@@ -1,0 +1,17 @@
+# 测试容器Dockerfile
+FROM node:18-alpine
+
+# 安装基本工具
+RUN apk add --no-cache curl wget
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制测试脚本
+COPY test_container.js .
+
+# 使脚本可执行
+RUN chmod +x test_container.js
+
+# 默认命令
+CMD ["node", "test_container.js"]

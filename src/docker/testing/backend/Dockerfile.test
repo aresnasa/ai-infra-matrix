@@ -1,0 +1,31 @@
+# Test Dockerfile for Backend
+FROM golang:1.24-alpine AS builder
+
+# 安装必要工具
+RUN apk add --no-cache curl git ca-certificates
+
+WORKDIR /go/src/ansible-playbook-generator-backend
+COPY backend/go.mod backend/go.sum ./
+
+RUN go mod download
+
+COPY backend/ .
+RUN go build -o main cmd/main.go
+
+FROM alpine:latest
+
+# 安装运行时依赖和curl（用于健康检查）
+RUN apk --no-cache add ca-certificates curl
+
+WORKDIR /root/
+
+COPY --from=builder /go/src/ansible-playbook-generator/web-v2/backend/main .
+
+ENV GIN_MODE=release
+EXPOSE 8082
+
+# 添加健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8082/health || exit 1
+
+CMD ["./main"]

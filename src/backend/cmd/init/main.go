@@ -1,0 +1,648 @@
+package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	
+	"github.com/go-ldap/ldap/v3"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+func main() {
+	// 加载配置
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal("Failed to load config:", err)
+	}
+
+	// 检查数据库是否存在，如果存在则备份并重建
+	if err := handleDatabaseReset(cfg); err != nil {
+		log.Fatal("Failed to handle database reset:", err)
+	}
+
+	// 连接数据库
+	if err := database.Connect(cfg); err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+
+	// 运行数据库迁移
+	if err := database.Migrate(); err != nil {
+		log.Fatal("Failed to migrate database:", err)
+	}
+
+	// 初始化RBAC系统
+	if err := initializeRBAC(); err != nil {
+		log.Fatal("Failed to initialize RBAC:", err)
+	}
+
+	// 创建默认管理员用户
+	createDefaultAdmin()
+
+	// 初始化默认AI配置
+	initializeDefaultAIConfigs()
+
+	// 初始化LDAP用户（如果LDAP服务可用）
+	initializeLDAPUsers(cfg)
+
+	log.Println("Initialization completed successfully!")
+}
+
+func handleDatabaseReset(cfg *config.Config) error {
+	// 连接到 postgres 系统数据库来检查目标数据库是否存在
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+
+	// 检查目标数据库是否存在
+	var exists bool
+	query := "SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)"
+	if err := systemDB.Raw(query, cfg.Database.DBName).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check database existence: %w", err)
+	}
+
+	if exists {
+		log.Printf("Database '%s' already exists", cfg.Database.DBName)
+		
+		// 创建备份数据库名称
+		backupDBName := fmt.Sprintf("%s_backup_%s", cfg.Database.DBName, time.Now().Format("20060102_150405"))
+		
+		// 备份现有数据库
+		log.Printf("Creating backup database: %s", backupDBName)
+		backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s", backupDBName, cfg.Database.DBName)
+		if err := systemDB.Exec(backupQuery).Error; err != nil {
+			log.Printf("Warning: Failed to create backup database: %v", err)
+		} else {
+			log.Printf("Backup database created successfully: %s", backupDBName)
+		}
+
+		// 终止所有连接到目标数据库的连接
+		log.Printf("Terminating connections to database: %s", cfg.Database.DBName)
+		terminateQuery := `
+			SELECT pg_terminate_backend(pid)
+			FROM pg_stat_activity
+			WHERE datname = ? AND pid <> pg_backend_pid()
+		`
+		if err := systemDB.Exec(terminateQuery, cfg.Database.DBName).Error; err != nil {
+			log.Printf("Warning: Failed to terminate connections: %v", err)
+		}
+
+		// 删除现有数据库
+		log.Printf("Dropping existing database: %s", cfg.Database.DBName)
+		dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", cfg.Database.DBName)
+		if err := systemDB.Exec(dropQuery).Error; err != nil {
+			return fmt.Errorf("failed to drop existing database: %w", err)
+		}
+		
+		log.Printf("Database '%s' dropped successfully", cfg.Database.DBName)
+	}
+
+	// 创建新数据库
+	log.Printf("Creating new database: %s", cfg.Database.DBName)
+	createQuery := fmt.Sprintf("CREATE DATABASE %s", cfg.Database.DBName)
+	if err := systemDB.Exec(createQuery).Error; err != nil {
+		return fmt.Errorf("failed to create database: %w", err)
+	}
+
+	log.Printf("Database '%s' created successfully", cfg.Database.DBName)
+
+	// 关闭系统数据库连接
+	sqlDB, _ := systemDB.DB()
+	sqlDB.Close()
+
+	return nil
+}
+
+func initializeRBAC() error {
+	log.Println("Initializing RBAC system...")
+	
+	rbacService := services.NewRBACService(database.DB)
+	if err := rbacService.InitializeDefaultRBAC(); err != nil {
+		return fmt.Errorf("failed to initialize RBAC: %w", err)
+	}
+	
+	log.Println("RBAC system initialized successfully!")
+	return nil
+}
+
+func createDefaultAdmin() {
+	db := database.DB
+	rbacService := services.NewRBACService(db)
+	
+	log.Println("Creating default admin user...")
+
+	// 创建默认管理员用户
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatal("Failed to hash password:", err)
+	}
+
+	admin := &models.User{
+		Username: "admin",
+		Email:    "admin@example.com",
+		Password: string(hashedPassword),
+		IsActive: true,
+	}
+
+	if err := db.Create(admin).Error; err != nil {
+		log.Fatal("Failed to create admin user:", err)
+	}
+
+	// 为管理员分配超级管理员角色
+	var superAdminRole models.Role
+	if err := db.Where("name = ?", "super-admin").First(&superAdminRole).Error; err != nil {
+		log.Fatal("Failed to find super-admin role:", err)
+	}
+
+	if err := rbacService.AssignRoleToUser(admin.ID, superAdminRole.ID); err != nil {
+		log.Printf("Warning: Failed to assign super-admin role to admin user: %v", err)
+	} else {
+		log.Println("Super-admin role assigned to admin user successfully!")
+	}
+
+	log.Println("Default admin user created successfully!")
+	log.Println("Username: admin")
+	log.Println("Password: admin123")
+	log.Printf("Password hash: %s", string(hashedPassword))
+	log.Println("Please change the password after first login!")
+}
+
+// initializeLDAPUsers 初始化LDAP用户账户
+func initializeLDAPUsers(cfg *config.Config) {
+	log.Println("Initializing LDAP users...")
+	
+	// 检查是否应该初始化LDAP（通过配置控制）
+	if !shouldInitializeLDAP(cfg) {
+		log.Println("LDAP initialization skipped (INIT_LDAP not set to true)")
+		return
+	}
+	
+	// 等待LDAP服务启动
+	if !waitForLDAP(cfg) {
+		log.Println("LDAP server not available, skipping LDAP user initialization")
+		return
+	}
+	
+	// 连接到LDAP服务器
+	conn, err := connectToLDAP(cfg)
+	if err != nil {
+		log.Printf("Failed to connect to LDAP: %v", err)
+		return
+	}
+	defer conn.Close()
+	
+	// 创建LDAP用户
+	if err := createLDAPUsers(conn, cfg); err != nil {
+		log.Printf("Failed to create LDAP users: %v", err)
+		return
+	}
+	
+	log.Println("LDAP users initialized successfully!")
+	log.Printf("Created users:")
+	log.Printf("  - %s (password: %s)", cfg.LDAPInit.AdminUser.UID, cfg.LDAPInit.AdminUser.Password)
+	log.Printf("  - %s (password: %s)", cfg.LDAPInit.RegularUser.UID, cfg.LDAPInit.RegularUser.Password)
+	
+	// 输出LDAP配置信息
+	printLDAPConfigInfo(cfg)
+}
+
+// shouldInitializeLDAP 检查是否应该初始化LDAP
+func shouldInitializeLDAP(cfg *config.Config) bool {
+	return cfg.LDAPInit.InitLDAP
+}
+
+// waitForLDAP 等待LDAP服务启动
+func waitForLDAP(cfg *config.Config) bool {
+	maxRetries := cfg.LDAPInit.RetryCount
+	retryInterval := time.Duration(cfg.LDAPInit.RetryInterval) * time.Second
+	
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			log.Printf("Waiting for LDAP server (attempt %d/%d)...", i+1, maxRetries)
+			time.Sleep(retryInterval)
+		}
+		
+		// 尝试连接LDAP服务器
+		conn, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", cfg.LDAP.Server, cfg.LDAP.Port))
+		if err == nil {
+			conn.Close()
+			log.Println("LDAP server is ready")
+			return true
+		}
+		
+		log.Printf("LDAP server not ready: %v", err)
+	}
+	
+	log.Printf("LDAP server not available after %d attempts", maxRetries)
+	return false
+}
+
+// connectToLDAP 连接到LDAP服务器
+func connectToLDAP(cfg *config.Config) (*ldap.Conn, error) {
+	// 连接到LDAP服务器 - 不要包含协议前缀
+	address := fmt.Sprintf("%s:%d", cfg.LDAP.Server, cfg.LDAP.Port)
+	
+	log.Printf("Attempting to connect to LDAP server at %s", address)
+	log.Printf("Base DN: %s", cfg.LDAP.BaseDN)
+	
+	var conn *ldap.Conn
+	var err error
+	
+	// 检查是否使用SSL
+	if cfg.LDAP.UseSSL {
+		log.Printf("Using SSL/TLS connection")
+		conn, err = ldap.DialTLS("tcp", address, &tls.Config{InsecureSkipVerify: true})
+	} else {
+		log.Printf("Using plain connection")
+		conn, err = ldap.Dial("tcp", address)
+	}
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to LDAP server %s: %w", address, err)
+	}
+	
+	// 使用管理员账户绑定
+	log.Printf("Attempting to bind as: %s", cfg.LDAP.BindDN)
+	
+	err = conn.Bind(cfg.LDAP.BindDN, cfg.LDAP.BindPassword)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind to LDAP as admin (%s): %w", cfg.LDAP.BindDN, err)
+	}
+	
+	log.Printf("Successfully connected and bound to LDAP server at %s", address)
+	return conn, nil
+}
+
+// createLDAPUsers 创建LDAP用户
+func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
+	baseDN := cfg.LDAP.BaseDN
+	peopleDN := fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.PeopleOU, baseDN)
+	groupsDN := fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.GroupsOU, baseDN)
+	
+	log.Printf("Creating LDAP users with base DN: %s", baseDN)
+	log.Printf("People DN: %s", peopleDN)
+	log.Printf("Groups DN: %s", groupsDN)
+	
+	// 确保组织单位存在
+	if err := ensureOrgUnitsExist(conn, cfg); err != nil {
+		return fmt.Errorf("failed to create organizational units: %w", err)
+	}
+	
+	// 创建用户组
+	if err := ensureGroupsExist(conn, cfg, groupsDN, peopleDN); err != nil {
+		return fmt.Errorf("failed to create groups: %w", err)
+	}
+	
+	// 创建用户
+	users := []LDAPUser{
+		{
+			UID:           cfg.LDAPInit.AdminUser.UID,
+			CN:            cfg.LDAPInit.AdminUser.CN,
+			SN:            cfg.LDAPInit.AdminUser.SN,
+			GivenName:     cfg.LDAPInit.AdminUser.GivenName,
+			Mail:          cfg.LDAPInit.AdminUser.Email,
+			Password:      cfg.LDAPInit.AdminUser.Password,
+			UIDNumber:     cfg.LDAPInit.AdminUser.UIDNumber,
+			GIDNumber:     cfg.LDAPInit.AdminUser.GIDNumber,
+			HomeDirectory: cfg.LDAPInit.AdminUser.HomeDirectory,
+		},
+		{
+			UID:           cfg.LDAPInit.RegularUser.UID,
+			CN:            cfg.LDAPInit.RegularUser.CN,
+			SN:            cfg.LDAPInit.RegularUser.SN,
+			GivenName:     cfg.LDAPInit.RegularUser.GivenName,
+			Mail:          cfg.LDAPInit.RegularUser.Email,
+			Password:      cfg.LDAPInit.RegularUser.Password,
+			UIDNumber:     cfg.LDAPInit.RegularUser.UIDNumber,
+			GIDNumber:     cfg.LDAPInit.RegularUser.GIDNumber,
+			HomeDirectory: cfg.LDAPInit.RegularUser.HomeDirectory,
+		},
+	}
+	
+	for _, user := range users {
+		if err := createLDAPUser(conn, user, peopleDN); err != nil {
+			log.Printf("Warning: Failed to create user %s: %v", user.UID, err)
+		} else {
+			log.Printf("Created LDAP user: %s", user.UID)
+		}
+	}
+	
+	return nil
+}
+
+// LDAPUser LDAP用户结构
+type LDAPUser struct {
+	UID           string
+	CN            string
+	SN            string
+	GivenName     string
+	Mail          string
+	Password      string
+	UIDNumber     int
+	GIDNumber     int
+	HomeDirectory string
+}
+
+// ensureOrgUnitsExist 确保组织单位存在
+func ensureOrgUnitsExist(conn *ldap.Conn, cfg *config.Config) error {
+	baseDN := cfg.LDAP.BaseDN
+	orgUnits := []struct {
+		DN string
+		OU string
+	}{
+		{fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.PeopleOU, baseDN), cfg.LDAPInit.PeopleOU},
+		{fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.GroupsOU, baseDN), cfg.LDAPInit.GroupsOU},
+	}
+	
+	for _, unit := range orgUnits {
+		log.Printf("Creating organizational unit: %s", unit.DN)
+		addReq := ldap.NewAddRequest(unit.DN, nil)
+		addReq.Attribute("objectClass", []string{"organizationalUnit"})
+		addReq.Attribute("ou", []string{unit.OU})
+		
+		err := conn.Add(addReq)
+		if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
+			return fmt.Errorf("failed to create OU %s: %w", unit.OU, err)
+		}
+		if err == nil {
+			log.Printf("Successfully created OU: %s", unit.OU)
+		} else {
+			log.Printf("OU already exists: %s", unit.OU)
+		}
+	}
+	
+	return nil
+}
+
+// ensureGroupsExist 确保用户组存在
+func ensureGroupsExist(conn *ldap.Conn, cfg *config.Config, groupsDN, peopleDN string) error {
+	groups := []struct {
+		DN      string
+		CN      string
+		Members []string
+	}{
+		{
+			DN:      fmt.Sprintf("cn=%s,%s", cfg.LDAPInit.AdminGroupCN, groupsDN),
+			CN:      cfg.LDAPInit.AdminGroupCN,
+			Members: []string{fmt.Sprintf("uid=%s,%s", cfg.LDAPInit.AdminUser.UID, peopleDN)},
+		},
+		{
+			DN:      fmt.Sprintf("cn=%s,%s", cfg.LDAPInit.UserGroupCN, groupsDN),
+			CN:      cfg.LDAPInit.UserGroupCN,
+			Members: []string{fmt.Sprintf("uid=%s,%s", cfg.LDAPInit.RegularUser.UID, peopleDN)},
+		},
+	}
+	
+	for _, group := range groups {
+		addReq := ldap.NewAddRequest(group.DN, nil)
+		addReq.Attribute("objectClass", []string{"groupOfNames"})
+		addReq.Attribute("cn", []string{group.CN})
+		addReq.Attribute("member", group.Members)
+		
+		err := conn.Add(addReq)
+		if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
+			return fmt.Errorf("failed to create group %s: %w", group.CN, err)
+		}
+	}
+	
+	return nil
+}
+
+// createLDAPUser 创建LDAP用户
+func createLDAPUser(conn *ldap.Conn, user LDAPUser, peopleDN string) error {
+	userDN := fmt.Sprintf("uid=%s,%s", user.UID, peopleDN)
+	
+	// 生成密码哈希 (SSHA)
+	passwordHash, err := generateSSHAPassword(user.Password)
+	if err != nil {
+		return fmt.Errorf("failed to generate password hash: %w", err)
+	}
+	
+	addReq := ldap.NewAddRequest(userDN, nil)
+	addReq.Attribute("objectClass", []string{"inetOrgPerson", "posixAccount"})
+	addReq.Attribute("uid", []string{user.UID})
+	addReq.Attribute("cn", []string{user.CN})
+	addReq.Attribute("sn", []string{user.SN})
+	addReq.Attribute("givenName", []string{user.GivenName})
+	addReq.Attribute("mail", []string{user.Mail})
+	addReq.Attribute("userPassword", []string{passwordHash})
+	addReq.Attribute("uidNumber", []string{fmt.Sprintf("%d", user.UIDNumber)})
+	addReq.Attribute("gidNumber", []string{fmt.Sprintf("%d", user.GIDNumber)})
+	addReq.Attribute("homeDirectory", []string{user.HomeDirectory})
+	
+	err = conn.Add(addReq)
+	if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
+		return fmt.Errorf("failed to add user: %w", err)
+	}
+	
+	return nil
+}
+
+// generateSSHAPassword 生成SSHA密码哈希
+func generateSSHAPassword(password string) (string, error) {
+	// 对于简单起见，这里使用明文密码
+	// 在生产环境中应该使用更安全的哈希方法
+	return password, nil
+}
+
+// isLDAPError 检查是否为特定的LDAP错误
+func isLDAPError(err error, code uint16) bool {
+	if ldapErr, ok := err.(*ldap.Error); ok {
+		return ldapErr.ResultCode == code
+	}
+	return false
+}
+
+// printLDAPConfigInfo 输出LDAP配置信息
+func printLDAPConfigInfo(cfg *config.Config) {
+	log.Println("")
+	log.Println("=== LDAP Configuration Information ===")
+	log.Println("Please use the following configuration in your backend service:")
+	log.Println("")
+	log.Printf("LDAP Server: %s", cfg.LDAP.Server)
+	log.Printf("LDAP Port: %d", cfg.LDAP.Port)
+	log.Printf("Use SSL: %t", cfg.LDAP.UseSSL)
+	log.Printf("Base DN: %s", cfg.LDAP.BaseDN)
+	log.Printf("Admin DN: %s", cfg.LDAP.BindDN)
+	log.Printf("Admin Password: %s", cfg.LDAP.BindPassword)
+	log.Println("")
+	log.Println("=== Organizational Units ===")
+	log.Printf("People OU: ou=%s,%s", cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN)
+	log.Printf("Groups OU: ou=%s,%s", cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
+	log.Println("")
+	log.Println("=== Groups ===")
+	log.Printf("Admins Group: cn=%s,ou=%s,%s", cfg.LDAPInit.AdminGroupCN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
+	log.Printf("Users Group: cn=%s,ou=%s,%s", cfg.LDAPInit.UserGroupCN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
+	log.Println("")
+	log.Println("=== User Accounts ===")
+	log.Printf("Admin User DN: uid=%s,ou=%s,%s", cfg.LDAPInit.AdminUser.UID, cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN)
+	log.Printf("  - Username: %s", cfg.LDAPInit.AdminUser.UID)
+	log.Printf("  - Password: %s", cfg.LDAPInit.AdminUser.Password)
+	log.Printf("  - Email: %s", cfg.LDAPInit.AdminUser.Email)
+	log.Printf("  - UID Number: %d", cfg.LDAPInit.AdminUser.UIDNumber)
+	log.Printf("  - GID Number: %d", cfg.LDAPInit.AdminUser.GIDNumber)
+	log.Printf("  - Home Directory: %s", cfg.LDAPInit.AdminUser.HomeDirectory)
+	log.Println("")
+	log.Printf("Regular User DN: uid=%s,ou=%s,%s", cfg.LDAPInit.RegularUser.UID, cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN)
+	log.Printf("  - Username: %s", cfg.LDAPInit.RegularUser.UID)
+	log.Printf("  - Password: %s", cfg.LDAPInit.RegularUser.Password)
+	log.Printf("  - Email: %s", cfg.LDAPInit.RegularUser.Email)
+	log.Printf("  - UID Number: %d", cfg.LDAPInit.RegularUser.UIDNumber)
+	log.Printf("  - GID Number: %d", cfg.LDAPInit.RegularUser.GIDNumber)
+	log.Printf("  - Home Directory: %s", cfg.LDAPInit.RegularUser.HomeDirectory)
+	log.Println("")
+	log.Println("=== Search Filters (for backend configuration) ===")
+	log.Printf("User Search Base: ou=%s,%s", cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN)
+	log.Println("User Search Filter: (uid={username})")
+	log.Println("User Object Class: inetOrgPerson")
+	log.Printf("Group Search Base: ou=%s,%s", cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
+	log.Println("Group Search Filter: (member={userdn})")
+	log.Println("Group Object Class: groupOfNames")
+	log.Println("")
+	log.Println("=== Common LDAP Attributes ===")
+	log.Println("Username Attribute: uid")
+	log.Println("Email Attribute: mail")
+	log.Println("Display Name Attribute: cn")
+	log.Println("First Name Attribute: givenName")
+	log.Println("Last Name Attribute: sn")
+	log.Println("Group Name Attribute: cn")
+	log.Println("Group Member Attribute: member")
+	log.Println("")
+	log.Println("=== Example Backend Configuration (JSON) ===")
+	log.Printf(`{
+  "ldap": {
+    "enabled": true,
+    "server": "%s",
+    "port": %d,
+    "use_ssl": %t,
+    "base_dn": "%s",
+    "bind_dn": "%s",
+    "bind_password": "%s",
+    "user_search_base": "ou=%s,%s",
+    "user_search_filter": "(uid={username})",
+    "user_attributes": {
+      "username": "uid",
+      "email": "mail",
+      "display_name": "cn",
+      "first_name": "givenName",
+      "last_name": "sn"
+    },
+    "group_search_base": "ou=%s,%s",
+    "group_search_filter": "(member={userdn})",
+    "group_attributes": {
+      "name": "cn"
+    },
+    "admin_group": "cn=%s,ou=%s,%s"
+  }
+}`, cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.UseSSL, cfg.LDAP.BaseDN, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, 
+		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN, 
+		cfg.LDAPInit.AdminGroupCN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
+	log.Println("")
+	log.Println("=== Test Commands ===")
+	log.Println("You can test LDAP connectivity using these commands:")
+	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b '%s' '(objectClass=*)'", 
+		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, cfg.LDAP.BaseDN)
+	log.Println("")
+	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b 'ou=%s,%s' '(uid=%s)'", 
+		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, 
+		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.AdminUser.UID)
+	log.Println("")
+	log.Println("=== LDAP Configuration Complete ===")
+}
+
+// initializeDefaultAIConfigs 初始化默认AI配置
+func initializeDefaultAIConfigs() {
+	log.Println("=== Initializing Default AI Configurations ===")
+
+	// 检查是否已存在AI配置
+	var count int64
+	database.DB.Model(&models.AIAssistantConfig{}).Count(&count)
+	
+	if count > 0 {
+		log.Printf("AI configurations already exist (%d configs found), skipping initialization", count)
+		return
+	}
+
+	// 创建默认OpenAI配置（需要用户后续配置API密钥）
+	openaiConfig := &models.AIAssistantConfig{
+		Name:         "默认OpenAI配置",
+		Provider:     "openai",
+		Model:        "gpt-3.5-turbo",
+		APIKey:       "", // 空密钥，需要管理员后续配置
+		APIEndpoint:  "https://api.openai.com/v1",
+		MaxTokens:    4096,
+		Temperature:  0.7,
+		SystemPrompt: "你是一个专业的AI助手，能够帮助用户解决各种问题。请提供准确、有用且友好的回答。",
+		IsEnabled:    false, // 默认禁用，直到配置了API密钥
+		IsDefault:    true,
+	}
+
+	if err := database.DB.Create(openaiConfig).Error; err != nil {
+		log.Printf("Warning: Failed to create default OpenAI config: %v", err)
+	} else {
+		log.Println("✓ Created default OpenAI configuration")
+	}
+
+	// 创建默认Claude配置（需要用户后续配置API密钥）
+	claudeConfig := &models.AIAssistantConfig{
+		Name:         "默认Claude配置",
+		Provider:     "claude",
+		Model:        "claude-3-haiku-20240307",
+		APIKey:       "", // 空密钥，需要管理员后续配置
+		APIEndpoint:  "https://api.anthropic.com",
+		MaxTokens:    4096,
+		Temperature:  0.7,
+		SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。你诚实、有用、无害，并且能够帮助用户解决各种问题。",
+		IsEnabled:    false, // 默认禁用，直到配置了API密钥
+		IsDefault:    false,
+	}
+
+	if err := database.DB.Create(claudeConfig).Error; err != nil {
+		log.Printf("Warning: Failed to create default Claude config: %v", err)
+	} else {
+		log.Println("✓ Created default Claude configuration")
+	}
+
+	// 创建MCP协议配置（预留接口）
+	mcpConfig := &models.AIAssistantConfig{
+		Name:         "MCP协议配置",
+		Provider:     "mcp",
+		Model:        "mcp-default",
+		APIKey:       "",
+		APIEndpoint:  "",
+		MaxTokens:    4096,
+		Temperature:  0.7,
+		SystemPrompt: "你是通过Model Context Protocol连接的AI助手。",
+		IsEnabled:    false, // 默认禁用，MCP功能仍在开发中
+		IsDefault:    false,
+	}
+
+	if err := database.DB.Create(mcpConfig).Error; err != nil {
+		log.Printf("Warning: Failed to create default MCP config: %v", err)
+	} else {
+		log.Println("✓ Created default MCP configuration")
+	}
+
+	log.Println("=== Default AI Configurations Initialized ===")
+	log.Println("📝 Note: AI configurations have been created with empty API keys.")
+	log.Println("🔑 Please configure API keys in the admin panel to enable AI functionality.")
+	log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
+}

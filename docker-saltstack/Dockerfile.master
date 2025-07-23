@@ -1,0 +1,38 @@
+FROM saltstack/salt:3006-alpine
+
+# Install additional packages for testing and management
+RUN apk add --no-cache \
+    bash \
+    curl \
+    git \
+    python3 \
+    py3-pip \
+    jq
+
+# Create necessary directories
+RUN mkdir -p /etc/salt/master.d \
+    /srv/salt \
+    /srv/pillar \
+    /var/cache/salt \
+    /var/log/salt
+
+# Copy master configuration
+COPY salt-config/master/ /etc/salt/master.d/
+
+# Set proper permissions
+RUN chown -R salt:salt /etc/salt /srv/salt /srv/pillar /var/cache/salt /var/log/salt
+
+# Expose Salt ports
+EXPOSE 4505 4506
+
+# Health check script
+COPY scripts/master-healthcheck.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/master-healthcheck.sh
+
+# Start script
+COPY scripts/start-master.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/start-master.sh
+
+USER salt
+
+ENTRYPOINT ["/usr/local/bin/start-master.sh"]

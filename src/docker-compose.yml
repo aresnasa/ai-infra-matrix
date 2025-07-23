@@ -1,0 +1,223 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ansible-postgres
+    environment:
+      POSTGRES_DB: ansible_playbook_generator
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ansible-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ansible_playbook_generator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ansible-redis
+    command: redis-server --requirepass ansible-redis-password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ansible-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "ansible-redis-password", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # OpenLDAP 服务 (用于LDAP认证测试和用户管理)
+  openldap:
+    image: osixia/openldap:stable
+    container_name: ansible-openldap
+    environment:
+      LDAP_ORGANISATION: "Test Company"
+      LDAP_DOMAIN: "testcompany.com"
+      LDAP_ADMIN_PASSWORD: "admin123"
+      LDAP_CONFIG_PASSWORD: "config123"
+      LDAP_BASE_DN: "dc=testcompany,dc=com"
+      LDAP_TLS_VERIFY_CLIENT: "never"
+    ports:
+      - "389:389"
+      - "636:636"
+    volumes:
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+      - ./docker/ldap/bootstrap.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/bootstrap.ldif
+    networks:
+      - ansible-network
+    command: --copy-service --loglevel debug
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost:389", "-D", "cn=admin,dc=testcompany,dc=com", "-w", "admin123", "-b", "dc=testcompany,dc=com", "(objectclass=*)", "dn"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # LDAP 管理界面
+  phpldapadmin:
+    image: osixia/phpldapadmin:stable
+    container_name: ansible-phpldapadmin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: openldap
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "8081:80"
+    depends_on:
+      openldap:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ansible-network
+
+  backend:
+    build: ./backend
+    container_name: ansible-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # 覆盖.env文件中的某些值以适应Docker环境
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - LDAP_SERVER=openldap
+      # 日志级别配置 (可以通过环境变量覆盖)
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "8082:8082"
+    extra_hosts:
+      - "kubernetes.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+    volumes:
+      - ./backend/outputs:/app/outputs
+      - ./backend/uploads:/app/uploads
+    networks:
+      - ansible-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  frontend:
+    build: 
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: /api
+    container_name: ansible-frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ansible-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # K8s API 代理服务
+  k8s-proxy:
+    image: tecnativa/tcp-proxy
+    container_name: ansible-k8s-proxy
+    ports:
+      - "6444:6443"  # 使用不同的端口避免冲突
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ansible-network
+    environment:
+      - LISTEN=6443
+      - TALK_TO=host.docker.internal:6443
+    restart: unless-stopped
+
+  # AI异步架构测试服务
+  ai-async-test:
+    build:
+      context: .
+      dockerfile: tests/ai-async/Dockerfile
+    container_name: ansible-ai-async-test
+    environment:
+      - BACKEND_URL=http://backend:8080
+      - REDIS_URL=redis://redis:6379
+      - DB_URL=postgres://user:password@postgres:5432/ansible_db?sslmode=disable
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - ansible-network
+    profiles:
+      - ai-test
+    volumes:
+      - ./tests/ai-async:/app/tests
+      - ai-test-reports:/tmp/ai-async-test-reports
+
+  # Redis集群监控（可选，用于高级测试）
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: ansible-redis-insight
+    ports:
+      - "8001:8001"
+    depends_on:
+      - redis
+    networks:
+      - ansible-network
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # 测试服务
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: ansible-test
+    depends_on:
+      - frontend
+      - backend
+      - postgres
+    networks:
+      - ansible-network
+    profiles:
+      - test
+
+volumes:
+  postgres_data:
+  redis_data:
+  ldap_data:
+  ldap_config:
+  ai-test-reports:
+
+networks:
+  ansible-network:
+    driver: bridge

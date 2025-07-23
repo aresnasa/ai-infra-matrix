@@ -1,0 +1,49 @@
+.auth-container {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+}
+
+.auth-container .ant-card {
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+}
+
+.auth-container .ant-card-head-title {
+  text-align: center;
+}
+
+.auth-container .ant-card-head-title h2 {
+  margin: 0;
+  color: #333;
+  font-weight: 600;
+}
+
+.auth-container .ant-tabs-tab {
+  font-weight: 500;
+}
+
+.auth-container .ant-btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 6px;
+  height: 45px;
+  font-weight: 500;
+}
+
+.auth-container .ant-btn-primary:hover {
+  background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+}
+
+.auth-container .ant-input-affix-wrapper {
+  border-radius: 6px;
+  height: 45px;
+}
+
+.auth-container .ant-input {
+  border-radius: 6px;
+  height: 45px;
+}
+
+.auth-container .ant-form-item {
+  margin-bottom: 20px;
+}

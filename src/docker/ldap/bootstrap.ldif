@@ -1,0 +1,51 @@
+# LDAP Bootstrap Data for Testing
+# Creates organizational units and test users
+
+# Create organizational units
+dn: ou=test,dc=test,dc=com
+objectClass: organizationalUnit
+ou: test
+
+dn: ou=groups,dc=test,dc=com
+objectClass: organizationalUnit
+ou: groups
+
+# Create admin group
+dn: cn=admins,ou=groups,dc=test,dc=com
+objectClass: groupOfNames
+cn: admins
+member: uid=ldap-admin,ou=test,dc=test,dc=com
+
+# Create regular users group
+dn: cn=users,ou=groups,dc=test,dc=com
+objectClass: groupOfNames
+cn: users
+member: uid=ldap-user,ou=test,dc=test,dc=com
+
+# Create LDAP admin user
+dn: uid=ldap-admin,ou=test,dc=test,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: ldap-admin
+cn: LDAP Administrator
+sn: Administrator
+givenName: LDAP
+mail: ldap-admin@test.com
+userPassword: admin123
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/ldap-admin
+
+# Create LDAP regular user
+dn: uid=ldap-user,ou=test,dc=test,dc=com
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: ldap-user
+cn: LDAP User
+sn: User
+givenName: LDAP
+mail: ldap-user@test.com
+userPassword: user123
+uidNumber: 1002
+gidNumber: 1002
+homeDirectory: /home/ldap-user

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前端测试页面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .section {
+            background: #f5f5f5;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        .button {
+            background: #1890ff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .button:hover {
+            background: #40a9ff;
+        }
+        .result {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border-left: 4px solid #1890ff;
+        }
+        .error {
+            border-left-color: #ff4d4f;
+            background: #fff2f0;
+        }
+        .success {
+            border-left-color: #52c41a;
+            background: #f6ffed;
+        }
+        pre {
+            background: #f6f8fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Kubernetes集群管理前端测试</h1>
+    
+    <div class="section">
+        <h2>测试说明</h2>
+        <p>此页面用于测试前端与后端API的连接，以及验证Kubernetes集群数据的显示。</p>
+    </div>
+
+    <div class="section">
+        <h2>快速链接</h2>
+        <button class="button" onclick="openMainApp()">打开主应用</button>
+        <button class="button" onclick="openKubernetesPage()">直接访问Kubernetes页面</button>
+        <button class="button" onclick="testAPI()">测试API连接</button>
+    </div>
+
+    <div class="section">
+        <h2>API测试结果</h2>
+        <div id="test-results"></div>
+    </div>
+
+    <div class="section">
+        <h2>当前状态检查</h2>
+        <div id="status-check"></div>
+    </div>
+
+    <script>
+        function openMainApp() {
+            window.open('http://localhost:3001', '_blank');
+        }
+
+        function openKubernetesPage() {
+            window.open('http://localhost:3001/kubernetes', '_blank');
+        }
+
+        async function testAPI() {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.innerHTML = '<div class="result">测试中...</div>';
+
+            try {
+                // 1. 测试登录
+                console.log('Testing login...');
+                const loginResponse = await fetch('http://localhost:8082/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: 'admin',
+                        password: 'admin123'
+                    })
+                });
+
+                if (!loginResponse.ok) {
+                    throw new Error(`登录失败: ${loginResponse.status}`);
+                }
+
+                const loginData = await loginResponse.json();
+                const token = loginData.data.token;
+
+                resultsDiv.innerHTML += `<div class="result success">✓ 登录成功，获取到token</div>`;
+
+                // 2. 测试获取集群列表
+                console.log('Testing clusters API...');
+                const clustersResponse = await fetch('http://localhost:8082/api/kubernetes/clusters', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    }
+                });
+
+                if (!clustersResponse.ok) {
+                    throw new Error(`获取集群列表失败: ${clustersResponse.status}`);
+                }
+
+                const clustersData = await clustersResponse.json();
+                
+                resultsDiv.innerHTML += `<div class="result success">✓ API调用成功</div>`;
+                resultsDiv.innerHTML += `<div class="result">集群数量: ${clustersData.length}</div>`;
+                
+                if (clustersData.length > 0) {
+                    const cluster = clustersData[0];
+                    resultsDiv.innerHTML += `<div class="result">第一个集群信息:<br>
+                        名称: ${cluster.name}<br>
+                        状态: ${cluster.status}<br>
+                        API服务器: ${cluster.api_server}<br>
+                        创建时间: ${cluster.created_at}
+                    </div>`;
+                }
+
+                resultsDiv.innerHTML += `<div class="result">完整数据:<pre>${JSON.stringify(clustersData, null, 2)}</pre></div>`;
+
+            } catch (error) {
+                console.error('Test failed:', error);
+                resultsDiv.innerHTML += `<div class="result error">✗ 测试失败: ${error.message}</div>`;
+            }
+        }
+
+        function checkStatus() {
+            const statusDiv = document.getElementById('status-check');
+            statusDiv.innerHTML = `
+                <div class="result">
+                    <strong>服务地址:</strong><br>
+                    前端: <a href="http://localhost:3001" target="_blank">http://localhost:3001</a><br>
+                    后端: <a href="http://localhost:8082" target="_blank">http://localhost:8082</a><br>
+                    Kubernetes页面: <a href="http://localhost:3001/kubernetes" target="_blank">http://localhost:3001/kubernetes</a>
+                </div>
+                <div class="result">
+                    <strong>预期功能:</strong><br>
+                    1. 用户应该能够使用 admin/admin123 登录<br>
+                    2. 登录后能够访问Kubernetes管理页面<br>
+                    3. 页面应该显示集群列表，状态为"已连接"<br>
+                    4. 可以进行连接测试操作
+                </div>
+            `;
+        }
+
+        // 页面加载时自动检查状态
+        window.onload = checkStatus;
+    </script>
+</body>
+</html>

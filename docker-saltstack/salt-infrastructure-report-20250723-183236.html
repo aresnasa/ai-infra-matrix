@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Salt Infrastructure Test Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { background-color: #f0f0f0; padding: 10px; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .warning { color: orange; }
+        .section { margin: 20px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        pre { background-color: #f8f8f8; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Salt Infrastructure Test Report</h1>
+        <p>Generated on: 2025年 7月23日 星期三 18时32分36秒 CST</p>
+    </div>
+    
+    <div class="section">
+        <h2>Container Status</h2>
+        <pre>NAME                             IMAGE                          COMMAND                  SERVICE       CREATED          STATUS          PORTS
+docker-saltstack-salt-master-1   docker-saltstack-salt-master   "salt-master -l debug"   salt-master   24 minutes ago   Up 24 minutes   4505-4506/tcp, 8000/tcp
+docker-saltstack-salt-minion-1   docker-saltstack-salt-minion   "salt-minion -l debug"   salt-minion   24 minutes ago   Up 24 minutes   4505-4506/tcp, 8000/tcp</pre>
+    </div>
+    
+    <div class="section">
+        <h2>Accepted Keys</h2>
+        <pre>Failed to get keys</pre>
+    </div>
+    
+    <div class="section">
+        <h2>Minion Status</h2>
+        <pre>Failed to get status</pre>
+    </div>
+    
+    <div class="section">
+        <h2>Grains Information</h2>
+        <h3>Minion-1</h3>
+        <pre>Failed to get grains</pre>
+        
+        <h3>Minion-2</h3>
+        <pre>Failed to get grains</pre>
+        
+        <h3>Minion-3</h3>
+        <pre>Failed to get grains</pre>
+    </div>
+    
+    <div class="section">
+        <h2>Network Information</h2>
+        <pre>[]
+Failed to get network info</pre>
+    </div>
+    
+    <div class="section">
+        <h2>Volume Information</h2>
+        <pre>No volumes found</pre>
+    </div>
+    
+</body>
+</html>
