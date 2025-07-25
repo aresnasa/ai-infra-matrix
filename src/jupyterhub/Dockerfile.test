@@ -1,0 +1,56 @@
+# 基础镜像
+FROM python:3.13-slim
+
+# 设置工作目录
+WORKDIR /srv/jupyterhub
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 使用阿里云镜像源加速包安装
+RUN echo "deb https://mirrors.aliyun.com/debian/ bookworm main" > /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian/ bookworm-updates main" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian-security/ bookworm-security main" >> /etc/apt/sources.list
+
+# 安装系统依赖 (最小化版本)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用清华源并安装基础工具
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/ && \
+    pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn && \
+    pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# 安装JupyterHub核心组件
+RUN pip install --no-cache-dir \
+    jupyterhub==5.3.0 \
+    jupyterlab==4.4.5 \
+    notebook==7.4.4
+
+# 安装configurable-http-proxy
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g configurable-http-proxy
+
+# 创建必要的目录
+RUN mkdir -p /srv/jupyterhub/data \
+    /var/log/jupyterhub
+
+# 复制测试配置文件
+COPY jupyterhub/test_config.py /srv/jupyterhub/jupyterhub_config.py
+
+# 设置权限
+RUN chown -R root:root /srv/jupyterhub
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/hub/health || exit 1
+
+# 启动JupyterHub
+CMD ["jupyterhub", "-f", "/srv/jupyterhub/jupyterhub_config.py"]

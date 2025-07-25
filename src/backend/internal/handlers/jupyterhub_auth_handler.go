@@ -1,0 +1,378 @@
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
+)
+
+type JupyterHubAuthHandler struct {
+	db             *gorm.DB
+	config         *config.Config
+	userService    *services.UserService
+	sessionService *services.SessionService
+	redisClient    *redis.Client
+}
+
+func NewJupyterHubAuthHandler(db *gorm.DB, cfg *config.Config, redisClient *redis.Client) *JupyterHubAuthHandler {
+	return &JupyterHubAuthHandler{
+		db:             db,
+		config:         cfg,
+		userService:    services.NewUserService(),
+		sessionService: services.NewSessionService(),
+		redisClient:    redisClient,
+	}
+}
+
+// JupyterHubStatusResponse JupyterHub状态响应
+type JupyterHubStatusResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	URL     string `json:"url"`
+	Message string `json:"message"`
+}
+
+// JupyterHubLoginRequest JupyterHub登录请求
+type JupyterHubLoginRequest struct {
+	Username string `json:"username" binding:"required"`
+}
+
+// JupyterHubTokenResponse JupyterHub令牌响应
+type JupyterHubTokenResponse struct {
+	Success   bool   `json:"success"`
+	Token     string `json:"token,omitempty"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
+
+// ServerActionRequest 服务器操作请求
+type ServerActionRequest struct {
+	Username string `json:"username" binding:"required"`
+	Action   string `json:"action"`   // start, stop, restart
+}
+
+// GetJupyterHubStatus 获取JupyterHub状态
+// @Summary 获取JupyterHub状态
+// @Description 检查JupyterHub服务状态和连接
+// @Tags JupyterHub认证
+// @Produce json
+// @Success 200 {object} JupyterHubStatusResponse
+// @Failure 500 {object} map[string]interface{}
+// @Router /jupyterhub/status [get]
+func (h *JupyterHubAuthHandler) GetJupyterHubStatus(c *gin.Context) {
+	// 这里可以添加实际的JupyterHub健康检查
+	// 暂时返回模拟状态
+	response := JupyterHubStatusResponse{
+		Status:  "connected",
+		Version: "5.3.0",
+		URL:     "http://localhost:8088",
+		Message: "JupyterHub统一认证系统运行正常",
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GenerateJupyterHubLoginToken 生成JupyterHub登录令牌
+// @Summary 生成JupyterHub登录令牌
+// @Description 为已认证用户生成JupyterHub登录令牌
+// @Tags JupyterHub认证
+// @Accept json
+// @Produce json
+// @Param request body JupyterHubLoginRequest true "登录请求"
+// @Success 200 {object} JupyterHubTokenResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /auth/jupyterhub-login [post]
+func (h *JupyterHubAuthHandler) GenerateJupyterHubLoginToken(c *gin.Context) {
+	var request JupyterHubLoginRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误", "details": err.Error()})
+		return
+	}
+
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 验证用户权限
+	var user models.User
+	if err := h.db.Preload("Roles").First(&user, userID).Error; err != nil {
+		logrus.WithError(err).Error("查询用户失败")
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 验证用户名匹配
+	if user.Username != request.Username {
+		c.JSON(http.StatusForbidden, gin.H{"error": "用户名不匹配"})
+		return
+	}
+
+	// 生成JupyterHub登录令牌
+	token, expiresAt, err := h.generateJupyterHubToken(user)
+	if err != nil {
+		logrus.WithError(err).Error("生成JupyterHub令牌失败")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成令牌失败"})
+		return
+	}
+
+	// 缓存令牌到Redis
+	if err := h.cacheJupyterHubToken(user.Username, token, expiresAt); err != nil {
+		logrus.WithError(err).Warning("缓存JupyterHub令牌失败")
+	}
+
+	// 记录登录日志
+	logrus.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"action":   "jupyterhub_login",
+	}).Info("用户生成JupyterHub登录令牌")
+
+	response := JupyterHubTokenResponse{
+		Success:   true,
+		Token:     token,
+		ExpiresAt: expiresAt.Unix(),
+		Message:   "登录令牌生成成功",
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// StartNotebookServer 启动Notebook服务器
+// @Summary 启动Notebook服务器
+// @Description 为用户启动JupyterHub Notebook服务器
+// @Tags JupyterHub认证
+// @Accept json
+// @Produce json
+// @Param request body ServerActionRequest true "服务器操作请求"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /jupyterhub/start-server [post]
+func (h *JupyterHubAuthHandler) StartNotebookServer(c *gin.Context) {
+	var request ServerActionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误", "details": err.Error()})
+		return
+	}
+
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 验证用户权限
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	if user.Username != request.Username {
+		c.JSON(http.StatusForbidden, gin.H{"error": "用户名不匹配"})
+		return
+	}
+
+	// 这里可以添加实际的JupyterHub API调用
+	// 暂时返回成功响应
+	logrus.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"action":   "start_notebook_server",
+	}).Info("用户启动Notebook服务器")
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Notebook服务器启动请求已提交",
+		"server_url": fmt.Sprintf("http://localhost:8088/user/%s/lab", user.Username),
+	})
+}
+
+// StopNotebookServer 停止Notebook服务器
+// @Summary 停止Notebook服务器
+// @Description 停止用户的JupyterHub Notebook服务器
+// @Tags JupyterHub认证
+// @Accept json
+// @Produce json
+// @Param request body ServerActionRequest true "服务器操作请求"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /jupyterhub/stop-server [post]
+func (h *JupyterHubAuthHandler) StopNotebookServer(c *gin.Context) {
+	var request ServerActionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误", "details": err.Error()})
+		return
+	}
+
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 验证用户权限
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	if user.Username != request.Username {
+		c.JSON(http.StatusForbidden, gin.H{"error": "用户名不匹配"})
+		return
+	}
+
+	// 记录日志
+	logrus.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"action":   "stop_notebook_server",
+	}).Info("用户停止Notebook服务器")
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Notebook服务器停止请求已提交",
+	})
+}
+
+// LogoutAllSessions 登出所有会话
+// @Summary 登出所有会话
+// @Description 清除用户的所有会话（包括JupyterHub）
+// @Tags JupyterHub认证
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/logout-all [post]
+func (h *JupyterHubAuthHandler) LogoutAllSessions(c *gin.Context) {
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 查询用户信息
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 清除Redis中的JupyterHub会话
+	if err := h.clearJupyterHubSessions(user.Username); err != nil {
+		logrus.WithError(err).Warning("清除JupyterHub会话失败")
+	}
+
+	// 记录日志
+	logrus.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"action":   "logout_all_sessions",
+	}).Info("用户登出所有会话")
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "所有会话已清除",
+	})
+}
+
+// generateJupyterHubToken 生成JupyterHub令牌
+func (h *JupyterHubAuthHandler) generateJupyterHubToken(user models.User) (string, time.Time, error) {
+	// 创建令牌载荷
+	expiresAt := time.Now().Add(time.Hour * 24) // 24小时有效期
+	
+	// 获取用户角色
+	var roles []string
+	for _, role := range user.Roles {
+		roles = append(roles, role.Name)
+	}
+
+	claims := jwt.Claims{
+		UserID:   user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Roles:    roles,
+		IsAdmin:  h.userHasAdminRole(roles),
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expiresAt.Unix(),
+			IssuedAt:  time.Now().Unix(),
+			Issuer:    "ai-infra-matrix",
+			Subject:   "jupyterhub-login",
+		},
+	}
+
+	// 生成JWT令牌
+	token, err := jwt.GenerateToken(claims, h.config.JWTSecret)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("生成JWT令牌失败: %w", err)
+	}
+
+	return token, expiresAt, nil
+}
+
+// cacheJupyterHubToken 缓存JupyterHub令牌到Redis
+func (h *JupyterHubAuthHandler) cacheJupyterHubToken(username, token string, expiresAt time.Time) error {
+	if h.redisClient == nil {
+		return fmt.Errorf("Redis客户端未初始化")
+	}
+
+	key := fmt.Sprintf("jupyterhub:token:%s", username)
+	duration := time.Until(expiresAt)
+
+	return h.redisClient.Set(context.Background(), key, token, duration).Err()
+}
+
+// clearJupyterHubSessions 清除JupyterHub会话
+func (h *JupyterHubAuthHandler) clearJupyterHubSessions(username string) error {
+	if h.redisClient == nil {
+		return fmt.Errorf("Redis客户端未初始化")
+	}
+
+	// 清除令牌缓存
+	tokenKey := fmt.Sprintf("jupyterhub:token:%s", username)
+	sessionKey := fmt.Sprintf("jupyterhub:session:%s", username)
+
+	pipe := h.redisClient.Pipeline()
+	pipe.Del(context.Background(), tokenKey)
+	pipe.Del(context.Background(), sessionKey)
+	
+	_, err := pipe.Exec(context.Background())
+	return err
+}
+
+// userHasAdminRole 检查用户是否具有管理员角色
+func (h *JupyterHubAuthHandler) userHasAdminRole(roles []string) bool {
+	for _, role := range roles {
+		if role == models.RoleAdmin || role == models.RoleSuperAdmin {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,32 @@
+# AI-Infra-Matrix JupyterHub Requirements
+# 基于ai-infra-matrix conda环境版本
+
+# 核心JupyterHub组件
+jupyterhub==5.3.0
+jupyterlab==4.4.5
+notebook==7.4.4
+
+# Jupyter相关依赖
+jupyter-client==8.6.3
+jupyter-core==5.8.1
+jupyter-server==2.16.0
+jupyter-lsp==2.2.6
+jupyterlab-server==2.27.3
+notebook-shim==0.2.4
+ipython==9.4.0
+
+# 网络和HTTP组件
+requests==2.32.4
+tornado==6.5.1
+aiohttp==3.12.14
+
+# 认证和安全
+PyJWT>=2.8.0
+psycopg2-binary>=2.9.0
+
+# JupyterHub扩展
+jupyterhub-nativeauthenticator>=1.2.0
+dockerspawner>=12.0.0
+
+# 其他依赖
+traitlets>=5.0.0

@@ -142,6 +142,128 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # JupyterHub统一认证服务 (PostgreSQL + Redis认证体系)
+  jupyterhub-unified:
+    build: 
+      context: ./jupyterhub
+      dockerfile: Dockerfile.unified
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: ai-infra-jupyterhub-unified:latest
+    container_name: ai-infra-jupyterhub-unified
+    environment:
+      # 数据库配置 (与后端共享)
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=ansible_playbook_generator
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      # Redis配置 (会话缓存)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=ansible-redis-password
+      - REDIS_DB=1
+      # JWT配置 (与后端保持一致)
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
+      # JupyterHub配置
+      - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
+      - CONFIGPROXY_AUTH_TOKEN=ai-infra-proxy-token
+      - SESSION_TIMEOUT=86400  # 24小时会话
+      # Spawner配置
+      - JUPYTERHUB_NOTEBOOK_IMAGE=jupyter/base-notebook:latest
+      - JUPYTERHUB_NETWORK=ai-infra-matrix_ansible-network
+      - JUPYTERHUB_MEM_LIMIT=2G
+      - JUPYTERHUB_CPU_LIMIT=1.0
+      # 功能开关
+      - JUPYTERHUB_IDLE_CULLER_ENABLED=true
+      - JUPYTERHUB_IDLE_TIMEOUT=3600
+      - JUPYTERHUB_CULL_TIMEOUT=7200
+      - JUPYTERHUB_DEBUG=false
+      - JUPYTERHUB_LOG_LEVEL=INFO
+      - JUPYTERHUB_ACCESS_LOG=true
+      # CORS配置
+      - JUPYTERHUB_CORS_ORIGIN=http://localhost:3001
+    ports:
+      - "8088:8000"  # JupyterHub主端口
+      - "8091:8091"  # Hub内部端口
+    volumes:
+      - jupyterhub_unified_data:/srv/data/jupyterhub
+      - jupyterhub_unified_notebooks:/srv/jupyterhub/notebooks
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Docker socket (可选)
+      - ${PWD}/shared:/srv/jupyterhub/shared:rw  # 共享目录
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - ansible-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/hub/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    profiles:
+      - jupyterhub-unified
+      - full
+      
+  # JupyterHub原版服务 (保留用于测试对比)
+  jupyterhub:
+    build: 
+      context: ./jupyterhub
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: ai-infra-jupyterhub-integrated:latest
+    container_name: ai-infra-jupyterhub-integrated
+    environment:
+      # AI-Infra-Matrix后端API配置 (修正端口)
+      - AI_INFRA_BACKEND_URL=http://backend:8082
+      - AI_INFRA_API_TOKEN=ai-infra-hub-token
+      # JupyterHub配置 (最新版本)
+      - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
+      - JUPYTERHUB_API_TOKEN=${JUPYTERHUB_API_TOKEN:-ai-infra-hub-api-token}
+      - CONFIGPROXY_AUTH_TOKEN=ai-infra-proxy-token
+      - JUPYTERHUB_AUTO_LOGIN=true
+      - JUPYTERHUB_TOKEN_REFRESH_THRESHOLD=300
+      - JWT_SECRET=${JWT_SECRET:-your-jwt-secret-key-change-in-production}
+      # 数据库配置
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ansible_playbook_generator
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "8089:8000"  # 修改端口避免冲突
+    volumes:
+      - jupyterhub_data:/srv/data/jupyterhub
+      - jupyterhub_notebooks:/srv/jupyterhub/notebooks
+      - jupyterhub_logs:/var/log/jupyterhub
+      - ./jupyterhub:/srv/jupyterhub/config:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - ansible-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/hub/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    command: >
+      jupyterhub -f /srv/jupyterhub/config/ai_infra_jupyterhub_config.py
+    profiles:
+      - jupyterhub-legacy
+      - testing
+
   # K8s API 代理服务
   k8s-proxy:
     image: tecnativa/tcp-proxy
@@ -217,6 +339,12 @@ volumes:
   ldap_data:
   ldap_config:
   ai-test-reports:
+  jupyterhub_data:
+  jupyterhub_notebooks:
+  jupyterhub_logs:
+  # 统一认证JupyterHub卷
+  jupyterhub_unified_data:
+  jupyterhub_unified_notebooks:
 
 networks:
   ansible-network:

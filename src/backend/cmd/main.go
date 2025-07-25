@@ -162,6 +162,10 @@ func main() {
 			auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 			auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
 			auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
+			// JupyterHub单点登录令牌生成
+			auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
+			// JWT令牌验证（用于JupyterHub认证器）
+			auth.POST("/verify-token", userHandler.VerifyJWT)
 		}
 
 		// 用户管理路由（管理员）

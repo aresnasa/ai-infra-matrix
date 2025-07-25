@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <h1>Kubernetes Cluster API Test</h1>
+    <div>
+        <h2>Login</h2>
+        <input type="text" id="username" placeholder="Username" value="admin">
+        <input type="password" id="password" placeholder="Password" value="admin123">
+        <button onclick="login()">Login</button>
+        <div id="loginResult"></div>
+    </div>
+    
+    <div>
+        <h2>Get Clusters</h2>
+        <button onclick="getClusters()">Get Clusters</button>
+        <div id="clustersResult"></div>
+    </div>
+
+    <script>
+        let token = '';
+        
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await axios.post('/api/auth/login', {
+                    username: username,
+                    password: password
+                });
+                
+                token = response.data.token;
+                document.getElementById('loginResult').innerHTML = 
+                    '<p style="color:green">Login successful! Token: ' + token.substring(0, 20) + '...</p>';
+                console.log('Login response:', response.data);
+            } catch (error) {
+                document.getElementById('loginResult').innerHTML = 
+                    '<p style="color:red">Login failed: ' + error.message + '</p>';
+                console.error('Login error:', error);
+            }
+        }
+        
+        async function getClusters() {
+            if (!token) {
+                document.getElementById('clustersResult').innerHTML = 
+                    '<p style="color:red">Please login first</p>';
+                return;
+            }
+            
+            try {
+                const response = await axios.get('/api/kubernetes/clusters', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+                
+                document.getElementById('clustersResult').innerHTML = 
+                    '<pre>' + JSON.stringify(response.data, null, 2) + '</pre>';
+                console.log('Clusters response:', response.data);
+            } catch (error) {
+                document.getElementById('clustersResult').innerHTML = 
+                    '<p style="color:red">Get clusters failed: ' + error.message + '</p>';
+                console.error('Get clusters error:', error);
+            }
+        }
+    </script>
+</body>
+</html>

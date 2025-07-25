@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
@@ -613,4 +618,220 @@ func (h *UserHandler) isAdminUser(user *models.User) bool {
 		}
 	}
 	return false
+}
+
+// GenerateJupyterHubToken 生成JupyterHub访问令牌
+// @Summary 生成JupyterHub访问令牌
+// @Description 为已认证用户生成JupyterHub访问令牌，用于单点登录到JupyterHub
+// @Tags 用户管理
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /auth/jupyterhub-token [post]
+func (h *UserHandler) GenerateJupyterHubToken(c *gin.Context) {
+	// 获取当前用户信息
+	currentUserID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 获取用户详细信息
+	currentUser, err := h.userService.GetUserByID(currentUserID)
+	if err != nil {
+		logrus.Error("Failed to get current user:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户信息失败"})
+		return
+	}
+
+	// 生成JupyterHub API token
+	hubToken, err := h.generateJupyterHubAPIToken(currentUser)
+	if err != nil {
+		logrus.Error("Failed to generate JupyterHub token:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "生成JupyterHub令牌失败",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// 创建或更新JupyterHub用户
+	if err := h.ensureJupyterHubUser(currentUser, hubToken); err != nil {
+		logrus.Warn("Failed to ensure JupyterHub user, but continuing:", err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"token":       hubToken,
+		"username":    currentUser.Username,
+		"expires_at":  time.Now().Add(24 * time.Hour).Unix(), // 24小时有效期
+		"redirect_url": fmt.Sprintf("/hub/login?token=%s", hubToken),
+	})
+}
+
+// generateJupyterHubAPIToken 生成JupyterHub API令牌
+func (h *UserHandler) generateJupyterHubAPIToken(user *models.User) (string, error) {
+	// 生成随机令牌
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", fmt.Errorf("failed to generate random token: %w", err)
+	}
+	
+	// 使用JWT生成令牌（复用现有的JWT基础设施）
+	roles, _ := h.rbacService.GetUserRoles(user.ID)
+	roleNames := make([]string, len(roles))
+	for i, role := range roles {
+		roleNames[i] = role.Name
+	}
+	
+	permissions, _ := h.rbacService.GetUserPermissions(user.ID)
+	permissionKeys := make([]string, len(permissions))
+	for i, permission := range permissions {
+		permissionKeys[i] = permission.GetPermissionKey()
+	}
+	
+	// 生成专用于JupyterHub的JWT令牌
+	token, _, err := jwt.GenerateToken(user.ID, user.Username, roleNames, permissionKeys)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate JWT token: %w", err)
+	}
+	
+	// 在实际生产环境中，这里应该调用JupyterHub API创建令牌
+	// 现在返回我们生成的JWT令牌
+	return token, nil
+}
+
+// ensureJupyterHubUser 确保JupyterHub中存在该用户
+func (h *UserHandler) ensureJupyterHubUser(user *models.User, token string) error {
+	// 获取JupyterHub配置 - 修正端口配置
+	jupyterHubURL := os.Getenv("JUPYTERHUB_URL")
+	if jupyterHubURL == "" {
+		jupyterHubURL = "http://localhost:8088" // 修正为实际端口8088
+	}
+	
+	// 准备用户数据
+	userData := map[string]interface{}{
+		"username": user.Username,
+		"admin":    h.isAdminUser(user),
+	}
+	
+	jsonData, err := json.Marshal(userData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal user data: %w", err)
+	}
+	
+	// 创建HTTP请求到JupyterHub API
+	req, err := http.NewRequest("POST", 
+		fmt.Sprintf("%s/hub/api/users/%s", jupyterHubURL, user.Username), 
+		bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	
+	// 发送请求
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request to JupyterHub: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("JupyterHub API returned status: %d", resp.StatusCode)
+	}
+	
+	logrus.Infof("Successfully ensured JupyterHub user: %s", user.Username)
+	return nil
+}
+
+// VerifyJWT 验证JWT令牌
+// @Summary 验证JWT令牌
+// @Description 验证JWT令牌的有效性，用于JupyterHub认证
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Param request body map[string]string true "包含token的请求体"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/verify-token [post]
+func (h *UserHandler) VerifyJWT(c *gin.Context) {
+	var req map[string]string
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	token, exists := req["token"]
+	if !exists || token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token is required"})
+		return
+	}
+
+	// 验证JWT token
+	claims, err := jwt.ParseToken(token)
+	if err != nil {
+		logrus.Error("Token validation failed:", err)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid": false,
+			"error": "Invalid token",
+		})
+		return
+	}
+
+	// 获取用户信息
+	userID := uint(claims.UserID)
+	user, err := h.userService.GetUserByID(userID)
+	if err != nil {
+		logrus.Error("Failed to get user:", err)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid": false,
+			"error": "User not found",
+		})
+		return
+	}
+
+	// 检查用户是否活跃
+	if !user.IsActive {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid":  false,
+			"error":  "User account is inactive",
+		})
+		return
+	}
+
+	// 获取用户角色和权限
+	roles, _ := h.rbacService.GetUserRoles(user.ID)
+	permissions, _ := h.rbacService.GetUserPermissions(user.ID)
+
+	roleNames := make([]string, len(roles))
+	for i, role := range roles {
+		roleNames[i] = role.Name
+	}
+
+	permissionKeys := make([]string, len(permissions))
+	for i, permission := range permissions {
+		permissionKeys[i] = permission.GetPermissionKey()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"valid": true,
+		"user": gin.H{
+			"id":          user.ID,
+			"username":    user.Username,
+			"email":       user.Email,
+			"is_active":   user.IsActive,
+			"auth_source": user.AuthSource,
+			"roles":       roleNames,
+			"permissions": permissionKeys,
+		},
+		"expires_at": time.Unix(claims.ExpiresAt, 0).Format(time.RFC3339),
+	})
 }
