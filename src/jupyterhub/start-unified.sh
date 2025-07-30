@@ -87,7 +87,8 @@ fi
 # 验证Python语法
 echo "验证Python配置语法..."
 python3 -m py_compile /srv/jupyterhub/postgres_authenticator.py
-python3 -c "exec(open('/srv/jupyterhub/jupyterhub_config.py').read())"
+# 跳过配置文件语法验证，因为需要JupyterHub运行时环境
+# python3 -c "exec(open('/srv/jupyterhub/jupyterhub_config.py').read())"
 
 echo "配置验证通过"
 
@@ -97,6 +98,12 @@ mkdir -p /srv/data/jupyterhub
 mkdir -p /srv/jupyterhub/notebooks
 chmod -R 755 /srv/data/jupyterhub
 chmod -R 755 /srv/jupyterhub/notebooks
+
+# 删除可能存在的有权限问题的cookie文件
+if [ -f "/srv/data/jupyterhub/cookie_secret" ]; then
+    echo "删除旧的cookie_secret文件"
+    rm -f /srv/data/jupyterhub/cookie_secret
+fi
 
 # 显示启动信息
 echo "=== 启动信息 ==="

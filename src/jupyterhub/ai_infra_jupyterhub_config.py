@@ -28,7 +28,7 @@ api_token = os.environ.get('AI_INFRA_API_TOKEN', '')
 
 c.AIInfraMatrixAuthenticator.backend_api_url = backend_url
 c.AIInfraMatrixAuthenticator.backend_api_token = api_token
-c.AIInfraMatrixAuthenticator.enable_auth_state = True
+c.AIInfraMatrixAuthenticator.enable_auth_state = False
 c.AIInfraMatrixAuthenticator.auto_login = os.environ.get('JUPYTERHUB_AUTO_LOGIN', 'true').lower() == 'true'
 c.AIInfraMatrixAuthenticator.token_refresh_threshold = int(os.environ.get('JUPYTERHUB_TOKEN_REFRESH_THRESHOLD', '300'))  # 5分钟
 

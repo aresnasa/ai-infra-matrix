@@ -37,10 +37,10 @@ const UnifiedJupyterHubIntegration = () => {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginForm] = Form.useForm();
 
-  // JupyterHub 配置 - 使用环境变量
+  // JupyterHub 配置 - 通过 Nginx 统一入口访问
   const jupyterHubConfig = {
-    url: process.env.REACT_APP_JUPYTERHUB_URL || 'http://localhost:8088',
-    apiUrl: process.env.REACT_APP_API_URL || 'http://localhost:8082'
+    url: process.env.REACT_APP_JUPYTERHUB_URL || `${window.location.origin}/jupyter`,
+    apiUrl: process.env.REACT_APP_API_URL || '/api'
   };
 
   useEffect(() => {

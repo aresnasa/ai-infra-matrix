@@ -1,24 +1,18 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -199,17 +193,80 @@ func (h *JupyterHubAuthHandler) StartNotebookServer(c *gin.Context) {
 
 	// 这里可以添加实际的JupyterHub API调用
 	// 暂时返回成功响应
-	logrus.WithFields(logrus.Fields{
-		"user_id":  user.ID,
-		"username": user.Username,
-		"action":   "start_notebook_server",
-	}).Info("用户启动Notebook服务器")
-
-	c.JSON(http.StatusOK, gin.H{
+	response := map[string]interface{}{
 		"success": true,
-		"message": "Notebook服务器启动请求已提交",
-		"server_url": fmt.Sprintf("http://localhost:8088/user/%s/lab", user.Username),
-	})
+		"message": fmt.Sprintf("用户 %s 的Notebook服务器启动请求已处理", request.Username),
+		"action":  request.Action,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// RedirectToJupyterHub 重定向到JupyterHub（统一登录）
+// @Summary 重定向到JupyterHub
+// @Description 为已认证用户生成token并重定向到JupyterHub
+// @Tags JupyterHub认证
+// @Produce json
+// @Param next query string false "跳转后的目标页面"
+// @Success 302 "重定向到JupyterHub"
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /auth/jupyterhub-redirect [get]
+func (h *JupyterHubAuthHandler) RedirectToJupyterHub(c *gin.Context) {
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未认证",
+			"redirect": "/login",
+		})
+		return
+	}
+
+	// 查询用户信息
+	var user models.User
+	if err := h.db.Preload("Roles").First(&user, userID).Error; err != nil {
+		logrus.WithError(err).Error("查询用户失败")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询用户信息失败"})
+		return
+	}
+
+	// 生成JupyterHub访问token
+	token, expiresAt, err := h.generateJupyterHubToken(user)
+	if err != nil {
+		logrus.WithError(err).Error("生成JupyterHub访问令牌失败")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成访问令牌失败"})
+		return
+	}
+
+	// 缓存令牌到Redis（用于会话管理）
+	if err := h.cacheJupyterHubToken(user.Username, token, expiresAt); err != nil {
+		logrus.WithError(err).Warning("缓存JupyterHub会话失败")
+	}
+
+	// 获取跳转目标页面
+	nextURL := c.Query("next")
+	if nextURL == "" {
+		nextURL = "/hub/home"
+	}
+
+	// 构建JupyterHub URL - 使用默认配置
+	jupyterhubURL := "http://localhost:8088"
+
+	// 构建重定向URL，包含token和目标页面
+	redirectURL := fmt.Sprintf("%s/unified-login?token=%s&next=%s", 
+		jupyterhubURL, token, nextURL)
+
+	// 记录访问日志
+	logrus.WithFields(logrus.Fields{
+		"user_id":      user.ID,
+		"username":     user.Username,
+		"action":       "jupyterhub_redirect",
+		"redirect_url": redirectURL,
+	}).Info("用户重定向到JupyterHub")
+
+	// 执行重定向
+	c.Redirect(http.StatusFound, redirectURL)
 }
 
 // StopNotebookServer 停止Notebook服务器
@@ -310,26 +367,13 @@ func (h *JupyterHubAuthHandler) generateJupyterHubToken(user models.User) (strin
 	
 	// 获取用户角色
 	var roles []string
+	var permissions []string
 	for _, role := range user.Roles {
 		roles = append(roles, role.Name)
 	}
 
-	claims := jwt.Claims{
-		UserID:   user.ID,
-		Username: user.Username,
-		Email:    user.Email,
-		Roles:    roles,
-		IsAdmin:  h.userHasAdminRole(roles),
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expiresAt.Unix(),
-			IssuedAt:  time.Now().Unix(),
-			Issuer:    "ai-infra-matrix",
-			Subject:   "jupyterhub-login",
-		},
-	}
-
 	// 生成JWT令牌
-	token, err := jwt.GenerateToken(claims, h.config.JWTSecret)
+	token, _, err := jwt.GenerateToken(user.ID, user.Username, roles, permissions)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("生成JWT令牌失败: %w", err)
 	}

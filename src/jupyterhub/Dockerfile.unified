@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir -r requirements-unified.txt
 RUN npm install -g configurable-http-proxy
 
 # 复制配置文件和认证器
-COPY unified_config.py /srv/jupyterhub/jupyterhub_config.py
+COPY unified_config_simple.py /srv/jupyterhub/jupyterhub_config.py
 COPY postgres_authenticator.py /srv/jupyterhub/postgres_authenticator.py
 
 # 创建必要的目录

@@ -51,10 +51,10 @@ const JupyterHubIntegration = () => {
   const [showJobModal, setShowJobModal] = useState(false);
   const [selectedNotebook, setSelectedNotebook] = useState(null);
 
-  // JupyterHub 配置
+  // JupyterHub 配置 - 通过 Nginx 统一入口访问
   const jupyterHubConfig = {
-    url: process.env.REACT_APP_JUPYTERHUB_URL || 'http://localhost:8088',
-    apiUrl: process.env.REACT_APP_API_URL || 'http://localhost:8080',
+    url: process.env.REACT_APP_JUPYTERHUB_URL || `${window.location.origin}/jupyter`,
+    apiUrl: process.env.REACT_APP_API_URL || '/api',
     namespace: 'jupyterhub-jobs'
   };
 

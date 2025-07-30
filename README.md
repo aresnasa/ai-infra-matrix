@@ -1,243 +1,369 @@
-# JupyterHub K8s GPU 集成示例
+# AI Infrastructure Matrix
 
-这个目录包含了在JupyterHub环境中使用Kubernetes GPU集群的完整示例。
+> 统一的AI基础设施平台，集成Ansible Playbook生成、JupyterHub、身份验证和DevOps工具链
 
-## 目录结构
+## 🎯 项目概述
 
-```
-examples/
-├── README.md                           # 本文件
-├── gpu_performance_test.py            # GPU性能测试脚本
-├── ml_training_example.py             # 机器学习训练示例
-└── distributed_training_example.py    # 分布式训练示例
-```
+AI Infrastructure Matrix 是一个完整的AI基础设施解决方案，通过统一的Nginx反向代理提供：
 
-## 使用方法
+- **Ansible Playbook Generator**: 智能的基础设施代码生成器
+- **JupyterHub**: 多用户Jupyter环境，统一身份验证
+- **DevOps工具链**: LDAP、PostgreSQL、Redis等完整技术栈
+- **统一访问入口**: 通过单一端口(8080)访问所有服务
 
-### 1. GPU 性能测试
+## 🚀 快速开始
 
-测试GPU环境和性能基准：
+### 1. 系统要求
 
-```python
-# 在JupyterLab中运行
-exec(open('/shared/examples/gpu_performance_test.py').read())
-```
+- Docker >= 20.10
+- Docker Compose >= 2.0
+- 8GB+ RAM 推荐
+- macOS/Linux/Windows (WSL2)
 
-或者通过API提交为K8s Job：
-
-```python
-import requests
-
-# 提交GPU性能测试任务
-response = requests.post('http://localhost:8080/api/k8s/submit-job', json={
-    "name": "gpu-performance-test",
-    "script_path": "/shared/examples/gpu_performance_test.py",
-    "gpu_required": True,
-    "gpu_type": "any",
-    "cpu_limit": "2",
-    "memory_limit": "4Gi",
-    "description": "GPU性能基准测试"
-})
-
-job_id = response.json()['job_id']
-print(f"任务已提交，ID: {job_id}")
-```
-
-### 2. 机器学习训练
-
-完整的CNN训练示例：
-
-```python
-# 直接运行
-exec(open('/shared/examples/ml_training_example.py').read())
-```
-
-通过API提交：
-
-```python
-# 提交训练任务
-response = requests.post('http://localhost:8080/api/k8s/submit-job', json={
-    "name": "cnn-training",
-    "script_path": "/shared/examples/ml_training_example.py",
-    "gpu_required": True,
-    "gpu_type": "any",
-    "cpu_limit": "4",
-    "memory_limit": "8Gi",
-    "description": "CIFAR-10 CNN训练"
-})
-```
-
-### 3. 分布式训练
-
-多GPU分布式训练：
-
-```python
-# 提交分布式训练任务
-response = requests.post('http://localhost:8080/api/k8s/submit-job', json={
-    "name": "distributed-training",
-    "script_path": "/shared/examples/distributed_training_example.py",
-    "gpu_required": True,
-    "gpu_count": 2,  # 请求2个GPU
-    "gpu_type": "any",
-    "cpu_limit": "8",
-    "memory_limit": "16Gi",
-    "description": "分布式CNN训练"
-})
-```
-
-## 脚本说明
-
-### gpu_performance_test.py
-
-**功能**: 
-- 检测GPU环境和配置
-- 执行矩阵乘法性能测试
-- 测试内存带宽
-- 神经网络推理性能测试
-
-**输出**: 
-- 控制台性能报告
-- `/shared/gpu_test_results.json` - 详细测试结果
-
-**适用场景**:
-- 验证GPU环境配置
-- 性能基准测试
-- 环境调试
-
-### ml_training_example.py
-
-**功能**:
-- 完整的CNN模型训练流程
-- CIFAR-10数据集训练
-- 自动模型保存和性能记录
-
-**输出**:
-- `/shared/trained_model.pth` - 训练好的模型
-- `/shared/training_results.json` - 训练日志和结果
-
-**特点**:
-- 自动GPU/CPU检测
-- 数据加载失败时使用模拟数据
-- 详细的训练过程监控
-
-### distributed_training_example.py
-
-**功能**:
-- 多GPU分布式训练
-- 使用PyTorch DDP (DistributedDataParallel)
-- 自动GPU数量检测和进程管理
-
-**输出**:
-- `/shared/distributed_model.pth` - 分布式训练模型
-- `/shared/distributed_training_results.json` - 分布式训练日志
-
-**特点**:
-- 支持任意数量GPU
-- 自动负载均衡
-- 同步训练状态
-
-## 监控和调试
-
-### 1. 查看任务状态
-
-```python
-# 获取任务状态
-response = requests.get(f'http://localhost:8080/api/k8s/job/{job_id}/status')
-status = response.json()
-print(f"任务状态: {status['phase']}")
-```
-
-### 2. 获取任务日志
-
-```python
-# 获取任务输出
-response = requests.get(f'http://localhost:8080/api/k8s/job/{job_id}/logs')
-logs = response.json()
-print("任务日志:")
-print(logs['logs'])
-```
-
-### 3. 监控GPU使用
-
-```python
-# 获取集群GPU状态
-response = requests.get('http://localhost:8080/api/k8s/gpu-status')
-gpu_status = response.json()
-
-for node in gpu_status['nodes']:
-    print(f"节点: {node['name']}")
-    for gpu in node['gpus']:
-        print(f"  GPU {gpu['index']}: {gpu['type']} - {gpu['status']}")
-```
-
-## 环境要求
-
-### Python包依赖
+### 2. 一键部署
 
 ```bash
-torch>=1.9.0
-torchvision>=0.10.0
-numpy
-pandas
-matplotlib
-requests
-ipywidgets
+# 克隆项目
+git clone <your-repo-url>
+cd ai-infra-matrix
+
+# 启动基础服务 + JupyterHub
+./deploy.sh up --with-jupyterhub
+
+# 或启动完整开发环境
+./deploy.sh dev
 ```
 
-### Kubernetes资源
+### 3. 访问地址
 
-- GPU节点标签: `accelerator=nvidia-tesla-*` 或类似
-- 存储: 共享存储卷 `/shared`
-- RBAC: Job创建和监控权限
+| 服务 | 地址 | 说明 |
+|------|------|------|
+| 🏠 **主页** | <http://localhost:8080> | React前端界面 |
+| 🔗 **API** | <http://localhost:8080/api> | 后端REST API |
+| 📊 **JupyterHub** | <http://localhost:8080/jupyter> | 多用户Jupyter环境 |
+| � **API文档** | <http://localhost:8080/swagger> | Swagger API文档 |
+| 🔧 **LDAP管理** | <http://localhost:8080/ldap-admin> | LDAP管理界面 (--with-admin) |
+| � **Redis监控** | <http://localhost:8080/redis-monitor> | Redis监控界面 (--with-monitoring) |
 
-## 常见问题
+> 注意：所有服务都通过Nginx统一入口访问，无需记忆多个端口
 
-### Q1: GPU检测失败
-**A**: 检查CUDA驱动和PyTorch GPU支持：
-```python
-import torch
-print(f"CUDA可用: {torch.cuda.is_available()}")
-print(f"CUDA版本: {torch.version.cuda}")
+### 4. 默认凭据
+
+```bash
+# JupyterHub管理员
+用户名: admin
+密码: admin
+
+# 数据库
+用户名: postgres
+密码: postgres
+
+# Redis
+密码: ansible-redis-password
 ```
 
-### Q2: 内存不足错误
-**A**: 减少批次大小或增加内存限制：
-```python
-# 在任务提交时增加内存
-"memory_limit": "16Gi"  # 根据需要调整
+## 🏗️ 架构设计
+
+```mermaid
+graph TB
+    User[用户] --> Nginx[Nginx反向代理<br/>:8080]
+    
+    Nginx --> Frontend[React前端<br/>:80]
+    Nginx --> Backend[Go API<br/>:8082]
+    Nginx --> JupyterHub[JupyterHub<br/>:8000]
+    
+    Backend --> PostgreSQL[(PostgreSQL<br/>:5432)]
+    Backend --> Redis[(Redis<br/>:6379)]
+    Backend --> LDAP[OpenLDAP<br/>:389]
+    
+    JupyterHub --> PostgreSQL
+    JupyterHub --> Redis
+    JupyterHub --> Docker[Docker Spawner]
+    
+    Docker --> Notebook1[Jupyter Notebook 1]
+    Docker --> Notebook2[Jupyter Notebook 2]
+    Docker --> NotebookN[Jupyter Notebook N]
 ```
 
-### Q3: 分布式训练失败
-**A**: 确保：
-- 多GPU节点可用
-- 网络通信正常
-- NCCL后端支持
+## 🔧 管理命令
 
-### Q4: 数据加载慢
-**A**: 使用共享存储和数据预处理：
-```python
-# 预先下载数据到共享存储
-import torchvision
-torchvision.datasets.CIFAR10(root='/shared/data', download=True)
+### 服务管理
+
+```bash
+# 查看服务状态
+./deploy.sh status
+
+# 查看日志
+./deploy.sh logs
+./deploy.sh logs --service nginx
+
+# 重启服务
+./deploy.sh restart
+./deploy.sh restart --service backend
+
+# 健康检查
+./deploy.sh health
 ```
 
-## 扩展示例
+### 开发模式
 
-可以基于这些示例创建更复杂的场景：
+```bash
+# 启动开发环境（包含管理界面和监控）
+./deploy.sh dev
 
-1. **超参数调优**: 使用不同参数运行多个训练任务
-2. **模型比较**: 并行训练不同模型架构
-3. **数据管道**: 集成数据预处理和增强
-4. **模型部署**: 训练完成后自动部署推理服务
+# 启动生产环境
+./deploy.sh prod
 
-## 技术支持
+# 重新构建镜像
+./deploy.sh build
 
-遇到问题时，请检查：
-1. JupyterHub日志: `kubectl logs -f deployment/jupyterhub`
-2. GPU节点状态: `kubectl describe nodes`
-3. 任务状态: `kubectl get jobs -n ai-infra`
-4. 存储挂载: `kubectl get pv,pvc`
+# 更新并重新部署
+./deploy.sh update
+```
+
+### 系统清理
+
+```bash
+# 停止所有服务
+./deploy.sh down
+
+# 清理所有资源（谨慎使用）
+./deploy.sh clean --force
+```
+
+## 📁 项目结构
+
+```text
+ai-infra-matrix/
+├── deploy.sh                 # 🚀 统一部署脚本
+├── docker-compose.yml        # 🐳 主配置文件
+├── .env                      # ⚙️ 环境变量
+├── README.md                 # 📖 主文档
+├── 
+├── src/                      # 📦 源代码
+│   ├── backend/              # 🔧 Go后端API
+│   │   ├── Dockerfile
+│   │   ├── main.go
+│   │   └── ...
+│   ├── frontend/             # 🌐 React前端
+│   │   ├── Dockerfile
+│   │   ├── package.json
+│   │   └── ...
+│   ├── jupyterhub/           # 📊 JupyterHub配置
+│   │   ├── Dockerfile
+│   │   ├── jupyterhub_config.py
+│   │   └── ...
+│   └── nginx/                # 🔀 Nginx配置
+│       └── nginx.conf
+├── 
+├── docs/                     # 📚 文档
+├── scripts/                  # 🛠️ 工具脚本
+├── examples/                 # 💡 示例
+└── dev_doc/                  # 📋 开发文档
+```
+
+## ⚙️ 配置说明
+
+### 环境变量
+
+主要配置文件：`.env`
+
+```bash
+# 项目配置
+COMPOSE_PROJECT_NAME=ai-infra-matrix
+LOG_LEVEL=info
+
+# 安全配置
+JWT_SECRET=your-secret-key-here
+
+# 数据库配置
+POSTGRES_DB=ansible_playbook_generator
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+
+# Redis配置
+REDIS_PASSWORD=your-redis-password
+
+# JupyterHub配置
+JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
+CONFIGPROXY_AUTH_TOKEN=your-proxy-token
+```
+
+### Docker Compose Profiles
+
+```bash
+# 基础服务（默认）
+./deploy.sh up
+
+# 包含JupyterHub
+./deploy.sh up --with-jupyterhub
+
+# 包含Kubernetes代理
+./deploy.sh up --with-k8s
+
+# 包含监控服务
+./deploy.sh up --with-monitoring
+
+# 包含管理界面
+./deploy.sh up --with-admin
+
+# 启动所有服务
+./deploy.sh up --all
+```
+
+## 🔐 安全配置
+
+### 生产环境部署
+
+1. **修改默认密码**
+
+```bash
+# 编辑 .env 文件
+vi .env
+
+# 修改以下配置
+JWT_SECRET=your-production-secret-key
+POSTGRES_PASSWORD=your-secure-password
+REDIS_PASSWORD=your-secure-redis-password
+CONFIGPROXY_AUTH_TOKEN=your-secure-proxy-token
+```
+
+2. **启用HTTPS**
+
+```bash
+# 将SSL证书放入 src/nginx/ssl/ 目录
+# 修改 src/nginx/nginx.conf 启用SSL配置
+```
+
+3. **网络安全**
+
+```bash
+# 仅暴露必要端口
+# 配置防火墙规则
+# 使用生产级密码策略
+```
+
+## 🧪 开发指南
+
+### 添加新服务
+
+1. 在 `src/` 目录创建服务文件夹
+2. 添加 `Dockerfile`
+3. 在 `docker-compose.yml` 中添加服务定义
+4. 更新 `src/nginx/nginx.conf` 路由配置
+5. 测试部署
+
+### 数据库迁移
+
+```bash
+# 备份数据
+docker exec ai-infra-postgres pg_dump -U postgres ansible_playbook_generator > backup.sql
+
+# 恢复数据
+docker exec -i ai-infra-postgres psql -U postgres ansible_playbook_generator < backup.sql
+```
+
+### 调试模式
+
+```bash
+# 启用详细日志
+LOG_LEVEL=debug ./deploy.sh up
+
+# 查看特定服务日志
+./deploy.sh logs --service backend --follow
+
+# 进入容器调试
+docker exec -it ai-infra-backend /bin/bash
+```
+
+## 🐛 故障排除
+
+### 常见问题
+
+1. **端口冲突**
+
+```bash
+# 检查端口占用
+lsof -i :8080
+lsof -i :5433
+
+# 修改端口配置
+vi docker-compose.yml
+```
+
+2. **服务启动失败**
+
+```bash
+# 查看详细日志
+./deploy.sh logs --service <service-name>
+
+# 检查健康状态
+./deploy.sh health
+
+# 重新构建镜像
+./deploy.sh build
+```
+
+3. **权限问题**
+
+```bash
+# 检查Docker权限
+sudo usermod -aG docker $USER
+newgrp docker
+
+# 检查文件权限
+chmod +x deploy.sh
+```
+
+4. **内存不足**
+
+```bash
+# 检查系统资源
+docker stats
+
+# 调整内存限制
+vi docker-compose.yml
+# 修改 mem_limit 配置
+```
+
+### 日志位置
+
+```bash
+# 容器日志
+docker logs ai-infra-<service>
+
+# Nginx日志
+docker exec ai-infra-nginx cat /var/log/nginx/access.log
+docker exec ai-infra-nginx cat /var/log/nginx/error.log
+
+# 应用日志
+./deploy.sh logs --service backend
+./deploy.sh logs --service jupyterhub
+```
+
+## 🤝 贡献指南
+
+1. Fork 项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交变更 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+## 📄 许可证
+
+本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情
+
+## 🆘 获取帮助
+
+- **文档**: [docs/](docs/)
+- **示例**: [examples/](examples/)
+- **问题反馈**: GitHub Issues
+- **邮件支持**: <ai-infra-support@example.com>
+
+## 🎉 致谢
+
+感谢所有为本项目做出贡献的开发者！
 
 ---
 
-更多信息请参考项目文档或联系运维团队。
+**AI Infrastructure Matrix** - 让基础设施管理变得简单而强大！ 🚀

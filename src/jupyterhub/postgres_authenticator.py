@@ -103,6 +103,367 @@ class PostgreSQLRedisAuthenticator(Authenticator):
             return None
             
         try:
+            cursor = conn.cursor()
+            query = """
+            SELECT id, username, email, password_hash, is_admin, role, 
+                   created_at, updated_at, is_active, last_login_at
+            FROM users 
+            WHERE username = %s AND is_active = TRUE
+            """
+            cursor.execute(query, (username,))
+            result = cursor.fetchone()
+            
+            if result:
+                return {
+                    'id': result['id'],
+                    'username': result['username'],
+                    'email': result['email'],
+                    'password_hash': result['password_hash'],
+                    'is_admin': result['is_admin'],
+                    'role': result['role'],
+                    'created_at': result['created_at'],
+                    'updated_at': result['updated_at'],
+                    'is_active': result['is_active'],
+                    'last_login_at': result['last_login_at']
+                }
+            return None
+            
+        except Exception as e:
+            self.log.error(f"Database query error: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+    
+    def _create_session_cache(self, user_info, token):
+        """在Redis中创建会话缓存"""
+        redis_client = self._get_redis_client()
+        if not redis_client:
+            return False
+            
+        try:
+            session_data = {
+                'user_id': user_info['id'],
+                'username': user_info['username'],
+                'email': user_info['email'],
+                'role': user_info['role'],
+                'is_admin': user_info['is_admin'],
+                'login_time': datetime.utcnow().isoformat(),
+                'last_activity': datetime.utcnow().isoformat(),
+                'source': 'jupyterhub',
+                'active': True
+            }
+            
+            # 使用多个键存储会话信息
+            session_key = f"session:{user_info['username']}"
+            token_key = f"token:{token}"
+            user_session_key = f"user_session:{user_info['id']}"
+            
+            # 将会话信息存储到Redis
+            redis_client.setex(session_key, self.session_timeout, json.dumps(session_data))
+            redis_client.setex(token_key, self.session_timeout, json.dumps(session_data))
+            redis_client.setex(user_session_key, self.session_timeout, token)
+            
+            self.log.info(f"Session created for user {user_info['username']}")
+            return True
+            
+        except Exception as e:
+            self.log.error(f"Redis session creation error: {e}")
+            return False
+    
+    def _validate_session_token(self, token):
+        """验证会话token"""
+        redis_client = self._get_redis_client()
+        if not redis_client:
+            return None
+            
+        try:
+            token_key = f"token:{token}"
+            session_data = redis_client.get(token_key)
+            
+            if session_data:
+                return json.loads(session_data)
+            return None
+            
+        except Exception as e:
+            self.log.error(f"Session validation error: {e}")
+            return None
+    
+    def _validate_jwt_token(self, token):
+        """验证JWT token"""
+        try:
+            payload = jwt.decode(token, self.jwt_secret, algorithms=['HS256'])
+            return payload
+        except jwt.ExpiredSignatureError:
+            self.log.warning("JWT token expired")
+            return None
+        except jwt.InvalidTokenError:
+            self.log.warning("Invalid JWT token")
+            return None
+        except Exception as e:
+            self.log.error(f"JWT validation error: {e}")
+            return None
+    
+    @gen.coroutine
+    def authenticate(self, handler, data):
+        """
+        认证方法
+        1. 支持传统用户名密码认证
+        2. 支持JWT token认证（从后端跳转）
+        3. 支持Redis会话验证
+        """
+        username = data.get('username', '').strip()
+        password = data.get('password', '').strip()
+        token = data.get('token', '').strip()
+        
+        # 从请求中获取token（如果没有在data中）
+        if not token:
+            auth_header = handler.request.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                token = auth_header[7:]
+            
+        # 方式1: JWT Token认证（从后端系统跳转）
+        if token:
+            self.log.info(f"Attempting JWT token authentication")
+            
+            # 首先尝试验证Redis会话
+            session_data = self._validate_session_token(token)
+            if session_data:
+                self.log.info(f"User {session_data['username']} authenticated via Redis session")
+                return {
+                    'name': session_data['username'],
+                    'admin': session_data['is_admin'],
+                    'auth_model': session_data
+                }
+            
+            # 如果Redis会话无效，尝试JWT验证
+            jwt_payload = self._validate_jwt_token(token)
+            if jwt_payload:
+                username = jwt_payload.get('username')
+                user_info = self._get_user_from_db(username)
+                if user_info:
+                    # 创建新的会话缓存
+                    self._create_session_cache(user_info, token)
+                    self.log.info(f"User {username} authenticated via JWT token")
+                    return {
+                        'name': user_info['username'],
+                        'admin': user_info['is_admin'],
+                        'auth_model': user_info
+                    }
+        
+        # 方式2: 传统用户名密码认证
+        if username and password:
+            self.log.info(f"Attempting username/password authentication for {username}")
+            
+            user_info = self._get_user_from_db(username)
+            if user_info and self._verify_password(user_info['password_hash'], password):
+                # 生成新的JWT token
+                token_payload = {
+                    'user_id': user_info['id'],
+                    'username': user_info['username'],
+                    'email': user_info['email'],
+                    'role': user_info['role'],
+                    'is_admin': user_info['is_admin'],
+                    'iat': datetime.utcnow().timestamp(),
+                    'exp': (datetime.utcnow() + timedelta(seconds=self.session_timeout)).timestamp()
+                }
+                
+                new_token = jwt.encode(token_payload, self.jwt_secret, algorithm='HS256')
+                
+                # 创建会话缓存
+                self._create_session_cache(user_info, new_token)
+                
+                self.log.info(f"User {username} authenticated via username/password")
+                return {
+                    'name': user_info['username'],
+                    'admin': user_info['is_admin'],
+                    'auth_model': user_info
+                }
+        
+        # 认证失败
+        self.log.warning(f"Authentication failed for {username}")
+        return None
+    
+    def get_handlers(self, app):
+        """添加自定义处理器"""
+        return [
+            (r'/login', UnifiedLoginHandler),
+            (r'/logout', UnifiedLogoutHandler),
+        ]
+
+
+class UnifiedLoginHandler(BaseHandler):
+    """统一登录处理器 - 处理从后端系统的跳转"""
+    
+    @web.authenticated
+    def get(self):
+        """处理登录GET请求"""
+        token = self.get_argument('token', None)
+        next_url = self.get_argument('next', '/hub/home')
+        
+        if token:
+            # 设置token到cookie，供后续认证使用
+            self.set_secure_cookie('jupyterhub-token', token)
+            
+        # 重定向到指定页面
+        self.redirect(next_url)
+    
+    async def post(self):
+        """处理登录POST请求"""
+        username = self.get_argument('username', '')
+        password = self.get_argument('password', '')
+        token = self.get_argument('token', '')
+        
+        if not any([username and password, token]):
+            raise web.HTTPError(400, "Missing credentials")
+        
+        auth_data = {}
+        if token:
+            auth_data['token'] = token
+        else:
+            auth_data['username'] = username
+            auth_data['password'] = password
+        
+        # 使用认证器进行认证
+        user_info = await self.authenticator.authenticate(self, auth_data)
+        
+        if user_info:
+            self.set_login_cookie(user_info['name'])
+            self.redirect('/hub/home')
+        else:
+            raise web.HTTPError(401, "Authentication failed")
+
+
+class UnifiedLogoutHandler(BaseHandler):
+    """统一登出处理器"""
+    
+    def get(self):
+        """处理登出请求"""
+        user = self.current_user
+        
+        if user:
+            # 清理Redis会话
+            authenticator = self.authenticator
+            redis_client = authenticator._get_redis_client()
+            
+            if redis_client:
+                try:
+                    session_key = f"session:{user.name}"
+                    user_session_key = f"user_session:{user.id}"
+                    
+                    redis_client.delete(session_key)
+                    redis_client.delete(user_session_key)
+                    
+                    self.log.info(f"Cleared session for user {user.name}")
+                except Exception as e:
+                    self.log.error(f"Error clearing session: {e}")
+        
+        # 清除登录cookie
+        self.clear_login_cookie()
+        self.clear_cookie('jupyterhub-token')
+        
+        # 重定向到主项目登录页面
+        backend_url = os.getenv('AI_INFRA_BACKEND_URL', 'http://localhost:3001')
+        logout_url = f"{backend_url}/login?logout=true&source=jupyterhub"
+        self.redirect(logout_url)
+    
+    def _get_user_from_db(self, username):
+        """从数据库获取用户信息"""
+        conn = self._get_db_connection()
+        if not conn:
+            return None
+            
+        try:
+            cursor = conn.cursor()
+            query = """
+            SELECT id, username, email, password_hash, is_admin, role, 
+                   created_at, updated_at, is_active, last_login_at
+            FROM users 
+            WHERE username = %s AND is_active = TRUE
+            """
+            cursor.execute(query, (username,))
+            result = cursor.fetchone()
+            
+            if result:
+                return {
+                    'id': result['id'],
+                    'username': result['username'],
+                    'email': result['email'],
+                    'password_hash': result['password_hash'],
+                    'is_admin': result['is_admin'],
+                    'role': result['role'],
+                    'created_at': result['created_at'],
+                    'updated_at': result['updated_at'],
+                    'is_active': result['is_active'],
+                    'last_login_at': result['last_login_at']
+                }
+            return None
+            
+        except Exception as e:
+            self.log.error(f"Database query error: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+    
+    def _create_session_cache(self, user_info, token):
+        """在Redis中创建会话缓存"""
+        redis_client = self._get_redis_client()
+        if not redis_client:
+            return False
+            
+        try:
+            session_data = {
+                'user_id': user_info['id'],
+                'username': user_info['username'],
+                'email': user_info['email'],
+                'role': user_info['role'],
+                'is_admin': user_info['is_admin'],
+                'login_time': datetime.utcnow().isoformat(),
+                'last_activity': datetime.utcnow().isoformat(),
+                'source': 'jupyterhub',
+                'active': True
+            }
+            
+            # 使用多个键存储会话信息
+            session_key = f"session:{user_info['username']}"
+            token_key = f"token:{token}"
+            user_session_key = f"user_session:{user_info['id']}"
+            
+            # 将会话信息存储到Redis
+            redis_client.setex(session_key, self.session_timeout, json.dumps(session_data))
+            redis_client.setex(token_key, self.session_timeout, json.dumps(session_data))
+            redis_client.setex(user_session_key, self.session_timeout, token)
+            
+            self.log.info(f"Session created for user {user_info['username']}")
+            return True
+            
+        except Exception as e:
+            self.log.error(f"Redis session creation error: {e}")
+            return False
+    
+    def _validate_session_token(self, token):
+        """验证会话token"""
+        redis_client = self._get_redis_client()
+        if not redis_client:
+            return None
+            
+        try:
+            token_key = f"token:{token}"
+            session_data = redis_client.get(token_key)
+            
+            if session_data:
+                return json.loads(session_data)
+            return None
+            
+        except Exception as e:
+            self.log.error(f"Session validation error: {e}")
+            return None
+        conn = self._get_db_connection()
+        if not conn:
+            return None
+            
+        try:
             with conn.cursor() as cursor:
                 # 查询用户信息，包括角色
                 cursor.execute("""

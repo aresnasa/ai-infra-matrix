@@ -17,7 +17,6 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	_ "github.com/aresnasa/ai-infra-matrix/src/backend/docs"
 	
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/swaggo/files"
@@ -94,17 +93,79 @@ func main() {
 
 	r := gin.Default()
 
+	// 最早期调试中间件 - 必须能看到这个
+	r.Use(func(c *gin.Context) {
+		logrus.WithFields(logrus.Fields{
+			"method": c.Request.Method,
+			"path": c.Request.URL.Path,
+			"origin": c.GetHeader("Origin"),
+		}).Info("EARLY DEBUG: Request entering")
+		c.Next()
+	})
+
 	// 添加日志中间件
 	r.Use(middleware.RequestIDMiddleware())
 	r.Use(middleware.LoggingMiddleware())
 
-	// CORS配置
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001", "http://localhost:3002", "http://127.0.0.1:3002"}
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	config.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization", "X-Requested-With"}
-	config.AllowCredentials = true
-	r.Use(cors.New(config))
+	// 添加CORS调试中间件
+	r.Use(func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		method := c.Request.Method
+		
+		logrus.WithFields(logrus.Fields{
+			"method": method,
+			"origin": origin,
+			"path": c.Request.URL.Path,
+			"user_agent": c.GetHeader("User-Agent"),
+		}).Info("CORS Debug: Request received")
+		
+		c.Next()
+		
+		logrus.WithFields(logrus.Fields{
+			"method": method,
+			"origin": origin,
+			"path": c.Request.URL.Path,
+			"status": c.Writer.Status(),
+		}).Info("CORS Debug: Response sent")
+	})
+
+	// 手动CORS中间件替代gin-contrib/cors
+	r.Use(func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		method := c.Request.Method
+		
+		logrus.WithFields(logrus.Fields{
+			"method": method,
+			"origin": origin,
+			"path": c.Request.URL.Path,
+			"user_agent": c.GetHeader("User-Agent"),
+		}).Info("Manual CORS: Request received")
+		
+		// 设置CORS头
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers")
+		c.Header("Access-Control-Max-Age", "86400")
+		
+		// 处理预检请求
+		if method == "OPTIONS" {
+			logrus.WithFields(logrus.Fields{
+				"origin": origin,
+				"path": c.Request.URL.Path,
+			}).Info("Manual CORS: Handling OPTIONS preflight request")
+			c.AbortWithStatus(200)
+			return
+		}
+		
+		c.Next()
+		
+		logrus.WithFields(logrus.Fields{
+			"method": method,
+			"origin": origin,
+			"path": c.Request.URL.Path,
+			"status": c.Writer.Status(),
+		}).Info("Manual CORS: Response sent")
+	})
 
 	// Swagger文档
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -150,13 +211,13 @@ func main() {
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	})
+	
+	// 鉴权路由（公开）
+	userHandler := handlers.NewUserHandler(database.DB)
+	auth := api.Group("/auth")
 	{
-		// 鉴权路由（公开）
-		userHandler := handlers.NewUserHandler(database.DB)
-		auth := api.Group("/auth")
-		{
-			auth.POST("/register", userHandler.Register)
-			auth.POST("/login", userHandler.Login)
+		auth.POST("/register", userHandler.Register)
+		auth.POST("/login", userHandler.Login)
 			auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
 			auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 			auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
@@ -410,7 +471,6 @@ func main() {
 				async.GET("/usage-stats", aiController.GetUsageStats)
 			}
 		}
-	}
 
 	// 优雅关闭
 	c := make(chan os.Signal, 1)

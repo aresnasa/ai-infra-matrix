@@ -1,0 +1,307 @@
+# AI Infrastructure Matrix - 统一 Docker Compose 配置
+# 版本: v2.0.0 - Nginx统一访问入口版本
+# 作者: AI Infrastructure Team
+
+services:
+  # PostgreSQL 数据库服务
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai-infra-postgres
+    environment:
+      POSTGRES_DB: ansible_playbook_generator
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    # 仅内部访问，不暴露端口
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ansible_playbook_generator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Redis 缓存服务
+  redis:
+    image: redis:7-alpine
+    container_name: ai-infra-redis
+    command: redis-server --requirepass ansible-redis-password
+    # 仅内部访问，不暴露端口
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "ansible-redis-password", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # OpenLDAP 目录服务
+  openldap:
+    image: osixia/openldap:stable
+    container_name: ai-infra-openldap
+    environment:
+      LDAP_ORGANISATION: "AI Infrastructure"
+      LDAP_DOMAIN: "ai-infra.com"
+      LDAP_ADMIN_PASSWORD: "admin123"
+      LDAP_CONFIG_PASSWORD: "config123"
+      LDAP_BASE_DN: "dc=ai-infra,dc=com"
+    # 仅内部访问，不暴露端口
+    expose:
+      - "389"
+      - "636"
+    volumes:
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "dc=ai-infra,dc=com", "-D", "cn=admin,dc=ai-infra,dc=com", "-w", "admin123"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # phpLDAPadmin Web界面
+  phpldapadmin:
+    image: osixia/phpldapadmin:stable
+    container_name: ai-infra-phpldapadmin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: openldap
+      PHPLDAPADMIN_HTTPS: "false"
+    # 仅通过Nginx访问，不直接暴露端口
+    expose:
+      - "80"
+    depends_on:
+      openldap:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+    profiles:
+      - admin
+
+  # 后端 API 服务
+  backend:
+    build: 
+      context: ./src/backend
+      dockerfile: Dockerfile
+    container_name: ai-infra-backend
+    env_file:
+      - ./src/backend/.env
+    environment:
+      # 数据库配置
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - LDAP_SERVER=openldap
+      # 日志级别配置
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    # 仅内部访问，通过nginx代理
+    expose:
+      - "8082"
+    extra_hosts:
+      - "kubernetes.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+    volumes:
+      - ./src/backend/outputs:/app/outputs
+      - ./src/backend/uploads:/app/uploads
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # 前端应用服务
+  frontend:
+    build: 
+      context: ./src/frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: /api
+        REACT_APP_JUPYTERHUB_URL: /jupyter
+    container_name: ai-infra-frontend
+    # 仅内部访问，通过nginx代理
+    expose:
+      - "80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # JupyterHub 统一认证服务
+  jupyterhub:
+    build: 
+      context: ./src/jupyterhub
+      dockerfile: Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: ai-infra-jupyterhub:latest
+    container_name: ai-infra-jupyterhub
+    environment:
+      # 数据库配置
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=ansible_playbook_generator
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      # Redis配置
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=ansible-redis-password
+      - REDIS_DB=1
+      # JWT配置
+      - JWT_SECRET=${JWT_SECRET:-ai-infra-secret-key-change-in-production}
+      # JupyterHub配置
+      - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
+      - CONFIGPROXY_AUTH_TOKEN=ai-infra-proxy-token
+      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-fd8f6d8c2a7b4e5fc3e2d9a8b7c4e6f5a2b9c8d7e6f3a2b1c9d8e7f6a5b4c3d2e1}
+      - SESSION_TIMEOUT=86400
+      # Spawner配置
+      - JUPYTERHUB_NOTEBOOK_IMAGE=jupyter/base-notebook:latest
+      - JUPYTERHUB_NETWORK=ai-infra-matrix_ai-infra-network
+      - JUPYTERHUB_MEM_LIMIT=2G
+      - JUPYTERHUB_CPU_LIMIT=1.0
+      # 功能开关
+      - JUPYTERHUB_IDLE_CULLER_ENABLED=true
+      - JUPYTERHUB_IDLE_TIMEOUT=3600
+      - JUPYTERHUB_CULL_TIMEOUT=7200
+      - JUPYTERHUB_DEBUG=false
+      - JUPYTERHUB_LOG_LEVEL=INFO
+      - JUPYTERHUB_ACCESS_LOG=true
+      # CORS配置
+      - JUPYTERHUB_CORS_ORIGIN=http://localhost:8080
+    # 仅内部访问，通过nginx代理
+    expose:
+      - "8000"  # JupyterHub主端口
+      - "8091"  # Hub内部端口
+    volumes:
+      - jupyterhub_data:/srv/data/jupyterhub
+      - jupyterhub_notebooks:/srv/jupyterhub/notebooks
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./shared:/srv/jupyterhub/shared:rw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/hub/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    profiles:
+      - jupyterhub
+
+  # Nginx 反向代理服务
+  nginx:
+    image: nginx:alpine
+    container_name: ai-infra-nginx
+    ports:
+      - "8080:80"    # 主访问端口
+      - "8443:443"   # HTTPS端口 (预留)
+    volumes:
+      - ./src/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # Kubernetes 代理服务 (可选)
+  k8s-proxy:
+    image: tecnativa/tcp-proxy
+    container_name: ai-infra-k8s-proxy
+    environment:
+      LISTEN: ":6443"
+      TALK_TO: "kubernetes.docker.internal:6443"
+    # 仅内部访问，不暴露端口
+    expose:
+      - "6443"
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+    profiles:
+      - k8s
+
+  # Redis 监控界面 (可选)
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: ai-infra-redis-insight
+    # 仅通过Nginx访问，不直接暴露端口
+    expose:
+      - "8001"
+    depends_on:
+      - redis
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+    name: ai-infra-postgres-data
+  redis_data:
+    name: ai-infra-redis-data
+  ldap_data:
+    name: ai-infra-ldap-data
+  ldap_config:
+    name: ai-infra-ldap-config
+  jupyterhub_data:
+    name: ai-infra-jupyterhub-data
+  jupyterhub_notebooks:
+    name: ai-infra-jupyterhub-notebooks
+  nginx_logs:
+    name: ai-infra-nginx-logs
+
+networks:
+  ai-infra-network:
+    name: ai-infra-network
+    driver: bridge

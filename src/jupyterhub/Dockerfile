@@ -51,6 +51,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     traitlets \
     PyJWT \
     psycopg2-binary \
+    redis \
     jupyterhub-nativeauthenticator \
     dockerspawner
 
@@ -68,7 +69,9 @@ RUN mkdir -p /srv/jupyterhub/config \
 
 # 复制自定义认证器和配置文件
 COPY ai_infra_auth.py /srv/jupyterhub/
-COPY ai_infra_jupyterhub_config.py /srv/jupyterhub/jupyterhub_config.py
+COPY postgres_authenticator.py /srv/jupyterhub/
+# 复制配置文件
+COPY unified_config.py /srv/jupyterhub/jupyterhub_config.py
 COPY requirements.txt /srv/jupyterhub/requirements.txt
 COPY init-db.sh /srv/jupyterhub/init-db.sh
 
@@ -94,30 +97,25 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/hub/health || exit 1
 
 # 创建启动脚本
-RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "=== 启动JupyterHub AI-Infra-Matrix集成版本 ==="\n\
-\n\
-# 确保数据目录存在\n\
-mkdir -p /srv/data/jupyterhub\n\
-\n\
-# 设置数据库路径\n\
-DB_PATH="/srv/data/jupyterhub/jupyterhub.sqlite"\n\
-\n\
-# 删除可能存在的旧数据库以避免版本冲突\n\
-if [ -f "$DB_PATH" ]; then\n\
-    echo "删除现有数据库以避免版本冲突..."\n\
-    rm -f "$DB_PATH"\n\
-fi\n\
-\n\
-# 初始化新数据库\n\
-echo "初始化新数据库..."\n\
-jupyterhub upgrade-db --config=/srv/jupyterhub/jupyterhub_config.py\n\
-\n\
-# 启动JupyterHub\n\
-echo "启动JupyterHub..."\n\
-exec jupyterhub -f /srv/jupyterhub/jupyterhub_config.py\n\
-' > /srv/jupyterhub/start.sh && chmod +x /srv/jupyterhub/start.sh
+RUN echo '#!/bin/bash' > /srv/jupyterhub/start.sh && \
+    echo 'set -e' >> /srv/jupyterhub/start.sh && \
+    echo 'echo "=== 启动JupyterHub AI-Infra-Matrix集成版本 ==="' >> /srv/jupyterhub/start.sh && \
+    echo '' >> /srv/jupyterhub/start.sh && \
+    echo 'mkdir -p /srv/data/jupyterhub' >> /srv/jupyterhub/start.sh && \
+    echo '' >> /srv/jupyterhub/start.sh && \
+    echo 'DB_PATH="/srv/data/jupyterhub/jupyterhub.sqlite"' >> /srv/jupyterhub/start.sh && \
+    echo '' >> /srv/jupyterhub/start.sh && \
+    echo 'if [ -f "$DB_PATH" ]; then' >> /srv/jupyterhub/start.sh && \
+    echo '    echo "删除现有数据库以避免版本冲突..."' >> /srv/jupyterhub/start.sh && \
+    echo '    rm -f "$DB_PATH"' >> /srv/jupyterhub/start.sh && \
+    echo 'fi' >> /srv/jupyterhub/start.sh && \
+    echo '' >> /srv/jupyterhub/start.sh && \
+    echo 'echo "初始化新数据库..."' >> /srv/jupyterhub/start.sh && \
+    echo 'jupyterhub upgrade-db --config=/srv/jupyterhub/jupyterhub_config.py' >> /srv/jupyterhub/start.sh && \
+    echo '' >> /srv/jupyterhub/start.sh && \
+    echo 'echo "启动JupyterHub..."' >> /srv/jupyterhub/start.sh && \
+    echo 'exec jupyterhub -f /srv/jupyterhub/jupyterhub_config.py' >> /srv/jupyterhub/start.sh && \
+    chmod +x /srv/jupyterhub/start.sh
 
 # 启动JupyterHub
-CMD ["/srv/jupyterhub/start.sh"]
+CMD ["jupyterhub", "-f", "/srv/jupyterhub/jupyterhub_config.py"]

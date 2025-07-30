@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -83,11 +84,22 @@ func (h *UserHandler) Register(c *gin.Context) {
 // @Failure 401 {object} map[string]interface{}
 // @Router /auth/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
+	// 添加调试日志
+	logrus.WithFields(logrus.Fields{
+		"user_agent": c.GetHeader("User-Agent"),
+		"origin":     c.GetHeader("Origin"),
+		"method":     c.Request.Method,
+		"path":       c.Request.URL.Path,
+	}).Info("Login request received")
+
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logrus.WithField("error", err).Error("Failed to bind login request")
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	logrus.WithField("username", req.Username).Info("Login attempt for user")
 
 	var user *models.User
 	var err error
@@ -832,6 +844,6 @@ func (h *UserHandler) VerifyJWT(c *gin.Context) {
 			"roles":       roleNames,
 			"permissions": permissionKeys,
 		},
-		"expires_at": time.Unix(claims.ExpiresAt, 0).Format(time.RFC3339),
+		"expires_at": claims.ExpiresAt.Time.Format(time.RFC3339),
 	})
 }
