@@ -18,6 +18,10 @@ ipython==9.4.0
 # 网络和HTTP组件
 requests==2.32.4
 tornado==6.5.1
+
+# 数据库和缓存支持
+psycopg2-binary==2.9.10
+redis==5.0.1
 aiohttp==3.12.14
 
 # 认证和安全

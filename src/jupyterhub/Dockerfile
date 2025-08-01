@@ -18,18 +18,38 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
-# 安装系统依赖 - alpine版本
-RUN apk --no-cache add \
-    git \
-    build-base \
-    linux-headers \
+# 安装系统依赖
+RUN apk update && apk add --no-cache \
+    bash \
+    shadow \
+    su-exec \
+    tini \
     nodejs \
     npm \
+    build-base \
+    linux-headers \
+    linux-pam \
+    linux-pam-dev \
+    python3-dev \
     postgresql-dev \
-    pkgconfig \
-    libffi-dev \
-    openssl-dev \
-    && rm -rf /var/cache/apk/*
+    postgresql-client \
+    redis \
+    curl \
+    git
+
+# 创建系统用户（解决getpwnam错误）
+RUN addgroup -g 1000 jupyterhub && \
+    adduser -D -u 1000 -G jupyterhub jupyterhub && \
+    adduser -D -u 1001 -s /bin/bash admin && \
+    adduser -D -u 1002 -s /bin/bash testuser && \
+    echo "admin:password" | chpasswd && \
+    echo "testuser:password" | chpasswd
+
+# 先复制requirements.txt并安装依赖（提高缓存效率）
+COPY requirements.txt /srv/jupyterhub/requirements.txt
+# 优先安装预编译的psutil以避免编译问题
+RUN pip install --no-cache-dir psutil --only-binary=psutil || pip install --no-cache-dir psutil
+RUN pip install --no-cache-dir -r /srv/jupyterhub/requirements.txt
 
 # 升级pip并安装与conda环境匹配的包版本
 RUN pip install --no-cache-dir --upgrade pip && \
@@ -58,36 +78,35 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 安装最新版本的configurable-http-proxy
 RUN npm install -g configurable-http-proxy
 
-# 创建必要的目录
+# 创建必要的目录和用户目录
 RUN mkdir -p /srv/jupyterhub/config \
     /srv/jupyterhub/data \
     /srv/jupyterhub/notebooks \
     /srv/jupyterhub/templates \
     /srv/jupyterhub/cookies \
     /var/log/jupyterhub \
-    /home/jovyan
+    /home/jovyan \
+    /home/admin \
+    /home/testuser \
+    /srv/jupyterhub/notebooks/admin \
+    /srv/jupyterhub/notebooks/testuser
 
-# 复制自定义认证器和配置文件
-COPY ai_infra_auth.py /srv/jupyterhub/
-COPY postgres_authenticator.py /srv/jupyterhub/
+# 设置用户目录权限
+RUN chown admin:admin /home/admin && \
+    chown testuser:testuser /home/testuser && \
+    chown admin:admin /srv/jupyterhub/notebooks/admin && \
+    chown testuser:testuser /srv/jupyterhub/notebooks/testuser
+
+# 复制配置文件（放在最后以提高缓存效率）
 # 复制配置文件
-COPY unified_config.py /srv/jupyterhub/jupyterhub_config.py
-COPY requirements.txt /srv/jupyterhub/requirements.txt
-COPY init-db.sh /srv/jupyterhub/init-db.sh
+COPY jupyterhub_config.py /srv/jupyterhub/jupyterhub_config.py
 
-# 创建默认环境配置
-RUN echo "AI_INFRA_BACKEND_URL=http://backend:8082" > /srv/jupyterhub/.env && \
-    echo "JWT_SECRET=your-jwt-secret-key-change-in-production" >> /srv/jupyterhub/.env && \
-    echo "JUPYTERHUB_API_TOKEN=your-api-token" >> /srv/jupyterhub/.env
-
-# 设置权限
+# 设置权限和环境变量
 RUN chown -R root:root /srv/jupyterhub && \
-    chmod 755 /srv/jupyterhub/ai_infra_auth.py && \
-    chmod +x /srv/jupyterhub/init-db.sh && \
     chmod 755 /home/jovyan
 
 # 设置Python路径
-ENV PYTHONPATH="/srv/jupyterhub:$PYTHONPATH"
+ENV PYTHONPATH="/srv/jupyterhub"
 
 # 暴露端口
 EXPOSE 8000
@@ -96,26 +115,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/hub/health || exit 1
 
-# 创建启动脚本
-RUN echo '#!/bin/bash' > /srv/jupyterhub/start.sh && \
-    echo 'set -e' >> /srv/jupyterhub/start.sh && \
-    echo 'echo "=== 启动JupyterHub AI-Infra-Matrix集成版本 ==="' >> /srv/jupyterhub/start.sh && \
-    echo '' >> /srv/jupyterhub/start.sh && \
-    echo 'mkdir -p /srv/data/jupyterhub' >> /srv/jupyterhub/start.sh && \
-    echo '' >> /srv/jupyterhub/start.sh && \
-    echo 'DB_PATH="/srv/data/jupyterhub/jupyterhub.sqlite"' >> /srv/jupyterhub/start.sh && \
-    echo '' >> /srv/jupyterhub/start.sh && \
-    echo 'if [ -f "$DB_PATH" ]; then' >> /srv/jupyterhub/start.sh && \
-    echo '    echo "删除现有数据库以避免版本冲突..."' >> /srv/jupyterhub/start.sh && \
-    echo '    rm -f "$DB_PATH"' >> /srv/jupyterhub/start.sh && \
-    echo 'fi' >> /srv/jupyterhub/start.sh && \
-    echo '' >> /srv/jupyterhub/start.sh && \
-    echo 'echo "初始化新数据库..."' >> /srv/jupyterhub/start.sh && \
-    echo 'jupyterhub upgrade-db --config=/srv/jupyterhub/jupyterhub_config.py' >> /srv/jupyterhub/start.sh && \
-    echo '' >> /srv/jupyterhub/start.sh && \
-    echo 'echo "启动JupyterHub..."' >> /srv/jupyterhub/start.sh && \
-    echo 'exec jupyterhub -f /srv/jupyterhub/jupyterhub_config.py' >> /srv/jupyterhub/start.sh && \
-    chmod +x /srv/jupyterhub/start.sh
-
-# 启动JupyterHub
+# 启动JupyterHub（使用PostgreSQL，无需SQLite初始化）
 CMD ["jupyterhub", "-f", "/srv/jupyterhub/jupyterhub_config.py"]

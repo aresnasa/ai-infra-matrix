@@ -48,6 +48,28 @@ function App() {
     initializeAuth();
   }, []);
 
+  // 检查token是否有效（本地检查，避免频繁请求后端）
+  const isTokenValid = () => {
+    const token = localStorage.getItem('token');
+    const expires_at = localStorage.getItem('token_expires');
+    
+    if (!token || !expires_at) {
+      console.log('Token或过期时间不存在');
+      return false;
+    }
+    
+    const expiryTime = new Date(expires_at).getTime();
+    const currentTime = new Date().getTime();
+    const bufferTime = 5 * 60 * 1000; // 5分钟缓冲时间
+    
+    if (currentTime + bufferTime >= expiryTime) {
+      console.log('Token即将过期或已过期');
+      return false;
+    }
+    
+    return true;
+  };
+
   // 初始化认证状态 - 确保完整的权限验证流程
   const initializeAuth = async () => {
     console.log('=== 开始初始化认证状态 ===');
@@ -55,11 +77,50 @@ function App() {
     const token = localStorage.getItem('token');
     console.log('检查token:', token ? '存在' : '不存在');
     
-    if (token) {
-      await verifyUserWithBackend();
-    } else {
+    if (!token) {
       console.log('无token，用户未认证');
       clearUserState();
+      setAuthChecked(true);
+      setLoading(false);
+      return;
+    }
+    
+    // 先检查token本地有效性
+    if (!isTokenValid()) {
+      console.log('Token已过期，尝试刷新...');
+      
+      try {
+        // 尝试刷新token
+        const response = await authAPI.refreshToken();
+        const { token: newToken, expires_at } = response.data;
+        
+        localStorage.setItem('token', newToken);
+        localStorage.setItem('token_expires', expires_at);
+        console.log('Token刷新成功');
+        
+        // 刷新后验证用户信息
+        await verifyUserWithBackend();
+      } catch (error) {
+        console.log('Token刷新失败，需要重新登录:', error.message);
+        clearUserState();
+      }
+    } else {
+      // Token有效，检查是否已有用户信息
+      const savedUser = localStorage.getItem('user');
+      if (savedUser) {
+        try {
+          const userData = JSON.parse(savedUser);
+          setUser(userData);
+          setPermissionsLoaded(true);
+          console.log('使用缓存的用户信息');
+        } catch (error) {
+          console.log('缓存用户信息解析失败，重新获取');
+          await verifyUserWithBackend();
+        }
+      } else {
+        // 没有缓存用户信息，从后端获取
+        await verifyUserWithBackend();
+      }
     }
     
     setAuthChecked(true);
@@ -68,7 +129,7 @@ function App() {
   };
 
   // 从后端验证用户并获取完整权限信息
-  const verifyUserWithBackend = async () => {
+  const verifyUserWithBackend = async (retryCount = 0) => {
     try {
       console.log('正在验证token并获取用户权限...');
       
@@ -90,6 +151,26 @@ function App() {
       
     } catch (error) {
       console.log('❌ Token验证失败:', error.message);
+      
+      // 判断是否是token过期错误且允许重试
+      if (error.response?.status === 401 && retryCount < 1) {
+        console.log('认证失败，尝试刷新token...');
+        try {
+          const refreshResponse = await authAPI.refreshToken();
+          const { token: newToken, expires_at } = refreshResponse.data;
+          
+          localStorage.setItem('token', newToken);
+          localStorage.setItem('token_expires', expires_at);
+          console.log('Token刷新成功，重新验证用户信息');
+          
+          // 递归调用，但限制重试次数
+          await verifyUserWithBackend(retryCount + 1);
+          return;
+        } catch (refreshError) {
+          console.log('Token刷新失败:', refreshError.message);
+        }
+      }
+      
       console.log('清除认证状态...');
       clearUserState();
     }

@@ -1,0 +1,18 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@11.3.0
+2 info using node@v22.16.0
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 warn Unknown builtin config "globalignorefile". This will stop working in the next major version of npm.
+5 warn Unknown builtin config "python". This will stop working in the next major version of npm.
+6 silly config load:file:/srv/jupyterhub/notebooks/admin/.npmrc
+7 silly config load:file:/etc/npmrc
+8 verbose title npm prefix
+9 verbose argv "prefix" "--global"
+10 verbose logfile logs-max:10 dir:/srv/jupyterhub/notebooks/admin/.npm/_logs/2025-07-31T04_27_53_800Z-
+11 verbose logfile /srv/jupyterhub/notebooks/admin/.npm/_logs/2025-07-31T04_27_53_800Z-debug-0.log
+12 verbose cwd /home/admin
+13 verbose os Linux 6.10.14-linuxkit
+14 verbose node v22.16.0
+15 verbose npm  v11.3.0
+16 verbose exit 0
+17 info ok

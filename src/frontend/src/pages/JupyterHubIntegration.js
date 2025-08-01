@@ -68,19 +68,24 @@ const JupyterHubIntegration = () => {
   const checkJupyterHubStatus = async () => {
     setLoading(true);
     try {
+      // 修复URL路径问题 - 使用完整的API路径
       const response = await fetch(`${jupyterHubConfig.url}/hub/api/info`);
+      
       if (response.ok) {
+        const data = await response.json();
+        console.log('JupyterHub状态:', data);
         setJupyterHubStatus('running');
       } else {
+        console.warn('JupyterHub状态检查失败:', response.status);
         setJupyterHubStatus('error');
       }
     } catch (error) {
-      setJupyterHubStatus('stopped');
+      console.error('JupyterHub连接失败:', error);
+      setJupyterHubStatus('error');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
-
-  const fetchGPUStatus = async () => {
+  };  const fetchGPUStatus = async () => {
     try {
       const response = await fetch(`${jupyterHubConfig.apiUrl}/api/k8s/gpu-status`);
       if (response.ok) {
@@ -126,34 +131,30 @@ const JupyterHubIntegration = () => {
         return;
       }
 
-      // 通过后端API生成JupyterHub认证令牌
-      const response = await fetch(`${jupyterHubConfig.apiUrl}/api/auth/jupyterhub-token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+      // 设置AI Infra Matrix认证cookie，用于JupyterHub自动登录
+      const setCrossOriginCookie = (name, value, maxAge = 3600) => {
+        // 设置cookie，确保能被JupyterHub访问
+        document.cookie = `${name}=${value}; path=/; max-age=${maxAge}; SameSite=Lax`;
+        
+        // 如果是不同端口，尝试设置到对应域
+        if (window.location.hostname === 'localhost') {
+          document.cookie = `${name}=${value}; path=/; max-age=${maxAge}; domain=localhost; SameSite=Lax`;
         }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          // 使用生成的token直接跳转到JupyterHub
-          const jupyterUrl = `${jupyterHubConfig.url}/hub/login?next=%2Fhub%2F&token=${data.token}`;
-          window.open(jupyterUrl, '_blank');
-          message.success('正在跳转到JupyterHub...');
-        } else {
-          message.error('生成JupyterHub令牌失败');
-        }
-      } else {
-        // 如果令牌生成失败，尝试直接跳转
-        message.warning('使用传统方式跳转到JupyterHub');
-        window.open(jupyterHubConfig.url, '_blank');
-      }
+      };
+      
+      // 设置认证cookie
+      setCrossOriginCookie('ai_infra_token', token);
+      
+      // 直接跳转到JupyterHub，让它的自动登录功能处理认证
+      const jupyterUrl = `${jupyterHubConfig.url}/hub/`;
+      
+      // 先尝试通过当前窗口跳转，这样cookie更容易共享
+      window.location.href = jupyterUrl;
+      
+      message.success('正在跳转到JupyterHub...');
     } catch (error) {
-      console.error('JupyterHub跳转失败:', error);
-      message.warning('使用传统方式跳转到JupyterHub');
-      window.open(jupyterHubConfig.url, '_blank');
+      console.error('JupyterHub启动失败:', error);
+      message.error('JupyterHub启动失败，请重试');
     } finally {
       setLoading(false);
     }
@@ -180,8 +181,8 @@ const JupyterHubIntegration = () => {
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
-          // 直接跳转到特定的notebook，包含认证信息
-          const notebookUrl = `${jupyterHubConfig.url}/hub/login?next=%2Fhub%2Fuser-redirect%2Flab%2Ftree%2F${encodeURIComponent(notebookPath)}&token=${data.token}`;
+          // 修复重定向循环问题 - 直接跳转到notebook，使用token认证
+          const notebookUrl = `${jupyterHubConfig.url}/hub/user-redirect/lab/tree/${encodeURIComponent(notebookPath)}?token=${data.token}`;
           window.open(notebookUrl, '_blank');
           message.success('正在跳转到Notebook...');
         } else {

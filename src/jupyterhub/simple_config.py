@@ -1,6 +1,4 @@
-# AI-Infra-Matrix 统一用户体系 JupyterHub 配置
-# 使用 PostgreSQL + Redis 的认证系统
-
+# AI-Infra-Matrix 简化JupyterHub配置 - 修复重定向循环问题
 import os
 import sys
 from pathlib import Path
@@ -18,43 +16,41 @@ c.JupyterHub.hub_bind_url = 'http://0.0.0.0:8091'
 # 设置正确的base URL用于反向代理
 c.JupyterHub.base_url = '/jupyter/'
 
-# 设置public URL以防止重定向循环
+# 关键：设置public URL并禁用重定向循环
 c.JupyterHub.public_url = 'http://localhost:8080/jupyter/'
 
-# 禁用login重定向以防止循环
+# 禁用自动重定向到login页面，避免循环
 c.JupyterHub.default_url = '/jupyter/hub/home'
+c.JupyterHub.redirect_to_server = False
 
 # 数据目录
 project_data_dir = Path("/srv/data/jupyterhub")
 project_data_dir.mkdir(parents=True, exist_ok=True)
 
-# 不再使用SQLite，JupyterHub仍需要自己的数据库来存储spawner状态等
-# 但用户认证完全依赖PostgreSQL
+# 数据库配置
 c.JupyterHub.db_url = f'sqlite:///{project_data_dir}/jupyterhub_internal.sqlite'
-c.JupyterHub.cookie_secret_file = str(project_data_dir / "cookie_secret")
 
 # 代理配置
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'ai-infra-proxy-token')
 
-# ===== 统一认证配置 =====
+# ===== 认证器配置 =====
 
-# 使用自定义的PostgreSQL Redis认证器
+# 使用自定义PostgreSQL+Redis认证器
 c.JupyterHub.authenticator_class = PostgreSQLRedisAuthenticator
 
-# PostgreSQL配置 - 从环境变量读取
-c.PostgreSQLRedisAuthenticator.db_host = os.environ.get('DB_HOST', 'localhost')
+# PostgreSQL配置
+c.PostgreSQLRedisAuthenticator.db_host = os.environ.get('DB_HOST', 'postgres')
 c.PostgreSQLRedisAuthenticator.db_port = int(os.environ.get('DB_PORT', '5432'))
 c.PostgreSQLRedisAuthenticator.db_name = os.environ.get('DB_NAME', 'ansible_playbook_generator')
 c.PostgreSQLRedisAuthenticator.db_user = os.environ.get('DB_USER', 'postgres')
 c.PostgreSQLRedisAuthenticator.db_password = os.environ.get('DB_PASSWORD', 'postgres')
 
-# Redis配置 - 从环境变量读取
-c.PostgreSQLRedisAuthenticator.redis_host = os.environ.get('REDIS_HOST', 'localhost')
+# Redis配置
+c.PostgreSQLRedisAuthenticator.redis_host = os.environ.get('REDIS_HOST', 'redis')
 c.PostgreSQLRedisAuthenticator.redis_port = int(os.environ.get('REDIS_PORT', '6379'))
 c.PostgreSQLRedisAuthenticator.redis_password = os.environ.get('REDIS_PASSWORD', '')
-c.PostgreSQLRedisAuthenticator.redis_db = int(os.environ.get('REDIS_DB', '0'))
 
-# 会话和安全配置
+# JWT配置
 c.PostgreSQLRedisAuthenticator.jwt_secret = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
 
 # 会话超时 (24小时)
@@ -83,85 +79,84 @@ if spawner_mode == 'docker':
     }
     
     # 资源限制
-    c.DockerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
     c.DockerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
+    c.DockerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
     
     # 环境变量
     c.DockerSpawner.environment = {
+        'JUPYTER_ENABLE_LAB': '1',
         'GRANT_SUDO': 'yes',
-        'CHOWN_HOME': 'yes',
-        'CHOWN_HOME_OPTS': '-R'
+        'CHOWN_HOME': 'yes'
     }
     
-    # 清理容器
+    # 容器清理
     c.DockerSpawner.remove = True
     
-    # 开发模式的额外配置
-    if os.environ.get('JUPYTERHUB_DEBUG', '').lower() == 'true':
+    # 调试模式
+    if os.environ.get('DEBUG_MODE', 'false').lower() == 'true':
         c.DockerSpawner.debug = True
 
 else:
-    # 本地进程spawner（开发环境）
+    # 本地进程spawner
     from jupyterhub.spawner import LocalProcessSpawner
     c.JupyterHub.spawner_class = LocalProcessSpawner
     c.LocalProcessSpawner.create_system_users = False
 
-# Spawner通用配置
-# Notebook工作目录
-notebook_dir = Path(os.environ.get('JUPYTERHUB_NOTEBOOK_DIR', '/srv/data/shared/notebooks'))
-notebook_dir.mkdir(parents=True, exist_ok=True)
-c.Spawner.notebook_dir = str(notebook_dir)
+# ===== 通用spawner配置 =====
 
-# 默认启动页面
+# 设置默认启动Jupyter Lab而不是Notebook
 c.Spawner.default_url = '/lab'
 
-# ===== 管理员配置 =====
+# ===== 管理配置 =====
 
-# 管理员用户
-admin_users_env = os.environ.get('JUPYTERHUB_ADMIN_USERS', 'admin')
+# 管理员用户（可选）
+admin_users_env = os.environ.get('JUPYTERHUB_ADMIN_USERS', '')
 if admin_users_env:
     c.JupyterHub.admin_users = set(admin_users_env.split(','))
 
 # ===== 服务配置 =====
 
-# 内置服务
+# 空闲清理服务
 services = []
-
-# 可选的idle culler服务 - 暂时禁用以避免模块错误
-# if os.environ.get('JUPYTERHUB_IDLE_CULLER_ENABLED', 'false').lower() == 'true':
-#     idle_timeout = int(os.environ.get('JUPYTERHUB_IDLE_TIMEOUT', '3600'))  # 1小时
-#     cull_interval = int(os.environ.get('JUPYTERHUB_CULL_INTERVAL', '7200'))  # 2小时
-#     
-#     services.append({
-#         'name': 'idle-culler',
-#         'command': [
-#             'python3', '-m', 'jupyterhub_idle_culler',
-#             f'--timeout={idle_timeout}',
-#             f'--cull-every={cull_interval}',
-#             '--remove-named-servers'
-#         ]
-#     })
+idle_timeout = int(os.environ.get('JUPYTERHUB_IDLE_TIMEOUT', '3600'))  # 1小时
+if idle_timeout > 0:
+    services.append({
+        'name': 'idle-culler',
+        'admin': True,
+        'command': [
+            sys.executable, '-m', 'jupyterhub_idle_culler',
+            f'--timeout={idle_timeout}',
+            '--cull-every=600',
+            '--concurrency=10',
+            '--max-age=86400',  # 24小时最大年龄
+        ],
+    })
 
 c.JupyterHub.services = services
 
-# ===== 开发和调试配置 =====
+# ===== 调试配置 =====
 
-# 日志配置
-if os.environ.get('JUPYTERHUB_DEBUG', '').lower() == 'true':
+# 日志级别
+if os.environ.get('DEBUG_MODE', 'false').lower() == 'true':
     c.JupyterHub.log_level = 'DEBUG'
     c.Application.log_level = 'DEBUG'
+else:
+    c.JupyterHub.log_level = 'INFO'
+    c.Application.log_level = 'INFO'
 
-# SSL配置（生产环境）
-ssl_key = os.environ.get('JUPYTERHUB_SSL_KEY')
-ssl_cert = os.environ.get('JUPYTERHUB_SSL_CERT')
-if ssl_key and ssl_cert:
-    c.JupyterHub.ssl_key = ssl_key
-    c.JupyterHub.ssl_cert = ssl_cert
+# ===== 安全配置 =====
 
-print("=== JupyterHub 配置加载完成 ===")
-print(f"Base URL: {c.JupyterHub.base_url}")
-print(f"Bind URL: {c.JupyterHub.bind_url}")
-print(f"Hub Bind URL: {c.JupyterHub.hub_bind_url}")
-print(f"Spawner模式: {spawner_mode}")
-print(f"认证器: PostgreSQL + Redis")
-print("==================================")
+# 允许命名服务器（可选）
+c.JupyterHub.allow_named_servers = False
+
+# 内部SSL（生产环境建议启用）
+c.JupyterHub.internal_ssl = False
+
+# CORS配置
+c.JupyterHub.tornado_settings = {
+    'headers': {
+        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080"
+    }
+}
+
+print("JupyterHub配置加载完成 - 简化版本，修复重定向循环问题")

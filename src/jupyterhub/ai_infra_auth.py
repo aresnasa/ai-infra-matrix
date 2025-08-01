@@ -21,11 +21,23 @@ class AIInfraMatrixAuth(BaseHandler):
     """AI基础设施矩阵认证处理器"""
     
     async def get(self):
-        """处理认证GET请求 - 检查token参数并进行认证"""
-        # 检查是否有JWT token参数
+        """处理认证GET请求 - 支持多种token来源"""
+        
+        # 1. 检查URL中的token参数
         jwt_token = self.get_argument('token', None)
-        if jwt_token and self.authenticator.allow_token_in_url:
-            # 有token，尝试使用token认证
+        
+        # 2. 检查AI Infra Matrix前端的认证cookie
+        if not jwt_token:
+            jwt_token = self.get_cookie('ai_infra_token')
+        
+        # 3. 检查Authorization header
+        if not jwt_token:
+            auth_header = self.request.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                jwt_token = auth_header[7:]
+        
+        # 4. 如果找到token，尝试认证
+        if jwt_token:
             auth_model = await self.authenticator._authenticate_with_jwt(jwt_token)
             if auth_model:
                 # token有效，设置用户并重定向
@@ -41,11 +53,11 @@ class AIInfraMatrixAuth(BaseHandler):
                 self.redirect(next_url)
                 return
             else:
-                # token无效，显示错误
-                self.log.error(f"Invalid JWT token provided in URL")
+                # token无效，清除可能的cookie
+                self.clear_cookie('ai_infra_token')
+                self.log.error(f"Invalid JWT token provided")
         
-        # 没有token或token无效，显示登录页面
-        # 使用标准的JupyterHub登录表单而不是重定向
+        # 没有token或token无效，返回带前端集成的登录页面
         html = self.render_template('login.html',
             next=self.get_argument('next', ''),
             username=self.get_argument('username', ''),
@@ -99,10 +111,26 @@ class AIInfraMatrixAuthenticator(Authenticator):
     )
     
     auto_login = Bool(
-        False,
+        True,  # 改为True，启用自动登录
         config=True,
         help="""
         是否启用自动登录（基于JWT token）
+        """
+    )
+    
+    frontend_cookie_name = Unicode(
+        'ai_infra_token',
+        config=True,
+        help="""
+        前端存储JWT token的cookie名称
+        """
+    )
+    
+    frontend_domain = Unicode(
+        'localhost',
+        config=True,
+        help="""
+        前端域名，用于跨域cookie共享
         """
     )
     
@@ -134,6 +162,36 @@ class AIInfraMatrixAuthenticator(Authenticator):
                 'Authorization': f'Bearer {self.backend_api_token}'
             })
     
+    async def get_user(self, handler, **kwargs):
+        """
+        预认证检查 - 在用户访问时自动检查前端认证状态
+        """
+        # 如果启用了自动登录，检查前端token
+        if self.auto_login:
+            # 1. 检查AI Infra Matrix前端的localStorage token
+            # 通过前端发送的cookie或header获取token
+            jwt_token = None
+            
+            # 检查cookie中的token
+            if hasattr(handler, 'get_cookie'):
+                jwt_token = handler.get_cookie(self.frontend_cookie_name)
+            
+            # 检查Authorization header
+            if not jwt_token and hasattr(handler, 'request'):
+                auth_header = handler.request.headers.get('Authorization', '')
+                if auth_header.startswith('Bearer '):
+                    jwt_token = auth_header[7:]
+            
+            # 如果找到token，尝试验证
+            if jwt_token:
+                auth_model = await self._authenticate_with_jwt(jwt_token)
+                if auth_model:
+                    self.log.info(f"Pre-auth successful for user: {auth_model['name']}")
+                    return self.user_for_name(auth_model['name'])
+        
+        # 调用父类方法
+        return await super().get_user(handler, **kwargs)
+    
     async def authenticate(self, handler, data):
         """
         主要认证方法
@@ -145,6 +203,30 @@ class AIInfraMatrixAuthenticator(Authenticator):
             if url_token:
                 self.log.info("Found token in URL parameter, attempting JWT authentication")
                 return await self._authenticate_with_jwt(url_token)
+        
+        # 检查cookie中的token
+        jwt_token_from_cookie = None
+        if hasattr(handler, 'get_cookie'):
+            jwt_token_from_cookie = handler.get_cookie(self.frontend_cookie_name)
+            if jwt_token_from_cookie:
+                self.log.info(f"Found token in cookie '{self.frontend_cookie_name}', attempting JWT authentication")
+                auth_result = await self._authenticate_with_jwt(jwt_token_from_cookie)
+                if auth_result:
+                    return auth_result
+        
+        # 检查Authorization header
+        if hasattr(handler, 'request'):
+            auth_header = handler.request.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+                jwt_token_from_header = auth_header[7:]
+                self.log.info("Found token in Authorization header, attempting JWT authentication")
+                auth_result = await self._authenticate_with_jwt(jwt_token_from_header)
+                if auth_result:
+                    return auth_result
+        
+        # 检查data是否为None
+        if data is None:
+            data = {}
         
         username = data.get('username', '').strip()
         password = data.get('password', '').strip()
