@@ -117,24 +117,22 @@ const UnifiedJupyterHubIntegration = () => {
 
     setLoading(true);
     try {
-      // 通过后端生成JupyterHub登录令牌
-      const response = await api.post('/auth/jupyterhub-login', {
-        username: userSession.username
-      });
-
-      if (response.data.success) {
-        // 使用令牌登录JupyterHub
-        const loginUrl = `${jupyterHubConfig.url}/hub/login?next=%2Fhub%2F&token=${response.data.token}`;
-        window.open(loginUrl, '_blank');
-        message.success('正在跳转到JupyterHub...');
-        
-        // 更新会话状态
-        setTimeout(() => {
-          checkJupyterHubSession(userSession.username);
-        }, 2000);
-      } else {
-        message.error('生成登录令牌失败');
+      // 从localStorage获取JWT token
+      const token = localStorage.getItem('token');
+      if (!token) {
+        message.error('未找到有效的登录令牌，请重新登录系统');
+        return;
       }
+
+      // 直接使用JWT token登录JupyterHub
+      const loginUrl = `${jupyterHubConfig.url}/hub/login?next=%2Fhub%2F&jwt_token=${encodeURIComponent(token)}`;
+      window.open(loginUrl, '_blank');
+      message.success('正在使用当前登录状态跳转到JupyterHub...');
+      
+      // 更新会话状态
+      setTimeout(() => {
+        checkJupyterHubSession(userSession.username);
+      }, 2000);
     } catch (error) {
       console.error('统一登录失败:', error);
       message.error('登录失败: ' + (error.response?.data?.message || error.message));

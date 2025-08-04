@@ -229,6 +229,14 @@ func main() {
 			auth.POST("/verify-token", userHandler.VerifyJWT)
 		}
 
+		// JupyterHub认证路由（独立处理）
+		jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
+		{
+			// JupyterHub令牌生成和验证
+			auth.POST("/jupyterhub-login", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.GenerateJupyterHubLoginToken)
+			auth.POST("/verify-jupyterhub-token", jupyterHubAuthHandler.VerifyJupyterHubToken)
+		}
+
 		// 用户管理路由（管理员）
 		users := api.Group("/users")
 		users.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())

@@ -35,6 +35,9 @@ const AIAssistantManagement = React.lazy(() => import('./pages/AIAssistantManage
 // JupyterHub管理页面懒加载
 const JupyterHubManagement = React.lazy(() => import('./pages/JupyterHubManagement'));
 
+// JupyterHub主页面懒加载
+const JupyterHubPage = React.lazy(() => import('./pages/JupyterHubPage'));
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -306,6 +309,16 @@ function App() {
                       element={
                         <Suspense fallback={<LazyLoadingSpinner />}>
                           <AnsibleManagement />
+                        </Suspense>
+                      } 
+                    />
+                    
+                    {/* JupyterHub页面 */}
+                    <Route 
+                      path="/jupyterhub" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <JupyterHubPage />
                         </Suspense>
                       } 
                     />

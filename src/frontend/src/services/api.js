@@ -288,4 +288,11 @@ export const aiAPI = {
   }),
 };
 
+// JupyterHub API
+export const jupyterHubAPI = {
+  getStatus: () => api.get('/jupyterhub/status'),
+  getUserTasks: () => api.get('/jupyterhub/user-tasks'),
+  getTaskOutput: (taskId) => api.get(`/jupyterhub/tasks/${taskId}/output`),
+};
+
 export default api;

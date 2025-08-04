@@ -1,0 +1,1048 @@
+ Container ai-infra-redis  Running
+ Container ai-infra-postgres  Running
+ Container ai-infra-openldap  Running
+ Container ai-infra-backend  Running
+ Container ai-infra-jupyterhub  Recreate
+ Container ai-infra-jupyterhub  Recreated
+Attaching to ai-infra-jupyterhub
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:17.238 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:17.238 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:17.238 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.238 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.238 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.239 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.239 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:17.238 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.238 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.238 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.239 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.239 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.240 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.240 JupyterHub app:1875] Generating new cookie_secret
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.240 JupyterHub app:1880] Writing cookie_secret to /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.240 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.240 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.240 JupyterHub app:1875] Generating new cookie_secret
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:17.240 JupyterHub app:1880] Writing cookie_secret to /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.240 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:17.246 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:17.246 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.246 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:17.250 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:17.250 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.250 JupyterHub application:1060] Exiting application: jupyterhub
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.246 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:17.250 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:17.250 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:17.250 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:18.595 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:18.595 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:18.595 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:18.595 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:18.595 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:18.595 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:18.597 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:18.597 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:18.597 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:18.601 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:18.602 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:18.605 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:18.605 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:18.605 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:20.070 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:20.070 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:20.070 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:20.070 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:20.070 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:20.070 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:20.072 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:20.072 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:20.072 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:20.076 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:20.076 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:20.079 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:20.079 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:20.079 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:21.762 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:21.763 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:21.763 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:21.763 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:21.763 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:21.763 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:21.764 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:21.764 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:21.764 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:21.769 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:21.769 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:21.773 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:21.773 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:21.773 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:23.830 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:23.830 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:23.830 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:23.830 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:23.830 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:23.830 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:23.831 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:23.831 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:23.832 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:23.836 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:23.836 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:23.840 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:23.840 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:23.840 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:26.692 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:26.693 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:26.693 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:26.693 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:26.693 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:26.693 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:26.694 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:26.694 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:26.694 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:26.698 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:26.699 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:26.702 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:26.702 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:26.702 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:31.172 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:31.172 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:31.172 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:31.172 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:31.172 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:31.172 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:31.173 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:31.173 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:31.174 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:31.178 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:31.178 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:31.181 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:31.181 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:31.181 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:38.858 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:38.858 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:38.858 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:38.858 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:38.858 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:38.858 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:38.859 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:38.859 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:38.859 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:38.863 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:38.864 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:38.867 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:38.867 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:38.867 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1
+ai-infra-jupyterhub  | ✅ Working JWT Authenticator Configuration Loaded
+ai-infra-jupyterhub  | ✅ Supports URL parameter JWT tokens
+ai-infra-jupyterhub  | ✅ Custom login handler for GET requests
+ai-infra-jupyterhub  | ✅ Fallback to username/password authentication
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:52.934 JupyterHub configurable:214] Config option `allow_origin` not recognized by `JupyterHub`.
+ai-infra-jupyterhub  | [W 2025-08-04 21:23:52.934 JupyterHub app:724] Both bind_url and ip/port/base_url have been configured.  please use just one or the other.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:52.935 JupyterHub app:3354] Running JupyterHub version 5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:52.935 JupyterHub app:3384] Using Authenticator: builtins.JWTAuthenticator
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:52.935 JupyterHub app:3384] Using Spawner: jupyterhub.spawner.SimpleLocalProcessSpawner-5.3.0
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:52.935 JupyterHub app:3384] Using Proxy: jupyterhub.proxy.ConfigurableHTTPProxy-5.3.0
+ai-infra-jupyterhub  | /usr/local/lib/python3.13/site-packages/jupyter_events/schema.py:68: JupyterEventsVersionWarning: The `version` property of an event schema must be a string. It has been type coerced, but in a future version of this library, it will fail to validate. Please update schema: https://schema.jupyter.org/jupyterhub/events/server-action
+ai-infra-jupyterhub  |   validate_schema(_schema)
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:52.936 JupyterHub app:3314] Could not load pycurl: No module named 'pycurl'
+ai-infra-jupyterhub  |     pycurl is recommended if you have a large number of users.
+ai-infra-jupyterhub  | [I 2025-08-04 21:23:52.936 JupyterHub app:1835] Loading cookie_secret from /srv/jupyterhub/jupyterhub_cookie_secret
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:52.936 JupyterHub app:2006] Connecting to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:52.941 JupyterHub app:2016] Failed to connect to db: sqlite:///srv/jupyterhub/jupyterhub.sqlite
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:52.941 JupyterHub app:2017] Database error was:
+ai-infra-jupyterhub  |     Traceback (most recent call last):
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/app.py", line 2011, in init_db
+ai-infra-jupyterhub  |         self.session_factory = orm.new_session_factory(
+ai-infra-jupyterhub  |                                ~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             self.db_url, reset=self.reset_db, echo=self.debug_db, **self.db_kwargs
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1576, in new_session_factory
+ai-infra-jupyterhub  |         check_db_revision(engine)
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/jupyterhub/orm.py", line 1461, in check_db_revision
+ai-infra-jupyterhub  |         current_table_names = set(inspect(engine).get_table_names())
+ai-infra-jupyterhub  |                                   ~~~~~~~^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/inspection.py", line 140, in inspect
+ai-infra-jupyterhub  |         ret = reg(subject)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 313, in _engine_insp
+ai-infra-jupyterhub  |         return Inspector._construct(Inspector._init_engine, bind)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 246, in _construct
+ai-infra-jupyterhub  |         init(self, bind)
+ai-infra-jupyterhub  |         ~~~~^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/reflection.py", line 257, in _init_engine
+ai-infra-jupyterhub  |         engine.connect().close()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3271, in connect
+ai-infra-jupyterhub  |         return self._connection_cls(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 145, in __init__
+ai-infra-jupyterhub  |         Connection._handle_dbapi_exception_noconnection(
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+ai-infra-jupyterhub  |             err, dialect, engine
+ai-infra-jupyterhub  |             ^^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |         )
+ai-infra-jupyterhub  |         ^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2434, in _handle_dbapi_exception_noconnection
+ai-infra-jupyterhub  |         raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+ai-infra-jupyterhub  |         self._dbapi_connection = engine.raw_connection()
+ai-infra-jupyterhub  |                                  ~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 3295, in raw_connection
+ai-infra-jupyterhub  |         return self.pool.connect()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 447, in connect
+ai-infra-jupyterhub  |         return _ConnectionFairy._checkout(self)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 1264, in _checkout
+ai-infra-jupyterhub  |         fairy = _ConnectionRecord.checkout(pool)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 711, in checkout
+ai-infra-jupyterhub  |         rec = pool._do_get()
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 177, in _do_get
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/impl.py", line 175, in _do_get
+ai-infra-jupyterhub  |         return self._create_connection()
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 388, in _create_connection
+ai-infra-jupyterhub  |         return _ConnectionRecord(self)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 673, in __init__
+ai-infra-jupyterhub  |         self.__connect()
+ai-infra-jupyterhub  |         ~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 899, in __connect
+ai-infra-jupyterhub  |         with util.safe_reraise():
+ai-infra-jupyterhub  |              ~~~~~~~~~~~~~~~~~^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
+ai-infra-jupyterhub  |         raise exc_value.with_traceback(exc_tb)
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/pool/base.py", line 895, in __connect
+ai-infra-jupyterhub  |         self.dbapi_connection = connection = pool._invoke_creator(self)
+ai-infra-jupyterhub  |                                              ~~~~~~~~~~~~~~~~~~~~^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/create.py", line 646, in connect
+ai-infra-jupyterhub  |         return dialect.connect(*cargs, **cparams)
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |       File "/usr/local/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 626, in connect
+ai-infra-jupyterhub  |         return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+ai-infra-jupyterhub  |                ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ai-infra-jupyterhub  |     sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+ai-infra-jupyterhub  |     (Background on this error at: https://sqlalche.me/e/20/e3q8)
+ai-infra-jupyterhub  |     
+ai-infra-jupyterhub  | [E 2025-08-04 21:23:52.944 JupyterHub app:1814] Directory /srv/jupyterhub/srv/jupyterhub does not exist
+ai-infra-jupyterhub  | [C 2025-08-04 21:23:52.944 JupyterHub app:2020] If you recently upgraded JupyterHub, try running
+ai-infra-jupyterhub  |         jupyterhub upgrade-db
+ai-infra-jupyterhub  |     to upgrade your JupyterHub database schema
+ai-infra-jupyterhub  | [D 2025-08-04 21:23:52.944 JupyterHub application:1060] Exiting application: jupyterhub
+[Kai-infra-jupyterhub exited with code 1

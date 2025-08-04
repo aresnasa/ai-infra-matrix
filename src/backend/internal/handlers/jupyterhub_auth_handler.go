@@ -153,6 +153,53 @@ func (h *JupyterHubAuthHandler) GenerateJupyterHubLoginToken(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// VerifyJupyterHubToken 验证JupyterHub令牌
+// @Summary 验证JupyterHub令牌
+// @Description 验证JupyterHub传来的认证令牌是否有效
+// @Tags JupyterHub认证
+// @Accept json
+// @Produce json
+// @Param request body map[string]string true "令牌验证请求"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/verify-jupyterhub-token [post]
+func (h *JupyterHubAuthHandler) VerifyJupyterHubToken(c *gin.Context) {
+	var request map[string]string
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误", "details": err.Error()})
+		return
+	}
+
+	token, exists := request["token"]
+	if !exists || token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少令牌参数"})
+		return
+	}
+
+	username, _ := request["username"]
+
+	// 验证令牌
+	isValid, userInfo, err := h.validateJupyterHubToken(token, username)
+	if err != nil {
+		logrus.WithError(err).Error("验证JupyterHub令牌失败")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "令牌验证失败"})
+		return
+	}
+
+	if isValid {
+		c.JSON(http.StatusOK, gin.H{
+			"valid": true,
+			"user":  userInfo,
+		})
+	} else {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid": false,
+			"error": "令牌无效或已过期",
+		})
+	}
+}
+
 // StartNotebookServer 启动Notebook服务器
 // @Summary 启动Notebook服务器
 // @Description 为用户启动JupyterHub Notebook服务器
@@ -419,4 +466,48 @@ func (h *JupyterHubAuthHandler) userHasAdminRole(roles []string) bool {
 		}
 	}
 	return false
+}
+
+// validateJupyterHubToken 验证JupyterHub令牌
+func (h *JupyterHubAuthHandler) validateJupyterHubToken(token, username string) (bool, map[string]interface{}, error) {
+	// 尝试解析JWT令牌
+	claims, err := jwt.ParseToken(token)
+	if err != nil {
+		return false, nil, fmt.Errorf("令牌解析失败: %w", err)
+	}
+
+	// 检查令牌是否过期
+	if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
+		return false, nil, fmt.Errorf("令牌已过期")
+	}
+
+	// 获取用户信息
+	var user models.User
+	if err := h.db.First(&user, claims.UserID).Error; err != nil {
+		return false, nil, fmt.Errorf("用户不存在: %w", err)
+	}
+
+	// 如果提供了用户名，验证是否匹配
+	if username != "" && user.Username != username {
+		return false, nil, fmt.Errorf("用户名不匹配")
+	}
+
+	// 检查Redis中的令牌缓存
+	if h.redisClient != nil {
+		cacheKey := fmt.Sprintf("jupyterhub:token:%s", user.Username)
+		cachedToken, err := h.redisClient.Get(context.Background(), cacheKey).Result()
+		if err == nil && cachedToken != token {
+			return false, nil, fmt.Errorf("令牌缓存不匹配")
+		}
+	}
+
+	// 构建用户信息
+	userInfo := map[string]interface{}{
+		"id":       user.ID,
+		"username": user.Username,
+		"email":    user.Email,
+		"roles":    []string{}, // 可以添加角色信息
+	}
+
+	return true, userInfo, nil
 }
