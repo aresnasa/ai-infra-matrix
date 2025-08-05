@@ -1,236 +1,258 @@
-user nginx;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
-
 events {
     worker_connections 1024;
-    use epoll;
-    multi_accept on;
 }
 
 http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
 
-    # 日志格式
-    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                    '$status $body_bytes_sent "$http_referer" '
-                    '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log /var/log/nginx/access.log main;
-
-    # 性能优化
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    server_tokens off;
-
-    # Gzip压缩
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types
-        text/plain
-        text/css
-        text/xml
-        text/javascript
-        application/json
-        application/javascript
-        application/xml+rss
-        application/atom+xml
-        image/svg+xml;
-
-    # 上传大小限制
-    client_max_body_size 100M;
-    client_body_buffer_size 1M;
-    client_header_buffer_size 1k;
-    large_client_header_buffers 4 4k;
-
-    # 超时设置
-    client_body_timeout 60s;
-    client_header_timeout 60s;
-    send_timeout 60s;
-
-    # WebSocket 支持
+    # WebSocket 连接升级映射
     map $http_upgrade $connection_upgrade {
         default upgrade;
         '' close;
     }
 
-    # 上游服务器定义
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+    error_log /var/log/nginx/error.log;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1000;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Backend upstream
     upstream backend {
-        server backend:8082;
+        server ai-infra-backend:8082;
         keepalive 32;
     }
 
-    upstream frontend {
-        server frontend:80;
-        keepalive 32;
-    }
-
+    # JupyterHub upstream  
     upstream jupyterhub {
         server ai-infra-jupyterhub:8000;
         keepalive 32;
     }
 
-    # 主服务器配置
+    # Frontend upstream
+    upstream frontend {
+        server ai-infra-frontend:80;
+        keepalive 32;
+    }
+
     server {
         listen 80;
         server_name localhost;
 
-        # 安全头 - 恢复但修改 Referrer Policy
-        add_header X-Frame-Options "SAMEORIGIN" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header X-XSS-Protection "1; mode=block" always;
-        add_header Referrer-Policy "no-referrer-when-downgrade" always;
+        # 设置最大请求体大小
+        client_max_body_size 100M;
 
-        # 前端静态文件 (主应用)
-        location / {
-            proxy_pass http://frontend;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header X-Forwarded-Host $host;
-            
-            # 缓存设置
-            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
-                proxy_pass http://frontend;
-                proxy_set_header Host $host;
-                expires 1y;
-                add_header Cache-Control "public, immutable";
-            }
+        # SSO单点登录桥接页面
+        location /sso/ {
+            alias /usr/share/nginx/html/sso/;
+            index jwt_sso_bridge.html;
+            try_files $uri $uri/ jwt_sso_bridge.html;
         }
-
-        # 后端API路由 - 移除 Origin 头以避免安全限制
-        location /api/ {
-            # 处理 CORS 预检请求
-            if ($request_method = 'OPTIONS') {
-                add_header 'Access-Control-Allow-Origin' '*' always;
-                add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS, PATCH' always;
-                add_header 'Access-Control-Allow-Headers' 'Origin, Content-Type, Accept, Authorization, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers' always;
-                add_header 'Access-Control-Max-Age' 86400 always;
-                add_header 'Content-Length' 0;
-                return 204;
-            }
-            
-            # 设置 CORS 头用于实际请求
-            add_header 'Access-Control-Allow-Origin' '*' always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS, PATCH' always;
-            add_header 'Access-Control-Allow-Headers' 'Origin, Content-Type, Accept, Authorization, X-Requested-With' always;
-            
-            proxy_pass http://backend;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            
-            # 移除可能导致问题的头部
-            proxy_set_header Origin "";
-            
-            # API超时设置
-            proxy_connect_timeout 30s;
-            proxy_send_timeout 60s;
-            proxy_read_timeout 60s;
-            
-            # 保持连接
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-        }
-
-        # JupyterHub 根路径重定向
-        # location = /jupyter {
-        #     return 301 $scheme://$http_host/jupyter/;
-        # }
         
-                # location = /jupyter/ {
-        #     return 301 $scheme://$http_host/jupyter/hub/login;
-        # }
-
-        # 重定向直接的 /hub/ 访问到正确的 /jupyter/hub/ 路径
-        location /hub/ {
-            return 301 $scheme://$http_host/jupyter$request_uri;
+        location = /sso {
+            return 301 /sso/;
         }
 
-        # JupyterHub 统一路由 - 重写路径去掉前缀
-
-        # 重定向旧的静态资源路径到新路径
-        location /hub/static/ {
-            return 301 /jupyter$request_uri;
+        # JupyterHub 核心服务代理 - 统一入口点
+        location /jupyter {
+            return 301 /jupyter/;
         }
 
-        # 处理favicon等根级静态资源
-        location /favicon.ico {
-            proxy_pass http://jupyterhub/favicon.ico;
-        }
+        # JupyterHub 完整代理配置
         location /jupyter/ {
-            # 重写路径，去掉 /jupyter 前缀
-            rewrite ^/jupyter/(.*) /$1 break;
-            proxy_pass http://jupyterhub;
+            # 动态路由支持：用户notebook容器
+            # 匹配模式：/jupyter/user/username/ -> /jupyter/user/username/
+            location ~ ^/jupyter/user/([^/]+)/(.*) {
+                proxy_pass http://jupyterhub/jupyter/user/$1/$2$is_args$args;
+                
+                # 基础代理头
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $host;
+                proxy_set_header X-Forwarded-Port $server_port;
+                
+                # JupyterHub 特定头部
+                proxy_set_header X-Forwarded-Prefix /jupyter;
+                proxy_set_header Origin http://$host;
+                proxy_set_header Referer $http_referer;
+
+                # Notebook/Lab WebSocket支持
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                
+                # 长连接和流式支持
+                proxy_buffering off;
+                proxy_request_buffering off;
+                proxy_read_timeout 86400s;
+                proxy_send_timeout 86400s;
+                
+                # 重定向处理 - 修复端口丢失和路径重复问题
+                proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://$host:8080/jupyter/;
+                proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://$host:8080/jupyter/$1;
+            }
+
+            # JupyterHub 控制面板和API
+            # 精确匹配 /jupyter/hub/
+            location = /jupyter/hub/ {
+                proxy_pass http://jupyterhub/jupyter/hub/;
+                
+                # 基础代理头
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $host;
+                proxy_set_header X-Forwarded-Port $server_port;
+                
+                # JupyterHub 特定头部
+                proxy_set_header X-Forwarded-Prefix /jupyter;
+                proxy_set_header Origin http://$host;
+                proxy_set_header Referer $http_referer;
+
+                # Notebook/Lab WebSocket支持
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                
+                # 长连接和流式支持
+                proxy_buffering off;
+                proxy_request_buffering off;
+                proxy_read_timeout 86400s;
+                proxy_send_timeout 86400s;
+                
+                # 重定向处理 - 修复端口丢失和路径重复问题
+                proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://$host:8080/jupyter/;
+                proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://$host:8080/jupyter/$1;
+            }
+
+            # 匹配模式：/jupyter/hub/ -> /jupyter/hub/
+            location ~ ^/jupyter/hub/(.*) {
+                proxy_pass http://jupyterhub/jupyter/hub/$1$is_args$args;
+                
+                # 基础代理头
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $host;
+                proxy_set_header X-Forwarded-Port $server_port;
+                
+                # JupyterHub 特定头部
+                proxy_set_header X-Forwarded-Prefix /jupyter;
+                
+                # WebSocket支持
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                
+                # 缓冲设置
+                proxy_buffering off;
+                proxy_read_timeout 300s;
+                proxy_send_timeout 300s;
+                
+                # 重定向处理 - 修复端口丢失和路径重复问题
+                proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://$host:8080/jupyter/;
+                proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://$host:8080/jupyter/$1;
+            }
+
+            # JupyterHub 根路径重定向
+            # /jupyter/ -> /jupyter/hub/
+            location = /jupyter/ {
+                return 302 http://$host:8080/jupyter/hub/;
+            }
+
+            # 默认路径处理
+            proxy_pass http://jupyterhub/jupyter/;
+            
+            # 基础代理头
             proxy_set_header Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header X-Forwarded-Host $http_host;
+            proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Forwarded-Port $server_port;
             
-            # 🔧 修复XSRF Cookie路径问题
-            # 设置JupyterHub认为自己运行在/jupyter路径下
+            # JupyterHub 特定头部
             proxy_set_header X-Forwarded-Prefix /jupyter;
             
-            # JupyterHub 特殊设置
-            proxy_set_header X-Scheme $scheme;
-            proxy_buffering off;
-            
-            # 🔧 修复重定向端口丢失问题
-            # 重写所有相对重定向以包含正确的主机和端口
-            proxy_redirect ~^/(.*)$ http://$http_host/jupyter/$1;
-            
-            # 🔧 Cookie路径重写 - 将/hub/路径的cookie重写为/jupyter/hub/
-            proxy_cookie_path /hub/ /jupyter/hub/;
-            proxy_cookie_path / /jupyter/;
-            
-            # WebSocket 支持 (Jupyter Notebook)
+            # WebSocket支持
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
             
-            # 超时设置 (Jupyter 需要长连接)
-            proxy_connect_timeout 60s;
-            proxy_send_timeout 300s;
-            proxy_read_timeout 300s;
+            # 重定向处理 - 修复端口丢失和路径重复问题
+            proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://$host:8080/jupyter/;
+            proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://$host:8080/jupyter/$1;
         }
 
-        # Swagger 文档路由
-        location /swagger/ {
-            proxy_pass http://backend;
+        # 处理根路径的favicon
+        location = /favicon.ico {
+            proxy_pass http://jupyterhub/favicon.ico;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # LDAP 管理界面路由 (服务未启动)
-        # location /ldap-admin/ {
-        #     proxy_pass http://ai-infra-phpldapadmin/;
-        #     proxy_set_header Host $host;
-        #     proxy_set_header X-Real-IP $remote_addr;
-        #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        #     proxy_set_header X-Forwarded-Proto $scheme;
-        # }
+        # JWT 自动登录页面
+        location /jwt-login {
+            alias /usr/share/nginx/html/jwt_login.html;
+            try_files $uri $uri/ =404;
+        }
 
-        # Redis 监控界面路由 (服务未启动)
-        # location /redis-monitor/ {
-        #     proxy_pass http://ai-infra-redis-insight:8001/;
-        #     proxy_set_header Host $host;
-        #     proxy_set_header X-Real-IP $remote_addr;
-        #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        #     proxy_set_header X-Forwarded-Proto $scheme;
-        # }
+        # 后端API代理
+        location /api/ {
+            proxy_pass http://backend/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # CORS支持
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With";
+
+            # 处理OPTIONS请求
+            if ($request_method = OPTIONS) {
+                add_header Access-Control-Allow-Origin *;
+                add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+                add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With";
+                return 204;
+            }
+        }
+
+        # 前端应用代理
+        location / {
+            proxy_pass http://frontend/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # 静态资源缓存
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                proxy_pass http://frontend;
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+        }
 
         # 健康检查端点
         location /health {
@@ -238,36 +260,5 @@ http {
             return 200 "healthy\n";
             add_header Content-Type text/plain;
         }
-
-        # 静态资源缓存 (排除JupyterHub路径)
-        location ~* ^(?!/jupyter/).*\.(css|js|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$ {
-            expires 1y;
-            add_header Cache-Control "public, immutable";
-            add_header Vary Accept-Encoding;
-        }
-
-        # 错误页面
-        error_page 404 /404.html;
-        error_page 500 502 503 504 /50x.html;
-        
-        location = /50x.html {
-            root /usr/share/nginx/html;
-        }
     }
-
-    # 额外的服务器配置 (如果需要HTTPS)
-    # server {
-    #     listen 443 ssl http2;
-    #     server_name localhost;
-    #     
-    #     ssl_certificate /etc/nginx/ssl/nginx.crt;
-    #     ssl_certificate_key /etc/nginx/ssl/nginx.key;
-    #     
-    #     # SSL 配置
-    #     ssl_protocols TLSv1.2 TLSv1.3;
-    #     ssl_ciphers HIGH:!aNULL:!MD5;
-    #     ssl_prefer_server_ciphers on;
-    #     
-    #     # 其他配置与HTTP相同...
-    # }
 }

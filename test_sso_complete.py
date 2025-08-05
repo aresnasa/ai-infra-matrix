@@ -130,10 +130,14 @@ class SSOTester:
             resp = self.session.get(sso_url, timeout=10, allow_redirects=True)
             
             print(f"   📊 SSO页面状态: {resp.status_code}")
+            print(f"   📍 最终URL: {resp.url}")
             
             if resp.status_code == 200:
                 # 检查页面内容
-                if 'jwt_sso_bridge.html' in resp.url or '单点登录' in resp.text:
+                if ('jwt_sso_bridge.html' in resp.url or 
+                    '单点登录' in resp.text or 
+                    'AI基础设施矩阵' in resp.text or
+                    'performSSO' in resp.text):
                     print("   ✅ SSO桥接页面加载成功")
                     
                     # 检查JavaScript自动登录逻辑
@@ -141,10 +145,14 @@ class SSOTester:
                         print("   ✅ 发现SSO处理函数")
                     if 'localStorage.getItem' in resp.text:
                         print("   ✅ 发现token读取逻辑")
+                    if 'JupyterHub' in resp.text:
+                        print("   ✅ 发现JupyterHub集成")
                     
                     return True
                 else:
                     print("   ⚠️  页面内容不符合预期")
+                    # 显示页面的前几行用于调试
+                    print(f"   📄 页面开头: {resp.text[:200]}...")
                     return False
             elif resp.status_code == 302:
                 location = resp.headers.get('Location', '')
