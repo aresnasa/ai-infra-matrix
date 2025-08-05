@@ -172,12 +172,12 @@ services:
       # 数据库配置
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=ansible_playbook_generator
+      - POSTGRES_DB=jupyterhub_db
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=ansible_playbook_generator
+      - DB_NAME=jupyterhub_db
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       # Redis配置
@@ -190,7 +190,7 @@ services:
       # JupyterHub配置
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
       - CONFIGPROXY_AUTH_TOKEN=ai-infra-proxy-token
-      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-fd8f6d8c2a7b4e5fc3e2d9a8b7c4e6f5a2b9c8d7e6f3a2b1c9d8e7f6a5b4c3d2e1}
+      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1}
       - SESSION_TIMEOUT=86400
       # 自定义认证配置
       - USE_CUSTOM_AUTH=true
@@ -200,7 +200,7 @@ services:
       - JUPYTERHUB_DEV_MODE=true
       # Spawner配置
       - JUPYTERHUB_NOTEBOOK_IMAGE=jupyter/base-notebook:latest
-      - JUPYTERHUB_NETWORK=ai-infra-matrix_ai-infra-network
+      - JUPYTERHUB_NETWORK=ai-infra-network
       - JUPYTERHUB_MEM_LIMIT=2G
       - JUPYTERHUB_CPU_LIMIT=1.0
       # 功能开关
@@ -210,12 +210,18 @@ services:
       - JUPYTERHUB_DEBUG=false
       - JUPYTERHUB_LOG_LEVEL=INFO
       - JUPYTERHUB_ACCESS_LOG=true
+      # 代理配置
+      - JUPYTERHUB_USE_PROXY=true
+      - JUPYTERHUB_PUBLIC_HOST=localhost:8080
       # CORS配置
       - JUPYTERHUB_CORS_ORIGIN=http://localhost:8080
-    # 仅内部访问，通过nginx代理
+    # 仅内部网络访问，不直接暴露端口
+    # 通过 nginx 代理访问 /jupyter/ 路径
+    # ports:
+    #   - "8088:8000"  # 移除直接访问端口，强制通过代理
     expose:
-      - "8000"  # JupyterHub主端口
-      - "8091"  # Hub内部端口
+      - "8000"  # JupyterHub主端口（仅内部网络）
+      - "8091"  # Hub内部端口（仅内部网络）
     volumes:
       - jupyterhub_data:/srv/data/jupyterhub
       - jupyterhub_notebooks:/srv/jupyterhub/notebooks

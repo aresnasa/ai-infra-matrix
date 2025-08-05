@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime, timezone
 from jupyterhub.auth import Authenticator
 from jupyterhub.handlers import BaseHandler
-from jupyterhub.spawner import LocalProcessSpawner
+from dockerspawner import DockerSpawner
 from tornado import web
 from traitlets import Unicode, Bool, Dict, List
 import redis
@@ -36,7 +36,7 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production'
 DB_CONFIG = {
     'host': os.environ.get('POSTGRES_HOST', 'postgres'),
     'port': int(os.environ.get('POSTGRES_PORT', 5432)),
-    'database': os.environ.get('POSTGRES_DB', 'ansible_playbook_generator'),
+    'database': os.environ.get('POSTGRES_DB', 'jupyterhub_db'),
     'user': os.environ.get('POSTGRES_USER', 'postgres'),
     'password': os.environ.get('POSTGRES_PASSWORD', 'postgres')
 }
@@ -220,7 +220,7 @@ class BackendProxyHandler(BaseHandler):
             self.write({'status': 'error', 'message': str(e)})
 
 
-class ContainerSpawner(LocalProcessSpawner):
+class ContainerSpawner(DockerSpawner):
     """容器环境优化的Spawner"""
     
     def user_env(self, env):
@@ -240,14 +240,33 @@ class ContainerSpawner(LocalProcessSpawner):
 c.JupyterHub.ip = '0.0.0.0'
 c.JupyterHub.port = 8000
 c.JupyterHub.hub_ip = '0.0.0.0'
-c.JupyterHub.base_url = '/'
 
-# 公共URL配置（nginx代理）
+# 通过环境变量决定是否通过代理访问
+use_proxy = os.environ.get('JUPYTERHUB_USE_PROXY', 'true').lower() == 'true'
+if use_proxy:
+    # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
+    c.JupyterHub.base_url = '/jupyter/'
+    # 配置代理头处理
+    c.JupyterHub.trust_user_provided_tokens = True
+    c.JupyterHub.trust_user_provided_image = True
+    # 允许来自代理的请求
+    c.JupyterHub.allow_origin = '*'
+    c.JupyterHub.allow_origin_pat = '.*'
+else:
+    # 直接访问模式
+    c.JupyterHub.base_url = '/'
+
+# 公共URL配置
 public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
-if not public_host.startswith('http'):
-    public_host = f'http://{public_host}'
-os.environ['JUPYTERHUB_PUBLIC_URL'] = f'{public_host}/jupyter/'
+if use_proxy:
+    if not public_host.startswith('http'):
+        public_host = f'http://{public_host}'
+    os.environ['JUPYTERHUB_PUBLIC_URL'] = f'{public_host}/jupyter/'
+    # 通知spawner使用代理URL
+    c.JupyterHub.public_url = f'{public_host}/jupyter/'
+else:
+    c.JupyterHub.public_url = f'http://{public_host}/'
 
 # 数据库配置 - PostgreSQL
 c.JupyterHub.db_url = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
@@ -270,12 +289,44 @@ c.JupyterHub.extra_handlers = [
 
 # Spawner配置
 c.JupyterHub.spawner_class = ContainerSpawner
-c.ContainerSpawner.notebook_dir = '/tmp'
-c.ContainerSpawner.args = ['--allow-root', '--ip=0.0.0.0', '--no-browser']
+
+# Docker Spawner配置
+# 配置Docker Spawner网络
+c.ContainerSpawner.image = os.environ.get('JUPYTERHUB_IMAGE', 'jupyter/base-notebook:latest')
+c.ContainerSpawner.network_name = os.environ.get('JUPYTERHUB_NETWORK', 'ai-infra-network')
+c.ContainerSpawner.remove = True  # 删除停止的容器
+c.ContainerSpawner.debug = True
+
+# 资源限制
+c.ContainerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
+c.ContainerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
+
+# 容器配置
+c.ContainerSpawner.notebook_dir = '/home/jovyan/work'
+c.ContainerSpawner.cmd = ['start-singleuser.sh']  # 使用标准单用户启动脚本
+
+# 环境变量设置
+c.ContainerSpawner.environment = {
+    'JUPYTER_ENABLE_LAB': 'yes',  # 启用JupyterLab
+}
+
+# 挂载配置（可选）
+c.ContainerSpawner.volumes = {
+    # 可以添加持久化存储
+}
 
 # 安全配置
 c.JupyterHub.cookie_secret_file = '/srv/jupyterhub/jupyterhub_cookie_secret'
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'default-token-change-me')
+
+# 加密密钥配置（用于auth_state）
+crypt_key = os.environ.get('JUPYTERHUB_CRYPT_KEY', '790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1')
+if len(crypt_key) == 64:  # 十六进制字符串
+    import binascii
+    c.CryptKeeper.keys = [binascii.unhexlify(crypt_key)]
+else:
+    print(f"Warning: Invalid crypt key length: {len(crypt_key)}, expected 64 hex chars")
+    c.Authenticator.enable_auth_state = False  # 禁用auth_state
 
 # 日志配置
 c.JupyterHub.log_level = 'DEBUG'
