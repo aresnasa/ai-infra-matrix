@@ -16,6 +16,8 @@ services:
       - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # 数据库初始化脚本
+      - ./scripts/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     networks:
       - ai-infra-network
     healthcheck:
@@ -89,8 +91,34 @@ services:
     networks:
       - ai-infra-network
     restart: unless-stopped
-    profiles:
-      - admin
+
+  # 后端初始化服务 - 创建admin用户和基础数据
+  backend-init:
+    build: 
+      context: ./src/backend
+      dockerfile: Dockerfile
+    container_name: ai-infra-backend-init
+    env_file:
+      - ./src/backend/.env
+    environment:
+      # 数据库配置
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_HOST=redis
+      - LDAP_SERVER=openldap
+      # 日志级别配置
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    command: ["./init"]  # 直接运行初始化程序
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    restart: "no"  # 初始化运行一次后不重启
 
   # 后端 API 服务
   backend:
@@ -121,6 +149,8 @@ services:
         condition: service_healthy
       openldap:
         condition: service_healthy
+      backend-init:
+        condition: service_completed_successfully
     volumes:
       - ./src/backend/outputs:/app/outputs
       - ./src/backend/uploads:/app/uploads
@@ -169,7 +199,7 @@ services:
     image: ai-infra-jupyterhub:latest
     container_name: ai-infra-jupyterhub
     environment:
-      # 数据库配置
+      # 数据库配置 - JupyterHub自动创建和管理数据库
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=jupyterhub_db
@@ -240,14 +270,12 @@ services:
     networks:
       - ai-infra-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/hub/api"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/jupyter/hub/api"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     restart: unless-stopped
-    profiles:
-      - jupyterhub
 
   # Nginx 反向代理服务
   nginx:
@@ -288,8 +316,6 @@ services:
     networks:
       - ai-infra-network
     restart: unless-stopped
-    profiles:
-      - k8s
 
   # Redis 监控界面 (可选)
   redis-insight:
@@ -303,8 +329,6 @@ services:
     networks:
       - ai-infra-network
     restart: unless-stopped
-    profiles:
-      - monitoring
 
 volumes:
   postgres_data:

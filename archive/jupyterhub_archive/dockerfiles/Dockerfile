@@ -34,27 +34,8 @@ RUN echo "Build: $(date '+%Y-%m-%d %H:%M:%S')" > /srv/jupyterhub/build_info.txt
 # 配置文件（最后复制，优化缓存）
 COPY jupyterhub_config.py backend_integrated_config.py ./
 
-# 创建数据库等待脚本
-RUN echo '#!/bin/bash' > /wait-for-db.sh && \
-    echo 'set -e' >> /wait-for-db.sh && \
-    echo 'host="$1"' >> /wait-for-db.sh && \
-    echo 'shift' >> /wait-for-db.sh && \
-    echo 'cmd="$@"' >> /wait-for-db.sh && \
-    echo 'until pg_isready -h "$host" -p 5432 -U postgres; do' >> /wait-for-db.sh && \
-    echo '  echo "PostgreSQL is unavailable - sleeping"' >> /wait-for-db.sh && \
-    echo '  sleep 1' >> /wait-for-db.sh && \
-    echo 'done' >> /wait-for-db.sh && \
-    echo 'echo "PostgreSQL is up - checking databases..."' >> /wait-for-db.sh && \
-    echo 'until psql -h "$host" -U postgres -d postgres -c "SELECT 1 FROM pg_database WHERE datname='"'"'jupyterhub_db'"'"';" | grep -q 1; do' >> /wait-for-db.sh && \
-    echo '  echo "JupyterHub database not ready - waiting..."' >> /wait-for-db.sh && \
-    echo '  sleep 2' >> /wait-for-db.sh && \
-    echo 'done' >> /wait-for-db.sh && \
-    echo 'echo "All databases are ready - executing command"' >> /wait-for-db.sh && \
-    echo 'exec $cmd' >> /wait-for-db.sh && \
-    chmod +x /wait-for-db.sh
-
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/jupyter/hub/api || exit 1
+    CMD curl -f http://localhost:8000/hub/health || exit 1
 
-CMD ["/wait-for-db.sh", "postgres", "jupyterhub", "-f", "/srv/jupyterhub/backend_integrated_config.py"]
+CMD ["jupyterhub", "-f", "/srv/jupyterhub/jupyterhub_config.py"]
