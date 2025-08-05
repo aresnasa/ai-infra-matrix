@@ -92,20 +92,25 @@ class BackendIntegratedAuthenticator(Authenticator):
             return None
     
     def _extract_token(self, handler):
-        """提取JWT Token"""
-        # 从Authorization header
+        """提取JWT Token - 优先级：Authorization header > Cookie > URL参数"""
+        # 1. 从Authorization header (最高优先级)
         auth_header = handler.request.headers.get('Authorization', '')
         if auth_header.startswith('Bearer '):
+            logger.info("从Authorization header提取token")
             return auth_header[7:]
         
-        # 从Cookie
-        token = handler.get_cookie('jwt_token')
-        if token:
-            return token
+        # 2. 从多种Cookie名称尝试获取 (支持不同的cookie名称)
+        cookie_names = ['ai_infra_token', 'jwt_token', 'auth_token']
+        for cookie_name in cookie_names:
+            token = handler.get_cookie(cookie_name)
+            if token:
+                logger.info(f"从Cookie '{cookie_name}' 提取token")
+                return token
         
-        # 从URL参数
+        # 3. 从URL参数 (最低优先级，用于备用方案)
         token = handler.get_argument('token', None)
         if token:
+            logger.info("从URL参数提取token")
             return token
         
         return None

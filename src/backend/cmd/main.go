@@ -218,16 +218,18 @@ func main() {
 	{
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/login", userHandler.Login)
-			auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
-			auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
-			auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
-			auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
-			auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
-			// JupyterHub单点登录令牌生成
-			auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
-			// JWT令牌验证（用于JupyterHub认证器）
-			auth.POST("/verify-token", userHandler.VerifyJWT)
-		}
+		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
+		auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
+		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
+		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
+		auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
+		// JupyterHub单点登录令牌生成
+		auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
+		// JWT令牌验证（用于JupyterHub认证器）
+		auth.POST("/verify-token", userHandler.VerifyJWT)
+		// 简单令牌验证（用于SSO认证）
+		auth.GET("/verify", middleware.AuthMiddleware(), userHandler.VerifyTokenSimple)
+	}
 
 		// JupyterHub认证路由（独立处理）
 		jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)

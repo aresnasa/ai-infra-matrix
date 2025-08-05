@@ -188,7 +188,7 @@ function App() {
     localStorage.removeItem('token_expires');
   };
 
-  // 处理登录成功 - 重新验证权限
+  // 处理登录成功 - 重新验证权限并设置SSO
   const handleLogin = async (userData) => {
     console.log('=== 处理登录成功 ===');
     console.log('登录返回的用户数据:', userData);
@@ -199,10 +199,50 @@ function App() {
     setPermissionsLoaded(false);
     
     try {
+      // 使用增强的认证服务设置认证状态
+      if (window.authService) {
+        await window.authService.setAuthData(
+          userData.token, 
+          userData.expires_at, 
+          userData.user || userData
+        );
+        
+        // 设置SSO cookies
+        await window.authService.setupSSOCookies(
+          userData.token, 
+          userData.user || userData
+        );
+        
+        console.log('✅ SSO状态设置完成');
+      } else {
+        // 降级处理：手动设置
+        localStorage.setItem('token', userData.token);
+        if (userData.expires_at) {
+          localStorage.setItem('token_expires', userData.expires_at);
+        }
+        if (userData.user) {
+          localStorage.setItem('user', JSON.stringify(userData.user));
+        }
+        
+        // 手动设置SSO cookie
+        const maxAge = 3600;
+        const cookieOptions = `path=/; max-age=${maxAge}; SameSite=Lax`;
+        document.cookie = `ai_infra_token=${userData.token}; ${cookieOptions}`;
+        document.cookie = `jwt_token=${userData.token}; ${cookieOptions}`;
+        
+        console.log('✅ 降级SSO状态设置完成');
+      }
+      
+      // 重新初始化认证状态
+      await initializeAuth();
+      
       // 立即从后端获取最新的权限信息
       await verifyUserWithBackend();
+      
     } catch (error) {
-      console.error('登录后获取权限信息失败:', error);
+      console.error('设置登录状态失败:', error);
+      message.error('登录状态设置失败');
+      
       // 如果获取最新权限失败，使用登录返回的数据作为备用
       setUser(userData);
       setPermissionsLoaded(true);

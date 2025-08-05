@@ -847,3 +847,42 @@ func (h *UserHandler) VerifyJWT(c *gin.Context) {
 		"expires_at": claims.ExpiresAt.Time.Format(time.RFC3339),
 	})
 }
+
+// VerifyTokenSimple 简单的token验证（通过Authorization header）
+// @Summary 简单验证JWT令牌
+// @Description 通过Authorization header验证JWT令牌，返回用户信息
+// @Tags 用户管理
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/verify [get]
+func (h *UserHandler) VerifyTokenSimple(c *gin.Context) {
+	// 从context中获取用户信息（由AuthMiddleware设置）
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	username, _ := c.Get("username")
+	roles, _ := c.Get("roles")
+	permissions, _ := c.Get("permissions")
+
+	// 获取完整用户信息
+	user, err := h.userService.GetUserByID(userID.(uint))
+	if err != nil {
+		logrus.Error("Failed to get user:", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"username":    username,
+		"email":       user.Email,
+		"roles":       roles,
+		"permissions": permissions,
+		"is_active":   user.IsActive,
+		"user_id":     userID,
+	})
+}

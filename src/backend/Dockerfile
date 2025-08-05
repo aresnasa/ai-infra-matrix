@@ -27,8 +27,8 @@ FROM golang:1.24-alpine
 # 更换alpine下载源为清华大学镜像
 RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
 
-# 设置时区为上海，添加netcat用于数据库等待
-RUN apk --no-cache add ca-certificates curl tzdata netcat-openbsd
+# 设置时区为上海，添加必要工具
+RUN apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
@@ -65,4 +65,4 @@ RUN echo '#!/bin/bash' > /wait-for-postgres.sh && \
 EXPOSE 8082
 
 # Run with database wait
-CMD ["/wait-for-postgres.sh", "./main"]
+CMD ["bash", "-c", "echo 'Waiting for database...' && while ! nc -z postgres 5432; do sleep 1; done && echo 'Database ready!' && ./main"]
