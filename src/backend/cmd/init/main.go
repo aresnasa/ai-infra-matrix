@@ -39,6 +39,11 @@ func main() {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
+	// 创建JupyterHub数据库
+	if err := createJupyterHubDatabase(cfg); err != nil {
+		log.Fatal("Failed to create JupyterHub database:", err)
+	}
+
 	// 初始化RBAC系统
 	if err := initializeRBAC(); err != nil {
 		log.Fatal("Failed to initialize RBAC:", err)
@@ -645,4 +650,49 @@ func initializeDefaultAIConfigs() {
 	log.Println("📝 Note: AI configurations have been created with empty API keys.")
 	log.Println("🔑 Please configure API keys in the admin panel to enable AI functionality.")
 	log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
+}
+
+// createJupyterHubDatabase 创建JupyterHub专用数据库
+func createJupyterHubDatabase(cfg *config.Config) error {
+	log.Println("Creating JupyterHub database...")
+
+	// 连接到 postgres 系统数据库
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// 检查JupyterHub数据库是否存在
+	var exists bool
+	jupyterhubDBName := "jupyterhub_db"
+	query := "SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)"
+	if err := systemDB.Raw(query, jupyterhubDBName).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check JupyterHub database existence: %w", err)
+	}
+
+	if !exists {
+		// 创建JupyterHub数据库
+		log.Printf("Creating JupyterHub database: %s", jupyterhubDBName)
+		createQuery := fmt.Sprintf("CREATE DATABASE %s", jupyterhubDBName)
+		if err := systemDB.Exec(createQuery).Error; err != nil {
+			return fmt.Errorf("failed to create JupyterHub database: %w", err)
+		}
+		log.Printf("JupyterHub database '%s' created successfully", jupyterhubDBName)
+	} else {
+		log.Printf("JupyterHub database '%s' already exists", jupyterhubDBName)
+	}
+
+	return nil
 }

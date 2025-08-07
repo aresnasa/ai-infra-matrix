@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider, Spin } from 'antd';
+import { ConfigProvider, Spin, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -135,6 +135,9 @@ function App() {
   const verifyUserWithBackend = async (retryCount = 0) => {
     try {
       console.log('正在验证token并获取用户权限...');
+      
+      // 确保 localStorage 的写入已经完成
+      await new Promise(resolve => setTimeout(resolve, 50));
       
       const response = await authAPI.getProfile();
       const userData = response.data;
@@ -353,15 +356,9 @@ function App() {
                       } 
                     />
                     
-                    {/* JupyterHub页面 */}
-                    <Route 
-                      path="/jupyterhub" 
-                      element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <JupyterHubPage />
-                        </Suspense>
-                      } 
-                    />
+                    {/* JupyterHub页面通过nginx静态服务 */}
+                    {/* 已移除React路由，避免与nginx配置冲突 */}
+                    {/* 访问 /jupyterhub 将由nginx直接处理 */}
                     
                     {/* 管理员路由 - 支持 admin 和 super-admin 角色 */}
                     {(user?.role === 'admin' || user?.role === 'super-admin' || (user?.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'))) && (

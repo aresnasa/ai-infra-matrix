@@ -2,7 +2,7 @@
     "swagger": "2.0",
     "info": {
         "description": "用于生成Ansible Playbook的REST API服务",
-        "title": "Ansible Playbook Generator API",
+        "title": "AI-Infra-Matrix API",
         "contact": {},
         "version": "1.0"
     },

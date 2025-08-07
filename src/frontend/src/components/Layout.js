@@ -161,7 +161,7 @@ const Layout = ({ children, user, onLogout }) => {
               fontWeight: 600
             }}
           >
-            Ansible Playbook Generator
+            AI-Infra-Matrix
           </Title>
         </div>
         
@@ -237,7 +237,7 @@ const Layout = ({ children, user, onLogout }) => {
         background: '#f0f2f5',
         borderTop: '1px solid #e8e8e8'
       }}>
-        Ansible Playbook Generator ©2025 Created by DevOps Team
+        AI-Infra-Matrix ©2025 Created by DevOps Team
       </Footer>
     </AntLayout>
   );

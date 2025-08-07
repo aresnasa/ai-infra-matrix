@@ -143,4 +143,11 @@ c.Application.log_level = 'INFO'
 c.JupyterHub.cookie_secret_file = '/srv/jupyterhub/jupyterhub_cookie_secret'
 c.JupyterHub.db_url = 'sqlite:///srv/jupyterhub/jupyterhub.sqlite'
 
-print("简化JWT认证器配置完成")
+# 修复iframe加载问题 - 允许在iframe中嵌入
+c.JupyterHub.tornado_settings = {
+    'headers': {
+        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080 https://localhost:8443"
+    }
+}
+
+print("简化JWT认证器配置完成 - 已启用iframe支持")

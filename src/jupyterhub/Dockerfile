@@ -3,8 +3,8 @@ FROM python:3.13-alpine
 
 # 基础环境和构建工具
 RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories && \
-    apk --no-cache add ca-certificates curl tzdata bash shadow nodejs npm \
-    build-base python3-dev postgresql-dev redis git linux-headers && \
+    apk --no-cache add ca-certificates curl tzdata bash shadow nodejs npm netcat-openbsd \
+    build-base python3-dev postgresql-dev postgresql-client redis git linux-headers && \
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 WORKDIR /srv/jupyterhub
@@ -34,22 +34,20 @@ RUN echo "Build: $(date '+%Y-%m-%d %H:%M:%S')" > /srv/jupyterhub/build_info.txt
 # 配置文件（最后复制，优化缓存）
 COPY jupyterhub_config.py backend_integrated_config.py ./
 
-# 创建数据库等待脚本
+# 创建数据库等待脚本（简化版，只检查连接性）
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \
     echo 'set -e' >> /wait-for-db.sh && \
     echo 'host="$1"' >> /wait-for-db.sh && \
     echo 'shift' >> /wait-for-db.sh && \
     echo 'cmd="$@"' >> /wait-for-db.sh && \
-    echo 'until pg_isready -h "$host" -p 5432 -U postgres; do' >> /wait-for-db.sh && \
+    echo 'echo "Waiting for PostgreSQL at $host:5432..."' >> /wait-for-db.sh && \
+    echo 'while ! nc -z "$host" 5432; do' >> /wait-for-db.sh && \
     echo '  echo "PostgreSQL is unavailable - sleeping"' >> /wait-for-db.sh && \
-    echo '  sleep 1' >> /wait-for-db.sh && \
-    echo 'done' >> /wait-for-db.sh && \
-    echo 'echo "PostgreSQL is up - checking databases..."' >> /wait-for-db.sh && \
-    echo 'until psql -h "$host" -U postgres -d postgres -c "SELECT 1 FROM pg_database WHERE datname='"'"'jupyterhub_db'"'"';" | grep -q 1; do' >> /wait-for-db.sh && \
-    echo '  echo "JupyterHub database not ready - waiting..."' >> /wait-for-db.sh && \
     echo '  sleep 2' >> /wait-for-db.sh && \
     echo 'done' >> /wait-for-db.sh && \
-    echo 'echo "All databases are ready - executing command"' >> /wait-for-db.sh && \
+    echo 'echo "PostgreSQL is up - waiting for backend initialization..."' >> /wait-for-db.sh && \
+    echo 'sleep 10' >> /wait-for-db.sh && \
+    echo 'echo "Backend should be initialized - starting JupyterHub"' >> /wait-for-db.sh && \
     echo 'exec $cmd' >> /wait-for-db.sh && \
     chmod +x /wait-for-db.sh
 

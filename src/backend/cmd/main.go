@@ -23,7 +23,7 @@ import (
 	"github.com/swaggo/gin-swagger"
 )
 
-// @title Ansible Playbook Generator API
+// @title AI-Infra-Matrix API
 // @version 1.0
 // @description 用于生成Ansible Playbook的REST API服务
 // @host localhost:8082
@@ -219,6 +219,7 @@ func main() {
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/login", userHandler.Login)
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
+		auth.POST("/refresh", userHandler.RefreshToken)
 		auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)

@@ -23,7 +23,7 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "localhost:8082",
 	BasePath:         "/api",
 	Schemes:          []string{},
-	Title:            "Ansible Playbook Generator API",
+	Title:            "AI-Infra-Matrix API",
 	Description:      "用于生成Ansible Playbook的REST API服务",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

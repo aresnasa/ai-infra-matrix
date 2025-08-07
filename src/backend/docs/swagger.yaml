@@ -115,7 +115,7 @@ host: localhost:8082
 info:
   contact: {}
   description: 用于生成Ansible Playbook的REST API服务
-  title: Ansible Playbook Generator API
+  title: AI-Infra-Matrix API
   version: "1.0"
 paths:
   /api/hosts:

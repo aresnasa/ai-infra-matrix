@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -885,4 +886,102 @@ func (h *UserHandler) VerifyTokenSimple(c *gin.Context) {
 		"is_active":   user.IsActive,
 		"user_id":     userID,
 	})
+}
+
+// RefreshToken 刷新访问令牌
+// @Summary 刷新访问令牌
+// @Description 刷新用户的访问令牌
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Success 200 {object} models.LoginResponse
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /auth/refresh [post]
+func (h *UserHandler) RefreshToken(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+		return
+	}
+
+	// 检查Bearer token格式
+	tokenParts := strings.SplitN(authHeader, " ", 2)
+	if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
+		return
+	}
+
+	tokenString := tokenParts[1]
+	
+	// 解析现有token
+	claims, err := jwt.ParseToken(tokenString)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	if err := database.DB.First(&user, claims.UserID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	// 检查用户是否仍然活跃
+	if !user.IsActive {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User account is inactive"})
+		return
+	}
+
+	// 获取用户角色和权限
+	roles, err := h.rbacService.GetUserRoles(user.ID)
+	if err != nil {
+		logrus.Error("Get user roles error:", err)
+		roles = []models.Role{}
+	}
+
+	permissions, err := h.rbacService.GetUserPermissions(user.ID)
+	if err != nil {
+		logrus.Error("Get user permissions error:", err)
+		permissions = []models.Permission{}
+	}
+
+	// 提取角色名称和权限键
+	roleNames := make([]string, len(roles))
+	for i, role := range roles {
+		roleNames[i] = role.Name
+	}
+
+	permissionKeys := make([]string, len(permissions))
+	for i, permission := range permissions {
+		permissionKeys[i] = permission.GetPermissionKey()
+	}
+
+	// 生成新的JWT token
+	newToken, expiresAt, err := jwt.GenerateToken(user.ID, user.Username, roleNames, permissionKeys)
+	if err != nil {
+		logrus.Error("Generate token error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	// 更新Redis会话
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+	if err := h.sessionService.CreateSession(&user, newToken, clientIP, userAgent); err != nil {
+		logrus.Error("Create session error:", err)
+		// 会话创建失败不阻止token刷新，只记录错误
+	}
+
+	// 删除旧的会话
+	h.sessionService.DeleteSession(tokenString)
+
+	response := models.LoginResponse{
+		Token:     newToken,
+		User:      user,
+		ExpiresAt: expiresAt,
+	}
+
+	c.JSON(http.StatusOK, response)
 }

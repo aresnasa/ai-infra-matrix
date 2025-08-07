@@ -1,5 +1,5 @@
 -- 
--- Ansible Playbook Generator Database Initialization Script
+-- AI-Infra-Matrix Database Initialization Script
 -- 包含表结构和基础RBAC数据
 -- 
 

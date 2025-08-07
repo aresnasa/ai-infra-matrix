@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta name="cache-version" content="1754584220" data-version="dev">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub - AI基础设施矩阵</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            overflow: hidden;
+        }
+        .header {
+            background: rgba(0,0,0,0.1);
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 500;
+        }
+        .nav-links {
+            display: flex;
+            gap: 15px;
+        }
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        .nav-links a:hover {
+            background-color: rgba(255,255,255,0.1);
+        }
+        .content-frame {
+            margin-top: 50px;
+            height: calc(100vh - 50px);
+            width: 100%;
+            border: none;
+            background: white;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #666;
+        }
+        .loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #e74c3c;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 400px;
+        }
+        .error h3 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        .error button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 AI基础设施矩阵 - JupyterHub</h1>
+        <div class="nav-links">
+            <a href="/" target="_top">🏠 主页</a>
+            <a href="/api" target="_blank">📡 API</a>
+            <a href="/docs" target="_blank">📚 文档</a>
+        </div>
+    </div>
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>正在加载JupyterHub...</p>
+        <p><small>获取认证令牌中...</small></p>
+    </div>
+    <div id="error" class="error hidden">
+        <h3>⚠️ 加载失败</h3>
+        <p>无法连接到JupyterHub服务</p>
+        <p><small id="error-detail">请检查服务状态</small></p>
+        <button onclick="location.reload()">🔄 重试</button>
+    </div>
+    <iframe 
+        id="jupyterhub-frame"
+        class="content-frame hidden"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation allow-downloads">
+    </iframe>
+    <script>
+        let frameLoadRetries = 0;
+        const maxRetries = 3;
+        let isFirstLoad = true;
+        let lastLoadTime = Date.now();
+        let authToken = null;
+
+        // 获取JWT token
+        async function getAuthToken() {
+            try {
+                console.log('正在获取JWT token...');
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: 'admin',
+                        password: 'admin123'
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                if (data.token) {
+                    authToken = data.token;
+                    console.log('JWT token获取成功');
+                    return authToken;
+                } else {
+                    throw new Error('Token response invalid: ' + JSON.stringify(data));
+                }
+            } catch (error) {
+                console.error('获取JWT token失败:', error);
+                throw error;
+            }
+        }
+
+        // 加载JupyterHub iframe
+        async function loadJupyterHub() {
+            try {
+                // 获取认证token
+                await getAuthToken();
+                
+                // 构建带token的URL
+                const jupyterhubUrl = `/jupyter/hub/?token=${encodeURIComponent(authToken)}`;
+                console.log('加载JupyterHub URL:', jupyterhubUrl);
+
+                // 设置iframe源
+                const frame = document.getElementById('jupyterhub-frame');
+                frame.src = jupyterhubUrl;
+                frame.onload = handleFrameLoad;
+                frame.onerror = handleFrameError;
+
+                // 等待加载
+                setTimeout(() => {
+                    if (isFirstLoad) {
+                        console.log('iframe加载超时，可能需要手动刷新');
+                        showLoaded();
+                    }
+                }, 5000);
+
+            } catch (error) {
+                console.error('加载JupyterHub失败:', error);
+                showError('认证失败: ' + error.message);
+            }
+        }
+
+        // 确保页面状态一致性
+        function ensureConsistentState() {
+            // 确保URL始终是 /jupyterhub
+            if (window.location.pathname !== '/jupyterhub') {
+                console.log('URL不一致，修正为/jupyterhub');
+                window.history.replaceState({}, document.title, '/jupyterhub');
+            }
+            
+            // 清理可能的重复监听器
+            window.removeEventListener('message', handleFrameMessage);
+            window.addEventListener('message', handleFrameMessage);
+        }
+
+        function handleFrameLoad() {
+            console.log('iframe加载完成');
+            isFirstLoad = false;
+            frameLoadRetries = 0;
+            lastLoadTime = Date.now();
+            showLoaded();
+        }
+
+        function handleFrameError() {
+            console.error('iframe加载错误');
+            frameLoadRetries++;
+            
+            if (frameLoadRetries < maxRetries) {
+                console.log(`iframe加载失败，重试 ${frameLoadRetries}/${maxRetries}`);
+                setTimeout(() => {
+                    loadJupyterHub();
+                }, 2000 * frameLoadRetries);
+            } else {
+                showError('多次重试后仍无法加载JupyterHub');
+            }
+        }
+
+        function handleFrameMessage(event) {
+            // 处理来自iframe的消息
+            if (event.origin !== window.location.origin) {
+                return;
+            }
+            
+            console.log('收到iframe消息:', event.data);
+            
+            // 可以根据消息类型处理不同逻辑
+            if (event.data.type === 'jupyterhub-ready') {
+                showLoaded();
+            } else if (event.data.type === 'jupyterhub-error') {
+                showError('JupyterHub内部错误: ' + event.data.message);
+            }
+        }
+
+        function showLoaded() {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('error').classList.add('hidden');
+            document.getElementById('jupyterhub-frame').classList.remove('hidden');
+        }
+
+        function showError(message) {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('jupyterhub-frame').classList.add('hidden');
+            document.getElementById('error').classList.remove('hidden');
+            document.getElementById('error-detail').textContent = message;
+        }
+
+        // 健康检查
+        function startHealthCheck() {
+            setInterval(async () => {
+                try {
+                    const response = await fetch('/jupyter/hub/api', { 
+                        method: 'HEAD',
+                        timeout: 5000 
+                    });
+                    if (!response.ok) {
+                        throw new Error('Health check failed');
+                    }
+                } catch (error) {
+                    console.warn('JupyterHub健康检查失败:', error);
+                    // 可以在这里添加重连逻辑
+                }
+            }, 30000); // 每30秒检查一次
+        }
+
+        // 页面可见性变化处理
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                console.log('页面重新可见，检查iframe状态');
+                const timeSinceLastLoad = Date.now() - lastLoadTime;
+                if (timeSinceLastLoad > 300000) { // 5分钟无活动则刷新
+                    console.log('长时间无活动，刷新iframe');
+                    loadJupyterHub();
+                }
+            }
+        });
+
+        // 初始化
+        window.addEventListener('load', () => {
+            ensureConsistentState();
+            loadJupyterHub();
+            startHealthCheck();
+        });
+
+        // 如果DOM已经加载完成
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                ensureConsistentState();
+                loadJupyterHub();
+                startHealthCheck();
+            });
+        } else {
+            ensureConsistentState();
+            loadJupyterHub();
+            startHealthCheck();
+        }
+    </script>
+</body>
+</html>

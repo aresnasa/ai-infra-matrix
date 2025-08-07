@@ -287,6 +287,7 @@ services:
     volumes:
       - ./src/nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./src/shared/sso:/usr/share/nginx/html/sso:ro
+      - ./src/shared/jupyterhub:/usr/share/nginx/html/jupyterhub:ro
       - nginx_logs:/var/log/nginx
     depends_on:
       frontend:
