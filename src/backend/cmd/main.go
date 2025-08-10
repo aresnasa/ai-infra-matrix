@@ -246,6 +246,21 @@ func main() {
 			auth.POST("/refresh-jupyterhub-token", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.RefreshJupyterHubToken)
 		}
 
+		// JupyterHub前端访问路由
+		jupyter := api.Group("/jupyter")
+		{
+			// 需要认证的路由
+			jupyterAuth := jupyter.Group("")
+			jupyterAuth.Use(middleware.AuthMiddlewareWithSession())
+			{
+				jupyterAuth.POST("/access", jupyterHubAuthHandler.HandleJupyterHubAccess)
+				jupyterAuth.GET("/status", jupyterHubAuthHandler.GetJupyterHubAccessStatus)
+			}
+			
+			// 公共路由（用于检查服务状态）
+			jupyter.GET("/health", jupyterHubAuthHandler.GetJupyterHubStatus)
+		}
+
 		// 用户管理路由（管理员）
 		users := api.Group("/users")
 		users.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())

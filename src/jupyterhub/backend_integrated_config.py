@@ -60,7 +60,7 @@ class BackendIntegratedAuthenticator(Authenticator):
     
     backend_url = Unicode(BACKEND_URL, config=True, help="后端API地址")
     jwt_secret = Unicode(JWT_SECRET, config=True, help="JWT签名密钥")
-    auto_login = True  # 启用自动登录：访问 /hub/login 时直接跳转到 login_url
+    auto_login = False  # 禁用自动登录避免重定向循环
 
     def login_url(self, base_url):
         """返回自动登录入口，配合 auto_login 使用。
@@ -277,7 +277,7 @@ c.BackendIntegratedAuthenticator.jwt_secret = JWT_SECRET
 c.Authenticator.allow_all = True  # 用户权限由后端控制
 c.Authenticator.admin_users = set()  # 管理员由后端API确定
 c.Authenticator.enable_auth_state = True  # 启用认证状态传递
-c.Authenticator.auto_login = True  # 访问 /hub/login 时直接进入自动登录流程
+# c.Authenticator.auto_login = True  # 禁用自动登录避免重定向循环
 
 class AutoLoginHandler(BaseHandler):
     """自动登录处理器：验证JWT并登录用户"""

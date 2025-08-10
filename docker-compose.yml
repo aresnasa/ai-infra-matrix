@@ -282,6 +282,9 @@ services:
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
+      args:
+        DEBUG_MODE: ${DEBUG_MODE:-false}
+        BUILD_ENV: ${BUILD_ENV:-production}
     image: ai-infra-nginx:latest
     container_name: ai-infra-nginx
     ports:
@@ -291,6 +294,9 @@ services:
       # 仅挂载日志目录，静态文件已嵌入镜像
       - nginx_logs:/var/log/nginx
     environment:
+      # 构建和调试配置
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - BUILD_ENV=${BUILD_ENV:-production}
       # 分布式部署支持
       - BACKEND_HOST=${BACKEND_HOST:-backend}
       - BACKEND_PORT=${BACKEND_PORT:-8082}

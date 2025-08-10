@@ -71,13 +71,25 @@ type ServerActionRequest struct {
 // @Failure 500 {object} map[string]interface{}
 // @Router /jupyterhub/status [get]
 func (h *JupyterHubAuthHandler) GetJupyterHubStatus(c *gin.Context) {
-	// 这里可以添加实际的JupyterHub健康检查
-	// 暂时返回模拟状态
+	// 检查JupyterHub实际健康状态
+	status, version, url, err := h.checkJupyterHubHealth()
+	
+	var message string
+	if err != nil {
+		status = "disconnected"
+		message = fmt.Sprintf("JupyterHub连接失败: %v", err)
+		logrus.WithError(err).Warning("JupyterHub健康检查失败")
+	} else if status == "connected" {
+		message = "JupyterHub统一认证系统运行正常"
+	} else {
+		message = "JupyterHub服务状态异常"
+	}
+	
 	response := JupyterHubStatusResponse{
-		Status:  "connected",
-		Version: "5.3.0",
-		URL:     "http://localhost:8088",
-		Message: "JupyterHub统一认证系统运行正常",
+		Status:  status,
+		Version: version,
+		URL:     url,
+		Message: message,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -297,8 +309,8 @@ func (h *JupyterHubAuthHandler) RedirectToJupyterHub(c *gin.Context) {
 		nextURL = "/hub/home"
 	}
 
-	// 构建JupyterHub URL - 使用默认配置
-	jupyterhubURL := "http://localhost:8088"
+	// 构建JupyterHub URL - 使用容器网络地址
+	jupyterhubURL := "http://ai-infra-jupyterhub:8000"
 
 	// 构建重定向URL，包含token和目标页面
 	redirectURL := fmt.Sprintf("%s/unified-login?token=%s&next=%s", 
@@ -614,4 +626,205 @@ func (h *JupyterHubAuthHandler) RefreshJupyterHubToken(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// JupyterHubAccessRequest JupyterHub访问请求
+type JupyterHubAccessRequest struct {
+	RedirectURI string `json:"redirect_uri,omitempty"`
+	Source      string `json:"source,omitempty"` // frontend, api, direct
+}
+
+// JupyterHubAccessResponse JupyterHub访问响应
+type JupyterHubAccessResponse struct {
+	Success     bool   `json:"success"`
+	Action      string `json:"action"`      // redirect, authenticated, error
+	RedirectURL string `json:"redirect_url,omitempty"`
+	Token       string `json:"token,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Message     string `json:"message"`
+}
+
+// HandleJupyterHubAccess 处理前端JupyterHub访问请求
+// @Summary 处理JupyterHub访问请求
+// @Description 智能处理前端JupyterHub访问，根据认证状态返回适当的响应
+// @Tags JupyterHub访问
+// @Accept json
+// @Produce json
+// @Param request body JupyterHubAccessRequest false "访问请求参数"
+// @Success 200 {object} JupyterHubAccessResponse
+// @Failure 401 {object} JupyterHubAccessResponse
+// @Failure 500 {object} JupyterHubAccessResponse
+// @Router /jupyter/access [post]
+func (h *JupyterHubAuthHandler) HandleJupyterHubAccess(c *gin.Context) {
+	var request JupyterHubAccessRequest
+	// 允许空的请求体
+	c.ShouldBindJSON(&request)
+
+	// 设置默认值
+	if request.RedirectURI == "" {
+		request.RedirectURI = "/jupyterhub-authenticated"
+	}
+	if request.Source == "" {
+		request.Source = "frontend"
+	}
+
+	// 记录访问日志
+	logrus.WithFields(logrus.Fields{
+		"source":       request.Source,
+		"redirect_uri": request.RedirectURI,
+		"user_agent":   c.GetHeader("User-Agent"),
+		"remote_addr":  c.ClientIP(),
+	}).Info("收到JupyterHub访问请求")
+
+	// 检查用户认证状态
+	userID, authenticated := c.Get("user_id")
+	if !authenticated {
+		// 用户未认证，返回重定向到SSO
+		response := JupyterHubAccessResponse{
+			Success:     false,
+			Action:      "redirect",
+			RedirectURL: fmt.Sprintf("/sso/?redirect_uri=%s", request.RedirectURI),
+			Message:     "需要登录，请跳转到SSO",
+		}
+		c.JSON(http.StatusUnauthorized, response)
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	if err := h.db.Preload("Roles").First(&user, userID).Error; err != nil {
+		logrus.WithError(err).Error("查询用户信息失败")
+		response := JupyterHubAccessResponse{
+			Success:     false,
+			Action:      "error",
+			Message:     "查询用户信息失败",
+		}
+		c.JSON(http.StatusInternalServerError, response)
+		return
+	}
+
+	// 生成或刷新JupyterHub令牌
+	token, expiresAt, err := h.generateJupyterHubToken(user)
+	if err != nil {
+		logrus.WithError(err).Error("生成JupyterHub令牌失败")
+		response := JupyterHubAccessResponse{
+			Success:     false,
+			Action:      "error",
+			Message:     "生成访问令牌失败",
+		}
+		c.JSON(http.StatusInternalServerError, response)
+		return
+	}
+
+	// 缓存令牌
+	if err := h.cacheJupyterHubToken(user.Username, token, expiresAt); err != nil {
+		logrus.WithError(err).Warning("缓存JupyterHub令牌失败")
+	}
+
+	// 记录成功访问
+	logrus.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"action":   "jupyterhub_access_granted",
+	}).Info("用户获得JupyterHub访问权限")
+
+	// 返回成功响应
+	response := JupyterHubAccessResponse{
+		Success:     true,
+		Action:      "authenticated",
+		RedirectURL: request.RedirectURI,
+		Token:       token,
+		Username:    user.Username,
+		Message:     "认证成功，可以访问JupyterHub",
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetJupyterHubAccessStatus 获取JupyterHub访问状态
+// @Summary 获取当前用户的JupyterHub访问状态
+// @Description 检查当前用户是否可以访问JupyterHub
+// @Tags JupyterHub访问
+// @Produce json
+// @Success 200 {object} JupyterHubAccessResponse
+// @Failure 401 {object} JupyterHubAccessResponse
+// @Router /jupyter/status [get]
+func (h *JupyterHubAuthHandler) GetJupyterHubAccessStatus(c *gin.Context) {
+	// 检查用户认证状态
+	userID, authenticated := c.Get("user_id")
+	if !authenticated {
+		response := JupyterHubAccessResponse{
+			Success:     false,
+			Action:      "redirect",
+			RedirectURL: "/sso/?redirect_uri=/jupyterhub-authenticated",
+			Message:     "用户未认证",
+		}
+		c.JSON(http.StatusUnauthorized, response)
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		response := JupyterHubAccessResponse{
+			Success: false,
+			Action:  "error",
+			Message: "获取用户信息失败",
+		}
+		c.JSON(http.StatusInternalServerError, response)
+		return
+	}
+
+	// 检查是否有有效的JupyterHub令牌
+	cacheKey := fmt.Sprintf("jupyterhub:token:%s", user.Username)
+	cachedToken, err := h.redisClient.Get(context.Background(), cacheKey).Result()
+	
+	var hasValidToken bool
+	if err == nil && cachedToken != "" {
+		// 验证缓存的令牌
+		isValid, _, tokenErr := h.validateJupyterHubToken(cachedToken, user.Username)
+		hasValidToken = (tokenErr == nil && isValid)
+	}
+
+	response := JupyterHubAccessResponse{
+		Success:  hasValidToken,
+		Action:   "status",
+		Username: user.Username,
+		Message:  "JupyterHub访问状态检查完成",
+	}
+
+	if hasValidToken {
+		response.Token = cachedToken
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// checkJupyterHubHealth 检查JupyterHub实际健康状态
+func (h *JupyterHubAuthHandler) checkJupyterHubHealth() (string, string, string, error) {
+	// JupyterHub容器地址
+	jupyterhubURL := "http://ai-infra-jupyterhub:8000/jupyter/hub/api"
+	
+	// 创建HTTP客户端，设置较短的超时时间
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	
+	// 发送健康检查请求
+	resp, err := client.Get(jupyterhubURL)
+	if err != nil {
+		return "disconnected", "unknown", "http://ai-infra-jupyterhub:8000", err
+	}
+	defer resp.Body.Close()
+	
+	// 根据响应状态判断健康状态
+	var status string
+	
+	if resp.StatusCode == 200 {
+		status = "connected"
+	} else {
+		status = "warning"
+	}
+	
+	return status, "5.3.0", "http://ai-infra-jupyterhub:8000", nil
 }

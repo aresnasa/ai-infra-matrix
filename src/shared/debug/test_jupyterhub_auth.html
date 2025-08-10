@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JupyterHub 认证测试</title>
+</head>
+<body>
+    <h1>JupyterHub 认证桥接测试</h1>
+    
+    <div>
+        <h2>测试场景</h2>
+        <button onclick="testWithoutToken()">测试无token访问</button>
+        <button onclick="testWithToken()">测试有token访问</button>
+        <button onclick="testIframeAccess()">测试iframe访问</button>
+    </div>
+    
+    <div id="result" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;"></div>
+
+    <script>
+        function log(message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML += '<p>' + new Date().toLocaleTimeString() + ': ' + message + '</p>';
+        }
+
+        function testWithoutToken() {
+            log('清除localStorage中的token...');
+            localStorage.removeItem('token');
+            log('重定向到 /jupyterhub (应该自动跳转到登录页面)');
+            window.open('/jupyterhub', '_blank');
+        }
+
+        function testWithToken() {
+            log('设置测试token到localStorage...');
+            localStorage.setItem('token', 'test_token_12345');
+            log('重定向到 /jupyterhub (应该尝试验证token)');
+            window.open('/jupyterhub', '_blank');
+        }
+
+        function testIframeAccess() {
+            log('设置测试token并创建iframe...');
+            localStorage.setItem('token', 'test_token_12345');
+            
+            const iframe = document.createElement('iframe');
+            iframe.src = '/jupyterhub?token=test_token_12345';
+            iframe.style.width = '80%';
+            iframe.style.height = '400px';
+            iframe.style.border = '1px solid #999';
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.appendChild(iframe);
+            log('已创建iframe，观察其行为...');
+        }
+    </script>
+</body>
+</html>

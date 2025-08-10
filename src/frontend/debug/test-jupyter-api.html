@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub API 集成测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .test-section { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; color: #0c5460; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        .log { background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 10px; margin: 10px 0; font-family: monospace; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>JupyterHub API 集成测试</h1>
+        
+        <div class="test-section info">
+            <h3>测试说明</h3>
+            <p>此页面用于测试前端页面访问JupyterHub时是否正确调用后端API <code>/api/jupyter/access</code></p>
+        </div>
+
+        <div class="test-section">
+            <h3>1. 登录获取Token</h3>
+            <button onclick="testLogin()">测试登录</button>
+            <div id="login-result" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. 测试JupyterHub健康检查</h3>
+            <button onclick="testHealth()">测试健康检查</button>
+            <div id="health-result" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. 测试JupyterHub访问API（需要认证）</h3>
+            <button onclick="testJupyterAccess()">测试访问API</button>
+            <div id="access-result" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>4. 测试JupyterHub状态API（需要认证）</h3>
+            <button onclick="testJupyterStatus()">测试状态API</button>
+            <div id="status-result" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>5. 模拟前端JupyterHub访问流程</h3>
+            <button onclick="simulateFrontendAccess()">模拟前端访问</button>
+            <div id="frontend-result" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let authToken = null;
+
+        function log(elementId, message, isError = false) {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const logMessage = `[${timestamp}] ${message}\n`;
+            element.textContent += logMessage;
+            
+            if (isError) {
+                element.parentElement.className = 'test-section error';
+            } else {
+                element.parentElement.className = 'test-section success';
+            }
+        }
+
+        function clearLog(elementId) {
+            document.getElementById(elementId).textContent = '';
+            document.getElementById(elementId).parentElement.className = 'test-section';
+        }
+
+        async function testLogin() {
+            clearLog('login-result');
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: 'admin',
+                        password: 'admin123'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.token;
+                    log('login-result', `登录成功！\nToken: ${authToken.substring(0, 50)}...\nUser: ${data.user.username}`);
+                } else {
+                    log('login-result', `登录失败: ${data.message || '未知错误'}`, true);
+                }
+            } catch (error) {
+                log('login-result', `登录异常: ${error.message}`, true);
+            }
+        }
+
+        async function testHealth() {
+            clearLog('health-result');
+            
+            try {
+                const response = await fetch('/api/jupyter/health');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    log('health-result', `健康检查成功！\n${JSON.stringify(data, null, 2)}`);
+                } else {
+                    log('health-result', `健康检查失败: ${data.message || '未知错误'}`, true);
+                }
+            } catch (error) {
+                log('health-result', `健康检查异常: ${error.message}`, true);
+            }
+        }
+
+        async function testJupyterAccess() {
+            clearLog('access-result');
+            
+            if (!authToken) {
+                log('access-result', '请先登录获取Token！', true);
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/jupyter/access', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        action: 'login'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    log('access-result', `JupyterHub访问API调用成功！\n${JSON.stringify(data, null, 2)}`);
+                } else {
+                    log('access-result', `JupyterHub访问API失败: ${data.message || '未知错误'}`, true);
+                }
+            } catch (error) {
+                log('access-result', `JupyterHub访问API异常: ${error.message}`, true);
+            }
+        }
+
+        async function testJupyterStatus() {
+            clearLog('status-result');
+            
+            if (!authToken) {
+                log('status-result', '请先登录获取Token！', true);
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/jupyter/status', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    log('status-result', `JupyterHub状态API调用成功！\n${JSON.stringify(data, null, 2)}`);
+                } else {
+                    log('status-result', `JupyterHub状态API失败: ${data.message || '未知错误'}`, true);
+                }
+            } catch (error) {
+                log('status-result', `JupyterHub状态API异常: ${error.message}`, true);
+            }
+        }
+
+        async function simulateFrontendAccess() {
+            clearLog('frontend-result');
+            
+            if (!authToken) {
+                log('frontend-result', '请先登录获取Token！', true);
+                return;
+            }
+
+            try {
+                log('frontend-result', '开始模拟前端JupyterHub访问流程...');
+                
+                // 步骤1: 调用后端API获取访问权限
+                log('frontend-result', '步骤1: 调用后端 /api/jupyter/access API...');
+                const accessResponse = await fetch('/api/jupyter/access', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        action: 'login'
+                    })
+                });
+
+                const accessData = await accessResponse.json();
+                
+                if (!accessResponse.ok) {
+                    log('frontend-result', `后端API调用失败: ${accessData.message}`, true);
+                    return;
+                }
+
+                log('frontend-result', `后端API调用成功: ${accessData.message}`);
+                log('frontend-result', `获得重定向URL: ${accessData.redirect_url}`);
+                log('frontend-result', `获得新的认证Token: ${accessData.token.substring(0, 50)}...`);
+
+                // 步骤2: 模拟前端重定向行为
+                log('frontend-result', '步骤2: 模拟前端重定向到JupyterHub...');
+                log('frontend-result', `✅ 前端到后端API集成测试成功！`);
+                log('frontend-result', `✅ 前端访问JupyterHub已正确触发后端 /api/jupyter/access 调用`);
+                log('frontend-result', `✅ 后端返回了正确的认证信息和重定向URL`);
+                
+            } catch (error) {
+                log('frontend-result', `前端访问流程异常: ${error.message}`, true);
+            }
+        }
+    </script>
+</body>
+</html>

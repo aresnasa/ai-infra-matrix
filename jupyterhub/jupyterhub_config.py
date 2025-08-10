@@ -40,7 +40,7 @@ c.Authenticator.admin_users = {'admin'}
 # 网络配置 - 修复重定向循环问题
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
 c.JupyterHub.hub_bind_url = 'http://0.0.0.0:8081'
-c.JupyterHub.base_url = '/'  # 使用根路径，由nginx处理路径前缀
+c.JupyterHub.base_url = '/jupyter/'  # 设置正确的base_url与nginx代理路径匹配
 
 # Spawner配置
 c.JupyterHub.spawner_class = 'jupyterhub.spawner.SimpleLocalProcessSpawner'

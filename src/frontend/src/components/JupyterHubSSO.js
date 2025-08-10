@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Button, message, Space, Typography, Alert, Spin } from 'antd';
-import { PlayCircleOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, LinkOutlined, WarningOutlined, AppstoreOutlined } from '@ant-design/icons';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -39,22 +39,36 @@ const JupyterHubSSO = () => {
     setSSO状态('checking');
     
     try {
-      // 检查认证状态
-      const isAuthenticated = await checkSSOStatus();
-      if (!isAuthenticated) {
+      // 调用后端API检查认证状态和获取访问权限
+      const response = await fetch('/api/jupyter/access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        },
+        body: JSON.stringify({
+          redirect_uri: '/jupyterhub-authenticated',
+          source: 'frontend_sso_component'
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success && data.action === 'authenticated') {
+        // 认证成功，可以直接跳转
+        setSSO状态('success');
+        message.success('认证成功，正在跳转到JupyterHub...');
+        window.location.href = data.redirect_url;
+        
+      } else if (data.action === 'redirect') {
+        // 需要重定向到SSO登录
         setSSO状态('error');
-        return;
-      }
-
-      setSSO状态('success');
-      message.success('正在跳转到JupyterHub...');
-
-      // 使用认证服务跳转（会自动设置SSO状态）
-      if (window.authService) {
-        await window.authService.goToJupyterHub('/');
+        message.info('需要登录，正在跳转到SSO...');
+        window.location.href = data.redirect_url;
+        
       } else {
-        // 降级方案：直接跳转
-        window.location.href = '/jupyter/hub/';
+        // 其他错误情况
+        throw new Error(data.message || '未知错误');
       }
 
     } catch (error) {
@@ -62,8 +76,104 @@ const JupyterHubSSO = () => {
       setErrorMessage(error.message);
       setSSO状态('error');
       message.error(`访问失败: ${error.message}`);
+      
+      // 出错时也跳转到SSO登录页面
+      setTimeout(() => {
+        window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated';
+      }, 1500);
     } finally {
       setLoading(false);
+    }
+  };
+
+    const handleJupyterHubIframe = () => {
+    if (ssoStatus === 'success') {
+      // 获取当前token
+      const token = localStorage.getItem('token');
+      // 使用认证后的地址，并传递token参数
+      const iframeSrc = token ? `/jupyterhub-authenticated?token=${encodeURIComponent(token)}` : '/jupyterhub-authenticated';
+      
+      // 创建iframe模态框
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        z-index: 10000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      `;
+
+      const iframeContainer = document.createElement('div');
+      iframeContainer.style.cssText = `
+        position: relative;
+        width: 95%;
+        height: 95%;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+      `;
+
+      const closeButton = document.createElement('button');
+      closeButton.innerHTML = '✕';
+      closeButton.style.cssText = `
+        position: absolute;
+        top: 10px;
+        right: 15px;
+        background: #ff4d4f;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        cursor: pointer;
+        font-size: 16px;
+        z-index: 10001;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+
+      const iframe = document.createElement('iframe');
+      iframe.src = iframeSrc;
+      iframe.style.cssText = `
+        width: 100%;
+        height: 100%;
+        border: none;
+      `;
+
+      // 监听iframe消息
+      const messageHandler = (event) => {
+        if (event.data.type === 'jupyterhub_auth_error') {
+          console.error('JupyterHub认证错误:', event.data.message);
+          document.body.removeChild(modal);
+          window.removeEventListener('message', messageHandler);
+        }
+      };
+      window.addEventListener('message', messageHandler);
+
+      closeButton.onclick = () => {
+        document.body.removeChild(modal);
+        window.removeEventListener('message', messageHandler);
+      };
+      modal.onclick = (e) => {
+        if (e.target === modal) {
+          document.body.removeChild(modal);
+          window.removeEventListener('message', messageHandler);
+        }
+      };
+
+      iframeContainer.appendChild(iframe);
+      iframeContainer.appendChild(closeButton);
+      modal.appendChild(iframeContainer);
+      document.body.appendChild(modal);
+    } else {
+      message.error('请先完成SSO认证');
     }
   };
 
@@ -150,7 +260,18 @@ const JupyterHubSSO = () => {
             onClick={handleJupyterHubAccess}
             disabled={ssoStatus === 'error'}
           >
-            访问 JupyterHub
+            新窗口访问
+          </Button>
+
+          <Button
+            type="default"
+            size="large"
+            icon={<AppstoreOutlined />}
+            loading={loading}
+            onClick={handleJupyterHubIframe}
+            disabled={ssoStatus === 'error'}
+          >
+            iframe内访问
           </Button>
 
           <Button

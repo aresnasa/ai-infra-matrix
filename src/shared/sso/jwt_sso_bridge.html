@@ -160,6 +160,29 @@
             <a href="/" class="btn btn-secondary">返回首页</a>
             <button onclick="toggleDebug()" class="btn btn-secondary">调试信息</button>
         </div>
+
+        <!-- 登录表单 -->
+        <div id="loginForm" style="display: none;">
+            <div style="margin: 20px 0;">
+                <h3 style="color: #333; margin-bottom: 20px;">用户登录</h3>
+                <form onsubmit="handleLogin(event)" style="text-align: left;">
+                    <div style="margin-bottom: 15px;">
+                        <label for="username" style="display: block; margin-bottom: 5px; font-weight: 500;">用户名:</label>
+                        <input type="text" id="username" name="username" required 
+                               style="width: 100%; padding: 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;">
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label for="password" style="display: block; margin-bottom: 5px; font-weight: 500;">密码:</label>
+                        <input type="password" id="password" name="password" required
+                               style="width: 100%; padding: 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;">
+                    </div>
+                    <div style="text-align: center;">
+                        <button type="submit" class="btn btn-primary" style="margin-right: 10px;">登录</button>
+                        <button type="button" onclick="showTestLogin()" class="btn btn-secondary">测试登录</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -207,6 +230,85 @@
             document.getElementById('actions').style.display = 'block';
         }
 
+        function showLoginForm() {
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('actions').style.display = 'none';
+        }
+
+        function hideLoginForm() {
+            document.getElementById('loginForm').style.display = 'none';
+        }
+
+        // 处理用户登录
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            updateStatus('正在验证用户信息...', 'loading');
+            
+            try {
+                // 调用后端登录API
+                const loginResponse = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password
+                    })
+                });
+                
+                if (!loginResponse.ok) {
+                    throw new Error(`登录失败: ${loginResponse.status} ${loginResponse.statusText}`);
+                }
+                
+                const loginData = await loginResponse.json();
+                
+                if (!loginData.token) {
+                    throw new Error('登录响应中未包含token');
+                }
+                
+                // 保存token到localStorage
+                localStorage.setItem('token', loginData.token);
+                if (loginData.expires_at) {
+                    localStorage.setItem('token_expires', loginData.expires_at);
+                }
+                
+                log(`登录成功: ${username}`);
+                updateStatus('登录成功，正在进行单点登录设置...', 'success');
+                hideLoginForm();
+                
+                // 延迟后重新执行SSO流程
+                setTimeout(() => {
+                    performSSO();
+                }, 1000);
+                
+            } catch (error) {
+                log(`登录失败: ${error.message}`, 'error');
+                updateStatus(`登录失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 测试登录（仅用于开发环境）
+        function showTestLogin() {
+            const mockToken = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzIzMzEwNDAwfQ.test_signature';
+            const expires = new Date(Date.now() + 3600000).toISOString();
+            
+            localStorage.setItem('token', mockToken);
+            localStorage.setItem('token_expires', expires);
+            
+            log('已设置测试token', 'info');
+            updateStatus('测试token已设置，继续认证流程...', 'loading');
+            hideLoginForm();
+            
+            setTimeout(() => {
+                performSSO();
+            }, 1000);
+        }
+
         async function performSSO() {
             try {
                 log('开始SSO流程');
@@ -216,11 +318,9 @@
                 const tokenExpires = localStorage.getItem('token_expires');
                 
                 if (!token) {
-                    log('未找到认证token', 'error');
+                    log('未找到认证token，展示登录表单', 'info');
                     updateStatus('未找到认证信息，请先登录', 'error');
-                    setTimeout(() => {
-                        window.location.href = '/';
-                    }, 3000);
+                    showLoginForm();
                     return;
                 }
                 
@@ -283,8 +383,8 @@
                 if (!verifyResponse.ok) {
                     throw new Error(`验证失败: ${verifyResponse.status}`);
                 }
-                
                 const userData = await verifyResponse.json();
+                
                 log(`用户验证成功: ${userData.username}`);
                 
                 // 4. 设置JupyterHub SSO cookie
@@ -314,7 +414,7 @@
                 
                 // 6. 获取重定向目标
                 const urlParams = new URLSearchParams(window.location.search);
-                const nextUrl = urlParams.get('next') || '/jupyter/hub/';
+                const nextUrl = urlParams.get('redirect_uri') || urlParams.get('next') || '/jupyter/hub/';
                 
                 log(`准备重定向到: ${nextUrl}`);
                 updateStatus('单点登录设置完成，正在跳转...', 'success');

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>调试工具中心 - AI基础设施矩阵</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 300;
+        }
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 30px;
+        }
+        .tool-card {
+            border: 1px solid #e1e5e9;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .tool-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border-color: #667eea;
+        }
+        .tool-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .tool-description {
+            color: #7f8c8d;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+        .tool-link {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 500;
+            transition: opacity 0.3s ease;
+        }
+        .tool-link:hover {
+            opacity: 0.9;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-online { background-color: #27ae60; }
+        .status-offline { background-color: #e74c3c; }
+        .status-warning { background-color: #f39c12; }
+        .footer {
+            padding: 20px 30px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #e1e5e9;
+            text-align: center;
+            color: #6c757d;
+        }
+        .timestamp {
+            font-size: 0.9rem;
+            color: #95a5a6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛠️ 调试工具中心</h1>
+            <p>AI基础设施矩阵系统 - 开发与调试工具集合</p>
+        </div>
+
+        <div class="tools-grid">
+            <div class="tool-card" onclick="location.href='/debug/test-jupyter-api.html'">
+                <div class="tool-title">
+                    <span class="status-indicator status-online"></span>
+                    JupyterHub API 集成测试
+                </div>
+                <div class="tool-description">
+                    测试前端JupyterHub访问是否正确调用后端API接口，验证认证流程和API响应。
+                </div>
+                <a href="/debug/test-jupyter-api.html" class="tool-link">启动测试</a>
+            </div>
+
+            <div class="tool-card" onclick="checkSystemStatus()">
+                <div class="tool-title">
+                    <span class="status-indicator status-online"></span>
+                    系统状态监控
+                </div>
+                <div class="tool-description">
+                    实时监控系统各组件状态，包括前端、后端、数据库、JupyterHub等服务的健康状况。
+                </div>
+                <a href="#" class="tool-link" onclick="event.preventDefault(); checkSystemStatus();">检查状态</a>
+            </div>
+
+            <div class="tool-card" onclick="testAuthentication()">
+                <div class="tool-title">
+                    <span class="status-indicator status-warning"></span>
+                    认证系统测试
+                </div>
+                <div class="tool-description">
+                    测试用户认证、JWT令牌生成、权限验证等认证相关功能的完整性。
+                </div>
+                <a href="#" class="tool-link" onclick="event.preventDefault(); testAuthentication();">测试认证</a>
+            </div>
+
+            <div class="tool-card" onclick="location.href='/api/health'">
+                <div class="tool-title">
+                    <span class="status-indicator status-online"></span>
+                    API 健康检查
+                </div>
+                <div class="tool-description">
+                    检查后端API服务的健康状态，包括数据库连接、缓存服务等基础设施组件。
+                </div>
+                <a href="/api/health" class="tool-link">查看健康状态</a>
+            </div>
+
+            <div class="tool-card" onclick="location.href='/'">
+                <div class="tool-title">
+                    <span class="status-indicator status-online"></span>
+                    返回主应用
+                </div>
+                <div class="tool-description">
+                    返回到主前端应用界面，进行正常的系统操作和管理。
+                </div>
+                <a href="/" class="tool-link">返回主页</a>
+            </div>
+
+            <div class="tool-card" onclick="openDocumentation()">
+                <div class="tool-title">
+                    <span class="status-indicator status-offline"></span>
+                    系统文档
+                </div>
+                <div class="tool-description">
+                    查看系统架构文档、API文档、部署指南等开发文档资源。
+                </div>
+                <a href="#" class="tool-link" onclick="event.preventDefault(); openDocumentation();">查看文档</a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="timestamp">最后更新时间: <span id="current-time"></span></div>
+            <div style="margin-top: 10px;">
+                <strong>AI基础设施矩阵</strong> v0.0.3 - 调试模式
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 更新当前时间
+        function updateTime() {
+            document.getElementById('current-time').textContent = new Date().toLocaleString('zh-CN');
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
+
+        // 系统状态检查
+        async function checkSystemStatus() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                alert('系统状态检查完成:\n' + JSON.stringify(data, null, 2));
+            } catch (error) {
+                alert('系统状态检查失败: ' + error.message);
+            }
+        }
+
+        // 认证系统测试
+        async function testAuthentication() {
+            try {
+                const response = await fetch('/api/auth/verify');
+                if (response.ok) {
+                    alert('认证系统正常运行');
+                } else {
+                    alert('认证系统测试: 需要登录');
+                }
+            } catch (error) {
+                alert('认证系统测试失败: ' + error.message);
+            }
+        }
+
+        // 打开文档
+        function openDocumentation() {
+            alert('文档功能开发中...\n可查看项目根目录下的README.md和docs文件夹');
+        }
+
+        // 添加键盘快捷键
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case '1':
+                        e.preventDefault();
+                        location.href = '/debug/test-jupyter-api.html';
+                        break;
+                    case '2':
+                        e.preventDefault();
+                        checkSystemStatus();
+                        break;
+                    case '3':
+                        e.preventDefault();
+                        testAuthentication();
+                        break;
+                    case 'h':
+                        e.preventDefault();
+                        location.href = '/';
+                        break;
+                }
+            }
+        });
+    </script>
+</body>
+</html>

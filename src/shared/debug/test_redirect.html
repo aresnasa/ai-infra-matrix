@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>JupyterHub重定向测试</title>
+</head>
+<body>
+    <h1>测试JupyterHub自动跳转</h1>
+    <p id="status">正在测试...</p>
+    <script>
+        // 模拟访问 /jupyterhub 的行为
+        fetch('/jupyterhub')
+            .then(response => {
+                document.getElementById('status').innerHTML = 
+                    `响应状态: ${response.status}<br>` +
+                    `URL: ${response.url}<br>` +
+                    `重定向: ${response.redirected ? '是' : '否'}`;
+                
+                // 检查是否有JavaScript重定向
+                const iframe = document.createElement('iframe');
+                iframe.src = '/jupyterhub';
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+                
+                // 监听iframe加载
+                iframe.onload = () => {
+                    setTimeout(() => {
+                        try {
+                            const currentUrl = iframe.contentWindow.location.href;
+                            document.getElementById('status').innerHTML += 
+                                `<br>Iframe最终URL: ${currentUrl}`;
+                        } catch (e) {
+                            document.getElementById('status').innerHTML += 
+                                `<br>无法获取iframe URL (可能已跳转): ${e.message}`;
+                        }
+                    }, 2000);
+                };
+            })
+            .catch(err => {
+                document.getElementById('status').innerHTML = `错误: ${err.message}`;
+            });
+    </script>
+</body>
+</html>

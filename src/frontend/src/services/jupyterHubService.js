@@ -10,51 +10,53 @@ class JupyterHubService {
     constructor() {
         this.baseURL = window.location.origin;
         this.jupyterHubURL = `${this.baseURL}/jupyter/`;
+        this.ssoLoginURL = `${this.baseURL}/sso/?redirect_uri=/jupyterhub-authenticated`;
     }
 
     /**
-     * 一键登录JupyterHub - 完整的SSO体验
+     * 一键登录JupyterHub - 使用后端API处理
      */
     async loginWithSSO() {
         try {
-            // 获取当前用户信息
-            const userResponse = await api.get('/auth/me');
-            if (!userResponse.data || !userResponse.data.username) {
-                throw new Error('请先登录系统');
-            }
-
-            const username = userResponse.data.username;
-
-            // 生成JupyterHub登录令牌
-            const tokenResponse = await api.post('/auth/jupyterhub-login', {
-                username: username
+            // 调用后端API处理JupyterHub访问
+            const response = await fetch('/api/jupyter/access', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+                },
+                body: JSON.stringify({
+                    redirect_uri: '/jupyterhub-authenticated',
+                    source: 'jupyterhub_service'
+                })
             });
 
-            if (!tokenResponse.data || !tokenResponse.data.success) {
-                throw new Error(tokenResponse.data?.message || '生成登录令牌失败');
+            const data = await response.json();
+            
+            if (data.success && data.action === 'authenticated') {
+                // 认证成功，直接跳转
+                message.success('认证成功，正在跳转到JupyterHub...');
+                window.location.href = data.redirect_url;
+                return { success: true, username: data.username };
+                
+            } else if (data.action === 'redirect') {
+                // 需要重定向到SSO登录
+                message.info('需要登录，正在跳转到SSO...');
+                window.location.href = data.redirect_url;
+                return;
+                
+            } else {
+                throw new Error(data.message || '访问失败');
             }
-
-            const token = tokenResponse.data.token;
-
-            // 设置认证相关的cookie
-            await this.setAuthCookies(token, username);
-
-            // 构建登录URL
-            const loginUrl = this.buildLoginUrl(token, username);
-
-            // 打开JupyterHub窗口
-            const jupyterWindow = this.openJupyterHubWindow(loginUrl);
-
-            // 监听窗口状态
-            this.monitorJupyterHubWindow(jupyterWindow);
-
-            return { success: true, token, username };
 
         } catch (error) {
             console.error('JupyterHub SSO登录失败:', error);
             
-            // 降级处理 - 使用传统登录方式
-            this.fallbackLogin();
+            // 出错时跳转到SSO登录
+            message.warning('登录遇到问题，正在跳转到SSO...');
+            setTimeout(() => {
+                window.location.href = this.ssoLoginURL;
+            }, 1500);
             
             throw error;
         }

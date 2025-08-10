@@ -303,51 +303,49 @@ class AuthService {
     }
 
     /**
-     * 创建JupyterHub访问链接
+     * 创建JupyterHub访问链接 - 使用认证桥接
      */
     createJupyterHubLink(path = '/') {
         const token = this.getToken();
         if (!token) {
-            return '/jupyter/hub/login';
+            // 没有token，跳转到SSO登录
+            return '/sso/?next=' + encodeURIComponent('/jupyterhub');
         }
         
-        // 创建包含SSO信息的链接
-        const baseUrl = '/jupyter/hub';
-        const targetUrl = path.startsWith('/') ? path : `/${path}`;
-        
-        // 如果需要，可以在URL中包含token参数作为备用方案
-        // return `${baseUrl}${targetUrl}?token=${encodeURIComponent(token)}`;
-        
-        return `${baseUrl}${targetUrl}`;
+        // 有token，使用认证桥接页面
+        return '/jupyterhub';
     }
 
     /**
-     * 跳转到JupyterHub（确保SSO状态）
+     * 跳转到JupyterHub（确保SSO状态）- 使用认证桥接机制
      */
     async goToJupyterHub(path = '/') {
         try {
             const token = this.getToken();
             if (!token) {
-                throw new Error('未找到认证token');
+                // 没有token，跳转到SSO登录
+                window.location.href = '/sso/?next=' + encodeURIComponent('/jupyterhub');
+                return;
             }
             
             // 验证token有效性
-            const verification = await this.verifyToken(token);
-            if (!verification.valid) {
-                // 尝试刷新token
-                await this.refreshToken();
+            try {
+                const verification = await this.verifyToken(token);
+                if (!verification.valid) {
+                    // Token无效，尝试刷新
+                    await this.refreshToken();
+                }
+            } catch (error) {
+                console.warn('Token验证失败，将通过认证桥接处理:', error);
             }
             
-            // 确保SSO cookies已设置
-            await this.setupSSOCookies(this.getToken(), this.getUser());
-            
-            // 跳转到JupyterHub
-            const jupyterUrl = this.createJupyterHubLink(path);
-            window.location.href = jupyterUrl;
+            // 跳转到认证桥接页面，它会自动处理认证传递
+            window.location.href = '/jupyterhub';
             
         } catch (error) {
             console.error('跳转到JupyterHub失败:', error);
-            throw error;
+            // 降级方案：跳转到SSO登录
+            window.location.href = '/sso/?next=' + encodeURIComponent('/jupyterhub');
         }
     }
 

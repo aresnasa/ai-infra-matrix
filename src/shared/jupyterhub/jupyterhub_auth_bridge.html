@@ -130,7 +130,7 @@
         </div>
         
         <div id="actions" class="action-buttons" style="display: none;">
-            <a href="/sso/" class="btn btn-primary">前往登录</a>
+            <a href="/sso/?redirect_uri=/jupyterhub-authenticated&from=manual" class="btn btn-primary" onclick="recordRedirect();">前往登录</a>
             <a href="/" class="btn btn-secondary">返回首页</a>
         </div>
     </div>
@@ -160,20 +160,96 @@
             document.getElementById('actions').style.display = 'block';
         }
 
+        // 重定向循环检测
+        function checkRedirectLoop() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const redirectCount = parseInt(sessionStorage.getItem('redirect_count') || '0');
+            const lastRedirectTime = parseInt(sessionStorage.getItem('last_redirect_time') || '0');
+            const currentTime = Date.now();
+            
+            // 如果在10秒内重定向超过3次，认为是循环
+            if (redirectCount >= 3 && (currentTime - lastRedirectTime) < 10000) {
+                log('检测到重定向循环，停止自动重定向', 'error');
+                updateStatus('检测到重定向循环，请手动登录', 'error');
+                showActions();
+                sessionStorage.removeItem('redirect_count');
+                sessionStorage.removeItem('last_redirect_time');
+                return true;
+            }
+            
+            // 检查是否刚从SSO重定向过来但没有token
+            const fromSSO = document.referrer.includes('/sso/') || urlParams.get('from') === 'sso';
+            if (fromSSO) {
+                // 检查是否有任何形式的token（URL参数或localStorage）
+                const hasToken = urlParams.get('token') || urlParams.get('auth_token') || localStorage.getItem('token');
+                if (!hasToken) {
+                    log('从SSO重定向过来但未获得token，可能认证失败', 'error');
+                    updateStatus('SSO认证可能失败，请重新尝试登录', 'error');
+                    showActions();
+                    return true;
+                } else {
+                    log('从SSO重定向过来，已检测到token，继续认证流程', 'info');
+                }
+            }
+            
+            return false;
+        }
+        
+        // 记录重定向
+        function recordRedirect() {
+            const redirectCount = parseInt(sessionStorage.getItem('redirect_count') || '0') + 1;
+            sessionStorage.setItem('redirect_count', redirectCount.toString());
+            sessionStorage.setItem('last_redirect_time', Date.now().toString());
+        }
+
         // 检查并传递认证
         async function checkAndPassAuth() {
             try {
                 log('开始检查认证状态...');
                 
-                // 1. 检查localStorage中的token
-                const token = localStorage.getItem('token');
-                const tokenExpires = localStorage.getItem('token_expires');
+                // 首先检查重定向循环
+                if (checkRedirectLoop()) {
+                    return;
+                }
+                
+                // 1. 优先从URL参数获取token
+                const urlParams = new URLSearchParams(window.location.search);
+                let token = urlParams.get('token') || urlParams.get('auth_token');
+                
+                // 2. 如果在iframe中，尝试从父窗口获取token
+                if (!token && window.parent !== window) {
+                    try {
+                        token = window.parent.localStorage.getItem('token');
+                        log('从父窗口获取到token');
+                    } catch (e) {
+                        log('无法访问父窗口localStorage，可能是跨域限制');
+                    }
+                }
+                
+                // 3. 检查localStorage中的token
+                if (!token) {
+                    token = localStorage.getItem('token');
+                }
+                // 4. 尝试从cookie中获取token（与JupyterHub后端兼容的多个名称）
+                if (!token) {
+                    const cookies = Object.fromEntries(document.cookie.split('; ').map(v => v.split('=')));
+                    token = cookies['ai_infra_token'] || cookies['jwt_token'] || cookies['auth_token'] || cookies['token'];
+                }
+                
+                const tokenExpires = localStorage.getItem('token_expires') || urlParams.get('token_expires');
                 
                 if (!token) {
                     log('未找到认证token，自动跳转到登录页面');
                     updateStatus('未找到认证信息，正在跳转到登录页面...', 'error');
-                    // 直接跳转，不等待
-                    window.location.href = '/sso/';
+                    recordRedirect();
+                    
+                    // 获取target_url参数，构建正确的重定向URL
+                    const targetUrl = urlParams.get('target_url') || '/jupyter/hub/';
+                    const redirectUri = encodeURIComponent(`/jupyterhub-auth-bridge?target_url=${encodeURIComponent(targetUrl)}`);
+                    
+                    setTimeout(() => {
+                        window.location.href = `/sso/?redirect_uri=${redirectUri}&from=no_token`;
+                    }, 1500);
                     return;
                 }
                 
@@ -187,61 +263,172 @@
                     if (currentTime >= expiryTime) {
                         log('Token已过期，自动跳转到登录页面');
                         updateStatus('认证信息已过期，正在跳转到登录页面...', 'error');
-                        window.location.href = '/sso/';
+                        recordRedirect();
+                        setTimeout(() => {
+                            window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated&from=expired';
+                        }, 2000);
                         return;
                     }
                 }
                 
                 // 3. 验证token有效性
                 updateStatus('正在验证认证信息...', 'loading');
+                console.log('开始API调用验证token');
                 
+                // 调用API验证真实token
                 const verifyResponse = await fetch('/api/auth/verify', {
                     method: 'GET',
                     headers: {
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
                     }
                 });
                 
+                console.log(`API响应状态: ${verifyResponse.status} ${verifyResponse.statusText}`);
                 if (!verifyResponse.ok) {
-                    throw new Error(`Token验证失败: ${verifyResponse.status}`);
+                    throw new Error(`Token验证失败: ${verifyResponse.status} ${verifyResponse.statusText}`);
                 }
-                
                 const userData = await verifyResponse.json();
+                console.log('API响应数据:', userData);
+                
                 log(`Token验证成功: ${userData.username || userData.user?.username || '未知用户'}`);
                 
-                // 4. 认证成功，直接跳转到JupyterHub
+                // 4. 认证成功，确定跳转目标
                 updateStatus(`认证成功！正在进入JupyterHub...`, 'success');
                 
-                // 5. 直接跳转到专用的JupyterHub路径，带token参数
-                const username = userData.username || userData.user?.username || 'unknown';
-                const redirectUrl = `/jupyterhub-direct/?auth_token=${encodeURIComponent(token)}&username=${encodeURIComponent(username)}`;
+                // 5. 重新获取URL参数确保数据正确
+                const currentUrlParams = new URLSearchParams(window.location.search);
+                const targetUrl = currentUrlParams.get('target_url') || '/jupyter/hub/';
+                const username = userData.username || userData.user?.username || 'testuser';
                 
-                log('直接跳转到JupyterHub...');
-                window.location.href = redirectUrl;
+                // 调试输出
+                console.log('=== 重定向参数调试 ===');
+                console.log(`当前URL: ${window.location.href}`);
+                console.log(`URL参数: ${window.location.search}`);
+                console.log(`解析的target_url: ${targetUrl}`);
+                console.log(`用户名: ${username}`);
+                console.log(`Token: ${token ? token.substring(0, 20) + '...' : 'null'}`);
+                
+                // 构建带认证信息的跳转URL，使用不会循环的路径
+                // 统一通过JupyterHub的自动登录端点建立会话
+                const baseTarget = targetUrl || '/jupyter/hub/home';
+                const nextParam = encodeURIComponent(baseTarget);
+                // 传递 token（参数名为 token 以匹配 AutoLoginHandler），让其完成验证与登录
+                const redirectUrl = `/jupyter/auto-login?token=${encodeURIComponent(token)}&next=${nextParam}`;
+                
+                console.log(`最终重定向URL: ${redirectUrl}`);
+                log(`跳转到目标页面: ${targetUrl}`);
+                
+                // 延迟跳转以便用户看到成功消息
+                setTimeout(() => {
+                    console.log(`执行跳转到: ${redirectUrl}`);
+                    updateStatus(`正在跳转到JupyterHub: ${targetUrl}`, 'success');
+                    window.location.href = redirectUrl;
+                }, 1000);
                 
             } catch (error) {
                 log(`认证检查失败: ${error.message}`, 'error');
                 updateStatus(`认证检查失败，跳转到登录页面...`, 'error');
-                // 出错时也直接跳转到登录页面
+                // 出错时也记录重定向，避免循环
+                recordRedirect();
                 setTimeout(() => {
-                    window.location.href = '/sso/';
+                    window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated&from=error';
                 }, 2000);
             }
         }
 
+        // 立即检查token，但避免循环
+        (function() {
+            console.log('=== JupyterHub认证桥接页面初始化 ===');
+            
+            // 首先检查是否存在重定向循环
+            if (checkRedirectLoop()) {
+                console.log('检测到重定向循环，停止自动跳转');
+                return;
+            }
+            
+            // 1. 优先从URL参数获取token
+            const urlParams = new URLSearchParams(window.location.search);
+            let token = urlParams.get('token') || urlParams.get('auth_token');
+            console.log(`URL参数token: ${token ? token.substring(0, 20) + '...' : 'null'}`);
+            
+            // 2. 如果在iframe中，尝试从父窗口获取token
+            if (!token && window.parent !== window) {
+                try {
+                    token = window.parent.localStorage.getItem('token');
+                    console.log(`父窗口token: ${token ? token.substring(0, 20) + '...' : 'null'}`);
+                } catch (e) {
+                    console.log('无法访问父窗口localStorage:', e.message);
+                }
+            }
+            
+            // 3. 检查localStorage中的token
+            if (!token) {
+                token = localStorage.getItem('token');
+                console.log(`本地token: ${token ? token.substring(0, 20) + '...' : 'null'}`);
+            }
+            
+            // 如果没有token，触发认证检查流程（会自动重定向到SSO）
+            if (!token) {
+                console.log('未找到token，将触发认证检查流程');
+                // 清除重定向计数，避免影响正常流程
+                sessionStorage.removeItem('redirect_count');
+                sessionStorage.removeItem('last_redirect_time');
+                // 不要return，让DOMContentLoaded处理
+                return;
+            }
+            
+            // 有token，继续正常的认证流程
+            console.log('找到token，将继续认证流程');
+        })();
+
         // 页面加载完成后立即开始检查
         document.addEventListener('DOMContentLoaded', () => {
             log('JupyterHub认证中转页面加载完成');
+            console.log('=== DOMContentLoaded 认证检查 ===');
             
-            // 预检查：如果没有token，立即跳转，避免白屏
-            const token = localStorage.getItem('token');
+            // 再次检查重定向循环
+            if (checkRedirectLoop()) {
+                console.log('DOMContentLoaded: 检测到重定向循环，停止处理');
+                return;
+            }
+            
+            // 再次检查token（双重保险）
+            const urlParams = new URLSearchParams(window.location.search);
+            let token = urlParams.get('token') || urlParams.get('auth_token');
+            
+            if (!token && window.parent !== window) {
+                try {
+                    token = window.parent.localStorage.getItem('token');
+                    console.log('从父窗口获取token');
+                } catch (e) {
+                    console.log('无法访问父窗口localStorage');
+                }
+            }
+            
             if (!token) {
-                log('预检查：未找到token，立即跳转到登录页面');
-                window.location.href = '/sso/';
+                token = localStorage.getItem('token');
+            }
+            
+            console.log(`最终token状态: ${token ? '存在' : '不存在'}`);
+            
+            if (!token) {
+                log('DOMContentLoaded检查：未找到token，自动跳转到登录页面');
+                updateStatus('未找到认证信息，正在跳转到登录页面...', 'error');
+                recordRedirect();
+                
+                // 获取target_url参数，构建正确的重定向URL
+                const targetUrl = urlParams.get('target_url') || '/jupyter/hub/';
+                const redirectUri = encodeURIComponent(`/jupyterhub-auth-bridge?target_url=${encodeURIComponent(targetUrl)}`);
+                
+                setTimeout(() => {
+                    window.location.href = `/sso/?redirect_uri=${redirectUri}&from=auth_bridge`;
+                }, 1500);
                 return;
             }
             
             // 有token，执行完整认证检查
+            console.log('开始执行完整认证检查');
             checkAndPassAuth();
         });
     </script>

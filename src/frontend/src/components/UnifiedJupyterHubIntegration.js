@@ -117,25 +117,47 @@ const UnifiedJupyterHubIntegration = () => {
 
     setLoading(true);
     try {
-      // 从localStorage获取JWT token
-      const token = localStorage.getItem('token');
-      if (!token) {
-        message.error('未找到有效的登录令牌，请重新登录系统');
-        return;
+      // 调用后端API处理JupyterHub访问
+      const response = await fetch('/api/jupyter/access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        },
+        body: JSON.stringify({
+          redirect_uri: '/jupyterhub-authenticated',
+          source: 'unified_integration'
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success && data.action === 'authenticated') {
+        // 认证成功
+        message.success('正在使用当前登录状态跳转到JupyterHub...');
+        window.location.href = data.redirect_url;
+        
+        // 更新会话状态
+        setTimeout(() => {
+          checkJupyterHubSession(userSession.username);
+        }, 2000);
+        
+      } else if (data.action === 'redirect') {
+        // 需要重定向到SSO登录
+        message.info('需要重新认证，正在跳转到SSO...');
+        window.location.href = data.redirect_url;
+        
+      } else {
+        throw new Error(data.message || '访问失败');
       }
 
-      // 直接使用JWT token登录JupyterHub
-      const loginUrl = `${jupyterHubConfig.url}/hub/login?next=%2Fhub%2F&jwt_token=${encodeURIComponent(token)}`;
-      window.open(loginUrl, '_blank');
-      message.success('正在使用当前登录状态跳转到JupyterHub...');
-      
-      // 更新会话状态
-      setTimeout(() => {
-        checkJupyterHubSession(userSession.username);
-      }, 2000);
     } catch (error) {
       console.error('统一登录失败:', error);
       message.error('登录失败: ' + (error.response?.data?.message || error.message));
+      // 出错时跳转到SSO登录
+      setTimeout(() => {
+        window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated';
+      }, 1500);
     } finally {
       setLoading(false);
     }
