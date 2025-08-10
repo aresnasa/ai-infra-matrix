@@ -1,0 +1,43 @@
+{
+  "main_page": {
+    "status_code": 200,
+    "content_length": 574
+  },
+  "api_health": {
+    "status_code": 200,
+    "response": "{\"message\":\"All services are running\",\"status\":\"healthy\",\"timestamp\":\"2025-08-08T11:50:49+08:00\"}"
+  },
+  "auth_login": {
+    "status_code": 200,
+    "has_token": true,
+    "token_length": 233
+  },
+  "jupyterhub_wrapper": {
+    "status_code": 200,
+    "content_length": 10842,
+    "has_iframe": true,
+    "has_auth_script": true,
+    "has_error_div": true
+  },
+  "jupyterhub_direct": {
+    "status_code": 200,
+    "final_url": "http://localhost:8080/jupyter/hub/login?next=%2Fjupyter%2Fhub%2F",
+    "is_login_page": true,
+    "content_length": 7985,
+    "token_access": {
+      "status_code": 200,
+      "final_url": "http://localhost:8080/jupyter/hub/login?next=%2Fjupyter%2Fhub%2F%3Ftoken%3DeyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iXSwicGVybWlzc2lvbnMiOlsiKjoqOioiXSwiZXhwIjoxNzU0NzExNDUwLCJpYXQiOjE3NTQ2MjUwNTB9.Nvv1Bfymu86FXFK0Dxvqe7hdIPMnnL6X7LuPQaFztIQ",
+      "content_length": 8229
+    }
+  },
+  "static_files": {
+    "/jupyterhub/iframe_test.html": {
+      "status_code": 200,
+      "content_length": 7985
+    },
+    "/jupyterhub/jupyterhub_wrapper.html": {
+      "status_code": 200,
+      "content_length": 7985
+    }
+  }
+}

@@ -220,6 +220,8 @@ func main() {
 		auth.POST("/login", userHandler.Login)
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
 		auth.POST("/refresh", userHandler.RefreshToken)
+		// 兼容前端/SSO刷新端点
+		auth.POST("/refresh-token", userHandler.RefreshToken)
 		auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
@@ -238,6 +240,10 @@ func main() {
 			// JupyterHub令牌生成和验证
 			auth.POST("/jupyterhub-login", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.GenerateJupyterHubLoginToken)
 			auth.POST("/verify-jupyterhub-token", jupyterHubAuthHandler.VerifyJupyterHubToken)
+			
+			// JupyterHub会话管理
+			auth.GET("/verify-jupyterhub-session", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.VerifyJupyterHubSession)
+			auth.POST("/refresh-jupyterhub-token", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.RefreshJupyterHubToken)
 		}
 
 		// 用户管理路由（管理员）

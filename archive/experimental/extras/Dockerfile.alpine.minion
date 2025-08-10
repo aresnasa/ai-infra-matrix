@@ -1,8 +1,13 @@
 FROM alpine
 MAINTAINER tim@cyface.com
 
-RUN apk --no-cache update &&\
-    apk --no-cache upgrade &&\
+# 配置Alpine镜像（多镜像自动回退）并安装依赖
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done; \
+    apk --no-cache upgrade && \
     apk --no-cache add git openssl salt-minion
 
 RUN sed -i "s|#master: salt|master: salt-master|g" /etc/salt/minion

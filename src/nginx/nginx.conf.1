@@ -1,0 +1,276 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # WebSocket 连接升级映射
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+    error_log /var/log/nginx/error.log;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1000;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Backend upstream
+    upstream backend {
+        server ai-infra-backend:8082;
+        keepalive 32;
+    }
+
+    # JupyterHub upstream  
+    upstream jupyterhub {
+        server ai-infra-jupyterhub:8000;
+        keepalive 32;
+    }
+
+    # Frontend upstream
+    upstream frontend {
+        server ai-infra-frontend:80;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        # 设置最大请求体大小
+        client_max_body_size 100M;
+
+        # SSO单点登录桥接页面
+        location /sso/ {
+            alias /usr/share/nginx/html/sso/;
+            index jwt_sso_bridge.html;
+            try_files $uri $uri/ jwt_sso_bridge.html;
+        }
+        
+        location = /sso {
+            return 301 $scheme://$http_host/sso/;
+        }
+
+        # JupyterHub wrapper页面 - 重定向到带斜杠版本
+        location = /jupyterhub {
+            return 301 http://localhost:8080/jupyterhub/;
+        }
+
+        # JupyterHub wrapper页面 - 统一访问入口 (带斜杠)
+        location = /jupyterhub/ {
+            root /usr/share/nginx/html;
+            try_files /jupyterhub/jupyterhub_wrapper.html =404;
+            add_header Content-Type text/html;
+            add_header X-Frame-Options SAMEORIGIN;
+            add_header Content-Security-Policy "frame-ancestors 'self'";
+        }
+
+        # iframe测试页面
+        location = /iframe_test.html {
+            root /usr/share/nginx/html;
+            add_header Content-Type text/html;
+        }
+
+        # iframe修复验证测试页面
+        location = /iframe_fix_test.html {
+            root /usr/share/nginx/html;
+            add_header Content-Type text/html;
+        }
+
+        # JupyterHub 核心服务代理 - 统一入口点
+        # 精确匹配 /jupyter (不带尾随斜杠)
+        location = /jupyter {
+            return 301 http://localhost:8080/jupyter/;
+        }
+
+        # JupyterHub 完整代理配置
+        location /jupyter/ {
+            # 动态路由支持：用户notebook容器
+            # 匹配模式：/jupyter/user/username/ -> /jupyter/user/username/
+            location ~ ^/jupyter/user/([^/]+)/(.*) {
+                proxy_pass http://jupyterhub/jupyter/user/$1/$2$is_args$args;
+                
+                # 基础代理头
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $host;
+                proxy_set_header X-Forwarded-Port $server_port;
+                
+                # JupyterHub 特定头部
+                proxy_set_header X-Forwarded-Prefix /jupyter;
+                proxy_set_header Origin http://$host;
+                proxy_set_header Referer $http_referer;
+
+                # Notebook/Lab WebSocket支持
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                
+                # 长连接和流式支持
+                proxy_buffering off;
+                proxy_request_buffering off;
+                proxy_read_timeout 86400s;
+                proxy_send_timeout 86400s;
+                
+                # 重定向处理 - 修复端口丢失和路径重复问题
+                proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://localhost:8080/jupyter/;
+                proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://localhost:8080/jupyter/$1;
+            }
+
+            # JupyterHub 控制面板和API
+            # 精确匹配 /jupyter/hub/
+            location = /jupyter/hub/ {
+                proxy_pass http://jupyterhub/jupyter/hub/;
+                
+                # 基础代理头
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $host;
+                proxy_set_header X-Forwarded-Port $server_port;
+                
+                # JupyterHub 特定头部
+                proxy_set_header X-Forwarded-Prefix /jupyter;
+                proxy_set_header Origin http://$host;
+                proxy_set_header Referer $http_referer;
+
+                # Notebook/Lab WebSocket支持
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                
+                # 长连接和流式支持
+                proxy_buffering off;
+                proxy_request_buffering off;
+                proxy_read_timeout 86400s;
+                proxy_send_timeout 86400s;
+                
+                # 修改CSP头以允许iframe嵌入
+                proxy_hide_header Content-Security-Policy;
+                add_header Content-Security-Policy "frame-ancestors 'self' http://localhost:8080 https://localhost:8443; report-uri /jupyter/hub/security/csp-report" always;
+                
+                # 重定向处理 - 修复端口丢失和路径重复问题
+                proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://localhost:8080/jupyter/;
+                proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://localhost:8080/jupyter/$1;
+            }
+
+            # 匹配模式：/jupyter/hub/ -> /jupyter/hub/
+            location ~ ^/jupyter/hub/(.*) {
+                proxy_pass http://jupyterhub/jupyter/hub/$1$is_args$args;
+                
+                # 基础代理头
+                proxy_set_header Host $http_host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header X-Forwarded-Host $host;
+                proxy_set_header X-Forwarded-Port $server_port;
+                
+                # JupyterHub 特定头部
+                proxy_set_header X-Forwarded-Prefix /jupyter;
+                
+                # WebSocket支持
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection $connection_upgrade;
+                
+                # 缓冲设置
+                proxy_buffering off;
+                proxy_read_timeout 300s;
+                proxy_send_timeout 300s;
+                
+                # 修改CSP头以允许iframe嵌入
+                proxy_hide_header Content-Security-Policy;
+                add_header Content-Security-Policy "frame-ancestors 'self' http://localhost:8080 https://localhost:8443; report-uri /jupyter/hub/security/csp-report" always;
+                
+                # 重定向处理 - 修复端口丢失和路径重复问题
+                proxy_redirect http://ai-infra-jupyterhub:8000/jupyter/ http://localhost:8080/jupyter/;
+                proxy_redirect ~^http://[^/]+/jupyter/(.*)$ http://localhost:8080/jupyter/$1;
+            }
+
+            # JupyterHub 根路径重定向
+            # /jupyter/ -> /jupyter/hub/  
+            location = /jupyter/ {
+                return 302 http://localhost:8080/jupyter/hub/;
+            }
+        }
+
+        # 处理根路径的favicon
+        location = /favicon.ico {
+            proxy_pass http://jupyterhub/favicon.ico;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # JWT 自动登录页面
+        location /jwt-login {
+            alias /usr/share/nginx/html/jwt_login.html;
+            try_files $uri $uri/ =404;
+        }
+
+        # 后端API代理
+        location /api/ {
+            proxy_pass http://backend/api/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # CORS支持
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With";
+
+            # 处理OPTIONS请求
+            if ($request_method = OPTIONS) {
+                add_header Access-Control-Allow-Origin *;
+                add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+                add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With";
+                return 204;
+            }
+        }
+
+        # 前端应用代理
+        location / {
+            proxy_pass http://frontend/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # 静态资源缓存
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                proxy_pass http://frontend;
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+        }
+
+        # 健康检查端点
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}

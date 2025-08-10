@@ -18,6 +18,7 @@ from tornado import web
 from traitlets import Unicode, Bool, Dict, List
 import redis
 import psycopg2
+from jupyterhub.utils import url_path_join
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
@@ -59,6 +60,14 @@ class BackendIntegratedAuthenticator(Authenticator):
     
     backend_url = Unicode(BACKEND_URL, config=True, help="后端API地址")
     jwt_secret = Unicode(JWT_SECRET, config=True, help="JWT签名密钥")
+    auto_login = True  # 启用自动登录：访问 /hub/login 时直接跳转到 login_url
+
+    def login_url(self, base_url):
+        """返回自动登录入口，配合 auto_login 使用。
+        当访问 /hub/login 时将重定向到此URL。
+        """
+        # 确保路径包含 base_url 前缀，例如 /jupyter/auto-login
+        return url_path_join(base_url, 'auto-login')
     
     async def authenticate(self, handler, data):
         """统一认证入口 - 通过后端验证"""
@@ -122,9 +131,9 @@ class BackendIntegratedAuthenticator(Authenticator):
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{self.backend_url}/api/auth/verify", headers=headers) as resp:
                     if resp.status == 200:
+                        # 后端返回200即表示有效；优先取username字段
                         result = await resp.json()
-                        if result.get('valid'):
-                            return result.get('username')
+                        return result.get('username') or result.get('user', {}).get('username')
             return None
         except Exception as e:
             logger.error(f"JWT验证失败: {e}")
@@ -154,14 +163,15 @@ class BackendIntegratedAuthenticator(Authenticator):
                 headers['Authorization'] = f'Bearer {token}'
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.backend_url}/api/users/{username}", headers=headers) as resp:
+                # 使用已认证用户的profile接口，避免按用户名查询不存在的路由
+                async with session.get(f"{self.backend_url}/api/users/profile", headers=headers) as resp:
                     if resp.status == 200:
                         user_info = await resp.json()
                         
                         # 返回用户名，JupyterHub会创建用户对象
                         # 用户权限信息通过auth_state传递
                         return {
-                            'name': username,
+                            'name': user_info.get('username', username),
                             'auth_state': {
                                 'user_info': user_info,
                                 'token': token,
@@ -183,37 +193,13 @@ class BackendProxyHandler(BaseHandler):
     
     async def get(self):
         """处理GET请求"""
-        # 处理自动登录
-        if self.request.path.endswith('/auto-login'):
-            await self._handle_auto_login()
-        else:
-            await self._proxy_to_backend()
+        await self._proxy_to_backend()
     
     async def post(self):
         """处理POST请求"""
         await self._proxy_to_backend()
     
-    async def _handle_auto_login(self):
-        """处理自动登录逻辑"""
-        try:
-            token = self.get_cookie('jwt_token') or self.get_argument('token', None)
-            if token:
-                # 验证token并重定向到hub
-                headers = {'Authorization': f'Bearer {token}'}
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"{BACKEND_URL}/api/auth/verify", headers=headers) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            if result.get('valid'):
-                                self.redirect('/hub/home')
-                                return
-            
-            # 验证失败，重定向到登录页
-            self.redirect('/hub/login')
-            
-        except Exception as e:
-            logger.error(f"自动登录处理失败: {e}")
-            self.redirect('/hub/login')
+    # 自动登录逻辑由 AutoLoginHandler 负责
     
     async def _proxy_to_backend(self):
         """代理请求到后端"""
@@ -285,11 +271,61 @@ c.BackendIntegratedAuthenticator.jwt_secret = JWT_SECRET
 c.Authenticator.allow_all = True  # 用户权限由后端控制
 c.Authenticator.admin_users = set()  # 管理员由后端API确定
 c.Authenticator.enable_auth_state = True  # 启用认证状态传递
+c.Authenticator.auto_login = True  # 访问 /hub/login 时直接进入自动登录流程
+
+class AutoLoginHandler(BaseHandler):
+    """自动登录处理器：验证JWT并登录用户"""
+
+    async def get(self):
+        next_url = self.get_argument('next', url_path_join(self.base_url, 'hub/'))
+        try:
+            auth: BackendIntegratedAuthenticator = self.authenticator  # type: ignore
+
+            # 提取token（与认证器一致的策略）
+            token = (
+                self.get_cookie('ai_infra_token')
+                or self.get_cookie('jwt_token')
+                or self.get_cookie('auth_token')
+            )
+            if not token:
+                auth_header = self.request.headers.get('Authorization', '')
+                if auth_header.startswith('Bearer '):
+                    token = auth_header[7:]
+            if not token:
+                # 作为兜底，支持从URL参数获取 token
+                token = self.get_argument('token', None)
+
+            if not token:
+                logger.warning("AutoLogin: 未找到token，跳转到登录页")
+                self.redirect(url_path_join(self.base_url, 'hub/login'))
+                return
+
+            username = await auth._verify_jwt_token(token)
+            if not username:
+                logger.warning("AutoLogin: token无效，跳转到登录页")
+                self.redirect(url_path_join(self.base_url, 'hub/login'))
+                return
+
+            user_info = await auth._get_user_info(username, token)
+
+            # 标准化login_user参数
+            if isinstance(user_info, str):
+                login_data = {'name': user_info}
+            else:
+                login_data = user_info
+
+            # 登录并设置Hub会话
+            await self.login_user(login_data)
+            logger.info(f"AutoLogin: 登录成功: {login_data.get('name', username)}")
+            self.redirect(next_url)
+        except Exception as e:
+            logger.error(f"AutoLogin: 处理失败: {e}")
+            self.redirect(url_path_join(self.base_url, 'hub/login'))
 
 # 额外处理器
 c.JupyterHub.extra_handlers = [
     (r'/backend/(.*)', BackendProxyHandler),
-    (r'/auto-login', BackendProxyHandler),
+    (r'/auto-login', AutoLoginHandler),
 ]
 
 # Spawner配置

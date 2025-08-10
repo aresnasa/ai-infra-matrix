@@ -1,8 +1,12 @@
 # JupyterHub Backend集成 - 精炼版（修复构建问题）
 FROM python:3.13-alpine
 
-# 基础环境和构建工具
-RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories && \
+# 基础环境和构建工具（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done; \
     apk --no-cache add ca-certificates curl tzdata bash shadow nodejs npm \
     build-base python3-dev postgresql-dev redis git linux-headers && \
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
@@ -11,7 +15,6 @@ WORKDIR /srv/jupyterhub
 
 # Python环境
 ENV PYTHONUNBUFFERED=1 \
-    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     PYTHONPATH="/srv/jupyterhub"
 
 # 升级pip并安装核心工具

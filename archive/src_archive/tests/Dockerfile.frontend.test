@@ -1,6 +1,13 @@
 # Test Dockerfile for Frontend  
 FROM node:18-alpine AS builder
 
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
+
 WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm ci
@@ -9,6 +16,13 @@ COPY frontend/ .
 RUN npm run build
 
 FROM nginx:stable-alpine-perl
+
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
 
 # 安装curl用于健康检查
 RUN apk add --no-cache curl

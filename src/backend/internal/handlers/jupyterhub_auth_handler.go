@@ -511,3 +511,107 @@ func (h *JupyterHubAuthHandler) validateJupyterHubToken(token, username string) 
 
 	return true, userInfo, nil
 }
+
+// VerifyJupyterHubSession 验证JupyterHub会话
+// @Summary 验证JupyterHub会话状态
+// @Description 检查当前用户的JupyterHub会话是否有效
+// @Tags JupyterHub认证
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/verify-jupyterhub-session [get]
+func (h *JupyterHubAuthHandler) VerifyJupyterHubSession(c *gin.Context) {
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid": false,
+			"error": "用户未认证",
+		})
+		return
+	}
+
+	username, exists := c.Get("username")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid": false,
+			"error": "无法获取用户信息",
+		})
+		return
+	}
+
+	// 检查Redis中的JupyterHub会话
+	if h.redisClient != nil {
+		cacheKey := fmt.Sprintf("jupyterhub:token:%s", username)
+		_, err := h.redisClient.Get(context.Background(), cacheKey).Result()
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"valid": false,
+				"error": "JupyterHub会话不存在或已过期",
+			})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"valid":    true,
+		"user_id":  userID,
+		"username": username,
+		"message":  "JupyterHub会话有效",
+	})
+}
+
+// RefreshJupyterHubToken 刷新JupyterHub令牌
+// @Summary 刷新JupyterHub令牌
+// @Description 为当前用户生成新的JupyterHub访问令牌
+// @Tags JupyterHub认证
+// @Produce json
+// @Success 200 {object} JupyterHubTokenResponse
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /auth/refresh-jupyterhub-token [post]
+func (h *JupyterHubAuthHandler) RefreshJupyterHubToken(c *gin.Context) {
+	// 获取当前用户
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 查询用户信息
+	var user models.User
+	if err := h.db.Preload("Roles").First(&user, userID).Error; err != nil {
+		logrus.WithError(err).Error("查询用户失败")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询用户信息失败"})
+		return
+	}
+
+	// 生成新的JupyterHub令牌
+	token, expiresAt, err := h.generateJupyterHubToken(user)
+	if err != nil {
+		logrus.WithError(err).Error("生成JupyterHub令牌失败")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成令牌失败"})
+		return
+	}
+
+	// 更新Redis缓存
+	if err := h.cacheJupyterHubToken(user.Username, token, expiresAt); err != nil {
+		logrus.WithError(err).Warning("缓存JupyterHub令牌失败")
+	}
+
+	// 记录刷新日志
+	logrus.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"username": user.Username,
+		"action":   "refresh_jupyterhub_token",
+	}).Info("用户刷新JupyterHub令牌")
+
+	response := JupyterHubTokenResponse{
+		Success:   true,
+		Token:     token,
+		ExpiresAt: expiresAt.Unix(),
+		Message:   "令牌刷新成功",
+	}
+
+	c.JSON(http.StatusOK, response)
+}

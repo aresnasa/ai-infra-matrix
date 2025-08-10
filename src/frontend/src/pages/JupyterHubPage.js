@@ -30,6 +30,7 @@ import {
   DashboardOutlined
 } from '@ant-design/icons';
 import api from '../services/api';
+import jupyterHubService from '../services/jupyterHubService';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -51,8 +52,21 @@ const JupyterHubPage = () => {
   const fetchHubStatus = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/jupyterhub/status');
-      setHubStatus(response.data);
+      const status = await jupyterHubService.checkStatus();
+      if (status) {
+        setHubStatus(status);
+      } else {
+        // 使用模拟数据作为降级方案
+        setHubStatus({
+          running: true,
+          users_online: 5,
+          servers_running: 3,
+          total_memory_gb: 32,
+          used_memory_gb: 12,
+          total_cpu_cores: 16,
+          used_cpu_cores: 6
+        });
+      }
     } catch (error) {
       console.error('获取JupyterHub状态失败:', error);
       // 使用模拟数据
@@ -72,8 +86,8 @@ const JupyterHubPage = () => {
 
   const fetchUserTasks = async () => {
     try {
-      const response = await api.get('/jupyterhub/user-tasks');
-      setUserTasks(response.data.tasks || []);
+      const tasks = await jupyterHubService.getUserTasks();
+      setUserTasks(tasks || []);
     } catch (error) {
       console.error('获取用户任务失败:', error);
       // 使用模拟数据
@@ -99,43 +113,22 @@ const JupyterHubPage = () => {
   const handleJupyterHubLogin = async () => {
     try {
       setLoading(true);
+      message.loading('正在准备JupyterHub登录...', 0);
       
-      // 获取当前用户信息
-      const userResponse = await api.get('/auth/me');
-      if (!userResponse.data || !userResponse.data.username) {
-        message.error('请先登录系统');
-        return;
-      }
+      // 使用新的JupyterHub服务进行SSO登录
+      await jupyterHubService.loginWithSSO();
       
-      const username = userResponse.data.username;
+      message.destroy(); // 清除loading消息
+      message.success('正在跳转到JupyterHub...', 2);
       
-      // 生成JupyterHub登录令牌
-      const tokenResponse = await api.post('/auth/jupyterhub-login', {
-        username: username
-      });
-      
-      if (tokenResponse.data && tokenResponse.data.success) {
-        const token = tokenResponse.data.token;
-        
-        // 使用令牌构建JupyterHub登录URL
-        const loginUrl = `${hubUrl}hub/login?token=${token}&username=${username}`;
-        
-        // 在新窗口打开JupyterHub（带认证令牌）
-        window.open(loginUrl, '_blank');
-        
-        message.success('正在跳转到JupyterHub...');
-      } else {
-        throw new Error(tokenResponse.data?.message || '生成登录令牌失败');
-      }
     } catch (error) {
+      message.destroy(); // 清除loading消息
       console.error('JupyterHub登录失败:', error);
       
-      // 如果令牌生成失败，尝试直接登录（降级处理）
-      if (error.response?.status === 401) {
+      if (error.message.includes('请先登录系统')) {
         message.error('请先登录系统');
       } else {
-        message.warning('使用传统方式登录JupyterHub');
-        window.open(hubUrl, '_blank');
+        message.warning('登录遇到问题，已为您打开传统登录页面');
       }
     } finally {
       setLoading(false);

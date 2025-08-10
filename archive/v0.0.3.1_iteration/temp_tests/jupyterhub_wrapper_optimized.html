@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub - AI基础设施矩阵</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .wrapper {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 16px;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .header .controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .header button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        .header button:hover {
+            background: #2980b9;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #e74c3c;
+            margin-right: 8px;
+            transition: background 0.3s;
+        }
+
+        .status-indicator.connected {
+            background: #2ecc71;
+        }
+
+        .status-indicator.loading {
+            background: #f39c12;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .content-area {
+            flex: 1;
+            position: relative;
+            background: white;
+            overflow: hidden;
+        }
+
+        .jupyter-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: white;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            transition: opacity 0.3s;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .error-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .error-overlay.show {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .error-content {
+            text-align: center;
+            max-width: 400px;
+            padding: 24px;
+        }
+
+        .error-icon {
+            font-size: 48px;
+            color: #e74c3c;
+            margin-bottom: 16px;
+        }
+
+        .error-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+
+        .error-message {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+
+        .error-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .error-actions button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .error-actions button:hover {
+            background: #2980b9;
+        }
+
+        .error-actions button.secondary {
+            background: #95a5a6;
+        }
+
+        .error-actions button.secondary:hover {
+            background: #7f8c8d;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 14px;
+            }
+
+            .header button {
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+
+            .error-content {
+                padding: 16px;
+                max-width: 300px;
+            }
+
+            .error-icon {
+                font-size: 36px;
+            }
+
+            .error-title {
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="header">
+            <div style="display: flex; align-items: center;">
+                <div class="status-indicator" id="status-indicator"></div>
+                <h1>JupyterHub</h1>
+            </div>
+            <div class="controls">
+                <button onclick="refreshJupyter()" title="刷新">🔄</button>
+                <button onclick="openInNewTab()" title="新窗口打开">🔗</button>
+                <button onclick="goHome()" title="返回主页">🏠</button>
+            </div>
+        </div>
+
+        <div class="content-area">
+            <iframe 
+                id="jupyter-frame"
+                class="jupyter-frame"
+                src="/jupyter/hub/"
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation allow-downloads allow-modals allow-popups-to-escape-sandbox"
+                allow="camera; microphone; geolocation; fullscreen">
+            </iframe>
+
+            <div class="loading-overlay" id="loading-overlay">
+                <div class="spinner"></div>
+                <div class="loading-text">正在加载 JupyterHub...</div>
+                <div style="font-size: 12px; color: #bdc3c7;">请稍候，正在连接服务</div>
+            </div>
+
+            <div class="error-overlay" id="error-overlay">
+                <div class="error-content">
+                    <div class="error-icon">⚠️</div>
+                    <div class="error-title">加载失败</div>
+                    <div class="error-message" id="error-message">
+                        无法连接到 JupyterHub 服务，请检查网络连接或服务状态。
+                    </div>
+                    <div class="error-actions">
+                        <button onclick="refreshJupyter()">重试</button>
+                        <button onclick="openInNewTab()" class="secondary">新窗口打开</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let loadStartTime;
+        let statusIndicator;
+        let loadingOverlay;
+        let errorOverlay;
+        let jupyterFrame;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            statusIndicator = document.getElementById('status-indicator');
+            loadingOverlay = document.getElementById('loading-overlay');
+            errorOverlay = document.getElementById('error-overlay');
+            jupyterFrame = document.getElementById('jupyter-frame');
+
+            setupIframeEvents();
+            setLoadingState();
+            loadStartTime = Date.now();
+        });
+
+        function setupIframeEvents() {
+            jupyterFrame.onload = function() {
+                const loadTime = Date.now() - loadStartTime;
+                console.log(`JupyterHub 加载完成，耗时: ${loadTime}ms`);
+                
+                setConnectedState();
+                hideLoading();
+                hideError();
+            };
+
+            jupyterFrame.onerror = function() {
+                console.error('JupyterHub 加载失败');
+                setErrorState();
+                hideLoading();
+                showError('连接失败', '无法加载 JupyterHub 服务，请检查服务状态。');
+            };
+
+            // 设置加载超时（15秒）
+            setTimeout(function() {
+                if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
+                    console.warn('JupyterHub 加载超时');
+                    setErrorState();
+                    hideLoading();
+                    showError('加载超时', '服务响应时间过长，请稍后重试或检查网络连接。');
+                }
+            }, 15000);
+        }
+
+        function setLoadingState() {
+            if (statusIndicator) {
+                statusIndicator.className = 'status-indicator loading';
+            }
+        }
+
+        function setConnectedState() {
+            if (statusIndicator) {
+                statusIndicator.className = 'status-indicator connected';
+            }
+        }
+
+        function setErrorState() {
+            if (statusIndicator) {
+                statusIndicator.className = 'status-indicator';
+            }
+        }
+
+        function hideLoading() {
+            if (loadingOverlay) {
+                loadingOverlay.classList.add('hidden');
+            }
+        }
+
+        function showError(title, message) {
+            if (errorOverlay) {
+                const titleEl = errorOverlay.querySelector('.error-title');
+                const messageEl = errorOverlay.querySelector('.error-message');
+                
+                if (titleEl) titleEl.textContent = title;
+                if (messageEl) messageEl.textContent = message;
+                
+                errorOverlay.classList.add('show');
+            }
+        }
+
+        function hideError() {
+            if (errorOverlay) {
+                errorOverlay.classList.remove('show');
+            }
+        }
+
+        function refreshJupyter() {
+            console.log('刷新 JupyterHub');
+            setLoadingState();
+            hideError();
+            loadingOverlay.classList.remove('hidden');
+            
+            loadStartTime = Date.now();
+            jupyterFrame.src = jupyterFrame.src; // 强制重新加载
+        }
+
+        function openInNewTab() {
+            console.log('在新窗口打开 JupyterHub');
+            window.open('/jupyter/hub/', '_blank');
+        }
+
+        function goHome() {
+            console.log('返回主页');
+            window.location.href = '/';
+        }
+
+        // 键盘快捷键
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key) {
+                    case 'r':
+                    case 'R':
+                        e.preventDefault();
+                        refreshJupyter();
+                        break;
+                    case 'n':
+                    case 'N':
+                        e.preventDefault();
+                        openInNewTab();
+                        break;
+                }
+            }
+        });
+
+        // 处理网络状态变化
+        window.addEventListener('online', function() {
+            console.log('网络已连接');
+            if (errorOverlay && errorOverlay.classList.contains('show')) {
+                refreshJupyter();
+            }
+        });
+
+        window.addEventListener('offline', function() {
+            console.log('网络已断开');
+            setErrorState();
+            showError('网络断开', '网络连接已断开，请检查网络设置。');
+        });
+    </script>
+</body>
+</html>

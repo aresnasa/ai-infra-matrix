@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub认证中转</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .auth-container {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            min-width: 400px;
+            max-width: 500px;
+        }
+
+        .logo {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+
+        .status.loading {
+            background: #e6f7ff;
+            border: 1px solid #91d5ff;
+            color: #1890ff;
+        }
+
+        .status.success {
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            color: #52c41a;
+        }
+
+        .status.error {
+            background: #fff2f0;
+            border: 1px solid #ffccc7;
+            color: #ff4d4f;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #1890ff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .action-buttons {
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: #1890ff;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="logo">AI</div>
+        <h1>JupyterHub访问</h1>
+        <p class="subtitle">正在验证您的登录状态...</p>
+        
+        <div id="status" class="status loading">
+            <span class="loading-spinner"></span>
+            检查认证状态...
+        </div>
+        
+        <div id="actions" class="action-buttons" style="display: none;">
+            <a href="/sso/" class="btn btn-primary">前往登录</a>
+            <a href="/" class="btn btn-secondary">返回首页</a>
+        </div>
+    </div>
+
+    <script>
+        // 日志函数
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            console.log(`[${timestamp}] ${message}`);
+        }
+
+        // 更新状态显示
+        function updateStatus(message, type = 'loading') {
+            const statusDiv = document.getElementById('status');
+            const icons = {
+                loading: '<span class="loading-spinner"></span>',
+                success: '✅',
+                error: '❌'
+            };
+            
+            statusDiv.className = `status ${type}`;
+            statusDiv.innerHTML = icons[type] + message;
+        }
+
+        // 显示操作按钮
+        function showActions() {
+            document.getElementById('actions').style.display = 'block';
+        }
+
+        // 检查并传递认证
+        async function checkAndPassAuth() {
+            try {
+                log('开始检查认证状态...');
+                
+                // 1. 检查localStorage中的token
+                const token = localStorage.getItem('token');
+                const tokenExpires = localStorage.getItem('token_expires');
+                
+                if (!token) {
+                    log('未找到认证token，重定向到登录页面');
+                    updateStatus('未找到认证信息，正在跳转到登录页面...', 'error');
+                    setTimeout(() => {
+                        window.location.href = '/sso/';
+                    }, 2000);
+                    return;
+                }
+                
+                log(`找到token: ${token.substring(0, 20)}...`);
+                
+                // 2. 检查token是否过期
+                if (tokenExpires) {
+                    const expiryTime = new Date(tokenExpires).getTime();
+                    const currentTime = new Date().getTime();
+                    
+                    if (currentTime >= expiryTime) {
+                        log('Token已过期，重定向到登录页面');
+                        updateStatus('认证信息已过期，正在跳转到登录页面...', 'error');
+                        setTimeout(() => {
+                            window.location.href = '/sso/';
+                        }, 2000);
+                        return;
+                    }
+                }
+                
+                // 3. 验证token有效性
+                updateStatus('正在验证认证信息...', 'loading');
+                
+                const verifyResponse = await fetch('/api/auth/verify', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!verifyResponse.ok) {
+                    throw new Error(`Token验证失败: ${verifyResponse.status}`);
+                }
+                
+                const userData = await verifyResponse.json();
+                log(`Token验证成功: ${userData.username || userData.user?.username || '未知用户'}`);
+                
+                // 4. 认证成功，准备传递到JupyterHub
+                updateStatus(`认证成功！正在进入JupyterHub...`, 'success');
+                
+                // 5. 首先获取XSRF token
+                log('获取JupyterHub XSRF token...');
+                const xsrfResponse = await fetch('/jupyter/hub/login', {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                
+                if (!xsrfResponse.ok) {
+                    throw new Error(`无法获取XSRF token: ${xsrfResponse.status}`);
+                }
+                
+                const loginPageText = await xsrfResponse.text();
+                const xsrfMatch = loginPageText.match(/name="_xsrf"[^>]*value="([^"]+)"/);
+                
+                if (!xsrfMatch) {
+                    throw new Error('无法从登录页面提取XSRF token');
+                }
+                
+                const xsrfToken = xsrfMatch[1];
+                log(`获取到XSRF token: ${xsrfToken.substring(0, 20)}...`);
+                
+                // 6. 创建表单自动提交到JupyterHub自动登录端点
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = '/jupyter/auto-login';
+                form.style.display = 'none';
+                
+                // 添加XSRF token字段
+                const xsrfField = document.createElement('input');
+                xsrfField.type = 'hidden';
+                xsrfField.name = '_xsrf';
+                xsrfField.value = xsrfToken;
+                form.appendChild(xsrfField);
+                
+                // 添加token字段
+                const tokenField = document.createElement('input');
+                tokenField.type = 'hidden';
+                tokenField.name = 'token';
+                tokenField.value = token;
+                form.appendChild(tokenField);
+                
+                // 添加用户信息
+                const usernameField = document.createElement('input');
+                usernameField.type = 'hidden';
+                usernameField.name = 'username';
+                usernameField.value = userData.username || userData.user?.username || 'unknown';
+                form.appendChild(usernameField);
+                
+                document.body.appendChild(form);
+                log('提交认证信息到JupyterHub...');
+                form.submit();
+                
+            } catch (error) {
+                log(`认证检查失败: ${error.message}`, 'error');
+                updateStatus(`认证检查失败: ${error.message}`, 'error');
+                showActions();
+            }
+        }
+
+        // 页面加载完成后开始检查
+        document.addEventListener('DOMContentLoaded', () => {
+            log('JupyterHub认证中转页面加载完成');
+            
+            // 延迟检查，让页面有时间渲染
+            setTimeout(checkAndPassAuth, 500);
+        });
+    </script>
+</body>
+</html>

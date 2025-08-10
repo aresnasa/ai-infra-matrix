@@ -1,17 +1,23 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
-# 更换alpine下载源为清华大学镜像
-RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
 
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn
 
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
+
+# Download dependencies with retry and fallback
+RUN go mod download || (sleep 5 && go mod download) || \
+    (export GOPROXY=direct && go mod download)
 
 # Copy source code
 COPY . .
@@ -24,11 +30,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test
 # Final stage
 FROM golang:1.24-alpine
 
-# 更换alpine下载源为清华大学镜像
-RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
 
-# 设置时区为上海，添加必要工具
-RUN apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl
+# 更新apk索引并设置时区为上海，添加必要工具
+RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl || \
+    apk --no-cache add ca-certificates tzdata busybox-extras bash curl
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 

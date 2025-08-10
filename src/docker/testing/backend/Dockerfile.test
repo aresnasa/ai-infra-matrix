@@ -1,6 +1,13 @@
 # Test Dockerfile for Backend
 FROM golang:1.24-alpine AS builder
 
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
+
 # 安装必要工具
 RUN apk add --no-cache curl git ca-certificates
 
@@ -13,6 +20,13 @@ COPY backend/ .
 RUN go build -o main cmd/main.go
 
 FROM alpine:latest
+
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
 
 # 安装运行时依赖和curl（用于健康检查）
 RUN apk --no-cache add ca-certificates curl

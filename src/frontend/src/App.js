@@ -49,7 +49,34 @@ function App() {
 
   useEffect(() => {
     initializeAuth();
+    
+    // 初始化favicon管理器
+    const initializeFavicon = () => {
+      if (window.faviconManager) {
+        window.faviconManager.updateFavicon();
+      }
+    };
+    
+    initializeFavicon();
   }, []);
+
+  // 监听用户状态变化，更新favicon
+  useEffect(() => {
+    if (window.faviconManager) {
+      if (user) {
+        // 用户已登录，显示正常状态
+        window.faviconManager.resetToDefault();
+        
+        // 根据用户角色设置不同的favicon效果
+        if (user.roles && user.roles.some(role => role.name === 'admin')) {
+          window.faviconManager.addEffect('admin');
+        }
+      } else {
+        // 用户未登录，可以设置特殊状态
+        window.faviconManager.resetToDefault();
+      }
+    }
+  }, [user]);
 
   // 检查token是否有效（本地检查，避免频繁请求后端）
   const isTokenValid = () => {

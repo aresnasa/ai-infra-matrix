@@ -1,5 +1,5 @@
 # AI Infrastructure Matrix - 统一 Docker Compose 配置
-# 版本: v2.0.0 - Nginx统一访问入口版本
+# 版本: v3.0.0 - 自定义Nginx镜像版本 (嵌入式静态文件)
 # 作者: AI Infrastructure Team
 
 services:
@@ -277,18 +277,27 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # Nginx 反向代理服务
+  # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: src/nginx/Dockerfile
+    image: ai-infra-nginx:latest
     container_name: ai-infra-nginx
     ports:
       - "8080:80"    # 主访问端口
       - "8443:443"   # HTTPS端口 (预留)
     volumes:
-      - ./src/nginx/nginx.conf:/etc/nginx/nginx.conf
-      - ./src/shared/sso:/usr/share/nginx/html/sso:ro
-      - ./src/shared/jupyterhub:/usr/share/nginx/html/jupyterhub:ro
+      # 仅挂载日志目录，静态文件已嵌入镜像
       - nginx_logs:/var/log/nginx
+    environment:
+      # 分布式部署支持
+      - BACKEND_HOST=${BACKEND_HOST:-backend}
+      - BACKEND_PORT=${BACKEND_PORT:-8082}
+      - FRONTEND_HOST=${FRONTEND_HOST:-frontend}
+      - FRONTEND_PORT=${FRONTEND_PORT:-80}
+      - JUPYTERHUB_HOST=${JUPYTERHUB_HOST:-jupyterhub}
+      - JUPYTERHUB_PORT=${JUPYTERHUB_PORT:-8000}
     depends_on:
       frontend:
         condition: service_healthy

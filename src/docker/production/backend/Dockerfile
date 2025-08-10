@@ -1,6 +1,13 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+		apk update && break || true; \
+	done
+
 ENV GO111MODULE=on
 ENV GOPROXY=https://goproxy.cn
 
@@ -19,6 +26,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 
 # Final stage
 FROM alpine:latest
+
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+		apk update && break || true; \
+	done
 
 RUN apk --no-cache add ca-certificates curl
 WORKDIR /root/

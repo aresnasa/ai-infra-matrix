@@ -879,6 +879,7 @@ func (h *UserHandler) VerifyTokenSimple(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"valid":       true,
 		"username":    username,
 		"email":       user.Email,
 		"roles":       roles,

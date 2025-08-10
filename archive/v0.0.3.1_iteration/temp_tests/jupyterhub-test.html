@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub 测试页面</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        .info {
+            background: #e3f2fd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196f3;
+        }
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+        .error {
+            background: #ffebee;
+            border-left-color: #f44336;
+            color: #c62828;
+        }
+        .success {
+            background: #e8f5e8;
+            border-left-color: #4caf50;
+            color: #2e7d32;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <h2>🧪 JupyterHub iframe 测试页面</h2>
+        <p>这个页面用于测试 JupyterHub 是否能在 iframe 中正常加载</p>
+        <p><strong>目标URL:</strong> <code>/jupyter/hub/</code></p>
+    </div>
+
+    <div class="status" id="status">
+        <strong>状态:</strong> 正在加载...
+    </div>
+
+    <iframe 
+        id="test-frame"
+        src="/jupyter/hub/"
+        title="JupyterHub Test Frame"
+        onload="handleLoad()"
+        onerror="handleError()">
+    </iframe>
+
+    <script>
+        let loadStartTime = Date.now();
+        
+        function updateStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            const loadTime = Date.now() - loadStartTime;
+            
+            status.innerHTML = `<strong>状态:</strong> ${message} <em>(${loadTime}ms)</em>`;
+            status.className = 'status ' + type;
+            
+            console.log(`[${loadTime}ms] ${message}`);
+        }
+
+        function handleLoad() {
+            const frame = document.getElementById('test-frame');
+            updateStatus('✅ iframe 加载完成', 'success');
+            
+            try {
+                const frameDoc = frame.contentDocument || frame.contentWindow.document;
+                if (frameDoc) {
+                    const title = frameDoc.title || '未知';
+                    updateStatus(`✅ iframe 加载完成 - 页面标题: "${title}"`, 'success');
+                } else {
+                    updateStatus('✅ iframe 加载完成 (无法访问内容，可能是跨域)', 'success');
+                }
+            } catch (e) {
+                updateStatus('✅ iframe 加载完成 (跨域限制)', 'success');
+            }
+        }
+
+        function handleError() {
+            updateStatus('❌ iframe 加载失败', 'error');
+        }
+
+        // 设置超时
+        setTimeout(() => {
+            const status = document.getElementById('status');
+            if (status.classList.contains('info') || status.textContent.includes('正在加载')) {
+                updateStatus('⏰ 加载超时 (可能是网络问题或服务未响应)', 'error');
+            }
+        }, 10000);
+
+        // 监听frame的消息
+        window.addEventListener('message', function(event) {
+            console.log('收到iframe消息:', event.data);
+            updateStatus(`📨 收到消息: ${JSON.stringify(event.data)}`);
+        });
+
+        updateStatus('🚀 开始加载 iframe...');
+    </script>
+</body>
+</html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>浏览器状态调试工具</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1, h2 {
+            color: #333;
+            border-bottom: 2px solid #007acc;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeaa7; color: #856404; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        pre {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-x: auto;
+        }
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #005fa3; }
+        .clear-btn { background: #dc3545; }
+        .clear-btn:hover { background: #c82333; }
+        .debug-info {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 AI基础设施矩阵 - 浏览器状态调试工具</h1>
+        <p>此工具帮助诊断浏览器缓存、Cookie、localStorage问题</p>
+        
+        <button onclick="checkStatus()">🔄 刷新状态检查</button>
+        <button onclick="clearLocalStorage()" class="clear-btn">🗑️ 清理 localStorage</button>
+        <button onclick="clearCookies()" class="clear-btn">🍪 清理 Cookies</button>
+        <button onclick="clearAll()" class="clear-btn">🧹 全部清理</button>
+    </div>
+
+    <div class="container">
+        <h2>📊 当前状态检查</h2>
+        <div id="statusResult">点击 "刷新状态检查" 开始...</div>
+    </div>
+
+    <div class="container">
+        <h2>🍪 Cookie 状态</h2>
+        <div id="cookieInfo">加载中...</div>
+    </div>
+
+    <div class="container">
+        <h2>💾 localStorage 状态</h2>
+        <div id="localStorageInfo">加载中...</div>
+    </div>
+
+    <div class="container">
+        <h2>🌐 网络连接测试</h2>
+        <div id="networkInfo">测试中...</div>
+    </div>
+
+    <script>
+        // 页面加载完成后自动检查
+        document.addEventListener('DOMContentLoaded', function() {
+            checkStatus();
+            updateCookieInfo();
+            updateLocalStorageInfo();
+            testNetworkConnections();
+        });
+
+        function checkStatus() {
+            console.log('开始状态检查...');
+            
+            let status = '<div class="info">🔍 浏览器状态检查结果:</div>';
+            
+            // 检查 localStorage
+            const token = localStorage.getItem('token');
+            const tokenExpires = localStorage.getItem('token_expires');
+            
+            if (token) {
+                const expiryTime = tokenExpires ? new Date(tokenExpires) : null;
+                const isExpired = expiryTime && new Date() > expiryTime;
+                
+                status += `<div class="${isExpired ? 'warning' : 'success'}">
+                    ✅ Token: ${token.substring(0, 20)}...
+                    <br>📅 过期时间: ${tokenExpires || '未设置'}
+                    <br>⏰ 状态: ${isExpired ? '已过期' : '有效'}
+                </div>`;
+            } else {
+                status += '<div class="error">❌ 未找到 localStorage token</div>';
+            }
+            
+            // 检查 cookies
+            const cookies = document.cookie.split(';').map(c => c.trim());
+            const aiTokenCookie = cookies.find(c => c.startsWith('ai_infra_token='));
+            const jwtTokenCookie = cookies.find(c => c.startsWith('jwt_token='));
+            const authTokenCookie = cookies.find(c => c.startsWith('auth_token='));
+            
+            if (aiTokenCookie || jwtTokenCookie || authTokenCookie) {
+                status += '<div class="success">✅ 找到认证 Cookie</div>';
+            } else {
+                status += '<div class="warning">⚠️ 未找到认证 Cookie</div>';
+            }
+            
+            // 浏览器信息
+            status += `<div class="info">
+                🌐 浏览器: ${navigator.userAgent.match(/(Chrome|Firefox|Safari|Edge)/)?.[0] || '未知'}
+                <br>📱 平台: ${navigator.platform}
+                <br>🔒 HTTPS: ${location.protocol === 'https:' ? '是' : '否'}
+                <br>🏠 当前域名: ${location.hostname}:${location.port}
+            </div>`;
+            
+            document.getElementById('statusResult').innerHTML = status;
+        }
+
+        function updateCookieInfo() {
+            const cookies = document.cookie.split(';').map(c => c.trim()).filter(c => c);
+            
+            let cookieHtml = '';
+            if (cookies.length === 0) {
+                cookieHtml = '<div class="warning">⚠️ 没有找到任何 Cookie</div>';
+            } else {
+                cookieHtml = '<div class="success">✅ 当前 Cookie 列表:</div>';
+                cookieHtml += '<pre class="debug-info">';
+                cookies.forEach(cookie => {
+                    const [name, value] = cookie.split('=');
+                    const displayValue = value && value.length > 20 ? value.substring(0, 20) + '...' : value;
+                    cookieHtml += `${name} = ${displayValue || '(空值)'}\n`;
+                });
+                cookieHtml += '</pre>';
+            }
+            
+            document.getElementById('cookieInfo').innerHTML = cookieHtml;
+        }
+
+        function updateLocalStorageInfo() {
+            let lsHtml = '';
+            
+            if (localStorage.length === 0) {
+                lsHtml = '<div class="warning">⚠️ localStorage 为空</div>';
+            } else {
+                lsHtml = '<div class="success">✅ localStorage 内容:</div>';
+                lsHtml += '<pre class="debug-info">';
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const value = localStorage.getItem(key);
+                    const displayValue = value && value.length > 50 ? value.substring(0, 50) + '...' : value;
+                    lsHtml += `${key} = ${displayValue}\n`;
+                }
+                lsHtml += '</pre>';
+            }
+            
+            document.getElementById('localStorageInfo').innerHTML = lsHtml;
+        }
+
+        async function testNetworkConnections() {
+            const endpoints = [
+                { name: '主服务健康检查', url: '/health' },
+                { name: '后端API健康检查', url: '/api/health' },
+                { name: 'JupyterHub API', url: '/jupyter/hub/api' },
+                { name: 'SSO页面', url: '/sso/' }
+            ];
+            
+            let networkHtml = '';
+            
+            for (const endpoint of endpoints) {
+                try {
+                    const response = await fetch(endpoint.url, { method: 'HEAD' });
+                    const status = response.ok ? 'success' : 'warning';
+                    const statusText = response.ok ? '✅ 正常' : `⚠️ ${response.status}`;
+                    networkHtml += `<div class="${status}">${endpoint.name}: ${statusText}</div>`;
+                } catch (error) {
+                    networkHtml += `<div class="error">${endpoint.name}: ❌ 连接失败 (${error.message})</div>`;
+                }
+            }
+            
+            document.getElementById('networkInfo').innerHTML = networkHtml;
+        }
+
+        function clearLocalStorage() {
+            const beforeCount = localStorage.length;
+            localStorage.clear();
+            const afterCount = localStorage.length;
+            
+            alert(`✅ localStorage 已清理！\n清理前: ${beforeCount} 项\n清理后: ${afterCount} 项`);
+            updateLocalStorageInfo();
+            checkStatus();
+        }
+
+        function clearCookies() {
+            const cookies = document.cookie.split(';');
+            let cleared = 0;
+            
+            cookies.forEach(cookie => {
+                const eqPos = cookie.indexOf('=');
+                const name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+                if (name) {
+                    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+                    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${location.hostname}`;
+                    cleared++;
+                }
+            });
+            
+            alert(`✅ Cookies 已清理！\n清理了 ${cleared} 个 Cookie`);
+            updateCookieInfo();
+            checkStatus();
+        }
+
+        function clearAll() {
+            clearLocalStorage();
+            clearCookies();
+            alert('✅ 所有数据已清理！请刷新页面并重新尝试登录。');
+        }
+    </script>
+</body>
+</html>

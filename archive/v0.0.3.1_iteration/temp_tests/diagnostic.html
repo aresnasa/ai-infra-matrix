@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+    <meta charset="utf-8"/>
+    <link rel="icon" type="image/x-icon" href="http://localhost:8080/favicon.ico"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Frontend Diagnostic Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; border-left: 4px solid #28a745; }
+        .error { background-color: #f8d7da; border-left: 4px solid #dc3545; }
+        .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; }
+        .info { background-color: #d1ecf1; border-left: 4px solid #17a2b8; }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+        }
+        #log-output {
+            max-height: 400px;
+            overflow-y: auto;
+            background-color: #000;
+            color: #0f0;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Frontend Diagnostic Test</h1>
+        
+        <div class="status info">
+            <strong>测试目标:</strong> http://localhost:8080
+        </div>
+        
+        <h2>1. 直接资源测试</h2>
+        <div id="resource-tests">
+            <button onclick="testResources()">测试资源加载</button>
+            <div id="resource-results"></div>
+        </div>
+        
+        <h2>2. 控制台日志输出</h2>
+        <div id="log-output"></div>
+        
+        <h2>3. iframe嵌入测试</h2>
+        <div class="status warning">
+            <strong>注意:</strong> 如果iframe显示内容，说明页面本身没问题，可能是浏览器特定问题
+        </div>
+        <iframe id="frontend-iframe" src="http://localhost:8080"></iframe>
+        
+        <h2>4. 网络请求测试</h2>
+        <div id="network-tests">
+            <button onclick="testNetwork()">测试网络连接</button>
+            <div id="network-results"></div>
+        </div>
+    </div>
+
+    <script>
+        // 拦截console.log用于显示
+        const originalLog = console.log;
+        const logOutput = document.getElementById('log-output');
+        
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const logEntry = document.createElement('div');
+            logEntry.textContent = new Date().toLocaleTimeString() + ': ' + args.join(' ');
+            logOutput.appendChild(logEntry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        };
+
+        async function testResources() {
+            const resultsDiv = document.getElementById('resource-results');
+            resultsDiv.innerHTML = '<div class="status info">正在测试资源...</div>';
+            
+            const resources = [
+                'http://localhost:8080/',
+                'http://localhost:8080/static/js/main.d1390cf5.js',
+                'http://localhost:8080/static/css/main.6c67a7d4.css',
+                'http://localhost:8080/favicon.ico',
+                'http://localhost:8080/api/health'
+            ];
+            
+            let results = '';
+            
+            for (const url of resources) {
+                try {
+                    console.log(`Testing: ${url}`);
+                    const response = await fetch(url);
+                    const status = response.ok ? 'success' : 'error';
+                    const icon = response.ok ? '✅' : '❌';
+                    
+                    results += `
+                        <div class="status ${status}">
+                            ${icon} ${url} - ${response.status} (${response.statusText})
+                        </div>
+                    `;
+                } catch (error) {
+                    console.log(`Error testing ${url}:`, error);
+                    results += `
+                        <div class="status error">
+                            ❌ ${url} - Network Error: ${error.message}
+                        </div>
+                    `;
+                }
+            }
+            
+            resultsDiv.innerHTML = results;
+        }
+
+        async function testNetwork() {
+            const resultsDiv = document.getElementById('network-results');
+            resultsDiv.innerHTML = '<div class="status info">正在测试网络...</div>';
+            
+            try {
+                // 测试API
+                console.log('Testing API connection...');
+                const apiResponse = await fetch('http://localhost:8080/api/health');
+                const apiData = await apiResponse.json();
+                
+                // 测试主页内容
+                console.log('Testing main page...');
+                const pageResponse = await fetch('http://localhost:8080/');
+                const pageText = await pageResponse.text();
+                
+                resultsDiv.innerHTML = `
+                    <div class="status success">
+                        ✅ API响应: ${JSON.stringify(apiData)}
+                    </div>
+                    <div class="status success">
+                        ✅ 页面长度: ${pageText.length} 字符
+                    </div>
+                    <div class="status ${pageText.includes('id="root"') ? 'success' : 'error'}">
+                        ${pageText.includes('id="root"') ? '✅' : '❌'} React root元素: ${pageText.includes('id="root"') ? '找到' : '未找到'}
+                    </div>
+                    <div class="status ${pageText.includes('main.d1390cf5.js') ? 'success' : 'error'}">
+                        ${pageText.includes('main.d1390cf5.js') ? '✅' : '❌'} 主JS文件: ${pageText.includes('main.d1390cf5.js') ? '找到' : '未找到'}
+                    </div>
+                `;
+            } catch (error) {
+                console.log('Network test error:', error);
+                resultsDiv.innerHTML = `
+                    <div class="status error">
+                        ❌ 网络测试失败: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        // 监听iframe加载
+        document.getElementById('frontend-iframe').addEventListener('load', function() {
+            console.log('✅ iframe loaded successfully');
+        });
+
+        document.getElementById('frontend-iframe').addEventListener('error', function() {
+            console.log('❌ iframe failed to load');
+        });
+
+        // 页面加载时自动运行测试
+        window.addEventListener('load', function() {
+            console.log('=== Diagnostic page loaded ===');
+            testResources();
+            setTimeout(testNetwork, 1000);
+        });
+    </script>
+</body>
+</html>
