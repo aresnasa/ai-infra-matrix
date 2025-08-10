@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 
@@ -77,7 +78,7 @@ func (s *LDAPService) UpdateLDAPConfig(req *models.LDAPConfigRequest) (*models.L
 		}
 		if config.EmailAttr == "" {
 			config.EmailAttr = "mail"
-		}
+	}
 		
 		err = s.db.Create(&config).Error
 	} else if err == nil {
@@ -94,6 +95,10 @@ func (s *LDAPService) UpdateLDAPConfig(req *models.LDAPConfigRequest) (*models.L
 		config.UsernameAttr = req.UsernameAttr
 		config.NameAttr = req.NameAttr
 		config.EmailAttr = req.EmailAttr
+	config.UsersOU = req.UsersOU
+	config.GroupsOU = req.GroupsOU
+	config.AdminGroupDN = req.AdminGroupDN
+	config.GroupMemberAttr = req.GroupMemberAttr
 		
 		err = s.db.Save(&config).Error
 	}
@@ -266,4 +271,98 @@ func (s *LDAPService) createLDAPConnection(server string, port int, useSSL, skip
 	}
 
 	return conn, err
+}
+
+// CreateUser 在LDAP中创建用户并可选加入组
+func (s *LDAPService) CreateUser(username, password, email, displayName, department string) error {
+	config, err := s.GetLDAPConfig()
+	if err != nil {
+		return fmt.Errorf("获取LDAP配置失败: %w", err)
+	}
+	if !config.IsEnabled {
+		return fmt.Errorf("LDAP未启用")
+	}
+
+	conn, err := s.createLDAPConnection(config.Server, config.Port, config.UseSSL, config.SkipVerify)
+	if err != nil {
+		return fmt.Errorf("连接LDAP失败: %w", err)
+	}
+	defer conn.Close()
+
+	if err := conn.Bind(config.BindDN, config.BindPassword); err != nil {
+		return fmt.Errorf("LDAP管理员绑定失败: %w", err)
+	}
+
+	// 构造用户DN: uid={username},<UsersOU or BaseDN>
+	usersBase := strings.TrimSpace(config.UsersOU)
+	if usersBase == "" {
+		usersBase = config.BaseDN
+	} else if !strings.Contains(usersBase, config.BaseDN) {
+		usersBase = usersBase + "," + config.BaseDN
+	}
+	userDN := fmt.Sprintf("uid=%s,%s", username, usersBase)
+
+	// inetOrgPerson + posixAccount（大多数OpenLDAP常用）
+	req := ldap.NewAddRequest(userDN, nil)
+	req.Attribute("objectClass", []string{"inetOrgPerson", "posixAccount"})
+	req.Attribute("uid", []string{username})
+	// cn/sn/givenName 尽量填充
+	cn := displayName
+	if cn == "" {
+		cn = username
+	}
+	req.Attribute("cn", []string{cn})
+	req.Attribute("sn", []string{cn})
+	req.Attribute("givenName", []string{cn})
+	if email != "" {
+		req.Attribute("mail", []string{email})
+	}
+	// 简化：使用随机的 uidNumber/gidNumber 起步，生产应有分配器
+	// 这里用时间戳低位生成一个相对唯一的整数
+	uidNumber := fmt.Sprintf("%d", (time.Now().Unix()%90000)+10000)
+	gidNumber := uidNumber
+	req.Attribute("uidNumber", []string{uidNumber})
+	req.Attribute("gidNumber", []string{gidNumber})
+	req.Attribute("homeDirectory", []string{fmt.Sprintf("/home/%s", username)})
+	// 明文密码属性（OpenLDAP会根据配置加密），也可使用 userPassword: {SSHA}... 预加密
+	req.Attribute("userPassword", []string{password})
+
+	if err := conn.Add(req); err != nil {
+		// 若已存在则忽略
+		if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return fmt.Errorf("创建LDAP用户失败: %w", err)
+		}
+	}
+
+	// 如果提供了部门，则尝试把用户加入对应组: cn={department},<GroupsOU or BaseDN>
+	if department != "" {
+		groupsBase := strings.TrimSpace(config.GroupsOU)
+		if groupsBase == "" {
+			groupsBase = config.BaseDN
+		} else if !strings.Contains(groupsBase, config.BaseDN) {
+			groupsBase = groupsBase + "," + config.BaseDN
+		}
+		groupDN := fmt.Sprintf("cn=%s,%s", department, groupsBase)
+		mod := ldap.NewModifyRequest(groupDN, nil)
+		memberAttr := config.GroupMemberAttr
+		if memberAttr == "" {
+			// 默认使用 groupOfNames 的 member 属性
+			memberAttr = "member"
+		}
+		// 常见两种：member(需要DN) 或 memberUid(只要uid)
+		if strings.ToLower(memberAttr) == "memberuid" {
+			mod.Add(memberAttr, []string{username})
+		} else {
+			mod.Add(memberAttr, []string{userDN})
+		}
+		if err := conn.Modify(mod); err != nil {
+			// 组不存在或已存在成员，忽略警告
+			if !(strings.Contains(strings.ToLower(err.Error()), "no such object") ||
+				 strings.Contains(strings.ToLower(err.Error()), "already exists")) {
+				return fmt.Errorf("添加用户到组失败: %w", err)
+			}
+		}
+	}
+
+	return nil
 }

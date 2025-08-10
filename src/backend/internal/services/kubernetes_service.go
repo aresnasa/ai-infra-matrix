@@ -12,6 +12,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -202,3 +203,37 @@ func (s *KubernetesService) GetNodes(clientset *kubernetes.Clientset) (*v1.NodeL
 }
 
 // 可扩展：集群健康检查、命名空间列表等
+
+// EnsureNamespace 确保命名空间存在
+func (s *KubernetesService) EnsureNamespace(clientset *kubernetes.Clientset, ns string) error {
+	if ns == "" { return nil }
+	_, err := clientset.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
+	if err == nil { return nil }
+	_, err = clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{})
+	if err != nil { return fmt.Errorf("创建命名空间失败: %w", err) }
+	return nil
+}
+
+// EnsureServiceAccount 为用户创建或获取ServiceAccount
+func (s *KubernetesService) EnsureServiceAccount(clientset *kubernetes.Clientset, namespace, saName string) (*v1.ServiceAccount, error) {
+	sa, err := clientset.CoreV1().ServiceAccounts(namespace).Get(context.TODO(), saName, metav1.GetOptions{})
+	if err == nil { return sa, nil }
+	sa = &v1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName}}
+	created, err := clientset.CoreV1().ServiceAccounts(namespace).Create(context.TODO(), sa, metav1.CreateOptions{})
+	if err != nil { return nil, fmt.Errorf("创建ServiceAccount失败: %w", err) }
+	return created, nil
+}
+
+// EnsureRoleBinding 绑定ClusterRole到用户的ServiceAccount
+func (s *KubernetesService) EnsureRoleBinding(clientset *kubernetes.Clientset, namespace, rbName, saName, clusterRole string) (*rbacv1.RoleBinding, error) {
+	rb, err := clientset.RbacV1().RoleBindings(namespace).Get(context.TODO(), rbName, metav1.GetOptions{})
+	if err == nil { return rb, nil }
+	rb = &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: rbName},
+		Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: namespace}},
+		RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: clusterRole},
+	}
+	created, err := clientset.RbacV1().RoleBindings(namespace).Create(context.TODO(), rb, metav1.CreateOptions{})
+	if err != nil { return nil, fmt.Errorf("创建RoleBinding失败: %w", err) }
+	return created, nil
+}

@@ -233,22 +233,16 @@ class ContainerSpawner(DockerSpawner):
 # JupyterHub核心配置
 # =========================
 
-# 基础网络配置
-c.JupyterHub.ip = '0.0.0.0'
-c.JupyterHub.port = 8000
-c.JupyterHub.hub_ip = '0.0.0.0'
+# 基础网络配置（使用 bind_url 配置监听地址）
+c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
 
 # 通过环境变量决定是否通过代理访问
 use_proxy = os.environ.get('JUPYTERHUB_USE_PROXY', 'true').lower() == 'true'
 if use_proxy:
     # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
     c.JupyterHub.base_url = '/jupyter/'
-    # 配置代理头处理
+    # 代理模式下，接收来自代理的Token
     c.JupyterHub.trust_user_provided_tokens = True
-    c.JupyterHub.trust_user_provided_image = True
-    # 允许来自代理的请求
-    c.JupyterHub.allow_origin = '*'
-    c.JupyterHub.allow_origin_pat = '.*'
 else:
     # 直接访问模式
     c.JupyterHub.base_url = '/'

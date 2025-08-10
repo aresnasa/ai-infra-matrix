@@ -69,6 +69,51 @@ func (h *UserHandler) Register(c *gin.Context) {
 		}
 		return
 	}
+	// After local user created, try to create corresponding LDAP entry and K8s SA/RBAC (best-effort)
+	go func() {
+		// 1) LDAP user provisioning
+		if h.ldapService != nil {
+			// displayName defaults to username
+			if err := h.ldapService.CreateUser(req.Username, req.Password, req.Email, req.Username, req.Department); err != nil {
+				logrus.WithError(err).Warn("LDAP user provisioning failed")
+			} else {
+				logrus.WithField("username", req.Username).Info("LDAP user provisioned")
+			}
+		}
+
+		// 2) K8s SA/RBAC provisioning
+		// Find default cluster from DB if exists (first enabled cluster)
+		defer func() { recover() }()
+		var cluster models.KubernetesCluster
+		if err := database.DB.Where("enabled = ?", true).First(&cluster).Error; err == nil {
+			ks := services.NewKubernetesService()
+			clientset, cerr := ks.ConnectToCluster(cluster.KubeConfig)
+			if cerr != nil {
+				logrus.WithError(cerr).Warn("K8s connect for provisioning failed")
+				return
+			}
+			// Namespace strategy: use department if provided, else "users"
+			ns := strings.ToLower(strings.TrimSpace(req.Department))
+			if ns == "" { ns = "users" }
+			if err := ks.EnsureNamespace(clientset, ns); err != nil {
+				logrus.WithError(err).Warn("Ensure namespace failed")
+			}
+			saName := fmt.Sprintf("user-%s", req.Username)
+			if _, err := ks.EnsureServiceAccount(clientset, ns, saName); err != nil {
+				logrus.WithError(err).Warn("Ensure ServiceAccount failed")
+			}
+			// Map role to ClusterRole
+			role := strings.ToLower(strings.TrimSpace(req.Role))
+			clusterRole := "view"
+			if role == "user" { clusterRole = "edit" }
+			if role == "admin" { clusterRole = "admin" }
+			rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
+			if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
+				logrus.WithError(err).Warn("Ensure RoleBinding failed")
+			}
+			logrus.WithFields(logrus.Fields{"username": req.Username, "namespace": ns, "cluster_role": clusterRole}).Info("K8s SA/RBAC provisioned")
+		}
+	}()
 
 	c.JSON(http.StatusCreated, user)
 }
