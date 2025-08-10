@@ -116,7 +116,13 @@ class BackendIntegratedAuthenticator(Authenticator):
                 logger.info(f"从Cookie '{cookie_name}' 提取token")
                 return token
         
-        # 3. 从URL参数 (最低优先级，用于备用方案)
+        # 3. 从URL参数 (用于nginx认证桥接传递)
+        auth_token = handler.get_argument('auth_token', None)
+        if auth_token:
+            logger.info("从URL参数'auth_token'提取token")
+            return auth_token
+        
+        # 4. 从URL参数 'token' (备用)
         token = handler.get_argument('token', None)
         if token:
             logger.info("从URL参数提取token")

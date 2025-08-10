@@ -170,11 +170,10 @@
                 const tokenExpires = localStorage.getItem('token_expires');
                 
                 if (!token) {
-                    log('未找到认证token，重定向到登录页面');
+                    log('未找到认证token，自动跳转到登录页面');
                     updateStatus('未找到认证信息，正在跳转到登录页面...', 'error');
-                    setTimeout(() => {
-                        window.location.href = '/sso/';
-                    }, 2000);
+                    // 直接跳转，不等待
+                    window.location.href = '/sso/';
                     return;
                 }
                 
@@ -186,11 +185,9 @@
                     const currentTime = new Date().getTime();
                     
                     if (currentTime >= expiryTime) {
-                        log('Token已过期，重定向到登录页面');
+                        log('Token已过期，自动跳转到登录页面');
                         updateStatus('认证信息已过期，正在跳转到登录页面...', 'error');
-                        setTimeout(() => {
-                            window.location.href = '/sso/';
-                        }, 2000);
+                        window.location.href = '/sso/';
                         return;
                     }
                 }
@@ -212,74 +209,40 @@
                 const userData = await verifyResponse.json();
                 log(`Token验证成功: ${userData.username || userData.user?.username || '未知用户'}`);
                 
-                // 4. 认证成功，准备传递到JupyterHub
+                // 4. 认证成功，直接跳转到JupyterHub
                 updateStatus(`认证成功！正在进入JupyterHub...`, 'success');
                 
-                // 5. 首先获取XSRF token
-                log('获取JupyterHub XSRF token...');
-                const xsrfResponse = await fetch('/jupyter/hub/login', {
-                    method: 'GET',
-                    credentials: 'include'
-                });
+                // 5. 直接跳转到专用的JupyterHub路径，带token参数
+                const username = userData.username || userData.user?.username || 'unknown';
+                const redirectUrl = `/jupyterhub-direct/?auth_token=${encodeURIComponent(token)}&username=${encodeURIComponent(username)}`;
                 
-                if (!xsrfResponse.ok) {
-                    throw new Error(`无法获取XSRF token: ${xsrfResponse.status}`);
-                }
-                
-                const loginPageText = await xsrfResponse.text();
-                const xsrfMatch = loginPageText.match(/name="_xsrf"[^>]*value="([^"]+)"/);
-                
-                if (!xsrfMatch) {
-                    throw new Error('无法从登录页面提取XSRF token');
-                }
-                
-                const xsrfToken = xsrfMatch[1];
-                log(`获取到XSRF token: ${xsrfToken.substring(0, 20)}...`);
-                
-                // 6. 创建表单自动提交到JupyterHub自动登录端点
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = '/jupyter/auto-login';
-                form.style.display = 'none';
-                
-                // 添加XSRF token字段
-                const xsrfField = document.createElement('input');
-                xsrfField.type = 'hidden';
-                xsrfField.name = '_xsrf';
-                xsrfField.value = xsrfToken;
-                form.appendChild(xsrfField);
-                
-                // 添加token字段
-                const tokenField = document.createElement('input');
-                tokenField.type = 'hidden';
-                tokenField.name = 'token';
-                tokenField.value = token;
-                form.appendChild(tokenField);
-                
-                // 添加用户信息
-                const usernameField = document.createElement('input');
-                usernameField.type = 'hidden';
-                usernameField.name = 'username';
-                usernameField.value = userData.username || userData.user?.username || 'unknown';
-                form.appendChild(usernameField);
-                
-                document.body.appendChild(form);
-                log('提交认证信息到JupyterHub...');
-                form.submit();
+                log('直接跳转到JupyterHub...');
+                window.location.href = redirectUrl;
                 
             } catch (error) {
                 log(`认证检查失败: ${error.message}`, 'error');
-                updateStatus(`认证检查失败: ${error.message}`, 'error');
-                showActions();
+                updateStatus(`认证检查失败，跳转到登录页面...`, 'error');
+                // 出错时也直接跳转到登录页面
+                setTimeout(() => {
+                    window.location.href = '/sso/';
+                }, 2000);
             }
         }
 
-        // 页面加载完成后开始检查
+        // 页面加载完成后立即开始检查
         document.addEventListener('DOMContentLoaded', () => {
             log('JupyterHub认证中转页面加载完成');
             
-            // 延迟检查，让页面有时间渲染
-            setTimeout(checkAndPassAuth, 500);
+            // 预检查：如果没有token，立即跳转，避免白屏
+            const token = localStorage.getItem('token');
+            if (!token) {
+                log('预检查：未找到token，立即跳转到登录页面');
+                window.location.href = '/sso/';
+                return;
+            }
+            
+            // 有token，执行完整认证检查
+            checkAndPassAuth();
         });
     </script>
 </body>
