@@ -1,0 +1,31 @@
+apiVersion: v2
+name: ai-infra-matrix
+description: A comprehensive AI infrastructure platform with JupyterHub, backend services, and unified authentication
+type: application
+version: 0.0.4
+appVersion: "0.0.3.2"
+
+keywords:
+  - ai
+  - jupyterhub
+  - kubernetes
+  - machine-learning
+  - infrastructure
+
+home: https://github.com/aresnasa/ai-infra-matrix
+sources:
+  - https://github.com/aresnasa/ai-infra-matrix
+
+maintainers:
+  - name: aresnasa
+    email: dev@ai-infra.local
+
+dependencies:
+  - name: postgresql
+    version: "15.5.2"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+  - name: redis
+    version: "19.6.4"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled

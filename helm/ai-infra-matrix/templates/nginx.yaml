@@ -1,0 +1,134 @@
+{{- if .Values.nginx.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "nginx" | nindent 4 }}
+spec:
+  replicas: {{ .Values.nginx.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ai-infra-matrix.selectorLabels" . | nindent 6 }}
+      {{- include "ai-infra-matrix.componentLabels" "nginx" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-infra-matrix.selectorLabels" . | nindent 8 }}
+        {{- include "ai-infra-matrix.componentLabels" "nginx" | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ai-infra-matrix.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+      - name: nginx
+        image: {{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}
+        imagePullPolicy: {{ .Values.nginx.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.nginx.service.port }}
+          protocol: TCP
+        env:
+        - name: BACKEND_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: BACKEND_HOST
+        - name: BACKEND_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: BACKEND_PORT
+        - name: FRONTEND_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: FRONTEND_HOST
+        - name: FRONTEND_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: FRONTEND_PORT
+        - name: JUPYTERHUB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_HOST
+        - name: JUPYTERHUB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_PORT
+        - name: NGINX_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: NGINX_PORT
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: JWT_SECRET
+        - name: NGINX_RESOLVER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: NGINX_RESOLVER
+        resources:
+          {{- toYaml .Values.nginx.resources | nindent 12 }}
+        {{- if .Values.nginx.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.nginx.livenessProbe | nindent 12 }}
+        {{- end }}
+        {{- if .Values.nginx.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.nginx.readinessProbe | nindent 12 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "nginx" | nindent 4 }}
+spec:
+  type: {{ .Values.nginx.service.type }}
+  {{- if and (eq .Values.nginx.service.type "LoadBalancer") .Values.nginx.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.nginx.service.loadBalancerIP }}
+  {{- end }}
+  {{- if .Values.nginx.service.externalIPs }}
+  externalIPs:
+    {{- toYaml .Values.nginx.service.externalIPs | nindent 4 }}
+  {{- end }}
+  ports:
+  - port: {{ .Values.nginx.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+    {{- if and (or (eq .Values.nginx.service.type "NodePort") (eq .Values.nginx.service.type "LoadBalancer")) .Values.nginx.service.nodePort }}
+    nodePort: {{ .Values.nginx.service.nodePort }}
+    {{- end }}
+  selector:
+    {{- include "ai-infra-matrix.selectorLabels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "nginx" | nindent 4 }}
+{{- end }}

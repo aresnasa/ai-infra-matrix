@@ -1,0 +1,109 @@
+AI Infrastructure Matrix has been deployed!
+
+🚀 **Deployment Status:**
+{{- if .Values.nginx.enabled }}
+- Nginx Gateway: {{ .Values.nginx.replicaCount }} replica(s)
+{{- end }}
+{{- if .Values.backend.enabled }}
+- Backend API: {{ .Values.backend.replicaCount }} replica(s)
+{{- end }}
+{{- if .Values.frontend.enabled }}
+- Frontend App: {{ .Values.frontend.replicaCount }} replica(s)
+{{- end }}
+{{- if .Values.jupyterhub.enabled }}
+- JupyterHub: 1 replica
+{{- end }}
+
+🌐 **Access Information:**
+
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  {{- if $.Values.ingress.tls }}
+    🔒 HTTPS: https://{{ $host.host }}
+  {{- else }}
+    🌍 HTTP: http://{{ $host.host }}
+  {{- end }}
+{{- end }}
+{{- else if eq .Values.nginx.service.type "LoadBalancer" }}
+  🌍 Load Balancer: Get external IP with:
+     kubectl get svc {{ include "ai-infra-matrix.fullname" . }}-nginx -n {{ .Release.Namespace }}
+     
+  📝 Once external IP is available, access:
+     http://<EXTERNAL-IP>:{{ .Values.nginx.service.port }}
+{{- else if eq .Values.nginx.service.type "NodePort" }}
+  🚪 NodePort: Access via any cluster node:
+     http://<NODE-IP>:{{ .Values.nginx.service.nodePort | default "30080" }}
+{{- else }}
+  🔧 ClusterIP: Use port-forwarding for access:
+     kubectl port-forward svc/{{ include "ai-infra-matrix.fullname" . }}-nginx {{ .Values.nginx.service.port }}:{{ .Values.nginx.service.port }} -n {{ .Release.Namespace }}
+     
+  📝 Then access: http://localhost:{{ .Values.nginx.service.port }}
+{{- end }}
+
+📚 **Service Endpoints:**
+{{- if .Values.backend.enabled }}
+- Backend API: /api/*
+{{- end }}
+{{- if .Values.frontend.enabled }}
+- Frontend App: /
+{{- end }}
+{{- if .Values.jupyterhub.enabled }}
+- JupyterHub: /jupyter/*
+- Single-user Notebooks: /jupyter/user/{username}/
+{{- end }}
+
+🔍 **Monitoring & Debugging:**
+
+Check deployment status:
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl get services -n {{ .Release.Namespace }}
+
+{{- if .Values.jupyterhub.enabled }}
+Check JupyterHub logs:
+  kubectl logs -f deployment/{{ include "ai-infra-matrix.fullname" . }}-jupyterhub -n {{ .Release.Namespace }}
+
+Check single-user pods:
+  kubectl get pods -n {{ include "ai-infra-matrix.userNamespace" . }}
+{{- end }}
+
+Check Nginx logs:
+  kubectl logs -f deployment/{{ include "ai-infra-matrix.fullname" . }}-nginx -n {{ .Release.Namespace }}
+
+💾 **Storage:**
+{{- if .Values.jupyterhub.persistence.enabled }}
+- JupyterHub Data: {{ .Values.jupyterhub.persistence.size }} ({{ .Values.jupyterhub.persistence.storageClass | default "default" }})
+{{- end }}
+{{- if .Values.sharedStorage.enabled }}
+- Shared Notebooks: {{ .Values.sharedStorage.size }} ({{ .Values.sharedStorage.storageClass | default "default" }})
+{{- end }}
+{{- if .Values.jupyterhub.singleuser.storage.dynamic }}
+- User Home Dirs: {{ .Values.jupyterhub.singleuser.storage.capacity | default "10Gi" }} each ({{ .Values.jupyterhub.singleuser.storage.storageClass | default "default" }})
+{{- end }}
+
+🔐 **Authentication:**
+{{- if .Values.jupyterhub.enabled }}
+- SSO Integration: Backend-integrated authentication
+- Auto-login: {{ if .Values.jupyterhub.config.autoLogin }}✅ Enabled{{ else }}❌ Disabled{{ end }}
+{{- end }}
+
+⚙️  **Configuration:**
+- Namespace: {{ .Release.Namespace }}
+{{- if .Values.jupyterhub.enabled }}
+- User Namespace: {{ include "ai-infra-matrix.userNamespace" . }}
+{{- end }}
+- Image Registry: {{ .Values.global.imageRegistry | default "Docker Hub" }}
+
+📖 **Next Steps:**
+1. Verify all pods are running
+2. Check external access (LoadBalancer/Ingress)
+3. Test authentication flow
+4. Create test notebooks in JupyterHub
+5. Monitor resource usage and scaling
+
+{{- if .Values.monitoring.enabled }}
+🔍 **Monitoring:**
+- Prometheus: {{ if .Values.monitoring.prometheus.enabled }}✅ Enabled{{ else }}❌ Disabled{{ end }}
+- Grafana: {{ if .Values.monitoring.grafana.enabled }}✅ Enabled{{ else }}❌ Disabled{{ end }}
+{{- end }}
+
+For more information, visit: https://github.com/your-org/ai-infra-matrix

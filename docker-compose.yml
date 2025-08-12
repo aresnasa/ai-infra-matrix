@@ -229,9 +229,9 @@ services:
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
       # Spawner配置
-      - JUPYTERHUB_NOTEBOOK_IMAGE=jupyter/base-notebook:latest
+      - JUPYTERHUB_IMAGE=ai-infra-singleuser:latest
       - JUPYTERHUB_NETWORK=ai-infra-network
-      - JUPYTERHUB_MEM_LIMIT=2G
+      - JUPYTERHUB_MEM_LIMIT=3G
       - JUPYTERHUB_CPU_LIMIT=1.0
       # 功能开关
       - JUPYTERHUB_IDLE_CULLER_ENABLED=true
@@ -245,10 +245,10 @@ services:
       - JUPYTERHUB_PUBLIC_HOST=localhost:8080
       # CORS配置
       - JUPYTERHUB_CORS_ORIGIN=http://localhost:8080
-    # 仅内部网络访问，不直接暴露端口
-    # 通过 nginx 代理访问 /jupyter/ 路径
-    # ports:
-    #   - "8088:8000"  # 移除直接访问端口，强制通过代理
+    # 暂时暴露主端口以便直接调试访问（http://localhost:8088/jupyter/）
+    # 调试完成后可注释掉，强制通过Nginx访问
+    ports:
+      - "8088:8000"
     expose:
       - "8000"  # JupyterHub主端口（仅内部网络）
       - "8091"  # Hub内部端口（仅内部网络）
@@ -277,6 +277,17 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
+  singleuser-builder:
+    build:
+      context: ./docker/singleuser
+      dockerfile: Dockerfile
+    image: ai-infra-singleuser:latest
+    command: ["true"]
+    networks:
+      - ai-infra-network
+    restart: "no"
+
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
     build:
@@ -290,6 +301,7 @@ services:
     ports:
       - "8080:80"    # 主访问端口
       - "8443:443"   # HTTPS端口 (预留)
+      - "8001:8001"  # 调试端口：直通JupyterHub（不做路径重写）
     volumes:
       # 仅挂载日志目录，静态文件已嵌入镜像
       - nginx_logs:/var/log/nginx

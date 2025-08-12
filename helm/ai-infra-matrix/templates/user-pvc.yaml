@@ -1,0 +1,24 @@
+{{- if .Values.jupyterhub.singleuser.storage.dynamic }}
+# This template creates PVCs dynamically for single-user pods
+# It's used by KubeSpawner via the pvc_name_template configuration
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-{username}
+  namespace: {{ include "ai-infra-matrix.userNamespace" . }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "singleuser" | nindent 4 }}
+    hub.jupyter.org/username: "{username}"
+spec:
+  accessModes:
+    - {{ .Values.jupyterhub.singleuser.storage.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ .Values.jupyterhub.singleuser.storage.capacity | default "10Gi" }}
+  {{- if .Values.jupyterhub.singleuser.storage.storageClass }}
+  storageClassName: {{ .Values.jupyterhub.singleuser.storage.storageClass }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,172 @@
+{{- if .Values.jupyterhub.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+spec:
+  replicas: 1  # JupyterHub should only have one replica
+  selector:
+    matchLabels:
+      {{- include "ai-infra-matrix.selectorLabels" . | nindent 6 }}
+      {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-infra-matrix.selectorLabels" . | nindent 8 }}
+        {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ai-infra-matrix.serviceAccountName" . }}-jupyterhub
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+      - name: jupyterhub
+        image: {{ .Values.jupyterhub.image.repository }}:{{ .Values.jupyterhub.image.tag }}
+        imagePullPolicy: {{ .Values.jupyterhub.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.jupyterhub.service.port }}
+          protocol: TCP
+        - name: hub
+          containerPort: {{ .Values.jupyterhub.service.hubPort }}
+          protocol: TCP
+        env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_PASSWORD
+        - name: BACKEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: BACKEND_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: JWT_SECRET
+        - name: JUPYTERHUB_PUBLIC_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_PUBLIC_HOST
+        - name: JUPYTERHUB_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_IMAGE
+        - name: JUPYTERHUB_MEM_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_MEM_LIMIT
+        - name: JUPYTERHUB_CPU_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_CPU_LIMIT
+        - name: SESSION_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: SESSION_TIMEOUT
+        - name: KUBERNETES_NAMESPACE
+          value: {{ include "ai-infra-matrix.userNamespace" . }}
+        - name: KUBERNETES_SERVICE_ACCOUNT
+          value: {{ include "ai-infra-matrix.serviceAccountName" . }}-jupyterhub
+        - name: JUPYTERHUB_STORAGE_CLASS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: JUPYTERHUB_STORAGE_CLASS
+        - name: SHARED_STORAGE_CLASS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: SHARED_STORAGE_CLASS
+        volumeMounts:
+        - name: jupyterhub-data
+          mountPath: /srv/data/jupyterhub
+        - name: shared-notebooks
+          mountPath: /srv/shared-notebooks
+        resources:
+          {{- toYaml .Values.jupyterhub.resources | nindent 12 }}
+        {{- if .Values.jupyterhub.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.jupyterhub.livenessProbe | nindent 12 }}
+        {{- end }}
+        {{- if .Values.jupyterhub.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.jupyterhub.readinessProbe | nindent 12 }}
+        {{- end }}
+      volumes:
+      - name: jupyterhub-data
+        persistentVolumeClaim:
+          claimName: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-data
+      - name: shared-notebooks
+        persistentVolumeClaim:
+          claimName: {{ include "ai-infra-matrix.fullname" . }}-shared-notebooks
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+spec:
+  type: {{ .Values.jupyterhub.service.type }}
+  ports:
+  - port: {{ .Values.jupyterhub.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  - port: {{ .Values.jupyterhub.service.hubPort }}
+    targetPort: hub
+    protocol: TCP
+    name: hub
+  selector:
+    {{- include "ai-infra-matrix.selectorLabels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+{{- end }}

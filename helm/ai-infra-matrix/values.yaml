@@ -1,0 +1,282 @@
+# Default values for ai-infra-matrix
+# This is a YAML-formatted file.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: "standard"
+
+# Image settings
+image:
+  registry: ""
+  repository: ai-infra
+  tag: "0.0.3.2"
+  pullPolicy: Always
+
+# Namespace configuration
+namespaceOverride: ""
+userNamespace: "ai-infra-users"
+
+# Service account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# RBAC
+rbac:
+  create: true
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: ai-infra.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: nginx
+  tls: []
+
+# PostgreSQL database configuration
+postgresql:
+  enabled: true
+  auth:
+    username: postgres
+    password: postgres
+    database: ai_infra_db
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+
+# Redis configuration
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: ansible-redis-password
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 250m
+
+# Backend service configuration
+backend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-infra-backend
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8082
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+  env:
+    JWT_SECRET: "your-secret-key-change-in-production"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8082
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8082
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Frontend service configuration
+frontend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-infra-frontend
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 250m
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# JupyterHub configuration
+jupyterhub:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ai-infra-jupyterhub
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8000
+    hubPort: 8081
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  config:
+    useProxy: true
+    publicHost: "ai-infra.local"
+    autoLogin: true
+    sessionTimeout: 86400
+    startTimeout: 300
+    httpTimeout: 120
+  singleuser:
+    image:
+      repository: ai-infra-singleuser
+      tag: "latest"
+      pullPolicy: Always
+    resources:
+      guarantee:
+        memory: 512Mi
+        cpu: 0.1
+      limit:
+        memory: 3Gi
+        cpu: 1.0
+    storage:
+      capacity: 10Gi
+      homeMountPath: /home/jovyan
+    extraEnv:
+      JUPYTER_ENABLE_LAB: "yes"
+      GRANT_SUDO: "yes"
+      CHOWN_HOME: "yes"
+  env:
+    CONFIGPROXY_AUTH_TOKEN: "default-token-change-me"
+    JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+  livenessProbe:
+    httpGet:
+      path: /jupyter/hub/api
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /jupyter/hub/api
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# Nginx gateway configuration
+nginx:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-infra-nginx
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: LoadBalancer
+    port: 80
+    httpsPort: 443
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 250m
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Shared storage for notebooks
+sharedStorage:
+  enabled: true
+  size: 20Gi
+  storageClass: ""
+  accessMode: ReadWriteMany
+
+# Node selector, tolerations and affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Monitoring and observability
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+
+# Network policies
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []

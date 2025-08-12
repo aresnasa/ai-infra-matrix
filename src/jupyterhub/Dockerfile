@@ -7,9 +7,19 @@ RUN set -eux; \
         sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
         apk update && break || true; \
     done; \
-    apk --no-cache add ca-certificates curl tzdata bash shadow nodejs npm netcat-openbsd \
-    build-base python3-dev postgresql-dev postgresql-client redis git linux-headers && \
-    ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+    # Keep only required runtime dependencies; psycopg2-binary avoids needing postgresql-dev/client
+    apk --no-cache add \
+        ca-certificates \
+        curl \
+        tzdata \
+        bash \
+        shadow \
+        nodejs \
+        npm \
+        netcat-openbsd \
+        redis \
+        git \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 
 WORKDIR /srv/jupyterhub
 
@@ -22,9 +32,18 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # 依赖安装（分层优化，优先二进制版本）
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefer-binary psutil>=5.9.0 && \
-    pip install --no-cache-dir -r requirements.txt && \
-    npm install -g configurable-http-proxy
+# Install temporary build deps to compile psutil on Alpine, then remove them
+RUN set -eux; \
+    apk add --no-cache --virtual .build-deps \
+        build-base \
+        musl-dev \
+        linux-headers \
+        python3-dev \
+    ; \
+    pip install --no-cache-dir --prefer-binary psutil>=5.9.0; \
+    pip install --no-cache-dir -r requirements.txt; \
+    npm install -g configurable-http-proxy; \
+    apk del .build-deps
 
 # 用户和目录
 RUN adduser -D -s /bin/bash admin && \

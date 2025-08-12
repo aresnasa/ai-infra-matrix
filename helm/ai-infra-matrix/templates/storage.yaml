@@ -1,0 +1,43 @@
+{{- if .Values.jupyterhub.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.jupyterhub.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.jupyterhub.persistence.size }}
+  {{- if .Values.jupyterhub.persistence.storageClass }}
+  storageClassName: {{ .Values.jupyterhub.persistence.storageClass }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.sharedStorage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-shared-notebooks
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "shared-storage" | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.sharedStorage.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.sharedStorage.size }}
+  {{- if .Values.sharedStorage.storageClass }}
+  storageClassName: {{ .Values.sharedStorage.storageClass }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+{{- end }}

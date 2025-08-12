@@ -19,13 +19,19 @@ from traitlets import Unicode, Bool, Dict, List
 import redis
 import psycopg2
 from jupyterhub.utils import url_path_join
+from urllib.parse import quote
+from typing import cast
+
+# 兼容编辑器/静态检查与运行时：优先使用 JupyterHub 提供的 get_config，否则退化为本地 Config
+try:  # pragma: no cover - 编辑器环境
+    c = get_config()  # type: ignore[name-defined]
+except Exception:  # 运行在非Hub环境时兜底
+    from traitlets.config import Config
+    c = Config()
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-# 获取配置对象
-c = get_config()
 
 print("🚀 JupyterHub后端集成配置加载中...")
 
@@ -60,16 +66,19 @@ class BackendIntegratedAuthenticator(Authenticator):
     
     backend_url = Unicode(BACKEND_URL, config=True, help="后端API地址")
     jwt_secret = Unicode(JWT_SECRET, config=True, help="JWT签名密钥")
-    auto_login = False  # 禁用自动登录避免重定向循环
+    # 启用自动登录，/hub/login 将重定向到 login_url（/auto-login）
+    auto_login = Bool(True, config=True, help="启用SSO自动登录")
 
     def login_url(self, base_url):
-        """返回自动登录入口，配合 auto_login 使用。
-        当访问 /hub/login 时将重定向到此URL。
         """
-        # 确保路径包含 base_url 前缀，例如 /jupyter/auto-login
+        重写登录URL，始终指向自定义的自动登录处理器。
+        该处理器将负责处理SSO流程，而不是JupyterHub的默认登录页。
+        """
+        # 注意：extra_handlers 中注册的是 '/auto-login'，不是 '/hub/auto-login'
+        # 因此这里应当返回 base_url + '/auto-login'，避免 404
         return url_path_join(base_url, 'auto-login')
     
-    async def authenticate(self, handler, data):
+    async def authenticate(self, handler, data):  # type: ignore[override]
         """统一认证入口 - 通过后端验证"""
         try:
             logger.info("🔐 开始后端集成认证...")
@@ -218,15 +227,11 @@ class BackendProxyHandler(BaseHandler):
 
 
 class ContainerSpawner(DockerSpawner):
-    """容器环境优化的Spawner"""
-    
-    def user_env(self, env):
-        """设置用户环境"""
-        # 在容器环境中统一使用root用户
-        env['USER'] = 'root'
-        env['HOME'] = '/root'
-        env['SHELL'] = '/bin/bash'
-        return env
+    """容器环境优化的Spawner
+    使用 Jupyter Docker Stacks 的默认用户/环境（jovyan），避免破坏启动脚本。
+    如需自定义用户，请使用 Dockerfile 定制镜像而非在此处强行覆盖。
+    """
+    pass
 
 
 # =========================
@@ -235,12 +240,14 @@ class ContainerSpawner(DockerSpawner):
 
 # 基础网络配置（使用 bind_url 配置监听地址）
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
+# Hub API 绑定到 0.0.0.0，以便单用户容器通过docker网络访问
+c.JupyterHub.hub_bind_url = 'http://0.0.0.0:8081'
 
 # 通过环境变量决定是否通过代理访问
 use_proxy = os.environ.get('JUPYTERHUB_USE_PROXY', 'true').lower() == 'true'
 if use_proxy:
     # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
-    c.JupyterHub.base_url = '/jupyter/'
+    c.JupyterHub.base_url = '/jupyter'
     # 代理模式下，接收来自代理的Token
     c.JupyterHub.trust_user_provided_tokens = True
 else:
@@ -259,6 +266,10 @@ if use_proxy:
 else:
     c.JupyterHub.public_url = f'http://{public_host}/'
 
+# Hub 对外(容器内)连接信息：让单用户容器能访问 Hub API（通过服务名 jupyterhub:8081）
+hub_connect_host = os.environ.get('JUPYTERHUB_HUB_CONNECT_HOST', 'jupyterhub')
+c.JupyterHub.hub_connect_url = f'http://{hub_connect_host}:8081'
+
 # 数据库配置 - PostgreSQL
 c.JupyterHub.db_url = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
 
@@ -271,7 +282,9 @@ c.BackendIntegratedAuthenticator.jwt_secret = JWT_SECRET
 c.Authenticator.allow_all = True  # 用户权限由后端控制
 c.Authenticator.admin_users = set()  # 管理员由后端API确定
 c.Authenticator.enable_auth_state = True  # 启用认证状态传递
-# c.Authenticator.auto_login = True  # 禁用自动登录避免重定向循环
+# 启用单点登录（SSO）：将 /hub/login 重定向到 authenticator.login_url，即 /auto-login
+_auto_login_env = os.environ.get('JUPYTERHUB_AUTO_LOGIN', 'true').lower() == 'true'
+c.BackendIntegratedAuthenticator.auto_login = _auto_login_env
 
 class AutoLoginHandler(BaseHandler):
     """自动登录处理器：验证JWT并登录用户"""
@@ -296,14 +309,16 @@ class AutoLoginHandler(BaseHandler):
                 token = self.get_argument('token', None)
 
             if not token:
-                logger.warning("AutoLogin: 未找到token，跳转到登录页")
-                self.redirect(url_path_join(self.base_url, 'hub/login'))
+                logger.warning("AutoLogin: 未找到token，跳转到前端桥接页")
+                bridge = f"/jupyterhub-auth-bridge?target_url={quote(next_url)}&from=auto_login_missing"
+                self.redirect(bridge)
                 return
 
             username = await auth._verify_jwt_token(token)
             if not username:
-                logger.warning("AutoLogin: token无效，跳转到登录页")
-                self.redirect(url_path_join(self.base_url, 'hub/login'))
+                logger.warning("AutoLogin: token无效，跳转到前端桥接页")
+                bridge = f"/jupyterhub-auth-bridge?target_url={quote(next_url)}&from=auto_login_invalid"
+                self.redirect(bridge)
                 return
 
             user_info = await auth._get_user_info(username, token)
@@ -320,7 +335,8 @@ class AutoLoginHandler(BaseHandler):
             self.redirect(next_url)
         except Exception as e:
             logger.error(f"AutoLogin: 处理失败: {e}")
-            self.redirect(url_path_join(self.base_url, 'hub/login'))
+            bridge = f"/jupyterhub-auth-bridge?target_url={quote(next_url)}&from=auto_login_error"
+            self.redirect(bridge)
 
 # 额外处理器
 c.JupyterHub.extra_handlers = [
@@ -337,6 +353,13 @@ c.ContainerSpawner.image = os.environ.get('JUPYTERHUB_IMAGE', 'jupyter/base-note
 c.ContainerSpawner.network_name = os.environ.get('JUPYTERHUB_NETWORK', 'ai-infra-network')
 c.ContainerSpawner.remove = True  # 删除停止的容器
 c.ContainerSpawner.debug = True
+
+# DockerSpawner 在同一 docker 网络内访问，使用容器内网IP可避免端口映射问题
+c.DockerSpawner.use_internal_ip = True
+
+# 启动/就绪超时调大，避免首次拉取镜像或慢启动导致超时
+c.Spawner.start_timeout = int(os.environ.get('JUPYTERHUB_START_TIMEOUT', '180'))
+c.Spawner.http_timeout = int(os.environ.get('JUPYTERHUB_HTTP_TIMEOUT', '120'))
 
 # 资源限制
 c.ContainerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
@@ -356,9 +379,16 @@ c.ContainerSpawner.volumes = {
     # 可以添加持久化存储
 }
 
-# 安全配置
-c.JupyterHub.cookie_secret_file = '/srv/jupyterhub/jupyterhub_cookie_secret'
+# 安全配置（将cookie密钥保存在数据卷中，避免每次重启失效）
+c.JupyterHub.cookie_secret_file = '/srv/data/jupyterhub/jupyterhub_cookie_secret'
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'default-token-change-me')
+
+# 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 1 天
+_session_timeout = int(os.environ.get('SESSION_TIMEOUT', '86400'))
+c.JupyterHub.cookie_max_age_days = max(1, _session_timeout // 86400)
+# 刷新认证，降低重复登录概率；在spawn前强制刷新
+c.Authenticator.auth_refresh_age = _session_timeout
+c.Authenticator.refresh_pre_spawn = True
 
 # 加密密钥配置（用于auth_state）
 crypt_key = os.environ.get('JUPYTERHUB_CRYPT_KEY', '790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1')
