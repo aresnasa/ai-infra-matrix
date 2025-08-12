@@ -49,6 +49,7 @@ ingress:
         - path: /
           pathType: Prefix
           service: nginx
+          port: 80
   tls: []
 
 # PostgreSQL database configuration

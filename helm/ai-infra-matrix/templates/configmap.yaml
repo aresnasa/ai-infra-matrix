@@ -27,12 +27,16 @@ data:
   # Backend Configuration
   BACKEND_URL: {{ include "ai-infra-matrix.backendUrl" . | quote }}
   BACKEND_PORT: {{ .Values.backend.service.port | quote }}
+  BACKEND_HOST: {{ printf "%s-backend" (include "ai-infra-matrix.fullname" .) | quote }}
   
   # Frontend Configuration
+  FRONTEND_HOST: {{ printf "%s-frontend" (include "ai-infra-matrix.fullname" .) | quote }}
   FRONTEND_PORT: {{ .Values.frontend.service.port | quote }}
+  REACT_APP_BACKEND_URL: "/api"
   
   # JupyterHub Configuration
   JUPYTERHUB_PORT: {{ .Values.jupyterhub.service.port | quote }}
+  JUPYTERHUB_HOST: {{ printf "%s-jupyterhub" (include "ai-infra-matrix.fullname" .) | quote }}
   JUPYTERHUB_USE_PROXY: {{ .Values.jupyterhub.config.useProxy | quote }}
   JUPYTERHUB_PUBLIC_HOST: {{ .Values.jupyterhub.config.publicHost | quote }}
   JUPYTERHUB_HUB_CONNECT_HOST: {{ printf "%s-jupyterhub" (include "ai-infra-matrix.fullname" .) | quote }}
@@ -54,6 +58,60 @@ data:
   # Nginx Configuration
   NGINX_PORT: {{ .Values.nginx.service.port | quote }}
   NGINX_SSL_PORT: {{ .Values.nginx.service.httpsPort | quote }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-nginx-conf
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+data:
+  nginx.conf: |
+    events { worker_connections 1024; }
+    http {
+      include       /etc/nginx/mime.types;
+      default_type  application/octet-stream;
+      resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+      map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+      server { listen 80; server_name _;
+        client_max_body_size 100M;
+        # JupyterHub under /jupyter (preserve prefix)
+        location ^~ /jupyter/ {
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-jupyterhub:{{ .Values.jupyterhub.service.port }};
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_buffering off;
+        }
+        # Backend API
+        location /api/ {
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-backend:{{ .Values.backend.service.port }}/api/;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        # Static passthrough to frontend first for asset caching
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-frontend:{{ .Values.frontend.service.port }};
+          expires 1y; add_header Cache-Control "public, immutable";
+        }
+        # Frontend app
+        location / {
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-frontend:{{ .Values.frontend.service.port }}/;
+          proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        location = /health { return 200 'healthy\n'; add_header Content-Type text/plain; }
+      }
+    }
 ---
 apiVersion: v1
 kind: Secret

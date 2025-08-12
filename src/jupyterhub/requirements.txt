@@ -11,3 +11,4 @@ psycopg2-binary>=2.9.0
 redis>=4.0.0
 dockerspawner>=12.0.0
 psutil>=5.9.0
+kubespawner>=6.0.0

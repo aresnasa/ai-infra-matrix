@@ -30,6 +30,10 @@ spec:
       - name: nginx
         image: {{ .Values.nginx.image.repository }}:{{ .Values.nginx.image.tag }}
         imagePullPolicy: {{ .Values.nginx.image.pullPolicy }}
+        args:
+          - /bin/sh
+          - -lc
+          - nginx -g 'daemon off;' -c /etc/nginx/nginx.conf
         ports:
         - name: http
           containerPort: {{ .Values.nginx.service.port }}
@@ -90,6 +94,10 @@ spec:
         readinessProbe:
           {{- toYaml .Values.nginx.readinessProbe | nindent 12 }}
         {{- end }}
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -102,6 +110,10 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: {{ include "ai-infra-matrix.fullname" . }}-nginx-conf
 ---
 apiVersion: v1
 kind: Service
