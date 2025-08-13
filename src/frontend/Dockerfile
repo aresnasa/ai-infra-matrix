@@ -31,6 +31,10 @@ RUN npm run build
 # 使用nginx作为生产环境镜像
 FROM nginx:stable-alpine-perl
 
+# Version metadata
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
 # 配置Alpine镜像（多镜像自动回退），并设置时区为上海
 RUN set -eux; \
 	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
@@ -59,3 +63,8 @@ EXPOSE 80
 
 # 启动nginx
 CMD ["nginx", "-g", "daemon off;"]
+
+LABEL maintainer="AI Infrastructure Team" \
+	org.opencontainers.image.title="ai-infra-frontend" \
+	org.opencontainers.image.version="${APP_VERSION}" \
+	org.opencontainers.image.description="AI Infra Matrix - Frontend"

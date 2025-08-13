@@ -1,6 +1,10 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
+# Version metadata (overridable at build time)
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
 # 配置Alpine镜像（多镜像自动回退）
 RUN set -eux; \
     for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
@@ -29,6 +33,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test
 
 # Final stage
 FROM golang:1.24-alpine
+
+# Keep version metadata available in the final image, too
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
 
 # 配置Alpine镜像（多镜像自动回退）
 RUN set -eux; \
@@ -77,3 +85,8 @@ EXPOSE 8082
 
 # Run with database wait
 CMD ["bash", "-c", "echo 'Waiting for database...' && while ! nc -z postgres 5432; do sleep 1; done && echo 'Database ready!' && ./main"]
+
+LABEL maintainer="AI Infrastructure Team" \
+    org.opencontainers.image.title="ai-infra-backend" \
+    org.opencontainers.image.version="${APP_VERSION}" \
+    org.opencontainers.image.description="AI Infra Matrix - Backend service"

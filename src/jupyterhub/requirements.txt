@@ -11,4 +11,7 @@ psycopg2-binary>=2.9.0
 redis>=4.0.0
 dockerspawner>=12.0.0
 psutil>=5.9.0
-kubespawner>=6.0.0
+# NOTE: kubespawner is required only for K8s deployments via Helm and currently
+# isn't compatible with Python 3.13 on Alpine. Keep it in a separate K8s image or
+# add it during Helm builds. For docker-compose (DockerSpawner), it's not needed.
+# kubespawner>=6.0.0

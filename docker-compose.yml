@@ -97,6 +97,9 @@ services:
     build: 
       context: ./src/backend
       dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-v0.0.3.2}
+    image: ai-infra-backend-init:${IMAGE_TAG:-v0.0.3.2}
     container_name: ai-infra-backend-init
     env_file:
       - ./src/backend/.env
@@ -125,6 +128,9 @@ services:
     build: 
       context: ./src/backend
       dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-v0.0.3.2}
+    image: ai-infra-backend:${IMAGE_TAG:-v0.0.3.2}
     container_name: ai-infra-backend
     env_file:
       - ./src/backend/.env
@@ -172,6 +178,8 @@ services:
       args:
         REACT_APP_API_URL: /api
         REACT_APP_JUPYTERHUB_URL: /jupyter
+        VERSION: ${IMAGE_TAG:-v0.0.3.2}
+    image: ai-infra-frontend:${IMAGE_TAG:-v0.0.3.2}
     container_name: ai-infra-frontend
     # 仅内部访问，通过nginx代理
     expose:
@@ -195,8 +203,9 @@ services:
       context: ./src/jupyterhub
       dockerfile: Dockerfile
       args:
-        - BUILDKIT_INLINE_CACHE=1
-    image: ai-infra-jupyterhub:latest
+        BUILDKIT_INLINE_CACHE: "1"
+        VERSION: ${IMAGE_TAG:-v0.0.3.2}
+    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.0.3.2}
     container_name: ai-infra-jupyterhub
     environment:
       # 数据库配置 - JupyterHub自动创建和管理数据库
@@ -229,7 +238,7 @@ services:
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
       # Spawner配置
-      - JUPYTERHUB_IMAGE=ai-infra-singleuser:latest
+      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.2}
       - JUPYTERHUB_NETWORK=ai-infra-network
       - JUPYTERHUB_MEM_LIMIT=3G
       - JUPYTERHUB_CPU_LIMIT=1.0
@@ -282,7 +291,9 @@ services:
     build:
       context: ./docker/singleuser
       dockerfile: Dockerfile
-    image: ai-infra-singleuser:latest
+      args:
+        VERSION: ${IMAGE_TAG:-v0.0.3.2}
+    image: ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.2}
     command: ["true"]
     networks:
       - ai-infra-network
@@ -296,7 +307,8 @@ services:
       args:
         DEBUG_MODE: ${DEBUG_MODE:-false}
         BUILD_ENV: ${BUILD_ENV:-production}
-    image: ai-infra-nginx:latest
+        VERSION: ${IMAGE_TAG:-v0.0.3.2}
+    image: ai-infra-nginx:${IMAGE_TAG:-v0.0.3.2}
     container_name: ai-infra-nginx
     ports:
       - "8080:80"    # 主访问端口

@@ -4,6 +4,10 @@
 
 FROM nginx:alpine
 
+# Version metadata (can be overridden at build time)
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
 # 构建参数 - 控制是否启用调试模式
 ARG DEBUG_MODE=false
 ARG BUILD_ENV=production
@@ -95,6 +99,9 @@ CMD ["nginx", "-g", "daemon off;"]
 
 # 元数据标签
 LABEL maintainer="AI Infrastructure Team" \
-      version="1.0.0" \
+    version="${APP_VERSION}" \
       description="AI基础设施矩阵 - 分布式Nginx代理服务" \
-      features="SSO,JupyterHub,Distributed,Upstream"
+    features="SSO,JupyterHub,Distributed,Upstream" \
+    org.opencontainers.image.title="ai-infra-nginx" \
+    org.opencontainers.image.version="${APP_VERSION}" \
+    org.opencontainers.image.description="AI Infra Matrix custom nginx gateway"

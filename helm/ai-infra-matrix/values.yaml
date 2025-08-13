@@ -11,8 +11,8 @@ global:
 image:
   registry: ""
   repository: ai-infra
-  tag: "0.0.3.2"
-  pullPolicy: Always
+  tag: "v0.0.3.2"
+  pullPolicy: IfNotPresent
 
 # Namespace configuration
 namespaceOverride: ""
@@ -94,9 +94,9 @@ backend:
   enabled: true
   replicaCount: 2
   image:
-    repository: ai-infra-backend
-    tag: "latest"
-    pullPolicy: Always
+  repository: ai-infra-backend
+  tag: "v0.0.3.2"
+  pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 8082
@@ -127,9 +127,9 @@ frontend:
   enabled: true
   replicaCount: 2
   image:
-    repository: ai-infra-frontend
-    tag: "latest"
-    pullPolicy: Always
+  repository: ai-infra-frontend
+  tag: "v0.0.3.2"
+  pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 3000
@@ -158,9 +158,9 @@ jupyterhub:
   enabled: true
   replicaCount: 1
   image:
-    repository: ai-infra-jupyterhub
-    tag: "latest"
-    pullPolicy: Always
+  repository: ai-infra-jupyterhub
+  tag: "v0.0.3.2"
+  pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 8000
@@ -186,9 +186,9 @@ jupyterhub:
     httpTimeout: 120
   singleuser:
     image:
-      repository: ai-infra-singleuser
-      tag: "latest"
-      pullPolicy: Always
+  repository: ai-infra-singleuser
+  tag: "v0.0.3.2"
+  pullPolicy: IfNotPresent
     resources:
       guarantee:
         memory: 512Mi
@@ -224,9 +224,9 @@ nginx:
   enabled: true
   replicaCount: 2
   image:
-    repository: ai-infra-nginx
-    tag: "latest"
-    pullPolicy: Always
+  repository: ai-infra-nginx
+  tag: "v0.0.3.2"
+  pullPolicy: IfNotPresent
   service:
     type: LoadBalancer
     port: 80

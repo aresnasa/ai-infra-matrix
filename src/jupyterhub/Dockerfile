@@ -1,6 +1,10 @@
 # JupyterHub Backend集成 - 精炼版（修复构建问题）
 FROM python:3.13-alpine
 
+# Version metadata (overridable at build time)
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
 # 基础环境和构建工具（多镜像自动回退）
 RUN set -eux; \
     for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
@@ -78,3 +82,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/jupyter/hub/api || exit 1
 
 CMD ["/wait-for-db.sh", "postgres", "jupyterhub", "-f", "/srv/jupyterhub/backend_integrated_config.py"]
+
+LABEL maintainer="AI Infrastructure Team" \
+    org.opencontainers.image.title="ai-infra-jupyterhub" \
+    org.opencontainers.image.version="${APP_VERSION}" \
+    org.opencontainers.image.description="AI Infra Matrix - JupyterHub with integrated backend auth"

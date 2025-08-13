@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# AI-Infra-Matrix 构建脚本
-# 支持开发模式和生产模式
+# AI-Infra-Matrix 构建脚本（增强版）
+# 目标：一键构建并打包所有组件镜像，版本号自动来自 Git（可覆盖）
+# 兼容 macOS bash 3.2
 
-set -e
+set -euo pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -27,6 +28,159 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}❌ $1${NC}"
+}
+
+#============================
+# 版本号与注册表配置
+#============================
+
+VERSION=""
+REGISTRY="${REGISTRY:-}"
+PUSH=""
+TAG_LATEST=""
+DIRECT_BUILD="true"  # 默认使用直接 docker build，不依赖 docker-compose
+NO_CACHE=""
+MODE="production"
+
+# 推导 Git 版本，回退为分支名或短哈希
+detect_version() {
+    # 优先从参数/环境获取
+    if [ -n "${VERSION:-}" ]; then
+        echo "$VERSION"
+        return 0
+    fi
+    local v
+    # 尝试使用当前分支名（若形如 vX.Y.Z）
+    if v=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); then
+        case "$v" in
+            v[0-9]*) VERSION="$v" ;;
+        esac
+    fi
+    # 若仍未得到，尝试最近 tag
+    if [ -z "$VERSION" ]; then
+        if v=$(git describe --tags --abbrev=0 2>/dev/null); then
+            VERSION="$v"
+        fi
+    fi
+    # 若仍未得到，用短哈希
+    if [ -z "$VERSION" ]; then
+        if v=$(git rev-parse --short HEAD 2>/dev/null); then
+            VERSION="dev-$v"
+        else
+            VERSION="dev-unknown"
+        fi
+    fi
+    echo "$VERSION"
+}
+
+registry_prefix() {
+    if [ -n "$REGISTRY" ]; then
+        echo "$REGISTRY/"
+    else
+        echo ""
+    fi
+}
+
+tag_args() {
+    local name="$1"; shift
+    local prefix; prefix=$(registry_prefix)
+    local args=("-t" "${name}:$VERSION")
+    if [ -n "$prefix" ]; then
+        args+=("-t" "${prefix}${name}:$VERSION")
+    fi
+    if [ -n "$TAG_LATEST" ]; then
+        args+=("-t" "${name}:latest")
+        if [ -n "$prefix" ]; then
+            args+=("-t" "${prefix}${name}:latest")
+        fi
+    fi
+    printf '%s\n' "${args[@]}"
+}
+
+#============================
+# 单个组件构建器
+#============================
+
+build_backend() {
+    print_info "构建 backend 与 backend-init (VERSION=$VERSION)"
+    docker build ${NO_CACHE} \
+        -f src/backend/Dockerfile \
+        --build-arg VERSION="$VERSION" \
+        $(tag_args ai-infra-backend) \
+        src/backend
+    # 派生一份 init 标签（共用同一镜像内容，便于引用）
+    docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:"$VERSION"
+    if [ -n "$REGISTRY" ]; then
+        docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:"$VERSION"
+    fi
+    if [ -n "$TAG_LATEST" ]; then
+        docker tag ai-infra-backend:"$VERSION" ai-infra-backend:latest || true
+        docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:latest || true
+        if [ -n "$REGISTRY" ]; then
+            docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend:latest || true
+            docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:latest || true
+        fi
+    fi
+}
+
+build_frontend() {
+    print_info "构建 frontend (VERSION=$VERSION)"
+    docker build ${NO_CACHE} \
+        -f src/frontend/Dockerfile \
+        --build-arg VERSION="$VERSION" \
+        --build-arg REACT_APP_API_URL="${REACT_APP_API_URL:-/api}" \
+        --build-arg REACT_APP_JUPYTERHUB_URL="${REACT_APP_JUPYTERHUB_URL:-/jupyter}" \
+        $(tag_args ai-infra-frontend) \
+        src/frontend
+}
+
+build_singleuser() {
+    print_info "构建 singleuser (VERSION=$VERSION)"
+    docker build ${NO_CACHE} \
+        -f docker/singleuser/Dockerfile \
+        --build-arg VERSION="$VERSION" \
+        $(tag_args ai-infra-singleuser) \
+        docker/singleuser
+}
+
+build_jupyterhub() {
+    print_info "构建 jupyterhub (VERSION=$VERSION)"
+    docker build ${NO_CACHE} \
+        -f src/jupyterhub/Dockerfile \
+        --build-arg VERSION="$VERSION" \
+        $(tag_args ai-infra-jupyterhub) \
+        src/jupyterhub
+}
+
+build_nginx() {
+    print_info "构建 nginx (VERSION=$VERSION)"
+    # 注意：nginx Dockerfile 复制了 repo 根下的资源，构建上下文必须为仓库根目录
+    docker build ${NO_CACHE} \
+        -f src/nginx/Dockerfile \
+        --build-arg VERSION="$VERSION" \
+        --build-arg DEBUG_MODE="${DEBUG_MODE:-false}" \
+        --build-arg BUILD_ENV="${BUILD_ENV:-$MODE}" \
+        $(tag_args ai-infra-nginx) \
+        .
+}
+
+push_image_if_needed() {
+    local name="$1"
+    if [ -z "$PUSH" ] || [ -z "$REGISTRY" ]; then
+        return 0
+    fi
+    local prefix; prefix=$(registry_prefix)
+    print_info "推送镜像到 $REGISTRY: $name:$VERSION"
+    docker push "${prefix}${name}:$VERSION"
+    if [ -n "$TAG_LATEST" ]; then
+        docker push "${prefix}${name}:latest" || true
+    fi
+}
+
+push_all_if_needed() {
+    for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx; do
+        push_image_if_needed "$n"
+    done
 }
 
 # 预拉取基础镜像（支持国内镜像源回退）
@@ -122,22 +276,25 @@ show_help() {
     echo "  prod, production     - 生产模式 (禁用调试工具)"
     echo ""
     echo "选项:"
+    echo "  --version X         - 指定镜像版本（默认从git自动推导）"
+    echo "  --registry R        - 指定镜像注册表前缀（如 registry.local:5000）"
+    echo "  --push              - 构建后推送到注册表（需要 --registry）"
+    echo "  --tag-latest        - 额外打 latest 标签"
     echo "  --no-cache          - 无缓存构建"
-    echo "  --rebuild           - 强制重建所有服务"
+    echo "  --rebuild           - (仅compose路径) 强制重建所有服务"
     echo "  --nginx-only        - 只构建nginx服务"
     echo "  --skip-prepull      - 跳过预拉取基础镜像"
     echo "  --update-images     - 强制更新（即使本地存在也重新拉取）"
+    echo "  --compose           - 使用 docker-compose build（默认直接 docker build）"
     echo "  -h, --help          - 显示此帮助信息"
     echo ""
     echo "示例:"
-    echo "  $0 dev              - 开发模式构建"
-    echo "  $0 prod --no-cache  - 生产模式无缓存构建"
-    echo "  $0 dev --nginx-only - 开发模式只构建nginx"
+    echo "  $0 dev                          - 开发模式构建（自动版本）"
+    echo "  $0 prod --version v0.0.3.2      - 指定版本号构建"
+    echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
 }
 
-# 默认参数
-MODE="production"
-NO_CACHE=""
+# 其他默认参数
 REBUILD=""
 NGINX_ONLY=""
 SKIP_PREPULL=""
@@ -154,6 +311,14 @@ while [[ $# -gt 0 ]]; do
             MODE="production"
             shift
             ;;
+        --version)
+            VERSION="$2"; shift 2 ;;
+        --registry)
+            REGISTRY="$2"; shift 2 ;;
+        --push)
+            PUSH="true"; shift ;;
+        --tag-latest)
+            TAG_LATEST="true"; shift ;;
         --no-cache)
             NO_CACHE="--no-cache"
             shift
@@ -174,6 +339,10 @@ while [[ $# -gt 0 ]]; do
             UPDATE_IMAGES="true"
             shift
             ;;
+        --compose)
+            DIRECT_BUILD=""  # 关闭直接构建，走 compose
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -190,6 +359,9 @@ done
 echo "🚀 AI-Infra-Matrix 构建开始"
 echo "================================"
 print_info "构建模式: $MODE"
+VERSION=$(detect_version)
+export IMAGE_TAG="$VERSION"
+print_info "镜像版本: $VERSION"
 print_info "构建时间: $(date)"
 
 # 设置环境变量文件
@@ -220,9 +392,11 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-if ! command -v docker-compose &> /dev/null; then
-    print_error "Docker Compose 未安装或不可用"
-    exit 1
+if [ -z "$DIRECT_BUILD" ]; then
+    if ! command -v docker-compose &> /dev/null; then
+        print_error "Docker Compose 未安装或不可用"
+        exit 1
+    fi
 fi
 
 # 构建服务
@@ -246,35 +420,37 @@ else
     print_warning "跳过基础镜像预拉取 (--skip-prepull)"
 fi
 
-if [ -n "$NGINX_ONLY" ]; then
-    print_info "仅构建 nginx 服务"
-    SERVICES="nginx"
+if [ -z "$DIRECT_BUILD" ]; then
+    # 使用 docker-compose 构建路径（兼容旧流程）
+    if [ -n "$NGINX_ONLY" ]; then
+        print_info "仅构建 nginx 服务 (compose)"
+        SERVICES="nginx"
+    else
+        SERVICES=""
+    fi
+    BUILD_CMD="docker-compose"
+    if [ -f "$ENV_FILE" ]; then
+        BUILD_CMD="$BUILD_CMD --env-file $ENV_FILE"
+    fi
+    # 让 compose 也能获得版本号
+    export IMAGE_TAG
+    BUILD_CMD="$BUILD_CMD build $NO_CACHE $SERVICES"
+    print_info "执行构建命令: $BUILD_CMD"
+    eval $BUILD_CMD
 else
-    SERVICES=""
+    # 直接 docker build 路径
+    [ -z "$NGINX_ONLY" ] && build_backend
+    [ -z "$NGINX_ONLY" ] && build_frontend
+    [ -z "$NGINX_ONLY" ] && build_singleuser
+    [ -z "$NGINX_ONLY" ] && build_jupyterhub
+    build_nginx
 fi
 
-# 构建命令
-BUILD_CMD="docker-compose"
-
-# 添加环境文件参数
-if [ -f "$ENV_FILE" ]; then
-    BUILD_CMD="$BUILD_CMD --env-file $ENV_FILE"
-fi
-
-BUILD_CMD="$BUILD_CMD build $NO_CACHE $SERVICES"
-
-print_info "执行构建命令: $BUILD_CMD"
-eval $BUILD_CMD
-
-if [ $? -eq 0 ]; then
-    print_success "构建完成!"
-else
-    print_error "构建失败!"
-    exit 1
-fi
+print_success "镜像构建完成"
+push_all_if_needed
 
 # 启动服务（如果需要）
-if [ -n "$REBUILD" ] || [ -n "$NGINX_ONLY" ]; then
+if [ -z "$DIRECT_BUILD" ] && { [ -n "$REBUILD" ] || [ -n "$NGINX_ONLY" ]; }; then
     print_info "重启服务..."
     
     START_CMD="docker-compose"
@@ -304,6 +480,7 @@ echo ""
 echo "🎉 构建完成!"
 echo "================================"
 print_info "构建模式: $MODE"
+print_info "镜像版本: $VERSION"
 print_info "服务访问:"
 echo "  🌐 前端应用: http://localhost:8080"
 echo "  🔐 SSO登录: http://localhost:8080/sso/"
@@ -316,3 +493,8 @@ fi
 
 print_info "查看服务状态: docker-compose ps"
 print_info "查看日志: docker-compose logs -f [服务名]"
+
+# 输出镜像摘要
+echo ""
+print_info "本地镜像（ai-infra-*:$VERSION）:"
+docker images | grep "ai-infra-" | grep "$VERSION" || true
