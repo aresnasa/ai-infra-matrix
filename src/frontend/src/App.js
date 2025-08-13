@@ -37,6 +37,7 @@ const JupyterHubManagement = React.lazy(() => import('./pages/JupyterHubManageme
 
 // JupyterHub主页面懒加载
 const JupyterHubPage = React.lazy(() => import('./pages/JupyterHubPage'));
+const EmbeddedJupyter = React.lazy(() => import('./pages/EmbeddedJupyter'));
 
 function App() {
   const [user, setUser] = useState(null);
@@ -383,9 +384,15 @@ function App() {
                       } 
                     />
                     
-                    {/* JupyterHub页面通过nginx静态服务 */}
-                    {/* 已移除React路由，避免与nginx配置冲突 */}
-                    {/* 访问 /jupyterhub 将由nginx直接处理 */}
+                    {/* Embedded Jupyter page (same-origin iframe) */}
+                    <Route 
+                      path="/jupyter" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <EmbeddedJupyter />
+                        </Suspense>
+                      } 
+                    />
                     
                     {/* 管理员路由 - 支持 admin 和 super-admin 角色 */}
                     {(user?.role === 'admin' || user?.role === 'super-admin' || (user?.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'))) && (

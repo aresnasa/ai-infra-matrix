@@ -17,10 +17,10 @@ NC='\033[0m'
 failures=0
 
 probe() {
-  local name="$1" url="$2"
+  local name="$1" url="$2" expected_regex="${3:-^2[0-9][0-9]$}"
   local code
   code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
-  if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+  if [[ "$code" =~ $expected_regex ]]; then
     printf "${GREEN}PASS${NC} %-36s => %s\n" "$name" "$code"
   else
     printf "${RED}FAIL${NC} %-36s => %s\n" "$name" "$code"
@@ -57,6 +57,8 @@ probe "jupyterhub direct 8088 /jupyter/hub/health" "http://localhost:8088/jupyte
 
 # Optional static asset check to ensure path prefixing works
 probe "jupyter static via nginx /jupyter/hub/static/favicon.ico" "http://localhost:8080/jupyter/hub/static/favicon.ico"
+
+probe "embedded jupyter route" "http://localhost:8080/jupyter" "^2[0-9][0-9]$|^30[12]$"
 
 # Frontend favicon SVG should be served
 probe "frontend favicon.svg" "http://localhost:8080/favicon.svg"

@@ -1,0 +1,125 @@
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { Card, Alert, Button, Space, Spin, Typography } from 'antd';
+import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
+
+// Embedded Jupyter subpage with SSO preflight and full-height iframe
+const EmbeddedJupyter = () => {
+  const [ready, setReady] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [error, setError] = useState(null);
+  const jupyterBase = useMemo(() => `${window.location.origin}/jupyter/`, []);
+
+  const [iframeKey, setIframeKey] = useState(0);
+
+  const preflight = useCallback(async () => {
+    let cancelled = false;
+    setChecking(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/jupyter/access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        },
+        body: JSON.stringify({
+          redirect_uri: '/jupyter',
+          source: 'embedded_jupyter'
+        })
+      });
+
+      let data = null;
+      try { data = await res.json(); } catch (_) {}
+
+      if (!cancelled) {
+        if (data?.success && data?.action === 'authenticated') {
+          setReady(true);
+        } else if (data?.action === 'redirect' && data?.redirect_url) {
+          window.location.href = data.redirect_url;
+          return;
+        } else {
+          setReady(true);
+        }
+      }
+    } catch (e) {
+      if (!cancelled) {
+        setError('无法预检JupyterHub会话，将直接尝试加载。');
+        setReady(true);
+      }
+    } finally {
+      if (!cancelled) setChecking(false);
+    }
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    preflight();
+  }, [preflight]);
+
+  const openInNewTab = () => window.open(`${jupyterBase}hub/`, '_blank', 'noopener');
+  const handleRefresh = async () => {
+    await preflight();
+    // Force reload iframe without leaving the subpage
+    setIframeKey(Date.now());
+  };
+
+  // Viewport-filling iframe height: subtract header (64) and content paddings/margins (~48)
+  const iframeStyle = {
+    width: '100%',
+    height: 'calc(100vh - 64px - 48px)',
+    border: '1px solid #f0f0f0',
+    borderRadius: 6,
+    background: '#fff'
+  };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <Card
+          size="small"
+          title={<span style={{ fontSize: 14 }}>Jupyter 工作区</span>}
+          extra={
+            <Space>
+              <Button icon={<ReloadOutlined />} onClick={handleRefresh} size="small">刷新</Button>
+              <Button icon={<ExportOutlined />} onClick={openInNewTab} size="small">新窗口打开</Button>
+            </Space>
+          }
+          bodyStyle={{ padding: 12 }}
+        >
+          <Alert
+            type="info"
+            banner
+            showIcon
+            message={
+              <span style={{ fontSize: 12 }}>
+                内嵌同源 JupyterHub。若需认证，会跳转登录并返回此页。
+              </span>
+            }
+            style={{ padding: '6px 8px' }}
+          />
+        </Card>
+
+        {checking && !ready ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 240 }}>
+            <Spin size="large" tip="正在准备会话..." />
+          </div>
+        ) : (
+          <>
+            {error && (
+              <Alert type="warning" message={error} showIcon />
+            )}
+            <iframe
+              title="embedded-jupyterhub"
+              key={iframeKey}
+              src={jupyterBase}
+              style={iframeStyle}
+              allow="clipboard-read; clipboard-write; fullscreen"
+            />
+          </>
+        )}
+      </Space>
+    </div>
+  );
+};
+
+export default EmbeddedJupyter;

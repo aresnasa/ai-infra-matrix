@@ -100,51 +100,8 @@ const Layout = ({ children, user, onLogout }) => {
   const handleMenuClick = ({ key }) => {
     // 特殊处理JupyterHub访问
     if (key === '/jupyterhub') {
-      // 调用后端API处理JupyterHub访问
-      const handleJupyterHubAccess = async () => {
-        try {
-          const response = await fetch('/api/jupyter/access', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-            },
-            body: JSON.stringify({
-              redirect_uri: '/jupyterhub-authenticated',
-              source: 'frontend_menu'
-            })
-          });
-
-          const data = await response.json();
-          
-          if (data.success && data.action === 'authenticated') {
-            // 认证成功，直接跳转
-            window.location.href = data.redirect_url;
-          } else if (data.action === 'redirect') {
-            // 需要重定向到SSO登录
-            window.location.href = data.redirect_url;
-          } else {
-            // 降级处理：使用客户端逻辑
-            const token = localStorage.getItem('token');
-            if (token) {
-              window.location.href = '/jupyterhub-authenticated';
-            } else {
-              window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated';
-            }
-          }
-        } catch (error) {
-          console.error('JupyterHub访问API调用失败:', error);
-          // 降级处理：使用客户端逻辑
-          const token = localStorage.getItem('token');
-          if (token) {
-            window.location.href = '/jupyterhub-authenticated';
-          } else {
-            window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated';
-          }
-        }
-      };
-      
-      handleJupyterHubAccess();
+      // Navigate to embedded Jupyter page for consistent UX
+      navigate('/jupyter');
       return;
     }
     
