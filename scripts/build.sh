@@ -41,6 +41,8 @@ TAG_LATEST=""
 DIRECT_BUILD="true"  # 默认使用直接 docker build，不依赖 docker-compose
 NO_CACHE=""
 MODE="production"
+DO_UP=""
+DO_TEST=""
 
 # 推导 Git 版本，回退为分支名或短哈希
 detect_version() {
@@ -286,6 +288,8 @@ show_help() {
     echo "  --skip-prepull      - 跳过预拉取基础镜像"
     echo "  --update-images     - 强制更新（即使本地存在也重新拉取）"
     echo "  --compose           - 使用 docker-compose build（默认直接 docker build）"
+    echo "  --up                - 构建后通过 compose 启动/更新服务 (up -d)"
+    echo "  --test              - 构建/启动后运行 scripts/test-health.sh 健康检查"
     echo "  -h, --help          - 显示此帮助信息"
     echo ""
     echo "示例:"
@@ -343,6 +347,14 @@ while [[ $# -gt 0 ]]; do
             DIRECT_BUILD=""  # 关闭直接构建，走 compose
             shift
             ;;
+        --up)
+            DO_UP="true"
+            shift
+            ;;
+        --test)
+            DO_TEST="true"
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -361,7 +373,7 @@ echo "================================"
 print_info "构建模式: $MODE"
 VERSION=$(detect_version)
 export IMAGE_TAG="$VERSION"
-print_info "镜像版本: $VERSION"
+print_info "镜像版本: ${VERSION}"
 print_info "构建时间: $(date)"
 
 # 设置环境变量文件
@@ -392,9 +404,17 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+# 选择 docker compose 命令（优先 v2: docker compose，其次 v1: docker-compose）
+COMPOSE_BIN=""
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_BIN="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_BIN="docker-compose"
+fi
+
 if [ -z "$DIRECT_BUILD" ]; then
-    if ! command -v docker-compose &> /dev/null; then
-        print_error "Docker Compose 未安装或不可用"
+    if [ -z "$COMPOSE_BIN" ]; then
+        print_error "未检测到 docker compose 或 docker-compose"
         exit 1
     fi
 fi
@@ -428,8 +448,9 @@ if [ -z "$DIRECT_BUILD" ]; then
     else
         SERVICES=""
     fi
-    BUILD_CMD="docker-compose"
-    if [ -f "$ENV_FILE" ]; then
+    BUILD_CMD="$COMPOSE_BIN"
+    # 仅当为 v2 (docker compose) 才支持 --env-file
+    if [ -f "$ENV_FILE" ] && [ "$COMPOSE_BIN" = "docker compose" ]; then
         BUILD_CMD="$BUILD_CMD --env-file $ENV_FILE"
     fi
     # 让 compose 也能获得版本号
@@ -449,29 +470,45 @@ fi
 print_success "镜像构建完成"
 push_all_if_needed
 
-# 启动服务（如果需要）
-if [ -z "$DIRECT_BUILD" ] && { [ -n "$REBUILD" ] || [ -n "$NGINX_ONLY" ]; }; then
-    print_info "重启服务..."
-    
-    START_CMD="docker-compose"
-    if [ -f "$ENV_FILE" ]; then
-        START_CMD="$START_CMD --env-file $ENV_FILE"
-    fi
-    
-    if [ -n "$NGINX_ONLY" ]; then
-        START_CMD="$START_CMD up -d $REBUILD nginx"
+# 启动服务（--up 时执行）
+if [ -n "$DO_UP" ]; then
+    if [ -z "$COMPOSE_BIN" ]; then
+        print_warning "未检测到 compose，跳过启动 (--up)"
     else
-        START_CMD="$START_CMD up -d $REBUILD"
+        print_info "启动/更新服务..."
+        START_CMD="$COMPOSE_BIN"
+        # 仅 v2 支持 --env-file
+        if [ -f "$ENV_FILE" ] && [ "$COMPOSE_BIN" = "docker compose" ]; then
+            START_CMD="$START_CMD --env-file $ENV_FILE"
+        fi
+        if [ -n "$NGINX_ONLY" ]; then
+            START_CMD="$START_CMD up -d $REBUILD nginx"
+        else
+            START_CMD="$START_CMD up -d $REBUILD"
+        fi
+        print_info "执行启动命令: $START_CMD"
+        if eval $START_CMD; then
+            print_success "服务启动完成!"
+        else
+            print_error "服务启动失败!"
+            exit 1
+        fi
     fi
-    
-    print_info "执行启动命令: $START_CMD"
-    eval $START_CMD
-    
-    if [ $? -eq 0 ]; then
-        print_success "服务启动完成!"
+fi
+
+# 运行健康检查（--test 时执行）
+if [ -n "$DO_TEST" ]; then
+    SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+    if [ -x "$SCRIPT_DIR/test-health.sh" ]; then
+        print_info "运行健康检查脚本: $SCRIPT_DIR/test-health.sh"
+        if "$SCRIPT_DIR/test-health.sh"; then
+            print_success "健康检查通过"
+        else
+            print_error "健康检查失败"
+            exit 1
+        fi
     else
-        print_error "服务启动失败!"
-        exit 1
+        print_warning "未找到可执行的测试脚本: $SCRIPT_DIR/test-health.sh"
     fi
 fi
 
@@ -480,21 +517,26 @@ echo ""
 echo "🎉 构建完成!"
 echo "================================"
 print_info "构建模式: $MODE"
-print_info "镜像版本: $VERSION"
+print_info "镜像版本: ${VERSION}"
 print_info "服务访问:"
 echo "  🌐 前端应用: http://localhost:8080"
 echo "  🔐 SSO登录: http://localhost:8080/sso/"
-echo "  📊 JupyterHub: http://localhost:8080/jupyterhub"
+echo "  📊 JupyterHub: http://localhost:8080/jupyter"
 
 if [ "$MODE" = "development" ]; then
     echo "  🔧 调试工具: http://localhost:8080/debug/"
     print_warning "调试模式已启用，生产环境请使用 prod 模式构建"
 fi
 
-print_info "查看服务状态: docker-compose ps"
-print_info "查看日志: docker-compose logs -f [服务名]"
+if [ -n "$COMPOSE_BIN" ]; then
+    print_info "查看服务状态: $COMPOSE_BIN ps"
+    print_info "查看日志: $COMPOSE_BIN logs -f [服务名]"
+else
+    print_info "查看服务状态: docker compose ps"
+    print_info "查看日志: docker compose logs -f [服务名]"
+fi
 
 # 输出镜像摘要
 echo ""
-print_info "本地镜像（ai-infra-*:$VERSION）:"
-docker images | grep "ai-infra-" | grep "$VERSION" || true
+print_info "本地镜像（ai-infra-*:${VERSION}）:"
+docker images | grep "ai-infra-" | grep "${VERSION}" || true
