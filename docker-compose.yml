@@ -350,11 +350,16 @@ services:
     image: tecnativa/tcp-proxy
     container_name: ai-infra-k8s-proxy
     environment:
-      LISTEN: ":6443"
-      TALK_TO: "kubernetes.docker.internal:6443"
+      LISTEN: "0.0.0.0:6443"
+      TALK: "host.docker.internal:6443"
+      PRE_RESOLVE: "0"
+      VERBOSE: "1"
     # 仅内部访问，不暴露端口
     expose:
       - "6443"
+    extra_hosts:
+      - "kubernetes.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
     networks:
       - ai-infra-network
     restart: unless-stopped
