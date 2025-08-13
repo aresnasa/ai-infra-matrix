@@ -58,6 +58,9 @@ probe "jupyterhub direct 8088 /jupyter/hub/health" "http://localhost:8088/jupyte
 # Optional static asset check to ensure path prefixing works
 probe "jupyter static via nginx /jupyter/hub/static/favicon.ico" "http://localhost:8080/jupyter/hub/static/favicon.ico"
 
+# Frontend favicon SVG should be served
+probe "frontend favicon.svg" "http://localhost:8080/favicon.svg"
+
 if [[ $failures -eq 0 ]]; then
   echo -e "${GREEN}All health checks passed.${NC}"
   exit 0

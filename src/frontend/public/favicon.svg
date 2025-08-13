@@ -1,45 +1,65 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
+    <!-- Deep blue infra gradient background -->
     <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a2e;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#16213e;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#0f3460;stop-opacity:1" />
+      <stop offset="0%" stop-color="#0d1b2a"/>
+      <stop offset="50%" stop-color="#14253d"/>
+      <stop offset="100%" stop-color="#1b2a41"/>
     </linearGradient>
-    <linearGradient id="center" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#64c8ff;stop-opacity:0.8" />
-      <stop offset="100%" style="stop-color:#50a3ff;stop-opacity:0.6" />
+    <!-- AI core glow -->
+    <radialGradient id="core" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#8fd3ff" stop-opacity="1"/>
+      <stop offset="60%" stop-color="#5bbcff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#2e86ff" stop-opacity="0.6"/>
+    </radialGradient>
+    <!-- Circuit line gradient -->
+    <linearGradient id="wire" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4dd0ff"/>
+      <stop offset="100%" stop-color="#50a3ff"/>
     </linearGradient>
   </defs>
-  
-  <!-- 背景 -->
-  <rect width="256" height="256" fill="url(#bg)" rx="32"/>
-  
-  <!-- 网格线 -->
-  <g stroke="#50b4ff" stroke-width="2" stroke-opacity="0.6" fill="none">
-    <!-- 垂直线 -->
-    <line x1="64" y1="32" x2="64" y2="224"/>
-    <line x1="128" y1="32" x2="128" y2="224"/>
-    <line x1="192" y1="32" x2="192" y2="224"/>
-    <!-- 水平线 -->
-    <line x1="32" y1="64" x2="224" y2="64"/>
-    <line x1="32" y1="128" x2="224" y2="128"/>
-    <line x1="32" y1="192" x2="224" y2="192"/>
+
+  <!-- Background -->
+  <rect width="256" height="256" fill="url(#bg)" rx="28"/>
+
+  <!-- Subtle infra grid -->
+  <g stroke="#2a4b74" stroke-width="2" stroke-opacity="0.55" fill="none">
+    <path d="M32 72H224 M32 128H224 M32 184H224 M72 32V224 M128 32V224 M184 32V224"/>
   </g>
-  
-  <!-- 中心AI核心 -->
-  <circle cx="128" cy="128" r="42" fill="url(#center)"/>
-  
-  <!-- 节点 -->
-  <g fill="#96dcff" fill-opacity="0.8">
-    <circle cx="64" cy="64" r="6"/>
-    <circle cx="192" cy="64" r="6"/>
-    <circle cx="64" cy="192" r="6"/>
-    <circle cx="192" cy="192" r="6"/>
-    <circle cx="128" cy="128" r="8"/>
+
+  <!-- AI core -->
+  <circle cx="128" cy="118" r="40" fill="url(#core)"/>
+
+  <!-- Infra brackets embracing AI core -->
+  <g stroke="#79c9ff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95">
+    <path d="M56 96 C56 80, 80 72, 96 72"/>
+    <path d="M56 140 C56 156, 80 164, 96 164"/>
+    <path d="M200 96 C200 80, 176 72, 160 72"/>
+    <path d="M200 140 C200 156, 176 164, 160 164"/>
   </g>
-  
-  <!-- AI文字 -->
-  <text x="128" y="200" font-family="Arial, sans-serif" font-size="32" font-weight="bold" 
-        text-anchor="middle" fill="white" fill-opacity="0.9">AI</text>
+
+  <!-- Circuit connections -->
+  <g stroke="url(#wire)" stroke-width="3" fill="none" opacity="0.9">
+    <path d="M128 38 V64"/>
+    <path d="M128 172 V200"/>
+    <path d="M38 118 H64"/>
+    <path d="M192 118 H218"/>
+  </g>
+  <g fill="#a7e3ff" opacity="0.95">
+    <circle cx="128" cy="38" r="4"/>
+    <circle cx="128" cy="200" r="4"/>
+    <circle cx="38" cy="118" r="4"/>
+    <circle cx="218" cy="118" r="4"/>
+  </g>
+
+  <!-- AI lettering -->
+  <g fill="#ffffff" fill-opacity="0.98">
+    <path d="M106 190 L116 164 H140 L150 190 H142 L138 180 H118 L114 190 Z M132 174 H122 L127 162 Z" opacity="0.95"/>
+    <rect x="154" y="164" width="8" height="26" rx="2" ry="2"/>
+    <circle cx="158" cy="156" r="5"/>
+  </g>
+
+  <!-- small brand label -->
+  <text x="128" y="232" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,Roboto,Arial" font-weight="600" font-size="16" fill="#cfeaff" opacity="0.9">AI·Infra</text>
 </svg>
