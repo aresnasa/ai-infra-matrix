@@ -8,6 +8,7 @@ set -euo pipefail
 #  - Backend internal (exec):   curl inside backend container to :8082
 #  - JupyterHub via Nginx:      http://localhost:8080/jupyter/hub/health
 #  - JupyterHub direct:         http://localhost:8088/jupyter/hub/health
+#  - Gitea via Nginx:           http://localhost:8080/gitea/
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -62,6 +63,9 @@ probe "embedded jupyter route" "http://localhost:8080/jupyter" "^2[0-9][0-9]$|^3
 
 # Frontend favicon SVG should be served
 probe "frontend favicon.svg" "http://localhost:8080/favicon.svg"
+
+# Gitea root should be reachable via reverse proxy
+probe "gitea via nginx /gitea/" "http://localhost:8080/gitea/" "^2[0-9][0-9]$|^30[12]$"
 
 if [[ $failures -eq 0 ]]; then
   echo -e "${GREEN}All health checks passed.${NC}"

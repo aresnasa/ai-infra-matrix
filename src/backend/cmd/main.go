@@ -428,6 +428,28 @@ func main() {
 			k8s.DELETE("/clusters/:id", k8sController.DeleteCluster)
 			k8s.POST("/clusters/:id/test", k8sController.TestConnection)
 			k8s.GET("/clusters/:id/info", k8sController.GetClusterInfo)
+
+			// 通用资源发现与CRUD接口
+			kres := controllers.NewKubernetesResourcesController()
+			// 资源发现与命名空间列表
+			k8s.GET("/clusters/:id/discovery", kres.DiscoverResources)
+			k8s.GET("/clusters/:id/namespaces", kres.ListNamespaces)
+			// 命名空间内资源
+			k8s.GET("/clusters/:id/namespaces/:namespace/resources/:resource", kres.ListResources)
+			k8s.GET("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.GetResource)
+			k8s.POST("/clusters/:id/namespaces/:namespace/resources/:resource", kres.CreateResource)
+			k8s.PUT("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.UpdateResource)
+			k8s.PATCH("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.PatchResource)
+			k8s.DELETE("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.DeleteResource)
+			// 集群级资源
+			k8s.GET("/clusters/:id/cluster-resources/:resource", kres.ListClusterResources)
+			k8s.GET("/clusters/:id/cluster-resources/:resource/:name", kres.GetClusterResource)
+			k8s.POST("/clusters/:id/cluster-resources/:resource", kres.CreateClusterResource)
+			k8s.PUT("/clusters/:id/cluster-resources/:resource/:name", kres.UpdateClusterResource)
+			k8s.PATCH("/clusters/:id/cluster-resources/:resource/:name", kres.PatchClusterResource)
+			k8s.DELETE("/clusters/:id/cluster-resources/:resource/:name", kres.DeleteClusterResource)
+			// 批量并发查询
+			k8s.GET("/clusters/:id/namespaces/:namespace/resources:batch", kres.BatchListResources)
 		}
 
 		// Ansible 执行管理路由（需要认证和RBAC权限）
@@ -446,6 +468,16 @@ func main() {
 		// JupyterHub 路由（需要认证和RBAC权限）
 		jupyterHubController := controllers.NewJupyterHubController()
 		jupyterHubController.RegisterRoutes(api)
+
+		// Slurm 路由（需要认证）
+		slurmController := controllers.NewSlurmController()
+		slurm := api.Group("/slurm")
+		slurm.Use(middleware.AuthMiddlewareWithSession())
+		{
+			slurm.GET("/summary", slurmController.GetSummary)
+			slurm.GET("/nodes", slurmController.GetNodes)
+			slurm.GET("/jobs", slurmController.GetJobs)
+		}
 
 		// AI 助手路由（需要认证）
 		aiController := controllers.NewAIAssistantController()

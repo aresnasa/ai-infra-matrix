@@ -377,6 +377,92 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
+  # Gitea 代码托管服务（可选，供门户内嵌）
+  gitea:
+    build:
+      context: ./third-party/gitea
+      dockerfile: Dockerfile
+    image: ai-infra-gitea:${IMAGE_TAG:-v0.0.3.2}
+    container_name: ai-infra-gitea
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      # Server / subpath
+      - ROOT_URL=http://localhost:8080/gitea/
+      - SUBURL=/gitea
+      - DOMAIN=localhost
+      - PROTOCOL=http
+      - HTTP_PORT=3000
+      # DB (PostgreSQL in compose)
+      - GITEA_DB_TYPE=postgres
+      - GITEA_DB_HOST=postgres:5432
+      - GITEA_DB_NAME=gitea
+      - GITEA_DB_USER=gitea
+      - GITEA_DB_PASSWD=gitea-password
+      # Use postgres admin creds from postgres service to create DB/user
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      # Security / registration
+      - DISABLE_REGISTRATION=false
+      - REVERSE_PROXY_TRUSTED_PROXIES=0.0.0.0/0,::/0
+      # Storage: local (NFS-backed) or minio (S3)
+      - GITEA__storage__STORAGE_TYPE=${GITEA_STORAGE:-local}
+      - DATA_PATH=/data/gitea
+      # MinIO/S3 settings (used when STORAGE_TYPE=minio)
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_BUCKET=gitea
+      - MINIO_USE_SSL=false
+      - MINIO_LOCATION=us-east-1
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+    expose:
+      - "3000"
+      - "22"
+    volumes:
+      - gitea_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # MinIO (S3-compatible) for Gitea object storage (optional)
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: ai-infra-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    expose:
+      - "9000"
+      - "9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # NFS client placeholder for future external NFS (optional, disabled by default)
+  # nfs-client:
+  #   image: itsthenetwork/nfs-client:latest
+  #   container_name: ai-infra-nfs-client
+  #   environment:
+  #     - NFS_SERVER=${NFS_SERVER}
+  #     - NFS_EXPORT=${NFS_EXPORT}
+  #   volumes:
+  #     - nfs_shared:/mnt/nfs
+  #   networks:
+  #     - ai-infra-network
+  #   restart: unless-stopped
+
 volumes:
   postgres_data:
     name: ai-infra-postgres-data
@@ -392,6 +478,15 @@ volumes:
     name: ai-infra-jupyterhub-notebooks
   nginx_logs:
     name: ai-infra-nginx-logs
+  gitea_data:
+    name: ai-infra-gitea-data
+  minio_data:
+    name: ai-infra-minio-data
+  # nfs_shared:
+  #   driver_opts:
+  #     type: "nfs"
+  #     o: "addr=${NFS_SERVER},rw,nfsvers=4"
+  #     device: ":${NFS_EXPORT}"
 
 networks:
   ai-infra-network:

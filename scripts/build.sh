@@ -43,6 +43,9 @@ NO_CACHE=""
 MODE="production"
 DO_UP=""
 DO_TEST=""
+PLATFORMS=""
+USE_BUILDX=""
+BUILDX_PUSHED=""
 
 # 推导 Git 版本，回退为分支名或短哈希
 detect_version() {
@@ -105,65 +108,189 @@ tag_args() {
 
 build_backend() {
     print_info "构建 backend 与 backend-init (VERSION=$VERSION)"
-    docker build ${NO_CACHE} \
-        -f src/backend/Dockerfile \
-        --build-arg VERSION="$VERSION" \
-        $(tag_args ai-infra-backend) \
-        src/backend
-    # 派生一份 init 标签（共用同一镜像内容，便于引用）
-    docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:"$VERSION"
-    if [ -n "$REGISTRY" ]; then
-        docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:"$VERSION"
-    fi
-    if [ -n "$TAG_LATEST" ]; then
-        docker tag ai-infra-backend:"$VERSION" ai-infra-backend:latest || true
-        docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:latest || true
+    if [ -n "$USE_BUILDX" ]; then
+        local prefix; prefix=$(registry_prefix)
+        local name="ai-infra-backend"
+        local tags=()
+        if [ -n "$prefix" ]; then
+            tags+=("--tag" "${prefix}${name}:$VERSION")
+        fi
+        tags+=("--tag" "${name}:$VERSION")
+        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f src/backend/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            ${tags[@]} \
+            --push \
+            src/backend
+        # backend-init uses same image; extra tagging happens on pull side if needed
+        docker image inspect "${name}:$VERSION" >/dev/null 2>&1 || true
+        BUILDX_PUSHED="true"
+    else
+        docker build ${NO_CACHE} \
+            -f src/backend/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            $(tag_args ai-infra-backend) \
+            src/backend
+        # 派生一份 init 标签（共用同一镜像内容，便于引用）
+        docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:"$VERSION"
         if [ -n "$REGISTRY" ]; then
-            docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend:latest || true
-            docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:latest || true
+            docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:"$VERSION"
+        fi
+        if [ -n "$TAG_LATEST" ]; then
+            docker tag ai-infra-backend:"$VERSION" ai-infra-backend:latest || true
+            docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:latest || true
+            if [ -n "$REGISTRY" ]; then
+                docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend:latest || true
+                docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:latest || true
+            fi
         fi
     fi
 }
 
 build_frontend() {
     print_info "构建 frontend (VERSION=$VERSION)"
-    docker build ${NO_CACHE} \
-        -f src/frontend/Dockerfile \
-        --build-arg VERSION="$VERSION" \
-        --build-arg REACT_APP_API_URL="${REACT_APP_API_URL:-/api}" \
-        --build-arg REACT_APP_JUPYTERHUB_URL="${REACT_APP_JUPYTERHUB_URL:-/jupyter}" \
-        $(tag_args ai-infra-frontend) \
-        src/frontend
+    if [ -n "$USE_BUILDX" ]; then
+        local prefix; prefix=$(registry_prefix)
+        local name="ai-infra-frontend"
+        local tags=()
+        if [ -n "$prefix" ]; then
+            tags+=("--tag" "${prefix}${name}:$VERSION")
+        fi
+        tags+=("--tag" "${name}:$VERSION")
+        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f src/frontend/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            --build-arg REACT_APP_API_URL="${REACT_APP_API_URL:-/api}" \
+            --build-arg REACT_APP_JUPYTERHUB_URL="${REACT_APP_JUPYTERHUB_URL:-/jupyter}" \
+            ${tags[@]} \
+            --push \
+            src/frontend
+    else
+        docker build ${NO_CACHE} \
+            -f src/frontend/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            --build-arg REACT_APP_API_URL="${REACT_APP_API_URL:-/api}" \
+            --build-arg REACT_APP_JUPYTERHUB_URL="${REACT_APP_JUPYTERHUB_URL:-/jupyter}" \
+            $(tag_args ai-infra-frontend) \
+            src/frontend
+    fi
 }
 
 build_singleuser() {
     print_info "构建 singleuser (VERSION=$VERSION)"
-    docker build ${NO_CACHE} \
-        -f docker/singleuser/Dockerfile \
-        --build-arg VERSION="$VERSION" \
-        $(tag_args ai-infra-singleuser) \
-        docker/singleuser
+    if [ -n "$USE_BUILDX" ]; then
+        local prefix; prefix=$(registry_prefix)
+        local name="ai-infra-singleuser"
+        local tags=()
+        if [ -n "$prefix" ]; then
+            tags+=("--tag" "${prefix}${name}:$VERSION")
+        fi
+        tags+=("--tag" "${name}:$VERSION")
+        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f docker/singleuser/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            ${tags[@]} \
+            --push \
+            docker/singleuser
+    else
+        docker build ${NO_CACHE} \
+            -f docker/singleuser/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            $(tag_args ai-infra-singleuser) \
+            docker/singleuser
+    fi
 }
 
 build_jupyterhub() {
     print_info "构建 jupyterhub (VERSION=$VERSION)"
-    docker build ${NO_CACHE} \
-        -f src/jupyterhub/Dockerfile \
-        --build-arg VERSION="$VERSION" \
-        $(tag_args ai-infra-jupyterhub) \
-        src/jupyterhub
+    if [ -n "$USE_BUILDX" ]; then
+        local prefix; prefix=$(registry_prefix)
+        local name="ai-infra-jupyterhub"
+        local tags=()
+        if [ -n "$prefix" ]; then
+            tags+=("--tag" "${prefix}${name}:$VERSION")
+        fi
+        tags+=("--tag" "${name}:$VERSION")
+        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f src/jupyterhub/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            ${tags[@]} \
+            --push \
+            src/jupyterhub
+    else
+        docker build ${NO_CACHE} \
+            -f src/jupyterhub/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            $(tag_args ai-infra-jupyterhub) \
+            src/jupyterhub
+    fi
 }
 
 build_nginx() {
     print_info "构建 nginx (VERSION=$VERSION)"
     # 注意：nginx Dockerfile 复制了 repo 根下的资源，构建上下文必须为仓库根目录
-    docker build ${NO_CACHE} \
-        -f src/nginx/Dockerfile \
-        --build-arg VERSION="$VERSION" \
-        --build-arg DEBUG_MODE="${DEBUG_MODE:-false}" \
-        --build-arg BUILD_ENV="${BUILD_ENV:-$MODE}" \
-        $(tag_args ai-infra-nginx) \
-        .
+    if [ -n "$USE_BUILDX" ]; then
+        local prefix; prefix=$(registry_prefix)
+        local name="ai-infra-nginx"
+        local tags=()
+        if [ -n "$prefix" ]; then
+            tags+=("--tag" "${prefix}${name}:$VERSION")
+        fi
+        tags+=("--tag" "${name}:$VERSION")
+        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f src/nginx/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            --build-arg DEBUG_MODE="${DEBUG_MODE:-false}" \
+            --build-arg BUILD_ENV="${BUILD_ENV:-$MODE}" \
+            ${tags[@]} \
+            --push \
+            .
+    else
+        docker build ${NO_CACHE} \
+            -f src/nginx/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            --build-arg DEBUG_MODE="${DEBUG_MODE:-false}" \
+            --build-arg BUILD_ENV="${BUILD_ENV:-$MODE}" \
+            $(tag_args ai-infra-nginx) \
+            .
+    fi
+}
+
+build_gitea() {
+    print_info "构建 gitea (VERSION=$VERSION)"
+    if [ -n "$USE_BUILDX" ]; then
+        local prefix; prefix=$(registry_prefix)
+        local name="ai-infra-gitea"
+        local tags=()
+        if [ -n "$prefix" ]; then
+            tags+=("--tag" "${prefix}${name}:$VERSION")
+        fi
+        tags+=("--tag" "${name}:$VERSION")
+        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f third-party/gitea/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            ${tags[@]} \
+            --push \
+            third-party/gitea
+    else
+        docker build ${NO_CACHE} \
+            -f third-party/gitea/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            $(tag_args ai-infra-gitea) \
+            third-party/gitea
+    fi
 }
 
 push_image_if_needed() {
@@ -180,7 +307,7 @@ push_image_if_needed() {
 }
 
 push_all_if_needed() {
-    for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx; do
+    for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx ai-infra-gitea; do
         push_image_if_needed "$n"
     done
 }
@@ -284,6 +411,8 @@ show_help() {
     echo "  --tag-latest        - 额外打 latest 标签"
     echo "  --no-cache          - 无缓存构建"
     echo "  --rebuild           - (仅compose路径) 强制重建所有服务"
+    echo "  --multi-arch        - 多架构构建 (linux/amd64,linux/arm64)，需配合 --registry --push 使用"
+    echo "  --platforms P       - 指定平台列表 (例如 linux/amd64,linux/arm64)，需配合 --registry --push 使用"
     echo "  --nginx-only        - 只构建nginx服务"
     echo "  --skip-prepull      - 跳过预拉取基础镜像"
     echo "  --update-images     - 强制更新（即使本地存在也重新拉取）"
@@ -327,6 +456,12 @@ while [[ $# -gt 0 ]]; do
             NO_CACHE="--no-cache"
             shift
             ;;
+        --multi-arch)
+            PLATFORMS="linux/amd64,linux/arm64"
+            shift
+            ;;
+        --platforms)
+            PLATFORMS="$2"; shift 2 ;;
         --rebuild)
             REBUILD="--force-recreate"
             shift
@@ -375,6 +510,17 @@ VERSION=$(detect_version)
 export IMAGE_TAG="$VERSION"
 print_info "镜像版本: ${VERSION}"
 print_info "构建时间: $(date)"
+
+# 判断是否启用 buildx（当指定了平台并且需要推送时）
+if [ -n "$PLATFORMS" ]; then
+    if [ -n "$PUSH" ] && [ -n "$REGISTRY" ]; then
+        USE_BUILDX="true"
+        print_info "启用 Buildx 多架构构建: $PLATFORMS (将直接 --push)"
+    else
+        print_warning "检测到 --platforms，但未指定 --registry/--push；将回退为单架构本地构建"
+        PLATFORMS=""
+    fi
+fi
 
 # 设置环境变量文件
 if [ "$MODE" = "development" ]; then
@@ -464,11 +610,16 @@ else
     [ -z "$NGINX_ONLY" ] && build_frontend
     [ -z "$NGINX_ONLY" ] && build_singleuser
     [ -z "$NGINX_ONLY" ] && build_jupyterhub
+    [ -z "$NGINX_ONLY" ] && build_gitea
     build_nginx
 fi
 
 print_success "镜像构建完成"
-push_all_if_needed
+if [ -n "$USE_BUILDX" ] && [ -n "$PUSH" ]; then
+    print_info "已通过 buildx --push 推送多架构镜像，跳过二次推送"
+else
+    push_all_if_needed
+fi
 
 # 启动服务（--up 时执行）
 if [ -n "$DO_UP" ]; then
@@ -522,6 +673,7 @@ print_info "服务访问:"
 echo "  🌐 前端应用: http://localhost:8080"
 echo "  🔐 SSO登录: http://localhost:8080/sso/"
 echo "  📊 JupyterHub: http://localhost:8080/jupyter"
+echo "  🗃️  Gitea: http://localhost:8080/gitea/"
 
 if [ "$MODE" = "development" ]; then
     echo "  🔧 调试工具: http://localhost:8080/debug/"

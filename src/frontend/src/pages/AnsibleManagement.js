@@ -52,6 +52,10 @@ const { Panel } = Collapse;
 
 const AnsibleManagement = () => {
   const [playbooks, setPlaybooks] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [tplModalOpen, setTplModalOpen] = useState(false);
+  const [tplEditing, setTplEditing] = useState(null);
+  const [tplForm] = Form.useForm();
   const [clusters, setClusters] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -101,7 +105,45 @@ const AnsibleManagement = () => {
   useEffect(() => {
     fetchPlaybooks();
     fetchClusters();
+    initTemplates();
   }, []);
+
+  // 模板本地降级初始化
+  const initTemplates = async () => {
+    try {
+      const res = await ansibleAPI.getTemplates();
+      setTemplates(res.data?.data || res.data || []);
+    } catch (e) {
+      const cached = localStorage.getItem('ansible_templates');
+      if (cached) {
+        setTemplates(JSON.parse(cached));
+      } else {
+        const defaults = [
+          {
+            id: 'init-k8s-control-plane',
+            name: '初始化K8s控制平面(kubeadm)',
+            description: '在目标主机上初始化Kubernetes控制平面',
+            content: '# kubeadm init playbook placeholder',
+            variables: { pod_network_cidr: '10.244.0.0/16' }
+          },
+          {
+            id: 'join-k8s-worker',
+            name: '加入K8s工作节点(kubeadm join)',
+            description: '将工作节点加入现有集群',
+            content: '# kubeadm join playbook placeholder',
+            variables: { control_plane_ip: '10.0.0.10' }
+          }
+        ];
+        setTemplates(defaults);
+        localStorage.setItem('ansible_templates', JSON.stringify(defaults));
+      }
+    }
+  };
+
+  const saveTemplatesLocal = (list) => {
+    setTemplates(list);
+    localStorage.setItem('ansible_templates', JSON.stringify(list));
+  };
 
   // 添加/编辑playbook
   const handleSubmit = async (values) => {
@@ -136,7 +178,7 @@ const AnsibleManagement = () => {
   // 执行playbook
   const handleExecute = async (playbook) => {
     setSelectedPlaybook(playbook);
-    setExecuteModalVisible(true);
+  setExecuteModalVisible(true);
     setExecuteResult(null);
     executeForm.setFieldsValue({
       playbookId: playbook.id,
@@ -174,6 +216,55 @@ const AnsibleManagement = () => {
       message.error('Playbook执行失败');
     } finally {
       setExecuteLoading(false);
+    }
+  };
+
+  // 模板CRUD（带后端尝试，失败则本地存储降级）
+  const openTplModal = (tpl) => {
+    setTplEditing(tpl || null);
+    tplForm.resetFields();
+    if (tpl) {
+      tplForm.setFieldsValue({
+        name: tpl.name,
+        description: tpl.description,
+        variables: typeof tpl.variables === 'string' ? tpl.variables : JSON.stringify(tpl.variables || {}, null, 2),
+        content: tpl.content,
+      });
+    }
+    setTplModalOpen(true);
+  };
+
+  const submitTpl = async (vals) => {
+    const normalized = {
+      name: vals.name,
+      description: vals.description,
+      content: vals.content,
+      variables: (() => { try { return JSON.parse(vals.variables || '{}'); } catch { return vals.variables || {}; } })(),
+    };
+    try {
+      if (tplEditing?.id) {
+        try { await ansibleAPI.updateTemplate(tplEditing.id, normalized); await initTemplates(); }
+        catch { const list = templates.map(t => t.id === tplEditing.id ? { ...t, ...normalized } : t); saveTemplatesLocal(list); }
+        message.success('模板已更新');
+      } else {
+        try { await ansibleAPI.createTemplate(normalized); await initTemplates(); }
+        catch { const id = `tpl-${Date.now()}`; const list = [...templates, { id, ...normalized }]; saveTemplatesLocal(list); }
+        message.success('模板已创建');
+      }
+      setTplModalOpen(false);
+      setTplEditing(null);
+    } catch (e) {
+      message.error('保存模板失败: ' + e.message);
+    }
+  };
+
+  const deleteTpl = async (tpl) => {
+    try {
+      try { await ansibleAPI.deleteTemplate(tpl.id); await initTemplates(); }
+      catch { saveTemplatesLocal(templates.filter(t => t.id !== tpl.id)); }
+      message.success('模板已删除');
+    } catch (e) {
+      message.error('删除失败: ' + e.message);
     }
   };
 
@@ -374,6 +465,9 @@ const AnsibleManagement = () => {
               >
                 刷新
               </Button>
+              <Button onClick={() => openTplModal()}>
+                新建模板
+              </Button>
               <Button
                 icon={<BugOutlined />}
                 onClick={handleGenerate}
@@ -395,53 +489,94 @@ const AnsibleManagement = () => {
           </Col>
         </Row>
 
-        <Table
-          columns={columns}
-          dataSource={playbooks}
-          rowKey="id"
-          loading={loading}
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={
-                  <span>
-                    暂无Playbook数据
-                    <br />
-                    <Text type="secondary">您可以点击"智能生成"或"添加Playbook"开始创建</Text>
-                  </span>
-                }
-              >
-                <Space>
-                  <Button 
-                    type="primary" 
-                    icon={<BugOutlined />} 
-                    onClick={handleGenerate}
+        <Tabs defaultActiveKey="playbooks">
+          <Tabs.TabPane tab="Playbooks" key="playbooks">
+            <Table
+              columns={columns}
+              dataSource={playbooks}
+              rowKey="id"
+              loading={loading}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={
+                      <span>
+                        暂无Playbook数据
+                        <br />
+                        <Text type="secondary">您可以点击"智能生成"或"添加Playbook"开始创建</Text>
+                      </span>
+                    }
                   >
-                    智能生成
-                  </Button>
-                  <Button
-                    icon={<PlusOutlined />}
-                    onClick={() => {
-                      setEditingPlaybook(null);
-                      form.resetFields();
-                      setModalVisible(true);
-                    }}
+                    <Space>
+                      <Button 
+                        type="primary" 
+                        icon={<BugOutlined />} 
+                        onClick={handleGenerate}
+                      >
+                        智能生成
+                      </Button>
+                      <Button
+                        icon={<PlusOutlined />}
+                        onClick={() => {
+                          setEditingPlaybook(null);
+                          form.resetFields();
+                          setModalVisible(true);
+                        }}
+                      >
+                        添加Playbook
+                      </Button>
+                    </Space>
+                  </Empty>
+                )
+              }}
+              pagination={{
+                total: playbooks.length,
+                pageSize: 10,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 个Playbook`,
+              }}
+            />
+          </Tabs.TabPane>
+          <Tabs.TabPane tab="模板库" key="templates">
+            <Row gutter={[16,16]}>
+              {(templates || []).map(tpl => (
+                <Col xs={24} md={12} lg={8} key={tpl.id}>
+                  <Card
+                    size="small"
+                    title={tpl.name}
+                    extra={
+                      <Space>
+                        <Button size="small" onClick={() => openTplModal(tpl)}>编辑</Button>
+                        <Popconfirm title="确认删除模板？" onConfirm={() => deleteTpl(tpl)}>
+                          <Button size="small" danger>删除</Button>
+                        </Popconfirm>
+                      </Space>
+                    }
                   >
-                    添加Playbook
-                  </Button>
-                </Space>
-              </Empty>
-            )
-          }}
-          pagination={{
-            total: playbooks.length,
-            pageSize: 10,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 个Playbook`,
-          }}
-        />
+                    <div style={{ minHeight: 60 }}>{tpl.description || '-'}</div>
+                    <Divider style={{ margin: '8px 0' }} />
+                    <Space>
+                      <Button size="small" type="primary" onClick={() => {
+                        // 通过模板快速创建playbook
+                        setEditingPlaybook(null);
+                        form.resetFields();
+                        form.setFieldsValue({
+                          name: tpl.name,
+                          description: tpl.description,
+                          content: tpl.content,
+                          variables: JSON.stringify(tpl.variables || {}, null, 2),
+                        });
+                        setModalVisible(true);
+                      }}>从模板创建</Button>
+                    </Space>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          </Tabs.TabPane>
+        </Tabs>
       </Card>
 
       {/* 添加/编辑Playbook模态框 */}
@@ -665,6 +800,37 @@ const AnsibleManagement = () => {
             </TabPane>
           </Tabs>
         )}
+      </Modal>
+
+      {/* 模板编辑/新增 */}
+      <Modal
+        title={tplEditing ? '编辑模板' : '新建模板'}
+        open={tplModalOpen}
+        onCancel={() => { setTplModalOpen(false); setTplEditing(null); tplForm.resetFields(); }}
+        onOk={() => tplForm.submit()}
+        width={900}
+        okText="保存"
+      >
+        <Form form={tplForm} layout="vertical" onFinish={submitTpl}>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="name" label="模板名称" rules={[{ required: true, message: '请输入模板名称' }]}>
+                <Input placeholder="如：初始化K8s控制平面" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="description" label="描述">
+                <Input placeholder="模板用途说明" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="variables" label="默认变量(JSON或YAML字符串)" tooltip="可粘贴JSON；YAML也可，前端会尝试按JSON解析失败则原样保存">
+            <TextArea rows={6} placeholder='{"pod_network_cidr":"10.244.0.0/16"}' />
+          </Form.Item>
+          <Form.Item name="content" label="Playbook内容" rules={[{ required: true, message: '请输入Playbook内容' }]}>
+            <TextArea rows={12} placeholder="# 在此粘贴Ansible Playbook YAML内容" />
+          </Form.Item>
+        </Form>
       </Modal>
 
       {/* 智能生成Playbook模态框 */}

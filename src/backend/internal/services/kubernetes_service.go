@@ -6,14 +6,22 @@ import (
 	"os"
 	"strings"
 	"context"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/rest"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/sirupsen/logrus"
-	"k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	meta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // KubernetesService 封装集群连接与基本操作
@@ -194,7 +202,7 @@ func (s *KubernetesService) GetClusterVersion(clientset *kubernetes.Clientset) (
 }
 
 // GetNodes 获取集群节点列表
-func (s *KubernetesService) GetNodes(clientset *kubernetes.Clientset) (*v1.NodeList, error) {
+func (s *KubernetesService) GetNodes(clientset *kubernetes.Clientset) (*corev1.NodeList, error) {
 	nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("获取节点列表失败: %w", err)
@@ -209,16 +217,16 @@ func (s *KubernetesService) EnsureNamespace(clientset *kubernetes.Clientset, ns 
 	if ns == "" { return nil }
 	_, err := clientset.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
 	if err == nil { return nil }
-	_, err = clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{})
+	_, err = clientset.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{})
 	if err != nil { return fmt.Errorf("创建命名空间失败: %w", err) }
 	return nil
 }
 
 // EnsureServiceAccount 为用户创建或获取ServiceAccount
-func (s *KubernetesService) EnsureServiceAccount(clientset *kubernetes.Clientset, namespace, saName string) (*v1.ServiceAccount, error) {
+func (s *KubernetesService) EnsureServiceAccount(clientset *kubernetes.Clientset, namespace, saName string) (*corev1.ServiceAccount, error) {
 	sa, err := clientset.CoreV1().ServiceAccounts(namespace).Get(context.TODO(), saName, metav1.GetOptions{})
 	if err == nil { return sa, nil }
-	sa = &v1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName}}
+	sa = &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName}}
 	created, err := clientset.CoreV1().ServiceAccounts(namespace).Create(context.TODO(), sa, metav1.CreateOptions{})
 	if err != nil { return nil, fmt.Errorf("创建ServiceAccount失败: %w", err) }
 	return created, nil
@@ -236,4 +244,165 @@ func (s *KubernetesService) EnsureRoleBinding(clientset *kubernetes.Clientset, n
 	created, err := clientset.RbacV1().RoleBindings(namespace).Create(context.TODO(), rb, metav1.CreateOptions{})
 	if err != nil { return nil, fmt.Errorf("创建RoleBinding失败: %w", err) }
 	return created, nil
+}
+
+// ----- 动态客户端与通用CRUD实现 -----
+
+// getRestConfig 从kubeconfig创建rest.Config（含TLS跳过策略）
+func (s *KubernetesService) getRestConfig(kubeConfig string) (*rest.Config, error) {
+	decryptedKubeConfig := kubeConfig
+	if database.CryptoService != nil && database.CryptoService.IsEncrypted(kubeConfig) {
+		decryptedKubeConfig = database.CryptoService.DecryptSafely(kubeConfig)
+	}
+	cfg, err := clientcmd.RESTConfigFromKubeConfig([]byte(decryptedKubeConfig))
+	if err != nil {
+		return nil, fmt.Errorf("kubeconfig 解析失败: %w", err)
+	}
+	if s.shouldSkipSSLVerification(cfg.Host) {
+		cfg.TLSClientConfig.Insecure = true
+		cfg.TLSClientConfig.CAData = nil
+		cfg.TLSClientConfig.CAFile = ""
+	}
+	return cfg, nil
+}
+
+// getDiscoveryMapper 返回discovery与RESTMapper
+func (s *KubernetesService) getDiscoveryMapper(cfg *rest.Config) (discovery.DiscoveryInterface, meta.RESTMapper, error) {
+	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil { return nil, nil, err }
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(dc))
+	return dc, mapper, nil
+}
+
+// GetDiscoveryAndMapper 返回可序列化的资源组与资源列表，用于前端构建资源树
+func (s *KubernetesService) GetDiscoveryAndMapper(ctx context.Context, kubeConfig string) (*metav1.APIGroupList, meta.RESTMapper, []*metav1.APIResourceList, error) {
+	cfg, err := s.getRestConfig(kubeConfig)
+	if err != nil { return nil, nil, nil, err }
+	dc, mapper, err := s.getDiscoveryMapper(cfg)
+	if err != nil { return nil, nil, nil, err }
+	groups, err := dc.ServerGroups()
+	if err != nil { return nil, nil, nil, err }
+	resLists, err := dc.ServerPreferredResources()
+	if err != nil {
+		// 某些API可能无权限，忽略部分错误，返回已获取的资源
+		logrus.WithError(err).Warn("ServerPreferredResources encountered partial error")
+	}
+	return groups, mapper, resLists, nil
+}
+
+// resolveGVR 解析资源名到GVR（如 pods, deployments.apps 等）
+func (s *KubernetesService) resolveGVR(mapper meta.RESTMapper, resource string) (schema.GroupVersionResource, meta.RESTScopeName, error) {
+	// 支持形如 "deployments.apps" 或 "deployments"。Version留空由mapper选择首选版本
+	gr := schema.ParseGroupResource(resource)
+	// 使用ResourceFor自动补全版本
+	gvr, err := mapper.ResourceFor(schema.GroupVersionResource{Group: gr.Group, Resource: gr.Resource})
+	if err != nil {
+		return schema.GroupVersionResource{}, "", err
+	}
+	mapping, err := mapper.RESTMapping(schema.GroupKind{Group: gvr.Group, Kind: ""}, gvr.Version)
+	if err != nil {
+		// 尝试通过资源直接获取映射
+		// Newer client-go may require RESTMapping by Kind; 退化处理：scope按常见资源推断
+		return gvr, meta.RESTScopeNameNamespace, nil
+	}
+	scope := mapping.Scope.Name()
+	return gvr, scope, nil
+}
+
+func (s *KubernetesService) getDynamicClientAndGVR(kubeConfig, resource string) (dynamic.Interface, meta.RESTMapper, schema.GroupVersionResource, meta.RESTScopeName, error) {
+	cfg, err := s.getRestConfig(kubeConfig)
+	if err != nil { return nil, nil, schema.GroupVersionResource{}, "", err }
+	dc, mapper, err := s.getDiscoveryMapper(cfg)
+	if err != nil { return nil, nil, schema.GroupVersionResource{}, "", err }
+	_ = dc
+	gvr, scope, err := s.resolveGVR(mapper, resource)
+	if err != nil { return nil, nil, schema.GroupVersionResource{}, "", err }
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil { return nil, nil, schema.GroupVersionResource{}, "", err }
+	return dyn, mapper, gvr, scope, nil
+}
+
+// DynamicList 通用列表
+func (s *KubernetesService) DynamicList(ctx context.Context, kubeConfig, resource, namespace string, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	dyn, _, gvr, scope, err := s.getDynamicClientAndGVR(kubeConfig, resource)
+	if err != nil { return nil, err }
+	var ri dynamic.ResourceInterface
+	if scope == meta.RESTScopeNameNamespace && namespace != "" {
+		ri = dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		ri = dyn.Resource(gvr)
+	}
+	return ri.List(ctx, opts)
+}
+
+// DynamicGet 通用获取
+func (s *KubernetesService) DynamicGet(ctx context.Context, kubeConfig, resource, namespace, name string) (*unstructured.Unstructured, error) {
+	dyn, _, gvr, scope, err := s.getDynamicClientAndGVR(kubeConfig, resource)
+	if err != nil { return nil, err }
+	var ri dynamic.ResourceInterface
+	if scope == meta.RESTScopeNameNamespace && namespace != "" {
+		ri = dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		ri = dyn.Resource(gvr)
+	}
+	return ri.Get(ctx, name, metav1.GetOptions{})
+}
+
+// DynamicCreate 通用创建
+func (s *KubernetesService) DynamicCreate(ctx context.Context, kubeConfig, resource, namespace string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	dyn, _, gvr, scope, err := s.getDynamicClientAndGVR(kubeConfig, resource)
+	if err != nil { return nil, err }
+	var ri dynamic.ResourceInterface
+	if scope == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			// 若未提供ns且资源需要命名空间，则尝试使用对象元数据中的namespace
+			if ns := obj.GetNamespace(); ns != "" {
+				namespace = ns
+			}
+		}
+		ri = dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		ri = dyn.Resource(gvr)
+	}
+	return ri.Create(ctx, obj, metav1.CreateOptions{})
+}
+
+// DynamicUpdate 通用更新（替换）
+func (s *KubernetesService) DynamicUpdate(ctx context.Context, kubeConfig, resource, namespace, name string, obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	dyn, _, gvr, scope, err := s.getDynamicClientAndGVR(kubeConfig, resource)
+	if err != nil { return nil, err }
+	var ri dynamic.ResourceInterface
+	if scope == meta.RESTScopeNameNamespace && namespace != "" {
+		ri = dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		ri = dyn.Resource(gvr)
+	}
+	if obj.GetName() == "" { obj.SetName(name) }
+	return ri.Update(ctx, obj, metav1.UpdateOptions{})
+}
+
+// DynamicPatch 通用Patch
+func (s *KubernetesService) DynamicPatch(ctx context.Context, kubeConfig, resource, namespace, name string, pt types.PatchType, data []byte) (*unstructured.Unstructured, error) {
+	dyn, _, gvr, scope, err := s.getDynamicClientAndGVR(kubeConfig, resource)
+	if err != nil { return nil, err }
+	var ri dynamic.ResourceInterface
+	if scope == meta.RESTScopeNameNamespace && namespace != "" {
+		ri = dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		ri = dyn.Resource(gvr)
+	}
+	return ri.Patch(ctx, name, pt, data, metav1.PatchOptions{})
+}
+
+// DynamicDelete 通用删除
+func (s *KubernetesService) DynamicDelete(ctx context.Context, kubeConfig, resource, namespace, name string, opts metav1.DeleteOptions) error {
+	dyn, _, gvr, scope, err := s.getDynamicClientAndGVR(kubeConfig, resource)
+	if err != nil { return err }
+	var ri dynamic.ResourceInterface
+	if scope == meta.RESTScopeNameNamespace && namespace != "" {
+		ri = dyn.Resource(gvr).Namespace(namespace)
+	} else {
+		ri = dyn.Resource(gvr)
+	}
+	return ri.Delete(ctx, name, opts)
 }

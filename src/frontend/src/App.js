@@ -38,6 +38,8 @@ const JupyterHubManagement = React.lazy(() => import('./pages/JupyterHubManageme
 // JupyterHub主页面懒加载
 const JupyterHubPage = React.lazy(() => import('./pages/JupyterHubPage'));
 const EmbeddedJupyter = React.lazy(() => import('./pages/EmbeddedJupyter'));
+const SlurmDashboard = React.lazy(() => import('./pages/SlurmDashboard'));
+const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
 
 function App() {
   const [user, setUser] = useState(null);
@@ -348,11 +350,22 @@ function App() {
                 <Suspense fallback={<LoadingFallback />}>
                   <Routes>
                     <Route path="/" element={<Navigate to="/projects" replace />} />
+                    {/* Legacy redirects for Slurm paths to keep old links working */}
+                    <Route path="/jupyter/with-slurm" element={<Navigate to="/slurm" replace />} />
+                    <Route path="/jupyter/slurm" element={<Navigate to="/slurm" replace />} />
                     <Route 
                       path="/projects" 
                       element={
                         <Suspense fallback={<ProjectLoadingFallback />}>
                           <ProjectList />
+                        </Suspense>
+                      } 
+                    />
+                    <Route 
+                      path="/gitea" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <GiteaEmbed />
                         </Suspense>
                       } 
                     />
@@ -390,6 +403,16 @@ function App() {
                       element={
                         <Suspense fallback={<LazyLoadingSpinner />}>
                           <EmbeddedJupyter />
+                        </Suspense>
+                      } 
+                    />
+
+                    {/* Slurm dashboard page */}
+                    <Route 
+                      path="/slurm" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <SlurmDashboard />
                         </Suspense>
                       } 
                     />
