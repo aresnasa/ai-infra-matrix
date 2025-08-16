@@ -19,6 +19,19 @@ set -euo pipefail
 : "${MINIO_BUCKET:=gitea}"
 : "${MINIO_USE_SSL:=false}"
 : "${MINIO_LOCATION:=us-east-1}"
+# Reverse-proxy SSO (optional)
+: "${ENABLE_REVERSE_PROXY_AUTH:=true}"
+: "${REVERSE_PROXY_EMAIL:=true}"
+: "${REVERSE_PROXY_FULL_NAME:=false}"
+
+# Optional admin bootstrap (needed because reverse-proxy auto-create can't use reserved name "admin")
+: "${GITEA_ADMIN_USER:=admin}"
+: "${GITEA_ADMIN_PASSWORD:=admin123}"
+: "${GITEA_ADMIN_EMAIL:=admin@example.com}"
+: "${GITEA_ADMIN_FULL_NAME:=Administrator}"
+
+# Reserved usernames override (allow 'admin' for reverse-proxy SSO)
+: "${RESERVED_USERNAMES:=git,gitea}"
 
 APP_INI=/data/gitea/conf/app.ini
 APP_DIR=/data/gitea
@@ -39,6 +52,7 @@ HTTP_PORT = ${HTTP_PORT:-3000}
 ROOT_URL = ${ROOT_URL}
 PROTOCOL = ${PROTOCOL:-http}
 SUBURL = ${SUBURL}
+PUBLIC_URL_DETECTION = auto
 LFS_START_SERVER = ${LFS_START_SERVER:-false}
 
 [database]
@@ -61,6 +75,34 @@ INSTALL_LOCK = true
 SECRET_KEY = ${SECRET_KEY:-}
 REVERSE_PROXY_LIMIT = 1
 REVERSE_PROXY_TRUSTED_PROXIES = ${REVERSE_PROXY_TRUSTED_PROXIES:-0.0.0.0/0,::/0}
+[service]
+# Enable reverse proxy authentication so upstream (Nginx) can sign users in
+ENABLE_REVERSE_PROXY_AUTHENTICATION = ${ENABLE_REVERSE_PROXY_AUTH}
+ENABLE_REVERSE_PROXY_AUTHENTICATION_API = ${ENABLE_REVERSE_PROXY_AUTH}
+ENABLE_REVERSE_PROXY_AUTO_REGISTRATION = ${ENABLE_REVERSE_PROXY_AUTH}
+ENABLE_REVERSE_PROXY_EMAIL = ${REVERSE_PROXY_EMAIL}
+ENABLE_REVERSE_PROXY_FULL_NAME = ${REVERSE_PROXY_FULL_NAME}
+RESERVED_USERNAMES = ${RESERVED_USERNAMES}
+
+[security]
+# Standard header names for reverse proxy auth
+REVERSE_PROXY_AUTHENTICATION_USER = X-WEBAUTH-USER
+REVERSE_PROXY_AUTHENTICATION_EMAIL = X-WEBAUTH-EMAIL
+REVERSE_PROXY_AUTHENTICATION_FULL_NAME = X-WEBAUTH-FULLNAME
+
+[auth]
+# Classic section still respected by parts of Gitea for proxy auth
+REQUIRE_EMAIL_CONFIRMATION = false
+REGISTER_EMAIL_CONFIRM = false
+DISABLE_REGISTRATION = ${DISABLE_REGISTRATION:-false}
+
+[auth.proxy]
+ENABLED = ${ENABLE_REVERSE_PROXY_AUTH}
+HEADER = X-WEBAUTH-USER
+EMAIL_HEADER = X-WEBAUTH-EMAIL
+FULL_NAME_HEADER = X-WEBAUTH-FULLNAME
+WHITELISTED_PROXIES = 0.0.0.0/0,::/0
+AUTO_CREATE_USERS = ${ENABLE_REVERSE_PROXY_AUTH}
 
 [service]
 DISABLE_REGISTRATION = ${DISABLE_REGISTRATION:-false}
@@ -97,17 +139,74 @@ main() {
     log "app.ini exists with INSTALL_LOCK=true, updating URL settings"
     # In-place update of ROOT_URL and SUBURL to keep proxy prefix alignment
     sed -i "s#^ROOT_URL *=.*#ROOT_URL = ${ROOT_URL//#/\\#}#" "$APP_INI" || true
-    # Ensure SUBURL line exists and is updated
+    # Ensure SUBURL matches external prefix; app will serve under subpath
     if grep -q '^SUBURL *=.*' "$APP_INI"; then
       sed -i "s#^SUBURL *=.*#SUBURL = ${SUBURL}#" "$APP_INI"
     else
       sed -i "/^\[server\]/,/^\[/ s#^HTTP_PORT *=.*#&\nSUBURL = ${SUBURL}#" "$APP_INI"
+    fi
+    # Ensure reverse-proxy auth stays enabled/updated
+    if grep -q '^\[service\]' "$APP_INI"; then
+      sed -i "s#^ENABLE_REVERSE_PROXY_AUTHENTICATION *=.*#ENABLE_REVERSE_PROXY_AUTHENTICATION = ${ENABLE_REVERSE_PROXY_AUTH}#" "$APP_INI" || true
+      sed -i "s#^ENABLE_REVERSE_PROXY_AUTHENTICATION_API *=.*#ENABLE_REVERSE_PROXY_AUTHENTICATION_API = ${ENABLE_REVERSE_PROXY_AUTH}#" "$APP_INI" || true
+      sed -i "s#^ENABLE_REVERSE_PROXY_AUTO_REGISTRATION *=.*#ENABLE_REVERSE_PROXY_AUTO_REGISTRATION = ${ENABLE_REVERSE_PROXY_AUTH}#" "$APP_INI" || true
+    fi
+    if grep -q '^\[auth.proxy\]' "$APP_INI"; then
+      sed -i "s#^ENABLED *=.*#ENABLED = ${ENABLE_REVERSE_PROXY_AUTH}#" "$APP_INI" || true
+      sed -i "s#^HEADER *=.*#HEADER = X-WEBAUTH-USER#" "$APP_INI" || true
+    fi
+
+    # Ensure RESERVED_USERNAMES excludes 'admin' by applying env value
+    if grep -q '^\[service\]' "$APP_INI"; then
+      if grep -q '^RESERVED_USERNAMES *=.*' "$APP_INI"; then
+        sed -i "s#^RESERVED_USERNAMES *=.*#RESERVED_USERNAMES = ${RESERVED_USERNAMES}#" "$APP_INI" || true
+      else
+        # Append the setting within the [service] section
+        awk -v repl="RESERVED_USERNAMES = ${RESERVED_USERNAMES}" '
+          BEGIN{insec=0}
+          /^\[service\]/{print; insec=1; next}
+          /^\[.*\]/{ if(insec){print repl; insec=0}; print; next }
+          {print}
+          END{ if(insec){print repl} }
+        ' "$APP_INI" >"${APP_INI}.tmp" && mv "${APP_INI}.tmp" "$APP_INI"
+      fi
     fi
   fi
 
   # Ensure data directories
   mkdir -p "$APP_DIR" "$DATA_PATH" /data/git/repositories
   chown -R 1000:1000 /data || true
+
+  # Note: CLI flags differ by version; avoid unsupported flags like --full-name
+
+  # Optionally create default admin so reverse-proxy SSO works for reserved username 'admin'
+  : "${ADMIN_USERNAME:=admin}"
+  : "${ADMIN_PASSWORD:=admin123}"
+  : "${ADMIN_EMAIL:=admin@example.com}"
+
+  # Helper to run as git user
+  run_as_git() {
+    if command -v su-exec >/dev/null 2>&1; then
+      su-exec 1000:1000 "$@"
+    elif command -v gosu >/dev/null 2>&1; then
+      gosu 1000:1000 "$@"
+    else
+      su -s /bin/sh -c "$*" git
+    fi
+  }
+
+  # Create admin if missing
+  if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk '{print $1}' | grep -qx "$ADMIN_USERNAME"; then
+    log "creating default admin user '$ADMIN_USERNAME' for SSO"
+    run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user create \
+      --admin \
+      --username "$ADMIN_USERNAME" \
+      --password "$ADMIN_PASSWORD" \
+      --email "$ADMIN_EMAIL" \
+      --must-change-password=false || true
+  else
+    log "admin user '$ADMIN_USERNAME' already exists"
+  fi
 
   # Delegate to upstream entrypoint; pass through arguments
   exec /usr/bin/entrypoint "$@"

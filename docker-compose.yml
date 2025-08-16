@@ -7,16 +7,17 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ai-infra-postgres
+    env_file:
+      - ./.env
     environment:
-      POSTGRES_DB: ansible_playbook_generator
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    # 仅内部访问，不暴露端口
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Asia/Shanghai
     expose:
       - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # 数据库初始化脚本
       - ./scripts/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     networks:
       - ai-infra-network
@@ -32,16 +33,21 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai-infra-redis
-    command: redis-server --requirepass ansible-redis-password
-    # 仅内部访问，不暴露端口
+    env_file:
+      - ./.env
+      - ./.env.production
+    # Defer expansion of REDIS_PASSWORD to the container environment
+    command: ["sh", "-c", "exec redis-server --requirepass \"$${REDIS_PASSWORD}\""]
     expose:
       - "6379"
     volumes:
       - redis_data:/data
     networks:
       - ai-infra-network
+    environment:
+      TZ: Asia/Shanghai
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "ansible-redis-password", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -52,13 +58,15 @@ services:
   openldap:
     image: osixia/openldap:stable
     container_name: ai-infra-openldap
+    env_file:
+      - ./.env
     environment:
       LDAP_ORGANISATION: "AI Infrastructure"
       LDAP_DOMAIN: "ai-infra.com"
-      LDAP_ADMIN_PASSWORD: "admin123"
-      LDAP_CONFIG_PASSWORD: "config123"
+      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}"
+      LDAP_CONFIG_PASSWORD: "${LDAP_CONFIG_PASSWORD}"
       LDAP_BASE_DN: "dc=ai-infra,dc=com"
-    # 仅内部访问，不暴露端口
+      TZ: Asia/Shanghai
     expose:
       - "389"
       - "636"
@@ -82,7 +90,7 @@ services:
     environment:
       PHPLDAPADMIN_LDAP_HOSTS: openldap
       PHPLDAPADMIN_HTTPS: "false"
-    # 仅通过Nginx访问，不直接暴露端口
+      TZ: Asia/Shanghai
     expose:
       - "80"
     depends_on:
@@ -94,24 +102,24 @@ services:
 
   # 后端初始化服务 - 创建admin用户和基础数据
   backend-init:
-    build: 
+    image: ai-infra-backend-init:${IMAGE_TAG:-v0.0.3.3}
+    build:
       context: ./src/backend
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG:-v0.0.3.2}
-    image: ai-infra-backend-init:${IMAGE_TAG:-v0.0.3.2}
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-backend-init
     env_file:
-      - ./src/backend/.env
+      - ./.env
+      - ./.env.production
     environment:
-      # 数据库配置
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_HOST=redis
       - LDAP_SERVER=openldap
-      # 日志级别配置
       - LOG_LEVEL=${LOG_LEVEL:-info}
-    command: ["./init"]  # 直接运行初始化程序
+      - TZ=Asia/Shanghai
+    command: ["./init"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -121,28 +129,27 @@ services:
         condition: service_healthy
     networks:
       - ai-infra-network
-    restart: "no"  # 初始化运行一次后不重启
+    restart: "no"
 
   # 后端 API 服务
   backend:
-    build: 
+    image: ai-infra-backend:${IMAGE_TAG:-v0.0.3.3}
+    build:
       context: ./src/backend
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG:-v0.0.3.2}
-    image: ai-infra-backend:${IMAGE_TAG:-v0.0.3.2}
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-backend
     env_file:
-      - ./src/backend/.env
+      - ./.env
+      - ./.env.production
     environment:
-      # 数据库配置
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_HOST=redis
       - LDAP_SERVER=openldap
-      # 日志级别配置
       - LOG_LEVEL=${LOG_LEVEL:-info}
-    # 仅内部访问，通过nginx代理
+      - TZ=Asia/Shanghai
     expose:
       - "8082"
     extra_hosts:
@@ -172,16 +179,17 @@ services:
 
   # 前端应用服务
   frontend:
-    build: 
+    image: ai-infra-frontend:${IMAGE_TAG:-v0.0.3.3}
+    build:
       context: ./src/frontend
       dockerfile: Dockerfile
       args:
         REACT_APP_API_URL: /api
         REACT_APP_JUPYTERHUB_URL: /jupyter
-        VERSION: ${IMAGE_TAG:-v0.0.3.2}
-    image: ai-infra-frontend:${IMAGE_TAG:-v0.0.3.2}
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-frontend
-    # 仅内部访问，通过nginx代理
+    environment:
+      TZ: Asia/Shanghai
     expose:
       - "80"
     depends_on:
@@ -199,74 +207,65 @@ services:
 
   # JupyterHub 统一认证服务
   jupyterhub:
-    build: 
+    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.0.3.3}
+    env_file:
+      - ./.env
+      - ./.env.production
+    build:
       context: ./src/jupyterhub
       dockerfile: Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: "1"
-        VERSION: ${IMAGE_TAG:-v0.0.3.2}
-    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.0.3.2}
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-jupyterhub
     environment:
-      # 数据库配置 - JupyterHub自动创建和管理数据库
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=jupyterhub_db
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=jupyterhub_db
       - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      # Redis配置
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=ansible-redis-password
       - REDIS_DB=1
-      # JWT配置
-      - JWT_SECRET=${JWT_SECRET:-ai-infra-secret-key-change-in-production}
-      # JupyterHub配置
+      - JWT_SECRET=${JWT_SECRET}
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
-      - CONFIGPROXY_AUTH_TOKEN=ai-infra-proxy-token
-      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1}
+      - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
+      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
       - SESSION_TIMEOUT=86400
-      # 自定义认证配置
       - USE_CUSTOM_AUTH=true
       - AI_INFRA_BACKEND_URL=http://backend:8082
       - AI_INFRA_API_TOKEN=ai-infra-hub-token
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
-      # Spawner配置
-      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.2}
+      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.3}
       - JUPYTERHUB_NETWORK=ai-infra-network
       - JUPYTERHUB_MEM_LIMIT=3G
       - JUPYTERHUB_CPU_LIMIT=1.0
-      # 功能开关
       - JUPYTERHUB_IDLE_CULLER_ENABLED=true
       - JUPYTERHUB_IDLE_TIMEOUT=3600
       - JUPYTERHUB_CULL_TIMEOUT=7200
       - JUPYTERHUB_DEBUG=false
       - JUPYTERHUB_LOG_LEVEL=INFO
       - JUPYTERHUB_ACCESS_LOG=true
-      # 代理配置
       - JUPYTERHUB_USE_PROXY=true
       - JUPYTERHUB_PUBLIC_HOST=localhost:8080
-      # CORS配置
       - JUPYTERHUB_CORS_ORIGIN=http://localhost:8080
-    # 暂时暴露主端口以便直接调试访问（http://localhost:8088/jupyter/）
-    # 调试完成后可注释掉，强制通过Nginx访问
+      - TZ=Asia/Shanghai
     ports:
       - "8088:8000"
     expose:
-      - "8000"  # JupyterHub主端口（仅内部网络）
-      - "8091"  # Hub内部端口（仅内部网络）
+      - "8000"
+      - "8091"
     volumes:
       - jupyterhub_data:/srv/data/jupyterhub
       - jupyterhub_notebooks:/srv/jupyterhub/notebooks
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./shared:/srv/jupyterhub/shared:rw
-      # 开发模式：挂载统一配置文件实现热更新
       - ./src/jupyterhub/jupyterhub_config.py:/srv/jupyterhub/jupyterhub_config.py:ro
       - ./src/jupyterhub/backend_integrated_config.py:/srv/jupyterhub/backend_integrated_config.py:ro
     depends_on:
@@ -288,12 +287,12 @@ services:
 
   # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
   singleuser-builder:
+    image: ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.3}
     build:
       context: ./docker/singleuser
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG:-v0.0.3.2}
-    image: ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.2}
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
     command: ["true"]
     networks:
       - ai-infra-network
@@ -301,33 +300,34 @@ services:
 
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
+    image: ai-infra-nginx:${IMAGE_TAG:-v0.0.3.3}
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
       args:
         DEBUG_MODE: ${DEBUG_MODE:-false}
         BUILD_ENV: ${BUILD_ENV:-production}
-        VERSION: ${IMAGE_TAG:-v0.0.3.2}
-    image: ai-infra-nginx:${IMAGE_TAG:-v0.0.3.2}
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-nginx
     ports:
-      - "8080:80"    # 主访问端口
-      - "8443:443"   # HTTPS端口 (预留)
-      - "8001:8001"  # 调试端口：直通JupyterHub（不做路径重写）
+      - "8080:80"
+      - "8443:443"
+      - "8001:8001"
     volumes:
-      # 仅挂载日志目录，静态文件已嵌入镜像
       - nginx_logs:/var/log/nginx
+    env_file:
+      - ./.env
+      - ./.env.production
     environment:
-      # 构建和调试配置
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - BUILD_ENV=${BUILD_ENV:-production}
-      # 分布式部署支持
       - BACKEND_HOST=${BACKEND_HOST:-backend}
       - BACKEND_PORT=${BACKEND_PORT:-8082}
       - FRONTEND_HOST=${FRONTEND_HOST:-frontend}
       - FRONTEND_PORT=${FRONTEND_PORT:-80}
       - JUPYTERHUB_HOST=${JUPYTERHUB_HOST:-jupyterhub}
       - JUPYTERHUB_PORT=${JUPYTERHUB_PORT:-8000}
+      - TZ=Asia/Shanghai
     depends_on:
       frontend:
         condition: service_healthy
@@ -354,7 +354,7 @@ services:
       TALK: "host.docker.internal:6443"
       PRE_RESOLVE: "0"
       VERBOSE: "1"
-    # 仅内部访问，不暴露端口
+      TZ: Asia/Shanghai
     expose:
       - "6443"
     extra_hosts:
@@ -368,7 +368,8 @@ services:
   redis-insight:
     image: redislabs/redisinsight:latest
     container_name: ai-infra-redis-insight
-    # 仅通过Nginx访问，不直接暴露端口
+    environment:
+      TZ: Asia/Shanghai
     expose:
       - "8001"
     depends_on:
@@ -379,42 +380,50 @@ services:
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:
+    image: ai-infra-gitea:${IMAGE_TAG:-v0.0.3.3}
     build:
       context: ./third-party/gitea
       dockerfile: Dockerfile
-    image: ai-infra-gitea:${IMAGE_TAG:-v0.0.3.2}
     container_name: ai-infra-gitea
+    env_file:
+      - ./.env
     environment:
       - USER_UID=1000
       - USER_GID=1000
-      # Server / subpath
       - ROOT_URL=http://localhost:8080/gitea/
       - SUBURL=/gitea
+      - GITEA__server__ROOT_URL=http://localhost:8080/gitea/
+      - GITEA__server__SUBURL=/gitea
       - DOMAIN=localhost
       - PROTOCOL=http
       - HTTP_PORT=3000
-      # DB (PostgreSQL in compose)
       - GITEA_DB_TYPE=postgres
       - GITEA_DB_HOST=postgres:5432
       - GITEA_DB_NAME=gitea
       - GITEA_DB_USER=gitea
-      - GITEA_DB_PASSWD=gitea-password
-      # Use postgres admin creds from postgres service to create DB/user
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      # Security / registration
+      - GITEA_DB_PASSWD=${GITEA_DB_PASSWD}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - DISABLE_REGISTRATION=false
       - REVERSE_PROXY_TRUSTED_PROXIES=0.0.0.0/0,::/0
-      # Storage: local (NFS-backed) or minio (S3)
+      - GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION=true
+      - GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION_API=true
+      - GITEA__service__ENABLE_REVERSE_PROXY_AUTO_REGISTRATION=true
+      - GITEA__security__REVERSE_PROXY_LIMIT=1
+      - GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES=0.0.0.0/0,::/0
+      - GITEA_ADMIN_USER=${GITEA_ADMIN_USER}
+      - GITEA_ADMIN_PASSWORD=${GITEA_ADMIN_PASSWORD}
+      - GITEA_ADMIN_EMAIL=${GITEA_ADMIN_EMAIL}
+      - GITEA_ADMIN_FULL_NAME=${GITEA_ADMIN_FULL_NAME}
       - GITEA__storage__STORAGE_TYPE=${GITEA_STORAGE:-local}
       - DATA_PATH=/data/gitea
-      # MinIO/S3 settings (used when STORAGE_TYPE=minio)
       - MINIO_ENDPOINT=minio:9000
       - MINIO_BUCKET=gitea
       - MINIO_USE_SSL=false
       - MINIO_LOCATION=us-east-1
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - TZ=Asia/Shanghai
     expose:
       - "3000"
       - "22"
@@ -433,14 +442,17 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # MinIO (S3-compatible) for Gitea object storage (optional)
+  # MinIO (S3-compatible)
   minio:
     image: quay.io/minio/minio:latest
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
+    env_file:
+      - ./.env
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+      - TZ=Asia/Shanghai
     expose:
       - "9000"
       - "9001"
@@ -449,19 +461,6 @@ services:
     networks:
       - ai-infra-network
     restart: unless-stopped
-
-  # NFS client placeholder for future external NFS (optional, disabled by default)
-  # nfs-client:
-  #   image: itsthenetwork/nfs-client:latest
-  #   container_name: ai-infra-nfs-client
-  #   environment:
-  #     - NFS_SERVER=${NFS_SERVER}
-  #     - NFS_EXPORT=${NFS_EXPORT}
-  #   volumes:
-  #     - nfs_shared:/mnt/nfs
-  #   networks:
-  #     - ai-infra-network
-  #   restart: unless-stopped
 
 volumes:
   postgres_data:
@@ -482,11 +481,6 @@ volumes:
     name: ai-infra-gitea-data
   minio_data:
     name: ai-infra-minio-data
-  # nfs_shared:
-  #   driver_opts:
-  #     type: "nfs"
-  #     o: "addr=${NFS_SERVER},rw,nfsvers=4"
-  #     device: ":${NFS_EXPORT}"
 
 networks:
   ai-infra-network:

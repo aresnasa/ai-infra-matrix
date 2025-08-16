@@ -28,6 +28,8 @@ type Config struct {
 	
 	// LDAP初始化配置
 	LDAPInit LDAPInitConfig
+	// LDAP后台同步（可选）
+	LDAPSync LDAPSyncRuntime
 	
 	// 日志级别 (trace, debug, info, warn, error, fatal, panic)
 	LogLevel string
@@ -85,6 +87,13 @@ type LDAPInitConfig struct {
 	// 组配置
 	AdminGroupCN string `json:"admin_group_cn"`
 	UserGroupCN  string `json:"user_group_cn"`
+}
+
+// LDAPSyncRuntime 运行时同步配置
+type LDAPSyncRuntime struct {
+	Enabled bool   `json:"enabled"`
+	// 同步间隔，单位秒（默认900秒=15分钟）
+	IntervalSeconds int `json:"interval_seconds"`
 }
 
 type AdminUserConfig struct {
@@ -186,6 +195,10 @@ func Load() (*Config, error) {
 			},
 			AdminGroupCN: getEnv("LDAP_ADMIN_GROUP_CN", "admins"),
 			UserGroupCN:  getEnv("LDAP_USER_GROUP_CN", "users"),
+		},
+		LDAPSync: LDAPSyncRuntime{
+			Enabled:         getEnv("LDAP_SYNC_ENABLED", "false") == "true",
+			IntervalSeconds: getEnvAsInt("LDAP_SYNC_INTERVAL_SECONDS", 900),
 		},
 	}
 

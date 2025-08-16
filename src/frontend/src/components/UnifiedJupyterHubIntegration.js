@@ -26,6 +26,7 @@ import {
   ReloadOutlined
 } from '@ant-design/icons';
 import api from '../services/api';
+import { resolveSSOTarget } from '../utils/ssoTarget';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -110,6 +111,7 @@ const UnifiedJupyterHubIntegration = () => {
 
   // 统一认证登录到JupyterHub
   const handleUnifiedLogin = async () => {
+  const target = resolveSSOTarget();
     if (!userSession) {
       message.warning('请先登录系统');
       return;
@@ -125,7 +127,7 @@ const UnifiedJupyterHubIntegration = () => {
           'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
         },
         body: JSON.stringify({
-          redirect_uri: '/jupyterhub-authenticated',
+          redirect_uri: target.authenticatedPath,
           source: 'unified_integration'
         })
       });
@@ -134,7 +136,7 @@ const UnifiedJupyterHubIntegration = () => {
       
       if (data.success && data.action === 'authenticated') {
         // 认证成功
-        message.success('正在使用当前登录状态跳转到JupyterHub...');
+        message.success(`正在使用当前登录状态跳转到${target.name}...`);
         window.location.href = data.redirect_url;
         
         // 更新会话状态
@@ -156,7 +158,7 @@ const UnifiedJupyterHubIntegration = () => {
       message.error('登录失败: ' + (error.response?.data?.message || error.message));
       // 出错时跳转到SSO登录
       setTimeout(() => {
-        window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated';
+        window.location.href = `/sso/?redirect_uri=${encodeURIComponent(target.authenticatedPath)}`;
       }, 1500);
     } finally {
       setLoading(false);

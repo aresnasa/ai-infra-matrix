@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Space, Alert, Card } from 'antd';
 import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
 
@@ -24,14 +24,54 @@ const resolveGiteaUrl = () => {
 const GiteaEmbed = () => {
   const iframeRef = useRef(null);
   const base = useMemo(() => resolveGiteaUrl(), []);
+  const [currentUrl, setCurrentUrl] = useState(base);
   const [iframeKey, setIframeKey] = useState(0);
+
+  // Detect if configured URL is cross-origin (very likely to be blocked by X-Frame-Options/CSP)
+  const isCrossOrigin = useMemo(() => {
+    try {
+      const u = new URL(currentUrl, window.location.origin);
+      return u.origin !== window.location.origin;
+    } catch (e) {
+      return false;
+    }
+  }, [currentUrl]);
+
+  // If cross-origin but local gateway /gitea/ is available, auto-switch to same-origin to avoid frame blocking
+  useEffect(() => {
+    let cancelled = false;
+    const trySwitchToLocal = async () => {
+      if (!isCrossOrigin) return;
+      try {
+        const resp = await fetch('/gitea/', { method: 'HEAD', credentials: 'include' });
+        if (!cancelled && resp.ok) {
+          // prefer same-origin path for embedding
+          // eslint-disable-next-line no-underscore-dangle
+          window.__GITEA_URL__ = '/gitea/';
+          setCurrentUrl('/gitea/');
+          setIframeKey(Date.now());
+        }
+      } catch (err) {
+        // ignore; keep external URL and show hint below
+      }
+    };
+    trySwitchToLocal();
+    return () => { cancelled = true; };
+  }, [isCrossOrigin]);
 
   const reload = () => {
     // Force reload without leaving the page
     setIframeKey(Date.now());
   };
 
-  const openNew = () => window.open(base, '_blank', 'noopener,noreferrer');
+  const openNew = () => window.open(currentUrl, '_blank', 'noopener,noreferrer');
+
+  const switchToSameOrigin = () => {
+    // eslint-disable-next-line no-underscore-dangle
+    window.__GITEA_URL__ = '/gitea/';
+    setCurrentUrl('/gitea/');
+    setIframeKey(Date.now());
+  };
 
   const iframeStyle = {
     width: '100%',
@@ -55,19 +95,34 @@ const GiteaEmbed = () => {
           }
           bodyStyle={{ padding: 12 }}
         >
-          <Alert
-            type="info"
-            banner
-            showIcon
-            message={<span style={{ fontSize: 12 }}>内嵌同源 Gitea。若页面未显示，请检查代理配置或安全策略。</span>}
-            style={{ padding: '6px 8px' }}
-          />
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Alert
+              type="info"
+              banner
+              showIcon
+              message={<span style={{ fontSize: 12 }}>内嵌 Gitea 地址: <code>{currentUrl}</code></span>}
+              style={{ padding: '6px 8px' }}
+            />
+            {isCrossOrigin && (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  <span style={{ fontSize: 12 }}>
+                    当前配置为跨域地址，可能被目标站点的 X-Frame-Options/CSP 阻止内嵌。建议切换为同源网关路径 <code>/gitea/</code>。
+                    <Button size="small" style={{ marginLeft: 8 }} onClick={switchToSameOrigin}>切换为同源</Button>
+                  </span>
+                }
+                style={{ padding: '6px 8px' }}
+              />
+            )}
+          </Space>
         </Card>
         <iframe
           ref={iframeRef}
           key={iframeKey}
           title="embedded-gitea"
-          src={base}
+          src={currentUrl}
           style={iframeStyle}
           allow="clipboard-read; clipboard-write; fullscreen"
         />

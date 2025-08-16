@@ -309,11 +309,23 @@ class AuthService {
         const token = this.getToken();
         if (!token) {
             // 没有token，跳转到SSO登录
-            return '/sso/?next=' + encodeURIComponent('/jupyterhub');
+            try {
+                const { resolveSSOTarget } = require('../utils/ssoTarget');
+                const target = resolveSSOTarget();
+                return '/sso/?next=' + encodeURIComponent(target.nextPath);
+            } catch (_) {
+                return '/sso/?next=' + encodeURIComponent('/jupyterhub');
+            }
         }
         
         // 有token，使用认证桥接页面
-        return '/jupyterhub';
+        try {
+            const { resolveSSOTarget } = require('../utils/ssoTarget');
+            const target = resolveSSOTarget();
+            return target.key === 'gitea' ? '/gitea/' : '/jupyterhub';
+        } catch (_) {
+            return '/jupyterhub';
+        }
     }
 
     /**
@@ -324,7 +336,13 @@ class AuthService {
             const token = this.getToken();
             if (!token) {
                 // 没有token，跳转到SSO登录
-                window.location.href = '/sso/?next=' + encodeURIComponent('/jupyterhub');
+                try {
+                    const { resolveSSOTarget } = require('../utils/ssoTarget');
+                    const target = resolveSSOTarget();
+                    window.location.href = '/sso/?next=' + encodeURIComponent(target.nextPath);
+                } catch (_) {
+                    window.location.href = '/sso/?next=' + encodeURIComponent('/jupyterhub');
+                }
                 return;
             }
             
@@ -340,12 +358,24 @@ class AuthService {
             }
             
             // 跳转到认证桥接页面，它会自动处理认证传递
-            window.location.href = '/jupyterhub';
+            try {
+                const { resolveSSOTarget } = require('../utils/ssoTarget');
+                const target = resolveSSOTarget();
+                window.location.href = target.key === 'gitea' ? '/gitea/' : '/jupyterhub';
+            } catch (_) {
+                window.location.href = '/jupyterhub';
+            }
             
         } catch (error) {
             console.error('跳转到JupyterHub失败:', error);
             // 降级方案：跳转到SSO登录
-            window.location.href = '/sso/?next=' + encodeURIComponent('/jupyterhub');
+            try {
+                const { resolveSSOTarget } = require('../utils/ssoTarget');
+                const target = resolveSSOTarget();
+                window.location.href = '/sso/?next=' + encodeURIComponent(target.nextPath);
+            } catch (_) {
+                window.location.href = '/sso/?next=' + encodeURIComponent('/jupyterhub');
+            }
         }
     }
 

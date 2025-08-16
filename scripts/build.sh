@@ -47,6 +47,31 @@ PLATFORMS=""
 USE_BUILDX=""
 BUILDX_PUSHED=""
 
+# 加载 .env 文件中的环境变量（兼容注释与引号）
+source_env_file() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        # 跳过空行和注释
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # 仅处理 KEY=VALUE 形式
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+            # 去掉首尾空白
+            val="${val%%[[:space:]]}"
+            val="${val##[[:space:]]}"
+            # 去掉包裹引号
+            if [[ "$val" =~ ^\".*\"$ ]]; then
+                val="${val:1:${#val}-2}"
+            elif [[ "$val" =~ ^\'.*\'$ ]]; then
+                val="${val:1:${#val}-2}"
+            fi
+            export "$key=$val"
+        fi
+    done < "$file"
+}
+
 # 推导 Git 版本，回退为分支名或短哈希
 detect_version() {
     # 优先从参数/环境获取
@@ -423,7 +448,7 @@ show_help() {
     echo ""
     echo "示例:"
     echo "  $0 dev                          - 开发模式构建（自动版本）"
-    echo "  $0 prod --version v0.0.3.2      - 指定版本号构建"
+    echo "  $0 prod --version v0.0.3.3      - 指定版本号构建"
     echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
 }
 
@@ -542,6 +567,16 @@ if [ ! -f "$ENV_FILE" ]; then
     print_warning "环境文件 $ENV_FILE 不存在，使用默认配置"
 else
     print_success "环境文件 $ENV_FILE 已找到"
+fi
+
+# 优先加载根目录 .env（通用变量），再加载模式专用 env 文件（覆盖）
+if [ -f ".env" ]; then
+    print_info "加载通用环境变量: .env"
+    source_env_file ".env"
+fi
+if [ -f "$ENV_FILE" ]; then
+    print_info "加载模式环境变量: $ENV_FILE"
+    source_env_file "$ENV_FILE"
 fi
 
 # 检查Docker是否可用
@@ -667,6 +702,10 @@ fi
 echo ""
 echo "🎉 构建完成!"
 echo "================================"
+# 若 .env 中提供了 IMAGE_TAG 或 VERSION，优先生效
+if [ -z "${VERSION:-}" ] && [ -n "${IMAGE_TAG:-}" ]; then
+    VERSION="$IMAGE_TAG"
+fi
 print_info "构建模式: $MODE"
 print_info "镜像版本: ${VERSION}"
 print_info "服务访问:"

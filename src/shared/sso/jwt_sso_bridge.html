@@ -156,7 +156,7 @@
         </div>
 
         <div class="action-buttons" style="display: none;" id="actions">
-            <a href="/jupyter/hub/" class="btn btn-primary">前往 JupyterHub</a>
+            <a id="primaryAction" href="#" class="btn btn-primary">前往目标</a>
             <a href="/" class="btn btn-secondary">返回首页</a>
             <button onclick="toggleDebug()" class="btn btn-secondary">调试信息</button>
         </div>
@@ -313,8 +313,15 @@
             try {
                 log('开始SSO流程');
                 
-                // 1. 检查localStorage中的token
-                const token = localStorage.getItem('token');
+                // 1. 检查localStorage中的token，或从URL参数接收一次性token
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlToken = urlParams.get('token');
+                if (urlToken) {
+                    log('从URL参数接收到token，写入localStorage后继续');
+                    localStorage.setItem('token', urlToken);
+                }
+
+                let token = localStorage.getItem('token');
                 const tokenExpires = localStorage.getItem('token_expires');
                 
                 if (!token) {
@@ -371,17 +378,35 @@
                 
                 log('Token有效，进行验证');
                 updateStatus('正在验证认证信息...', 'loading');
-                
-                // 3. 验证token有效性
-                const verifyResponse = await fetch('/api/auth/verify', {
-                    method: 'GET',
+
+                // 3. 验证token有效性（改为POST，避免浏览器或代理对自定义头的拦截/丢失）
+                const verifyResponse = await fetch('/api/auth/verify-token', {
+                    method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ token })
                 });
-                
+
                 if (!verifyResponse.ok) {
-                    throw new Error(`验证失败: ${verifyResponse.status}`);
+                    // 读取后端返回的错误信息
+                    let errorDetail = '';
+                    try {
+                        const errJson = await verifyResponse.json();
+                        errorDetail = errJson && (errJson.error || JSON.stringify(errJson));
+                    } catch (_) {}
+
+                    // 如果是无效token，自动清理并回到登录表单
+                    if (verifyResponse.status === 401 || errorDetail.toLowerCase().includes('invalid token')) {
+                        log(`token无效，清理本地凭证并显示登录表单（detail: ${errorDetail || verifyResponse.status}）`, 'warn');
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('token_expires');
+                        updateStatus('认证信息无效，请重新登录', 'error');
+                        showLoginForm();
+                        return;
+                    }
+
+                    throw new Error(`验证失败: ${verifyResponse.status}${errorDetail ? ' ' + errorDetail : ''}`);
                 }
                 const userData = await verifyResponse.json();
                 
@@ -413,8 +438,33 @@
                 log('设置用户信息cookie');
                 
                 // 6. 获取重定向目标
-                const urlParams = new URLSearchParams(window.location.search);
-                const nextUrl = urlParams.get('redirect_uri') || urlParams.get('next') || '/jupyter/hub/';
+                // 重新获取（上面已创建），以便后续使用
+                // const urlParams = new URLSearchParams(window.location.search);
+                // Support split redirect params to preserve querystring
+                const redirectPath = urlParams.get('redirect_path');
+                const redirectArgs = urlParams.get('redirect_args');
+                let nextUrl = urlParams.get('redirect_uri') || urlParams.get('next');
+                if (!nextUrl && redirectPath) {
+                    nextUrl = redirectArgs ? `${redirectPath}?${redirectArgs}` : redirectPath;
+                }
+                // Fallback by service hint
+                const service = (urlParams.get('service') || '').toLowerCase();
+                if (!nextUrl) {
+                    nextUrl = service === 'gitea' ? '/gitea/' : '/jupyter/hub/';
+                }
+
+                // Update primary action button (label + target)
+                const primaryBtn = document.getElementById('primaryAction');
+                if (primaryBtn) {
+                    primaryBtn.href = nextUrl;
+                    let label = '前往目标';
+                    if (service === 'gitea' || nextUrl.startsWith('/gitea')) {
+                        label = '前往 Gitea';
+                    } else if (nextUrl.includes('/jupyter')) {
+                        label = '前往 JupyterHub';
+                    }
+                    primaryBtn.textContent = label;
+                }
                 
                 log(`准备重定向到: ${nextUrl}`);
                 updateStatus('单点登录设置完成，正在跳转...', 'success');

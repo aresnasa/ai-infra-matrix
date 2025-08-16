@@ -80,6 +80,29 @@ func main() {
 	// 设置JWT密钥
 	jwt.SetSecret(cfg.JWTSecret)
 
+	// 启动后台LDAP同步（如果启用）
+	if cfg.LDAP.Enabled && cfg.LDAPSync.Enabled {
+		interval := time.Duration(cfg.LDAPSync.IntervalSeconds) * time.Second
+		ldapService := services.NewLDAPService(database.DB)
+		ldapSync := services.NewLDAPSyncService(database.DB, ldapService, services.NewUserService(), rbacService)
+		logrus.WithFields(logrus.Fields{"interval": interval}).Info("Starting background LDAP sync loop")
+		go func() {
+			// 启动延迟，等待依赖稳定
+			time.Sleep(5 * time.Second)
+			for {
+				if !cfg.LDAP.Enabled || !cfg.LDAPSync.Enabled {
+					return
+				}
+				if _, err := ldapSync.SyncLDAPUsersAndGroups(); err != nil {
+					logrus.WithError(err).Warn("Background LDAP sync failed")
+				} else {
+					logrus.Info("Background LDAP sync completed")
+				}
+				time.Sleep(interval)
+			}
+		}()
+	}
+
 	// 创建必要的目录
 	os.MkdirAll("outputs", 0755)
 	os.MkdirAll("uploads", 0755)

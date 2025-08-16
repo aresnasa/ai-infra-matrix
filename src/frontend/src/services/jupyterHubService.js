@@ -10,7 +10,13 @@ class JupyterHubService {
     constructor() {
         this.baseURL = window.location.origin;
         this.jupyterHubURL = `${this.baseURL}/jupyter/`;
-        this.ssoLoginURL = `${this.baseURL}/sso/?redirect_uri=/jupyterhub-authenticated`;
+        try {
+            const { resolveSSOTarget } = require('../utils/ssoTarget');
+            const target = resolveSSOTarget();
+            this.ssoLoginURL = `${this.baseURL}/sso/?redirect_uri=${encodeURIComponent(target.authenticatedPath)}`;
+        } catch (_) {
+            this.ssoLoginURL = `${this.baseURL}/sso/?redirect_uri=/jupyterhub-authenticated`;
+        }
     }
 
     /**
@@ -26,7 +32,14 @@ class JupyterHubService {
                     'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
                 },
                 body: JSON.stringify({
-                    redirect_uri: '/jupyterhub-authenticated',
+                    redirect_uri: (() => {
+                        try {
+                            const { resolveSSOTarget } = require('../utils/ssoTarget');
+                            return resolveSSOTarget().authenticatedPath;
+                        } catch (_) {
+                            return '/jupyterhub-authenticated';
+                        }
+                    })(),
                     source: 'jupyterhub_service'
                 })
             });

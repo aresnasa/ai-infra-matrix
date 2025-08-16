@@ -39,6 +39,8 @@ RUN mkdir -p /usr/share/nginx/html/sso \
 # 复制项目静态文件
 COPY src/shared/sso/ /usr/share/nginx/html/sso/
 COPY src/shared/jupyterhub/ /usr/share/nginx/html/jupyterhub/
+# Copy any additional nginx static html (like debug_auth.html)
+COPY src/nginx/html/ /usr/share/nginx/html/
 # browser_debug.html was archived; serve debug index from existing debug bundle when DEBUG_MODE=true
 # Provide a lightweight default debug page otherwise
 RUN echo "<html><body><h3>Debug entry</h3><p>See /debug/ when DEBUG_MODE=true.</p></body></html>" > /usr/share/nginx/html/debug.html

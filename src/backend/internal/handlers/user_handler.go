@@ -207,6 +207,21 @@ func (h *UserHandler) Login(c *gin.Context) {
 		ExpiresAt: expiresAt,
 	}
 
+	// Set SSO cookies to simplify downstream auth (read by nginx auth_request)
+	// Use SameSite=Lax so normal navigations carry the cookie; mark HttpOnly for security.
+	// expiresAt is unix seconds (int64); convert to time.Time for time.Until
+	maxAge := int(time.Until(time.Unix(expiresAt, 0)).Seconds())
+	if maxAge <= 0 {
+		maxAge = 3600
+	}
+	// Ensure SameSite before setting cookies
+	c.SetSameSite(http.SameSiteLaxMode)
+	// Primary cookie preferred by gateway
+	c.SetCookie("ai_infra_token", token, maxAge, "/", "", false, true)
+	// Backward/compat cookies some clients expect
+	c.SetCookie("jwt_token", token, maxAge, "/", "", false, true)
+	c.SetCookie("auth_token", token, maxAge, "/", "", false, true)
+
 	c.JSON(http.StatusOK, response)
 }
 
@@ -921,6 +936,18 @@ func (h *UserHandler) VerifyTokenSimple(c *gin.Context) {
 		logrus.Error("Failed to get user:", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
+	}
+
+	// 暴露简化的用户信息到响应头，便于反向代理认证（如Nginx auth_request）
+	if uname, ok := username.(string); ok {
+		c.Header("X-User", uname)
+		// 兼容反向代理认证常用头，便于下游（如Gitea）直接复用
+		c.Header("X-WEBAUTH-USER", uname)
+	}
+	if user.Email != "" {
+		c.Header("X-Email", user.Email)
+		// 兼容反向代理认证常用头
+		c.Header("X-WEBAUTH-EMAIL", user.Email)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
