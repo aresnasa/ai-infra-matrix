@@ -30,6 +30,11 @@ type Config struct {
 	LDAPInit LDAPInitConfig
 	// LDAP后台同步（可选）
 	LDAPSync LDAPSyncRuntime
+    
+	// Gitea 集成
+	Gitea GiteaConfig
+	// Gitea 后台同步
+	GiteaSync GiteaSyncRuntime
 	
 	// 日志级别 (trace, debug, info, warn, error, fatal, panic)
 	LogLevel string
@@ -94,6 +99,21 @@ type LDAPSyncRuntime struct {
 	Enabled bool   `json:"enabled"`
 	// 同步间隔，单位秒（默认900秒=15分钟）
 	IntervalSeconds int `json:"interval_seconds"`
+}
+
+// GiteaConfig Gitea 集成配置
+type GiteaConfig struct {
+	Enabled    bool   `json:"enabled"`
+	BaseURL    string `json:"base_url"`
+	AdminToken string `json:"admin_token"`
+	AutoCreate bool   `json:"auto_create"`
+	AutoUpdate bool   `json:"auto_update"`
+}
+
+// GiteaSyncRuntime Gitea 同步配置
+type GiteaSyncRuntime struct {
+	Enabled         bool `json:"enabled"`
+	IntervalSeconds int  `json:"interval_seconds"`
 }
 
 type AdminUserConfig struct {
@@ -199,6 +219,17 @@ func Load() (*Config, error) {
 		LDAPSync: LDAPSyncRuntime{
 			Enabled:         getEnv("LDAP_SYNC_ENABLED", "false") == "true",
 			IntervalSeconds: getEnvAsInt("LDAP_SYNC_INTERVAL_SECONDS", 900),
+		},
+		Gitea: GiteaConfig{
+			Enabled:    getEnv("GITEA_ENABLED", "false") == "true",
+			BaseURL:    getEnv("GITEA_BASE_URL", "http://gitea:3000/gitea"),
+			AdminToken: getEnv("GITEA_ADMIN_TOKEN", ""),
+			AutoCreate: getEnv("GITEA_AUTO_CREATE", "true") == "true",
+			AutoUpdate: getEnv("GITEA_AUTO_UPDATE", "true") == "true",
+		},
+		GiteaSync: GiteaSyncRuntime{
+			Enabled:         getEnv("GITEA_SYNC_ENABLED", "false") == "true",
+			IntervalSeconds: getEnvAsInt("GITEA_SYNC_INTERVAL_SECONDS", 600),
 		},
 	}
 

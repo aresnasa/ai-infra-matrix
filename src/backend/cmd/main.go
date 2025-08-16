@@ -80,6 +80,28 @@ func main() {
 	// 设置JWT密钥
 	jwt.SetSecret(cfg.JWTSecret)
 
+	// 启动Gitea后台同步（如果启用）
+	if cfg.Gitea.Enabled && cfg.GiteaSync.Enabled {
+		interval := time.Duration(cfg.GiteaSync.IntervalSeconds) * time.Second
+		giteaSvc := services.NewGiteaService(cfg)
+		logrus.WithFields(logrus.Fields{"interval": interval}).Info("Starting background Gitea sync loop")
+		go func() {
+			// 启动延迟，等待依赖稳定
+			time.Sleep(5 * time.Second)
+			for {
+				if !cfg.Gitea.Enabled || !cfg.GiteaSync.Enabled {
+					return
+				}
+				if _, _, _, err := giteaSvc.SyncAllUsers(); err != nil {
+					logrus.WithError(err).Warn("Background Gitea sync failed")
+				} else {
+					logrus.Info("Background Gitea sync completed")
+				}
+				time.Sleep(interval)
+			}
+		}()
+	}
+
 	// 启动后台LDAP同步（如果启用）
 	if cfg.LDAP.Enabled && cfg.LDAPSync.Enabled {
 		interval := time.Duration(cfg.LDAPSync.IntervalSeconds) * time.Second
@@ -395,6 +417,20 @@ func main() {
 		admin := api.Group("/admin")
 		admin.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminOnlyMiddleware(database.DB))
 		{
+			// 手动触发 Gitea 用户同步
+			admin.POST("/sync-gitea-users", func(c *gin.Context) {
+				if !cfg.Gitea.Enabled {
+					c.JSON(400, gin.H{"status": "disabled", "message": "Gitea integration disabled"})
+					return
+				}
+				giteaSvc := services.NewGiteaService(cfg)
+				created, updated, skipped, err := giteaSvc.SyncAllUsers()
+				if err != nil {
+					c.JSON(500, gin.H{"status": "error", "error": err.Error(), "created": created, "updated": updated, "skipped": skipped})
+					return
+				}
+				c.JSON(200, gin.H{"status": "ok", "created": created, "updated": updated, "skipped": skipped})
+			})
 			// 用户管理
 			admin.GET("/users", adminController.GetAllUsers)
 			admin.GET("/users/:id", adminController.GetUserDetail)

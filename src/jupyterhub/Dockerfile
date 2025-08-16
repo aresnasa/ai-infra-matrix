@@ -15,6 +15,7 @@ RUN set -eux; \
     apk --no-cache add \
         ca-certificates \
         curl \
+    openssl \
         tzdata \
         bash \
         shadow \
@@ -43,9 +44,13 @@ RUN set -eux; \
         musl-dev \
         linux-headers \
         python3-dev \
+        curl-dev \
+        openssl-dev \
+        zlib-dev \
     ; \
     pip install --no-cache-dir --prefer-binary psutil>=5.9.0; \
     pip install --no-cache-dir -r requirements.txt; \
+    PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl; \
     npm install -g configurable-http-proxy; \
     apk del .build-deps
 

@@ -8,7 +8,7 @@ services:
     image: postgres:15-alpine
     container_name: ai-infra-postgres
     env_file:
-      - ./.env
+      - ${ENV_FILE:-.env}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -34,8 +34,7 @@ services:
     image: redis:7-alpine
     container_name: ai-infra-redis
     env_file:
-      - ./.env
-      - ./.env.production
+      - ${ENV_FILE:-.env}
     # Defer expansion of REDIS_PASSWORD to the container environment
     command: ["sh", "-c", "exec redis-server --requirepass \"$${REDIS_PASSWORD}\""]
     expose:
@@ -59,7 +58,7 @@ services:
     image: osixia/openldap:stable
     container_name: ai-infra-openldap
     env_file:
-      - ./.env
+      - ${ENV_FILE:-.env}
     environment:
       LDAP_ORGANISATION: "AI Infrastructure"
       LDAP_DOMAIN: "ai-infra.com"
@@ -110,8 +109,7 @@ services:
         VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-backend-init
     env_file:
-      - ./.env
-      - ./.env.production
+      - ${ENV_FILE:-.env}
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -141,15 +139,21 @@ services:
         VERSION: ${IMAGE_TAG:-v0.0.3.3}
     container_name: ai-infra-backend
     env_file:
-      - ./.env
-      - ./.env.production
+      - ${ENV_FILE:-.env}
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - REDIS_HOST=redis
-      - LDAP_SERVER=openldap
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - TZ=Asia/Shanghai
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      REDIS_HOST: redis
+      LDAP_SERVER: openldap
+      GITEA_ENABLED: "${GITEA_ENABLED:-true}"
+      GITEA_BASE_URL: "${GITEA_BASE_URL:-http://gitea:3000}"
+      GITEA_ADMIN_TOKEN: "${GITEA_ADMIN_TOKEN}"
+      GITEA_AUTO_CREATE: "${GITEA_AUTO_CREATE:-true}"
+      GITEA_AUTO_UPDATE: "${GITEA_AUTO_UPDATE:-true}"
+      GITEA_SYNC_ENABLED: "${GITEA_SYNC_ENABLED:-true}"
+      GITEA_SYNC_INTERVAL_SECONDS: "${GITEA_SYNC_INTERVAL_SECONDS:-600}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      TZ: Asia/Shanghai
     expose:
       - "8082"
     extra_hosts:
@@ -209,8 +213,7 @@ services:
   jupyterhub:
     image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.0.3.3}
     env_file:
-      - ./.env
-      - ./.env.production
+      - ${ENV_FILE:-.env}
     build:
       context: ./src/jupyterhub
       dockerfile: Dockerfile
@@ -316,8 +319,7 @@ services:
     volumes:
       - nginx_logs:/var/log/nginx
     env_file:
-      - ./.env
-      - ./.env.production
+      - ${ENV_FILE:-.env}
     environment:
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - BUILD_ENV=${BUILD_ENV:-production}
@@ -386,7 +388,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai-infra-gitea
     env_file:
-      - ./.env
+      - ${ENV_FILE:-.env}
     environment:
       - USER_UID=1000
       - USER_GID=1000
@@ -448,7 +450,7 @@ services:
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
     env_file:
-      - ./.env
+      - ${ENV_FILE:-.env}
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}

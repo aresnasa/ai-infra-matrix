@@ -549,13 +549,13 @@ fi
 
 # 设置环境变量文件
 if [ "$MODE" = "development" ]; then
-    ENV_FILE=".env.development"
+    ENV_FILE=".env"
     export DEBUG_MODE=true
     export BUILD_ENV=development
     print_info "使用开发环境配置: $ENV_FILE"
     print_warning "调试工具将被启用"
 else
-    ENV_FILE=".env.production"
+    ENV_FILE=".env.prod"
     export DEBUG_MODE=false
     export BUILD_ENV=production
     print_info "使用生产环境配置: $ENV_FILE"
@@ -570,7 +570,7 @@ else
 fi
 
 # 优先加载根目录 .env（通用变量），再加载模式专用 env 文件（覆盖）
-if [ -f ".env" ]; then
+if [ -f ".env" ] && [ "$ENV_FILE" != ".env" ]; then
     print_info "加载通用环境变量: .env"
     source_env_file ".env"
 fi

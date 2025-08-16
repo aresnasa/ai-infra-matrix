@@ -15,6 +15,9 @@ psutil>=5.9.0
 # It requires system-level curl-dev (curl-config) and SSL dev libs which complicate Alpine+Py3.13 builds.
 # Omit by default to keep image lean and builds reliable. If needed, enable via Dockerfile with curl-dev
 # and openssl-dev installed before `pip install pycurl`.
+# If you prefer to pin here instead of Dockerfile, uncomment the following line and remove the
+# Dockerfile-specific installation:
+# pycurl==7.45.3
 # NOTE: kubespawner is required only for K8s deployments via Helm and currently
 # isn't compatible with Python 3.13 on Alpine. Keep it in a separate K8s image or
 # add it during Helm builds. For docker-compose (DockerSpawner), it's not needed.

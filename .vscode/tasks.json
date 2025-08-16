@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build JupyterHub image with pycurl",
+			"type": "shell",
+			"command": "docker build -t ai-infra-jupyterhub:test-pycurl -f src/jupyterhub/Dockerfile src/jupyterhub",
+			"problemMatcher": [
+				"$gcc"
+			]
+		}
+	]
+}
