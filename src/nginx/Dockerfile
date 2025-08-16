@@ -63,8 +63,9 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
     fi && \
     rm -rf /tmp/debug
 
-# 复制环境配置模板
-COPY src/nginx/nginx.conf /tmp/nginx.conf.template
+# 复制Nginx主配置与片段到容器
+COPY src/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY src/nginx/conf.d/ /etc/nginx/conf.d/
 
 # 创建JupyterHub wrapper页面的符号链接，支持多种访问方式
 RUN ln -sf /usr/share/nginx/html/jupyterhub/jupyterhub_wrapper_upstream.html /usr/share/nginx/html/jupyterhub_wrapper.html
