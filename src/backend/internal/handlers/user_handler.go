@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -937,6 +938,39 @@ func (h *UserHandler) VerifyTokenSimple(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 		return
 	}
+
+	// 在SSO校验通过时，后台异步触发统一预配（Gitea / 可选JupyterHub）
+	go func(u *models.User) {
+		defer func() { _ = recover() }()
+		cfg, cfgErr := config.Load()
+		if cfgErr != nil {
+			logrus.WithError(cfgErr).Debug("Skip SSO provisioning: failed to load config")
+			return
+		}
+		// Gitea 预配（幂等）
+		if cfg.Gitea.Enabled {
+			gsvc := services.NewGiteaService(cfg)
+			if err := gsvc.EnsureUser(*u); err != nil {
+				logrus.WithError(err).WithFields(logrus.Fields{
+					"username": u.Username,
+				}).Warn("Gitea ensure user failed during SSO verify")
+			} else {
+				logrus.WithFields(logrus.Fields{
+					"username": u.Username,
+				}).Debug("Gitea user ensured during SSO verify")
+			}
+		}
+		// 可选：JupyterHub 用户预配（通过环境开关控制，最佳努力）
+		if os.Getenv("JUPYTERHUB_AUTO_PROVISION") == "true" {
+			if token, err := h.generateJupyterHubAPIToken(u); err == nil {
+				if err := h.ensureJupyterHubUser(u, token); err != nil {
+					logrus.WithError(err).WithField("username", u.Username).Debug("JupyterHub ensure user failed (optional)")
+				}
+			} else {
+				logrus.WithError(err).WithField("username", u.Username).Debug("Generate JupyterHub token failed (optional)")
+			}
+		}
+	}(user)
 
 	// 暴露简化的用户信息到响应头，便于反向代理认证（如Nginx auth_request）
 	if uname, ok := username.(string); ok {

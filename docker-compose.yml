@@ -2,8 +2,9 @@
 # 版本: v3.0.0 - 自定义Nginx镜像版本 (嵌入式静态文件)
 # 作者: AI Infrastructure Team
 
+version: '3.9'
+
 services:
-  # PostgreSQL 数据库服务
   postgres:
     image: postgres:15-alpine
     container_name: ai-infra-postgres
@@ -152,8 +153,10 @@ services:
       GITEA_AUTO_UPDATE: "${GITEA_AUTO_UPDATE:-true}"
       GITEA_SYNC_ENABLED: "${GITEA_SYNC_ENABLED:-true}"
       GITEA_SYNC_INTERVAL_SECONDS: "${GITEA_SYNC_INTERVAL_SECONDS:-600}"
+      # Map reserved username 'admin' to a real admin account in Gitea (e.g., 'test')
+      GITEA_ALIAS_ADMIN_TO: "${GITEA_ALIAS_ADMIN_TO:-test}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
-      TZ: Asia/Shanghai
+      TZ: "Asia/Shanghai"
     expose:
       - "8082"
     extra_hosts:
@@ -390,42 +393,53 @@ services:
     env_file:
       - ${ENV_FILE:-.env}
     environment:
-      - USER_UID=1000
-      - USER_GID=1000
-      - ROOT_URL=http://localhost:8080/gitea/
-      - SUBURL=/gitea
-      - GITEA__server__ROOT_URL=http://localhost:8080/gitea/
-      - GITEA__server__SUBURL=/gitea
-      - DOMAIN=localhost
-      - PROTOCOL=http
-      - HTTP_PORT=3000
-      - GITEA_DB_TYPE=postgres
-      - GITEA_DB_HOST=postgres:5432
-      - GITEA_DB_NAME=gitea
-      - GITEA_DB_USER=gitea
-      - GITEA_DB_PASSWD=${GITEA_DB_PASSWD}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - DISABLE_REGISTRATION=false
-      - REVERSE_PROXY_TRUSTED_PROXIES=0.0.0.0/0,::/0
-      - GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION=true
-      - GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION_API=true
-      - GITEA__service__ENABLE_REVERSE_PROXY_AUTO_REGISTRATION=true
-      - GITEA__security__REVERSE_PROXY_LIMIT=1
-      - GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES=0.0.0.0/0,::/0
-      - GITEA_ADMIN_USER=${GITEA_ADMIN_USER}
-      - GITEA_ADMIN_PASSWORD=${GITEA_ADMIN_PASSWORD}
-      - GITEA_ADMIN_EMAIL=${GITEA_ADMIN_EMAIL}
-      - GITEA_ADMIN_FULL_NAME=${GITEA_ADMIN_FULL_NAME}
-      - GITEA__storage__STORAGE_TYPE=${GITEA_STORAGE:-local}
-      - DATA_PATH=/data/gitea
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_BUCKET=gitea
-      - MINIO_USE_SSL=false
-      - MINIO_LOCATION=us-east-1
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-      - TZ=Asia/Shanghai
+      USER_UID: "1000"
+      USER_GID: "1000"
+      ROOT_URL: "http://localhost:8080/gitea/"
+      SUBURL: "/gitea"
+      GITEA__server__ROOT_URL: "http://localhost:8080/gitea/"
+      GITEA__server__SUBURL: "/gitea"
+      DOMAIN: "localhost"
+      PROTOCOL: "http"
+      HTTP_PORT: "3000"
+      GITEA_DB_TYPE: "postgres"
+      GITEA_DB_HOST: "postgres:5432"
+      GITEA_DB_NAME: "gitea"
+      # 注意：以下两行必须使用6个空格缩进，保持与其他 environment 项对齐，否则会导致 YAML 解析错误。
+      GITEA_DB_USER: "${POSTGRES_USER}"
+      GITEA_DB_PASSWD: "${POSTGRES_PASSWORD}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      DISABLE_REGISTRATION: "false"
+      REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
+      GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION: "true"
+      GITEA__service__ENABLE_REVERSE_PROXY_AUTHENTICATION_API: "true"
+      GITEA__service__ENABLE_REVERSE_PROXY_AUTO_REGISTRATION: "true"
+      GITEA__auth__REVERSE_PROXY_AUTHENTICATION_USER: "X-WEBAUTH-USER"
+      GITEA__auth__REVERSE_PROXY_AUTHENTICATION_EMAIL: "X-WEBAUTH-EMAIL"
+      GITEA__auth__REVERSE_PROXY_AUTHENTICATION_FULL_NAME: "X-WEBAUTH-FULLNAME"
+      GITEA__auth__PROXY_ENABLED: "true"
+      GITEA__auth__PROXY_HEADER_NAME: "X-WEBAUTH-USER"
+      GITEA__auth__PROXY_EMAIL_HEADER: "X-WEBAUTH-EMAIL"
+      GITEA__auth__PROXY_FULL_NAME_HEADER: "X-WEBAUTH-FULLNAME"
+      GITEA__security__REVERSE_PROXY_LIMIT: "1"
+      GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
+      GITEA_ADMIN_USER: "${GITEA_ADMIN_USER}"
+      GITEA_ADMIN_PASSWORD: "${GITEA_ADMIN_PASSWORD}"
+      GITEA_ADMIN_EMAIL: "${GITEA_ADMIN_EMAIL}"
+      GITEA_ADMIN_FULL_NAME: "${GITEA_ADMIN_FULL_NAME}"
+      ADMIN_USERNAME: "${GITEA_ADMIN_USER}"
+      ADMIN_PASSWORD: "${GITEA_ADMIN_PASSWORD}"
+      ADMIN_EMAIL: "${GITEA_ADMIN_EMAIL}"
+      GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
+      DATA_PATH: "/data/gitea"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_BUCKET: "gitea"
+      MINIO_USE_SSL: "false"
+      MINIO_LOCATION: "us-east-1"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+      TZ: "Asia/Shanghai"
     expose:
       - "3000"
       - "22"

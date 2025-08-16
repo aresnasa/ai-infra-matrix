@@ -24,6 +24,7 @@ type giteaServiceImpl struct {
 
 type giteaUserCreateReq struct {
     Username string `json:"username"`
+    LoginName string `json:"login_name,omitempty"`
     Email    string `json:"email"`
     FullName string `json:"full_name,omitempty"`
     Password string `json:"password,omitempty"`
@@ -32,6 +33,7 @@ type giteaUserCreateReq struct {
 }
 
 type giteaUserUpdateReq struct {
+    LoginName string `json:"login_name,omitempty"`
     Email    string `json:"email,omitempty"`
     FullName string `json:"full_name,omitempty"`
     Active   *bool  `json:"active,omitempty"`
@@ -61,6 +63,18 @@ func (s *giteaServiceImpl) auth(req *http.Request) {
     req.Header.Set("Content-Type", "application/json")
 }
 
+// resolveUsername applies aliasing rules for reserved names (e.g., "admin").
+func (s *giteaServiceImpl) resolveUsername(u models.User) (username string) {
+    username = u.Username
+    if username == "admin" {
+        alias := s.cfg.Gitea.AliasAdminTo
+        if alias != "" {
+            username = alias
+        }
+    }
+    return
+}
+
 // EnsureUser creates or updates user in Gitea using admin API
 func (s *giteaServiceImpl) EnsureUser(u models.User) error {
     if !s.cfg.Gitea.Enabled {
@@ -70,8 +84,12 @@ func (s *giteaServiceImpl) EnsureUser(u models.User) error {
         return fmt.Errorf("Gitea Admin token not configured")
     }
 
-    // First, try to get user
-    getURL := s.api(fmt.Sprintf("/admin/users/%s", u.Username))
+    // Map reserved usernames if necessary (e.g., admin -> test)
+    targetUsername := s.resolveUsername(u)
+
+    // First, try to get user (public endpoint)
+    // Note: GET /admin/users/{username} returns 405 in Gitea; use /users/{username} to check existence
+    getURL := s.api(fmt.Sprintf("/users/%s", targetUsername))
     req, _ := http.NewRequest("GET", getURL, nil)
     s.auth(req)
     resp, err := s.httpClient.Do(req)
@@ -84,12 +102,14 @@ func (s *giteaServiceImpl) EnsureUser(u models.User) error {
         if !s.cfg.Gitea.AutoUpdate {
             return nil
         }
-        // Update user if email/fullname differs
-        // We can't easily diff without fetching body; send update to be idempotent
-        active := u.IsActive
-        payload := giteaUserUpdateReq{ Email: u.Email, FullName: u.Username, Active: &active }
+    // Update user if email/fullname differs
+    // We can't easily diff without fetching body; send update to be idempotent
+    active := u.IsActive
+    payload := giteaUserUpdateReq{ LoginName: targetUsername, Email: u.Email, FullName: targetUsername, Active: &active }
         body, _ := json.Marshal(payload)
-        updReq, _ := http.NewRequest("PATCH", getURL, bytes.NewReader(body))
+    // Admin endpoint required for update
+    updURL := s.api(fmt.Sprintf("/admin/users/%s", targetUsername))
+    updReq, _ := http.NewRequest("PATCH", updURL, bytes.NewReader(body))
         s.auth(updReq)
         updResp, err := s.httpClient.Do(updReq)
         if err != nil { return err }
@@ -104,9 +124,10 @@ func (s *giteaServiceImpl) EnsureUser(u models.User) error {
         }
         // Create user
         payload := giteaUserCreateReq{
-            Username: u.Username,
+            Username: targetUsername,
+            LoginName: targetUsername,
             Email:    u.Email,
-            FullName: u.Username,
+        FullName: targetUsername,
             Password: randomPassword(), // temporary, user logs via reverse-proxy anyway
             MustChangePassword: false,
             SendNotify: false,

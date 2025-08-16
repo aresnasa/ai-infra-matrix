@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 	"net/http"
 	"strings"
+	"os"
 )
 
 func main() {
@@ -44,6 +45,11 @@ func main() {
 	// 创建JupyterHub数据库
 	if err := createJupyterHubDatabase(cfg); err != nil {
 		log.Fatal("Failed to create JupyterHub database:", err)
+	}
+
+	// 创建Gitea数据库与用户（按照当前 .env 配置）
+	if err := createGiteaDatabase(cfg); err != nil {
+		log.Fatal("Failed to create Gitea database:", err)
 	}
 
 	// 初始化RBAC系统
@@ -700,6 +706,63 @@ func createJupyterHubDatabase(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+// createGiteaDatabase ensures the Gitea role and database exist with the configured credentials
+func createGiteaDatabase(cfg *config.Config) error {
+	log.Println("Creating Gitea database and role...")
+
+	// Read Gitea DB settings from env (compose passes into container)
+	gUser := getEnvCompat("GITEA_DB_USER", "gitea")
+	gPass := getEnvCompat("GITEA_DB_PASSWD", "gitea-password")
+	gDB := getEnvCompat("GITEA_DB_NAME", "gitea")
+
+	// Connect to system DB
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Create role if missing
+	createRole := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE USER %s WITH LOGIN PASSWORD '%s'; END IF; END $$;", gUser, gUser, gPass)
+	if err := systemDB.Exec(createRole).Error; err != nil {
+		return fmt.Errorf("failed to ensure Gitea role: %w", err)
+	}
+
+	// Create DB if missing and grant
+	var exists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", gDB).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check Gitea DB existence: %w", err)
+	}
+	if !exists {
+		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", gDB, gUser)).Error; err != nil {
+			return fmt.Errorf("failed to create Gitea database: %w", err)
+		}
+	}
+	if err := systemDB.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", gDB, gUser)).Error; err != nil {
+		log.Printf("Warning: failed to grant privileges on %s to %s: %v", gDB, gUser, err)
+	}
+
+	log.Println("Gitea database initialization done")
+	return nil
+}
+
+// getEnvCompat reads from process env; used by init which runs inside container
+func getEnvCompat(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" { return v }
+	return def
 }
 
 // initializeGiteaUsers 在系统初始化阶段，确保后端用户同步到 Gitea

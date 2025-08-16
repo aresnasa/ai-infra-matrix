@@ -108,6 +108,11 @@ type GiteaConfig struct {
 	AdminToken string `json:"admin_token"`
 	AutoCreate bool   `json:"auto_create"`
 	AutoUpdate bool   `json:"auto_update"`
+	// AliasAdminTo maps the reserved backend username "admin" to a concrete Gitea account name.
+	// Gitea reserves the name "admin", so provisioning that username will fail with 422.
+	// When set (non-empty), any "admin" user will be provisioned/updated as this target username.
+	// Example: "test" (an existing Gitea admin user).
+	AliasAdminTo string `json:"alias_admin_to"`
 }
 
 // GiteaSyncRuntime Gitea 同步配置
@@ -222,10 +227,14 @@ func Load() (*Config, error) {
 		},
 		Gitea: GiteaConfig{
 			Enabled:    getEnv("GITEA_ENABLED", "false") == "true",
-			BaseURL:    getEnv("GITEA_BASE_URL", "http://gitea:3000/gitea"),
+			// IMPORTANT: Use the internal service base URL WITHOUT the web SUBURL (/gitea)
+			// Admin API is always rooted at /api/v1 on the service, regardless of SUBURL.
+			BaseURL:    getEnv("GITEA_BASE_URL", "http://gitea:3000"),
 			AdminToken: getEnv("GITEA_ADMIN_TOKEN", ""),
 			AutoCreate: getEnv("GITEA_AUTO_CREATE", "true") == "true",
 			AutoUpdate: getEnv("GITEA_AUTO_UPDATE", "true") == "true",
+			// Default alias maps backend "admin" to Gitea user "test". Override via env if needed.
+			AliasAdminTo: getEnv("GITEA_ALIAS_ADMIN_TO", "test"),
 		},
 		GiteaSync: GiteaSyncRuntime{
 			Enabled:         getEnv("GITEA_SYNC_ENABLED", "false") == "true",
