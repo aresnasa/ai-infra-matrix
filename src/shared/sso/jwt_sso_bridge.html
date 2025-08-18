@@ -409,31 +409,32 @@
                     throw new Error(`验证失败: ${verifyResponse.status}${errorDetail ? ' ' + errorDetail : ''}`);
                 }
                 const userData = await verifyResponse.json();
-                
-                log(`用户验证成功: ${userData.username}`);
-                
+                // 兼容 userData.username 或 userData.user.username
+                const username = userData.username || (userData.user && userData.user.username) || '';
+                log(`用户验证成功: ${username}`);
+
                 // 4. 设置JupyterHub SSO cookie
                 updateStatus('正在设置单点登录状态...', 'loading');
-                
+
                 // 设置多种格式的cookie以确保兼容性
                 const cookieOptions = [
                     `ai_infra_token=${token}; path=/; max-age=3600; SameSite=Lax`,
                     `jwt_token=${token}; path=/; max-age=3600; SameSite=Lax`,
                     `auth_token=${token}; path=/; max-age=3600; SameSite=Lax`
                 ];
-                
+
                 cookieOptions.forEach(cookieStr => {
                     document.cookie = cookieStr;
                     log(`设置cookie: ${cookieStr.split('=')[0]}`);
                 });
-                
+
                 // 5. 设置用户信息cookie
                 const userInfo = {
-                    username: userData.username,
-                    roles: userData.roles || [],
-                    permissions: userData.permissions || []
+                    username: username,
+                    roles: userData.roles || (userData.user && userData.user.roles) || [],
+                    permissions: userData.permissions || (userData.user && userData.user.permissions) || []
                 };
-                
+
                 document.cookie = `user_info=${encodeURIComponent(JSON.stringify(userInfo))}; path=/; max-age=3600; SameSite=Lax`;
                 log('设置用户信息cookie');
                 
@@ -451,6 +452,19 @@
                 const service = (urlParams.get('service') || '').toLowerCase();
                 if (!nextUrl) {
                     nextUrl = service === 'gitea' ? '/gitea/' : '/jupyter/hub/';
+                }
+
+                // For Gitea, prefer going through /gitea/user/login to ensure SSO headers are validated upstream
+                if (service === 'gitea') {
+                    const isAlreadyLogin = nextUrl.startsWith('/gitea/user/login');
+                    // Normalize trivial home targets to admin page by default after SSO
+                    const isGiteaHome = nextUrl === '/gitea' || nextUrl === '/gitea/' || nextUrl.startsWith('/gitea?');
+                    const finalTarget = isGiteaHome ? '/gitea/admin' : nextUrl;
+                    if (!isAlreadyLogin) {
+                        const encoded = encodeURIComponent(finalTarget);
+                        nextUrl = `/gitea/user/login?redirect_to=${encoded}`;
+                        log(`为 Gitea 包装登录路径，目标: ${finalTarget}`);
+                    }
                 }
 
                 // Update primary action button (label + target)

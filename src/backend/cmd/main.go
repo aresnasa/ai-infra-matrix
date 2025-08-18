@@ -259,6 +259,9 @@ func main() {
 	
 	// 鉴权路由（公开）
 	userHandler := handlers.NewUserHandler(database.DB)
+	// JupyterHub认证处理器（在多个地方使用）
+	jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
+	
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", userHandler.Register)
@@ -277,19 +280,16 @@ func main() {
 		auth.POST("/verify-token", userHandler.VerifyJWT)
 		// 简单令牌验证（用于SSO认证）
 		auth.GET("/verify", middleware.AuthMiddleware(), userHandler.VerifyTokenSimple)
+		
+		// JupyterHub认证路由
+		// JupyterHub令牌生成和验证
+		auth.POST("/jupyterhub-login", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.GenerateJupyterHubLoginToken)
+		auth.POST("/verify-jupyterhub-token", jupyterHubAuthHandler.VerifyJupyterHubToken)
+		
+		// JupyterHub会话管理
+		auth.GET("/verify-jupyterhub-session", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.VerifyJupyterHubSession)
+		auth.POST("/refresh-jupyterhub-token", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.RefreshJupyterHubToken)
 	}
-
-		// JupyterHub认证路由（独立处理）
-		jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
-		{
-			// JupyterHub令牌生成和验证
-			auth.POST("/jupyterhub-login", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.GenerateJupyterHubLoginToken)
-			auth.POST("/verify-jupyterhub-token", jupyterHubAuthHandler.VerifyJupyterHubToken)
-			
-			// JupyterHub会话管理
-			auth.GET("/verify-jupyterhub-session", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.VerifyJupyterHubSession)
-			auth.POST("/refresh-jupyterhub-token", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.RefreshJupyterHubToken)
-		}
 
 		// JupyterHub前端访问路由
 		jupyter := api.Group("/jupyter")

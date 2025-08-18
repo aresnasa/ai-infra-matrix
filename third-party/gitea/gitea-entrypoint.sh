@@ -24,11 +24,13 @@ set -euo pipefail
 : "${REVERSE_PROXY_EMAIL:=true}"
 : "${REVERSE_PROXY_FULL_NAME:=false}"
 
-# Optional admin bootstrap (needed because reverse-proxy auto-create can't use reserved name "admin")
-: "${GITEA_ADMIN_USER:=admin}"
-: "${GITEA_ADMIN_PASSWORD:=admin123}"
-: "${GITEA_ADMIN_EMAIL:=admin@example.com}"
-: "${GITEA_ADMIN_FULL_NAME:=Administrator}"
+# Initial admin bootstrap (SSO-first):
+# - Avoid using the default 'admin' credentials.
+# - If INITIAL_ADMIN_USERNAME is set (ideally to a backend-managed identity, e.g. GITEA_ALIAS_ADMIN_TO),
+#   we create that user as admin with a random password. Password login is disabled anyway.
+: "${INITIAL_ADMIN_USERNAME:=${GITEA_ALIAS_ADMIN_TO:-}}"
+: "${INITIAL_ADMIN_EMAIL:=admin@example.com}"
+: "${INITIAL_ADMIN_FULL_NAME:=Portal Administrator}"
 
 # Reserved usernames override (allow 'admin' for reverse-proxy SSO)
 : "${RESERVED_USERNAMES:=git,gitea}"
@@ -52,6 +54,7 @@ HTTP_PORT = ${HTTP_PORT:-3000}
 ROOT_URL = ${ROOT_URL}
 PROTOCOL = ${PROTOCOL:-http}
 SUBURL = ${SUBURL}
+STATIC_URL_PREFIX = ${STATIC_URL_PREFIX:-/gitea}
 PUBLIC_URL_DETECTION = auto
 LFS_START_SERVER = ${LFS_START_SERVER:-false}
 
@@ -83,6 +86,8 @@ ENABLE_REVERSE_PROXY_AUTO_REGISTRATION = ${ENABLE_REVERSE_PROXY_AUTH}
 ENABLE_REVERSE_PROXY_EMAIL = ${REVERSE_PROXY_EMAIL}
 ENABLE_REVERSE_PROXY_FULL_NAME = ${REVERSE_PROXY_FULL_NAME}
 RESERVED_USERNAMES = ${RESERVED_USERNAMES}
+DISABLE_LOGIN_FORM = ${DISABLE_LOGIN_FORM:-true}
+ALLOW_ONLY_EXTERNAL_LOGIN = ${ALLOW_ONLY_EXTERNAL_LOGIN:-true}
 
 [security]
 # Standard header names for reverse proxy auth
@@ -95,6 +100,9 @@ REVERSE_PROXY_AUTHENTICATION_FULL_NAME = X-WEBAUTH-FULLNAME
 REQUIRE_EMAIL_CONFIRMATION = false
 REGISTER_EMAIL_CONFIRM = false
 DISABLE_REGISTRATION = ${DISABLE_REGISTRATION:-false}
+ENABLE_OPENID_SIGNIN = false
+ENABLE_OPENID_SIGNUP = false
+OAUTH2_ENABLE = false
 
 [auth.proxy]
 ENABLED = ${ENABLE_REVERSE_PROXY_AUTH}
@@ -156,6 +164,32 @@ main() {
       sed -i "s#^HEADER *=.*#HEADER = X-WEBAUTH-USER#" "$APP_INI" || true
     fi
 
+    # Ensure OAuth/OpenID style internal SSO are disabled to enforce unified external SSO via reverse proxy
+    if grep -q '^\[auth\]' "$APP_INI"; then
+      sed -i "s#^ENABLE_OPENID_SIGNIN *=.*#ENABLE_OPENID_SIGNIN = false#" "$APP_INI" || true
+      sed -i "s#^ENABLE_OPENID_SIGNUP *=.*#ENABLE_OPENID_SIGNUP = false#" "$APP_INI" || true
+      sed -i "s#^OAUTH2_ENABLE *=.*#OAUTH2_ENABLE = false#" "$APP_INI" || true
+    fi
+
+    # Ensure STATIC_URL_PREFIX aligns with proxy subpath (use '/gitea' so templates adding '/assets' don't double it)
+    if grep -q '^STATIC_URL_PREFIX *=.*' "$APP_INI"; then
+      sed -i "s#^STATIC_URL_PREFIX *=.*#STATIC_URL_PREFIX = ${STATIC_URL_PREFIX:-/gitea}#" "$APP_INI" || true
+    else
+      sed -i "/^SUBURL *=/a STATIC_URL_PREFIX = ${STATIC_URL_PREFIX:-/gitea}" "$APP_INI" || true
+    fi
+
+    # Force SSO-only login UX
+    if grep -q '^DISABLE_LOGIN_FORM *=.*' "$APP_INI"; then
+      sed -i "s#^DISABLE_LOGIN_FORM *=.*#DISABLE_LOGIN_FORM = ${DISABLE_LOGIN_FORM:-true}#" "$APP_INI" || true
+    else
+      sed -i "/^\[service\]/,/^\[/ s#^REQUIRE_SIGNIN_VIEW *=.*#&\nDISABLE_LOGIN_FORM = ${DISABLE_LOGIN_FORM:-true}#" "$APP_INI" || true
+    fi
+    if grep -q '^ALLOW_ONLY_EXTERNAL_LOGIN *=.*' "$APP_INI"; then
+      sed -i "s#^ALLOW_ONLY_EXTERNAL_LOGIN *=.*#ALLOW_ONLY_EXTERNAL_LOGIN = ${ALLOW_ONLY_EXTERNAL_LOGIN:-true}#" "$APP_INI" || true
+    else
+      sed -i "/^\[service\]/,/^\[/ s#^REQUIRE_SIGNIN_VIEW *=.*#&\nALLOW_ONLY_EXTERNAL_LOGIN = ${ALLOW_ONLY_EXTERNAL_LOGIN:-true}#" "$APP_INI" || true
+    fi
+
     # Ensure RESERVED_USERNAMES excludes 'admin' by applying env value
     if grep -q '^\[service\]' "$APP_INI"; then
       if grep -q '^RESERVED_USERNAMES *=.*' "$APP_INI"; then
@@ -177,13 +211,6 @@ main() {
   mkdir -p "$APP_DIR" "$DATA_PATH" /data/git/repositories
   chown -R 1000:1000 /data || true
 
-  # Note: CLI flags differ by version; avoid unsupported flags like --full-name
-
-  # Optionally create default admin so reverse-proxy SSO works for reserved username 'admin'
-  : "${ADMIN_USERNAME:=admin}"
-  : "${ADMIN_PASSWORD:=admin123}"
-  : "${ADMIN_EMAIL:=admin@example.com}"
-
   # Helper to run as git user
   run_as_git() {
     if command -v su-exec >/dev/null 2>&1; then
@@ -195,17 +222,24 @@ main() {
     fi
   }
 
-  # Create admin if missing
-  if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk '{print $1}' | grep -qx "$ADMIN_USERNAME"; then
-    log "creating default admin user '$ADMIN_USERNAME' for SSO"
-    run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user create \
-      --admin \
-      --username "$ADMIN_USERNAME" \
-      --password "$ADMIN_PASSWORD" \
-      --email "$ADMIN_EMAIL" \
-      --must-change-password=false || true
+  # SSO-first bootstrap: optionally create an initial admin user that matches backend identity mapping
+  # Avoid using default 'admin'. Only act if INITIAL_ADMIN_USERNAME is provided and != 'admin'.
+  if [ -n "${INITIAL_ADMIN_USERNAME}" ] && [ "${INITIAL_ADMIN_USERNAME}" != "admin" ]; then
+    if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk '{print $1}' | grep -qx "$INITIAL_ADMIN_USERNAME"; then
+      # Generate a random password; login form is disabled, so this is never used interactively
+      RAND_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)
+      log "creating initial SSO admin user '$INITIAL_ADMIN_USERNAME' (password login disabled)"
+      run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user create \
+        --admin \
+        --username "$INITIAL_ADMIN_USERNAME" \
+        --password "${RAND_PASS:-ChangeMe123}" \
+        --email "${INITIAL_ADMIN_EMAIL}" \
+        --must-change-password=false || true
+    else
+      log "initial SSO admin user '$INITIAL_ADMIN_USERNAME' already exists"
+    fi
   else
-    log "admin user '$ADMIN_USERNAME' already exists"
+    log "skip creating default 'admin'; relying on reverse-proxy SSO auto-create and backend sync"
   fi
 
   # Delegate to upstream entrypoint; pass through arguments

@@ -32,6 +32,12 @@ WORKDIR /srv/jupyterhub
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/srv/jupyterhub"
 
+# 使用 PyPI TUNA 镜像（带官方 PyPI 作为备用源）
+ENV PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" \
+    PIP_EXTRA_INDEX_URL="https://pypi.org/simple" \
+    PIP_TRUSTED_HOST="pypi.tuna.tsinghua.edu.cn" \
+    PIP_TIMEOUT=60
+
 # 升级pip并安装核心工具
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 

@@ -68,6 +68,13 @@ class AuthService {
                     console.warn('后端登出请求失败:', e);
                 }
             }
+
+            // 统一清理Gitea侧会话，避免iframe内JS解析非JSON导致的错误
+            try {
+                await fetch('/gitea/_logout', { method: 'GET', credentials: 'include' });
+            } catch (e) {
+                console.warn('Gitea 登出清理失败（可忽略）:', e);
+            }
             
             // 重定向到登录页
             window.location.href = '/';

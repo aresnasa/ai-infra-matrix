@@ -91,7 +91,7 @@ func (s *giteaServiceImpl) EnsureUser(u models.User) error {
     // Note: GET /admin/users/{username} returns 405 in Gitea; use /users/{username} to check existence
     getURL := s.api(fmt.Sprintf("/users/%s", targetUsername))
     req, _ := http.NewRequest("GET", getURL, nil)
-    s.auth(req)
+    // Public endpoint: do NOT send Authorization to avoid 401 if admin token is invalid
     resp, err := s.httpClient.Do(req)
     if err != nil {
         return err
