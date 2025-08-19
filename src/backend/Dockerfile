@@ -1,6 +1,9 @@
 # Build stage
 FROM golang:1.25-alpine AS builder
 
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn
+
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
@@ -33,6 +36,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test
 
 # Final stage
 FROM golang:1.25-alpine
+
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn
 
 # Keep version metadata available in the final image, too
 ARG VERSION="dev"
