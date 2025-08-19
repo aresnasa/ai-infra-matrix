@@ -49,55 +49,108 @@ spec:
               name: {{ include "ai-infra-matrix.fullname" . }}-config
               key: POSTGRES_PORT
         - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: POSTGRES_DB
+          value: "jupyterhub_db"
         - name: POSTGRES_USER
           valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
               key: POSTGRES_USER
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-secrets
               key: POSTGRES_PASSWORD
-        - name: BACKEND_URL
+        - name: DB_HOST
           valueFrom:
             configMapKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: BACKEND_URL
+              key: POSTGRES_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_PORT
+        - name: DB_NAME
+          value: "jupyterhub_db"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: REDIS_PORT
+        - name: REDIS_DB
+          value: "1"
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-secrets
               key: JWT_SECRET
-        - name: JUPYTERHUB_PUBLIC_HOST
+        - name: JUPYTERHUB_ADMIN_USERS
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_ADMIN_USERS | quote }}
+        - name: CONFIGPROXY_AUTH_TOKEN
           valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: JUPYTERHUB_PUBLIC_HOST
-        - name: JUPYTERHUB_IMAGE
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: CONFIGPROXY_AUTH_TOKEN
+        - name: JUPYTERHUB_CRYPT_KEY
           valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: JUPYTERHUB_IMAGE
-        - name: JUPYTERHUB_MEM_LIMIT
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: JUPYTERHUB_MEM_LIMIT
-        - name: JUPYTERHUB_CPU_LIMIT
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: JUPYTERHUB_CPU_LIMIT
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: JUPYTERHUB_CRYPT_KEY
         - name: SESSION_TIMEOUT
-          valueFrom:
-            configMapKeyRef:
-              name: {{ include "ai-infra-matrix.fullname" . }}-config
-              key: SESSION_TIMEOUT
+          value: {{ .Values.jupyterhub.env.SESSION_TIMEOUT | quote }}
+        - name: USE_CUSTOM_AUTH
+          value: {{ .Values.jupyterhub.env.USE_CUSTOM_AUTH | quote }}
+        - name: AI_INFRA_BACKEND_URL
+          value: "http://{{ include "ai-infra-matrix.fullname" . }}-backend:{{ .Values.backend.service.port }}"
+        - name: AI_INFRA_API_TOKEN
+          value: "ai-infra-hub-token"
+        - name: JUPYTERHUB_AUTO_LOGIN
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_AUTO_LOGIN | quote }}
+        - name: JUPYTERHUB_DEV_MODE
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_DEV_MODE | quote }}
+        - name: JUPYTERHUB_IMAGE
+          value: "{{ .Values.jupyterhub.singleuser.image.repository }}:{{ .Values.jupyterhub.singleuser.image.tag }}"
+        - name: JUPYTERHUB_NETWORK
+          value: "pod"
+        - name: JUPYTERHUB_MEM_LIMIT
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_MEM_LIMIT | quote }}
+        - name: JUPYTERHUB_CPU_LIMIT
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_CPU_LIMIT | quote }}
+        - name: JUPYTERHUB_IDLE_CULLER_ENABLED
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_IDLE_CULLER_ENABLED | quote }}
+        - name: JUPYTERHUB_IDLE_TIMEOUT
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_IDLE_TIMEOUT | quote }}
+        - name: JUPYTERHUB_CULL_TIMEOUT
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_CULL_TIMEOUT | quote }}
+        - name: JUPYTERHUB_DEBUG
+          value: "false"
+        - name: JUPYTERHUB_LOG_LEVEL
+          value: "INFO"
+        - name: JUPYTERHUB_ACCESS_LOG
+          value: "true"
+        - name: JUPYTERHUB_USE_PROXY
+          value: "true"
+        - name: JUPYTERHUB_PUBLIC_HOST
+          value: {{ .Values.jupyterhub.config.publicHost | quote }}
+        - name: JUPYTERHUB_CORS_ORIGIN
+          value: "http://{{ .Values.jupyterhub.config.publicHost }}"
+        - name: TZ
+          value: "Asia/Shanghai"
         - name: KUBERNETES_NAMESPACE
           value: {{ include "ai-infra-matrix.userNamespace" . }}
         - name: KUBERNETES_SERVICE_ACCOUNT

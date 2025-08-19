@@ -20,44 +20,37 @@ data:
   {{- end }}
   
   # Redis Configuration
-  REDIS_HOST: {{ include "ai-infra-matrix.redisHost" . | quote }}
+  REDIS_HOST: {{ printf "%s-redis-master" (include "ai-infra-matrix.fullname" .) | quote }}
   REDIS_PORT: "6379"
   REDIS_DB: "1"
   
   # Backend Configuration
-  BACKEND_URL: {{ include "ai-infra-matrix.backendUrl" . | quote }}
-  BACKEND_PORT: {{ .Values.backend.service.port | quote }}
   BACKEND_HOST: {{ printf "%s-backend" (include "ai-infra-matrix.fullname" .) | quote }}
+  BACKEND_PORT: {{ .Values.backend.service.port | quote }}
   
   # Frontend Configuration
   FRONTEND_HOST: {{ printf "%s-frontend" (include "ai-infra-matrix.fullname" .) | quote }}
   FRONTEND_PORT: {{ .Values.frontend.service.port | quote }}
-  REACT_APP_BACKEND_URL: "/api"
   
   # JupyterHub Configuration
-  JUPYTERHUB_PORT: {{ .Values.jupyterhub.service.port | quote }}
   JUPYTERHUB_HOST: {{ printf "%s-jupyterhub" (include "ai-infra-matrix.fullname" .) | quote }}
-  JUPYTERHUB_USE_PROXY: {{ .Values.jupyterhub.config.useProxy | quote }}
-  JUPYTERHUB_PUBLIC_HOST: {{ .Values.jupyterhub.config.publicHost | quote }}
-  JUPYTERHUB_HUB_CONNECT_HOST: {{ printf "%s-jupyterhub" (include "ai-infra-matrix.fullname" .) | quote }}
-  JUPYTERHUB_IMAGE: {{ printf "%s:%s" .Values.jupyterhub.singleuser.image.repository .Values.jupyterhub.singleuser.image.tag | quote }}
-  JUPYTERHUB_MEM_LIMIT: {{ .Values.jupyterhub.singleuser.resources.limit.memory | quote }}
-  JUPYTERHUB_CPU_LIMIT: {{ .Values.jupyterhub.singleuser.resources.limit.cpu | quote }}
-  JUPYTERHUB_START_TIMEOUT: {{ .Values.jupyterhub.config.startTimeout | quote }}
-  JUPYTERHUB_HTTP_TIMEOUT: {{ .Values.jupyterhub.config.httpTimeout | quote }}
-  JUPYTERHUB_AUTO_LOGIN: {{ .Values.jupyterhub.config.autoLogin | quote }}
+  JUPYTERHUB_PORT: {{ .Values.jupyterhub.service.port | quote }}
   
-  # Session Configuration
-  SESSION_TIMEOUT: {{ .Values.jupyterhub.config.sessionTimeout | quote }}
+  # Gitea Configuration
+  GITEA_HOST: {{ printf "%s-gitea" (include "ai-infra-matrix.fullname" .) | quote }}
+  GITEA_PORT: {{ .Values.gitea.service.port | quote }}
   
-  # Kubernetes Configuration
-  JUPYTERHUB_SPAWNER: "kubernetes"
-  K8S_NAMESPACE: {{ include "ai-infra-matrix.userNamespace" . | quote }}
-  K8S_SERVICE_ACCOUNT: "default"
+  # OpenLDAP Configuration
+  LDAP_HOST: {{ printf "%s-openldap" (include "ai-infra-matrix.fullname" .) | quote }}
+  LDAP_PORT: {{ .Values.openldap.service.port | quote }}
+  
+  # MinIO Configuration
+  MINIO_HOST: {{ printf "%s-minio" (include "ai-infra-matrix.fullname" .) | quote }}
+  MINIO_PORT: {{ .Values.minio.service.port | quote }}
   
   # Nginx Configuration
   NGINX_PORT: {{ .Values.nginx.service.port | quote }}
-  NGINX_SSL_PORT: {{ .Values.nginx.service.httpsPort | quote }}
+  NGINX_RESOLVER: "kube-dns.kube-system.svc.cluster.local"
 
 ---
 apiVersion: v1
@@ -74,10 +67,114 @@ data:
       include       /etc/nginx/mime.types;
       default_type  application/octet-stream;
       resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
-      map $http_upgrade $connection_upgrade { default upgrade; '' close; }
-      server { listen 80; server_name _;
+      
+      # Variables for better handling
+      map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+      }
+      
+      # Cookie variables
+      map $http_cookie $has_ai_cookie {
+        ~*ai_infra_token=([^;]+) 1;
+        default 0;
+      }
+      
+      map $http_cookie $cookie_ai_infra_token {
+        ~*ai_infra_token=([^;]+) $1;
+        default "";
+      }
+      
+      map $http_authorization $has_authz {
+        ~*Bearer\s+([^\s]+) 1;
+        default 0;
+      }
+      
+      map $http_authorization $authz_final {
+        ~*Bearer\s+([^\s]+) $http_authorization;
+        default "Bearer $cookie_ai_infra_token";
+      }
+      
+      # External variables
+      map $scheme $external_scheme {
+        http http;
+        https https;
+        default http;
+      }
+      
+      map $host $external_host {
+        default $host;
+      }
+      
+      # Log format
+      log_format authdebug '$remote_addr - $remote_user [$time_local] "$request" '
+                           '$status $body_bytes_sent "$http_referer" '
+                           '"$http_user_agent" '
+                           'ai_cookie=$has_ai_cookie authz=$has_authz';
+      
+      server {
+        listen 80 default_server;
+        server_name _;
+        
+        absolute_redirect off;
         client_max_body_size 100M;
-        # JupyterHub under /jupyter (preserve prefix)
+        
+        # Security headers
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        
+        # Health check endpoint
+        location /health {
+          access_log off;
+          return 200 "OK\n";
+          add_header Content-Type text/plain;
+        }
+        
+        # Internal auth endpoint
+        location = /__auth/verify {
+          internal;
+          access_log /var/log/nginx/auth_request.log;
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-backend:{{ .Values.backend.service.port }}/api/auth/verify;
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $external_scheme;
+          proxy_set_header X-Forwarded-Host $external_host;
+          proxy_set_header Authorization $authz_final;
+          proxy_set_header Cookie $http_cookie;
+          proxy_pass_request_body off;
+          proxy_set_header Content-Length "";
+        }
+        
+        # SSO bridge pages
+        location /sso/ {
+          root /usr/share/nginx/html;
+          index jwt_sso_bridge.html;
+          try_files $uri $uri/ /sso/jwt_sso_bridge.html;
+          add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+          add_header Pragma "no-cache" always;
+          add_header Expires "0" always;
+        }
+        
+        # JWT auto login
+        location /jwt-login {
+          root /usr/share/nginx/html;
+          try_files /jwt_login.html =404;
+        }
+        
+        # Backend API
+        location /api/ {
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-backend:{{ .Values.backend.service.port }}/api/;
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $external_scheme;
+          proxy_set_header X-Forwarded-Host $external_host;
+          proxy_set_header Authorization $authz_final;
+        }
+        
+        # JupyterHub
         location ^~ /jupyter/ {
           proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-jupyterhub:{{ .Values.jupyterhub.service.port }};
           proxy_set_header Host $host;
@@ -86,57 +183,170 @@ data:
           proxy_set_header X-Forwarded-Proto $scheme;
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
-          proxy_set_header Connection "upgrade";
+          proxy_set_header Connection $connection_upgrade;
           proxy_buffering off;
         }
-        # Backend API
-        location /api/ {
-          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-backend:{{ .Values.backend.service.port }}/api/;
+        
+        # Gitea service integration
+        {{- if .Values.gitea.enabled }}
+        # Gitea root path - direct proxy to Gitea homepage
+        location = /gitea/ {
+          access_log /var/log/nginx/gitea_root_access.log authdebug;
+          
+          # Direct proxy to Gitea main page with SSO headers
+          rewrite ^/gitea/$ / break;
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-gitea:{{ .Values.gitea.service.port }};
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $external_scheme;
+          proxy_set_header X-Forwarded-Host $external_host;
+          proxy_set_header X-External-Host $external_host;
+          proxy_set_header Authorization "";
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          
+          # SSO user headers (hardcoded mapping)
+          proxy_set_header X-WEBAUTH-USER "test";
+          proxy_set_header X-WEBAUTH-EMAIL "admin@example.com";
+          proxy_set_header X-Forwarded-User "test";
+          proxy_set_header Remote-User "test";
+          proxy_set_header X-User "test";
+          
+          # Frame headers for iframe support
+          proxy_hide_header Content-Security-Policy;
+          proxy_hide_header Content-Security-Policy-Report-Only;
+          proxy_hide_header X-Content-Security-Policy;
+          proxy_hide_header X-Frame-Options;
+          add_header X-Frame-Options SAMEORIGIN always;
+          add_header Content-Security-Policy "frame-ancestors 'self'" always;
+          proxy_redirect off;
+          
+          proxy_buffering off;
+          proxy_request_buffering off;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          expires -1;
+          
+          # Debug headers
+          add_header X-Debug-SSO-User "test" always;
+          add_header X-Debug-SSO-Email "admin@example.com" always;
+          add_header X-Debug-SSO-Method "hardcoded_mapping_root" always;
+          add_header X-Debug-SSO-Action "gitea_root_direct_proxy" always;
+        }
+        
+        # Gitea user login handling
+        location = /gitea/user/login {
+          access_log /var/log/nginx/gitea_login_access.log authdebug;
+          
+          rewrite ^/gitea/user/login$ /user/login break;
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-gitea:{{ .Values.gitea.service.port }};
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $external_scheme;
+          proxy_set_header X-Forwarded-Host $external_host;
+          proxy_set_header X-External-Host $external_host;
+          
+          # SSO user headers
+          proxy_set_header X-WEBAUTH-USER "test";
+          proxy_set_header X-WEBAUTH-EMAIL "admin@example.com";
+          proxy_set_header X-Forwarded-User "test";
+          proxy_set_header Remote-User "test";
+          proxy_set_header X-User "test";
+          
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          
+          # Debug headers
+          add_header X-Debug-SSO-User "test" always;
+          add_header X-Debug-SSO-Email "admin@example.com" always;
+          add_header X-Debug-SSO-Action "login_with_auth_headers" always;
+        }
+        
+        # Gitea logout handling
+        location = /gitea/user/logout {
+          return 302 /gitea/;
+        }
+        
+        # Other Gitea paths
+        location ^~ /gitea/ {
+          access_log /var/log/nginx/gitea_access.log authdebug;
+          rewrite ^/gitea(/.*)$ $1 break;
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-gitea:{{ .Values.gitea.service.port }};
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $external_scheme;
+          proxy_set_header X-Forwarded-Host $external_host;
+          proxy_set_header X-External-Host $external_host;
+          proxy_set_header Authorization "";
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection $connection_upgrade;
+          
+          # SSO user headers
+          proxy_set_header X-WEBAUTH-USER "test";
+          proxy_set_header X-WEBAUTH-EMAIL "admin@example.com";
+          proxy_set_header X-Forwarded-User "test";
+          proxy_set_header Remote-User "test";
+          proxy_set_header X-User "test";
+          
+          # Frame headers
+          proxy_hide_header Content-Security-Policy;
+          proxy_hide_header Content-Security-Policy-Report-Only;
+          proxy_hide_header X-Content-Security-Policy;
+          proxy_hide_header X-Frame-Options;
+          add_header X-Frame-Options SAMEORIGIN always;
+          add_header Content-Security-Policy "frame-ancestors 'self'" always;
+          proxy_redirect off;
+          
+          proxy_buffering off;
+          proxy_request_buffering off;
+          add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+          expires -1;
+          
+          # Debug headers
+          add_header X-Debug-SSO-User "test" always;
+          add_header X-Debug-SSO-Email "admin@example.com" always;
+          add_header X-Debug-SSO-Method "hardcoded_mapping" always;
+        }
+        
+        # Frontend exact path for /gitea (React page)
+        location = /gitea {
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-frontend:{{ .Values.frontend.service.port }};
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
         }
-        # Static passthrough to frontend first for asset caching
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-frontend:{{ .Values.frontend.service.port }};
-          expires 1y; add_header Cache-Control "public, immutable";
-        }
-        # Frontend app
+        {{- end }}
+        
+        # Frontend (catch-all)
         location / {
-          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-frontend:{{ .Values.frontend.service.port }}/;
-          proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr;
+          proxy_pass http://{{ include "ai-infra-matrix.fullname" . }}-frontend:{{ .Values.frontend.service.port }};
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
         }
-        location = /health { return 200 'healthy\n'; add_header Content-Type text/plain; }
       }
     }
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ include "ai-infra-matrix.fullname" . }}-secrets
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
-type: Opaque
-data:
-  # Database password
-  {{- if .Values.postgresql.enabled }}
-  POSTGRES_PASSWORD: {{ .Values.postgresql.auth.password | b64enc | quote }}
-  {{- else }}
-  POSTGRES_PASSWORD: {{ "postgres" | b64enc | quote }}
-  {{- end }}
   
-  # Redis password
-  {{- if .Values.redis.enabled }}
-  REDIS_PASSWORD: {{ .Values.redis.auth.password | b64enc | quote }}
-  {{- else }}
-  REDIS_PASSWORD: {{ "ansible-redis-password" | b64enc | quote }}
-  {{- end }}
-  
-  # JWT and other secrets
-  JWT_SECRET: {{ .Values.backend.env.JWT_SECRET | b64enc | quote }}
-  CONFIGPROXY_AUTH_TOKEN: {{ .Values.jupyterhub.env.CONFIGPROXY_AUTH_TOKEN | b64enc | quote }}
-  JUPYTERHUB_CRYPT_KEY: {{ .Values.jupyterhub.env.JUPYTERHUB_CRYPT_KEY | b64enc | quote }}
+  gitea-iframe.html: |
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Gitea - AI Infrastructure Matrix</title>
+        <style>
+            body { margin: 0; padding: 0; overflow: hidden; }
+            iframe { width: 100%; height: 100vh; border: none; }
+        </style>
+    </head>
+    <body>
+        <iframe src="/gitea/" title="Gitea"></iframe>
+    </body>
+    </html>

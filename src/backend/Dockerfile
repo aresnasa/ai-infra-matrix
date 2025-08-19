@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
@@ -32,7 +32,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage
-FROM golang:1.24-alpine
+FROM golang:1.25-alpine
 
 # Keep version metadata available in the final image, too
 ARG VERSION="dev"

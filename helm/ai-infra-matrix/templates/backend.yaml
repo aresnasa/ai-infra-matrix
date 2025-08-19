@@ -35,16 +35,84 @@ spec:
           containerPort: {{ .Values.backend.service.port }}
           protocol: TCP
         env:
-        - name: POSTGRES_HOST
+        - name: DB_HOST
           valueFrom:
             configMapKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-config
               key: POSTGRES_HOST
-        - name: POSTGRES_PORT
+        - name: DB_PORT
           valueFrom:
             configMapKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-config
               key: POSTGRES_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: REDIS_PASSWORD
+        - name: LDAP_SERVER
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: LDAP_HOST
+        - name: LDAP_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: LDAP_PORT
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: JWT_SECRET
+        - name: LOG_LEVEL
+          value: {{ .Values.backend.env.LOG_LEVEL | quote }}
+        - name: GITEA_ENABLED
+          value: {{ .Values.backend.env.GITEA_ENABLED | quote }}
+        - name: GITEA_BASE_URL
+          value: "http://{{ include "ai-infra-matrix.fullname" . }}-gitea:{{ .Values.gitea.service.port }}"
+        - name: GITEA_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: GITEA_ADMIN_TOKEN
+        - name: GITEA_AUTO_CREATE
+          value: {{ .Values.backend.env.GITEA_AUTO_CREATE | quote }}
+        - name: GITEA_AUTO_UPDATE
+          value: {{ .Values.backend.env.GITEA_AUTO_UPDATE | quote }}
+        - name: GITEA_SYNC_ENABLED
+          value: {{ .Values.backend.env.GITEA_SYNC_ENABLED | quote }}
+        - name: GITEA_SYNC_INTERVAL_SECONDS
+          value: {{ .Values.backend.env.GITEA_SYNC_INTERVAL_SECONDS | quote }}
+        - name: GITEA_ALIAS_ADMIN_TO
+          value: {{ .Values.backend.env.GITEA_ALIAS_ADMIN_TO | quote }}
+        - name: TZ
+          value: "Asia/Shanghai"
         - name: POSTGRES_DB
           valueFrom:
             configMapKeyRef:
