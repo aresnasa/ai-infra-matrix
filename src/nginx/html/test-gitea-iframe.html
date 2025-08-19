@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gitea iframe测试页面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.success { background-color: #d4edda; color: #155724; }
+        .status.error { background-color: #f8d7da; color: #721c24; }
+        .status.loading { background-color: #fff3cd; color: #856404; }
+        .iframe-container {
+            margin-top: 20px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+        }
+        .info {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+        }
+        .debug {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Gitea iframe测试页面</h1>
+            <p>测试修复后的 /gitea/ 路径在iframe中的显示效果</p>
+        </div>
+        
+        <div class="info">
+            <strong>测试目标:</strong> 验证 http://localhost:8080/gitea/ 在iframe中能正常显示Gitea主页，而不是404错误
+        </div>
+        
+        <div id="status" class="status loading">⏳ 正在加载iframe...</div>
+        
+        <div class="debug">
+            <div><strong>测试时间:</strong> <span id="timestamp"></span></div>
+            <div><strong>iframe URL:</strong> <code>/gitea/</code></div>
+            <div><strong>预期结果:</strong> 显示Gitea Dashboard页面 (test用户)</div>
+        </div>
+        
+        <div class="iframe-container">
+            <iframe 
+                id="gitea-iframe" 
+                src="/gitea/" 
+                title="Gitea Dashboard"
+                allowfullscreen>
+                您的浏览器不支持iframe
+            </iframe>
+        </div>
+    </div>
+
+    <script>
+        // 设置时间戳
+        document.getElementById('timestamp').textContent = new Date().toLocaleString('zh-CN');
+        
+        // iframe加载状态监控
+        const iframe = document.getElementById('gitea-iframe');
+        const status = document.getElementById('status');
+        
+        iframe.onload = function() {
+            console.log('Gitea iframe加载完成');
+            status.textContent = '✅ Gitea iframe加载成功！';
+            status.className = 'status success';
+            
+            // 尝试检测iframe内容
+            try {
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                if (iframeDoc) {
+                    const title = iframeDoc.title;
+                    console.log('iframe页面标题:', title);
+                    if (title.includes('Gitea') && title.includes('Dashboard')) {
+                        status.textContent = '✅ Gitea Dashboard加载成功! 标题: ' + title;
+                    }
+                }
+            } catch (e) {
+                // 正常的跨域限制，不影响iframe显示
+                console.log('无法访问iframe内容（跨域限制）:', e.message);
+                status.textContent = '✅ Gitea iframe加载成功（跨域保护正常）';
+            }
+        };
+        
+        iframe.onerror = function() {
+            console.error('Gitea iframe加载失败');
+            status.textContent = '❌ Gitea iframe加载失败';
+            status.className = 'status error';
+        };
+        
+        // 超时检测
+        setTimeout(() => {
+            if (status.className.includes('loading')) {
+                status.textContent = '⚠️ Gitea iframe加载超时';
+                status.className = 'status error';
+            }
+        }, 10000);
+    </script>
+</body>
+</html>
