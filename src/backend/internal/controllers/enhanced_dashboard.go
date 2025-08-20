@@ -659,3 +659,248 @@ func (edc *EnhancedDashboardController) ImportDashboard(c *gin.Context) {
 		"widgets_count": len(config.Widgets),
 	})
 }
+
+// GetDashboardTemplates 获取仪表板模板列表
+func (edc *EnhancedDashboardController) GetDashboardTemplates(c *gin.Context) {
+	var templates []models.DashboardTemplate
+	
+	// 查询所有公共模板和当前用户的私有模板
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+	
+	err := edc.db.Where("is_public = ? OR created_by = ?", true, userID).
+		Order("created_at DESC").Find(&templates).Error
+	
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取模板列表失败"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"templates": templates,
+		"total": len(templates),
+	})
+}
+
+// CreateDashboardTemplate 创建仪表板模板
+func (edc *EnhancedDashboardController) CreateDashboardTemplate(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+	
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		Category    string `json:"category"`
+		Config      string `json:"config" binding:"required"`
+		IsPublic    bool   `json:"is_public"`
+		Tags        string `json:"tags"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// 验证配置格式
+	var config models.DashboardConfig
+	if err := json.Unmarshal([]byte(req.Config), &config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "配置格式无效"})
+		return
+	}
+	
+	template := models.DashboardTemplate{
+		Name:        req.Name,
+		Description: req.Description,
+		Role:        req.Category, // 使用 Role 字段替代 Category
+		Category:    req.Category,
+		Config:      req.Config,   // 存储为JSON字符串
+		IsDefault:   false,
+		IsPublic:    req.IsPublic,
+		Tags:        req.Tags,
+		CreatedBy:   userID.(uint),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	
+	if err := edc.db.Create(&template).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建模板失败"})
+		return
+	}
+	
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "模板创建成功",
+		"template": template,
+	})
+}
+
+// UpdateDashboardTemplate 更新仪表板模板
+func (edc *EnhancedDashboardController) UpdateDashboardTemplate(c *gin.Context) {
+	templateID := c.Param("id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+	
+	var template models.DashboardTemplate
+	if err := edc.db.First(&template, templateID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "模板不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询模板失败"})
+		}
+		return
+	}
+	
+	// 检查权限（只有创建者可以修改）
+	if template.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权限修改此模板"})
+		return
+	}
+	
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Category    string `json:"category"`
+		Config      string `json:"config"`
+		IsPublic    bool   `json:"is_public"`
+		Tags        string `json:"tags"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// 验证配置格式（如果提供了新配置）
+	if req.Config != "" {
+		var config models.DashboardConfig
+		if err := json.Unmarshal([]byte(req.Config), &config); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "配置格式无效"})
+			return
+		}
+		template.Config = req.Config
+	}
+	
+	// 更新字段
+	if req.Name != "" {
+		template.Name = req.Name
+	}
+	if req.Description != "" {
+		template.Description = req.Description
+	}
+	if req.Category != "" {
+		template.Category = req.Category
+	}
+	if req.Tags != "" {
+		template.Tags = req.Tags
+	}
+	template.IsPublic = req.IsPublic
+	
+	if err := edc.db.Save(&template).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新模板失败"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": "模板更新成功",
+		"template": template,
+	})
+}
+
+// DeleteDashboardTemplate 删除仪表板模板
+func (edc *EnhancedDashboardController) DeleteDashboardTemplate(c *gin.Context) {
+	templateID := c.Param("id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+	
+	var template models.DashboardTemplate
+	if err := edc.db.First(&template, templateID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "模板不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询模板失败"})
+		}
+		return
+	}
+	
+	// 检查权限（只有创建者可以删除）
+	if template.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权限删除此模板"})
+		return
+	}
+	
+	if err := edc.db.Delete(&template).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除模板失败"})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{"message": "模板删除成功"})
+}
+
+// ApplyDashboardTemplate 应用仪表板模板
+func (edc *EnhancedDashboardController) ApplyDashboardTemplate(c *gin.Context) {
+	templateID := c.Param("templateId")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+	
+	var template models.DashboardTemplate
+	if err := edc.db.First(&template, templateID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "模板不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询模板失败"})
+		}
+		return
+	}
+	
+	// 检查模板访问权限
+	if !template.IsPublic && template.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权限访问此模板"})
+		return
+	}
+	
+	// 查询或创建用户仪表板
+	var dashboard models.Dashboard
+	err := edc.db.Where("user_id = ?", userID).First(&dashboard).Error
+	
+	if err == gorm.ErrRecordNotFound {
+		// 创建新仪表板
+		dashboard = models.Dashboard{
+			UserID: userID.(uint),
+			Config: template.Config,
+		}
+		if err := edc.db.Create(&dashboard).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "应用模板失败"})
+			return
+		}
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询仪表板失败"})
+		return
+	} else {
+		// 更新现有仪表板
+		dashboard.Config = template.Config
+		if err := edc.db.Save(&dashboard).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "应用模板失败"})
+			return
+		}
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": "模板应用成功",
+		"dashboard_id": dashboard.ID,
+		"template_name": template.Name,
+	})
+}

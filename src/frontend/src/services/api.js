@@ -345,7 +345,7 @@ export const adminAPI = {
   
   // 增强用户管理功能
   getUserWithAuthSource: (id) => api.get(`/admin/users/${id}/auth-source`),
-  resetUserPassword: (id) => api.post(`/admin/users/${id}/reset-password`),
+  resetUserPassword: (id) => api.post(`/admin/enhanced-users/${id}/reset-password`),
   
   // 统计信息
   getSystemStats: () => api.get('/admin/stats'),
@@ -437,6 +437,45 @@ export const dashboardAPI = {
   cloneDashboard: (sourceUserId) => api.post(`/dashboard/clone/${sourceUserId}`),
   exportDashboard: () => api.get('/dashboard/export'),
   importDashboard: (config, overwrite = false) => api.post('/dashboard/import', { config, overwrite }),
+};
+
+// 增强仪表板API
+export const enhancedDashboardAPI = {
+  // 增强仪表板功能
+  getEnhancedDashboard: () => api.get('/dashboard/enhanced'),
+  getDashboardStats: () => api.get('/dashboard/stats'),
+  cloneDashboard: (sourceUserId) => api.post(`/dashboard/clone/${sourceUserId}`),
+  exportDashboard: () => api.get('/dashboard/export'),
+  importDashboard: (dashboardData) => api.post('/dashboard/import', dashboardData),
+  
+  // 仪表板模板管理
+  getDashboardTemplates: () => api.get('/dashboard/templates'),
+  createDashboardTemplate: (template) => api.post('/dashboard/templates', template),
+  updateDashboardTemplate: (id, template) => api.put(`/dashboard/templates/${id}`, template),
+  deleteDashboardTemplate: (id) => api.delete(`/dashboard/templates/${id}`),
+  applyDashboardTemplate: (templateId) => api.post(`/dashboard/apply-template/${templateId}`),
+};
+
+// 增强用户管理API
+export const enhancedUserAPI = {
+  // 增强用户管理功能
+  getEnhancedUsers: () => api.get('/admin/enhanced-users'),
+  createEnhancedUser: (userData) => api.post('/admin/enhanced-users', userData),
+  resetUserPassword: (id) => api.post(`/admin/enhanced-users/${id}/reset-password`),
+  
+  // 用户组管理
+  getUserGroups: () => api.get('/user-groups'),
+  createUserGroup: (groupData) => api.post('/user-groups', groupData),
+  updateUserGroup: (id, groupData) => api.put(`/user-groups/${id}`, groupData),
+  deleteUserGroup: (id) => api.delete(`/user-groups/${id}`),
+  addUserToGroup: (groupId, userId) => api.post(`/user-groups/${groupId}/users/${userId}`),
+  removeUserFromGroup: (groupId, userId) => api.delete(`/user-groups/${groupId}/users/${userId}`),
+  
+  // 用户统计和分析
+  getUserStatistics: () => api.get('/admin/user-stats'),
+  getUserActivityReport: (userId, period) => api.get(`/admin/users/${userId}/activity`, { 
+    params: { period } 
+  }),
 };
 
 // LDAP API (保持向后兼容)

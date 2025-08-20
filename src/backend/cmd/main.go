@@ -333,25 +333,31 @@ func main() {
 			dashboard.POST("/clone/:sourceUserId", enhancedDashboardController.CloneDashboard)
 			dashboard.GET("/export", enhancedDashboardController.ExportDashboard)
 			dashboard.POST("/import", enhancedDashboardController.ImportDashboard)
+			
+			// 模板管理
+			dashboard.GET("/templates", enhancedDashboardController.GetDashboardTemplates)
+			dashboard.POST("/templates", enhancedDashboardController.CreateDashboardTemplate)
+			dashboard.PUT("/templates/:id", enhancedDashboardController.UpdateDashboardTemplate)
+			dashboard.DELETE("/templates/:id", enhancedDashboardController.DeleteDashboardTemplate)
+			dashboard.POST("/apply-template/:templateId", enhancedDashboardController.ApplyDashboardTemplate)
 		}
 
 		// 增强用户管理路由（管理员）
 		enhancedUserController := controllers.NewEnhancedUserController(database.DB)
-		enhancedUsers := api.Group("/users")
-		enhancedUsers.Use(middleware.AuthMiddlewareWithSession())
+		enhancedUsers := api.Group("/admin/enhanced-users")
+		enhancedUsers.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
 		{
-			// 基础用户管理（管理员权限）
-			adminUsers := enhancedUsers.Group("")
-			adminUsers.Use(middleware.AdminMiddleware())
-			{
-				adminUsers.GET("", enhancedUserController.GetUsers)
-				adminUsers.POST("", enhancedUserController.CreateUser)
-				adminUsers.POST("/:id/reset-password", enhancedUserController.ResetPassword)
-			}
-			
-			// 用户个人信息（用户自己可访问）
-			enhancedUsers.GET("/profile", userHandler.GetProfile)
-			enhancedUsers.PUT("/profile", userHandler.UpdateProfile)
+			enhancedUsers.GET("", enhancedUserController.GetUsers)
+			enhancedUsers.POST("", enhancedUserController.CreateUser)
+			enhancedUsers.POST("/:id/reset-password", enhancedUserController.ResetPassword)
+		}
+
+		// 用户个人信息路由（用户自己可访问）
+		userProfile := api.Group("/users")
+		userProfile.Use(middleware.AuthMiddlewareWithSession())
+		{
+			userProfile.GET("/profile", userHandler.GetProfile)
+			userProfile.PUT("/profile", userHandler.UpdateProfile)
 		}
 
 		// 用户组管理路由（管理员）
@@ -360,6 +366,10 @@ func main() {
 		{
 			userGroups.GET("", enhancedUserController.GetUserGroups)
 			userGroups.POST("", enhancedUserController.CreateUserGroup)
+			userGroups.PUT("/:id", enhancedUserController.UpdateUserGroup)
+			userGroups.DELETE("/:id", enhancedUserController.DeleteUserGroup)
+			userGroups.POST("/:groupId/users/:userId", enhancedUserController.AddUserToGroup)
+			userGroups.DELETE("/:groupId/users/:userId", enhancedUserController.RemoveUserFromGroup)
 		}
 
 		// 角色管理路由（管理员）
@@ -367,20 +377,6 @@ func main() {
 		roles.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
 		{
 			roles.GET("", enhancedUserController.GetRoles)
-		}
-
-		// LDAP管理路由（管理员）
-		ldapController := controllers.NewLDAPController(database.DB)
-		ldap := api.Group("/ldap")
-		ldap.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
-		{
-			ldap.GET("/config", ldapController.GetConfig)
-			ldap.PUT("/config", ldapController.UpdateConfig)
-			ldap.POST("/test-connection", ldapController.TestConnection)
-			ldap.POST("/sync-users", ldapController.SyncUsers)
-			ldap.GET("/search-users", ldapController.SearchUsers)
-			ldap.GET("/groups", ldapController.GetUserGroups)
-			ldap.POST("/sync-groups", ldapController.SyncGroups)
 		}
 
 		// 项目路由（需要认证和RBAC权限）

@@ -70,12 +70,18 @@ type EnhancedDashboardResponse struct {
 
 // DashboardTemplate 仪表板模板
 type DashboardTemplate struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
+	ID          uint            `json:"id" gorm:"primaryKey;autoIncrement"`
+	Name        string          `json:"name" gorm:"not null"`
 	Description string          `json:"description"`
-	Role        string          `json:"role"`
-	Config      DashboardConfig `json:"config"`
-	IsDefault   bool            `json:"is_default"`
+	Role        string          `json:"role"`        // 适用角色
+	Category    string          `json:"category"`    // 模板分类
+	Config      string          `json:"config" gorm:"type:text"` // 存储为JSON字符串
+	IsDefault   bool            `json:"is_default"`  // 是否为默认模板
+	IsPublic    bool            `json:"is_public"`   // 是否为公共模板
+	Tags        string          `json:"tags"`        // 标签
+	CreatedBy   uint            `json:"created_by"`  // 创建者ID
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // DashboardImportRequest 导入仪表板请求
