@@ -7,6 +7,7 @@
 ### 🚀 快速开始
 
 - [快速开始指南](QUICK_START.md) - 5分钟快速部署指南
+- [镜像拉取指南](IMAGE_PULL_GUIDE.md) - 从注册表拉取镜像的完整指南
 - [开发环境搭建](DEVELOPMENT_SETUP.md) - 完整的开发环境配置
 - [Docker Hub推送指南](DOCKER-HUB-PUSH.md) - 如何推送镜像到Docker Hub
 - [阿里云ACR部署指南](ALIBABA_CLOUD_ACR_GUIDE.md) - 阿里云容器镜像服务部署
@@ -29,6 +30,7 @@
 
 | 文档 | 最后更新 | 版本 | 说明 |
 |------|----------|------|------|
+| IMAGE_PULL_GUIDE.md | 2025-08-20 | v0.0.3.3 | 镜像拉取完整指南 |
 | QUICK_START.md | 2025-08-20 | v0.0.3.3 | 5分钟快速部署指南 |
 | DEVELOPMENT_SETUP.md | 2025-08-20 | v0.0.3.3 | 完整开发环境配置 |
 | PROJECT_STATUS.md | 2025-08-20 | v0.0.3.3 | 项目状态汇总报告 |

@@ -37,6 +37,7 @@ print_error() {
 VERSION=""
 REGISTRY="${REGISTRY:-}"
 PUSH=""
+PULL=""
 TAG_LATEST=""
 DIRECT_BUILD="true"  # 默认使用直接 docker build，不依赖 docker-compose
 NO_CACHE=""
@@ -414,6 +415,117 @@ push_all_if_needed() {
     for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx ai-infra-gitea; do
         push_image_if_needed "$n"
     done
+}
+
+#============================
+# 镜像拉取功能
+#============================
+
+# 拉取单个镜像并重新标记为本地标签
+pull_image_from_registry() {
+    local name="$1"
+    if [ -z "$REGISTRY" ]; then
+        print_error "拉取镜像需要指定 --registry 参数"
+        return 1
+    fi
+    
+    local target_image
+    target_image=$(get_target_image_name "$name" "$VERSION")
+    print_info "从注册表拉取镜像: $target_image"
+    
+    if docker pull "$target_image"; then
+        print_success "拉取成功: $target_image"
+        
+        # 重新标记为本地标签（去掉注册表前缀）
+        local local_image="${name}:${VERSION}"
+        if docker tag "$target_image" "$local_image"; then
+            print_info "重新标记为本地镜像: $local_image"
+        else
+            print_warning "重新标记失败: $target_image -> $local_image"
+        fi
+        
+        # 如果需要latest标签
+        if [ -n "$TAG_LATEST" ]; then
+            local target_latest
+            target_latest=$(get_target_image_name "$name" "latest")
+            print_info "拉取latest标签: $target_latest"
+            if docker pull "$target_latest"; then
+                docker tag "$target_latest" "${name}:latest" || print_warning "latest标签重新标记失败"
+                print_success "拉取latest成功: $target_latest"
+            else
+                print_warning "拉取latest失败: $target_latest"
+            fi
+        fi
+        
+        return 0
+    else
+        print_error "拉取失败: $target_image"
+        return 1
+    fi
+}
+
+# 拉取所有AI-Infra-Matrix组件镜像
+pull_all_images() {
+    if [ -z "$REGISTRY" ]; then
+        print_error "拉取镜像需要指定 --registry 参数"
+        exit 1
+    fi
+    
+    print_info "开始从注册表拉取所有AI-Infra-Matrix镜像"
+    print_info "注册表: $REGISTRY"
+    print_info "版本: $VERSION"
+    echo "================================"
+    
+    local images=(
+        "ai-infra-backend"
+        "ai-infra-backend-init"
+        "ai-infra-frontend"
+        "ai-infra-singleuser"
+        "ai-infra-jupyterhub"
+        "ai-infra-nginx"
+        "ai-infra-gitea"
+    )
+    
+    local success_count=0
+    local fail_count=0
+    local failed_images=()
+    
+    for img in "${images[@]}"; do
+        echo "--------------------"
+        if pull_image_from_registry "$img"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            failed_images+=("$img")
+        fi
+    done
+    
+    # 显示拉取结果摘要
+    echo ""
+    echo "🎉 镜像拉取完成！"
+    echo "================================"
+    print_success "成功拉取: $success_count 个镜像"
+    if [ $fail_count -gt 0 ]; then
+        print_error "拉取失败: $fail_count 个镜像"
+        echo "失败的镜像:"
+        for img in "${failed_images[@]}"; do
+            echo "  ❌ $img"
+        done
+    fi
+    
+    # 显示本地可用的镜像
+    if [ $success_count -gt 0 ]; then
+        echo ""
+        print_info "本地现在可用的AI-Infra-Matrix镜像:"
+        docker images | grep "ai-infra-" | grep "${VERSION}" || true
+        
+        echo ""
+        print_info "现在您可以使用以下命令启动服务:"
+        echo "  $0 --up                        # 启动所有服务"
+        echo "  docker compose up -d           # 或直接使用compose启动"
+    fi
+    
+    return $fail_count
 }
 
 #============================
@@ -828,6 +940,7 @@ show_help() {
     echo "  --version X         - 指定镜像版本（默认从git自动推导）"
     echo "  --registry R        - 指定镜像注册表前缀（如 registry.local:5000）"
     echo "  --push              - 构建后推送到注册表（需要 --registry）"
+    echo "  --pull              - 从指定注册表拉取所有AI-Infra-Matrix镜像（需要 --registry）"
     echo "  --tag-latest        - 额外打 latest 标签"
     echo "  --no-cache          - 无缓存构建"
     echo "  --rebuild           - (仅compose路径) 强制重建所有服务"
@@ -852,6 +965,7 @@ show_help() {
     echo "  $0 prod --version v0.0.3.3      - 指定版本号构建"
     echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
     echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3  - 推送到阿里云ACR"
+    echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --pull --version v0.0.3.3  - 从阿里云ACR拉取镜像"
     echo "  $0 prod --export-x86            - 构建并导出所有 x86_64 版本镜像"
     echo "  $0 prod --export-arm64 --export-dir /tmp/images  - 导出 arm64 版本到指定目录"
     echo "  $0 prod --push-deps --deps-namespace myuser  - 推送依赖镜像到Docker Hub myuser命名空间"
@@ -883,6 +997,8 @@ while [[ $# -gt 0 ]]; do
             REGISTRY="$2"; shift 2 ;;
         --push)
             PUSH="true"; shift ;;
+        --pull)
+            PULL="true"; shift ;;
         --tag-latest)
             TAG_LATEST="true"; shift ;;
         --no-cache)
@@ -1013,6 +1129,28 @@ fi
 if ! command -v docker &> /dev/null; then
     print_error "Docker 未安装或不可用"
     exit 1
+fi
+
+# 如果是拉取模式，直接执行拉取操作并退出
+if [ -n "$PULL" ]; then
+    echo ""
+    echo "🔽 AI-Infra-Matrix 镜像拉取模式"
+    echo "================================"
+    print_info "拉取模式: 从注册表拉取镜像"
+    print_info "注册表: ${REGISTRY:-未指定}"
+    print_info "镜像版本: ${VERSION}"
+    print_info "拉取时间: $(date)"
+    echo ""
+    
+    if pull_all_images; then
+        echo ""
+        print_success "🎉 镜像拉取完成！"
+        print_info "现在您可以使用拉取的镜像启动服务"
+        exit 0
+    else
+        print_error "❌ 镜像拉取失败！"
+        exit 1
+    fi
 fi
 
 # 选择 docker compose 命令（优先 v2: docker compose，其次 v1: docker-compose）
