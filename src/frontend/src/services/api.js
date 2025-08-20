@@ -210,6 +210,13 @@ export const userAPI = {
   getUserPermissions: (id) => api.get(`/users/${id}/permissions`),
   assignRoleToUser: (userId, roleId) => api.post(`/users/${userId}/roles/${roleId}`),
   removeRoleFromUser: (userId, roleId) => api.delete(`/users/${userId}/roles/${roleId}`),
+  
+  // LDAP相关（增强功能）
+  getUserWithAuthSource: (id) => api.get(`/users/${id}/auth-source`),
+  
+  // 用户仪表板相关
+  getUserDashboardSettings: () => api.get('/users/dashboard/settings'),
+  updateUserDashboardSettings: (settings) => api.put('/users/dashboard/settings', settings),
 };
 
 // 主机管理API
@@ -335,6 +342,22 @@ export const adminAPI = {
   getTrashItems: () => api.get('/admin/trash'),
   restoreTrashItem: (id) => api.post(`/admin/trash/${id}/restore`),
   permanentDeleteTrashItem: (id) => api.delete(`/admin/trash/${id}/permanent`),
+  
+  // 增强用户管理功能
+  getUserWithAuthSource: (id) => api.get(`/admin/users/${id}/auth-source`),
+  resetUserPassword: (id) => api.post(`/admin/users/${id}/reset-password`),
+  
+  // 统计信息
+  getSystemStats: () => api.get('/admin/stats'),
+  getUserStatistics: () => api.get('/admin/user-stats'),
+  
+  // 增强LDAP管理
+  getLDAPConfig: () => api.get('/admin/ldap/config'),
+  updateLDAPConfig: (config) => api.put('/admin/ldap/config', config),
+  testLDAPConnection: (config) => api.post('/admin/ldap/test', config),
+  syncLDAPUsers: (options = {}) => api.post('/admin/ldap/sync', options),
+  getLDAPSyncStatus: (syncId) => api.get(`/admin/ldap/sync/${syncId}/status`),
+  getLDAPSyncHistory: (limit = 10) => api.get(`/admin/ldap/sync/history?limit=${limit}`),
 };
 
 // AI助手API
@@ -407,9 +430,16 @@ export const dashboardAPI = {
   getUserDashboard: () => api.get('/dashboard'),
   updateDashboard: (config) => api.put('/dashboard', config),
   resetDashboard: () => api.delete('/dashboard'),
+  
+  // 增强功能
+  getUserDashboardEnhanced: () => api.get('/dashboard/enhanced'),
+  getDashboardStats: () => api.get('/dashboard/stats'),
+  cloneDashboard: (sourceUserId) => api.post(`/dashboard/clone/${sourceUserId}`),
+  exportDashboard: () => api.get('/dashboard/export'),
+  importDashboard: (config, overwrite = false) => api.post('/dashboard/import', { config, overwrite }),
 };
 
-// LDAP API
+// LDAP API (保持向后兼容)
 export const ldapAPI = {
   getConfig: () => api.get('/ldap/config'),
   updateConfig: (config) => api.put('/ldap/config', config),

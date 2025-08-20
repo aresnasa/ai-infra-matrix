@@ -1006,3 +1006,124 @@ func (c *AdminController) ClearTrash(ctx *gin.Context) {
 		"deleted_count": deletedCount,
 	})
 }
+
+// GetUserStatistics 获取用户统计信息（管理员专用）
+// @Summary 获取用户统计信息
+// @Description 管理员获取用户相关的统计数据
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/user-stats [get]
+func (c *AdminController) GetUserStatistics(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "users", "read", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	var totalUsers int64
+	var activeUsers int64
+	var ldapUsers int64
+	var localUsers int64
+
+	// 统计总用户数
+	if err := c.db.Model(&models.User{}).Count(&totalUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户统计失败"})
+		return
+	}
+
+	// 统计活跃用户数
+	if err := c.db.Model(&models.User{}).Where("is_active = ?", true).Count(&activeUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取活跃用户统计失败"})
+		return
+	}
+
+	// 统计LDAP用户数
+	if err := c.db.Model(&models.User{}).Where("auth_source = ?", "ldap").Count(&ldapUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取LDAP用户统计失败"})
+		return
+	}
+
+	// 统计本地用户数
+	if err := c.db.Model(&models.User{}).Where("auth_source = ? OR auth_source IS NULL", "local").Count(&localUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取本地用户统计失败"})
+		return
+	}
+
+	// 统计各角色用户数
+	var roleStats []struct {
+		RoleName  string `json:"role_name"`
+		UserCount int64  `json:"user_count"`
+	}
+
+	if err := c.db.Table("users").
+		Select("roles.name as role_name, COUNT(DISTINCT users.id) as user_count").
+		Joins("LEFT JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("LEFT JOIN roles ON user_roles.role_id = roles.id").
+		Group("roles.name").
+		Scan(&roleStats).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取角色统计失败"})
+		return
+	}
+
+	// 统计最近登录用户
+	var recentLogins []struct {
+		Username  string `json:"username"`
+		LastLogin string `json:"last_login"`
+	}
+
+	if err := c.db.Table("users").
+		Select("username, last_login").
+		Where("last_login IS NOT NULL").
+		Order("last_login DESC").
+		Limit(10).
+		Scan(&recentLogins).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取最近登录统计失败"})
+		return
+	}
+
+	// 统计用户组信息
+	var userGroupCount int64
+	if err := c.db.Model(&models.UserGroup{}).Count(&userGroupCount).Error; err != nil {
+		userGroupCount = 0
+	}
+
+	// 计算用户增长趋势（最近7天）
+	var dailyNewUsers []struct {
+		Date     string `json:"date"`
+		NewUsers int64  `json:"new_users"`
+	}
+
+	if err := c.db.Raw(`
+		SELECT DATE(created_at) as date, COUNT(*) as new_users 
+		FROM users 
+		WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+		GROUP BY DATE(created_at)
+		ORDER BY date DESC
+	`).Scan(&dailyNewUsers).Error; err != nil {
+		// 如果查询失败，使用空数组
+		dailyNewUsers = []struct {
+			Date     string `json:"date"`
+			NewUsers int64  `json:"new_users"`
+		}{}
+	}
+
+	statistics := gin.H{
+		"total_users":       totalUsers,
+		"active_users":      activeUsers,
+		"ldap_users":        ldapUsers,
+		"local_users":       localUsers,
+		"inactive_users":    totalUsers - activeUsers,
+		"user_groups":       userGroupCount,
+		"role_distribution": roleStats,
+		"recent_logins":     recentLogins,
+		"growth_trend":      dailyNewUsers,
+		"auth_source_distribution": gin.H{
+			"ldap":  ldapUsers,
+			"local": localUsers,
+		},
+	}
+
+	ctx.JSON(http.StatusOK, statistics)
+}

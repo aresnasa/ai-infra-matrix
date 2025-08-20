@@ -29,6 +29,11 @@ const Layout = ({ children, user, onLogout }) => {
       label: '我的工作台',
     },
     {
+      key: '/enhanced-dashboard',
+      icon: <ExperimentOutlined />,
+      label: '增强仪表板',
+    },
+    {
       key: '/projects',
       icon: <ProjectOutlined />,
       label: '项目管理',

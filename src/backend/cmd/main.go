@@ -318,12 +318,21 @@ func main() {
 
 		// Dashboard路由（需要认证）
 		dashboardController := controllers.NewDashboardController(database.DB)
+		enhancedDashboardController := controllers.NewEnhancedDashboardController(database.DB)
 		dashboard := api.Group("/dashboard")
 		dashboard.Use(middleware.AuthMiddlewareWithSession())
 		{
+			// 基础功能
 			dashboard.GET("", dashboardController.GetUserDashboard)
 			dashboard.PUT("", dashboardController.UpdateDashboard)
 			dashboard.DELETE("", dashboardController.ResetDashboard)
+			
+			// 增强功能
+			dashboard.GET("/enhanced", enhancedDashboardController.GetUserDashboardEnhanced)
+			dashboard.GET("/stats", enhancedDashboardController.GetDashboardStats)
+			dashboard.POST("/clone/:sourceUserId", enhancedDashboardController.CloneDashboard)
+			dashboard.GET("/export", enhancedDashboardController.ExportDashboard)
+			dashboard.POST("/import", enhancedDashboardController.ImportDashboard)
 		}
 
 		// 增强用户管理路由（管理员）
@@ -520,6 +529,7 @@ func main() {
 			
 			// 系统统计
 			admin.GET("/stats", adminController.GetSystemStats)
+			admin.GET("/user-stats", adminController.GetUserStatistics)
 			
 			// RBAC初始化
 			admin.POST("/rbac/initialize", adminController.InitializeRBAC)

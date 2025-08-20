@@ -45,6 +45,7 @@ const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
 // 新增功能页面懒加载
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
 const EnhancedUserManagement = React.lazy(() => import('./pages/EnhancedUserManagement'));
+const DashboardIntegration = React.lazy(() => import('./components/DashboardIntegration'));
 
 function App() {
   const [user, setUser] = useState(null);
@@ -362,6 +363,16 @@ function App() {
                       element={
                         <Suspense fallback={<LazyLoadingSpinner />}>
                           <DashboardPage user={user} />
+                        </Suspense>
+                      } 
+                    />
+                    
+                    {/* 增强仪表板与LDAP多用户集成 */}
+                    <Route 
+                      path="/enhanced-dashboard" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <DashboardIntegration />
                         </Suspense>
                       } 
                     />
