@@ -114,19 +114,71 @@ registry_prefix() {
     fi
 }
 
+# 获取镜像在目标注册表中的完整名称
+get_target_image_name() {
+    local source_name="$1"
+    local version="$2"
+    
+    if [ -z "$REGISTRY" ]; then
+        echo "${source_name}:${version}"
+        return
+    fi
+    
+    # 检查是否是阿里云ACR格式 (*.aliyuncs.com)
+    if echo "$REGISTRY" | grep -q "\.aliyuncs\.com"; then
+        # 阿里云ACR格式: registry/namespace/repository:tag
+        # 例如: xxx.aliyuncs.com/ai-infra-matrix/ai-infra-matrix:v0.0.3.3
+        
+        # 从REGISTRY中提取namespace（假设格式为 registry.com/namespace 或直接是 registry.com）
+        local registry_host
+        local namespace
+        
+        if echo "$REGISTRY" | grep -q "/"; then
+            registry_host=$(echo "$REGISTRY" | cut -d'/' -f1)
+            namespace=$(echo "$REGISTRY" | cut -d'/' -f2-)
+        else
+            registry_host="$REGISTRY"
+            namespace="ai-infra-matrix"  # 默认命名空间
+        fi
+        
+        # 对于阿里云ACR，将所有ai-infra组件映射到统一的repository名称
+        case "$source_name" in
+            ai-infra-*)
+                # 所有ai-infra组件使用相同的repository名，通过tag区分
+                echo "${registry_host}/${namespace}/ai-infra-matrix:${source_name#ai-infra-}-${version}"
+                ;;
+            *)
+                # 非ai-infra组件保持原名
+                echo "${registry_host}/${namespace}/${source_name}:${version}"
+                ;;
+        esac
+    else
+        # 其他注册表保持原有逻辑
+        echo "${REGISTRY}/${source_name}:${version}"
+    fi
+}
+
 tag_args() {
     local name="$1"; shift
-    local prefix; prefix=$(registry_prefix)
     local args=("-t" "${name}:$VERSION")
-    if [ -n "$prefix" ]; then
-        args+=("-t" "${prefix}${name}:$VERSION")
+    
+    # 添加目标注册表标签
+    if [ -n "$REGISTRY" ]; then
+        local target_image
+        target_image=$(get_target_image_name "$name" "$VERSION")
+        args+=("-t" "$target_image")
     fi
+    
+    # 添加latest标签
     if [ -n "$TAG_LATEST" ]; then
         args+=("-t" "${name}:latest")
-        if [ -n "$prefix" ]; then
-            args+=("-t" "${prefix}${name}:latest")
+        if [ -n "$REGISTRY" ]; then
+            local target_latest
+            target_latest=$(get_target_image_name "$name" "latest")
+            args+=("-t" "$target_latest")
         fi
     fi
+    
     printf '%s\n' "${args[@]}"
 }
 
@@ -134,22 +186,45 @@ tag_args() {
 # 单个组件构建器
 #============================
 
+# 生成buildx标签参数
+buildx_tag_args() {
+    local name="$1"
+    local tags=()
+    
+    # 本地标签
+    tags+=("--tag" "${name}:$VERSION")
+    if [ -n "$TAG_LATEST" ]; then
+        tags+=("--tag" "${name}:latest")
+    fi
+    
+    # 目标注册表标签
+    if [ -n "$REGISTRY" ]; then
+        local target_image
+        target_image=$(get_target_image_name "$name" "$VERSION")
+        tags+=("--tag" "$target_image")
+        
+        if [ -n "$TAG_LATEST" ]; then
+            local target_latest
+            target_latest=$(get_target_image_name "$name" "latest")
+            tags+=("--tag" "$target_latest")
+        fi
+    fi
+    
+    printf '%s\n' "${tags[@]}"
+}
+
 build_backend() {
     print_info "构建 backend 与 backend-init (VERSION=$VERSION)"
     if [ -n "$USE_BUILDX" ]; then
-        local prefix; prefix=$(registry_prefix)
         local name="ai-infra-backend"
         local tags=()
-        if [ -n "$prefix" ]; then
-            tags+=("--tag" "${prefix}${name}:$VERSION")
-        fi
-        tags+=("--tag" "${name}:$VERSION")
-        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        readarray -t tags < <(buildx_tag_args "$name")
+        
         docker buildx build ${NO_CACHE} \
             --platform "$PLATFORMS" \
             -f src/backend/Dockerfile \
             --build-arg VERSION="$VERSION" \
-            ${tags[@]} \
+            "${tags[@]}" \
             --push \
             src/backend
         # backend-init uses same image; extra tagging happens on pull side if needed
@@ -164,14 +239,19 @@ build_backend() {
         # 派生一份 init 标签（共用同一镜像内容，便于引用）
         docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:"$VERSION"
         if [ -n "$REGISTRY" ]; then
-            docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:"$VERSION"
+            local target_init
+            target_init=$(get_target_image_name "ai-infra-backend-init" "$VERSION")
+            docker tag ai-infra-backend:"$VERSION" "$target_init"
         fi
         if [ -n "$TAG_LATEST" ]; then
             docker tag ai-infra-backend:"$VERSION" ai-infra-backend:latest || true
             docker tag ai-infra-backend:"$VERSION" ai-infra-backend-init:latest || true
             if [ -n "$REGISTRY" ]; then
-                docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend:latest || true
-                docker tag ai-infra-backend:"$VERSION" "$(registry_prefix)"ai-infra-backend-init:latest || true
+                local target_backend_latest target_init_latest
+                target_backend_latest=$(get_target_image_name "ai-infra-backend" "latest")
+                target_init_latest=$(get_target_image_name "ai-infra-backend-init" "latest")
+                docker tag ai-infra-backend:"$VERSION" "$target_backend_latest" || true
+                docker tag ai-infra-backend:"$VERSION" "$target_init_latest" || true
             fi
         fi
     fi
@@ -180,21 +260,17 @@ build_backend() {
 build_frontend() {
     print_info "构建 frontend (VERSION=$VERSION)"
     if [ -n "$USE_BUILDX" ]; then
-        local prefix; prefix=$(registry_prefix)
         local name="ai-infra-frontend"
         local tags=()
-        if [ -n "$prefix" ]; then
-            tags+=("--tag" "${prefix}${name}:$VERSION")
-        fi
-        tags+=("--tag" "${name}:$VERSION")
-        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        readarray -t tags < <(buildx_tag_args "$name")
+        
         docker buildx build ${NO_CACHE} \
             --platform "$PLATFORMS" \
             -f src/frontend/Dockerfile \
             --build-arg VERSION="$VERSION" \
             --build-arg REACT_APP_API_URL="${REACT_APP_API_URL:-/api}" \
             --build-arg REACT_APP_JUPYTERHUB_URL="${REACT_APP_JUPYTERHUB_URL:-/jupyter}" \
-            ${tags[@]} \
+            "${tags[@]}" \
             --push \
             src/frontend
     else
@@ -211,19 +287,15 @@ build_frontend() {
 build_singleuser() {
     print_info "构建 singleuser (VERSION=$VERSION)"
     if [ -n "$USE_BUILDX" ]; then
-        local prefix; prefix=$(registry_prefix)
         local name="ai-infra-singleuser"
         local tags=()
-        if [ -n "$prefix" ]; then
-            tags+=("--tag" "${prefix}${name}:$VERSION")
-        fi
-        tags+=("--tag" "${name}:$VERSION")
-        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        readarray -t tags < <(buildx_tag_args "$name")
+        
         docker buildx build ${NO_CACHE} \
             --platform "$PLATFORMS" \
             -f docker/singleuser/Dockerfile \
             --build-arg VERSION="$VERSION" \
-            ${tags[@]} \
+            "${tags[@]}" \
             --push \
             docker/singleuser
     else
@@ -238,19 +310,15 @@ build_singleuser() {
 build_jupyterhub() {
     print_info "构建 jupyterhub (VERSION=$VERSION)"
     if [ -n "$USE_BUILDX" ]; then
-        local prefix; prefix=$(registry_prefix)
         local name="ai-infra-jupyterhub"
         local tags=()
-        if [ -n "$prefix" ]; then
-            tags+=("--tag" "${prefix}${name}:$VERSION")
-        fi
-        tags+=("--tag" "${name}:$VERSION")
-        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        readarray -t tags < <(buildx_tag_args "$name")
+        
         docker buildx build ${NO_CACHE} \
             --platform "$PLATFORMS" \
             -f src/jupyterhub/Dockerfile \
             --build-arg VERSION="$VERSION" \
-            ${tags[@]} \
+            "${tags[@]}" \
             --push \
             src/jupyterhub
     else
@@ -266,21 +334,17 @@ build_nginx() {
     print_info "构建 nginx (VERSION=$VERSION)"
     # 注意：nginx Dockerfile 复制了 repo 根下的资源，构建上下文必须为仓库根目录
     if [ -n "$USE_BUILDX" ]; then
-        local prefix; prefix=$(registry_prefix)
         local name="ai-infra-nginx"
         local tags=()
-        if [ -n "$prefix" ]; then
-            tags+=("--tag" "${prefix}${name}:$VERSION")
-        fi
-        tags+=("--tag" "${name}:$VERSION")
-        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        readarray -t tags < <(buildx_tag_args "$name")
+        
         docker buildx build ${NO_CACHE} \
             --platform "$PLATFORMS" \
             -f src/nginx/Dockerfile \
             --build-arg VERSION="$VERSION" \
             --build-arg DEBUG_MODE="${DEBUG_MODE:-false}" \
             --build-arg BUILD_ENV="${BUILD_ENV:-$MODE}" \
-            ${tags[@]} \
+            "${tags[@]}" \
             --push \
             .
     else
@@ -297,19 +361,15 @@ build_nginx() {
 build_gitea() {
     print_info "构建 gitea (VERSION=$VERSION)"
     if [ -n "$USE_BUILDX" ]; then
-        local prefix; prefix=$(registry_prefix)
         local name="ai-infra-gitea"
         local tags=()
-        if [ -n "$prefix" ]; then
-            tags+=("--tag" "${prefix}${name}:$VERSION")
-        fi
-        tags+=("--tag" "${name}:$VERSION")
-        [ -n "$TAG_LATEST" ] && tags+=("--tag" "${name}:latest") && [ -n "$prefix" ] && tags+=("--tag" "${prefix}${name}:latest")
+        readarray -t tags < <(buildx_tag_args "$name")
+        
         docker buildx build ${NO_CACHE} \
             --platform "$PLATFORMS" \
             -f third-party/gitea/Dockerfile \
             --build-arg VERSION="$VERSION" \
-            ${tags[@]} \
+            "${tags[@]}" \
             --push \
             third-party/gitea
     else
@@ -326,11 +386,27 @@ push_image_if_needed() {
     if [ -z "$PUSH" ] || [ -z "$REGISTRY" ]; then
         return 0
     fi
-    local prefix; prefix=$(registry_prefix)
-    print_info "推送镜像到 $REGISTRY: $name:$VERSION"
-    docker push "${prefix}${name}:$VERSION"
+    
+    local target_image
+    target_image=$(get_target_image_name "$name" "$VERSION")
+    print_info "推送镜像到 $REGISTRY: $target_image"
+    
+    if docker push "$target_image"; then
+        print_success "推送成功: $target_image"
+    else
+        print_error "推送失败: $target_image"
+        return 1
+    fi
+    
     if [ -n "$TAG_LATEST" ]; then
-        docker push "${prefix}${name}:latest" || true
+        local target_latest
+        target_latest=$(get_target_image_name "$name" "latest")
+        print_info "推送latest标签: $target_latest"
+        if docker push "$target_latest"; then
+            print_success "推送latest成功: $target_latest"
+        else
+            print_warning "推送latest失败: $target_latest"
+        fi
     fi
 }
 
@@ -338,6 +414,181 @@ push_all_if_needed() {
     for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx ai-infra-gitea; do
         push_image_if_needed "$n"
     done
+}
+
+#============================
+# 推送依赖镜像到Docker Hub
+#============================
+
+# 推送单个依赖镜像到Docker Hub
+push_dependency_image() {
+    local original_image="$1"
+    local target_registry="${2:-docker.io}"
+    local namespace="${3:-aresnasa}"
+    
+    # 解析镜像名称和标签
+    local image_name_tag="$original_image"
+    local image_name
+    local image_tag="latest"
+    
+    if echo "$original_image" | grep -q ':'; then
+        image_name=$(echo "$original_image" | cut -d':' -f1)
+        image_tag=$(echo "$original_image" | cut -d':' -f2)
+    else
+        image_name="$original_image"
+    fi
+    
+    # 去掉可能的仓库前缀，只保留镜像名
+    local clean_name
+    clean_name=$(echo "$image_name" | sed 's|.*/||')
+    
+    # 构建目标镜像名
+    local target_image="${target_registry}/${namespace}/ai-infra-dep-${clean_name}:${image_tag}"
+    
+    print_info "推送依赖镜像: $original_image -> $target_image"
+    
+    # 检查原始镜像是否存在
+    if ! docker image inspect "$original_image" >/dev/null 2>&1; then
+        print_warning "原始镜像不存在，尝试拉取: $original_image"
+        if ! docker pull "$original_image"; then
+            print_error "无法拉取镜像: $original_image"
+            return 1
+        fi
+    fi
+    
+    # 重新标记镜像
+    if docker tag "$original_image" "$target_image"; then
+        print_info "重新标记成功: $target_image"
+    else
+        print_error "重新标记失败: $original_image -> $target_image"
+        return 1
+    fi
+    
+    # 推送到Docker Hub
+    print_info "推送镜像到Docker Hub: $target_image"
+    if docker push "$target_image"; then
+        print_success "推送成功: $target_image"
+        
+        # 创建latest标签（如果不是latest）
+        if [ "$image_tag" != "latest" ]; then
+            local latest_target="${target_registry}/${namespace}/ai-infra-dep-${clean_name}:latest"
+            docker tag "$original_image" "$latest_target"
+            print_info "推送latest标签: $latest_target"
+            docker push "$latest_target" || print_warning "推送latest标签失败: $latest_target"
+        fi
+        
+        return 0
+    else
+        print_error "推送失败: $target_image"
+        return 1
+    fi
+}
+
+# 推送所有依赖镜像到Docker Hub
+push_all_dependencies() {
+    local target_registry="${1:-docker.io}"
+    local namespace="${2:-aresnasa}"
+    local skip_existing="${3:-false}"
+    
+    print_info "开始推送所有依赖镜像到Docker Hub"
+    print_info "目标仓库: $target_registry"
+    print_info "命名空间: $namespace"
+    echo "================================"
+    
+    # 检查Docker Hub登录状态
+    if ! docker info | grep -q "Username:"; then
+        print_warning "未检测到Docker Hub登录状态，请确保已登录"
+        print_info "请运行: docker login"
+        if [ "$skip_existing" != "force" ]; then
+            read -p "是否继续推送？(y/N): " -r
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                print_info "取消推送操作"
+                return 0
+            fi
+        fi
+    fi
+    
+    # 收集依赖镜像列表
+    print_info "收集依赖镜像列表..."
+    collect_compose_images
+    
+    if [ ${#BASE_IMAGES[@]} -eq 0 ]; then
+        print_warning "未找到依赖镜像，请检查docker-compose.yml文件"
+        return 1
+    fi
+    
+    print_info "找到 ${#BASE_IMAGES[@]} 个依赖镜像:"
+    for img in "${BASE_IMAGES[@]}"; do
+        echo "  - $img"
+    done
+    echo ""
+    
+    # 统计推送结果
+    local success_count=0
+    local fail_count=0
+    local skipped_count=0
+    local failed_images=()
+    
+    # 逐个推送依赖镜像
+    for img in "${BASE_IMAGES[@]}"; do
+        echo "--------------------"
+        
+        # 检查是否跳过已存在的镜像
+        if [ "$skip_existing" = "true" ]; then
+            local clean_name
+            clean_name=$(echo "$img" | sed 's|.*/||' | cut -d':' -f1)
+            local check_image="${target_registry}/${namespace}/ai-infra-dep-${clean_name}:latest"
+            
+            # 简单检查镜像是否可能已存在（通过尝试pull manifest）
+            if docker manifest inspect "$check_image" >/dev/null 2>&1; then
+                print_info "镜像可能已存在，跳过: $check_image"
+                skipped_count=$((skipped_count + 1))
+                continue
+            fi
+        fi
+        
+        if push_dependency_image "$img" "$target_registry" "$namespace"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            failed_images+=("$img")
+        fi
+    done
+    
+    # 显示推送结果摘要
+    echo ""
+    echo "🎉 依赖镜像推送完成！"
+    echo "================================"
+    print_success "成功推送: $success_count 个镜像"
+    if [ $skipped_count -gt 0 ]; then
+        print_info "跳过镜像: $skipped_count 个镜像"
+    fi
+    if [ $fail_count -gt 0 ]; then
+        print_error "推送失败: $fail_count 个镜像"
+        echo "失败的镜像:"
+        for img in "${failed_images[@]}"; do
+            echo "  ❌ $img"
+        done
+    fi
+    
+    # 显示推送的镜像访问信息
+    if [ $success_count -gt 0 ]; then
+        echo ""
+        print_info "推送的镜像可通过以下方式访问:"
+        echo "  docker pull ${target_registry}/${namespace}/ai-infra-dep-<镜像名>:latest"
+        echo ""
+        print_info "示例镜像列表:"
+        for img in "${BASE_IMAGES[@]:0:3}"; do
+            local clean_name
+            clean_name=$(echo "$img" | sed 's|.*/||' | cut -d':' -f1)
+            echo "  docker pull ${target_registry}/${namespace}/ai-infra-dep-${clean_name}:latest"
+        done
+        if [ ${#BASE_IMAGES[@]} -gt 3 ]; then
+            echo "  ... 还有 $((${#BASE_IMAGES[@]} - 3)) 个镜像"
+        fi
+    fi
+    
+    return $fail_count
 }
 
 #============================
@@ -591,14 +842,19 @@ show_help() {
     echo "  --export-x86        - 导出所有已构建镜像的 x86_64/amd64 版本为 tar 文件"
     echo "  --export-arm64      - 导出所有已构建镜像的 arm64 版本为 tar 文件"
     echo "  --export-dir DIR    - 指定导出目录（默认：./exports）"
+    echo "  --push-deps         - 推送所有依赖镜像到Docker Hub"
+    echo "  --deps-namespace NS - 指定依赖镜像的命名空间（默认：aresnasa）"
+    echo "  --skip-existing-deps - 跳过已存在的依赖镜像"
     echo "  -h, --help          - 显示此帮助信息"
     echo ""
     echo "示例:"
     echo "  $0 dev                          - 开发模式构建（自动版本）"
     echo "  $0 prod --version v0.0.3.3      - 指定版本号构建"
     echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
+    echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3  - 推送到阿里云ACR"
     echo "  $0 prod --export-x86            - 构建并导出所有 x86_64 版本镜像"
     echo "  $0 prod --export-arm64 --export-dir /tmp/images  - 导出 arm64 版本到指定目录"
+    echo "  $0 prod --push-deps --deps-namespace myuser  - 推送依赖镜像到Docker Hub myuser命名空间"
 }
 
 # 其他默认参数
@@ -606,6 +862,9 @@ REBUILD=""
 NGINX_ONLY=""
 SKIP_PREPULL=""
 UPDATE_IMAGES=""
+PUSH_DEPS=""
+DEPS_NAMESPACE="aresnasa"
+SKIP_EXISTING_DEPS=""
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -676,6 +935,16 @@ while [[ $# -gt 0 ]]; do
             ;;
         --export-dir)
             EXPORT_DIR="$2"; shift 2 ;;
+        --push-deps)
+            PUSH_DEPS="true"
+            shift
+            ;;
+        --deps-namespace)
+            DEPS_NAMESPACE="$2"; shift 2 ;;
+        --skip-existing-deps)
+            SKIP_EXISTING_DEPS="true"
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -927,5 +1196,31 @@ if [ -n "$DO_EXPORT" ]; then
     else
         print_error "Image export failed!"
         exit 1
+    fi
+fi
+
+# 执行依赖镜像推送（如果需要）
+if [ -n "$PUSH_DEPS" ]; then
+    echo ""
+    print_info "Starting dependency images push to Docker Hub..."
+    
+    # 设置跳过已存在镜像的选项
+    skip_mode=""
+    if [ -n "$SKIP_EXISTING_DEPS" ]; then
+        skip_mode="true"
+    fi
+    
+    if push_all_dependencies "docker.io" "$DEPS_NAMESPACE" "$skip_mode"; then
+        print_success "Dependency images push completed!"
+        echo ""
+        print_info "All dependency images are now available on Docker Hub"
+        print_info "Namespace: $DEPS_NAMESPACE"
+        print_info "You can now pull them using: docker pull docker.io/$DEPS_NAMESPACE/ai-infra-dep-<image-name>:latest"
+    else
+        exit_code=$?
+        print_error "Some dependency images failed to push!"
+        print_warning "Check the output above for failed images"
+        print_info "You can retry with --skip-existing-deps to skip already pushed images"
+        exit $exit_code
     fi
 fi
