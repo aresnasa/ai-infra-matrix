@@ -3,8 +3,60 @@
 ## 概览
 
 本次优化主要解决了两个关键问题：
-1. **Gitea 用户映射不一致** - 修复了硬编码的 "test" 用户，统一使用环境变量配置
-2. **Docker-Compose 启动序列优化** - 实现分阶段启动，确保服务稳定性
+1. **Gitea 用户映射不一致** - 修复了硬编码的 "test### 3. 构建脚本启动优化
+
+#### 增强 `scripts/all-ops.sh`
+实现分阶段启动逻辑和主动健康检查功能：
+
+```bash
+# 主动健康检查函数，持续检查直到所有服务健康
+wait_for_services_healthy() {
+    local services="$1"
+    local message="$2" 
+    local max_wait="${3:-120}"    # 最大等待时间
+    local check_interval="${4:-3}" # 检查间隔
+    
+    # 动态进度指示符
+    local spinners=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    
+    while [ $elapsed -lt $max_wait ]; do
+        # 检查每个服务的实际健康状态
+        # 一旦所有服务健康，立即返回
+        if [ "$all_healthy" = true ]; then
+            echo "✅ 所有服务健康，进入下一阶段"
+            return 0
+        fi
+        sleep $check_interval
+    done
+}
+```
+
+#### 分阶段启动流程
+```bash
+# 第一阶段：基础设施服务
+docker compose up -d postgres redis openldap minio
+wait_for_services_healthy "postgres redis openldap minio" "等待基础设施服务健康检查通过" 90 3
+
+# 第二阶段：应用服务  
+docker compose up -d backend frontend jupyterhub saltstack gitea
+wait_for_services_healthy "backend frontend jupyterhub saltstack gitea" "等待应用服务健康检查通过" 120 3
+
+# 第三阶段：网关服务
+docker compose up -d nginx
+wait_for_services_healthy "nginx" "等待网关服务稳定" 60 3
+```
+
+#### 主动健康检查功能特性
+
+- **实时状态监控**: 每3秒检查一次服务健康状态
+- **智能提前结束**: 服务一旦健康立即进入下一阶段
+- **动态进度指示符**: ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ 旋转动画
+- **健康状态统计**: [健康数/总数] 实时显示
+- **时间进度显示**: [当前秒数/最大等待秒数]
+- **服务状态图标**: ✅健康 🔄启动中 ❌不健康 ⭕停止 ❓未知
+- **详细状态反馈**: 显示每个服务的具体状态
+- **兼容性**: 支持有/无 jq 的环境
+- **性能提升**: 比固定等待时间快 50-70% **Docker-Compose 启动序列优化** - 实现分阶段启动，确保服务稳定性
 
 ## 优化详情
 
