@@ -30,6 +30,146 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+# 主动健康检查函数，持续检查直到所有服务健康
+wait_for_services_healthy() {
+    local services="$1"
+    local message="$2"
+    local max_wait="${3:-120}"  # 默认最大等待120秒
+    local check_interval="${4:-3}"  # 默认每3秒检查一次
+    
+    if [ -z "$COMPOSE_BIN" ] || [ -z "$services" ]; then
+        print_warning "无法进行健康检查，跳过等待"
+        return 0
+    fi
+    
+    # 进度指示符
+    local spinners=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    local dots=("   " ".  " ".. " "...")
+    
+    print_info "$message"
+    
+    local elapsed=0
+    local spinner_idx=0
+    
+    while [ $elapsed -lt $max_wait ]; do
+        local all_healthy=true
+        local healthy_count=0
+        local total_count=0
+        local status_summary=""
+        
+        # 检查每个服务的状态
+        for service in $services; do
+            total_count=$((total_count + 1))
+            local status="unknown"
+            
+            # 优先使用 jq 解析健康状态
+            if command -v jq >/dev/null 2>&1; then
+                status=$($COMPOSE_BIN ps --format json 2>/dev/null | jq -r '.[] | select(.Service=="'$service'") | .Health' 2>/dev/null || echo "unknown")
+            fi
+            
+            # 如果没有 jq 或获取不到健康状态，使用基本状态检查
+            if [ "$status" = "unknown" ] || [ -z "$status" ]; then
+                if $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up.*healthy"; then
+                    status="healthy"
+                elif $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up.*unhealthy"; then
+                    status="unhealthy"
+                elif $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up.*starting"; then
+                    status="starting"
+                elif $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up"; then
+                    # 对于没有健康检查的服务，运行状态视为健康
+                    status="running"
+                else
+                    status="down"
+                    all_healthy=false
+                fi
+            fi
+            
+            case "$status" in
+                "healthy"|"running")
+                    healthy_count=$((healthy_count + 1))
+                    status_summary="$status_summary${service}:✅ "
+                    ;;
+                "starting")
+                    all_healthy=false
+                    status_summary="$status_summary${service}:� "
+                    ;;
+                "unhealthy")
+                    all_healthy=false
+                    status_summary="$status_summary${service}:❌ "
+                    ;;
+                "down")
+                    all_healthy=false
+                    status_summary="$status_summary${service}:⭕ "
+                    ;;
+                *)
+                    all_healthy=false
+                    status_summary="$status_summary${service}:❓ "
+                    ;;
+            esac
+        done
+        
+        # 显示当前状态
+        local dots_idx=$(((elapsed / 3) % ${#dots[@]}))
+        spinner_idx=$(((spinner_idx + 1) % ${#spinners[@]}))
+        
+        echo -ne "\r${BLUE}🔍 $message ${spinners[$spinner_idx]} [$healthy_count/$total_count] [${elapsed}s/${max_wait}s]${dots[$dots_idx]}${NC}"
+        
+        # 如果所有服务都健康，直接返回
+        if [ "$all_healthy" = true ]; then
+            echo -e "\r${GREEN}✅ $message 完成 - 所有服务健康 [$healthy_count/$total_count] [${elapsed}s]                    ${NC}"
+            echo -e "${GREEN}   服务状态: $status_summary${NC}"
+            return 0
+        fi
+        
+        # 等待下次检查
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+    
+    # 超时处理
+    echo -e "\r${YELLOW}⚠️  $message 超时 [$healthy_count/$total_count] [${max_wait}s]                    ${NC}"
+    echo -e "${YELLOW}   当前状态: $status_summary${NC}"
+    
+    # 显示详细状态
+    print_warning "部分服务未完全健康，详细状态："
+    for service in $services; do
+        local status=$($COMPOSE_BIN ps --format json 2>/dev/null | jq -r '.[] | select(.Service=="'$service'") | .Health' 2>/dev/null || echo "unknown")
+        if [ "$status" = "unknown" ] || [ -z "$status" ]; then
+            if $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up.*healthy"; then
+                status="healthy"
+            elif $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up.*unhealthy"; then
+                status="unhealthy"
+            elif $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up.*starting"; then
+                status="starting"
+            elif $COMPOSE_BIN ps "$service" 2>/dev/null | grep -q "Up"; then
+                status="running"
+            else
+                status="down"
+            fi
+        fi
+        
+        case "$status" in
+            "healthy"|"running")
+                echo -e "  ${service}: ${GREEN}$status${NC}"
+                ;;
+            "starting")
+                echo -e "  ${service}: ${YELLOW}$status${NC}"
+                ;;
+            *)
+                echo -e "  ${service}: ${RED}$status${NC}"
+                ;;
+        esac
+    done
+    
+    if [ $healthy_count -gt 0 ]; then
+        print_warning "继续执行下一阶段 ($healthy_count/$total_count 个服务健康)"
+        return 0
+    else
+        print_error "没有服务健康，请检查配置"
+        return 1
+    fi
+}
+
 #============================
 # 版本号与注册表配置
 #============================
@@ -550,8 +690,14 @@ pull_all_images() {
         
         echo ""
         print_info "现在您可以使用以下命令启动服务:"
-        echo "  $0 --up                        # 启动所有服务"
-        echo "  docker compose up -d           # 或直接使用compose启动"
+        echo "  $0 --up                        # 分阶段启动所有服务 (推荐)"
+        echo "  docker compose up -d           # 或直接使用compose启动 (可能不稳定)"
+        echo ""
+        print_info "分阶段启动顺序:"
+        echo "  1. 基础设施服务: postgres, redis, openldap, minio"
+        echo "  2. 应用服务: backend, frontend, jupyterhub, saltstack, gitea"  
+        echo "  3. 网关服务: nginx"
+        echo "  4. 调试服务: gitea-debug-proxy, redis-insight, k8s-proxy"
     fi
     
     return $fail_count
@@ -1703,26 +1849,57 @@ if [ -n "$DO_UP" ]; then
                 "$IMPROVED_STARTUP"
             fi
         else
-            # 原有的启动逻辑
+            # 优化的分阶段启动逻辑
             START_CMD="$COMPOSE_BIN"
             # 仅 v2 支持 --env-file
             if [ -f "$ENV_FILE" ] && [ "$COMPOSE_BIN" = "docker compose" ]; then
                 START_CMD="$START_CMD --env-file $ENV_FILE"
             fi
-            if [ -n "$NGINX_ONLY" ]; then
-                START_CMD="$START_CMD up -d $REBUILD nginx"
+            
+            print_info "分阶段启动服务以确保稳定性..."
+            
+            # 第一阶段：启动基础设施服务
+            print_info "启动基础设施服务 (postgres, redis, openldap, minio)..."
+            if eval "$START_CMD up -d postgres redis openldap minio"; then
+                print_success "基础设施服务启动完成"
+                wait_for_services_healthy "postgres redis openldap minio" "等待基础设施服务健康检查通过" 90 3
             else
-                START_CMD="$START_CMD up -d $REBUILD"
-            fi
-            print_info "执行启动命令: $START_CMD"
-            if eval $START_CMD; then
-                print_success "服务启动完成!"
-                print_info "等待服务稳定..."
-                sleep 30
-            else
-                print_error "服务启动失败!"
+                print_error "基础设施服务启动失败!"
                 exit 1
             fi
+            
+            # 第二阶段：启动应用服务
+            print_info "启动应用服务 (backend, frontend, jupyterhub, saltstack, gitea)..."
+            if eval "$START_CMD up -d backend frontend jupyterhub saltstack gitea"; then
+                print_success "应用服务启动完成"
+                wait_for_services_healthy "backend frontend jupyterhub saltstack gitea" "等待应用服务健康检查通过" 120 3
+            else
+                print_error "应用服务启动失败!"
+                exit 1
+            fi
+            
+            # 第三阶段：启动网关服务
+            print_info "启动 Nginx 网关服务..."
+            if eval "$START_CMD up -d nginx"; then
+                print_success "Nginx 网关启动完成"
+                wait_for_services_healthy "nginx" "等待网关服务稳定" 60 3
+            else
+                print_error "网关服务启动失败!"
+                exit 1
+            fi
+            
+            # 可选：启动调试和监控服务
+            print_info "启动调试和监控服务..."
+            eval "$START_CMD up -d gitea-debug-proxy redis-insight k8s-proxy" || true
+            
+            print_success "所有服务启动完成!"
+            print_info "服务访问地址："
+            print_info "  主门户: http://localhost:8080"
+            print_info "  JupyterHub: http://localhost:8080/jupyter"
+            print_info "  Gitea: http://localhost:8080/gitea"
+            print_info "  MinIO: http://localhost:8080/minio"
+            print_info "查看服务状态: $COMPOSE_BIN ps"
+            print_info "查看日志: $COMPOSE_BIN logs -f [service_name]"
         fi
     fi
 fi

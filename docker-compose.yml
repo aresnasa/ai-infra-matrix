@@ -176,9 +176,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/api/health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   # 前端应用服务
@@ -370,6 +370,16 @@ services:
       - JUPYTERHUB_PORT=${JUPYTERHUB_PORT:-8000}
       - TZ=Asia/Shanghai
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      gitea:
+        condition: service_healthy
       frontend:
         condition: service_healthy
       backend:
@@ -378,18 +388,14 @@ services:
         condition: service_healthy
       saltstack:
         condition: service_healthy
-      gitea:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
     networks:
       - ai-infra-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+      timeout: 15s
+      retries: 5
+      start_period: 90s
     restart: unless-stopped
 
   # Kubernetes 代理服务 (可选)
@@ -494,9 +500,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     restart: unless-stopped
 
   # Debug-only: Nginx shim to rewrite /gitea/* to upstream paths so direct backend validation can use /gitea URLs
