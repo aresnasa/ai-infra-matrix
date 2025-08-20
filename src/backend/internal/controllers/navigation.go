@@ -93,7 +93,7 @@ var DefaultNavigationItems = []NavigationItem{
 		ID:      "saltstack",
 		Key:     "/saltstack",
 		Label:   "SaltStack",
-		Icon:    "SettingOutlined",
+		Icon:    "ControlOutlined",
 		Visible: true,
 		Order:   6,
 		Roles:   []string{"admin", "super-admin"},

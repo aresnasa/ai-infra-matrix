@@ -14,7 +14,10 @@ import {
   FileTextOutlined,
   ExperimentTwoTone,
   ClusterOutlined,
-  TeamOutlined
+  TeamOutlined,
+  ControlOutlined,
+  ApiOutlined,
+  MenuOutlined
 } from '@ant-design/icons';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { navigationAPI } from '../services/api';
@@ -81,7 +84,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'saltstack',
     key: '/saltstack',
     label: 'SaltStack',
-    icon: 'SettingOutlined',
+    icon: 'ControlOutlined',
     visible: true,
     order: 6,
     roles: ['admin', 'super-admin']
@@ -289,7 +292,10 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     'ExperimentTwoTone': <ExperimentTwoTone />,
     'ClusterOutlined': <ClusterOutlined />,
     'SettingOutlined': <SettingOutlined />,
-    'TeamOutlined': <TeamOutlined />
+    'TeamOutlined': <TeamOutlined />,
+    'ControlOutlined': <ControlOutlined />,
+    'ApiOutlined': <ApiOutlined />,
+    'MenuOutlined': <MenuOutlined />
   };
 
   useEffect(() => {
@@ -305,7 +311,12 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        flex: 1,
+        overflow: 'hidden' // 防止溢出
+      }}>
         <Menu
           theme="dark"
           mode="horizontal"
@@ -317,9 +328,10 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
           }))}
           onClick={onMenuClick}
           style={{ 
-            minWidth: 200,
+            minWidth: 0, // 允许收缩
             borderBottom: 'none',
-            flex: 1
+            flex: 1,
+            overflow: 'hidden' // 防止Menu项溢出
           }}
         />
         
@@ -333,7 +345,8 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
             style={{
               color: '#fff',
               marginLeft: 8,
-              opacity: 0.7
+              opacity: 0.7,
+              flexShrink: 0 // 不允许收缩
             }}
           />
         </Tooltip>

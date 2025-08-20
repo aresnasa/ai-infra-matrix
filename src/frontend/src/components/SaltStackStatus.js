@@ -65,7 +65,7 @@ const SaltStackStatus = () => {
 
   useEffect(() => {
     loadAll();
-    const interval = setInterval(loadAll, 30000); // 每30秒刷新
+    const interval = setInterval(loadAll, 60000); // 每60秒刷新，减少对后端的压力
     return () => clearInterval(interval);
   }, []);
 

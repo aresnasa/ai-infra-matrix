@@ -138,8 +138,27 @@ const Layout = ({ children, user, onLogout }) => {
   // 获取当前选中的菜单key和打开的子菜单
   const getCurrentMenuKeys = () => {
     const pathname = location.pathname;
-    const selectedKeys = [pathname];
+    let selectedKeys = [pathname];
     const openKeys = [];
+    
+    // 特殊路径映射
+    if (pathname === '/jupyter' || pathname.startsWith('/jupyter')) {
+      selectedKeys = ['/jupyterhub'];
+    } else if (pathname === '/gitea' || pathname.startsWith('/gitea')) {
+      selectedKeys = ['/gitea'];
+    } else if (pathname === '/projects' || pathname.startsWith('/projects')) {
+      selectedKeys = ['/projects'];
+    } else if (pathname === '/kubernetes' || pathname.startsWith('/kubernetes')) {
+      selectedKeys = ['/kubernetes'];
+    } else if (pathname === '/ansible' || pathname.startsWith('/ansible')) {
+      selectedKeys = ['/ansible'];
+    } else if (pathname === '/slurm' || pathname.startsWith('/slurm')) {
+      selectedKeys = ['/slurm'];
+    } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {
+      selectedKeys = ['/saltstack'];
+    } else if (pathname === '/ldap-management' || pathname.startsWith('/ldap-management')) {
+      selectedKeys = ['/ldap-management'];
+    }
     
     // 如果是管理员页面，确保管理中心子菜单展开
     if (pathname.startsWith('/admin') && pathname !== '/admin') {
@@ -175,12 +194,16 @@ const Layout = ({ children, user, onLogout }) => {
         display: 'flex', 
         alignItems: 'center', 
         background: '#001529',
-        padding: '0 24px'
+        padding: '0 24px',
+        minWidth: '1200px', // 设置最小宽度防止挤压
+        overflow: 'hidden' // 防止内容溢出
       }}>
+        {/* 左侧标题区域 - 固定宽度不会被挤压 */}
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
-          marginRight: 'auto'
+          minWidth: '200px', // 固定最小宽度
+          flexShrink: 0 // 不允许收缩
         }}>
           <CodeOutlined style={{ 
             fontSize: '24px', 
@@ -192,53 +215,61 @@ const Layout = ({ children, user, onLogout }) => {
             style={{ 
               color: '#fff', 
               margin: 0,
-              fontWeight: 600
+              fontWeight: 600,
+              whiteSpace: 'nowrap' // 防止标题换行
             }}
           >
             AI-Infra-Matrix
           </Title>
         </div>
         
-        <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+        {/* 中间导航区域 - 可伸缩 */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          flex: 1,
+          minWidth: 0, // 允许收缩
+          overflow: 'hidden' // 防止溢出
+        }}>
           <CustomizableNavigation
             user={user}
             selectedKeys={selectedKeys}
             onMenuClick={handleMenuClick}
           />
-          
-          {isAdmin && (
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <Dropdown
-                menu={{ items: adminMenuItems }}
-                placement="bottomRight"
-                trigger={['hover']}
-              >
-                <Button 
-                  type="text" 
-                  style={{ 
-                    color: '#fff',
-                    height: '64px',
-                    padding: '0 16px',
-                    marginLeft: '8px',
-                    backgroundColor: location.pathname.startsWith('/admin') ? '#1890ff' : 'transparent',
-                    borderRadius: '0'
-                  }}
-                  icon={<SettingOutlined />}
-                  onClick={() => navigate('/admin')}
-                >
-                  管理中心 <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
-                </Button>
-              </Dropdown>
-            </div>
-          )}
         </div>
+          
+        {/* 右侧管理员菜单 */}
+        {isAdmin && (
+          <Dropdown
+            menu={{ items: adminMenuItems }}
+            placement="bottomRight"
+            trigger={['hover']}
+          >
+            <Button 
+              type="text" 
+              style={{ 
+                color: '#fff',
+                height: '64px',
+                padding: '0 16px',
+                marginLeft: '8px',
+                backgroundColor: location.pathname.startsWith('/admin') ? '#1890ff' : 'transparent',
+                borderRadius: '0'
+              }}
+              icon={<SettingOutlined />}
+              onClick={() => navigate('/admin')}
+            >
+              管理中心 <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
+            </Button>
+          </Dropdown>
+        )}
 
+        {/* 右侧用户菜单 */}
         <Dropdown
           menu={{ items: userMenuItems }}
           placement="bottomRight"
           trigger={['click']}
         >
-          <Space style={{ cursor: 'pointer', color: '#fff' }}>
+          <Space style={{ cursor: 'pointer', color: '#fff', marginLeft: '16px' }}>
             <Avatar icon={<UserOutlined />} />
             <span>{user?.username}</span>
             {isAdmin && (

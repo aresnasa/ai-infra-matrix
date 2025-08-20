@@ -250,7 +250,7 @@ const EnhancedDashboardPage = () => {
       if (isAdmin) {
         loadLdapSyncStatus();
       }
-    }, 30000);
+    }, 60000); // 60秒刷新一次，减少对后端的压力
     
     return () => clearInterval(interval);
   }, [loadDashboard, loadLdapSyncStatus, isAdmin]);

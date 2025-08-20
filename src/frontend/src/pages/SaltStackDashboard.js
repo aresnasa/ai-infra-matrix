@@ -69,7 +69,7 @@ const SaltStackDashboard = () => {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 30000); // 30秒刷新一次
+    const interval = setInterval(loadData, 60000); // 60秒刷新一次，减少对后端的压力
     return () => clearInterval(interval);
   }, []);
 

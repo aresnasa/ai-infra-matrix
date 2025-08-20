@@ -21,6 +21,27 @@ code {
   background: #f0f2f5;
 }
 
+/* Header响应式样式 */
+.ant-layout-header {
+  min-width: 1200px; /* 确保Header有最小宽度 */
+  overflow-x: auto; /* 在极小屏幕上允许滚动 */
+}
+
+/* 导航菜单响应式 */
+.ant-menu-horizontal {
+  overflow: hidden;
+}
+
+.ant-menu-horizontal > .ant-menu-item,
+.ant-menu-horizontal > .ant-menu-submenu {
+  white-space: nowrap;
+}
+
+/* 确保标题不换行 */
+.ant-typography h3 {
+  white-space: nowrap !important;
+}
+
 .content-container {
   background: #fff;
   padding: 24px;

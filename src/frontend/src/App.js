@@ -5,52 +5,104 @@ import zhCN from 'antd/locale/zh_CN';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoadingFallback, { AdminLoadingFallback, ProjectLoadingFallback } from './components/LoadingFallback';
+import EnhancedLoading from './components/EnhancedLoading';
+import withLazyLoading from './components/withLazyLoading';
 import AIAssistantFloat from './components/AIAssistantFloat';
 import { useSmartPreload } from './hooks/usePagePreload';
+import { useAPIHealth } from './hooks/useAPIHealth';
 import AuthPage from './pages/AuthPage';
 import { authAPI } from './services/api';
 import './App.css';
 
-// 懒加载组件
-const ProjectList = React.lazy(() => import('./pages/ProjectList'));
-const ProjectDetail = React.lazy(() => import('./pages/ProjectDetail'));
-const UserProfile = React.lazy(() => import('./pages/UserProfile'));
+// 懒加载组件 - 使用增强的懒加载包装
+const ProjectList = withLazyLoading(React.lazy(() => import('./pages/ProjectList')), {
+  loadingText: '正在加载项目列表...'
+});
+const ProjectDetail = withLazyLoading(React.lazy(() => import('./pages/ProjectDetail')), {
+  loadingText: '正在加载项目详情...'
+});
+const UserProfile = withLazyLoading(React.lazy(() => import('./pages/UserProfile')), {
+  loadingText: '正在加载用户资料...'
+});
 
 // 管理员页面懒加载
-const AdminCenter = React.lazy(() => import('./pages/AdminCenter'));
-const AdminUsers = React.lazy(() => import('./pages/AdminUsers'));
-const AdminProjects = React.lazy(() => import('./pages/AdminProjects'));
-const AdminLDAP = React.lazy(() => import('./pages/AdminLDAP'));
-const AdminAuthSettings = React.lazy(() => import('./pages/AdminAuthSettings'));
-const AdminTrash = React.lazy(() => import('./pages/AdminTrash'));
-const AdminTest = React.lazy(() => import('./pages/AdminTest'));
+const AdminCenter = withLazyLoading(React.lazy(() => import('./pages/AdminCenter')), {
+  loadingText: '正在加载管理中心...'
+});
+const AdminUsers = withLazyLoading(React.lazy(() => import('./pages/AdminUsers')), {
+  loadingText: '正在加载用户管理...'
+});
+const AdminProjects = withLazyLoading(React.lazy(() => import('./pages/AdminProjects')), {
+  loadingText: '正在加载项目管理...'
+});
+const AdminLDAP = withLazyLoading(React.lazy(() => import('./pages/AdminLDAP')), {
+  loadingText: '正在加载LDAP配置...'
+});
+const AdminAuthSettings = withLazyLoading(React.lazy(() => import('./pages/AdminAuthSettings')), {
+  loadingText: '正在加载认证设置...'
+});
+const AdminTrash = withLazyLoading(React.lazy(() => import('./pages/AdminTrash')), {
+  loadingText: '正在加载回收站...'
+});
+const AdminTest = withLazyLoading(React.lazy(() => import('./pages/AdminTest')), {
+  loadingText: '正在加载系统测试...'
+});
 
 // Kubernetes和Ansible管理页面懒加载
-const KubernetesManagement = React.lazy(() => import('./pages/KubernetesManagement'));
-const AnsibleManagement = React.lazy(() => import('./pages/AnsibleManagement'));
+const KubernetesManagement = withLazyLoading(React.lazy(() => import('./pages/KubernetesManagement')), {
+  loadingText: '正在加载Kubernetes管理...'
+});
+const AnsibleManagement = withLazyLoading(React.lazy(() => import('./pages/AnsibleManagement')), {
+  loadingText: '正在加载Ansible管理...'
+});
 
 // AI助手管理页面懒加载
-const AIAssistantManagement = React.lazy(() => import('./pages/AIAssistantManagement'));
+const AIAssistantManagement = withLazyLoading(React.lazy(() => import('./pages/AIAssistantManagement')), {
+  loadingText: '正在加载AI助手管理...'
+});
 
 // JupyterHub管理页面懒加载
-const JupyterHubManagement = React.lazy(() => import('./pages/JupyterHubManagement'));
+const JupyterHubManagement = withLazyLoading(React.lazy(() => import('./pages/JupyterHubManagement')), {
+  loadingText: '正在加载JupyterHub管理...'
+});
 
 // JupyterHub主页面懒加载
-const JupyterHubPage = React.lazy(() => import('./pages/JupyterHubPage'));
-const EmbeddedJupyter = React.lazy(() => import('./pages/EmbeddedJupyter'));
-const SlurmDashboard = React.lazy(() => import('./pages/SlurmDashboard'));
-const SaltStackDashboard = React.lazy(() => import('./pages/SaltStackDashboard'));
-const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
+const JupyterHubPage = withLazyLoading(React.lazy(() => import('./pages/JupyterHubPage')), {
+  loadingText: '正在加载JupyterHub...'
+});
+const EmbeddedJupyter = withLazyLoading(React.lazy(() => import('./pages/EmbeddedJupyter')), {
+  loadingText: '正在加载Jupyter环境...'
+});
+const SlurmDashboard = withLazyLoading(React.lazy(() => import('./pages/SlurmDashboard')), {
+  loadingText: '正在加载Slurm仪表板...'
+});
+const SaltStackDashboard = withLazyLoading(React.lazy(() => import('./pages/SaltStackDashboard')), {
+  loadingText: '正在加载SaltStack仪表板...'
+});
+const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')), {
+  loadingText: '正在加载Gitea...'
+});
 
 // 新增功能页面懒加载
-const MultiUserLDAPManagement = React.lazy(() => import('./pages/MultiUserLDAPManagement'));
-const EnhancedUserManagement = React.lazy(() => import('./pages/EnhancedUserManagement'));
+const MultiUserLDAPManagement = withLazyLoading(React.lazy(() => import('./pages/MultiUserLDAPManagement')), {
+  loadingText: '正在加载LDAP用户管理...'
+});
+const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
+  loadingText: '正在加载增强用户管理...'
+});
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authChecked, setAuthChecked] = useState(false);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
+
+  // API健康监控
+  const { apiHealth, isHealthy, isDegraded, isDown } = useAPIHealth({
+    checkInterval: 60000, // 60秒检查一次，减少对后端的压力
+    enableAutoCheck: true,
+    showNotifications: true
+  });
 
   // 智能预加载用户可能访问的页面
   useSmartPreload(user);
@@ -324,16 +376,15 @@ function App() {
     );
   }
 
-  // 懒加载的加载组件
-  const LazyLoadingSpinner = () => (
-    <div style={{ 
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center', 
-      minHeight: '200px' 
-    }}>
-      <Spin size="large" tip="正在加载页面..." />
-    </div>
+  // 懒加载的加载组件 - 包含API状态监控
+  const LazyLoadingSpinner = ({ loadingText = '正在加载页面...', ...props }) => (
+    <EnhancedLoading
+      loading={true}
+      apiHealth={apiHealth}
+      showAPIStatus={true}
+      loadingText={loadingText}
+      {...props}
+    />
   );
 
   console.log('=== App渲染状态 ===');
