@@ -662,30 +662,52 @@ if [ -n "$DO_UP" ]; then
         print_warning "未检测到 compose，跳过启动 (--up)"
     else
         print_info "启动/更新服务..."
-        START_CMD="$COMPOSE_BIN"
-        # 仅 v2 支持 --env-file
-        if [ -f "$ENV_FILE" ] && [ "$COMPOSE_BIN" = "docker compose" ]; then
-            START_CMD="$START_CMD --env-file $ENV_FILE"
-        fi
-        if [ -n "$NGINX_ONLY" ]; then
-            START_CMD="$START_CMD up -d $REBUILD nginx"
+        
+        # 检查是否有改进的启动脚本
+        SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+        IMPROVED_STARTUP="$SCRIPT_DIR/start-services-improved.sh"
+        
+        if [ -x "$IMPROVED_STARTUP" ]; then
+            print_info "使用改进的分阶段启动脚本..."
+            if [ -n "$DO_TEST" ]; then
+                "$IMPROVED_STARTUP" --test
+            else
+                "$IMPROVED_STARTUP"
+            fi
         else
-            START_CMD="$START_CMD up -d $REBUILD"
-        fi
-        print_info "执行启动命令: $START_CMD"
-        if eval $START_CMD; then
-            print_success "服务启动完成!"
-        else
-            print_error "服务启动失败!"
-            exit 1
+            # 原有的启动逻辑
+            START_CMD="$COMPOSE_BIN"
+            # 仅 v2 支持 --env-file
+            if [ -f "$ENV_FILE" ] && [ "$COMPOSE_BIN" = "docker compose" ]; then
+                START_CMD="$START_CMD --env-file $ENV_FILE"
+            fi
+            if [ -n "$NGINX_ONLY" ]; then
+                START_CMD="$START_CMD up -d $REBUILD nginx"
+            else
+                START_CMD="$START_CMD up -d $REBUILD"
+            fi
+            print_info "执行启动命令: $START_CMD"
+            if eval $START_CMD; then
+                print_success "服务启动完成!"
+                print_info "等待服务稳定..."
+                sleep 30
+            else
+                print_error "服务启动失败!"
+                exit 1
+            fi
         fi
     fi
 fi
 
-# 运行健康检查（--test 时执行）
+# 运行健康检查（--test 时执行，但如果已经在启动脚本中运行过则跳过）
 if [ -n "$DO_TEST" ]; then
     SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-    if [ -x "$SCRIPT_DIR/test-health.sh" ]; then
+    IMPROVED_STARTUP="$SCRIPT_DIR/start-services-improved.sh"
+    
+    # 如果使用了改进的启动脚本且已经运行过测试，则跳过
+    if [ -x "$IMPROVED_STARTUP" ] && [ -n "$DO_UP" ]; then
+        print_info "健康检查已在启动脚本中执行，跳过重复检查"
+    elif [ -x "$SCRIPT_DIR/test-health.sh" ]; then
         print_info "运行健康检查脚本: $SCRIPT_DIR/test-health.sh"
         if "$SCRIPT_DIR/test-health.sh"; then
             print_success "健康检查通过"

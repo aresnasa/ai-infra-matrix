@@ -17,11 +17,10 @@ services:
       - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     networks:
       - ai-infra-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ansible_playbook_generator"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -338,6 +337,10 @@ services:
         condition: service_healthy
       jupyterhub:
         condition: service_healthy
+      gitea:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - ai-infra-network
     healthcheck:
@@ -422,7 +425,7 @@ services:
       GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
       # Optional: seed initial admin identity from backend alias; random password; login form disabled
       INITIAL_ADMIN_USERNAME: "${GITEA_ALIAS_ADMIN_TO:-}"
-  # Admin bootstrap via reverse-proxy SSO only; no default 'admin' credentials
+      # Admin bootstrap via reverse-proxy SSO only; no default 'admin' credentials
       GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
       DATA_PATH: "/data/gitea"
       MINIO_ENDPOINT: "minio:9000"
@@ -442,6 +445,8 @@ services:
       - gitea_data:/data
     depends_on:
       postgres:
+        condition: service_healthy
+      backend:
         condition: service_healthy
     networks:
       - ai-infra-network
@@ -483,6 +488,12 @@ services:
       - "9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     networks:
       - ai-infra-network
     restart: unless-stopped
