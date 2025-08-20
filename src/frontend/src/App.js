@@ -43,9 +43,8 @@ const SaltStackDashboard = React.lazy(() => import('./pages/SaltStackDashboard')
 const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
 
 // 新增功能页面懒加载
-const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
+const MultiUserLDAPManagement = React.lazy(() => import('./pages/MultiUserLDAPManagement'));
 const EnhancedUserManagement = React.lazy(() => import('./pages/EnhancedUserManagement'));
-const DashboardIntegration = React.lazy(() => import('./components/DashboardIntegration'));
 
 function App() {
   const [user, setUser] = useState(null);
@@ -355,24 +354,14 @@ function App() {
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
                   <Routes>
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/" element={<Navigate to="/projects" replace />} />
                     
-                    {/* 新增拖拽式工作台 */}
+                    {/* LDAP多用户管理 */}
                     <Route 
-                      path="/dashboard" 
+                      path="/ldap-management" 
                       element={
                         <Suspense fallback={<LazyLoadingSpinner />}>
-                          <DashboardPage user={user} />
-                        </Suspense>
-                      } 
-                    />
-                    
-                    {/* 增强仪表板与LDAP多用户集成 */}
-                    <Route 
-                      path="/enhanced-dashboard" 
-                      element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <DashboardIntegration />
+                          <MultiUserLDAPManagement />
                         </Suspense>
                       } 
                     />

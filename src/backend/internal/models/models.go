@@ -256,12 +256,13 @@ type AnsibleExecutionResponse struct {
 
 // UserGroup 用户组表
 type UserGroup struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Name        string    `json:"name" gorm:"uniqueIndex;not null;size:100"`
-	Description string    `json:"description" gorm:"size:500"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                uint      `json:"id" gorm:"primaryKey"`
+	Name              string    `json:"name" gorm:"uniqueIndex;not null;size:100"`
+	Description       string    `json:"description" gorm:"size:500"`
+	DashboardTemplate string    `json:"dashboard_template" gorm:"type:text"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt `json:"-" gorm:"index"`
 	
 	// 关联关系
 	Users []User `json:"users,omitempty" gorm:"many2many:user_group_memberships"`
@@ -665,4 +666,20 @@ func (RolePermission) TableName() string {
 
 func (LDAPConfig) TableName() string {
 	return "ldap_configs"
+}
+
+// UserNavigationConfig 用户导航配置模型
+type UserNavigationConfig struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	UserID    uint      `json:"user_id" gorm:"not null;index"`
+	Config    string    `json:"config" gorm:"type:text"` // JSON格式的导航配置
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	
+	// 关联关系
+	User User `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+}
+
+func (UserNavigationConfig) TableName() string {
+	return "user_navigation_configs"
 }

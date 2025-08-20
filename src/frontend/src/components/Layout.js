@@ -2,6 +2,7 @@ import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
 import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
+import CustomizableNavigation from './CustomizableNavigation';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -199,17 +200,10 @@ const Layout = ({ children, user, onLogout }) => {
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-          <Menu
-            theme="dark"
-            mode="horizontal"
+          <CustomizableNavigation
+            user={user}
             selectedKeys={selectedKeys}
-            items={menuItems}
-            onClick={handleMenuClick}
-            style={{ 
-              minWidth: 200,
-              borderBottom: 'none',
-              flex: 1
-            }}
+            onMenuClick={handleMenuClick}
           />
           
           {isAdmin && (

@@ -425,37 +425,6 @@ export const saltStackAPI = {
   executeCommand: (command) => api.post('/saltstack/execute', command),
 };
 
-// Dashboard API
-export const dashboardAPI = {
-  getUserDashboard: () => api.get('/dashboard'),
-  updateDashboard: (config) => api.put('/dashboard', config),
-  resetDashboard: () => api.delete('/dashboard'),
-  
-  // 增强功能
-  getUserDashboardEnhanced: () => api.get('/dashboard/enhanced'),
-  getDashboardStats: () => api.get('/dashboard/stats'),
-  cloneDashboard: (sourceUserId) => api.post(`/dashboard/clone/${sourceUserId}`),
-  exportDashboard: () => api.get('/dashboard/export'),
-  importDashboard: (config, overwrite = false) => api.post('/dashboard/import', { config, overwrite }),
-};
-
-// 增强仪表板API
-export const enhancedDashboardAPI = {
-  // 增强仪表板功能
-  getEnhancedDashboard: () => api.get('/dashboard/enhanced'),
-  getDashboardStats: () => api.get('/dashboard/stats'),
-  cloneDashboard: (sourceUserId) => api.post(`/dashboard/clone/${sourceUserId}`),
-  exportDashboard: () => api.get('/dashboard/export'),
-  importDashboard: (dashboardData) => api.post('/dashboard/import', dashboardData),
-  
-  // 仪表板模板管理
-  getDashboardTemplates: () => api.get('/dashboard/templates'),
-  createDashboardTemplate: (template) => api.post('/dashboard/templates', template),
-  updateDashboardTemplate: (id, template) => api.put(`/dashboard/templates/${id}`, template),
-  deleteDashboardTemplate: (id) => api.delete(`/dashboard/templates/${id}`),
-  applyDashboardTemplate: (templateId) => api.post(`/dashboard/apply-template/${templateId}`),
-};
-
 // 增强用户管理API
 export const enhancedUserAPI = {
   // 增强用户管理功能
@@ -487,6 +456,14 @@ export const ldapAPI = {
   searchUsers: (query) => api.get('/ldap/search-users', { params: { query } }),
   getUserGroups: () => api.get('/ldap/groups'),
   syncGroups: () => api.post('/ldap/sync-groups'),
+};
+
+// 导航配置API
+export const navigationAPI = {
+  getUserNavigationConfig: () => api.get('/navigation/config'),
+  saveUserNavigationConfig: (config) => api.put('/navigation/config', { items: config }),
+  resetNavigationConfig: () => api.delete('/navigation/config'),
+  getDefaultNavigationConfig: () => api.get('/navigation/default'),
 };
 
 export default api;

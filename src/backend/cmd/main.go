@@ -316,32 +316,6 @@ func main() {
 			users.PUT("/:id/groups", userHandler.AdminUpdateUserGroups)
 		}
 
-		// Dashboard路由（需要认证）
-		dashboardController := controllers.NewDashboardController(database.DB)
-		enhancedDashboardController := controllers.NewEnhancedDashboardController(database.DB)
-		dashboard := api.Group("/dashboard")
-		dashboard.Use(middleware.AuthMiddlewareWithSession())
-		{
-			// 基础功能
-			dashboard.GET("", dashboardController.GetUserDashboard)
-			dashboard.PUT("", dashboardController.UpdateDashboard)
-			dashboard.DELETE("", dashboardController.ResetDashboard)
-			
-			// 增强功能
-			dashboard.GET("/enhanced", enhancedDashboardController.GetUserDashboardEnhanced)
-			dashboard.GET("/stats", enhancedDashboardController.GetDashboardStats)
-			dashboard.POST("/clone/:sourceUserId", enhancedDashboardController.CloneDashboard)
-			dashboard.GET("/export", enhancedDashboardController.ExportDashboard)
-			dashboard.POST("/import", enhancedDashboardController.ImportDashboard)
-			
-			// 模板管理
-			dashboard.GET("/templates", enhancedDashboardController.GetDashboardTemplates)
-			dashboard.POST("/templates", enhancedDashboardController.CreateDashboardTemplate)
-			dashboard.PUT("/templates/:id", enhancedDashboardController.UpdateDashboardTemplate)
-			dashboard.DELETE("/templates/:id", enhancedDashboardController.DeleteDashboardTemplate)
-			dashboard.POST("/apply-template/:templateId", enhancedDashboardController.ApplyDashboardTemplate)
-		}
-
 		// 增强用户管理路由（管理员）
 		enhancedUserController := controllers.NewEnhancedUserController(database.DB)
 		enhancedUsers := api.Group("/admin/enhanced-users")
@@ -368,8 +342,14 @@ func main() {
 			userGroups.POST("", enhancedUserController.CreateUserGroup)
 			userGroups.PUT("/:id", enhancedUserController.UpdateUserGroup)
 			userGroups.DELETE("/:id", enhancedUserController.DeleteUserGroup)
-			userGroups.POST("/:groupId/users/:userId", enhancedUserController.AddUserToGroup)
-			userGroups.DELETE("/:groupId/users/:userId", enhancedUserController.RemoveUserFromGroup)
+		}
+
+		// 用户组成员管理路由（管理员）- 使用不同的前缀避免冲突
+		groupMembers := api.Group("/group-members")
+		groupMembers.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
+		{
+			groupMembers.POST("/:groupId/:userId", enhancedUserController.AddUserToGroup)
+			groupMembers.DELETE("/:groupId/:userId", enhancedUserController.RemoveUserFromGroup)
 		}
 
 		// 角色管理路由（管理员）
@@ -611,6 +591,17 @@ func main() {
 			saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
 			saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
 			saltstack.POST("/execute", middleware.RBACMiddleware(database.DB, "saltstack", "execute"), saltStackHandler.ExecuteSaltCommand)
+		}
+
+		// 导航配置路由（需要认证）
+		navigationController := controllers.NewNavigationController()
+		navigation := api.Group("/navigation")
+		navigation.Use(middleware.AuthMiddlewareWithSession())
+		{
+			navigation.GET("/config", navigationController.GetNavigationConfig)
+			navigation.PUT("/config", navigationController.SaveNavigationConfig)
+			navigation.DELETE("/config", navigationController.ResetNavigationConfig)
+			navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
 		}
 
 		// AI 助手路由（需要认证）
