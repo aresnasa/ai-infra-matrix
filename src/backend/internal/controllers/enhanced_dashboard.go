@@ -24,6 +24,7 @@ type DashboardStatsResponse struct {
 	TotalWidgets     int                    `json:"total_widgets"`
 	ActiveWidgets    int                    `json:"active_widgets"`
 	WidgetTypes      map[string]int         `json:"widget_types"`
+	WidgetCategories map[string]int         `json:"widget_categories"`
 	UserDashboards   int                    `json:"user_dashboards"`
 	PopularWidgets   []PopularWidget        `json:"popular_widgets"`
 	RecentActivity   []DashboardActivity    `json:"recent_activity"`

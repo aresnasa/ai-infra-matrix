@@ -6,7 +6,7 @@ import {
   SettingOutlined,
   TeamOutlined,
   CloudSyncOutlined,
-  StatsOutlined 
+  BarChartOutlined 
 } from '@ant-design/icons';
 import EnhancedDashboardPage from '../pages/EnhancedDashboardPage';
 import MultiUserLDAPManagement from '../pages/MultiUserLDAPManagement';
@@ -150,7 +150,7 @@ const DashboardIntegration = () => {
         {userStats && (
           <div style={{ marginTop: 8, fontSize: 12 }}>
             <Space>
-              <StatsOutlined />
+              <BarChartOutlined />
               <span>总用户: {userStats.totalUsers || 0}</span>
               <span>在线用户: {userStats.onlineUsers || 0}</span>
               <span>LDAP用户: {userStats.ldapUsers || 0}</span>

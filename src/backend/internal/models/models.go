@@ -371,27 +371,36 @@ type RolePermission struct {
 
 // LDAPConfig LDAP配置表
 type LDAPConfig struct {
-	ID             uint      `json:"id" gorm:"primaryKey"`
-	Server         string    `json:"server" gorm:"not null;size:255"`
-	Port           int       `json:"port" gorm:"default:389"`
-	BindDN         string    `json:"bind_dn" gorm:"not null;size:500"`
-	BindPassword   string    `json:"bind_password" gorm:"not null;size:255"`
-	BaseDN         string    `json:"base_dn" gorm:"not null;size:500"`
-	UserFilter     string    `json:"user_filter" gorm:"not null;size:500"`
-	UsernameAttr   string    `json:"username_attr" gorm:"default:'uid';size:100"`
-	EmailAttr      string    `json:"email_attr" gorm:"default:'mail';size:100"`
-	NameAttr       string    `json:"name_attr" gorm:"default:'cn';size:100"`
-	UseSSL         bool      `json:"use_ssl" gorm:"default:false"`
-	SkipVerify     bool      `json:"skip_verify" gorm:"default:false"`
-	IsEnabled      bool      `json:"is_enabled" gorm:"default:false"`
+	ID               uint      `json:"id" gorm:"primaryKey"`
+	Server           string    `json:"server" gorm:"not null;size:255"`
+	Port             int       `json:"port" gorm:"default:389"`
+	BindDN           string    `json:"bind_dn" gorm:"not null;size:500"`
+	BindPassword     string    `json:"bind_password" gorm:"not null;size:255"`
+	BaseDN           string    `json:"base_dn" gorm:"not null;size:500"`
+	UserFilter       string    `json:"user_filter" gorm:"not null;size:500"`
+	UsernameAttr     string    `json:"username_attr" gorm:"default:'uid';size:100"`
+	EmailAttr        string    `json:"email_attr" gorm:"default:'mail';size:100"`
+	NameAttr         string    `json:"name_attr" gorm:"default:'cn';size:100"`
+	DisplayNameAttr  string    `json:"display_name_attr" gorm:"default:'displayName';size:100"`
+	GroupNameAttr    string    `json:"group_name_attr" gorm:"default:'cn';size:100"`
+	MemberAttr       string    `json:"member_attr" gorm:"default:'member';size:100"`
+	UseSSL           bool      `json:"use_ssl" gorm:"default:false"`
+	SkipVerify       bool      `json:"skip_verify" gorm:"default:false"`
+	IsEnabled        bool      `json:"is_enabled" gorm:"default:false"`
+	SyncEnabled      bool      `json:"sync_enabled" gorm:"default:false"`
+	AutoCreateUser   bool      `json:"auto_create_user" gorm:"default:true"`
+	AutoCreateGroup  bool      `json:"auto_create_group" gorm:"default:true"`
+	DefaultRole      string    `json:"default_role" gorm:"default:'user';size:50"`
+	SyncStatus       string    `json:"sync_status" gorm:"default:'never';size:50"`
+	LastSync         *time.Time `json:"last_sync,omitempty"`
 	// Optional OUs for user and groups management
-	UsersOU        string    `json:"users_ou" gorm:"size:255"`
-	GroupsOU       string    `json:"groups_ou" gorm:"size:255"`
+	UsersOU         string    `json:"users_ou" gorm:"size:255"`
+	GroupsOU        string    `json:"groups_ou" gorm:"size:255"`
 	// Optional group DN for admins and the member attribute name (e.g., member or memberUid)
-	AdminGroupDN   string    `json:"admin_group_dn" gorm:"size:500"`
-	GroupMemberAttr string   `json:"group_member_attr" gorm:"size:100"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	AdminGroupDN    string    `json:"admin_group_dn" gorm:"size:500"`
+	GroupMemberAttr string    `json:"group_member_attr" gorm:"size:100"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // LDAPUser LDAP用户信息
@@ -415,6 +424,38 @@ type LDAPGroup struct {
 type LDAPSyncOptions struct {
 	DryRun    bool `json:"dry_run"`
 	BatchSize int  `json:"batch_size"`
+	ForceUpdate     bool     `json:"force_update"`      // 强制更新已存在用户
+	SyncGroups      bool     `json:"sync_groups"`       // 同步用户组
+	DeleteMissing   bool     `json:"delete_missing"`    // 删除LDAP中不存在的用户
+	UserFilter      string   `json:"user_filter"`       // 自定义用户过滤器
+	SelectedUsers   []string `json:"selected_users"`    // 仅同步指定用户
+}
+
+// LDAPSyncResult LDAP同步结果
+type LDAPSyncResult struct {
+	Created   int                     `json:"created"`
+	Updated   int                     `json:"updated"`
+	Skipped   int                     `json:"skipped"`
+	Errors    int                     `json:"errors"`
+	Details   []LDAPSyncDetail        `json:"details"`
+	StartTime time.Time               `json:"start_time"`
+	EndTime   time.Time               `json:"end_time"`
+	Duration  string                  `json:"duration"`
+}
+
+// LDAPSyncDetail LDAP同步详情
+type LDAPSyncDetail struct {
+	Action   string `json:"action"`   // created, updated, skipped, error
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Message  string `json:"message"`
+}
+
+// LDAPTestResponse LDAP连接测试响应
+type LDAPTestResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
 }
 
 // LDAPConfigRequest LDAP配置请求

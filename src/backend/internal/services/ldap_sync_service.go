@@ -1,13 +1,14 @@
 package services
 
 import (
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
-	"crypto/rand"
-	"encoding/hex"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 
@@ -72,7 +73,7 @@ func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
 	}
 
 	// 检查LDAP是否启用
-	config, err := s.ldapService.GetLDAPConfig()
+	config, err := s.ldapService.GetConfig()
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("获取LDAP配置失败: %v", err))
 		return result, err
@@ -85,8 +86,8 @@ func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
 
 	log.Printf("开始LDAP同步，服务器: %s:%d", config.Server, config.Port)
 
-	// 创建LDAP连接
-	conn, err := s.ldapService.createLDAPConnection(config.Server, config.Port, config.UseSSL, config.SkipVerify)
+	// 创建LDAP连接 - 使用本地函数而不是调用ldapService的私有方法
+	conn, err := s.createLDAPConnection(config.Server, config.Port, config.UseSSL, config.SkipVerify)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("连接LDAP服务器失败: %v", err))
 		return result, err
@@ -464,4 +465,25 @@ func (s *LDAPSyncService) GetSyncHistory(limit int) []*SyncStatus {
 	history := make([]*SyncStatus, limit)
 	copy(history, s.syncHistory[:limit])
 	return history
+}
+
+// createLDAPConnection 创建LDAP连接
+func (s *LDAPSyncService) createLDAPConnection(server string, port int, useSSL, skipVerify bool) (*ldap.Conn, error) {
+	var conn *ldap.Conn
+	var err error
+	
+	if useSSL {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: skipVerify,
+		}
+		conn, err = ldap.DialTLS("tcp", fmt.Sprintf("%s:%d", server, port), tlsConfig)
+	} else {
+		conn, err = ldap.Dial("tcp", fmt.Sprintf("%s:%d", server, port))
+	}
+	
+	if err != nil {
+		return nil, fmt.Errorf("连接LDAP服务器失败: %v", err)
+	}
+	
+	return conn, nil
 }

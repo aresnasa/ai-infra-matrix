@@ -2,7 +2,6 @@ package services
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -354,4 +353,170 @@ func (ls *LDAPService) SearchUsers(query string) ([]models.LDAPUser, error) {
 	}
 	
 	return ls.searchLDAPUsers(config, options)
+}
+
+// GetLDAPConfig 获取LDAP配置 (兼容性方法)
+func (ls *LDAPService) GetLDAPConfig() (*models.LDAPConfig, error) {
+	return ls.GetConfig()
+}
+
+// UpdateLDAPConfig 更新LDAP配置 (兼容性方法)
+func (ls *LDAPService) UpdateLDAPConfig(req *models.LDAPConfigRequest) (*models.LDAPConfig, error) {
+	config := &models.LDAPConfig{
+		Server:       req.Server,
+		Port:         req.Port,
+		BindDN:       req.BindDN,
+		BindPassword: req.BindPassword,
+		BaseDN:       req.BaseDN,
+		UserFilter:   req.UserFilter,
+		UsernameAttr: req.UsernameAttr,
+		EmailAttr:    req.EmailAttr,
+		NameAttr:     req.NameAttr,
+		UseSSL:       req.UseSSL,
+		SkipVerify:   req.SkipVerify,
+		IsEnabled:    req.IsEnabled,
+		UsersOU:      req.UsersOU,
+		GroupsOU:     req.GroupsOU,
+		AdminGroupDN: req.AdminGroupDN,
+		GroupMemberAttr: req.GroupMemberAttr,
+	}
+	
+	err := ls.UpdateConfig(config)
+	if err != nil {
+		return nil, err
+	}
+	
+	return config, nil
+}
+
+// TestLDAPConnection 测试LDAP连接
+func (ls *LDAPService) TestLDAPConnection(req *models.LDAPTestRequest) error {
+	config := &models.LDAPConfig{
+		Server:       req.Server,
+		Port:         req.Port,
+		BindDN:       req.BindDN,
+		BindPassword: req.BindPassword,
+		BaseDN:       req.BaseDN,
+		UserFilter:   req.UserFilter,
+		UseSSL:       req.UseSSL,
+		SkipVerify:   req.SkipVerify,
+	}
+	
+	response := ls.TestConnection(config)
+	if !response.Success {
+		return fmt.Errorf(response.Message)
+	}
+	
+	return nil
+}
+
+// AuthenticateUser 认证用户
+func (ls *LDAPService) AuthenticateUser(username, password string) (*models.LDAPUser, error) {
+	config, err := ls.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	
+	if !config.IsEnabled {
+		return nil, fmt.Errorf("LDAP认证未启用")
+	}
+	
+	// 创建LDAP连接
+	conn, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", config.Server, config.Port))
+	if err != nil {
+		return nil, fmt.Errorf("连接LDAP服务器失败: %v", err)
+	}
+	defer conn.Close()
+	
+	// 搜索用户
+	searchRequest := ldap.NewSearchRequest(
+		config.BaseDN,
+		ldap.ScopeWholeSubtree,
+		ldap.NeverDerefAliases,
+		0,
+		0,
+		false,
+		fmt.Sprintf("(&%s(%s=%s))", config.UserFilter, config.UsernameAttr, username),
+		[]string{config.UsernameAttr, config.EmailAttr, config.NameAttr, "dn"},
+		nil,
+	)
+	
+	searchResult, err := conn.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("搜索用户失败: %v", err)
+	}
+	
+	if len(searchResult.Entries) == 0 {
+		return nil, fmt.Errorf("用户不存在")
+	}
+	
+	userEntry := searchResult.Entries[0]
+	userDN := userEntry.DN
+	
+	// 尝试绑定用户
+	err = conn.Bind(userDN, password)
+	if err != nil {
+		return nil, fmt.Errorf("用户认证失败: %v", err)
+	}
+	
+	// 构建用户对象
+	ldapUser := &models.LDAPUser{
+		DN:          userDN,
+		Username:    userEntry.GetAttributeValue(config.UsernameAttr),
+		Email:       userEntry.GetAttributeValue(config.EmailAttr),
+		Name:        userEntry.GetAttributeValue(config.NameAttr),
+		DisplayName: userEntry.GetAttributeValue(config.DisplayNameAttr),
+	}
+	
+	return ldapUser, nil
+}
+
+// IsUserAdmin 检查用户是否为管理员
+func (ls *LDAPService) IsUserAdmin(ldapUser *models.LDAPUser) bool {
+	config, err := ls.GetConfig()
+	if err != nil {
+		return false
+	}
+	
+	if config.AdminGroupDN == "" {
+		return false
+	}
+	
+	// 创建LDAP连接
+	conn, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", config.Server, config.Port))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	
+	// 绑定管理员账户
+	err = conn.Bind(config.BindDN, config.BindPassword)
+	if err != nil {
+		return false
+	}
+	
+	// 搜索管理员组
+	searchRequest := ldap.NewSearchRequest(
+		config.AdminGroupDN,
+		ldap.ScopeBaseObject,
+		ldap.NeverDerefAliases,
+		0,
+		0,
+		false,
+		fmt.Sprintf("(%s=%s)", config.GroupMemberAttr, ldapUser.DN),
+		[]string{config.GroupMemberAttr},
+		nil,
+	)
+	
+	searchResult, err := conn.Search(searchRequest)
+	if err != nil {
+		return false
+	}
+	
+	return len(searchResult.Entries) > 0
+}
+
+// CreateUser 创建LDAP用户 (暂不实现，返回错误)
+func (ls *LDAPService) CreateUser(username, password, email, displayName, department string) error {
+	return fmt.Errorf("LDAP用户创建功能暂未实现")
 }
