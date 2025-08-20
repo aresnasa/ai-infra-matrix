@@ -1,0 +1,34 @@
+FROM saltstack/salt:3006-alpine
+
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
+
+# Install additional packages
+RUN apk add --no-cache \
+    bash \
+    curl \
+    python3 \
+    py3-pip
+
+# Create necessary directories
+RUN mkdir -p /etc/salt/minion.d \
+    /var/cache/salt \
+    /var/log/salt
+
+# Copy minion configuration template
+COPY salt-config/minion-template/ /etc/salt/minion.d/
+
+# Set proper permissions
+RUN chown -R salt:salt /etc/salt /var/cache/salt /var/log/salt
+
+# Start script
+COPY scripts/start-minion.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/start-minion.sh
+
+USER salt
+
+ENTRYPOINT ["/usr/local/bin/start-minion.sh"]

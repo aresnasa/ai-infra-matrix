@@ -49,6 +49,10 @@ type RegisterRequest struct {
 	Username string `json:"username" binding:"required,min=3,max=50"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
+	// Optional: department/team for LDAP group and K8s namespace mapping
+	Department string `json:"department" binding:"omitempty"`
+	// Optional desired role; maps to RBAC and K8s ClusterRole (viewer|user|admin)
+	Role       string `json:"role" binding:"omitempty,oneof=viewer user admin"`
 }
 
 // ChangePasswordRequest 修改密码请求结构
@@ -380,6 +384,12 @@ type LDAPConfig struct {
 	UseSSL         bool      `json:"use_ssl" gorm:"default:false"`
 	SkipVerify     bool      `json:"skip_verify" gorm:"default:false"`
 	IsEnabled      bool      `json:"is_enabled" gorm:"default:false"`
+	// Optional OUs for user and groups management
+	UsersOU        string    `json:"users_ou" gorm:"size:255"`
+	GroupsOU       string    `json:"groups_ou" gorm:"size:255"`
+	// Optional group DN for admins and the member attribute name (e.g., member or memberUid)
+	AdminGroupDN   string    `json:"admin_group_dn" gorm:"size:500"`
+	GroupMemberAttr string   `json:"group_member_attr" gorm:"size:100"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -407,6 +417,10 @@ type LDAPConfigRequest struct {
 	UseSSL       bool   `json:"use_ssl"`
 	SkipVerify   bool   `json:"skip_verify"`
 	IsEnabled    bool   `json:"is_enabled"`
+	UsersOU      string `json:"users_ou"`
+	GroupsOU     string `json:"groups_ou"`
+	AdminGroupDN string `json:"admin_group_dn"`
+	GroupMemberAttr string `json:"group_member_attr"`
 }
 
 // LDAPTestRequest LDAP测试连接请求

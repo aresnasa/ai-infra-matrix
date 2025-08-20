@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>JupyterHub前端访问测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .test-container { max-width: 800px; margin: 0 auto; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .test-button { padding: 10px 20px; margin: 10px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .test-button:hover { background: #40a9ff; }
+        .result { margin: 10px 0; padding: 10px; background: #f0f0f0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 JupyterHub前端访问测试</h1>
+        
+        <div class="test-section">
+            <h3>1. 模拟前端Layout菜单点击</h3>
+            <button class="test-button" onclick="testLayoutMenuClick()">
+                点击JupyterHub菜单项
+            </button>
+            <div id="layout-result" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2. 模拟JupyterHubSSO组件访问</h3>
+            <button class="test-button" onclick="testJupyterHubSSO()">
+                使用JupyterHubSSO组件访问
+            </button>
+            <div id="sso-result" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3. 模拟UnifiedJupyterHubIntegration访问</h3>
+            <button class="test-button" onclick="testUnifiedIntegration()">
+                使用统一集成组件访问
+            </button>
+            <div id="unified-result" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>4. 直接URL访问测试</h3>
+            <button class="test-button" onclick="testDirectAccess()">
+                直接访问 /jupyterhub
+            </button>
+            <div id="direct-result" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        // 模拟localStorage中的token (用于测试)
+        const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.token';
+        
+        function logResult(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'success' ? '#52c41a' : type === 'error' ? '#f5222d' : '#1890ff';
+            element.innerHTML = `<span style="color: ${color}">[${timestamp}] ${message}</span>`;
+        }
+        
+        function testLayoutMenuClick() {
+            logResult('layout-result', '模拟Layout组件handleMenuClick函数...', 'info');
+            
+            // 模拟Layout组件中的handleMenuClick逻辑
+            const token = localStorage.getItem('token');
+            setTimeout(() => {
+                if (token) {
+                    logResult('layout-result', '检测到token，将跳转到: /jupyterhub-authenticated', 'success');
+                    // 实际代码: window.location.href = '/jupyterhub-authenticated';
+                } else {
+                    logResult('layout-result', '未检测到token，将跳转到: /sso/?redirect_uri=/jupyterhub-authenticated', 'success');
+                    // 实际代码: window.location.href = '/sso/?redirect_uri=/jupyterhub-authenticated';
+                }
+            }, 500);
+        }
+        
+        function testJupyterHubSSO() {
+            logResult('sso-result', '模拟JupyterHubSSO组件handleJupyterHubAccess...', 'info');
+            
+            // 模拟认证检查
+            setTimeout(async () => {
+                try {
+                    // 模拟checkSSOStatus函数
+                    const token = localStorage.getItem('token');
+                    if (!token) {
+                        logResult('sso-result', '未找到token，将跳转到SSO登录', 'success');
+                        return;
+                    }
+                    
+                    // 模拟token验证 (实际会调用API)
+                    logResult('sso-result', '认证成功，将跳转到: /jupyterhub-authenticated', 'success');
+                    
+                } catch (error) {
+                    logResult('sso-result', '认证失败，将跳转到SSO登录', 'error');
+                }
+            }, 500);
+        }
+        
+        function testUnifiedIntegration() {
+            logResult('unified-result', '模拟UnifiedJupyterHubIntegration组件handleUnifiedLogin...', 'info');
+            
+            setTimeout(() => {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    logResult('unified-result', '未找到token，将跳转到: /sso/?redirect_uri=/jupyterhub-authenticated', 'success');
+                } else {
+                    logResult('unified-result', '找到token，将跳转到: /jupyterhub-authenticated', 'success');
+                }
+            }, 500);
+        }
+        
+        function testDirectAccess() {
+            logResult('direct-result', '测试直接访问 /jupyterhub...', 'info');
+            
+            fetch('/jupyterhub', { method: 'HEAD' })
+                .then(response => {
+                    if (response.redirected) {
+                        logResult('direct-result', `服务器重定向到: ${response.url}`, 'success');
+                    } else {
+                        logResult('direct-result', `返回状态: ${response.status}`, 'info');
+                    }
+                })
+                .catch(error => {
+                    logResult('direct-result', `请求失败: ${error.message}`, 'error');
+                });
+        }
+        
+        // 页面加载时显示当前token状态
+        window.onload = function() {
+            const token = localStorage.getItem('token');
+            if (token) {
+                console.log('当前localStorage中有token:', token.substring(0, 20) + '...');
+            } else {
+                console.log('当前localStorage中没有token');
+            }
+        };
+        
+        // 添加一个设置测试token的按钮
+        document.querySelector('.test-container').insertAdjacentHTML('afterbegin', `
+            <div class="test-section">
+                <h3>🔧 测试工具</h3>
+                <button class="test-button" onclick="setTestToken()">设置测试Token</button>
+                <button class="test-button" onclick="clearToken()">清除Token</button>
+                <div id="token-status" class="result">Token状态: ${localStorage.getItem('token') ? '已设置' : '未设置'}</div>
+            </div>
+        `);
+        
+        function setTestToken() {
+            localStorage.setItem('token', mockToken);
+            document.getElementById('token-status').innerHTML = 'Token状态: 已设置 ✅';
+        }
+        
+        function clearToken() {
+            localStorage.removeItem('token');
+            document.getElementById('token-status').innerHTML = 'Token状态: 未设置 ❌';
+        }
+    </script>
+</body>
+</html>

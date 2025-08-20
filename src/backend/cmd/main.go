@@ -23,7 +23,7 @@ import (
 	"github.com/swaggo/gin-swagger"
 )
 
-// @title Ansible Playbook Generator API
+// @title AI-Infra-Matrix API
 // @version 1.0
 // @description 用于生成Ansible Playbook的REST API服务
 // @host localhost:8082
@@ -79,6 +79,51 @@ func main() {
 
 	// 设置JWT密钥
 	jwt.SetSecret(cfg.JWTSecret)
+
+	// 启动Gitea后台同步（如果启用）
+	if cfg.Gitea.Enabled && cfg.GiteaSync.Enabled {
+		interval := time.Duration(cfg.GiteaSync.IntervalSeconds) * time.Second
+		giteaSvc := services.NewGiteaService(cfg)
+		logrus.WithFields(logrus.Fields{"interval": interval}).Info("Starting background Gitea sync loop")
+		go func() {
+			// 启动延迟，等待依赖稳定
+			time.Sleep(5 * time.Second)
+			for {
+				if !cfg.Gitea.Enabled || !cfg.GiteaSync.Enabled {
+					return
+				}
+				if _, _, _, err := giteaSvc.SyncAllUsers(); err != nil {
+					logrus.WithError(err).Warn("Background Gitea sync failed")
+				} else {
+					logrus.Info("Background Gitea sync completed")
+				}
+				time.Sleep(interval)
+			}
+		}()
+	}
+
+	// 启动后台LDAP同步（如果启用）
+	if cfg.LDAP.Enabled && cfg.LDAPSync.Enabled {
+		interval := time.Duration(cfg.LDAPSync.IntervalSeconds) * time.Second
+		ldapService := services.NewLDAPService(database.DB)
+		ldapSync := services.NewLDAPSyncService(database.DB, ldapService, services.NewUserService(), rbacService)
+		logrus.WithFields(logrus.Fields{"interval": interval}).Info("Starting background LDAP sync loop")
+		go func() {
+			// 启动延迟，等待依赖稳定
+			time.Sleep(5 * time.Second)
+			for {
+				if !cfg.LDAP.Enabled || !cfg.LDAPSync.Enabled {
+					return
+				}
+				if _, err := ldapSync.SyncLDAPUsersAndGroups(); err != nil {
+					logrus.WithError(err).Warn("Background LDAP sync failed")
+				} else {
+					logrus.Info("Background LDAP sync completed")
+				}
+				time.Sleep(interval)
+			}
+		}()
+	}
 
 	// 创建必要的目录
 	os.MkdirAll("outputs", 0755)
@@ -214,19 +259,51 @@ func main() {
 	
 	// 鉴权路由（公开）
 	userHandler := handlers.NewUserHandler(database.DB)
+	// JupyterHub认证处理器（在多个地方使用）
+	jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
+	
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/login", userHandler.Login)
-			auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
-			auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
-			auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
-			auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
-			auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
-			// JupyterHub单点登录令牌生成
-			auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
-			// JWT令牌验证（用于JupyterHub认证器）
-			auth.POST("/verify-token", userHandler.VerifyJWT)
+		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
+		auth.POST("/refresh", userHandler.RefreshToken)
+		// 兼容前端/SSO刷新端点
+		auth.POST("/refresh-token", userHandler.RefreshToken)
+		auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
+		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
+		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
+		auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
+		// JupyterHub单点登录令牌生成
+		auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
+		// JWT令牌验证（用于JupyterHub认证器）
+		auth.POST("/verify-token", userHandler.VerifyJWT)
+		// 简单令牌验证（用于SSO认证）
+		auth.GET("/verify", middleware.AuthMiddleware(), userHandler.VerifyTokenSimple)
+		
+		// JupyterHub认证路由
+		// JupyterHub令牌生成和验证
+		auth.POST("/jupyterhub-login", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.GenerateJupyterHubLoginToken)
+		auth.POST("/verify-jupyterhub-token", jupyterHubAuthHandler.VerifyJupyterHubToken)
+		
+		// JupyterHub会话管理
+		auth.GET("/verify-jupyterhub-session", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.VerifyJupyterHubSession)
+		auth.POST("/refresh-jupyterhub-token", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.RefreshJupyterHubToken)
+	}
+
+		// JupyterHub前端访问路由
+		jupyter := api.Group("/jupyter")
+		{
+			// 需要认证的路由
+			jupyterAuth := jupyter.Group("")
+			jupyterAuth.Use(middleware.AuthMiddlewareWithSession())
+			{
+				jupyterAuth.POST("/access", jupyterHubAuthHandler.HandleJupyterHubAccess)
+				jupyterAuth.GET("/status", jupyterHubAuthHandler.GetJupyterHubAccessStatus)
+			}
+			
+			// 公共路由（用于检查服务状态）
+			jupyter.GET("/health", jupyterHubAuthHandler.GetJupyterHubStatus)
 		}
 
 		// 用户管理路由（管理员）
@@ -340,6 +417,20 @@ func main() {
 		admin := api.Group("/admin")
 		admin.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminOnlyMiddleware(database.DB))
 		{
+			// 手动触发 Gitea 用户同步
+			admin.POST("/sync-gitea-users", func(c *gin.Context) {
+				if !cfg.Gitea.Enabled {
+					c.JSON(400, gin.H{"status": "disabled", "message": "Gitea integration disabled"})
+					return
+				}
+				giteaSvc := services.NewGiteaService(cfg)
+				created, updated, skipped, err := giteaSvc.SyncAllUsers()
+				if err != nil {
+					c.JSON(500, gin.H{"status": "error", "error": err.Error(), "created": created, "updated": updated, "skipped": skipped})
+					return
+				}
+				c.JSON(200, gin.H{"status": "ok", "created": created, "updated": updated, "skipped": skipped})
+			})
 			// 用户管理
 			admin.GET("/users", adminController.GetAllUsers)
 			admin.GET("/users/:id", adminController.GetUserDetail)
@@ -396,6 +487,28 @@ func main() {
 			k8s.DELETE("/clusters/:id", k8sController.DeleteCluster)
 			k8s.POST("/clusters/:id/test", k8sController.TestConnection)
 			k8s.GET("/clusters/:id/info", k8sController.GetClusterInfo)
+
+			// 通用资源发现与CRUD接口
+			kres := controllers.NewKubernetesResourcesController()
+			// 资源发现与命名空间列表
+			k8s.GET("/clusters/:id/discovery", kres.DiscoverResources)
+			k8s.GET("/clusters/:id/namespaces", kres.ListNamespaces)
+			// 命名空间内资源
+			k8s.GET("/clusters/:id/namespaces/:namespace/resources/:resource", kres.ListResources)
+			k8s.GET("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.GetResource)
+			k8s.POST("/clusters/:id/namespaces/:namespace/resources/:resource", kres.CreateResource)
+			k8s.PUT("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.UpdateResource)
+			k8s.PATCH("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.PatchResource)
+			k8s.DELETE("/clusters/:id/namespaces/:namespace/resources/:resource/:name", kres.DeleteResource)
+			// 集群级资源
+			k8s.GET("/clusters/:id/cluster-resources/:resource", kres.ListClusterResources)
+			k8s.GET("/clusters/:id/cluster-resources/:resource/:name", kres.GetClusterResource)
+			k8s.POST("/clusters/:id/cluster-resources/:resource", kres.CreateClusterResource)
+			k8s.PUT("/clusters/:id/cluster-resources/:resource/:name", kres.UpdateClusterResource)
+			k8s.PATCH("/clusters/:id/cluster-resources/:resource/:name", kres.PatchClusterResource)
+			k8s.DELETE("/clusters/:id/cluster-resources/:resource/:name", kres.DeleteClusterResource)
+			// 批量并发查询
+			k8s.GET("/clusters/:id/namespaces/:namespace/resources:batch", kres.BatchListResources)
 		}
 
 		// Ansible 执行管理路由（需要认证和RBAC权限）
@@ -414,6 +527,16 @@ func main() {
 		// JupyterHub 路由（需要认证和RBAC权限）
 		jupyterHubController := controllers.NewJupyterHubController()
 		jupyterHubController.RegisterRoutes(api)
+
+		// Slurm 路由（需要认证）
+		slurmController := controllers.NewSlurmController()
+		slurm := api.Group("/slurm")
+		slurm.Use(middleware.AuthMiddlewareWithSession())
+		{
+			slurm.GET("/summary", slurmController.GetSummary)
+			slurm.GET("/nodes", slurmController.GetNodes)
+			slurm.GET("/jobs", slurmController.GetJobs)
+		}
 
 		// AI 助手路由（需要认证）
 		aiController := controllers.NewAIAssistantController()

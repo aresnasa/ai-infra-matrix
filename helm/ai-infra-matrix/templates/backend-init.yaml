@@ -1,0 +1,81 @@
+{{- if .Values.backendInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-backend-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "backend-init" | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "ai-infra-matrix.selectorLabels" . | nindent 8 }}
+        {{- include "ai-infra-matrix.componentLabels" "backend-init" | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ai-infra-matrix.serviceAccountName" . }}
+      restartPolicy: Never
+      containers:
+      - name: backend-init
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.backendInit.image.repository }}:{{ .Values.backendInit.image.tag }}"
+        imagePullPolicy: {{ .Values.backendInit.image.pullPolicy }}
+        command: ["./init"]
+        env:
+        - name: DB_HOST
+          value: "{{ include "ai-infra-matrix.fullname" . }}-postgresql"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          value: "{{ include "ai-infra-matrix.fullname" . }}-redis-master"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "ai-infra-matrix.fullname" . }}-secrets
+              key: REDIS_PASSWORD
+        - name: LDAP_SERVER
+          value: "{{ include "ai-infra-matrix.fullname" . }}-openldap"
+        - name: LDAP_PORT
+          value: "389"
+        - name: LOG_LEVEL
+          value: {{ .Values.backend.env.LOG_LEVEL | quote }}
+        - name: TZ
+          value: "Asia/Shanghai"
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

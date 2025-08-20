@@ -1,369 +1,295 @@
 # AI Infrastructure Matrix
 
-> 统一的AI基础设施平台，集成Ansible Playbook生成、JupyterHub、身份验证和DevOps工具链
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker](https://img.shields.io/badge/Docker-20.10+-blue.svg)](https://www.docker.com/)
+[![Version](https://img.shields.io/badge/Version-v0.0.3.3-green.svg)](https://github.com/aresnasa/ai-infra-matrix)
 
-## 🎯 项目概述
+> 企业级AI基础设施平台 - 集成机器学习、开发协作与统一认证
 
-AI Infrastructure Matrix 是一个完整的AI基础设施解决方案，通过统一的Nginx反向代理提供：
+## 🌟 项目简介
 
-- **Ansible Playbook Generator**: 智能的基础设施代码生成器
-- **JupyterHub**: 多用户Jupyter环境，统一身份验证
-- **DevOps工具链**: LDAP、PostgreSQL、Redis等完整技术栈
-- **统一访问入口**: 通过单一端口(8080)访问所有服务
+AI Infrastructure Matrix 是一个全栈AI基础设施平台，提供统一的机器学习开发环境、代码协作平台和企业级认证系统。通过容器化架构，实现了开箱即用的AI开发和部署解决方案。
 
-## 🚀 快速开始
+### 核心特性
 
-### 1. 系统要求
+- 🔐 **统一身份认证** - 基于JWT的SSO系统，支持多服务单点登录
+- 🐍 **JupyterHub集成** - 企业级Jupyter环境，支持GPU计算和分布式训练
+- 🔧 **代码协作平台** - 集成Gitea，提供完整的Git工作流
+- 🚀 **容器化部署** - Docker Compose一键部署，支持多环境配置
+- 📊 **监控与日志** - 完整的健康检查和日志管理系统
+- 🌐 **多注册表支持** - 支持Docker Hub、阿里云ACR等多种镜像仓库
 
-- Docker >= 20.10
-- Docker Compose >= 2.0
-- 8GB+ RAM 推荐
-- macOS/Linux/Windows (WSL2)
-
-### 2. 一键部署
-
-```bash
-# 克隆项目
-git clone <your-repo-url>
-cd ai-infra-matrix
-
-# 启动基础服务 + JupyterHub
-./deploy.sh up --with-jupyterhub
-
-# 或启动完整开发环境
-./deploy.sh dev
-```
-
-### 3. 访问地址
-
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 🏠 **主页** | <http://localhost:8080> | React前端界面 |
-| 🔗 **API** | <http://localhost:8080/api> | 后端REST API |
-| 📊 **JupyterHub** | <http://localhost:8080/jupyter> | 多用户Jupyter环境 |
-| � **API文档** | <http://localhost:8080/swagger> | Swagger API文档 |
-| 🔧 **LDAP管理** | <http://localhost:8080/ldap-admin> | LDAP管理界面 (--with-admin) |
-| � **Redis监控** | <http://localhost:8080/redis-monitor> | Redis监控界面 (--with-monitoring) |
-
-> 注意：所有服务都通过Nginx统一入口访问，无需记忆多个端口
-
-### 4. 默认凭据
-
-```bash
-# JupyterHub管理员
-用户名: admin
-密码: admin
-
-# 数据库
-用户名: postgres
-密码: postgres
-
-# Redis
-密码: ansible-redis-password
-```
-
-## 🏗️ 架构设计
+## 🏗️ 系统架构
 
 ```mermaid
 graph TB
-    User[用户] --> Nginx[Nginx反向代理<br/>:8080]
+    subgraph "外部访问"
+        Client[客户端浏览器]
+    end
     
-    Nginx --> Frontend[React前端<br/>:80]
-    Nginx --> Backend[Go API<br/>:8082]
-    Nginx --> JupyterHub[JupyterHub<br/>:8000]
+    subgraph "反向代理层"
+        Nginx[Nginx - 端口8080]
+    end
     
-    Backend --> PostgreSQL[(PostgreSQL<br/>:5432)]
-    Backend --> Redis[(Redis<br/>:6379)]
-    Backend --> LDAP[OpenLDAP<br/>:389]
+    subgraph "应用服务层"
+        Frontend[前端应用<br/>React SPA]
+        Backend[后端API<br/>Python FastAPI]
+        JupyterHub[JupyterHub<br/>机器学习平台]
+        Gitea[Gitea<br/>代码仓库]
+    end
     
-    JupyterHub --> PostgreSQL
-    JupyterHub --> Redis
-    JupyterHub --> Docker[Docker Spawner]
+    subgraph "数据存储层"
+        Postgres[(PostgreSQL<br/>主数据库)]
+        Redis[(Redis<br/>缓存/会话)]
+        Storage[持久化存储<br/>数据卷]
+    end
     
-    Docker --> Notebook1[Jupyter Notebook 1]
-    Docker --> Notebook2[Jupyter Notebook 2]
-    Docker --> NotebookN[Jupyter Notebook N]
+    Client --> Nginx
+    Nginx --> Frontend
+    Nginx --> Backend
+    Nginx --> JupyterHub
+    Nginx --> Gitea
+    
+    Backend --> Postgres
+    Backend --> Redis
+    JupyterHub --> Postgres
+    Gitea --> Postgres
+    
+    JupyterHub --> Storage
+    Gitea --> Storage
 ```
 
-## 🔧 管理命令
+## 🚀 快速开始
 
-### 服务管理
+### 前置要求
+
+- Docker 20.10+
+- Docker Compose 2.0+
+- Git
+- 4GB+ 可用内存
+
+### 一键部署
+
+```bash
+# 克隆项目
+git clone https://github.com/aresnasa/ai-infra-matrix.git
+cd ai-infra-matrix
+
+# 开发环境部署
+./scripts/build.sh dev --up --test
+
+# 生产环境部署
+./scripts/build.sh prod --up --test
+```
+
+### 访问服务
+
+部署完成后，通过浏览器访问：
+
+- 🌐 **主页**: http://localhost:8080
+- 🔐 **SSO登录**: http://localhost:8080/sso/
+- 📊 **JupyterHub**: http://localhost:8080/jupyter
+- 🗃️ **Gitea**: http://localhost:8080/gitea/
+
+默认管理员账号：`admin` / `admin123`
+
+## 📚 文档导航
+
+### 用户文档
+- [快速开始指南](docs/QUICK_START.md)
+- [用户操作手册](docs/USER_GUIDE.md)
+- [JupyterHub使用指南](docs/JUPYTERHUB_UNIFIED_AUTH_GUIDE.md)
+
+### 开发文档
+- [开发环境搭建](docs/DEVELOPMENT_SETUP.md)
+- [API文档](docs/API_REFERENCE.md)
+- [调试工具使用](docs/DEBUG_TOOLS.md)
+
+### 部署文档
+- [Docker Hub推送指南](docs/DOCKER-HUB-PUSH.md)
+- [阿里云ACR部署指南](docs/ALIBABA_CLOUD_ACR_GUIDE.md)
+- [Kubernetes部署](docs/KUBERNETES_DEPLOYMENT.md)
+- [Helm Chart指南](docs/HELM_GUIDE.md)
+
+### 运维文档
+- [系统监控](docs/MONITORING.md)
+- [故障排除](docs/TROUBLESHOOTING.md)
+- [备份恢复](docs/BACKUP_RECOVERY.md)
+
+### 架构文档
+- [系统架构设计](docs/ARCHITECTURE.md)
+- [认证系统设计](docs/AUTHENTICATION.md)
+- [项目结构说明](docs/PROJECT_STRUCTURE.md)
+
+## 🛠️ 构建与部署
+
+### 基本构建
+
+```bash
+# 开发模式构建
+./scripts/build.sh dev
+
+# 生产模式构建
+./scripts/build.sh prod --version v0.0.3.3
+```
+
+### 镜像推送
+
+```bash
+# 推送到Docker Hub
+./scripts/build.sh prod --registry docker.io/username --push --version v0.0.3.3
+
+# 推送到阿里云ACR
+./scripts/build.sh prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3
+
+# 推送依赖镜像
+./scripts/build.sh prod --push-deps --deps-namespace username
+```
+
+### 多架构构建
+
+```bash
+# 多架构构建并推送
+./scripts/build.sh prod --multi-arch --registry docker.io/username --push --version v0.0.3.3
+```
+
+## 🎯 主要功能
+
+### 🔐 统一身份认证系统
+- JWT令牌管理
+- 跨服务单点登录
+- 角色权限控制
+- 会话管理
+
+### 📊 机器学习平台
+- JupyterHub多用户环境
+- GPU资源支持
+- 自定义镜像管理
+- 分布式计算支持
+
+### 🔧 开发协作
+- Git代码仓库管理
+- 项目协作工作流
+- 代码审查流程
+- 持续集成支持
+
+### 🚀 容器化平台
+- Docker Compose编排
+- 多环境配置管理
+- 健康检查监控
+- 自动化部署
+
+## 🔧 配置管理
+
+### 环境变量配置
+
+```bash
+# 开发环境
+cp .env.example .env
+vi .env
+
+# 生产环境  
+cp .env.example .env.prod
+vi .env.prod
+```
+
+### 关键配置项
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `POSTGRES_PASSWORD` | 数据库密码 | `ai_infra_secure_pass` |
+| `JWT_SECRET_KEY` | JWT签名密钥 | 随机生成 |
+| `ADMIN_USER` | 管理员用户名 | `admin` |
+| `ADMIN_PASSWORD` | 管理员密码 | `admin123` |
+
+## 🧪 测试与验证
+
+### 健康检查
+
+```bash
+# 运行健康检查
+./scripts/test-health.sh
+
+# 完整系统测试
+./scripts/test-integration-full.sh
+```
+
+### 单元测试
+
+```bash
+# 后端测试
+cd src/backend && python -m pytest
+
+# 前端测试
+cd src/frontend && npm test
+```
+
+## 📈 监控与维护
+
+### 服务状态监控
 
 ```bash
 # 查看服务状态
-./deploy.sh status
+docker compose ps
 
-# 查看日志
-./deploy.sh logs
-./deploy.sh logs --service nginx
-
-# 重启服务
-./deploy.sh restart
-./deploy.sh restart --service backend
-
-# 健康检查
-./deploy.sh health
+# 查看服务日志
+docker compose logs -f [服务名]
 ```
 
-### 开发模式
+### 数据备份
 
 ```bash
-# 启动开发环境（包含管理界面和监控）
-./deploy.sh dev
+# 数据库备份
+./scripts/backup-database.sh
 
-# 启动生产环境
-./deploy.sh prod
-
-# 重新构建镜像
-./deploy.sh build
-
-# 更新并重新部署
-./deploy.sh update
-```
-
-### 系统清理
-
-```bash
-# 停止所有服务
-./deploy.sh down
-
-# 清理所有资源（谨慎使用）
-./deploy.sh clean --force
-```
-
-## 📁 项目结构
-
-```text
-ai-infra-matrix/
-├── deploy.sh                 # 🚀 统一部署脚本
-├── docker-compose.yml        # 🐳 主配置文件
-├── .env                      # ⚙️ 环境变量
-├── README.md                 # 📖 主文档
-├── 
-├── src/                      # 📦 源代码
-│   ├── backend/              # 🔧 Go后端API
-│   │   ├── Dockerfile
-│   │   ├── main.go
-│   │   └── ...
-│   ├── frontend/             # 🌐 React前端
-│   │   ├── Dockerfile
-│   │   ├── package.json
-│   │   └── ...
-│   ├── jupyterhub/           # 📊 JupyterHub配置
-│   │   ├── Dockerfile
-│   │   ├── jupyterhub_config.py
-│   │   └── ...
-│   └── nginx/                # 🔀 Nginx配置
-│       └── nginx.conf
-├── 
-├── docs/                     # 📚 文档
-├── scripts/                  # 🛠️ 工具脚本
-├── examples/                 # 💡 示例
-└── dev_doc/                  # 📋 开发文档
-```
-
-## ⚙️ 配置说明
-
-### 环境变量
-
-主要配置文件：`.env`
-
-```bash
-# 项目配置
-COMPOSE_PROJECT_NAME=ai-infra-matrix
-LOG_LEVEL=info
-
-# 安全配置
-JWT_SECRET=your-secret-key-here
-
-# 数据库配置
-POSTGRES_DB=ansible_playbook_generator
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-
-# Redis配置
-REDIS_PASSWORD=your-redis-password
-
-# JupyterHub配置
-JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
-CONFIGPROXY_AUTH_TOKEN=your-proxy-token
-```
-
-### Docker Compose Profiles
-
-```bash
-# 基础服务（默认）
-./deploy.sh up
-
-# 包含JupyterHub
-./deploy.sh up --with-jupyterhub
-
-# 包含Kubernetes代理
-./deploy.sh up --with-k8s
-
-# 包含监控服务
-./deploy.sh up --with-monitoring
-
-# 包含管理界面
-./deploy.sh up --with-admin
-
-# 启动所有服务
-./deploy.sh up --all
-```
-
-## 🔐 安全配置
-
-### 生产环境部署
-
-1. **修改默认密码**
-
-```bash
-# 编辑 .env 文件
-vi .env
-
-# 修改以下配置
-JWT_SECRET=your-production-secret-key
-POSTGRES_PASSWORD=your-secure-password
-REDIS_PASSWORD=your-secure-redis-password
-CONFIGPROXY_AUTH_TOKEN=your-secure-proxy-token
-```
-
-2. **启用HTTPS**
-
-```bash
-# 将SSL证书放入 src/nginx/ssl/ 目录
-# 修改 src/nginx/nginx.conf 启用SSL配置
-```
-
-3. **网络安全**
-
-```bash
-# 仅暴露必要端口
-# 配置防火墙规则
-# 使用生产级密码策略
-```
-
-## 🧪 开发指南
-
-### 添加新服务
-
-1. 在 `src/` 目录创建服务文件夹
-2. 添加 `Dockerfile`
-3. 在 `docker-compose.yml` 中添加服务定义
-4. 更新 `src/nginx/nginx.conf` 路由配置
-5. 测试部署
-
-### 数据库迁移
-
-```bash
-# 备份数据
-docker exec ai-infra-postgres pg_dump -U postgres ansible_playbook_generator > backup.sql
-
-# 恢复数据
-docker exec -i ai-infra-postgres psql -U postgres ansible_playbook_generator < backup.sql
-```
-
-### 调试模式
-
-```bash
-# 启用详细日志
-LOG_LEVEL=debug ./deploy.sh up
-
-# 查看特定服务日志
-./deploy.sh logs --service backend --follow
-
-# 进入容器调试
-docker exec -it ai-infra-backend /bin/bash
-```
-
-## 🐛 故障排除
-
-### 常见问题
-
-1. **端口冲突**
-
-```bash
-# 检查端口占用
-lsof -i :8080
-lsof -i :5433
-
-# 修改端口配置
-vi docker-compose.yml
-```
-
-2. **服务启动失败**
-
-```bash
-# 查看详细日志
-./deploy.sh logs --service <service-name>
-
-# 检查健康状态
-./deploy.sh health
-
-# 重新构建镜像
-./deploy.sh build
-```
-
-3. **权限问题**
-
-```bash
-# 检查Docker权限
-sudo usermod -aG docker $USER
-newgrp docker
-
-# 检查文件权限
-chmod +x deploy.sh
-```
-
-4. **内存不足**
-
-```bash
-# 检查系统资源
-docker stats
-
-# 调整内存限制
-vi docker-compose.yml
-# 修改 mem_limit 配置
-```
-
-### 日志位置
-
-```bash
-# 容器日志
-docker logs ai-infra-<service>
-
-# Nginx日志
-docker exec ai-infra-nginx cat /var/log/nginx/access.log
-docker exec ai-infra-nginx cat /var/log/nginx/error.log
-
-# 应用日志
-./deploy.sh logs --service backend
-./deploy.sh logs --service jupyterhub
+# 完整系统备份
+./scripts/backup-system.sh
 ```
 
 ## 🤝 贡献指南
 
-1. Fork 项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交变更 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
+我们欢迎所有形式的贡献！请遵循以下步骤：
+
+1. Fork 本仓库
+2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'Add amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 创建 Pull Request
+
+### 开发规范
+
+- 遵循PEP 8 (Python)和ESLint (JavaScript)代码规范
+- 编写完整的测试用例
+- 更新相关文档
+- 提交前运行完整测试套件
 
 ## 📄 许可证
 
-本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情
+本项目采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
 
-## 🆘 获取帮助
+## 🙋 支持与反馈
 
-- **文档**: [docs/](docs/)
-- **示例**: [examples/](examples/)
-- **问题反馈**: GitHub Issues
-- **邮件支持**: <ai-infra-support@example.com>
+- 📧 邮箱：aresnasa@example.com
+- 🐛 问题反馈：[GitHub Issues](https://github.com/aresnasa/ai-infra-matrix/issues)
+- 💬 讨论交流：[GitHub Discussions](https://github.com/aresnasa/ai-infra-matrix/discussions)
 
 ## 🎉 致谢
 
-感谢所有为本项目做出贡献的开发者！
+感谢以下开源项目的支持：
+
+- [JupyterHub](https://jupyterhub.readthedocs.io/) - 多用户Jupyter环境
+- [Gitea](https://gitea.io/) - 轻量级Git服务
+- [FastAPI](https://fastapi.tiangolo.com/) - 现代Python Web框架
+- [React](https://reactjs.org/) - 用户界面库
+- [PostgreSQL](https://www.postgresql.org/) - 高性能数据库
+- [Redis](https://redis.io/) - 内存数据结构存储
 
 ---
 
-**AI Infrastructure Matrix** - 让基础设施管理变得简单而强大！ 🚀
+<div align="center">
+
+**AI Infrastructure Matrix** - 让AI开发更简单
+
+[官网](https://ai-infra-matrix.example.com) • [文档](docs/) • [演示](https://demo.ai-infra-matrix.example.com)
+
+</div>

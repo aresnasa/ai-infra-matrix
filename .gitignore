@@ -1,2 +1,6 @@
 third_party/
 log/
+.env*
+*.tgz
+*.tar.*
+test-exports/

@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI基础设施矩阵 - 单点登录</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .sso-container {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            min-width: 400px;
+            max-width: 500px;
+        }
+
+        .logo {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+
+        .status.loading {
+            background: #e6f7ff;
+            border: 1px solid #91d5ff;
+            color: #1890ff;
+        }
+
+        .status.success {
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            color: #52c41a;
+        }
+
+        .status.error {
+            background: #fff2f0;
+            border: 1px solid #ffccc7;
+            color: #ff4d4f;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #1890ff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .debug-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            text-align: left;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 12px;
+            color: #666;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .action-buttons {
+            margin-top: 20px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .btn-primary {
+            background: #1890ff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #40a9ff;
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #666;
+        }
+
+        .btn-secondary:hover {
+            background: #e6e6e6;
+        }
+    </style>
+</head>
+<body>
+    <div class="sso-container">
+        <div class="logo">AI</div>
+        <h1>单点登录认证</h1>
+        <p class="subtitle">正在处理您的登录请求...</p>
+        
+        <div id="status" class="status loading">
+            <span class="loading-spinner"></span>
+            正在验证认证状态...
+        </div>
+
+        <div id="debug" class="debug-info" style="display: none;">
+            <div id="debug-content"></div>
+        </div>
+
+        <div class="action-buttons" style="display: none;" id="actions">
+            <a id="primaryAction" href="#" class="btn btn-primary">前往目标</a>
+            <a href="/" class="btn btn-secondary">返回首页</a>
+            <button onclick="toggleDebug()" class="btn btn-secondary">调试信息</button>
+        </div>
+
+        <!-- 登录表单 -->
+        <div id="loginForm" style="display: none;">
+            <div style="margin: 20px 0;">
+                <h3 style="color: #333; margin-bottom: 20px;">用户登录</h3>
+                <form onsubmit="handleLogin(event)" style="text-align: left;">
+                    <div style="margin-bottom: 15px;">
+                        <label for="username" style="display: block; margin-bottom: 5px; font-weight: 500;">用户名:</label>
+                        <input type="text" id="username" name="username" required 
+                               style="width: 100%; padding: 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;">
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label for="password" style="display: block; margin-bottom: 5px; font-weight: 500;">密码:</label>
+                        <input type="password" id="password" name="password" required
+                               style="width: 100%; padding: 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px;">
+                    </div>
+                    <div style="text-align: center;">
+                        <button type="submit" class="btn btn-primary" style="margin-right: 10px;">登录</button>
+                        <button type="button" onclick="showTestLogin()" class="btn btn-secondary">测试登录</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let debugMode = false;
+        let debugLogs = [];
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${type.toUpperCase()}: ${message}`;
+            debugLogs.push(logEntry);
+            console.log(logEntry);
+            updateDebugDisplay();
+        }
+
+        function updateDebugDisplay() {
+            if (debugMode) {
+                document.getElementById('debug-content').innerHTML = debugLogs.join('<br>');
+            }
+        }
+
+        function toggleDebug() {
+            debugMode = !debugMode;
+            const debugDiv = document.getElementById('debug');
+            debugDiv.style.display = debugMode ? 'block' : 'none';
+            updateDebugDisplay();
+        }
+
+        function updateStatus(message, type = 'loading') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            
+            let icon = '';
+            if (type === 'loading') {
+                icon = '<span class="loading-spinner"></span>';
+            } else if (type === 'success') {
+                icon = '✅ ';
+            } else if (type === 'error') {
+                icon = '❌ ';
+            }
+            
+            statusDiv.innerHTML = icon + message;
+        }
+
+        function showActions() {
+            document.getElementById('actions').style.display = 'block';
+        }
+
+        function showLoginForm() {
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('actions').style.display = 'none';
+        }
+
+        function hideLoginForm() {
+            document.getElementById('loginForm').style.display = 'none';
+        }
+
+        // 处理用户登录
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            updateStatus('正在验证用户信息...', 'loading');
+            
+            try {
+                // 调用后端登录API
+                const loginResponse = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password
+                    })
+                });
+                
+                if (!loginResponse.ok) {
+                    throw new Error(`登录失败: ${loginResponse.status} ${loginResponse.statusText}`);
+                }
+                
+                const loginData = await loginResponse.json();
+                
+                if (!loginData.token) {
+                    throw new Error('登录响应中未包含token');
+                }
+                
+                // 保存token到localStorage
+                localStorage.setItem('token', loginData.token);
+                if (loginData.expires_at) {
+                    localStorage.setItem('token_expires', loginData.expires_at);
+                }
+                
+                log(`登录成功: ${username}`);
+                updateStatus('登录成功，正在进行单点登录设置...', 'success');
+                hideLoginForm();
+                
+                // 延迟后重新执行SSO流程
+                setTimeout(() => {
+                    performSSO();
+                }, 1000);
+                
+            } catch (error) {
+                log(`登录失败: ${error.message}`, 'error');
+                updateStatus(`登录失败: ${error.message}`, 'error');
+            }
+        }
+
+        // 测试登录（仅用于开发环境）
+        function showTestLogin() {
+            const mockToken = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzIzMzEwNDAwfQ.test_signature';
+            const expires = new Date(Date.now() + 3600000).toISOString();
+            
+            localStorage.setItem('token', mockToken);
+            localStorage.setItem('token_expires', expires);
+            
+            log('已设置测试token', 'info');
+            updateStatus('测试token已设置，继续认证流程...', 'loading');
+            hideLoginForm();
+            
+            setTimeout(() => {
+                performSSO();
+            }, 1000);
+        }
+
+        async function performSSO() {
+            try {
+                log('开始SSO流程');
+                
+                // 1. 检查localStorage中的token，或从URL参数接收一次性token
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlToken = urlParams.get('token');
+                if (urlToken) {
+                    log('从URL参数接收到token，写入localStorage后继续');
+                    localStorage.setItem('token', urlToken);
+                }
+
+                let token = localStorage.getItem('token');
+                const tokenExpires = localStorage.getItem('token_expires');
+                
+                if (!token) {
+                    log('未找到认证token，展示登录表单', 'info');
+                    updateStatus('未找到认证信息，请先登录', 'error');
+                    showLoginForm();
+                    return;
+                }
+                
+                log(`找到token: ${token.substring(0, 20)}...`);
+                
+                // 2. 检查token是否过期
+                if (tokenExpires) {
+                    const expiryTime = new Date(tokenExpires).getTime();
+                    const currentTime = new Date().getTime();
+                    const bufferTime = 5 * 60 * 1000; // 5分钟缓冲
+                    
+                    if (currentTime + bufferTime >= expiryTime) {
+                        log('Token即将过期，尝试刷新', 'warn');
+                        updateStatus('认证信息即将过期，正在刷新...', 'loading');
+                        
+                        try {
+                            const refreshResponse = await fetch('/api/auth/refresh-token', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${token}`
+                                }
+                            });
+                            
+                            if (refreshResponse.ok) {
+                                const refreshData = await refreshResponse.json();
+                                const newToken = refreshData.token;
+                                const newExpires = refreshData.expires_at;
+                                
+                                localStorage.setItem('token', newToken);
+                                localStorage.setItem('token_expires', newExpires);
+                                
+                                log('Token刷新成功');
+                                return performSSO(); // 递归调用使用新token
+                            } else {
+                                throw new Error('刷新失败');
+                            }
+                        } catch (refreshError) {
+                            log(`Token刷新失败: ${refreshError.message}`, 'error');
+                            updateStatus('认证信息刷新失败，请重新登录', 'error');
+                            setTimeout(() => {
+                                window.location.href = '/';
+                            }, 3000);
+                            return;
+                        }
+                    }
+                }
+                
+                log('Token有效，进行验证');
+                updateStatus('正在验证认证信息...', 'loading');
+
+                // 3. 验证token有效性（改为POST，避免浏览器或代理对自定义头的拦截/丢失）
+                const verifyResponse = await fetch('/api/auth/verify-token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ token })
+                });
+
+                if (!verifyResponse.ok) {
+                    // 读取后端返回的错误信息
+                    let errorDetail = '';
+                    try {
+                        const errJson = await verifyResponse.json();
+                        errorDetail = errJson && (errJson.error || JSON.stringify(errJson));
+                    } catch (_) {}
+
+                    // 如果是无效token，自动清理并回到登录表单
+                    if (verifyResponse.status === 401 || errorDetail.toLowerCase().includes('invalid token')) {
+                        log(`token无效，清理本地凭证并显示登录表单（detail: ${errorDetail || verifyResponse.status}）`, 'warn');
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('token_expires');
+                        updateStatus('认证信息无效，请重新登录', 'error');
+                        showLoginForm();
+                        return;
+                    }
+
+                    throw new Error(`验证失败: ${verifyResponse.status}${errorDetail ? ' ' + errorDetail : ''}`);
+                }
+                const userData = await verifyResponse.json();
+                // 兼容 userData.username 或 userData.user.username
+                const username = userData.username || (userData.user && userData.user.username) || '';
+                log(`用户验证成功: ${username}`);
+
+                // 4. 设置JupyterHub SSO cookie
+                updateStatus('正在设置单点登录状态...', 'loading');
+
+                // 设置多种格式的cookie以确保兼容性
+                const cookieOptions = [
+                    `ai_infra_token=${token}; path=/; max-age=3600; SameSite=Lax`,
+                    `jwt_token=${token}; path=/; max-age=3600; SameSite=Lax`,
+                    `auth_token=${token}; path=/; max-age=3600; SameSite=Lax`
+                ];
+
+                cookieOptions.forEach(cookieStr => {
+                    document.cookie = cookieStr;
+                    log(`设置cookie: ${cookieStr.split('=')[0]}`);
+                });
+
+                // 5. 设置用户信息cookie
+                const userInfo = {
+                    username: username,
+                    roles: userData.roles || (userData.user && userData.user.roles) || [],
+                    permissions: userData.permissions || (userData.user && userData.user.permissions) || []
+                };
+
+                document.cookie = `user_info=${encodeURIComponent(JSON.stringify(userInfo))}; path=/; max-age=3600; SameSite=Lax`;
+                log('设置用户信息cookie');
+                
+                // 6. 获取重定向目标
+                // 重新获取（上面已创建），以便后续使用
+                // const urlParams = new URLSearchParams(window.location.search);
+                // Support split redirect params to preserve querystring
+                const redirectPath = urlParams.get('redirect_path');
+                const redirectArgs = urlParams.get('redirect_args');
+                let nextUrl = urlParams.get('redirect_uri') || urlParams.get('next');
+                if (!nextUrl && redirectPath) {
+                    nextUrl = redirectArgs ? `${redirectPath}?${redirectArgs}` : redirectPath;
+                }
+                // Fallback by service hint
+                const service = (urlParams.get('service') || '').toLowerCase();
+                if (!nextUrl) {
+                    nextUrl = service === 'gitea' ? '/gitea/' : '/jupyter/hub/';
+                }
+
+                // For Gitea, prefer going through /gitea/user/login to ensure SSO headers are validated upstream
+                if (service === 'gitea') {
+                    const isAlreadyLogin = nextUrl.startsWith('/gitea/user/login');
+                    // Normalize trivial home targets to admin page by default after SSO
+                    const isGiteaHome = nextUrl === '/gitea' || nextUrl === '/gitea/' || nextUrl.startsWith('/gitea?');
+                    const finalTarget = isGiteaHome ? '/gitea/admin' : nextUrl;
+                    if (!isAlreadyLogin) {
+                        const encoded = encodeURIComponent(finalTarget);
+                        nextUrl = `/gitea/user/login?redirect_to=${encoded}`;
+                        log(`为 Gitea 包装登录路径，目标: ${finalTarget}`);
+                    }
+                }
+
+                // Update primary action button (label + target)
+                const primaryBtn = document.getElementById('primaryAction');
+                if (primaryBtn) {
+                    primaryBtn.href = nextUrl;
+                    let label = '前往目标';
+                    if (service === 'gitea' || nextUrl.startsWith('/gitea')) {
+                        label = '前往 Gitea';
+                    } else if (nextUrl.includes('/jupyter')) {
+                        label = '前往 JupyterHub';
+                    }
+                    primaryBtn.textContent = label;
+                }
+                
+                log(`准备重定向到: ${nextUrl}`);
+                updateStatus('单点登录设置完成，正在跳转...', 'success');
+                
+                showActions();
+                
+                // 延迟重定向，让用户看到成功信息
+                setTimeout(() => {
+                    window.location.href = nextUrl;
+                }, 2000);
+                
+            } catch (error) {
+                log(`SSO流程失败: ${error.message}`, 'error');
+                updateStatus(`单点登录失败: ${error.message}`, 'error');
+                showActions();
+            }
+        }
+
+        // 页面加载完成后开始SSO流程
+        document.addEventListener('DOMContentLoaded', () => {
+            log('SSO页面加载完成');
+            
+            // 检查是否来自前端应用
+            const referrer = document.referrer;
+            if (referrer && referrer.includes(window.location.origin)) {
+                log(`来自内部页面: ${referrer}`);
+            } else {
+                log('直接访问SSO页面');
+            }
+            
+            // 开始SSO流程
+            setTimeout(() => {
+                performSSO();
+            }, 500);
+        });
+
+        // 处理页面可见性变化（用户切换标签页时）
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                log('页面重新可见');
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+2025-08-08 15:29:14,753 - INFO - 🚀 开始JupyterHub iframe诊断测试
+2025-08-08 15:29:14,753 - INFO - ============================================================
+2025-08-08 15:36:00,089 - ERROR - ❌ Chrome WebDriver 初始化失败: Message: Unable to obtain driver for chrome using Selenium Manager.; For documentation on this error, please visit: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors/driver_location
+

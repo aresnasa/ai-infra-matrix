@@ -1,0 +1,15 @@
+{
+  "default": "favicon.ico",
+  "pages": {
+    "jupyter": "icon-jupyter.png",
+    "kubernetes": "icon-kubernetes.png",
+    "ansible": "icon-ansible.png",
+    "admin": "icon-admin.png"
+  },
+  "routes": {
+    "/projects": "icon-jupyter.png",
+    "/admin": "icon-admin.png",
+    "/kubernetes": "icon-kubernetes.png",
+    "/ansible": "icon-ansible.png"
+  }
+}

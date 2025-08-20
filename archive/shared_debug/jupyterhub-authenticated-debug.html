@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub认证调试工具</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            margin: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #569cd6;
+            border-bottom: 2px solid #569cd6;
+            padding-bottom: 10px;
+        }
+        .section {
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        .log {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.success { background: #238636; color: white; }
+        .status.error { background: #da3633; color: white; }
+        .status.warning { background: #bf8700; color: white; }
+        .status.info { background: #0969da; color: white; }
+        button {
+            background: #0969da;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0860ca;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .info-item {
+            background: #2d2d30;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border-left: 4px solid #569cd6;
+        }
+        .critical {
+            border-left-color: #f85149;
+        }
+        .warning {
+            border-left-color: #d29922;
+        }
+        .success {
+            border-left-color: #56d364;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 JupyterHub认证调试工具</h1>
+        
+        <div class="section">
+            <h2>🔍 当前状态</h2>
+            <div id="current-status" class="status info">正在检查...</div>
+        </div>
+
+        <div class="grid">
+            <div class="section">
+                <h2>📍 Token状态</h2>
+                <div id="token-info"></div>
+                <button onclick="checkTokens()">🔄 刷新Token状态</button>
+                <button onclick="clearTokens()">🗑️ 清除所有Token</button>
+            </div>
+
+            <div class="section">
+                <h2>🌐 环境信息</h2>
+                <div id="env-info"></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🧪 重定向流程测试</h2>
+            <div>
+                <button onclick="testSSORedirect()">测试SSO重定向</button>
+                <button onclick="testJupyterHubAuth()">测试JupyterHub认证</button>
+                <button onclick="testCompleteFlow()">完整流程测试</button>
+                <button onclick="simulateTokenAuth()">模拟Token认证</button>
+            </div>
+            <div id="test-results" class="log"></div>
+        </div>
+
+        <div class="section">
+            <h2>📝 实时日志</h2>
+            <div id="debug-log" class="log"></div>
+            <button onclick="clearLog()">清除日志</button>
+        </div>
+
+        <div class="section">
+            <h2>🔧 手动操作</h2>
+            <div>
+                <button onclick="goToSSO()">前往SSO登录</button>
+                <button onclick="goToJupyterHub()">直接访问JupyterHub</button>
+                <button onclick="goToAuthBridge()">访问认证桥接</button>
+                <button onclick="testBackendAPI()">测试后端API</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let logCount = 0;
+        
+        function log(message, type = 'info') {
+            logCount++;
+            const timestamp = new Date().toLocaleTimeString();
+            const logElement = document.getElementById('debug-log');
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+            logElement.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(`[DEBUG] ${message}`);
+        }
+
+        function clearLog() {
+            document.getElementById('debug-log').textContent = '';
+            logCount = 0;
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusEl = document.getElementById('current-status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        function checkTokens() {
+            log('检查Token状态...');
+            const tokenInfo = document.getElementById('token-info');
+            
+            // URL参数中的token
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlToken = urlParams.get('token') || urlParams.get('auth_token');
+            
+            // localStorage中的token
+            const localToken = localStorage.getItem('token');
+            const tokenExpires = localStorage.getItem('token_expires');
+            
+            // sessionStorage中的token
+            const sessionToken = sessionStorage.getItem('token');
+            
+            let html = '';
+            
+            html += `<div class="info-item ${urlToken ? 'success' : ''}">`;
+            html += `<strong>URL参数Token:</strong> ${urlToken ? '✅ 存在 (' + urlToken.substring(0, 20) + '...)' : '❌ 不存在'}`;
+            html += `</div>`;
+            
+            html += `<div class="info-item ${localToken ? 'success' : ''}">`;
+            html += `<strong>localStorage Token:</strong> ${localToken ? '✅ 存在 (' + localToken.substring(0, 20) + '...)' : '❌ 不存在'}`;
+            html += `</div>`;
+            
+            if (tokenExpires) {
+                const expiryTime = new Date(tokenExpires);
+                const isExpired = new Date() >= expiryTime;
+                html += `<div class="info-item ${isExpired ? 'critical' : 'success'}">`;
+                html += `<strong>Token过期时间:</strong> ${isExpired ? '❌ 已过期' : '✅ 有效'} (${expiryTime.toLocaleString()})`;
+                html += `</div>`;
+            }
+            
+            html += `<div class="info-item ${sessionToken ? 'success' : ''}">`;
+            html += `<strong>sessionStorage Token:</strong> ${sessionToken ? '✅ 存在 (' + sessionToken.substring(0, 20) + '...)' : '❌ 不存在'}`;
+            html += `</div>`;
+            
+            tokenInfo.innerHTML = html;
+            
+            log(`Token检查完成 - URL:${!!urlToken}, Local:${!!localToken}, Session:${!!sessionToken}`);
+        }
+
+        function clearTokens() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('token_expires');
+            sessionStorage.removeItem('token');
+            log('所有Token已清除', 'warning');
+            checkTokens();
+        }
+
+        function loadEnvInfo() {
+            const envInfo = document.getElementById('env-info');
+            
+            const info = {
+                '当前URL': window.location.href,
+                '引用页面': document.referrer || '直接访问',
+                'User Agent': navigator.userAgent.substring(0, 50) + '...',
+                '时间戳': new Date().toLocaleString(),
+                '是否iframe': window.parent !== window ? '是' : '否'
+            };
+            
+            let html = '';
+            for (const [key, value] of Object.entries(info)) {
+                html += `<div class="info-item">`;
+                html += `<strong>${key}:</strong> ${value}`;
+                html += `</div>`;
+            }
+            
+            envInfo.innerHTML = html;
+        }
+
+        async function testBackendAPI() {
+            log('测试后端API...');
+            const testResults = document.getElementById('test-results');
+            
+            try {
+                // 测试无token的API调用
+                const response1 = await fetch('/api/auth/verify');
+                testResults.textContent += `API测试 (无token): ${response1.status} ${response1.statusText}\n`;
+                
+                // 测试假token的API调用
+                const response2 = await fetch('/api/auth/verify', {
+                    headers: { 'Authorization': 'Bearer fake-token' }
+                });
+                testResults.textContent += `API测试 (假token): ${response2.status} ${response2.statusText}\n`;
+                
+                log('后端API测试完成', 'success');
+            } catch (error) {
+                testResults.textContent += `API测试错误: ${error.message}\n`;
+                log(`后端API测试失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testSSORedirect() {
+            log('测试SSO重定向...');
+            const testResults = document.getElementById('test-results');
+            
+            try {
+                const response = await fetch('/sso/?redirect_uri=/jupyterhub-authenticated');
+                testResults.textContent += `SSO页面访问: ${response.status} ${response.statusText}\n`;
+                log('SSO页面访问测试完成', 'success');
+            } catch (error) {
+                testResults.textContent += `SSO测试错误: ${error.message}\n`;
+                log(`SSO测试失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testJupyterHubAuth() {
+            log('测试JupyterHub认证页面...');
+            const testResults = document.getElementById('test-results');
+            
+            try {
+                const response = await fetch('/jupyterhub-authenticated');
+                testResults.textContent += `JupyterHub认证页面: ${response.status} ${response.statusText}\n`;
+                
+                // 检查响应内容
+                const text = await response.text();
+                const hasRedirect = text.includes('window.location');
+                testResults.textContent += `页面包含重定向代码: ${hasRedirect ? '是' : '否'}\n`;
+                
+                log('JupyterHub认证页面测试完成', 'success');
+            } catch (error) {
+                testResults.textContent += `JupyterHub认证测试错误: ${error.message}\n`;
+                log(`JupyterHub认证测试失败: ${error.message}`, 'error');
+            }
+        }
+
+        function testCompleteFlow() {
+            log('开始完整流程测试...', 'warning');
+            updateStatus('正在执行完整流程测试...', 'warning');
+            
+            // 清除所有token
+            clearTokens();
+            
+            // 模拟完整的认证流程
+            setTimeout(() => {
+                log('第1步: 访问 /jupyterhub');
+                window.open('/jupyterhub', '_blank');
+            }, 1000);
+        }
+
+        function simulateTokenAuth() {
+            log('模拟Token认证...');
+            
+            // 创建一个假的token进行测试
+            const fakeToken = 'fake-jwt-token-for-testing-' + Date.now();
+            const expires = new Date(Date.now() + 3600000).toISOString(); // 1小时后过期
+            
+            localStorage.setItem('token', fakeToken);
+            localStorage.setItem('token_expires', expires);
+            
+            log('假Token已设置，现在访问认证页面...', 'warning');
+            
+            // 访问认证页面看是否会重定向
+            setTimeout(() => {
+                window.open('/jupyterhub-authenticated', '_blank');
+            }, 1000);
+            
+            checkTokens();
+        }
+
+        // 导航函数
+        function goToSSO() {
+            window.open('/sso/?redirect_uri=/jupyterhub-authenticated', '_blank');
+        }
+
+        function goToJupyterHub() {
+            window.open('/jupyterhub', '_blank');
+        }
+
+        function goToAuthBridge() {
+            window.open('/jupyterhub-authenticated', '_blank');
+        }
+
+        // 页面加载时初始化
+        window.addEventListener('load', function() {
+            log('JupyterHub认证调试工具已加载');
+            updateStatus('调试工具已就绪', 'success');
+            checkTokens();
+            loadEnvInfo();
+            
+            // 检查是否从其他页面重定向过来
+            if (document.referrer.includes('jupyterhub-authenticated')) {
+                log('检测到可能的重定向循环！', 'error');
+                updateStatus('⚠️ 检测到可能的重定向循环', 'error');
+            }
+        });
+
+        // 监听页面焦点变化，检测重定向
+        let redirectCount = 0;
+        window.addEventListener('focus', function() {
+            redirectCount++;
+            if (redirectCount > 3) {
+                log('检测到多次页面焦点变化，可能存在重定向循环', 'error');
+            }
+        });
+    </script>
+</body>
+</html>

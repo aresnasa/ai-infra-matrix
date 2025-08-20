@@ -1,17 +1,30 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
-
-# 更换alpine下载源为清华大学镜像
-RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
+FROM golang:1.25-alpine AS builder
 
 ENV GO111MODULE=on
 ENV GOPROXY=https://goproxy.cn
+
+# Version metadata (overridable at build time)
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
+
+ENV GO111MODULE=on
 
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
 # Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download
+
+# Download dependencies with retry and fallback
+RUN go mod download || (sleep 5 && go mod download) || \
+    (export GOPROXY=direct && go mod download)
 
 # Copy source code
 COPY . .
@@ -22,13 +35,25 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage
-FROM golang:1.24-alpine
+FROM golang:1.25-alpine
 
-# 更换alpine下载源为清华大学镜像
-RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
+ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn
 
-# 设置时区为上海
-RUN apk --no-cache add ca-certificates curl tzdata
+# Keep version metadata available in the final image, too
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done
+
+# 更新apk索引并设置时区为上海，添加必要工具
+RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl || \
+    apk --no-cache add ca-certificates tzdata busybox-extras bash curl
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
@@ -49,8 +74,25 @@ RUN update-ca-certificates
 # Create necessary directories
 RUN mkdir -p outputs uploads
 
+# 创建等待数据库的脚本
+RUN echo '#!/bin/bash' > /wait-for-postgres.sh && \
+    echo 'set -e' >> /wait-for-postgres.sh && \
+    echo 'echo "Waiting for PostgreSQL to be ready..."' >> /wait-for-postgres.sh && \
+    echo 'until nc -z postgres 5432; do' >> /wait-for-postgres.sh && \
+    echo '  echo "Database is unavailable - sleeping"' >> /wait-for-postgres.sh && \
+    echo '  sleep 1' >> /wait-for-postgres.sh && \
+    echo 'done' >> /wait-for-postgres.sh && \
+    echo 'echo "Database is ready - starting application"' >> /wait-for-postgres.sh && \
+    echo 'exec "$@"' >> /wait-for-postgres.sh && \
+    chmod +x /wait-for-postgres.sh
+
 # Expose port
 EXPOSE 8082
 
-# Run the binary
-CMD ["./main"]
+# Run with database wait
+CMD ["bash", "-c", "echo 'Waiting for database...' && while ! nc -z postgres 5432; do sleep 1; done && echo 'Database ready!' && ./main"]
+
+LABEL maintainer="AI Infrastructure Team" \
+    org.opencontainers.image.title="ai-infra-backend" \
+    org.opencontainers.image.version="${APP_VERSION}" \
+    org.opencontainers.image.description="AI Infra Matrix - Backend service"

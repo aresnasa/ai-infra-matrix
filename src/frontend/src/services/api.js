@@ -45,7 +45,6 @@ export const authAPI = {
   getProfile: () => api.get('/auth/me'), // 添加getProfile方法，指向相同的端点
   refreshToken: () => api.post('/auth/refresh'),
 };
-
 // Kubernetes集群管理API
 export const kubernetesAPI = {
   // 获取集群列表
@@ -71,6 +70,68 @@ export const kubernetesAPI = {
   
   // 获取集群命名空间
   getClusterNamespaces: (id) => api.get(`/kubernetes/clusters/${id}/namespaces`),
+
+  // 资源浏览（若后端未实现，将在调用处做降级处理）
+  getPods: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/pods`),
+  getDeployments: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/deployments`),
+  getServices: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/services`),
+  getNodesDetail: (id) => api.get(`/kubernetes/clusters/${id}/nodes/detail`),
+  getEvents: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || ''}/events`),
+
+  // 操作类（按需在后端实现）
+  scaleDeployment: (id, namespace, name, replicas) => api.post(`/kubernetes/clusters/${id}/namespaces/${namespace}/deployments/${name}/scale`, { replicas }),
+  deleteResource: (id, namespace, kind, name) => api.delete(`/kubernetes/clusters/${id}/namespaces/${namespace}/${kind.toLowerCase()}s/${name}`),
+  getPodLogs: (id, namespace, pod, container) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace}/pods/${pod}/logs`, { params: { container } }),
+  buildPodExecWsUrl: (id, namespace, pod, container, command) => {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = window.location.host;
+    const cmdQuery = command ? `&command=${encodeURIComponent(command)}` : '';
+    return `${proto}://${host}/api/kubernetes/clusters/${id}/namespaces/${namespace}/pods/${encodeURIComponent(pod)}/exec?container=${encodeURIComponent(container || '')}${cmdQuery}`;
+  },
+
+  // ---- 通用资源发现与CRUD（动态）----
+  // 资源发现：返回资源组与资源列表，前端可构建资源树
+  discover: (id) => api.get(`/kubernetes/clusters/${id}/discovery`),
+
+  // 命名空间内：通用列表、获取、创建、更新、Patch、删除
+  listResources: (id, namespace, resource, params) =>
+    api.get(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${resource}`, { params }),
+  getResource: (id, namespace, resource, name) =>
+    api.get(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${resource}/${encodeURIComponent(name)}`),
+  createResource: (id, namespace, resource, obj) =>
+    api.post(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${resource}`, obj),
+  updateResource: (id, namespace, resource, name, obj) =>
+    api.put(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${resource}/${encodeURIComponent(name)}`, obj),
+  patchResource: (id, namespace, resource, name, patch, patchType = 'application/merge-patch+json') =>
+    api.patch(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${resource}/${encodeURIComponent(name)}`, patch, {
+      headers: { 'Content-Type': patchType },
+    }),
+  deleteResourceGeneric: (id, namespace, resource, name, params) =>
+    api.delete(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${resource}/${encodeURIComponent(name)}`, { params }),
+
+  // 集群级资源（无命名空间）
+  listClusterResources: (id, resource, params) =>
+    api.get(`/kubernetes/clusters/${id}/cluster-resources/${resource}`, { params }),
+  getClusterResource: (id, resource, name) =>
+    api.get(`/kubernetes/clusters/${id}/cluster-resources/${resource}/${encodeURIComponent(name)}`),
+  createClusterResource: (id, resource, obj) =>
+    api.post(`/kubernetes/clusters/${id}/cluster-resources/${resource}`, obj),
+  updateClusterResource: (id, resource, name, obj) =>
+    api.put(`/kubernetes/clusters/${id}/cluster-resources/${resource}/${encodeURIComponent(name)}`, obj),
+  patchClusterResource: (id, resource, name, patch, patchType = 'application/merge-patch+json') =>
+    api.patch(`/kubernetes/clusters/${id}/cluster-resources/${resource}/${encodeURIComponent(name)}`, patch, {
+      headers: { 'Content-Type': patchType },
+    }),
+  deleteClusterResource: (id, resource, name, params) =>
+    api.delete(`/kubernetes/clusters/${id}/cluster-resources/${resource}/${encodeURIComponent(name)}`, { params }),
+
+  // 并发批量列表，用于高性能加载多个资源种类
+  batchListResources: (id, namespace, kinds = [], params = {}) => {
+    const kindsParam = Array.isArray(kinds) ? kinds.join(',') : String(kinds || '');
+    return api.get(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources:batch`, {
+      params: { ...params, kinds: kindsParam },
+    });
+  },
 };
 
 // Ansible管理API
@@ -98,6 +159,12 @@ export const ansibleAPI = {
   
   // 生成playbook - 使用正确的端点
   generatePlaybook: (config) => api.post('/playbook/generate', config),
+
+  // 模板库（后端可实现以下端点；前端会在页面中做localStorage降级）
+  getTemplates: () => api.get('/ansible/templates'),
+  createTemplate: (tpl) => api.post('/ansible/templates', tpl),
+  updateTemplate: (id, tpl) => api.put(`/ansible/templates/${id}`, tpl),
+  deleteTemplate: (id) => api.delete(`/ansible/templates/${id}`),
 };
 
 // 项目管理API
@@ -286,6 +353,20 @@ export const aiAPI = {
   getUsageStats: (startDate, endDate) => api.get('/ai/usage-stats', {
     params: { start_date: startDate, end_date: endDate }
   }),
+};
+
+// JupyterHub API
+export const jupyterHubAPI = {
+  getStatus: () => api.get('/jupyterhub/status'),
+  getUserTasks: () => api.get('/jupyterhub/user-tasks'),
+  getTaskOutput: (taskId) => api.get(`/jupyterhub/tasks/${taskId}/output`),
+};
+
+// Slurm API
+export const slurmAPI = {
+  getSummary: () => api.get('/slurm/summary'),
+  getNodes: () => api.get('/slurm/nodes'),
+  getJobs: () => api.get('/slurm/jobs'),
 };
 
 export default api;

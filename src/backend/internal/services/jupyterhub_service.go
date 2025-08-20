@@ -428,3 +428,37 @@ func (s *JupyterHubService) GetTaskOutput(taskID uint, userID uint) (string, err
 	
 	return string(content), nil
 }
+
+// GetHubStatus 获取JupyterHub状态
+func (s *JupyterHubService) GetHubStatus() (map[string]interface{}, error) {
+	// 这里应该实现与JupyterHub API的实际通信
+	// 目前返回模拟数据
+	status := map[string]interface{}{
+		"running":         true,
+		"users_online":    5,
+		"servers_running": 3,
+		"total_memory_gb": 32,
+		"used_memory_gb":  12,
+		"total_cpu_cores": 16,
+		"used_cpu_cores":  6,
+		"version":         "5.3.0",
+		"url":             "/jupyter/",
+		"last_updated":    time.Now().Format(time.RFC3339),
+	}
+	return status, nil
+}
+
+// GetUserTasks 获取用户任务列表（用于前端页面显示）
+func (s *JupyterHubService) GetUserTasks(userID uint) ([]models.JupyterTask, error) {
+	var tasks []models.JupyterTask
+	
+	if err := s.db.Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&tasks).Error; err != nil {
+		s.logger.WithError(err).Error("Failed to get user tasks")
+		return nil, err
+	}
+	
+	return tasks, nil
+}

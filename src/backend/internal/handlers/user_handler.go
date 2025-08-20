@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -68,6 +70,51 @@ func (h *UserHandler) Register(c *gin.Context) {
 		}
 		return
 	}
+	// After local user created, try to create corresponding LDAP entry and K8s SA/RBAC (best-effort)
+	go func() {
+		// 1) LDAP user provisioning
+		if h.ldapService != nil {
+			// displayName defaults to username
+			if err := h.ldapService.CreateUser(req.Username, req.Password, req.Email, req.Username, req.Department); err != nil {
+				logrus.WithError(err).Warn("LDAP user provisioning failed")
+			} else {
+				logrus.WithField("username", req.Username).Info("LDAP user provisioned")
+			}
+		}
+
+		// 2) K8s SA/RBAC provisioning
+		// Find default cluster from DB if exists (first enabled cluster)
+		defer func() { recover() }()
+		var cluster models.KubernetesCluster
+		if err := database.DB.Where("enabled = ?", true).First(&cluster).Error; err == nil {
+			ks := services.NewKubernetesService()
+			clientset, cerr := ks.ConnectToCluster(cluster.KubeConfig)
+			if cerr != nil {
+				logrus.WithError(cerr).Warn("K8s connect for provisioning failed")
+				return
+			}
+			// Namespace strategy: use department if provided, else "users"
+			ns := strings.ToLower(strings.TrimSpace(req.Department))
+			if ns == "" { ns = "users" }
+			if err := ks.EnsureNamespace(clientset, ns); err != nil {
+				logrus.WithError(err).Warn("Ensure namespace failed")
+			}
+			saName := fmt.Sprintf("user-%s", req.Username)
+			if _, err := ks.EnsureServiceAccount(clientset, ns, saName); err != nil {
+				logrus.WithError(err).Warn("Ensure ServiceAccount failed")
+			}
+			// Map role to ClusterRole
+			role := strings.ToLower(strings.TrimSpace(req.Role))
+			clusterRole := "view"
+			if role == "user" { clusterRole = "edit" }
+			if role == "admin" { clusterRole = "admin" }
+			rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
+			if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
+				logrus.WithError(err).Warn("Ensure RoleBinding failed")
+			}
+			logrus.WithFields(logrus.Fields{"username": req.Username, "namespace": ns, "cluster_role": clusterRole}).Info("K8s SA/RBAC provisioned")
+		}
+	}()
 
 	c.JSON(http.StatusCreated, user)
 }
@@ -160,6 +207,21 @@ func (h *UserHandler) Login(c *gin.Context) {
 		User:      *user,
 		ExpiresAt: expiresAt,
 	}
+
+	// Set SSO cookies to simplify downstream auth (read by nginx auth_request)
+	// Use SameSite=Lax so normal navigations carry the cookie; mark HttpOnly for security.
+	// expiresAt is unix seconds (int64); convert to time.Time for time.Until
+	maxAge := int(time.Until(time.Unix(expiresAt, 0)).Seconds())
+	if maxAge <= 0 {
+		maxAge = 3600
+	}
+	// Ensure SameSite before setting cookies
+	c.SetSameSite(http.SameSiteLaxMode)
+	// Primary cookie preferred by gateway
+	c.SetCookie("ai_infra_token", token, maxAge, "/", "", false, true)
+	// Backward/compat cookies some clients expect
+	c.SetCookie("jwt_token", token, maxAge, "/", "", false, true)
+	c.SetCookie("auth_token", token, maxAge, "/", "", false, true)
 
 	c.JSON(http.StatusOK, response)
 }
@@ -846,4 +908,187 @@ func (h *UserHandler) VerifyJWT(c *gin.Context) {
 		},
 		"expires_at": claims.ExpiresAt.Time.Format(time.RFC3339),
 	})
+}
+
+// VerifyTokenSimple 简单的token验证（通过Authorization header）
+// @Summary 简单验证JWT令牌
+// @Description 通过Authorization header验证JWT令牌，返回用户信息
+// @Tags 用户管理
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/verify [get]
+func (h *UserHandler) VerifyTokenSimple(c *gin.Context) {
+	// 从context中获取用户信息（由AuthMiddleware设置）
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	username, _ := c.Get("username")
+	roles, _ := c.Get("roles")
+	permissions, _ := c.Get("permissions")
+
+	// 获取完整用户信息
+	user, err := h.userService.GetUserByID(userID.(uint))
+	if err != nil {
+		logrus.Error("Failed to get user:", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	// 在SSO校验通过时，后台异步触发统一预配（Gitea / 可选JupyterHub）
+	go func(u *models.User) {
+		defer func() { _ = recover() }()
+		cfg, cfgErr := config.Load()
+		if cfgErr != nil {
+			logrus.WithError(cfgErr).Debug("Skip SSO provisioning: failed to load config")
+			return
+		}
+		// Gitea 预配（幂等）
+		if cfg.Gitea.Enabled {
+			gsvc := services.NewGiteaService(cfg)
+			if err := gsvc.EnsureUser(*u); err != nil {
+				logrus.WithError(err).WithFields(logrus.Fields{
+					"username": u.Username,
+				}).Warn("Gitea ensure user failed during SSO verify")
+			} else {
+				logrus.WithFields(logrus.Fields{
+					"username": u.Username,
+				}).Debug("Gitea user ensured during SSO verify")
+			}
+		}
+		// 可选：JupyterHub 用户预配（通过环境开关控制，最佳努力）
+		if os.Getenv("JUPYTERHUB_AUTO_PROVISION") == "true" {
+			if token, err := h.generateJupyterHubAPIToken(u); err == nil {
+				if err := h.ensureJupyterHubUser(u, token); err != nil {
+					logrus.WithError(err).WithField("username", u.Username).Debug("JupyterHub ensure user failed (optional)")
+				}
+			} else {
+				logrus.WithError(err).WithField("username", u.Username).Debug("Generate JupyterHub token failed (optional)")
+			}
+		}
+	}(user)
+
+	// 暴露简化的用户信息到响应头，便于反向代理认证（如Nginx auth_request）
+	if uname, ok := username.(string); ok {
+		c.Header("X-User", uname)
+		// 兼容反向代理认证常用头，便于下游（如Gitea）直接复用
+		c.Header("X-WEBAUTH-USER", uname)
+	}
+	if user.Email != "" {
+		c.Header("X-Email", user.Email)
+		// 兼容反向代理认证常用头
+		c.Header("X-WEBAUTH-EMAIL", user.Email)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"valid":       true,
+		"username":    username,
+		"email":       user.Email,
+		"roles":       roles,
+		"permissions": permissions,
+		"is_active":   user.IsActive,
+		"user_id":     userID,
+	})
+}
+
+// RefreshToken 刷新访问令牌
+// @Summary 刷新访问令牌
+// @Description 刷新用户的访问令牌
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Success 200 {object} models.LoginResponse
+// @Failure 401 {object} gin.H
+// @Failure 500 {object} gin.H
+// @Router /auth/refresh [post]
+func (h *UserHandler) RefreshToken(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+		return
+	}
+
+	// 检查Bearer token格式
+	tokenParts := strings.SplitN(authHeader, " ", 2)
+	if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
+		return
+	}
+
+	tokenString := tokenParts[1]
+	
+	// 解析现有token
+	claims, err := jwt.ParseToken(tokenString)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		return
+	}
+
+	// 获取用户信息
+	var user models.User
+	if err := database.DB.First(&user, claims.UserID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+
+	// 检查用户是否仍然活跃
+	if !user.IsActive {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User account is inactive"})
+		return
+	}
+
+	// 获取用户角色和权限
+	roles, err := h.rbacService.GetUserRoles(user.ID)
+	if err != nil {
+		logrus.Error("Get user roles error:", err)
+		roles = []models.Role{}
+	}
+
+	permissions, err := h.rbacService.GetUserPermissions(user.ID)
+	if err != nil {
+		logrus.Error("Get user permissions error:", err)
+		permissions = []models.Permission{}
+	}
+
+	// 提取角色名称和权限键
+	roleNames := make([]string, len(roles))
+	for i, role := range roles {
+		roleNames[i] = role.Name
+	}
+
+	permissionKeys := make([]string, len(permissions))
+	for i, permission := range permissions {
+		permissionKeys[i] = permission.GetPermissionKey()
+	}
+
+	// 生成新的JWT token
+	newToken, expiresAt, err := jwt.GenerateToken(user.ID, user.Username, roleNames, permissionKeys)
+	if err != nil {
+		logrus.Error("Generate token error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	// 更新Redis会话
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+	if err := h.sessionService.CreateSession(&user, newToken, clientIP, userAgent); err != nil {
+		logrus.Error("Create session error:", err)
+		// 会话创建失败不阻止token刷新，只记录错误
+	}
+
+	// 删除旧的会话
+	h.sessionService.DeleteSession(tokenString)
+
+	response := models.LoginResponse{
+		Token:     newToken,
+		User:      user,
+		ExpiresAt: expiresAt,
+	}
+
+	c.JSON(http.StatusOK, response)
 }

@@ -1,0 +1,439 @@
+# Default values for ai-infra-matrix
+# This is a YAML-formatted file.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: "standard"
+
+# Image settings
+image:
+  registry: ""
+  repository: ai-infra
+  tag: "v0.0.3.3"
+  pullPolicy: IfNotPresent
+
+# Namespace configuration
+namespaceOverride: ""
+userNamespace: "ai-infra-users"
+
+# Service account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# RBAC
+rbac:
+  create: true
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: ai-infra.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: nginx
+          port: 80
+  tls: []
+
+# PostgreSQL database configuration
+postgresql:
+  enabled: true
+  auth:
+    username: postgres
+    password: postgres
+    database: ai_infra_db
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+
+# Redis configuration
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: ansible-redis-password
+  master:
+    persistence:
+      enabled: false
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 250m
+
+# OpenLDAP configuration
+openldap:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: osixia/openldap
+    tag: "stable"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 389
+    tlsPort: 636
+  env:
+    LDAP_ORGANISATION: "AI Infrastructure"
+    LDAP_DOMAIN: "ai-infra.com"
+    LDAP_ADMIN_PASSWORD: "admin123"
+    LDAP_CONFIG_PASSWORD: "config123"
+    LDAP_BASE_DN: "dc=ai-infra,dc=com"
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 250m
+
+# phpLDAPadmin configuration
+phpldapadmin:
+  enabled: true
+  image:
+    repository: osixia/phpldapadmin
+    tag: "stable"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  env:
+    PHPLDAPADMIN_LDAP_HOSTS: openldap
+    PHPLDAPADMIN_HTTPS: "false"
+
+# Backend service configuration
+backend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-infra-backend
+    tag: "v0.0.3.3"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8082
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+  env:
+    JWT_SECRET: "your-secret-key-change-in-production"
+    LOG_LEVEL: "info"
+    GITEA_ENABLED: "true"
+    GITEA_AUTO_CREATE: "true"
+    GITEA_AUTO_UPDATE: "true"
+    GITEA_SYNC_ENABLED: "true"
+    GITEA_SYNC_INTERVAL_SECONDS: "600"
+    GITEA_ALIAS_ADMIN_TO: "test"
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: 8082
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 8082
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Backend initialization job
+backendInit:
+  enabled: true
+  image:
+    repository: ai-infra-backend-init
+    tag: "v0.0.3.3"
+    pullPolicy: IfNotPresent
+
+# Frontend service configuration
+frontend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-infra-frontend
+    tag: "v0.0.3.3"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 250m
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# JupyterHub configuration
+jupyterhub:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ai-infra-jupyterhub
+    tag: "v0.0.3.3"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+    hubPort: 8081
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 250m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  config:
+    useProxy: true
+    publicHost: "ai-infra.local"
+    autoLogin: true
+    sessionTimeout: 86400
+    startTimeout: 300
+    httpTimeout: 120
+  singleuser:
+    image:
+      repository: ai-infra-singleuser
+      tag: "v0.0.3.3"
+      pullPolicy: IfNotPresent
+    resources:
+      guarantee:
+        memory: 512Mi
+        cpu: 0.1
+      limit:
+        memory: 3Gi
+        cpu: 1.0
+    storage:
+      dynamic: true
+      capacity: 10Gi
+      homeMountPath: /home/jovyan
+      accessMode: ReadWriteOnce
+      storageClass: ""
+    extraEnv:
+      JUPYTER_ENABLE_LAB: "yes"
+      GRANT_SUDO: "yes"
+      CHOWN_HOME: "yes"
+  env:
+    CONFIGPROXY_AUTH_TOKEN: "default-token-change-me"
+    JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+    JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
+    SESSION_TIMEOUT: "86400"
+    USE_CUSTOM_AUTH: "true"
+    JUPYTERHUB_AUTO_LOGIN: "true"
+    JUPYTERHUB_DEV_MODE: "true"
+    JUPYTERHUB_MEM_LIMIT: "3G"
+    JUPYTERHUB_CPU_LIMIT: "1.0"
+    JUPYTERHUB_IDLE_CULLER_ENABLED: "true"
+    JUPYTERHUB_IDLE_TIMEOUT: "3600"
+    JUPYTERHUB_CULL_TIMEOUT: "7200"
+  livenessProbe:
+    httpGet:
+      path: /jupyter/hub/api
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /jupyter/hub/api
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+
+# Gitea configuration
+gitea:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ai-infra-gitea
+    tag: "v0.0.3.3"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+    sshPort: 22
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  env:
+    ROOT_URL: "http://ai-infra.local/gitea/"
+    SUBURL: "/gitea"
+    STATIC_URL_PREFIX: "/gitea"
+    DOMAIN: "ai-infra.local"
+    PROTOCOL: "http"
+    HTTP_PORT: "3000"
+    GITEA_DB_TYPE: "postgres"
+    DISABLE_REGISTRATION: "false"
+    REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
+    GITEA__auth__REVERSE_PROXY_AUTHENTICATION_USER: "X-WEBAUTH-USER"
+    GITEA__auth__REVERSE_PROXY_AUTHENTICATION_EMAIL: "X-WEBAUTH-EMAIL"
+    GITEA__auth__PROXY_ENABLED: "true"
+    GITEA__auth__PROXY_HEADER_NAME: "X-WEBAUTH-USER"
+    GITEA__auth__PROXY_EMAIL_HEADER: "X-WEBAUTH-EMAIL"
+    GITEA__security__REVERSE_PROXY_LIMIT: "1"
+    GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
+    GITEA__storage__STORAGE_TYPE: "local"
+    DATA_PATH: "/data/gitea"
+
+# MinIO configuration
+minio:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: quay.io/minio/minio
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9000
+    consolePort: 9001
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 1Gi
+      cpu: 500m
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  auth:
+    rootUser: "minio"
+    rootPassword: "minio123"
+
+# Nginx gateway configuration
+nginx:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ai-infra-nginx
+    tag: "v0.0.3.3"
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 80
+    httpsPort: 443
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 250m
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 80
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Shared storage for notebooks
+sharedStorage:
+  enabled: true
+  size: 20Gi
+  storageClass: ""
+  accessMode: ReadWriteMany
+
+# Node selector, tolerations and affinity
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Monitoring and observability
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+
+# Network policies
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+# Secrets configuration
+secrets:
+  jwtSecret: "your-secret-key-change-in-production"
+  postgresPassword: "postgres"
+  redisPassword: "ansible-redis-password"
+  ldapAdminPassword: "admin123"
+  ldapConfigPassword: "config123"
+  giteaAdminToken: "your-gitea-admin-token"
+  minioRootPassword: "minio123"
+  configproxyAuthToken: "default-token-change-me"
+  jupyterhubCryptKey: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # API测试脚本
-# 测试Ansible Playbook Generator后端API
+# 测试AI-Infra-Matrix后端API
 
 BASE_URL="http://localhost:8082"
 TEST_USER="testuser"

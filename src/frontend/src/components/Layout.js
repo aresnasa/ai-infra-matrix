@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
-import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined } from '@ant-design/icons';
+import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const { Header, Content, Footer } = AntLayout;
@@ -29,6 +29,11 @@ const Layout = ({ children, user, onLogout }) => {
       label: '项目管理',
     },
     {
+      key: '/gitea',
+      icon: <CodeOutlined />,
+      label: 'Gitea',
+    },
+    {
       key: '/kubernetes',
       icon: <CloudServerOutlined />,
       label: 'Kubernetes',
@@ -37,6 +42,16 @@ const Layout = ({ children, user, onLogout }) => {
       key: '/ansible',
       icon: <FileTextOutlined />,
       label: 'Ansible',
+    },
+    {
+      key: '/jupyterhub',
+      icon: <ExperimentTwoTone />,
+      label: 'JupyterHub',
+    },
+    {
+  key: '/slurm',
+      icon: <ClusterOutlined />,
+      label: 'Slurm',
     },
   ];
 
@@ -93,6 +108,14 @@ const Layout = ({ children, user, onLogout }) => {
   ];
 
   const handleMenuClick = ({ key }) => {
+    // 特殊处理JupyterHub访问
+    if (key === '/jupyterhub') {
+      // Navigate to embedded Jupyter page for consistent UX
+  navigate('/jupyter');
+      return;
+    }
+    
+    // 其他菜单项正常导航
     navigate(key);
   };
 
@@ -156,7 +179,7 @@ const Layout = ({ children, user, onLogout }) => {
               fontWeight: 600
             }}
           >
-            Ansible Playbook Generator
+            AI-Infra-Matrix
           </Title>
         </div>
         
@@ -232,7 +255,7 @@ const Layout = ({ children, user, onLogout }) => {
         background: '#f0f2f5',
         borderTop: '1px solid #e8e8e8'
       }}>
-        Ansible Playbook Generator ©2025 Created by DevOps Team
+        AI-Infra-Matrix ©2025 Created by DevOps Team
       </Footer>
     </AntLayout>
   );

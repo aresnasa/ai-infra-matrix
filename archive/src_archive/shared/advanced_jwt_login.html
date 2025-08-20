@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI基础设施矩阵 - 智能登录</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-weight: bold;
+        }
+        .status.loading {
+            background-color: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
+        }
+        .status.success {
+            background-color: #e8f5e8;
+            color: #2e7d2e;
+            border: 1px solid #c8e6c9;
+        }
+        .status.error {
+            background-color: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background-color: #f0f0f0;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .manual-login {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: bold;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin: 10px 5px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .btn-secondary {
+            background: #6c757d;
+        }
+        .debug-info {
+            margin-top: 30px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            text-align: left;
+            font-size: 12px;
+            color: #666;
+            display: none;
+        }
+        .debug-info h4 {
+            margin-top: 0;
+            color: #333;
+        }
+        .debug-info pre {
+            background: #eee;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">AI</div>
+        <h1>AI基础设施矩阵</h1>
+        <p class="subtitle">智能单点登录系统</p>
+
+        <div id="status" class="status loading">
+            🔍 正在检测登录状态...
+        </div>
+
+        <div class="progress-bar">
+            <div id="progress" class="progress-bar-fill"></div>
+        </div>
+
+        <div id="manual-login" class="manual-login">
+            <h3>手动登录</h3>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="username">用户名:</label>
+                    <input type="text" id="username" name="username" value="admin" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">密码:</label>
+                    <input type="password" id="password" name="password" value="admin123" required>
+                </div>
+                <button type="submit" class="btn">登录</button>
+            </form>
+        </div>
+
+        <button id="show-debug" class="btn btn-secondary" onclick="toggleDebug()">显示调试信息</button>
+
+        <div id="debug-info" class="debug-info">
+            <h4>调试信息</h4>
+            <pre id="debug-content"></pre>
+        </div>
+    </div>
+
+    <script>
+        let debugData = {};
+        let progressValue = 0;
+
+        function updateProgress(value) {
+            progressValue = value;
+            document.getElementById('progress').style.width = value + '%';
+        }
+
+        function updateStatus(message, type) {
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = message;
+            statusElement.className = 'status ' + type;
+
+            debugData.lastStatus = {
+                message: message,
+                type: type,
+                timestamp: new Date().toISOString()
+            };
+            updateDebugInfo();
+        }
+
+        function updateDebugInfo() {
+            document.getElementById('debug-content').textContent = JSON.stringify(debugData, null, 2);
+        }
+
+        function toggleDebug() {
+            const debugDiv = document.getElementById('debug-info');
+            debugDiv.style.display = debugDiv.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function getUrlParameter(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        function setCookie(name, value, hours) {
+            const expires = new Date(Date.now() + hours * 60 * 60 * 1000).toUTCString();
+            document.cookie = `${name}=${value}; expires=${expires}; path=/; SameSite=Lax`;
+        }
+
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return null;
+        }
+
+        async function attemptJWTLogin(token, username) {
+            try {
+                updateStatus('🔑 验证JWT token...', 'loading');
+                updateProgress(30);
+
+                // 验证token格式
+                const tokenParts = token.split('.');
+                if (tokenParts.length !== 3) {
+                    throw new Error('JWT token格式无效');
+                }
+
+                // 解码payload (不验证签名，仅用于显示信息)
+                const payload = JSON.parse(atob(tokenParts[1]));
+                debugData.jwtPayload = payload;
+                updateDebugInfo();
+
+                updateStatus('🍪 设置认证cookie...', 'loading');
+                updateProgress(50);
+
+                // 设置JWT cookie
+                setCookie('jupyterhub-jwt-token', token, 24);
+                setCookie('ai-matrix-user', username || payload.username, 24);
+
+                updateStatus('🚀 重定向到JupyterHub...', 'loading');
+                updateProgress(80);
+
+                // 构建JupyterHub登录URL
+                const jupyterUrl = new URL('/jupyter/hub/login', window.location.origin);
+                jupyterUrl.searchParams.set('token', token);
+                if (username) {
+                    jupyterUrl.searchParams.set('username', username);
+                }
+
+                debugData.redirectUrl = jupyterUrl.toString();
+                updateDebugInfo();
+
+                updateProgress(100);
+                updateStatus('✅ 正在跳转到JupyterHub...', 'success');
+
+                // 延迟跳转以显示成功状态
+                setTimeout(() => {
+                    window.location.href = jupyterUrl.toString();
+                }, 1500);
+
+                return true;
+
+            } catch (error) {
+                debugData.jwtError = error.message;
+                updateDebugInfo();
+                updateStatus(`❌ JWT登录失败: ${error.message}`, 'error');
+                updateProgress(0);
+                return false;
+            }
+        }
+
+        async function attemptBackendLogin(username, password) {
+            try {
+                updateStatus('🔐 连接后端认证...', 'loading');
+                updateProgress(20);
+
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                debugData.backendResponse = {
+                    status: response.status,
+                    headers: Object.fromEntries(response.headers.entries())
+                };
+
+                if (response.ok) {
+                    const data = await response.json();
+                    debugData.backendData = data;
+                    updateDebugInfo();
+
+                    if (data.token) {
+                        updateStatus('✅ 后端认证成功，使用JWT登录...', 'success');
+                        updateProgress(60);
+                        return await attemptJWTLogin(data.token, username);
+                    } else {
+                        throw new Error('后端未返回JWT token');
+                    }
+                } else {
+                    const errorData = await response.text();
+                    debugData.backendError = errorData;
+                    throw new Error(`后端认证失败: ${response.status}`);
+                }
+
+            } catch (error) {
+                debugData.backendLoginError = error.message;
+                updateDebugInfo();
+                updateStatus(`❌ 后端登录失败: ${error.message}`, 'error');
+                updateProgress(0);
+                return false;
+            }
+        }
+
+        async function initializeLogin() {
+            updateProgress(10);
+
+            // 1. 检查URL参数中的token
+            const urlToken = getUrlParameter('token');
+            const urlUsername = getUrlParameter('username');
+
+            if (urlToken) {
+                debugData.urlToken = urlToken.substring(0, 50) + '...';
+                debugData.urlUsername = urlUsername;
+                updateDebugInfo();
+
+                const success = await attemptJWTLogin(urlToken, urlUsername);
+                if (success) return;
+            }
+
+            // 2. 检查已存储的token
+            const storedToken = getCookie('jupyterhub-jwt-token');
+            const storedUser = getCookie('ai-matrix-user');
+
+            if (storedToken) {
+                debugData.storedToken = storedToken.substring(0, 50) + '...';
+                debugData.storedUser = storedUser;
+                updateDebugInfo();
+
+                updateStatus('🔍 发现已存储的token，尝试自动登录...', 'loading');
+                const success = await attemptJWTLogin(storedToken, storedUser);
+                if (success) return;
+            }
+
+            // 3. 显示手动登录选项
+            updateStatus('⚠️ 需要手动登录', 'error');
+            updateProgress(0);
+            document.getElementById('manual-login').style.display = 'block';
+        }
+
+        // 表单提交处理
+        document.getElementById('login-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            const success = await attemptBackendLogin(username, password);
+            if (!success) {
+                // 如果后端登录失败，尝试直接JupyterHub登录
+                updateStatus('🔄 尝试直接JupyterHub登录...', 'loading');
+
+                try {
+                    const formData = new FormData();
+                    formData.append('username', username);
+                    formData.append('password', password);
+
+                    const response = await fetch('/jupyter/hub/login', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok || response.redirected) {
+                        updateStatus('✅ JupyterHub直接登录成功', 'success');
+                        window.location.href = '/jupyter/hub/home';
+                    } else {
+                        throw new Error('JupyterHub登录失败');
+                    }
+
+                } catch (error) {
+                    updateStatus('❌ 所有登录方式都失败了', 'error');
+                    debugData.finalError = error.message;
+                    updateDebugInfo();
+                }
+            }
+        });
+
+        // 页面加载时开始登录流程
+        window.addEventListener('load', initializeLogin);
+
+        // 初始化调试信息
+        debugData.pageLoaded = new Date().toISOString();
+        debugData.userAgent = navigator.userAgent;
+        debugData.location = window.location.toString();
+        updateDebugInfo();
+    </script>
+</body>
+</html>

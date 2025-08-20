@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta name="cache-version" content="1754584220" data-version="dev">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub - AI基础设施矩阵</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #f8f9fa;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .nav-links a:hover {
+            background-color: rgba(255,255,255,0.1);
+        }
+
+        .content-frame {
+            margin-top: 50px;
+            height: calc(100vh - 50px);
+            width: 100%;
+            border: none;
+            background: white;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #666;
+        }
+
+        .loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #d63384;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 JupyterHub - AI基础设施矩阵</h1>
+        <div class="nav-links">
+            <a href="/">🏠 主页</a>
+            <a href="/jupyter/">📊 Jupyter</a>
+            <a href="/sso/">🔐 SSO</a>
+        </div>
+    </div>
+
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p>正在加载 JupyterHub...</p>
+    </div>
+
+    <div class="error-message" id="error">
+        <h3>❌ 加载失败</h3>
+        <p>无法连接到 JupyterHub 服务</p>
+        <button onclick="location.reload()">🔄 重试</button>
+    </div>
+
+    <iframe 
+        id="jupyterhub-frame"
+        class="content-frame"
+        src="/jupyter/hub/"
+        onload="handleFrameLoad()"
+        onerror="handleFrameError()"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation allow-downloads">
+    </iframe>
+
+    <script>
+        let frameLoadRetries = 0;
+        const maxRetries = 3;
+        let isFirstLoad = true;
+        let lastLoadTime = Date.now();
+
+        // 确保页面状态一致性
+        function ensureConsistentState() {
+            // 确保URL始终是 /jupyterhub
+            if (window.location.pathname !== '/jupyterhub') {
+                console.log('URL不一致，修正为/jupyterhub');
+                window.history.replaceState({}, document.title, '/jupyterhub');
+            }
+            
+            // 确保页面标题一致
+            if (document.title !== 'JupyterHub - AI基础设施矩阵') {
+                document.title = 'JupyterHub - AI基础设施矩阵';
+            }
+            
+            // 检查iframe是否存在
+            const iframe = document.getElementById('jupyterhub-frame');
+            if (!iframe) {
+                console.error('iframe元素丢失，页面可能损坏');
+                location.reload();
+                return;
+            }
+            
+            // 检查iframe src是否正确
+            if (iframe.src !== window.location.origin + '/jupyter/hub/') {
+                console.log('iframe src不一致，修正中...');
+                iframe.src = '/jupyter/hub/';
+            }
+        }
+
+        function handleFrameLoad() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            
+            loading.style.display = 'none';
+            error.style.display = 'none';
+            
+            // 确保状态一致性
+            ensureConsistentState();
+            
+            // 更新页面标题
+            try {
+                const frame = document.getElementById('jupyterhub-frame');
+                const frameTitle = frame.contentDocument?.title;
+                if (frameTitle && frameTitle !== '404') {
+                    document.title = `${frameTitle} - AI基础设施矩阵`;
+                }
+            } catch (e) {
+                // 跨域限制，忽略错误
+                console.log('无法访问iframe标题，可能是跨域限制');
+            }
+            
+            console.log('JupyterHub 加载完成，状态已同步');
+            lastLoadTime = Date.now();
+            
+            // 监听iframe内的错误并自动重试
+            monitorFrameErrors();
+            
+            // 重置重试计数
+            frameLoadRetries = 0;
+            isFirstLoad = false;
+        }
+
+        function handleFrameError() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            
+            loading.style.display = 'none';
+            error.style.display = 'block';
+            
+            console.error('JupyterHub 加载失败');
+            
+            // 确保状态一致性即使在错误时也要维护
+            ensureConsistentState();
+            
+            // 自动重试
+            if (frameLoadRetries < maxRetries) {
+                setTimeout(() => {
+                    retryFrameLoad();
+                }, 2000);
+            }
+        }
+
+        function retryFrameLoad() {
+            frameLoadRetries++;
+            console.log(`正在重试加载 JupyterHub (${frameLoadRetries}/${maxRetries})`);
+            
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const frame = document.getElementById('jupyterhub-frame');
+            
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            
+            // 确保状态一致性
+            ensureConsistentState();
+            
+            // 重新加载iframe
+            frame.src = frame.src + '?t=' + Date.now(); // 添加时间戳避免缓存
+        }
+
+        function monitorFrameErrors() {
+            const frame = document.getElementById('jupyterhub-frame');
+            
+            // 监听iframe的导航错误
+            frame.addEventListener('load', function() {
+                try {
+                    // 检查是否是错误页面
+                    const frameDoc = frame.contentDocument || frame.contentWindow.document;
+                    if (frameDoc && (frameDoc.title.includes('404') || frameDoc.body.innerHTML.includes('404'))) {
+                        console.warn('检测到404错误，尝试刷新');
+                        setTimeout(() => {
+                            frame.src = frame.src;
+                        }, 1000);
+                    }
+                } catch (e) {
+                    // 跨域限制，无法检查内容
+                }
+            });
+        }
+
+        // 监听frame内的导航，保持URL为 /jupyterhub
+        window.addEventListener('message', function(event) {
+            // 处理来自frame的消息
+            if (event.origin === window.location.origin) {
+                console.log('Frame message:', event.data);
+                
+                // 如果收到错误消息，尝试刷新
+                if (event.data && event.data.type === 'error') {
+                    console.warn('收到错误消息，刷新iframe');
+                    const frame = document.getElementById('jupyterhub-frame');
+                    frame.src = frame.src;
+                }
+                
+                // 确保状态一致性
+                ensureConsistentState();
+            }
+        });
+
+        // 页面可见性变化处理
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+                // 页面重新可见时，检查状态一致性
+                console.log('页面重新可见，检查JupyterHub状态');
+                ensureConsistentState();
+                
+                // 检查iframe是否还活着
+                const frame = document.getElementById('jupyterhub-frame');
+                if (!frame || !frame.src) {
+                    console.warn('iframe状态异常，重新初始化');
+                    location.reload();
+                    return;
+                }
+                
+                // 尝试与iframe通信，如果失败则刷新
+                try {
+                    frame.contentWindow.postMessage({type: 'ping'}, '*');
+                } catch (e) {
+                    console.log('iframe通信失败，可能需要刷新');
+                }
+            }
+        });
+
+        // 浏览器历史管理
+        window.addEventListener('popstate', function(event) {
+            console.log('浏览器历史变化，确保URL一致性');
+            ensureConsistentState();
+        });
+
+        // 页面卸载前的清理
+        window.addEventListener('beforeunload', function() {
+            console.log('页面即将卸载');
+        });
+
+        // 页面加载完成后立即检查状态
+        document.addEventListener('DOMContentLoaded', function() {
+            ensureConsistentState();
+        });
+
+        // 设置加载超时
+        setTimeout(function() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            
+            if (loading && loading.style.display !== 'none') {
+                loading.style.display = 'none';
+                if (error) error.style.display = 'block';
+                console.warn('JupyterHub加载超时');
+            }
+        }, 15000); // 增加到15秒超时
+
+        // 添加全局错误处理
+        window.addEventListener('error', function(e) {
+            console.error('全局错误:', e.error);
+            ensureConsistentState();
+        });
+
+        // 定期检查iframe健康状态和页面一致性
+        setInterval(function() {
+            const frame = document.getElementById('jupyterhub-frame');
+            
+            // 确保状态一致性
+            ensureConsistentState();
+            
+            // 检查iframe健康状态
+            try {
+                // 尝试访问iframe，如果抛出错误说明有问题
+                const test = frame.contentWindow.location.href;
+            } catch (e) {
+                if (e.name === 'SecurityError') {
+                    // 跨域是正常的，忽略
+                    return;
+                }
+                console.warn('iframe健康检查失败:', e);
+            }
+            
+            // 检查加载时间，如果太久没有更新则可能有问题
+            const timeSinceLastLoad = Date.now() - lastLoadTime;
+            if (timeSinceLastLoad > 300000) { // 5分钟
+                console.warn('iframe长时间无响应，可能需要刷新');
+                lastLoadTime = Date.now();
+            }
+        }, 30000); // 每30秒检查一次
+
+        // 立即执行状态检查
+        ensureConsistentState();
+    </script>
+</body>
+</html>

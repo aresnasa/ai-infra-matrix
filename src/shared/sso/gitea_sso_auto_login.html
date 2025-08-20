@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gitea SSO Bridge</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 400px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        h2 { color: #333; margin-bottom: 0.5rem; }
+        p { color: #666; margin-bottom: 1rem; }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #f0f0f0;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .debug { 
+            font-size: 0.8rem; 
+            color: #999; 
+            margin-top: 1rem;
+            text-align: left;
+            background: #f8f9fa;
+            padding: 0.5rem;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h2>SSO Authentication</h2>
+        <p id="status">Initializing Gitea session...</p>
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress"></div>
+        </div>
+        <div class="debug" id="debug" style="display: none;"></div>
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+        
+        const statusEl = document.getElementById('status');
+        const progressEl = document.getElementById('progress');
+        const debugEl = document.getElementById('debug');
+        let progress = 0;
+        
+        function updateStatus(message, showDebug = false) {
+            statusEl.textContent = message;
+            if (showDebug) {
+                debugEl.style.display = 'block';
+            }
+        }
+        
+        function updateProgress(percent) {
+            progress = Math.min(100, Math.max(0, percent));
+            progressEl.style.width = progress + '%';
+        }
+        
+        function log(message) {
+            console.log('[Gitea SSO]', message);
+            debugEl.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+        }
+        
+        async function initializeGiteaSession() {
+            try {
+                updateStatus('Checking authentication status...');
+                updateProgress(20);
+                log('Starting Gitea SSO bootstrap process');
+                
+                // Step 1: Check if we have SSO tokens
+                const hasAIToken = document.cookie.includes('ai_infra_token=');
+                const hasJWTToken = document.cookie.includes('jwt_token=');
+                const hasAuthToken = document.cookie.includes('auth_token=');
+                
+                if (!hasAIToken && !hasJWTToken && !hasAuthToken) {
+                    throw new Error('No SSO tokens found. Please log in first.');
+                }
+                
+                log('SSO tokens detected: ai_infra=' + hasAIToken + ', jwt=' + hasJWTToken + ', auth=' + hasAuthToken);
+                updateProgress(40);
+                
+                // Step 2: Call the Gitea login endpoint to establish session
+                updateStatus('Establishing Gitea session...');
+                const loginUrl = new URL('/gitea/user/login', window.location.origin);
+                const redirectTo = new URLSearchParams(window.location.search).get('redirect_to') || '/gitea/';
+                loginUrl.searchParams.set('redirect_to', redirectTo);
+                
+                log('Calling Gitea login: ' + loginUrl.toString());
+                
+                const loginResponse = await fetch(loginUrl.toString(), {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'text/html,application/xhtml+xml',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!loginResponse.ok) {
+                    throw new Error('Login request failed: ' + loginResponse.status);
+                }
+                
+                updateProgress(70);
+                log('Gitea login response: ' + loginResponse.status);
+                
+                // Step 3: Check if Gitea session was established
+                updateStatus('Verifying session...');
+                const hasGiteaSession = document.cookie.includes('i_like_gitea=');
+                
+                // Allow some time for cookies to be set
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                const updatedGiteaSession = document.cookie.includes('i_like_gitea=');
+                log('Gitea session check: initial=' + hasGiteaSession + ', updated=' + updatedGiteaSession);
+                
+                updateProgress(90);
+                
+                // Step 4: Redirect to intended destination
+                updateStatus('Redirecting to Gitea...');
+                updateProgress(100);
+                
+                log('Redirecting to: ' + redirectTo);
+                
+                // Small delay to show completion
+                setTimeout(() => {
+                    window.location.href = redirectTo;
+                }, 500);
+                
+            } catch (error) {
+                console.error('Gitea SSO initialization failed:', error);
+                log('ERROR: ' + error.message);
+                updateStatus('Authentication failed: ' + error.message, true);
+                updateProgress(0);
+                
+                // Fallback: redirect to main SSO login
+                setTimeout(() => {
+                    window.location.href = '/sso/jwt_sso_bridge.html?service=gitea&redirect_path=/gitea/';
+                }, 3000);
+            }
+        }
+        
+        // Start the process when page loads
+        window.addEventListener('load', () => {
+            setTimeout(initializeGiteaSession, 500);
+        });
+        
+    })();
+    </script>
+</body>
+</html>

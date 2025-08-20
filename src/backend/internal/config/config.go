@@ -28,6 +28,13 @@ type Config struct {
 	
 	// LDAP初始化配置
 	LDAPInit LDAPInitConfig
+	// LDAP后台同步（可选）
+	LDAPSync LDAPSyncRuntime
+    
+	// Gitea 集成
+	Gitea GiteaConfig
+	// Gitea 后台同步
+	GiteaSync GiteaSyncRuntime
 	
 	// 日志级别 (trace, debug, info, warn, error, fatal, panic)
 	LogLevel string
@@ -85,6 +92,33 @@ type LDAPInitConfig struct {
 	// 组配置
 	AdminGroupCN string `json:"admin_group_cn"`
 	UserGroupCN  string `json:"user_group_cn"`
+}
+
+// LDAPSyncRuntime 运行时同步配置
+type LDAPSyncRuntime struct {
+	Enabled bool   `json:"enabled"`
+	// 同步间隔，单位秒（默认900秒=15分钟）
+	IntervalSeconds int `json:"interval_seconds"`
+}
+
+// GiteaConfig Gitea 集成配置
+type GiteaConfig struct {
+	Enabled    bool   `json:"enabled"`
+	BaseURL    string `json:"base_url"`
+	AdminToken string `json:"admin_token"`
+	AutoCreate bool   `json:"auto_create"`
+	AutoUpdate bool   `json:"auto_update"`
+	// AliasAdminTo maps the reserved backend username "admin" to a concrete Gitea account name.
+	// Gitea reserves the name "admin", so provisioning that username will fail with 422.
+	// When set (non-empty), any "admin" user will be provisioned/updated as this target username.
+	// Example: "test" (an existing Gitea admin user).
+	AliasAdminTo string `json:"alias_admin_to"`
+}
+
+// GiteaSyncRuntime Gitea 同步配置
+type GiteaSyncRuntime struct {
+	Enabled         bool `json:"enabled"`
+	IntervalSeconds int  `json:"interval_seconds"`
 }
 
 type AdminUserConfig struct {
@@ -186,6 +220,25 @@ func Load() (*Config, error) {
 			},
 			AdminGroupCN: getEnv("LDAP_ADMIN_GROUP_CN", "admins"),
 			UserGroupCN:  getEnv("LDAP_USER_GROUP_CN", "users"),
+		},
+		LDAPSync: LDAPSyncRuntime{
+			Enabled:         getEnv("LDAP_SYNC_ENABLED", "false") == "true",
+			IntervalSeconds: getEnvAsInt("LDAP_SYNC_INTERVAL_SECONDS", 900),
+		},
+		Gitea: GiteaConfig{
+			Enabled:    getEnv("GITEA_ENABLED", "false") == "true",
+			// IMPORTANT: Use the internal service base URL WITHOUT the web SUBURL (/gitea)
+			// Admin API is always rooted at /api/v1 on the service, regardless of SUBURL.
+			BaseURL:    getEnv("GITEA_BASE_URL", "http://gitea:3000"),
+			AdminToken: getEnv("GITEA_ADMIN_TOKEN", ""),
+			AutoCreate: getEnv("GITEA_AUTO_CREATE", "true") == "true",
+			AutoUpdate: getEnv("GITEA_AUTO_UPDATE", "true") == "true",
+			// Default alias maps backend "admin" to Gitea user "test". Override via env if needed.
+			AliasAdminTo: getEnv("GITEA_ALIAS_ADMIN_TO", "test"),
+		},
+		GiteaSync: GiteaSyncRuntime{
+			Enabled:         getEnv("GITEA_SYNC_ENABLED", "false") == "true",
+			IntervalSeconds: getEnvAsInt("GITEA_SYNC_INTERVAL_SECONDS", 600),
 		},
 	}
 

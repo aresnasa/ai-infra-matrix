@@ -1,8 +1,12 @@
 # 使用Node.js 18作为基础镜像
-FROM node:18-alpine as build
+FROM node:18-alpine AS build
 
-# 更换alpine下载源为清华大学镜像
-RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories
+# 配置Alpine镜像（多镜像自动回退）
+RUN set -eux; \
+	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+		apk update && break || true; \
+	done
 
 # 设置工作目录
 WORKDIR /app
@@ -27,8 +31,17 @@ RUN npm run build
 # 使用nginx作为生产环境镜像
 FROM nginx:stable-alpine-perl
 
-# 设置时区为上海
-RUN apk add --no-cache tzdata
+# Version metadata
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
+# 配置Alpine镜像（多镜像自动回退），并设置时区为上海
+RUN set -eux; \
+	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+		apk update && break || true; \
+	done; \
+	apk add --no-cache tzdata
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
@@ -50,3 +63,8 @@ EXPOSE 80
 
 # 启动nginx
 CMD ["nginx", "-g", "daemon off;"]
+
+LABEL maintainer="AI Infrastructure Team" \
+	org.opencontainers.image.title="ai-infra-frontend" \
+	org.opencontainers.image.version="${APP_VERSION}" \
+	org.opencontainers.image.description="AI Infra Matrix - Frontend"

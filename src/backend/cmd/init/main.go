@@ -15,6 +15,9 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"net/http"
+	"strings"
+	"os"
 )
 
 func main() {
@@ -39,6 +42,16 @@ func main() {
 		log.Fatal("Failed to migrate database:", err)
 	}
 
+	// 创建JupyterHub数据库
+	if err := createJupyterHubDatabase(cfg); err != nil {
+		log.Fatal("Failed to create JupyterHub database:", err)
+	}
+
+	// 创建Gitea数据库与用户（按照当前 .env 配置）
+	if err := createGiteaDatabase(cfg); err != nil {
+		log.Fatal("Failed to create Gitea database:", err)
+	}
+
 	// 初始化RBAC系统
 	if err := initializeRBAC(); err != nil {
 		log.Fatal("Failed to initialize RBAC:", err)
@@ -52,6 +65,9 @@ func main() {
 
 	// 初始化LDAP用户（如果LDAP服务可用）
 	initializeLDAPUsers(cfg)
+
+	// 初始化并同步 Gitea 用户（如果启用）
+	initializeGiteaUsers(cfg)
 
 	log.Println("Initialization completed successfully!")
 }
@@ -645,4 +661,163 @@ func initializeDefaultAIConfigs() {
 	log.Println("📝 Note: AI configurations have been created with empty API keys.")
 	log.Println("🔑 Please configure API keys in the admin panel to enable AI functionality.")
 	log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
+}
+
+// createJupyterHubDatabase 创建JupyterHub专用数据库
+func createJupyterHubDatabase(cfg *config.Config) error {
+	log.Println("Creating JupyterHub database...")
+
+	// 连接到 postgres 系统数据库
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// 检查JupyterHub数据库是否存在
+	var exists bool
+	jupyterhubDBName := "jupyterhub_db"
+	query := "SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)"
+	if err := systemDB.Raw(query, jupyterhubDBName).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check JupyterHub database existence: %w", err)
+	}
+
+	if !exists {
+		// 创建JupyterHub数据库
+		log.Printf("Creating JupyterHub database: %s", jupyterhubDBName)
+		createQuery := fmt.Sprintf("CREATE DATABASE %s", jupyterhubDBName)
+		if err := systemDB.Exec(createQuery).Error; err != nil {
+			return fmt.Errorf("failed to create JupyterHub database: %w", err)
+		}
+		log.Printf("JupyterHub database '%s' created successfully", jupyterhubDBName)
+	} else {
+		log.Printf("JupyterHub database '%s' already exists", jupyterhubDBName)
+	}
+
+	return nil
+}
+
+// createGiteaDatabase ensures the Gitea role and database exist with the configured credentials
+func createGiteaDatabase(cfg *config.Config) error {
+	log.Println("Creating Gitea database and role...")
+
+	// Read Gitea DB settings from env (compose passes into container)
+	gUser := getEnvCompat("GITEA_DB_USER", "gitea")
+	gPass := getEnvCompat("GITEA_DB_PASSWD", "gitea-password")
+	gDB := getEnvCompat("GITEA_DB_NAME", "gitea")
+
+	// Connect to system DB
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Create role if missing
+	createRole := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE USER %s WITH LOGIN PASSWORD '%s'; END IF; END $$;", gUser, gUser, gPass)
+	if err := systemDB.Exec(createRole).Error; err != nil {
+		return fmt.Errorf("failed to ensure Gitea role: %w", err)
+	}
+
+	// Create DB if missing and grant
+	var exists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", gDB).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check Gitea DB existence: %w", err)
+	}
+	if !exists {
+		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", gDB, gUser)).Error; err != nil {
+			return fmt.Errorf("failed to create Gitea database: %w", err)
+		}
+	}
+	if err := systemDB.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", gDB, gUser)).Error; err != nil {
+		log.Printf("Warning: failed to grant privileges on %s to %s: %v", gDB, gUser, err)
+	}
+
+	log.Println("Gitea database initialization done")
+	return nil
+}
+
+// getEnvCompat reads from process env; used by init which runs inside container
+func getEnvCompat(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" { return v }
+	return def
+}
+
+// initializeGiteaUsers 在系统初始化阶段，确保后端用户同步到 Gitea
+func initializeGiteaUsers(cfg *config.Config) {
+	if !cfg.Gitea.Enabled {
+		log.Println("Gitea integration disabled, skipping Gitea user initialization")
+		return
+	}
+	if cfg.Gitea.AdminToken == "" {
+		log.Println("Gitea admin token not configured, skipping Gitea user initialization")
+		return
+	}
+
+	log.Println("Initializing Gitea users...")
+
+	// 等待 Gitea HTTP 服务就绪
+	if !waitForGitea(cfg, 30, 2*time.Second) {
+		log.Println("Gitea not available, skip initializing Gitea users")
+		return
+	}
+
+	// 调用后台服务进行一次全量同步（幂等）
+	giteaSvc := services.NewGiteaService(cfg)
+	created, updated, skipped, err := giteaSvc.SyncAllUsers()
+	if err != nil {
+		log.Printf("Warning: Gitea user sync failed: %v (created=%d updated=%d skipped=%d)", err, created, updated, skipped)
+		return
+	}
+
+	log.Printf("Gitea users initialized: created=%d updated=%d skipped=%d", created, updated, skipped)
+}
+
+// waitForGitea 简单等待 Gitea 健康（GET /api/v1/version 200 即认为可用）
+func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bool {
+	base := cfg.Gitea.BaseURL
+	// 去掉末尾斜杠，拼接 API 路径
+	url := fmt.Sprintf("%s/api/v1/version", strings.TrimRight(base, "/"))
+	client := &http.Client{ Timeout: 3 * time.Second }
+
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			time.Sleep(interval)
+		}
+		req, _ := http.NewRequest("GET", url, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Waiting for Gitea... (%d/%d): %v", i+1, maxRetries, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Println("Gitea is ready")
+			return true
+		}
+		log.Printf("Gitea not ready, status=%d (%d/%d)", resp.StatusCode, i+1, maxRetries)
+	}
+	return false
 }

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 数据库备份和恢复脚本
-# 用于Ansible Playbook Generator项目
+# 用于AI-Infra-Matrix项目
 
 # 设置变量
 DB_HOST="localhost"

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>iframe测试页面</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-frame { width: 100%; height: 600px; border: 2px solid #ccc; }
+        .status { 
+            margin: 10px 0; 
+            padding: 10px; 
+            background: #f5f5f5; 
+            border-left: 4px solid #ccc;
+        }
+        .status.loaded { background: #e8f5e8; border-left-color: #4caf50; }
+        .status.error { background: #ffe8e8; border-left-color: #f44336; }
+        .status.accessible { background: #e8f4fd; border-left-color: #2196f3; }
+        .status.blocked { background: #fff3e0; border-left-color: #ff9800; }
+    </style>
+</head>
+<body>
+    <h1>🧪 JupyterHub iframe测试</h1>
+    
+    <div class="status">
+        <strong>测试说明:</strong> 如果下面的iframe显示JupyterHub内容，说明iframe功能正常。
+    </div>
+    
+    <h2>测试1: 直接iframe嵌入</h2>
+    <iframe 
+        id="test-frame-1" 
+        class="test-frame"
+        src="http://localhost:8080/jupyter/hub/"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation">
+        您的浏览器不支持iframe
+    </iframe>
+    
+    <h2>测试2: 使用wrapper页面</h2>
+    <iframe 
+        id="test-frame-2" 
+        class="test-frame"
+        src="http://localhost:8080/jupyterhub"
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation">
+        您的浏览器不支持iframe
+    </iframe>
+    
+    <script>
+        // 监听iframe加载事件
+        function setupIframeMonitoring(iframeId, name) {
+            const iframe = document.getElementById(iframeId);
+            
+            iframe.onload = function() {
+                console.log(`${name} - iframe加载完成`);
+                updateStatus(iframeId, 'loaded');
+                
+                try {
+                    // 尝试访问iframe内容（可能因为同源策略而失败）
+                    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                    console.log(`${name} - 可以访问iframe内容`);
+                    updateStatus(iframeId, 'accessible');
+                } catch (e) {
+                    console.log(`${name} - 无法访问iframe内容（正常的跨域限制）: ${e.message}`);
+                    updateStatus(iframeId, 'blocked');
+                }
+            };
+            
+            iframe.onerror = function() {
+                console.error(`${name} - iframe加载错误`);
+                updateStatus(iframeId, 'error');
+            };
+        }
+        
+        function updateStatus(iframeId, status) {
+            const statusDiv = document.getElementById(`status-${iframeId}`);
+            if (statusDiv) {
+                statusDiv.innerHTML = `状态: ${status}`;
+                statusDiv.className = `status ${status}`;
+            }
+        }
+        
+        // 创建状态显示元素
+        function createStatusElements() {
+            const iframe1 = document.getElementById('test-frame-1');
+            const iframe2 = document.getElementById('test-frame-2');
+            
+            // 为每个iframe添加状态显示
+            [iframe1, iframe2].forEach(iframe => {
+                const statusDiv = document.createElement('div');
+                statusDiv.id = `status-${iframe.id}`;
+                statusDiv.className = 'status';
+                statusDiv.innerHTML = '状态: 等待加载...';
+                iframe.parentNode.insertBefore(statusDiv, iframe);
+            });
+        }
+        
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            createStatusElements();
+            setupIframeMonitoring('test-frame-1', '直接嵌入');
+            setupIframeMonitoring('test-frame-2', 'Wrapper页面');
+            
+            // 5秒后检查iframe状态
+            setTimeout(() => {
+                ['test-frame-1', 'test-frame-2'].forEach((id, index) => {
+                    const iframe = document.getElementById(id);
+                    const name = index === 0 ? '直接嵌入' : 'Wrapper页面';
+                    
+                    if (iframe.contentWindow) {
+                        console.log(`${name} - iframe窗口存在`);
+                        
+                        // 尝试检查iframe是否真的加载了内容
+                        try {
+                            const currentSrc = iframe.src;
+                            console.log(`${name} - iframe当前src: ${currentSrc}`);
+                            
+                            // 检查iframe是否显示空白
+                            const rect = iframe.getBoundingClientRect();
+                            console.log(`${name} - iframe尺寸: ${rect.width}x${rect.height}`);
+                        } catch (e) {
+                            console.log(`${name} - 检查iframe详情失败: ${e.message}`);
+                        }
+                    } else {
+                        console.log(`${name} - iframe窗口不存在`);
+                    }
+                });
+                
+                // 添加调试信息到页面
+                const debugInfo = document.createElement('div');
+                debugInfo.innerHTML = `
+                    <h3>🔍 调试信息</h3>
+                    <p><strong>时间:</strong> ${new Date().toLocaleTimeString()}</p>
+                    <p><strong>用户代理:</strong> ${navigator.userAgent}</p>
+                    <p><strong>页面URL:</strong> ${window.location.href}</p>
+                    <p>请打开浏览器开发者工具查看控制台日志</p>
+                `;
+                debugInfo.style.background = '#f0f0f0';
+                debugInfo.style.padding = '10px';
+                debugInfo.style.margin = '20px 0';
+                document.body.appendChild(debugInfo);
+                
+            }, 5000);
+        });
+    </script>
+</body>
+</html>

@@ -24,11 +24,17 @@ const AuthPage = ({ onLogin }) => {
       localStorage.setItem('token', token);
       localStorage.setItem('token_expires', expires_at);
       
+      // 确保localStorage写入完成
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       message.success('登录成功！正在加载权限信息...');
       
-      // 不在这里设置用户状态，让App.js来处理权限验证
-      // 这样确保获取到最新的权限信息后再渲染界面
-      onLogin(user);
+      // 传递完整的登录响应数据，包括token信息
+      onLogin({
+        token,
+        expires_at,
+        user
+      });
       
     } catch (error) {
       console.error('登录失败:', error);
@@ -57,7 +63,7 @@ const AuthPage = ({ onLogin }) => {
         <Col xs={22} sm={16} md={12} lg={8} xl={6}>
           <Card title={
             <div style={{ textAlign: 'center' }}>
-              <h2>Ansible Playbook Generator</h2>
+              <h2>AI-Infra-Matrix</h2>
             </div>
           }>
             <Tabs activeKey={activeTab} onChange={setActiveTab} centered>

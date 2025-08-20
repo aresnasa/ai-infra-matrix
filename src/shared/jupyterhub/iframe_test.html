@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta name="cache-version" content="1754584220" data-version="dev">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub iframe测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ccc;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.loading { background: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>🧪 JupyterHub iframe集成测试</h1>
+    
+    <div class="test-section">
+        <h2>1. 直接访问JupyterHub (iframe)</h2>
+        <div id="direct-status" class="status loading">正在加载...</div>
+        <iframe src="/jupyter/hub/" id="direct-frame"></iframe>
+    </div>
+    
+    <div class="test-section">
+        <h2>2. 通过wrapper访问JupyterHub (带自动认证)</h2>
+        <div id="wrapper-status" class="status loading">正在加载...</div>
+        <iframe src="/jupyterhub" id="wrapper-frame"></iframe>
+    </div>
+
+    <div class="test-section">
+        <h2>3. 服务状态检查</h2>
+        <div id="health-status" class="status loading">检查中...</div>
+        <button onclick="checkServices()">🔄 重新检查</button>
+    </div>
+
+    <script>
+        // 检查iframe加载状态
+        function setupFrameMonitoring(frameId, statusId) {
+            const frame = document.getElementById(frameId);
+            const status = document.getElementById(statusId);
+            
+            let loadTimeout = setTimeout(() => {
+                status.className = 'status error';
+                status.textContent = '⚠️ 加载超时（可能是正常的，如果显示内容）';
+            }, 10000);
+
+            frame.onload = () => {
+                clearTimeout(loadTimeout);
+                status.className = 'status success';
+                status.textContent = '✅ iframe已加载';
+            };
+
+            frame.onerror = () => {
+                clearTimeout(loadTimeout);
+                status.className = 'status error';
+                status.textContent = '❌ iframe加载失败';
+            };
+        }
+
+        // 检查服务状态
+        async function checkServices() {
+            const healthStatus = document.getElementById('health-status');
+            healthStatus.className = 'status loading';
+            healthStatus.textContent = '检查中...';
+
+            const services = [
+                { name: 'JupyterHub API', url: '/jupyter/hub/api' },
+                { name: '后端认证API', url: '/api/auth/token' },
+                { name: 'nginx健康检查', url: '/health' }
+            ];
+
+            let results = [];
+            
+            for (const service of services) {
+                try {
+                    const response = await fetch(service.url, { method: 'HEAD' });
+                    results.push(`✅ ${service.name}: ${response.status}`);
+                } catch (error) {
+                    results.push(`❌ ${service.name}: ${error.message}`);
+                }
+            }
+
+            healthStatus.className = 'status success';
+            healthStatus.innerHTML = results.join('<br>');
+        }
+
+        // 初始化
+        window.addEventListener('load', () => {
+            setupFrameMonitoring('direct-frame', 'direct-status');
+            setupFrameMonitoring('wrapper-frame', 'wrapper-status');
+            checkServices();
+        });
+    </script>
+</body>
+</html>

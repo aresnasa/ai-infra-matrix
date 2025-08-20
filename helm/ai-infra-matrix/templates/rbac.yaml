@@ -1,0 +1,79 @@
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "ai-infra-matrix.userNamespace" . }}
+  labels:
+    name: {{ include "ai-infra-matrix.userNamespace" . }}
+    app.kubernetes.io/name: {{ include "ai-infra-matrix.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    purpose: single-user-pods
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: {{ include "ai-infra-matrix.userNamespace" . }}
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-user-pods
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "persistentvolumeclaims", "events", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log", "pods/exec"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-user-pods
+  namespace: {{ include "ai-infra-matrix.userNamespace" . }}
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "ai-infra-matrix.serviceAccountName" . }}-jupyterhub
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-user-pods
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-cluster
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-cluster
+  labels:
+    {{- include "ai-infra-matrix.labels" . | nindent 4 }}
+    {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "ai-infra-matrix.serviceAccountName" . }}-jupyterhub
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "ai-infra-matrix.fullname" . }}-jupyterhub-cluster
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

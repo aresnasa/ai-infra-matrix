@@ -26,6 +26,7 @@ import {
   ReloadOutlined
 } from '@ant-design/icons';
 import api from '../services/api';
+import { resolveSSOTarget } from '../utils/ssoTarget';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -110,6 +111,7 @@ const UnifiedJupyterHubIntegration = () => {
 
   // 统一认证登录到JupyterHub
   const handleUnifiedLogin = async () => {
+  const target = resolveSSOTarget();
     if (!userSession) {
       message.warning('请先登录系统');
       return;
@@ -117,27 +119,47 @@ const UnifiedJupyterHubIntegration = () => {
 
     setLoading(true);
     try {
-      // 通过后端生成JupyterHub登录令牌
-      const response = await api.post('/auth/jupyterhub-login', {
-        username: userSession.username
+      // 调用后端API处理JupyterHub访问
+      const response = await fetch('/api/jupyter/access', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        },
+        body: JSON.stringify({
+          redirect_uri: target.authenticatedPath,
+          source: 'unified_integration'
+        })
       });
 
-      if (response.data.success) {
-        // 使用令牌登录JupyterHub
-        const loginUrl = `${jupyterHubConfig.url}/hub/login?next=%2Fhub%2F&token=${response.data.token}`;
-        window.open(loginUrl, '_blank');
-        message.success('正在跳转到JupyterHub...');
+      const data = await response.json();
+      
+      if (data.success && data.action === 'authenticated') {
+        // 认证成功
+        message.success(`正在使用当前登录状态跳转到${target.name}...`);
+        window.location.href = data.redirect_url;
         
         // 更新会话状态
         setTimeout(() => {
           checkJupyterHubSession(userSession.username);
         }, 2000);
+        
+      } else if (data.action === 'redirect') {
+        // 需要重定向到SSO登录
+        message.info('需要重新认证，正在跳转到SSO...');
+        window.location.href = data.redirect_url;
+        
       } else {
-        message.error('生成登录令牌失败');
+        throw new Error(data.message || '访问失败');
       }
+
     } catch (error) {
       console.error('统一登录失败:', error);
       message.error('登录失败: ' + (error.response?.data?.message || error.message));
+      // 出错时跳转到SSO登录
+      setTimeout(() => {
+        window.location.href = `/sso/?redirect_uri=${encodeURIComponent(target.authenticatedPath)}`;
+      }, 1500);
     } finally {
       setLoading(false);
     }

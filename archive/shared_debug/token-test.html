@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Token设置测试</title>
+</head>
+<body>
+    <h1>设置测试Token</h1>
+    <button onclick="setToken()">设置有效Token</button>
+    <button onclick="clearToken()">清除Token</button>
+    <button onclick="testAuth()">测试认证页面</button>
+    <div id="status"></div>
+    
+    <script>
+        function setToken() {
+            // 设置一个测试token
+            const testToken = 'test-token-' + Date.now();
+            const expires = new Date(Date.now() + 3600000).toISOString();
+            
+            localStorage.setItem('token', testToken);
+            localStorage.setItem('token_expires', expires);
+            
+            document.getElementById('status').innerHTML = '✅ Token已设置: ' + testToken;
+        }
+        
+        function clearToken() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('token_expires');
+            sessionStorage.removeItem('redirect_count');
+            sessionStorage.removeItem('last_redirect_time');
+            
+            document.getElementById('status').innerHTML = '🗑️ Token已清除';
+        }
+        
+        function testAuth() {
+            document.getElementById('status').innerHTML = '🔄 正在跳转到认证页面...';
+            window.location.href = '/jupyterhub-authenticated';
+        }
+    </script>
+</body>
+</html>

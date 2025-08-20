@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider, Spin } from 'antd';
+import { ConfigProvider, Spin, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -35,6 +35,12 @@ const AIAssistantManagement = React.lazy(() => import('./pages/AIAssistantManage
 // JupyterHub管理页面懒加载
 const JupyterHubManagement = React.lazy(() => import('./pages/JupyterHubManagement'));
 
+// JupyterHub主页面懒加载
+const JupyterHubPage = React.lazy(() => import('./pages/JupyterHubPage'));
+const EmbeddedJupyter = React.lazy(() => import('./pages/EmbeddedJupyter'));
+const SlurmDashboard = React.lazy(() => import('./pages/SlurmDashboard'));
+const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -46,7 +52,34 @@ function App() {
 
   useEffect(() => {
     initializeAuth();
+    
+    // 初始化favicon管理器
+    const initializeFavicon = () => {
+      if (window.faviconManager) {
+        window.faviconManager.updateFavicon();
+      }
+    };
+    
+    initializeFavicon();
   }, []);
+
+  // 监听用户状态变化，更新favicon
+  useEffect(() => {
+    if (window.faviconManager) {
+      if (user) {
+        // 用户已登录，显示正常状态
+        window.faviconManager.resetToDefault();
+        
+        // 根据用户角色设置不同的favicon效果
+        if (user.roles && user.roles.some(role => role.name === 'admin')) {
+          window.faviconManager.addEffect('admin');
+        }
+      } else {
+        // 用户未登录，可以设置特殊状态
+        window.faviconManager.resetToDefault();
+      }
+    }
+  }, [user]);
 
   // 检查token是否有效（本地检查，避免频繁请求后端）
   const isTokenValid = () => {
@@ -133,6 +166,9 @@ function App() {
     try {
       console.log('正在验证token并获取用户权限...');
       
+      // 确保 localStorage 的写入已经完成
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
       const response = await authAPI.getProfile();
       const userData = response.data;
       
@@ -185,7 +221,7 @@ function App() {
     localStorage.removeItem('token_expires');
   };
 
-  // 处理登录成功 - 重新验证权限
+  // 处理登录成功 - 重新验证权限并设置SSO
   const handleLogin = async (userData) => {
     console.log('=== 处理登录成功 ===');
     console.log('登录返回的用户数据:', userData);
@@ -196,10 +232,50 @@ function App() {
     setPermissionsLoaded(false);
     
     try {
+      // 使用增强的认证服务设置认证状态
+      if (window.authService) {
+        await window.authService.setAuthData(
+          userData.token, 
+          userData.expires_at, 
+          userData.user || userData
+        );
+        
+        // 设置SSO cookies
+        await window.authService.setupSSOCookies(
+          userData.token, 
+          userData.user || userData
+        );
+        
+        console.log('✅ SSO状态设置完成');
+      } else {
+        // 降级处理：手动设置
+        localStorage.setItem('token', userData.token);
+        if (userData.expires_at) {
+          localStorage.setItem('token_expires', userData.expires_at);
+        }
+        if (userData.user) {
+          localStorage.setItem('user', JSON.stringify(userData.user));
+        }
+        
+        // 手动设置SSO cookie
+        const maxAge = 3600;
+        const cookieOptions = `path=/; max-age=${maxAge}; SameSite=Lax`;
+        document.cookie = `ai_infra_token=${userData.token}; ${cookieOptions}`;
+        document.cookie = `jwt_token=${userData.token}; ${cookieOptions}`;
+        
+        console.log('✅ 降级SSO状态设置完成');
+      }
+      
+      // 重新初始化认证状态
+      await initializeAuth();
+      
       // 立即从后端获取最新的权限信息
       await verifyUserWithBackend();
+      
     } catch (error) {
-      console.error('登录后获取权限信息失败:', error);
+      console.error('设置登录状态失败:', error);
+      message.error('登录状态设置失败');
+      
       // 如果获取最新权限失败，使用登录返回的数据作为备用
       setUser(userData);
       setPermissionsLoaded(true);
@@ -274,11 +350,22 @@ function App() {
                 <Suspense fallback={<LoadingFallback />}>
                   <Routes>
                     <Route path="/" element={<Navigate to="/projects" replace />} />
+                    {/* Legacy redirects for Slurm paths to keep old links working */}
+                    <Route path="/jupyter/with-slurm" element={<Navigate to="/slurm" replace />} />
+                    <Route path="/jupyter/slurm" element={<Navigate to="/slurm" replace />} />
                     <Route 
                       path="/projects" 
                       element={
                         <Suspense fallback={<ProjectLoadingFallback />}>
                           <ProjectList />
+                        </Suspense>
+                      } 
+                    />
+                    <Route 
+                      path="/gitea" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <GiteaEmbed />
                         </Suspense>
                       } 
                     />
@@ -306,6 +393,26 @@ function App() {
                       element={
                         <Suspense fallback={<LazyLoadingSpinner />}>
                           <AnsibleManagement />
+                        </Suspense>
+                      } 
+                    />
+                    
+                    {/* Embedded Jupyter page (same-origin iframe) */}
+                    <Route 
+                      path="/jupyter" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <EmbeddedJupyter />
+                        </Suspense>
+                      } 
+                    />
+
+                    {/* Slurm dashboard page */}
+                    <Route 
+                      path="/slurm" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <SlurmDashboard />
                         </Suspense>
                       } 
                     />

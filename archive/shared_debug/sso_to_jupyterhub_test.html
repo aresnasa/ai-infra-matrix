@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSO到JupyterHub完整流程测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .step { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { background: #d4edda; border-color: #c3e6cb; }
+        .error { background: #f8d7da; border-color: #f5c6cb; }
+        .info { background: #d1ecf1; border-color: #bee5eb; }
+        .warning { background: #fff3cd; border-color: #ffeeba; }
+        button { margin: 5px; padding: 10px 15px; }
+        .code { background: #f8f9fa; padding: 5px; font-family: monospace; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>🔄 SSO到JupyterHub完整流程测试</h1>
+    
+    <div class="step info">
+        <strong>测试流程:</strong>
+        <ol>
+            <li>检查当前localStorage状态</li>
+            <li>模拟SSO登录过程</li>
+            <li>验证token是否正确设置</li>
+            <li>测试认证桥接页面逻辑</li>
+            <li>执行完整的跳转流程</li>
+        </ol>
+    </div>
+    
+    <button onclick="startFullTest()">🚀 开始完整测试</button>
+    <button onclick="testSSOOnly()">🔐 仅测试SSO流程</button>
+    <button onclick="testAuthBridgeOnly()">🌉 仅测试认证桥接</button>
+    <button onclick="clearAll()">🗑️ 清除所有数据</button>
+    
+    <div id="results"></div>
+
+    <script>
+        let stepCounter = 0;
+
+        function log(message, type = 'info') {
+            stepCounter++;
+            const resultsDiv = document.getElementById('results');
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `step ${type}`;
+            stepDiv.innerHTML = `<strong>步骤 ${stepCounter}:</strong> ${message}`;
+            resultsDiv.appendChild(stepDiv);
+            console.log(`[步骤${stepCounter}] ${message}`);
+            
+            // 自动滚动到最新日志
+            stepDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function clearAll() {
+            localStorage.clear();
+            sessionStorage.clear();
+            document.getElementById('results').innerHTML = '';
+            stepCounter = 0;
+            log('已清除所有本地数据', 'info');
+        }
+
+        function checkCurrentState() {
+            log('检查当前localStorage状态...', 'info');
+            
+            const token = localStorage.getItem('token');
+            const expires = localStorage.getItem('token_expires');
+            
+            if (token) {
+                log(`发现Token: <span class="code">${token.substring(0, 30)}...</span>`, 'success');
+                if (expires) {
+                    const expiryDate = new Date(expires);
+                    const now = new Date();
+                    const isExpired = now >= expiryDate;
+                    log(`Token过期时间: <span class="code">${expiryDate.toLocaleString()}</span> ${isExpired ? '(已过期)' : '(有效)'}`, isExpired ? 'warning' : 'success');
+                }
+            } else {
+                log('未发现Token', 'warning');
+            }
+            
+            // 检查sessionStorage中的重定向记录
+            const redirectCount = sessionStorage.getItem('redirect_count');
+            const lastRedirectTime = sessionStorage.getItem('last_redirect_time');
+            if (redirectCount) {
+                log(`重定向计数: ${redirectCount}, 最后重定向时间: ${new Date(parseInt(lastRedirectTime)).toLocaleTimeString()}`, 'info');
+            }
+        }
+
+        function simulateSSO() {
+            log('模拟SSO登录流程...', 'info');
+            
+            // 模拟SSO设置的token
+            const mockToken = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzIzMzEwNDAwfQ.test_signature';
+            const expires = new Date(Date.now() + 3600000).toISOString();
+            
+            localStorage.setItem('token', mockToken);
+            localStorage.setItem('token_expires', expires);
+            
+            log('✅ SSO Token设置完成', 'success');
+            log(`Token: <span class="code">${mockToken.substring(0, 30)}...</span>`, 'success');
+            log(`过期时间: <span class="code">${expires}</span>`, 'success');
+        }
+
+        function testAuthBridgeLogic() {
+            log('测试认证桥接页面逻辑...', 'info');
+            
+            // 模拟认证桥接页面的token检查逻辑
+            const urlParams = new URLSearchParams('?target_url=/jupyter/hub/');
+            let token = urlParams.get('token') || urlParams.get('auth_token');
+            
+            if (!token) {
+                token = localStorage.getItem('token');
+            }
+            
+            if (token) {
+                log(`✅ 认证桥接页面能够获取到Token: <span class="code">${token.substring(0, 30)}...</span>`, 'success');
+                
+                // 检查是否是测试token
+                if (token.includes('test_signature')) {
+                    log('✅ 检测到测试Token，将使用模拟用户数据', 'success');
+                    
+                    const userData = {
+                        username: 'testuser',
+                        user: { username: 'testuser' }
+                    };
+                    
+                    // 模拟重定向URL构建
+                    const targetUrl = urlParams.get('target_url') || '/jupyter/hub/';
+                    const username = userData.username;
+                    
+                    let redirectUrl;
+                    if (targetUrl === '/jupyter/hub/') {
+                        redirectUrl = `/jupyter/hub/home?auth_token=${encodeURIComponent(token)}&username=${encodeURIComponent(username)}`;
+                    } else {
+                        redirectUrl = `${targetUrl}?auth_token=${encodeURIComponent(token)}&username=${encodeURIComponent(username)}`;
+                    }
+                    
+                    log(`✅ 构建的重定向URL: <span class="code">${redirectUrl}</span>`, 'success');
+                    return redirectUrl;
+                } else {
+                    log('⚠️ 非测试Token，需要调用API验证', 'warning');
+                }
+            } else {
+                log('❌ 认证桥接页面无法获取Token', 'error');
+                return null;
+            }
+        }
+
+        async function testSSOOnly() {
+            clearAll();
+            checkCurrentState();
+            simulateSSO();
+            checkCurrentState();
+        }
+
+        async function testAuthBridgeOnly() {
+            checkCurrentState();
+            const redirectUrl = testAuthBridgeLogic();
+            if (redirectUrl) {
+                log('🎯 准备跳转到JupyterHub...', 'info');
+                setTimeout(() => {
+                    log(`🚀 执行跳转: ${redirectUrl}`, 'info');
+                    window.location.href = redirectUrl;
+                }, 2000);
+            }
+        }
+
+        async function startFullTest() {
+            clearAll();
+            
+            log('🚀 开始完整的SSO到JupyterHub流程测试', 'info');
+            
+            // 步骤1: 检查初始状态
+            checkCurrentState();
+            
+            // 步骤2: 模拟SSO登录
+            simulateSSO();
+            
+            // 步骤3: 验证token设置
+            checkCurrentState();
+            
+            // 步骤4: 测试认证桥接逻辑
+            const redirectUrl = testAuthBridgeLogic();
+            
+            if (redirectUrl) {
+                log('✅ 所有检查通过，准备执行跳转', 'success');
+                log('3秒后将跳转到JupyterHub...', 'info');
+                
+                let countdown = 3;
+                const countdownInterval = setInterval(() => {
+                    log(`倒计时: ${countdown} 秒`, 'info');
+                    countdown--;
+                    if (countdown < 0) {
+                        clearInterval(countdownInterval);
+                        log(`🚀 执行跳转到: ${redirectUrl}`, 'success');
+                        window.location.href = redirectUrl;
+                    }
+                }, 1000);
+            } else {
+                log('❌ 测试失败，无法生成有效的重定向URL', 'error');
+            }
+        }
+
+        // 页面加载时检查当前状态
+        window.addEventListener('load', () => {
+            checkCurrentState();
+        });
+    </script>
+</body>
+</html>

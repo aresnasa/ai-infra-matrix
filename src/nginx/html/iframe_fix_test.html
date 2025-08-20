@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub iframe 修复验证测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #4a5568;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .content {
+            padding: 20px;
+        }
+        
+        .test-section {
+            margin-bottom: 30px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .test-header {
+            background: #f7fafc;
+            padding: 15px;
+            font-weight: 600;
+            color: #2d3748;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .test-content {
+            padding: 20px;
+        }
+        
+        iframe {
+            width: 100%;
+            height: 500px;
+            border: 2px solid #e2e8f0;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+        
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: 500;
+        }
+        
+        .status.loading {
+            background: #bee3f8;
+            color: #2c5282;
+        }
+        
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .status.error {
+            background: #fed7d7;
+            color: #c53030;
+        }
+        
+        .link-test {
+            margin: 10px 0;
+        }
+        
+        .link-test a {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #4299e1;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-right: 10px;
+            transition: background 0.3s;
+        }
+        
+        .link-test a:hover {
+            background: #3182ce;
+        }
+        
+        .info-box {
+            background: #ebf4ff;
+            border-left: 4px solid #4299e1;
+            padding: 15px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧪 JupyterHub iframe 修复验证测试</h1>
+            <p>测试时间: <span id="timestamp"></span></p>
+        </div>
+        
+        <div class="content">
+            <div class="info-box">
+                <strong>修复说明:</strong> 
+                修复了Layout.js中的handleMenuClick函数，确保JupyterHub菜单项正确处理直接跳转。
+                同时验证nginx配置和CSP策略支持iframe嵌入。
+            </div>
+            
+            <!-- 测试1: 直接iframe加载 -->
+            <div class="test-section">
+                <div class="test-header">
+                    📍 测试1: 直接iframe加载 JupyterHub
+                </div>
+                <div class="test-content">
+                    <iframe 
+                        id="direct-iframe" 
+                        src="http://localhost:8080/jupyterhub"
+                        title="直接JupyterHub iframe">
+                    </iframe>
+                    <div id="status-direct" class="status loading">
+                        🔄 正在加载JupyterHub...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 测试2: JupyterHub Hub路径 -->
+            <div class="test-section">
+                <div class="test-header">
+                    📍 测试2: JupyterHub Hub登录页面
+                </div>
+                <div class="test-content">
+                    <iframe 
+                        id="hub-iframe" 
+                        src="http://localhost:8080/jupyter/hub/login"
+                        title="JupyterHub Hub iframe">
+                    </iframe>
+                    <div id="status-hub" class="status loading">
+                        🔄 正在加载JupyterHub Hub...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 测试3: 导航链接测试 -->
+            <div class="test-section">
+                <div class="test-header">
+                    📍 测试3: 导航链接测试
+                </div>
+                <div class="test-content">
+                    <div class="link-test">
+                        <a href="http://localhost:8080/projects" target="_blank">
+                            🏠 打开Projects页面 (新窗口)
+                        </a>
+                        <a href="http://localhost:8080/jupyterhub" target="_blank">
+                            🚀 打开JupyterHub (新窗口)
+                        </a>
+                        <a href="javascript:void(0)" onclick="loadInIframe()">
+                            🔄 在iframe中重新加载
+                        </a>
+                    </div>
+                    <div id="navigation-status" class="status">
+                        点击上方链接测试导航功能
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 测试4: 实时状态监控 -->
+            <div class="test-section">
+                <div class="test-header">
+                    📍 测试4: 实时状态监控
+                </div>
+                <div class="test-content">
+                    <div id="realtime-status">
+                        <div>测试开始时间: <span id="start-time"></span></div>
+                        <div>iframe加载状态: <span id="load-status">检测中...</span></div>
+                        <div>内容检测结果: <span id="content-status">等待中...</span></div>
+                        <div>网络状态: <span id="network-status">检查中...</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 设置时间戳
+        document.getElementById('timestamp').textContent = new Date().toLocaleString('zh-CN');
+        document.getElementById('start-time').textContent = new Date().toLocaleString('zh-CN');
+        
+        // iframe加载状态监控
+        function setupIframeMonitoring() {
+            const directIframe = document.getElementById('direct-iframe');
+            const hubIframe = document.getElementById('hub-iframe');
+            
+            // 监控直接iframe
+            directIframe.onload = function() {
+                console.log('直接iframe加载完成');
+                updateStatus('status-direct', '✅ JupyterHub加载成功', 'success');
+                checkIframeContent('direct-iframe', 'status-direct');
+            };
+            
+            directIframe.onerror = function() {
+                console.log('直接iframe加载失败');
+                updateStatus('status-direct', '❌ JupyterHub加载失败', 'error');
+            };
+            
+            // 监控Hub iframe
+            hubIframe.onload = function() {
+                console.log('Hub iframe加载完成');
+                updateStatus('status-hub', '✅ JupyterHub Hub加载成功', 'success');
+                checkIframeContent('hub-iframe', 'status-hub');
+            };
+            
+            hubIframe.onerror = function() {
+                console.log('Hub iframe加载失败');
+                updateStatus('status-hub', '❌ JupyterHub Hub加载失败', 'error');
+            };
+            
+            // 超时检测
+            setTimeout(() => {
+                const directStatus = document.getElementById('status-direct');
+                const hubStatus = document.getElementById('status-hub');
+                
+                if (directStatus.classList.contains('loading')) {
+                    updateStatus('status-direct', '⚠️ JupyterHub加载超时', 'error');
+                }
+                
+                if (hubStatus.classList.contains('loading')) {
+                    updateStatus('status-hub', '⚠️ JupyterHub Hub加载超时', 'error');
+                }
+            }, 15000);
+        }
+        
+        function updateStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+        
+        function checkIframeContent(iframeId, statusId) {
+            try {
+                const iframe = document.getElementById(iframeId);
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                
+                if (iframeDoc) {
+                    const bodyText = iframeDoc.body ? iframeDoc.body.innerText : '';
+                    console.log(`iframe ${iframeId} 内容长度: ${bodyText.length}`);
+                    
+                    if (bodyText.length > 50) {
+                        updateStatus(statusId, 
+                            `✅ 内容正常 (${bodyText.length} 字符)`, 
+                            'success'
+                        );
+                    } else if (bodyText.length > 0) {
+                        updateStatus(statusId, 
+                            `⚠️ 内容较少 (${bodyText.length} 字符)`, 
+                            'error'
+                        );
+                    } else {
+                        updateStatus(statusId, '❌ 内容为空 (白屏)', 'error');
+                    }
+                } else {
+                    console.log(`无法访问iframe ${iframeId} 内容 - 可能跨域限制`);
+                    updateStatus(statusId, '🔒 跨域限制无法检测内容', 'loading');
+                }
+            } catch (e) {
+                console.log(`检查iframe ${iframeId} 内容失败:`, e);
+                updateStatus(statusId, '🔒 无法检测内容 (跨域)', 'loading');
+            }
+        }
+        
+        function loadInIframe() {
+            const directIframe = document.getElementById('direct-iframe');
+            updateStatus('status-direct', '🔄 重新加载中...', 'loading');
+            directIframe.src = directIframe.src;
+        }
+        
+        // 网络状态检测
+        function checkNetworkStatus() {
+            const urls = [
+                'http://localhost:8080/',
+                'http://localhost:8080/jupyterhub',
+                'http://localhost:8080/jupyter/hub/login'
+            ];
+            
+            let successCount = 0;
+            let totalCount = urls.length;
+            
+            urls.forEach(url => {
+                fetch(url, { method: 'HEAD', mode: 'no-cors' })
+                    .then(() => {
+                        successCount++;
+                        updateNetworkStatus(successCount, totalCount);
+                    })
+                    .catch(() => {
+                        updateNetworkStatus(successCount, totalCount);
+                    });
+            });
+        }
+        
+        function updateNetworkStatus(success, total) {
+            const status = document.getElementById('network-status');
+            if (success === total) {
+                status.textContent = '✅ 所有服务正常';
+                status.style.color = '#22543d';
+            } else if (success > 0) {
+                status.textContent = `⚠️ 部分服务可用 (${success}/${total})`;
+                status.style.color = '#d69e2e';
+            } else {
+                status.textContent = '❌ 服务不可用';
+                status.style.color = '#c53030';
+            }
+        }
+        
+        // 实时状态更新
+        function updateRealtimeStatus() {
+            const loadStatus = document.getElementById('load-status');
+            const contentStatus = document.getElementById('content-status');
+            
+            setInterval(() => {
+                const directIframe = document.getElementById('direct-iframe');
+                const hubIframe = document.getElementById('hub-iframe');
+                
+                let loadedCount = 0;
+                if (directIframe.contentDocument || directIframe.contentWindow.document) loadedCount++;
+                if (hubIframe.contentDocument || hubIframe.contentWindow.document) loadedCount++;
+                
+                loadStatus.textContent = `${loadedCount}/2 个iframe已加载`;
+                loadStatus.style.color = loadedCount === 2 ? '#22543d' : '#d69e2e';
+                
+                // 简单的内容检测
+                try {
+                    let hasContent = false;
+                    if (directIframe.contentWindow && directIframe.contentWindow.document) {
+                        const body = directIframe.contentWindow.document.body;
+                        if (body && body.innerText.length > 50) hasContent = true;
+                    }
+                    
+                    contentStatus.textContent = hasContent ? '✅ 检测到内容' : '⚠️ 内容检测中';
+                    contentStatus.style.color = hasContent ? '#22543d' : '#d69e2e';
+                } catch (e) {
+                    contentStatus.textContent = '🔒 跨域限制';
+                    contentStatus.style.color = '#a0aec0';
+                }
+            }, 2000);
+        }
+        
+        // 初始化
+        window.onload = function() {
+            setupIframeMonitoring();
+            checkNetworkStatus();
+            updateRealtimeStatus();
+            
+            console.log('JupyterHub iframe修复验证测试页面已加载');
+            console.log('开始监控iframe加载状态...');
+        };
+    </script>
+</body>
+</html>

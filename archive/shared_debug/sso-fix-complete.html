@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎉 SSO重定向修复验证完成</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .success-header {
+            text-align: center;
+            color: #52c41a;
+            margin-bottom: 30px;
+        }
+        .fix-item {
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+        .fix-item h3 {
+            color: #52c41a;
+            margin: 0 0 10px 0;
+        }
+        .code {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 10px 0;
+        }
+        .test-button {
+            display: inline-block;
+            background: #1890ff;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px;
+            transition: background-color 0.3s;
+        }
+        .test-button:hover {
+            background: #40a9ff;
+        }
+        .test-button.success {
+            background: #52c41a;
+        }
+        .test-button.success:hover {
+            background: #73d13d;
+        }
+        .flow-step {
+            display: flex;
+            align-items: center;
+            margin: 15px 0;
+            padding: 15px;
+            background: #e6f7ff;
+            border-radius: 8px;
+        }
+        .step-number {
+            background: #1890ff;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-weight: bold;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success-header">
+            <h1>🎉 SSO重定向问题修复完成！</h1>
+            <p>http://localhost:8080/sso/?redirect_uri=/jupyterhub-authenticated 跳转异常已修复</p>
+        </div>
+
+        <div class="fix-item">
+            <h3>✅ 问题原因定位</h3>
+            <p>SSO页面JavaScript代码中的URL参数解析错误：</p>
+            <div class="code">
+                // 修复前 (错误代码)
+                const nextUrl = urlParams.get('next') || '/jupyter/hub/';
+                
+                // 修复后 (正确代码)  
+                const nextUrl = urlParams.get('redirect_uri') || urlParams.get('next') || '/jupyter/hub/';
+            </div>
+        </div>
+
+        <div class="fix-item">
+            <h3>✅ 已完成的修复</h3>
+            <ul>
+                <li>修复了SSO页面对 <code>redirect_uri</code> 参数的识别和处理</li>
+                <li>清理了之前存在的mock token问题</li>
+                <li>验证了后端JWT认证API的正常工作</li>
+                <li>确认了nginx配置的重定向规则正确</li>
+                <li>测试了完整的认证桥接流程</li>
+            </ul>
+        </div>
+
+        <div class="container">
+            <h2>🔄 完整认证流程</h2>
+            <div class="flow-step">
+                <div class="step-number">1</div>
+                <div>用户访问 <code>http://localhost:8080/jupyterhub</code></div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">2</div>
+                <div>nginx自动重定向到 <code>http://localhost:8080/sso/?redirect_uri=/jupyterhub-authenticated</code></div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">3</div>
+                <div>SSO页面检查认证状态，验证JWT token</div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">4</div>
+                <div>认证成功后重定向到 <code>/jupyterhub-authenticated</code></div>
+            </div>
+            <div class="flow-step">
+                <div class="step-number">5</div>
+                <div>认证桥接页面最终跳转到JupyterHub</div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div>
+                <h3>🧪 测试验证</h3>
+                <a href="/fix_sso_mock_token.html" class="test-button">清理认证状态</a>
+                <a href="/end_to_end_test.html" class="test-button">端到端测试</a>
+                <a href="/sso/?redirect_uri=/jupyterhub-authenticated" class="test-button">测试SSO重定向</a>
+                <a href="/jupyterhub-authenticated" class="test-button">测试认证桥接</a>
+            </div>
+            <div>
+                <h3>🚀 立即体验</h3>
+                <a href="/jupyterhub" class="test-button success">访问 JupyterHub</a>
+                <p>点击上面的按钮体验修复后的完整JupyterHub访问流程</p>
+            </div>
+        </div>
+
+        <div class="fix-item">
+            <h3>📝 技术细节</h3>
+            <p><strong>修复的文件：</strong></p>
+            <div class="code">src/shared/sso/jwt_sso_bridge.html</div>
+            
+            <p><strong>修复的代码行：</strong></p>
+            <div class="code">
+                // 第316行，修改URL参数解析逻辑
+                - const nextUrl = urlParams.get('next') || '/jupyter/hub/';
+                + const nextUrl = urlParams.get('redirect_uri') || urlParams.get('next') || '/jupyter/hub/';
+            </div>
+            
+            <p><strong>构建命令：</strong></p>
+            <div class="code">./scripts/build.sh dev --nginx-only</div>
+        </div>
+
+        <div class="container" style="background: #f0f8ff;">
+            <h2>🎯 问题解决状态</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+                <div style="background: #f6ffed; padding: 15px; border-radius: 8px;">
+                    <h4 style="color: #52c41a; margin: 0;">✅ SSO重定向修复</h4>
+                    <p style="margin: 5px 0 0;">redirect_uri参数正确处理</p>
+                </div>
+                <div style="background: #f6ffed; padding: 15px; border-radius: 8px;">
+                    <h4 style="color: #52c41a; margin: 0;">✅ Mock Token清理</h4>
+                    <p style="margin: 5px 0 0;">移除测试token，使用真实JWT</p>
+                </div>
+                <div style="background: #f6ffed; padding: 15px; border-radius: 8px;">
+                    <h4 style="color: #52c41a; margin: 0;">✅ 认证API验证</h4>
+                    <p style="margin: 5px 0 0;">后端JWT验证正常工作</p>
+                </div>
+                <div style="background: #f6ffed; padding: 15px; border-radius: 8px;">
+                    <h4 style="color: #52c41a; margin: 0;">✅ 完整流程测试</h4>
+                    <p style="margin: 5px 0 0;">端到端访问流程正常</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 页面加载时显示当前认证状态
+        document.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('token');
+            const statusDiv = document.createElement('div');
+            statusDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #52c41a; color: white; padding: 10px 20px; border-radius: 6px; z-index: 1000;';
+            
+            if (token && !token.includes('mock')) {
+                statusDiv.innerHTML = '✅ 已登录 (真实Token)';
+            } else if (token && token.includes('mock')) {
+                statusDiv.innerHTML = '⚠️ Mock Token (需清理)';
+                statusDiv.style.background = '#faad14';
+            } else {
+                statusDiv.innerHTML = '❌ 未登录';
+                statusDiv.style.background = '#ff4d4f';
+            }
+            
+            document.body.appendChild(statusDiv);
+            
+            // 3秒后自动隐藏
+            setTimeout(() => {
+                statusDiv.style.opacity = '0';
+                statusDiv.style.transition = 'opacity 0.5s';
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
