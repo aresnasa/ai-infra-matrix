@@ -24,6 +24,11 @@ const Layout = ({ children, user, onLogout }) => {
 
   const menuItems = [
     {
+      key: '/dashboard',
+      icon: <ProjectOutlined />,
+      label: '我的工作台',
+    },
+    {
       key: '/projects',
       icon: <ProjectOutlined />,
       label: '项目管理',

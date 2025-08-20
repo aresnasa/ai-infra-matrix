@@ -316,6 +316,64 @@ func main() {
 			users.PUT("/:id/groups", userHandler.AdminUpdateUserGroups)
 		}
 
+		// Dashboard路由（需要认证）
+		dashboardController := controllers.NewDashboardController(database.DB)
+		dashboard := api.Group("/dashboard")
+		dashboard.Use(middleware.AuthMiddlewareWithSession())
+		{
+			dashboard.GET("", dashboardController.GetUserDashboard)
+			dashboard.PUT("", dashboardController.UpdateDashboard)
+			dashboard.DELETE("", dashboardController.ResetDashboard)
+		}
+
+		// 增强用户管理路由（管理员）
+		enhancedUserController := controllers.NewEnhancedUserController(database.DB)
+		enhancedUsers := api.Group("/users")
+		enhancedUsers.Use(middleware.AuthMiddlewareWithSession())
+		{
+			// 基础用户管理（管理员权限）
+			adminUsers := enhancedUsers.Group("")
+			adminUsers.Use(middleware.AdminMiddleware())
+			{
+				adminUsers.GET("", enhancedUserController.GetUsers)
+				adminUsers.POST("", enhancedUserController.CreateUser)
+				adminUsers.POST("/:id/reset-password", enhancedUserController.ResetPassword)
+			}
+			
+			// 用户个人信息（用户自己可访问）
+			enhancedUsers.GET("/profile", userHandler.GetProfile)
+			enhancedUsers.PUT("/profile", userHandler.UpdateProfile)
+		}
+
+		// 用户组管理路由（管理员）
+		userGroups := api.Group("/user-groups")
+		userGroups.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
+		{
+			userGroups.GET("", enhancedUserController.GetUserGroups)
+			userGroups.POST("", enhancedUserController.CreateUserGroup)
+		}
+
+		// 角色管理路由（管理员）
+		roles := api.Group("/roles")
+		roles.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
+		{
+			roles.GET("", enhancedUserController.GetRoles)
+		}
+
+		// LDAP管理路由（管理员）
+		ldapController := controllers.NewLDAPController(database.DB)
+		ldap := api.Group("/ldap")
+		ldap.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
+		{
+			ldap.GET("/config", ldapController.GetConfig)
+			ldap.PUT("/config", ldapController.UpdateConfig)
+			ldap.POST("/test-connection", ldapController.TestConnection)
+			ldap.POST("/sync-users", ldapController.SyncUsers)
+			ldap.GET("/search-users", ldapController.SearchUsers)
+			ldap.GET("/groups", ldapController.GetUserGroups)
+			ldap.POST("/sync-groups", ldapController.SyncGroups)
+		}
+
 		// 项目路由（需要认证和RBAC权限）
 		projectHandler := handlers.NewProjectHandler(database.DB)
 		projects := api.Group("/projects")

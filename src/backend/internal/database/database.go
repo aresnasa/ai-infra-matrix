@@ -103,6 +103,8 @@ func Migrate() error {
 		&models.UserRole{},
 		&models.UserGroupRole{},
 		&models.RolePermission{},
+		// Dashboard 相关表
+		&models.Dashboard{},
 		// LDAP 配置表
 		&models.LDAPConfig{},
 		// Kubernetes 和 Ansible 相关表

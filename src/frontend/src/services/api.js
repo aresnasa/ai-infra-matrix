@@ -179,12 +179,37 @@ export const projectAPI = {
 
 // 用户管理API
 export const userAPI = {
-  getUsers: () => api.get('/users'),
+  // 基础用户管理
+  getUsers: (params) => api.get('/users', { params }),
+  getUser: (id) => api.get(`/users/${id}`),
   createUser: (userData) => api.post('/users', userData),
   updateUser: (id, userData) => api.put(`/users/${id}`, userData),
   deleteUser: (id) => api.delete(`/users/${id}`),
+  resetPassword: (id) => api.post(`/users/${id}/reset-password`),
+  
+  // 用户个人信息
   getUserProfile: () => api.get('/users/profile'),
   updateUserProfile: (profileData) => api.put('/users/profile', profileData),
+  
+  // 用户组管理
+  getUserGroups: () => api.get('/user-groups'),
+  getUserGroup: (id) => api.get(`/user-groups/${id}`),
+  createUserGroup: (groupData) => api.post('/user-groups', groupData),
+  updateUserGroup: (id, groupData) => api.put(`/user-groups/${id}`, groupData),
+  deleteUserGroup: (id) => api.delete(`/user-groups/${id}`),
+  
+  // 角色管理
+  getRoles: () => api.get('/roles'),
+  getRole: (id) => api.get(`/roles/${id}`),
+  createRole: (roleData) => api.post('/roles', roleData),
+  updateRole: (id, roleData) => api.put(`/roles/${id}`, roleData),
+  deleteRole: (id) => api.delete(`/roles/${id}`),
+  
+  // 权限管理
+  getPermissions: () => api.get('/permissions'),
+  getUserPermissions: (id) => api.get(`/users/${id}/permissions`),
+  assignRoleToUser: (userId, roleId) => api.post(`/users/${userId}/roles/${roleId}`),
+  removeRoleFromUser: (userId, roleId) => api.delete(`/users/${userId}/roles/${roleId}`),
 };
 
 // 主机管理API
@@ -375,6 +400,24 @@ export const saltStackAPI = {
   getMinions: () => api.get('/saltstack/minions'),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   executeCommand: (command) => api.post('/saltstack/execute', command),
+};
+
+// Dashboard API
+export const dashboardAPI = {
+  getUserDashboard: () => api.get('/dashboard'),
+  updateDashboard: (config) => api.put('/dashboard', config),
+  resetDashboard: () => api.delete('/dashboard'),
+};
+
+// LDAP API
+export const ldapAPI = {
+  getConfig: () => api.get('/ldap/config'),
+  updateConfig: (config) => api.put('/ldap/config', config),
+  testConnection: () => api.post('/ldap/test-connection'),
+  syncUsers: (options) => api.post('/ldap/sync-users', options),
+  searchUsers: (query) => api.get('/ldap/search-users', { params: { query } }),
+  getUserGroups: () => api.get('/ldap/groups'),
+  syncGroups: () => api.post('/ldap/sync-groups'),
 };
 
 export default api;

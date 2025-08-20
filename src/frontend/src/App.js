@@ -42,6 +42,10 @@ const SlurmDashboard = React.lazy(() => import('./pages/SlurmDashboard'));
 const SaltStackDashboard = React.lazy(() => import('./pages/SaltStackDashboard'));
 const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
 
+// 新增功能页面懒加载
+const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
+const EnhancedUserManagement = React.lazy(() => import('./pages/EnhancedUserManagement'));
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -350,7 +354,18 @@ function App() {
               <ErrorBoundary>
                 <Suspense fallback={<LoadingFallback />}>
                   <Routes>
-                    <Route path="/" element={<Navigate to="/projects" replace />} />
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    
+                    {/* 新增拖拽式工作台 */}
+                    <Route 
+                      path="/dashboard" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <DashboardPage user={user} />
+                        </Suspense>
+                      } 
+                    />
+                    
                     {/* Legacy redirects for Slurm paths to keep old links working */}
                     <Route path="/jupyter/with-slurm" element={<Navigate to="/slurm" replace />} />
                     <Route path="/jupyter/slurm" element={<Navigate to="/slurm" replace />} />
@@ -444,7 +459,7 @@ function App() {
                           path="/admin/users" 
                           element={
                             <Suspense fallback={<AdminLoadingFallback />}>
-                              <AdminUsers />
+                              <EnhancedUserManagement />
                             </Suspense>
                           } 
                         />
