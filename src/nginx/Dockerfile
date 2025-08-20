@@ -53,13 +53,23 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
         echo "<h1>Debug tools are disabled in production mode</h1>" > /usr/share/nginx/html/debug/index.html; \
     fi
 
-# 条件复制：仅在调试模式下复制完整调试文件夹
-COPY --chown=nginx:nginx src/shared/debug/ /tmp/debug/
+# 条件复制：仅在调试模式下且debug目录存在时复制调试文件夹
+# 先检查源目录是否有内容，然后决定是否复制
+COPY src/shared/debug/ /tmp/debug/
 RUN if [ "$DEBUG_MODE" = "true" ]; then \
-        echo "� 复制调试文件到目标目录..."; \
-        cp -r /tmp/debug/* /usr/share/nginx/html/debug/ || echo "⚠️  调试文件复制失败，但继续构建"; \
-        echo "✅ 调试文件已复制到 /usr/share/nginx/html/debug/"; \
-        ls -la /usr/share/nginx/html/debug/ | head -10; \
+        echo "🔧 调试模式启用，检查调试文件..."; \
+        if [ "$(ls -A /tmp/debug 2>/dev/null)" ]; then \
+            echo "📂 复制调试文件到目标目录..."; \
+            cp -r /tmp/debug/* /usr/share/nginx/html/debug/ 2>/dev/null || echo "⚠️  调试文件复制失败，但继续构建"; \
+            echo "✅ 调试文件已复制到 /usr/share/nginx/html/debug/"; \
+            ls -la /usr/share/nginx/html/debug/ | head -10; \
+        else \
+            echo "📝 调试目录为空，创建默认调试页面"; \
+            echo "<h1>Debug Mode Enabled</h1><p>Debug tools directory is empty. Please add debug tools to src/shared/debug/</p>" > /usr/share/nginx/html/debug/index.html; \
+        fi; \
+    else \
+        echo "🚀 生产模式，创建生产调试页面"; \
+        echo "<h1>Debug tools are disabled in production mode</h1>" > /usr/share/nginx/html/debug/index.html; \
     fi && \
     rm -rf /tmp/debug
 
