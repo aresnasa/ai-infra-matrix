@@ -98,7 +98,7 @@ ENV BUILD_ENV=${BUILD_ENV}
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD curl -f http://localhost/health || exit 1
+    CMD curl -f http://127.0.0.1/health || exit 1
 
 # 暴露端口
 EXPOSE 80 443

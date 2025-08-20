@@ -51,6 +51,11 @@ DO_EXPORT=""
 EXPORT_ARCH=""
 EXPORT_DIR="./exports"
 
+# 清理功能相关变量
+DO_CLEANUP=""
+CLEANUP_TYPE=""
+CLEANUP_FORCE=""
+
 # 加载 .env 文件中的环境变量（兼容注释与引号）
 source_env_file() {
     local file="$1"
@@ -553,6 +558,321 @@ pull_all_images() {
 }
 
 #============================
+# Docker 清理功能
+#============================
+
+# 清理AI-Infra-Matrix相关的Docker资源
+cleanup_ai_infra() {
+    local cleanup_type="$1"
+    local force_mode="${2:-false}"
+    
+    case "$cleanup_type" in
+        "images")
+            cleanup_ai_infra_images "$force_mode"
+            ;;
+        "containers")
+            cleanup_ai_infra_containers "$force_mode"
+            ;;
+        "volumes")
+            cleanup_ai_infra_volumes "$force_mode"
+            ;;
+        "networks")
+            cleanup_ai_infra_networks "$force_mode"
+            ;;
+        "all")
+            cleanup_all_ai_infra "$force_mode"
+            ;;
+        *)
+            print_error "无效的清理类型: $cleanup_type"
+            print_info "支持的清理类型: images, containers, volumes, networks, all"
+            return 1
+            ;;
+    esac
+}
+
+# 清理AI-Infra-Matrix相关的镜像
+cleanup_ai_infra_images() {
+    local force_mode="${1:-false}"
+    
+    print_info "开始清理AI-Infra-Matrix相关镜像..."
+    
+    # 查找AI-Infra-Matrix相关镜像
+    local images
+    images=$(docker images --filter "reference=ai-infra-*" --format "{{.Repository}}:{{.Tag}}" 2>/dev/null || true)
+    
+    if [ -z "$images" ]; then
+        print_info "没有找到AI-Infra-Matrix相关镜像"
+        return 0
+    fi
+    
+    echo "找到以下AI-Infra-Matrix镜像:"
+    echo "$images" | while read -r img; do
+        echo "  🖼️  $img"
+    done
+    
+    if [ "$force_mode" != "true" ]; then
+        echo ""
+        read -p "确认删除这些镜像？[y/N]: " -r confirm
+        case "$confirm" in
+            [yY]|[yY][eE][sS])
+                ;;
+            *)
+                print_info "取消清理操作"
+                return 0
+                ;;
+        esac
+    fi
+    
+    echo ""
+    local success_count=0
+    local fail_count=0
+    
+    echo "$images" | while read -r img; do
+        if [ -n "$img" ]; then
+            if docker rmi "$img" 2>/dev/null; then
+                print_success "删除镜像: $img"
+                success_count=$((success_count + 1))
+            else
+                print_warning "删除失败: $img (可能被容器使用)"
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+    done
+    
+    # 清理悬空镜像
+    local dangling_images
+    dangling_images=$(docker images -f "dangling=true" -q 2>/dev/null || true)
+    if [ -n "$dangling_images" ]; then
+        print_info "清理悬空镜像..."
+        if docker rmi $dangling_images 2>/dev/null; then
+            print_success "清理悬空镜像完成"
+        else
+            print_warning "部分悬空镜像清理失败"
+        fi
+    fi
+    
+    print_success "镜像清理完成"
+}
+
+# 清理AI-Infra-Matrix相关的容器
+cleanup_ai_infra_containers() {
+    local force_mode="${1:-false}"
+    
+    print_info "开始清理AI-Infra-Matrix相关容器..."
+    
+    # 查找AI-Infra-Matrix相关容器（包括停止的）
+    local containers
+    containers=$(docker ps -a --filter "name=ai-infra" --format "{{.Names}}" 2>/dev/null || true)
+    
+    if [ -z "$containers" ]; then
+        print_info "没有找到AI-Infra-Matrix相关容器"
+        return 0
+    fi
+    
+    echo "找到以下AI-Infra-Matrix容器:"
+    echo "$containers" | while read -r container; do
+        local status
+        status=$(docker ps -a --filter "name=$container" --format "{{.Status}}" 2>/dev/null || echo "未知")
+        echo "  📦 $container ($status)"
+    done
+    
+    if [ "$force_mode" != "true" ]; then
+        echo ""
+        read -p "确认删除这些容器？[y/N]: " -r confirm
+        case "$confirm" in
+            [yY]|[yY][eE][sS])
+                ;;
+            *)
+                print_info "取消清理操作"
+                return 0
+                ;;
+        esac
+    fi
+    
+    echo ""
+    local success_count=0
+    local fail_count=0
+    
+    echo "$containers" | while read -r container; do
+        if [ -n "$container" ]; then
+            # 先停止容器
+            if docker stop "$container" 2>/dev/null; then
+                print_info "停止容器: $container"
+            fi
+            
+            # 删除容器
+            if docker rm "$container" 2>/dev/null; then
+                print_success "删除容器: $container"
+                success_count=$((success_count + 1))
+            else
+                print_error "删除失败: $container"
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+    done
+    
+    print_success "容器清理完成"
+}
+
+# 清理AI-Infra-Matrix相关的数据卷
+cleanup_ai_infra_volumes() {
+    local force_mode="${1:-false}"
+    
+    print_info "开始清理AI-Infra-Matrix相关数据卷..."
+    
+    # 查找AI-Infra-Matrix相关卷
+    local volumes
+    volumes=$(docker volume ls --filter "name=ai-infra" --format "{{.Name}}" 2>/dev/null || true)
+    
+    if [ -z "$volumes" ]; then
+        print_info "没有找到AI-Infra-Matrix相关数据卷"
+        return 0
+    fi
+    
+    echo "找到以下AI-Infra-Matrix数据卷:"
+    echo "$volumes" | while read -r vol; do
+        echo "  💾 $vol"
+    done
+    
+    if [ "$force_mode" != "true" ]; then
+        echo ""
+        print_warning "删除数据卷将永久删除所有数据！"
+        read -p "确认删除这些数据卷？[y/N]: " -r confirm
+        case "$confirm" in
+            [yY]|[yY][eE][sS])
+                ;;
+            *)
+                print_info "取消清理操作"
+                return 0
+                ;;
+        esac
+    fi
+    
+    echo ""
+    local success_count=0
+    local fail_count=0
+    
+    echo "$volumes" | while read -r vol; do
+        if [ -n "$vol" ]; then
+            if docker volume rm "$vol" 2>/dev/null; then
+                print_success "删除数据卷: $vol"
+                success_count=$((success_count + 1))
+            else
+                print_error "删除失败: $vol (可能被容器使用)"
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+    done
+    
+    print_success "数据卷清理完成"
+}
+
+# 清理AI-Infra-Matrix相关的网络
+cleanup_ai_infra_networks() {
+    local force_mode="${1:-false}"
+    
+    print_info "开始清理AI-Infra-Matrix相关网络..."
+    
+    # 查找AI-Infra-Matrix相关网络
+    local networks
+    networks=$(docker network ls --filter "name=ai-infra" --format "{{.Name}}" 2>/dev/null | grep -v "^bridge$\|^host$\|^none$" || true)
+    
+    if [ -z "$networks" ]; then
+        print_info "没有找到AI-Infra-Matrix相关网络"
+        return 0
+    fi
+    
+    echo "找到以下AI-Infra-Matrix网络:"
+    echo "$networks" | while read -r net; do
+        echo "  🌐 $net"
+    done
+    
+    if [ "$force_mode" != "true" ]; then
+        echo ""
+        read -p "确认删除这些网络？[y/N]: " -r confirm
+        case "$confirm" in
+            [yY]|[yY][eE][sS])
+                ;;
+            *)
+                print_info "取消清理操作"
+                return 0
+                ;;
+        esac
+    fi
+    
+    echo ""
+    local success_count=0
+    local fail_count=0
+    
+    echo "$networks" | while read -r net; do
+        if [ -n "$net" ]; then
+            if docker network rm "$net" 2>/dev/null; then
+                print_success "删除网络: $net"
+                success_count=$((success_count + 1))
+            else
+                print_error "删除失败: $net (可能被容器使用)"
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+    done
+    
+    print_success "网络清理完成"
+}
+
+# 清理所有AI-Infra-Matrix相关的Docker资源
+cleanup_all_ai_infra() {
+    local force_mode="${1:-false}"
+    
+    print_info "开始清理所有AI-Infra-Matrix相关的Docker资源..."
+    
+    if [ "$force_mode" != "true" ]; then
+        echo ""
+        print_warning "这将删除所有AI-Infra-Matrix相关的容器、镜像、数据卷和网络！"
+        print_warning "此操作不可逆，将永久删除所有相关数据！"
+        echo ""
+        read -p "确认继续？[y/N]: " -r confirm
+        case "$confirm" in
+            [yY]|[yY][eE][sS])
+                ;;
+            *)
+                print_info "取消清理操作"
+                return 0
+                ;;
+        esac
+    fi
+    
+    echo ""
+    print_info "清理顺序: 容器 -> 镜像 -> 数据卷 -> 网络"
+    echo "==============================="
+    
+    # 1. 清理容器
+    cleanup_ai_infra_containers "true"
+    echo ""
+    
+    # 2. 清理镜像
+    cleanup_ai_infra_images "true"
+    echo ""
+    
+    # 3. 清理数据卷
+    cleanup_ai_infra_volumes "true"
+    echo ""
+    
+    # 4. 清理网络
+    cleanup_ai_infra_networks "true"
+    echo ""
+    
+    print_success "🎉 所有AI-Infra-Matrix相关资源清理完成！"
+    
+    # 显示清理后的状态
+    echo ""
+    print_info "清理后的Docker状态:"
+    echo "镜像数量: $(docker images -q | wc -l | tr -d ' ')"
+    echo "容器数量: $(docker ps -aq | wc -l | tr -d ' ')"
+    echo "数据卷数量: $(docker volume ls -q | wc -l | tr -d ' ')"
+    echo "网络数量: $(docker network ls -q | wc -l | tr -d ' ')"
+}
+
+#============================
 # 推送依赖镜像到Docker Hub
 #============================
 
@@ -984,6 +1304,13 @@ show_help() {
     echo "  --push-deps         - 推送所有依赖镜像到Docker Hub"
     echo "  --deps-namespace NS - 指定依赖镜像的命名空间（默认：aresnasa）"
     echo "  --skip-existing-deps - 跳过已存在的依赖镜像"
+    echo "  --cleanup [TYPE]    - 清理AI-Infra-Matrix相关Docker资源 (images|containers|volumes|networks|all，默认：all)"
+    echo "  --cleanup-images    - 只清理AI-Infra-Matrix相关镜像"
+    echo "  --cleanup-containers - 只清理AI-Infra-Matrix相关容器"
+    echo "  --cleanup-volumes   - 只清理AI-Infra-Matrix相关数据卷"
+    echo "  --cleanup-networks  - 只清理AI-Infra-Matrix相关网络"
+    echo "  --cleanup-all       - 清理所有AI-Infra-Matrix相关资源"
+    echo "  --force             - 强制清理，不提示确认"
     echo "  -h, --help          - 显示此帮助信息"
     echo ""
     echo "示例:"
@@ -997,6 +1324,9 @@ show_help() {
     echo "  $0 prod --export-x86            - 构建并导出所有 x86_64 版本镜像"
     echo "  $0 prod --export-arm64 --export-dir /tmp/images  - 导出 arm64 版本到指定目录"
     echo "  $0 prod --push-deps --deps-namespace myuser  - 推送依赖镜像到Docker Hub myuser命名空间"
+    echo "  $0 --cleanup-all                - 清理所有AI-Infra-Matrix相关Docker资源"
+    echo "  $0 --cleanup images             - 只清理AI-Infra-Matrix相关镜像"
+    echo "  $0 --cleanup-containers --force - 强制清理所有容器，无提示确认"
 }
 
 # 验证服务名称是否有效
@@ -1130,6 +1460,40 @@ while [[ $# -gt 0 ]]; do
             SKIP_EXISTING_DEPS="true"
             shift
             ;;
+        --cleanup)
+            DO_CLEANUP="true"
+            CLEANUP_TYPE="${2:-all}"
+            shift 2
+            ;;
+        --cleanup-images)
+            DO_CLEANUP="true"
+            CLEANUP_TYPE="images"
+            shift
+            ;;
+        --cleanup-containers)
+            DO_CLEANUP="true"
+            CLEANUP_TYPE="containers"
+            shift
+            ;;
+        --cleanup-volumes)
+            DO_CLEANUP="true"
+            CLEANUP_TYPE="volumes"
+            shift
+            ;;
+        --cleanup-networks)
+            DO_CLEANUP="true"
+            CLEANUP_TYPE="networks"
+            shift
+            ;;
+        --cleanup-all)
+            DO_CLEANUP="true"
+            CLEANUP_TYPE="all"
+            shift
+            ;;
+        --force)
+            CLEANUP_FORCE="true"
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -1141,6 +1505,20 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# 如果是清理操作，执行清理并退出
+if [ -n "$DO_CLEANUP" ]; then
+    echo "🧹 AI-Infra-Matrix Docker 清理工具"
+    echo "================================"
+    print_info "清理类型: $CLEANUP_TYPE"
+    if [ "$CLEANUP_FORCE" = "true" ]; then
+        print_warning "强制模式：将不提示确认"
+    fi
+    echo ""
+    
+    cleanup_ai_infra "$CLEANUP_TYPE" "$CLEANUP_FORCE"
+    exit $?
+fi
 
 # 显示构建信息
 echo "🚀 AI-Infra-Matrix 构建开始"

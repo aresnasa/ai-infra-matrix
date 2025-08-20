@@ -39,6 +39,7 @@ const JupyterHubManagement = React.lazy(() => import('./pages/JupyterHubManageme
 const JupyterHubPage = React.lazy(() => import('./pages/JupyterHubPage'));
 const EmbeddedJupyter = React.lazy(() => import('./pages/EmbeddedJupyter'));
 const SlurmDashboard = React.lazy(() => import('./pages/SlurmDashboard'));
+const SaltStackDashboard = React.lazy(() => import('./pages/SaltStackDashboard'));
 const GiteaEmbed = React.lazy(() => import('./pages/GiteaEmbed'));
 
 function App() {
@@ -413,6 +414,16 @@ function App() {
                       element={
                         <Suspense fallback={<LazyLoadingSpinner />}>
                           <SlurmDashboard />
+                        </Suspense>
+                      } 
+                    />
+
+                    {/* SaltStack dashboard page */}
+                    <Route 
+                      path="/saltstack" 
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <SaltStackDashboard />
                         </Suspense>
                       } 
                     />

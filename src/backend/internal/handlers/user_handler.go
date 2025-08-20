@@ -779,10 +779,10 @@ func (h *UserHandler) generateJupyterHubAPIToken(user *models.User) (string, err
 
 // ensureJupyterHubUser 确保JupyterHub中存在该用户
 func (h *UserHandler) ensureJupyterHubUser(user *models.User, token string) error {
-	// 获取JupyterHub配置 - 修正端口配置
+	// 获取JupyterHub配置 - 使用环境变量配置
 	jupyterHubURL := os.Getenv("JUPYTERHUB_URL")
 	if jupyterHubURL == "" {
-		jupyterHubURL = "http://localhost:8088" // 修正为实际端口8088
+		jupyterHubURL = "http://ai-infra-matrix-jupyterhub:8000" // K8s服务名
 	}
 	
 	// 准备用户数据

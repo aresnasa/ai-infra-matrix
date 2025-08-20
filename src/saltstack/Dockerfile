@@ -1,61 +1,67 @@
-FROM alpine:3.22
+FROM python:3.13-alpine
 
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像源使用阿里云镜像加速
-RUN echo "https://mirrors.aliyun.com/alpine/v3.22/main" > /etc/apk/repositories && \
+# 基础环境和构建工具（使用阿里云Alpine源）
+RUN set -eux; \
+    # 使用阿里云Alpine源提高下载速度
+    echo "https://mirrors.aliyun.com/alpine/v3.22/main" > /etc/apk/repositories && \
     echo "https://mirrors.aliyun.com/alpine/v3.22/community" >> /etc/apk/repositories && \
     echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/main" >> /etc/apk/repositories && \
-    echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories
+    echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories; \
+    apk update
 
-# 安装依赖
-RUN apk update && apk add --no-cache \
-    python3 \
-    py3-pip \
-    py3-cryptography \
-    py3-openssl \
-    py3-requests \
-    py3-yaml \
-    py3-ldap3 \
-    openssh \
-    supervisor \
+# 更新包索引并安装必要依赖
+RUN apk add --no-cache \
+    ca-certificates \
     curl \
+    openssl \
+    bash \
     wget \
     shadow \
-    bash \
     gcc \
     python3-dev \
     musl-dev \
     libffi-dev \
     openssl-dev \
+    build-base \
+    linux-headers \
+    openssh \
     openldap-dev \
-    cyrus-sasl-dev
+    cyrus-sasl-dev \
+    netcat-openbsd
 
-# 配置pip使用阿里云镜像源并安装SaltStack及其所有依赖
-RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip3 config set global.trusted-host mirrors.aliyun.com && \
-    pip3 install --no-cache-dir --break-system-packages \
-        salt==3007.6 \
-        tornado \
-        jinja2 \
-        msgpack \
-        pycrypto \
+# 配置pip使用中国镜像源
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip config set install.trusted-host mirrors.aliyun.com
+
+# 安装SaltStack及其依赖（确保所有必需依赖）
+RUN pip install --no-cache-dir \
+        packaging \
+        wheel \
+        setuptools \
+        six \
         pyyaml \
+        jinja2 \
         markupsafe \
-        requests \
-        looseversion \
-        distro \
+        msgpack \
+        tornado \
         psutil \
-        setproctitle \
-        CherryPy==18.8.0 \
+        requests \
+        cryptography \
+        cffi \
+        pyzmq \
+        && \
+    pip install --no-cache-dir \
+        salt \
+        cherrypy \
         python-ldap \
-        pyopenssl
-
-# 创建Salt用户（Alpine方式）
-RUN adduser -D -s /bin/bash salt \
-    && echo "salt:salt" | chpasswd \
-    && adduser salt wheel
+        pyopenssl \
+        setproctitle \
+        distro \
+        looseversion
 
 # 创建必要目录
 RUN mkdir -p /etc/salt/master.d \
@@ -64,7 +70,8 @@ RUN mkdir -p /etc/salt/master.d \
     && mkdir -p /etc/salt/pki/minion \
     && mkdir -p /srv/salt \
     && mkdir -p /srv/pillar \
-    && mkdir -p /var/cache/salt \
+    && mkdir -p /var/cache/salt/master \
+    && mkdir -p /var/cache/salt/minion \
     && mkdir -p /var/log/salt \
     && mkdir -p /var/run/salt
 
@@ -72,28 +79,20 @@ RUN mkdir -p /etc/salt/master.d \
 COPY salt-master.conf /etc/salt/master.d/master.conf
 COPY salt-api.conf /etc/salt/master.d/api.conf
 COPY salt-minion.conf /etc/salt/minion.d/minion.conf
-COPY supervisord.conf /etc/supervisord.conf
-COPY supervisor.conf /etc/supervisor/conf.d/saltstack.conf
 COPY salt-states/ /srv/salt/
 COPY salt-pillar/ /srv/pillar/
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# 设置权限
-RUN chown -R salt:salt /etc/salt \
-    && chown -R salt:salt /srv/salt \
-    && chown -R salt:salt /srv/pillar \
-    && chown -R salt:salt /var/cache/salt \
-    && chown -R salt:salt /var/log/salt \
-    && chown -R salt:salt /var/run/salt
-
 EXPOSE 4505 4506 8000
 
+# 增强的健康检查 - 检查Salt Master和API端口
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/stats || exit 1
+    CMD nc -z 127.0.0.1 4505 && nc -z 127.0.0.1 4506 && nc -z 127.0.0.1 8000 || exit 1
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["supervisord", "-c", "/etc/supervisord.conf"]
+# 默认启动Salt Master和API（由entrypoint脚本管理）
+CMD ["salt-master", "--log-level=info"]
 
 LABEL maintainer="AI Infrastructure Team" \
       version="${APP_VERSION}" \

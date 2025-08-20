@@ -49,9 +49,14 @@ const Layout = ({ children, user, onLogout }) => {
       label: 'JupyterHub',
     },
     {
-  key: '/slurm',
+      key: '/slurm',
       icon: <ClusterOutlined />,
       label: 'Slurm',
+    },
+    {
+      key: '/saltstack',
+      icon: <SettingOutlined />,
+      label: 'SaltStack',
     },
   ];
 

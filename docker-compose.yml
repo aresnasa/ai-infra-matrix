@@ -150,8 +150,8 @@ services:
       GITEA_AUTO_UPDATE: "${GITEA_AUTO_UPDATE:-true}"
       GITEA_SYNC_ENABLED: "${GITEA_SYNC_ENABLED:-true}"
       GITEA_SYNC_INTERVAL_SECONDS: "${GITEA_SYNC_INTERVAL_SECONDS:-600}"
-      # Map reserved username 'admin' to a real admin account in Gitea (e.g., 'test')
-      GITEA_ALIAS_ADMIN_TO: "${GITEA_ALIAS_ADMIN_TO:-test}"
+      # Map reserved username 'admin' to a real admin account in Gitea (use 'admin' as default)
+      GITEA_ALIAS_ADMIN_TO: "${GITEA_ALIAS_ADMIN_TO:-admin}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       TZ: "Asia/Shanghai"
     expose:
@@ -333,7 +333,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/stats"]
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 4505 && nc -z 127.0.0.1 4506 && nc -z 127.0.0.1 8000"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -464,9 +464,9 @@ services:
       GITEA__auth__PROXY_FULL_NAME_HEADER: "X-WEBAUTH-FULLNAME"
       GITEA__security__REVERSE_PROXY_LIMIT: "1"
       GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
-      # Optional: seed initial admin identity from backend alias; random password; login form disabled
-      INITIAL_ADMIN_USERNAME: "${GITEA_ALIAS_ADMIN_TO:-}"
-      # Admin bootstrap via reverse-proxy SSO only; no default 'admin' credentials
+      # Set initial admin identity to 'admin' user
+      INITIAL_ADMIN_USERNAME: "${GITEA_ALIAS_ADMIN_TO:-admin}"
+      # Admin bootstrap via reverse-proxy SSO only; admin user will be default admin
       GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
       DATA_PATH: "/data/gitea"
       MINIO_ENDPOINT: "minio:9000"

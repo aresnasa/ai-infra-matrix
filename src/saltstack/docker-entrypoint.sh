@@ -7,25 +7,32 @@ echo "📅 启动时间: $(date)"
 echo "🏷️ 版本: ${APP_VERSION:-dev}"
 
 # 创建必要的目录
-mkdir -p /var/log/supervisor
 mkdir -p /var/log/salt
-
-# 设置权限
-chown -R salt:salt /var/log/salt
-chown -R salt:salt /var/cache/salt
-chown -R salt:salt /var/run
+mkdir -p /var/cache/salt/master
+mkdir -p /var/cache/salt/minion
+mkdir -p /var/run/salt
+mkdir -p /etc/salt/pki/master
+mkdir -p /etc/salt/pki/minion
 
 # 生成Salt Master密钥
 if [ ! -f /etc/salt/pki/master/master.pem ]; then
     echo "🔐 生成Salt Master密钥..."
     salt-key --gen-keys=master --gen-keys-dir=/etc/salt/pki/master/
-    cp /etc/salt/pki/master/master.pem /etc/salt/pki/master/master.pub /etc/salt/pki/master/
-    chown -R salt:salt /etc/salt/pki
 fi
 
-# 等待网络就绪
-echo "🌐 等待网络服务就绪..."
-sleep 5
+# 验证Salt配置文件
+echo "🔧 验证Salt配置文件..."
+if [ ! -r /etc/salt/master.d/master.conf ]; then
+    echo "❌ Salt Master配置文件不可读"
+    exit 1
+fi
+
+if [ ! -r /etc/salt/minion.d/minion.conf ]; then
+    echo "❌ Salt Minion配置文件不可读"
+    exit 1
+fi
+
+echo "✅ Salt配置文件验证通过"
 
 echo "✅ SaltStack服务准备完成"
 echo "🚀 支持功能:"
@@ -34,5 +41,20 @@ echo "   ✅ Salt API (端口: 8000)"
 echo "   ✅ AI-Infra-Matrix SSO集成"
 echo "   ✅ 自动密钥管理"
 
-# 启动supervisor
-exec "$@"
+# 后台启动Salt API（如果需要）
+if [ "$1" = "salt-master" ]; then
+    echo "🌐 启动Salt API服务..."
+    salt-api --daemon || echo "⚠️ Salt API启动失败，继续启动Master"
+    
+    echo "🔧 启动Salt Minion (本地测试)..."
+    salt-minion --daemon || echo "⚠️ Salt Minion启动失败，继续启动Master"
+    
+    # 等待服务就绪
+    sleep 3
+    
+    echo "🎯 启动Salt Master..."
+    exec salt-master --log-level=info
+else
+    # 如果不是启动master，直接执行命令
+    exec "$@"
+fi

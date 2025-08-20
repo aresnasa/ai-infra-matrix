@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, Progress, Tabs } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography } from 'antd';
 import { slurmAPI } from '../services/api';
-import SaltStackStatus from '../components/SaltStackStatus';
 
-const { Sider, Content } = Layout;
 const { Title } = Typography;
 
 const columnsNodes = [
@@ -62,86 +60,77 @@ const SlurmDashboard = () => {
   }, []);
 
   return (
-    <Layout style={{ minHeight: '100vh', background: '#f0f2f5' }}>
-      <Content style={{ padding: 24 }}>
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Title level={2}>Slurm 集群管理</Title>
-          
-          {error && (
-            <Alert 
-              type="error" 
-              showIcon 
-              message="无法加载Slurm数据"
-              description={
-                <Space>
-                  <span>请确认已登录且后端 /api/slurm 接口可达。</span>
-                  <Button size="small" onClick={load}>重试</Button>
-                </Space>
-              }
-            />
-          )}
-          {demo && (
-            <Alert type="info" showIcon message="使用演示数据：未检测到Slurm命令(sinfo/squeue)，展示示例统计" />
-          )}
+    <div style={{ padding: 24 }}>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Title level={2}>Slurm 集群管理</Title>
+        
+        {error && (
+          <Alert 
+            type="error" 
+            showIcon 
+            message="无法加载Slurm数据"
+            description={
+              <Space>
+                <span>请确认已登录且后端 /api/slurm 接口可达。</span>
+                <Button size="small" onClick={load}>重试</Button>
+              </Space>
+            }
+          />
+        )}
+        {demo && (
+          <Alert type="info" showIcon message="使用演示数据：未检测到Slurm命令(sinfo/squeue)，展示示例统计" />
+        )}
 
-          <Row gutter={16}>
-            <Col span={6}>
-              <Card>
-                <Statistic title="节点总数" value={summary?.nodes_total || 0} loading={loading} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic title="空闲节点" value={summary?.nodes_idle || 0} loading={loading} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic title="占用节点" value={summary?.nodes_alloc || 0} loading={loading} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic title="分区数量" value={summary?.partitions || 0} loading={loading} />
-              </Card>
-            </Col>
-          </Row>
+        <Row gutter={16}>
+          <Col span={6}>
+            <Card>
+              <Statistic title="节点总数" value={summary?.nodes_total || 0} loading={loading} />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic title="空闲节点" value={summary?.nodes_idle || 0} loading={loading} />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic title="占用节点" value={summary?.nodes_alloc || 0} loading={loading} />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic title="分区数量" value={summary?.partitions || 0} loading={loading} />
+            </Card>
+          </Col>
+        </Row>
 
-          <Row gutter={16}>
-            <Col span={8}>
-              <Card>
-                <Statistic title="运行中作业" value={summary?.jobs_running || 0} loading={loading} />
-              </Card>
-            </Col>
-            <Col span={8}>
-              <Card>
-                <Statistic title="等待中作业" value={summary?.jobs_pending || 0} loading={loading} />
-              </Card>
-            </Col>
-            <Col span={8}>
-              <Card>
-                <Statistic title="其他状态" value={summary?.jobs_other || 0} loading={loading} />
-              </Card>
-            </Col>
-          </Row>
+        <Row gutter={16}>
+          <Col span={8}>
+            <Card>
+              <Statistic title="运行中作业" value={summary?.jobs_running || 0} loading={loading} />
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card>
+              <Statistic title="等待中作业" value={summary?.jobs_pending || 0} loading={loading} />
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card>
+              <Statistic title="其他状态" value={summary?.jobs_other || 0} loading={loading} />
+            </Card>
+          </Col>
+        </Row>
 
-          <Card title="节点列表" extra={!loading ? null : <Spin size="small" />}>
-            <Table rowKey="name" dataSource={nodes} columns={columnsNodes} size="small" pagination={{ pageSize: 8 }} />
-          </Card>
+        <Card title="节点列表" extra={!loading ? null : <Spin size="small" />}>
+          <Table rowKey="name" dataSource={nodes} columns={columnsNodes} size="small" pagination={{ pageSize: 8 }} />
+        </Card>
 
-          <Card title="作业队列" extra={!loading ? null : <Spin size="small" />}>
-            <Table rowKey="id" dataSource={jobs} columns={columnsJobs} size="small" pagination={{ pageSize: 8 }} />
-          </Card>
-        </Space>
-      </Content>
-      
-      <Sider width={400} style={{ background: '#fff', boxShadow: '-2px 0 8px rgba(0,0,0,0.1)' }}>
-        <div style={{ padding: '24px 16px' }}>
-          <Title level={4} style={{ marginBottom: 16 }}>SaltStack 状态</Title>
-          <SaltStackStatus />
-        </div>
-      </Sider>
-    </Layout>
+        <Card title="作业队列" extra={!loading ? null : <Spin size="small" />}>
+          <Table rowKey="id" dataSource={jobs} columns={columnsJobs} size="small" pagination={{ pageSize: 8 }} />
+        </Card>
+      </Space>
+    </div>
   );
 };
 
