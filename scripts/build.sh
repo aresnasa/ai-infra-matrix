@@ -382,6 +382,29 @@ build_gitea() {
     fi
 }
 
+build_saltstack() {
+    print_info "构建 saltstack (VERSION=$VERSION)"
+    if [ -n "$USE_BUILDX" ]; then
+        local name="ai-infra-saltstack"
+        local tags=()
+        readarray -t tags < <(buildx_tag_args "$name")
+        
+        docker buildx build ${NO_CACHE} \
+            --platform "$PLATFORMS" \
+            -f src/saltstack/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            "${tags[@]}" \
+            --push \
+            src/saltstack
+    else
+        docker build ${NO_CACHE} \
+            -f src/saltstack/Dockerfile \
+            --build-arg VERSION="$VERSION" \
+            $(tag_args ai-infra-saltstack) \
+            src/saltstack
+    fi
+}
+
 push_image_if_needed() {
     local name="$1"
     if [ -z "$PUSH" ] || [ -z "$REGISTRY" ]; then
@@ -412,7 +435,7 @@ push_image_if_needed() {
 }
 
 push_all_if_needed() {
-    for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx ai-infra-gitea; do
+    for n in ai-infra-backend ai-infra-backend-init ai-infra-frontend ai-infra-singleuser ai-infra-jupyterhub ai-infra-nginx ai-infra-gitea ai-infra-saltstack; do
         push_image_if_needed "$n"
     done
 }
@@ -484,6 +507,7 @@ pull_all_images() {
         "ai-infra-jupyterhub"
         "ai-infra-nginx"
         "ai-infra-gitea"
+        "ai-infra-saltstack"
     )
     
     local success_count=0
@@ -722,6 +746,7 @@ get_built_images() {
         "ai-infra-jupyterhub"
         "ai-infra-nginx"
         "ai-infra-gitea"
+        "ai-infra-saltstack"
     )
     
     for image in "${base_images[@]}"; do
@@ -946,6 +971,7 @@ show_help() {
     echo "  --rebuild           - (仅compose路径) 强制重建所有服务"
     echo "  --multi-arch        - 多架构构建 (linux/amd64,linux/arm64)，需配合 --registry --push 使用"
     echo "  --platforms P       - 指定平台列表 (例如 linux/amd64,linux/arm64)，需配合 --registry --push 使用"
+    echo "  --service S         - 只构建指定服务 (backend|frontend|singleuser|jupyterhub|nginx|gitea|saltstack)"
     echo "  --nginx-only        - 只构建nginx服务"
     echo "  --skip-prepull      - 跳过预拉取基础镜像"
     echo "  --update-images     - 强制更新（即使本地存在也重新拉取）"
@@ -963,6 +989,8 @@ show_help() {
     echo "示例:"
     echo "  $0 dev                          - 开发模式构建（自动版本）"
     echo "  $0 prod --version v0.0.3.3      - 指定版本号构建"
+    echo "  $0 prod --service saltstack     - 只构建 saltstack 服务"
+    echo "  $0 prod --service backend,frontend  - 只构建 backend 和 frontend 服务"
     echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
     echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3  - 推送到阿里云ACR"
     echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --pull --version v0.0.3.3  - 从阿里云ACR拉取镜像"
@@ -971,9 +999,48 @@ show_help() {
     echo "  $0 prod --push-deps --deps-namespace myuser  - 推送依赖镜像到Docker Hub myuser命名空间"
 }
 
+# 验证服务名称是否有效
+validate_services() {
+    local services="$1"
+    local valid_services="backend frontend singleuser jupyterhub nginx gitea saltstack"
+    
+    # 使用逗号分割服务列表
+    IFS=',' read -ra service_array <<< "$services"
+    for service in "${service_array[@]}"; do
+        # 去除空格
+        service=$(echo "$service" | xargs)
+        if [[ ! " $valid_services " =~ " $service " ]]; then
+            print_error "无效的服务名称: '$service'"
+            print_error "有效的服务: $valid_services"
+            exit 1
+        fi
+    done
+}
+
+# 检查是否应该构建指定服务
+should_build_service() {
+    local service="$1"
+    
+    # 如果没有指定 SERVICE_ONLY，则构建所有服务（除非是 NGINX_ONLY）
+    if [ -z "$SERVICE_ONLY" ]; then
+        return 0
+    fi
+    
+    # 检查服务是否在指定列表中
+    IFS=',' read -ra service_array <<< "$SERVICE_ONLY"
+    for s in "${service_array[@]}"; do
+        s=$(echo "$s" | xargs)  # 去除空格
+        if [ "$s" = "$service" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # 其他默认参数
 REBUILD=""
 NGINX_ONLY=""
+SERVICE_ONLY=""
 SKIP_PREPULL=""
 UPDATE_IMAGES=""
 PUSH_DEPS=""
@@ -1011,6 +1078,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         --platforms)
             PLATFORMS="$2"; shift 2 ;;
+        --service)
+            SERVICE_ONLY="$2"; shift 2 ;;
         --rebuild)
             REBUILD="--force-recreate"
             shift
@@ -1081,6 +1150,14 @@ VERSION=$(detect_version)
 export IMAGE_TAG="$VERSION"
 print_info "镜像版本: ${VERSION}"
 print_info "构建时间: $(date)"
+
+# 验证服务参数
+if [ -n "$SERVICE_ONLY" ]; then
+    validate_services "$SERVICE_ONLY"
+    print_info "只构建指定服务: $SERVICE_ONLY"
+elif [ -n "$NGINX_ONLY" ]; then
+    print_info "只构建 nginx 服务"
+fi
 
 # 判断是否启用 buildx（当指定了平台并且需要推送时）
 if [ -n "$PLATFORMS" ]; then
@@ -1194,6 +1271,10 @@ if [ -z "$DIRECT_BUILD" ]; then
     if [ -n "$NGINX_ONLY" ]; then
         print_info "仅构建 nginx 服务 (compose)"
         SERVICES="nginx"
+    elif [ -n "$SERVICE_ONLY" ]; then
+        print_info "仅构建指定服务 (compose): $SERVICE_ONLY"
+        # 将逗号分隔的服务转换为空格分隔
+        SERVICES=$(echo "$SERVICE_ONLY" | tr ',' ' ')
     else
         SERVICES=""
     fi
@@ -1209,12 +1290,13 @@ if [ -z "$DIRECT_BUILD" ]; then
     eval $BUILD_CMD
 else
     # 直接 docker build 路径
-    [ -z "$NGINX_ONLY" ] && build_backend
-    [ -z "$NGINX_ONLY" ] && build_frontend
-    [ -z "$NGINX_ONLY" ] && build_singleuser
-    [ -z "$NGINX_ONLY" ] && build_jupyterhub
-    [ -z "$NGINX_ONLY" ] && build_gitea
-    build_nginx
+    should_build_service "backend" && [ -z "$NGINX_ONLY" ] && build_backend
+    should_build_service "frontend" && [ -z "$NGINX_ONLY" ] && build_frontend
+    should_build_service "singleuser" && [ -z "$NGINX_ONLY" ] && build_singleuser
+    should_build_service "jupyterhub" && [ -z "$NGINX_ONLY" ] && build_jupyterhub
+    should_build_service "gitea" && [ -z "$NGINX_ONLY" ] && build_gitea
+    should_build_service "saltstack" && [ -z "$NGINX_ONLY" ] && build_saltstack
+    should_build_service "nginx" && build_nginx
 fi
 
 print_success "镜像构建完成"

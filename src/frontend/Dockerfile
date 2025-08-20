@@ -1,9 +1,9 @@
 # 使用Node.js 18作为基础镜像
 FROM node:18-alpine AS build
 
-# 配置Alpine镜像（多镜像自动回退）
+# 配置Alpine镜像（使用阿里云镜像加速）
 RUN set -eux; \
-	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+	for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
 		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
 		apk update && break || true; \
 	done
@@ -24,7 +24,7 @@ COPY . .
 ARG REACT_APP_API_URL=http://localhost:8083/api
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
-# 构建应用
+# 设置阿里云npm镜像并构建应用
 RUN npm config set registry https://registry.npmmirror.com
 RUN npm run build
 
@@ -35,9 +35,9 @@ FROM nginx:stable-alpine-perl
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（多镜像自动回退），并设置时区为上海
+# 配置Alpine镜像（使用阿里云镜像加速），并设置时区为上海
 RUN set -eux; \
-	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+	for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
 		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
 		apk update && break || true; \
 	done; \

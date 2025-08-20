@@ -369,4 +369,12 @@ export const slurmAPI = {
   getJobs: () => api.get('/slurm/jobs'),
 };
 
+// SaltStack API
+export const saltStackAPI = {
+  getStatus: () => api.get('/saltstack/status'),
+  getMinions: () => api.get('/saltstack/minions'),
+  getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
+  executeCommand: (command) => api.post('/saltstack/execute', command),
+};
+
 export default api;

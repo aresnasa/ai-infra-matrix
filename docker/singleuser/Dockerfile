@@ -9,7 +9,9 @@ ENV APP_VERSION=${VERSION}
 USER root
 
 # Align jupyterhub-singleuser with Hub 5.3.x to avoid auth/redirect quirks
-RUN pip install --no-cache-dir \
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip install --no-cache-dir \
 	"jupyterhub==5.3.*" \
 	ipykernel \
 	jupyterlab \

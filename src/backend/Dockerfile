@@ -8,9 +8,9 @@ ENV GOPROXY=https://goproxy.cn
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（多镜像自动回退）
+# 配置Alpine镜像（使用阿里云镜像加速）
 RUN set -eux; \
-    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+    for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
         sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
         apk update && break || true; \
     done
@@ -44,9 +44,9 @@ ENV GOPROXY=https://goproxy.cn
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（多镜像自动回退）
+# 配置Alpine镜像（使用阿里云镜像加速）
 RUN set -eux; \
-    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+    for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
         sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
         apk update && break || true; \
     done

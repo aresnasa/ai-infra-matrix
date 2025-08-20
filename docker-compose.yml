@@ -301,6 +301,45 @@ services:
       - ai-infra-network
     restart: "no"
 
+  # SaltStack 配置管理服务
+  saltstack:
+    image: ai-infra-saltstack:${IMAGE_TAG:-v0.0.3.3}
+    build:
+      context: src/saltstack
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-v0.0.3.3}
+    container_name: ai-infra-saltstack
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      - TZ=Asia/Shanghai
+      - SALT_MASTER_HOST=saltstack
+      - AI_INFRA_BACKEND_URL=http://backend:8082
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+    expose:
+      - "4505"  # Salt Master Publish Port
+      - "4506"  # Salt Master Return Port
+      - "8000"  # Salt API Port
+    volumes:
+      - salt_data:/var/cache/salt
+      - salt_logs:/var/log/salt
+      - salt_keys:/etc/salt/pki
+    networks:
+      - ai-infra-network
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
     image: ai-infra-nginx:${IMAGE_TAG:-v0.0.3.3}
@@ -336,6 +375,8 @@ services:
       backend:
         condition: service_healthy
       jupyterhub:
+        condition: service_healthy
+      saltstack:
         condition: service_healthy
       gitea:
         condition: service_healthy
@@ -513,6 +554,12 @@ volumes:
     name: ai-infra-jupyterhub-notebooks
   nginx_logs:
     name: ai-infra-nginx-logs
+  salt_data:
+    name: ai-infra-salt-data
+  salt_logs:
+    name: ai-infra-salt-logs
+  salt_keys:
+    name: ai-infra-salt-keys
   gitea_data:
     name: ai-infra-gitea-data
   minio_data:

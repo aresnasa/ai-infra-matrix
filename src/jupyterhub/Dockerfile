@@ -5,17 +5,19 @@ FROM python:3.13-alpine
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 基础环境和构建工具（多镜像自动回退）
+# 基础环境和构建工具（使用阿里云Alpine源）
 RUN set -eux; \
-    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
-        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
-        apk update && break || true; \
-    done; \
+    # 使用阿里云Alpine源提高下载速度
+    echo "https://mirrors.aliyun.com/alpine/v3.22/main" > /etc/apk/repositories && \
+    echo "https://mirrors.aliyun.com/alpine/v3.22/community" >> /etc/apk/repositories && \
+    echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/main" >> /etc/apk/repositories && \
+    echo "https://dl-cdn.alpinelinux.org/alpine/v3.22/community" >> /etc/apk/repositories; \
+    apk update; \
     # Keep only required runtime dependencies; psycopg2-binary avoids needing postgresql-dev/client
     apk --no-cache add \
         ca-certificates \
         curl \
-    openssl \
+        openssl \
         tzdata \
         bash \
         shadow \
@@ -32,10 +34,10 @@ WORKDIR /srv/jupyterhub
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/srv/jupyterhub"
 
-# 使用 PyPI TUNA 镜像（带官方 PyPI 作为备用源）
-ENV PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" \
+# 使用阿里云 PyPI 镜像（带官方 PyPI 作为备用源）
+ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
     PIP_EXTRA_INDEX_URL="https://pypi.org/simple" \
-    PIP_TRUSTED_HOST="pypi.tuna.tsinghua.edu.cn" \
+    PIP_TRUSTED_HOST="mirrors.aliyun.com" \
     PIP_TIMEOUT=60
 
 # 升级pip并安装核心工具
@@ -43,8 +45,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # 依赖安装（分层优化，优先二进制版本）
 COPY requirements.txt .
-# Install temporary build deps to compile psutil on Alpine, then remove them
+# Install Node.js and temporary build deps to compile psutil on Alpine, then remove them
 RUN set -eux; \
+    apk add --no-cache nodejs npm && \
     apk add --no-cache --virtual .build-deps \
         build-base \
         musl-dev \

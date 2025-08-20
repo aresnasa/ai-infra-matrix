@@ -538,6 +538,17 @@ func main() {
 			slurm.GET("/jobs", slurmController.GetJobs)
 		}
 
+		// SaltStack 路由（需要认证）
+		saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
+		saltstack := api.Group("/saltstack")
+		saltstack.Use(middleware.AuthMiddlewareWithSession())
+		{
+			saltstack.GET("/status", saltStackHandler.GetSaltStackStatus)
+			saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
+			saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
+			saltstack.POST("/execute", middleware.RBACMiddleware(database.DB, "saltstack", "execute"), saltStackHandler.ExecuteSaltCommand)
+		}
+
 		// AI 助手路由（需要认证）
 		aiController := controllers.NewAIAssistantController()
 		ai := api.Group("/ai")
