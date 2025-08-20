@@ -396,11 +396,25 @@ type LDAPConfig struct {
 
 // LDAPUser LDAP用户信息
 type LDAPUser struct {
-	DN          string `json:"dn"`
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
+	DN          string   `json:"dn"`
+	Username    string   `json:"username"`
+	Email       string   `json:"email"`
+	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name"`
+	Groups      []string `json:"groups,omitempty"` // 添加用户组信息
+}
+
+// LDAPGroup LDAP组信息
+type LDAPGroup struct {
+	DN      string   `json:"dn"`
+	Name    string   `json:"name"`
+	Members []string `json:"members"`
+}
+
+// LDAPSyncOptions LDAP同步选项
+type LDAPSyncOptions struct {
+	DryRun    bool `json:"dry_run"`
+	BatchSize int  `json:"batch_size"`
 }
 
 // LDAPConfigRequest LDAP配置请求

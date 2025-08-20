@@ -94,6 +94,12 @@ type LDAPSyncDetail struct {
 	Email    string `json:"email"`
 	Message  string `json:"message"`
 }
+type LDAPSyncDetail struct {
+	Action   string `json:"action"`   // created, updated, skipped, error
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Message  string `json:"message"`
+}
 
 // LDAPUser LDAP用户信息
 type LDAPUser struct {
