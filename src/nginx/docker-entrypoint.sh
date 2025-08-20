@@ -13,6 +13,22 @@ echo "⚙️ 配置nginx..."
 # 移除官方默认站点，确保我们的 server-main.conf 生效
 rm -f /etc/nginx/conf.d/default.conf || true
 
+# 处理环境变量替换 (必须在nginx -t之前)
+echo "🔧 处理配置文件中的环境变量..."
+
+# 设置默认值
+export GITEA_ALIAS_ADMIN_TO="${GITEA_ALIAS_ADMIN_TO:-admin}"
+export GITEA_ADMIN_EMAIL="${GITEA_ADMIN_EMAIL:-admin@example.com}"
+
+echo "   GITEA_ALIAS_ADMIN_TO: ${GITEA_ALIAS_ADMIN_TO}"
+echo "   GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL}"
+
+# 替换配置文件中的环境变量
+find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/\${GITEA_ALIAS_ADMIN_TO}/${GITEA_ALIAS_ADMIN_TO}/g" {} \;
+find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/\${GITEA_ADMIN_EMAIL}/${GITEA_ADMIN_EMAIL}/g" {} \;
+
+echo "✅ 环境变量替换完成"
+
 if [ "${DEBUG_MODE}" = "true" ]; then
     echo "🔧 启用调试模式 - 8001 调试服务可用"
     if [ -d "/usr/share/nginx/html/debug" ] && [ "$(ls -A /usr/share/nginx/html/debug)" ]; then
