@@ -46,6 +46,9 @@ DO_TEST=""
 PLATFORMS=""
 USE_BUILDX=""
 BUILDX_PUSHED=""
+DO_EXPORT=""
+EXPORT_ARCH=""
+EXPORT_DIR="./exports"
 
 # 加载 .env 文件中的环境变量（兼容注释与引号）
 source_env_file() {
@@ -337,6 +340,147 @@ push_all_if_needed() {
     done
 }
 
+#============================
+# 镜像导出功能
+#============================
+
+# 获取所有已构建的ai-infra镜像列表
+get_built_images() {
+    local version="$1"
+    local arch_filter="$2"
+    local images=()
+    
+    # 基础镜像列表（不包括init，因为它只是backend的别名）
+    local base_images=(
+        "ai-infra-backend"
+        "ai-infra-backend-init"
+        "ai-infra-frontend"
+        "ai-infra-singleuser"
+        "ai-infra-jupyterhub"
+        "ai-infra-nginx"
+        "ai-infra-gitea"
+    )
+    
+    for image in "${base_images[@]}"; do
+        # 检查镜像是否存在
+        if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${image}:${version}$"; then
+            # 暂时跳过架构过滤，直接添加所有找到的镜像
+            images+=("${image}:${version}")
+        fi
+    done
+    
+    printf '%s\n' "${images[@]}"
+}
+
+# 导出镜像到tar文件
+export_images() {
+    local arch="$1"
+    local version="$2"
+    local export_dir="$3"
+    
+    print_info "Exporting $arch architecture images (version: $version)"
+    
+    # 创建导出目录
+    if [ ! -d "$export_dir" ]; then
+        mkdir -p "$export_dir"
+        print_info "Creating export directory: $export_dir"
+    fi
+    
+    # 获取要导出的镜像列表
+    local images_list
+    images_list=$(get_built_images "$version" "$arch")
+    
+    if [ -z "$images_list" ]; then
+        print_warning "No built images found for $arch architecture (version: $version)"
+        return 1
+    fi
+    
+    # 转换为数组
+    local images=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && images+=("$line")
+    done <<< "$images_list"
+    
+    print_info "Found ${#images[@]} images to export:"
+    for img in "${images[@]}"; do
+        echo "  - $img"
+    done
+    
+    # 生成导出文件名
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    local export_file="${export_dir}/ai-infra-matrix-${version}-${arch}-${timestamp}.tar"
+    
+    print_info "Export file: $export_file"
+    print_info "Starting image export, this may take several minutes..."
+    
+    # 执行导出
+    if docker save "${images[@]}" -o "$export_file"; then
+        local file_size
+        file_size=$(du -h "$export_file" | cut -f1)
+        print_success "Image export successful!"
+        print_info "Export file: $export_file"
+        print_info "File size: $file_size"
+        
+        # 生成导入脚本
+        local import_script="${export_dir}/import-${version}-${arch}-${timestamp}.sh"
+        cat > "$import_script" << EOF
+#!/bin/bash
+# AI-Infra-Matrix 镜像导入脚本
+# 生成时间: $(date)
+# 架构: $arch
+# 版本: $version
+
+set -e
+
+SCRIPT_DIR=\$(cd "\$(dirname "\$0")" && pwd)
+TAR_FILE="\$SCRIPT_DIR/$(basename "$export_file")"
+
+echo "🚀 开始导入 AI-Infra-Matrix 镜像..."
+echo "架构: $arch"
+echo "版本: $version"
+echo "文件: \$TAR_FILE"
+
+if [ ! -f "\$TAR_FILE" ]; then
+    echo "❌ 错误: 找不到镜像文件 \$TAR_FILE"
+    exit 1
+fi
+
+echo "⏳ 正在导入镜像..."
+if docker load -i "\$TAR_FILE"; then
+    echo "✅ 镜像导入成功!"
+    echo ""
+    echo "📊 已导入的镜像:"
+    docker images | grep "ai-infra-" | grep "$version"
+else
+    echo "❌ 镜像导入失败!"
+    exit 1
+fi
+EOF
+        chmod +x "$import_script"
+        print_info "Generated import script: $import_script"
+        
+        # 生成镜像列表文件
+        local manifest_file="${export_dir}/manifest-${version}-${arch}-${timestamp}.txt"
+        cat > "$manifest_file" << EOF
+# AI-Infra-Matrix 镜像清单
+# 生成时间: $(date)
+# 架构: $arch
+# 版本: $version
+# 导出文件: $(basename "$export_file")
+
+EOF
+        for img in "${images[@]}"; do
+            echo "$img" >> "$manifest_file"
+        done
+        print_info "Generated image manifest: $manifest_file"
+        
+    else
+        print_error "Image export failed!"
+        return 1
+    fi
+}
+
 # 预拉取基础镜像（支持国内镜像源回退）
 MIRRORS=(
     "docker.m.daocloud.io"
@@ -444,12 +588,17 @@ show_help() {
     echo "  --compose           - 使用 docker-compose build（默认直接 docker build）"
     echo "  --up                - 构建后通过 compose 启动/更新服务 (up -d)"
     echo "  --test              - 构建/启动后运行 scripts/test-health.sh 健康检查"
+    echo "  --export-x86        - 导出所有已构建镜像的 x86_64/amd64 版本为 tar 文件"
+    echo "  --export-arm64      - 导出所有已构建镜像的 arm64 版本为 tar 文件"
+    echo "  --export-dir DIR    - 指定导出目录（默认：./exports）"
     echo "  -h, --help          - 显示此帮助信息"
     echo ""
     echo "示例:"
     echo "  $0 dev                          - 开发模式构建（自动版本）"
     echo "  $0 prod --version v0.0.3.3      - 指定版本号构建"
     echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
+    echo "  $0 prod --export-x86            - 构建并导出所有 x86_64 版本镜像"
+    echo "  $0 prod --export-arm64 --export-dir /tmp/images  - 导出 arm64 版本到指定目录"
 }
 
 # 其他默认参数
@@ -515,6 +664,18 @@ while [[ $# -gt 0 ]]; do
             DO_TEST="true"
             shift
             ;;
+        --export-x86)
+            DO_EXPORT="true"
+            EXPORT_ARCH="amd64"
+            shift
+            ;;
+        --export-arm64)
+            DO_EXPORT="true"
+            EXPORT_ARCH="arm64"
+            shift
+            ;;
+        --export-dir)
+            EXPORT_DIR="$2"; shift 2 ;;
         -h|--help)
             show_help
             exit 0
@@ -753,3 +914,18 @@ fi
 echo ""
 print_info "本地镜像（ai-infra-*:${VERSION}）:"
 docker images | grep "ai-infra-" | grep "${VERSION}" || true
+
+# 执行镜像导出（如果需要）
+if [ -n "$DO_EXPORT" ]; then
+    echo ""
+    print_info "Starting image export..."
+    if export_images "$EXPORT_ARCH" "$VERSION" "$EXPORT_DIR"; then
+        print_success "Image export completed!"
+        echo ""
+        print_info "Export directory: $EXPORT_DIR"
+        print_info "Use the generated import script to import images on other machines"
+    else
+        print_error "Image export failed!"
+        exit 1
+    fi
+fi
