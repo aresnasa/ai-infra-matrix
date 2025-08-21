@@ -4,7 +4,7 @@
 
 services:
   postgres:
-    image: harbor.company.com/ai-infra/postgres:15-alpine
+    image: postgres:15-alpine
     container_name: ai-infra-postgres
     env_file:
       - ${ENV_FILE:-.env}
@@ -29,7 +29,7 @@ services:
 
   # Redis 缓存服务
   redis:
-    image: harbor.company.com/ai-infra/redis:7-alpine
+    image: redis:7-alpine
     container_name: ai-infra-redis
     env_file:
       - ${ENV_FILE:-.env}
@@ -53,7 +53,7 @@ services:
 
   # OpenLDAP 目录服务
   openldap:
-    image: harbor.company.com/ai-infra/openldap:stable
+    image: osixia/openldap:stable
     container_name: ai-infra-openldap
     env_file:
       - ${ENV_FILE:-.env}
@@ -82,7 +82,7 @@ services:
 
   # phpLDAPadmin Web界面
   phpldapadmin:
-    image: harbor.company.com/ai-infra/phpldapadmin:stable
+    image: osixia/phpldapadmin:stable
     container_name: ai-infra-phpldapadmin
     environment:
       PHPLDAPADMIN_LDAP_HOSTS: openldap
@@ -99,7 +99,7 @@ services:
 
   # 后端初始化服务 - 创建admin用户和基础数据
   backend-init:
-    image: harbor.company.com/ai-infra/ai-infra-backend-init:v0.3.5
+    image: ai-infra-backend-init:${IMAGE_TAG}
     build:
       context: ./src/backend
       dockerfile: Dockerfile
@@ -129,7 +129,7 @@ services:
 
   # 后端 API 服务
   backend:
-    image: harbor.company.com/ai-infra/ai-infra-backend:v0.3.5
+    image: ai-infra-backend:${IMAGE_TAG}
     build:
       context: ./src/backend
       dockerfile: Dockerfile
@@ -183,7 +183,7 @@ services:
 
   # 前端应用服务
   frontend:
-    image: harbor.company.com/ai-infra/ai-infra-frontend:v0.3.5
+    image: ai-infra-frontend:${IMAGE_TAG}
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
@@ -211,7 +211,7 @@ services:
 
   # JupyterHub 统一认证服务
   jupyterhub:
-    image: harbor.company.com/ai-infra/ai-infra-jupyterhub:v0.3.5
+    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.0.3.3}
     env_file:
       - ${ENV_FILE:-.env}
     build:
@@ -245,7 +245,7 @@ services:
       - AI_INFRA_API_TOKEN=ai-infra-hub-token
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
-      - JUPYTERHUB_IMAGE=harbor.company.com/ai-infra/ai-infra-singleuser:v0.3.5
+      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.3}
       - JUPYTERHUB_NETWORK=ai-infra-network
       - JUPYTERHUB_MEM_LIMIT=3G
       - JUPYTERHUB_CPU_LIMIT=1.0
@@ -290,7 +290,7 @@ services:
 
   # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
   singleuser-builder:
-    image: harbor.company.com/ai-infra/ai-infra-singleuser:v0.3.5
+    image: ai-infra-singleuser:${IMAGE_TAG}
     build:
       context: ./docker/singleuser
       dockerfile: Dockerfile
@@ -303,7 +303,7 @@ services:
 
   # SaltStack 配置管理服务
   saltstack:
-    image: harbor.company.com/ai-infra/ai-infra-saltstack:v0.3.5
+    image: ai-infra-saltstack:${IMAGE_TAG}
     build:
       context: src/saltstack
       dockerfile: Dockerfile
@@ -342,7 +342,7 @@ services:
 
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
-    image: harbor.company.com/ai-infra/ai-infra-nginx:v0.3.5
+    image: ai-infra-nginx:${IMAGE_TAG}
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
@@ -400,7 +400,7 @@ services:
 
   # Kubernetes 代理服务 (可选)
   k8s-proxy:
-    image: harbor.company.com/ai-infra/tcp-proxy:latest
+    image: tecnativa/tcp-proxy
     container_name: ai-infra-k8s-proxy
     environment:
       LISTEN: "0.0.0.0:6443"
@@ -419,7 +419,7 @@ services:
 
   # Redis 监控界面 (可选)
   redis-insight:
-    image: harbor.company.com/ai-infra/redisinsight:latest
+    image: redislabs/redisinsight:latest
     container_name: ai-infra-redis-insight
     environment:
       TZ: Asia/Shanghai
@@ -433,7 +433,7 @@ services:
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:
-    image: harbor.company.com/ai-infra/ai-infra-gitea:v0.3.5
+    image: ai-infra-gitea:${IMAGE_TAG:-v0.0.3.3}
     build:
       context: ./third-party/gitea
       dockerfile: Dockerfile
@@ -507,7 +507,7 @@ services:
 
   # Debug-only: Nginx shim to rewrite /gitea/* to upstream paths so direct backend validation can use /gitea URLs
   gitea-debug-proxy:
-    image: harbor.company.com/ai-infra/nginx:1.27-alpine
+    image: nginx:1.27-alpine
     container_name: ai-infra-gitea-debug
     depends_on:
       - gitea
@@ -521,7 +521,7 @@ services:
 
   # MinIO (S3-compatible)
   minio:
-    image: harbor.company.com/ai-infra/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
     env_file:

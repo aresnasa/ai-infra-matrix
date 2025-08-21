@@ -363,11 +363,20 @@ start_services() {
         exit 1
     fi
     
+    # 确定使用的环境文件
+    local env_file=".env"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        env_file=".env.prod"
+    fi
+    
     # 设置环境变量
     export IMAGE_TAG="$IMAGE_TAG"
-    export ENV_FILE=".env.prod"
+    export ENV_FILE="$env_file"
     
-    $compose_cmd --env-file .env.prod up -d
+    print_info "使用环境文件: $env_file"
+    print_info "镜像标签: $IMAGE_TAG"
+    
+    $compose_cmd --env-file "$env_file" up -d
     
     print_success "服务已启动"
     
