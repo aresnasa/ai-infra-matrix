@@ -16,6 +16,21 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) {
     // 你同样可以将错误日志上报给服务器
     console.error('ErrorBoundary caught an error:', error, errorInfo);
+    console.error('Error stack:', error.stack);
+    console.error('Component stack:', errorInfo.componentStack);
+    
+    // 也记录到localStorage以便调试
+    try {
+      localStorage.setItem('lastError', JSON.stringify({
+        error: error.toString(),
+        stack: error.stack,
+        componentStack: errorInfo.componentStack,
+        timestamp: new Date().toISOString()
+      }));
+    } catch (e) {
+      console.error('Failed to save error to localStorage:', e);
+    }
+    
     this.setState({
       error: error,
       errorInfo: errorInfo
@@ -54,16 +69,19 @@ class ErrorBoundary extends React.Component {
               </Button>,
             ]}
           >
-            {process.env.NODE_ENV === 'development' && (
-              <div style={{ textAlign: 'left', marginTop: '20px' }}>
-                <details style={{ whiteSpace: 'pre-wrap' }}>
-                  <summary>错误详情（开发模式）</summary>
-                  {this.state.error && this.state.error.toString()}
-                  <br />
-                  {this.state.errorInfo.componentStack}
-                </details>
-              </div>
-            )}
+            <div style={{ textAlign: 'left', marginTop: '20px' }}>
+              <details open style={{ whiteSpace: 'pre-wrap', background: '#f5f5f5', padding: '10px', borderRadius: '4px' }}>
+                <summary><strong>错误详情</strong></summary>
+                <div style={{ marginTop: '10px' }}>
+                  <strong>错误信息:</strong><br />
+                  {this.state.error && this.state.error.toString()}<br />
+                  <strong>错误堆栈:</strong><br />
+                  {this.state.error && this.state.error.stack}<br />
+                  <strong>组件堆栈:</strong><br />
+                  {this.state.errorInfo && this.state.errorInfo.componentStack}
+                </div>
+              </details>
+            </div>
           </Result>
         </div>
       );

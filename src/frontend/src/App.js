@@ -64,6 +64,11 @@ const AIAssistantManagement = withLazyLoading(React.lazy(() => import('./pages/A
   loadingText: '正在加载AI助手管理...'
 });
 
+// 调试页面懒加载
+const DebugPage = withLazyLoading(React.lazy(() => import('./pages/DebugPage')), {
+  loadingText: '正在加载调试页面...'
+});
+
 // JupyterHub管理页面懒加载
 const JupyterHubManagement = withLazyLoading(React.lazy(() => import('./pages/JupyterHubManagement')), {
   loadingText: '正在加载JupyterHub管理...'
@@ -544,6 +549,14 @@ function App() {
                           element={
                             <Suspense fallback={<AdminLoadingFallback />}>
                               <AdminTrash />
+                            </Suspense>
+                          } 
+                        />
+                        <Route 
+                          path="/debug" 
+                          element={
+                            <Suspense fallback={<AdminLoadingFallback />}>
+                              <DebugPage />
                             </Suspense>
                           } 
                         />

@@ -1,5 +1,5 @@
 # 使用Node.js 18作为基础镜像
-FROM node:18-alpine AS build
+FROM node:22-alpine AS build
 
 # 配置Alpine镜像（多镜像源智能回退配置）
 RUN set -eux; \

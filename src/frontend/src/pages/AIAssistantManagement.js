@@ -17,7 +17,9 @@ import {
   Space,
   Tag,
   Tooltip,
-  Popconfirm
+  Popconfirm,
+  Spin,
+  Alert
 } from 'antd';
 import { 
   PlusOutlined, 
@@ -37,6 +39,9 @@ const { TabPane } = Tabs;
 const { TextArea } = Input;
 
 const AIAssistantManagement = () => {
+  console.log('=== AIAssistantManagement 组件开始渲染 ===');
+  
+  // 状态初始化 - 确保所有数组状态都有默认值
   const [configs, setConfigs] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [usage, setUsage] = useState([]);
@@ -44,6 +49,9 @@ const AIAssistantManagement = () => {
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [editingConfig, setEditingConfig] = useState(null);
   const [configForm] = Form.useForm();
+  const [error, setError] = useState(null);
+  
+  console.log('AIAssistantManagement 状态初始化完成, configs:', configs, 'conversations:', conversations, 'usage:', usage);
 
   // AI提供商选项
   const aiProviders = [
@@ -53,45 +61,125 @@ const AIAssistantManagement = () => {
     { value: 'custom', label: '自定义' }
   ];
 
+  // 安全的数组检查函数
+  const ensureArray = (data, fallback = []) => {
+    if (Array.isArray(data)) {
+      return data;
+    }
+    console.warn('Data is not an array:', data);
+    return fallback;
+  };
+
+  // 安全的统计计算函数
+  const calculateStats = () => {
+    const safeUsage = ensureArray(usage);
+    console.log('计算统计，使用数据:', safeUsage);
+    
+    try {
+      return {
+        totalRequests: safeUsage.reduce((sum, item) => sum + (Number(item?.request_count) || 0), 0),
+        totalTokens: safeUsage.reduce((sum, item) => sum + (Number(item?.token_used) || 0), 0),
+        totalCost: safeUsage.reduce((sum, item) => sum + (Number(item?.total_cost) || 0), 0),
+        activeUsers: new Set(safeUsage.map(item => item?.user_id).filter(Boolean)).size
+      };
+    } catch (error) {
+      console.error('统计计算错误:', error);
+      return {
+        totalRequests: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        activeUsers: 0
+      };
+    }
+  };
+
   // 加载数据
   useEffect(() => {
-    loadConfigs();
-    loadConversations();
-    loadUsage();
+    console.log('=== useEffect 执行，开始加载数据 ===');
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          loadConfigs(),
+          loadConversations(),
+          loadUsage()
+        ]);
+      } catch (error) {
+        console.error('数据加载失败:', error);
+        setError(error.message);
+      }
+    };
+    loadData();
   }, []);
 
   const loadConfigs = async () => {
+    console.log('开始加载 configs...');
     try {
       setLoading(true);
       const response = await aiAPI.getConfigs();
-      console.log('管理页面获取配置响应:', response.data);
+      console.log('配置响应:', response);
+      
+      if (!response || !response.data) {
+        console.warn('Invalid response structure:', response);
+        setConfigs([]);
+        return;
+      }
+      
       const configData = response.data.data || response.data || [];
-      setConfigs(configData);
+      const safeConfigs = ensureArray(configData);
+      console.log('安全的配置数据:', safeConfigs);
+      setConfigs(safeConfigs);
     } catch (error) {
       console.error('加载AI配置失败:', error);
-      message.error('加载AI配置失败');
+      message.error('加载AI配置失败: ' + error.message);
+      setConfigs([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadConversations = async () => {
+    const loadConversations = async () => {
+    console.log('开始加载 conversations...');
     try {
       const response = await aiAPI.getConversations();
+      console.log('对话响应:', response);
+      
+      if (!response || !response.data) {
+        console.warn('Invalid response structure:', response);
+        setConversations([]);
+        return;
+      }
+      
       const conversationData = response.data.data || response.data || [];
-      setConversations(conversationData);
+      const safeConversations = ensureArray(conversationData);
+      console.log('安全的对话数据:', safeConversations);
+      setConversations(safeConversations);
     } catch (error) {
-      message.error('加载对话记录失败');
+      console.error('加载对话记录失败:', error);
+      message.error('加载对话记录失败: ' + error.message);
+      setConversations([]);
     }
   };
 
   const loadUsage = async () => {
+    console.log('开始加载 usage...');
     try {
       const response = await aiAPI.getUsage();
+      console.log('使用统计响应:', response);
+      
+      if (!response || !response.data) {
+        console.warn('Invalid response structure:', response);
+        setUsage([]);
+        return;
+      }
+      
       const usageData = response.data.data || response.data || [];
-      setUsage(usageData);
+      const safeUsage = ensureArray(usageData);
+      console.log('安全的使用统计数据:', safeUsage);
+      setUsage(safeUsage);
     } catch (error) {
-      message.error('加载使用统计失败');
+      console.error('加载使用统计失败:', error);
+      message.error('加载使用统计失败: ' + error.message);
+      setUsage([]);
     }
   };
 
@@ -313,16 +401,39 @@ const AIAssistantManagement = () => {
     },
   ];
 
+  // 获取统计数据
+  const stats = calculateStats();
+
+  if (error) {
+    return (
+      <div style={{ padding: '24px' }}>
+        <Alert
+          message="加载失败"
+          description={error}
+          type="error"
+          showIcon
+          action={
+            <Button onClick={() => window.location.reload()}>
+              重新加载
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: '24px' }}>
-      <div style={{ marginBottom: '24px' }}>
-        <h1>
-          <RobotOutlined style={{ marginRight: '8px' }} />
-          AI助手管理
-        </h1>
-      </div>
-
-      <Tabs defaultActiveKey="configs">
+      <Spin spinning={loading}>
+        <Card 
+          title={
+            <span>
+              <RobotOutlined style={{ marginRight: '8px' }} />
+              AI助手管理
+            </span>
+          }
+        >
+          <Tabs defaultActiveKey="configs">
         <TabPane 
           tab={
             <span>
@@ -346,7 +457,7 @@ const AIAssistantManagement = () => {
           >
             <Table
               columns={configColumns}
-              dataSource={configs}
+              dataSource={ensureArray(configs)}
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
@@ -380,7 +491,7 @@ const AIAssistantManagement = () => {
           >
             <Table
               columns={conversationColumns}
-              dataSource={conversations}
+              dataSource={ensureArray(conversations)}
               rowKey="id"
               pagination={{ pageSize: 10 }}
             />
@@ -401,19 +512,19 @@ const AIAssistantManagement = () => {
               <Col span={6}>
                 <Statistic
                   title="总请求数"
-                  value={usage.reduce((sum, item) => sum + (item.request_count || 0), 0)}
+                  value={stats.totalRequests}
                 />
               </Col>
               <Col span={6}>
                 <Statistic
                   title="总Token使用"
-                  value={usage.reduce((sum, item) => sum + (item.token_used || 0), 0)}
+                  value={stats.totalTokens}
                 />
               </Col>
               <Col span={6}>
                 <Statistic
                   title="总费用"
-                  value={usage.reduce((sum, item) => sum + (item.total_cost || 0), 0)}
+                  value={stats.totalCost}
                   precision={4}
                   prefix="$"
                 />
@@ -421,7 +532,7 @@ const AIAssistantManagement = () => {
               <Col span={6}>
                 <Statistic
                   title="活跃用户"
-                  value={new Set(usage.map(item => item.user_id)).size}
+                  value={stats.activeUsers}
                 />
               </Col>
             </Row>
@@ -430,7 +541,7 @@ const AIAssistantManagement = () => {
             
             <Table
               columns={usageColumns}
-              dataSource={usage}
+              dataSource={Array.isArray(usage) ? usage : []}
               rowKey={(record) => `${record.user_id}-${record.date}`}
               pagination={{ pageSize: 10 }}
             />
@@ -551,6 +662,8 @@ const AIAssistantManagement = () => {
           </Row>
         </Form>
       </Modal>
+        </Card>
+      </Spin>
     </div>
   );
 };
