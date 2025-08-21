@@ -97,6 +97,20 @@ export const CustomMenuIcons = {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
       <path d="M20,2A2,2 0 0,1 22,4V16A2,2 0 0,1 20,18H6L2,22V4C2,2.89 2.9,2 4,2H20M8,14H16V12H8V14M8,11H18V9H8V11M8,8H18V6H8V8Z"/>
     </svg>
+  ),
+
+  // 三横杠汉堡菜单图标
+  Menu: ({ style = {}, size = 16 }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+      <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+    </svg>
+  ),
+
+  // SaltStack配置管理图标
+  SaltStack: ({ style = {}, size = 16 }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={style}>
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+    </svg>
   )
 };
 

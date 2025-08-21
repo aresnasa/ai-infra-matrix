@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
-import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
+import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
@@ -67,7 +67,7 @@ const Layout = ({ children, user, onLogout }) => {
     },
     {
       key: '/saltstack',
-      icon: <SettingOutlined />,
+      icon: <CustomMenuIcons.Menu size={16} />,
       label: 'SaltStack',
     },
   ];
@@ -256,7 +256,7 @@ const Layout = ({ children, user, onLogout }) => {
                 backgroundColor: location.pathname.startsWith('/admin') ? '#1890ff' : 'transparent',
                 borderRadius: '0'
               }}
-              icon={<SettingOutlined />}
+              icon={<CustomMenuIcons.Menu size={16} />}
               onClick={() => navigate('/admin')}
             >
               管理中心 <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
