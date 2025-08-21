@@ -123,27 +123,34 @@ cd ai-infra-matrix
 
 ## 🛠️ 构建与部署
 
+### ⚠️ 重要说明
+
+**版本参数现在是必需的！** 为了避免错误的默认版本影响构建环境，必须明确指定版本号。
+
 ### 基本构建
 
 ```bash
 # 开发模式构建
-./scripts/build.sh dev
+./build.sh dev --version v0.3.6-dev
 
 # 生产模式构建
-./scripts/build.sh prod --version v0.0.3.3
+./build.sh prod --version v0.3.5
+
+# 也可以使用完整路径
+./scripts/all-ops.sh prod --version v0.3.5
 ```
 
 ### 镜像推送
 
 ```bash
 # 推送到Docker Hub
-./scripts/build.sh prod --registry docker.io/username --push --version v0.0.3.3
+./build.sh prod --version v0.3.5 --registry docker.io/username --push
 
 # 推送到阿里云ACR
-./scripts/build.sh prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3
+./build.sh prod --version v0.3.5 --registry xxx.aliyuncs.com/ai-infra-matrix --push
 
 # 推送依赖镜像
-./scripts/build.sh prod --push-deps --deps-namespace username
+./build.sh prod --version v0.3.5 --push-deps --deps-namespace username
 ```
 
 ### 多架构构建

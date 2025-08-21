@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Menu, Button, Modal, Space, Switch, Card, Typography, message, Tooltip, Select } from 'antd';
+import { Menu, Button, Modal, Space, Switch, Card, Typography, message, Tooltip } from 'antd';
 import { 
   SettingOutlined, 
   DragOutlined, 
@@ -17,54 +17,7 @@ import {
   TeamOutlined,
   ControlOutlined,
   ApiOutlined,
-  MenuOutlined,
-  // 新增的自定义图标
-  HomeOutlined,
-  DashboardOutlined,
-  DatabaseOutlined,
-  DeploymentUnitOutlined,
-  FolderOutlined,
-  GlobalOutlined,
-  HddOutlined,
-  InsertRowAboveOutlined,
-  KeyOutlined,
-  LaptopOutlined,
-  MonitorOutlined,
-  NodeIndexOutlined,
-  OrderedListOutlined,
-  PieChartOutlined,
-  RocketOutlined,
-  SafetyOutlined,
-  ToolOutlined,
-  UnorderedListOutlined,
-  UsergroupAddOutlined,
-  WifiOutlined,
-  AppstoreOutlined,
-  BugOutlined,
-  CloudOutlined,
-  DesktopOutlined,
-  EnvironmentOutlined,
-  FireOutlined,
-  GithubOutlined,
-  HeartOutlined,
-  InfoCircleOutlined,
-  JavaScriptOutlined,
-  KubernetesOutlined,
-  LinkedinOutlined,
-  MailOutlined,
-  NotificationOutlined,
-  OpenAIOutlined,
-  PhoneOutlined,
-  QuestionCircleOutlined,
-  RedditOutlined,
-  SkypeOutlined,
-  TwitterOutlined,
-  UserOutlined,
-  VideoCameraOutlined,
-  WhatsAppOutlined,
-  XOutlined,
-  YoutubeOutlined,
-  ZoomInOutlined
+  MenuOutlined
 } from '@ant-design/icons';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { navigationAPI } from '../services/api';
@@ -77,7 +30,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'projects',
     key: '/projects',
     label: '项目管理',
-    icon: 'FolderOutlined',
+    icon: 'ProjectOutlined',
     visible: true,
     order: 0,
     roles: ['user', 'admin', 'super-admin']
@@ -86,7 +39,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'gitea',
     key: '/gitea',
     label: 'Gitea',
-    icon: 'GithubOutlined',
+    icon: 'CodeOutlined',
     visible: true,
     order: 1,
     roles: ['user', 'admin', 'super-admin']
@@ -95,7 +48,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'kubernetes',
     key: '/kubernetes',
     label: 'Kubernetes',
-    icon: 'CloudOutlined',
+    icon: 'CloudServerOutlined',
     visible: true,
     order: 2,
     roles: ['admin', 'super-admin']
@@ -104,7 +57,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'ansible',
     key: '/ansible',
     label: 'Ansible',
-    icon: 'ToolOutlined',
+    icon: 'FileTextOutlined',
     visible: true,
     order: 3,
     roles: ['admin', 'super-admin']
@@ -113,7 +66,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'jupyterhub',
     key: '/jupyterhub',
     label: 'JupyterHub',
-    icon: 'ExperimentOutlined',
+    icon: 'ExperimentTwoTone',
     visible: true,
     order: 4,
     roles: ['user', 'admin', 'super-admin']
@@ -131,7 +84,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'saltstack',
     key: '/saltstack',
     label: 'SaltStack',
-    icon: 'DeploymentUnitOutlined',
+    icon: 'ControlOutlined',
     visible: true,
     order: 6,
     roles: ['admin', 'super-admin']
@@ -140,7 +93,7 @@ const DEFAULT_NAV_ITEMS = [
     id: 'ldap-management',
     key: '/ldap-management',
     label: 'LDAP用户管理',
-    icon: 'UsergroupAddOutlined',
+    icon: 'TeamOutlined',
     visible: true,
     order: 7,
     roles: ['admin', 'super-admin']
@@ -237,27 +190,11 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     ));
   };
 
-  // 更新导航项图标
-  const updateItemIcon = (itemId, newIcon) => {
-    setNavItems(prev => prev.map(item => 
-      item.id === itemId ? { ...item, icon: newIcon } : item
-    ));
-  };
-
   // 获取可见且有权限的导航项
   const getVisibleNavItems = () => {
     return navItems
       .filter(item => item.visible && hasRole(item.roles))
       .sort((a, b) => a.order - b.order);
-  };
-
-  // 获取图标选项
-  const getIconOptions = () => {
-    return Object.keys(iconMap).map(iconKey => ({
-      value: iconKey,
-      label: iconKey.replace('Outlined', '').replace('TwoTone', ''),
-      icon: iconMap[iconKey]
-    }));
   };
 
   // 渲染配置模态框
@@ -310,48 +247,18 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
                           <div {...provided.dragHandleProps} style={{ marginRight: 12, cursor: 'grab' }}>
                             <DragOutlined style={{ color: '#999' }} />
                           </div>
-                          <div style={{ marginRight: 12 }}>
-                            {iconMap[item.icon] || <ProjectOutlined />}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500 }}>{item.label}</div>
-                            {!hasRole(item.roles) && (
-                              <Text type="secondary" style={{ fontSize: 12 }}>
-                                (无权限)
-                              </Text>
-                            )}
-                          </div>
+                          <span>{item.label}</span>
+                          {!hasRole(item.roles) && (
+                            <Text type="secondary" style={{ marginLeft: 8 }}>
+                              (无权限)
+                            </Text>
+                          )}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <Select
-                            value={item.icon}
-                            style={{ width: 140 }}
-                            size="small"
-                            disabled={!hasRole(item.roles)}
-                            onChange={(value) => updateItemIcon(item.id, value)}
-                            optionLabelProp="label"
-                            showSearch
-                            filterOption={(input, option) =>
-                              option.label.toLowerCase().includes(input.toLowerCase())
-                            }
-                          >
-                            {getIconOptions().map(option => (
-                              <Select.Option 
-                                key={option.value} 
-                                value={option.value} 
-                                label={option.label}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  {option.icon}
-                                  <span>{option.label}</span>
-                                </div>
-                              </Select.Option>
-                            ))}
-                          </Select>
+                        <div>
                           <Tooltip title={item.visible ? "点击隐藏" : "点击显示"}>
                             <Button
                               type="text"
@@ -377,7 +284,6 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
 
   // 图标映射
   const iconMap = {
-    // 原有图标
     'ProjectOutlined': <ProjectOutlined />,
     'ExperimentOutlined': <ExperimentOutlined />,
     'CodeOutlined': <CodeOutlined />,
@@ -389,55 +295,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     'TeamOutlined': <TeamOutlined />,
     'ControlOutlined': <ControlOutlined />,
     'ApiOutlined': <ApiOutlined />,
-    'MenuOutlined': <MenuOutlined />,
-    
-    // 新增的通用图标
-    'HomeOutlined': <HomeOutlined />,
-    'DashboardOutlined': <DashboardOutlined />,
-    'DatabaseOutlined': <DatabaseOutlined />,
-    'DeploymentUnitOutlined': <DeploymentUnitOutlined />,
-    'FolderOutlined': <FolderOutlined />,
-    'GlobalOutlined': <GlobalOutlined />,
-    'HddOutlined': <HddOutlined />,
-    'InsertRowAboveOutlined': <InsertRowAboveOutlined />,
-    'KeyOutlined': <KeyOutlined />,
-    'LaptopOutlined': <LaptopOutlined />,
-    'MonitorOutlined': <MonitorOutlined />,
-    'NodeIndexOutlined': <NodeIndexOutlined />,
-    'OrderedListOutlined': <OrderedListOutlined />,
-    'PieChartOutlined': <PieChartOutlined />,
-    'RocketOutlined': <RocketOutlined />,
-    'SafetyOutlined': <SafetyOutlined />,
-    'ToolOutlined': <ToolOutlined />,
-    'UnorderedListOutlined': <UnorderedListOutlined />,
-    'UsergroupAddOutlined': <UsergroupAddOutlined />,
-    'WifiOutlined': <WifiOutlined />,
-    'AppstoreOutlined': <AppstoreOutlined />,
-    'BugOutlined': <BugOutlined />,
-    'CloudOutlined': <CloudOutlined />,
-    'DesktopOutlined': <DesktopOutlined />,
-    'EnvironmentOutlined': <EnvironmentOutlined />,
-    'FireOutlined': <FireOutlined />,
-    'GithubOutlined': <GithubOutlined />,
-    'HeartOutlined': <HeartOutlined />,
-    'InfoCircleOutlined': <InfoCircleOutlined />,
-    'JavaScriptOutlined': <JavaScriptOutlined />,
-    'KubernetesOutlined': <KubernetesOutlined />,
-    'LinkedinOutlined': <LinkedinOutlined />,
-    'MailOutlined': <MailOutlined />,
-    'NotificationOutlined': <NotificationOutlined />,
-    'OpenAIOutlined': <OpenAIOutlined />,
-    'PhoneOutlined': <PhoneOutlined />,
-    'QuestionCircleOutlined': <QuestionCircleOutlined />,
-    'RedditOutlined': <RedditOutlined />,
-    'SkypeOutlined': <SkypeOutlined />,
-    'TwitterOutlined': <TwitterOutlined />,
-    'UserOutlined': <UserOutlined />,
-    'VideoCameraOutlined': <VideoCameraOutlined />,
-    'WhatsAppOutlined': <WhatsAppOutlined />,
-    'XOutlined': <XOutlined />,
-    'YoutubeOutlined': <YoutubeOutlined />,
-    'ZoomInOutlined': <ZoomInOutlined />
+    'MenuOutlined': <MenuOutlined />
   };
 
   useEffect(() => {

@@ -12,12 +12,38 @@ ENV APP_VERSION=${VERSION}
 ARG DEBUG_MODE=false
 ARG BUILD_ENV=production
 
-# 配置Alpine镜像（使用阿里云镜像加速）
+# 配置Alpine镜像（多镜像源智能回退配置）
 RUN set -eux; \
-	for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
-		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
-		apk update && break || true; \
-	done
+    # 备份原始repositories文件
+    cp /etc/apk/repositories /etc/apk/repositories.bak; \
+    # 获取Alpine版本
+    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
+    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
+    # 尝试阿里云镜像源
+    { \
+        echo "尝试阿里云镜像源..."; \
+        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+        apk update --no-cache && \
+        echo "成功使用阿里云镜像源"; \
+    } || { \
+        echo "阿里云镜像源失败，尝试清华源..."; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+        apk update --no-cache && \
+        echo "成功使用清华源"; \
+    } || { \
+        echo "清华源失败，尝试中科大源..."; \
+        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+        apk update --no-cache && \
+        echo "成功使用中科大源"; \
+    } || { \
+        echo "所有国内源都失败，使用官方源..."; \
+        cp /etc/apk/repositories.bak /etc/apk/repositories && \
+        apk update && \
+        echo "使用官方源"; \
+    }
 
 # 安装必要的工具
 RUN apk add --no-cache \

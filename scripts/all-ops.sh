@@ -1421,14 +1421,16 @@ pull_image() {
 show_help() {
     echo "AI-Infra-Matrix 构建脚本"
     echo ""
-    echo "用法: $0 [模式] [选项]"
+    echo "用法: $0 [模式] --version <版本号> [选项]"
     echo ""
     echo "模式:"
     echo "  dev, development     - 开发模式 (启用调试工具)"
     echo "  prod, production     - 生产模式 (禁用调试工具)"
     echo ""
+    echo "必需参数:"
+    echo "  --version X         - 指定镜像版本标签 (必需!)"
+    echo ""
     echo "选项:"
-    echo "  --version X         - 指定镜像版本（默认从git自动推导）"
     echo "  --registry R        - 指定镜像注册表前缀（如 registry.local:5000）"
     echo "  --push              - 构建后推送到注册表（需要 --registry）"
     echo "  --pull              - 从指定注册表拉取所有AI-Infra-Matrix镜像（需要 --registry）"
@@ -1460,14 +1462,14 @@ show_help() {
     echo "  -h, --help          - 显示此帮助信息"
     echo ""
     echo "示例:"
-    echo "  $0 dev                          - 开发模式构建（自动版本）"
-    echo "  $0 prod --version v0.0.3.3      - 指定版本号构建"
-    echo "  $0 prod --service saltstack     - 只构建 saltstack 服务"
-    echo "  $0 prod --service backend,frontend  - 只构建 backend 和 frontend 服务"
-    echo "  $0 prod --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
-    echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3  - 推送到阿里云ACR"
-    echo "  $0 prod --registry xxx.aliyuncs.com/ai-infra-matrix --pull --version v0.0.3.3  - 从阿里云ACR拉取镜像"
-    echo "  $0 prod --export-x86            - 构建并导出所有 x86_64 版本镜像"
+    echo "  $0 dev --version v0.3.6-dev                          - 开发模式构建指定版本"
+    echo "  $0 prod --version v0.3.5                             - 生产模式构建指定版本"
+    echo "  $0 prod --version v0.3.5 --service saltstack         - 只构建 saltstack 服务"
+    echo "  $0 prod --version v0.3.5 --service backend,frontend  - 只构建 backend 和 frontend 服务"
+    echo "  $0 prod --version v0.3.5 --registry localhost:5000 --push --tag-latest  - 构建并推送到本地仓库"
+    echo "  $0 prod --version v0.3.5 --registry xxx.aliyuncs.com/ai-infra-matrix --push  - 推送到阿里云ACR"
+    echo "  $0 prod --version v0.3.5 --registry xxx.aliyuncs.com/ai-infra-matrix --pull  - 从阿里云ACR拉取镜像"
+    echo "  $0 prod --version v0.3.5 --export-x86                - 构建并导出所有 x86_64 版本镜像"
     echo "  $0 prod --export-arm64 --export-dir /tmp/images  - 导出 arm64 版本到指定目录"
     echo "  $0 prod --push-deps --deps-namespace myuser  - 推送依赖镜像到Docker Hub myuser命名空间"
     echo "  $0 --cleanup-all                - 清理所有AI-Infra-Matrix相关Docker资源"
@@ -1666,11 +1668,26 @@ if [ -n "$DO_CLEANUP" ]; then
     exit $?
 fi
 
+# 检查版本参数是否提供
+if [ -z "$VERSION" ]; then
+    print_error "错误: 必须提供版本参数！"
+    echo ""
+    print_info "使用方法："
+    print_info "  $0 [dev|prod] --version <版本号> [其他选项]"
+    echo ""
+    print_info "示例："
+    print_info "  $0 prod --version v0.3.5 --up"
+    print_info "  $0 dev --version v0.3.6-dev --test"
+    echo ""
+    print_warning "为了避免错误的默认版本影响构建环境，必须明确指定版本号"
+    exit 1
+fi
+
 # 显示构建信息
 echo "🚀 AI-Infra-Matrix 构建开始"
 echo "================================"
 print_info "构建模式: $MODE"
-VERSION=$(detect_version)
+# 使用用户提供的版本，而不是自动检测
 export IMAGE_TAG="$VERSION"
 print_info "镜像版本: ${VERSION}"
 print_info "构建时间: $(date)"

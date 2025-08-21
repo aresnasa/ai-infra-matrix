@@ -3,6 +3,7 @@ import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button 
 import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
+import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -26,7 +27,7 @@ const Layout = ({ children, user, onLogout }) => {
   const menuItems = [
     {
       key: '/dashboard',
-      icon: <ProjectOutlined />,
+      icon: <CustomMenuIcons.Dashboard />,
       label: '我的工作台',
     },
     {
@@ -36,17 +37,17 @@ const Layout = ({ children, user, onLogout }) => {
     },
     {
       key: '/projects',
-      icon: <ProjectOutlined />,
+      icon: <CustomMenuIcons.Projects />,
       label: '项目管理',
     },
     {
       key: '/gitea',
-      icon: <CodeOutlined />,
+      icon: <CustomMenuIcons.Gitea />,
       label: 'Gitea',
     },
     {
       key: '/kubernetes',
-      icon: <CloudServerOutlined />,
+      icon: <CustomMenuIcons.Kubernetes />,
       label: 'Kubernetes',
     },
     {
@@ -56,7 +57,7 @@ const Layout = ({ children, user, onLogout }) => {
     },
     {
       key: '/jupyterhub',
-      icon: <ExperimentTwoTone />,
+      icon: <CustomMenuIcons.Jupyter />,
       label: 'JupyterHub',
     },
     {
@@ -111,7 +112,7 @@ const Layout = ({ children, user, onLogout }) => {
     },
     {
       key: '/admin/ai-assistant',
-      icon: <RobotOutlined />,
+      icon: <CustomMenuIcons.AIAssistant />,
       label: 'AI助手管理',
       onClick: () => navigate('/admin/ai-assistant'),
     },
@@ -205,7 +206,7 @@ const Layout = ({ children, user, onLogout }) => {
           minWidth: '200px', // 固定最小宽度
           flexShrink: 0 // 不允许收缩
         }}>
-          <CodeOutlined style={{ 
+          <MainLogoSVG style={{ 
             fontSize: '24px', 
             color: '#1890ff', 
             marginRight: '12px' 
