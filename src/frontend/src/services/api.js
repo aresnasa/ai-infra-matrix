@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { message } from 'antd';
+import { apiRequestManager } from '../utils/apiRequestManager';
 
 // 创建axios实例
 const api = axios.create({
@@ -9,6 +11,10 @@ const api = axios.create({
   },
 });
 
+// 请求重试机制
+let retryCount = 0;
+const MAX_RETRIES = 2;
+
 // 请求拦截器
 api.interceptors.request.use(
   (config) => {
@@ -16,34 +22,116 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // 添加请求时间戳，用于监控
+    config.metadata = { startTime: Date.now() };
+    
     return config;
   },
   (error) => {
+    console.error('Request interceptor error:', error);
     return Promise.reject(error);
   }
 );
 
-// 响应拦截器
+// 响应拦截器 - 优化错误处理和重试逻辑
 api.interceptors.response.use(
   (response) => {
+    // 计算响应时间
+    if (response.config.metadata) {
+      const responseTime = Date.now() - response.config.metadata.startTime;
+      if (responseTime > 5000) {
+        console.warn(`Slow API response: ${response.config.url} took ${responseTime}ms`);
+      }
+    }
+    
+    // 重置重试计数
+    retryCount = 0;
     return response;
   },
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+  async (error) => {
+    const originalRequest = error.config;
+    
+    // 避免在登录页面显示token过期消息
+    const isAuthPage = window.location.pathname.includes('/login') || 
+                      window.location.pathname.includes('/auth');
+    
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthPage) {
+      originalRequest._retry = true;
+      
+      // 只在用户实际登录状态下尝试刷新token
+      const token = localStorage.getItem('token');
+      if (token && retryCount < MAX_RETRIES) {
+        retryCount++;
+        
+        try {
+          console.log('Token expired, attempting refresh...');
+          const refreshResponse = await authAPI.refreshToken();
+          const { token: newToken, expires_at } = refreshResponse.data;
+          
+          localStorage.setItem('token', newToken);
+          localStorage.setItem('token_expires', expires_at);
+          
+          // 更新请求头并重试
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return api(originalRequest);
+          
+        } catch (refreshError) {
+          console.log('Token refresh failed:', refreshError.message);
+          
+          // 清理认证状态和缓存
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          localStorage.removeItem('token_expires');
+          apiRequestManager.clearCache();
+          
+          // 只在非认证页面时跳转到登录
+          if (!isAuthPage) {
+            message.error('登录已过期，请重新登录');
+            setTimeout(() => {
+              window.location.href = '/login';
+            }, 1000);
+          }
+        }
+      }
     }
+    
+    // 网络错误处理
+    if (!error.response) {
+      console.error('Network error:', error.message);
+      if (!isAuthPage) {
+        message.error('网络连接失败，请检查网络设置');
+      }
+    }
+    
     return Promise.reject(error);
   }
 );
 
-// 认证API
+// 带缓存的API请求包装器
+const createCachedRequest = (requestFn, enableCache = true) => {
+  return async (...args) => {
+    const cacheKey = apiRequestManager.generateCacheKey(
+      requestFn.toString(),
+      'GET',
+      args[0] || {}
+    );
+    
+    return apiRequestManager.wrapRequest(
+      () => requestFn(...args),
+      cacheKey,
+      enableCache
+    );
+  };
+};
+
+// 认证API - 关键API不缓存，避免安全问题
 export const authAPI = {
   login: (credentials) => api.post('/auth/login', credentials),
   logout: () => api.post('/auth/logout'),
-  getCurrentUser: () => api.get('/auth/me'),
-  getProfile: () => api.get('/auth/me'), // 添加getProfile方法，指向相同的端点
-  refreshToken: () => api.post('/auth/refresh'),
+  getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
+  getProfile: createCachedRequest(() => api.get('/auth/me'), true), 
+  refreshToken: () => api.post('/auth/refresh'), // 不缓存token刷新请求
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {
@@ -464,6 +552,31 @@ export const navigationAPI = {
   saveUserNavigationConfig: (config) => api.put('/navigation/config', { items: config }),
   resetNavigationConfig: () => api.delete('/navigation/config'),
   getDefaultNavigationConfig: () => api.get('/navigation/default'),
+};
+
+// JupyterLab模板管理API
+export const jupyterLabAPI = {
+  // 模板管理
+  getTemplates: (includeInactive = false) => api.get('/jupyterlab/templates', { 
+    params: { include_inactive: includeInactive } 
+  }),
+  getTemplate: (id) => api.get(`/jupyterlab/templates/${id}`),
+  createTemplate: (template) => api.post('/jupyterlab/templates', template),
+  updateTemplate: (id, template) => api.put(`/jupyterlab/templates/${id}`, template),
+  deleteTemplate: (id) => api.delete(`/jupyterlab/templates/${id}`),
+  cloneTemplate: (id, name) => api.post(`/jupyterlab/templates/${id}/clone`, { name }),
+  setDefaultTemplate: (id) => api.post(`/jupyterlab/templates/${id}/default`),
+  exportTemplate: (id) => api.get(`/jupyterlab/templates/${id}/export`),
+  importTemplate: (data) => api.post('/jupyterlab/templates/import', data),
+  
+  // 实例管理
+  getInstances: () => api.get('/jupyterlab/instances'),
+  getInstance: (id) => api.get(`/jupyterlab/instances/${id}`),
+  createInstance: (instance) => api.post('/jupyterlab/instances', instance),
+  deleteInstance: (id) => api.delete(`/jupyterlab/instances/${id}`),
+  
+  // 管理员功能
+  createPredefinedTemplates: () => api.post('/jupyterlab/admin/create-predefined-templates'),
 };
 
 export default api;

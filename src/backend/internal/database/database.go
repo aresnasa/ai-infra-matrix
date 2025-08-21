@@ -15,6 +15,11 @@ import (
 
 var DB *gorm.DB
 
+// GetDB 返回数据库连接实例
+func GetDB() *gorm.DB {
+	return DB
+}
+
 func Connect(cfg *config.Config) error {
 	// 初始化加密服务
 	InitCrypto(cfg)
@@ -118,6 +123,10 @@ func Migrate() error {
 		// JupyterHub 相关表
 		&models.JupyterHubConfig{},
 		&models.JupyterTask{},
+		// JupyterLab 模板相关表
+		&models.JupyterLabTemplate{},
+		&models.JupyterLabResourceQuota{},
+		&models.JupyterLabInstance{},
 	)
 	if err != nil {
 		logrus.Errorf("Database migration failed: %v", err)

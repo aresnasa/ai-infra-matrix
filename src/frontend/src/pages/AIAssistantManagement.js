@@ -27,10 +27,10 @@ import {
   ApiOutlined,
   MessageOutlined,
   BarChartOutlined,
-  SettingOutlined,
   KeyOutlined
 } from '@ant-design/icons';
 import { aiAPI } from '../services/api';
+import { CustomMenuIcons } from '../components/CustomIcons';
 
 const { Option } = Select;
 const { TabPane } = Tabs;
@@ -326,7 +326,7 @@ const AIAssistantManagement = () => {
         <TabPane 
           tab={
             <span>
-              <SettingOutlined />
+              <CustomMenuIcons.Menu size={16} />
               AI配置
             </span>
           } 

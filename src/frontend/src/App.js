@@ -9,9 +9,12 @@ import EnhancedLoading from './components/EnhancedLoading';
 import withLazyLoading from './components/withLazyLoading';
 import AIAssistantFloat from './components/AIAssistantFloat';
 import { useSmartPreload } from './hooks/usePagePreload';
-import { useAPIHealth } from './hooks/useAPIHealth';
+import { useAPIHealth } from './hooks/useAPIHealth'; // 使用优化版本
 import AuthPage from './pages/AuthPage';
 import { authAPI } from './services/api';
+import { authCache } from './utils/authCache';
+import { apiRequestManager } from './utils/apiRequestManager';
+import { usePerformanceMonitor } from './utils/performanceMonitor';
 import './App.css';
 
 // 懒加载组件 - 使用增强的懒加载包装
@@ -97,15 +100,22 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
 
-  // API健康监控
+  // API健康监控 - 使用优化配置
   const { apiHealth, isHealthy, isDegraded, isDown } = useAPIHealth({
-    checkInterval: 60000, // 60秒检查一次，减少对后端的压力
+    checkInterval: 5 * 60 * 1000, // 5分钟检查一次
     enableAutoCheck: true,
-    showNotifications: true
+    showNotifications: false, // 关闭通知，减少干扰
+    onlyCheckOnFocus: true // 只在窗口获得焦点时检查
   });
 
   // 智能预加载用户可能访问的页面
   useSmartPreload(user);
+
+  // 性能监控 - 仅在开发环境或特定条件下启用
+  const performanceTools = usePerformanceMonitor(
+    process.env.NODE_ENV === 'development' || 
+    localStorage.getItem('enable_performance_monitor') === 'true'
+  );
 
   useEffect(() => {
     initializeAuth();
@@ -118,6 +128,15 @@ function App() {
     };
     
     initializeFavicon();
+    
+    // 清理过期缓存
+    const cleanupInterval = setInterval(() => {
+      apiRequestManager.cleanExpiredCache();
+    }, 10 * 60 * 1000); // 每10分钟清理一次
+    
+    return () => {
+      clearInterval(cleanupInterval);
+    };
   }, []);
 
   // 监听用户状态变化，更新favicon
@@ -138,29 +157,7 @@ function App() {
     }
   }, [user]);
 
-  // 检查token是否有效（本地检查，避免频繁请求后端）
-  const isTokenValid = () => {
-    const token = localStorage.getItem('token');
-    const expires_at = localStorage.getItem('token_expires');
-    
-    if (!token || !expires_at) {
-      console.log('Token或过期时间不存在');
-      return false;
-    }
-    
-    const expiryTime = new Date(expires_at).getTime();
-    const currentTime = new Date().getTime();
-    const bufferTime = 5 * 60 * 1000; // 5分钟缓冲时间
-    
-    if (currentTime + bufferTime >= expiryTime) {
-      console.log('Token即将过期或已过期');
-      return false;
-    }
-    
-    return true;
-  };
-
-  // 初始化认证状态 - 确保完整的权限验证流程
+  // 初始化认证状态 - 优化版本，减少API调用
   const initializeAuth = async () => {
     console.log('=== 开始初始化认证状态 ===');
     
@@ -176,17 +173,21 @@ function App() {
     }
     
     // 先检查token本地有效性
-    if (!isTokenValid()) {
-      console.log('Token已过期，尝试刷新...');
+    if (authCache.isTokenNearExpiry()) {
+      console.log('Token即将过期，尝试刷新...');
       
       try {
-        // 尝试刷新token
-        const response = await authAPI.refreshToken();
-        const { token: newToken, expires_at } = response.data;
-        
-        localStorage.setItem('token', newToken);
-        localStorage.setItem('token_expires', expires_at);
-        console.log('Token刷新成功');
+        // 使用去重机制避免重复刷新请求
+        await authCache.withDeduplication('token-refresh', async () => {
+          const response = await authAPI.refreshToken();
+          const { token: newToken, expires_at } = response.data;
+          
+          localStorage.setItem('token', newToken);
+          localStorage.setItem('token_expires', expires_at);
+          console.log('Token刷新成功');
+          
+          return response;
+        });
         
         // 刷新后验证用户信息
         await verifyUserWithBackend();
@@ -195,20 +196,15 @@ function App() {
         clearUserState();
       }
     } else {
-      // Token有效，检查是否已有用户信息
-      const savedUser = localStorage.getItem('user');
-      if (savedUser) {
-        try {
-          const userData = JSON.parse(savedUser);
-          setUser(userData);
-          setPermissionsLoaded(true);
-          console.log('使用缓存的用户信息');
-        } catch (error) {
-          console.log('缓存用户信息解析失败，重新获取');
-          await verifyUserWithBackend();
-        }
+      // Token有效，检查是否已有缓存用户信息
+      const cachedUser = authCache.getCachedUser();
+      if (cachedUser && !authCache.shouldRefreshAuth()) {
+        // 使用缓存的用户信息
+        setUser(cachedUser);
+        setPermissionsLoaded(true);
+        console.log('使用缓存的用户信息');
       } else {
-        // 没有缓存用户信息，从后端获取
+        // 缓存过期或不存在，从后端获取
         await verifyUserWithBackend();
       }
     }
@@ -218,16 +214,16 @@ function App() {
     console.log('=== 认证状态初始化完成 ===');
   };
 
-  // 从后端验证用户并获取完整权限信息
+  // 从后端验证用户并获取完整权限信息 - 优化版本
   const verifyUserWithBackend = async (retryCount = 0) => {
     try {
       console.log('正在验证token并获取用户权限...');
       
-      // 确保 localStorage 的写入已经完成
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
-      const response = await authAPI.getProfile();
-      const userData = response.data;
+      // 使用去重机制避免重复请求
+      const userData = await authCache.withDeduplication('user-profile', async () => {
+        const response = await authAPI.getProfile();
+        return response.data;
+      });
       
       console.log('后端返回用户数据:', userData);
       console.log('用户角色:', userData.role);
@@ -237,8 +233,8 @@ function App() {
       setUser(userData);
       setPermissionsLoaded(true);
       
-      // 更新本地存储
-      localStorage.setItem('user', JSON.stringify(userData));
+      // 缓存用户信息
+      authCache.cacheUser(userData);
       
       console.log('✅ 用户权限验证成功');
       
@@ -249,12 +245,16 @@ function App() {
       if (error.response?.status === 401 && retryCount < 1) {
         console.log('认证失败，尝试刷新token...');
         try {
-          const refreshResponse = await authAPI.refreshToken();
-          const { token: newToken, expires_at } = refreshResponse.data;
-          
-          localStorage.setItem('token', newToken);
-          localStorage.setItem('token_expires', expires_at);
-          console.log('Token刷新成功，重新验证用户信息');
+          await authCache.withDeduplication('token-refresh-retry', async () => {
+            const refreshResponse = await authAPI.refreshToken();
+            const { token: newToken, expires_at } = refreshResponse.data;
+            
+            localStorage.setItem('token', newToken);
+            localStorage.setItem('token_expires', expires_at);
+            console.log('Token刷新成功，重新验证用户信息');
+            
+            return refreshResponse;
+          });
           
           // 递归调用，但限制重试次数
           await verifyUserWithBackend(retryCount + 1);
@@ -269,13 +269,14 @@ function App() {
     }
   };
 
-  // 清除用户状态
+  // 清除用户状态 - 优化版本
   const clearUserState = () => {
     setUser(null);
     setPermissionsLoaded(false);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('token_expires');
+    
+    // 清理所有缓存
+    authCache.clearAll();
+    apiRequestManager.clearCache();
   };
 
   // 处理登录成功 - 重新验证权限并设置SSO

@@ -661,6 +661,36 @@ func main() {
 			}
 		}
 
+		// JupyterLab 模板管理路由（需要认证）
+		jupyterLabController := controllers.NewJupyterLabTemplateController()
+		jupyterlab := api.Group("/jupyterlab")
+		jupyterlab.Use(middleware.AuthMiddlewareWithSession())
+		{
+			// 模板管理
+			jupyterlab.GET("/templates", jupyterLabController.ListTemplates)
+			jupyterlab.POST("/templates", jupyterLabController.CreateTemplate)
+			jupyterlab.GET("/templates/:id", jupyterLabController.GetTemplate)
+			jupyterlab.PUT("/templates/:id", jupyterLabController.UpdateTemplate)
+			jupyterlab.DELETE("/templates/:id", jupyterLabController.DeleteTemplate)
+			jupyterlab.POST("/templates/:id/clone", jupyterLabController.CloneTemplate)
+			jupyterlab.POST("/templates/:id/default", jupyterLabController.SetDefaultTemplate)
+			jupyterlab.GET("/templates/:id/export", jupyterLabController.ExportTemplate)
+			jupyterlab.POST("/templates/import", jupyterLabController.ImportTemplate)
+			
+			// 实例管理
+			jupyterlab.GET("/instances", jupyterLabController.ListInstances)
+			jupyterlab.POST("/instances", jupyterLabController.CreateInstance)
+			jupyterlab.GET("/instances/:id", jupyterLabController.GetInstance)
+			jupyterlab.DELETE("/instances/:id", jupyterLabController.DeleteInstance)
+		}
+
+		// 管理员可以创建预定义模板
+		jupyterlabAdmin := api.Group("/jupyterlab/admin")
+		jupyterlabAdmin.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
+		{
+			jupyterlabAdmin.POST("/create-predefined-templates", jupyterLabController.CreatePredefinedTemplates)
+		}
+
 	// 优雅关闭
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
