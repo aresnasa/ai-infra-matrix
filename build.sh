@@ -232,7 +232,7 @@ modify_compose_images() {
             fi
             
             echo "${indent}image: $private_image"
-            print_info "替换镜像: $original_image -> $private_image"
+            print_info "替换镜像: $original_image -> $private_image" >&2
         elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*JUPYTERHUB_IMAGE=(.+)$ ]]; then
             # 处理 JUPYTERHUB_IMAGE 环境变量
             local original_image="${BASH_REMATCH[1]}"
@@ -250,7 +250,7 @@ modify_compose_images() {
             fi
             
             echo "${indent}- JUPYTERHUB_IMAGE=$private_image"
-            print_info "替换环境变量: JUPYTERHUB_IMAGE=$original_image -> $private_image"
+            print_info "替换环境变量: JUPYTERHUB_IMAGE=$original_image -> $private_image" >&2
         else
             echo "$line"
         fi
