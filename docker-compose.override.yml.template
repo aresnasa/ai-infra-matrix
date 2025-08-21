@@ -1,0 +1,44 @@
+# Docker Compose Override for Internal Registry
+# 用于使用内部镜像仓库的覆盖配置
+# 
+# 使用方法:
+# 1. 将此文件重命名为 docker-compose.override.yml
+# 2. 修改 IMAGE_REGISTRY_PREFIX 为您的内部仓库地址
+# 3. 运行 docker-compose up -d
+
+version: '3.8'
+
+services:
+  backend-init:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-backend-init:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+  
+  backend:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-backend:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+  
+  frontend:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-frontend:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+  
+  jupyterhub:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-jupyterhub:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+    environment:
+      - JUPYTERHUB_IMAGE=${IMAGE_REGISTRY_PREFIX}ai-infra-singleuser:${IMAGE_TAG}
+  
+  singleuser-builder:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-singleuser:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+  
+  saltstack:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-saltstack:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+  
+  nginx:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-nginx:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
+  
+  gitea:
+    image: ${IMAGE_REGISTRY_PREFIX}ai-infra-gitea:${IMAGE_TAG}
+    build: null  # 禁用构建，直接使用镜像
