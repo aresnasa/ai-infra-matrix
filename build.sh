@@ -1,173 +1,270 @@
 #!/bin/bash
 
-# AI-Infra-Matrix 全栈镜像管理脚本
-# 支持私有仓库镜像管理、自动标签和推送
+# AI Infrastructure Matrix - 三环境统一构建部署脚本
+# 版本: v3.2.0
+# 支持: 开发环境、CI/CD环境、生产环境
 
-set -euo pipefail
+set -e
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# 全局变量
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="v3.2.0"
+FORCE_MODE="false"
 
-# 打印带颜色的消息
+# 默认配置
+DEFAULT_IMAGE_TAG="v0.3.5"
+DOCKER_COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
+DOCKER_COMPOSE_BACKUP="$SCRIPT_DIR/docker-compose.yml.backup"
+
+# 颜色输出函数
 print_info() {
-    echo -e "${BLUE}ℹ️  $1${NC}"
+    echo -e "\033[34m[INFO]\033[0m $1"
 }
 
 print_success() {
-    echo -e "${GREEN}✅ $1${NC}"
+    echo -e "\033[32m[SUCCESS]\033[0m $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    echo -e "\033[33m[WARNING]\033[0m $1"
 }
 
 print_error() {
-    echo -e "${RED}❌ $1${NC}"
+    echo -e "\033[31m[ERROR]\033[0m $1"
 }
 
-# 获取脚本所在目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 环境检测函数
+detect_environment() {
+    # 1. 优先使用环境变量
+    if [[ -n "$AI_INFRA_ENV_TYPE" ]]; then
+        case "$AI_INFRA_ENV_TYPE" in
+            dev|development) ENV_TYPE="development" ;;
+            cicd|ci) ENV_TYPE="cicd" ;;
+            prod|production) ENV_TYPE="production" ;;
+            *) ENV_TYPE="development" ;;
+        esac
+        print_info "环境类型: $ENV_TYPE (来源: 环境变量)"
+        return
+    fi
 
-# 全局变量
-PRIVATE_REGISTRY=""
-IMAGE_TAG="v0.3.5"
-DOCKER_COMPOSE_FILE="docker-compose.yml"
-DOCKER_COMPOSE_BACKUP="docker-compose.yml.backup"
+    # 2. 检查环境标识文件
+    if [[ -f "/etc/ai-infra-env" ]]; then
+        local env_content=$(cat /etc/ai-infra-env 2>/dev/null | tr -d '[:space:]')
+        case "$env_content" in
+            dev|development) ENV_TYPE="development" ;;
+            cicd|ci) ENV_TYPE="cicd" ;;
+            prod|production) ENV_TYPE="production" ;;
+            *) ENV_TYPE="development" ;;
+        esac
+        print_info "环境类型: $ENV_TYPE (来源: /etc/ai-infra-env)"
+        return
+    fi
 
-# 获取镜像映射名称的函数
-get_image_mapping() {
-    local original_image="$1"
-    
-    case "$original_image" in
-        "postgres:15-alpine")
-            echo "postgres:15-alpine"
-            ;;
-        "redis:7-alpine")
-            echo "redis:7-alpine"
-            ;;
-        "osixia/openldap:stable")
-            echo "openldap:stable"
-            ;;
-        "osixia/phpldapadmin:stable")
-            echo "phpldapadmin:stable"
-            ;;
-        "nginx:1.27-alpine")
-            echo "nginx:1.27-alpine"
-            ;;
-        "quay.io/minio/minio:latest")
-            echo "minio:latest"
-            ;;
-        "redislabs/redisinsight:latest")
-            echo "redisinsight:latest"
-            ;;
-        "tecnativa/tcp-proxy")
-            echo "tcp-proxy:latest"
-            ;;
-        "ai-infra-backend-init")
-            echo "ai-infra-backend-init"
-            ;;
-        "ai-infra-backend")
-            echo "ai-infra-backend"
-            ;;
-        "ai-infra-frontend")
-            echo "ai-infra-frontend"
-            ;;
-        "ai-infra-jupyterhub")
-            echo "ai-infra-jupyterhub"
-            ;;
-        "ai-infra-singleuser")
-            echo "ai-infra-singleuser"
-            ;;
-        "ai-infra-saltstack")
-            echo "ai-infra-saltstack"
-            ;;
-        "ai-infra-nginx")
-            echo "ai-infra-nginx"
-            ;;
-        "ai-infra-gitea")
-            echo "ai-infra-gitea"
+    # 3. 自动检测
+    if kubectl cluster-info &>/dev/null; then
+        ENV_TYPE="production"
+        print_info "环境类型: $ENV_TYPE (来源: 检测到Kubernetes)"
+        return
+    fi
+
+    if [[ -n "$CI" ]] || [[ -n "$JENKINS_URL" ]] || [[ -n "$GITLAB_CI" ]] || [[ -n "$GITHUB_ACTIONS" ]]; then
+        ENV_TYPE="cicd"
+        print_info "环境类型: $ENV_TYPE (来源: 检测到CI环境)"
+        return
+    fi
+
+    # 4. 默认为开发环境
+    ENV_TYPE="development"
+    print_info "环境类型: $ENV_TYPE (来源: 默认)"
+}
+
+# 加载环境配置
+load_environment_config() {
+    case "$ENV_TYPE" in
+        "production")
+            ENV_FILE="$SCRIPT_DIR/.env.prod"
             ;;
         *)
-            # 默认处理：移除前缀域名
-            echo "${original_image##*/}"
+            ENV_FILE="$SCRIPT_DIR/.env"
             ;;
     esac
+
+    if [[ -f "$ENV_FILE" ]]; then
+        print_info "加载环境配置: $ENV_FILE"
+        set -a
+        source "$ENV_FILE"
+        set +a
+    else
+        print_warning "环境配置文件不存在: $ENV_FILE"
+    fi
+
+    # 设置默认值
+    IMAGE_TAG="${IMAGE_TAG:-$DEFAULT_IMAGE_TAG}"
+    K8S_NAMESPACE="${K8S_NAMESPACE:-ai-infra-prod}"
 }
 
-# 解析镜像名称和标签
-parse_image() {
-    local image="$1"
-    local name tag
+# 从docker-compose.yml提取镜像列表
+extract_images_from_compose() {
+    local compose_file="$1"
     
-    if [[ "$image" == *":"* ]]; then
-        name="${image%:*}"
-        tag="${image#*:}"
-    else
-        name="$image"
-        tag="latest"
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "找不到 docker-compose.yml 文件: $compose_file"
+        exit 1
     fi
     
-    echo "$name:$tag"
+    # 提取image字段和环境变量中的镜像
+    {
+        grep -E '^\s*image:\s*' "$compose_file" | sed 's/.*image:\s*//' | sed 's/["\047]//g'
+        grep -E '^\s*-\s*JUPYTERHUB_IMAGE=' "$compose_file" | sed 's/.*JUPYTERHUB_IMAGE=//' | sed 's/["\047]//g'
+    } | sort -u
 }
 
-# 生成私有仓库镜像名称
+# 获取私有镜像名称
 get_private_image_name() {
     local original_image="$1"
     local registry="$2"
     
-    # 移除 registry 末尾的斜杠（如果有）
-    registry="${registry%/}"
+    # 移除可能的镜像仓库前缀
+    local image_name_tag="${original_image#*/}"
+    if [[ "$image_name_tag" == "$original_image" ]]; then
+        # 如果没有斜杠，可能是官方镜像
+        image_name_tag="$original_image"
+    fi
     
-    # 解析原始镜像
-    local name tag
-    if [[ "$original_image" == *":"* ]]; then
-        name="${original_image%:*}"
-        tag="${original_image#*:}"
+    echo "${registry}/${image_name_tag}"
+}
+
+# 构建所有镜像
+build_all_images() {
+    local tag="${1:-$IMAGE_TAG}"
+    
+    print_info "开始构建所有镜像，标签: $tag"
+    
+    # 使用现有的all-ops.sh脚本进行构建
+    if [[ -f "$SCRIPT_DIR/scripts/all-ops.sh" ]]; then
+        print_info "使用 all-ops.sh 脚本构建镜像..."
+        cd "$SCRIPT_DIR"
+        export IMAGE_TAG="$tag"
+        ./scripts/all-ops.sh
     else
-        name="$original_image"
-        tag="latest"
+        print_warning "未找到 all-ops.sh 脚本，尝试直接构建..."
+        
+        # 直接构建主要镜像
+        local build_dirs=("src/backend" "src/frontend" "src/jupyterhub" "src/nginx")
+        
+        for dir in "${build_dirs[@]}"; do
+            if [[ -f "$SCRIPT_DIR/$dir/Dockerfile" ]]; then
+                local service_name=$(basename "$dir")
+                local image_name="ai-infra-${service_name}:${tag}"
+                
+                print_info "构建 $image_name..."
+                docker build -t "$image_name" "$SCRIPT_DIR/$dir"
+            fi
+        done
     fi
     
-    # 处理变量替换
-    if [[ "$tag" == *"\${IMAGE_TAG"* ]]; then
-        tag="${IMAGE_TAG}"
-    fi
+    print_success "所有镜像构建完成"
+}
+
+# 镜像传输到私有仓库
+transfer_images_to_private_registry() {
+    local registry="$1"
+    local tag="${2:-$IMAGE_TAG}"
     
-    # 获取映射名称
-    local mapped_name=$(get_image_mapping "$name")
-    if [[ -z "$mapped_name" ]]; then
-        mapped_name=$(get_image_mapping "$original_image")
-    fi
+    print_info "开始镜像传输: 公共仓库 -> $registry"
+    print_info "目标标签: $tag"
     
-    if [[ -z "$mapped_name" ]]; then
-        # 默认处理：移除前缀域名
-        mapped_name="${name##*/}"
-    fi
+    local images=$(extract_images_from_compose "$DOCKER_COMPOSE_FILE")
+    local success_count=0
+    local total_count=0
     
-    # 如果映射名称包含标签，使用映射的标签
-    if [[ "$mapped_name" == *":"* ]]; then
-        echo "${registry}/${mapped_name}"
-    else
-        echo "${registry}/${mapped_name}:${tag}"
+    while IFS= read -r original_image; do
+        if [[ -n "$original_image" ]]; then
+            total_count=$((total_count + 1))
+            
+            # 替换环境变量
+            if [[ "$original_image" == *"\${IMAGE_TAG"* ]]; then
+                original_image="${original_image//\$\{IMAGE_TAG:-v0.0.3.3\}/$tag}"
+                original_image="${original_image//\$\{IMAGE_TAG\}/$tag}"
+                original_image="${original_image//\$\{IMAGE_TAG:-$DEFAULT_IMAGE_TAG\}/$tag}"
+            fi
+            
+            # 跳过无效的镜像名（包含未解析的变量）
+            if [[ "$original_image" == *"\${'"* ]] || [[ "$original_image" == *':-'* ]]; then
+                print_warning "跳过无效镜像名: $original_image"
+                continue
+            fi
+            
+            local private_image=$(get_private_image_name "$original_image" "$registry")
+            
+            print_info "[$total_count] 准备传输: $original_image -> $private_image"
+            
+            # 模拟镜像传输（暂时跳过实际的docker操作）
+            if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+                print_success "✓ [模拟] 传输成功: $private_image"
+                success_count=$((success_count + 1))
+            else
+                # 实际的docker操作
+                if docker pull "$original_image" 2>/dev/null; then
+                    if docker tag "$original_image" "$private_image" 2>/dev/null; then
+                        if docker push "$private_image" 2>/dev/null; then
+                            print_success "✓ 传输成功: $private_image"
+                            success_count=$((success_count + 1))
+                        else
+                            print_warning "推送失败: $private_image (可能是网络或权限问题)"
+                        fi
+                    else
+                        print_warning "标记失败: $private_image"
+                    fi
+                else
+                    print_warning "拉取失败: $original_image (可能镜像不存在或网络问题)"
+                fi
+            fi
+        fi
+    done <<< "$images"
+    
+    print_success "镜像传输完成: $success_count/$total_count 成功"
+    if [[ $success_count -lt $total_count ]]; then
+        print_info "部分镜像传输失败，这在开发环境中是正常的"
+        print_info "生产环境请确保网络连接和镜像存在性"
     fi
 }
 
-# 从 docker-compose.yml 提取所有镜像
-extract_images_from_compose() {
-    local compose_file="$1"
+# 启动服务
+start_services() {
+    print_info "启动服务..."
     
-    # 使用更精确的方式提取镜像
-    grep -E "^\s*image:\s*" "$compose_file" | \
-    sed -E 's/^\s*image:\s*//g' | \
-    sed -E 's/["'\''"]//g' | \
-    sort -u
+    if [[ ! -f "$DOCKER_COMPOSE_FILE" ]]; then
+        print_error "找不到 docker-compose.yml 文件"
+        exit 1
+    fi
+    
+    # 检查配置文件
+    if ! docker-compose -f "$DOCKER_COMPOSE_FILE" config > /dev/null; then
+        print_error "docker-compose.yml 配置文件有错误"
+        exit 1
+    fi
+    
+    # 启动服务
+    docker-compose -f "$DOCKER_COMPOSE_FILE" up -d
+    
+    print_success "服务启动完成"
+    print_info "查看服务状态: docker-compose ps"
 }
 
-# 备份 docker-compose.yml 文件
+# 停止服务
+stop_services() {
+    print_info "停止服务..."
+    
+    if docker-compose -f "$DOCKER_COMPOSE_FILE" down; then
+        print_success "服务已停止"
+    else
+        print_error "停止服务失败"
+        exit 1
+    fi
+}
+
+# 备份docker-compose.yml
 backup_compose_file() {
     local compose_file="$1"
     local backup_file="$2"
@@ -182,7 +279,7 @@ backup_compose_file() {
     fi
 }
 
-# 恢复 docker-compose.yml 文件
+# 恢复docker-compose.yml
 restore_compose_file() {
     local compose_file="$1"
     local backup_file="$2"
@@ -196,28 +293,22 @@ restore_compose_file() {
     fi
 }
 
-# 直接修改 docker-compose.yml 文件中的镜像
+# 修改docker-compose.yml中的镜像引用
 modify_compose_images() {
     local registry="$1"
     local tag="$2"
     local compose_file="$3"
     
-    print_info "直接修改 docker-compose.yml 中的镜像..."
-    print_info "私有仓库: $registry"
-    print_info "镜像标签: $tag"
+    print_info "修改 docker-compose.yml 中的镜像引用..."
     
-    # 创建临时文件
     local temp_file="${compose_file}.tmp"
     
-    # 逐行处理文件
     while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ "$line" =~ ^[[:space:]]*image:[[:space:]]*(.+)$ ]]; then
             local original_image="${BASH_REMATCH[1]}"
-            # 移除引号
             original_image="${original_image//\"/}"
             original_image="${original_image//\'/}"
             
-            # 替换环境变量
             if [[ "$original_image" == *"\${IMAGE_TAG"* ]]; then
                 original_image="${original_image//\$\{IMAGE_TAG:-v0.0.3.3\}/$tag}"
                 original_image="${original_image//\$\{IMAGE_TAG\}/$tag}"
@@ -225,7 +316,6 @@ modify_compose_images() {
             
             local private_image=$(get_private_image_name "$original_image" "$registry")
             
-            # 保持原有的缩进
             local indent=""
             if [[ "$line" =~ ^([[:space:]]*) ]]; then
                 indent="${BASH_REMATCH[1]}"
@@ -233,338 +323,473 @@ modify_compose_images() {
             
             echo "${indent}image: $private_image"
             print_info "替换镜像: $original_image -> $private_image" >&2
-        elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*JUPYTERHUB_IMAGE=(.+)$ ]]; then
-            # 处理 JUPYTERHUB_IMAGE 环境变量
-            local original_image="${BASH_REMATCH[1]}"
-            if [[ "$original_image" == *"\${IMAGE_TAG"* ]]; then
-                original_image="${original_image//\$\{IMAGE_TAG:-v0.0.3.3\}/$tag}"
-                original_image="${original_image//\$\{IMAGE_TAG\}/$tag}"
-            fi
-            
-            local private_image=$(get_private_image_name "$original_image" "$registry")
-            
-            # 保持原有的缩进
-            local indent=""
-            if [[ "$line" =~ ^([[:space:]]*) ]]; then
-                indent="${BASH_REMATCH[1]}"
-            fi
-            
-            echo "${indent}- JUPYTERHUB_IMAGE=$private_image"
-            print_info "替换环境变量: JUPYTERHUB_IMAGE=$original_image -> $private_image" >&2
         else
             echo "$line"
         fi
     done < "$compose_file" > "$temp_file"
     
-    # 替换原文件
     mv "$temp_file" "$compose_file"
-    
     print_success "docker-compose.yml 修改完成"
 }
 
-# 拉取所有镜像到本地
+# 从私有仓库拉取镜像
 pull_all_images() {
     local registry="$1"
     local tag="$2"
     
     print_info "从私有仓库拉取所有镜像..."
+    print_info "仓库地址: $registry"
+    print_info "镜像标签: $tag"
     
-    # 提取所有镜像
     local images=$(extract_images_from_compose "$DOCKER_COMPOSE_FILE")
+    local success_count=0
+    local total_count=0
     
     while IFS= read -r original_image; do
         if [[ -n "$original_image" ]]; then
+            total_count=$((total_count + 1))
+            
             # 替换环境变量
             if [[ "$original_image" == *"\${IMAGE_TAG"* ]]; then
                 original_image="${original_image//\$\{IMAGE_TAG:-v0.0.3.3\}/$tag}"
                 original_image="${original_image//\$\{IMAGE_TAG\}/$tag}"
+                original_image="${original_image//\$\{IMAGE_TAG:-$DEFAULT_IMAGE_TAG\}/$tag}"
+            fi
+            
+            # 跳过无效的镜像名
+            if [[ "$original_image" == *"\${'"* ]] || [[ "$original_image" == *':-'* ]]; then
+                print_warning "跳过无效镜像名: $original_image"
+                continue
             fi
             
             local private_image=$(get_private_image_name "$original_image" "$registry")
             
-            print_info "拉取镜像: $private_image"
-            if docker pull "$private_image"; then
-                print_success "拉取成功: $private_image"
+            print_info "[$total_count] 拉取镜像: $private_image"
+            
+            # 模拟或实际拉取
+            if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+                print_success "✓ [模拟] 拉取成功: $private_image"
+                success_count=$((success_count + 1))
             else
-                print_warning "拉取失败: $private_image"
+                if docker pull "$private_image" 2>/dev/null; then
+                    print_success "✓ 拉取成功: $private_image"
+                    success_count=$((success_count + 1))
+                else
+                    print_warning "拉取失败: $private_image (可能镜像不存在或网络问题)"
+                fi
             fi
         fi
     done <<< "$images"
+    
+    print_success "镜像拉取完成: $success_count/$total_count 成功"
 }
 
-# 标签并推送所有镜像
-tag_and_push_all_images() {
+# Docker Compose部署
+deploy_with_docker_compose() {
     local registry="$1"
     local tag="$2"
     
-    print_info "标签并推送所有镜像到私有仓库..."
+    print_info "使用 Docker Compose 部署..."
     
-    # 提取所有镜像
-    local images=$(extract_images_from_compose "$DOCKER_COMPOSE_FILE")
+    backup_compose_file "$DOCKER_COMPOSE_FILE" "$DOCKER_COMPOSE_BACKUP"
+    modify_compose_images "$registry" "$tag" "$DOCKER_COMPOSE_FILE"
+    pull_all_images "$registry" "$tag"
+    start_services
     
-    while IFS= read -r original_image; do
-        if [[ -n "$original_image" ]]; then
-            # 替换环境变量
-            local processed_image="$original_image"
-            if [[ "$original_image" == *"\${IMAGE_TAG"* ]]; then
-                processed_image="${original_image//\$\{IMAGE_TAG:-v0.0.3.3\}/$tag}"
-                processed_image="${processed_image//\$\{IMAGE_TAG\}/$tag}"
-            fi
-            
-            local private_image=$(get_private_image_name "$processed_image" "$registry")
-            
-            print_info "处理镜像: $processed_image -> $private_image"
-            
-            # 检查本地是否存在原始镜像
-            if docker image inspect "$processed_image" >/dev/null 2>&1; then
-                print_info "标签镜像: $processed_image -> $private_image"
-                docker tag "$processed_image" "$private_image"
-                
-                print_info "推送镜像: $private_image"
-                if docker push "$private_image"; then
-                    print_success "推送成功: $private_image"
-                else
-                    print_error "推送失败: $private_image"
-                fi
-            else
-                print_warning "本地镜像不存在: $processed_image"
-                
-                # 尝试从 Docker Hub 拉取并转推
-                print_info "尝试从公共仓库拉取: $processed_image"
-                if docker pull "$processed_image"; then
-                    print_info "标签镜像: $processed_image -> $private_image"
-                    docker tag "$processed_image" "$private_image"
-                    
-                    print_info "推送镜像: $private_image"
-                    if docker push "$private_image"; then
-                        print_success "推送成功: $private_image"
-                    else
-                        print_error "推送失败: $private_image"
-                    fi
-                else
-                    print_error "无法拉取镜像: $processed_image"
-                fi
-            fi
-        fi
-    done <<< "$images"
+    print_success "Docker Compose 部署完成"
 }
 
-# 启动服务
-start_services() {
-    print_info "启动服务..."
+# Kubernetes Helm部署
+deploy_with_helm() {
+    local registry="$1"
+    local tag="$2"
     
-    local compose_cmd
-    if command -v docker-compose &> /dev/null; then
-        compose_cmd="docker-compose"
-    elif docker compose version &> /dev/null; then
-        compose_cmd="docker compose"
-    else
-        print_error "Docker Compose 未找到"
+    print_info "使用 Helm 部署到 Kubernetes..."
+    
+    # 检查工具
+    if ! command -v kubectl &> /dev/null; then
+        print_error "kubectl 未安装"
         exit 1
     fi
     
-    # 确定使用的环境文件
-    local env_file=".env"
-    if [[ -n "$PRIVATE_REGISTRY" ]]; then
-        env_file=".env.prod"
-    fi
-    
-    # 设置环境变量
-    export IMAGE_TAG="$IMAGE_TAG"
-    export ENV_FILE="$env_file"
-    
-    print_info "使用环境文件: $env_file"
-    print_info "镜像标签: $IMAGE_TAG"
-    
-    $compose_cmd --env-file "$env_file" up -d
-    
-    print_success "服务已启动"
-    
-    # 显示服务状态
-    print_info "检查服务状态..."
-    sleep 5
-    $compose_cmd ps
-}
-
-# 停止服务
-stop_services() {
-    print_info "停止所有服务..."
-    
-    if command -v docker-compose &> /dev/null; then
-        docker-compose down
-    elif docker compose version &> /dev/null; then
-        docker compose down
-    else
-        print_error "Docker Compose 未找到"
+    if ! command -v helm &> /dev/null; then
+        print_error "helm 未安装"
         exit 1
     fi
     
-    print_success "服务已停止"
+    if ! kubectl cluster-info &> /dev/null; then
+        print_error "无法连接到 Kubernetes 集群"
+        exit 1
+    fi
+    
+    # 更新Helm values
+    local helm_values_file="$SCRIPT_DIR/helm/ai-infra-matrix/values.yaml"
+    if [[ -f "$helm_values_file" ]]; then
+        cp "$helm_values_file" "$helm_values_file.backup-$(date +%Y%m%d-%H%M%S)"
+        sed -i.bak "s|imageRegistry: \".*\"|imageRegistry: \"$registry\"|g" "$helm_values_file"
+        sed -i.bak "s|imageTag: \".*\"|imageTag: \"$tag\"|g" "$helm_values_file"
+        print_success "Helm values.yaml 已更新"
+    fi
+    
+    # 部署
+    local namespace="${K8S_NAMESPACE:-ai-infra-prod}"
+    local release_name="ai-infra-matrix"
+    
+    kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f -
+    
+    if helm list -n "$namespace" | grep -q "$release_name"; then
+        print_info "升级现有部署..."
+        helm upgrade "$release_name" "$SCRIPT_DIR/helm/ai-infra-matrix" \
+            --namespace "$namespace" \
+            --timeout 20m \
+            --wait
+    else
+        print_info "新建部署..."
+        helm install "$release_name" "$SCRIPT_DIR/helm/ai-infra-matrix" \
+            --namespace "$namespace" \
+            --timeout 20m \
+            --wait \
+            --create-namespace
+    fi
+    
+    print_success "Helm 部署完成"
+    kubectl get pods -n "$namespace"
+    kubectl get services -n "$namespace"
 }
 
-# 显示镜像映射
-show_image_mappings() {
-    local registry="${1:-<private-registry>}"
+# 打包配置
+package_configurations() {
+    local registry="$1"
+    local tag="$2"
     
-    print_info "镜像映射表 (目标仓库: $registry)"
-    echo ""
+    print_info "打包部署配置..."
     
-    printf "%-40s -> %-60s\n" "原始镜像" "私有仓库镜像"
-    printf "%-40s -> %-60s\n" "----------------------------------------" "------------------------------------------------------------"
+    local package_dir="ai-infra-deploy-package"
+    local package_file="ai-infra-deploy-${tag}.tar.gz"
     
-    # 从 docker-compose.yml 提取实际使用的镜像
-    local images=$(extract_images_from_compose "$DOCKER_COMPOSE_FILE")
+    rm -rf "$package_dir"
+    mkdir -p "$package_dir"
     
-    while IFS= read -r original_image; do
-        if [[ -n "$original_image" ]]; then
-            # 替换环境变量显示
-            local display_image="$original_image"
-            if [[ "$original_image" == *"\${IMAGE_TAG"* ]]; then
-                display_image="${original_image//\$\{IMAGE_TAG:-v0.0.3.3\}/\${IMAGE_TAG\}}"
-                display_image="${display_image//\$\{IMAGE_TAG\}/\${IMAGE_TAG\}}"
-            fi
-            
-            local private_image=$(get_private_image_name "$original_image" "$registry")
-            # 替换实际的镜像标签为变量显示
-            private_image="${private_image//:$IMAGE_TAG/:\${IMAGE_TAG\}}"
-            
-            printf "%-40s -> %-60s\n" "$display_image" "$private_image"
+    # 复制文件
+    cp -r "$SCRIPT_DIR/helm" "$package_dir/" 2>/dev/null || true
+    cp -r "$SCRIPT_DIR/scripts" "$package_dir/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/docker-compose.yml" "$package_dir/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/.env.prod" "$package_dir/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/build_clean.sh" "$package_dir/build.sh"
+    
+    # 创建部署说明
+    cat > "$package_dir/DEPLOY_README.md" << EOF
+# AI Infrastructure Matrix 部署包
+
+版本: $tag
+镜像仓库: $registry
+打包时间: $(date)
+
+## 部署说明
+
+### Docker Compose 部署
+\`\`\`bash
+export AI_INFRA_ENV_TYPE=production
+./build.sh deploy-compose $registry $tag
+\`\`\`
+
+### Kubernetes 部署
+\`\`\`bash
+export AI_INFRA_ENV_TYPE=production
+./build.sh deploy-helm $registry $tag
+\`\`\`
+
+## 注意事项
+1. 确保网络可以访问私有镜像仓库: $registry
+2. 生产环境建议修改 .env.prod 中的密码配置
+3. Kubernetes 部署需要正确配置 kubectl 访问权限
+EOF
+    
+    tar -czf "$package_file" "$package_dir"
+    rm -rf "$package_dir"
+    
+    print_success "部署包已创建: $package_file"
+}
+
+# 显示环境状态
+show_environment_status() {
+    print_info "环境状态:"
+    print_info "  环境类型: $ENV_TYPE"
+    print_info "  镜像标签: $IMAGE_TAG"
+    print_info "  私有仓库: ${PRIVATE_REGISTRY:-'未配置'}"
+    print_info "  配置文件: ${ENV_FILE}"
+    
+    if [[ "$ENV_TYPE" == "production" ]]; then
+        print_info "  Kubernetes命名空间: ${K8S_NAMESPACE:-ai-infra-prod}"
+    fi
+    
+    # 检查Docker状态
+    if command -v docker &> /dev/null && docker ps &> /dev/null; then
+        local running_containers=$(docker ps --format "table {{.Names}}" | grep -E "ai-infra|jupyterhub" 2>/dev/null | wc -l)
+        print_info "  相关容器: $running_containers 个运行中"
+    fi
+    
+    # 检查Kubernetes状态
+    if [[ "$ENV_TYPE" == "production" ]] && command -v kubectl &> /dev/null && kubectl cluster-info &> /dev/null; then
+        local namespace="${K8S_NAMESPACE:-ai-infra-prod}"
+        local pod_count=$(kubectl get pods -n "$namespace" 2>/dev/null | wc -l)
+        if [[ $pod_count -gt 1 ]]; then
+            print_info "  K8s Pods: $((pod_count-1)) 个在命名空间 $namespace"
         fi
-    done <<< "$images"
-    
-    echo ""
+    fi
 }
 
-# 显示帮助信息
+# 清理资源
+clean_docker_resources() {
+    print_info "清理Docker资源..."
+    
+    # 停止相关容器
+    local containers=$(docker ps -q --filter "name=ai-infra" --filter "name=jupyterhub" 2>/dev/null)
+    if [[ -n "$containers" ]]; then
+        docker stop $containers
+    fi
+    
+    docker image prune -f
+    docker container prune -f
+    docker network prune -f
+    
+    print_success "Docker资源清理完成"
+}
+
+# 显示帮助
 show_help() {
-    cat << EOF
-AI-Infra-Matrix 全栈镜像管理脚本
+    cat << 'EOF'
+AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
 
-用法: $0 <command> [options]
+用法: ./build.sh <command> [options]
 
-命令:
-  registry <registry_url> [tag]           设置私有仓库并修改 docker-compose.yml
-  pull <registry_url> [tag]              从私有仓库拉取所有镜像
-  push <registry_url> [tag]              标签并推送所有镜像到私有仓库
-  start [registry_url] [tag]             启动服务（可选使用私有仓库）
-  stop                                   停止所有服务
-  images [registry_url]                  显示镜像映射表
-  restore                                恢复原始 docker-compose.yml
-  help                                   显示帮助信息
-  
-  其他命令会传递给 scripts/all-ops.sh 处理
+=== 通用命令 ===
+  env                                     显示当前环境信息
+  status                                  显示环境和服务状态
+  version                                 显示脚本版本信息
+  clean                                   清理Docker资源
+  restore                                 恢复docker-compose.yml备份
+  help                                    显示帮助信息
 
-示例:
-  # 设置私有仓库并修改 docker-compose.yml
-  $0 registry registry.company.com/ai-infra v0.3.5
-  
-  # 推送所有镜像到私有仓库
-  $0 push registry.company.com/ai-infra v0.3.5
-  
-  # 从私有仓库启动服务
-  $0 start registry.company.com/ai-infra v0.3.5
-  
-  # 显示镜像映射
-  $0 images registry.company.com/ai-infra
-  
-  # 停止服务
-  $0 stop
-  
-  # 恢复原始配置
-  $0 restore
+=== 开发环境命令 (development) ===
+  build [tag]                            构建所有镜像
+  dev-start [tag]                        构建并启动开发环境
+  dev-stop                               停止开发环境
+  start                                  启动服务
 
-支持的私有仓库格式:
-  - registry.company.com/project
-  - harbor.company.com/ai-infra
-  - xxx.dockerhub.com/xxx-project
+=== CI/CD环境命令 (cicd) ===
+  transfer <registry> [tag]              转发镜像到私有仓库
+  package <registry> [tag]               打包配置和部署脚本
 
-环境变量:
-  IMAGE_TAG              镜像标签 (默认: v0.3.5)
-  ENV_FILE               环境文件 (默认: .env.prod)
+=== 生产环境命令 (production) ===
+  pull <registry> [tag]                  从私有仓库拉取镜像
+  deploy-compose <registry> [tag]        使用Docker Compose部署
+  deploy-helm <registry> [tag]           使用Kubernetes Helm部署
 
-注意:
-  - 脚本会自动备份原始 docker-compose.yml 为 docker-compose.yml.backup
-  - 使用 'restore' 命令可以恢复原始配置
+=== 选项 ===
+  --force                                强制执行，跳过环境检查
+  --skip-docker                          跳过Docker操作，仅显示转换结果
+
+=== 使用示例 ===
+
+1. 开发环境:
+   export AI_INFRA_ENV_TYPE=development
+   ./build.sh build v0.3.5
+   ./build.sh dev-start
+
+2. CI/CD环境:
+   export AI_INFRA_ENV_TYPE=cicd
+   ./build.sh transfer registry.company.com/ai-infra v0.3.5
+   ./build.sh package registry.company.com/ai-infra v0.3.5
+
+3. 生产环境:
+   export AI_INFRA_ENV_TYPE=production
+   ./build.sh deploy-compose registry.company.com/ai-infra v0.3.5
+   ./build.sh deploy-helm registry.company.com/ai-infra v0.3.5
+
+4. 测试模式（跳过Docker操作）:
+   export SKIP_DOCKER_OPERATIONS=true
+   ./build.sh transfer registry.example.com v1.0.0
+
+=== 环境检测 ===
+  1. 环境变量 AI_INFRA_ENV_TYPE
+  2. 文件 /etc/ai-infra-env
+  3. 自动检测（Kubernetes → production, CI → cicd）
+  4. 默认：development
+
 EOF
 }
 
-# 清理配置文件
-clean_configs() {
-    restore_compose_file "$DOCKER_COMPOSE_FILE" "$DOCKER_COMPOSE_BACKUP"
-}
-
-# 主逻辑
+# 主函数
 main() {
+    # 检查参数
+    if [[ " $* " =~ " --force " ]]; then
+        FORCE_MODE="true"
+        set -- "${@/--force/}"
+    fi
+    
+    if [[ " $* " =~ " --skip-docker " ]]; then
+        export SKIP_DOCKER_OPERATIONS="true"
+        set -- "${@/--skip-docker/}"
+        print_info "启用模拟模式：跳过Docker操作"
+    fi
+    
+    # 初始化环境
+    detect_environment
+    load_environment_config
+    
     local command="${1:-help}"
     
     case "$command" in
-        "registry")
-            if [[ $# -lt 2 ]]; then
-                print_error "用法: $0 registry <registry_url> [tag]"
-                print_info "示例: $0 registry registry.company.com/ai-infra v0.3.5"
-                exit 1
-            fi
-            PRIVATE_REGISTRY="$2"
-            IMAGE_TAG="${3:-$IMAGE_TAG}"
-            backup_compose_file "$DOCKER_COMPOSE_FILE" "$DOCKER_COMPOSE_BACKUP"
-            modify_compose_images "$PRIVATE_REGISTRY" "$IMAGE_TAG" "$DOCKER_COMPOSE_FILE"
+        "env")
+            print_info "当前环境: $ENV_TYPE"
+            print_info "镜像标签: $IMAGE_TAG"
+            print_info "配置文件: $ENV_FILE"
+            [[ -n "$PRIVATE_REGISTRY" ]] && print_info "私有仓库: $PRIVATE_REGISTRY"
             ;;
-        "pull")
-            if [[ $# -lt 2 ]]; then
-                print_error "用法: $0 pull <registry_url> [tag]"
-                exit 1
+            
+            
+        "build")
+            if [[ "$ENV_TYPE" != "development" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "构建功能主要用于开发环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
             fi
-            PRIVATE_REGISTRY="$2"
-            IMAGE_TAG="${3:-$IMAGE_TAG}"
-            pull_all_images "$PRIVATE_REGISTRY" "$IMAGE_TAG"
+            build_all_images "${2:-$IMAGE_TAG}"
             ;;
-        "push")
-            if [[ $# -lt 2 ]]; then
-                print_error "用法: $0 push <registry_url> [tag]"
-                exit 1
+            
+        "dev-start")
+            if [[ "$ENV_TYPE" != "development" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "开发环境启动功能主要用于开发环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
             fi
-            PRIVATE_REGISTRY="$2"
-            IMAGE_TAG="${3:-$IMAGE_TAG}"
-            tag_and_push_all_images "$PRIVATE_REGISTRY" "$IMAGE_TAG"
-            ;;
-        "start")
-            if [[ $# -ge 2 ]]; then
-                PRIVATE_REGISTRY="$2"
-                IMAGE_TAG="${3:-$IMAGE_TAG}"
-                backup_compose_file "$DOCKER_COMPOSE_FILE" "$DOCKER_COMPOSE_BACKUP"
-                modify_compose_images "$PRIVATE_REGISTRY" "$IMAGE_TAG" "$DOCKER_COMPOSE_FILE"
-            fi
+            build_all_images "${2:-$IMAGE_TAG}"
             start_services
             ;;
-        "stop")
+            
+        "dev-stop")
+            if [[ "$ENV_TYPE" != "development" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "开发环境停止功能主要用于开发环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
             stop_services
             ;;
-        "images")
-            show_image_mappings "${2:-<private-registry>}"
+            
+        "transfer")
+            if [[ "$ENV_TYPE" != "cicd" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "镜像传输功能主要用于CI/CD环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定私有仓库地址"
+                print_info "用法: $0 transfer <私有仓库地址> [标签]"
+                exit 1
+            fi
+            transfer_images_to_private_registry "$registry" "${3:-$IMAGE_TAG}"
             ;;
+            
+        "package")
+            if [[ "$ENV_TYPE" != "cicd" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "打包功能主要用于CI/CD环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定私有仓库地址"
+                print_info "用法: $0 package <私有仓库地址> [标签]"
+                exit 1
+            fi
+            package_configurations "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "pull")
+            if [[ "$ENV_TYPE" != "production" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "镜像拉取功能主要用于生产环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定私有仓库地址"
+                print_info "用法: $0 pull <私有仓库地址> [标签]"
+                exit 1
+            fi
+            pull_all_images "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "deploy-compose")
+            if [[ "$ENV_TYPE" != "production" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "生产部署功能主要用于生产环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定私有仓库地址"
+                print_info "用法: $0 deploy-compose <私有仓库地址> [标签]"
+                exit 1
+            fi
+            deploy_with_docker_compose "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "deploy-helm")
+            if [[ "$ENV_TYPE" != "production" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "生产部署功能主要用于生产环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定私有仓库地址"
+                print_info "用法: $0 deploy-helm <私有仓库地址> [标签]"
+                exit 1
+            fi
+            deploy_with_helm "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "start")
+            start_services
+            ;;
+            
         "restore")
             restore_compose_file "$DOCKER_COMPOSE_FILE" "$DOCKER_COMPOSE_BACKUP"
             ;;
-        "clean")
-            clean_configs
+            
+        "status")
+            show_environment_status
             ;;
-        "help"|"--help"|"-h")
+            
+        "clean")
+            clean_docker_resources
+            ;;
+            
+        "version")
+            echo "AI Infrastructure Matrix Build Script"
+            echo "Version: $VERSION"
+            echo "Environment: $ENV_TYPE"
+            echo "Image Tag: $IMAGE_TAG"
+            echo "Registry: ${PRIVATE_REGISTRY:-'未配置'}"
+            ;;
+            
+        "help"|"-h"|"--help")
             show_help
             ;;
+            
         *)
-            # 传递给 all-ops.sh 处理其他命令
-            ALL_OPS_SCRIPT="$SCRIPT_DIR/scripts/all-ops.sh"
-            
-            if [ ! -f "$ALL_OPS_SCRIPT" ]; then
-                print_error "找不到 $ALL_OPS_SCRIPT"
-                exit 1
-            fi
-            
-            # 确保脚本可执行
-            chmod +x "$ALL_OPS_SCRIPT"
-            
-            # 传递所有参数给 all-ops.sh
-            exec "$ALL_OPS_SCRIPT" "$@"
+            print_error "未知命令: $1"
+            print_info "使用 '$0 help' 查看可用命令"
+            show_help
+            exit 1
             ;;
     esac
 }
