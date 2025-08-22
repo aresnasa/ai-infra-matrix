@@ -184,6 +184,12 @@ get_private_image_name() {
     # 处理不同类型的镜像名格式
     local image_name_tag=""
     
+    # 检查registry是否已经包含项目路径（Harbor语法）
+    local is_harbor_style=false
+    if [[ "$registry" == *"/"* ]]; then
+        is_harbor_style=true
+    fi
+    
     if [[ "$original_image" == *"/"* ]]; then
         # 包含仓库前缀的镜像
         if [[ "$original_image" == *"."*"/"* ]]; then
@@ -198,9 +204,16 @@ get_private_image_name() {
         image_name_tag="$original_image"
     fi
     
-    # 确保ai-infra前缀的镜像路径正确
+    # 处理ai-infra前缀的镜像路径
     if [[ "$image_name_tag" == ai-infra-* ]]; then
-        image_name_tag="ai-infra/${image_name_tag}"
+        if [[ "$is_harbor_style" == "true" ]]; then
+            # Harbor模式：registry.xxx.com/project/image:tag
+            # 不需要额外的ai-infra路径前缀
+            image_name_tag="$image_name_tag"
+        else
+            # 传统模式：registry.xxx.com/ai-infra/image:tag
+            image_name_tag="ai-infra/${image_name_tag}"
+        fi
     fi
     
     echo "${registry}/${image_name_tag}"
@@ -666,10 +679,15 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
   --force                                强制执行，跳过环境检查
   --skip-docker                          跳过Docker操作，仅显示转换结果
 
+=== Registry格式支持 ===
+  传统格式: registry.example.com
+  Harbor格式: registry.example.com/project-name
+
 === 使用示例 ===
 
 1. 镜像管理:
    ./build.sh list-images registry.company.com/ai-infra
+   ./build.sh list-images harbor.company.com/myproject
    ./build.sh export-all registry.company.com/ai-infra v0.3.5
 
 2. 开发环境:
