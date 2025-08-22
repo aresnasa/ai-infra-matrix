@@ -1,0 +1,2 @@
+# This file ensures the debug directory is tracked by Git
+# The debug directory is required for frontend build processes

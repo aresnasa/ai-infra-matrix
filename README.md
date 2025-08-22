@@ -10,6 +10,20 @@
 
 AI Infrastructure Matrix 是一个全栈AI基础设施平台，提供统一的机器学习开发环境、代码协作平台和企业级认证系统。通过容器化架构，实现了开箱即用的AI开发和部署解决方案。
 
+## help 101
+```
+# 查看所有镜像清单
+./build.sh list-images registry.internal.com/ai-infra
+
+# 导出所有镜像到内部仓库
+./build.sh export-all registry.internal.com/ai-infra v0.3.5
+
+# 模拟模式（测试不实际执行docker操作）
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v1.0.0
+
+```
+
+
 ### 核心特性
 
 - 🔐 **统一身份认证** - 基于JWT的SSO系统，支持多服务单点登录

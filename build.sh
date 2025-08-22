@@ -114,9 +114,66 @@ extract_images_from_compose() {
     
     # 提取image字段和环境变量中的镜像
     {
-        grep -E '^\s*image:\s*' "$compose_file" | sed 's/.*image:\s*//' | sed 's/["\047]//g'
-        grep -E '^\s*-\s*JUPYTERHUB_IMAGE=' "$compose_file" | sed 's/.*JUPYTERHUB_IMAGE=//' | sed 's/["\047]//g'
+        grep -E '^\s*image:\s*' "$compose_file" | sed 's/.*image:\s*//' | sed 's/"//g' | sed "s/'//g"
+        grep -E '^\s*-\s*JUPYTERHUB_IMAGE=' "$compose_file" | sed 's/.*JUPYTERHUB_IMAGE=//' | sed 's/"//g' | sed "s/'//g"
     } | sort -u
+}
+
+# 列出所有检测到的镜像
+list_all_images() {
+    local compose_file="${1:-$DOCKER_COMPOSE_FILE}"
+    local registry="${2:-$PRIVATE_REGISTRY}"
+    local tag="${3:-$IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "AI-Infra 镜像清单分析"
+    print_info "=========================================="
+    print_info "分析文件: $compose_file"
+    print_info "目标仓库: $registry"
+    print_info "镜像标签: $tag"
+    echo
+    
+    local images=$(extract_images_from_compose "$compose_file")
+    local ai_infra_count=0
+    local base_image_count=0
+    local total_count=0
+    
+    print_info "📦 检测到的镜像列表:"
+    echo
+    
+    while IFS= read -r original_image; do
+        if [[ -n "$original_image" ]]; then
+            total_count=$((total_count + 1))
+            
+            # 处理环境变量
+            local processed_image="$original_image"
+            if [[ "$processed_image" == *"\${IMAGE_TAG"* ]]; then
+                processed_image="${processed_image//\$\{IMAGE_TAG:-v0.0.3.3\}/$tag}"
+                processed_image="${processed_image//\$\{IMAGE_TAG\}/$tag}"
+            fi
+            
+            # 分类统计
+            if [[ "$processed_image" == ai-infra-* ]]; then
+                ai_infra_count=$((ai_infra_count + 1))
+                echo "  🔧 AI-Infra服务: $processed_image"
+            else
+                base_image_count=$((base_image_count + 1))
+                echo "  📚 基础镜像: $processed_image"
+            fi
+            
+            # 显示目标私有镜像名
+            local private_image=$(get_private_image_name "$processed_image" "$registry")
+            echo "     → $private_image"
+            echo
+        fi
+    done <<< "$images"
+    
+    print_info "📊 统计摘要:"
+    echo "  • AI-Infra服务镜像: $ai_infra_count"
+    echo "  • 基础设施镜像: $base_image_count" 
+    echo "  • 总计镜像数量: $total_count"
+    echo
+    print_info "=========================================="
 }
 
 # 获取私有镜像名称
@@ -124,11 +181,26 @@ get_private_image_name() {
     local original_image="$1"
     local registry="$2"
     
-    # 移除可能的镜像仓库前缀
-    local image_name_tag="${original_image#*/}"
-    if [[ "$image_name_tag" == "$original_image" ]]; then
-        # 如果没有斜杠，可能是官方镜像
+    # 处理不同类型的镜像名格式
+    local image_name_tag=""
+    
+    if [[ "$original_image" == *"/"* ]]; then
+        # 包含仓库前缀的镜像
+        if [[ "$original_image" == *"."*"/"* ]]; then
+            # 第三方仓库镜像 (如 quay.io/minio/minio:latest)
+            image_name_tag="${original_image#*/}"  # 移除域名部分，保留 minio/minio:latest
+        else
+            # Docker Hub 官方镜像或组织镜像 (如 osixia/openldap:stable)
+            image_name_tag="$original_image"
+        fi
+    else
+        # 没有斜杠的镜像名 (如 redis:7-alpine, postgres:15-alpine)
         image_name_tag="$original_image"
+    fi
+    
+    # 确保ai-infra前缀的镜像路径正确
+    if [[ "$image_name_tag" == ai-infra-* ]]; then
+        image_name_tag="ai-infra/${image_name_tag}"
     fi
     
     echo "${registry}/${image_name_tag}"
@@ -571,6 +643,10 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
   restore                                 恢复docker-compose.yml备份
   help                                    显示帮助信息
 
+=== 镜像管理命令 ===
+  list-images [registry] [tag]           列出所有AI-Infra镜像清单
+  export-all <registry> [tag]            导出所有镜像到内部仓库(包括基础镜像)
+
 === 开发环境命令 (development) ===
   build [tag]                            构建所有镜像
   dev-start [tag]                        构建并启动开发环境
@@ -592,24 +668,28 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
 
 === 使用示例 ===
 
-1. 开发环境:
+1. 镜像管理:
+   ./build.sh list-images registry.company.com/ai-infra
+   ./build.sh export-all registry.company.com/ai-infra v0.3.5
+
+2. 开发环境:
    export AI_INFRA_ENV_TYPE=development
    ./build.sh build v0.3.5
    ./build.sh dev-start
 
-2. CI/CD环境:
+3. CI/CD环境:
    export AI_INFRA_ENV_TYPE=cicd
    ./build.sh transfer registry.company.com/ai-infra v0.3.5
    ./build.sh package registry.company.com/ai-infra v0.3.5
 
-3. 生产环境:
+4. 生产环境:
    export AI_INFRA_ENV_TYPE=production
    ./build.sh deploy-compose registry.company.com/ai-infra v0.3.5
    ./build.sh deploy-helm registry.company.com/ai-infra v0.3.5
 
-4. 测试模式（跳过Docker操作）:
+5. 测试模式（跳过Docker操作）:
    export SKIP_DOCKER_OPERATIONS=true
-   ./build.sh transfer registry.example.com v1.0.0
+   ./build.sh export-all registry.example.com v1.0.0
 
 === 环境检测 ===
   1. 环境变量 AI_INFRA_ENV_TYPE
@@ -690,6 +770,32 @@ main() {
                 print_info "用法: $0 transfer <私有仓库地址> [标签]"
                 exit 1
             fi
+            transfer_images_to_private_registry "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "list-images")
+            print_info "分析AI-Infra镜像依赖"
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            list_all_images "$DOCKER_COMPOSE_FILE" "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "export-all")
+            print_info "导出所有AI-Infra镜像到内部仓库"
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定私有仓库地址"
+                print_info "用法: $0 export-all <私有仓库地址> [标签]"
+                exit 1
+            fi
+            
+            print_info "即将导出所有镜像到: $registry"
+            if [[ "$FORCE_MODE" != "true" ]]; then
+                # 首先显示镜像预览
+                list_all_images "$DOCKER_COMPOSE_FILE" "$registry" "${3:-$IMAGE_TAG}"
+                read -p "确认导出以上所有镜像？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
             transfer_images_to_private_registry "$registry" "${3:-$IMAGE_TAG}"
             ;;
             
