@@ -251,6 +251,138 @@ build_all_images() {
     print_success "所有镜像构建完成"
 }
 
+# 构建镜像并适配目标仓库格式
+build_images_for_registry() {
+    local registry="$1"
+    local tag="${2:-$IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "为目标仓库构建镜像: $registry"
+    print_info "镜像标签: $tag"
+    print_info "=========================================="
+    
+    # 检查registry是否为Harbor格式
+    local is_harbor_style=false
+    if [[ "$registry" == *"/"* ]]; then
+        is_harbor_style=true
+        print_info "检测到Harbor格式仓库，将构建符合Harbor命名的镜像"
+    else
+        print_info "检测到传统格式仓库，将构建传统命名的镜像"
+    fi
+    
+    # 定义要构建的服务
+    local build_dirs=("src/backend" "src/frontend" "src/jupyterhub" "src/nginx" "src/saltstack")
+    local build_success=0
+    local build_total=0
+    
+    print_info "开始构建AI-Infra服务镜像..."
+    echo
+    
+    for dir in "${build_dirs[@]}"; do
+        if [[ -f "$SCRIPT_DIR/$dir/Dockerfile" ]]; then
+            build_total=$((build_total + 1))
+            local service_name=$(basename "$dir")
+            local original_image="ai-infra-${service_name}:${tag}"
+            
+            # 获取目标镜像名
+            local target_image=$(get_private_image_name "ai-infra-${service_name}:${tag}" "$registry")
+            
+            print_info "[$build_total] 构建服务: $service_name"
+            print_info "    原始镜像: $original_image"
+            print_info "    目标镜像: $target_image"
+            
+            if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+                print_success "    ✓ [模拟] 构建成功"
+                build_success=$((build_success + 1))
+            else
+                # 实际构建
+                if docker build -t "$target_image" "$SCRIPT_DIR/$dir" 2>/dev/null; then
+                    # 同时创建传统命名的镜像作为别名（便于本地开发）
+                    if docker tag "$target_image" "$original_image" 2>/dev/null; then
+                        print_success "    ✓ 构建成功: $target_image"
+                        print_info "    ✓ 别名创建: $original_image"
+                        build_success=$((build_success + 1))
+                    else
+                        print_warning "    ✗ 别名创建失败: $original_image"
+                        build_success=$((build_success + 1))  # 主镜像构建成功就算成功
+                    fi
+                else
+                    print_error "    ✗ 构建失败: $target_image"
+                fi
+            fi
+            echo
+        else
+            print_warning "未找到 Dockerfile: $SCRIPT_DIR/$dir/Dockerfile"
+        fi
+    done
+    
+    print_info "=========================================="
+    print_success "AI-Infra服务镜像构建完成: $build_success/$build_total 成功"
+    
+    # 处理基础镜像
+    echo
+    print_info "开始处理基础镜像..."
+    echo
+    
+    # 获取所有基础镜像
+    local base_images=($(extract_images_from_compose "$SCRIPT_DIR/docker-compose.yml" | grep -v "^ai-infra-" | sed 's/\${[^}]*}//g' | grep -v "^$" | sort | uniq))
+    local base_success=0
+    local base_total=${#base_images[@]}
+    
+    if [[ $base_total -gt 0 ]]; then
+        for original_image in "${base_images[@]}"; do
+            base_total_index=$((${#base_images[@]} - base_total + base_success + 1))
+            local target_image=$(get_private_image_name "$original_image" "$registry")
+            
+            print_info "[$base_total_index/$base_total] 处理基础镜像: $original_image"
+            print_info "    目标镜像: $target_image"
+            
+            if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+                print_success "    ✓ [模拟] 标签创建成功"
+                base_success=$((base_success + 1))
+            else
+                # 尝试拉取原始镜像（如果本地没有）
+                if ! docker image inspect "$original_image" >/dev/null 2>&1; then
+                    print_info "    → 拉取基础镜像..."
+                    if ! docker pull "$original_image" 2>/dev/null; then
+                        print_error "    ✗ 拉取失败: $original_image"
+                        continue
+                    fi
+                fi
+                
+                # 创建目标仓库格式的标签
+                if docker tag "$original_image" "$target_image" 2>/dev/null; then
+                    print_success "    ✓ 标签创建成功: $target_image"
+                    base_success=$((base_success + 1))
+                else
+                    print_error "    ✗ 标签创建失败: $target_image"
+                fi
+            fi
+            echo
+        done
+        
+        print_info "=========================================="
+        print_success "基础镜像处理完成: $base_success/$base_total 成功"
+    else
+        print_info "未发现需要处理的基础镜像"
+    fi
+    
+    print_info "=========================================="
+    local total_success=$((build_success + base_success))
+    local total_images=$((build_total + base_total))
+    print_success "总计镜像处理完成: $total_success/$total_images 成功"
+    print_info "  - AI-Infra服务镜像: $build_success/$build_total"
+    print_info "  - 基础镜像: $base_success/$base_total"
+    
+    if [[ $total_success -eq $total_images ]]; then
+        print_success "所有镜像处理成功！"
+        print_info "提示: 镜像已构建/标记为目标仓库格式，可直接推送到 $registry"
+    else
+        print_warning "部分镜像处理失败，请检查错误信息"
+    fi
+    print_info "=========================================="
+}
+
 # 镜像传输到私有仓库
 transfer_images_to_private_registry() {
     local registry="$1"
@@ -661,7 +793,8 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
   export-all <registry> [tag]            导出所有镜像到内部仓库(包括基础镜像)
 
 === 开发环境命令 (development) ===
-  build [tag]                            构建所有镜像
+  build [tag]                            构建所有镜像(传统格式)
+  build-for <registry> [tag]             为目标仓库构建镜像(包含基础镜像)
   dev-start [tag]                        构建并启动开发环境
   dev-stop                               停止开发环境
   start                                  启动服务
@@ -692,7 +825,9 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
 
 2. 开发环境:
    export AI_INFRA_ENV_TYPE=development
-   ./build.sh build v0.3.5
+   ./build.sh build v0.3.5                              # 传统格式构建
+   ./build.sh build-for harbor.company.com/ai-infra     # Harbor格式构建(含基础镜像)
+   ./build.sh build-for registry.internal.com v0.3.5    # 指定仓库构建(含基础镜像)
    ./build.sh dev-start
 
 3. CI/CD环境:
@@ -754,6 +889,26 @@ main() {
                 [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
             fi
             build_all_images "${2:-$IMAGE_TAG}"
+            ;;
+            
+        "build-for")
+            print_info "为目标仓库构建镜像"
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定目标仓库地址"
+                print_info "用法: $0 build-for <目标仓库地址> [标签]"
+                print_info "示例: $0 build-for harbor.company.com/ai-infra v0.3.5"
+                print_info "示例: $0 build-for registry.internal.com v0.3.5"
+                exit 1
+            fi
+            
+            if [[ "$ENV_TYPE" != "development" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "构建功能主要用于开发环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            build_images_for_registry "$registry" "${3:-$IMAGE_TAG}"
             ;;
             
         "dev-start")
