@@ -2,7 +2,7 @@
 # 支持分布式部署和JupyterHub upstream访问
 # 支持开发模式和生产模式
 
-FROM nginx:alpine
+FROM nginx:stable-alpine-perl
 
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
