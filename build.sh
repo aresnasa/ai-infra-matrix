@@ -119,6 +119,18 @@ extract_images_from_compose() {
     } | sort -u
 }
 
+# 提取所有Dockerfile中的FROM镜像
+extract_dockerfile_base_images() {
+    local script_dir="$1"
+    
+    # 查找所有Dockerfile并提取FROM镜像
+    find "$script_dir/src" -name "Dockerfile" -exec grep "^FROM" {} \; 2>/dev/null | \
+        awk '{print $2}' | \
+        grep -v "AS" | \
+        sed 's/.*\s//' | \
+        sort -u
+}
+
 # 列出所有检测到的镜像
 list_all_images() {
     local compose_file="${1:-$DOCKER_COMPOSE_FILE}"
@@ -243,7 +255,7 @@ build_all_images() {
                 local image_name="ai-infra-${service_name}:${tag}"
                 
                 print_info "构建 $image_name..."
-                docker build -t "$image_name" "$SCRIPT_DIR/$dir"
+                docker build -f "$SCRIPT_DIR/$dir/Dockerfile" -t "$image_name" "$SCRIPT_DIR"
             fi
         done
     fi
@@ -295,8 +307,8 @@ build_images_for_registry() {
                 print_success "    ✓ [模拟] 构建成功"
                 build_success=$((build_success + 1))
             else
-                # 实际构建
-                if docker build -t "$target_image" "$SCRIPT_DIR/$dir" 2>/dev/null; then
+                # 实际构建 - 使用项目根目录作为构建上下文以支持跨目录引用
+                if docker build -f "$SCRIPT_DIR/$dir/Dockerfile" -t "$target_image" "$SCRIPT_DIR" 2>/dev/null; then
                     # 同时创建传统命名的镜像作为别名（便于本地开发）
                     if docker tag "$target_image" "$original_image" 2>/dev/null; then
                         print_success "    ✓ 构建成功: $target_image"
@@ -380,6 +392,176 @@ build_images_for_registry() {
     else
         print_warning "部分镜像处理失败，请检查错误信息"
     fi
+    print_info "=========================================="
+}
+
+# CI/CD一键构建和推送函数
+cicd_build_and_push() {
+    local registry="$1"
+    local tag="${2:-$IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "CI/CD一键构建和推送开始"
+    print_info "目标仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "=========================================="
+    
+    # 第一阶段：拉取所有基础镜像
+    print_info "第一阶段：拉取基础镜像依赖..."
+    echo
+    
+    # 合并docker-compose.yml和Dockerfile中的基础镜像
+    local compose_images=($(extract_images_from_compose "$SCRIPT_DIR/docker-compose.yml" | grep -v "^ai-infra-" | sed 's/\${[^}]*}//g' | grep -v "^$"))
+    local dockerfile_images=($(extract_dockerfile_base_images "$SCRIPT_DIR"))
+    local all_base_images=($(printf '%s\n' "${compose_images[@]}" "${dockerfile_images[@]}" | sort | uniq))
+    
+    local pull_success=0
+    local pull_total=${#all_base_images[@]}
+    
+    print_info "检测到 $pull_total 个基础镜像需要处理"
+    echo
+    
+    for original_image in "${all_base_images[@]}"; do
+        pull_index=$((pull_success + 1))
+        print_info "[$pull_index/$pull_total] 拉取基础镜像: $original_image"
+        
+        if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+            print_success "    ✓ [模拟] 拉取成功"
+            pull_success=$((pull_success + 1))
+        else
+            if docker pull "$original_image" 2>/dev/null; then
+                print_success "    ✓ 拉取成功: $original_image"
+                pull_success=$((pull_success + 1))
+            else
+                print_warning "    ✗ 拉取失败: $original_image (可能镜像不存在或网络问题)"
+            fi
+        fi
+        echo
+    done
+    
+    print_success "基础镜像拉取完成: $pull_success/$pull_total 成功"
+    echo
+    
+    # 第二阶段：构建AI-Infra服务镜像
+    print_info "第二阶段：构建AI-Infra服务镜像..."
+    echo
+    
+    local build_dirs=("src/backend" "src/frontend" "src/jupyterhub" "src/nginx" "src/saltstack")
+    local build_success=0
+    local build_total=0
+    
+    for dir in "${build_dirs[@]}"; do
+        if [[ -f "$SCRIPT_DIR/$dir/Dockerfile" ]]; then
+            build_total=$((build_total + 1))
+            local service_name=$(basename "$dir")
+            local target_image=$(get_private_image_name "ai-infra-${service_name}:${tag}" "$registry")
+            
+            print_info "[$build_total] 构建服务: $service_name"
+            print_info "    目标镜像: $target_image"
+            
+            if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+                print_success "    ✓ [模拟] 构建成功"
+                build_success=$((build_success + 1))
+            else
+                if docker build -f "$SCRIPT_DIR/$dir/Dockerfile" -t "$target_image" "$SCRIPT_DIR" 2>/dev/null; then
+                    print_success "    ✓ 构建成功: $target_image"
+                    build_success=$((build_success + 1))
+                else
+                    print_error "    ✗ 构建失败: $target_image"
+                fi
+            fi
+            echo
+        fi
+    done
+    
+    print_success "AI-Infra服务镜像构建完成: $build_success/$build_total 成功"
+    echo
+    
+    # 第三阶段：标记并推送基础镜像
+    print_info "第三阶段：标记并推送基础镜像..."
+    echo
+    
+    local base_tag_success=0
+    for original_image in "${all_base_images[@]}"; do
+        base_index=$((base_tag_success + 1))
+        local target_image=$(get_private_image_name "$original_image" "$registry")
+        
+        print_info "[$base_index/$pull_total] 处理基础镜像: $original_image"
+        print_info "    目标镜像: $target_image"
+        
+        if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+            print_success "    ✓ [模拟] 标记和推送成功"
+            base_tag_success=$((base_tag_success + 1))
+        else
+            if docker tag "$original_image" "$target_image" 2>/dev/null; then
+                if docker push "$target_image" 2>/dev/null; then
+                    print_success "    ✓ 标记和推送成功: $target_image"
+                    base_tag_success=$((base_tag_success + 1))
+                else
+                    print_warning "    ✗ 推送失败: $target_image (可能是网络或权限问题)"
+                fi
+            else
+                print_warning "    ✗ 标记失败: $target_image"
+            fi
+        fi
+        echo
+    done
+    
+    print_success "基础镜像标记推送完成: $base_tag_success/$pull_total 成功"
+    echo
+    
+    # 第四阶段：推送AI-Infra服务镜像
+    print_info "第四阶段：推送AI-Infra服务镜像..."
+    echo
+    
+    local push_success=0
+    for dir in "${build_dirs[@]}"; do
+        if [[ -f "$SCRIPT_DIR/$dir/Dockerfile" ]]; then
+            local service_name=$(basename "$dir")
+            local target_image=$(get_private_image_name "ai-infra-${service_name}:${tag}" "$registry")
+            
+            push_index=$((push_success + 1))
+            print_info "[$push_index/$build_total] 推送服务镜像: $service_name"
+            print_info "    目标镜像: $target_image"
+            
+            if [[ "$SKIP_DOCKER_OPERATIONS" == "true" ]]; then
+                print_success "    ✓ [模拟] 推送成功"
+                push_success=$((push_success + 1))
+            else
+                if docker push "$target_image" 2>/dev/null; then
+                    print_success "    ✓ 推送成功: $target_image"
+                    push_success=$((push_success + 1))
+                else
+                    print_error "    ✗ 推送失败: $target_image"
+                fi
+            fi
+            echo
+        fi
+    done
+    
+    print_success "AI-Infra服务镜像推送完成: $push_success/$build_total 成功"
+    
+    # 总结
+    print_info "=========================================="
+    print_info "CI/CD一键构建和推送总结"
+    print_info "=========================================="
+    print_info "  基础镜像拉取: $pull_success/$pull_total 成功"
+    print_info "  AI-Infra服务构建: $build_success/$build_total 成功"
+    print_info "  基础镜像推送: $base_tag_success/$pull_total 成功"
+    print_info "  AI-Infra服务推送: $push_success/$build_total 成功"
+    
+    local total_success=$((pull_success + build_success + base_tag_success + push_success))
+    local total_operations=$((pull_total + build_total + pull_total + build_total))
+    
+    if [[ $build_success -eq $build_total ]] && [[ $push_success -eq $build_total ]]; then
+        print_success "🎉 所有AI-Infra服务镜像构建和推送成功！"
+        print_success "🚀 项目已准备好在目标环境中部署"
+    else
+        print_warning "⚠️  部分操作失败，请检查错误信息"
+        print_info "💡 您可以使用 '$0 build-for $registry $tag' 重新构建"
+        print_info "💡 或使用 '$0 transfer $registry $tag' 重新推送"
+    fi
+    
     print_info "=========================================="
 }
 
@@ -800,6 +982,7 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
   start                                  启动服务
 
 === CI/CD环境命令 (cicd) ===
+  cicd-build <registry> [tag]            一键构建和推送(拉取依赖→构建→推送)
   transfer <registry> [tag]              转发镜像到私有仓库
   package <registry> [tag]               打包配置和部署脚本
 
@@ -832,8 +1015,9 @@ AI-Infra-Matrix 三环境统一构建部署脚本 v3.2.0
 
 3. CI/CD环境:
    export AI_INFRA_ENV_TYPE=cicd
-   ./build.sh transfer registry.company.com/ai-infra v0.3.5
-   ./build.sh package registry.company.com/ai-infra v0.3.5
+   ./build.sh cicd-build xxx.aliyuncs.com/ai-infra-matrix v0.3.5  # 一键构建推送
+   ./build.sh transfer registry.company.com/ai-infra v0.3.5       # 仅转发现有镜像
+   ./build.sh package registry.company.com/ai-infra v0.3.5        # 打包配置
 
 4. 生产环境:
    export AI_INFRA_ENV_TYPE=production
@@ -909,6 +1093,27 @@ main() {
             fi
             
             build_images_for_registry "$registry" "${3:-$IMAGE_TAG}"
+            ;;
+            
+        "cicd-build")
+            print_info "CI/CD一键构建和推送"
+            local registry="${2:-$PRIVATE_REGISTRY}"
+            if [[ -z "$registry" ]]; then
+                print_error "请指定目标仓库地址"
+                print_info "用法: $0 cicd-build <目标仓库地址> [标签]"
+                print_info "示例: $0 cicd-build xxx.aliyuncs.com/ai-infra-matrix v0.3.5"
+                print_info "功能: 自动拉取依赖→构建服务→推送到仓库"
+                exit 1
+            fi
+            
+            # CI/CD环境推荐，但允许其他环境强制执行
+            if [[ "$ENV_TYPE" != "cicd" ]] && [[ "$FORCE_MODE" != "true" ]]; then
+                print_warning "CI/CD一键构建主要用于CI/CD环境，使用 --force 强制执行"
+                read -p "是否继续？(y/N): " confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && exit 0
+            fi
+            
+            cicd_build_and_push "$registry" "${3:-$IMAGE_TAG}"
             ;;
             
         "dev-start")
