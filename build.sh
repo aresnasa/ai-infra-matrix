@@ -198,8 +198,23 @@ get_private_image_name() {
     
     # 检查registry是否已经包含项目路径（Harbor语法）
     local is_harbor_style=false
+    local registry_base=""
+    local project_path=""
+    
     if [[ "$registry" == *"/"* ]]; then
         is_harbor_style=true
+        # 分离registry基础地址和项目路径
+        registry_base="${registry%%/*}"
+        project_path="${registry#*/}"
+    else
+        registry_base="$registry"
+    fi
+    
+    # 检查original_image是否已经包含了registry信息
+    if [[ "$original_image" == "$registry_base"/* ]]; then
+        # 镜像已经包含完整路径，直接返回
+        echo "$original_image"
+        return 0
     fi
     
     if [[ "$original_image" == *"/"* ]]; then
@@ -228,7 +243,14 @@ get_private_image_name() {
         fi
     fi
     
-    echo "${registry}/${image_name_tag}"
+    # 构建最终镜像路径
+    if [[ "$is_harbor_style" == "true" ]]; then
+        # Harbor风格：分别处理registry和项目路径
+        echo "${registry_base}/${project_path}/${image_name_tag}"
+    else
+        # 传统风格
+        echo "${registry}/${image_name_tag}"
+    fi
 }
 
 # 构建所有镜像
