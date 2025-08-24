@@ -46,14 +46,14 @@ ENV GO111MODULE=on
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY src/backend/go.mod src/backend/go.sum ./
 
 # Download dependencies with retry and fallback
 RUN go mod download || (sleep 5 && go mod download) || \
     (export GOPROXY=direct && go mod download)
 
 # Copy source code
-COPY . .
+COPY src/backend/ .
 
 # Build the application with JupyterHub integration
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/main.go
@@ -94,7 +94,7 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/.env* ./
 
 # Copy docker-desktop-ca.crt and update certificates
-COPY docker-desktop-ca.crt /usr/local/share/ca-certificates/docker-desktop-ca.crt
+COPY src/backend/docker-desktop-ca.crt /usr/local/share/ca-certificates/docker-desktop-ca.crt
 RUN update-ca-certificates
 
 # Create necessary directories
