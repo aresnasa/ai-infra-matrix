@@ -949,11 +949,11 @@ generate_production_config() {
     # 首先处理项目镜像（保持原有逻辑）
     print_info "处理项目镜像..."
     if [[ "$OS_TYPE" == "macOS" ]]; then
-        sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
-        sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-matrix/ai-infra-|g" "$output_file"
+        sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}|g" "$output_file"
+        sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
     else
-        sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
-        sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-matrix/ai-infra-|g" "$output_file"
+        sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}|g" "$output_file"
+        sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
     fi
     
     # 然后处理基础镜像和第三方镜像（使用映射配置）
