@@ -9,18 +9,137 @@ set -e
 # 全局变量
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="1.0.0"
-DEFAULT_IMAGE_TAG="v0.3.5"
+CONFIG_FILE="$SCRIPT_DIR/config.toml"
 
-# 源码服务定义 - 使用数组而不是关联数组（兼容macOS bash 3.2）
-SRC_SERVICES="backend frontend jupyterhub nginx saltstack"
-SRC_PATHS="src/backend src/frontend src/jupyterhub src/nginx src/saltstack"
+# ==========================================
+# 配置文件解析功能
+# ==========================================
 
-# 依赖镜像定义（第三方中间件）
-# 静态列表作为后备
-DEPENDENCY_IMAGES="postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
+# 读取TOML配置文件中的值
+read_config() {
+    local section="$1"
+    local key="$2"
+    local subsection="$3"
+    
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        print_error "配置文件不存在: $CONFIG_FILE"
+        return 1
+    fi
+    
+    if [[ -n "$subsection" ]]; then
+        # 读取嵌套配置 [section.subsection]
+        awk -F' *= *' -v section="$section" -v subsection="$subsection" -v key="$key" '
+            /^\[[[:space:]]*[^.]+\.[^]]+\]/ {
+                # 匹配 [section.subsection] 格式
+                gsub(/^\[|\]$/, "")
+                split($0, parts, "\\.")
+                if (parts[1] == section && parts[2] == subsection) {
+                    in_target = 1
+                } else {
+                    in_target = 0
+                }
+                next
+            }
+            /^\[/ { in_target = 0; next }
+            in_target && $1 == key {
+                gsub(/^"/, "", $2)
+                gsub(/"$/, "", $2)
+                print $2
+                exit
+            }
+        ' "$CONFIG_FILE"
+    else
+        # 读取简单配置 [section]
+        awk -F' *= *' -v section="$section" -v key="$key" '
+            /^\[[[:space:]]*[^.]+\]/ {
+                gsub(/^\[|\]$/, "")
+                if ($0 == section) {
+                    in_target = 1
+                } else {
+                    in_target = 0
+                }
+                next
+            }
+            /^\[/ { in_target = 0; next }
+            in_target && $1 == key {
+                gsub(/^"/, "", $2)
+                gsub(/"$/, "", $2)
+                print $2
+                exit
+            }
+        ' "$CONFIG_FILE"
+    fi
+}
+
+# 获取所有服务名称
+get_all_services() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "backend frontend jupyterhub nginx saltstack"
+        return
+    fi
+    
+    awk '
+        /^\[services\.[^]]+\]/ {
+            gsub(/^\[services\.|\]$/, "")
+            print $0
+        }
+    ' "$CONFIG_FILE" | sort
+}
+
+# 获取所有依赖镜像
+get_all_dependencies() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
+        return
+    fi
+    
+    awk -F' *= *' '
+        /^\[dependencies\]/ { in_dependencies = 1; next }
+        /^\[/ { in_dependencies = 0; next }
+        in_dependencies && NF > 1 {
+            gsub(/^"/, "", $2)
+            gsub(/"$/, "", $2)
+            print $2
+        }
+    ' "$CONFIG_FILE" | tr '\n' ' '
+}
+
+# 获取所有扩展组件镜像
+get_all_extensions() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "ai-infra-singleuser ai-infra-backend-init ai-infra-gitea"
+        return
+    fi
+    
+    awk -F' *= *' '
+        /^\[extensions\]/ { in_extensions = 1; next }
+        /^\[/ { in_extensions = 0; next }
+        in_extensions && NF > 1 {
+            gsub(/^"/, "", $2)
+            gsub(/"$/, "", $2)
+            print $2
+        }
+    ' "$CONFIG_FILE" | tr '\n' ' '
+}
+
+# 初始化配置
+DEFAULT_IMAGE_TAG=$(read_config "project" "version")
+[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.5"
+
+# 动态加载服务和依赖配置
+SRC_SERVICES=$(get_all_services | tr '\n' ' ')
+DEPENDENCY_IMAGES=$(get_all_dependencies | tr '\n' ' ')
+EXTENSION_IMAGES=$(get_all_extensions | tr '\n' ' ')
 
 # 动态收集依赖镜像函数
 collect_dependency_images() {
+    # 优先使用配置文件中的依赖镜像列表
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo "$DEPENDENCY_IMAGES"
+        return
+    fi
+    
+    # 后备方案：从docker-compose文件中提取
     local compose_files=()
     local script_dir="$(cd "$(dirname "$0")" && pwd)"
     
@@ -30,7 +149,7 @@ collect_dependency_images() {
     
     if [ ${#compose_files[@]} -eq 0 ]; then
         print_warning "未找到docker-compose.yml文件，使用静态依赖列表"
-        echo "$DEPENDENCY_IMAGES"
+        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
         return
     fi
     
@@ -53,7 +172,7 @@ collect_dependency_images() {
     if [ -n "$images_list" ]; then
         echo "$images_list" | tr '\n' ' '
     else
-        echo "$DEPENDENCY_IMAGES"
+        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
     fi
 }
 
@@ -65,14 +184,23 @@ MOCK_REDIS_IMAGE="redis:7-alpine"
 # 获取服务对应的路径
 get_service_path() {
     local service="$1"
-    case "$service" in
-        "backend") echo "src/backend" ;;
-        "frontend") echo "src/frontend" ;;
-        "jupyterhub") echo "src/jupyterhub" ;;
-        "nginx") echo "src/nginx" ;;
-        "saltstack") echo "src/saltstack" ;;
-        *) echo "" ;;
-    esac
+    
+    # 从配置文件读取路径
+    local path=$(read_config "services" "path" "$service")
+    
+    # 如果配置文件中没有，使用后备方案
+    if [[ -z "$path" ]]; then
+        case "$service" in
+            "backend") echo "src/backend" ;;
+            "frontend") echo "src/frontend" ;;
+            "jupyterhub") echo "src/jupyterhub" ;;
+            "nginx") echo "src/nginx" ;;
+            "saltstack") echo "src/saltstack" ;;
+            *) echo "" ;;
+        esac
+    else
+        echo "$path"
+    fi
 }
 
 # 颜色输出函数
@@ -523,6 +651,244 @@ push_dependencies() {
     fi
 }
 
+# ==========================================
+# 生产环境部署相关功能
+# ==========================================
+
+# 生成生产环境配置文件
+generate_production_config() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local compose_file="${3:-docker-compose.yml}"
+    local output_file="${4:-docker-compose.prod.yml}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "请指定目标 registry"
+        return 1
+    fi
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "源配置文件不存在: $compose_file"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "生成生产环境配置文件"
+    print_info "=========================================="
+    print_info "源文件: $compose_file"
+    print_info "目标文件: $output_file"
+    print_info "Registry: $registry"
+    print_info "标签: $tag"
+    echo
+    
+    # 复制源文件
+    cp "$compose_file" "$output_file"
+    
+    # 替换依赖镜像为内部registry版本
+    print_info "替换依赖镜像为内部registry版本..."
+    for image in $DEPENDENCY_IMAGES; do
+        if [[ -n "$image" ]]; then
+            local base_name=$(basename "$image" | cut -d':' -f1)
+            local internal_image=$(get_private_image_name "ai-infra-deps-$base_name:$tag" "$registry")
+            print_info "  $image -> $internal_image"
+            sed -i.bak "s|image: $image|image: $internal_image|g" "$output_file"
+            sed -i.bak "s|image: '$image'|image: '$internal_image'|g" "$output_file"
+            sed -i.bak "s|image: \"$image\"|image: \"$internal_image\"|g" "$output_file"
+        fi
+    done
+    
+    # 替换源码服务镜像为内部registry版本
+    print_info "替换源码服务镜像为内部registry版本..."
+    for service in $SRC_SERVICES; do
+        if [[ -n "$service" ]]; then
+            local service_image=$(get_private_image_name "ai-infra-$service:$tag" "$registry")
+            print_info "  ai-infra-$service -> $service_image"
+            
+            # 替换image行
+            sed -i.bak "s|image: ai-infra-$service[^[:space:]]*|image: $service_image|g" "$output_file"
+            sed -i.bak "s|image: ai-infra-$service:\${[^}]*}|image: $service_image|g" "$output_file"
+        fi
+    done
+    
+    # 替换扩展组件镜像为内部registry版本
+    print_info "替换扩展组件镜像为内部registry版本..."
+    for extension in $EXTENSION_IMAGES; do
+        if [[ -n "$extension" ]]; then
+            local ext_image=$(get_private_image_name "$extension:$tag" "$registry")
+            print_info "  $extension -> $ext_image"
+            
+            # 替换image行
+            sed -i.bak "s|image: $extension[^[:space:]]*|image: $ext_image|g" "$output_file"
+            sed -i.bak "s|image: $extension:\${[^}]*}|image: $ext_image|g" "$output_file"
+        fi
+    done
+    
+    # 简化处理：移除build块（使用简单的awk脚本）
+    print_info "移除构建配置块..."
+    awk '
+        /^[[:space:]]*build:[[:space:]]*/ {
+            in_build = 1
+            build_indent = length($0) - length(ltrim($0))
+            next
+        }
+        in_build {
+            current_indent = length($0) - length(ltrim($0))
+            if (NF == 0 || current_indent > build_indent) {
+                next
+            } else if (current_indent <= build_indent) {
+                in_build = 0
+            }
+        }
+        !in_build { print }
+        
+        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
+    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    
+    # 清理备份文件
+    rm -f "$output_file.bak"
+    
+    print_success "✓ 生产环境配置文件生成成功: $output_file"
+    echo
+    print_info "注意事项："
+    print_info "  1. 请确保所有依赖镜像已推送到内部registry (使用 deps-all 命令)"
+    print_info "  2. 请确保所有源码服务镜像已推送到内部registry (使用 build-push 命令)"
+    print_info "  3. 请检查生成的配置文件并根据需要调整环境变量"
+    echo
+    
+    return 0
+}
+
+# 启动生产环境
+start_production() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local compose_file="docker-compose.prod.yml"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "请指定目标 registry"
+        return 1
+    fi
+    
+    # 如果生产配置文件不存在，先生成
+    if [[ ! -f "$compose_file" ]]; then
+        print_info "生产配置文件不存在，正在生成..."
+        if ! generate_production_config "$registry" "$tag"; then
+            return 1
+        fi
+    fi
+    
+    print_info "=========================================="
+    print_info "启动生产环境"
+    print_info "=========================================="
+    print_info "配置文件: $compose_file"
+    print_info "Registry: $registry"
+    print_info "标签: $tag"
+    echo
+    
+    print_info "拉取所有镜像..."
+    if ! docker-compose -f "$compose_file" pull; then
+        print_error "镜像拉取失败"
+        return 1
+    fi
+    
+    print_info "启动生产环境..."
+    if docker-compose -f "$compose_file" up -d; then
+        print_success "✓ 生产环境启动成功"
+        echo
+        print_info "查看服务状态:"
+        docker-compose -f "$compose_file" ps
+        return 0
+    else
+        print_error "✗ 生产环境启动失败"
+        return 1
+    fi
+}
+
+# 停止生产环境
+stop_production() {
+    local compose_file="docker-compose.prod.yml"
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "生产配置文件不存在: $compose_file"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "停止生产环境"
+    print_info "=========================================="
+    
+    if docker-compose -f "$compose_file" down; then
+        print_success "✓ 生产环境已停止"
+        return 0
+    else
+        print_error "✗ 生产环境停止失败"
+        return 1
+    fi
+}
+
+# 重启生产环境
+restart_production() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "重启生产环境"
+    print_info "=========================================="
+    
+    # 先停止
+    stop_production
+    
+    # 等待一段时间
+    sleep 2
+    
+    # 再启动
+    start_production "$registry" "$tag"
+}
+
+# 查看生产环境状态
+production_status() {
+    local compose_file="docker-compose.prod.yml"
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "生产配置文件不存在: $compose_file"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "生产环境状态"
+    print_info "=========================================="
+    
+    docker-compose -f "$compose_file" ps
+}
+
+# 查看生产环境日志
+production_logs() {
+    local compose_file="docker-compose.prod.yml"
+    local service="$1"
+    local follow="${2:-false}"
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "生产配置文件不存在: $compose_file"
+        return 1
+    fi
+    
+    if [[ -z "$service" ]]; then
+        # 显示所有服务的日志
+        if [[ "$follow" == "true" ]]; then
+            docker-compose -f "$compose_file" logs -f
+        else
+            docker-compose -f "$compose_file" logs --tail=100
+        fi
+    else
+        # 显示指定服务的日志
+        if [[ "$follow" == "true" ]]; then
+            docker-compose -f "$compose_file" logs -f "$service"
+        else
+            docker-compose -f "$compose_file" logs --tail=100 "$service"
+        fi
+    fi
+}
+
 # 创建简化的 Mock 测试环境（仅用于脚本功能验证）
 setup_mock_environment() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
@@ -882,6 +1248,14 @@ show_help() {
     echo "  deps-push <registry> [tag]      - 推送依赖镜像"
     echo "  deps-all <registry> [tag]       - 拉取、标记并推送所有依赖镜像"
     echo
+    echo "生产环境命令:"
+    echo "  prod-generate <registry> [tag]  - 生成生产环境配置文件（使用内部镜像）"
+    echo "  prod-up <registry> [tag]        - 启动生产环境"
+    echo "  prod-down                       - 停止生产环境"
+    echo "  prod-restart <registry> [tag]   - 重启生产环境"
+    echo "  prod-status                     - 查看生产环境状态"
+    echo "  prod-logs [service] [--follow]  - 查看生产环境日志"
+    echo
     echo "Mock 测试命令:"
     echo "  mock-setup [tag]               - 创建 Mock 数据测试环境配置"
     echo "  mock-up [tag]                  - 启动 Mock 测试环境"
@@ -921,6 +1295,15 @@ show_help() {
     echo "                                  # 推送依赖镜像"
     echo "  $0 deps-all registry.local/ai-infra v0.3.5"
     echo "                                  # 完整依赖镜像操作"
+    echo
+    echo "  # 生产环境操作"
+    echo "  $0 prod-generate registry.local/ai-infra v0.3.5"
+    echo "                                  # 生成生产环境配置"
+    echo "  $0 prod-up registry.local/ai-infra v0.3.5"
+    echo "                                  # 启动生产环境"
+    echo "  $0 prod-down                   # 停止生产环境"
+    echo "  $0 prod-status                 # 查看生产环境状态"
+    echo "  $0 prod-logs backend --follow   # 实时查看backend服务日志"
     echo
     echo "  # Mock 测试操作"
     echo "  $0 mock-setup v0.3.5           # 创建 Mock 环境配置"
@@ -1013,6 +1396,47 @@ main() {
                 print_error "依赖镜像拉取失败，停止推送操作"
                 exit 1
             fi
+            ;;
+            
+        # 生产环境部署命令
+        "prod-generate")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                exit 1
+            fi
+            generate_production_config "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "prod-up")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                exit 1
+            fi
+            start_production "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "prod-down")
+            stop_production
+            ;;
+            
+        "prod-restart")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                exit 1
+            fi
+            restart_production "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "prod-status")
+            production_status
+            ;;
+            
+        "prod-logs")
+            local follow="false"
+            if [[ "$3" == "--follow" || "$3" == "-f" ]]; then
+                follow="true"
+            fi
+            production_logs "$2" "$follow"
             ;;
             
         # Mock 测试环境命令

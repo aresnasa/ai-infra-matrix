@@ -1,0 +1,63 @@
+# AI Infrastructure Matrix - 项目配置文件
+# 版本: v1.0.0
+
+[project]
+name = "ai-infra-matrix"
+version = "v0.3.5"
+description = "AI Infrastructure Matrix - 统一开发和部署平台"
+
+# 源码服务配置
+[services]
+[services.backend]
+name = "backend"
+path = "src/backend"
+image = "ai-infra-backend"
+description = "后端 API 服务"
+
+[services.frontend]
+name = "frontend"
+path = "src/frontend"
+image = "ai-infra-frontend"
+description = "前端 Web 服务"
+
+[services.jupyterhub]
+name = "jupyterhub"
+path = "src/jupyterhub"
+image = "ai-infra-jupyterhub"
+description = "JupyterHub 统一认证服务"
+
+[services.nginx]
+name = "nginx"
+path = "src/nginx"
+image = "ai-infra-nginx"
+description = "Nginx 反向代理服务"
+
+[services.saltstack]
+name = "saltstack"
+path = "src/saltstack"
+image = "ai-infra-saltstack"
+description = "SaltStack 配置管理服务"
+
+# 依赖镜像配置（第三方中间件）
+[dependencies]
+postgres = "postgres:15-alpine"
+redis = "redis:7-alpine"
+nginx-base = "nginx:1.27-alpine"
+openldap = "osixia/openldap:stable"
+phpldapadmin = "osixia/phpldapadmin:stable"
+minio = "quay.io/minio/minio:latest"
+redisinsight = "redislabs/redisinsight:latest"
+tcp-proxy = "tecnativa/tcp-proxy"
+
+# 扩展组件配置（ai-infra相关的非源码镜像）
+[extensions]
+singleuser = "ai-infra-singleuser"
+backend-init = "ai-infra-backend-init"
+gitea = "ai-infra-gitea"
+
+# 生产环境配置
+[production]
+compose_source = "docker-compose.yml"
+compose_output = "docker-compose.prod.yml"
+registry_prefix = "ai-infra-deps"
+remove_build_blocks = true
