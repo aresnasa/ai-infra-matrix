@@ -889,24 +889,24 @@ generate_production_config() {
         sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
         sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
         
-        # 替换所有基础镜像为私有仓库版本
-        sed -i.bak "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
-        sed -i.bak "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
-        sed -i.bak "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
-        sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa-tcp-proxy:latest|g" "$output_file"
-        sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs-redisinsight:latest|g" "$output_file"
-        sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${registry}/minio-minio:latest|g" "$output_file"
+        # 替换所有基础镜像为私有仓库版本（使用library项目命名空间）
+        sed -i.bak "s|image: postgres:15-alpine|image: ${registry}/library/postgres:15-alpine|g" "$output_file"
+        sed -i.bak "s|image: redis:7-alpine|image: ${registry}/library/redis:7-alpine|g" "$output_file"
+        sed -i.bak "s|image: nginx:1.27-alpine|image: ${registry}/library/nginx:1.27-alpine|g" "$output_file"
+        sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa/tcp-proxy:latest|g" "$output_file"
+        sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs/redisinsight:latest|g" "$output_file"
+        sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${registry}/minio/minio:latest|g" "$output_file"
     else
         sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
         sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
         
-        # 替换所有基础镜像为私有仓库版本
-        sed -i "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
-        sed -i "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
-        sed -i "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
-        sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa-tcp-proxy:latest|g" "$output_file"
-        sed -i "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs-redisinsight:latest|g" "$output_file"
-        sed -i "s|image: quay.io/minio/minio:latest|image: ${registry}/minio-minio:latest|g" "$output_file"
+        # 替换所有基础镜像为私有仓库版本（使用library项目命名空间）
+        sed -i "s|image: postgres:15-alpine|image: ${registry}/library/postgres:15-alpine|g" "$output_file"
+        sed -i "s|image: redis:7-alpine|image: ${registry}/library/redis:7-alpine|g" "$output_file"
+        sed -i "s|image: nginx:1.27-alpine|image: ${registry}/library/nginx:1.27-alpine|g" "$output_file"
+        sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa/tcp-proxy:latest|g" "$output_file"
+        sed -i "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs/redisinsight:latest|g" "$output_file"
+        sed -i "s|image: quay.io/minio/minio:latest|image: ${registry}/minio/minio:latest|g" "$output_file"
     fi
     
     # 2. 更新镜像标签（只更新项目镜像，不影响依赖镜像）
