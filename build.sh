@@ -6,10 +6,22 @@
 
 set -e
 
+# 操作系统检测
+detect_os() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macOS"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "Linux"
+    else
+        echo "Other"
+    fi
+}
+
 # 全局变量
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="1.0.0"
 CONFIG_FILE="$SCRIPT_DIR/config.toml"
+OS_TYPE=$(detect_os)
 
 # ==========================================
 # 配置文件解析功能
@@ -702,13 +714,27 @@ generate_production_config() {
     cp "$base_file" "$output_file"
     
     # 1. 更新镜像registry路径
-    print_info "更新镜像registry路径..."
-    sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
-    sed -i.bak "s|image: ai-infra-matrix|image: ${registry}/ai-infra-matrix|g" "$output_file"
+    print_info "更新镜像registry路径... (OS: $OS_TYPE)"
+    # 兼容macOS和Linux的sed命令
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
+        sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+    else
+        sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
+        sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+    fi
     
     # 2. 更新镜像标签
     print_info "更新镜像标签..."
-    sed -i.bak "s|:latest|:${tag}|g" "$output_file"
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i.bak "s|:latest|:${tag}|g" "$output_file"
+        sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+        sed -i.bak "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
+    else
+        sed -i "s|:latest|:${tag}|g" "$output_file"
+        sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+        sed -i "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
+    fi
     
     # 3. 移除LDAP相关服务（使用Python脚本精确处理）
     print_info "移除openldap和phpldapadmin服务..."
@@ -721,24 +747,43 @@ generate_production_config() {
             print_success "✓ 使用Python脚本成功移除LDAP服务"
         else
             print_warning "Python脚本移除失败，使用备用方案"
-            # 备用方案：使用sed简单移除
+            # 备用方案：使用sed简单移除（兼容macOS和Linux）
+            if [[ "$OS_TYPE" == "macOS" ]]; then
+                sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i.bak '/^  openldap:/d' "$output_file"
+                sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+            else
+                sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i '/^  openldap:/d' "$output_file"
+                sed -i '/^  phpldapadmin:/d' "$output_file"
+            fi
+        fi
+    else
+        print_warning "未安装PyYAML，使用简化方案移除LDAP服务"
+        # 简化方案：使用sed移除服务块（兼容macOS和Linux）
+        if [[ "$OS_TYPE" == "macOS" ]]; then
             sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i.bak '/^  openldap:/d' "$output_file"
             sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+            
+            # 手动移除一些可能的残留
+            sed -i.bak '/LDAP_SERVER=/d' "$output_file"
+            sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
+            sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
+        else
+            sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i '/^  openldap:/d' "$output_file"
+            sed -i '/^  phpldapadmin:/d' "$output_file"
+            
+            # 手动移除一些可能的残留
+            sed -i '/LDAP_SERVER=/d' "$output_file"
+            sed -i '/PHPLDAPADMIN_/d' "$output_file"
+            sed -i '/openldap:/,/condition: service_healthy/d' "$output_file"
         fi
-    else
-        print_warning "未安装PyYAML，使用简化方案移除LDAP服务"
-        # 简化方案：使用sed移除服务块
-        sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-        sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-        sed -i.bak '/^  openldap:/d' "$output_file"
-        sed -i.bak '/^  phpldapadmin:/d' "$output_file"
-        
-        # 手动移除一些可能的残留
-        sed -i.bak '/LDAP_SERVER=/d' "$output_file"
-        sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-        sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
     fi
     
     # 4. 清理重复的networks配置（如果有的话）
@@ -756,8 +801,10 @@ generate_production_config() {
     END { if (prev_line != "") print prev_line }
     ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
     
-    # 5. 清理备份文件
-    rm -f "$output_file.bak"
+    # 5. 清理备份文件（仅在macOS上存在）
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        rm -f "$output_file.bak"
+    fi
     
     # 6. 验证配置文件
     print_info "验证配置文件..."
