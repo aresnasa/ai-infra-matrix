@@ -16,7 +16,46 @@ SRC_SERVICES="backend frontend jupyterhub nginx saltstack"
 SRC_PATHS="src/backend src/frontend src/jupyterhub src/nginx src/saltstack"
 
 # 依赖镜像定义（第三方中间件）
+# 静态列表作为后备
 DEPENDENCY_IMAGES="postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
+
+# 动态收集依赖镜像函数
+collect_dependency_images() {
+    local compose_files=()
+    local script_dir="$(cd "$(dirname "$0")" && pwd)"
+    
+    # 收集所有compose文件
+    [ -f "docker-compose.yml" ] && compose_files+=("docker-compose.yml")
+    [ -f "src/docker/production/docker-compose.yml" ] && compose_files+=("src/docker/production/docker-compose.yml")
+    
+    if [ ${#compose_files[@]} -eq 0 ]; then
+        print_warning "未找到docker-compose.yml文件，使用静态依赖列表"
+        echo "$DEPENDENCY_IMAGES"
+        return
+    fi
+    
+    # 提取所有镜像，排除ai-infra-*镜像
+    local images_list
+    images_list=$(
+        for f in "${compose_files[@]}"; do
+            grep -E '^[[:space:]]*image:[[:space:]]' "$f" 2>/dev/null | \
+                sed -E 's/^[[:space:]]*image:[[:space:]]*//' | \
+                sed -E 's/[[:space:]]+#.*$//' | \
+                tr -d '"' | tr -d "'" | \
+                sed 's/\${[^}]*}//' | \
+                sed 's/:$//' || true
+        done | \
+        grep -vE '^(ai-infra-|$)' | \
+        awk 'NF{print $1}' | sort -u
+    )
+    
+    # 返回收集到的镜像列表
+    if [ -n "$images_list" ]; then
+        echo "$images_list" | tr '\n' ' '
+    else
+        echo "$DEPENDENCY_IMAGES"
+    fi
+}
 
 # Mock 数据测试相关配置
 MOCK_DATA_ENABLED="${MOCK_DATA_ENABLED:-false}"
@@ -357,13 +396,18 @@ pull_and_tag_dependencies() {
     print_info "拉取并标记依赖镜像到 $registry"
     print_info "=========================================="
     print_info "目标标签: $tag"
+    
+    # 动态收集依赖镜像
+    local dependency_images
+    dependency_images=$(collect_dependency_images)
+    print_info "收集到依赖镜像: $dependency_images"
     echo
     
     local success_count=0
     local total_count=0
     local failed_deps=()
     
-    for dep_image in $DEPENDENCY_IMAGES; do
+    for dep_image in $dependency_images; do
         total_count=$((total_count + 1))
         print_info "处理依赖镜像: $dep_image"
         
@@ -427,13 +471,18 @@ push_dependencies() {
     print_info "推送依赖镜像到 $registry"
     print_info "=========================================="
     print_info "目标标签: $tag"
+    
+    # 动态收集依赖镜像
+    local dependency_images
+    dependency_images=$(collect_dependency_images)
+    print_info "收集到依赖镜像: $dependency_images"
     echo
     
     local success_count=0
     local total_count=0
     local failed_deps=()
     
-    for dep_image in $DEPENDENCY_IMAGES; do
+    for dep_image in $dependency_images; do
         total_count=$((total_count + 1))
         
         # 生成目标镜像名（与拉取时保持一致）
@@ -851,7 +900,9 @@ show_help() {
     done
     echo
     echo "依赖镜像列表:"
-    for dep_image in $DEPENDENCY_IMAGES; do
+    local dependency_images
+    dependency_images=$(collect_dependency_images)
+    for dep_image in $dependency_images; do
         echo "  • $dep_image"
     done
     echo
