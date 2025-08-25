@@ -19,7 +19,7 @@ detect_os() {
 
 # 全局变量
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.0"
+VERSION="   1.0.0"
 CONFIG_FILE="$SCRIPT_DIR/config.toml"
 OS_TYPE=$(detect_os)
 
@@ -909,7 +909,7 @@ generate_production_config() {
         sed -i "s|${registry}/ai-infra-\([^:]*\):\${IMAGE_TAG}|${registry}/ai-infra-\1:${tag}|g" "$output_file"
     fi
     
-    # 3. 移除LDAP相关服务（使用Python脚本精确处理）
+    # 3. 移除LDAP相关服务（使用改进的处理逻辑）
     print_info "移除openldap和phpldapadmin服务..."
     
     # 检查是否有Python和PyYAML
@@ -919,62 +919,126 @@ generate_production_config() {
             mv "$output_file.tmp" "$output_file"
             print_success "✓ 使用Python脚本成功移除LDAP服务"
         else
-            print_warning "Python脚本移除失败，使用备用方案"
-            # 备用方案：使用sed简单移除（兼容macOS和Linux）
+            print_warning "Python脚本移除失败，使用改进的备用方案"
+            # 改进的备用方案：更完整的sed和awk处理
             if [[ "$OS_TYPE" == "macOS" ]]; then
+                # macOS版本 - 移除整个服务块
                 sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i.bak '/^  openldap:/d' "$output_file"
                 sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+                
+                # 移除depends_on中的openldap依赖（包括复杂格式）
+                sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
+                sed -i.bak '/LDAP_SERVER=/d' "$output_file"
+                sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
             else
+                # Linux版本 - 移除整个服务块
                 sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i '/^  openldap:/d' "$output_file"
                 sed -i '/^  phpldapadmin:/d' "$output_file"
+                
+                # 移除depends_on中的openldap依赖（包括复杂格式）
+                sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
+                sed -i '/LDAP_SERVER=/d' "$output_file"
+                sed -i '/PHPLDAPADMIN_/d' "$output_file"
             fi
+            
+            # 使用awk清理复杂的多行openldap依赖块（适用于所有系统）
+            awk '
+            BEGIN { 
+                in_openldap_dep = 0
+                print_line = 1
+            }
+            {
+                # 检测openldap依赖块的开始
+                if ($0 ~ /^[[:space:]]*openldap:[[:space:]]*$/) {
+                    in_openldap_dep = 1
+                    print_line = 0
+                }
+                # 检测openldap依赖块的结束
+                else if (in_openldap_dep && $0 ~ /^[[:space:]]*condition: service_healthy[[:space:]]*$/) {
+                    in_openldap_dep = 0
+                    print_line = 0
+                }
+                # 检测下一个服务或配置块（重置状态）
+                else if (in_openldap_dep && $0 ~ /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*/) {
+                    in_openldap_dep = 0
+                    print_line = 1
+                }
+                # 普通情况
+                else {
+                    print_line = 1
+                }
+                
+                # 只打印非openldap依赖的行
+                if (print_line && !in_openldap_dep) {
+                    print $0
+                }
+            }
+            ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
         fi
     else
-        print_warning "未安装PyYAML，使用简化方案移除LDAP服务"
-        # 简化方案：使用sed移除服务块（兼容macOS和Linux）
+        print_warning "未安装PyYAML，使用改进的sed方案移除LDAP服务"
+        # 改进的纯sed和awk方案
         if [[ "$OS_TYPE" == "macOS" ]]; then
+            # macOS版本
             sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i.bak '/^  openldap:/d' "$output_file"
             sed -i.bak '/^  phpldapadmin:/d' "$output_file"
             
-            # 手动移除一些可能的残留
+            # 移除简单的依赖和环境变量
+            sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
             sed -i.bak '/LDAP_SERVER=/d' "$output_file"
             sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-            sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
-            # 移除depends_on中的openldap依赖
-            sed -i.bak '/openldap:$/d' "$output_file"
-            sed -i.bak '/condition: service_healthy$/d' "$output_file"
-            # 移除单独的openldap依赖行
-            sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
-            sed -i.bak '/^[[:space:]]*openldap:[[:space:]]*$/d' "$output_file"
-            # 移除depends_on中的openldap依赖
-            sed -i.bak '/openldap:$/d' "$output_file"
-            sed -i.bak '/condition: service_healthy$/d' "$output_file"
-            # 移除单独的openldap依赖行
-            sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
-            sed -i.bak '/^[[:space:]]*openldap:[[:space:]]*$/d' "$output_file"
         else
+            # Linux版本
             sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i '/^  openldap:/d' "$output_file"
             sed -i '/^  phpldapadmin:/d' "$output_file"
             
-            # 手动移除一些可能的残留
+            # 移除简单的依赖和环境变量
+            sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
             sed -i '/LDAP_SERVER=/d' "$output_file"
             sed -i '/PHPLDAPADMIN_/d' "$output_file"
-            sed -i '/openldap:/,/condition: service_healthy/d' "$output_file"
-            # 移除depends_on中的openldap依赖
-            sed -i '/openldap:$/d' "$output_file"
-            sed -i '/condition: service_healthy$/d' "$output_file"
-            # 移除单独的openldap依赖行
-            sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
-            sed -i '/^[[:space:]]*openldap:[[:space:]]*$/d' "$output_file"
         fi
+        
+        # 使用awk清理复杂的多行openldap依赖块
+        awk '
+        BEGIN { 
+            in_openldap_dep = 0
+            print_line = 1
+        }
+        {
+            # 检测openldap依赖块的开始
+            if ($0 ~ /^[[:space:]]*openldap:[[:space:]]*$/) {
+                in_openldap_dep = 1
+                print_line = 0
+            }
+            # 检测openldap依赖块的结束
+            else if (in_openldap_dep && $0 ~ /^[[:space:]]*condition: service_healthy[[:space:]]*$/) {
+                in_openldap_dep = 0
+                print_line = 0
+            }
+            # 检测下一个服务或配置块（重置状态）
+            else if (in_openldap_dep && $0 ~ /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*/) {
+                in_openldap_dep = 0
+                print_line = 1
+            }
+            # 普通情况
+            else {
+                print_line = 1
+            }
+            
+            # 只打印非openldap依赖的行
+            if (print_line && !in_openldap_dep) {
+                print $0
+            }
+        }
+        ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
     fi
     
     # 4. 清理重复的networks配置（如果有的话）
