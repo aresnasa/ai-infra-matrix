@@ -233,6 +233,62 @@ print_error() {
 }
 
 # ==========================================
+# 环境变量管理函数
+# ==========================================
+
+# 检测并确定唯一的环境文件
+detect_env_file() {
+    local env_file=""
+    
+    # 优先级检查：.env.prod > .env > .env.example
+    if [[ -f ".env.prod" ]]; then
+        env_file=".env.prod"
+        echo "使用生产环境配置: $env_file" >&2
+    elif [[ -f ".env" ]]; then
+        env_file=".env"
+        echo "使用开发环境配置: $env_file" >&2
+    elif [[ -f ".env.example" ]]; then
+        echo "未找到环境配置文件，从模板创建..." >&2
+        cp ".env.example" ".env"
+        env_file=".env"
+        echo "✓ 从.env.example创建了.env文件" >&2
+    else
+        echo "错误: 未找到任何环境配置文件（.env.prod, .env, .env.example）" >&2
+        return 1
+    fi
+    
+    echo "$env_file"
+    return 0
+}
+
+# 验证环境文件有效性
+validate_env_file() {
+    local env_file="$1"
+    
+    if [[ ! -f "$env_file" ]]; then
+        echo "错误: 环境文件不存在: $env_file" >&2
+        return 1
+    fi
+    
+    # 检查关键变量是否存在
+    local required_vars=("IMAGE_TAG" "COMPOSE_PROJECT_NAME")
+    local missing_vars=()
+    
+    for var in "${required_vars[@]}"; do
+        if ! grep -q "^${var}=" "$env_file" 2>/dev/null; then
+            missing_vars+=("$var")
+        fi
+    done
+    
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        echo "警告: 环境文件 $env_file 缺少必要变量: ${missing_vars[*]}" >&2
+        echo "建议检查并补充这些变量" >&2
+    fi
+    
+    return 0
+}
+
+# ==========================================
 # Docker Compose 版本检测和适配
 # ==========================================
 
@@ -788,6 +844,18 @@ generate_production_config() {
         return 1
     fi
     
+    # 检测并确保环境变量文件存在
+    local env_file
+    env_file=$(detect_env_file)
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    
+    # 验证环境文件
+    if ! validate_env_file "$env_file"; then
+        return 1
+    fi
+    
     # 验证原始配置文件
     print_info "验证原始配置文件..."
     local compose_cmd=$(detect_compose_command)
@@ -825,16 +893,20 @@ generate_production_config() {
         sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
     fi
     
-    # 2. 更新镜像标签
+    # 2. 更新镜像标签（只更新项目镜像，不影响依赖镜像）
     print_info "更新镜像标签..."
     if [[ "$OS_TYPE" == "macOS" ]]; then
-        sed -i.bak "s|:latest|:${tag}|g" "$output_file"
+        # 只更新项目镜像的标签，保持依赖镜像原有标签
         sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
         sed -i.bak "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
+        # 特别处理项目镜像，确保正确的registry和tag
+        sed -i.bak "s|${registry}/ai-infra-\([^:]*\):\${IMAGE_TAG}|${registry}/ai-infra-\1:${tag}|g" "$output_file"
     else
-        sed -i "s|:latest|:${tag}|g" "$output_file"
+        # 只更新项目镜像的标签，保持依赖镜像原有标签
         sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
         sed -i "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
+        # 特别处理项目镜像，确保正确的registry和tag
+        sed -i "s|${registry}/ai-infra-\([^:]*\):\${IMAGE_TAG}|${registry}/ai-infra-\1:${tag}|g" "$output_file"
     fi
     
     # 3. 移除LDAP相关服务（使用Python脚本精确处理）
@@ -874,6 +946,18 @@ generate_production_config() {
             sed -i.bak '/LDAP_SERVER=/d' "$output_file"
             sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
             sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
+            # 移除depends_on中的openldap依赖
+            sed -i.bak '/openldap:$/d' "$output_file"
+            sed -i.bak '/condition: service_healthy$/d' "$output_file"
+            # 移除单独的openldap依赖行
+            sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
+            sed -i.bak '/^[[:space:]]*openldap:[[:space:]]*$/d' "$output_file"
+            # 移除depends_on中的openldap依赖
+            sed -i.bak '/openldap:$/d' "$output_file"
+            sed -i.bak '/condition: service_healthy$/d' "$output_file"
+            # 移除单独的openldap依赖行
+            sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
+            sed -i.bak '/^[[:space:]]*openldap:[[:space:]]*$/d' "$output_file"
         else
             sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
@@ -884,6 +968,12 @@ generate_production_config() {
             sed -i '/LDAP_SERVER=/d' "$output_file"
             sed -i '/PHPLDAPADMIN_/d' "$output_file"
             sed -i '/openldap:/,/condition: service_healthy/d' "$output_file"
+            # 移除depends_on中的openldap依赖
+            sed -i '/openldap:$/d' "$output_file"
+            sed -i '/condition: service_healthy$/d' "$output_file"
+            # 移除单独的openldap依赖行
+            sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
+            sed -i '/^[[:space:]]*openldap:[[:space:]]*$/d' "$output_file"
         fi
     fi
     
@@ -973,6 +1063,7 @@ except Exception as e:
     print_info "  2. 请确保所有源码服务镜像已推送到内部registry (使用 build-push 命令)"
     print_info "  3. 生产环境已移除LDAP服务依赖，服务可独立启动"
     print_info "  4. 请检查生成的配置文件并根据需要调整环境变量"
+    print_info "  5. 当前使用环境文件: $env_file"
     echo
     
     return 0
@@ -984,18 +1075,21 @@ start_production() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local compose_file="docker-compose.prod.yml"
-    local env_file=".env.prod"
     
     if [[ -z "$registry" ]]; then
         print_error "请指定目标 registry"
         return 1
     fi
     
-    # 检查生产环境配置文件
-    if [[ ! -f "$env_file" ]]; then
-        print_error "生产环境配置文件不存在: $env_file"
-        print_info "请使用以下命令生成生产环境密码:"
-        print_info "  ./scripts/generate-prod-passwords.sh"
+    # 检测环境文件
+    local env_file
+    env_file=$(detect_env_file)
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    
+    # 验证环境文件
+    if ! validate_env_file "$env_file"; then
         return 1
     fi
     
@@ -1038,16 +1132,23 @@ start_production() {
 # 停止生产环境
 stop_production() {
     local compose_file="docker-compose.prod.yml"
-    local env_file=".env.prod"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
         return 1
     fi
     
+    # 检测环境文件
+    local env_file
+    env_file=$(detect_env_file)
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    
     print_info "=========================================="
     print_info "停止生产环境"
     print_info "=========================================="
+    print_info "使用环境文件: $env_file"
     
     if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" down; then
         print_success "✓ 生产环境已停止"
@@ -1080,16 +1181,23 @@ restart_production() {
 # 查看生产环境状态
 production_status() {
     local compose_file="docker-compose.prod.yml"
-    local env_file=".env.prod"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
         return 1
     fi
     
+    # 检测环境文件
+    local env_file
+    env_file=$(detect_env_file)
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    
     print_info "=========================================="
     print_info "生产环境状态"
     print_info "=========================================="
+    print_info "使用环境文件: $env_file"
     
     ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps
 }
@@ -1097,12 +1205,18 @@ production_status() {
 # 查看生产环境日志
 production_logs() {
     local compose_file="docker-compose.prod.yml"
-    local env_file=".env.prod"
     local service="$1"
     local follow="${2:-false}"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
+        return 1
+    fi
+    
+    # 检测环境文件
+    local env_file
+    env_file=$(detect_env_file)
+    if [[ $? -ne 0 ]]; then
         return 1
     fi
     
