@@ -888,9 +888,25 @@ generate_production_config() {
     if [[ "$OS_TYPE" == "macOS" ]]; then
         sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
         sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+        
+        # 替换所有基础镜像为私有仓库版本
+        sed -i.bak "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
+        sed -i.bak "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
+        sed -i.bak "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
+        sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa-tcp-proxy:latest|g" "$output_file"
+        sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs-redisinsight:latest|g" "$output_file"
+        sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${registry}/minio-minio:latest|g" "$output_file"
     else
         sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
         sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+        
+        # 替换所有基础镜像为私有仓库版本
+        sed -i "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
+        sed -i "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
+        sed -i "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
+        sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa-tcp-proxy:latest|g" "$output_file"
+        sed -i "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs-redisinsight:latest|g" "$output_file"
+        sed -i "s|image: quay.io/minio/minio:latest|image: ${registry}/minio-minio:latest|g" "$output_file"
     fi
     
     # 2. 更新镜像标签（只更新项目镜像，不影响依赖镜像）
@@ -1157,12 +1173,10 @@ start_production() {
         return 1
     fi
     
-    # 如果生产配置文件不存在，先生成
-    if [[ ! -f "$compose_file" ]]; then
-        print_info "生产配置文件不存在，正在生成..."
-        if ! generate_production_config "$registry" "$tag"; then
-            return 1
-        fi
+    # 总是重新生成生产配置文件以确保使用正确的registry和tag
+    print_info "生成生产配置文件 (使用 registry: $registry, tag: $tag)..."
+    if ! generate_production_config "$registry" "$tag"; then
+        return 1
     fi
     
     print_info "=========================================="
