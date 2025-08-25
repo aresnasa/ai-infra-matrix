@@ -18,6 +18,23 @@ echo "目标仓库: $REGISTRY_BASE"
 echo "开始时间: $(date)"
 echo
 
+echo "📋 Harbor项目准备检查："
+echo "请确保以下项目已在Harbor中创建："
+echo "  • aihpc (主项目，用于ai-infra-*镜像)"
+echo "  • library (用于官方基础镜像：postgres, redis, nginx)"
+echo "  • tecnativa (用于tecnativa/tcp-proxy)"
+echo "  • redislabs (用于redislabs/redisinsight)"
+echo "  • minio (用于minio/minio)"
+echo
+read -p "是否已创建所有必要的Harbor项目？(y/n): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "请先在Harbor中创建必要的项目，然后重新运行此脚本。"
+    echo "Harbor项目创建路径：Harbor UI -> 项目 -> 新建项目"
+    exit 1
+fi
+echo
+
 # 镜像映射表
 declare -A images=(
     ["postgres:15-alpine"]="$REGISTRY_BASE/library/postgres:15-alpine"

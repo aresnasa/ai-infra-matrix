@@ -450,6 +450,87 @@ get_private_image_name() {
     fi
 }
 
+# 根据镜像映射配置获取私有镜像名称和版本
+# 支持latest标签到git版本的映射
+get_mapped_private_image() {
+    local original_image="$1"
+    local registry="$2"
+    local target_tag="${3:-v0.3.5}"  # 默认目标git版本
+    local mapping_file="$SCRIPT_DIR/config/image-mapping.conf"
+    
+    if [[ -z "$registry" ]]; then
+        echo "$original_image"
+        return 0
+    fi
+    
+    # 如果映射文件不存在，使用原有逻辑
+    if [[ ! -f "$mapping_file" ]]; then
+        get_private_image_name "$original_image" "$registry"
+        return 0
+    fi
+    
+    # 标准化镜像名称（移除tag用于匹配）
+    local image_base=""
+    local original_tag=""
+    
+    if [[ "$original_image" == *":"* ]]; then
+        image_base="${original_image%%:*}"
+        original_tag="${original_image##*:}"
+    else
+        image_base="$original_image"
+        original_tag="latest"
+    fi
+    
+    # 读取映射配置
+    local mapped_project=""
+    local mapped_version=""
+    local found_mapping=false
+    
+    while IFS='|' read -r pattern project version special; do
+        # 跳过注释和空行
+        [[ "$pattern" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$pattern" ]] && continue
+        
+        # 检查是否匹配（支持精确匹配和基础名匹配）
+        if [[ "$original_image" == "$pattern" ]] || 
+           [[ "$image_base" == "$pattern" ]] ||
+           [[ "$image_base:$original_tag" == "$pattern" ]]; then
+            mapped_project="$project"
+            mapped_version="$version"
+            found_mapping=true
+            break
+        fi
+    done < "$mapping_file"
+    
+    if [[ "$found_mapping" == "true" ]]; then
+        # 处理特殊变量替换
+        if [[ "$mapped_version" == *"\${TARGET_TAG}"* ]]; then
+            # 项目镜像，使用传入的target_tag
+            mapped_version="${mapped_version//\${TARGET_TAG}/$target_tag}"
+        elif [[ "$mapped_version" == *"\${IMAGE_TAG}"* ]]; then
+            # 兼容旧格式
+            mapped_version="${mapped_version//\${IMAGE_TAG}/$target_tag}"
+        fi
+        
+        # 构建Harbor格式的完整镜像名
+        local registry_base="${registry%%/*}"
+        local final_image=""
+        
+        if [[ "$registry" == *"/"* ]]; then
+            # Harbor格式：registry/project已指定
+            final_image="${registry_base}/${mapped_project}/${image_base##*/}:${mapped_version}"
+        else
+            # 传统格式
+            final_image="${registry}/${mapped_project}/${image_base##*/}:${mapped_version}"
+        fi
+        
+        echo "$final_image"
+    else
+        # 未找到映射，使用原有逻辑
+        get_private_image_name "$original_image" "$registry"
+    fi
+}
+
 # 检查 Dockerfile 是否存在
 check_dockerfile() {
     local service="$1"
@@ -695,7 +776,7 @@ pull_and_tag_dependencies() {
     print_info "=========================================="
     print_info "拉取并标记依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "目标标签: $tag"
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
     
     # 动态收集依赖镜像
     local dependency_images
@@ -715,19 +796,9 @@ pull_and_tag_dependencies() {
         if docker pull "$dep_image"; then
             print_success "  ✓ 拉取成功: $dep_image"
             
-            # 生成目标镜像名（使用统一的命名规则）
-            local base_name
-            if [[ "$dep_image" == *"/"* ]]; then
-                # 包含组织名的镜像，提取最后的镜像名
-                base_name=$(echo "$dep_image" | sed 's|.*/||' | sed 's|:.*||')
-            else
-                # 简单镜像名
-                base_name=$(echo "$dep_image" | sed 's|:.*||')
-            fi
-            
-            # 使用get_private_image_name函数生成目标镜像名
+            # 使用新的映射机制生成目标镜像名
             local target_image
-            target_image=$(get_private_image_name "ai-infra-deps-$base_name:$tag" "$registry")
+            target_image=$(get_mapped_private_image "$dep_image" "$registry" "v0.3.5")
             
             # 标记镜像
             if docker tag "$dep_image" "$target_image"; then
@@ -770,7 +841,7 @@ push_dependencies() {
     print_info "=========================================="
     print_info "推送依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "目标标签: $tag"
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
     
     # 动态收集依赖镜像
     local dependency_images
@@ -785,19 +856,9 @@ push_dependencies() {
     for dep_image in $dependency_images; do
         total_count=$((total_count + 1))
         
-        # 生成目标镜像名（与拉取时保持一致）
-        local base_name
-        if [[ "$dep_image" == *"/"* ]]; then
-            # 包含组织名的镜像，提取最后的镜像名
-            base_name=$(echo "$dep_image" | sed 's|.*/||' | sed 's|:.*||')
-        else
-            # 简单镜像名
-            base_name=$(echo "$dep_image" | sed 's|:.*||')
-        fi
-        
-        # 使用get_private_image_name函数生成目标镜像名
+        # 使用新的映射机制生成目标镜像名
         local target_image
-        target_image=$(get_private_image_name "ai-infra-deps-$base_name:$tag" "$registry")
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "v0.3.5")
         
         print_info "推送依赖镜像: $target_image"
         
@@ -882,47 +943,62 @@ generate_production_config() {
     # 复制基础配置文件
     cp "$base_file" "$output_file"
     
-    # 1. 更新镜像registry路径
-    print_info "更新镜像registry路径... (OS: $OS_TYPE)"
-    # 兼容macOS和Linux的sed命令
+    # 1. 使用映射配置更新基础镜像和第三方镜像，项目镜像保持原有逻辑
+    print_info "使用映射配置更新基础镜像和第三方镜像... (OS: $OS_TYPE)"
+    
+    # 首先处理项目镜像（保持原有逻辑）
+    print_info "处理项目镜像..."
     if [[ "$OS_TYPE" == "macOS" ]]; then
         sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
-        sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-        
-        # 替换所有基础镜像为私有仓库版本（使用library项目命名空间）
-        sed -i.bak "s|image: postgres:15-alpine|image: ${registry}/library/postgres:15-alpine|g" "$output_file"
-        sed -i.bak "s|image: redis:7-alpine|image: ${registry}/library/redis:7-alpine|g" "$output_file"
-        sed -i.bak "s|image: nginx:1.27-alpine|image: ${registry}/library/nginx:1.27-alpine|g" "$output_file"
-        sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa/tcp-proxy:latest|g" "$output_file"
-        sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs/redisinsight:latest|g" "$output_file"
-        sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${registry}/minio/minio:latest|g" "$output_file"
+        sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-matrix/ai-infra-|g" "$output_file"
     else
         sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
-        sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-        
-        # 替换所有基础镜像为私有仓库版本（使用library项目命名空间）
-        sed -i "s|image: postgres:15-alpine|image: ${registry}/library/postgres:15-alpine|g" "$output_file"
-        sed -i "s|image: redis:7-alpine|image: ${registry}/library/redis:7-alpine|g" "$output_file"
-        sed -i "s|image: nginx:1.27-alpine|image: ${registry}/library/nginx:1.27-alpine|g" "$output_file"
-        sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tecnativa/tcp-proxy:latest|g" "$output_file"
-        sed -i "s|image: redislabs/redisinsight:latest|image: ${registry}/redislabs/redisinsight:latest|g" "$output_file"
-        sed -i "s|image: quay.io/minio/minio:latest|image: ${registry}/minio/minio:latest|g" "$output_file"
+        sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-matrix/ai-infra-|g" "$output_file"
     fi
     
-    # 2. 更新镜像标签（只更新项目镜像，不影响依赖镜像）
-    print_info "更新镜像标签..."
+    # 然后处理基础镜像和第三方镜像（使用映射配置）
+    print_info "处理基础镜像和第三方镜像..."
+    declare -a base_images_to_replace=(
+        "postgres:15-alpine"
+        "redis:7-alpine" 
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "tecnativa/tcp-proxy"
+        "redislabs/redisinsight:latest"
+        "redislabs/redisinsight"
+        "quay.io/minio/minio:latest"
+        "minio/minio:latest"
+        "minio/minio"
+    )
+    
+    # 使用映射配置替换基础镜像
+    for original_image in "${base_images_to_replace[@]}"; do
+        # 获取映射后的镜像（这里target_tag用于基础镜像映射到v0.3.5）
+        local mapped_image
+        mapped_image=$(get_mapped_private_image "$original_image" "$registry" "v0.3.5")
+        
+        if [[ "$mapped_image" != "$original_image" ]]; then
+            print_info "  映射: $original_image -> $mapped_image"
+            
+            # 执行替换
+            if [[ "$OS_TYPE" == "macOS" ]]; then
+                sed -i.bak "s|image: ${original_image}|image: ${mapped_image}|g" "$output_file"
+            else
+                sed -i "s|image: ${original_image}|image: ${mapped_image}|g" "$output_file"
+            fi
+        fi
+    done
+    
+    # 2. 更新项目镜像的环境变量标签
+    print_info "更新项目镜像环境变量标签..."
     if [[ "$OS_TYPE" == "macOS" ]]; then
-        # 只更新项目镜像的标签，保持依赖镜像原有标签
+        # 只更新项目镜像的环境变量标签
         sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
         sed -i.bak "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
-        # 特别处理项目镜像，确保正确的registry和tag
-        sed -i.bak "s|${registry}/ai-infra-\([^:]*\):\${IMAGE_TAG}|${registry}/ai-infra-\1:${tag}|g" "$output_file"
     else
-        # 只更新项目镜像的标签，保持依赖镜像原有标签
+        # 只更新项目镜像的环境变量标签
         sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
         sed -i "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
-        # 特别处理项目镜像，确保正确的registry和tag
-        sed -i "s|${registry}/ai-infra-\([^:]*\):\${IMAGE_TAG}|${registry}/ai-infra-\1:${tag}|g" "$output_file"
     fi
     
     # 3. 移除LDAP相关服务（使用改进的处理逻辑）
@@ -1804,6 +1880,7 @@ main() {
         "deps-pull")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
+                print_info "用法: $0 deps-pull <registry> [tag]"
                 exit 1
             fi
             pull_and_tag_dependencies "$2" "${3:-latest}"
@@ -1812,6 +1889,7 @@ main() {
         "deps-push")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
+                print_info "用法: $0 deps-push <registry> [tag]"
                 exit 1
             fi
             push_dependencies "$2" "${3:-latest}"

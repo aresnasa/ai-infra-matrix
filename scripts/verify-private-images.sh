@@ -20,6 +20,17 @@ echo "镜像标签: $TAG"
 echo "开始时间: $(date)"
 echo
 
+echo "📋 Harbor项目检查："
+echo "验证前请确保以下项目已在Harbor中创建："
+echo "  • aihpc (主项目)"
+echo "  • library (基础镜像)"
+echo "  • tecnativa (第三方镜像)"
+echo "  • redislabs (第三方镜像)"
+echo "  • minio (第三方镜像)"
+echo
+echo "如未创建，请参考: docs/HARBOR_PROJECT_SETUP.md"
+echo
+
 # 源码镜像列表
 declare -a source_images=(
     "ai-infra-backend-init"
