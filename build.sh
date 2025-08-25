@@ -672,6 +672,26 @@ generate_production_config() {
         return 1
     fi
     
+    # 验证原始配置文件
+    print_info "验证原始配置文件..."
+    if command -v docker-compose >/dev/null 2>&1; then
+        if ! docker-compose -f "$base_file" config >/dev/null 2>&1; then
+            print_error "原始配置文件验证失败: $base_file"
+            print_info "详细错误信息："
+            docker-compose -f "$base_file" config 2>&1 | head -10
+            return 1
+        fi
+    elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        if ! docker compose -f "$base_file" config >/dev/null 2>&1; then
+            print_error "原始配置文件验证失败: $base_file"
+            print_info "详细错误信息："
+            docker compose -f "$base_file" config 2>&1 | head -10
+            return 1
+        fi
+    else
+        print_warning "未安装docker-compose或docker compose，跳过原始配置验证"
+    fi
+    
     print_info "生成生产环境配置文件..."
     print_info "  Registry: $registry"
     print_info "  Tag: $tag"
@@ -690,70 +710,38 @@ generate_production_config() {
     print_info "更新镜像标签..."
     sed -i.bak "s|:latest|:${tag}|g" "$output_file"
     
-    # 3. 移除LDAP相关服务（精确删除，避免networks重复）
+    # 3. 移除LDAP相关服务（使用Python脚本精确处理）
     print_info "移除openldap和phpldapadmin服务..."
     
-    # 使用更精确的方式删除LDAP服务块，避免留下孤立的配置
-    awk '
-    BEGIN { in_openldap = 0; in_phpldapadmin = 0; }
+    # 检查是否有Python和PyYAML
+    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
+        # 使用Python脚本精确移除LDAP服务
+        if python3 fix_ldap_removal.py "$output_file" "$output_file.tmp" 2>/dev/null; then
+            mv "$output_file.tmp" "$output_file"
+            print_success "✓ 使用Python脚本成功移除LDAP服务"
+        else
+            print_warning "Python脚本移除失败，使用备用方案"
+            # 备用方案：使用sed简单移除
+            sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i.bak '/^  openldap:/d' "$output_file"
+            sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+        fi
+    else
+        print_warning "未安装PyYAML，使用简化方案移除LDAP服务"
+        # 简化方案：使用sed移除服务块
+        sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+        sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+        sed -i.bak '/^  openldap:/d' "$output_file"
+        sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+        
+        # 手动移除一些可能的残留
+        sed -i.bak '/LDAP_SERVER=/d' "$output_file"
+        sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
+        sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
+    fi
     
-    # 检测openldap服务开始
-    /^[[:space:]]*openldap:[[:space:]]*$/ {
-        in_openldap = 1
-        openldap_indent = length($0) - length(ltrim($0))
-        print "  # openldap service removed in production"
-        next
-    }
-    
-    # 检测phpldapadmin服务开始  
-    /^[[:space:]]*phpldapadmin:[[:space:]]*$/ {
-        in_phpldapadmin = 1
-        phpldapadmin_indent = length($0) - length(ltrim($0))
-        print "  # phpldapadmin service removed in production"
-        next
-    }
-    
-    # 在openldap服务块内
-    in_openldap {
-        current_indent = length($0) - length(ltrim($0))
-        if (NF == 0) {
-            print $0
-            next
-        }
-        if (current_indent <= openldap_indent && !/^[[:space:]]*$/) {
-            in_openldap = 0
-            print $0
-        } else {
-            next
-        }
-    }
-    
-    # 在phpldapadmin服务块内
-    in_phpldapadmin {
-        current_indent = length($0) - length(ltrim($0))
-        if (NF == 0) {
-            print $0
-            next
-        }
-        if (current_indent <= phpldapadmin_indent && !/^[[:space:]]*$/) {
-            in_phpldapadmin = 0
-            print $0
-        } else {
-            next
-        }
-    }
-    
-    # 正常行输出
-    !in_openldap && !in_phpldapadmin { print }
-    
-    function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
-    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-    
-    # 4. 移除服务依赖中的openldap引用
-    print_info "移除openldap依赖..."
-    sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
-    
-    # 5. 清理重复的networks配置
+    # 4. 清理重复的networks配置（如果有的话）
     print_info "清理重复的networks配置..."
     awk '
     BEGIN { prev_line = "" }
@@ -768,39 +756,66 @@ generate_production_config() {
     END { if (prev_line != "") print prev_line }
     ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
     
-    # 6. 移除LDAP环境变量
-    print_info "移除LDAP环境变量..."
-    sed -i.bak '/LDAP_SERVER=/d' "$output_file"
-    sed -i.bak '/- LDAP_SERVER=/d' "$output_file"
-    sed -i.bak '/LDAP_SERVER:/d' "$output_file"
-    sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-    sed -i.bak '/LDAP_ADMIN_PASSWORD/d' "$output_file"
-    sed -i.bak '/LDAP_CONFIG_PASSWORD/d' "$output_file"
-    
-    # 7. 清理备份文件
+    # 5. 清理备份文件
     rm -f "$output_file.bak"
     
-    # 8. 验证YAML语法
-    print_info "验证YAML语法..."
+    # 6. 验证配置文件
+    print_info "验证配置文件..."
+    
+    # 验证YAML语法
+    local yaml_valid=false
     if command -v python3 >/dev/null 2>&1; then
-        python3 -c "
+        if python3 -c "
 import yaml
 import sys
 try:
     with open('$output_file', 'r') as f:
         yaml.safe_load(f)
     print('✓ YAML语法正确')
+    sys.exit(0)
 except yaml.YAMLError as e:
     print(f'✗ YAML语法错误: {e}')
     sys.exit(1)
 except Exception as e:
     print(f'✗ 文件读取错误: {e}')
     sys.exit(1)
-" || {
-            print_warning "YAML验证失败，请手动检查配置文件"
-        }
+"; then
+            yaml_valid=true
+        else
+            print_error "YAML语法验证失败"
+            return 1
+        fi
     else
         print_warning "未安装Python3，跳过YAML语法验证"
+        yaml_valid=true
+    fi
+    
+    # 验证docker-compose配置
+    if [[ "$yaml_valid" == "true" ]]; then
+        print_info "验证docker-compose配置..."
+        if command -v docker-compose >/dev/null 2>&1; then
+            # 使用docker-compose config命令验证配置文件
+            if docker-compose -f "$output_file" config >/dev/null 2>&1; then
+                print_success "✓ docker-compose配置验证通过"
+            else
+                print_error "✗ docker-compose配置验证失败"
+                print_info "详细错误信息："
+                docker-compose -f "$output_file" config 2>&1 | head -10
+                return 1
+            fi
+        elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            # 使用docker compose命令验证配置文件
+            if docker compose -f "$output_file" config >/dev/null 2>&1; then
+                print_success "✓ docker compose配置验证通过"
+            else
+                print_error "✗ docker compose配置验证失败"
+                print_info "详细错误信息："
+                docker compose -f "$output_file" config 2>&1 | head -10
+                return 1
+            fi
+        else
+            print_warning "未安装docker-compose或docker compose，跳过配置验证"
+        fi
     fi
     
     print_success "✓ 生产环境配置文件生成成功: $output_file"
