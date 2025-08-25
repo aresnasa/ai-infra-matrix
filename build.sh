@@ -659,231 +659,149 @@ push_dependencies() {
 generate_production_config() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
-    local compose_file="${3:-docker-compose.yml}"
-    local output_file="${4:-docker-compose.prod.yml}"
+    local base_file="docker-compose.yml"
+    local output_file="docker-compose.prod.yml"
     
     if [[ -z "$registry" ]]; then
         print_error "请指定目标 registry"
         return 1
     fi
     
-    if [[ ! -f "$compose_file" ]]; then
-        print_error "源配置文件不存在: $compose_file"
+    if [[ ! -f "$base_file" ]]; then
+        print_error "基础配置文件不存在: $base_file"
         return 1
     fi
     
-    print_info "=========================================="
-    print_info "生成生产环境配置文件"
-    print_info "=========================================="
-    print_info "源文件: $compose_file"
-    print_info "目标文件: $output_file"
-    print_info "Registry: $registry"
-    print_info "标签: $tag"
+    print_info "生成生产环境配置文件..."
+    print_info "  Registry: $registry"
+    print_info "  Tag: $tag"
+    print_info "  输出文件: $output_file"
     echo
     
-    # 复制源文件
-    cp "$compose_file" "$output_file"
+    # 复制基础配置文件
+    cp "$base_file" "$output_file"
     
-    # 替换依赖镜像为内部registry版本
-    print_info "替换依赖镜像为内部registry版本..."
-    for image in $DEPENDENCY_IMAGES; do
-        if [[ -n "$image" ]]; then
-            local base_name=$(basename "$image" | cut -d':' -f1)
-            local internal_image=$(get_private_image_name "ai-infra-deps-$base_name:$tag" "$registry")
-            print_info "  $image -> $internal_image"
-            sed -i.bak "s|image: $image|image: $internal_image|g" "$output_file"
-            sed -i.bak "s|image: '$image'|image: '$internal_image'|g" "$output_file"
-            sed -i.bak "s|image: \"$image\"|image: \"$internal_image\"|g" "$output_file"
-        fi
-    done
+    # 1. 更新镜像registry路径
+    print_info "更新镜像registry路径..."
+    sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}/ai-infra-matrix|g" "$output_file"
+    sed -i.bak "s|image: ai-infra-matrix|image: ${registry}/ai-infra-matrix|g" "$output_file"
     
-    # 替换源码服务镜像为内部registry版本
-    print_info "替换源码服务镜像为内部registry版本..."
-    for service in $SRC_SERVICES; do
-        if [[ -n "$service" ]]; then
-            local service_image=$(get_private_image_name "ai-infra-$service:$tag" "$registry")
-            print_info "  ai-infra-$service -> $service_image"
-            
-            # 替换image行
-            sed -i.bak "s|image: ai-infra-$service[^[:space:]]*|image: $service_image|g" "$output_file"
-            sed -i.bak "s|image: ai-infra-$service:\${[^}]*}|image: $service_image|g" "$output_file"
-        fi
-    done
+    # 2. 更新镜像标签
+    print_info "更新镜像标签..."
+    sed -i.bak "s|:latest|:${tag}|g" "$output_file"
     
-    # 替换扩展组件镜像为内部registry版本
-    print_info "替换扩展组件镜像为内部registry版本..."
-    for extension in $EXTENSION_IMAGES; do
-        if [[ -n "$extension" ]]; then
-            local ext_image=$(get_private_image_name "$extension:$tag" "$registry")
-            print_info "  $extension -> $ext_image"
-            
-            # 替换image行
-            sed -i.bak "s|image: $extension[^[:space:]]*|image: $ext_image|g" "$output_file"
-            sed -i.bak "s|image: $extension:\${[^}]*}|image: $ext_image|g" "$output_file"
-        fi
-    done
+    # 3. 移除LDAP相关服务（精确删除，避免networks重复）
+    print_info "移除openldap和phpldapadmin服务..."
     
-    # 简化处理：移除build块（使用简单的awk脚本）
-    print_info "移除构建配置块..."
+    # 使用更精确的方式删除LDAP服务块，避免留下孤立的配置
     awk '
-        /^[[:space:]]*build:[[:space:]]*/ {
-            in_build = 1
-            build_indent = length($0) - length(ltrim($0))
+    BEGIN { in_openldap = 0; in_phpldapadmin = 0; }
+    
+    # 检测openldap服务开始
+    /^[[:space:]]*openldap:[[:space:]]*$/ {
+        in_openldap = 1
+        openldap_indent = length($0) - length(ltrim($0))
+        print "  # openldap service removed in production"
+        next
+    }
+    
+    # 检测phpldapadmin服务开始  
+    /^[[:space:]]*phpldapadmin:[[:space:]]*$/ {
+        in_phpldapadmin = 1
+        phpldapadmin_indent = length($0) - length(ltrim($0))
+        print "  # phpldapadmin service removed in production"
+        next
+    }
+    
+    # 在openldap服务块内
+    in_openldap {
+        current_indent = length($0) - length(ltrim($0))
+        if (NF == 0) {
+            print $0
             next
         }
-        in_build {
-            current_indent = length($0) - length(ltrim($0))
-            if (NF == 0 || current_indent > build_indent) {
-                next
-            } else if (current_indent <= build_indent) {
-                in_build = 0
-            }
-        }
-        !in_build { print }
-        
-        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
-    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-    
-    # 生产环境移除LDAP依赖
-    print_info "移除LDAP服务依赖（生产环境可选）..."
-    
-    # 移除openldap和phpldapadmin服务定义
-    awk '
-        /^[[:space:]]*openldap:[[:space:]]*$/ || /^[[:space:]]*phpldapadmin:[[:space:]]*$/ {
-            in_ldap = 1
-            ldap_indent = length($0) - length(ltrim($0))
-            print "  # " $0 " - REMOVED IN PRODUCTION"
+        if (current_indent <= openldap_indent && !/^[[:space:]]*$/) {
+            in_openldap = 0
+            print $0
+        } else {
             next
         }
-        in_ldap {
-            current_indent = length($0) - length(ltrim($0))
-            if (NF == 0) {
-                print $0
-                next
-            }
-            if (current_indent <= ldap_indent && !/^[[:space:]]*$/) {
-                in_ldap = 0
-                print $0
-            } else {
-                print "  # " $0 " - REMOVED IN PRODUCTION"
-                next
-            }
-        }
-        !in_ldap { print }
-        
-        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
-    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    }
     
-    # 移除depends_on中的openldap依赖
-    print_info "移除服务中的LDAP依赖..."
-    awk '
-        /^[[:space:]]*openldap:[[:space:]]*$/ {
-            # 在depends_on块中找到openldap，删除整个openldap依赖块
-            in_ldap_dep = 1
-            ldap_dep_indent = length($0) - length(ltrim($0))
+    # 在phpldapadmin服务块内
+    in_phpldapadmin {
+        current_indent = length($0) - length(ltrim($0))
+        if (NF == 0) {
+            print $0
             next
         }
-        in_ldap_dep {
-            current_indent = length($0) - length(ltrim($0))
-            if (NF == 0) {
-                print $0
-                next
-            }
-            if (current_indent <= ldap_dep_indent && !/^[[:space:]]*$/) {
-                in_ldap_dep = 0
-                print $0
-            } else {
-                # 跳过openldap依赖配置行
-                next
-            }
+        if (current_indent <= phpldapadmin_indent && !/^[[:space:]]*$/) {
+            in_phpldapadmin = 0
+            print $0
+        } else {
+            next
         }
-        !in_ldap_dep { print }
-        
-        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
+    }
+    
+    # 正常行输出
+    !in_openldap && !in_phpldapadmin { print }
+    
+    function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
     ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
     
-    # 移除LDAP_SERVER环境变量
+    # 4. 移除服务依赖中的openldap引用
+    print_info "移除openldap依赖..."
+    sed -i.bak '/openldap:/,/condition: service_healthy/d' "$output_file"
+    
+    # 5. 清理重复的networks配置
+    print_info "清理重复的networks配置..."
+    awk '
+    BEGIN { prev_line = "" }
+    {
+        # 如果当前行和上一行都是"    networks:"，则跳过当前行
+        if ($0 ~ /^[[:space:]]*networks:[[:space:]]*$/ && prev_line ~ /^[[:space:]]*networks:[[:space:]]*$/) {
+            next
+        }
+        print prev_line
+        prev_line = $0
+    }
+    END { if (prev_line != "") print prev_line }
+    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    
+    # 6. 移除LDAP环境变量
+    print_info "移除LDAP环境变量..."
     sed -i.bak '/LDAP_SERVER=/d' "$output_file"
     sed -i.bak '/- LDAP_SERVER=/d' "$output_file"
     sed -i.bak '/LDAP_SERVER:/d' "$output_file"
-    
-    # 移除phpldapadmin相关配置
-    print_info "移除phpldapadmin服务..."
     sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-    
-    # 移除openldap相关配置
-    print_info "移除openldap服务..."
     sed -i.bak '/LDAP_ADMIN_PASSWORD/d' "$output_file"
     sed -i.bak '/LDAP_CONFIG_PASSWORD/d' "$output_file"
     
-    # 移除服务依赖中的openldap引用
-    print_info "移除服务依赖中的openldap引用..."
-    sed -i.bak '/# LDAP_SERVER: openldap/d' "$output_file"
-    
-    # 清理残留的LDAP配置注释
-    print_info "清理残留LDAP配置..."
-    sed -i.bak '/Disabled in production/d' "$output_file"
-    sed -i.bak 's/- LDAP_SERVER=openldap/# - LDAP_SERVER=openldap # Disabled in production/' "$output_file"
-    sed -i.bak 's/LDAP_SERVER: openldap/# LDAP_SERVER: openldap # Disabled in production/' "$output_file"
-    
-    # 移除phpldapadmin服务（整个服务块）
-    print_info "移除phpldapadmin服务..."
-    awk '
-        /^[[:space:]]*phpldapadmin:[[:space:]]*/ {
-            in_service = 1
-            service_indent = length($0) - length(ltrim($0))
-            next
-        }
-        in_service {
-            current_indent = length($0) - length(ltrim($0))
-            if (NF == 0) {
-                next
-            } else if (current_indent <= service_indent && /^[[:space:]]*[a-zA-Z_]/) {
-                in_service = 0
-            } else {
-                next
-            }
-        }
-        !in_service { print }
-        
-        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
-    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-    
-    # 移除openldap服务（整个服务块）  
-    print_info "移除openldap服务..."
-    awk '
-        /^[[:space:]]*openldap:[[:space:]]*/ {
-            in_service = 1
-            service_indent = length($0) - length(ltrim($0))
-            next
-        }
-        in_service {
-            current_indent = length($0) - length(ltrim($0))
-            if (NF == 0) {
-                next
-            } else if (current_indent <= service_indent && /^[[:space:]]*[a-zA-Z_]/) {
-                in_service = 0
-            } else {
-                next
-            }
-        }
-        !in_service { print }
-        
-        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
-    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-    
-    # 移除depends_on中的openldap依赖
-    print_info "移除服务依赖中的openldap引用..."
-    sed -i.bak '/^[[:space:]]*openldap:[[:space:]]*$/,/^[[:space:]]*condition: service_healthy[[:space:]]*$/d' "$output_file"
-    
-    # 清理残留的LDAP配置
-    print_info "清理残留LDAP配置..."
-    sed -i.bak '/ai-infra-openldap/d' "$output_file"
-    sed -i.bak '/ai-infra-phpldapadmin/d' "$output_file"
-    sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-    
-    # 清理备份文件
+    # 7. 清理备份文件
     rm -f "$output_file.bak"
+    
+    # 8. 验证YAML语法
+    print_info "验证YAML语法..."
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import yaml
+import sys
+try:
+    with open('$output_file', 'r') as f:
+        yaml.safe_load(f)
+    print('✓ YAML语法正确')
+except yaml.YAMLError as e:
+    print(f'✗ YAML语法错误: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'✗ 文件读取错误: {e}')
+    sys.exit(1)
+" || {
+            print_warning "YAML验证失败，请手动检查配置文件"
+        }
+    else
+        print_warning "未安装Python3，跳过YAML语法验证"
+    fi
     
     print_success "✓ 生产环境配置文件生成成功: $output_file"
     echo
@@ -896,6 +814,7 @@ generate_production_config() {
     
     return 0
 }
+
 
 # 启动生产环境
 start_production() {
