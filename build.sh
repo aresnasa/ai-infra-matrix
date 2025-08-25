@@ -232,6 +232,110 @@ print_error() {
     echo -e "\033[31m[ERROR]\033[0m $1"
 }
 
+# ==========================================
+# Docker Compose 版本检测和适配
+# ==========================================
+
+# 检测Docker Compose版本并返回最佳命令
+detect_compose_command() {
+    local compose_cmd=""
+    local compose_version=""
+    
+    # 优先使用docker compose (v2)
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        compose_cmd="docker compose"
+        compose_version=$(docker compose version --short 2>/dev/null || docker compose version | grep -o 'v[0-9.]*' | head -1)
+        echo "$compose_cmd"
+        return 0
+    fi
+    
+    # 回退到docker-compose (v1)
+    if command -v docker-compose >/dev/null 2>&1; then
+        compose_cmd="docker-compose"
+        compose_version=$(docker-compose version --short 2>/dev/null || docker-compose version | grep -o '[0-9.]*' | head -1)
+        echo "$compose_cmd"
+        return 0
+    fi
+    
+    return 1
+}
+
+# 检查Docker Compose版本兼容性
+check_compose_compatibility() {
+    local compose_cmd
+    compose_cmd=$(detect_compose_command)
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        print_error "未找到Docker Compose命令"
+        print_info "请安装Docker Compose v2.0+:"
+        print_info "  https://docs.docker.com/compose/install/"
+        return 1
+    fi
+    
+    local version=""
+    if [[ "$compose_cmd" == "docker compose" ]]; then
+        version=$(docker compose version --short 2>/dev/null || docker compose version | grep -o 'v[0-9.]*' | head -1 | sed 's/v//')
+        print_info "检测到Docker Compose v2: $version"
+        
+        # 清理版本号，移除v前缀和额外信息
+        local clean_version=$(echo "$version" | sed 's/^v//' | sed 's/-.*$//')
+        
+        # 检查是否为v2.39.2或更高版本
+        if command -v python3 >/dev/null 2>&1; then
+            local is_compatible=$(python3 -c "
+import sys
+from packaging import version
+try:
+    current = version.parse('$clean_version')
+    required = version.parse('2.39.2')
+    print('true' if current >= required else 'false')
+except Exception as e:
+    print('true')  # 默认兼容
+" 2>/dev/null || echo "true")
+            
+            if [[ "$is_compatible" == "true" ]]; then
+                print_success "✓ Docker Compose版本兼容 (v$clean_version >= v2.39.2)"
+            else
+                print_warning "⚠ Docker Compose版本较旧 (v$clean_version < v2.39.2)，建议升级"
+                print_info "当前版本应该仍可工作，但建议升级以获得最佳体验"
+            fi
+        else
+            print_info "✓ 使用Docker Compose v2: $clean_version"
+        fi
+    else
+        version=$(docker-compose version --short 2>/dev/null || docker-compose version | grep -o '[0-9.]*' | head -1)
+        print_warning "检测到Docker Compose v1: $version"
+        print_info "建议升级到Docker Compose v2以获得更好的性能和功能"
+    fi
+    
+    echo "$compose_cmd"
+    return 0
+}
+
+# 验证compose文件格式
+validate_compose_file() {
+    local file="$1"
+    local compose_cmd="$2"
+    
+    if [[ ! -f "$file" ]]; then
+        print_error "Compose文件不存在: $file"
+        return 1
+    fi
+    
+    print_info "验证compose文件: $file"
+    
+    if ! $compose_cmd -f "$file" config >/dev/null 2>&1; then
+        print_error "Compose文件验证失败: $file"
+        print_info "详细错误信息："
+        $compose_cmd -f "$file" config 2>&1 | head -10
+        return 1
+    fi
+    
+    print_success "✓ Compose文件验证通过: $file"
+    return 0
+}
+
 # 获取私有镜像名称（支持Harbor格式：registry/project）
 get_private_image_name() {
     local original_image="$1"
@@ -686,22 +790,19 @@ generate_production_config() {
     
     # 验证原始配置文件
     print_info "验证原始配置文件..."
-    if command -v docker-compose >/dev/null 2>&1; then
-        if ! docker-compose -f "$base_file" config >/dev/null 2>&1; then
+    local compose_cmd=$(detect_compose_command)
+    local compose_version=$(echo "$compose_cmd" | cut -d'|' -f2)
+    compose_cmd=$(echo "$compose_cmd" | cut -d'|' -f1)
+    
+    if [[ "$compose_cmd" != "none" ]]; then
+        # 验证compose文件
+        if ! validate_compose_file "$base_file" "$compose_cmd"; then
             print_error "原始配置文件验证失败: $base_file"
-            print_info "详细错误信息："
-            docker-compose -f "$base_file" config 2>&1 | head -10
             return 1
         fi
-    elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-        if ! docker compose -f "$base_file" config >/dev/null 2>&1; then
-            print_error "原始配置文件验证失败: $base_file"
-            print_info "详细错误信息："
-            docker compose -f "$base_file" config 2>&1 | head -10
-            return 1
-        fi
+        print_success "配置文件验证通过 (使用 $compose_cmd $compose_version)"
     else
-        print_warning "未安装docker-compose或docker compose，跳过原始配置验证"
+        print_warning "未找到可用的Docker Compose命令，跳过原始配置验证"
     fi
     
     print_info "生成生产环境配置文件..."
@@ -1453,6 +1554,13 @@ show_help() {
 
 # 主函数
 main() {
+    # 早期Docker Compose兼容性检查
+    if [[ "${1:-}" != "version" && "${1:-}" != "help" && "${1:-}" != "-h" && "${1:-}" != "--help" ]]; then
+        if ! check_compose_compatibility; then
+            exit 1
+        fi
+    fi
+    
     case "${1:-help}" in
         "list")
             list_services "${2:-$DEFAULT_IMAGE_TAG}" "$3"
