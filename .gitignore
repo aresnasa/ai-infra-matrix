@@ -6,3 +6,8 @@ log/
 *.tgz
 *.tar.*
 test-exports/
+
+# 生成的配置文件 - 不要提交到git
+docker-compose.prod.yml
+docker-compose.test.yml
+*.env.backup.*

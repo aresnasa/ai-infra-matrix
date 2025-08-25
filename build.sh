@@ -744,6 +744,144 @@ generate_production_config() {
         function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
     ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
     
+    # 生产环境移除LDAP依赖
+    print_info "移除LDAP服务依赖（生产环境可选）..."
+    
+    # 移除openldap和phpldapadmin服务定义
+    awk '
+        /^[[:space:]]*openldap:[[:space:]]*$/ || /^[[:space:]]*phpldapadmin:[[:space:]]*$/ {
+            in_ldap = 1
+            ldap_indent = length($0) - length(ltrim($0))
+            print "  # " $0 " - REMOVED IN PRODUCTION"
+            next
+        }
+        in_ldap {
+            current_indent = length($0) - length(ltrim($0))
+            if (NF == 0) {
+                print $0
+                next
+            }
+            if (current_indent <= ldap_indent && !/^[[:space:]]*$/) {
+                in_ldap = 0
+                print $0
+            } else {
+                print "  # " $0 " - REMOVED IN PRODUCTION"
+                next
+            }
+        }
+        !in_ldap { print }
+        
+        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
+    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    
+    # 移除depends_on中的openldap依赖
+    print_info "移除服务中的LDAP依赖..."
+    awk '
+        /^[[:space:]]*openldap:[[:space:]]*$/ {
+            # 在depends_on块中找到openldap，删除整个openldap依赖块
+            in_ldap_dep = 1
+            ldap_dep_indent = length($0) - length(ltrim($0))
+            next
+        }
+        in_ldap_dep {
+            current_indent = length($0) - length(ltrim($0))
+            if (NF == 0) {
+                print $0
+                next
+            }
+            if (current_indent <= ldap_dep_indent && !/^[[:space:]]*$/) {
+                in_ldap_dep = 0
+                print $0
+            } else {
+                # 跳过openldap依赖配置行
+                next
+            }
+        }
+        !in_ldap_dep { print }
+        
+        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
+    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    
+    # 移除LDAP_SERVER环境变量
+    sed -i.bak '/LDAP_SERVER=/d' "$output_file"
+    sed -i.bak '/- LDAP_SERVER=/d' "$output_file"
+    sed -i.bak '/LDAP_SERVER:/d' "$output_file"
+    
+    # 移除phpldapadmin相关配置
+    print_info "移除phpldapadmin服务..."
+    sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
+    
+    # 移除openldap相关配置
+    print_info "移除openldap服务..."
+    sed -i.bak '/LDAP_ADMIN_PASSWORD/d' "$output_file"
+    sed -i.bak '/LDAP_CONFIG_PASSWORD/d' "$output_file"
+    
+    # 移除服务依赖中的openldap引用
+    print_info "移除服务依赖中的openldap引用..."
+    sed -i.bak '/# LDAP_SERVER: openldap/d' "$output_file"
+    
+    # 清理残留的LDAP配置注释
+    print_info "清理残留LDAP配置..."
+    sed -i.bak '/Disabled in production/d' "$output_file"
+    sed -i.bak 's/- LDAP_SERVER=openldap/# - LDAP_SERVER=openldap # Disabled in production/' "$output_file"
+    sed -i.bak 's/LDAP_SERVER: openldap/# LDAP_SERVER: openldap # Disabled in production/' "$output_file"
+    
+    # 移除phpldapadmin服务（整个服务块）
+    print_info "移除phpldapadmin服务..."
+    awk '
+        /^[[:space:]]*phpldapadmin:[[:space:]]*/ {
+            in_service = 1
+            service_indent = length($0) - length(ltrim($0))
+            next
+        }
+        in_service {
+            current_indent = length($0) - length(ltrim($0))
+            if (NF == 0) {
+                next
+            } else if (current_indent <= service_indent && /^[[:space:]]*[a-zA-Z_]/) {
+                in_service = 0
+            } else {
+                next
+            }
+        }
+        !in_service { print }
+        
+        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
+    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    
+    # 移除openldap服务（整个服务块）  
+    print_info "移除openldap服务..."
+    awk '
+        /^[[:space:]]*openldap:[[:space:]]*/ {
+            in_service = 1
+            service_indent = length($0) - length(ltrim($0))
+            next
+        }
+        in_service {
+            current_indent = length($0) - length(ltrim($0))
+            if (NF == 0) {
+                next
+            } else if (current_indent <= service_indent && /^[[:space:]]*[a-zA-Z_]/) {
+                in_service = 0
+            } else {
+                next
+            }
+        }
+        !in_service { print }
+        
+        function ltrim(s) { gsub(/^[[:space:]]+/, "", s); return s }
+    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+    
+    # 移除depends_on中的openldap依赖
+    print_info "移除服务依赖中的openldap引用..."
+    sed -i.bak '/^[[:space:]]*openldap:[[:space:]]*$/,/^[[:space:]]*condition: service_healthy[[:space:]]*$/d' "$output_file"
+    
+    # 清理残留的LDAP配置
+    print_info "清理残留LDAP配置..."
+    sed -i.bak '/ai-infra-openldap/d' "$output_file"
+    sed -i.bak '/ai-infra-phpldapadmin/d' "$output_file"
+    sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
+    
     # 清理备份文件
     rm -f "$output_file.bak"
     
@@ -752,7 +890,8 @@ generate_production_config() {
     print_info "注意事项："
     print_info "  1. 请确保所有依赖镜像已推送到内部registry (使用 deps-all 命令)"
     print_info "  2. 请确保所有源码服务镜像已推送到内部registry (使用 build-push 命令)"
-    print_info "  3. 请检查生成的配置文件并根据需要调整环境变量"
+    print_info "  3. 生产环境已移除LDAP服务依赖，服务可独立启动"
+    print_info "  4. 请检查生成的配置文件并根据需要调整环境变量"
     echo
     
     return 0
@@ -763,9 +902,18 @@ start_production() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local compose_file="docker-compose.prod.yml"
+    local env_file=".env.prod"
     
     if [[ -z "$registry" ]]; then
         print_error "请指定目标 registry"
+        return 1
+    fi
+    
+    # 检查生产环境配置文件
+    if [[ ! -f "$env_file" ]]; then
+        print_error "生产环境配置文件不存在: $env_file"
+        print_info "请使用以下命令生成生产环境密码:"
+        print_info "  ./scripts/generate-prod-passwords.sh"
         return 1
     fi
     
@@ -781,22 +929,23 @@ start_production() {
     print_info "启动生产环境"
     print_info "=========================================="
     print_info "配置文件: $compose_file"
+    print_info "环境文件: $env_file"
     print_info "Registry: $registry"
     print_info "标签: $tag"
     echo
     
     print_info "拉取所有镜像..."
-    if ! docker-compose -f "$compose_file" pull; then
+    if ! ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" pull; then
         print_error "镜像拉取失败"
         return 1
     fi
     
     print_info "启动生产环境..."
-    if docker-compose -f "$compose_file" up -d; then
+    if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" up -d; then
         print_success "✓ 生产环境启动成功"
         echo
         print_info "查看服务状态:"
-        docker-compose -f "$compose_file" ps
+        ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps
         return 0
     else
         print_error "✗ 生产环境启动失败"
@@ -807,6 +956,7 @@ start_production() {
 # 停止生产环境
 stop_production() {
     local compose_file="docker-compose.prod.yml"
+    local env_file=".env.prod"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
@@ -817,7 +967,7 @@ stop_production() {
     print_info "停止生产环境"
     print_info "=========================================="
     
-    if docker-compose -f "$compose_file" down; then
+    if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" down; then
         print_success "✓ 生产环境已停止"
         return 0
     else
@@ -848,6 +998,7 @@ restart_production() {
 # 查看生产环境状态
 production_status() {
     local compose_file="docker-compose.prod.yml"
+    local env_file=".env.prod"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
@@ -858,12 +1009,13 @@ production_status() {
     print_info "生产环境状态"
     print_info "=========================================="
     
-    docker-compose -f "$compose_file" ps
+    ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps
 }
 
 # 查看生产环境日志
 production_logs() {
     local compose_file="docker-compose.prod.yml"
+    local env_file=".env.prod"
     local service="$1"
     local follow="${2:-false}"
     
@@ -875,16 +1027,16 @@ production_logs() {
     if [[ -z "$service" ]]; then
         # 显示所有服务的日志
         if [[ "$follow" == "true" ]]; then
-            docker-compose -f "$compose_file" logs -f
+            ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" logs -f
         else
-            docker-compose -f "$compose_file" logs --tail=100
+            ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" logs --tail=100
         fi
     else
         # 显示指定服务的日志
         if [[ "$follow" == "true" ]]; then
-            docker-compose -f "$compose_file" logs -f "$service"
+            ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" logs -f "$service"
         else
-            docker-compose -f "$compose_file" logs --tail=100 "$service"
+            ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" logs --tail=100 "$service"
         fi
     fi
 }
@@ -1255,6 +1407,7 @@ show_help() {
     echo "  prod-restart <registry> [tag]   - 重启生产环境"
     echo "  prod-status                     - 查看生产环境状态"
     echo "  prod-logs [service] [--follow]  - 查看生产环境日志"
+    echo "  注意: 首次使用生产环境前请运行: ./scripts/generate-prod-passwords.sh"
     echo
     echo "Mock 测试命令:"
     echo "  mock-setup [tag]               - 创建 Mock 数据测试环境配置"
