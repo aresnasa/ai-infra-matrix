@@ -798,7 +798,7 @@ pull_and_tag_dependencies() {
             
             # 使用新的映射机制生成目标镜像名
             local target_image
-            target_image=$(get_mapped_private_image "$dep_image" "$registry" "v0.3.5")
+            target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
             
             # 标记镜像
             if docker tag "$dep_image" "$target_image"; then
@@ -858,7 +858,7 @@ push_dependencies() {
         
         # 使用新的映射机制生成目标镜像名
         local target_image
-        target_image=$(get_mapped_private_image "$dep_image" "$registry" "v0.3.5")
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
         
         print_info "推送依赖镜像: $target_image"
         
@@ -973,9 +973,9 @@ generate_production_config() {
     
     # 使用映射配置替换基础镜像
     for original_image in "${base_images_to_replace[@]}"; do
-        # 获取映射后的镜像（这里target_tag用于基础镜像映射到v0.3.5）
+        # 获取映射后的镜像（使用传入的tag参数）
         local mapped_image
-        mapped_image=$(get_mapped_private_image "$original_image" "$registry" "v0.3.5")
+        mapped_image=$(get_mapped_private_image "$original_image" "$registry" "$tag")
         
         if [[ "$mapped_image" != "$original_image" ]]; then
             print_info "  映射: $original_image -> $mapped_image"
