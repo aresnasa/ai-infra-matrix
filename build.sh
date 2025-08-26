@@ -1564,12 +1564,55 @@ generate_production_config() {
         fi
     fi
     
-    # 5. 清理备份文件（仅在macOS上存在）
+    # 5. 修复 backend-init 服务的环境文件挂载
+    print_info "修复 backend-init 服务环境文件挂载..."
+    
+    # 使用 Python 脚本添加 volume 挂载（如果可用）
+    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
+        if python3 fix_backend_init_volumes.py "$output_file" "$output_file.tmp" 2>/dev/null; then
+            mv "$output_file.tmp" "$output_file"
+            print_success "✓ 使用Python脚本修复backend-init环境文件挂载"
+        else
+            print_warning "Python脚本修复失败，使用sed方案"
+            # 回退到手动添加 volume 配置
+            if [[ "$OS_TYPE" == "macOS" ]]; then
+                sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
+                    /networks:/i\
+\    volumes:\
+\    - "./.env.prod:/app/.env:ro"
+                }' "$output_file"
+            else
+                sed -i '/^  backend-init:/,/^  [^[:space:]]/{
+                    /networks:/i\
+\    volumes:\
+\    - "./.env.prod:/app/.env:ro"
+                }' "$output_file"
+            fi
+        fi
+    else
+        print_warning "未安装PyYAML，使用sed方案添加backend-init环境文件挂载"
+        # 使用sed添加volume配置
+        if [[ "$OS_TYPE" == "macOS" ]]; then
+            sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
+                /networks:/i\
+\    volumes:\
+\    - "./.env.prod:/app/.env:ro"
+            }' "$output_file"
+        else
+            sed -i '/^  backend-init:/,/^  [^[:space:]]/{
+                /networks:/i\
+\    volumes:\
+\    - "./.env.prod:/app/.env:ro"
+            }' "$output_file"
+        fi
+    fi
+    
+    # 6. 清理备份文件（仅在macOS上存在）
     if [[ "$OS_TYPE" == "macOS" ]]; then
         rm -f "$output_file.bak"
     fi
     
-    # 6. 验证配置文件
+    # 7. 验证配置文件
     print_info "验证配置文件..."
     
     # 验证YAML语法
