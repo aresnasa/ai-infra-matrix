@@ -2585,7 +2585,7 @@ show_help() {
     echo "    • 构建上下文固定为项目根目录"
     echo
     echo "  # Jenkins/GitLab CI流水线"
-    echo "  ./build.sh build-push harbor.company.com/ai-infra v${BUILD_NUMBER}"
+    echo "  ./build.sh build-push harbor.company.com/ai-infra v1.0.0"
     echo "  ./build.sh deps-push harbor.company.com/ai-infra latest"
     echo 
     echo "  # 阿里云ACR推送 "

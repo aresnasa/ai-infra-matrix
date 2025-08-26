@@ -14,6 +14,12 @@ path = "src/backend"
 image = "ai-infra-backend"
 description = "后端 API 服务"
 
+[services.backend-init]
+name = "backend-init"
+path = "src/backend"
+image = "ai-infra-backend-init"
+description = "后端初始化服务"
+
 [services.frontend]
 name = "frontend"
 path = "src/frontend"
