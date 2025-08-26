@@ -1524,6 +1524,46 @@ generate_production_config() {
     END { if (prev_line != "") print prev_line }
     ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
     
+    # 4.5. 修复 backend-init 服务的重启策略
+    print_info "修复 backend-init 服务重启策略..."
+    # backend-init 应该是一次性运行的初始化服务，不应该重启
+    
+    # 使用 Python 脚本精确修复（如果可用）
+    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
+        if python3 fix_backend_init_restart.py "$output_file" "$output_file.tmp" 2>/dev/null; then
+            mv "$output_file.tmp" "$output_file"
+            print_success "✓ 使用Python脚本修复backend-init重启策略"
+        else
+            print_warning "Python脚本修复失败，使用sed方案"
+            # 回退到sed方案
+            if [[ "$OS_TYPE" == "macOS" ]]; then
+                sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
+                    /networks:/a\
+\    restart: "no"
+                }' "$output_file"
+            else
+                sed -i '/^  backend-init:/,/^  [^[:space:]]/{
+                    /networks:/a\
+\    restart: "no"
+                }' "$output_file"
+            fi
+        fi
+    else
+        print_warning "未安装PyYAML，使用sed方案修复backend-init重启策略"
+        # 使用sed插入restart配置
+        if [[ "$OS_TYPE" == "macOS" ]]; then
+            sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
+                /networks:/a\
+\    restart: "no"
+            }' "$output_file"
+        else
+            sed -i '/^  backend-init:/,/^  [^[:space:]]/{
+                /networks:/a\
+\    restart: "no"
+            }' "$output_file"
+        fi
+    fi
+    
     # 5. 清理备份文件（仅在macOS上存在）
     if [[ "$OS_TYPE" == "macOS" ]]; then
         rm -f "$output_file.bak"
