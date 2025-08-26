@@ -299,6 +299,71 @@ create_env_from_template() {
     fi
 }
 
+# 自动生成环境文件（用于自动修复）
+auto_generate_env_files() {
+    local force="${1:-false}"
+    
+    print_info "=========================================="
+    print_info "自动生成环境配置文件"
+    print_info "=========================================="
+    
+    local generated_count=0
+    local failed_count=0
+    
+    # 生成主环境文件
+    if [[ ! -f ".env" ]] || [[ "$force" == "true" ]]; then
+        print_info "生成主环境文件 .env..."
+        if create_env_from_template "dev" "$force"; then
+            ((generated_count++))
+        else
+            ((failed_count++))
+        fi
+    else
+        print_info "主环境文件 .env 已存在，跳过"
+    fi
+    
+    # 生成生产环境文件
+    if [[ ! -f ".env.prod" ]] || [[ "$force" == "true" ]]; then
+        print_info "生成生产环境文件 .env.prod..."
+        if create_env_from_template "prod" "$force"; then
+            ((generated_count++))
+        else
+            ((failed_count++))
+        fi
+    else
+        print_info "生产环境文件 .env.prod 已存在，跳过"
+    fi
+    
+    # 检查并修复PostgreSQL密码一致性
+    print_info "检查PostgreSQL密码配置一致性..."
+    local env_postgres_password=$(grep -E '^POSTGRES_PASSWORD=' .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+    local env_postgres_user=$(grep -E '^POSTGRES_USER=' .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+    
+    if [[ -n "$env_postgres_password" ]] && [[ -n "$env_postgres_user" ]]; then
+        print_success "✓ PostgreSQL配置: 用户=$env_postgres_user, 密码=<已设置>"
+    else
+        print_warning "PostgreSQL密码配置可能有问题，请检查.env文件"
+    fi
+    
+    # 检查Redis密码配置
+    local redis_password=$(grep -E '^REDIS_PASSWORD=' .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+    if [[ -n "$redis_password" ]]; then
+        print_success "✓ Redis密码配置正常"
+    else
+        print_warning "Redis密码配置可能有问题，请检查.env文件"
+    fi
+    
+    print_info "=========================================="
+    if [[ $failed_count -eq 0 ]]; then
+        print_success "环境文件生成完成: $generated_count 个文件"
+        print_info "建议重启所有服务以应用新配置"
+        return 0
+    else
+        print_error "环境文件生成失败: $failed_count 个文件"
+        return 1
+    fi
+}
+
 # 检测并确定唯一的环境文件
 detect_env_file() {
     local env_file=""
@@ -669,67 +734,28 @@ build_service() {
     local build_context="$SCRIPT_DIR/$service_path"
     local dockerfile_name="Dockerfile"
     
-    # 特殊处理：backend 和 backend-init 需要项目根目录作为构建上下文
-    if [[ "$service" == "backend" ]] || [[ "$service" == "backend-init" ]]; then
-        # 对于 backend-init，需要指定特殊的 target
-        local target_arg=""
-        if [[ "$service" == "backend-init" ]]; then
-            target_arg="--target backend-init"
+    # 统一处理：所有服务都使用项目根目录作为构建上下文
+    # 因为Dockerfile中的路径都是相对于项目根目录的（如 src/frontend/nginx.conf）
+    local target_arg=""
+    if [[ "$service" == "backend-init" ]]; then
+        target_arg="--target backend-init"
+    fi
+    
+    # 统一使用项目根目录作为构建上下文
+    if docker build -f "$dockerfile_path" $target_arg -t "$target_image" "$SCRIPT_DIR"; then
+        print_success "✓ 构建成功: $target_image"
+        
+        # 如果指定了registry，同时创建本地别名
+        if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
+            if docker tag "$target_image" "$base_image"; then
+                print_info "  ✓ 本地别名: $base_image"
+            fi
         fi
         
-        if docker build -f "$dockerfile_path" $target_arg -t "$target_image" "$SCRIPT_DIR"; then
-            print_success "✓ 构建成功: $target_image"
-            
-            # 如果指定了registry，同时创建本地别名
-            if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
-                if docker tag "$target_image" "$base_image"; then
-                    print_info "  ✓ 本地别名: $base_image"
-                fi
-            fi
-            
-            return 0
-        else
-            print_error "✗ 构建失败: $target_image"
-            return 1
-        fi
-    # 检查是否在服务目录中构建
-    elif [[ -f "$build_context/$dockerfile_name" ]]; then
-        # 切换到服务目录进行构建
-        cd "$build_context"
-        if docker build -f "$dockerfile_name" -t "$target_image" .; then
-            cd "$SCRIPT_DIR"  # 返回原目录
-            print_success "✓ 构建成功: $target_image"
-            
-            # 如果指定了registry，同时创建本地别名
-            if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
-                if docker tag "$target_image" "$base_image"; then
-                    print_info "  ✓ 本地别名: $base_image"
-                fi
-            fi
-            
-            return 0
-        else
-            cd "$SCRIPT_DIR"  # 返回原目录
-            print_error "✗ 构建失败: $target_image"
-            return 1
-        fi
+        return 0
     else
-        # 后备方案：使用项目根目录作为构建上下文
-        if docker build -f "$dockerfile_path" -t "$target_image" "$SCRIPT_DIR"; then
-            print_success "✓ 构建成功: $target_image"
-            
-            # 如果指定了registry，同时创建本地别名
-            if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
-                if docker tag "$target_image" "$base_image"; then
-                    print_info "  ✓ 本地别名: $base_image"
-                fi
-            fi
-            
-            return 0
-        else
-            print_error "✗ 构建失败: $target_image"
-            return 1
-        fi
+        print_error "✗ 构建失败: $target_image"
+        return 1
     fi
 }
 
@@ -799,17 +825,33 @@ push_service() {
     local target_image=$(get_private_image_name "$base_image" "$registry")
     
     print_info "推送服务: $service"
+    print_info "  原始镜像: $base_image"
     print_info "  目标镜像: $target_image"
+    print_info "  Registry: $registry"
     
     # 检查镜像是否存在
-    if ! docker image inspect "$target_image" >/dev/null 2>&1; then
-        print_warning "镜像不存在，尝试构建..."
+    if ! docker image inspect "$base_image" >/dev/null 2>&1; then
+        print_warning "本地镜像不存在: $base_image"
+        print_info "尝试构建镜像..."
         if ! build_service "$service" "$tag" "$registry"; then
+            print_error "构建失败，无法推送"
+            return 1
+        fi
+    else
+        print_success "✓ 本地镜像存在: $base_image"
+    fi
+    
+    # 如果需要标记为目标镜像
+    if [[ "$base_image" != "$target_image" ]]; then
+        print_info "标记镜像: $base_image -> $target_image"
+        if ! docker tag "$base_image" "$target_image"; then
+            print_error "镜像标记失败"
             return 1
         fi
     fi
     
     # 推送镜像
+    print_info "推送镜像: $target_image"
     if docker push "$target_image"; then
         print_success "✓ 推送成功: $target_image"
         return 0
@@ -2581,6 +2623,9 @@ show_help() {
     echo "  verify-key <registry> [tag]    - 快速验证关键镜像"
     echo
     echo "工具命令:"
+    echo "  create-env [dev|prod] [--force] - 从模板创建环境配置文件"
+    echo "  auto-env [--force]              - 自动生成所有环境配置文件"
+    echo "  test-push <service> <registry> [tag] - 测试推送配置（不实际推送）"
     echo "  clean [type] [tag] [--force]   - 清理镜像"
     echo "    • clean ai-infra [tag]       - 清理AI-Infra镜像 (默认)"
     echo "    • clean all [tag]            - 清理所有镜像 (AI-Infra + 依赖)"
@@ -2633,6 +2678,12 @@ show_help() {
     echo "  $0 prod-down                   # 停止生产环境"
     echo "  $0 prod-status                 # 查看生产环境状态"
     echo "  $0 prod-logs backend --follow   # 实时查看backend服务日志"
+    echo
+    echo "  # 推送测试和验证"
+    echo "  $0 test-push backend harbor.company.com/ai-infra v0.3.5"
+    echo "                                  # 测试backend服务推送配置（不实际推送）"
+    echo "  $0 verify harbor.company.com/ai-infra v0.3.5"
+    echo "                                  # 验证所有镜像是否可用"
     echo
     echo "  # Mock 测试操作"
     echo "  $0 mock-setup v0.3.5           # 创建 Mock 环境配置"
@@ -2712,6 +2763,45 @@ main() {
             build_all_services "${2:-$DEFAULT_IMAGE_TAG}" "$3"
             ;;
             
+        "test-push")
+            if [[ -z "$2" ]]; then
+                print_error "请指定要测试推送的服务"
+                print_info "可用服务: $SRC_SERVICES"
+                exit 1
+            fi
+            if [[ -z "$3" ]]; then
+                print_error "请指定目标 registry"
+                exit 1
+            fi
+            
+            local service="$2"
+            local registry="$3"
+            local tag="${4:-$DEFAULT_IMAGE_TAG}"
+            local base_image="ai-infra-${service}:${tag}"
+            local target_image=$(get_private_image_name "$base_image" "$registry")
+            
+            print_info "=========================================="
+            print_info "测试推送配置（不实际推送）"
+            print_info "=========================================="
+            print_info "服务名称: $service"
+            print_info "Registry: $registry"
+            print_info "标签: $tag"
+            print_info "原始镜像: $base_image"
+            print_info "目标镜像: $target_image"
+            
+            # 检查镜像是否存在
+            if docker image inspect "$base_image" >/dev/null 2>&1; then
+                print_success "✓ 本地镜像存在: $base_image"
+            else
+                print_warning "✗ 本地镜像不存在: $base_image"
+                print_info "需要先构建镜像：./build.sh build $service $tag"
+            fi
+            
+            print_info "推送命令预览："
+            print_info "  docker tag $base_image $target_image"
+            print_info "  docker push $target_image"
+            ;;
+            
         "push")
             if [[ -z "$2" ]]; then
                 print_error "请指定要推送的服务"
@@ -2755,6 +2845,20 @@ main() {
             done
             
             create_env_from_template "$env_type" "$force"
+            ;;
+            
+        "auto-env")
+            local force="false"
+            
+            # 检查是否有 --force 参数
+            for arg in "$@"; do
+                if [[ "$arg" == "--force" ]]; then
+                    force="true"
+                    break
+                fi
+            done
+            
+            auto_generate_env_files "$force"
             ;;
             
         # 依赖镜像管理命令
