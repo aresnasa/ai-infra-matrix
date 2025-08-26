@@ -2584,6 +2584,17 @@ show_help() {
     echo "    • 支持 Harbor 和传统 registry 格式"
     echo "    • 构建上下文固定为项目根目录"
     echo
+    echo "  # Jenkins/GitLab CI流水线"
+    echo "  ./build.sh build-push harbor.company.com/ai-infra v${BUILD_NUMBER}"
+    echo "  ./build.sh deps-push harbor.company.com/ai-infra latest"
+    echo 
+    echo "  # 阿里云ACR推送 "
+    echo "  ./build.sh build-push xxx.aliyuncs.com/ai-infra-matrix latest"
+    echo "  ./build.sh deps-push xxx.aliyuncs.com/ai-infra-matrix latest"
+    echo
+    echo "  # Docker Hub推送"
+    echo "  ./build.sh build-push docker.io/myuser latest"
+    echo
     echo "  # 首次部署"
     echo "  ./scripts/generate-prod-passwords.sh"
     echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.0.0"
