@@ -1,7 +1,12 @@
 #!/bin/bash
 
-# 生产环境密码生成脚本
-# 自动生成强密码并更新.env.prod文件
+# =============================================================================
+# AI Infrastructure Matrix - 生产环境密码生成脚本
+# =============================================================================
+# 功能：自动生成强密码并更新.env.prod文件
+# 注意：此脚本只更改系统服务密码，不会更改默认admin用户密码
+# 默认管理员账户: admin / admin123 (请在首次登录后修改)
+# =============================================================================
 
 set -euo pipefail
 
@@ -47,6 +52,16 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
+echo
+print_info "======================================================================"
+print_info "🔧 AI Infrastructure Matrix 生产环境密码生成器"
+print_info "======================================================================"
+print_warning "⚠️  此脚本将生成新的系统服务密码"
+print_warning "⚠️  默认管理员账户 (admin/admin123) 不会被此脚本修改"
+print_warning "⚠️  请在系统部署后通过Web界面修改管理员密码"
+print_info "======================================================================"
+echo
+
 print_info "创建备份: $BACKUP_FILE"
 cp "$ENV_FILE" "$BACKUP_FILE"
 
@@ -80,7 +95,19 @@ sed -i.tmp "s/LDAP_CONFIG_PASSWORD=.*/LDAP_CONFIG_PASSWORD=$LDAP_CONFIG_PASSWORD
 
 print_success "已生成并应用新的强密码"
 
-print_info "新生成的密码信息:"
+echo
+print_info "======================================================================"
+print_warning "🔑 重要！默认管理员账户信息："
+echo
+echo -e "${GREEN}  用户名: ${YELLOW}admin${NC}"
+echo -e "${GREEN}  初始密码: ${RED}admin123${NC}"
+echo
+print_warning "⚠️  请在首次登录后立即更改管理员密码！"
+print_warning "⚠️  管理员密码未通过此脚本更改，需要在系统内修改！"
+print_info "======================================================================"
+echo
+
+print_info "系统服务密码信息:"
 echo "POSTGRES_PASSWORD: $POSTGRES_PASSWORD"
 echo "REDIS_PASSWORD: $REDIS_PASSWORD"
 echo "JWT_SECRET: $JWT_SECRET"
@@ -93,5 +120,6 @@ echo "GITEA_DB_PASSWD: $GITEA_DB_PASSWD"
 echo "LDAP_ADMIN_PASSWORD: $LDAP_ADMIN_PASSWORD"
 echo "LDAP_CONFIG_PASSWORD: $LDAP_CONFIG_PASSWORD"
 
+echo
 print_warning "请妥善保存这些密码信息！"
 print_info "原配置文件已备份至: $BACKUP_FILE"
