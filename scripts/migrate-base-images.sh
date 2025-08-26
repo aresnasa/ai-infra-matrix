@@ -35,18 +35,27 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 echo
 
-# 镜像映射表
-declare -A images=(
-    ["postgres:15-alpine"]="$REGISTRY_BASE/library/postgres:15-alpine"
-    ["redis:7-alpine"]="$REGISTRY_BASE/library/redis:7-alpine"
-    ["nginx:1.27-alpine"]="$REGISTRY_BASE/library/nginx:1.27-alpine"
-    ["tecnativa/tcp-proxy:latest"]="$REGISTRY_BASE/tecnativa/tcp-proxy:latest"
-    ["redislabs/redisinsight:latest"]="$REGISTRY_BASE/redislabs/redisinsight:latest"
-    ["quay.io/minio/minio:latest"]="$REGISTRY_BASE/minio/minio:latest"
+# 镜像映射表 - 定义基础镜像映射关系
+declare -a source_images=(
+    "postgres:15-alpine"
+    "redis:7-alpine" 
+    "nginx:1.27-alpine"
+    "tecnativa/tcp-proxy:latest"
+    "redislabs/redisinsight:latest"
+    "quay.io/minio/minio:latest"
+)
+
+declare -a target_images=(
+    "$REGISTRY_BASE/library/postgres:15-alpine"
+    "$REGISTRY_BASE/library/redis:7-alpine"
+    "$REGISTRY_BASE/library/nginx:1.27-alpine" 
+    "$REGISTRY_BASE/tecnativa/tcp-proxy:latest"
+    "$REGISTRY_BASE/redislabs/redisinsight:latest"
+    "$REGISTRY_BASE/minio/minio:latest"
 )
 
 # 统计信息
-total_images=${#images[@]}
+total_images=${#source_images[@]}
 current_count=0
 failed_images=()
 
@@ -54,8 +63,9 @@ echo "计划迁移 $total_images 个基础镜像"
 echo "============================================"
 
 # 拉取、标签和推送镜像
-for source in "${!images[@]}"; do
-    target="${images[$source]}"
+for i in "${!source_images[@]}"; do
+    source="${source_images[$i]}"
+    target="${target_images[$i]}"
     current_count=$((current_count + 1))
     
     echo "[$current_count/$total_images] 处理镜像: $source"

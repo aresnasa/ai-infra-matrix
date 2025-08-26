@@ -608,8 +608,31 @@ build_service() {
     local build_context="$SCRIPT_DIR/$service_path"
     local dockerfile_name="Dockerfile"
     
+    # 特殊处理：backend 和 backend-init 需要项目根目录作为构建上下文
+    if [[ "$service" == "backend" ]] || [[ "$service" == "backend-init" ]]; then
+        # 对于 backend-init，需要指定特殊的 target
+        local target_arg=""
+        if [[ "$service" == "backend-init" ]]; then
+            target_arg="--target backend-init"
+        fi
+        
+        if docker build -f "$dockerfile_path" $target_arg -t "$target_image" "$SCRIPT_DIR"; then
+            print_success "✓ 构建成功: $target_image"
+            
+            # 如果指定了registry，同时创建本地别名
+            if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
+                if docker tag "$target_image" "$base_image"; then
+                    print_info "  ✓ 本地别名: $base_image"
+                fi
+            fi
+            
+            return 0
+        else
+            print_error "✗ 构建失败: $target_image"
+            return 1
+        fi
     # 检查是否在服务目录中构建
-    if [[ -f "$build_context/$dockerfile_name" ]]; then
+    elif [[ -f "$build_context/$dockerfile_name" ]]; then
         # 切换到服务目录进行构建
         cd "$build_context"
         if docker build -f "$dockerfile_name" -t "$target_image" .; then
@@ -1977,6 +2000,221 @@ list_services() {
     print_info "=========================================="
 }
 
+# ==========================================
+# 镜像验证功能
+# ==========================================
+
+# 验证单个镜像是否可用
+verify_image() {
+    local image="$1"
+    local timeout="${2:-10}"
+    
+    # 先尝试检查本地镜像
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    # 尝试拉取验证（用于远程镜像）
+    if timeout "$timeout" docker pull "$image" >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    return 1
+}
+
+# 验证私有仓库中的所有AI-Infra镜像
+verify_private_images() {
+    local registry="$1"
+    local tag="${2:-v0.3.5}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "使用方法: verify <registry_base> [tag]"
+        print_info "示例: verify aiharbor.msxf.local/aihpc v0.3.5"
+        return 1
+    fi
+    
+    print_info "=== AI Infrastructure Matrix 镜像验证 ==="
+    print_info "目标仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "开始时间: $(date)"
+    echo
+    
+    print_info "📋 Harbor项目检查："
+    print_info "验证前请确保以下项目已在Harbor中创建："
+    print_info "  • aihpc (主项目)"
+    print_info "  • library (基础镜像)"
+    print_info "  • tecnativa (第三方镜像)"
+    print_info "  • redislabs (第三方镜像)"
+    print_info "  • minio (第三方镜像)"
+    echo
+    print_info "如未创建，请参考: docs/HARBOR_PROJECT_SETUP.md"
+    echo
+    
+    # 源码镜像列表
+    local source_images=(
+        "ai-infra-backend-init"
+        "ai-infra-backend"
+        "ai-infra-frontend"
+        "ai-infra-jupyterhub"
+        "ai-infra-singleuser"
+        "ai-infra-saltstack"
+        "ai-infra-nginx"
+        "ai-infra-gitea"
+    )
+    
+    # 基础镜像列表（从配置文件获取）
+    local base_image_patterns=(
+        "postgres:15-alpine"
+        "redis:7-alpine"
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "redislabs/redisinsight:latest"
+        "quay.io/minio/minio:latest"
+    )
+    
+    local total_images=$((${#source_images[@]} + ${#base_image_patterns[@]}))
+    local success_count=0
+    local failed_images=()
+    
+    print_info "计划验证 $total_images 个镜像"
+    print_info "============================================"
+    
+    # 验证源码镜像
+    print_info "验证源码镜像 (${#source_images[@]} 个):"
+    for image_base in "${source_images[@]}"; do
+        local target_image="${registry}/${image_base}:${tag}"
+        
+        printf "  检查: %-45s" "$target_image"
+        if verify_image "$target_image" 5; then
+            echo "    ✓ 可用"
+            ((success_count++))
+        else
+            echo "    ✗ 不可用"
+            failed_images+=("$target_image")
+        fi
+    done
+    
+    echo
+    # 验证基础镜像
+    print_info "验证基础镜像 (${#base_image_patterns[@]} 个):"
+    for base_pattern in "${base_image_patterns[@]}"; do
+        # 使用映射配置获取目标镜像名
+        local target_image
+        target_image=$(get_mapped_private_image "$base_pattern" "$registry" "$tag")
+        
+        printf "  检查: %-45s" "$target_image"
+        if verify_image "$target_image" 5; then
+            echo "    ✓ 可用"
+            ((success_count++))
+        else
+            echo "    ✗ 不可用"
+            failed_images+=("$target_image")
+        fi
+    done
+    
+    echo
+    print_info "============================================"
+    print_info "验证结果汇总:"
+    print_info "总计镜像: $total_images"
+    print_success "验证通过: $success_count"
+    print_error "验证失败: $((total_images - success_count))"
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        echo
+        print_error "失败镜像列表:"
+        for failed_image in "${failed_images[@]}"; do
+            echo "  ✗ $failed_image"
+        done
+        
+        echo
+        print_info "建议操作:"
+        print_info "1. 检查网络连接和仓库权限"
+        print_info "2. 重新运行基础镜像迁移脚本:"
+        print_info "   ./scripts/migrate-base-images.sh $registry"
+        print_info "3. 重新构建和推送源码镜像:"
+        print_info "   ./build.sh build-push $registry $tag"
+        
+        return 1
+    else
+        echo
+        print_success "🎉 所有镜像验证通过！"
+        return 0
+    fi
+}
+
+# 快速验证关键镜像
+verify_key_images() {
+    local registry="$1"
+    local tag="${2:-v0.3.5}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "使用方法: verify-key <registry_base> [tag]"
+        return 1
+    fi
+    
+    print_info "=== 快速验证关键镜像 ==="
+    print_info "目标仓库: $registry"
+    print_info "镜像标签: $tag"
+    echo
+    
+    # 关键服务镜像
+    local key_images=(
+        "ai-infra-backend"
+        "ai-infra-frontend" 
+        "ai-infra-jupyterhub"
+        "ai-infra-nginx"
+    )
+    
+    # 关键基础镜像
+    local key_base_images=(
+        "postgres:15-alpine"
+        "redis:7-alpine"
+    )
+    
+    local success_count=0
+    local total_count=$((${#key_images[@]} + ${#key_base_images[@]}))
+    
+    print_info "验证关键服务镜像:"
+    for image_base in "${key_images[@]}"; do
+        local target_image="${registry}/${image_base}:${tag}"
+        printf "  %-40s" "$target_image"
+        
+        if verify_image "$target_image" 3; then
+            echo " ✓"
+            ((success_count++))
+        else
+            echo " ✗"
+        fi
+    done
+    
+    print_info "验证关键基础镜像:"
+    for base_pattern in "${key_base_images[@]}"; do
+        local target_image
+        target_image=$(get_mapped_private_image "$base_pattern" "$registry" "$tag")
+        printf "  %-40s" "$target_image"
+        
+        if verify_image "$target_image" 3; then
+            echo " ✓"
+            ((success_count++))
+        else
+            echo " ✗"
+        fi
+    done
+    
+    echo
+    if [[ $success_count -eq $total_count ]]; then
+        print_success "🎉 所有关键镜像验证通过 ($success_count/$total_count)"
+        return 0
+    else
+        print_warning "⚠ 部分关键镜像验证失败 ($success_count/$total_count)"
+        return 1
+    fi
+}
+
+# ==========================================
+# 清理功能
+# ==========================================
+
 # 清理本地镜像
 clean_images() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
@@ -2277,6 +2515,10 @@ show_help() {
     echo "  mock-down                      - 停止 Mock 测试环境"
     echo "  mock-restart [tag]             - 重启 Mock 测试环境"
     echo
+    echo "镜像验证命令:"
+    echo "  verify <registry> [tag]        - 验证所有镜像是否可用"
+    echo "  verify-key <registry> [tag]    - 快速验证关键镜像"
+    echo
     echo "工具命令:"
     echo "  clean [type] [tag] [--force]   - 清理镜像"
     echo "    • clean ai-infra [tag]       - 清理AI-Infra镜像 (默认)"
@@ -2527,6 +2769,25 @@ main() {
             
         "mock-test")
             run_mock_tests "${2:-$DEFAULT_IMAGE_TAG}" "test"
+            ;;
+            
+        # 镜像验证命令
+        "verify")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                print_info "用法: $0 verify <registry> [tag]"
+                exit 1
+            fi
+            verify_private_images "$2" "${3:-v0.3.5}"
+            ;;
+            
+        "verify-key")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                print_info "用法: $0 verify-key <registry> [tag]"
+                exit 1
+            fi
+            verify_key_images "$2" "${3:-v0.3.5}"
             ;;
             
         "clean")

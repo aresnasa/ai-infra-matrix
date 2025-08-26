@@ -80,10 +80,6 @@ COPY src/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 # 设置工作目录
 WORKDIR /usr/share/nginx/html
 
-# 复制docker-desktop-ca.crt并更新系统信任
-COPY src/frontend/docker-desktop-ca.crt /usr/local/share/ca-certificates/docker-desktop-ca.crt
-RUN update-ca-certificates || true
-
 # 暴露端口
 EXPOSE 80
 
