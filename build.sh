@@ -2579,10 +2579,24 @@ show_help() {
     echo "  $0 mock-down                   # 停止 Mock 测试环境"
     echo "  $0 clean v0.3.5 --force        # 强制清理标签为 v0.3.5 的镜像"
     echo
-    echo "注意:"
-    echo "  • 默认镜像标签: $DEFAULT_IMAGE_TAG"
-    echo "  • 支持 Harbor 和传统 registry 格式"
-    echo "  • 构建上下文固定为项目根目录"
+    echo "  注意:"
+    echo "    • 默认镜像标签: $DEFAULT_IMAGE_TAG"
+    echo "    • 支持 Harbor 和传统 registry 格式"
+    echo "    • 构建上下文固定为项目根目录"
+    echo
+    echo "  # 首次部署"
+    echo "  ./scripts/generate-prod-passwords.sh"
+    echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.0.0"
+    echo "  ./build.sh prod-up harbor.company.com/ai-infra v1.0.0"
+    echo
+    echo "  # 版本更新"
+    echo "  ./build.sh prod-down"
+    echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.1.0"
+    echo "  ./build.sh prod-up harbor.company.com/ai-infra v1.1.0"
+    echo
+    echo "  # 监控运维"
+    echo "  ./build.sh prod-status"
+    echo "  ./build.sh prod-logs --follow"
 }
 
 # 主函数
