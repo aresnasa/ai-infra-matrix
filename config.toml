@@ -38,6 +38,18 @@ path = "src/saltstack"
 image = "ai-infra-saltstack"
 description = "SaltStack 配置管理服务"
 
+[services.singleuser]
+name = "singleuser"
+path = "src/singleuser"
+image = "ai-infra-singleuser"
+description = "JupyterHub SingleUser 容器镜像"
+
+[services.gitea]
+name = "gitea"
+path = "src/gitea"
+image = "ai-infra-gitea"
+description = "Gitea Git 代码仓库服务"
+
 # 依赖镜像配置（第三方中间件）
 [dependencies]
 postgres = "postgres:15-alpine"
@@ -48,12 +60,6 @@ phpldapadmin = "osixia/phpldapadmin:stable"
 minio = "quay.io/minio/minio:latest"
 redisinsight = "redislabs/redisinsight:latest"
 tcp-proxy = "tecnativa/tcp-proxy"
-
-# 扩展组件配置（ai-infra相关的非源码镜像）
-[extensions]
-singleuser = "ai-infra-singleuser"
-backend-init = "ai-infra-backend-init"
-gitea = "ai-infra-gitea"
 
 # 生产环境配置
 [production]

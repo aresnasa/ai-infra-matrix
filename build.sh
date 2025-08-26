@@ -138,24 +138,6 @@ get_production_dependencies() {
     ' "$CONFIG_FILE" | tr '\n' ' '
 }
 
-# 获取所有扩展组件镜像
-get_all_extensions() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "ai-infra-singleuser ai-infra-backend-init ai-infra-gitea"
-        return
-    fi
-    
-    awk -F' *= *' '
-        /^\[extensions\]/ { in_extensions = 1; next }
-        /^\[/ { in_extensions = 0; next }
-        in_extensions && NF > 1 {
-            gsub(/^"/, "", $2)
-            gsub(/"$/, "", $2)
-            print $2
-        }
-    ' "$CONFIG_FILE" | tr '\n' ' '
-}
-
 # 初始化配置
 DEFAULT_IMAGE_TAG=$(read_config "project" "version")
 [[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.5"
@@ -163,7 +145,6 @@ DEFAULT_IMAGE_TAG=$(read_config "project" "version")
 # 动态加载服务和依赖配置
 SRC_SERVICES=$(get_all_services | tr '\n' ' ')
 DEPENDENCY_IMAGES=$(get_all_dependencies | tr '\n' ' ')
-EXTENSION_IMAGES=$(get_all_extensions | tr '\n' ' ')
 
 # 动态收集依赖镜像函数
 collect_dependency_images() {
@@ -230,6 +211,9 @@ get_service_path() {
             "jupyterhub") echo "src/jupyterhub" ;;
             "nginx") echo "src/nginx" ;;
             "saltstack") echo "src/saltstack" ;;
+            "singleuser") echo "src/singleuser" ;;
+            "gitea") echo "src/gitea" ;;
+            "backend-init") echo "src/backend" ;;  # backend-init 使用 backend 的 Dockerfile
             *) echo "" ;;
         esac
     else
@@ -621,20 +605,47 @@ build_service() {
     
     # 构建镜像
     print_info "  → 正在构建镜像..."
-    if docker build -f "$dockerfile_path" -t "$target_image" "$SCRIPT_DIR"; then
-        print_success "✓ 构建成功: $target_image"
-        
-        # 如果指定了registry，同时创建本地别名
-        if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
-            if docker tag "$target_image" "$base_image"; then
-                print_info "  ✓ 本地别名: $base_image"
+    local build_context="$SCRIPT_DIR/$service_path"
+    local dockerfile_name="Dockerfile"
+    
+    # 检查是否在服务目录中构建
+    if [[ -f "$build_context/$dockerfile_name" ]]; then
+        # 切换到服务目录进行构建
+        cd "$build_context"
+        if docker build -f "$dockerfile_name" -t "$target_image" .; then
+            cd "$SCRIPT_DIR"  # 返回原目录
+            print_success "✓ 构建成功: $target_image"
+            
+            # 如果指定了registry，同时创建本地别名
+            if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
+                if docker tag "$target_image" "$base_image"; then
+                    print_info "  ✓ 本地别名: $base_image"
+                fi
             fi
+            
+            return 0
+        else
+            cd "$SCRIPT_DIR"  # 返回原目录
+            print_error "✗ 构建失败: $target_image"
+            return 1
         fi
-        
-        return 0
     else
-        print_error "✗ 构建失败: $target_image"
-        return 1
+        # 后备方案：使用项目根目录作为构建上下文
+        if docker build -f "$dockerfile_path" -t "$target_image" "$SCRIPT_DIR"; then
+            print_success "✓ 构建成功: $target_image"
+            
+            # 如果指定了registry，同时创建本地别名
+            if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
+                if docker tag "$target_image" "$base_image"; then
+                    print_info "  ✓ 本地别名: $base_image"
+                fi
+            fi
+            
+            return 0
+        else
+            print_error "✗ 构建失败: $target_image"
+            return 1
+        fi
     fi
 }
 
@@ -658,12 +669,17 @@ build_all_services() {
     local total_count=0
     local failed_services=()
     
+    # 获取所有服务（包括原扩展组件）
+    local all_services="$SRC_SERVICES"
+    
     # 计算服务总数
-    for service in $SRC_SERVICES; do
+    for service in $all_services; do
         total_count=$((total_count + 1))
     done
     
-    for service in $SRC_SERVICES; do
+    # 构建所有服务
+    for service in $all_services; do
+        print_info "构建服务: $service"
         if build_service "$service" "$tag" "$registry"; then
             success_count=$((success_count + 1))
         else
