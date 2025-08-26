@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="   1.0.0"
 CONFIG_FILE="$SCRIPT_DIR/config.toml"
 OS_TYPE=$(detect_os)
+FORCE_REBUILD=false  # 强制重新构建标志
 
 # ==========================================
 # 配置文件解析功能
@@ -98,7 +99,7 @@ get_all_services() {
     ' "$CONFIG_FILE" | sort
 }
 
-# 获取所有依赖镜像
+# 获取所有依赖镜像（包含测试工具）
 get_all_dependencies() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
         echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
@@ -112,6 +113,27 @@ get_all_dependencies() {
             gsub(/^"/, "", $2)
             gsub(/"$/, "", $2)
             print $2
+        }
+    ' "$CONFIG_FILE" | tr '\n' ' '
+}
+
+# 获取生产环境依赖镜像（移除测试工具）
+get_production_dependencies() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "postgres:15-alpine redis:7-alpine tecnativa/tcp-proxy nginx:1.27-alpine quay.io/minio/minio:latest"
+        return
+    fi
+    
+    awk -F' *= *' '
+        /^\[dependencies\]/ { in_dependencies = 1; next }
+        /^\[/ { in_dependencies = 0; next }
+        in_dependencies && NF > 1 {
+            gsub(/^"/, "", $2)
+            gsub(/"$/, "", $2)
+            # 排除测试工具和LDAP服务
+            if ($2 !~ /phpldapadmin/ && $2 !~ /redisinsight/ && $2 !~ /openldap/) {
+                print $2
+            }
         }
     ' "$CONFIG_FILE" | tr '\n' ' '
 }
@@ -580,7 +602,24 @@ build_service() {
     print_info "  Dockerfile: $service_path/Dockerfile"
     print_info "  目标镜像: $target_image"
     
+    # 检查镜像是否已存在
+    if [[ "$FORCE_REBUILD" == "false" ]] && docker image inspect "$target_image" >/dev/null 2>&1; then
+        print_success "  ✓ 镜像已存在，跳过构建: $target_image"
+        
+        # 如果指定了registry，确保本地别名也存在
+        if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
+            if ! docker image inspect "$base_image" >/dev/null 2>&1; then
+                if docker tag "$target_image" "$base_image"; then
+                    print_info "  ✓ 创建本地别名: $base_image"
+                fi
+            fi
+        fi
+        
+        return 0
+    fi
+    
     # 构建镜像
+    print_info "  → 正在构建镜像..."
     if docker build -f "$dockerfile_path" -t "$target_image" "$SCRIPT_DIR"; then
         print_success "✓ 构建成功: $target_image"
         
@@ -792,24 +831,37 @@ pull_and_tag_dependencies() {
         total_count=$((total_count + 1))
         print_info "处理依赖镜像: $dep_image"
         
-        # 拉取原始镜像
-        if docker pull "$dep_image"; then
-            print_success "  ✓ 拉取成功: $dep_image"
-            
-            # 使用新的映射机制生成目标镜像名
-            local target_image
-            target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
-            
-            # 标记镜像
-            if docker tag "$dep_image" "$target_image"; then
-                print_success "  ✓ 标记成功: $target_image"
-                success_count=$((success_count + 1))
-            else
-                print_error "  ✗ 标记失败: $target_image"
-                failed_deps+=("$dep_image")
-            fi
+        # 使用新的映射机制生成目标镜像名
+        local target_image
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        # 检查目标镜像是否已存在
+        if [[ "$FORCE_REBUILD" == "false" ]] && docker image inspect "$target_image" >/dev/null 2>&1; then
+            print_success "  ✓ 镜像已存在，跳过: $target_image"
+            success_count=$((success_count + 1))
+            continue
+        fi
+        
+        # 检查原始镜像是否已存在本地
+        if docker image inspect "$dep_image" >/dev/null 2>&1; then
+            print_success "  ✓ 本地镜像已存在: $dep_image"
         else
-            print_error "  ✗ 拉取失败: $dep_image"
+            # 拉取原始镜像
+            print_info "  → 正在拉取镜像: $dep_image"
+            if ! docker pull "$dep_image"; then
+                print_error "  ✗ 拉取失败: $dep_image"
+                failed_deps+=("$dep_image")
+                continue
+            fi
+            print_success "  ✓ 拉取成功: $dep_image"
+        fi
+        
+        # 标记镜像
+        if docker tag "$dep_image" "$target_image"; then
+            print_success "  ✓ 标记成功: $target_image"
+            success_count=$((success_count + 1))
+        else
+            print_error "  ✗ 标记失败: $target_image"
             failed_deps+=("$dep_image")
         fi
         echo
@@ -880,6 +932,144 @@ push_dependencies() {
         return 1
     else
         print_success "🎉 所有依赖镜像推送成功！"
+        return 0
+    fi
+}
+
+# ==========================================
+# 生产环境依赖镜像处理功能
+# ==========================================
+
+# 拉取并标记生产环境依赖镜像（排除测试工具）
+pull_and_tag_production_dependencies() {
+    local registry="$1"
+    local tag="${2:-latest}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "需要指定 registry"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "拉取并标记生产环境依赖镜像到 $registry"
+    print_info "=========================================="
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
+    
+    # 使用生产环境依赖镜像列表
+    local dependency_images
+    dependency_images=$(get_production_dependencies | tr '\n' ' ')
+    print_info "收集到生产环境依赖镜像: $dependency_images"
+    echo
+    
+    local success_count=0
+    local total_count=0
+    local failed_deps=()
+    
+    for dep_image in $dependency_images; do
+        if [[ -z "$dep_image" ]]; then
+            continue
+        fi
+        
+        ((total_count++))
+        
+        # 获取目标镜像名称
+        local target_image
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        # 检查镜像是否已存在
+        if docker image inspect "$target_image" >/dev/null 2>&1; then
+            print_success "  ✓ 镜像已存在，跳过: $target_image"
+            ((success_count++))
+            continue
+        fi
+        
+        print_info "处理生产环境依赖镜像: $dep_image"
+        
+        # 拉取原始镜像
+        if ! docker pull "$dep_image"; then
+            print_error "  ✗ 拉取失败: $dep_image"
+            failed_deps+=("$dep_image")
+            continue
+        fi
+        
+        # 标记为目标镜像
+        if ! docker tag "$dep_image" "$target_image"; then
+            print_error "  ✗ 标记失败: $dep_image -> $target_image"
+            failed_deps+=("$dep_image")
+            continue
+        fi
+        
+        print_success "  ✓ 处理成功: $dep_image -> $target_image"
+        ((success_count++))
+    done
+    
+    print_info "=========================================="
+    print_success "生产环境依赖镜像处理完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_deps[@]} -gt 0 ]]; then
+        print_warning "失败的依赖镜像: ${failed_deps[*]}"
+        return 1
+    else
+        print_success "🎉 所有生产环境依赖镜像处理成功！"
+        return 0
+    fi
+}
+
+# 推送生产环境依赖镜像
+push_production_dependencies() {
+    local registry="$1"
+    local tag="${2:-latest}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "需要指定 registry"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "推送生产环境依赖镜像到 $registry"
+    print_info "=========================================="
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
+    
+    # 使用生产环境依赖镜像列表
+    local dependency_images
+    dependency_images=$(get_production_dependencies | tr '\n' ' ')
+    print_info "收集到生产环境依赖镜像: $dependency_images"
+    echo
+    
+    local success_count=0
+    local total_count=0
+    local failed_deps=()
+    
+    for dep_image in $dependency_images; do
+        if [[ -z "$dep_image" ]]; then
+            continue
+        fi
+        
+        ((total_count++))
+        
+        # 获取目标镜像名称
+        local target_image
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        print_info "推送生产环境依赖镜像: $target_image"
+        
+        if docker push "$target_image"; then
+            print_success "  ✓ 推送成功: $target_image"
+            ((success_count++))
+        else
+            print_error "  ✗ 推送失败: $target_image"
+            failed_deps+=("$target_image")
+        fi
+    done
+    
+    print_info "=========================================="
+    print_success "生产环境依赖镜像推送完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_deps[@]} -gt 0 ]]; then
+        print_warning "失败的依赖镜像: ${failed_deps[*]}"
+        return 1
+    else
+        print_success "🎉 所有生产环境依赖镜像推送成功！"
         return 0
     fi
 }
@@ -964,8 +1154,6 @@ generate_production_config() {
         "nginx:1.27-alpine"
         "tecnativa/tcp-proxy:latest"
         "tecnativa/tcp-proxy"
-        "redislabs/redisinsight:latest"
-        "redislabs/redisinsight"
         "quay.io/minio/minio:latest"
         "minio/minio:latest"
         "minio/minio"
@@ -1001,15 +1189,15 @@ generate_production_config() {
         sed -i "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
     fi
     
-    # 3. 移除LDAP相关服务（使用改进的处理逻辑）
-    print_info "移除openldap和phpldapadmin服务..."
+    # 3. 移除生产环境非必须服务（使用改进的处理逻辑）
+    print_info "移除openldap、phpldapadmin和redisinsight服务..."
     
     # 检查是否有Python和PyYAML
     if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
-        # 使用Python脚本精确移除LDAP服务
+        # 使用Python脚本精确移除非必须服务
         if python3 fix_ldap_removal.py "$output_file" "$output_file.tmp" 2>/dev/null; then
             mv "$output_file.tmp" "$output_file"
-            print_success "✓ 使用Python脚本成功移除LDAP服务"
+            print_success "✓ 使用Python脚本成功移除生产环境非必须服务"
         else
             print_warning "Python脚本移除失败，使用改进的备用方案"
             # 改进的备用方案：更完整的sed和awk处理
@@ -1017,8 +1205,12 @@ generate_production_config() {
                 # macOS版本 - 移除整个服务块
                 sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i.bak '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i.bak '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i.bak '/^  openldap:/d' "$output_file"
                 sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+                sed -i.bak '/^  redisinsight:/d' "$output_file"
+                sed -i.bak '/^  redis-insight:/d' "$output_file"
                 
                 # 移除depends_on中的openldap依赖（包括复杂格式）
                 sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
@@ -1028,8 +1220,12 @@ generate_production_config() {
                 # Linux版本 - 移除整个服务块
                 sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+                sed -i '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
                 sed -i '/^  openldap:/d' "$output_file"
                 sed -i '/^  phpldapadmin:/d' "$output_file"
+                sed -i '/^  redisinsight:/d' "$output_file"
+                sed -i '/^  redis-insight:/d' "$output_file"
                 
                 # 移除depends_on中的openldap依赖（包括复杂格式）
                 sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
@@ -1072,14 +1268,18 @@ generate_production_config() {
             ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
         fi
     else
-        print_warning "未安装PyYAML，使用改进的sed方案移除LDAP服务"
+        print_warning "未安装PyYAML，使用改进的sed方案移除生产环境非必须服务"
         # 改进的纯sed和awk方案
         if [[ "$OS_TYPE" == "macOS" ]]; then
             # macOS版本
             sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i.bak '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i.bak '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i.bak '/^  openldap:/d' "$output_file"
             sed -i.bak '/^  phpldapadmin:/d' "$output_file"
+            sed -i.bak '/^  redisinsight:/d' "$output_file"
+            sed -i.bak '/^  redis-insight:/d' "$output_file"
             
             # 移除简单的依赖和环境变量
             sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
@@ -1089,8 +1289,12 @@ generate_production_config() {
             # Linux版本
             sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
+            sed -i '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
             sed -i '/^  openldap:/d' "$output_file"
             sed -i '/^  phpldapadmin:/d' "$output_file"
+            sed -i '/^  redisinsight:/d' "$output_file"
+            sed -i '/^  redis-insight:/d' "$output_file"
             
             # 移除简单的依赖和环境变量
             sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
@@ -1215,9 +1419,9 @@ except Exception as e:
     print_success "✓ 生产环境配置文件生成成功: $output_file"
     echo
     print_info "注意事项："
-    print_info "  1. 请确保所有依赖镜像已推送到内部registry (使用 deps-all 命令)"
+    print_info "  1. 请确保所有依赖镜像已推送到内部registry (使用 deps-prod 命令)"
     print_info "  2. 请确保所有源码服务镜像已推送到内部registry (使用 build-push 命令)"
-    print_info "  3. 生产环境已移除LDAP服务依赖，服务可独立启动"
+    print_info "  3. 生产环境已移除LDAP、phpldapadmin和redisinsight服务，服务可独立启动"
     print_info "  4. 请检查生成的配置文件并根据需要调整环境变量"
     print_info "  5. 当前使用环境文件: $env_file"
     echo
@@ -1735,7 +1939,10 @@ show_help() {
     echo "专注于 src/ 目录下的 Dockerfile 构建，支持依赖镜像管理和 Mock 测试"
     echo
     echo "用法:"
-    echo "  $0 <命令> [参数...]"
+    echo "  $0 [--force] <命令> [参数...]"
+    echo
+    echo "全局选项:"
+    echo "  --force                         - 强制重新构建/下载，忽略本地存在的镜像"
     echo
     echo "源码服务命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
@@ -1749,6 +1956,7 @@ show_help() {
     echo "  deps-pull <registry> [tag]      - 拉取并标记依赖镜像"
     echo "  deps-push <registry> [tag]      - 推送依赖镜像"
     echo "  deps-all <registry> [tag]       - 拉取、标记并推送所有依赖镜像"
+    echo "  deps-prod <registry> [tag]      - 拉取、标记并推送生产环境依赖镜像（排除测试工具）"
     echo
     echo "生产环境命令:"
     echo "  prod-generate <registry> [tag]  - 生成生产环境配置文件（使用内部镜像）"
@@ -1787,16 +1995,21 @@ show_help() {
     echo "  # 源码服务操作"
     echo "  $0 list                         # 列出所有服务"
     echo "  $0 build backend               # 构建 backend 服务"
+    echo "  $0 --force build backend       # 强制重新构建 backend 服务"
     echo "  $0 build-all v0.3.5            # 构建所有服务，标签 v0.3.5"
+    echo "  $0 --force build-all v0.3.5    # 强制重新构建所有服务"
     echo "  $0 build-push registry.local/ai-infra v0.3.5"
     echo "                                  # 构建并推送到私有仓库"
     echo
     echo "  # 依赖镜像操作"
     echo "  $0 deps-pull registry.local/ai-infra latest"
     echo "                                  # 拉取并标记依赖镜像"
+    echo "  $0 --force deps-pull registry.local/ai-infra latest"
+    echo "                                  # 强制重新拉取依赖镜像"
     echo "  $0 deps-push registry.local/ai-infra latest"
     echo "                                  # 推送依赖镜像"
     echo "  $0 deps-all registry.local/ai-infra v0.3.5"
+    echo "  $0 deps-prod registry.local/ai-infra v0.3.5"
     echo "                                  # 完整依赖镜像操作"
     echo
     echo "  # 生产环境操作"
@@ -1822,6 +2035,20 @@ show_help() {
 
 # 主函数
 main() {
+    # 预处理命令行参数，检查 --force 标志
+    local args=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--force" ]]; then
+            FORCE_REBUILD=true
+            print_info "启用强制重新构建模式"
+        else
+            args+=("$arg")
+        fi
+    done
+    
+    # 重新设置位置参数
+    set -- "${args[@]}"
+    
     # 早期Docker Compose兼容性检查
     if [[ "${1:-}" != "version" && "${1:-}" != "help" && "${1:-}" != "-h" && "${1:-}" != "--help" ]]; then
         if ! check_compose_compatibility; then
@@ -1906,6 +2133,21 @@ main() {
                 push_dependencies "$2" "$deps_tag"
             else
                 print_error "依赖镜像拉取失败，停止推送操作"
+                exit 1
+            fi
+            ;;
+            
+        "deps-prod")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                exit 1
+            fi
+            local deps_tag="${3:-latest}"
+            print_info "执行生产环境依赖镜像操作（排除测试工具）..."
+            if pull_and_tag_production_dependencies "$2" "$deps_tag"; then
+                push_production_dependencies "$2" "$deps_tag"
+            else
+                print_error "生产环境依赖镜像拉取失败，停止推送操作"
                 exit 1
             fi
             ;;
