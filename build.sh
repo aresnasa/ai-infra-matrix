@@ -1250,6 +1250,27 @@ generate_production_config() {
         return 1
     fi
     
+    # 确保生产环境环境文件存在且正确
+    print_info "确保生产环境文件配置..."
+    local prod_env_file=".env.prod"
+    
+    # 如果当前使用的不是 .env.prod，则确保 .env.prod 存在
+    if [[ "$env_file" != "$prod_env_file" ]]; then
+        if [[ ! -f "$prod_env_file" ]]; then
+            print_info "生产环境文件不存在，从 $env_file 复制..."
+            cp "$env_file" "$prod_env_file"
+            print_success "✓ 已创建生产环境文件: $prod_env_file"
+        else
+            print_info "生产环境文件已存在: $prod_env_file"
+        fi
+        
+        # 验证生产环境文件
+        if ! validate_env_file "$prod_env_file"; then
+            print_error "生产环境文件验证失败: $prod_env_file"
+            return 1
+        fi
+    fi
+    
     # 验证原始配置文件
     print_info "验证原始配置文件..."
     local compose_cmd=$(detect_compose_command)
@@ -1330,6 +1351,14 @@ generate_production_config() {
         # 只更新项目镜像的环境变量标签
         sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
         sed -i "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
+    fi
+    
+    # 2.5. 更新环境文件引用为生产环境文件
+    print_info "更新环境文件引用为生产环境..."
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i.bak "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
+    else
+        sed -i "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
     fi
     
     # 3. 移除生产环境非必须服务（使用改进的处理逻辑）
@@ -1585,11 +1614,17 @@ start_production() {
         return 1
     fi
     
-    # 检测环境文件
+    # 检测环境文件 - 生产环境优先使用 .env.prod
     local env_file
-    env_file=$(detect_env_file)
-    if [[ $? -ne 0 ]]; then
-        return 1
+    if [[ -f ".env.prod" ]]; then
+        env_file=".env.prod"
+        print_info "使用生产环境文件: $env_file"
+    else
+        env_file=$(detect_env_file)
+        if [[ $? -ne 0 ]]; then
+            return 1
+        fi
+        print_warning "未找到 .env.prod，使用: $env_file"
     fi
     
     # 验证环境文件
