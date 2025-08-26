@@ -534,17 +534,18 @@ get_mapped_private_image() {
             mapped_version="${mapped_version//\${IMAGE_TAG}/$target_tag}"
         fi
         
-        # 构建Harbor格式的完整镜像名
-        local registry_base="${registry%%/*}"
-        local final_image=""
-        
-        if [[ "$registry" == *"/"* ]]; then
-            # Harbor格式：registry/project已指定
-            final_image="${registry_base}/${mapped_project}/${image_base##*/}:${mapped_version}"
+        # 提取原始镜像的简短名称（不含namespace）
+        local simple_name=""
+        if [[ "$image_base" == *"/"* ]]; then
+            # 处理带namespace的镜像，如 tecnativa/tcp-proxy -> tcp-proxy
+            simple_name="${image_base##*/}"
         else
-            # 传统格式
-            final_image="${registry}/${mapped_project}/${image_base##*/}:${mapped_version}"
+            # 直接使用镜像名，如 postgres -> postgres
+            simple_name="$image_base"
         fi
+        
+        # 构建统一的 aiharbor.msxf.local/aihpc/servicename:version 格式
+        local final_image="${registry}/${simple_name}:${mapped_version}"
         
         echo "$final_image"
     else
