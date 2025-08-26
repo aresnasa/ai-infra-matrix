@@ -242,6 +242,63 @@ print_error() {
 # 环境变量管理函数
 # ==========================================
 
+# 生成环境文件从模板
+create_env_from_template() {
+    local env_type="${1:-dev}"  # dev 或 prod
+    local force="${2:-false}"
+    
+    print_info "正在创建环境配置文件..."
+    
+    case "$env_type" in
+        "prod"|"production")
+            local template_file=".env.prod.example"
+            local target_file=".env.prod"
+            ;;
+        "dev"|"development"|*)
+            local template_file=".env.example"
+            local target_file=".env"
+            ;;
+    esac
+    
+    # 检查模板文件是否存在
+    if [[ ! -f "$template_file" ]]; then
+        print_error "模板文件不存在: $template_file"
+        return 1
+    fi
+    
+    # 检查目标文件是否已存在
+    if [[ -f "$target_file" ]] && [[ "$force" != "true" ]]; then
+        print_warning "环境文件已存在: $target_file"
+        print_info "如需强制覆盖，请使用 --force 参数"
+        return 0
+    fi
+    
+    # 复制模板文件
+    if cp "$template_file" "$target_file"; then
+        print_success "✓ 创建环境文件: $target_file (从 $template_file)"
+        
+        # 检查并创建backend目录的环境文件
+        if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
+            cp "src/backend/.env.example" "src/backend/.env"
+            print_success "✓ 创建后端环境文件: src/backend/.env"
+        fi
+        
+        # 根据环境类型调整配置
+        if [[ "$env_type" == "prod" ]] || [[ "$env_type" == "production" ]]; then
+            # 生产环境特殊配置
+            print_info "应用生产环境配置..."
+            sed -i.bak 's/DEBUG_MODE=true/DEBUG_MODE=false/g' "$target_file" 2>/dev/null || true
+            sed -i.bak 's/LOG_LEVEL=debug/LOG_LEVEL=info/g' "$target_file" 2>/dev/null || true
+            sed -i.bak 's/BUILD_ENV=development/BUILD_ENV=production/g' "$target_file" 2>/dev/null || true
+        fi
+        
+        return 0
+    else
+        print_error "创建环境文件失败"
+        return 1
+    fi
+}
+
 # 检测并确定唯一的环境文件
 detect_env_file() {
     local env_file=""
@@ -255,9 +312,13 @@ detect_env_file() {
         echo "使用开发环境配置: $env_file" >&2
     elif [[ -f ".env.example" ]]; then
         echo "未找到环境配置文件，从模板创建..." >&2
-        cp ".env.example" ".env"
-        env_file=".env"
-        echo "✓ 从.env.example创建了.env文件" >&2
+        if create_env_from_template "dev"; then
+            env_file=".env"
+            echo "✓ 从.env.example创建了.env文件" >&2
+        else
+            echo "错误: 创建环境文件失败" >&2
+            return 1
+        fi
     else
         echo "错误: 未找到任何环境配置文件（.env.prod, .env, .env.example）" >&2
         return 1
@@ -2678,6 +2739,22 @@ main() {
                 exit 1
             fi
             build_and_push_all "${3:-$DEFAULT_IMAGE_TAG}" "$2"
+            ;;
+            
+        # 环境配置管理命令
+        "create-env")
+            local env_type="${2:-dev}"
+            local force="false"
+            
+            # 检查是否有 --force 参数
+            for arg in "$@"; do
+                if [[ "$arg" == "--force" ]]; then
+                    force="true"
+                    break
+                fi
+            done
+            
+            create_env_from_template "$env_type" "$force"
             ;;
             
         # 依赖镜像管理命令
