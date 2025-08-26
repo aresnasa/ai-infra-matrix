@@ -47,7 +47,7 @@ RUN npm install
 COPY src/frontend/ .
 
 # 设置构建时环境变量
-ARG REACT_APP_API_URL=http://localhost:8083/api
+ARG REACT_APP_API_URL=/api
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
 # 设置阿里云npm镜像并构建应用

@@ -1002,7 +1002,7 @@ pull_and_tag_production_dependencies() {
         print_success "  ✓ 处理成功: $dep_image -> $target_image"
         ((success_count++))
     done
-    
+    you y
     print_info "=========================================="
     print_success "生产环境依赖镜像处理完成: $success_count/$total_count 成功"
     
@@ -1434,6 +1434,7 @@ except Exception as e:
 start_production() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local force_local="${3:-false}"  # 新增参数：是否强制使用本地镜像
     local compose_file="docker-compose.prod.yml"
     
     if [[ -z "$registry" ]]; then
@@ -1466,12 +1467,26 @@ start_production() {
     print_info "环境文件: $env_file"
     print_info "Registry: $registry"
     print_info "标签: $tag"
+    if [[ "$force_local" == "true" ]]; then
+        print_info "模式: 强制使用本地镜像 (跳过拉取)"
+    fi
     echo
     
-    print_info "拉取所有镜像..."
-    if ! ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" pull; then
-        print_error "镜像拉取失败"
-        return 1
+    # 根据 force_local 参数决定是否拉取镜像
+    if [[ "$force_local" == "true" ]]; then
+        print_info "跳过镜像拉取，使用本地已有镜像..."
+        
+        # 检查并构建缺失的镜像（包括有build配置的服务）
+        print_info "检查并构建需要的镜像..."
+        if ! check_and_build_missing_images "$compose_file" "$env_file" "$registry" "$tag"; then
+            print_warning "部分镜像构建失败，继续尝试启动..."
+        fi
+    else
+        print_info "拉取所有镜像..."
+        if ! ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" pull; then
+            print_error "镜像拉取失败"
+            return 1
+        fi
     fi
     
     print_info "启动生产环境..."
@@ -1483,6 +1498,73 @@ start_production() {
         return 0
     else
         print_error "✗ 生产环境启动失败"
+        return 1
+    fi
+}
+
+# 检查并构建缺失的镜像
+check_and_build_missing_images() {
+    local compose_file="$1"
+    local env_file="$2"
+    local registry="$3"
+    local tag="$4"
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "compose文件不存在: $compose_file"
+        return 1
+    fi
+    
+    print_info "分析compose文件中需要的镜像..."
+    
+    # 直接构建已知的关键服务（简化方案）
+    local critical_services=("backend-init" "gitea" "singleuser-builder")
+    local missing_count=0
+    
+    for service in "${critical_services[@]}"; do
+        # 构造预期的镜像名
+        local expected_image="${registry}/ai-infra-${service}:${tag}"
+        
+        # 检查镜像是否存在
+        if ! docker image inspect "$expected_image" >/dev/null 2>&1; then
+            print_info "缺失镜像: $expected_image"
+            if build_service_if_missing "$service" "$compose_file" "$env_file"; then
+                # 构建成功后标记镜像
+                local local_image="ai-infra-${service}:${tag}"
+                if docker image inspect "$local_image" >/dev/null 2>&1; then
+                    docker tag "$local_image" "$expected_image"
+                    print_success "✓ 已标记: $local_image -> $expected_image"
+                fi
+            else
+                missing_count=$((missing_count + 1))
+            fi
+        else
+            print_success "✓ 镜像已存在: $expected_image"
+        fi
+    done
+    
+    if [[ $missing_count -eq 0 ]]; then
+        print_success "所有关键镜像都已准备就绪"
+        return 0
+    else
+        print_warning "有 $missing_count 个关键服务构建失败"
+        return 1
+    fi
+}
+
+# 构建单个服务（如果缺失）
+build_service_if_missing() {
+    local service="$1"
+    local compose_file="$2"
+    local env_file="$3"
+    
+    print_info "尝试构建服务: $service"
+    
+    # 使用docker-compose构建特定服务
+    if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" build "$service" 2>/dev/null; then
+        print_success "✓ 构建成功: $service"
+        return 0
+    else
+        print_warning "✗ 构建失败: $service (可能不存在build配置)"
         return 1
     fi
 }
@@ -1932,6 +2014,209 @@ clean_images() {
     print_success "清理完成: $success_count/${#images_to_clean[@]} 成功"
 }
 
+# 清理所有镜像（包括依赖镜像）
+clean_all_images() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local force="${2:-false}"
+    
+    print_info "=========================================="
+    print_info "清理所有 AI-Infra 相关镜像"
+    print_info "=========================================="
+    print_info "目标标签: $tag"
+    echo
+    
+    local images_to_clean=()
+    
+    # 收集AI-Infra源码服务镜像
+    print_info "收集源码服务镜像..."
+    for service in $SRC_SERVICES; do
+        local image="ai-infra-${service}:${tag}"
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            images_to_clean+=("$image")
+            echo "  • $image"
+        fi
+    done
+    
+    # 收集依赖镜像
+    print_info "收集依赖镜像..."
+    local dependency_images
+    dependency_images=$(collect_dependency_images)
+    
+    for dep_image in $dependency_images; do
+        # 检查原始镜像
+        if docker image inspect "$dep_image" >/dev/null 2>&1; then
+            images_to_clean+=("$dep_image")
+            echo "  • $dep_image"
+        fi
+        
+        # 检查带标签的依赖镜像（如果不是latest）
+        if [[ "$tag" != "latest" && "$dep_image" == *":latest" ]]; then
+            local tagged_image="${dep_image%:latest}:${tag}"
+            if docker image inspect "$tagged_image" >/dev/null 2>&1; then
+                images_to_clean+=("$tagged_image")
+                echo "  • $tagged_image"
+            fi
+        fi
+    done
+    
+    # 收集重新标记的依赖镜像（用于推送的镜像）
+    print_info "收集重新标记的依赖镜像..."
+    local retagged_images
+    retagged_images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(ai-infra-dep-|/ai-infra-)" | sort -u)
+    
+    if [[ -n "$retagged_images" ]]; then
+        while IFS= read -r image; do
+            if [[ -n "$image" ]]; then
+                images_to_clean+=("$image")
+                echo "  • $image"
+            fi
+        done <<< "$retagged_images"
+    fi
+    
+    if [[ ${#images_to_clean[@]} -eq 0 ]]; then
+        print_info "没有找到需要清理的镜像"
+        return 0
+    fi
+    
+    echo
+    print_info "找到 ${#images_to_clean[@]} 个镜像需要清理"
+    echo
+    
+    if [[ "$force" != "true" ]]; then
+        read -p "确认删除这些镜像? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            print_info "已取消清理操作"
+            return 0
+        fi
+    fi
+    
+    # 删除镜像
+    local success_count=0
+    local failed_count=0
+    
+    for image in "${images_to_clean[@]}"; do
+        if docker rmi "$image" 2>/dev/null; then
+            print_success "✓ 已删除: $image"
+            success_count=$((success_count + 1))
+        else
+            print_error "✗ 删除失败: $image"
+            failed_count=$((failed_count + 1))
+        fi
+    done
+    
+    echo
+    print_success "清理完成: $success_count 成功, $failed_count 失败"
+    
+    if [[ $failed_count -gt 0 ]]; then
+        print_warning "某些镜像可能正在被容器使用，请先停止相关容器后重试"
+        print_info "可以使用以下命令停止所有容器："
+        echo "  docker-compose down"
+        echo "  docker stop \$(docker ps -aq)"
+    fi
+}
+
+# 清理悬空镜像和未使用的镜像
+clean_dangling_images() {
+    local force="${1:-false}"
+    
+    print_info "=========================================="
+    print_info "清理悬空镜像和未使用的镜像"
+    print_info "=========================================="
+    
+    # 清理悬空镜像
+    local dangling_images
+    dangling_images=$(docker images -f "dangling=true" -q)
+    
+    if [[ -n "$dangling_images" ]]; then
+        print_info "找到悬空镜像:"
+        docker images -f "dangling=true" --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
+        echo
+        
+        if [[ "$force" == "true" ]]; then
+            print_info "正在删除悬空镜像..."
+            docker rmi $dangling_images 2>/dev/null || true
+            print_success "悬空镜像清理完成"
+        else
+            read -p "是否删除这些悬空镜像? (y/N): " confirm
+            if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                docker rmi $dangling_images 2>/dev/null || true
+                print_success "悬空镜像清理完成"
+            fi
+        fi
+    else
+        print_info "没有找到悬空镜像"
+    fi
+    
+    # 清理未使用的镜像
+    echo
+    print_info "检查未使用的镜像..."
+    
+    if [[ "$force" == "true" ]]; then
+        print_info "正在清理未使用的镜像..."
+        docker image prune -f
+        print_success "未使用镜像清理完成"
+    else
+        read -p "是否清理所有未使用的镜像? (y/N): " confirm
+        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+            docker image prune -f
+            print_success "未使用镜像清理完成"
+        fi
+    fi
+}
+
+# 深度清理：清理所有Docker资源
+deep_clean() {
+    local force="${1:-false}"
+    
+    print_warning "=========================================="
+    print_warning "深度清理 - 清理所有Docker资源"
+    print_warning "=========================================="
+    print_warning "这将删除："
+    print_warning "  • 所有停止的容器"
+    print_warning "  • 所有未使用的网络"
+    print_warning "  • 所有悬空镜像"
+    print_warning "  • 所有未使用的镜像"
+    print_warning "  • 所有构建缓存"
+    echo
+    
+    if [[ "$force" != "true" ]]; then
+        read -p "确认执行深度清理? 这可能会影响其他Docker项目 (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            print_info "已取消深度清理操作"
+            return 0
+        fi
+    fi
+    
+    print_info "正在执行深度清理..."
+    
+    # 清理停止的容器
+    print_info "清理停止的容器..."
+    docker container prune -f || true
+    
+    # 清理未使用的网络
+    print_info "清理未使用的网络..."
+    docker network prune -f || true
+    
+    # 清理未使用的卷
+    print_info "清理未使用的卷..."
+    docker volume prune -f || true
+    
+    # 清理镜像
+    print_info "清理未使用的镜像..."
+    docker image prune -a -f || true
+    
+    # 清理构建缓存
+    print_info "清理构建缓存..."
+    docker builder prune -a -f || true
+    
+    print_success "深度清理完成"
+    
+    # 显示清理后的磁盘使用情况
+    echo
+    print_info "清理后的Docker磁盘使用情况:"
+    docker system df
+}
+
 # 显示帮助信息
 show_help() {
     echo "AI Infrastructure Matrix - 精简构建脚本 v$VERSION"
@@ -1942,7 +2227,8 @@ show_help() {
     echo "  $0 [--force] <命令> [参数...]"
     echo
     echo "全局选项:"
-    echo "  --force                         - 强制重新构建/下载，忽略本地存在的镜像"
+    echo "  --force                         - 对构建命令：强制重新构建，忽略本地存在的镜像"
+    echo "                                    对prod-up命令：跳过镜像拉取，使用本地已有镜像"
     echo
     echo "源码服务命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
@@ -1961,6 +2247,7 @@ show_help() {
     echo "生产环境命令:"
     echo "  prod-generate <registry> [tag]  - 生成生产环境配置文件（使用内部镜像）"
     echo "  prod-up <registry> [tag]        - 启动生产环境"
+    echo "  prod-up --force <registry> [tag] - 启动生产环境（跳过镜像拉取，使用本地镜像）"
     echo "  prod-down                       - 停止生产环境"
     echo "  prod-restart <registry> [tag]   - 重启生产环境"
     echo "  prod-status                     - 查看生产环境状态"
@@ -1974,7 +2261,11 @@ show_help() {
     echo "  mock-restart [tag]             - 重启 Mock 测试环境"
     echo
     echo "工具命令:"
-    echo "  clean [tag] [--force]          - 清理本地镜像"
+    echo "  clean [type] [tag] [--force]   - 清理镜像"
+    echo "    • clean ai-infra [tag]       - 清理AI-Infra镜像 (默认)"
+    echo "    • clean all [tag]            - 清理所有镜像 (AI-Infra + 依赖)"
+    echo "    • clean dangling             - 清理悬空镜像"
+    echo "    • clean deep                 - 深度清理所有Docker资源"
     echo "  version                        - 显示版本信息"
     echo "  help                           - 显示此帮助信息"
     echo
@@ -2017,6 +2308,8 @@ show_help() {
     echo "                                  # 生成生产环境配置"
     echo "  $0 prod-up registry.local/ai-infra v0.3.5"
     echo "                                  # 启动生产环境"
+    echo "  $0 --force prod-up registry.local/ai-infra v0.3.5"
+    echo "                                  # 启动生产环境（跳过镜像拉取）"
     echo "  $0 prod-down                   # 停止生产环境"
     echo "  $0 prod-status                 # 查看生产环境状态"
     echo "  $0 prod-logs backend --follow   # 实时查看backend服务日志"
@@ -2166,7 +2459,12 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            start_production "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            # 检查是否有 --force 参数
+            local force_local="false"
+            if [[ "$FORCE_REBUILD" == "true" ]]; then
+                force_local="true"
+            fi
+            start_production "$2" "${3:-$DEFAULT_IMAGE_TAG}" "$force_local"
             ;;
             
         "prod-down")
@@ -2215,11 +2513,53 @@ main() {
             ;;
             
         "clean")
+            local clean_type="${2:-ai-infra}"
+            local tag_or_force="$3"
+            local force_flag="$4"
             local force="false"
-            if [[ "$3" == "--force" ]]; then
-                force="true"
-            fi
-            clean_images "${2:-$DEFAULT_IMAGE_TAG}" "$force"
+            local tag="$DEFAULT_IMAGE_TAG"
+            
+            # 解析参数
+            case "$clean_type" in
+                "all")
+                    if [[ "$tag_or_force" == "--force" ]]; then
+                        force="true"
+                    elif [[ -n "$tag_or_force" && "$tag_or_force" != "--force" ]]; then
+                        tag="$tag_or_force"
+                        if [[ "$force_flag" == "--force" ]]; then
+                            force="true"
+                        fi
+                    fi
+                    clean_all_images "$tag" "$force"
+                    ;;
+                "dangling")
+                    if [[ "$tag_or_force" == "--force" ]]; then
+                        force="true"
+                    fi
+                    clean_dangling_images "$force"
+                    ;;
+                "deep")
+                    if [[ "$tag_or_force" == "--force" ]]; then
+                        force="true"
+                    fi
+                    deep_clean "$force"
+                    ;;
+                "ai-infra"|*)
+                    # 默认清理AI-Infra镜像（保持原有行为）
+                    if [[ "$clean_type" != "ai-infra" && "$clean_type" != "--force" ]]; then
+                        tag="$clean_type"
+                    fi
+                    if [[ "$tag_or_force" == "--force" ]]; then
+                        force="true"
+                    elif [[ -n "$tag_or_force" && "$tag_or_force" != "--force" && "$clean_type" == "ai-infra" ]]; then
+                        tag="$tag_or_force"
+                        if [[ "$force_flag" == "--force" ]]; then
+                            force="true"
+                        fi
+                    fi
+                    clean_images "$tag" "$force"
+                    ;;
+            esac
             ;;
             
         "version")
