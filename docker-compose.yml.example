@@ -109,12 +109,16 @@ services:
     env_file:
     - .env.prod
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
+      - DB_HOST=${POSTGRES_HOST:-postgres}
+      - DB_PORT=${POSTGRES_PORT:-5432}
       - DB_USER=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - REDIS_HOST=redis
-      - LDAP_SERVER=openldap
+      - DB_NAME=${POSTGRES_DB:-ansible_playbook_generator}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - LDAP_SERVER=${LDAP_HOST:-openldap}
+      - LDAP_PORT=${LDAP_PORT:-389}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - TZ=Asia/Shanghai
     command: ["./init"]
@@ -141,12 +145,17 @@ services:
     env_file:
     - .env.prod
     environment:
-      DB_HOST: postgres
-      DB_PORT: "5432"
+      DB_HOST: "${POSTGRES_HOST:-postgres}"
+      DB_PORT: "${POSTGRES_PORT:-5432}"
       DB_USER: "${POSTGRES_USER:-postgres}"
       DB_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
-      REDIS_HOST: redis
-      LDAP_SERVER: openldap
+      DB_NAME: "${POSTGRES_DB:-ansible_playbook_generator}"
+      REDIS_HOST: "${REDIS_HOST:-redis}"
+      REDIS_PORT: "${REDIS_PORT:-6379}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      LDAP_SERVER: "${LDAP_HOST:-openldap}"
+      LDAP_PORT: "${LDAP_PORT:-389}"
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=example,dc=org}"
       GITEA_ENABLED: "${GITEA_ENABLED:-true}"
       GITEA_BASE_URL: "${GITEA_BASE_URL:-http://gitea:3000}"
       GITEA_ADMIN_TOKEN: "${GITEA_ADMIN_TOKEN}"
@@ -226,26 +235,27 @@ services:
         VERSION: v0.3.5
     container_name: ai-infra-jupyterhub
     environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_DB=jupyterhub_db
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - DB_HOST=postgres
-      - DB_PORT=5432
+      - DB_HOST=${POSTGRES_HOST:-postgres}
+      - DB_PORT=${POSTGRES_PORT:-5432}
       - DB_NAME=jupyterhub_db
-      - DB_USER=postgres
+      - DB_USER=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_DB=1
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
       - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
       - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
       - SESSION_TIMEOUT=86400
       - USE_CUSTOM_AUTH=true
-      - AI_INFRA_BACKEND_URL=http://backend:8082
+      - AI_INFRA_BACKEND_URL=${BACKEND_URL:-http://backend:8082}
       - AI_INFRA_API_TOKEN=ai-infra-hub-token
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
@@ -319,7 +329,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - SALT_MASTER_HOST=saltstack
-      - AI_INFRA_BACKEND_URL=http://backend:8082
+      - AI_INFRA_BACKEND_URL=${BACKEND_URL:-http://backend:8082}
       - DEBUG_MODE=${DEBUG_MODE:-false}
     expose:
       - "4505"  # Salt Master Publish Port
@@ -456,13 +466,13 @@ services:
       PROTOCOL: "http"
       HTTP_PORT: "3000"
       GITEA_DB_TYPE: "postgres"
-      GITEA_DB_HOST: "postgres:5432"
-      GITEA_DB_NAME: "gitea"
+      GITEA_DB_HOST: "${GITEA_DB_HOST:-postgres:5432}"
+      GITEA_DB_NAME: "${GITEA_DB_NAME:-gitea}"
       # 注意：以下两行必须使用6个空格缩进，保持与其他 environment 项对齐，否则会导致 YAML 解析错误。
-      GITEA_DB_USER: "${GITEA_DB_USER}"
-      GITEA_DB_PASSWD: "${GITEA_DB_PASSWD}"
-      POSTGRES_USER: "${POSTGRES_USER}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      GITEA_DB_USER: "${GITEA_DB_USER:-gitea}"
+      GITEA_DB_PASSWD: "${GITEA_DB_PASSWD:-gitea-password}"
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
       DISABLE_REGISTRATION: "false"
       REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
       GITEA__auth__REVERSE_PROXY_AUTHENTICATION_USER: "X-WEBAUTH-USER"
@@ -479,12 +489,12 @@ services:
       # Admin bootstrap via reverse-proxy SSO only; admin user will be default admin
       GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
       DATA_PATH: "/data/gitea"
-      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ENDPOINT: "${MINIO_HOST:-minio}:${MINIO_PORT:-9000}"
       MINIO_BUCKET: "gitea"
       MINIO_USE_SSL: "false"
       MINIO_LOCATION: "us-east-1"
-      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
-      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
       TZ: "Asia/Shanghai"
     expose:
       - "3000"
@@ -531,8 +541,8 @@ services:
     env_file:
     - .env.prod
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
       - TZ=Asia/Shanghai
     expose:
       - "9000"

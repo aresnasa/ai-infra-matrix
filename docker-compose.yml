@@ -9,9 +9,9 @@ services:
     env_file:
     - .env.prod
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ansible_playbook_generator
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       TZ: Asia/Shanghai
     expose:
       - "5432"
@@ -20,7 +20,7 @@ services:
     networks:
       - ai-infra-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ansible_playbook_generator"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -60,8 +60,8 @@ services:
     environment:
       LDAP_ORGANISATION: "AI Infrastructure"
       LDAP_DOMAIN: "ai-infra.com"
-      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}"
-      LDAP_CONFIG_PASSWORD: "${LDAP_CONFIG_PASSWORD}"
+      LDAP_ADMIN_PASSWORD: "admin123"
+      LDAP_CONFIG_PASSWORD: "config123"
       LDAP_BASE_DN: "dc=ai-infra,dc=com"
       TZ: Asia/Shanghai
     expose:
@@ -111,10 +111,14 @@ services:
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=${POSTGRES_USER:-postgres}
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=ansible_playbook_generator
       - REDIS_HOST=redis
-      - LDAP_SERVER=openldap
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=ansible-redis-password
+      - LDAP_SERVER=
+      - LDAP_PORT=389
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - TZ=Asia/Shanghai
     command: ["./init"]
@@ -141,21 +145,26 @@ services:
     env_file:
     - .env.prod
     environment:
-      DB_HOST: postgres
+      DB_HOST: "postgres"
       DB_PORT: "5432"
-      DB_USER: "${POSTGRES_USER:-postgres}"
-      DB_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
-      REDIS_HOST: redis
-      LDAP_SERVER: openldap
+      DB_USER: "postgres"
+      DB_PASSWORD: "postgres"
+      DB_NAME: "ansible_playbook_generator"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "ansible-redis-password"
+      LDAP_SERVER: ""
+      LDAP_PORT: "389"
+      LDAP_BASE_DN: "dc"
       GITEA_ENABLED: "${GITEA_ENABLED:-true}"
-      GITEA_BASE_URL: "${GITEA_BASE_URL:-http://gitea:3000}"
+      GITEA_BASE_URL: "http://gitea:3000"
       GITEA_ADMIN_TOKEN: "${GITEA_ADMIN_TOKEN}"
       GITEA_AUTO_CREATE: "${GITEA_AUTO_CREATE:-true}"
       GITEA_AUTO_UPDATE: "${GITEA_AUTO_UPDATE:-true}"
       GITEA_SYNC_ENABLED: "${GITEA_SYNC_ENABLED:-true}"
       GITEA_SYNC_INTERVAL_SECONDS: "${GITEA_SYNC_INTERVAL_SECONDS:-600}"
       # Map reserved username 'admin' to a real admin account in Gitea (use 'admin' as default)
-      GITEA_ALIAS_ADMIN_TO: "${GITEA_ALIAS_ADMIN_TO:-admin}"
+      GITEA_ALIAS_ADMIN_TO: "admin"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       TZ: "Asia/Shanghai"
     expose:
@@ -230,22 +239,23 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=jupyterhub_db
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=postgres
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=jupyterhub_db
       - DB_USER=postgres
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DB_PASSWORD=postgres
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=1
-      - JWT_SECRET=${JWT_SECRET}
+      - REDIS_PASSWORD=ansible-redis-password
+      - JWT_SECRET=ai-infra-secret-key-change-in-dev
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
-      - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
-      - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
+      - CONFIGPROXY_AUTH_TOKEN=ai-infra-proxy-token-dev
+      - JUPYTERHUB_CRYPT_KEY=790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1
       - SESSION_TIMEOUT=86400
       - USE_CUSTOM_AUTH=true
-      - AI_INFRA_BACKEND_URL=http://backend:8082
+      - AI_INFRA_BACKEND_URL=
       - AI_INFRA_API_TOKEN=ai-infra-hub-token
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
@@ -319,7 +329,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - SALT_MASTER_HOST=saltstack
-      - AI_INFRA_BACKEND_URL=http://backend:8082
+      - AI_INFRA_BACKEND_URL=
       - DEBUG_MODE=${DEBUG_MODE:-false}
     expose:
       - "4505"  # Salt Master Publish Port
@@ -456,13 +466,13 @@ services:
       PROTOCOL: "http"
       HTTP_PORT: "3000"
       GITEA_DB_TYPE: "postgres"
-      GITEA_DB_HOST: "postgres:5432"
-      GITEA_DB_NAME: "gitea"
+      GITEA_DB_HOST: "${GITEA_DB_HOST:-postgres:5432}"
+      GITEA_DB_NAME: "${GITEA_DB_NAME:-gitea}"
       # 注意：以下两行必须使用6个空格缩进，保持与其他 environment 项对齐，否则会导致 YAML 解析错误。
-      GITEA_DB_USER: "${GITEA_DB_USER}"
-      GITEA_DB_PASSWD: "${GITEA_DB_PASSWD}"
-      POSTGRES_USER: "${POSTGRES_USER}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      GITEA_DB_USER: "${GITEA_DB_USER:-gitea}"
+      GITEA_DB_PASSWD: "gitea-password"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
       DISABLE_REGISTRATION: "false"
       REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
       GITEA__auth__REVERSE_PROXY_AUTHENTICATION_USER: "X-WEBAUTH-USER"
@@ -475,16 +485,16 @@ services:
       GITEA__security__REVERSE_PROXY_LIMIT: "1"
       GITEA__security__REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
       # Set initial admin identity to 'admin' user
-      INITIAL_ADMIN_USERNAME: "${GITEA_ALIAS_ADMIN_TO:-admin}"
+      INITIAL_ADMIN_USERNAME: "admin"
       # Admin bootstrap via reverse-proxy SSO only; admin user will be default admin
       GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
       DATA_PATH: "/data/gitea"
-      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ENDPOINT: "${MINIO_HOST:-minio}:${MINIO_PORT:-9000}"
       MINIO_BUCKET: "gitea"
       MINIO_USE_SSL: "false"
       MINIO_LOCATION: "us-east-1"
-      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
-      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
       TZ: "Asia/Shanghai"
     expose:
       - "3000"
@@ -531,8 +541,8 @@ services:
     env_file:
     - .env.prod
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
       - TZ=Asia/Shanghai
     expose:
       - "9000"

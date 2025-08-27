@@ -239,6 +239,125 @@ print_error() {
 }
 
 # ==========================================
+# 随机密码生成函数
+# ==========================================
+
+# 生成安全的随机密码
+generate_random_password() {
+    local length="${1:-24}"  # 默认长度24
+    local password_type="${2:-standard}"  # standard, hex, alphanumeric
+    
+    case "$password_type" in
+        "hex")
+            # 64位十六进制密钥 (用于JupyterHub等需要特定长度的密钥)
+            if [[ "$length" == "64" ]]; then
+                openssl rand -hex 32
+            else
+                openssl rand -hex "$((length/2))"
+            fi
+            ;;
+        "alphanumeric")
+            # 字母数字组合，避免特殊字符
+            LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$length"
+            ;;
+        "standard"|*)
+            # 标准密码：字母、数字、部分安全特殊字符
+            LC_ALL=C tr -dc 'A-Za-z0-9._-' < /dev/urandom | head -c "$length"
+            ;;
+    esac
+}
+
+# 替换环境文件中的模板密码
+replace_template_passwords() {
+    local template_file="$1"
+    local target_file="$2"
+    local force="${3:-false}"
+    
+    if [[ ! -f "$template_file" ]]; then
+        print_error "模板文件不存在: $template_file"
+        return 1
+    fi
+    
+    if [[ -f "$target_file" ]] && [[ "$force" != "true" ]]; then
+        print_warning "目标文件已存在: $target_file"
+        print_info "如需强制覆盖，请使用 --force 参数"
+        return 1
+    fi
+    
+    print_info "正在从模板生成环境文件: $target_file"
+    
+    # 复制模板文件
+    cp "$template_file" "$target_file"
+    
+    # 生成所有需要的密码
+    local postgres_password=$(generate_random_password 24 "alphanumeric")
+    local redis_password=$(generate_random_password 24 "alphanumeric")
+    local jwt_secret=$(generate_random_password 48 "standard")
+    local configproxy_token=$(generate_random_password 48 "standard")
+    local jupyterhub_crypt_key=$(generate_random_password 64 "hex")
+    local minio_access_key=$(generate_random_password 20 "alphanumeric")
+    local minio_secret_key=$(generate_random_password 40 "standard")
+    local gitea_admin_password=$(generate_random_password 24 "alphanumeric")
+    local gitea_db_password=$(generate_random_password 24 "alphanumeric")
+    local ldap_admin_password=$(generate_random_password 24 "alphanumeric")
+    local ldap_config_password=$(generate_random_password 24 "alphanumeric")
+    
+    # 替换模板中的密码占位符
+    sed -i.bak \
+        -e "s/TEMPLATE_POSTGRES_PASSWORD/$postgres_password/g" \
+        -e "s/TEMPLATE_REDIS_PASSWORD/$redis_password/g" \
+        -e "s/TEMPLATE_JWT_SECRET/$jwt_secret/g" \
+        -e "s/TEMPLATE_CONFIGPROXY_AUTH_TOKEN/$configproxy_token/g" \
+        -e "s/TEMPLATE_JUPYTERHUB_CRYPT_KEY/$jupyterhub_crypt_key/g" \
+        -e "s/TEMPLATE_MINIO_ACCESS_KEY/$minio_access_key/g" \
+        -e "s/TEMPLATE_MINIO_SECRET_KEY/$minio_secret_key/g" \
+        -e "s/TEMPLATE_GITEA_ADMIN_PASSWORD/$gitea_admin_password/g" \
+        -e "s/TEMPLATE_GITEA_DB_PASSWD/$gitea_db_password/g" \
+        -e "s/TEMPLATE_LDAP_ADMIN_PASSWORD/$ldap_admin_password/g" \
+        -e "s/TEMPLATE_LDAP_CONFIG_PASSWORD/$ldap_config_password/g" \
+        "$target_file"
+    
+    # 处理环境变量展开的URL (替换 ${VARIABLE} 形式)
+    # 读取当前文件内容并替换变量引用
+    local temp_content=$(cat "$target_file")
+    
+    # 处理DATABASE_URL
+    temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER}|postgres|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PASSWORD}|$postgres_password|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_HOST}|postgres|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT}|5432|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_DB}|aiinfra|g")
+    
+    # 处理REDIS_URL
+    temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PASSWORD}|$redis_password|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST}|redis|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PORT}|6379|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB}|0|g")
+    
+    # 处理其他服务URL
+    temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_HOST}|backend|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_PORT}|8082|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${FRONTEND_HOST}|frontend|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${FRONTEND_PORT}|80|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_HOST}|jupyterhub|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PORT}|8000|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_HOST}|gitea|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_PORT}|3000|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_INTERNAL_URL}|http://gitea:3000|g")
+    
+    # 写回文件
+    echo "$temp_content" > "$target_file"
+    
+    # 删除备份文件
+    rm -f "${target_file}.bak"
+    
+    print_success "✓ 生成环境文件完成: $target_file"
+    print_info "所有密码已自动生成，请妥善保管！"
+    
+    return 0
+}
+
+# ==========================================
 # 环境变量管理函数
 # ==========================================
 
@@ -260,6 +379,28 @@ create_env_from_template() {
             ;;
     esac
     
+    # 对于生产环境，使用密码替换功能
+    if [[ "$env_type" == "prod" ]] || [[ "$env_type" == "production" ]]; then
+        if replace_template_passwords "$template_file" "$target_file" "$force"; then
+            # 检查并创建backend目录的环境文件
+            if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
+                cp "src/backend/.env.example" "src/backend/.env"
+                print_success "✓ 创建后端环境文件: src/backend/.env"
+            fi
+            
+            # 应用生产环境特殊配置
+            print_info "应用生产环境配置..."
+            sed -i.bak 's/DEBUG_MODE=true/DEBUG_MODE=false/g' "$target_file" 2>/dev/null || true
+            sed -i.bak 's/LOG_LEVEL=debug/LOG_LEVEL=info/g' "$target_file" 2>/dev/null || true
+            sed -i.bak 's/BUILD_ENV=development/BUILD_ENV=production/g' "$target_file" 2>/dev/null || true
+            rm -f "${target_file}.bak"
+            
+            return 0
+        else
+            return 1
+        fi
+    fi
+    
     # 检查模板文件是否存在
     if [[ ! -f "$template_file" ]]; then
         print_error "模板文件不存在: $template_file"
@@ -273,7 +414,7 @@ create_env_from_template() {
         return 0
     fi
     
-    # 复制模板文件
+    # 复制模板文件 (开发环境)
     if cp "$template_file" "$target_file"; then
         print_success "✓ 创建环境文件: $target_file (从 $template_file)"
         
@@ -281,15 +422,6 @@ create_env_from_template() {
         if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
             cp "src/backend/.env.example" "src/backend/.env"
             print_success "✓ 创建后端环境文件: src/backend/.env"
-        fi
-        
-        # 根据环境类型调整配置
-        if [[ "$env_type" == "prod" ]] || [[ "$env_type" == "production" ]]; then
-            # 生产环境特殊配置
-            print_info "应用生产环境配置..."
-            sed -i.bak 's/DEBUG_MODE=true/DEBUG_MODE=false/g' "$target_file" 2>/dev/null || true
-            sed -i.bak 's/LOG_LEVEL=debug/LOG_LEVEL=info/g' "$target_file" 2>/dev/null || true
-            sed -i.bak 's/BUILD_ENV=development/BUILD_ENV=production/g' "$target_file" 2>/dev/null || true
         fi
         
         return 0
@@ -1547,31 +1679,33 @@ generate_production_config() {
         if [[ "$OS_TYPE" == "macOS" ]]; then
             # 更新项目镜像（添加registry前缀）
             sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-            # 更新基础镜像（添加registry前缀）
-            sed -i.bak "s|image: postgres:|image: ${registry}/postgres:|g" "$output_file"
-            sed -i.bak "s|image: redis:|image: ${registry}/redis:|g" "$output_file"
-            sed -i.bak "s|image: nginx:|image: ${registry}/nginx:|g" "$output_file"
-            sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy|g" "$output_file"
-            sed -i.bak "s|image: minio/minio|image: ${registry}/minio|g" "$output_file"
-            sed -i.bak "s|image: quay.io/minio/minio|image: ${registry}/minio|g" "$output_file"
+            # 更新基础镜像（添加registry前缀，保持原有版本）
+            sed -i.bak "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
+            sed -i.bak "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
+            sed -i.bak "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
+            sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy:latest|g" "$output_file"
+            sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${registry}/minio:latest|g" "$output_file"
+            sed -i.bak "s|image: osixia/openldap:stable|image: ${registry}/openldap:stable|g" "$output_file"
+            sed -i.bak "s|image: osixia/phpldapadmin:stable|image: ${registry}/phpldapadmin:stable|g" "$output_file"
+            sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${registry}/redisinsight:latest|g" "$output_file"
             # 更新镜像标签（包括环境变量形式的标签）
             sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
             sed -i.bak "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
-            sed -i.bak "s|:latest|:${tag}|g" "$output_file"
         else
             # 更新项目镜像（添加registry前缀）
             sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-            # 更新基础镜像（添加registry前缀）
-            sed -i "s|image: postgres:|image: ${registry}/postgres:|g" "$output_file"
-            sed -i "s|image: redis:|image: ${registry}/redis:|g" "$output_file"
-            sed -i "s|image: nginx:|image: ${registry}/nginx:|g" "$output_file"
-            sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy|g" "$output_file"
-            sed -i "s|image: minio/minio|image: ${registry}/minio|g" "$output_file"
-            sed -i "s|image: quay.io/minio/minio|image: ${registry}/minio|g" "$output_file"
+            # 更新基础镜像（添加registry前缀，保持原有版本）
+            sed -i "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
+            sed -i "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
+            sed -i "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
+            sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy:latest|g" "$output_file"
+            sed -i "s|image: quay.io/minio/minio:latest|image: ${registry}/minio:latest|g" "$output_file"
+            sed -i "s|image: osixia/openldap:stable|image: ${registry}/openldap:stable|g" "$output_file"
+            sed -i "s|image: osixia/phpldapadmin:stable|image: ${registry}/phpldapadmin:stable|g" "$output_file"
+            sed -i "s|image: redislabs/redisinsight:latest|image: ${registry}/redisinsight:latest|g" "$output_file"
             # 更新镜像标签（包括环境变量形式的标签）
             sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
             sed -i "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
-            sed -i "s|:latest|:${tag}|g" "$output_file"
         fi
     else
         # 无registry前缀的情况（本地镜像）
@@ -1601,6 +1735,107 @@ generate_production_config() {
         sed -i "/env_file:/,/^[[:space:]]*-/ { 
             s|^[[:space:]]*-.*\.env.*|    - .env.prod|g
         }" "$output_file"
+    fi
+    
+    # 处理环境变量展开（读取.env.prod文件并替换变量）
+    print_info "处理环境变量展开..."
+    if [[ -f ".env.prod" ]]; then
+        # 读取.env.prod文件中的变量值
+        print_info "读取生产环境变量..."
+        local postgres_password=$(grep "^POSTGRES_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local postgres_user=$(grep "^POSTGRES_USER=" .env.prod | cut -d'=' -f2)
+        local postgres_db=$(grep "^POSTGRES_DB=" .env.prod | cut -d'=' -f2)
+        local postgres_host=$(grep "^POSTGRES_HOST=" .env.prod | cut -d'=' -f2)
+        local postgres_port=$(grep "^POSTGRES_PORT=" .env.prod | cut -d'=' -f2)
+        local redis_password=$(grep "^REDIS_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local redis_host=$(grep "^REDIS_HOST=" .env.prod | cut -d'=' -f2)
+        local redis_port=$(grep "^REDIS_PORT=" .env.prod | cut -d'=' -f2)
+        local redis_db=$(grep "^REDIS_DB=" .env.prod | cut -d'=' -f2)
+        local jwt_secret=$(grep "^JWT_SECRET=" .env.prod | cut -d'=' -f2)
+        local configproxy_token=$(grep "^CONFIGPROXY_AUTH_TOKEN=" .env.prod | cut -d'=' -f2)
+        local jupyterhub_crypt_key=$(grep "^JUPYTERHUB_CRYPT_KEY=" .env.prod | cut -d'=' -f2)
+        local minio_access_key=$(grep "^MINIO_ACCESS_KEY=" .env.prod | cut -d'=' -f2)
+        local minio_secret_key=$(grep "^MINIO_SECRET_KEY=" .env.prod | cut -d'=' -f2)
+        local ldap_admin_password=$(grep "^LDAP_ADMIN_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local ldap_config_password=$(grep "^LDAP_CONFIG_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local ldap_host=$(grep "^LDAP_HOST=" .env.prod | cut -d'=' -f2)
+        local ldap_port=$(grep "^LDAP_PORT=" .env.prod | cut -d'=' -f2)
+        local ldap_base_dn=$(grep "^LDAP_BASE_DN=" .env.prod | cut -d'=' -f2)
+        local gitea_db_passwd=$(grep "^GITEA_DB_PASSWD=" .env.prod | cut -d'=' -f2)
+        local gitea_base_url=$(grep "^GITEA_BASE_URL=" .env.prod | cut -d'=' -f2)
+        local gitea_alias_admin_to=$(grep "^GITEA_ALIAS_ADMIN_TO=" .env.prod | cut -d'=' -f2)
+        local backend_url=$(grep "^BACKEND_URL=" .env.prod | cut -d'=' -f2)
+        
+        # 替换Docker Compose文件中的环境变量
+        print_info "展开环境变量引用..."
+        local temp_content=$(cat "$output_file")
+        
+        # 处理数据库变量（但保持 $${VAR} 形式不变）
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PASSWORD:-[^}]*}|$postgres_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PASSWORD}|$postgres_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER:-[^}]*}|$postgres_user|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER}|$postgres_user|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_DB:-[^}]*}|$postgres_db|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_DB}|$postgres_db|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_HOST:-[^}]*}|$postgres_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_HOST}|$postgres_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT:-[^}]*}|$postgres_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT}|$postgres_port|g")
+        
+        # 处理Redis变量（对于单$的展开，但保持 $${VAR} 形式）
+        # 注意：不处理 $${REDIS_PASSWORD} 形式，保持它们在容器内展开
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PASSWORD:-[^}]*}|$redis_password|g")
+        temp_content=$(echo "$temp_content" | sed "/\\\$\\\${REDIS_PASSWORD}/!s|\\\${REDIS_PASSWORD}|$redis_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST:-[^}]*}|$redis_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST}|$redis_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PORT:-[^}]*}|$redis_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PORT}|$redis_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB:-[^}]*}|$redis_db|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB}|$redis_db|g")
+        
+        # 处理JWT和认证相关变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET:-[^}]*}|$jwt_secret|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET}|$jwt_secret|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN:-[^}]*}|$configproxy_token|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN}|$configproxy_token|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY:-[^}]*}|$jupyterhub_crypt_key|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY}|$jupyterhub_crypt_key|g")
+        
+        # 处理MinIO变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY:-[^}]*}|$minio_access_key|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY}|$minio_access_key|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY:-[^}]*}|$minio_secret_key|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY}|$minio_secret_key|g")
+        
+        # 处理LDAP变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD:-[^}]*}|$ldap_admin_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD}|$ldap_admin_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD:-[^}]*}|$ldap_config_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD}|$ldap_config_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_HOST:-[^}]*}|$ldap_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_HOST}|$ldap_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_PORT:-[^}]*}|$ldap_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_PORT}|$ldap_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_BASE_DN:-[^}]*}|$ldap_base_dn|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_BASE_DN}|$ldap_base_dn|g")
+        
+        # 处理Gitea变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD:-[^}]*}|$gitea_db_passwd|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD}|$gitea_db_passwd|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_BASE_URL:-[^}]*}|$gitea_base_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_BASE_URL}|$gitea_base_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_ALIAS_ADMIN_TO:-[^}]*}|$gitea_alias_admin_to|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_ALIAS_ADMIN_TO}|$gitea_alias_admin_to|g")
+        
+        # 处理后端URL变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_URL:-[^}]*}|$backend_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_URL}|$backend_url|g")
+        
+        # 写回文件
+        echo "$temp_content" > "$output_file"
+        print_success "✓ 环境变量展开完成"
+    else
+        print_warning "未找到.env.prod文件，跳过环境变量展开"
     fi
     
     # 清理备份文件（仅在macOS上存在）
@@ -1702,6 +1937,11 @@ start_production() {
     if [[ "$force_local" == "true" ]]; then
         print_info "跳过镜像拉取，使用本地已有镜像..."
         
+        # 如果指定了registry，标记本地镜像为新的registry标签
+        if [[ -n "$registry" ]]; then
+            tag_local_images_for_registry "$registry" "$tag"
+        fi
+        
         # 检查并构建缺失的镜像（包括有build配置的服务）
         print_info "检查并构建需要的镜像..."
         if ! check_and_build_missing_images "$compose_file" "$env_file" "$registry" "$tag"; then
@@ -1729,6 +1969,88 @@ start_production() {
 }
 
 # 检查并构建缺失的镜像
+# 标记本地镜像为新的registry标签
+tag_local_images_for_registry() {
+    local registry="$1"
+    local tag="$2"
+    
+    print_info "标记本地镜像为新的registry标签..."
+    
+    # 定义需要标记的镜像列表
+    local source_images=(
+        # 自研镜像
+        "ai-infra-backend:${tag}"
+        "ai-infra-backend-init:${tag}"
+        "ai-infra-frontend:${tag}"
+        "ai-infra-jupyterhub:${tag}"
+        "ai-infra-gitea:${tag}"
+        "ai-infra-nginx:${tag}"
+        "ai-infra-saltstack:${tag}"
+        "ai-infra-singleuser:${tag}"
+        # 基础镜像
+        "postgres:15-alpine"
+        "redis:7-alpine"
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "quay.io/minio/minio:latest"
+        "osixia/openldap:stable"
+        "osixia/phpldapadmin:stable"
+        "redislabs/redisinsight:latest"
+    )
+    
+    local target_images=(
+        # 自研镜像
+        "${registry}/ai-infra-backend:${tag}"
+        "${registry}/ai-infra-backend-init:${tag}"
+        "${registry}/ai-infra-frontend:${tag}"
+        "${registry}/ai-infra-jupyterhub:${tag}"
+        "${registry}/ai-infra-gitea:${tag}"
+        "${registry}/ai-infra-nginx:${tag}"
+        "${registry}/ai-infra-saltstack:${tag}"
+        "${registry}/ai-infra-singleuser:${tag}"
+        # 基础镜像
+        "${registry}/postgres:15-alpine"
+        "${registry}/redis:7-alpine"
+        "${registry}/nginx:1.27-alpine"
+        "${registry}/tcp-proxy:latest"
+        "${registry}/minio:latest"
+        "${registry}/openldap:stable"
+        "${registry}/phpldapadmin:stable"
+        "${registry}/redisinsight:latest"
+    )
+    
+    local tagged_count=0
+    local missing_count=0
+    
+    for i in "${!source_images[@]}"; do
+        local source_image="${source_images[$i]}"
+        local target_image="${target_images[$i]}"
+        
+        # 检查源镜像是否存在
+        if docker image inspect "$source_image" >/dev/null 2>&1; then
+            # 检查目标镜像是否已存在
+            if docker image inspect "$target_image" >/dev/null 2>&1; then
+                print_info "  ✓ 已存在: $target_image"
+            else
+                # 标记镜像
+                if docker tag "$source_image" "$target_image" 2>/dev/null; then
+                    print_success "  ✓ 已标记: $source_image -> $target_image"
+                    tagged_count=$((tagged_count + 1))
+                else
+                    print_warning "  ✗ 标记失败: $source_image -> $target_image"
+                fi
+            fi
+        else
+            print_warning "  ✗ 源镜像不存在: $source_image"
+            missing_count=$((missing_count + 1))
+        fi
+    done
+    
+    print_info "镜像标记完成: 成功 $tagged_count 个，缺失 $missing_count 个"
+    
+    return 0
+}
+
 check_and_build_missing_images() {
     local compose_file="$1"
     local env_file="$2"
@@ -2670,6 +2992,7 @@ show_help() {
     echo "全局选项:"
     echo "  --force                         - 对构建命令：强制重新构建，忽略本地存在的镜像"
     echo "                                    对prod-up命令：跳过镜像拉取，使用本地已有镜像"
+    echo "  --skip-pull                     - 对prod-up命令：跳过镜像拉取，标记本地镜像并使用"
     echo
     echo "源码服务命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
@@ -2689,6 +3012,7 @@ show_help() {
     echo "  prod-generate [registry] [tag]  - 生成生产环境配置文件（registry可为空，使用本地镜像）"
     echo "  prod-up [registry] [tag]        - 启动生产环境（registry可为空，使用本地镜像）"
     echo "  prod-up --force [registry] [tag] - 启动生产环境（跳过镜像拉取，使用本地镜像）"
+    echo "  prod-up --skip-pull [registry] [tag] - 启动生产环境（标记本地镜像并跳过拉取）"
     echo "  prod-down                       - 停止生产环境"
     echo "  prod-restart <registry> [tag]   - 重启生产环境"
     echo "  prod-status                     - 查看生产环境状态"
@@ -2707,6 +3031,7 @@ show_help() {
     echo
     echo "工具命令:"
     echo "  create-env [dev|prod] [--force] - 从模板创建环境配置文件"
+    echo "  generate-passwords [--force]    - 生成生产环境随机密码"
     echo "  auto-env [--force]              - 自动生成所有环境配置文件"
     echo "  validate-env                   - 校验环境文件的完整性和一致性"
     echo "  test-push <service> <registry> [tag] - 测试推送配置（不实际推送）"
@@ -2759,6 +3084,8 @@ show_help() {
     echo "                                  # 启动生产环境"
     echo "  $0 --force prod-up registry.local/ai-infra v0.3.5"
     echo "                                  # 启动生产环境（跳过镜像拉取）"
+    echo "  $0 --skip-pull prod-up aiharbor.msxf.local/aihpc v0.3.5"
+    echo "                                  # 内网环境启动（标记本地镜像并跳过拉取）"
     echo "  $0 prod-down                   # 停止生产环境"
     echo "  $0 prod-status                 # 查看生产环境状态"
     echo "  $0 prod-logs backend --follow   # 实时查看backend服务日志"
@@ -2824,12 +3151,15 @@ show_help() {
 
 # 主函数
 main() {
-    # 预处理命令行参数，检查 --force 标志
+    # 预处理命令行参数，检查 --force 和 --skip-pull 标志
     local args=()
     for arg in "$@"; do
         if [[ "$arg" == "--force" ]]; then
             FORCE_REBUILD=true
             print_info "启用强制重新构建模式"
+        elif [[ "$arg" == "--skip-pull" ]]; then
+            SKIP_PULL=true
+            print_info "启用跳过拉取模式"
         else
             args+=("$arg")
         fi
@@ -2962,13 +3292,10 @@ main() {
             local env_type="${2:-dev}"
             local force="false"
             
-            # 检查是否有 --force 参数
-            for arg in "$@"; do
-                if [[ "$arg" == "--force" ]]; then
-                    force="true"
-                    break
-                fi
-            done
+            # 使用全局 FORCE_REBUILD 标志
+            if [[ "$FORCE_REBUILD" == "true" ]]; then
+                force="true"
+            fi
             
             create_env_from_template "$env_type" "$force"
             ;;
@@ -2976,15 +3303,35 @@ main() {
         "auto-env")
             local force="false"
             
-            # 检查是否有 --force 参数
-            for arg in "$@"; do
-                if [[ "$arg" == "--force" ]]; then
-                    force="true"
-                    break
-                fi
-            done
+            # 使用全局 FORCE_REBUILD 标志
+            if [[ "$FORCE_REBUILD" == "true" ]]; then
+                force="true"
+            fi
             
             auto_generate_env_files "$force"
+            ;;
+            
+        # 生成生产环境密码命令
+        "generate-passwords")
+            print_info "=========================================="
+            print_info "生成生产环境随机密码"
+            print_info "=========================================="
+            
+            local force="false"
+            if [[ "$FORCE_REBUILD" == "true" ]]; then
+                force="true"
+            fi
+            
+            if replace_template_passwords ".env.prod.example" ".env.prod" "$force"; then
+                print_success "✓ 生产环境配置文件已更新: .env.prod"
+                print_warning "请妥善保管生成的密码，这些密码仅显示一次！"
+                print_info ""
+                print_info "新生成的密码已保存到 .env.prod 文件中"
+                print_info "请在部署前检查并备份此文件"
+            else
+                print_error "密码生成失败"
+                exit 1
+            fi
             ;;
             
         # 依赖镜像管理命令
@@ -3044,9 +3391,9 @@ main() {
             
         "prod-up")
             # registry 参数可以为空（使用本地镜像）
-            # 检查是否有 --force 参数
+            # 检查是否有 --force 或 --skip-pull 参数
             local force_local="false"
-            if [[ "$FORCE_REBUILD" == "true" ]]; then
+            if [[ "$FORCE_REBUILD" == "true" || "$SKIP_PULL" == "true" ]]; then
                 force_local="true"
             fi
             start_production "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}" "$force_local"
