@@ -24,6 +24,15 @@ CONFIG_FILE="$SCRIPT_DIR/config.toml"
 OS_TYPE=$(detect_os)
 FORCE_REBUILD=false  # 强制重新构建标志
 
+# 基本输出函数（早期定义，供其他函数使用）
+print_error() {
+    echo -e "\033[31m[ERROR]\033[0m $1"
+}
+
+print_info() {
+    echo -e "\033[32m[INFO]\033[0m $1"
+}
+
 # ==========================================
 # 配置文件解析功能
 # ==========================================
@@ -35,7 +44,7 @@ read_config() {
     local subsection="$3"
     
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        print_error "配置文件不存在: $CONFIG_FILE"
+        # 配置文件不存在时返回空值，由调用者处理默认值
         return 1
     fi
     
@@ -139,7 +148,7 @@ get_production_dependencies() {
 }
 
 # 初始化配置
-DEFAULT_IMAGE_TAG=$(read_config "project" "version")
+DEFAULT_IMAGE_TAG=$(read_config "project" "version" 2>/dev/null || echo "")
 [[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.5"
 
 # 动态加载服务和依赖配置
@@ -201,7 +210,7 @@ get_service_path() {
     local service="$1"
     
     # 从配置文件读取路径
-    local path=$(read_config "services" "path" "$service")
+    local path=$(read_config "services" "path" "$service" 2>/dev/null || echo "")
     
     # 如果配置文件中没有，使用后备方案
     if [[ -z "$path" ]]; then
@@ -221,21 +230,13 @@ get_service_path() {
     fi
 }
 
-# 颜色输出函数
-print_info() {
-    echo -e "\033[34m[INFO]\033[0m $1"
-}
-
+# 颜色输出函数（扩展）
 print_success() {
     echo -e "\033[32m[SUCCESS]\033[0m $1"
 }
 
 print_warning() {
     echo -e "\033[33m[WARNING]\033[0m $1"
-}
-
-print_error() {
-    echo -e "\033[31m[ERROR]\033[0m $1"
 }
 
 # ==========================================
@@ -974,6 +975,8 @@ build_service() {
     local target_arg=""
     if [[ "$service" == "backend-init" ]]; then
         target_arg="--target backend-init"
+    elif [[ "$service" == "backend" ]]; then
+        target_arg="--target backend"
     fi
     
     # 统一使用项目根目录作为构建上下文
@@ -1671,53 +1674,77 @@ generate_production_config() {
     print_info "复制基础配置文件..."
     cp "$base_file" "$output_file"
     
-    # 更新镜像标签和仓库前缀
+    # 更新镜像标签和registry配置
     print_info "更新镜像配置..."
     if [[ -n "$registry" ]]; then
         # 有registry前缀的情况
         print_info "  使用 registry 前缀: $registry"
         if [[ "$OS_TYPE" == "macOS" ]]; then
-            # 更新项目镜像（添加registry前缀）
+            # 添加registry前缀到项目镜像
             sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-            # 更新基础镜像（添加registry前缀，保持原有版本）
-            sed -i.bak "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
-            sed -i.bak "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
-            sed -i.bak "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
-            sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy:latest|g" "$output_file"
-            sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${registry}/minio:latest|g" "$output_file"
-            sed -i.bak "s|image: osixia/openldap:stable|image: ${registry}/openldap:stable|g" "$output_file"
-            sed -i.bak "s|image: osixia/phpldapadmin:stable|image: ${registry}/phpldapadmin:stable|g" "$output_file"
-            sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${registry}/redisinsight:latest|g" "$output_file"
-            # 更新镜像标签（包括环境变量形式的标签）
+            # 使用环境变量替换IMAGE_TAG
+            sed -i.bak "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
             sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
-            sed -i.bak "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
+            
+            # 处理依赖镜像映射
+            print_info "  应用依赖镜像映射..."
+            local postgres_mapped=$(get_mapped_private_image "postgres:15-alpine" "$registry" "$tag")
+            local redis_mapped=$(get_mapped_private_image "redis:7-alpine" "$registry" "$tag")
+            local nginx_mapped=$(get_mapped_private_image "nginx:1.27-alpine" "$registry" "$tag")
+            local tcp_proxy_mapped=$(get_mapped_private_image "tecnativa/tcp-proxy" "$registry" "$tag")
+            local minio_mapped=$(get_mapped_private_image "quay.io/minio/minio:latest" "$registry" "$tag")
+            local openldap_mapped=$(get_mapped_private_image "osixia/openldap:stable" "$registry" "$tag")
+            local phpldapadmin_mapped=$(get_mapped_private_image "osixia/phpldapadmin:stable" "$registry" "$tag")
+            local redisinsight_mapped=$(get_mapped_private_image "redislabs/redisinsight:latest" "$registry" "$tag")
+            
+            # 应用映射
+            sed -i.bak "s|image: postgres:15-alpine|image: ${postgres_mapped}|g" "$output_file"
+            sed -i.bak "s|image: redis:7-alpine|image: ${redis_mapped}|g" "$output_file"
+            sed -i.bak "s|image: nginx:1.27-alpine|image: ${nginx_mapped}|g" "$output_file"
+            sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${tcp_proxy_mapped}|g" "$output_file"
+            sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
+            sed -i.bak "s|image: osixia/openldap:stable|image: ${openldap_mapped}|g" "$output_file"
+            sed -i.bak "s|image: osixia/phpldapadmin:stable|image: ${phpldapadmin_mapped}|g" "$output_file"
+            sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${redisinsight_mapped}|g" "$output_file"
         else
-            # 更新项目镜像（添加registry前缀）
+            # 添加registry前缀到项目镜像
             sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-            # 更新基础镜像（添加registry前缀，保持原有版本）
-            sed -i "s|image: postgres:15-alpine|image: ${registry}/postgres:15-alpine|g" "$output_file"
-            sed -i "s|image: redis:7-alpine|image: ${registry}/redis:7-alpine|g" "$output_file"
-            sed -i "s|image: nginx:1.27-alpine|image: ${registry}/nginx:1.27-alpine|g" "$output_file"
-            sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy:latest|g" "$output_file"
-            sed -i "s|image: quay.io/minio/minio:latest|image: ${registry}/minio:latest|g" "$output_file"
-            sed -i "s|image: osixia/openldap:stable|image: ${registry}/openldap:stable|g" "$output_file"
-            sed -i "s|image: osixia/phpldapadmin:stable|image: ${registry}/phpldapadmin:stable|g" "$output_file"
-            sed -i "s|image: redislabs/redisinsight:latest|image: ${registry}/redisinsight:latest|g" "$output_file"
-            # 更新镜像标签（包括环境变量形式的标签）
+            # 使用环境变量替换IMAGE_TAG
+            sed -i "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
             sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
-            sed -i "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
+            
+            # 处理依赖镜像映射
+            print_info "  应用依赖镜像映射..."
+            local postgres_mapped=$(get_mapped_private_image "postgres:15-alpine" "$registry" "$tag")
+            local redis_mapped=$(get_mapped_private_image "redis:7-alpine" "$registry" "$tag")
+            local nginx_mapped=$(get_mapped_private_image "nginx:1.27-alpine" "$registry" "$tag")
+            local tcp_proxy_mapped=$(get_mapped_private_image "tecnativa/tcp-proxy" "$registry" "$tag")
+            local minio_mapped=$(get_mapped_private_image "quay.io/minio/minio:latest" "$registry" "$tag")
+            local openldap_mapped=$(get_mapped_private_image "osixia/openldap:stable" "$registry" "$tag")
+            local phpldapadmin_mapped=$(get_mapped_private_image "osixia/phpldapadmin:stable" "$registry" "$tag")
+            local redisinsight_mapped=$(get_mapped_private_image "redislabs/redisinsight:latest" "$registry" "$tag")
+            
+            # 应用映射
+            sed -i "s|image: postgres:15-alpine|image: ${postgres_mapped}|g" "$output_file"
+            sed -i "s|image: redis:7-alpine|image: ${redis_mapped}|g" "$output_file"
+            sed -i "s|image: nginx:1.27-alpine|image: ${nginx_mapped}|g" "$output_file"
+            sed -i "s|image: tecnativa/tcp-proxy|image: ${tcp_proxy_mapped}|g" "$output_file"
+            sed -i "s|image: quay.io/minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
+            sed -i "s|image: osixia/openldap:stable|image: ${openldap_mapped}|g" "$output_file"
+            sed -i "s|image: osixia/phpldapadmin:stable|image: ${phpldapadmin_mapped}|g" "$output_file"
+            sed -i "s|image: redislabs/redisinsight:latest|image: ${redisinsight_mapped}|g" "$output_file"
         fi
     else
         # 无registry前缀的情况（本地镜像）
         print_info "  使用本地镜像（无 registry 前缀）"
         if [[ "$OS_TYPE" == "macOS" ]]; then
-            # 只更新镜像标签（包括环境变量形式的标签）
+            # 简单的环境变量替换
+            sed -i.bak "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
             sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
-            sed -i.bak "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
         else
-            # 只更新镜像标签（包括环境变量形式的标签）
+            # 简单的环境变量替换
+            sed -i "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
             sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
-            sed -i "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
         fi
     fi
     
@@ -2225,241 +2252,9 @@ production_logs() {
     fi
 }
 
-# 创建简化的 Mock 测试环境（仅用于脚本功能验证）
-setup_mock_environment() {
-    local tag="${1:-$DEFAULT_IMAGE_TAG}"
-    
-    print_info "=========================================="
-    print_info "设置 Mock 测试环境（脚本功能验证）"
-    print_info "=========================================="
-    print_info "镜像标签: $tag"
-    echo
-    
-    # 创建 mock 数据目录
-    local mock_dir="$SCRIPT_DIR/test/mock-data"
-    mkdir -p "$mock_dir"
-    
-    # 创建简化的 Mock 测试 docker-compose 文件
-    cat > "$mock_dir/docker-compose-mock.yml" << EOF
-services:
-  mock-postgres:
-    image: postgres:15-alpine
-    container_name: ai-infra-mock-postgres
-    environment:
-      POSTGRES_DB: test_db
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_pass
-      TZ: Asia/Shanghai
-    ports:
-      - "15432:5432"
-    volumes:
-      - mock_postgres_data:/var/lib/postgresql/data
-    networks:
-      - mock-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-
-  mock-redis:
-    image: redis:7-alpine
-    container_name: ai-infra-mock-redis
-    command: redis-server --requirepass test_redis_pass
-    ports:
-      - "16379:6379"
-    volumes:
-      - mock_redis_data:/data
-    networks:
-      - mock-network
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a test_redis_pass ping || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-
-  # 如果backend镜像存在，则启动测试实例
-  mock-backend:
-    image: ai-infra-backend:$tag
-    container_name: ai-infra-mock-backend
-    environment:
-      POSTGRES_HOST: mock-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: test_db
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_pass
-      REDIS_HOST: mock-redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: test_redis_pass
-      MOCK_MODE: "true"
-    ports:
-      - "18080:8080"
-    depends_on:
-      mock-postgres:
-        condition: service_healthy
-      mock-redis:
-        condition: service_healthy
-    networks:
-      - mock-network
-    profiles:
-      - backend-test
-
-volumes:
-  mock_postgres_data:
-  mock_redis_data:
-
-networks:
-  mock-network:
-    driver: bridge
-EOF
-
-    # 创建简单的测试脚本
-    cat > "$mock_dir/test-connectivity.sh" << 'EOF'
-#!/bin/bash
-# Mock 环境连接测试脚本
-
-echo "=== Mock 环境连接测试 ==="
-
-# 测试 PostgreSQL
-echo "测试 PostgreSQL 连接..."
-if docker exec ai-infra-mock-postgres psql -U test_user -d test_db -c "SELECT version();" >/dev/null 2>&1; then
-    echo "✓ PostgreSQL 连接正常"
-else
-    echo "✗ PostgreSQL 连接失败"
-fi
-
-# 测试 Redis
-echo "测试 Redis 连接..."
-if docker exec ai-infra-mock-redis redis-cli -a test_redis_pass ping >/dev/null 2>&1; then
-    echo "✓ Redis 连接正常"
-else
-    echo "✗ Redis 连接失败"
-fi
-
-echo "=== 测试完成 ==="
-EOF
-
-    chmod +x "$mock_dir/test-connectivity.sh"
-    
-    print_success "✓ Mock 测试环境配置已创建"
-    print_info "  配置文件: $mock_dir/docker-compose-mock.yml"
-    print_info "  测试脚本: $mock_dir/test-connectivity.sh"
-    echo
-    print_info "启动基础 Mock 环境:"
-    print_info "  cd $mock_dir && docker-compose -f docker-compose-mock.yml up -d"
-    print_info "启动包含 backend 的完整环境:"
-    print_info "  cd $mock_dir && docker-compose -f docker-compose-mock.yml --profile backend-test up -d"
-    print_info "停止 Mock 环境:"
-    print_info "  cd $mock_dir && docker-compose -f docker-compose-mock.yml down"
-}
-
-# 运行简化的 Mock 测试（仅验证脚本功能）
-run_mock_tests() {
-    local tag="${1:-$DEFAULT_IMAGE_TAG}"
-    local action="${2:-up}"
-    
-    local mock_dir="$SCRIPT_DIR/test/mock-data"
-    
-    if [[ ! -f "$mock_dir/docker-compose-mock.yml" ]]; then
-        print_warning "Mock 环境配置不存在，正在创建..."
-        setup_mock_environment "$tag"
-    fi
-    
-    print_info "=========================================="
-    case "$action" in
-        "up"|"start")
-            print_info "启动 Mock 测试环境（脚本功能验证）"
-            ;;
-        "down"|"stop")
-            print_info "停止 Mock 测试环境"
-            ;;
-        "restart")
-            print_info "重启 Mock 测试环境"
-            ;;
-        "test")
-            print_info "运行 Mock 环境连接测试"
-            ;;
-        *)
-            print_error "无效的操作: $action"
-            print_info "支持的操作: up/start, down/stop, restart, test"
-            return 1
-            ;;
-    esac
-    print_info "=========================================="
-    echo
-    
-    cd "$mock_dir"
-    
-    case "$action" in
-        "up"|"start")
-            # 检查 backend 镜像是否存在
-            local has_backend=false
-            if docker image inspect "ai-infra-backend:$tag" >/dev/null 2>&1; then
-                has_backend=true
-                print_info "检测到 backend 镜像，将启动完整测试环境"
-                if docker-compose -f docker-compose-mock.yml --profile backend-test up -d; then
-                    print_success "✓ Mock 环境（包含 backend）启动成功"
-                    print_info "服务访问地址:"
-                    print_info "  Backend API: http://localhost:18080"
-                    print_info "  PostgreSQL: localhost:15432 (test_user/test_pass)"
-                    print_info "  Redis: localhost:16379 (test_redis_pass)"
-                else
-                    print_error "✗ Mock 环境启动失败"
-                    return 1
-                fi
-            else
-                print_info "未检测到 backend 镜像，启动基础环境"
-                if docker-compose -f docker-compose-mock.yml up -d mock-postgres mock-redis; then
-                    print_success "✓ Mock 基础环境启动成功"
-                    print_info "服务访问地址:"
-                    print_info "  PostgreSQL: localhost:15432 (test_user/test_pass)"
-                    print_info "  Redis: localhost:16379 (test_redis_pass)"
-                else
-                    print_error "✗ Mock 环境启动失败"
-                    return 1
-                fi
-            fi
-            
-            # 等待服务启动
-            print_info "等待服务启动..."
-            sleep 5
-            
-            # 运行连接测试
-            if [[ -x "./test-connectivity.sh" ]]; then
-                print_info "运行连接测试..."
-                ./test-connectivity.sh
-            fi
-            ;;
-            
-        "down"|"stop")
-            if docker-compose -f docker-compose-mock.yml down; then
-                print_success "✓ Mock 环境停止成功"
-            else
-                print_error "✗ Mock 环境停止失败"
-                return 1
-            fi
-            ;;
-            
-        "restart")
-            print_info "停止现有环境..."
-            docker-compose -f docker-compose-mock.yml down
-            sleep 2
-            print_info "启动环境..."
-            run_mock_tests "$tag" "up"
-            ;;
-            
-        "test")
-            if [[ -x "./test-connectivity.sh" ]]; then
-                ./test-connectivity.sh
-            else
-                print_error "测试脚本不存在或不可执行"
-                return 1
-            fi
-            ;;
-    esac
-    
-    cd "$SCRIPT_DIR"
-}
+# ==========================================
+# 服务列表功能
+# ==========================================
 
 # 列出所有服务和镜像
 list_services() {
@@ -2778,375 +2573,50 @@ clean_images() {
 }
 
 # 清理所有镜像（包括依赖镜像）
-clean_all_images() {
-    local tag="${1:-$DEFAULT_IMAGE_TAG}"
-    local force="${2:-false}"
-    
-    print_info "=========================================="
-    print_info "清理所有 AI-Infra 相关镜像"
-    print_info "=========================================="
-    print_info "目标标签: $tag"
-    echo
-    
-    local images_to_clean=()
-    
-    # 收集AI-Infra源码服务镜像
-    print_info "收集源码服务镜像..."
-    for service in $SRC_SERVICES; do
-        local image="ai-infra-${service}:${tag}"
-        if docker image inspect "$image" >/dev/null 2>&1; then
-            images_to_clean+=("$image")
-            echo "  • $image"
-        fi
-    done
-    
-    # 收集依赖镜像
-    print_info "收集依赖镜像..."
-    local dependency_images
-    dependency_images=$(collect_dependency_images)
-    
-    for dep_image in $dependency_images; do
-        # 检查原始镜像
-        if docker image inspect "$dep_image" >/dev/null 2>&1; then
-            images_to_clean+=("$dep_image")
-            echo "  • $dep_image"
-        fi
-        
-        # 检查带标签的依赖镜像（如果不是latest）
-        if [[ "$tag" != "latest" && "$dep_image" == *":latest" ]]; then
-            local tagged_image="${dep_image%:latest}:${tag}"
-            if docker image inspect "$tagged_image" >/dev/null 2>&1; then
-                images_to_clean+=("$tagged_image")
-                echo "  • $tagged_image"
-            fi
-        fi
-    done
-    
-    # 收集重新标记的依赖镜像（用于推送的镜像）
-    print_info "收集重新标记的依赖镜像..."
-    local retagged_images
-    retagged_images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(ai-infra-dep-|/ai-infra-)" | sort -u)
-    
-    if [[ -n "$retagged_images" ]]; then
-        while IFS= read -r image; do
-            if [[ -n "$image" ]]; then
-                images_to_clean+=("$image")
-                echo "  • $image"
-            fi
-        done <<< "$retagged_images"
-    fi
-    
-    if [[ ${#images_to_clean[@]} -eq 0 ]]; then
-        print_info "没有找到需要清理的镜像"
-        return 0
-    fi
-    
-    echo
-    print_info "找到 ${#images_to_clean[@]} 个镜像需要清理"
-    echo
-    
-    if [[ "$force" != "true" ]]; then
-        read -p "确认删除这些镜像? (y/N): " confirm
-        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-            print_info "已取消清理操作"
-            return 0
-        fi
-    fi
-    
-    # 删除镜像
-    local success_count=0
-    local failed_count=0
-    
-    for image in "${images_to_clean[@]}"; do
-        if docker rmi "$image" 2>/dev/null; then
-            print_success "✓ 已删除: $image"
-            success_count=$((success_count + 1))
-        else
-            print_error "✗ 删除失败: $image"
-            failed_count=$((failed_count + 1))
-        fi
-    done
-    
-    echo
-    print_success "清理完成: $success_count 成功, $failed_count 失败"
-    
-    if [[ $failed_count -gt 0 ]]; then
-        print_warning "某些镜像可能正在被容器使用，请先停止相关容器后重试"
-        print_info "可以使用以下命令停止所有容器："
-        echo "  docker-compose down"
-        echo "  docker stop \$(docker ps -aq)"
-    fi
-}
-
-# 清理悬空镜像和未使用的镜像
-clean_dangling_images() {
-    local force="${1:-false}"
-    
-    print_info "=========================================="
-    print_info "清理悬空镜像和未使用的镜像"
-    print_info "=========================================="
-    
-    # 清理悬空镜像
-    local dangling_images
-    dangling_images=$(docker images -f "dangling=true" -q)
-    
-    if [[ -n "$dangling_images" ]]; then
-        print_info "找到悬空镜像:"
-        docker images -f "dangling=true" --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
-        echo
-        
-        if [[ "$force" == "true" ]]; then
-            print_info "正在删除悬空镜像..."
-            docker rmi $dangling_images 2>/dev/null || true
-            print_success "悬空镜像清理完成"
-        else
-            read -p "是否删除这些悬空镜像? (y/N): " confirm
-            if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-                docker rmi $dangling_images 2>/dev/null || true
-                print_success "悬空镜像清理完成"
-            fi
-        fi
-    else
-        print_info "没有找到悬空镜像"
-    fi
-    
-    # 清理未使用的镜像
-    echo
-    print_info "检查未使用的镜像..."
-    
-    if [[ "$force" == "true" ]]; then
-        print_info "正在清理未使用的镜像..."
-        docker image prune -f
-        print_success "未使用镜像清理完成"
-    else
-        read -p "是否清理所有未使用的镜像? (y/N): " confirm
-        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-            docker image prune -f
-            print_success "未使用镜像清理完成"
-        fi
-    fi
-}
-
-# 深度清理：清理所有Docker资源
-deep_clean() {
-    local force="${1:-false}"
-    
-    print_warning "=========================================="
-    print_warning "深度清理 - 清理所有Docker资源"
-    print_warning "=========================================="
-    print_warning "这将删除："
-    print_warning "  • 所有停止的容器"
-    print_warning "  • 所有未使用的网络"
-    print_warning "  • 所有悬空镜像"
-    print_warning "  • 所有未使用的镜像"
-    print_warning "  • 所有构建缓存"
-    echo
-    
-    if [[ "$force" != "true" ]]; then
-        read -p "确认执行深度清理? 这可能会影响其他Docker项目 (y/N): " confirm
-        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-            print_info "已取消深度清理操作"
-            return 0
-        fi
-    fi
-    
-    print_info "正在执行深度清理..."
-    
-    # 清理停止的容器
-    print_info "清理停止的容器..."
-    docker container prune -f || true
-    
-    # 清理未使用的网络
-    print_info "清理未使用的网络..."
-    docker network prune -f || true
-    
-    # 清理未使用的卷
-    print_info "清理未使用的卷..."
-    docker volume prune -f || true
-    
-    # 清理镜像
-    print_info "清理未使用的镜像..."
-    docker image prune -a -f || true
-    
-    # 清理构建缓存
-    print_info "清理构建缓存..."
-    docker builder prune -a -f || true
-    
-    print_success "深度清理完成"
-    
-    # 显示清理后的磁盘使用情况
-    echo
-    print_info "清理后的Docker磁盘使用情况:"
-    docker system df
-}
-
 # 显示帮助信息
 show_help() {
-    echo "AI Infrastructure Matrix - 精简构建脚本 v$VERSION"
+    echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
     echo
-    echo "专注于 src/ 目录下的 Dockerfile 构建，支持依赖镜像管理和 Mock 测试"
-    echo
-    echo "用法:"
-    echo "  $0 [--force] <命令> [参数...]"
+    echo "用法: $0 [--force|--skip-pull] <命令> [参数...]"
     echo
     echo "全局选项:"
-    echo "  --force                         - 对构建命令：强制重新构建，忽略本地存在的镜像"
-    echo "                                    对prod-up命令：跳过镜像拉取，使用本地已有镜像"
-    echo "  --skip-pull                     - 对prod-up命令：跳过镜像拉取，标记本地镜像并使用"
+    echo "  --force      - 强制重新构建/跳过镜像拉取"
+    echo "  --skip-pull  - 跳过镜像拉取，使用本地镜像"
     echo
-    echo "源码服务命令:"
+    echo "主要命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
     echo "  build <service> [tag] [registry] - 构建单个服务"
     echo "  build-all [tag] [registry]      - 构建所有服务"
-    echo "  push <service> <registry> [tag] - 推送单个服务"
+    echo "  build-push <registry> [tag]     - 构建并推送所有服务"
     echo "  push-all <registry> [tag]       - 推送所有服务"
-    echo "  build-push <registry> [tag]     - 一键构建并推送所有服务"
     echo
-    echo "依赖镜像命令:"
-    echo "  deps-pull <registry> [tag]      - 拉取并标记依赖镜像"
+    echo "依赖镜像:"
+    echo "  deps-pull <registry> [tag]      - 拉取依赖镜像"
     echo "  deps-push <registry> [tag]      - 推送依赖镜像"
-    echo "  deps-all <registry> [tag]       - 拉取、标记并推送所有依赖镜像"
-    echo "  deps-prod <registry> [tag]      - 拉取、标记并推送生产环境依赖镜像（排除测试工具）"
+    echo "  deps-all <registry> [tag]       - 拉取、标记并推送依赖镜像"
     echo
-    echo "生产环境命令:"
-    echo "  prod-generate [registry] [tag]  - 生成生产环境配置文件（registry可为空，使用本地镜像）"
-    echo "  prod-up [registry] [tag]        - 启动生产环境（registry可为空，使用本地镜像）"
-    echo "  prod-up --force [registry] [tag] - 启动生产环境（跳过镜像拉取，使用本地镜像）"
-    echo "  prod-up --skip-pull [registry] [tag] - 启动生产环境（标记本地镜像并跳过拉取）"
+    echo "生产环境:"
+    echo "  prod-generate [registry] [tag]  - 生成生产环境配置"
+    echo "  prod-up [registry] [tag]        - 启动生产环境"
     echo "  prod-down                       - 停止生产环境"
-    echo "  prod-restart <registry> [tag]   - 重启生产环境"
-    echo "  prod-status                     - 查看生产环境状态"
-    echo "  prod-logs [service] [--follow]  - 查看生产环境日志"
-    echo "  注意: 首次使用生产环境前请运行: ./scripts/generate-prod-passwords.sh"
-    echo
-    echo "Mock 测试命令:"
-    echo "  mock-setup [tag]               - 创建 Mock 数据测试环境配置"
-    echo "  mock-up [tag]                  - 启动 Mock 测试环境"
-    echo "  mock-down                      - 停止 Mock 测试环境"
-    echo "  mock-restart [tag]             - 重启 Mock 测试环境"
-    echo
-    echo "镜像验证命令:"
-    echo "  verify <registry> [tag]        - 验证所有镜像是否可用"
-    echo "  verify-key <registry> [tag]    - 快速验证关键镜像"
+    echo "  prod-status                     - 查看状态"
+    echo "  prod-logs [service] [--follow]  - 查看日志"
     echo
     echo "工具命令:"
-    echo "  create-env [dev|prod] [--force] - 从模板创建环境配置文件"
-    echo "  generate-passwords [--force]    - 生成生产环境随机密码"
-    echo "  auto-env [--force]              - 自动生成所有环境配置文件"
-    echo "  validate-env                   - 校验环境文件的完整性和一致性"
-    echo "  test-push <service> <registry> [tag] - 测试推送配置（不实际推送）"
-    echo "  clean [type] [tag] [--force]   - 清理镜像"
-    echo "    • clean ai-infra [tag]       - 清理AI-Infra镜像 (默认)"
-    echo "    • clean all [tag]            - 清理所有镜像 (AI-Infra + 依赖)"
-    echo "    • clean dangling             - 清理悬空镜像"
-    echo "    • clean deep                 - 深度清理所有Docker资源"
-    echo "  version                        - 显示版本信息"
-    echo "  help                           - 显示此帮助信息"
+    echo "  clean [tag] [--force]           - 清理镜像"
+    echo "  verify <registry> [tag]         - 验证镜像"
+    echo "  create-env [dev|prod] [--force] - 创建环境配置"
+    echo "  validate-env                    - 校验环境配置"
+    echo "  version                         - 显示版本"
+    echo "  help                            - 显示帮助"
     echo
-    echo "服务列表 (源码):"
-    for service in $SRC_SERVICES; do
-        local service_path=$(get_service_path "$service")
-        echo "  • $service ($service_path)"
-    done
+    echo "常用示例:"
+    echo "  $0 build-all v1.0.0                    # 构建所有服务"
+    echo "  $0 build-push harbor.com/ai-infra latest  # 构建并推送"
+    echo "  $0 prod-up harbor.com/ai-infra v1.0.0     # 启动生产环境"
+    echo "  $0 --force prod-up \"\" latest             # 强制使用本地镜像启动"
     echo
-    echo "依赖镜像列表:"
-    local dependency_images
-    dependency_images=$(collect_dependency_images)
-    for dep_image in $dependency_images; do
-        echo "  • $dep_image"
-    done
-    echo
-    echo "示例:"
-    echo "  # 源码服务操作"
-    echo "  $0 list                         # 列出所有服务"
-    echo "  $0 build backend               # 构建 backend 服务"
-    echo "  $0 --force build backend       # 强制重新构建 backend 服务"
-    echo "  $0 build-all v0.3.5            # 构建所有服务，标签 v0.3.5"
-    echo "  $0 --force build-all v0.3.5    # 强制重新构建所有服务"
-    echo "  $0 build-push registry.local/ai-infra v0.3.5"
-    echo "                                  # 构建并推送到私有仓库"
-    echo
-    echo "  # 依赖镜像操作"
-    echo "  $0 deps-pull registry.local/ai-infra latest"
-    echo "                                  # 拉取并标记依赖镜像"
-    echo "  $0 --force deps-pull registry.local/ai-infra latest"
-    echo "                                  # 强制重新拉取依赖镜像"
-    echo "  $0 deps-push registry.local/ai-infra latest"
-    echo "                                  # 推送依赖镜像"
-    echo "  $0 deps-all registry.local/ai-infra v0.3.5"
-    echo "  $0 deps-prod registry.local/ai-infra v0.3.5"
-    echo "                                  # 完整依赖镜像操作"
-    echo
-    echo "  # 生产环境操作"
-    echo "  $0 prod-generate registry.local/ai-infra v0.3.5"
-    echo "                                  # 生成生产环境配置"
-    echo "  $0 prod-up registry.local/ai-infra v0.3.5"
-    echo "                                  # 启动生产环境"
-    echo "  $0 --force prod-up registry.local/ai-infra v0.3.5"
-    echo "                                  # 启动生产环境（跳过镜像拉取）"
-    echo "  $0 --skip-pull prod-up aiharbor.msxf.local/aihpc v0.3.5"
-    echo "                                  # 内网环境启动（标记本地镜像并跳过拉取）"
-    echo "  $0 prod-down                   # 停止生产环境"
-    echo "  $0 prod-status                 # 查看生产环境状态"
-    echo "  $0 prod-logs backend --follow   # 实时查看backend服务日志"
-    echo
-    echo "  # 推送测试和验证"
-    echo "  $0 test-push backend harbor.company.com/ai-infra v0.3.5"
-    echo "                                  # 测试backend服务推送配置（不实际推送）"
-    echo "  $0 verify harbor.company.com/ai-infra v0.3.5"
-    echo "                                  # 验证所有镜像是否可用"
-    echo
-    echo "  # Mock 测试操作"
-    echo "  $0 mock-setup v0.3.5           # 创建 Mock 环境配置"
-    echo "  $0 mock-up v0.3.5              # 启动 Mock 测试环境"
-    echo "  $0 mock-down                   # 停止 Mock 测试环境"
-    echo "  $0 clean v0.3.5 --force        # 强制清理标签为 v0.3.5 的镜像"
-    echo
-    echo "  注意:"
-    echo "    • 默认镜像标签: $DEFAULT_IMAGE_TAG"
-    echo "    • 支持 Harbor 和传统 registry 格式"
-    echo "    • 构建上下文固定为项目根目录"
-    echo
-    echo "  # Jenkins/GitLab CI流水线"
-    echo "  ./build.sh build-push harbor.company.com/ai-infra v1.0.0"
-    echo "  ./build.sh deps-push harbor.company.com/ai-infra latest"
-    echo 
-    echo "  # 阿里云ACR推送 "
-    echo "  ./build.sh build-push xxx.aliyuncs.com/ai-infra-matrix latest"
-    echo "  ./build.sh deps-push xxx.aliyuncs.com/ai-infra-matrix latest"
-    echo
-    echo "  # Docker Hub推送"
-    echo "  ./build.sh build-push docker.io/myuser latest"
-    echo
-    echo "  # 双环境部署模式"
-    echo "  ./build.sh build-env aiharbor.msxf.local/aihpc v0.3.5"
-    echo "                                  # 构建环境模式：构建并推送所有镜像"
-    echo "  ./build.sh intranet-env aiharbor.msxf.local/aihpc v0.3.5"
-    echo "                                  # 内网环境模式：拉取镜像并启动服务"
-    echo "  ./build.sh create-env-prod build aiharbor.msxf.local/aihpc v0.3.5"
-    echo "                                  # 创建生产环境配置文件"
-    echo
-    echo "  # 环境文件校验"
-    echo "  ./build.sh validate-env         # 校验 .env 和 .env.prod 的一致性"
-    echo
-    echo "  # 新的统一部署流程"
-    echo "  ./build.sh create-env-prod intranet registry.local/ai-infra v1.0.0"
-    echo "  ./build.sh prod-generate registry.local/ai-infra v1.0.0  # 生成 docker-compose.yml"
-    echo "  docker compose up -d            # 直接使用标准 docker compose 命令启动"
-    echo
-    echo "  # 首次部署（传统流程）"
-    echo "  ./scripts/generate-prod-passwords.sh"
-    echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.0.0"
-    echo "  ./build.sh prod-up harbor.company.com/ai-infra v1.0.0"
-    echo
-    echo "  # 版本更新（传统流程）"
-    echo "  ./build.sh prod-down"
-    echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.1.0"
-    echo "  ./build.sh prod-up harbor.company.com/ai-infra v1.1.0"
-    echo
-    echo "  # 监控运维"
-    echo "  ./build.sh prod-status"
-    echo "  ./build.sh prod-logs --follow"
+    echo "注意: 首次部署前运行 ./scripts/generate-prod-passwords.sh"
 }
 
 # 主函数
@@ -3472,29 +2942,6 @@ main() {
             
             # 解析参数
             case "$clean_type" in
-                "all")
-                    if [[ "$tag_or_force" == "--force" ]]; then
-                        force="true"
-                    elif [[ -n "$tag_or_force" && "$tag_or_force" != "--force" ]]; then
-                        tag="$tag_or_force"
-                        if [[ "$force_flag" == "--force" ]]; then
-                            force="true"
-                        fi
-                    fi
-                    clean_all_images "$tag" "$force"
-                    ;;
-                "dangling")
-                    if [[ "$tag_or_force" == "--force" ]]; then
-                        force="true"
-                    fi
-                    clean_dangling_images "$force"
-                    ;;
-                "deep")
-                    if [[ "$tag_or_force" == "--force" ]]; then
-                        force="true"
-                    fi
-                    deep_clean "$force"
-                    ;;
                 "ai-infra"|*)
                     # 默认清理AI-Infra镜像（保持原有行为）
                     if [[ "$clean_type" != "ai-infra" && "$clean_type" != "--force" ]]; then
