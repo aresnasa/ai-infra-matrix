@@ -60,8 +60,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
-# Final stage
-FROM golang:1.25-alpine
+# Final stage - Backend Service (Default)
+FROM golang:1.25-alpine AS backend
 
 ENV GO111MODULE=on
 ENV GOPROXY=https://goproxy.cn

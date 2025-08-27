@@ -73,7 +73,7 @@ services:
     networks:
       - ai-infra-network
     healthcheck:
-      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "dc=ai-infra,dc=com", "-D", "cn=admin,dc=ai-infra,dc=com", "-w", "admin123"]
+      test: ["CMD", "sh", "-c", "ldapsearch -x -H ldap://localhost -b dc=ai-infra,dc=com -D cn=admin,dc=ai-infra,dc=com -w \"$$LDAP_ADMIN_PASSWORD\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -111,6 +111,8 @@ services:
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - REDIS_HOST=redis
       - LDAP_SERVER=openldap
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -141,6 +143,8 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
+      DB_USER: "${POSTGRES_USER:-postgres}"
+      DB_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
       REDIS_HOST: redis
       LDAP_SERVER: openldap
       GITEA_ENABLED: "${GITEA_ENABLED:-true}"

@@ -1218,6 +1218,186 @@ push_production_dependencies() {
 }
 
 # ==========================================
+# 双环境部署支持功能
+# ==========================================
+
+# 创建生产环境配置文件 (.env.prod)
+create_production_env() {
+    local mode="${1:-production}"  # production 或 intranet
+    local registry="${2:-aiharbor.msxf.local/aihpc}"
+    local tag="${3:-$DEFAULT_IMAGE_TAG}"
+    
+    local env_file=".env.prod"
+    local template_file=".env.example"
+    
+    print_info "创建生产环境配置文件: $env_file"
+    print_info "模式: $mode"
+    print_info "镜像仓库: $registry"
+    print_info "镜像标签: $tag"
+    
+    # 检查模板文件
+    if [[ ! -f "$template_file" ]]; then
+        print_error "模板文件不存在: $template_file"
+        return 1
+    fi
+    
+    # 复制模板文件
+    cp "$template_file" "$env_file"
+    
+    # 根据模式配置不同的参数
+    case "$mode" in
+        "build"|"builder")
+            # 构建环境配置
+            sed -i.bak \
+                -e "s|^IMAGE_TAG=.*|IMAGE_TAG=$tag|" \
+                -e "s|^PRIVATE_REGISTRY=.*|PRIVATE_REGISTRY=$registry|" \
+                -e "s|^BUILD_ENV=.*|BUILD_ENV=production|" \
+                -e "s|^DEBUG_MODE=.*|DEBUG_MODE=false|" \
+                -e "s|^LOG_LEVEL=.*|LOG_LEVEL=info|" \
+                -e "s|^ENV_FILE=.*|ENV_FILE=.env.prod|" \
+                -e "s|^DOMAIN=.*|DOMAIN=ai-infra.local|" \
+                "$env_file"
+            ;;
+        "intranet"|"runtime")
+            # 内网运行环境配置
+            sed -i.bak \
+                -e "s|^IMAGE_TAG=.*|IMAGE_TAG=$tag|" \
+                -e "s|^PRIVATE_REGISTRY=.*|PRIVATE_REGISTRY=$registry|" \
+                -e "s|^BUILD_ENV=.*|BUILD_ENV=production|" \
+                -e "s|^DEBUG_MODE=.*|DEBUG_MODE=false|" \
+                -e "s|^LOG_LEVEL=.*|LOG_LEVEL=info|" \
+                -e "s|^ENV_FILE=.*|ENV_FILE=.env.prod|" \
+                -e "s|^DOMAIN=.*|DOMAIN=ai-infra.local|" \
+                "$env_file"
+            ;;
+        *)
+            print_error "不支持的模式: $mode"
+            print_info "支持的模式: build, intranet"
+            return 1
+            ;;
+    esac
+    
+    # 删除备份文件
+    rm -f "${env_file}.bak"
+    
+    print_success "✓ 已创建生产环境配置: $env_file"
+    print_info "请根据实际环境调整配置文件中的参数"
+    
+    return 0
+}
+
+# 构建环境模式 - 构建并推送所有镜像
+build_environment_deploy() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "构建环境部署模式"
+    print_info "=========================================="
+    print_info "镜像仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "目标: 构建所有镜像并推送到仓库"
+    echo
+    
+    # 1. 创建生产环境配置
+    if ! create_production_env "build" "$registry" "$tag"; then
+        return 1
+    fi
+    
+    # 2. 构建所有服务镜像
+    print_info "构建所有服务镜像..."
+    if ! build_all_services "$tag" "$registry"; then
+        print_error "服务镜像构建失败"
+        return 1
+    fi
+    
+    # 3. 推送所有镜像到仓库
+    print_info "推送所有镜像到仓库..."
+    if ! push_all_services "$tag" "$registry"; then
+        print_error "镜像推送失败"
+        return 1
+    fi
+    
+    # 4. 推送依赖镜像
+    print_info "推送依赖镜像..."
+    if ! push_all_dependencies "$tag" "$registry"; then
+        print_error "依赖镜像推送失败"
+        return 1
+    fi
+    
+    # 5. 生成生产环境docker-compose配置
+    print_info "生成生产环境配置文件..."
+    if ! generate_production_config "$registry" "$tag"; then
+        print_error "生产环境配置生成失败"
+        return 1
+    fi
+    
+    print_success "✅ 构建环境部署完成！"
+    print_info "生成的文件:"
+    print_info "  - .env.prod (生产环境配置)"
+    print_info "  - docker-compose.prod.yml (生产环境编排文件)"
+    print_info ""
+    print_info "已推送到仓库的镜像:"
+    print_info "  - 所有服务镜像 (标签: $tag)"
+    print_info "  - 所有依赖镜像"
+    print_info ""
+    print_info "下一步: 将以下文件复制到内网环境："
+    print_info "  - .env.prod"
+    print_info "  - docker-compose.prod.yml"
+    print_info "  - build.sh (用于内网部署)"
+    
+    return 0
+}
+
+# 内网环境模式 - 拉取镜像并启动服务
+intranet_environment_deploy() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "内网环境部署模式"
+    print_info "=========================================="
+    print_info "镜像仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "目标: 拉取镜像并启动所有服务"
+    echo
+    
+    # 1. 检查或创建生产环境配置
+    if [[ ! -f ".env.prod" ]]; then
+        print_info "创建生产环境配置..."
+        if ! create_production_env "intranet" "$registry" "$tag"; then
+            return 1
+        fi
+    else
+        print_info "使用现有的生产环境配置: .env.prod"
+    fi
+    
+    # 2. 检查或生成docker-compose.prod.yml
+    if [[ ! -f "docker-compose.prod.yml" ]]; then
+        print_info "生成生产环境编排文件..."
+        if ! generate_production_config "$registry" "$tag"; then
+            print_error "生产环境配置生成失败"
+            return 1
+        fi
+    else
+        print_info "使用现有的编排文件: docker-compose.prod.yml"
+    fi
+    
+    # 3. 启动生产环境服务
+    print_info "启动生产环境服务..."
+    if ! start_production "$registry" "$tag" "false"; then
+        print_error "服务启动失败"
+        return 1
+    fi
+    
+    print_success "✅ 内网环境部署完成！"
+    print_info "服务状态:"
+    production_status
+    
+    return 0
+}
+
+# ==========================================
 # 生产环境部署相关功能
 # ==========================================
 
@@ -1225,12 +1405,13 @@ push_production_dependencies() {
 generate_production_config() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
-    local base_file="docker-compose.yml"
+    local base_file="docker-compose.yml.backup"
     local output_file="docker-compose.prod.yml"
     
+    # registry可以为空（使用本地镜像）
     if [[ -z "$registry" ]]; then
-        print_error "请指定目标 registry"
-        return 1
+        print_info "使用本地镜像（无 registry 前缀）"
+        registry=""
     fi
     
     if [[ ! -f "$base_file" ]]; then
@@ -1238,127 +1419,75 @@ generate_production_config() {
         return 1
     fi
     
-    # 检测并确保环境变量文件存在
-    local env_file
-    env_file=$(detect_env_file)
-    if [[ $? -ne 0 ]]; then
+    # 确保生产环境配置文件存在
+    if [[ ! -f ".env.prod" ]]; then
+        print_warning "生产环境配置文件不存在，请先使用 create-env-prod 命令创建"
         return 1
-    fi
-    
-    # 验证环境文件
-    if ! validate_env_file "$env_file"; then
-        return 1
-    fi
-    
-    # 确保生产环境环境文件存在且正确
-    print_info "确保生产环境文件配置..."
-    local prod_env_file=".env.prod"
-    
-    # 如果当前使用的不是 .env.prod，则确保 .env.prod 存在
-    if [[ "$env_file" != "$prod_env_file" ]]; then
-        if [[ ! -f "$prod_env_file" ]]; then
-            print_info "生产环境文件不存在，从 $env_file 复制..."
-            cp "$env_file" "$prod_env_file"
-            print_success "✓ 已创建生产环境文件: $prod_env_file"
-        else
-            print_info "生产环境文件已存在: $prod_env_file"
-        fi
-        
-        # 验证生产环境文件
-        if ! validate_env_file "$prod_env_file"; then
-            print_error "生产环境文件验证失败: $prod_env_file"
-            return 1
-        fi
-    fi
-    
-    # 验证原始配置文件
-    print_info "验证原始配置文件..."
-    local compose_cmd=$(detect_compose_command)
-    local compose_version=$(echo "$compose_cmd" | cut -d'|' -f2)
-    compose_cmd=$(echo "$compose_cmd" | cut -d'|' -f1)
-    
-    if [[ "$compose_cmd" != "none" ]]; then
-        # 验证compose文件
-        if ! validate_compose_file "$base_file" "$compose_cmd"; then
-            print_error "原始配置文件验证失败: $base_file"
-            return 1
-        fi
-        print_success "配置文件验证通过 (使用 $compose_cmd $compose_version)"
-    else
-        print_warning "未找到可用的Docker Compose命令，跳过原始配置验证"
     fi
     
     print_info "生成生产环境配置文件..."
-    print_info "  Registry: $registry"
+    print_info "  基础文件: $base_file"
+    print_info "  Registry: ${registry:-'(本地镜像)'}"
     print_info "  Tag: $tag"
     print_info "  输出文件: $output_file"
     echo
     
-    # 复制基础配置文件
+    # 简单复制备份文件
+    print_info "复制基础配置文件..."
     cp "$base_file" "$output_file"
     
-    # 1. 使用映射配置更新基础镜像和第三方镜像，项目镜像保持原有逻辑
-    print_info "使用映射配置更新基础镜像和第三方镜像... (OS: $OS_TYPE)"
-    
-    # 首先处理项目镜像（保持原有逻辑）
-    print_info "处理项目镜像..."
-    if [[ "$OS_TYPE" == "macOS" ]]; then
-        sed -i.bak "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}|g" "$output_file"
-        sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-    else
-        sed -i "s|ghcr.io/aresnasa/ai-infra-matrix|${registry}|g" "$output_file"
-        sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
-    fi
-    
-    # 然后处理基础镜像和第三方镜像（使用映射配置）
-    print_info "处理基础镜像和第三方镜像..."
-    declare -a base_images_to_replace=(
-        "postgres:15-alpine"
-        "redis:7-alpine" 
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "tecnativa/tcp-proxy"
-        "quay.io/minio/minio:latest"
-        "minio/minio:latest"
-        "minio/minio"
-    )
-    
-    # 使用映射配置替换基础镜像
-    for original_image in "${base_images_to_replace[@]}"; do
-        # 获取映射后的镜像（使用传入的tag参数）
-        local mapped_image
-        mapped_image=$(get_mapped_private_image "$original_image" "$registry" "$tag")
-        
-        if [[ "$mapped_image" != "$original_image" ]]; then
-            print_info "  映射: $original_image -> $mapped_image"
-            
-            # 执行替换
-            if [[ "$OS_TYPE" == "macOS" ]]; then
-                sed -i.bak "s|image: ${original_image}|image: ${mapped_image}|g" "$output_file"
-            else
-                sed -i "s|image: ${original_image}|image: ${mapped_image}|g" "$output_file"
-            fi
+    # 更新镜像标签和仓库前缀
+    print_info "更新镜像配置..."
+    if [[ -n "$registry" ]]; then
+        # 有registry前缀的情况
+        print_info "  使用 registry 前缀: $registry"
+        if [[ "$OS_TYPE" == "macOS" ]]; then
+            # 更新项目镜像（添加registry前缀）
+            sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+            # 更新基础镜像（添加registry前缀）
+            sed -i.bak "s|image: postgres:|image: ${registry}/postgres:|g" "$output_file"
+            sed -i.bak "s|image: redis:|image: ${registry}/redis:|g" "$output_file"
+            sed -i.bak "s|image: nginx:|image: ${registry}/nginx:|g" "$output_file"
+            sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy|g" "$output_file"
+            sed -i.bak "s|image: minio/minio|image: ${registry}/minio|g" "$output_file"
+            sed -i.bak "s|image: quay.io/minio/minio|image: ${registry}/minio|g" "$output_file"
+            # 更新镜像标签
+            sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            sed -i.bak "s|:latest|:${tag}|g" "$output_file"
+        else
+            # 更新项目镜像（添加registry前缀）
+            sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+            # 更新基础镜像（添加registry前缀）
+            sed -i "s|image: postgres:|image: ${registry}/postgres:|g" "$output_file"
+            sed -i "s|image: redis:|image: ${registry}/redis:|g" "$output_file"
+            sed -i "s|image: nginx:|image: ${registry}/nginx:|g" "$output_file"
+            sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy|g" "$output_file"
+            sed -i "s|image: minio/minio|image: ${registry}/minio|g" "$output_file"
+            sed -i "s|image: quay.io/minio/minio|image: ${registry}/minio|g" "$output_file"
+            # 更新镜像标签
+            sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            sed -i "s|:latest|:${tag}|g" "$output_file"
         fi
-    done
-    
-    # 2. 更新项目镜像的环境变量标签
-    print_info "更新项目镜像环境变量标签..."
-    if [[ "$OS_TYPE" == "macOS" ]]; then
-        # 只更新项目镜像的环境变量标签
-        sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
-        sed -i.bak "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
     else
-        # 只更新项目镜像的环境变量标签
-        sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
-        sed -i "s|\${IMAGE_TAG:-v[^}]*}|${tag}|g" "$output_file"
+        # 无registry前缀的情况（本地镜像）
+        print_info "  使用本地镜像（无 registry 前缀）"
+        if [[ "$OS_TYPE" == "macOS" ]]; then
+            # 只更新镜像标签
+            sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+        else
+            # 只更新镜像标签
+            sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+        fi
     fi
     
-    # 2.5. 更新环境文件引用为生产环境文件
-    print_info "更新环境文件引用为生产环境..."
+    # 更新环境文件引用为生产环境
+    print_info "更新环境文件引用..."
     if [[ "$OS_TYPE" == "macOS" ]]; then
         sed -i.bak "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
+        sed -i.bak "s|env_file:.*|env_file:\n    - .env.prod|g" "$output_file"
     else
         sed -i "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
+        sed -i "s|env_file:.*|env_file:\n    - .env.prod|g" "$output_file"
     fi
     
     # 3. 移除生产环境非必须服务（使用改进的处理逻辑）
@@ -2825,6 +2954,14 @@ show_help() {
     echo "  # Docker Hub推送"
     echo "  ./build.sh build-push docker.io/myuser latest"
     echo
+    echo "  # 双环境部署模式"
+    echo "  ./build.sh build-env aiharbor.msxf.local/aihpc v0.3.5"
+    echo "                                  # 构建环境模式：构建并推送所有镜像"
+    echo "  ./build.sh intranet-env aiharbor.msxf.local/aihpc v0.3.5"
+    echo "                                  # 内网环境模式：拉取镜像并启动服务"
+    echo "  ./build.sh create-env-prod build aiharbor.msxf.local/aihpc v0.3.5"
+    echo "                                  # 创建生产环境配置文件"
+    echo
     echo "  # 首次部署"
     echo "  ./scripts/generate-prod-passwords.sh"
     echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.0.0"
@@ -2947,6 +3084,32 @@ main() {
                 exit 1
             fi
             build_and_push_all "${3:-$DEFAULT_IMAGE_TAG}" "$2"
+            ;;
+            
+        # 双环境部署命令
+        "build-env")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                print_info "示例: $0 build-env aiharbor.msxf.local/aihpc v0.3.5"
+                exit 1
+            fi
+            build_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "intranet-env")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                print_info "示例: $0 intranet-env aiharbor.msxf.local/aihpc v0.3.5"
+                exit 1
+            fi
+            intranet_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "create-env-prod")
+            local mode="${2:-production}"
+            local registry="${3:-aiharbor.msxf.local/aihpc}"
+            local tag="${4:-$DEFAULT_IMAGE_TAG}"
+            create_production_env "$mode" "$registry" "$tag"
             ;;
             
         # 环境配置管理命令
