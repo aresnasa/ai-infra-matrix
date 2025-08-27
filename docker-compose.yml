@@ -7,7 +7,7 @@ services:
     image: postgres:15-alpine
     container_name: ai-infra-postgres
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -32,7 +32,7 @@ services:
     image: redis:7-alpine
     container_name: ai-infra-redis
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     # Defer expansion of REDIS_PASSWORD to the container environment
     command: ["sh", "-c", "exec redis-server --requirepass \"$${REDIS_PASSWORD}\""]
     expose:
@@ -56,7 +56,7 @@ services:
     image: osixia/openldap:stable
     container_name: ai-infra-openldap
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       LDAP_ORGANISATION: "AI Infrastructure"
       LDAP_DOMAIN: "ai-infra.com"
@@ -99,15 +99,15 @@ services:
 
   # 后端初始化服务 - 创建admin用户和基础数据
   backend-init:
-    image: ai-infra-backend-init:${IMAGE_TAG}
+    image: ai-infra-backend-init:v0.3.5
     build:
       context: ./src/backend
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     container_name: ai-infra-backend-init
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -131,15 +131,15 @@ services:
 
   # 后端 API 服务
   backend:
-    image: ai-infra-backend:${IMAGE_TAG}
+    image: ai-infra-backend:v0.3.5
     build:
       context: ./src/backend
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     container_name: ai-infra-backend
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
@@ -187,14 +187,14 @@ services:
 
   # 前端应用服务
   frontend:
-    image: ai-infra-frontend:${IMAGE_TAG}
+    image: ai-infra-frontend:v0.3.5
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
       args:
         REACT_APP_API_URL: /api
         REACT_APP_JUPYTERHUB_URL: /jupyter
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     container_name: ai-infra-frontend
     environment:
       TZ: Asia/Shanghai
@@ -215,15 +215,15 @@ services:
 
   # JupyterHub 统一认证服务
   jupyterhub:
-    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.0.3.3}
+    image: ai-infra-jupyterhub:v0.3.5
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     build:
       context: ./src/jupyterhub
       dockerfile: Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: "1"
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     container_name: ai-infra-jupyterhub
     environment:
       - POSTGRES_HOST=postgres
@@ -249,7 +249,7 @@ services:
       - AI_INFRA_API_TOKEN=ai-infra-hub-token
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
-      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.0.3.3}
+      - JUPYTERHUB_IMAGE=ai-infra-singleuser:v0.3.5
       - JUPYTERHUB_NETWORK=ai-infra-network
       - JUPYTERHUB_MEM_LIMIT=3G
       - JUPYTERHUB_CPU_LIMIT=1.0
@@ -294,12 +294,12 @@ services:
 
   # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
   singleuser-builder:
-    image: ai-infra-singleuser:${IMAGE_TAG}
+    image: ai-infra-singleuser:v0.3.5
     build:
       context: ./docker/singleuser
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     command: ["true"]
     networks:
       - ai-infra-network
@@ -307,15 +307,15 @@ services:
 
   # SaltStack 配置管理服务
   saltstack:
-    image: ai-infra-saltstack:${IMAGE_TAG}
+    image: ai-infra-saltstack:v0.3.5
     build:
       context: src/saltstack
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     container_name: ai-infra-saltstack
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       - TZ=Asia/Shanghai
       - SALT_MASTER_HOST=saltstack
@@ -346,14 +346,14 @@ services:
 
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
-    image: ai-infra-nginx:${IMAGE_TAG}
+    image: ai-infra-nginx:v0.3.5
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
       args:
         DEBUG_MODE: ${DEBUG_MODE:-false}
         BUILD_ENV: ${BUILD_ENV:-production}
-        VERSION: ${IMAGE_TAG}
+        VERSION: v0.3.5
     container_name: ai-infra-nginx
     ports:
       - "8080:80"
@@ -362,7 +362,7 @@ services:
     volumes:
       - nginx_logs:/var/log/nginx
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - BUILD_ENV=${BUILD_ENV:-production}
@@ -437,13 +437,13 @@ services:
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:
-    image: ai-infra-gitea:${IMAGE_TAG:-v0.0.3.3}
+    image: ai-infra-gitea:v0.3.5
     build:
       context: ./third-party/gitea
       dockerfile: Dockerfile
     container_name: ai-infra-gitea
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       USER_UID: "1000"
       USER_GID: "1000"
@@ -459,8 +459,8 @@ services:
       GITEA_DB_HOST: "postgres:5432"
       GITEA_DB_NAME: "gitea"
       # 注意：以下两行必须使用6个空格缩进，保持与其他 environment 项对齐，否则会导致 YAML 解析错误。
-      GITEA_DB_USER: "${POSTGRES_USER}"
-      GITEA_DB_PASSWD: "${POSTGRES_PASSWORD}"
+      GITEA_DB_USER: "${GITEA_DB_USER}"
+      GITEA_DB_PASSWD: "${GITEA_DB_PASSWD}"
       POSTGRES_USER: "${POSTGRES_USER}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       DISABLE_REGISTRATION: "false"
@@ -529,7 +529,7 @@ services:
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
     env_file:
-      - ${ENV_FILE:-.env}
+    - .env.prod
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}

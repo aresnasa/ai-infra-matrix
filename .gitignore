@@ -11,4 +11,3 @@ test-exports/
 docker-compose.prod.yml
 docker-compose.test.yml
 *.env.backup.*
-fix_ldap_removal.py

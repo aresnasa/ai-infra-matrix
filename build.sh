@@ -420,6 +420,109 @@ validate_env_file() {
     return 0
 }
 
+# 对比两个环境文件的差异
+compare_env_files() {
+    local env1="$1"
+    local env2="$2"
+    
+    if [[ ! -f "$env1" ]] || [[ ! -f "$env2" ]]; then
+        print_error "环境文件不存在: $env1 或 $env2"
+        return 1
+    fi
+    
+    print_info "对比环境文件: $env1 vs $env2"
+    
+    # 提取所有变量名（排除注释和空行）
+    local vars1=$(grep -E "^[A-Z_][A-Z0-9_]*=" "$env1" | cut -d'=' -f1 | sort)
+    local vars2=$(grep -E "^[A-Z_][A-Z0-9_]*=" "$env2" | cut -d'=' -f1 | sort)
+    
+    # 找出差异变量
+    local only_in_1=$(comm -23 <(echo "$vars1") <(echo "$vars2"))
+    local only_in_2=$(comm -13 <(echo "$vars1") <(echo "$vars2"))
+    local common_vars=$(comm -12 <(echo "$vars1") <(echo "$vars2"))
+    
+    if [[ -n "$only_in_1" ]]; then
+        print_warning "仅在 $env1 中存在的变量:"
+        echo "$only_in_1" | while read var; do
+            echo "  - $var"
+        done
+    fi
+    
+    if [[ -n "$only_in_2" ]]; then
+        print_warning "仅在 $env2 中存在的变量:"
+        echo "$only_in_2" | while read var; do
+            echo "  - $var"
+        done
+    fi
+    
+    # 检查共同变量的值差异
+    local diff_count=0
+    echo "$common_vars" | while read var; do
+        if [[ -n "$var" ]]; then
+            local val1=$(grep "^${var}=" "$env1" | cut -d'=' -f2- | tr -d '"'"'"'"')
+            local val2=$(grep "^${var}=" "$env2" | cut -d'=' -f2- | tr -d '"'"'"'"')
+            if [[ "$val1" != "$val2" ]]; then
+                if [[ $diff_count -eq 0 ]]; then
+                    print_info "值不同的变量:"
+                fi
+                echo "  $var:"
+                echo "    $env1: $val1"
+                echo "    $env2: $val2"
+                ((diff_count++))
+            fi
+        fi
+    done
+    
+    if [[ -z "$only_in_1" ]] && [[ -z "$only_in_2" ]] && [[ $diff_count -eq 0 ]]; then
+        print_success "✓ 环境文件配置一致"
+    fi
+    
+    return 0
+}
+
+# 校验环境文件的完整性和一致性
+validate_env_consistency() {
+    local dev_env=".env"
+    local prod_env=".env.prod"
+    local example_env=".env.example"
+    
+    print_info "=========================================="
+    print_info "环境文件一致性校验"
+    print_info "=========================================="
+    
+    # 检查文件存在性
+    local files_exist=()
+    local files_missing=()
+    
+    for env_file in "$dev_env" "$prod_env" "$example_env"; do
+        if [[ -f "$env_file" ]]; then
+            files_exist+=("$env_file")
+        else
+            files_missing+=("$env_file")
+        fi
+    done
+    
+    print_info "存在的环境文件: ${files_exist[*]}"
+    if [[ ${#files_missing[@]} -gt 0 ]]; then
+        print_warning "缺失的环境文件: ${files_missing[*]}"
+    fi
+    
+    # 如果开发环境和生产环境文件都存在，进行对比
+    if [[ -f "$dev_env" ]] && [[ -f "$prod_env" ]]; then
+        echo
+        compare_env_files "$dev_env" "$prod_env"
+    fi
+    
+    # 校验必要的变量
+    echo
+    for env_file in "${files_exist[@]}"; do
+        print_info "校验 $env_file..."
+        validate_env_file "$env_file"
+    done
+    
+    return 0
+}
+
 # ==========================================
 # Docker Compose 版本检测和适配
 # ==========================================
@@ -1405,8 +1508,8 @@ intranet_environment_deploy() {
 generate_production_config() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
-    local base_file="docker-compose.yml.backup"
-    local output_file="docker-compose.prod.yml"
+    local base_file="docker-compose.yml.example"
+    local output_file="docker-compose.yml"
     
     # registry可以为空（使用本地镜像）
     if [[ -z "$registry" ]]; then
@@ -1432,7 +1535,7 @@ generate_production_config() {
     print_info "  输出文件: $output_file"
     echo
     
-    # 简单复制备份文件
+    # 简单复制示例文件
     print_info "复制基础配置文件..."
     cp "$base_file" "$output_file"
     
@@ -1451,8 +1554,9 @@ generate_production_config() {
             sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy|g" "$output_file"
             sed -i.bak "s|image: minio/minio|image: ${registry}/minio|g" "$output_file"
             sed -i.bak "s|image: quay.io/minio/minio|image: ${registry}/minio|g" "$output_file"
-            # 更新镜像标签
+            # 更新镜像标签（包括环境变量形式的标签）
             sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            sed -i.bak "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
             sed -i.bak "s|:latest|:${tag}|g" "$output_file"
         else
             # 更新项目镜像（添加registry前缀）
@@ -1464,19 +1568,22 @@ generate_production_config() {
             sed -i "s|image: tecnativa/tcp-proxy|image: ${registry}/tcp-proxy|g" "$output_file"
             sed -i "s|image: minio/minio|image: ${registry}/minio|g" "$output_file"
             sed -i "s|image: quay.io/minio/minio|image: ${registry}/minio|g" "$output_file"
-            # 更新镜像标签
+            # 更新镜像标签（包括环境变量形式的标签）
             sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            sed -i "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
             sed -i "s|:latest|:${tag}|g" "$output_file"
         fi
     else
         # 无registry前缀的情况（本地镜像）
         print_info "  使用本地镜像（无 registry 前缀）"
         if [[ "$OS_TYPE" == "macOS" ]]; then
-            # 只更新镜像标签
+            # 只更新镜像标签（包括环境变量形式的标签）
             sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            sed -i.bak "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
         else
-            # 只更新镜像标签
+            # 只更新镜像标签（包括环境变量形式的标签）
             sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            sed -i "s|\${IMAGE_TAG:-[^}]*}|${tag}|g" "$output_file"
         fi
     fi
     
@@ -1484,268 +1591,25 @@ generate_production_config() {
     print_info "更新环境文件引用..."
     if [[ "$OS_TYPE" == "macOS" ]]; then
         sed -i.bak "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
-        sed -i.bak "s|env_file:.*|env_file:\n    - .env.prod|g" "$output_file"
+        # 修复可能的多行环境文件配置
+        sed -i.bak "/env_file:/,/^[[:space:]]*-/ { 
+            s|^[[:space:]]*-.*\.env.*|    - .env.prod|g
+        }" "$output_file"
     else
         sed -i "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
-        sed -i "s|env_file:.*|env_file:\n    - .env.prod|g" "$output_file"
+        # 修复可能的多行环境文件配置
+        sed -i "/env_file:/,/^[[:space:]]*-/ { 
+            s|^[[:space:]]*-.*\.env.*|    - .env.prod|g
+        }" "$output_file"
     fi
     
-    # 3. 移除生产环境非必须服务（使用改进的处理逻辑）
-    print_info "移除openldap、phpldapadmin和redisinsight服务..."
-    
-    # 检查是否有Python和PyYAML
-    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
-        # 使用Python脚本精确移除非必须服务
-        if python3 fix_ldap_removal.py "$output_file" "$output_file.tmp" 2>/dev/null; then
-            mv "$output_file.tmp" "$output_file"
-            print_success "✓ 使用Python脚本成功移除生产环境非必须服务"
-        else
-            print_warning "Python脚本移除失败，使用改进的备用方案"
-            # 改进的备用方案：更完整的sed和awk处理
-            if [[ "$OS_TYPE" == "macOS" ]]; then
-                # macOS版本 - 移除整个服务块
-                sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i.bak '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i.bak '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i.bak '/^  openldap:/d' "$output_file"
-                sed -i.bak '/^  phpldapadmin:/d' "$output_file"
-                sed -i.bak '/^  redisinsight:/d' "$output_file"
-                sed -i.bak '/^  redis-insight:/d' "$output_file"
-                
-                # 移除depends_on中的openldap依赖（包括复杂格式）
-                sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
-                sed -i.bak '/LDAP_SERVER=/d' "$output_file"
-                sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-            else
-                # Linux版本 - 移除整个服务块
-                sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-                sed -i '/^  openldap:/d' "$output_file"
-                sed -i '/^  phpldapadmin:/d' "$output_file"
-                sed -i '/^  redisinsight:/d' "$output_file"
-                sed -i '/^  redis-insight:/d' "$output_file"
-                
-                # 移除depends_on中的openldap依赖（包括复杂格式）
-                sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
-                sed -i '/LDAP_SERVER=/d' "$output_file"
-                sed -i '/PHPLDAPADMIN_/d' "$output_file"
-            fi
-            
-            # 使用awk清理复杂的多行openldap依赖块（适用于所有系统）
-            awk '
-            BEGIN { 
-                in_openldap_dep = 0
-                print_line = 1
-            }
-            {
-                # 检测openldap依赖块的开始
-                if ($0 ~ /^[[:space:]]*openldap:[[:space:]]*$/) {
-                    in_openldap_dep = 1
-                    print_line = 0
-                }
-                # 检测openldap依赖块的结束
-                else if (in_openldap_dep && $0 ~ /^[[:space:]]*condition: service_healthy[[:space:]]*$/) {
-                    in_openldap_dep = 0
-                    print_line = 0
-                }
-                # 检测下一个服务或配置块（重置状态）
-                else if (in_openldap_dep && $0 ~ /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*/) {
-                    in_openldap_dep = 0
-                    print_line = 1
-                }
-                # 普通情况
-                else {
-                    print_line = 1
-                }
-                
-                # 只打印非openldap依赖的行
-                if (print_line && !in_openldap_dep) {
-                    print $0
-                }
-            }
-            ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-        fi
-    else
-        print_warning "未安装PyYAML，使用改进的sed方案移除生产环境非必须服务"
-        # 改进的纯sed和awk方案
-        if [[ "$OS_TYPE" == "macOS" ]]; then
-            # macOS版本
-            sed -i.bak '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i.bak '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i.bak '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i.bak '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i.bak '/^  openldap:/d' "$output_file"
-            sed -i.bak '/^  phpldapadmin:/d' "$output_file"
-            sed -i.bak '/^  redisinsight:/d' "$output_file"
-            sed -i.bak '/^  redis-insight:/d' "$output_file"
-            
-            # 移除简单的依赖和环境变量
-            sed -i.bak '/^[[:space:]]*- openldap$/d' "$output_file"
-            sed -i.bak '/LDAP_SERVER=/d' "$output_file"
-            sed -i.bak '/PHPLDAPADMIN_/d' "$output_file"
-        else
-            # Linux版本
-            sed -i '/^  openldap:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i '/^  phpldapadmin:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i '/^  redisinsight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i '/^  redis-insight:/,/^  [a-zA-Z]/{ /^  [a-zA-Z]/!d; }' "$output_file"
-            sed -i '/^  openldap:/d' "$output_file"
-            sed -i '/^  phpldapadmin:/d' "$output_file"
-            sed -i '/^  redisinsight:/d' "$output_file"
-            sed -i '/^  redis-insight:/d' "$output_file"
-            
-            # 移除简单的依赖和环境变量
-            sed -i '/^[[:space:]]*- openldap$/d' "$output_file"
-            sed -i '/LDAP_SERVER=/d' "$output_file"
-            sed -i '/PHPLDAPADMIN_/d' "$output_file"
-        fi
-        
-        # 使用awk清理复杂的多行openldap依赖块
-        awk '
-        BEGIN { 
-            in_openldap_dep = 0
-            print_line = 1
-        }
-        {
-            # 检测openldap依赖块的开始
-            if ($0 ~ /^[[:space:]]*openldap:[[:space:]]*$/) {
-                in_openldap_dep = 1
-                print_line = 0
-            }
-            # 检测openldap依赖块的结束
-            else if (in_openldap_dep && $0 ~ /^[[:space:]]*condition: service_healthy[[:space:]]*$/) {
-                in_openldap_dep = 0
-                print_line = 0
-            }
-            # 检测下一个服务或配置块（重置状态）
-            else if (in_openldap_dep && $0 ~ /^[[:space:]]*[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*/) {
-                in_openldap_dep = 0
-                print_line = 1
-            }
-            # 普通情况
-            else {
-                print_line = 1
-            }
-            
-            # 只打印非openldap依赖的行
-            if (print_line && !in_openldap_dep) {
-                print $0
-            }
-        }
-        ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-    fi
-    
-    # 4. 清理重复的networks配置（如果有的话）
-    print_info "清理重复的networks配置..."
-    awk '
-    BEGIN { prev_line = "" }
-    {
-        # 如果当前行和上一行都是"    networks:"，则跳过当前行
-        if ($0 ~ /^[[:space:]]*networks:[[:space:]]*$/ && prev_line ~ /^[[:space:]]*networks:[[:space:]]*$/) {
-            next
-        }
-        print prev_line
-        prev_line = $0
-    }
-    END { if (prev_line != "") print prev_line }
-    ' "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
-    
-    # 4.5. 修复 backend-init 服务的重启策略
-    print_info "修复 backend-init 服务重启策略..."
-    # backend-init 应该是一次性运行的初始化服务，不应该重启
-    
-    # 使用 Python 脚本精确修复（如果可用）
-    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
-        if python3 fix_backend_init_restart.py "$output_file" "$output_file.tmp" 2>/dev/null; then
-            mv "$output_file.tmp" "$output_file"
-            print_success "✓ 使用Python脚本修复backend-init重启策略"
-        else
-            print_warning "Python脚本修复失败，使用sed方案"
-            # 回退到sed方案
-            if [[ "$OS_TYPE" == "macOS" ]]; then
-                sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
-                    /networks:/a\
-\    restart: "no"
-                }' "$output_file"
-            else
-                sed -i '/^  backend-init:/,/^  [^[:space:]]/{
-                    /networks:/a\
-\    restart: "no"
-                }' "$output_file"
-            fi
-        fi
-    else
-        print_warning "未安装PyYAML，使用sed方案修复backend-init重启策略"
-        # 使用sed插入restart配置
-        if [[ "$OS_TYPE" == "macOS" ]]; then
-            sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
-                /networks:/a\
-\    restart: "no"
-            }' "$output_file"
-        else
-            sed -i '/^  backend-init:/,/^  [^[:space:]]/{
-                /networks:/a\
-\    restart: "no"
-            }' "$output_file"
-        fi
-    fi
-    
-    # 5. 修复 backend-init 服务的环境文件挂载
-    print_info "修复 backend-init 服务环境文件挂载..."
-    
-    # 使用 Python 脚本添加 volume 挂载（如果可用）
-    if command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
-        if python3 fix_backend_init_volumes.py "$output_file" "$output_file.tmp" 2>/dev/null; then
-            mv "$output_file.tmp" "$output_file"
-            print_success "✓ 使用Python脚本修复backend-init环境文件挂载"
-        else
-            print_warning "Python脚本修复失败，使用sed方案"
-            # 回退到手动添加 volume 配置
-            if [[ "$OS_TYPE" == "macOS" ]]; then
-                sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
-                    /networks:/i\
-\    volumes:\
-\    - "./.env.prod:/app/.env:ro"
-                }' "$output_file"
-            else
-                sed -i '/^  backend-init:/,/^  [^[:space:]]/{
-                    /networks:/i\
-\    volumes:\
-\    - "./.env.prod:/app/.env:ro"
-                }' "$output_file"
-            fi
-        fi
-    else
-        print_warning "未安装PyYAML，使用sed方案添加backend-init环境文件挂载"
-        # 使用sed添加volume配置
-        if [[ "$OS_TYPE" == "macOS" ]]; then
-            sed -i.bak '/^  backend-init:/,/^  [^[:space:]]/{
-                /networks:/i\
-\    volumes:\
-\    - "./.env.prod:/app/.env:ro"
-            }' "$output_file"
-        else
-            sed -i '/^  backend-init:/,/^  [^[:space:]]/{
-                /networks:/i\
-\    volumes:\
-\    - "./.env.prod:/app/.env:ro"
-            }' "$output_file"
-        fi
-    fi
-    
-    # 6. 清理备份文件（仅在macOS上存在）
+    # 清理备份文件（仅在macOS上存在）
     if [[ "$OS_TYPE" == "macOS" ]]; then
         rm -f "$output_file.bak"
     fi
     
-    # 7. 验证配置文件
+    # 简单验证YAML语法
     print_info "验证配置文件..."
-    
-    # 验证YAML语法
-    local yaml_valid=false
     if command -v python3 >/dev/null 2>&1; then
         if python3 -c "
 import yaml
@@ -1762,52 +1626,23 @@ except Exception as e:
     print(f'✗ 文件读取错误: {e}')
     sys.exit(1)
 "; then
-            yaml_valid=true
+            print_success "✓ 生产环境配置文件生成成功: $output_file"
         else
             print_error "YAML语法验证失败"
             return 1
         fi
     else
+        print_success "✓ 生产环境配置文件生成成功: $output_file"
         print_warning "未安装Python3，跳过YAML语法验证"
-        yaml_valid=true
     fi
     
-    # 验证docker-compose配置
-    if [[ "$yaml_valid" == "true" ]]; then
-        print_info "验证docker-compose配置..."
-        if command -v docker-compose >/dev/null 2>&1; then
-            # 使用docker-compose config命令验证配置文件
-            if docker-compose -f "$output_file" config >/dev/null 2>&1; then
-                print_success "✓ docker-compose配置验证通过"
-            else
-                print_error "✗ docker-compose配置验证失败"
-                print_info "详细错误信息："
-                docker-compose -f "$output_file" config 2>&1 | head -10
-                return 1
-            fi
-        elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-            # 使用docker compose命令验证配置文件
-            if docker compose -f "$output_file" config >/dev/null 2>&1; then
-                print_success "✓ docker compose配置验证通过"
-            else
-                print_error "✗ docker compose配置验证失败"
-                print_info "详细错误信息："
-                docker compose -f "$output_file" config 2>&1 | head -10
-                return 1
-            fi
-        else
-            print_warning "未安装docker-compose或docker compose，跳过配置验证"
-        fi
-    fi
-    
-    print_success "✓ 生产环境配置文件生成成功: $output_file"
     echo
     print_info "注意事项："
-    print_info "  1. 请确保所有依赖镜像已推送到内部registry (使用 deps-prod 命令)"
-    print_info "  2. 请确保所有源码服务镜像已推送到内部registry (使用 build-push 命令)"
-    print_info "  3. 生产环境已移除LDAP、phpldapadmin和redisinsight服务，服务可独立启动"
-    print_info "  4. 请检查生成的配置文件并根据需要调整环境变量"
-    print_info "  5. 当前使用环境文件: $env_file"
+    print_info "  1. 配置文件基于 $base_file 生成"
+    print_info "  2. 已更新镜像配置和环境文件引用"
+    print_info "  3. 生产环境使用 .env.prod 文件"
+    print_info "  4. 启动服务前请确保镜像已准备就绪"
+    print_info "  5. 使用 docker compose up -d 启动服务"
     echo
     
     return 0
@@ -1819,11 +1654,12 @@ start_production() {
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local force_local="${3:-false}"  # 新增参数：是否强制使用本地镜像
-    local compose_file="docker-compose.prod.yml"
+    local compose_file="docker-compose.yml"
     
+    # registry 可以为空（使用本地镜像）
     if [[ -z "$registry" ]]; then
-        print_error "请指定目标 registry"
-        return 1
+        print_info "使用本地镜像（无 registry 前缀）"
+        registry=""
     fi
     
     # 检测环境文件 - 生产环境优先使用 .env.prod
@@ -2850,9 +2686,9 @@ show_help() {
     echo "  deps-prod <registry> [tag]      - 拉取、标记并推送生产环境依赖镜像（排除测试工具）"
     echo
     echo "生产环境命令:"
-    echo "  prod-generate <registry> [tag]  - 生成生产环境配置文件（使用内部镜像）"
-    echo "  prod-up <registry> [tag]        - 启动生产环境"
-    echo "  prod-up --force <registry> [tag] - 启动生产环境（跳过镜像拉取，使用本地镜像）"
+    echo "  prod-generate [registry] [tag]  - 生成生产环境配置文件（registry可为空，使用本地镜像）"
+    echo "  prod-up [registry] [tag]        - 启动生产环境（registry可为空，使用本地镜像）"
+    echo "  prod-up --force [registry] [tag] - 启动生产环境（跳过镜像拉取，使用本地镜像）"
     echo "  prod-down                       - 停止生产环境"
     echo "  prod-restart <registry> [tag]   - 重启生产环境"
     echo "  prod-status                     - 查看生产环境状态"
@@ -2872,6 +2708,7 @@ show_help() {
     echo "工具命令:"
     echo "  create-env [dev|prod] [--force] - 从模板创建环境配置文件"
     echo "  auto-env [--force]              - 自动生成所有环境配置文件"
+    echo "  validate-env                   - 校验环境文件的完整性和一致性"
     echo "  test-push <service> <registry> [tag] - 测试推送配置（不实际推送）"
     echo "  clean [type] [tag] [--force]   - 清理镜像"
     echo "    • clean ai-infra [tag]       - 清理AI-Infra镜像 (默认)"
@@ -2962,12 +2799,20 @@ show_help() {
     echo "  ./build.sh create-env-prod build aiharbor.msxf.local/aihpc v0.3.5"
     echo "                                  # 创建生产环境配置文件"
     echo
-    echo "  # 首次部署"
+    echo "  # 环境文件校验"
+    echo "  ./build.sh validate-env         # 校验 .env 和 .env.prod 的一致性"
+    echo
+    echo "  # 新的统一部署流程"
+    echo "  ./build.sh create-env-prod intranet registry.local/ai-infra v1.0.0"
+    echo "  ./build.sh prod-generate registry.local/ai-infra v1.0.0  # 生成 docker-compose.yml"
+    echo "  docker compose up -d            # 直接使用标准 docker compose 命令启动"
+    echo
+    echo "  # 首次部署（传统流程）"
     echo "  ./scripts/generate-prod-passwords.sh"
     echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.0.0"
     echo "  ./build.sh prod-up harbor.company.com/ai-infra v1.0.0"
     echo
-    echo "  # 版本更新"
+    echo "  # 版本更新（传统流程）"
     echo "  ./build.sh prod-down"
     echo "  ./build.sh prod-generate harbor.company.com/ai-infra v1.1.0"
     echo "  ./build.sh prod-up harbor.company.com/ai-infra v1.1.0"
@@ -3193,24 +3038,18 @@ main() {
             
         # 生产环境部署命令
         "prod-generate")
-            if [[ -z "$2" ]]; then
-                print_error "请指定目标 registry"
-                exit 1
-            fi
-            generate_production_config "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            # registry 参数可以为空（使用本地镜像）
+            generate_production_config "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}"
             ;;
             
         "prod-up")
-            if [[ -z "$2" ]]; then
-                print_error "请指定目标 registry"
-                exit 1
-            fi
+            # registry 参数可以为空（使用本地镜像）
             # 检查是否有 --force 参数
             local force_local="false"
             if [[ "$FORCE_REBUILD" == "true" ]]; then
                 force_local="true"
             fi
-            start_production "$2" "${3:-$DEFAULT_IMAGE_TAG}" "$force_local"
+            start_production "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}" "$force_local"
             ;;
             
         "prod-down")
@@ -3337,6 +3176,10 @@ main() {
             for dep in $DEPENDENCY_IMAGES; do
                 echo "  • $dep"
             done
+            ;;
+            
+        "validate-env")
+            validate_env_consistency
             ;;
             
         "help"|"-h"|"--help")
