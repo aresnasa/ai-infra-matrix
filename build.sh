@@ -830,12 +830,6 @@ get_mapped_private_image() {
         return 0
     fi
     
-    # 如果映射文件不存在，使用原有逻辑
-    if [[ ! -f "$mapping_file" ]]; then
-        get_private_image_name "$original_image" "$registry"
-        return 0
-    fi
-    
     # 标准化镜像名称（移除tag用于匹配）
     local image_base=""
     local original_tag=""
@@ -848,55 +842,61 @@ get_mapped_private_image() {
         original_tag="latest"
     fi
     
-    # 读取映射配置
+    # 提取原始镜像的简短名称（不含namespace）
+    local simple_name=""
+    if [[ "$image_base" == *"/"* ]]; then
+        # 处理带namespace的镜像，如 tecnativa/tcp-proxy -> tcp-proxy
+        simple_name="${image_base##*/}"
+    else
+        # 直接使用镜像名，如 postgres -> postgres
+        simple_name="$image_base"
+    fi
+    
+    # 如果映射文件存在，尝试读取映射配置
     local mapped_project=""
     local mapped_version=""
     local found_mapping=false
     
-    while IFS='|' read -r pattern project version special; do
-        # 跳过注释和空行
-        [[ "$pattern" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$pattern" ]] && continue
-        
-        # 检查是否匹配（支持精确匹配和基础名匹配）
-        if [[ "$original_image" == "$pattern" ]] || 
-           [[ "$image_base" == "$pattern" ]] ||
-           [[ "$image_base:$original_tag" == "$pattern" ]]; then
-            mapped_project="$project"
-            mapped_version="$version"
-            found_mapping=true
-            break
-        fi
-    done < "$mapping_file"
+    if [[ -f "$mapping_file" ]]; then
+        while IFS='|' read -r pattern project version special; do
+            # 跳过注释和空行
+            [[ "$pattern" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "$pattern" ]] && continue
+            
+            # 检查是否匹配（支持精确匹配和基础名匹配）
+            if [[ "$original_image" == "$pattern" ]] || 
+               [[ "$image_base" == "$pattern" ]] ||
+               [[ "$image_base:$original_tag" == "$pattern" ]]; then
+                mapped_project="$project"
+                mapped_version="$version"
+                found_mapping=true
+                break
+            fi
+        done < "$mapping_file"
+    fi
     
+    local final_version=""
     if [[ "$found_mapping" == "true" ]]; then
         # 处理特殊变量替换
-        if [[ "$mapped_version" == *"\${TARGET_TAG}"* ]]; then
+        if [[ "$mapped_version" == *'${TARGET_TAG}'* ]]; then
             # 项目镜像，使用传入的target_tag
-            mapped_version="${mapped_version//\${TARGET_TAG}/$target_tag}"
-        elif [[ "$mapped_version" == *"\${IMAGE_TAG}"* ]]; then
+            final_version="${mapped_version//\$\{TARGET_TAG\}/$target_tag}"
+        elif [[ "$mapped_version" == *'${IMAGE_TAG}'* ]]; then
             # 兼容旧格式
-            mapped_version="${mapped_version//\${IMAGE_TAG}/$target_tag}"
-        fi
-        
-        # 提取原始镜像的简短名称（不含namespace）
-        local simple_name=""
-        if [[ "$image_base" == *"/"* ]]; then
-            # 处理带namespace的镜像，如 tecnativa/tcp-proxy -> tcp-proxy
-            simple_name="${image_base##*/}"
+            final_version="${mapped_version//\$\{IMAGE_TAG\}/$target_tag}"
         else
-            # 直接使用镜像名，如 postgres -> postgres
-            simple_name="$image_base"
+            # 使用配置文件中的版本
+            final_version="$mapped_version"
         fi
-        
-        # 构建统一的 aiharbor.msxf.local/aihpc/servicename:version 格式
-        local final_image="${registry}/${simple_name}:${mapped_version}"
-        
-        echo "$final_image"
     else
-        # 未找到映射，使用原有逻辑
-        get_private_image_name "$original_image" "$registry"
+        # 未找到映射，强制使用目标标签
+        final_version="$target_tag"
     fi
+    
+    # 构建最终镜像名：registry/simple_name:final_version
+    local final_image="${registry}/${simple_name}:${final_version}"
+    
+    echo "$final_image"
 }
 
 # 检查 Dockerfile 是否存在
@@ -1193,7 +1193,7 @@ pull_and_tag_dependencies() {
     print_info "=========================================="
     print_info "拉取并标记依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
+    print_info "目标镜像标签: $tag (所有依赖镜像将统一使用此版本标签)"
     
     # 动态收集依赖镜像
     local dependency_images
@@ -1271,7 +1271,7 @@ push_dependencies() {
     print_info "=========================================="
     print_info "推送依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
+    print_info "目标镜像标签: $tag (所有依赖镜像将统一使用此版本标签)"
     
     # 动态收集依赖镜像
     local dependency_images
@@ -1331,7 +1331,7 @@ pull_and_tag_production_dependencies() {
     print_info "=========================================="
     print_info "拉取并标记生产环境依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
+    print_info "目标镜像标签: $tag (所有生产环境依赖镜像将统一使用此版本标签)"
     
     # 使用生产环境依赖镜像列表
     local dependency_images
@@ -3341,7 +3341,7 @@ main() {
                 print_info "用法: $0 deps-pull <registry> [tag]"
                 exit 1
             fi
-            pull_and_tag_dependencies "$2" "${3:-latest}"
+            pull_and_tag_dependencies "$2" "${3:-v0.3.5}"
             ;;
             
         "deps-push")
@@ -3350,7 +3350,7 @@ main() {
                 print_info "用法: $0 deps-push <registry> [tag]"
                 exit 1
             fi
-            push_dependencies "$2" "${3:-latest}"
+            push_dependencies "$2" "${3:-v0.3.5}"
             ;;
             
         "deps-all")
@@ -3358,7 +3358,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-latest}"
+            local deps_tag="${3:-v0.3.5}"
             print_info "执行完整的依赖镜像操作..."
             if pull_and_tag_dependencies "$2" "$deps_tag"; then
                 push_dependencies "$2" "$deps_tag"
@@ -3373,7 +3373,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-latest}"
+            local deps_tag="${3:-v0.3.5}"
             print_info "执行生产环境依赖镜像操作（排除测试工具）..."
             if pull_and_tag_production_dependencies "$2" "$deps_tag"; then
                 push_production_dependencies "$2" "$deps_tag"
