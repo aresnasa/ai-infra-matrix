@@ -139,3 +139,176 @@ env:
   DEBUG_PORTS_ENABLED: "true"
   ENABLE_TESTING: "false"
   TEST_DATABASE_URL: "postgresql://test:test@postgres:5432/test_db"
+
+# JupyterHub configuration
+jupyterhub:
+  enabled: true
+  image:
+    repository: "ai-infra-jupyterhub"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 8000
+    targetPort: 8000
+  config:
+    publicHost: "localhost:8080"
+    corsOrigin: "http://localhost:8080"
+    debug: false
+    logLevel: "INFO"
+    accessLog: true
+  env:
+    JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
+    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.5"
+    JUPYTERHUB_NETWORK: "ai-infra-network"
+    JUPYTERHUB_MEM_LIMIT: "2G"
+    JUPYTERHUB_CPU_LIMIT: "1.0"
+    JUPYTERHUB_IDLE_CULLER_ENABLED: "true"
+    JUPYTERHUB_IDLE_TIMEOUT: "3600"
+    JUPYTERHUB_CULL_TIMEOUT: "7200"
+    JUPYTERHUB_AUTO_LOGIN: "true"
+    JUPYTERHUB_DEV_MODE: "true"
+    USE_CUSTOM_AUTH: "true"
+    AI_INFRA_BACKEND_URL: "http://backend:8082"
+    AI_INFRA_API_TOKEN: "ai-infra-hub-token"
+    JUPYTERHUB_USE_PROXY: "true"
+    JUPYTERHUB_PUBLIC_HOST: "localhost:8080"
+    JUPYTERHUB_CORS_ORIGIN: "http://localhost:8080"
+    JUPYTERHUB_DEBUG: "false"
+    JUPYTERHUB_LOG_LEVEL: "INFO"
+    JUPYTERHUB_ACCESS_LOG: "true"
+    CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-dev"
+    JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+  singleuser:
+    image:
+      repository: "ai-infra-singleuser"
+      tag: "v0.3.5"
+      pullPolicy: "IfNotPresent"
+    resources:
+      limit:
+        memory: "2G"
+        cpu: "1.0"
+      guarantee:
+        memory: "1G"
+        cpu: "0.5"
+    storage:
+      dynamic: false  # 设为false以跳过动态PVC创建
+  persistence:
+    enabled: false  # 设为false以跳过persistence存储创建
+
+# Shared storage configuration
+sharedStorage:
+  enabled: false  # 设为false以跳过共享存储创建
+
+# Service account configuration
+serviceAccount:
+  create: true
+  name: "ai-infra-matrix-sa"
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Secrets configuration (for demo/testing purposes)
+secrets:
+  jwtSecret: "demo-jwt-secret-key"
+  postgresPassword: "demo-postgres-password"
+  redisPassword: "demo-redis-password"
+  ldapAdminPassword: "demo-ldap-admin-password"
+  ldapConfigPassword: "demo-ldap-config-password"
+  giteaAdminToken: "demo-gitea-admin-token"
+  minioRootPassword: "demo-minio-password"
+  configproxyAuthToken: "demo-proxy-token"
+  jupyterhubCryptKey: "demo-jupyterhub-crypt-key"
+
+# PostgreSQL configuration
+postgresql:
+  auth:
+    username: "ai_infra_user"
+    database: "ai_infra_db"
+
+# MinIO configuration
+minio:
+  auth:
+    rootUser: "minioadmin"
+  service:
+    port: 9000
+
+# OpenLDAP configuration
+openldap:
+  enabled: false  # 暂时禁用以简化部署
+  service:
+    port: 389
+
+# phpLDAPadmin configuration  
+phpldapadmin:
+  enabled: false  # 暂时禁用以简化部署
+
+# Nginx configuration
+nginx:
+  enabled: true  # 启用nginx服务
+  image:
+    repository: "ai-infra-nginx"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 80
+    targetPort: 80
+
+# Additional service configurations
+gitea:
+  enabled: false  # 暂时禁用以简化部署
+  service:
+    port: 3000
+
+saltstack:
+  enabled: false  # 暂时禁用以简化部署
+
+# Ingress configuration
+ingress:
+  enabled: false  # 暂时禁用ingress以简化部署
+
+# Monitoring configuration
+monitoring:
+  enabled: false  # 暂时禁用monitoring以简化部署
+
+# Frontend configuration
+frontend:
+  enabled: true
+  image:
+    repository: "ai-infra-frontend"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 80
+    targetPort: 80
+
+# Backend configuration
+backend:
+  enabled: true
+  image:
+    repository: "ai-infra-backend"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 8082
+    targetPort: 8082
+  env:
+    JWT_SECRET: "ai-infra-secret-key-change-in-dev"
+    JWT_EXPIRY: "24h"
+    JWT_REFRESH_EXPIRY: "168h"
+    SESSION_SECRET: "ai-infra-session-secret-key"
+    SESSION_TIMEOUT: "86400"
+    CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-dev"
+    JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+
+# Backend Init Job configuration
+backendInit:
+  enabled: true
+  image:
+    repository: "ai-infra-backend"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"

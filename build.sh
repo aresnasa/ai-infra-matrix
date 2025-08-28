@@ -96,7 +96,7 @@ read_config() {
 # 获取所有服务名称
 get_all_services() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "backend frontend jupyterhub nginx saltstack"
+        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init"
         return
     fi
     
@@ -1069,7 +1069,15 @@ build_service() {
     
     # 构建镜像
     print_info "  → 正在构建镜像..."
-    local build_context="$SCRIPT_DIR/$service_path"
+    
+    # 特殊处理nginx的构建上下文 - 需要访问shared目录
+    local build_context
+    if [[ "$service" == "nginx" ]]; then
+        build_context="$SCRIPT_DIR"  # 使用项目根目录作为构建上下文
+    else
+        build_context="$SCRIPT_DIR/$service_path"
+    fi
+    
     local dockerfile_name="Dockerfile"
     
     # 统一处理：所有服务都使用各自的src子目录作为构建上下文
