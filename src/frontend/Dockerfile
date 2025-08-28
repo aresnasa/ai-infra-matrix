@@ -38,13 +38,13 @@ RUN set -eux; \
 WORKDIR /app
 
 # 复制package.json和package-lock.json
-COPY src/frontend/package*.json ./
+COPY package*.json ./
 
 # 安装依赖
 RUN npm install
 
 # 复制源代码
-COPY src/frontend/ .
+COPY . .
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
@@ -75,7 +75,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY --from=build /app/build /usr/share/nginx/html
 
 # 复制nginx配置文件
-COPY src/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # 设置工作目录
 WORKDIR /usr/share/nginx/html

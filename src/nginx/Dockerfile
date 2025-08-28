@@ -63,10 +63,10 @@ RUN mkdir -p /usr/share/nginx/html/sso \
     && mkdir -p /etc/nginx/conf.d
 
 # 复制项目静态文件
-COPY src/shared/sso/ /usr/share/nginx/html/sso/
-COPY src/shared/jupyterhub/ /usr/share/nginx/html/jupyterhub/
+COPY shared/sso/ /usr/share/nginx/html/sso/
+COPY shared/jupyterhub/ /usr/share/nginx/html/jupyterhub/
 # Copy any additional nginx static html (like debug_auth.html)
-COPY src/nginx/html/ /usr/share/nginx/html/
+COPY nginx/html/ /usr/share/nginx/html/
 # browser_debug.html was archived; serve debug index from existing debug bundle when DEBUG_MODE=true
 # Provide a lightweight default debug page otherwise
 RUN echo "<html><body><h3>Debug entry</h3><p>See /debug/ when DEBUG_MODE=true.</p></body></html>" > /usr/share/nginx/html/debug.html
@@ -81,7 +81,7 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
 
 # 条件复制：仅在调试模式下且debug目录存在时复制调试文件夹
 # 先检查源目录是否有内容，然后决定是否复制
-COPY src/shared/debug/ /tmp/debug/
+COPY shared/debug/ /tmp/debug/
 RUN if [ "$DEBUG_MODE" = "true" ]; then \
         echo "🔧 调试模式启用，检查调试文件..."; \
         if [ "$(ls -A /tmp/debug 2>/dev/null)" ]; then \
@@ -100,8 +100,8 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
     rm -rf /tmp/debug
 
 # 复制Nginx主配置与片段到容器
-COPY src/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY src/nginx/conf.d/ /etc/nginx/conf.d/
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY nginx/conf.d/ /etc/nginx/conf.d/
 
 # 创建JupyterHub wrapper页面的符号链接，支持多种访问方式
 RUN ln -sf /usr/share/nginx/html/jupyterhub/jupyterhub_wrapper_upstream.html /usr/share/nginx/html/jupyterhub_wrapper.html
@@ -113,7 +113,7 @@ RUN chown -R nginx:nginx /usr/share/nginx/html \
     && chmod -R 755 /var/log/nginx
 
 # 复制启动脚本
-COPY src/nginx/docker-entrypoint.sh /docker-entrypoint.sh
+COPY nginx/docker-entrypoint.sh /docker-entrypoint.sh
 
 # 设置启动脚本权限
 RUN chmod +x /docker-entrypoint.sh

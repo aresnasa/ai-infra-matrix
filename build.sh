@@ -169,7 +169,6 @@ collect_dependency_images() {
     
     # 收集所有compose文件
     [ -f "docker-compose.yml" ] && compose_files+=("docker-compose.yml")
-    [ -f "src/docker/production/docker-compose.yml" ] && compose_files+=("src/docker/production/docker-compose.yml")
     
     if [ ${#compose_files[@]} -eq 0 ]; then
         print_warning "未找到docker-compose.yml文件，使用静态依赖列表"
@@ -1073,8 +1072,7 @@ build_service() {
     local build_context="$SCRIPT_DIR/$service_path"
     local dockerfile_name="Dockerfile"
     
-    # 统一处理：所有服务都使用项目根目录作为构建上下文
-    # 因为Dockerfile中的路径都是相对于项目根目录的（如 src/frontend/nginx.conf）
+    # 统一处理：所有服务都使用各自的src子目录作为构建上下文
     local target_arg=""
     if [[ "$service" == "backend-init" ]]; then
         target_arg="--target backend-init"
@@ -1082,8 +1080,8 @@ build_service() {
         target_arg="--target backend"
     fi
     
-    # 统一使用项目根目录作为构建上下文
-    if docker build -f "$dockerfile_path" $target_arg -t "$target_image" "$SCRIPT_DIR"; then
+    # 使用各自的src子目录作为构建上下文
+    if docker build -f "$dockerfile_path" $target_arg -t "$target_image" "$build_context"; then
         print_success "✓ 构建成功: $target_image"
         
         # 如果指定了registry，同时创建本地别名
@@ -2299,18 +2297,48 @@ tag_local_images_for_registry() {
     
     print_info "标记本地镜像为新的registry标签..."
     
-    # 定义需要标记的镜像列表
-    local source_images=(
-        # 自研镜像
-        "ai-infra-backend:${tag}"
-        "ai-infra-backend-init:${tag}"
-        "ai-infra-frontend:${tag}"
-        "ai-infra-jupyterhub:${tag}"
-        "ai-infra-gitea:${tag}"
-        "ai-infra-nginx:${tag}"
-        "ai-infra-saltstack:${tag}"
-        "ai-infra-singleuser:${tag}"
-        # 基础镜像
+    # 智能查找本地镜像的函数
+    find_local_image() {
+        local image_name="$1"
+        local target_tag="$2"
+        
+        # 先尝试精确匹配
+        if docker image inspect "${image_name}:${target_tag}" >/dev/null 2>&1; then
+            echo "${image_name}:${target_tag}"
+            return 0
+        fi
+        
+        # 如果精确匹配失败，尝试查找包含目标标签的镜像
+        local found_image=$(docker images --format "table {{.Repository}}:{{.Tag}}" | grep "^${image_name}:" | grep -E "(test-)?${target_tag}$" | head -n1)
+        if [[ -n "$found_image" ]]; then
+            echo "$found_image"
+            return 0
+        fi
+        
+        # 如果还是找不到，查找最新的镜像
+        local latest_image=$(docker images --format "table {{.Repository}}:{{.Tag}}" | grep "^${image_name}:" | grep -v "<none>" | head -n1)
+        if [[ -n "$latest_image" ]]; then
+            echo "$latest_image"
+            return 0
+        fi
+        
+        return 1
+    }
+    
+    # 定义需要标记的镜像基础名称
+    local ai_infra_images=(
+        "ai-infra-backend"
+        "ai-infra-backend-init"
+        "ai-infra-frontend"
+        "ai-infra-jupyterhub"
+        "ai-infra-gitea"
+        "ai-infra-nginx"
+        "ai-infra-saltstack"
+        "ai-infra-singleuser"
+    )
+    
+    # 定义依赖镜像
+    local dependency_images=(
         "postgres:15-alpine"
         "redis:7-alpine"
         "nginx:1.27-alpine"
@@ -2321,47 +2349,55 @@ tag_local_images_for_registry() {
         "redislabs/redisinsight:latest"
     )
     
-    local target_images=(
-        # 自研镜像
-        "${registry}/ai-infra-backend:${tag}"
-        "${registry}/ai-infra-backend-init:${tag}"
-        "${registry}/ai-infra-frontend:${tag}"
-        "${registry}/ai-infra-jupyterhub:${tag}"
-        "${registry}/ai-infra-gitea:${tag}"
-        "${registry}/ai-infra-nginx:${tag}"
-        "${registry}/ai-infra-saltstack:${tag}"
-        "${registry}/ai-infra-singleuser:${tag}"
-        # 基础镜像
-        "${registry}/postgres:15-alpine"
-        "${registry}/redis:7-alpine"
-        "${registry}/nginx:1.27-alpine"
-        "${registry}/tcp-proxy:latest"
-        "${registry}/minio:latest"
-        "${registry}/openldap:stable"
-        "${registry}/phpldapadmin:stable"
-        "${registry}/redisinsight:latest"
-    )
-    
     local tagged_count=0
     local missing_count=0
     
-    for i in "${!source_images[@]}"; do
-        local source_image="${source_images[$i]}"
-        local target_image="${target_images[$i]}"
+    # 处理AI-Infra自研镜像
+    for image_name in "${ai_infra_images[@]}"; do
+        local target_image="${registry}/${image_name}:${tag}"
+        
+        # 检查目标镜像是否已存在
+        if docker image inspect "$target_image" >/dev/null 2>&1; then
+            print_info "  ✓ 已存在: $target_image"
+            continue
+        fi
+        
+        # 智能查找本地镜像
+        local source_image=$(find_local_image "$image_name" "$tag")
+        if [[ -n "$source_image" ]]; then
+            # 标记镜像
+            if docker tag "$source_image" "$target_image" 2>/dev/null; then
+                print_success "  ✓ 已标记: $source_image -> $target_image"
+                tagged_count=$((tagged_count + 1))
+            else
+                print_warning "  ✗ 标记失败: $source_image -> $target_image"
+            fi
+        else
+            print_warning "  ✗ 本地未找到镜像: $image_name"
+            missing_count=$((missing_count + 1))
+        fi
+    done
+    
+    # 处理依赖镜像
+    for source_image in "${dependency_images[@]}"; do
+        # 计算目标镜像名（移除域名前缀）
+        local clean_name=$(echo "$source_image" | sed 's|^[^/]*/||' | sed 's|^[^/]*/||')
+        local target_image="${registry}/${clean_name}"
+        
+        # 检查目标镜像是否已存在
+        if docker image inspect "$target_image" >/dev/null 2>&1; then
+            print_info "  ✓ 已存在: $target_image"
+            continue
+        fi
         
         # 检查源镜像是否存在
         if docker image inspect "$source_image" >/dev/null 2>&1; then
-            # 检查目标镜像是否已存在
-            if docker image inspect "$target_image" >/dev/null 2>&1; then
-                print_info "  ✓ 已存在: $target_image"
+            # 标记镜像
+            if docker tag "$source_image" "$target_image" 2>/dev/null; then
+                print_success "  ✓ 已标记: $source_image -> $target_image"
+                tagged_count=$((tagged_count + 1))
             else
-                # 标记镜像
-                if docker tag "$source_image" "$target_image" 2>/dev/null; then
-                    print_success "  ✓ 已标记: $source_image -> $target_image"
-                    tagged_count=$((tagged_count + 1))
-                else
-                    print_warning "  ✗ 标记失败: $source_image -> $target_image"
-                fi
+                print_warning "  ✗ 标记失败: $source_image -> $target_image"
             fi
         else
             print_warning "  ✗ 源镜像不存在: $source_image"

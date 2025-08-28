@@ -1353,9 +1353,8 @@ collect_compose_images() {
     local repo_root
     repo_root=$(cd "$script_dir/.." && pwd)
 
-    # 收集候选 compose 文件（根目录 + 生产目录）
+    # 收集候选 compose 文件（根目录）
     [ -f "$repo_root/docker-compose.yml" ] && compose_files+=("$repo_root/docker-compose.yml")
-    [ -f "$repo_root/src/docker/production/docker-compose.yml" ] && compose_files+=("$repo_root/src/docker/production/docker-compose.yml")
 
     local images_list
     images_list=$(

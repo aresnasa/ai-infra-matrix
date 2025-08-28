@@ -68,7 +68,7 @@ ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # 依赖安装（分层优化，优先二进制版本）
-COPY src/jupyterhub/requirements.txt .
+COPY requirements.txt .
 # Install Node.js and temporary build deps to compile psutil on Alpine, then remove them
 RUN set -eux; \
     apk update || (sleep 5 && apk update) || (sleep 10 && apk update); \
@@ -97,7 +97,7 @@ RUN adduser -D -s /bin/bash admin && \
 RUN echo "Build: $(date '+%Y-%m-%d %H:%M:%S')" > /srv/jupyterhub/build_info.txt
 
 # 配置文件（最后复制，优化缓存）
-COPY src/jupyterhub/jupyterhub_config.py src/jupyterhub/backend_integrated_config.py src/jupyterhub/simple_config.py ./
+COPY jupyterhub_config.py backend_integrated_config.py simple_config.py ./
 
 # 创建数据库等待脚本（简化版，只检查连接性）
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \

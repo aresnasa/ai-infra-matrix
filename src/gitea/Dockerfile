@@ -4,7 +4,7 @@ FROM gitea/gitea:1.24.5
 
 # Copy custom entrypoint as root, then run as standard user
 USER root
-COPY src/gitea/gitea-entrypoint.sh /usr/local/bin/gitea-entrypoint.sh
+COPY gitea-entrypoint.sh /usr/local/bin/gitea-entrypoint.sh
 RUN chmod +x /usr/local/bin/gitea-entrypoint.sh
 
 # Use our wrapper entrypoint but delegate to upstream after init

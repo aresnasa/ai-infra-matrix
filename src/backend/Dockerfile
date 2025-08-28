@@ -45,15 +45,15 @@ ENV GO111MODULE=on
 
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
-# Copy go mod files
-COPY src/backend/go.mod src/backend/go.sum ./
+# Copy go.mod and go.sum files first for better caching
+COPY go.mod go.sum ./
 
 # Download dependencies with retry and fallback
 RUN go mod download || (sleep 5 && go mod download) || \
     (export GOPROXY=direct && go mod download)
 
 # Copy source code
-COPY src/backend/ .
+COPY . .
 
 # Build the application with JupyterHub integration
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/main.go
