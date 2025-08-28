@@ -2122,6 +2122,14 @@ generate_production_config() {
         local gitea_alias_admin_to=$(grep "^GITEA_ALIAS_ADMIN_TO=" .env.prod | cut -d'=' -f2)
         local backend_url=$(grep "^BACKEND_URL=" .env.prod | cut -d'=' -f2)
         
+        # 读取HOST相关配置
+        local domain=$(grep "^DOMAIN=" .env.prod | cut -d'=' -f2)
+        local public_host=$(grep "^PUBLIC_HOST=" .env.prod | cut -d'=' -f2)
+        local public_protocol=$(grep "^PUBLIC_PROTOCOL=" .env.prod | cut -d'=' -f2)
+        local jupyterhub_public_host=$(grep "^JUPYTERHUB_PUBLIC_HOST=" .env.prod | cut -d'=' -f2)
+        local jupyterhub_cors_origin=$(grep "^JUPYTERHUB_CORS_ORIGIN=" .env.prod | cut -d'=' -f2)
+        local root_url=$(grep "^ROOT_URL=" .env.prod | cut -d'=' -f2)
+        
         # 替换Docker Compose文件中的环境变量
         print_info "展开环境变量引用..."
         local temp_content=$(cat "$output_file")
@@ -2187,6 +2195,20 @@ generate_production_config() {
         temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_URL:-[^}]*}|$backend_url|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_URL}|$backend_url|g")
         
+        # 处理HOST相关变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${DOMAIN:-[^}]*}|$domain|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${DOMAIN}|$domain|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_HOST:-[^}]*}|$public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_HOST}|$public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_PROTOCOL:-[^}]*}|$public_protocol|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_PROTOCOL}|$public_protocol|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PUBLIC_HOST:-[^}]*}|$jupyterhub_public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PUBLIC_HOST}|$jupyterhub_public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN:-[^}]*}|$jupyterhub_cors_origin|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN}|$jupyterhub_cors_origin|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${ROOT_URL:-[^}]*}|$root_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${ROOT_URL}|$root_url|g")
+        
         # 写回文件
         echo "$temp_content" > "$output_file"
         print_success "✓ 环境变量展开完成"
@@ -2234,6 +2256,104 @@ except Exception as e:
     print_info "  3. 生产环境使用 .env.prod 文件"
     print_info "  4. 启动服务前请确保镜像已准备就绪"
     print_info "  5. 使用 docker compose up -d 启动服务"
+    echo
+    
+    return 0
+}
+
+# 部署到指定HOST（动态配置域名）
+deploy_to_host() {
+    local host="$1"
+    local registry="$2"
+    local tag="${3:-$DEFAULT_IMAGE_TAG}"
+    
+    if [[ -z "$host" ]]; then
+        print_error "必须指定HOST地址"
+        return 1
+    fi
+    
+    print_info "===========================================" 
+    print_info "部署AI-Infra到指定HOST: $host"
+    print_info "==========================================="
+    print_info "Host: $host"
+    print_info "Registry: ${registry:-'(本地镜像)'}"
+    print_info "Tag: $tag"
+    echo
+    
+    # 备份原始.env.prod文件
+    if [[ -f ".env.prod" ]]; then
+        cp ".env.prod" ".env.prod.backup.$(date +%Y%m%d%H%M%S)"
+        print_info "已备份原始.env.prod文件"
+    fi
+    
+    # 检测HOST格式并设置PORT
+    local nginx_port="8080"
+    local public_host="$host:$nginx_port"
+    local public_protocol="http"
+    
+    if [[ "$host" =~ ^https?:// ]]; then
+        print_error "HOST不应包含协议前缀，请使用纯域名或IP，如: example.com 或 192.168.1.100"
+        return 1
+    fi
+    
+    if [[ "$host" =~ :[0-9]+$ ]]; then
+        public_host="$host"
+        print_info "检测到HOST包含端口: $public_host"
+    else
+        public_host="$host:$nginx_port"
+        print_info "使用默认端口: $public_host"
+    fi
+    
+    # 临时设置环境变量（用于生成配置）
+    export AI_INFRA_HOST="$host"
+    
+    # 更新.env.prod文件中的HOST相关配置
+    print_info "更新.env.prod中的HOST配置..."
+    
+    # 使用sed命令更新配置
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i.bak "s|^DOMAIN=.*|DOMAIN=$host|g" .env.prod
+        sed -i.bak "s|^PUBLIC_HOST=.*|PUBLIC_HOST=$public_host|g" .env.prod  
+        sed -i.bak "s|^JUPYTERHUB_PUBLIC_HOST=.*|JUPYTERHUB_PUBLIC_HOST=$public_host|g" .env.prod
+        sed -i.bak "s|^JUPYTERHUB_CORS_ORIGIN=.*|JUPYTERHUB_CORS_ORIGIN=$public_protocol://$public_host|g" .env.prod
+        sed -i.bak "s|^ROOT_URL=.*|ROOT_URL=$public_protocol://$public_host/gitea/|g" .env.prod
+        rm -f .env.prod.bak
+    else
+        sed -i "s|^DOMAIN=.*|DOMAIN=$host|g" .env.prod
+        sed -i "s|^PUBLIC_HOST=.*|PUBLIC_HOST=$public_host|g" .env.prod
+        sed -i "s|^JUPYTERHUB_PUBLIC_HOST=.*|JUPYTERHUB_PUBLIC_HOST=$public_host|g" .env.prod
+        sed -i "s|^JUPYTERHUB_CORS_ORIGIN=.*|JUPYTERHUB_CORS_ORIGIN=$public_protocol://$public_host|g" .env.prod
+        sed -i "s|^ROOT_URL=.*|ROOT_URL=$public_protocol://$public_host/gitea/|g" .env.prod
+    fi
+    
+    print_success "✓ HOST配置更新完成"
+    
+    # 生成生产环境配置
+    print_info "生成生产环境配置文件..."
+    if ! generate_production_config "$registry" "$tag"; then
+        print_error "生产环境配置生成失败"
+        return 1
+    fi
+    
+    # 启动服务（使用本地镜像模式）
+    print_info "启动生产环境服务..."
+    if ! start_production "$registry" "$tag" "true"; then
+        print_error "生产环境启动失败"
+        return 1
+    fi
+    
+    print_success "=========================================="
+    print_success "🎉 部署完成！"
+    print_success "=========================================="
+    print_info "访问地址:"
+    print_info "  主页: $public_protocol://$public_host/"
+    print_info "  JupyterHub: $public_protocol://$public_host/jupyterhub/"
+    print_info "  Gitea: $public_protocol://$public_host/gitea/"
+    print_info ""
+    print_info "管理命令:"
+    print_info "  查看状态: $0 prod-status"
+    print_info "  查看日志: $0 prod-logs [service]"
+    print_info "  停止服务: $0 prod-down"
     echo
     
     return 0
@@ -2568,7 +2688,7 @@ restart_production() {
 
 # 查看生产环境状态
 production_status() {
-    local compose_file="docker-compose.prod.yml"
+    local compose_file="docker-compose.yml"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
@@ -2592,7 +2712,7 @@ production_status() {
 
 # 查看生产环境日志
 production_logs() {
-    local compose_file="docker-compose.prod.yml"
+    local compose_file="docker-compose.yml"
     local service="$1"
     local follow="${2:-false}"
     
@@ -2975,6 +3095,7 @@ show_help() {
     echo
     echo "生产环境:"
     echo "  prod-generate [registry] [tag]  - 生成生产环境配置"
+    echo "  prod-deploy <host> [registry] [tag] - 部署到指定HOST（自动配置域名）"
     echo "  prod-up [registry] [tag]        - 启动生产环境"
     echo "  prod-down                       - 停止生产环境"
     echo "  prod-status                     - 查看状态"
@@ -3308,6 +3429,17 @@ main() {
         "prod-generate")
             # registry 参数可以为空（使用本地镜像）
             generate_production_config "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "prod-deploy")
+            if [[ -z "$2" ]]; then
+                print_error "请指定部署的HOST地址"
+                print_info "用法: $0 prod-deploy <host> [registry] [tag]"
+                print_info "示例: $0 prod-deploy 192.168.1.100 harbor.company.com/ai-infra v1.0.0"
+                print_info "示例: $0 prod-deploy example.com \"\" v1.0.0  # 使用本地镜像"
+                exit 1
+            fi
+            deploy_to_host "$2" "${3:-}" "${4:-$DEFAULT_IMAGE_TAG}"
             ;;
             
         "prod-up")

@@ -270,8 +270,8 @@ services:
       - JUPYTERHUB_LOG_LEVEL=INFO
       - JUPYTERHUB_ACCESS_LOG=true
       - JUPYTERHUB_USE_PROXY=true
-      - JUPYTERHUB_PUBLIC_HOST=localhost:8080
-      - JUPYTERHUB_CORS_ORIGIN=http://localhost:8080
+      - JUPYTERHUB_PUBLIC_HOST=${JUPYTERHUB_PUBLIC_HOST}
+      - JUPYTERHUB_CORS_ORIGIN=${JUPYTERHUB_CORS_ORIGIN}
       - TZ=Asia/Shanghai
     ports:
       - "8088:8000"
@@ -457,12 +457,12 @@ services:
     environment:
       USER_UID: "1000"
       USER_GID: "1000"
-      ROOT_URL: "http://localhost:8080/gitea/"
+      ROOT_URL: "${ROOT_URL}"
       SUBURL: "/gitea"
       STATIC_URL_PREFIX: "/gitea"
-      GITEA__server__ROOT_URL: "http://localhost:8080/gitea/"
+      GITEA__server__ROOT_URL: "${ROOT_URL}"
       GITEA__server__SUBURL: "/gitea"
-      DOMAIN: "localhost"
+      DOMAIN: "${DOMAIN}"
       PROTOCOL: "http"
       HTTP_PORT: "3000"
       GITEA_DB_TYPE: "postgres"
