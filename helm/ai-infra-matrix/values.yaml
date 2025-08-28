@@ -223,26 +223,151 @@ secrets:
 
 # PostgreSQL configuration
 postgresql:
+  enabled: true
+  image:
+    repository: "postgres"
+    tag: "15-alpine"
+    pullPolicy: "IfNotPresent"
   auth:
     username: "ai_infra_user"
     database: "ai_infra_db"
+    password: "demo-postgres-password"
+    postgresPassword: "demo-postgres-password"
+  service:
+    type: "ClusterIP"
+    port: 5432
+  persistence:
+    enabled: true
+    size: "10Gi"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Redis configuration
+redis:
+  enabled: true
+  image:
+    repository: "redis"
+    tag: "7-alpine"
+    pullPolicy: "IfNotPresent"
+  auth:
+    enabled: true
+    password: "demo-redis-password"
+  service:
+    type: "ClusterIP"
+    port: 6379
+  persistence:
+    enabled: true
+    size: "5Gi"
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
 
 # MinIO configuration
 minio:
+  enabled: true
+  image:
+    repository: "minio/minio"
+    tag: "latest"
+    pullPolicy: "IfNotPresent"
   auth:
     rootUser: "minioadmin"
+    rootPassword: "demo-minio-password"
   service:
+    type: "ClusterIP"
     port: 9000
+    consolePort: 9001
+  persistence:
+    enabled: true
+    size: "20Gi"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
 
 # OpenLDAP configuration
 openldap:
-  enabled: false  # 暂时禁用以简化部署
+  enabled: true
+  image:
+    repository: "osixia/openldap"
+    tag: "stable"
+    pullPolicy: "IfNotPresent"
+  auth:
+    adminPassword: "demo-ldap-admin-password"
+    configPassword: "demo-ldap-config-password"
   service:
+    type: "ClusterIP"
     port: 389
+    sslPort: 636
+  persistence:
+    enabled: true
+    size: "5Gi"
+  env:
+    LDAP_ORGANISATION: "AI Infrastructure Matrix"
+    LDAP_DOMAIN: "ai-infra.com"
+    LDAP_BASE_DN: "dc=ai-infra,dc=com"
+    LDAP_ADMIN_PASSWORD: "demo-ldap-admin-password"
+    LDAP_CONFIG_PASSWORD: "demo-ldap-config-password"
+    LDAP_READONLY_USER: "true"
+    LDAP_READONLY_USER_USERNAME: "readonly"
+    LDAP_READONLY_USER_PASSWORD: "readonly"
+    LDAP_RFC2307BIS_SCHEMA: "false"
+    LDAP_BACKEND: "mdb"
+    LDAP_TLS: "true"
+    LDAP_TLS_CRT_FILENAME: "ldap.crt"
+    LDAP_TLS_KEY_FILENAME: "ldap.key"
+    LDAP_TLS_DH_PARAM_FILENAME: "dhparam.pem"
+    LDAP_TLS_CA_CRT_FILENAME: "ca.crt"
+    LDAP_TLS_ENFORCE: "false"
+    LDAP_TLS_CIPHER_SUITE: "SECURE256:-VERS-SSL3.0"
+    LDAP_TLS_VERIFY_CLIENT: "demand"
+    LDAP_REPLICATION: "false"
+    KEEP_EXISTING_CONFIG: "false"
+    LDAP_REMOVE_CONFIG_AFTER_SETUP: "true"
+    LDAP_SSL_HELPER_PREFIX: "ldap"
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
 
 # phpLDAPadmin configuration  
 phpldapadmin:
-  enabled: false  # 暂时禁用以简化部署
+  enabled: true
+  image:
+    repository: "osixia/phpldapadmin"
+    tag: "stable"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 80
+  env:
+    PHPLDAPADMIN_LDAP_HOSTS: "openldap"
+    PHPLDAPADMIN_HTTPS: "false"
+    PHPLDAPADMIN_HTTPS_CRT_FILENAME: "ldap.crt"
+    PHPLDAPADMIN_HTTPS_KEY_FILENAME: "ldap.key"
+    PHPLDAPADMIN_HTTPS_CA_CRT_FILENAME: "ca.crt"
+    PHPLDAPADMIN_TRUST_PROXY_SSL: "true"
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "25m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
 
 # Nginx configuration
 nginx:
@@ -258,12 +383,75 @@ nginx:
 
 # Additional service configurations
 gitea:
-  enabled: false  # 暂时禁用以简化部署
+  enabled: true
+  image:
+    repository: "ai-infra-gitea"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"
   service:
+    type: "ClusterIP"
     port: 3000
+  persistence:
+    enabled: true
+    size: "10Gi"
+  auth:
+    adminUsername: "admin"
+    adminPassword: "demo-gitea-admin-password"
+    adminToken: "demo-gitea-admin-token"
+  database:
+    type: "postgres"
+    host: "postgres"
+    port: 5432
+    name: "gitea"
+    user: "gitea"
+    password: "gitea-password"
+  env:
+    USER_UID: "1000"
+    USER_GID: "1000"
+    GITEA__database__DB_TYPE: "postgres"
+    GITEA__database__HOST: "postgres:5432"
+    GITEA__database__NAME: "gitea"
+    GITEA__database__USER: "gitea"
+    GITEA__database__PASSWD: "gitea-password"
+    GITEA__security__INSTALL_LOCK: "true"
+    GITEA__security__SECRET_KEY: "gitea-secret-key-12345"
+    GITEA__server__DOMAIN: "gitea.local"
+    GITEA__server__SSH_DOMAIN: "gitea.local"
+    ROOT_URL: "http://gitea.local:3000/"
+    GITEA__server__SSH_PORT: "22"
+    GITEA__server__HTTP_PORT: "3000"
+    GITEA__session__PROVIDER: "memory"
+    GITEA__log__MODE: "console"
+    GITEA__log__LEVEL: "Info"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
 
 saltstack:
-  enabled: false  # 暂时禁用以简化部署
+  enabled: true
+  image:
+    repository: "ai-infra-saltstack"
+    tag: "v0.3.5"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    masterPort: 4505
+    returnPort: 4506
+    apiPort: 8000
+  persistence:
+    enabled: true
+    size: "5Gi"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
 
 # Ingress configuration
 ingress:

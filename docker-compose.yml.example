@@ -521,7 +521,7 @@ services:
 
   # MinIO (S3-compatible)
   minio:
-    image: quay.io/minio/minio:latest
+    image: minio/minio:latest
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
     env_file:

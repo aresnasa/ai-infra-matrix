@@ -108,10 +108,10 @@ get_all_services() {
     ' "$CONFIG_FILE" | sort
 }
 
-# 获取所有依赖镜像（包含测试工具）
+# 获取所有依赖镜像（包含测试工具和构建依赖）
 get_all_dependencies() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
+        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
         return
     fi
     
@@ -126,10 +126,10 @@ get_all_dependencies() {
     ' "$CONFIG_FILE" | tr '\n' ' '
 }
 
-# 获取生产环境依赖镜像（移除测试工具）
+# 获取生产环境依赖镜像（移除测试工具和构建依赖）
 get_production_dependencies() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "postgres:15-alpine redis:7-alpine tecnativa/tcp-proxy nginx:1.27-alpine quay.io/minio/minio:latest"
+        echo "postgres:15-alpine redis:7-alpine tecnativa/tcp-proxy nginx:1.27-alpine minio/minio:latest"
         return
     fi
     
@@ -163,40 +163,8 @@ collect_dependency_images() {
         return
     fi
     
-    # 后备方案：从docker-compose文件中提取
-    local compose_files=()
-    local script_dir="$(cd "$(dirname "$0")" && pwd)"
-    
-    # 收集所有compose文件
-    [ -f "docker-compose.yml" ] && compose_files+=("docker-compose.yml")
-    
-    if [ ${#compose_files[@]} -eq 0 ]; then
-        print_warning "未找到docker-compose.yml文件，使用静态依赖列表"
-        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
-        return
-    fi
-    
-    # 提取所有镜像，排除ai-infra-*镜像
-    local images_list
-    images_list=$(
-        for f in "${compose_files[@]}"; do
-            grep -E '^[[:space:]]*image:[[:space:]]' "$f" 2>/dev/null | \
-                sed -E 's/^[[:space:]]*image:[[:space:]]*//' | \
-                sed -E 's/[[:space:]]+#.*$//' | \
-                tr -d '"' | tr -d "'" | \
-                sed 's/\${[^}]*}//' | \
-                sed 's/:$//' || true
-        done | \
-        grep -vE '^(ai-infra-|$)' | \
-        awk 'NF{print $1}' | sort -u
-    )
-    
-    # 返回收集到的镜像列表
-    if [ -n "$images_list" ]; then
-        echo "$images_list" | tr '\n' ' '
-    else
-        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine quay.io/minio/minio:latest"
-    fi
+    # 使用统一的静态依赖列表，确保与get_all_dependencies一致
+    echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
 }
 
 # Mock 数据测试相关配置
@@ -1564,6 +1532,65 @@ push_production_dependencies() {
     fi
 }
 
+# 推送构建依赖镜像（仅包含构建时需要的镜像）
+push_build_dependencies() {
+    local registry="$1"
+    local tag="${2:-latest}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "需要指定 registry"
+        print_info "用法: $0 build-deps-push <registry> [tag]"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "推送构建依赖镜像到 $registry"
+    print_info "=========================================="
+    print_info "目标镜像标签: $tag"
+    
+    # 定义构建依赖镜像
+    local build_dependencies=(
+        "node:22-alpine"
+        "nginx:stable-alpine-perl"
+        "golang:1.25-alpine"
+        "python:3.13-alpine"
+        "gitea/gitea:1.24.5"
+        "jupyter/base-notebook:latest"
+    )
+    
+    local success_count=0
+    local total_count=${#build_dependencies[@]}
+    local failed_deps=()
+    
+    for dep_image in "${build_dependencies[@]}"; do
+        # 使用新的映射机制生成目标镜像名
+        local target_image
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        print_info "推送构建依赖镜像: $target_image"
+        
+        if docker push "$target_image"; then
+            print_success "  ✓ 推送成功: $target_image"
+            success_count=$((success_count + 1))
+        else
+            print_error "  ✗ 推送失败: $target_image"
+            failed_deps+=("$target_image")
+        fi
+        echo
+    done
+    
+    print_info "=========================================="
+    print_success "构建依赖镜像推送完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_deps[@]} -gt 0 ]]; then
+        print_warning "失败的构建依赖镜像: ${failed_deps[*]}"
+        return 1
+    else
+        print_success "🎉 所有构建依赖镜像推送成功！"
+        return 0
+    fi
+}
+
 # ==========================================
 # AI Harbor 镜像拉取管理
 # ==========================================
@@ -1646,7 +1673,7 @@ pull_aiharbor_dependencies() {
     # 从配置文件或预定义列表收集依赖镜像
     local dependency_images=$(get_all_dependencies | tr '\n' ' ')
     if [[ -z "$dependency_images" ]]; then
-        dependency_images="postgres:15-alpine redis:7-alpine nginx:1.27-alpine tecnativa/tcp-proxy quay.io/minio/minio:latest osixia/openldap:stable osixia/phpldapadmin:stable redislabs/redisinsight:latest"
+        dependency_images="postgres:15-alpine redis:7-alpine nginx:1.27-alpine tecnativa/tcp-proxy minio/minio:latest osixia/openldap:stable osixia/phpldapadmin:stable redislabs/redisinsight:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
     fi
     
     print_info "依赖镜像列表: $dependency_images"
@@ -1994,7 +2021,7 @@ generate_production_config() {
             local redis_mapped=$(get_mapped_private_image "redis:7-alpine" "$registry" "$tag")
             local nginx_mapped=$(get_mapped_private_image "nginx:1.27-alpine" "$registry" "$tag")
             local tcp_proxy_mapped=$(get_mapped_private_image "tecnativa/tcp-proxy" "$registry" "$tag")
-            local minio_mapped=$(get_mapped_private_image "quay.io/minio/minio:latest" "$registry" "$tag")
+            local minio_mapped=$(get_mapped_private_image "minio/minio:latest" "$registry" "$tag")
             local openldap_mapped=$(get_mapped_private_image "osixia/openldap:stable" "$registry" "$tag")
             local phpldapadmin_mapped=$(get_mapped_private_image "osixia/phpldapadmin:stable" "$registry" "$tag")
             local redisinsight_mapped=$(get_mapped_private_image "redislabs/redisinsight:latest" "$registry" "$tag")
@@ -2004,7 +2031,7 @@ generate_production_config() {
             sed -i.bak "s|image: redis:7-alpine|image: ${redis_mapped}|g" "$output_file"
             sed -i.bak "s|image: nginx:1.27-alpine|image: ${nginx_mapped}|g" "$output_file"
             sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${tcp_proxy_mapped}|g" "$output_file"
-            sed -i.bak "s|image: quay.io/minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
+            sed -i.bak "s|image: minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
             sed -i.bak "s|image: osixia/openldap:stable|image: ${openldap_mapped}|g" "$output_file"
             sed -i.bak "s|image: osixia/phpldapadmin:stable|image: ${phpldapadmin_mapped}|g" "$output_file"
             sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${redisinsight_mapped}|g" "$output_file"
@@ -2021,7 +2048,7 @@ generate_production_config() {
             local redis_mapped=$(get_mapped_private_image "redis:7-alpine" "$registry" "$tag")
             local nginx_mapped=$(get_mapped_private_image "nginx:1.27-alpine" "$registry" "$tag")
             local tcp_proxy_mapped=$(get_mapped_private_image "tecnativa/tcp-proxy" "$registry" "$tag")
-            local minio_mapped=$(get_mapped_private_image "quay.io/minio/minio:latest" "$registry" "$tag")
+            local minio_mapped=$(get_mapped_private_image "minio/minio:latest" "$registry" "$tag")
             local openldap_mapped=$(get_mapped_private_image "osixia/openldap:stable" "$registry" "$tag")
             local phpldapadmin_mapped=$(get_mapped_private_image "osixia/phpldapadmin:stable" "$registry" "$tag")
             local redisinsight_mapped=$(get_mapped_private_image "redislabs/redisinsight:latest" "$registry" "$tag")
@@ -2031,7 +2058,7 @@ generate_production_config() {
             sed -i "s|image: redis:7-alpine|image: ${redis_mapped}|g" "$output_file"
             sed -i "s|image: nginx:1.27-alpine|image: ${nginx_mapped}|g" "$output_file"
             sed -i "s|image: tecnativa/tcp-proxy|image: ${tcp_proxy_mapped}|g" "$output_file"
-            sed -i "s|image: quay.io/minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
+            sed -i "s|image: minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
             sed -i "s|image: osixia/openldap:stable|image: ${openldap_mapped}|g" "$output_file"
             sed -i "s|image: osixia/phpldapadmin:stable|image: ${phpldapadmin_mapped}|g" "$output_file"
             sed -i "s|image: redislabs/redisinsight:latest|image: ${redisinsight_mapped}|g" "$output_file"
@@ -2351,10 +2378,16 @@ tag_local_images_for_registry() {
         "redis:7-alpine"
         "nginx:1.27-alpine"
         "tecnativa/tcp-proxy:latest"
-        "quay.io/minio/minio:latest"
+        "minio/minio:latest"
         "osixia/openldap:stable"
         "osixia/phpldapadmin:stable"
         "redislabs/redisinsight:latest"
+        "node:22-alpine"
+        "nginx:stable-alpine-perl"
+        "golang:1.25-alpine"
+        "python:3.13-alpine"
+        "gitea/gitea:1.24.5"
+        "jupyter/base-notebook:latest"
     )
     
     local tagged_count=0
