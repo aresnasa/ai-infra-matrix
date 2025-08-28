@@ -268,6 +268,109 @@ generate_random_password() {
     esac
 }
 
+# 生产环境强密码生成器 (集成自 scripts/generate-prod-passwords.sh)
+generate_production_passwords() {
+    local env_file="${1:-.env.prod}"
+    local force="${2:-false}"
+    
+    print_info "======================================================================"
+    print_info "🔧 AI Infrastructure Matrix 生产环境密码生成器"
+    print_info "======================================================================"
+    print_warning "⚠️  此脚本将生成新的系统服务密码"
+    print_warning "⚠️  默认管理员账户 (admin/admin123) 不会被此脚本修改"
+    print_warning "⚠️  请在系统部署后通过Web界面修改管理员密码"
+    print_info "======================================================================"
+    
+    if [[ ! -f "$env_file" ]]; then
+        print_error "环境文件不存在: $env_file"
+        return 1
+    fi
+    
+    # 创建备份
+    local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    print_info "创建备份: $backup_file"
+    cp "$env_file" "$backup_file"
+    
+    print_info "生成新的强密码..."
+    
+    # 生成新密码 (使用openssl更安全，确保没有换行符)
+    local postgres_password=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-24)
+    local redis_password=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-24)
+    local jwt_secret=$(openssl rand -base64 64 | tr -d "=+/\n" | cut -c1-48)
+    local configproxy_token=$(openssl rand -base64 64 | tr -d "=+/\n" | cut -c1-48)
+    local jupyterhub_crypt_key=$(openssl rand -hex 32)
+    local minio_access_key=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-20)
+    local minio_secret_key=$(openssl rand -base64 64 | tr -d "=+/\n" | cut -c1-40)
+    local gitea_admin_password=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-24)
+    local gitea_db_passwd=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-24)
+    local ldap_admin_password=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-24)
+    local ldap_config_password=$(openssl rand -base64 32 | tr -d "=+/\n" | cut -c1-24)
+    
+    # 使用awk进行安全的替换（避免sed特殊字符问题）
+    # 创建临时文件
+    local temp_file="${env_file}.updating"
+    
+    # 使用awk替换，更安全地处理特殊字符
+    awk -v pg_pass="$postgres_password" \
+        -v redis_pass="$redis_password" \
+        -v jwt_sec="$jwt_secret" \
+        -v config_token="$configproxy_token" \
+        -v hub_key="$jupyterhub_crypt_key" \
+        -v minio_access="$minio_access_key" \
+        -v minio_secret="$minio_secret_key" \
+        -v gitea_admin="$gitea_admin_password" \
+        -v gitea_db="$gitea_db_passwd" \
+        -v ldap_admin="$ldap_admin_password" \
+        -v ldap_config="$ldap_config_password" \
+        '
+        /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
+        /^REDIS_PASSWORD=/ { print "REDIS_PASSWORD=" redis_pass; next }
+        /^JWT_SECRET=/ { print "JWT_SECRET=" jwt_sec; next }
+        /^CONFIGPROXY_AUTH_TOKEN=/ { print "CONFIGPROXY_AUTH_TOKEN=" config_token; next }
+        /^JUPYTERHUB_CRYPT_KEY=/ { print "JUPYTERHUB_CRYPT_KEY=" hub_key; next }
+        /^MINIO_ACCESS_KEY=/ { print "MINIO_ACCESS_KEY=" minio_access; next }
+        /^MINIO_SECRET_KEY=/ { print "MINIO_SECRET_KEY=" minio_secret; next }
+        /^GITEA_ADMIN_PASSWORD=/ { print "GITEA_ADMIN_PASSWORD=" gitea_admin; next }
+        /^GITEA_DB_PASSWD=/ { print "GITEA_DB_PASSWD=" gitea_db; next }
+        /^LDAP_ADMIN_PASSWORD=/ { print "LDAP_ADMIN_PASSWORD=" ldap_admin; next }
+        /^LDAP_CONFIG_PASSWORD=/ { print "LDAP_CONFIG_PASSWORD=" ldap_config; next }
+        { print }
+        ' "$env_file" > "$temp_file"
+    
+    # 替换原文件
+    mv "$temp_file" "$env_file"
+    
+    print_success "已生成并应用新的强密码"
+    
+    print_info "======================================================================"
+    print_warning "🔑 重要！默认管理员账户信息："
+    echo
+    print_success "  用户名: admin"
+    print_error "  初始密码: admin123"
+    echo
+    print_warning "⚠️  请在首次登录后立即更改管理员密码！"
+    print_warning "⚠️  管理员密码未通过此脚本更改，需要在系统内修改！"
+    print_info "======================================================================"
+    
+    print_info "系统服务密码信息:"
+    echo "POSTGRES_PASSWORD: $postgres_password"
+    echo "REDIS_PASSWORD: $redis_password"
+    echo "JWT_SECRET: $jwt_secret"
+    echo "CONFIGPROXY_AUTH_TOKEN: $configproxy_token"
+    echo "JUPYTERHUB_CRYPT_KEY: $jupyterhub_crypt_key"
+    echo "MINIO_ACCESS_KEY: $minio_access_key"
+    echo "MINIO_SECRET_KEY: $minio_secret_key"
+    echo "GITEA_ADMIN_PASSWORD: $gitea_admin_password"
+    echo "GITEA_DB_PASSWD: $gitea_db_passwd"
+    echo "LDAP_ADMIN_PASSWORD: $ldap_admin_password"
+    echo "LDAP_CONFIG_PASSWORD: $ldap_config_password"
+    
+    print_warning "请妥善保存这些密码信息！"
+    print_info "原配置文件已备份至: $backup_file"
+    
+    return 0
+}
+
 # 替换环境文件中的模板密码
 replace_template_passwords() {
     local template_file="$1"
@@ -1456,6 +1559,199 @@ push_production_dependencies() {
 }
 
 # ==========================================
+# AI Harbor 镜像拉取管理
+# ==========================================
+
+# 从 AI Harbor 拉取所有服务镜像
+pull_aiharbor_services() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "🚢 从 AI Harbor 拉取服务镜像"
+    print_info "=========================================="
+    print_info "Harbor地址: $registry"
+    print_info "镜像标签: $tag"
+    echo
+    
+    local services=("backend" "frontend" "jupyterhub" "nginx" "saltstack" "singleuser" "gitea" "backend-init")
+    local success_count=0
+    local total_count=${#services[@]}
+    local failed_services=()
+    
+    for service in "${services[@]}"; do
+        local harbor_image="${registry}/ai-infra-${service}:${tag}"
+        local local_image="ai-infra-${service}:${tag}"
+        
+        print_info "→ 拉取服务: $service"
+        print_info "  Harbor镜像: $harbor_image"
+        print_info "  本地标签: $local_image"
+        
+        # 尝试拉取镜像
+        if docker pull "$harbor_image"; then
+            print_success "  ✓ 拉取成功: $harbor_image"
+            
+            # 标记为本地镜像名
+            if docker tag "$harbor_image" "$local_image"; then
+                print_success "  ✓ 标记为本地镜像: $local_image"
+                success_count=$((success_count + 1))
+            else
+                print_error "  ✗ 标记失败: $local_image"
+                failed_services+=("$service")
+            fi
+        else
+            print_error "  ✗ 拉取失败: $harbor_image"
+            failed_services+=("$service")
+        fi
+        echo
+    done
+    
+    print_info "=========================================="
+    print_success "拉取完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_services[@]} -gt 0 ]]; then
+        print_warning "失败的服务: ${failed_services[*]}"
+        print_info "可以尝试以下操作:"
+        print_info "1. 检查 Harbor 仓库访问权限"
+        print_info "2. 验证镜像标签是否存在: $tag"
+        print_info "3. 确认网络连接正常"
+        return 1
+    else
+        print_success "🚀 所有AI-Infra服务镜像拉取成功！"
+        print_info "现在可以使用本地镜像启动服务："
+        print_info "  ./build.sh prod-generate \"\" $tag"
+        print_info "  docker compose up -d"
+        return 0
+    fi
+}
+
+# 从 AI Harbor 拉取依赖镜像  
+pull_aiharbor_dependencies() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "🚢 从 AI Harbor 拉取依赖镜像"
+    print_info "=========================================="
+    print_info "Harbor地址: $registry"
+    print_info "镜像标签: $tag"
+    echo
+    
+    # 从配置文件或预定义列表收集依赖镜像
+    local dependency_images=$(get_all_dependencies | tr '\n' ' ')
+    if [[ -z "$dependency_images" ]]; then
+        dependency_images="postgres:15-alpine redis:7-alpine nginx:1.27-alpine tecnativa/tcp-proxy quay.io/minio/minio:latest osixia/openldap:stable osixia/phpldapadmin:stable redislabs/redisinsight:latest"
+    fi
+    
+    print_info "依赖镜像列表: $dependency_images"
+    echo
+    
+    local success_count=0
+    local total_count=0
+    local failed_deps=()
+    
+    for dep_image in $dependency_images; do
+        if [[ -z "$dep_image" ]]; then
+            continue
+        fi
+        
+        ((total_count++))
+        
+        # 获取映射后的Harbor镜像名称
+        local harbor_image
+        harbor_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        print_info "→ 拉取依赖: $(basename "$dep_image")"
+        print_info "  Harbor镜像: $harbor_image"
+        print_info "  原始镜像: $dep_image"
+        
+        # 尝试拉取Harbor镜像
+        if docker pull "$harbor_image"; then
+            print_success "  ✓ 拉取成功: $harbor_image"
+            
+            # 标记为原始镜像名
+            if docker tag "$harbor_image" "$dep_image"; then
+                print_success "  ✓ 标记为原始镜像: $dep_image"
+                success_count=$((success_count + 1))
+            else
+                print_error "  ✗ 标记失败: $dep_image"
+                failed_deps+=("$dep_image")
+            fi
+        else
+            print_warning "  ! Harbor拉取失败，尝试官方源: $dep_image"
+            # 回退到官方镜像拉取
+            if docker pull "$dep_image"; then
+                print_success "  ✓ 从官方源拉取成功: $dep_image"
+                success_count=$((success_count + 1))
+            else
+                print_error "  ✗ 所有源都拉取失败: $dep_image"
+                failed_deps+=("$dep_image")
+            fi
+        fi
+        echo
+    done
+    
+    print_info "=========================================="
+    print_success "依赖镜像拉取完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_deps[@]} -gt 0 ]]; then
+        print_warning "失败的依赖镜像: ${failed_deps[*]}"
+        return 1
+    else
+        print_success "🚀 所有依赖镜像拉取成功！"
+        return 0
+    fi
+}
+
+# 从 AI Harbor 拉取所有镜像（服务+依赖）
+pull_aiharbor_all() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "=========================================="
+    print_info "🚢 从 AI Harbor 拉取所有镜像"
+    print_info "=========================================="
+    print_info "Harbor地址: $registry"
+    print_info "镜像标签: $tag"
+    echo
+    
+    local overall_success=true
+    
+    # 先拉取依赖镜像
+    print_info "步骤 1/2: 拉取依赖镜像..."
+    if ! pull_aiharbor_dependencies "$registry" "$tag"; then
+        print_warning "部分依赖镜像拉取失败，但继续拉取服务镜像..."
+        overall_success=false
+    fi
+    
+    echo
+    print_info "步骤 2/2: 拉取服务镜像..."
+    if ! pull_aiharbor_services "$registry" "$tag"; then
+        print_error "服务镜像拉取失败"
+        overall_success=false
+    fi
+    
+    echo
+    print_info "=========================================="
+    if [[ "$overall_success" == "true" ]]; then
+        print_success "🎉 所有镜像拉取完成！"
+        print_info ""
+        print_info "接下来可以："
+        print_info "1. 生成生产配置: ./build.sh prod-generate \"\" $tag"
+        print_info "2. 启动服务: docker compose up -d"
+        print_info "3. 查看状态: ./build.sh prod-status"
+        return 0
+    else
+        print_warning "⚠️  部分镜像拉取失败，请检查错误信息"
+        print_info "建议操作："
+        print_info "1. 检查Harbor访问权限和网络连接"
+        print_info "2. 验证镜像标签 $tag 是否存在"
+        print_info "3. 重新运行失败的拉取命令"
+        return 1
+    fi
+}
+
+# ==========================================
 # 双环境部署支持功能
 # ==========================================
 
@@ -2595,12 +2891,18 @@ show_help() {
     echo "  deps-push <registry> [tag]      - 推送依赖镜像"
     echo "  deps-all <registry> [tag]       - 拉取、标记并推送依赖镜像"
     echo
+    echo "AI Harbor镜像拉取:"
+    echo "  harbor-pull-services [registry] [tag] - 从AI Harbor拉取AI-Infra服务镜像"
+    echo "  harbor-pull-deps [registry] [tag]     - 从AI Harbor拉取依赖镜像"
+    echo "  harbor-pull-all [registry] [tag]      - 从AI Harbor拉取所有镜像"
+    echo
     echo "生产环境:"
     echo "  prod-generate [registry] [tag]  - 生成生产环境配置"
     echo "  prod-up [registry] [tag]        - 启动生产环境"
     echo "  prod-down                       - 停止生产环境"
     echo "  prod-status                     - 查看状态"
     echo "  prod-logs [service] [--follow]  - 查看日志"
+    echo "  generate-passwords [file] [--force] - 生成生产环境强密码"
     echo
     echo "工具命令:"
     echo "  clean [tag] [--force]           - 清理镜像"
@@ -2610,13 +2912,73 @@ show_help() {
     echo "  version                         - 显示版本"
     echo "  help                            - 显示帮助"
     echo
-    echo "常用示例:"
-    echo "  $0 build-all v1.0.0                    # 构建所有服务"
-    echo "  $0 build-push harbor.com/ai-infra latest  # 构建并推送"
-    echo "  $0 prod-up harbor.com/ai-infra v1.0.0     # 启动生产环境"
-    echo "  $0 --force prod-up \"\" latest             # 强制使用本地镜像启动"
+    echo "===================================================================================="
+    echo "📦 CI/CD服务器运行实例 (构建和推送镜像):"
+    echo "===================================================================================="
+    echo "  # 构建所有服务并推送到私有仓库"
+    echo "  $0 build-push harbor.example.com/ai-infra v1.2.0"
     echo
-    echo "注意: 首次部署前运行 ./scripts/generate-prod-passwords.sh"
+    echo "  # 推送依赖镜像到私有仓库"
+    echo "  $0 deps-all harbor.example.com/ai-infra v1.2.0"
+    echo
+    echo "  # 分步骤操作（推荐用于CI/CD Pipeline）"
+    echo "  $0 build-all v1.2.0                                    # 步骤1: 构建所有服务"
+    echo "  $0 push-all harbor.example.com/ai-infra v1.2.0         # 步骤2: 推送项目镜像"
+    echo "  $0 deps-push harbor.example.com/ai-infra v1.2.0        # 步骤3: 推送依赖镜像"
+    echo
+    echo "===================================================================================="
+    echo "🚀 生产节点运行实例 (生成配置和启动服务):"
+    echo "===================================================================================="
+    echo "  # 从AI Harbor拉取镜像完整部署流程"
+    echo "  $0 harbor-pull-all aiharbor.msxf.local/aihpc v1.2.0    # 步骤1: 拉取所有镜像"
+    echo "  $0 generate-passwords .env.prod --force                # 步骤2: 生成强密码"
+    echo "  $0 prod-generate \"\" v1.2.0                            # 步骤3: 生成docker-compose.yml"
+    echo "  docker compose up -d                                   # 步骤4: 启动所有服务"
+    echo
+    echo "  # 标准私有仓库部署流程"
+    echo "  $0 generate-passwords .env.prod --force                # 步骤1: 生成强密码"
+    echo "  $0 prod-generate harbor.example.com/ai-infra v1.2.0    # 步骤2: 生成docker-compose.yml"
+    echo "  docker compose up -d                                   # 步骤3: 启动所有服务"
+    echo
+    echo "  # 快速启动 (生产配置已存在)"
+    echo "  $0 prod-up harbor.example.com/ai-infra v1.2.0"
+    echo
+    echo "  # 本地镜像部署 (无需registry)"
+    echo "  $0 generate-passwords .env.prod                        # 生成密码"
+    echo "  $0 prod-generate \"\" v1.2.0                            # 生成本地镜像配置"
+    echo "  docker compose up -d                                   # 启动服务"
+    echo
+    echo "  # 服务管理"
+    echo "  $0 prod-status                                         # 查看服务状态"
+    echo "  $0 prod-logs jupyterhub --follow                       # 查看实时日志"
+    echo "  $0 prod-down                                           # 停止所有服务"
+    echo
+    echo "===================================================================================="
+    echo "💡 常用开发实例:"
+    echo "===================================================================================="
+    echo "  # 从AI Harbor快速获取镜像进行本地开发"
+    echo "  $0 harbor-pull-services aiharbor.msxf.local/aihpc v1.2.0  # 拉取AI-Infra服务"
+    echo "  $0 harbor-pull-deps aiharbor.msxf.local/aihpc             # 拉取依赖镜像"
+    echo "  $0 prod-generate \"\" v1.2.0                               # 生成本地配置"
+    echo "  docker compose up -d                                      # 启动服务"
+    echo
+    echo "  # 本地开发测试"
+    echo "  $0 build-all test-v0.3.5                              # 构建测试版本"
+    echo "  $0 prod-generate \"\" test-v0.3.5                      # 生成本地配置"
+    echo "  docker compose up -d backend frontend                 # 启动核心服务"
+    echo
+    echo "  # 单服务调试"
+    echo "  $0 build backend test-debug                           # 构建调试版本"
+    echo "  docker compose up -d postgres redis                  # 启动依赖"
+    echo "  docker run --rm -it ai-infra-backend:test-debug bash  # 交互式调试"
+    echo
+    echo "===================================================================================="
+    echo "⚠️  重要提醒:"
+    echo "  • 首次部署必须运行 generate-passwords 生成强密码"
+    echo "  • 默认管理员账户: admin / admin123 (部署后请立即修改)"
+    echo "  • 生产环境配置文件 docker-compose.yml 会被自动生成，请勿手动编辑"
+    echo "  • 服务访问端口: Web界面:8080, JupyterHub:8088, Gitea:3010"
+    echo "===================================================================================="
 }
 
 # 主函数
@@ -2783,21 +3145,14 @@ main() {
             
         # 生成生产环境密码命令
         "generate-passwords")
-            print_info "=========================================="
-            print_info "生成生产环境随机密码"
-            print_info "=========================================="
-            
+            local env_file="${2:-.env.prod}"
             local force="false"
-            if [[ "$FORCE_REBUILD" == "true" ]]; then
+            if [[ "$FORCE_REBUILD" == "true" || "$3" == "--force" ]]; then
                 force="true"
             fi
             
-            if replace_template_passwords ".env.prod.example" ".env.prod" "$force"; then
-                print_success "✓ 生产环境配置文件已更新: .env.prod"
-                print_warning "请妥善保管生成的密码，这些密码仅显示一次！"
-                print_info ""
-                print_info "新生成的密码已保存到 .env.prod 文件中"
-                print_info "请在部署前检查并备份此文件"
+            if generate_production_passwords "$env_file" "$force"; then
+                print_success "✓ 生产环境密码生成完成"
             else
                 print_error "密码生成失败"
                 exit 1
@@ -2836,6 +3191,25 @@ main() {
                 print_error "依赖镜像拉取失败，停止推送操作"
                 exit 1
             fi
+            ;;
+            
+        # AI Harbor 镜像拉取命令
+        "harbor-pull-services")
+            local harbor_registry="${2:-aiharbor.msxf.local/aihpc}"
+            local harbor_tag="${3:-$DEFAULT_IMAGE_TAG}"
+            pull_aiharbor_services "$harbor_registry" "$harbor_tag"
+            ;;
+            
+        "harbor-pull-deps")
+            local harbor_registry="${2:-aiharbor.msxf.local/aihpc}"
+            local harbor_tag="${3:-$DEFAULT_IMAGE_TAG}"
+            pull_aiharbor_dependencies "$harbor_registry" "$harbor_tag"
+            ;;
+            
+        "harbor-pull-all")
+            local harbor_registry="${2:-aiharbor.msxf.local/aihpc}"
+            local harbor_tag="${3:-$DEFAULT_IMAGE_TAG}"
+            pull_aiharbor_all "$harbor_registry" "$harbor_tag"
             ;;
             
         "deps-prod")
