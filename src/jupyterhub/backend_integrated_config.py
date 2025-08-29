@@ -127,7 +127,7 @@ class BackendIntegratedAuthenticator(Authenticator):
             return auth_header[7:]
         
         # 2. 从多种Cookie名称尝试获取 (支持不同的cookie名称)
-        cookie_names = ['ai_infra_token', 'jwt_token', 'auth_token']
+        cookie_names = ['ai_infra_token', 'jwt_token', 'auth_token', 'jupyterhub_auth_token']
         for cookie_name in cookie_names:
             token = handler.get_cookie(cookie_name)
             if token:
@@ -323,14 +323,21 @@ _auto_login_env = os.environ.get('JUPYTERHUB_AUTO_LOGIN', 'true').lower() == 'tr
 c.BackendIntegratedAuthenticator.auto_login = _auto_login_env
 
 class AutoLoginHandler(BaseHandler):
-    """自动登录处理器：验证JWT并登录用户"""
+    """自动登录处理器：验证JWT并登录用户，修复SSO重复登录问题"""
 
     async def get(self):
         next_url = self.get_argument('next', url_path_join(self.base_url, 'hub/'))
         try:
             auth: BackendIntegratedAuthenticator = self.authenticator  # type: ignore
 
-            # 提取token（与认证器一致的策略）
+            # 1. 首先检查当前用户是否已经登录
+            current_user = self.current_user
+            if current_user:
+                logger.info(f"AutoLogin: 用户 {current_user.name} 已登录，直接跳转")
+                self.redirect(next_url)
+                return
+
+            # 2. 提取token（与认证器一致的策略）
             token = (
                 self.get_cookie('ai_infra_token')
                 or self.get_cookie('jwt_token')
@@ -350,6 +357,7 @@ class AutoLoginHandler(BaseHandler):
                 self.redirect(bridge)
                 return
 
+            # 3. 验证token有效性
             username = await auth._verify_jwt_token(token)
             if not username:
                 logger.warning("AutoLogin: token无效，跳转到前端桥接页")
@@ -357,6 +365,7 @@ class AutoLoginHandler(BaseHandler):
                 self.redirect(bridge)
                 return
 
+            # 4. 获取用户信息并登录
             user_info = await auth._get_user_info(username, token)
 
             # 标准化login_user参数
@@ -365,9 +374,28 @@ class AutoLoginHandler(BaseHandler):
             else:
                 login_data = user_info
 
-            # 登录并设置Hub会话
+            # 5. 设置持久化认证状态
+            if isinstance(login_data, dict) and 'auth_state' in login_data:
+                # 确保auth_state包含token信息，用于后续认证
+                auth_state = login_data['auth_state']
+                auth_state['token'] = token
+                auth_state['auth_time'] = datetime.now(timezone.utc).isoformat()
+                login_data['auth_state'] = auth_state
+
+            # 6. 登录并设置Hub会话
             await self.login_user(login_data)
             logger.info(f"AutoLogin: 登录成功: {login_data.get('name', username)}")
+            
+            # 7. 设置额外的认证cookie，确保状态持久化
+            self.set_cookie(
+                'jupyterhub_auth_token', 
+                token, 
+                expires_days=7,  # 7天有效期
+                httponly=True,
+                secure=False,  # 在HTTP环境下设为False
+                path=self.base_url
+            )
+            
             self.redirect(next_url)
         except Exception as e:
             logger.error(f"AutoLogin: 处理失败: {e}")
@@ -451,12 +479,39 @@ if SPAWNER_TYPE == 'docker':
 c.JupyterHub.cookie_secret_file = '/srv/data/jupyterhub/jupyterhub_cookie_secret'
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'default-token-change-me')
 
-# 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 1 天
-_session_timeout = int(os.environ.get('SESSION_TIMEOUT', '86400'))
+# 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 7 天
+_session_timeout = int(os.environ.get('SESSION_TIMEOUT', '604800'))  # 7天
 c.JupyterHub.cookie_max_age_days = max(1, _session_timeout // 86400)
-# 刷新认证，降低重复登录概率；在spawn前强制刷新
-c.Authenticator.auth_refresh_age = _session_timeout
-c.Authenticator.refresh_pre_spawn = True
+
+# 修复SSO认证状态持久化问题
+# 检查是否禁用认证刷新
+_disable_auth_refresh = os.environ.get('JUPYTERHUB_DISABLE_AUTH_REFRESH', 'true').lower() == 'true'
+
+if _disable_auth_refresh:
+    # 1. 禁用认证刷新，避免重复要求登录
+    c.Authenticator.auth_refresh_age = 0  # 禁用认证刷新
+    c.Authenticator.refresh_pre_spawn = False  # 禁用spawn前强制刷新
+    logger.info("🔧 SSO优化：已禁用认证刷新，避免重复登录")
+else:
+    # 2. 使用默认的认证刷新设置
+    c.Authenticator.auth_refresh_age = _session_timeout
+    c.Authenticator.refresh_pre_spawn = True
+    logger.info("🔧 使用默认认证刷新设置")
+
+# 3. 延长会话有效期，避免频繁重新登录
+c.JupyterHub.cookie_max_age_days = max(7, _session_timeout // 86400)  # 至少7天
+
+# 4. 启用认证状态持久化，确保SSO状态保存
+c.Authenticator.enable_auth_state = True
+
+# 5. 设置正确的cookie域名和路径（支持反向代理）
+if use_proxy:
+    # 反向代理模式下的cookie配置
+    c.JupyterHub.base_url = '/jupyter/'
+    c.JupyterHub.hub_prefix = '/jupyter/hub/'
+else:
+    # 直接访问模式下的cookie配置
+    c.JupyterHub.base_url = '/'
 
 # 加密密钥配置（用于auth_state）
 crypt_key = os.environ.get('JUPYTERHUB_CRYPT_KEY', '790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1')
