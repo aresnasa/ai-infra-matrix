@@ -263,9 +263,36 @@ else:
     # 直接访问模式
     c.JupyterHub.base_url = '/'
 
-# 公共URL配置
+# 公共URL配置 - 支持动态检测客户端访问地址
 public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
+
+# 设置动态公共URL检测
+def get_public_url(request=None):
+    """动态检测公共URL"""
+    if request and hasattr(request, 'headers'):
+        # 优先使用代理传递的原始Host头
+        host = request.headers.get('X-Forwarded-Host') or request.headers.get('Host')
+        if host:
+            proto = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else 'http'
+            if use_proxy:
+                return f'{proto}://{host}/jupyter/'
+            else:
+                return f'{proto}://{host}/'
+    
+    # 降级到配置的静态地址
+    if use_proxy:
+        if not public_host.startswith('http'):
+            static_host = f'http://{public_host}'
+        else:
+            static_host = public_host
+        return f'{static_host}/jupyter/'
+    else:
+        if not public_host.startswith('http'):
+            return f'http://{public_host}/'
+        else:
+            return f'{public_host}/'
+
 if use_proxy:
     if not public_host.startswith('http'):
         public_host = f'http://{public_host}'

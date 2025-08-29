@@ -12,5 +12,5 @@ docker-compose.prod.yml
 docker-compose.yml
 docker-compose.test.yml
 *.env.backup.*
-.env.prod
+.env.prod.back*
 .env

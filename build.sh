@@ -2211,8 +2211,9 @@ generate_production_config() {
         temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_PROTOCOL}|$public_protocol|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PUBLIC_HOST:-[^}]*}|$jupyterhub_public_host|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PUBLIC_HOST}|$jupyterhub_public_host|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN:-[^}]*}|$jupyterhub_cors_origin|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN}|$jupyterhub_cors_origin|g")
+        # 特殊处理JUPYTERHUB_CORS_ORIGIN，因为可能包含*字符
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN:-[^}]*}|${jupyterhub_cors_origin//\*/\\*}|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN}|${jupyterhub_cors_origin//\*/\\*}|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${ROOT_URL:-[^}]*}|$root_url|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${ROOT_URL}|$root_url|g")
         
@@ -2373,6 +2374,13 @@ start_production() {
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local force_local="${3:-false}"  # 新增参数：是否强制使用本地镜像
     local compose_file="docker-compose.yml"
+    
+    # 自动检测外部主机地址
+    if [[ -f "scripts/detect-external-host.sh" ]]; then
+        print_info "自动检测外部主机地址..."
+        source scripts/detect-external-host.sh
+        print_info "使用检测到的主机地址: $EXTERNAL_HOST"
+    fi
     
     # registry 可以为空（使用本地镜像）
     if [[ -z "$registry" ]]; then
@@ -2646,18 +2654,23 @@ build_service_if_missing() {
 
 # 停止生产环境
 stop_production() {
-    local compose_file="docker-compose.prod.yml"
+    local compose_file="docker-compose.yml"
     
     if [[ ! -f "$compose_file" ]]; then
         print_error "生产配置文件不存在: $compose_file"
         return 1
     fi
     
-    # 检测环境文件
+    # 检测环境文件 - 生产环境优先使用 .env.prod
     local env_file
-    env_file=$(detect_env_file)
-    if [[ $? -ne 0 ]]; then
-        return 1
+    if [[ -f ".env.prod" ]]; then
+        env_file=".env.prod"
+        print_info "使用生产环境文件: $env_file"
+    else
+        env_file=$(detect_env_file)
+        if [[ $? -ne 0 ]]; then
+            return 1
+        fi
     fi
     
     print_info "=========================================="
@@ -2702,11 +2715,16 @@ production_status() {
         return 1
     fi
     
-    # 检测环境文件
+    # 检测环境文件 - 生产环境优先使用 .env.prod
     local env_file
-    env_file=$(detect_env_file)
-    if [[ $? -ne 0 ]]; then
-        return 1
+    if [[ -f ".env.prod" ]]; then
+        env_file=".env.prod"
+        print_info "使用生产环境配置: $env_file"
+    else
+        env_file=$(detect_env_file)
+        if [[ $? -ne 0 ]]; then
+            return 1
+        fi
     fi
     
     print_info "=========================================="
@@ -3072,7 +3090,212 @@ clean_images() {
     print_success "清理完成: $success_count/${#images_to_clean[@]} 成功"
 }
 
-# 清理所有镜像（包括依赖镜像）
+# 清理所有AI-Infra相关资源（镜像、容器、数据卷、配置文件）
+clean_all() {
+    local force="${1:-false}"
+    
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "clean-all - 完整清理AI-Infra系统"
+        echo
+        echo "用法: $0 clean-all [--force]"
+        echo
+        echo "选项:"
+        echo "  --force    跳过确认提示，强制执行清理"
+        echo
+        echo "说明:"
+        echo "  此命令将删除所有AI-Infra相关的资源："
+        echo "  • 容器和服务"
+        echo "  • 镜像"
+        echo "  • 数据卷（数据库、文件等）"
+        echo "  • 配置文件（.env.prod, docker-compose.yml）"
+        echo
+        echo "警告: 此操作不可逆转，请谨慎使用！"
+        return 0
+    fi
+    
+    print_info "=========================================="
+    print_info "完整清理 AI-Infra 系统"
+    print_info "=========================================="
+    print_warning "⚠️  这将删除所有AI-Infra相关的:"
+    print_warning "   • 容器和服务"
+    print_warning "   • 镜像"
+    print_warning "   • 数据卷（数据库、文件等）"
+    print_warning "   • 配置文件（.env.prod, docker-compose.yml）"
+    echo
+    
+    if [[ "$force" != "true" ]]; then
+        read -p "确认执行完整清理? 这将删除所有数据! (yes/NO): " confirm
+        if [[ "$confirm" != "yes" ]]; then
+            print_info "已取消清理操作"
+            return 0
+        fi
+    fi
+    
+    # 1. 停止并删除容器
+    print_info "1. 停止并删除容器..."
+    if [[ -f "docker-compose.yml" && -f ".env.prod" ]]; then
+        ENV_FILE=.env.prod docker-compose -f docker-compose.yml --env-file .env.prod down --remove-orphans 2>/dev/null || true
+    fi
+    
+    # 删除所有ai-infra相关容器
+    local containers=$(docker ps -aq --filter "name=ai-infra" 2>/dev/null || true)
+    if [[ -n "$containers" ]]; then
+        docker rm -f $containers 2>/dev/null || true
+        print_success "✓ 容器清理完成"
+    else
+        print_info "  没有找到相关容器"
+    fi
+    
+    # 2. 删除镜像
+    print_info "2. 删除镜像..."
+    local images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "ai-infra" 2>/dev/null || true)
+    if [[ -n "$images" ]]; then
+        echo "$images" | xargs docker rmi -f 2>/dev/null || true
+        print_success "✓ 镜像清理完成"
+    else
+        print_info "  没有找到相关镜像"
+    fi
+    
+    # 3. 删除数据卷
+    print_info "3. 删除数据卷..."
+    local volumes=$(docker volume ls --format "{{.Name}}" | grep "ai-infra" 2>/dev/null || true)
+    if [[ -n "$volumes" ]]; then
+        echo "$volumes" | xargs docker volume rm -f 2>/dev/null || true
+        print_success "✓ 数据卷清理完成"
+    else
+        print_info "  没有找到相关数据卷"
+    fi
+    
+    # 4. 删除网络
+    print_info "4. 删除网络..."
+    local networks=$(docker network ls --format "{{.Name}}" | grep "ai-infra" 2>/dev/null || true)
+    if [[ -n "$networks" ]]; then
+        echo "$networks" | xargs docker network rm 2>/dev/null || true
+        print_success "✓ 网络清理完成"
+    else
+        print_info "  没有找到相关网络"
+    fi
+    
+    # 5. 删除配置文件
+    print_info "5. 删除配置文件..."
+    local files_removed=0
+    if [[ -f ".env.prod" ]]; then
+        rm -f .env.prod
+        files_removed=$((files_removed + 1))
+        print_info "  ✓ 删除 .env.prod"
+    fi
+    if [[ -f "docker-compose.yml" ]]; then
+        rm -f docker-compose.yml
+        files_removed=$((files_removed + 1))
+        print_info "  ✓ 删除 docker-compose.yml"
+    fi
+    if [[ $files_removed -gt 0 ]]; then
+        print_success "✓ 配置文件清理完成 ($files_removed 个文件)"
+    else
+        print_info "  没有找到配置文件"
+    fi
+    
+    # 6. 清理备份文件
+    print_info "6. 清理备份文件..."
+    local backup_files=$(find . -maxdepth 1 -name "*.env.prod.backup.*" -o -name "docker-compose.yml.bak" 2>/dev/null || true)
+    if [[ -n "$backup_files" ]]; then
+        echo "$backup_files" | xargs rm -f 2>/dev/null || true
+        print_success "✓ 备份文件清理完成"
+    else
+        print_info "  没有找到备份文件"
+    fi
+    
+    echo
+    print_success "🎉 完整清理完成！"
+    print_info "提示: 使用以下命令重新部署系统:"
+    print_info "  1. ./build.sh create-env-prod intranet \"\" v0.3.6"
+    print_info "  2. ./build.sh build-all \"\" v0.3.6"
+    print_info "  3. ./build.sh prod-generate \"\" v0.3.6"
+    print_info "  4. ./build.sh prod-up \"\" v0.3.6"
+}
+
+# 重置数据库（仅删除数据库相关数据卷）
+reset_database() {
+    local force="${1:-false}"
+    
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "reset-db - 重置数据库"
+        echo
+        echo "用法: $0 reset-db [--force]"
+        echo
+        echo "选项:"
+        echo "  --force    跳过确认提示，强制执行重置"
+        echo
+        echo "说明:"
+        echo "  此命令将删除所有数据库相关的数据卷："
+        echo "  • PostgreSQL 数据"
+        echo "  • Redis 数据"
+        echo "  • JupyterHub 数据"
+        echo "  • Gitea 数据"
+        echo
+        echo "注意:"
+        echo "  • 镜像和容器不会被删除"
+        echo "  • 配置文件不会被删除"
+        echo "  • 此操作不可逆转，请谨慎使用！"
+        return 0
+    fi
+    
+    print_info "=========================================="
+    print_info "重置数据库"
+    print_info "=========================================="
+    print_warning "⚠️  这将删除所有数据库数据:"
+    print_warning "   • PostgreSQL 数据"
+    print_warning "   • Redis 数据"
+    print_warning "   • JupyterHub 数据"
+    print_warning "   • Gitea 数据"
+    echo
+    
+    if [[ "$force" != "true" ]]; then
+        read -p "确认重置数据库? 这将删除所有数据! (yes/NO): " confirm
+        if [[ "$confirm" != "yes" ]]; then
+            print_info "已取消重置操作"
+            return 0
+        fi
+    fi
+    
+    # 停止相关服务
+    print_info "停止数据库相关服务..."
+    if [[ -f "docker-compose.yml" && -f ".env.prod" ]]; then
+        ENV_FILE=.env.prod docker-compose -f docker-compose.yml --env-file .env.prod stop postgres redis jupyterhub gitea backend backend-init 2>/dev/null || true
+    fi
+    
+    # 删除数据库相关数据卷
+    print_info "删除数据库数据卷..."
+    local db_volumes=(
+        "ai-infra-postgres-data"
+        "ai-infra-redis-data"
+        "ai-infra-jupyterhub-data"
+        "ai-infra-jupyterhub-notebooks"
+        "ai-infra-gitea-data"
+    )
+    
+    local removed_count=0
+    for volume in "${db_volumes[@]}"; do
+        if docker volume inspect "$volume" >/dev/null 2>&1; then
+            if docker volume rm "$volume" 2>/dev/null; then
+                print_info "  ✓ 删除 $volume"
+                removed_count=$((removed_count + 1))
+            else
+                print_error "  ✗ 删除失败 $volume (可能被容器使用)"
+            fi
+        fi
+    done
+    
+    if [[ $removed_count -gt 0 ]]; then
+        print_success "✓ 数据库重置完成 ($removed_count 个数据卷)"
+        print_info "提示: 使用 ./build.sh prod-up 重新启动服务"
+    else
+        print_info "没有找到需要重置的数据库数据卷"
+    fi
+}
+
 # 显示帮助信息
 show_help() {
     echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
@@ -3111,6 +3334,8 @@ show_help() {
     echo
     echo "工具命令:"
     echo "  clean [tag] [--force]           - 清理镜像"
+    echo "  clean-all [--force]             - 完整清理（镜像、容器、数据卷、配置文件）"
+    echo "  reset-db [--force]              - 重置数据库（仅删除数据库数据卷）"
     echo "  verify <registry> [tag]         - 验证镜像"
     echo "  create-env [dev|prod] [--force] - 创建环境配置"
     echo "  validate-env                    - 校验环境配置"
@@ -3548,6 +3773,36 @@ main() {
                     clean_images "$tag" "$force"
                     ;;
             esac
+            ;;
+            
+        "clean-all")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                clean_all "--help"
+                exit 0
+            fi
+            
+            # 使用全局FORCE_REBUILD变量
+            local force="false"
+            if [[ "$FORCE_REBUILD" == "true" ]]; then
+                force="true"
+            fi
+            clean_all "$force"
+            ;;
+            
+        "reset-db")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                reset_database "--help"
+                exit 0
+            fi
+            
+            # 使用全局FORCE_REBUILD变量
+            local force="false"
+            if [[ "$FORCE_REBUILD" == "true" ]]; then
+                force="true"
+            fi
+            reset_database "$force"
             ;;
             
         "version")
