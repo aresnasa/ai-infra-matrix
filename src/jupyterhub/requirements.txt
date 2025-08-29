@@ -10,6 +10,8 @@ PyJWT>=2.8.0
 psycopg2-binary>=2.9.0
 redis>=4.0.0
 dockerspawner>=12.0.0
+kubespawner>=6.0.0
+kubernetes>=26.0.0
 psutil>=5.9.0
 # pycurl is optional and recommended for very large deployments to improve HTTP performance.
 # It requires system-level curl-dev (curl-config) and SSL dev libs which complicate Alpine+Py3.13 builds.
@@ -18,7 +20,3 @@ psutil>=5.9.0
 # If you prefer to pin here instead of Dockerfile, uncomment the following line and remove the
 # Dockerfile-specific installation:
 # pycurl==7.45.3
-# NOTE: kubespawner is required only for K8s deployments via Helm and currently
-# isn't compatible with Python 3.13 on Alpine. Keep it in a separate K8s image or
-# add it during Helm builds. For docker-compose (DockerSpawner), it's not needed.
-# kubespawner>=6.0.0

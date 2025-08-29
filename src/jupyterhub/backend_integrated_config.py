@@ -22,6 +22,15 @@ from jupyterhub.utils import url_path_join
 from urllib.parse import quote
 from typing import cast
 
+# 尝试导入KubeSpawner支持
+try:
+    from kubespawner import KubeSpawner
+    KUBESPAWNER_AVAILABLE = True
+    print("✅ KubeSpawner 可用")
+except ImportError:
+    KUBESPAWNER_AVAILABLE = False
+    print("⚠️  KubeSpawner 不可用，仅支持DockerSpawner")
+
 # 兼容编辑器/静态检查与运行时：优先使用 JupyterHub 提供的 get_config，否则退化为本地 Config
 try:  # pragma: no cover - 编辑器环境
     c = get_config()  # type: ignore[name-defined]
@@ -344,40 +353,72 @@ c.JupyterHub.extra_handlers = [
     (r'/auto-login', AutoLoginHandler),
 ]
 
-# Spawner配置
-c.JupyterHub.spawner_class = ContainerSpawner
+# =========================
+# 动态Spawner配置
+# =========================
 
-# Docker Spawner配置
-# 配置Docker Spawner网络
-c.ContainerSpawner.image = os.environ.get('JUPYTERHUB_IMAGE', 'jupyter/base-notebook:latest')
-c.ContainerSpawner.network_name = os.environ.get('JUPYTERHUB_NETWORK', 'ai-infra-network')
-c.ContainerSpawner.remove = True  # 删除停止的容器
-c.ContainerSpawner.debug = True
+# Spawner类型选择：支持docker/kubernetes两种模式
+SPAWNER_TYPE = os.environ.get('JUPYTERHUB_SPAWNER', 'docker').lower()
 
-# DockerSpawner 在同一 docker 网络内访问，使用容器内网IP可避免端口映射问题
-c.DockerSpawner.use_internal_ip = True
+print(f"🔧 Spawner配置模式: {SPAWNER_TYPE}")
 
-# 启动/就绪超时调大，避免首次拉取镜像或慢启动导致超时
-c.Spawner.start_timeout = int(os.environ.get('JUPYTERHUB_START_TIMEOUT', '180'))
-c.Spawner.http_timeout = int(os.environ.get('JUPYTERHUB_HTTP_TIMEOUT', '120'))
+if SPAWNER_TYPE == 'kubernetes' and KUBESPAWNER_AVAILABLE:
+    print("🚀 使用KubeSpawner进行Kubernetes部署")
+    
+    # 加载KubeSpawner配置
+    try:
+        exec(open('/srv/jupyterhub/kubernetes_spawner_config.py').read())
+        # 配置KubeSpawner
+        configure_kubespawner(c)
+        print("✅ KubeSpawner配置加载完成")
+    except Exception as e:
+        print(f"❌ KubeSpawner配置加载失败: {e}")
+        print("🔄 回退到DockerSpawner模式")
+        SPAWNER_TYPE = 'docker'
 
-# 资源限制
-c.ContainerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
-c.ContainerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
+if SPAWNER_TYPE == 'docker':
+    print("🐳 使用DockerSpawner进行容器部署")
+    
+    # Spawner配置
+    c.JupyterHub.spawner_class = ContainerSpawner
+    
+    # Docker Spawner配置
+    # 配置Docker Spawner网络
+    c.ContainerSpawner.image = os.environ.get('JUPYTERHUB_IMAGE', 'jupyter/base-notebook:latest')
+    c.ContainerSpawner.network_name = os.environ.get('JUPYTERHUB_NETWORK', 'ai-infra-network')
+    c.ContainerSpawner.remove = True  # 删除停止的容器
+    c.ContainerSpawner.debug = True
+    
+    # DockerSpawner 在同一 docker 网络内访问，使用容器内网IP可避免端口映射问题
+    c.DockerSpawner.use_internal_ip = True
+    
+    # 启动/就绪超时调大，避免首次拉取镜像或慢启动导致超时
+    c.Spawner.start_timeout = int(os.environ.get('JUPYTERHUB_START_TIMEOUT', '180'))
+    c.Spawner.http_timeout = int(os.environ.get('JUPYTERHUB_HTTP_TIMEOUT', '120'))
+    
+    # 资源限制
+    c.ContainerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
+    c.ContainerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
+    
+    # 容器配置
+    c.ContainerSpawner.notebook_dir = '/home/jovyan/work'
+    c.ContainerSpawner.cmd = ['start-singleuser.sh']  # 使用标准单用户启动脚本
+    
+    # 环境变量设置
+    c.ContainerSpawner.environment = {
+        'JUPYTER_ENABLE_LAB': 'yes',  # 启用JupyterLab
+    }
+    
+    # 挂载配置（可选）
+    c.ContainerSpawner.volumes = {
+        # 可以添加持久化存储
+    }
+    
+    print("✅ DockerSpawner配置完成")
 
-# 容器配置
-c.ContainerSpawner.notebook_dir = '/home/jovyan/work'
-c.ContainerSpawner.cmd = ['start-singleuser.sh']  # 使用标准单用户启动脚本
-
-# 环境变量设置
-c.ContainerSpawner.environment = {
-    'JUPYTER_ENABLE_LAB': 'yes',  # 启用JupyterLab
-}
-
-# 挂载配置（可选）
-c.ContainerSpawner.volumes = {
-    # 可以添加持久化存储
-}
+# =========================
+# 通用Spawner配置
+# =========================
 
 # 安全配置（将cookie密钥保存在数据卷中，避免每次重启失效）
 c.JupyterHub.cookie_secret_file = '/srv/data/jupyterhub/jupyterhub_cookie_secret'

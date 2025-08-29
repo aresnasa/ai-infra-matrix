@@ -36,6 +36,16 @@ data:
   JUPYTERHUB_HOST: {{ printf "%s-jupyterhub" (include "ai-infra-matrix.fullname" .) | quote }}
   JUPYTERHUB_PORT: {{ .Values.jupyterhub.service.port | quote }}
   
+  # JupyterHub Spawner Configuration  
+  JUPYTERHUB_SPAWNER: {{ .Values.jupyterhub.env.JUPYTERHUB_SPAWNER | quote }}
+  JUPYTERHUB_STORAGE_CLASS: {{ .Values.jupyterhub.env.JUPYTERHUB_STORAGE_CLASS | quote }}
+  SHARED_STORAGE_CLASS: {{ .Values.jupyterhub.env.SHARED_STORAGE_CLASS | quote }}
+  SHARED_STORAGE_ENABLED: {{ .Values.jupyterhub.env.SHARED_STORAGE_ENABLED | quote }}
+  
+  # Kubernetes Configuration (for KubeSpawner)
+  KUBERNETES_NAMESPACE: {{ .Values.jupyterhub.env.KUBERNETES_NAMESPACE | quote }}
+  KUBERNETES_SERVICE_ACCOUNT: {{ .Values.jupyterhub.env.KUBERNETES_SERVICE_ACCOUNT | quote }}
+  
   # Gitea Configuration
   GITEA_HOST: {{ printf "%s-gitea" (include "ai-infra-matrix.fullname" .) | quote }}
   GITEA_PORT: {{ .Values.gitea.service.port | quote }}

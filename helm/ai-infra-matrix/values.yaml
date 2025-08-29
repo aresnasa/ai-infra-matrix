@@ -151,23 +151,47 @@ jupyterhub:
     type: "ClusterIP"
     port: 8000
     targetPort: 8000
+    hubPort: 8081  # 添加hub端口配置
   config:
     publicHost: "localhost:8080"
     corsOrigin: "http://localhost:8080"
     debug: false
     logLevel: "INFO"
     accessLog: true
+  
+  # Spawner配置
+  spawner:
+    type: "kubernetes"  # 选择spawner类型: docker 或 kubernetes
+    # Docker Spawner配置
+    docker:
+      network: "ai-infra-network"
+      useInternalIp: true
+      remove: true
+    # Kubernetes Spawner配置  
+    kubernetes:
+      namespace: "ai-infra-users"  # 用户Pod命名空间
+      serviceAccount: "ai-infra-matrix-jupyterhub"  # 服务账户
+      storageClass: "local-path"  # 存储类
+      sharedStorageClass: "nfs-client"  # 共享存储类
+      sharedStorageEnabled: true  # 是否启用共享存储
+      deleteGracePeriod: 30  # Pod删除宽限期
+      fsGid: 100  # 文件系统组ID
+      
   env:
     JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
     JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.5"
-    JUPYTERHUB_NETWORK: "ai-infra-network"
+    JUPYTERHUB_NETWORK: "pod"  # Kubernetes模式下使用pod网络
     JUPYTERHUB_MEM_LIMIT: "2G"
     JUPYTERHUB_CPU_LIMIT: "1.0"
+    JUPYTERHUB_MEM_GUARANTEE: "1G"  # 资源保证
+    JUPYTERHUB_CPU_GUARANTEE: "0.5"
     JUPYTERHUB_IDLE_CULLER_ENABLED: "true"
     JUPYTERHUB_IDLE_TIMEOUT: "3600"
     JUPYTERHUB_CULL_TIMEOUT: "7200"
     JUPYTERHUB_AUTO_LOGIN: "true"
     JUPYTERHUB_DEV_MODE: "true"
+    JUPYTERHUB_START_TIMEOUT: "300"  # Kubernetes启动需要更长时间
+    JUPYTERHUB_HTTP_TIMEOUT: "120"
     USE_CUSTOM_AUTH: "true"
     AI_INFRA_BACKEND_URL: "http://backend:8082"
     AI_INFRA_API_TOKEN: "ai-infra-hub-token"
@@ -177,8 +201,16 @@ jupyterhub:
     JUPYTERHUB_DEBUG: "false"
     JUPYTERHUB_LOG_LEVEL: "INFO"
     JUPYTERHUB_ACCESS_LOG: "true"
+    JUPYTERHUB_SPAWNER: "kubernetes"  # 指定使用的spawner类型
+    KUBERNETES_NAMESPACE: "ai-infra-users"  # Kubernetes命名空间
+    KUBERNETES_SERVICE_ACCOUNT: "ai-infra-matrix-jupyterhub"  # 服务账户
+    JUPYTERHUB_STORAGE_CLASS: "local-path"  # 存储类
+    SHARED_STORAGE_CLASS: "nfs-client"  # 共享存储类  
+    SHARED_STORAGE_ENABLED: "true"  # 共享存储启用
     CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-dev"
     JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+    SESSION_TIMEOUT: "86400"  # 会话超时
+    
   singleuser:
     image:
       repository: "ai-infra-singleuser"
@@ -192,9 +224,37 @@ jupyterhub:
         memory: "1G"
         cpu: "0.5"
     storage:
-      dynamic: false  # 设为false以跳过动态PVC创建
+      capacity: "10Gi"  # 用户存储容量
+      dynamic: true  # 启用动态PVC创建（Kubernetes模式）
+      accessModes: ["ReadWriteOnce"]
   persistence:
-    enabled: false  # 设为false以跳过persistence存储创建
+    enabled: true  # 启用persistence存储（Kubernetes模式）
+    
+  # 资源配置
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+      
+  # 健康检查配置
+  livenessProbe:
+    httpGet:
+      path: /hub/health
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    
+  readinessProbe:
+    httpGet:
+      path: /hub/health  
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
 
 # Shared storage configuration
 sharedStorage:

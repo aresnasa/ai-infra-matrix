@@ -97,7 +97,7 @@ RUN adduser -D -s /bin/bash admin && \
 RUN echo "Build: $(date '+%Y-%m-%d %H:%M:%S')" > /srv/jupyterhub/build_info.txt
 
 # 配置文件（最后复制，优化缓存）
-COPY jupyterhub_config.py backend_integrated_config.py simple_config.py ./
+COPY jupyterhub_config.py backend_integrated_config.py simple_config.py kubernetes_spawner_config.py ./
 
 # 创建数据库等待脚本（简化版，只检查连接性）
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \
