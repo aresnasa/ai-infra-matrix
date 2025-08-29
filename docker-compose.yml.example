@@ -103,6 +103,7 @@ services:
     build:
       context: ./src/backend
       dockerfile: Dockerfile
+      target: backend-init
       args:
         VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-backend-init
@@ -139,6 +140,7 @@ services:
     build:
       context: ./src/backend
       dockerfile: Dockerfile
+      target: backend
       args:
         VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-backend

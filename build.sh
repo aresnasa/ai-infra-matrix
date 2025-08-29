@@ -248,9 +248,17 @@ generate_production_passwords() {
     print_warning "⚠️  请在系统部署后通过Web界面修改管理员密码"
     print_info "======================================================================"
     
+    # 如果目标环境文件不存在，从 .env.example 复制
     if [[ ! -f "$env_file" ]]; then
-        print_error "环境文件不存在: $env_file"
-        return 1
+        if [[ -f ".env.example" ]]; then
+            print_info "环境文件不存在，从 .env.example 创建: $env_file"
+            cp ".env.example" "$env_file"
+            print_success "✓ 已从 .env.example 创建环境文件: $env_file"
+        else
+            print_error "环境文件不存在: $env_file"
+            print_error "且模板文件 .env.example 也不存在"
+            return 1
+        fi
     fi
     
     # 创建备份
@@ -2134,9 +2142,8 @@ generate_production_config() {
         print_info "展开环境变量引用..."
         local temp_content=$(cat "$output_file")
         
-        # 处理数据库变量（但保持 $${VAR} 形式不变）
-        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PASSWORD:-[^}]*}|$postgres_password|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PASSWORD}|$postgres_password|g")
+        # 处理数据库变量（保持密码的环境变量引用形式，不展开密码）
+        # 只处理非密码的数据库配置
         temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER:-[^}]*}|$postgres_user|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER}|$postgres_user|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_DB:-[^}]*}|$postgres_db|g")
@@ -2146,10 +2153,8 @@ generate_production_config() {
         temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT:-[^}]*}|$postgres_port|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT}|$postgres_port|g")
         
-        # 处理Redis变量（对于单$的展开，但保持 $${VAR} 形式）
-        # 注意：不处理 $${REDIS_PASSWORD} 形式，保持它们在容器内展开
-        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PASSWORD:-[^}]*}|$redis_password|g")
-        temp_content=$(echo "$temp_content" | sed "/\\\$\\\${REDIS_PASSWORD}/!s|\\\${REDIS_PASSWORD}|$redis_password|g")
+        # 处理Redis变量（保持环境变量引用形式，不展开密码）
+        # 只处理非密码的Redis配置
         temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST:-[^}]*}|$redis_host|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST}|$redis_host|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PORT:-[^}]*}|$redis_port|g")
@@ -2157,25 +2162,27 @@ generate_production_config() {
         temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB:-[^}]*}|$redis_db|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB}|$redis_db|g")
         
-        # 处理JWT和认证相关变量
-        temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET:-[^}]*}|$jwt_secret|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET}|$jwt_secret|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN:-[^}]*}|$configproxy_token|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN}|$configproxy_token|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY:-[^}]*}|$jupyterhub_crypt_key|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY}|$jupyterhub_crypt_key|g")
+        # 处理JWT和认证相关变量（保持密钥的环境变量引用形式，不展开）
+        # 这些都是敏感信息，应该通过环境变量传递
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET:-[^}]*}|$jwt_secret|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET}|$jwt_secret|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN:-[^}]*}|$configproxy_token|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN}|$configproxy_token|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY:-[^}]*}|$jupyterhub_crypt_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY}|$jupyterhub_crypt_key|g")
         
-        # 处理MinIO变量
-        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY:-[^}]*}|$minio_access_key|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY}|$minio_access_key|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY:-[^}]*}|$minio_secret_key|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY}|$minio_secret_key|g")
+        # 处理MinIO变量（保持密钥的环境变量引用形式，不展开密钥）
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY:-[^}]*}|$minio_access_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY}|$minio_access_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY:-[^}]*}|$minio_secret_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY}|$minio_secret_key|g")
         
-        # 处理LDAP变量
-        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD:-[^}]*}|$ldap_admin_password|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD}|$ldap_admin_password|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD:-[^}]*}|$ldap_config_password|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD}|$ldap_config_password|g")
+        # 处理LDAP变量（保持密码的环境变量引用形式，不展开密码）
+        # 只处理非密码的LDAP配置
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD:-[^}]*}|$ldap_admin_password|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD}|$ldap_admin_password|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD:-[^}]*}|$ldap_config_password|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD}|$ldap_config_password|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_HOST:-[^}]*}|$ldap_host|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_HOST}|$ldap_host|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_PORT:-[^}]*}|$ldap_port|g")
@@ -2183,9 +2190,9 @@ generate_production_config() {
         temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_BASE_DN:-[^}]*}|$ldap_base_dn|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_BASE_DN}|$ldap_base_dn|g")
         
-        # 处理Gitea变量
-        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD:-[^}]*}|$gitea_db_passwd|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD}|$gitea_db_passwd|g")
+        # 处理Gitea变量（保持密码的环境变量引用形式，不展开密码）
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD:-[^}]*}|$gitea_db_passwd|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD}|$gitea_db_passwd|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_BASE_URL:-[^}]*}|$gitea_base_url|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_BASE_URL}|$gitea_base_url|g")
         temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_ALIAS_ADMIN_TO:-[^}]*}|$gitea_alias_admin_to|g")

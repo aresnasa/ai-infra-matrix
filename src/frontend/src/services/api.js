@@ -160,21 +160,21 @@ export const kubernetesAPI = {
   getClusterNamespaces: (id) => api.get(`/kubernetes/clusters/${id}/namespaces`),
 
   // 资源浏览（若后端未实现，将在调用处做降级处理）
-  getPods: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/pods`),
-  getDeployments: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/deployments`),
-  getServices: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/services`),
-  getNodesDetail: (id) => api.get(`/kubernetes/clusters/${id}/nodes/detail`),
-  getEvents: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || ''}/events`),
+  getPods: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/resources/pods`),
+  getDeployments: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/resources/deployments`),
+  getServices: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || 'default'}/resources/services`),
+  getNodesDetail: (id) => api.get(`/kubernetes/clusters/${id}/cluster-resources/nodes`),
+  getEvents: (id, namespace) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace || ''}/resources/events`),
 
   // 操作类（按需在后端实现）
-  scaleDeployment: (id, namespace, name, replicas) => api.post(`/kubernetes/clusters/${id}/namespaces/${namespace}/deployments/${name}/scale`, { replicas }),
-  deleteResource: (id, namespace, kind, name) => api.delete(`/kubernetes/clusters/${id}/namespaces/${namespace}/${kind.toLowerCase()}s/${name}`),
-  getPodLogs: (id, namespace, pod, container) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace}/pods/${pod}/logs`, { params: { container } }),
+  scaleDeployment: (id, namespace, name, replicas) => api.post(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/deployments/${name}/scale`, { replicas }),
+  deleteResource: (id, namespace, kind, name) => api.delete(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/${kind.toLowerCase()}s/${name}`),
+  getPodLogs: (id, namespace, pod, container) => api.get(`/kubernetes/clusters/${id}/namespaces/${namespace}/resources/pods/${pod}/logs`, { params: { container } }),
   buildPodExecWsUrl: (id, namespace, pod, container, command) => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const host = window.location.host;
     const cmdQuery = command ? `&command=${encodeURIComponent(command)}` : '';
-    return `${proto}://${host}/api/kubernetes/clusters/${id}/namespaces/${namespace}/pods/${encodeURIComponent(pod)}/exec?container=${encodeURIComponent(container || '')}${cmdQuery}`;
+    return `${proto}://${host}/api/kubernetes/clusters/${id}/namespaces/${namespace}/resources/pods/${encodeURIComponent(pod)}/exec?container=${encodeURIComponent(container || '')}${cmdQuery}`;
   },
 
   // ---- 通用资源发现与CRUD（动态）----
