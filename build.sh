@@ -214,7 +214,20 @@ print_warning() {
 load_environment_variables() {
     local env_file="$SCRIPT_DIR/.env.prod"
     
-    # 从 .env.prod 文件加载变量
+    # 检测外部主机地址
+    local detected_host="localhost"
+    local detected_port="8080"
+    
+    if [[ -f "$SCRIPT_DIR/scripts/detect-external-host.sh" ]]; then
+        detected_host=$(cd "$SCRIPT_DIR" && bash scripts/detect-external-host.sh | grep "检测到的主机地址:" | cut -d: -f2 | xargs)
+        if [[ -n "$detected_host" && "$detected_host" != "localhost" ]]; then
+            print_info "自动检测到外部主机: $detected_host"
+        else
+            detected_host="localhost"
+        fi
+    fi
+    
+    # 从 .env.prod 文件加载变量并进行动态替换
     if [[ -f "$env_file" ]]; then
         while IFS='=' read -r key value; do
             # 跳过注释和空行
@@ -227,9 +240,19 @@ load_environment_variables() {
             value=${value#\'}
             value=${value%\'}
             
+            # 动态替换变量中的占位符
+            value=${value//\$\{EXTERNAL_HOST\}/$detected_host}
+            value=${value//\$\{EXTERNAL_PORT\}/8080}
+            value=${value//\$\{EXTERNAL_SCHEME\}/http}
+            
             eval "ENV_${key}=\"$value\""
         done < "$env_file"
     fi
+    
+    # 设置动态变量
+    EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
+    EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
+    EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
     
     # 从 docker-compose.yml 提取默认值
     if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
@@ -241,7 +264,8 @@ load_environment_variables() {
         JUPYTERHUB_HOST="${ENV_JUPYTERHUB_HOST:-jupyterhub}"
         JUPYTERHUB_PORT="${ENV_JUPYTERHUB_PORT:-8000}"
         EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
-        EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-localhost:8080}"
+        EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
+        EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
         GITEA_ALIAS_ADMIN_TO="${ENV_GITEA_ALIAS_ADMIN_TO:-admin}"
         GITEA_ADMIN_EMAIL="${ENV_GITEA_ADMIN_EMAIL:-admin@example.com}"
     fi
@@ -532,6 +556,12 @@ replace_template_passwords() {
     temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_PORT}|3000|g")
     temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_INTERNAL_URL}|http://gitea:3000|g")
     
+    # 处理外部访问变量 (动态检测)
+    load_environment_variables
+    temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_HOST}|$EXTERNAL_HOST|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_PORT}|$EXTERNAL_PORT|g")
+    temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_SCHEME}|$EXTERNAL_SCHEME|g")
+    
     # 写回文件
     echo "$temp_content" > "$target_file"
     
@@ -601,9 +631,21 @@ create_env_from_template() {
         return 0
     fi
     
-    # 复制模板文件 (开发环境)
+    # 复制模板文件并进行变量替换 (开发环境)
     if cp "$template_file" "$target_file"; then
         print_success "✓ 创建环境文件: $target_file (从 $template_file)"
+        
+        # 加载环境变量
+        load_environment_variables
+        
+        # 进行基本的外部变量替换
+        local temp_content=$(cat "$target_file")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_HOST}|$EXTERNAL_HOST|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_PORT}|$EXTERNAL_PORT|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_SCHEME}|$EXTERNAL_SCHEME|g")
+        echo "$temp_content" > "$target_file"
+        
+        print_success "✓ 应用外部变量替换: EXTERNAL_HOST=$EXTERNAL_HOST, EXTERNAL_PORT=$EXTERNAL_PORT"
         
         # 检查并创建backend目录的环境文件
         if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
@@ -735,6 +777,272 @@ validate_env_file() {
         echo "警告: 环境文件 $env_file 缺少必要变量: ${missing_vars[*]}" >&2
         echo "建议检查并补充这些变量" >&2
     fi
+    
+    return 0
+}
+
+# 更新外部主机配置
+update_external_host_config() {
+    local host_ip="${1:-auto}"
+    
+    print_info "=========================================="
+    print_info "🌐 更新外部主机配置"
+    print_info "=========================================="
+    
+    # 自动检测外部主机IP
+    if [[ "$host_ip" == "auto" ]]; then
+        print_info "自动检测外部主机IP..."
+        
+        # 尝试检测外部可访问的IP地址
+        local detected_ip=""
+        
+        # 方法1: 通过默认路由检测
+        if command -v ip >/dev/null 2>&1; then
+            detected_ip=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
+        fi
+        
+        # 方法2: 通过ifconfig检测（macOS兼容）
+        if [[ -z "$detected_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+            detected_ip=$(ifconfig | grep -E 'inet\s+([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+        fi
+        
+        # 方法3: 通过route命令（macOS兼容）
+        if [[ -z "$detected_ip" ]] && command -v route >/dev/null 2>&1; then
+            detected_ip=$(route get default 2>/dev/null | grep interface | awk '{print $2}' | xargs ifconfig 2>/dev/null | grep -E 'inet\s+([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+        fi
+        
+        # 备用方案: 使用localhost
+        if [[ -z "$detected_ip" ]]; then
+            detected_ip="localhost"
+            print_warning "无法自动检测外部IP，使用默认值: localhost"
+        else
+            print_success "检测到外部IP: $detected_ip"
+        fi
+        
+        host_ip="$detected_ip"
+    fi
+    
+    print_info "目标主机IP: $host_ip"
+    
+    # 确定要更新的环境文件
+    local env_files=()
+    [[ -f ".env" ]] && env_files+=(".env")
+    [[ -f ".env.prod" ]] && env_files+=(".env.prod")
+    [[ -f ".env.example" ]] && env_files+=(".env.example")
+    
+    if [[ ${#env_files[@]} -eq 0 ]]; then
+        print_error "未找到任何环境配置文件"
+        return 1
+    fi
+    
+    print_info "将更新以下环境文件: ${env_files[*]}"
+    
+    local success_count=0
+    local total_count=${#env_files[@]}
+    
+    for env_file in "${env_files[@]}"; do
+        print_info "→ 更新文件: $env_file"
+        
+        # 备份原文件
+        local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        if cp "$env_file" "$backup_file"; then
+            print_info "  ✓ 创建备份: $backup_file"
+        else
+            print_warning "  ⚠ 无法创建备份文件"
+        fi
+        
+        # 更新EXTERNAL_HOST
+        if grep -q "^EXTERNAL_HOST=" "$env_file"; then
+            # 更新现有的EXTERNAL_HOST
+            if sed -i.tmp "s/^EXTERNAL_HOST=.*/EXTERNAL_HOST=$host_ip/" "$env_file" && rm -f "${env_file}.tmp"; then
+                print_success "  ✓ 更新EXTERNAL_HOST=$host_ip"
+            else
+                print_error "  ✗ 更新EXTERNAL_HOST失败"
+                continue
+            fi
+        else
+            # 添加新的EXTERNAL_HOST
+            echo "EXTERNAL_HOST=$host_ip" >> "$env_file"
+            print_success "  ✓ 添加EXTERNAL_HOST=$host_ip"
+        fi
+        
+        # 确保其他动态配置变量存在
+        local dynamic_vars=(
+            "EXTERNAL_PORT=8080"
+            "EXTERNAL_SCHEME=http"
+        )
+        
+        for var_line in "${dynamic_vars[@]}"; do
+            local var_name=$(echo "$var_line" | cut -d'=' -f1)
+            if ! grep -q "^${var_name}=" "$env_file"; then
+                echo "$var_line" >> "$env_file"
+                print_success "  ✓ 添加默认配置: $var_line"
+            fi
+        done
+        
+        ((success_count++))
+    done
+    
+    print_info "=========================================="
+    if [[ $success_count -eq $total_count ]]; then
+        print_success "✅ 外部主机配置更新完成: $success_count/$total_count 文件"
+        print_info "新的外部主机: $host_ip"
+        print_info "建议重新生成nginx配置并重启服务："
+        print_info "  $0 build nginx"
+        print_info "  docker compose restart nginx"
+    else
+        print_error "❌ 外部主机配置更新失败: $success_count/$total_count 文件"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 更新外部端口配置
+update_external_port_config() {
+    local port="${1:-8080}"
+    
+    print_info "=========================================="
+    print_info "🔌 更新外部端口配置"
+    print_info "=========================================="
+    print_info "目标端口: $port"
+    
+    # 验证端口号格式
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+        print_error "无效的端口号: $port (必须是1-65535之间的数字)"
+        return 1
+    fi
+    
+    # 确定要更新的环境文件
+    local env_files=()
+    [[ -f ".env" ]] && env_files+=(".env")
+    [[ -f ".env.prod" ]] && env_files+=(".env.prod")
+    [[ -f ".env.example" ]] && env_files+=(".env.example")
+    
+    if [[ ${#env_files[@]} -eq 0 ]]; then
+        print_error "未找到任何环境配置文件"
+        return 1
+    fi
+    
+    print_info "将更新以下环境文件: ${env_files[*]}"
+    
+    local success_count=0
+    local total_count=${#env_files[@]}
+    
+    for env_file in "${env_files[@]}"; do
+        print_info "→ 更新文件: $env_file"
+        
+        # 备份原文件
+        local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        if cp "$env_file" "$backup_file"; then
+            print_info "  ✓ 创建备份: $backup_file"
+        else
+            print_warning "  ⚠ 无法创建备份文件"
+        fi
+        
+        # 更新EXTERNAL_PORT
+        if grep -q "^EXTERNAL_PORT=" "$env_file"; then
+            # 更新现有的EXTERNAL_PORT
+            if sed -i.tmp "s/^EXTERNAL_PORT=.*/EXTERNAL_PORT=$port/" "$env_file" && rm -f "${env_file}.tmp"; then
+                print_success "  ✓ 更新EXTERNAL_PORT=$port"
+            else
+                print_error "  ✗ 更新EXTERNAL_PORT失败"
+                continue
+            fi
+        else
+            # 添加新的EXTERNAL_PORT
+            echo "EXTERNAL_PORT=$port" >> "$env_file"
+            print_success "  ✓ 添加EXTERNAL_PORT=$port"
+        fi
+        
+        # 计算并显示相关端口
+        local jupyter_port=$((port + 8))
+        local gitea_port=$((port - 5070))
+        local debug_port=$((port - 79))
+        
+        print_info "  → 计算的端口配置:"
+        print_info "    主入口端口: $port"
+        print_info "    JupyterHub端口: $jupyter_port"
+        print_info "    Gitea端口: $gitea_port"
+        print_info "    调试端口: $debug_port"
+        
+        ((success_count++))
+    done
+    
+    print_info "=========================================="
+    if [[ $success_count -eq $total_count ]]; then
+        print_success "✅ 外部端口配置更新完成: $success_count/$total_count 文件"
+        print_info "新的外部端口: $port"
+        print_info "端口映射:"
+        print_info "  • 主入口: $port"
+        print_info "  • JupyterHub: $((port + 8))"
+        print_info "  • Gitea: $((port - 5070))"
+        print_info "  • 调试端口: $((port - 79))"
+        print_info ""
+        print_info "建议重新生成配置并重启服务："
+        print_info "  $0 build nginx --force"
+        print_info "  docker compose down && docker compose up -d"
+    else
+        print_error "❌ 外部端口配置更新失败: $success_count/$total_count 文件"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 一键更新端口并重新部署
+quick_deploy_with_port() {
+    local port="${1:-8080}"
+    local host="${2:-auto}"
+    
+    print_info "=========================================="
+    print_info "🚀 一键更新端口并重新部署"
+    print_info "=========================================="
+    print_info "目标端口: $port"
+    print_info "目标主机: $host"
+    
+    # 步骤1: 更新外部主机配置
+    print_info "步骤1: 更新外部主机配置..."
+    if ! update_external_host_config "$host"; then
+        print_error "外部主机配置更新失败"
+        return 1
+    fi
+    
+    # 步骤2: 更新端口配置
+    print_info "步骤2: 更新端口配置..."
+    if ! update_external_port_config "$port"; then
+        print_error "端口配置更新失败"
+        return 1
+    fi
+    
+    # 步骤3: 重新构建nginx
+    print_info "步骤3: 重新构建nginx配置..."
+    FORCE_REBUILD=true
+    if ! build_service "nginx" "$DEFAULT_IMAGE_TAG"; then
+        print_error "nginx构建失败"
+        return 1
+    fi
+    
+    # 步骤4: 重启nginx服务
+    print_info "步骤4: 重启nginx服务..."
+    if docker compose restart nginx; then
+        print_success "✓ nginx服务重启成功"
+    else
+        print_error "nginx服务重启失败"
+        return 1
+    fi
+    
+    # 显示服务信息
+    print_info "=========================================="
+    print_success "🎉 一键部署完成！"
+    print_info "服务访问地址:"
+    local current_host=$(grep "^EXTERNAL_HOST=" .env.example | cut -d'=' -f2)
+    local current_scheme=$(grep "^EXTERNAL_SCHEME=" .env.example | cut -d'=' -f2)
+    print_info "  • 主入口: ${current_scheme}://${current_host}:${port}"
+    print_info "  • JupyterHub: ${current_scheme}://${current_host}:$((port + 8))/jupyter/"
+    print_info "  • Gitea: ${current_scheme}://${current_host}:$((port - 5070))/gitea/"
+    print_info "  • 调试接口: ${current_scheme}://${current_host}:$((port - 79))/debug/"
+    print_info "=========================================="
     
     return 0
 }
@@ -3170,6 +3478,11 @@ show_help() {
     echo "  version                         - 显示版本"
     echo "  help                            - 显示帮助"
     echo
+    echo "动态配置管理:"
+    echo "  update-host [host|auto]         - 更新外部主机配置（auto=自动检测）"
+    echo "  update-port <port>              - 更新外部端口配置（自动计算相关端口）"
+    echo "  quick-deploy [port] [host]      - 一键更新配置并重新部署（默认8080 auto）"
+    echo
     echo "===================================================================================="
     echo "📦 CI/CD服务器运行实例 (构建和推送镜像):"
     echo "===================================================================================="
@@ -3224,6 +3537,26 @@ show_help() {
     echo "  $0 build backend test-debug                           # 构建调试版本"
     echo "  docker compose up -d postgres redis                  # 启动依赖"
     echo "  docker run --rm -it ai-infra-backend:test-debug bash  # 交互式调试"
+    echo
+    echo "===================================================================================="
+    echo "🔧 动态配置管理实例:"
+    echo "===================================================================================="
+    echo "  # 自动检测外部IP并更新配置"
+    echo "  $0 update-host auto                                   # 自动检测外部主机IP"
+    echo "  $0 build nginx --force && docker compose restart nginx  # 应用新配置"
+    echo
+    echo "  # 手动指定外部主机"
+    echo "  $0 update-host 192.168.1.100                         # 设置外部主机为指定IP"
+    echo
+    echo "  # 修改外部端口（便捷部署不同环境）"
+    echo "  $0 update-port 9090                                  # 更新外部端口为9090"
+    echo "                                                        # 自动计算：主入口9090，JupyterHub9098，Gitea4020"
+    echo "  $0 build nginx --force                               # 重新构建nginx配置"
+    echo "  docker compose down && docker compose up -d          # 重启所有服务"
+    echo
+    echo "  # 快速切换部署端口"
+    echo "  $0 update-port 8080 && $0 build nginx --force        # 切换到8080端口并更新配置"
+    echo "  $0 update-port 9000 && $0 build nginx --force        # 切换到9000端口并更新配置"
     echo
     echo "===================================================================================="
     echo "⚠️  重要提醒:"
@@ -3383,6 +3716,25 @@ main() {
             fi
             
             create_env_from_template "$env_type" "$force"
+            ;;
+            
+        # 更新外部主机配置命令
+        "update-host")
+            local host_ip="${2:-auto}"
+            update_external_host_config "$host_ip"
+            ;;
+            
+        # 更新外部端口配置命令
+        "update-port")
+            local port="${2:-8080}"
+            update_external_port_config "$port"
+            ;;
+            
+        # 一键更新端口并重新部署
+        "quick-deploy")
+            local port="${2:-8080}"
+            local host="${3:-auto}"
+            quick_deploy_with_port "$port" "$host"
             ;;
             
         "auto-env")
