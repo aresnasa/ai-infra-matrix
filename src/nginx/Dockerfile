@@ -3,6 +3,9 @@
 # 支持开发模式和生产模式
 
 FROM nginx:stable-alpine-perl
+# 先检查源目录是否有内容，然后决定是否复制
+# 复制调试工具
+COPY src/shared/debug/ /tmp/debug/ble-alpine-perl
 
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
@@ -82,7 +85,7 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
 # 条件复制：仅在调试模式下且debug目录存在时复制调试文件夹
 # 先检查源目录是否有内容，然后决定是否复制
     # 复制调试工具
-    COPY src/shared/debug/ /tmp/debug/
+COPY src/shared/debug/ /tmp/debug/
 RUN if [ "$DEBUG_MODE" = "true" ]; then \
         echo "🔧 调试模式启用，检查调试文件..."; \
         if [ "$(ls -A /tmp/debug 2>/dev/null)" ]; then \

@@ -3,17 +3,17 @@
 
 # Frontend Upstream
 upstream frontend {
-    server frontend:80;
+    server {{FRONTEND_HOST}}:{{FRONTEND_PORT}};
 }
 
 # Backend Upstream
 upstream backend {
-    server backend:8082;
+    server {{BACKEND_HOST}}:{{BACKEND_PORT}};
 }
 
 # JupyterHub Upstream
 upstream jupyterhub {
-    server jupyterhub:8000;
+    server {{JUPYTERHUB_HOST}}:{{JUPYTERHUB_PORT}};
 }
 
 server {
@@ -33,8 +33,8 @@ server {
     error_log /var/log/nginx/error.log warn;
 
     # 定义基础变量
-    set $external_scheme "http";
-    set $external_host "localhost:8080";
+    set $external_scheme "{{EXTERNAL_SCHEME}}";
+    set $external_host "{{EXTERNAL_HOST}}";
 
     # 认证验证端点（内部认证检查时调用后端）
     location = /__auth/verify {

@@ -207,113 +207,51 @@ print_warning() {
 }
 
 # ==========================================
-# 模板渲染功能
+# 配置模板生成函数
 # ==========================================
 
-# 从 docker-compose.yml 加载环境变量
-load_environment_variables() {
-    local env_file="$SCRIPT_DIR/.env.prod"
-    
-    # 从 .env.prod 文件加载变量
-    if [[ -f "$env_file" ]]; then
-        while IFS='=' read -r key value; do
-            # 跳过注释和空行
-            [[ "$key" =~ ^[[:space:]]*# ]] && continue
-            [[ -z "$key" ]] && continue
-            
-            # 移除引号
-            value=${value#\"}
-            value=${value%\"}
-            value=${value#\'}
-            value=${value%\'}
-            
-            eval "ENV_${key}=\"$value\""
-        done < "$env_file"
-    fi
-    
-    # 从 docker-compose.yml 提取默认值
-    if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
-        # 提取环境变量默认值
-        BACKEND_HOST="${ENV_BACKEND_HOST:-backend}"
-        BACKEND_PORT="${ENV_BACKEND_PORT:-8082}"
-        FRONTEND_HOST="${ENV_FRONTEND_HOST:-frontend}"
-        FRONTEND_PORT="${ENV_FRONTEND_PORT:-80}"
-        JUPYTERHUB_HOST="${ENV_JUPYTERHUB_HOST:-jupyterhub}"
-        JUPYTERHUB_PORT="${ENV_JUPYTERHUB_PORT:-8000}"
-        EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
-        EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-localhost:8080}"
-        GITEA_ALIAS_ADMIN_TO="${ENV_GITEA_ALIAS_ADMIN_TO:-admin}"
-        GITEA_ADMIN_EMAIL="${ENV_GITEA_ADMIN_EMAIL:-admin@example.com}"
-    fi
-}
-
-# 渲染模板文件
-render_template() {
+# 替换模板变量的函数
+replace_template_vars() {
     local template_file="$1"
     local output_file="$2"
+    shift 2
     
-    if [[ ! -f "$template_file" ]]; then
-        print_error "模板文件不存在: $template_file"
-        return 1
-    fi
+    # 创建临时Python脚本进行模板替换
+    local temp_script=$(mktemp)
+    cat > "$temp_script" << 'PYTHON_EOF'
+import sys
+import re
+
+def replace_template(template_file, output_file, replacements):
+    with open(template_file, 'r') as f:
+        content = f.read()
     
-    print_info "渲染模板: $template_file -> $output_file"
+    for i in range(0, len(replacements), 2):
+        var_name = replacements[i]
+        var_value = replacements[i+1] if i+1 < len(replacements) else ''
+        pattern = '{{' + var_name + '}}'
+        content = content.replace(pattern, var_value)
     
-    # 读取模板内容
-    local template_content
-    template_content=$(<"$template_file")
+    with open(output_file, 'w') as f:
+        f.write(content)
+
+if __name__ == '__main__':
+    template_file = sys.argv[1]
+    output_file = sys.argv[2]
+    replacements = sys.argv[3:]
+    replace_template(template_file, output_file, replacements)
+PYTHON_EOF
     
-    # 替换变量
-    template_content=$(echo "$template_content" | sed "s/{{BACKEND_HOST}}/${BACKEND_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{BACKEND_PORT}}/${BACKEND_PORT}/g")
-    template_content=$(echo "$template_content" | sed "s/{{FRONTEND_HOST}}/${FRONTEND_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{FRONTEND_PORT}}/${FRONTEND_PORT}/g")
-    template_content=$(echo "$template_content" | sed "s/{{JUPYTERHUB_HOST}}/${JUPYTERHUB_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{JUPYTERHUB_PORT}}/${JUPYTERHUB_PORT}/g")
-    template_content=$(echo "$template_content" | sed "s/{{EXTERNAL_SCHEME}}/${EXTERNAL_SCHEME}/g")
-    template_content=$(echo "$template_content" | sed "s/{{EXTERNAL_HOST}}/${EXTERNAL_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{GITEA_ALIAS_ADMIN_TO}}/${GITEA_ALIAS_ADMIN_TO}/g")
-    template_content=$(echo "$template_content" | sed "s/{{GITEA_ADMIN_EMAIL}}/${GITEA_ADMIN_EMAIL}/g")
+    # 复制模板文件到输出文件
+    cp "$template_file" "$output_file"
     
-    # 创建输出目录
-    local output_dir
-    output_dir=$(dirname "$output_file")
-    mkdir -p "$output_dir"
+    # 使用Python脚本进行替换
+    python3 "$temp_script" "$template_file" "$output_file" "$@"
     
-    # 写入输出文件
-    echo "$template_content" > "$output_file"
-    print_success "✓ 模板渲染完成: $output_file"
+    # 清理临时文件
+    rm -f "$temp_script"
 }
 
-# 渲染所有nginx模板
-render_nginx_templates() {
-    print_info "===========================================" 
-    print_info "渲染 Nginx 配置模板"
-    print_info "==========================================="
-    
-    # 加载环境变量
-    load_environment_variables
-    
-    local template_dir="$SCRIPT_DIR/src/nginx/templates"
-    local output_dir="$SCRIPT_DIR/src/nginx"
-    
-    if [[ ! -d "$template_dir" ]]; then
-        print_error "模板目录不存在: $template_dir"
-        return 1
-    fi
-    
-    # 渲染主配置文件
-    render_template "$template_dir/conf.d/server-main.conf.tpl" "$output_dir/conf.d/server-main.conf"
-    
-    # 渲染includes配置文件  
-    render_template "$template_dir/conf.d/includes/gitea.conf.tpl" "$output_dir/conf.d/includes/gitea.conf"
-    render_template "$template_dir/conf.d/includes/jupyterhub.conf.tpl" "$output_dir/conf.d/includes/jupyterhub.conf"
-    
-    print_success "✓ Nginx 模板渲染完成"
-    echo
-}
-
-# ==========================================
 # ==========================================
 # 随机密码生成函数
 # ==========================================
@@ -1157,9 +1095,6 @@ build_service() {
     # 特殊处理nginx的构建上下文 - 需要访问shared目录
     local build_context
     if [[ "$service" == "nginx" ]]; then
-        # nginx构建前先渲染模板
-        print_info "  → nginx构建前渲染配置模板..."
-        render_nginx_templates
         build_context="$SCRIPT_DIR"  # 使用项目根目录作为构建上下文
     else
         build_context="$SCRIPT_DIR/$service_path"
@@ -1771,7 +1706,8 @@ pull_aiharbor_services() {
     else
         print_success "🚀 所有AI-Infra服务镜像拉取成功！"
         print_info "现在可以使用本地镜像启动服务："
-        print_info "  docker compose -f docker-compose.yml.example up -d"
+        print_info "  ./build.sh prod-generate \"\" $tag"
+        print_info "  docker compose up -d"
         return 0
     fi
 }
@@ -1888,8 +1824,9 @@ pull_aiharbor_all() {
         print_success "🎉 所有镜像拉取完成！"
         print_info ""
         print_info "接下来可以："
-        print_info "1. 启动服务: docker compose -f docker-compose.yml.example up -d"
-        print_info "2. 查看状态: ./build.sh prod-status"
+        print_info "1. 生成生产配置: ./build.sh prod-generate \"\" $tag"
+        print_info "2. 启动服务: docker compose up -d"
+        print_info "3. 查看状态: ./build.sh prod-status"
         return 0
     else
         print_warning "⚠️  部分镜像拉取失败，请检查错误信息"
@@ -2010,12 +1947,9 @@ build_environment_deploy() {
     fi
     
     # 5. 生成生产环境docker-compose配置
-    print_info "复制生产环境配置文件..."
-    if [[ -f "docker-compose.yml.example" ]]; then
-        cp docker-compose.yml.example docker-compose.yml
-        print_success "✓ 已复制 docker-compose.yml.example 到 docker-compose.yml"
-    else
-        print_error "docker-compose.yml.example 文件不存在"
+    print_info "生成生产环境配置文件..."
+    if ! generate_production_config "$registry" "$tag"; then
+        print_error "生产环境配置生成失败"
         return 1
     fi
     
@@ -2061,12 +1995,9 @@ intranet_environment_deploy() {
     
     # 2. 检查或生成docker-compose.prod.yml
     if [[ ! -f "docker-compose.prod.yml" ]]; then
-        print_info "复制生产环境编排文件..."
-        if [[ -f "docker-compose.yml.example" ]]; then
-            cp docker-compose.yml.example docker-compose.prod.yml
-            print_success "✓ 已复制 docker-compose.yml.example 到 docker-compose.prod.yml"
-        else
-            print_error "docker-compose.yml.example 文件不存在"
+        print_info "生成生产环境编排文件..."
+        if ! generate_production_config "$registry" "$tag"; then
+            print_error "生产环境配置生成失败"
             return 1
         fi
     else
@@ -2090,6 +2021,348 @@ intranet_environment_deploy() {
 # ==========================================
 # 生产环境部署相关功能
 # ==========================================
+
+# 部署到指定HOST（动态配置域名）
+deploy_to_host() {
+    local host="$1"
+    local registry="$2"
+    local tag="${3:-$DEFAULT_IMAGE_TAG}"
+    
+    if [[ ! -f "$base_file" ]]; then
+        print_error "基础配置文件不存在: $base_file"
+        return 1
+    fi
+    
+    # 确保生产环境配置文件存在
+    if [[ ! -f ".env.prod" ]]; then
+        print_warning "生产环境配置文件不存在，请先使用 create-env-prod 命令创建"
+        return 1
+    fi
+    
+    print_info "生成生产环境配置文件..."
+    print_info "  基础文件: $base_file"
+    print_info "  Registry: ${registry:-'(本地镜像)'}"
+    print_info "  Tag: $tag"
+    print_info "  输出文件: $output_file"
+    echo
+    
+    # 简单复制示例文件
+    print_info "复制基础配置文件..."
+    cp "$base_file" "$output_file"
+    
+    # 更新镜像标签和registry配置
+    print_info "更新镜像配置..."
+    if [[ -n "$registry" ]]; then
+        # 有registry前缀的情况
+        print_info "  使用 registry 前缀: $registry"
+        if [[ "$OS_TYPE" == "macOS" ]]; then
+            # 添加registry前缀到项目镜像
+            sed -i.bak "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+            # 使用环境变量替换IMAGE_TAG
+            sed -i.bak "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
+            sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            
+            # 处理依赖镜像映射
+            print_info "  应用依赖镜像映射..."
+            local postgres_mapped=$(get_mapped_private_image "postgres:15-alpine" "$registry" "$tag")
+            local redis_mapped=$(get_mapped_private_image "redis:7-alpine" "$registry" "$tag")
+            local nginx_mapped=$(get_mapped_private_image "nginx:1.27-alpine" "$registry" "$tag")
+            local tcp_proxy_mapped=$(get_mapped_private_image "tecnativa/tcp-proxy" "$registry" "$tag")
+            local minio_mapped=$(get_mapped_private_image "minio/minio:latest" "$registry" "$tag")
+            local openldap_mapped=$(get_mapped_private_image "osixia/openldap:stable" "$registry" "$tag")
+            local phpldapadmin_mapped=$(get_mapped_private_image "osixia/phpldapadmin:stable" "$registry" "$tag")
+            local redisinsight_mapped=$(get_mapped_private_image "redislabs/redisinsight:latest" "$registry" "$tag")
+            
+            # 应用映射
+            sed -i.bak "s|image: postgres:15-alpine|image: ${postgres_mapped}|g" "$output_file"
+            sed -i.bak "s|image: redis:7-alpine|image: ${redis_mapped}|g" "$output_file"
+            sed -i.bak "s|image: nginx:1.27-alpine|image: ${nginx_mapped}|g" "$output_file"
+            sed -i.bak "s|image: tecnativa/tcp-proxy|image: ${tcp_proxy_mapped}|g" "$output_file"
+            sed -i.bak "s|image: minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
+            sed -i.bak "s|image: osixia/openldap:stable|image: ${openldap_mapped}|g" "$output_file"
+            sed -i.bak "s|image: osixia/phpldapadmin:stable|image: ${phpldapadmin_mapped}|g" "$output_file"
+            sed -i.bak "s|image: redislabs/redisinsight:latest|image: ${redisinsight_mapped}|g" "$output_file"
+        else
+            # 添加registry前缀到项目镜像
+            sed -i "s|image: ai-infra-|image: ${registry}/ai-infra-|g" "$output_file"
+            # 使用环境变量替换IMAGE_TAG
+            sed -i "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
+            sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+            
+            # 处理依赖镜像映射
+            print_info "  应用依赖镜像映射..."
+            local postgres_mapped=$(get_mapped_private_image "postgres:15-alpine" "$registry" "$tag")
+            local redis_mapped=$(get_mapped_private_image "redis:7-alpine" "$registry" "$tag")
+            local nginx_mapped=$(get_mapped_private_image "nginx:1.27-alpine" "$registry" "$tag")
+            local tcp_proxy_mapped=$(get_mapped_private_image "tecnativa/tcp-proxy" "$registry" "$tag")
+            local minio_mapped=$(get_mapped_private_image "minio/minio:latest" "$registry" "$tag")
+            local openldap_mapped=$(get_mapped_private_image "osixia/openldap:stable" "$registry" "$tag")
+            local phpldapadmin_mapped=$(get_mapped_private_image "osixia/phpldapadmin:stable" "$registry" "$tag")
+            local redisinsight_mapped=$(get_mapped_private_image "redislabs/redisinsight:latest" "$registry" "$tag")
+            
+            # 应用映射
+            sed -i "s|image: postgres:15-alpine|image: ${postgres_mapped}|g" "$output_file"
+            sed -i "s|image: redis:7-alpine|image: ${redis_mapped}|g" "$output_file"
+            sed -i "s|image: nginx:1.27-alpine|image: ${nginx_mapped}|g" "$output_file"
+            sed -i "s|image: tecnativa/tcp-proxy|image: ${tcp_proxy_mapped}|g" "$output_file"
+            sed -i "s|image: minio/minio:latest|image: ${minio_mapped}|g" "$output_file"
+            sed -i "s|image: osixia/openldap:stable|image: ${openldap_mapped}|g" "$output_file"
+            sed -i "s|image: osixia/phpldapadmin:stable|image: ${phpldapadmin_mapped}|g" "$output_file"
+            sed -i "s|image: redislabs/redisinsight:latest|image: ${redisinsight_mapped}|g" "$output_file"
+        fi
+    else
+        # 无registry前缀的情况（本地镜像）
+        print_info "  使用本地镜像（无 registry 前缀）"
+        if [[ "$OS_TYPE" == "macOS" ]]; then
+            # 简单的环境变量替换
+            sed -i.bak "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
+            sed -i.bak "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+        else
+            # 简单的环境变量替换
+            sed -i "s|\${IMAGE_TAG:-v[0-9.]*}|${tag}|g" "$output_file"
+            sed -i "s|\${IMAGE_TAG}|${tag}|g" "$output_file"
+        fi
+    fi
+    
+    # 更新环境文件引用为生产环境
+    print_info "更新环境文件引用..."
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i.bak "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
+        # 修复可能的多行环境文件配置
+        sed -i.bak "/env_file:/,/^[[:space:]]*-/ { 
+            s|^[[:space:]]*-.*\.env.*|    - .env.prod|g
+        }" "$output_file"
+    else
+        sed -i "s|\${ENV_FILE:-.env}|.env.prod|g" "$output_file"
+        # 修复可能的多行环境文件配置
+        sed -i "/env_file:/,/^[[:space:]]*-/ { 
+            s|^[[:space:]]*-.*\.env.*|    - .env.prod|g
+        }" "$output_file"
+    fi
+    
+    # 处理环境变量展开（读取.env.prod文件并替换变量）
+    print_info "处理环境变量展开..."
+    if [[ -f ".env.prod" ]]; then
+        # 读取.env.prod文件中的变量值
+        print_info "读取生产环境变量..."
+        local postgres_password=$(grep "^POSTGRES_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local postgres_user=$(grep "^POSTGRES_USER=" .env.prod | cut -d'=' -f2)
+        local postgres_db=$(grep "^POSTGRES_DB=" .env.prod | cut -d'=' -f2)
+        local postgres_host=$(grep "^POSTGRES_HOST=" .env.prod | cut -d'=' -f2)
+        local postgres_port=$(grep "^POSTGRES_PORT=" .env.prod | cut -d'=' -f2)
+        local redis_password=$(grep "^REDIS_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local redis_host=$(grep "^REDIS_HOST=" .env.prod | cut -d'=' -f2)
+        local redis_port=$(grep "^REDIS_PORT=" .env.prod | cut -d'=' -f2)
+        local redis_db=$(grep "^REDIS_DB=" .env.prod | cut -d'=' -f2)
+        local jwt_secret=$(grep "^JWT_SECRET=" .env.prod | cut -d'=' -f2)
+        local configproxy_token=$(grep "^CONFIGPROXY_AUTH_TOKEN=" .env.prod | cut -d'=' -f2)
+        local jupyterhub_crypt_key=$(grep "^JUPYTERHUB_CRYPT_KEY=" .env.prod | cut -d'=' -f2)
+        local minio_access_key=$(grep "^MINIO_ACCESS_KEY=" .env.prod | cut -d'=' -f2)
+        local minio_secret_key=$(grep "^MINIO_SECRET_KEY=" .env.prod | cut -d'=' -f2)
+        local ldap_admin_password=$(grep "^LDAP_ADMIN_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local ldap_config_password=$(grep "^LDAP_CONFIG_PASSWORD=" .env.prod | cut -d'=' -f2)
+        local ldap_host=$(grep "^LDAP_HOST=" .env.prod | cut -d'=' -f2)
+        local ldap_port=$(grep "^LDAP_PORT=" .env.prod | cut -d'=' -f2)
+        local ldap_base_dn=$(grep "^LDAP_BASE_DN=" .env.prod | cut -d'=' -f2)
+        local gitea_db_passwd=$(grep "^GITEA_DB_PASSWD=" .env.prod | cut -d'=' -f2)
+        local gitea_base_url=$(grep "^GITEA_BASE_URL=" .env.prod | cut -d'=' -f2)
+        local gitea_alias_admin_to=$(grep "^GITEA_ALIAS_ADMIN_TO=" .env.prod | cut -d'=' -f2)
+        local backend_url=$(grep "^BACKEND_URL=" .env.prod | cut -d'=' -f2)
+        
+        # 读取HOST相关配置
+        local domain=$(grep "^DOMAIN=" .env.prod | cut -d'=' -f2)
+        local public_host=$(grep "^PUBLIC_HOST=" .env.prod | cut -d'=' -f2)
+        local public_protocol=$(grep "^PUBLIC_PROTOCOL=" .env.prod | cut -d'=' -f2)
+        local jupyterhub_public_host=$(grep "^JUPYTERHUB_PUBLIC_HOST=" .env.prod | cut -d'=' -f2)
+        local jupyterhub_cors_origin=$(grep "^JUPYTERHUB_CORS_ORIGIN=" .env.prod | cut -d'=' -f2)
+        local root_url=$(grep "^ROOT_URL=" .env.prod | cut -d'=' -f2)
+        
+        # 替换Docker Compose文件中的环境变量
+        print_info "展开环境变量引用..."
+        local temp_content=$(cat "$output_file")
+        
+        # 处理数据库变量（保持密码的环境变量引用形式，不展开密码）
+        # 只处理非密码的数据库配置
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER:-[^}]*}|$postgres_user|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_USER}|$postgres_user|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_DB:-[^}]*}|$postgres_db|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_DB}|$postgres_db|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_HOST:-[^}]*}|$postgres_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_HOST}|$postgres_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT:-[^}]*}|$postgres_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${POSTGRES_PORT}|$postgres_port|g")
+        
+        # 处理Redis变量（保持环境变量引用形式，不展开密码）
+        # 只处理非密码的Redis配置
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST:-[^}]*}|$redis_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_HOST}|$redis_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PORT:-[^}]*}|$redis_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_PORT}|$redis_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB:-[^}]*}|$redis_db|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${REDIS_DB}|$redis_db|g")
+        
+        # 处理JWT和认证相关变量（保持密钥的环境变量引用形式，不展开）
+        # 这些都是敏感信息，应该通过环境变量传递
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET:-[^}]*}|$jwt_secret|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JWT_SECRET}|$jwt_secret|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN:-[^}]*}|$configproxy_token|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${CONFIGPROXY_AUTH_TOKEN}|$configproxy_token|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY:-[^}]*}|$jupyterhub_crypt_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CRYPT_KEY}|$jupyterhub_crypt_key|g")
+        
+        # 处理MinIO变量（保持密钥的环境变量引用形式，不展开密钥）
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY:-[^}]*}|$minio_access_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_ACCESS_KEY}|$minio_access_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY:-[^}]*}|$minio_secret_key|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${MINIO_SECRET_KEY}|$minio_secret_key|g")
+        
+        # 处理LDAP变量（保持密码的环境变量引用形式，不展开密码）
+        # 只处理非密码的LDAP配置
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD:-[^}]*}|$ldap_admin_password|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_ADMIN_PASSWORD}|$ldap_admin_password|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD:-[^}]*}|$ldap_config_password|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_CONFIG_PASSWORD}|$ldap_config_password|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_HOST:-[^}]*}|$ldap_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_HOST}|$ldap_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_PORT:-[^}]*}|$ldap_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_PORT}|$ldap_port|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_BASE_DN:-[^}]*}|$ldap_base_dn|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${LDAP_BASE_DN}|$ldap_base_dn|g")
+        
+        # 处理Gitea变量（保持密码的环境变量引用形式，不展开密码）
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD:-[^}]*}|$gitea_db_passwd|g")
+        # temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_DB_PASSWD}|$gitea_db_passwd|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_BASE_URL:-[^}]*}|$gitea_base_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_BASE_URL}|$gitea_base_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_ALIAS_ADMIN_TO:-[^}]*}|$gitea_alias_admin_to|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${GITEA_ALIAS_ADMIN_TO}|$gitea_alias_admin_to|g")
+        
+        # 处理后端URL变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_URL:-[^}]*}|$backend_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${BACKEND_URL}|$backend_url|g")
+        
+        # 处理HOST相关变量
+        temp_content=$(echo "$temp_content" | sed "s|\\\${DOMAIN:-[^}]*}|$domain|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${DOMAIN}|$domain|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_HOST:-[^}]*}|$public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_HOST}|$public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_PROTOCOL:-[^}]*}|$public_protocol|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${PUBLIC_PROTOCOL}|$public_protocol|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PUBLIC_HOST:-[^}]*}|$jupyterhub_public_host|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_PUBLIC_HOST}|$jupyterhub_public_host|g")
+        # 特殊处理JUPYTERHUB_CORS_ORIGIN，因为可能包含*字符
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN:-[^}]*}|${jupyterhub_cors_origin//\*/\\*}|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${JUPYTERHUB_CORS_ORIGIN}|${jupyterhub_cors_origin//\*/\\*}|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${ROOT_URL:-[^}]*}|$root_url|g")
+        temp_content=$(echo "$temp_content" | sed "s|\\\${ROOT_URL}|$root_url|g")
+        
+        # 写回文件
+        echo "$temp_content" > "$output_file"
+        print_success "✓ 环境变量展开完成"
+    else
+        print_warning "未找到.env.prod文件，跳过环境变量展开"
+    fi
+    
+    # 清理备份文件（仅在macOS上存在）
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        rm -f "$output_file.bak"
+    fi
+    
+    # 简单验证YAML语法
+    print_info "验证配置文件..."
+    if command -v python3 >/dev/null 2>&1; then
+        if python3 -c "
+import yaml
+import sys
+try:
+    with open('$output_file', 'r') as f:
+        yaml.safe_load(f)
+    print('✓ YAML语法正确')
+    sys.exit(0)
+except yaml.YAMLError as e:
+    print(f'✗ YAML语法错误: {e}')
+    sys.exit(1)
+except Exception as e:
+    print(f'✗ 文件读取错误: {e}')
+    sys.exit(1)
+"; then
+            print_success "✓ 生产环境配置文件生成成功: $output_file"
+        else
+            print_error "YAML语法验证失败"
+            return 1
+        fi
+    else
+        print_success "✓ 生产环境配置文件生成成功: $output_file"
+        print_warning "未安装Python3，跳过YAML语法验证"
+    fi
+    
+    echo
+    print_info "注意事项："
+    print_info "  1. 配置文件基于 $base_file 生成"
+    print_info "  2. 已更新镜像配置和环境文件引用"
+    print_info "  3. 生产环境使用 .env.prod 文件"
+    print_info "  4. 启动服务前请确保镜像已准备就绪"
+    print_info "  5. 使用 docker compose up -d 启动服务"
+    echo
+    
+    # 修正nginx构建上下文
+    print_info "修正nginx构建上下文..."
+    if grep -q "build:" "$output_file" && grep -A5 "nginx:" "$output_file" | grep -q "build:"; then
+        # 使用临时文件进行替换
+        temp_file=$(mktemp)
+        
+        # 修正nginx构建上下文
+        python3 -c "
+import re
+import sys
+
+def fix_nginx_build_context(content):
+    # 查找nginx服务的build配置
+    nginx_build_pattern = r'(\s+nginx:\s*\n(?:[^\n]*\n)*?)(\s+build:\s*[^\n]*)'
+    
+    def replace_build_config(match):
+        service_content = match.group(1)
+        build_line = match.group(2)
+        
+        # 提取缩进
+        indent_match = re.search(r'^(\s+)build:', build_line)
+        if indent_match:
+            indent = indent_match.group(1)
+            # 替换为新的构建配置
+            new_build_config = f'{indent}build:\n{indent}  context: .\n{indent}  dockerfile: src/nginx/Dockerfile'
+            return service_content + new_build_config
+        return match.group(0)
+    
+    # 应用替换
+    fixed_content = re.sub(nginx_build_pattern, replace_build_config, content, flags=re.MULTILINE)
+    return fixed_content
+
+# 读取文件
+with open('$output_file', 'r') as f:
+    content = f.read()
+
+# 修正nginx构建上下文
+fixed_content = fix_nginx_build_context(content)
+
+# 写回文件
+with open('$temp_file', 'w') as f:
+    f.write(fixed_content)
+"
+        
+        # 检查Python脚本执行是否成功
+        if [ $? -eq 0 ]; then
+            mv "$temp_file" "$output_file"
+            print_success "✓ nginx构建上下文修正完成"
+        else
+            print_error "nginx构建上下文修正失败"
+            rm -f "$temp_file"
+        fi
+    else
+        print_info "未发现nginx构建配置，跳过构建上下文修正"
+    fi
+    
+    return 0
+}
 
 # 部署到指定HOST（动态配置域名）
 deploy_to_host() {
@@ -2158,13 +2431,9 @@ deploy_to_host() {
     
     print_success "✓ HOST配置更新完成"
     
-    # 复制生产环境配置文件
-    print_info "复制生产环境配置文件..."
-    if [[ -f "docker-compose.yml.example" ]]; then
-        cp docker-compose.yml.example docker-compose.yml
-        print_success "✓ 已复制 docker-compose.yml.example 到 docker-compose.yml"
-    else
-        print_error "docker-compose.yml.example 文件不存在"
+    # 生成生产环境配置
+    print_info "生成生产环境配置文件..."
+    if ! generate_production_config "$registry" "$tag"; then
         print_error "生产环境配置生成失败"
         return 1
     fi
@@ -2232,13 +2501,9 @@ start_production() {
         return 1
     fi
     
-    # 总是重新复制配置文件
-    print_info "复制配置文件 (registry: $registry, tag: $tag)..."
-    if [[ -f "docker-compose.yml.example" ]]; then
-        cp docker-compose.yml.example docker-compose.yml
-        print_success "✓ 已复制 docker-compose.yml.example 到 docker-compose.yml"
-    else
-        print_error "docker-compose.yml.example 文件不存在"
+    # 总是重新生成生产配置文件以确保使用正确的registry和tag
+    print_info "生成生产配置文件 (使用 registry: $registry, tag: $tag)..."
+    if ! generate_production_config "$registry" "$tag"; then
         return 1
     fi
     
@@ -3041,7 +3306,8 @@ clean_all() {
     print_info "提示: 使用以下命令重新部署系统:"
     print_info "  1. ./build.sh create-env-prod intranet \"\" v0.3.6"
     print_info "  2. ./build.sh build-all \"\" v0.3.6"
-    print_info "  3. docker compose -f docker-compose.yml.example up -d"
+    print_info "  3. ./build.sh prod-generate \"\" v0.3.6"
+    print_info "  4. ./build.sh prod-up \"\" v0.3.6"
 }
 
 # 重置数据库（仅删除数据库相关数据卷）
@@ -3153,12 +3419,21 @@ show_help() {
     echo "  harbor-pull-all [registry] [tag]      - 从AI Harbor拉取所有镜像"
     echo
     echo "生产环境:"
+    echo "  prod-generate [registry] [tag]  - 生成生产环境配置"
     echo "  prod-deploy <host> [registry] [tag] - 部署到指定HOST（自动配置域名）"
     echo "  prod-up [registry] [tag]        - 启动生产环境"
     echo "  prod-down                       - 停止生产环境"
     echo "  prod-status                     - 查看状态"
     echo "  prod-logs [service] [--follow]  - 查看日志"
     echo "  generate-passwords [file] [--force] - 生成生产环境强密码"
+    echo
+    echo "配置生成命令:"
+    echo "  generate-configs [env] [domain] [auth] - 生成所有配置文件"
+    echo "    env: development, production, test (默认: development)"
+    echo "    domain: 域名 (默认: localhost)"
+    echo "    auth: local, ldap, oauth (默认: local)"
+    echo "  generate-nginx [env] [domain]       - 生成nginx配置"
+    echo "  generate-jupyterhub [env] [auth]    - 生成JupyterHub配置"
     echo
     echo "工具命令:"
     echo "  clean [tag] [--force]           - 清理镜像"
@@ -3185,23 +3460,26 @@ show_help() {
     echo "  $0 deps-push harbor.example.com/ai-infra v1.2.0        # 步骤3: 推送依赖镜像"
     echo
     echo "===================================================================================="
-    echo "🚀 生产节点运行实例 (启动服务):"
+    echo "🚀 生产节点运行实例 (生成配置和启动服务):"
     echo "===================================================================================="
     echo "  # 从AI Harbor拉取镜像完整部署流程"
     echo "  $0 harbor-pull-all aiharbor.msxf.local/aihpc v1.2.0    # 步骤1: 拉取所有镜像"
     echo "  $0 generate-passwords .env.prod --force                # 步骤2: 生成强密码"
-    echo "  docker compose -f docker-compose.yml.example up -d     # 步骤3: 启动所有服务"
+    echo "  $0 prod-generate \"\" v1.2.0                            # 步骤3: 生成docker-compose.yml"
+    echo "  docker compose up -d                                   # 步骤4: 启动所有服务"
     echo
     echo "  # 标准私有仓库部署流程"
     echo "  $0 generate-passwords .env.prod --force                # 步骤1: 生成强密码"
-    echo "  docker compose -f docker-compose.yml.example up -d     # 步骤2: 启动所有服务"
+    echo "  $0 prod-generate harbor.example.com/ai-infra v1.2.0    # 步骤2: 生成docker-compose.yml"
+    echo "  docker compose up -d                                   # 步骤3: 启动所有服务"
     echo
     echo "  # 快速启动 (生产配置已存在)"
     echo "  $0 prod-up harbor.example.com/ai-infra v1.2.0"
     echo
     echo "  # 本地镜像部署 (无需registry)"
     echo "  $0 generate-passwords .env.prod                        # 生成密码"
-    echo "  docker compose -f docker-compose.yml.example up -d     # 启动服务"
+    echo "  $0 prod-generate \"\" v1.2.0                            # 生成本地镜像配置"
+    echo "  docker compose up -d                                   # 启动服务"
     echo
     echo "  # 服务管理"
     echo "  $0 prod-status                                         # 查看服务状态"
@@ -3214,11 +3492,13 @@ show_help() {
     echo "  # 从AI Harbor快速获取镜像进行本地开发"
     echo "  $0 harbor-pull-services aiharbor.msxf.local/aihpc v1.2.0  # 拉取AI-Infra服务"
     echo "  $0 harbor-pull-deps aiharbor.msxf.local/aihpc             # 拉取依赖镜像"
-    echo "  docker compose -f docker-compose.yml.example up -d        # 启动服务"
+    echo "  $0 prod-generate \"\" v1.2.0                               # 生成本地配置"
+    echo "  docker compose up -d                                      # 启动服务"
     echo
     echo "  # 本地开发测试"
     echo "  $0 build-all test-v0.3.5                              # 构建测试版本"
-    echo "  docker compose -f docker-compose.yml.example up -d backend frontend  # 启动核心服务"
+    echo "  $0 prod-generate \"\" test-v0.3.5                      # 生成本地配置"
+    echo "  docker compose up -d backend frontend                 # 启动核心服务"
     echo
     echo "  # 单服务调试"
     echo "  $0 build backend test-debug                           # 构建调试版本"
@@ -3412,6 +3692,44 @@ main() {
             fi
             ;;
             
+        # 配置文件生成命令
+        "generate-configs")
+            local environment="${2:-development}"
+            local domain="${3:-localhost}"
+            local auth_type="${4:-local}"
+            
+            if generate_all_configs "$environment" "$domain" "$auth_type"; then
+                print_success "✓ 配置文件生成完成"
+            else
+                print_error "配置文件生成失败"
+                exit 1
+            fi
+            ;;
+            
+        "generate-nginx")
+            local environment="${2:-development}"
+            local domain="${3:-localhost}"
+            
+            if generate_nginx_config "$environment" "$domain"; then
+                print_success "✓ nginx配置文件生成完成"
+            else
+                print_error "nginx配置文件生成失败"
+                exit 1
+            fi
+            ;;
+            
+        "generate-jupyterhub")
+            local environment="${2:-development}"
+            local auth_type="${3:-local}"
+            
+            if generate_jupyterhub_config "$environment" "$auth_type"; then
+                print_success "✓ JupyterHub配置文件生成完成"
+            else
+                print_error "JupyterHub配置文件生成失败"
+                exit 1
+            fi
+            ;;
+            
         # 依赖镜像管理命令
         "deps-pull")
             if [[ -z "$2" ]]; then
@@ -3478,6 +3796,12 @@ main() {
                 print_error "生产环境依赖镜像拉取失败，停止推送操作"
                 exit 1
             fi
+            ;;
+            
+        # 生产环境部署命令
+        "prod-generate")
+            # registry 参数可以为空（使用本地镜像）
+            generate_production_config "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}"
             ;;
             
         "prod-deploy")
