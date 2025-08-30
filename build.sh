@@ -283,29 +283,94 @@ render_template() {
     
     print_info "渲染模板: $template_file -> $output_file"
     
-    # 读取模板内容
-    local template_content
-    template_content=$(<"$template_file")
-    
-    # 替换变量
-    template_content=$(echo "$template_content" | sed "s/{{BACKEND_HOST}}/${BACKEND_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{BACKEND_PORT}}/${BACKEND_PORT}/g")
-    template_content=$(echo "$template_content" | sed "s/{{FRONTEND_HOST}}/${FRONTEND_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{FRONTEND_PORT}}/${FRONTEND_PORT}/g")
-    template_content=$(echo "$template_content" | sed "s/{{JUPYTERHUB_HOST}}/${JUPYTERHUB_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{JUPYTERHUB_PORT}}/${JUPYTERHUB_PORT}/g")
-    template_content=$(echo "$template_content" | sed "s/{{EXTERNAL_SCHEME}}/${EXTERNAL_SCHEME}/g")
-    template_content=$(echo "$template_content" | sed "s/{{EXTERNAL_HOST}}/${EXTERNAL_HOST}/g")
-    template_content=$(echo "$template_content" | sed "s/{{GITEA_ALIAS_ADMIN_TO}}/${GITEA_ALIAS_ADMIN_TO}/g")
-    template_content=$(echo "$template_content" | sed "s/{{GITEA_ADMIN_EMAIL}}/${GITEA_ADMIN_EMAIL}/g")
-    
     # 创建输出目录
     local output_dir
     output_dir=$(dirname "$output_file")
     mkdir -p "$output_dir"
     
-    # 写入输出文件
-    echo "$template_content" > "$output_file"
+    # 使用Python渲染器来处理模板变量替换，避免shell sed的特殊字符问题
+    if [[ -f "$SCRIPT_DIR/scripts/template_renderer.py" ]]; then
+        python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_file" "$output_file"
+        if [[ $? -eq 0 ]]; then
+            print_success "✓ 模板渲染完成: $output_file"
+            return 0
+        else
+            print_warning "Python模板渲染失败，尝试shell方法..."
+        fi
+    fi
+    
+    # 备用方案：使用shell进行模板变量替换
+    local template_content
+    template_content=$(<"$template_file")
+    
+    # 设置所有模板变量的默认值
+    local BACKEND_HOST="${BACKEND_HOST:-backend}"
+    local BACKEND_PORT="${BACKEND_PORT:-8082}"
+    local FRONTEND_HOST="${FRONTEND_HOST:-frontend}"
+    local FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+    local JUPYTERHUB_HOST="${JUPYTERHUB_HOST:-jupyterhub}"
+    local JUPYTERHUB_PORT="${JUPYTERHUB_PORT:-8000}"
+    local EXTERNAL_SCHEME="${EXTERNAL_SCHEME:-http}"
+    local EXTERNAL_HOST="${EXTERNAL_HOST:-localhost}"
+    local GITEA_ALIAS_ADMIN_TO="${GITEA_ALIAS_ADMIN_TO:-admin@example.com}"
+    local GITEA_ADMIN_EMAIL="${GITEA_ADMIN_EMAIL:-admin@example.com}"
+    
+    # JupyterHub特定变量
+    local ENVIRONMENT="${ENVIRONMENT:-development}"
+    local AUTH_TYPE="${AUTH_TYPE:-local}"
+    local GENERATION_TIME="$(date)"
+    local JUPYTERHUB_HUB_PORT="${JUPYTERHUB_HUB_PORT:-8081}"
+    local JUPYTERHUB_BASE_URL="${JUPYTERHUB_BASE_URL:-/jupyter/}"
+    local JUPYTERHUB_HUB_CONNECT_HOST="${JUPYTERHUB_HUB_CONNECT_HOST:-jupyterhub}"
+    local JUPYTERHUB_PUBLIC_URL="${JUPYTERHUB_PUBLIC_URL:-http://localhost:8080/jupyter/}"
+    local CONFIGPROXY_AUTH_TOKEN="${CONFIGPROXY_AUTH_TOKEN:-ai-infra-proxy-token-dev}"
+    local JUPYTERHUB_DB_URL="${JUPYTERHUB_DB_URL:-sqlite:///jupyterhub.sqlite}"
+    local JUPYTERHUB_LOG_LEVEL="${JUPYTERHUB_LOG_LEVEL:-INFO}"
+    local SESSION_TIMEOUT_DAYS="${SESSION_TIMEOUT_DAYS:-7}"
+    local SINGLEUSER_IMAGE="${SINGLEUSER_IMAGE:-ai-infra-singleuser:latest}"
+    local DOCKER_NETWORK="${DOCKER_NETWORK:-ai-infra-matrix_default}"
+    local JUPYTERHUB_MEM_LIMIT="${JUPYTERHUB_MEM_LIMIT:-2G}"
+    local JUPYTERHUB_CPU_LIMIT="${JUPYTERHUB_CPU_LIMIT:-1.0}"
+    local JUPYTERHUB_MEM_GUARANTEE="${JUPYTERHUB_MEM_GUARANTEE:-1G}"
+    local JUPYTERHUB_CPU_GUARANTEE="${JUPYTERHUB_CPU_GUARANTEE:-0.5}"
+    local USER_STORAGE_CAPACITY="${USER_STORAGE_CAPACITY:-10Gi}"
+    local JUPYTERHUB_STORAGE_CLASS="${JUPYTERHUB_STORAGE_CLASS:-default}"
+    local SHARED_STORAGE_PATH="${SHARED_STORAGE_PATH:-/srv/shared-notebooks}"
+    local AI_INFRA_BACKEND_URL="${AI_INFRA_BACKEND_URL:-http://backend:8082}"
+    local KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-infra-users}"
+    local KUBERNETES_SERVICE_ACCOUNT="${KUBERNETES_SERVICE_ACCOUNT:-ai-infra-matrix-jupyterhub}"
+    local JUPYTERHUB_START_TIMEOUT="${JUPYTERHUB_START_TIMEOUT:-300}"
+    local JUPYTERHUB_HTTP_TIMEOUT="${JUPYTERHUB_HTTP_TIMEOUT:-30}"
+    local JWT_SECRET="${JWT_SECRET:-}"
+    local JUPYTERHUB_AUTO_LOGIN="${JUPYTERHUB_AUTO_LOGIN:-False}"
+    local AUTH_REFRESH_AGE="${AUTH_REFRESH_AGE:-3600}"
+    local ADMIN_USERS="${ADMIN_USERS:-'admin'}"
+    
+    
+    # 备用shell方法：只处理基础变量替换，使用envsubst
+    if command -v envsubst >/dev/null 2>&1; then
+        # 导出所有变量供envsubst使用
+        export BACKEND_HOST BACKEND_PORT FRONTEND_HOST FRONTEND_PORT
+        export JUPYTERHUB_HOST JUPYTERHUB_PORT EXTERNAL_SCHEME EXTERNAL_HOST
+        export GITEA_ALIAS_ADMIN_TO GITEA_ADMIN_EMAIL
+        export ENVIRONMENT AUTH_TYPE GENERATION_TIME
+        export JUPYTERHUB_HUB_PORT JUPYTERHUB_BASE_URL JUPYTERHUB_HUB_CONNECT_HOST
+        export JUPYTERHUB_PUBLIC_URL CONFIGPROXY_AUTH_TOKEN JUPYTERHUB_DB_URL
+        export JUPYTERHUB_LOG_LEVEL SESSION_TIMEOUT_DAYS SINGLEUSER_IMAGE
+        export DOCKER_NETWORK JUPYTERHUB_MEM_LIMIT JUPYTERHUB_CPU_LIMIT
+        export JUPYTERHUB_MEM_GUARANTEE JUPYTERHUB_CPU_GUARANTEE
+        export USER_STORAGE_CAPACITY JUPYTERHUB_STORAGE_CLASS SHARED_STORAGE_PATH
+        export AI_INFRA_BACKEND_URL KUBERNETES_NAMESPACE KUBERNETES_SERVICE_ACCOUNT
+        export JUPYTERHUB_START_TIMEOUT JUPYTERHUB_HTTP_TIMEOUT JWT_SECRET
+        export JUPYTERHUB_AUTO_LOGIN AUTH_REFRESH_AGE ADMIN_USERS
+        export AUTH_CONFIG SPAWNER_CONFIG SHARED_STORAGE_CONFIG ADDITIONAL_CONFIG
+        
+        echo "$template_content" | envsubst > "$output_file"
+    else
+        print_warning "envsubst不可用，使用基础字符串替换"
+        echo "$template_content" > "$output_file"
+    fi
+    
     print_success "✓ 模板渲染完成: $output_file"
 }
 
@@ -335,6 +400,143 @@ render_nginx_templates() {
     
     print_success "✓ Nginx 模板渲染完成"
     echo
+}
+
+# 渲染JupyterHub配置模板
+render_jupyterhub_templates() {
+    print_info "===========================================" 
+    print_info "渲染 JupyterHub 配置模板"
+    print_info "==========================================="
+    
+    # 加载环境变量
+    load_environment_variables
+    
+    local template_dir="$SCRIPT_DIR/src/jupyterhub/templates"
+    local output_dir="$SCRIPT_DIR/src/jupyterhub"
+    
+    if [[ ! -d "$template_dir" ]]; then
+        print_error "JupyterHub模板目录不存在: $template_dir"
+        return 1
+    fi
+    
+    # 设置JupyterHub特定的环境变量
+    setup_jupyterhub_variables
+    
+    # 读取和渲染子模板内容
+    local auth_config=""
+    local spawner_config=""
+    local shared_storage_config=""
+    local additional_config=""
+    
+    # 根据环境和配置选择认证方式
+    if [[ "${USE_CUSTOM_AUTH:-false}" == "true" ]]; then
+        if [[ -f "$template_dir/auth_backend.py.tpl" ]]; then
+            # 先渲染认证模板到临时文件，再读取内容
+            local temp_auth_file="$output_dir/.temp_auth_config.py"
+            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/auth_backend.py.tpl" "$temp_auth_file"
+            if [[ -f "$temp_auth_file" ]]; then
+                auth_config=$(<"$temp_auth_file")
+                rm -f "$temp_auth_file"
+            fi
+        fi
+    else
+        if [[ -f "$template_dir/auth_local.py.tpl" ]]; then
+            # 先渲染认证模板到临时文件，再读取内容
+            local temp_auth_file="$output_dir/.temp_auth_config.py"
+            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/auth_local.py.tpl" "$temp_auth_file"
+            if [[ -f "$temp_auth_file" ]]; then
+                auth_config=$(<"$temp_auth_file")
+                rm -f "$temp_auth_file"
+            fi
+        fi
+    fi
+    
+    # 根据环境选择Spawner配置
+    if [[ "${ENVIRONMENT:-development}" == "production" || "${JUPYTERHUB_SPAWNER:-docker}" == "kubernetes" ]]; then
+        if [[ -f "$template_dir/spawner_kubernetes.py.tpl" ]]; then
+            # 先渲染Spawner模板到临时文件，再读取内容
+            local temp_spawner_file="$output_dir/.temp_spawner_config.py"
+            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/spawner_kubernetes.py.tpl" "$temp_spawner_file"
+            if [[ -f "$temp_spawner_file" ]]; then
+                spawner_config=$(<"$temp_spawner_file")
+                rm -f "$temp_spawner_file"
+            fi
+            
+            # 处理共享存储配置
+            if [[ -f "$template_dir/shared_storage_k8s.py.tpl" ]]; then
+                local temp_storage_file="$output_dir/.temp_storage_config.py"
+                python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/shared_storage_k8s.py.tpl" "$temp_storage_file"
+                if [[ -f "$temp_storage_file" ]]; then
+                    shared_storage_config=$(<"$temp_storage_file")
+                    rm -f "$temp_storage_file"
+                fi
+            fi
+        fi
+    else
+        if [[ -f "$template_dir/spawner_docker.py.tpl" ]]; then
+            # 先渲染Spawner模板到临时文件，再读取内容
+            local temp_spawner_file="$output_dir/.temp_spawner_config.py"
+            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/spawner_docker.py.tpl" "$temp_spawner_file"
+            if [[ -f "$temp_spawner_file" ]]; then
+                spawner_config=$(<"$temp_spawner_file")
+                rm -f "$temp_spawner_file"
+            fi
+        fi
+    fi
+    
+    
+    # 设置模板变量环境变量供Python渲染器使用
+    export AUTH_CONFIG="$auth_config"
+    export SPAWNER_CONFIG="$spawner_config"
+    export SHARED_STORAGE_CONFIG="$shared_storage_config"
+    export ADDITIONAL_CONFIG="$additional_config"
+    
+    # 渲染主配置文件
+    if [[ -f "$template_dir/jupyterhub_config.py.tpl" ]]; then
+        python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_generated.py"
+    fi
+    
+    # 生成不同环境的配置文件
+    ENVIRONMENT="development" AUTH_TYPE="local" python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_development_generated.py"
+    ENVIRONMENT="production" AUTH_TYPE="backend" USE_CUSTOM_AUTH="true" JUPYTERHUB_SPAWNER="kubernetes" python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_production_generated.py"
+    
+    print_success "✓ JupyterHub 模板渲染完成"
+    echo
+}
+
+# 设置JupyterHub特定变量
+setup_jupyterhub_variables() {
+    # 从环境变量或.env文件中读取JupyterHub配置
+    ENVIRONMENT="${ENVIRONMENT:-${ENV_ENVIRONMENT:-development}}"
+    AUTH_TYPE="${AUTH_TYPE:-${ENV_AUTH_TYPE:-local}}"
+    JUPYTERHUB_HUB_PORT="${JUPYTERHUB_HUB_PORT:-${ENV_JUPYTERHUB_HUB_PORT:-8081}}"
+    JUPYTERHUB_BASE_URL="${JUPYTERHUB_BASE_URL:-${ENV_JUPYTERHUB_BASE_URL:-/jupyter/}}"
+    JUPYTERHUB_HUB_CONNECT_HOST="${JUPYTERHUB_HUB_CONNECT_HOST:-${ENV_JUPYTERHUB_HUB_CONNECT_HOST:-jupyterhub}}"
+    JUPYTERHUB_PUBLIC_URL="${JUPYTERHUB_PUBLIC_URL:-${ENV_JUPYTERHUB_PUBLIC_URL:-http://localhost:8080/jupyter/}}"
+    CONFIGPROXY_AUTH_TOKEN="${CONFIGPROXY_AUTH_TOKEN:-${ENV_CONFIGPROXY_AUTH_TOKEN:-}}"
+    JUPYTERHUB_DB_URL="${JUPYTERHUB_DB_URL:-${ENV_JUPYTERHUB_DB_URL:-sqlite:///jupyterhub.sqlite}}"
+    JUPYTERHUB_LOG_LEVEL="${JUPYTERHUB_LOG_LEVEL:-${ENV_JUPYTERHUB_LOG_LEVEL:-INFO}}"
+    SESSION_TIMEOUT_DAYS="${SESSION_TIMEOUT_DAYS:-${ENV_SESSION_TIMEOUT_DAYS:-7}}"
+    SINGLEUSER_IMAGE="${SINGLEUSER_IMAGE:-${ENV_SINGLEUSER_IMAGE:-ai-infra-singleuser:latest}}"
+    DOCKER_NETWORK="${DOCKER_NETWORK:-${ENV_DOCKER_NETWORK:-ai-infra-matrix_default}}"
+    JUPYTERHUB_MEM_LIMIT="${JUPYTERHUB_MEM_LIMIT:-${ENV_JUPYTERHUB_MEM_LIMIT:-2G}}"
+    JUPYTERHUB_CPU_LIMIT="${JUPYTERHUB_CPU_LIMIT:-${ENV_JUPYTERHUB_CPU_LIMIT:-1.0}}"
+    JUPYTERHUB_MEM_GUARANTEE="${JUPYTERHUB_MEM_GUARANTEE:-${ENV_JUPYTERHUB_MEM_GUARANTEE:-1G}}"
+    JUPYTERHUB_CPU_GUARANTEE="${JUPYTERHUB_CPU_GUARANTEE:-${ENV_JUPYTERHUB_CPU_GUARANTEE:-0.5}}"
+    USER_STORAGE_CAPACITY="${USER_STORAGE_CAPACITY:-${ENV_USER_STORAGE_CAPACITY:-10Gi}}"
+    JUPYTERHUB_STORAGE_CLASS="${JUPYTERHUB_STORAGE_CLASS:-${ENV_JUPYTERHUB_STORAGE_CLASS:-default}}"
+    SHARED_STORAGE_PATH="${SHARED_STORAGE_PATH:-${ENV_SHARED_STORAGE_PATH:-/srv/shared-notebooks}}"
+    AI_INFRA_BACKEND_URL="${AI_INFRA_BACKEND_URL:-${ENV_AI_INFRA_BACKEND_URL:-http://backend:8082}}"
+    KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-${ENV_KUBERNETES_NAMESPACE:-ai-infra-users}}"
+    KUBERNETES_SERVICE_ACCOUNT="${KUBERNETES_SERVICE_ACCOUNT:-${ENV_KUBERNETES_SERVICE_ACCOUNT:-ai-infra-matrix-jupyterhub}}"
+    JUPYTERHUB_START_TIMEOUT="${JUPYTERHUB_START_TIMEOUT:-${ENV_JUPYTERHUB_START_TIMEOUT:-300}}"
+    JUPYTERHUB_HTTP_TIMEOUT="${JUPYTERHUB_HTTP_TIMEOUT:-${ENV_JUPYTERHUB_HTTP_TIMEOUT:-30}}"
+    JWT_SECRET="${JWT_SECRET:-${ENV_JWT_SECRET:-}}"
+    JUPYTERHUB_AUTO_LOGIN="${JUPYTERHUB_AUTO_LOGIN:-${ENV_JUPYTERHUB_AUTO_LOGIN:-False}}"
+    AUTH_REFRESH_AGE="${AUTH_REFRESH_AGE:-${ENV_AUTH_REFRESH_AGE:-3600}}"
+    ADMIN_USERS="${ADMIN_USERS:-${ENV_ADMIN_USERS:-'admin'}}"
+    USE_CUSTOM_AUTH="${USE_CUSTOM_AUTH:-${ENV_USE_CUSTOM_AUTH:-false}}"
+    JUPYTERHUB_SPAWNER="${JUPYTERHUB_SPAWNER:-${ENV_JUPYTERHUB_SPAWNER:-docker}}"
 }
 
 # ==========================================
@@ -1462,13 +1664,18 @@ build_service() {
     # 构建镜像
     print_info "  → 正在构建镜像..."
     
-    # 特殊处理nginx的构建上下文 - 需要访问shared目录
+    # 特殊处理nginx和jupyterhub的构建上下文
     local build_context
     if [[ "$service" == "nginx" ]]; then
         # nginx构建前先渲染模板
         print_info "  → nginx构建前渲染配置模板..."
         render_nginx_templates
         build_context="$SCRIPT_DIR"  # 使用项目根目录作为构建上下文
+    elif [[ "$service" == "jupyterhub" ]]; then
+        # jupyterhub构建前先渲染配置模板
+        print_info "  → jupyterhub构建前渲染配置模板..."
+        render_jupyterhub_templates
+        build_context="$SCRIPT_DIR/$service_path"
     else
         build_context="$SCRIPT_DIR/$service_path"
     fi
@@ -3475,6 +3682,7 @@ show_help() {
     echo "  verify <registry> [tag]         - 验证镜像"
     echo "  create-env [dev|prod] [--force] - 创建环境配置"
     echo "  validate-env                    - 校验环境配置"
+    echo "  render-templates [nginx|jupyterhub|all] - 渲染配置模板"
     echo "  version                         - 显示版本"
     echo "  help                            - 显示帮助"
     echo
@@ -3972,6 +4180,26 @@ main() {
                 force="true"
             fi
             reset_database "$force"
+            ;;
+            
+        "render-templates")
+            case "${2:-all}" in
+                "nginx")
+                    render_nginx_templates
+                    ;;
+                "jupyterhub")
+                    render_jupyterhub_templates
+                    ;;
+                "all")
+                    render_nginx_templates
+                    render_jupyterhub_templates
+                    ;;
+                *)
+                    print_error "未知的模板类型: $2"
+                    print_info "可用模板类型: nginx, jupyterhub, all"
+                    exit 1
+                    ;;
+            esac
             ;;
             
         "version")
