@@ -15,3 +15,4 @@ docker-compose.test.yml
 .env.prod.back*
 .env
 src/jupyterhub/jupyterhub_config_*
+src/nginx/conf.d/includes/gitea.conf
