@@ -10,11 +10,8 @@
         add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
 
-    # JupyterHub 入口（/jupyter 与 /jupyter/）
-    location = /jupyter {
-        add_header X-Frame-Options SAMEORIGIN always;
-        return 302 $scheme://$http_host/jupyter/;
-    }
+    # JupyterHub 前端入口交给 React 路由处理
+    # 注释掉 location = /jupyter 让前端路由处理 /jupyter 页面（iframe展示）
 
     location ^~ /jupyter/ {
         proxy_pass http://jupyterhub;
@@ -32,7 +29,7 @@
         proxy_send_timeout 86400s;
         proxy_hide_header Content-Security-Policy;
         proxy_hide_header X-Frame-Options;
-        add_header Content-Security-Policy "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://192.168.18.222:8080;" always;
+        add_header Content-Security-Policy "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://192.168.18.222:8080 http://172.20.10.11:8080;" always;
         add_header X-Frame-Options SAMEORIGIN always;
     }
 

@@ -408,6 +408,13 @@ c.JupyterHub.extra_handlers = [
     (r'/auto-login', AutoLoginHandler),
 ]
 
+# 配置 Tornado 设置以支持 iframe 嵌入
+c.JupyterHub.tornado_settings = {
+    'headers': {
+        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://172.20.10.11:8080;",
+    },
+}
+
 # =========================
 # 动态Spawner配置
 # =========================

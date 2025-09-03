@@ -17,7 +17,7 @@ def get_template_variables():
         'BACKEND_HOST': 'backend',
         'BACKEND_PORT': '8082',
         'FRONTEND_HOST': 'frontend', 
-        'FRONTEND_PORT': '3000',
+        'FRONTEND_PORT': '80',
         'JUPYTERHUB_HOST': 'jupyterhub',
         'JUPYTERHUB_PORT': '8000',
         'EXTERNAL_SCHEME': 'http',

@@ -55,6 +55,11 @@ server {
         proxy_hide_header Access-Control-Allow-Credentials;
     }
 
+    # 明确处理 /jupyter 路径，重定向到前端React路由处理（iframe页面）
+    location = /jupyter {
+        return 302 $scheme://$http_host/#/jupyter;
+    }
+
     # 按模块拆分：Gitea 与 JupyterHub 路由在独立文件中，便于单独调试
     include /etc/nginx/conf.d/includes/gitea.conf;
     include /etc/nginx/conf.d/includes/jupyterhub.conf;

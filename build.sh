@@ -307,7 +307,7 @@ render_template() {
     local BACKEND_HOST="${BACKEND_HOST:-backend}"
     local BACKEND_PORT="${BACKEND_PORT:-8082}"
     local FRONTEND_HOST="${FRONTEND_HOST:-frontend}"
-    local FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+    local FRONTEND_PORT="${FRONTEND_PORT:-80}"
     local JUPYTERHUB_HOST="${JUPYTERHUB_HOST:-jupyterhub}"
     local JUPYTERHUB_PORT="${JUPYTERHUB_PORT:-8000}"
     local EXTERNAL_SCHEME="${EXTERNAL_SCHEME:-http}"

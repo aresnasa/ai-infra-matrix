@@ -47,5 +47,13 @@ c.JupyterHub.cookie_max_age_days = {{SESSION_TIMEOUT_DAYS}}
 # Admin users
 c.Authenticator.admin_users = {{{ADMIN_USERS}}}
 
+# Iframe support for embedding JupyterHub
+c.JupyterHub.tornado_settings = {
+    'headers': {
+        'X-Frame-Options': 'SAMEORIGIN',
+        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://172.20.10.11:8080;"
+    }
+}
+
 # Additional environment-specific configuration
 {{ADDITIONAL_CONFIG}}
