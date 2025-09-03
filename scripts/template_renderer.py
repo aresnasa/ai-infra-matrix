@@ -22,7 +22,7 @@ def get_template_variables():
         'JUPYTERHUB_PORT': '8000',
         'EXTERNAL_SCHEME': 'http',
         'EXTERNAL_HOST': 'localhost',
-        'GITEA_ALIAS_ADMIN_TO': 'admin@example.com',
+        'GITEA_ALIAS_ADMIN_TO': 'admin',
         'GITEA_ADMIN_EMAIL': 'admin@example.com',
         
         # JupyterHub特定变量

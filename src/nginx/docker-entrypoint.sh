@@ -26,6 +26,9 @@ echo "   GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL}"
 # 替换配置文件中的环境变量
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/\${GITEA_ALIAS_ADMIN_TO}/${GITEA_ALIAS_ADMIN_TO}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/\${GITEA_ADMIN_EMAIL}/${GITEA_ADMIN_EMAIL}/g" {} \;
+# 同时处理模板渲染后可能遗留的双大括号格式
+find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{GITEA_ALIAS_ADMIN_TO}}/${GITEA_ALIAS_ADMIN_TO}/g" {} \;
+find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{GITEA_ADMIN_EMAIL}}/${GITEA_ADMIN_EMAIL}/g" {} \;
 
 echo "✅ 环境变量替换完成"
 
