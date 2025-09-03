@@ -14,3 +14,4 @@ docker-compose.test.yml
 *.env.backup.*
 .env.prod.back*
 .env
+src/jupyterhub/jupyterhub_config_*
