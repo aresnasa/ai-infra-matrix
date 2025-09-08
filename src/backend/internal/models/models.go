@@ -687,3 +687,30 @@ type UserNavigationConfig struct {
 func (UserNavigationConfig) TableName() string {
 	return "user_navigation_configs"
 }
+
+// RegistrationApproval 注册审批表
+type RegistrationApproval struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	UserID      uint      `json:"user_id" gorm:"not null;index"`
+	Username    string    `json:"username" gorm:"not null;size:50"`
+	Email       string    `json:"email" gorm:"not null;size:100"`
+	Department  string    `json:"department" gorm:"size:100"`
+	RoleTemplate string   `json:"role_template" gorm:"size:50"`
+	Status      string    `json:"status" gorm:"not null;default:'pending';size:20"` // pending, approved, rejected
+	ApprovedBy  *uint     `json:"approved_by,omitempty" gorm:"index"`
+	ApprovedAt  *time.Time `json:"approved_at,omitempty"`
+	RejectedBy  *uint     `json:"rejected_by,omitempty" gorm:"index"`
+	RejectedAt  *time.Time `json:"rejected_at,omitempty"`
+	RejectReason string   `json:"reject_reason" gorm:"size:500"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	
+	// 关联关系
+	User       User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Approver   User `json:"approver,omitempty" gorm:"foreignKey:ApprovedBy"`
+	Rejector   User `json:"rejector,omitempty" gorm:"foreignKey:RejectedBy"`
+}
+
+func (RegistrationApproval) TableName() string {
+	return "registration_approvals"
+}

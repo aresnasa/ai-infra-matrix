@@ -11,10 +11,16 @@ import (
 	"gorm.io/gorm"
 )
 
-type UserService struct{}
+type UserService struct {
+	ldapService *LDAPService
+	rbacService *RBACService
+}
 
 func NewUserService() *UserService {
-	return &UserService{}
+	return &UserService{
+		ldapService: NewLDAPService(database.DB),
+		rbacService: NewRBACService(database.DB),
+	}
 }
 
 // Register 用户注册
@@ -27,6 +33,39 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 		return nil, errors.New("username or email already exists")
 	}
 
+	// LDAP验证：检查用户是否在LDAP中存在
+	ldapUser, err := s.ldapService.AuthenticateUser(req.Username, req.Password)
+	if err != nil {
+		return nil, errors.New("LDAP验证失败: 用户不存在或密码错误")
+	}
+
+	// 如果需要审批，创建审批记录
+	if req.RequiresApproval {
+		approval := &models.RegistrationApproval{
+			Username:     req.Username,
+			Email:        req.Email,
+			Department:   req.Department,
+			RoleTemplate: req.RoleTemplate,
+			Status:       "pending",
+		}
+		
+		if err := db.Create(approval).Error; err != nil {
+			return nil, errors.New("创建注册审批记录失败")
+		}
+		
+		// 返回用户对象但标记为未激活
+		user := &models.User{
+			Username:     req.Username,
+			Email:        req.Email,
+			Password:     "", // 密码暂时不设置
+			IsActive:     false,
+			AuthSource:   "ldap",
+			DashboardRole: req.Role,
+		}
+		return user, nil
+	}
+
+	// 直接注册流程
 	// 加密密码
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -34,15 +73,37 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 	}
 
 	user := &models.User{
-		Username:   req.Username,
-		Email:      req.Email,
-		Password:   string(hashedPassword),
-		IsActive:   true,
-		AuthSource: "local", // 设置认证源为本地
+		Username:      req.Username,
+		Email:         req.Email,
+		Password:      string(hashedPassword),
+		IsActive:      true,
+		AuthSource:    "ldap", // 设置认证源为LDAP
+		DashboardRole: req.Role,
 	}
 
-	if err := db.Create(user).Error; err != nil {
+	// 开始事务
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Create(user).Error; err != nil {
+		tx.Rollback()
 		return nil, err
+	}
+
+	// 如果指定了角色模板，为用户分配角色
+	if req.RoleTemplate != "" {
+		if err := s.rbacService.AssignRoleToUser(user.ID, req.RoleTemplate); err != nil {
+			tx.Rollback()
+			return nil, errors.New("分配角色模板失败: " + err.Error())
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, errors.New("提交事务失败")
 	}
 
 	return user, nil
