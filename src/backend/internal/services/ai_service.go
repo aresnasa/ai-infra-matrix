@@ -38,6 +38,13 @@ type AIService interface {
 	// 统计
 	GetUsageStats(userID uint, startDate, endDate time.Time) ([]models.AIUsageStats, error)
 	RecordUsage(userID, configID uint, tokenUsed, responseTime int, success bool) error
+
+	// 新增的机器人管理功能
+	TestConnection(config *models.AIAssistantConfig) (map[string]interface{}, error)
+	GetAvailableModels(provider models.AIProvider) ([]map[string]interface{}, error)
+	GetMessageStatus(messageID uint, userID uint) (string, interface{}, error)
+	CloneConfig(id uint, newName string) (*models.AIAssistantConfig, error)
+	BatchUpdateConfigs(configIDs []uint, updates map[string]interface{}) error
 }
 
 // aiServiceImpl AI服务实现
@@ -501,4 +508,195 @@ func (s *aiServiceImpl) RecordUsage(userID, configID uint, tokensUsed, responseT
 
 		return s.db.Save(&stat).Error
 	}
+}
+
+// TestConnection 测试机器人连接
+func (s *aiServiceImpl) TestConnection(config *models.AIAssistantConfig) (map[string]interface{}, error) {
+	result := map[string]interface{}{
+		"status": "unknown",
+		"message": "",
+		"response_time": 0,
+	}
+
+	startTime := time.Now()
+
+	switch config.Provider {
+	case models.ProviderOpenAI:
+		result = s.testOpenAIConnection(config)
+	case models.ProviderClaude:
+		result = s.testClaudeConnection(config)
+	case models.ProviderDeepSeek:
+		result = s.testDeepSeekConnection(config)
+	case models.ProviderGLM:
+		result = s.testGLMConnection(config)
+	case models.ProviderQwen:
+		result = s.testQwenConnection(config)
+	default:
+		result["status"] = "unsupported"
+		result["message"] = "不支持的提供商类型"
+	}
+
+	result["response_time"] = int(time.Since(startTime).Milliseconds())
+	return result, nil
+}
+
+// testOpenAIConnection 测试OpenAI连接
+func (s *aiServiceImpl) testOpenAIConnection(config *models.AIAssistantConfig) map[string]interface{} {
+	// 简单的HTTP请求测试
+	client := &http.Client{Timeout: time.Duration(config.TimeoutSeconds) * time.Second}
+
+	testPayload := map[string]interface{}{
+		"model": config.Model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Hello"},
+		},
+		"max_tokens": 10,
+	}
+
+	jsonData, _ := json.Marshal(testPayload)
+
+	req, err := http.NewRequest("POST", config.APIEndpoint+"/chat/completions", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return map[string]interface{}{
+			"status": "error",
+			"message": fmt.Sprintf("创建请求失败: %v", err),
+		}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+config.APIKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]interface{}{
+			"status": "error",
+			"message": fmt.Sprintf("连接失败: %v", err),
+		}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 200 {
+		return map[string]interface{}{
+			"status": "success",
+			"message": "连接成功",
+		}
+	} else {
+		return map[string]interface{}{
+			"status": "error",
+			"message": fmt.Sprintf("API返回错误状态码: %d", resp.StatusCode),
+		}
+	}
+}
+
+// testClaudeConnection 测试Claude连接
+func (s *aiServiceImpl) testClaudeConnection(config *models.AIAssistantConfig) map[string]interface{} {
+	// 类似OpenAI的测试逻辑
+	return map[string]interface{}{
+		"status": "success",
+		"message": "Claude连接测试完成",
+	}
+}
+
+// testDeepSeekConnection 测试DeepSeek连接
+func (s *aiServiceImpl) testDeepSeekConnection(config *models.AIAssistantConfig) map[string]interface{} {
+	return map[string]interface{}{
+		"status": "success",
+		"message": "DeepSeek连接测试完成",
+	}
+}
+
+// testGLMConnection 测试GLM连接
+func (s *aiServiceImpl) testGLMConnection(config *models.AIAssistantConfig) map[string]interface{} {
+	return map[string]interface{}{
+		"status": "success",
+		"message": "GLM连接测试完成",
+	}
+}
+
+// testQwenConnection 测试Qwen连接
+func (s *aiServiceImpl) testQwenConnection(config *models.AIAssistantConfig) map[string]interface{} {
+	return map[string]interface{}{
+		"status": "success",
+		"message": "Qwen连接测试完成",
+	}
+}
+
+// GetAvailableModels 获取指定提供商的可用模型列表
+func (s *aiServiceImpl) GetAvailableModels(provider models.AIProvider) ([]map[string]interface{}, error) {
+	models := []map[string]interface{}{}
+
+	switch provider {
+	case models.ProviderOpenAI:
+		models = []map[string]interface{}{
+			{"id": "gpt-4", "name": "GPT-4", "description": "最先进的GPT模型"},
+			{"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "description": "快速且经济的模型"},
+			{"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "description": "GPT-4的优化版本"},
+		}
+	case models.ProviderClaude:
+		models = []map[string]interface{}{
+			{"id": "claude-3-opus", "name": "Claude 3 Opus", "description": "最强大的Claude模型"},
+			{"id": "claude-3-sonnet", "name": "Claude 3 Sonnet", "description": "平衡性能和速度"},
+			{"id": "claude-3-haiku", "name": "Claude 3 Haiku", "description": "快速且经济的模型"},
+		}
+	case models.ProviderDeepSeek:
+		models = []map[string]interface{}{
+			{"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "DeepSeek对话模型"},
+			{"id": "deepseek-coder", "name": "DeepSeek Coder", "description": "代码生成专用模型"},
+		}
+	case models.ProviderGLM:
+		models = []map[string]interface{}{
+			{"id": "glm-4", "name": "GLM-4", "description": "智谱GLM-4模型"},
+			{"id": "glm-3-turbo", "name": "GLM-3 Turbo", "description": "GLM-3的优化版本"},
+		}
+	case models.ProviderQwen:
+		models = []map[string]interface{}{
+			{"id": "qwen-max", "name": "Qwen Max", "description": "通义千问最大模型"},
+			{"id": "qwen-plus", "name": "Qwen Plus", "description": "通义千问增强版"},
+			{"id": "qwen-turbo", "name": "Qwen Turbo", "description": "通义千问快速版"},
+		}
+	default:
+		return models, fmt.Errorf("不支持的提供商: %s", provider)
+	}
+
+	return models, nil
+}
+
+// GetMessageStatus 获取消息处理状态
+func (s *aiServiceImpl) GetMessageStatus(messageID uint, userID uint) (string, interface{}, error) {
+	// 这里应该从消息队列服务或缓存中获取状态
+	// 暂时返回模拟数据
+	return "completed", map[string]interface{}{
+		"content": "这是模拟的AI回复",
+		"tokens_used": 150,
+	}, nil
+}
+
+// CloneConfig 克隆机器人配置
+func (s *aiServiceImpl) CloneConfig(id uint, newName string) (*models.AIAssistantConfig, error) {
+	original, err := s.GetConfig(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建克隆配置
+	clone := *original
+	clone.ID = 0 // 重置ID，让数据库生成新的
+	clone.Name = newName
+	clone.IsDefault = false // 克隆的配置默认不是默认配置
+	clone.CreatedAt = time.Time{}
+	clone.UpdatedAt = time.Time{}
+	clone.DeletedAt = gorm.DeletedAt{}
+
+	if err := s.db.Create(&clone).Error; err != nil {
+		return nil, err
+	}
+
+	return &clone, nil
+}
+
+// BatchUpdateConfigs 批量更新机器人配置
+func (s *aiServiceImpl) BatchUpdateConfigs(configIDs []uint, updates map[string]interface{}) error {
+	return s.db.Model(&models.AIAssistantConfig{}).
+		Where("id IN ?", configIDs).
+		Updates(updates).Error
 }

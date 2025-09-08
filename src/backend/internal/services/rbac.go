@@ -423,6 +423,67 @@ func (s *RBACService) CreatePermission(resource, verb, scope, description string
 	return &permission, nil
 }
 
+// 角色模板定义
+type RoleTemplate struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Permissions []models.Permission `json:"permissions"`
+	IsSystem    bool   `json:"is_system"`
+}
+
+// 预定义角色模板
+var RoleTemplates = map[string]RoleTemplate{
+	"model-developer": {
+		Name:        "model-developer",
+		Description: "模型开发人员 - 主要关注Jupyter环境",
+		Permissions: []models.Permission{
+			{Resource: "jupyterhub", Verb: "create", Scope: "*"},
+			{Resource: "jupyterhub", Verb: "read", Scope: "*"},
+			{Resource: "jupyterhub", Verb: "update", Scope: "own"},
+			{Resource: "jupyterhub", Verb: "delete", Scope: "own"},
+			{Resource: "projects", Verb: "read", Scope: "*"},
+			{Resource: "projects", Verb: "create", Scope: "own"},
+		},
+		IsSystem: true,
+	},
+	"sre": {
+		Name:        "sre",
+		Description: "SRE工程师 - 关注SaltStack、Ansible和K8s",
+		Permissions: []models.Permission{
+			{Resource: "saltstack", Verb: "create", Scope: "*"},
+			{Resource: "saltstack", Verb: "read", Scope: "*"},
+			{Resource: "saltstack", Verb: "update", Scope: "*"},
+			{Resource: "saltstack", Verb: "delete", Scope: "*"},
+			{Resource: "ansible", Verb: "create", Scope: "*"},
+			{Resource: "ansible", Verb: "read", Scope: "*"},
+			{Resource: "ansible", Verb: "update", Scope: "*"},
+			{Resource: "ansible", Verb: "delete", Scope: "*"},
+			{Resource: "kubernetes", Verb: "create", Scope: "*"},
+			{Resource: "kubernetes", Verb: "read", Scope: "*"},
+			{Resource: "kubernetes", Verb: "update", Scope: "*"},
+			{Resource: "kubernetes", Verb: "delete", Scope: "*"},
+			{Resource: "hosts", Verb: "read", Scope: "*"},
+		},
+		IsSystem: true,
+	},
+	"engineer": {
+		Name:        "engineer",
+		Description: "工程研发人员 - 主要关注K8s环境",
+		Permissions: []models.Permission{
+			{Resource: "kubernetes", Verb: "create", Scope: "*"},
+			{Resource: "kubernetes", Verb: "read", Scope: "*"},
+			{Resource: "kubernetes", Verb: "update", Scope: "*"},
+			{Resource: "kubernetes", Verb: "delete", Scope: "*"},
+			{Resource: "projects", Verb: "create", Scope: "*"},
+			{Resource: "projects", Verb: "read", Scope: "*"},
+			{Resource: "projects", Verb: "update", Scope: "own"},
+			{Resource: "projects", Verb: "delete", Scope: "own"},
+			{Resource: "hosts", Verb: "read", Scope: "*"},
+		},
+		IsSystem: true,
+	},
+}
+
 // InitializeDefaultRBAC 初始化默认的RBAC权限和角色
 func (s *RBACService) InitializeDefaultRBAC() error {
 	// 创建基础权限
@@ -560,6 +621,43 @@ func (s *RBACService) InitializeDefaultRBAC() error {
 		}
 	}
 
+	// 创建预定义角色模板
+	for _, template := range RoleTemplates {
+		var role models.Role
+		err := s.db.Where("name = ?", template.Name).First(&role).Error
+		if err == gorm.ErrRecordNotFound {
+			// 创建角色
+			_, err := s.CreateRole(template.Name, template.Description, nil, template.IsSystem)
+			if err != nil {
+				return fmt.Errorf("创建角色失败: %v", err)
+			}
+		} else if err == nil {
+			// 更新角色描述
+			role.Description = template.Description
+			s.db.Save(&role)
+		} else {
+			return err
+		}
+
+		// 分配权限
+		for _, permission := range template.Permissions {
+			var perm models.Permission
+			err := s.db.Where("resource = ? AND verb = ? AND scope = ?", permission.Resource, permission.Verb, permission.Scope).First(&perm).Error
+			if err == nil {
+				var rolePermission models.RolePermission
+				err = s.db.Where("role_id = ? AND permission_id = ?", role.ID, perm.ID).First(&rolePermission).Error
+				if err != nil && err == gorm.ErrRecordNotFound {
+					// 添加权限到角色
+					rolePermission = models.RolePermission{
+						RoleID:       role.ID,
+						PermissionID: perm.ID,
+					}
+					s.db.Create(&rolePermission)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -624,6 +722,117 @@ func (s *RBACService) RevokeRoleFromUserGroup(groupID, roleID uint) error {
 
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("用户组未分配该角色")
+	}
+
+	return nil
+}
+
+// CreateRoleTemplate 创建角色模板
+func (s *RBACService) CreateRoleTemplate(templateName string) (*models.Role, error) {
+	template, exists := RoleTemplates[templateName]
+	if !exists {
+		return nil, fmt.Errorf("角色模板不存在: %s", templateName)
+	}
+
+	// 检查角色是否已存在
+	var existingRole models.Role
+	err := s.db.Where("name = ?", template.Name).First(&existingRole).Error
+	if err == nil {
+		return &existingRole, nil // 角色已存在，直接返回
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, fmt.Errorf("查询角色失败: %v", err)
+	}
+
+	// 创建角色
+	role := &models.Role{
+		Name:        template.Name,
+		Description: template.Description,
+		IsSystem:    template.IsSystem,
+	}
+
+	// 开始事务
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Create(role).Error; err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("创建角色失败: %v", err)
+	}
+
+	// 为角色添加权限
+	for _, perm := range template.Permissions {
+		var permission models.Permission
+		err := tx.Where("resource = ? AND verb = ? AND scope = ?", perm.Resource, perm.Verb, perm.Scope).First(&permission).Error
+		if err == gorm.ErrRecordNotFound {
+			// 权限不存在，创建权限
+			permission = models.Permission{
+				Resource:    perm.Resource,
+				Verb:        perm.Verb,
+				Scope:       perm.Scope,
+				Description: fmt.Sprintf("%s %s %s", perm.Verb, perm.Resource, perm.Scope),
+			}
+			if err := tx.Create(&permission).Error; err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("创建权限失败: %v", err)
+			}
+		} else if err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("查询权限失败: %v", err)
+		}
+
+		// 创建角色权限关联
+		rolePermission := models.RolePermission{
+			RoleID:       role.ID,
+			PermissionID: permission.ID,
+		}
+		if err := tx.Create(&rolePermission).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("创建角色权限关联失败: %v", err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("提交事务失败: %v", err)
+	}
+
+	return role, nil
+}
+
+// GetRoleTemplates 获取所有角色模板
+func (s *RBACService) GetRoleTemplates() map[string]RoleTemplate {
+	return RoleTemplates
+}
+
+// AssignRoleToUser 为用户分配角色模板
+func (s *RBACService) AssignRoleToUser(userID uint, templateName string) error {
+	// 创建或获取角色模板
+	role, err := s.CreateRoleTemplate(templateName)
+	if err != nil {
+		return fmt.Errorf("创建角色模板失败: %v", err)
+	}
+
+	// 检查用户角色关联是否已存在
+	var userRole models.UserRole
+	err = s.db.Where("user_id = ? AND role_id = ?", userID, role.ID).First(&userRole).Error
+	if err == nil {
+		return nil // 已存在关联
+	}
+	if err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("查询用户角色关联失败: %v", err)
+	}
+
+	// 创建用户角色关联
+	userRole = models.UserRole{
+		UserID: userID,
+		RoleID: role.ID,
+	}
+	if err := s.db.Create(&userRole).Error; err != nil {
+		return fmt.Errorf("创建用户角色关联失败: %v", err)
 	}
 
 	return nil

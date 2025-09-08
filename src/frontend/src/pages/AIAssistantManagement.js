@@ -25,6 +25,7 @@ import {
   PlusOutlined, 
   EditOutlined, 
   DeleteOutlined,
+  CopyOutlined,
   RobotOutlined,
   ApiOutlined,
   MessageOutlined,
@@ -53,11 +54,38 @@ const AIAssistantManagement = () => {
   
   console.log('AIAssistantManagement 状态初始化完成, configs:', configs, 'conversations:', conversations, 'usage:', usage);
 
-  // AI提供商选项
+  // AI提供商选项 - 扩展支持更多提供商
   const aiProviders = [
     { value: 'openai', label: 'OpenAI' },
     { value: 'claude', label: 'Claude (Anthropic)' },
+    { value: 'deepseek', label: 'DeepSeek' },
+    { value: 'glm', label: '智谱GLM' },
+    { value: 'qwen', label: '通义千问' },
     { value: 'mcp', label: 'Model Context Protocol' },
+    { value: 'custom', label: '自定义' }
+  ];
+
+  // 模型类型选项
+  const modelTypes = [
+    { value: 'chat', label: '对话模型' },
+    { value: 'completion', label: '补全模型' },
+    { value: 'embedding', label: '嵌入模型' },
+    { value: 'image', label: '图像生成' },
+    { value: 'audio', label: '音频处理' },
+    { value: 'custom', label: '自定义' }
+  ];
+
+  // 机器人分类选项
+  const botCategories = [
+    { value: 'general', label: '通用对话' },
+    { value: 'coding', label: '代码生成' },
+    { value: 'writing', label: '写作助手' },
+    { value: 'analysis', label: '数据分析' },
+    { value: 'translation', label: '翻译助手' },
+    { value: 'research', label: '研究助手' },
+    { value: 'education', label: '教育助手' },
+    { value: 'business', label: '商业助手' },
+    { value: 'creative', label: '创意助手' },
     { value: 'custom', label: '自定义' }
   ];
 
@@ -209,6 +237,26 @@ const AIAssistantManagement = () => {
     }
   };
 
+  const handleCloneConfig = async (config) => {
+    try {
+      const clonedConfig = {
+        ...config,
+        name: `${config.name} (副本)`,
+        is_default: false,
+        enabled: false
+      };
+      delete clonedConfig.id;
+      delete clonedConfig.created_at;
+      delete clonedConfig.updated_at;
+      
+      await aiAPI.createConfig(clonedConfig);
+      message.success('克隆成功');
+      loadConfigs();
+    } catch (error) {
+      message.error('克隆失败');
+    }
+  };
+
   const handleConfigSubmit = async (values) => {
     try {
       setLoading(true);
@@ -259,25 +307,61 @@ const AIAssistantManagement = () => {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
+      width: 120,
     },
     {
       title: '提供商',
       dataIndex: 'provider',
       key: 'provider',
+      width: 100,
       render: (provider) => {
         const providerInfo = aiProviders.find(p => p.value === provider);
         return <Tag color="blue">{providerInfo?.label || provider}</Tag>;
       }
     },
     {
+      title: '模型类型',
+      dataIndex: 'model_type',
+      key: 'model_type',
+      width: 100,
+      render: (modelType) => {
+        const typeMap = {
+          'chat': '对话',
+          'completion': '补全',
+          'embedding': '嵌入',
+          'image': '图像',
+          'audio': '音频',
+          'custom': '自定义'
+        };
+        return <Tag color="purple">{typeMap[modelType] || modelType}</Tag>;
+      }
+    },
+    {
       title: '模型',
       dataIndex: 'model',
       key: 'model',
+      width: 120,
+    },
+    {
+      title: '类别',
+      dataIndex: 'category',
+      key: 'category',
+      width: 100,
+      render: (category) => category ? <Tag color="orange">{category}</Tag> : '-'
+    },
+    {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      width: 150,
+      ellipsis: true,
+      render: (desc) => desc || '-'
     },
     {
       title: '状态',
       dataIndex: 'enabled',
       key: 'enabled',
+      width: 80,
       render: (enabled, record) => (
         <Switch
           checked={enabled}
@@ -291,6 +375,7 @@ const AIAssistantManagement = () => {
       title: '默认',
       dataIndex: 'is_default',
       key: 'is_default',
+      width: 80,
       render: (isDefault) => (
         isDefault ? <Tag color="green">默认</Tag> : null
       )
@@ -299,11 +384,13 @@ const AIAssistantManagement = () => {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 150,
       render: (time) => new Date(time).toLocaleString()
     },
     {
       title: '操作',
       key: 'action',
+      width: 120,
       render: (_, record) => (
         <Space>
           <Tooltip title="编辑">
@@ -311,6 +398,13 @@ const AIAssistantManagement = () => {
               type="text" 
               icon={<EditOutlined />} 
               onClick={() => handleEditConfig(record)}
+            />
+          </Tooltip>
+          <Tooltip title="克隆">
+            <Button 
+              type="text" 
+              icon={<CopyOutlined />} 
+              onClick={() => handleCloneConfig(record)}
             />
           </Tooltip>
           <Popconfirm
@@ -586,6 +680,20 @@ const AIAssistantManagement = () => {
           </Form.Item>
 
           <Form.Item
+            name="model_type"
+            label="模型类型"
+            rules={[{ required: true, message: '请选择模型类型' }]}
+          >
+            <Select placeholder="选择模型类型">
+              {modelTypes.map(type => (
+                <Option key={type.value} value={type.value}>
+                  {type.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
             name="model"
             label="模型名称"
             rules={[{ required: true, message: '请输入模型名称' }]}
@@ -594,25 +702,48 @@ const AIAssistantManagement = () => {
           </Form.Item>
 
           <Form.Item
+            name="category"
+            label="机器人分类"
+          >
+            <Select placeholder="选择机器人分类">
+              {botCategories.map(category => (
+                <Option key={category.value} value={category.value}>
+                  {category.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
             name="api_key"
             label="API密钥"
             rules={[{ required: !editingConfig, message: '请输入API密钥' }]}
           >
-            <Input.Password 
+            <Input.Password
               placeholder={editingConfig ? "留空表示不修改" : "请输入API密钥"}
               prefix={<KeyOutlined />}
             />
           </Form.Item>
 
           <Form.Item
-            name="api_base"
-            label="API基础URL"
+            name="api_secret"
+            label="API密钥(备用)"
           >
-            <Input placeholder="可选，自定义API基础URL" />
+            <Input.Password
+              placeholder="可选，某些提供商需要额外的密钥"
+              prefix={<KeyOutlined />}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="api_endpoint"
+            label="API端点"
+          >
+            <Input placeholder="API基础URL，例如：https://api.openai.com/v1" />
           </Form.Item>
 
           <Row gutter={16}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item
                 name="max_tokens"
                 label="最大Token数"
@@ -620,12 +751,66 @@ const AIAssistantManagement = () => {
                 <Input type="number" placeholder="例如：4096" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item
                 name="temperature"
                 label="温度参数"
               >
-                <Input type="number" step="0.1" placeholder="0.0-2.0" />
+                <Input type="number" step="0.1" min="0" max="2" placeholder="0.0-2.0" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="top_p"
+                label="Top P"
+              >
+                <Input type="number" step="0.1" min="0" max="1" placeholder="0.0-1.0" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="frequency_penalty"
+                label="频率惩罚"
+              >
+                <Input type="number" step="0.1" min="-2" max="2" placeholder="-2.0-2.0" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="presence_penalty"
+                label="存在惩罚"
+              >
+                <Input type="number" step="0.1" min="-2" max="2" placeholder="-2.0-2.0" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item
+                name="rate_limit_per_hour"
+                label="每小时限额"
+              >
+                <Input type="number" placeholder="例如：100" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="rate_limit_per_day"
+                label="每日限额"
+              >
+                <Input type="number" placeholder="例如：1000" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="timeout_seconds"
+                label="超时时间(秒)"
+              >
+                <Input type="number" placeholder="例如：60" />
               </Form.Item>
             </Col>
           </Row>
@@ -634,14 +819,42 @@ const AIAssistantManagement = () => {
             name="system_prompt"
             label="系统提示词"
           >
-            <TextArea 
+            <TextArea
               rows={3}
               placeholder="可选，自定义系统提示词"
             />
           </Form.Item>
 
+          <Form.Item
+            name="description"
+            label="机器人描述"
+          >
+            <TextArea
+              rows={2}
+              placeholder="描述这个机器人的用途和特点"
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="icon_url"
+            label="图标URL"
+          >
+            <Input placeholder="可选，自定义机器人图标URL" />
+          </Form.Item>
+
+          <Form.Item
+            name="tags"
+            label="标签"
+          >
+            <Select
+              mode="tags"
+              placeholder="添加标签来分类机器人"
+              tokenSeparators={[',']}
+            />
+          </Form.Item>
+
           <Row gutter={16}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item
                 name="enabled"
                 label="启用状态"
@@ -650,13 +863,21 @@ const AIAssistantManagement = () => {
                 <Switch checkedChildren="启用" unCheckedChildren="禁用" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item
                 name="is_default"
                 label="设为默认"
                 valuePropName="checked"
               >
                 <Switch checkedChildren="是" unCheckedChildren="否" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="retry_attempts"
+                label="重试次数"
+              >
+                <Input type="number" min="0" max="10" placeholder="0-10" />
               </Form.Item>
             </Col>
           </Row>

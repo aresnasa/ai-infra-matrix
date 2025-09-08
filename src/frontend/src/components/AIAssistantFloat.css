@@ -7,19 +7,28 @@
 }
 
 .ai-assistant-float .ant-float-btn {
-  width: 60px !important;
-  height: 60px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  transition: all 0.3s ease;
+  width: 64px !important;
+  height: 64px !important;
+  box-shadow: 0 4px 16px rgba(24, 144, 255, 0.25);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 50% !important;
+  background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+  border: 2px solid #1890ff;
 }
 
 .ai-assistant-float .ant-float-btn .ant-float-btn-icon {
-  font-size: 28px !important;
+  font-size: 32px !important;
+  color: #1890ff;
 }
 
 .ai-assistant-float .ant-float-btn:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  transform: scale(1.1) translateY(-2px);
+  box-shadow: 0 8px 24px rgba(24, 144, 255, 0.35);
+  background: linear-gradient(135deg, #bae7ff 0%, #91d5ff 100%);
+}
+
+.ai-assistant-float .ant-float-btn:active {
+  transform: scale(1.05) translateY(0px);
 }
 
 /* AI助手抽屉样式 */

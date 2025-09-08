@@ -1664,7 +1664,7 @@ build_service() {
     # 构建镜像
     print_info "  → 正在构建镜像..."
     
-    # 特殊处理nginx和jupyterhub的构建上下文
+    # 特殊处理nginx、jupyterhub和frontend的构建上下文
     local build_context
     if [[ "$service" == "nginx" ]]; then
         # nginx构建前先渲染模板
@@ -1676,6 +1676,15 @@ build_service() {
         print_info "  → jupyterhub构建前渲染配置模板..."
         render_jupyterhub_templates
         build_context="$SCRIPT_DIR/$service_path"
+    elif [[ "$service" == "frontend" ]]; then
+        # frontend使用专用构建函数，不在这里重复构建
+        print_info "  → 使用专用前端构建函数..."
+        if ! build_frontend; then
+            print_error "前端构建失败"
+            return 1
+        fi
+        # 前端构建完成后，直接返回成功
+        return 0
     else
         build_context="$SCRIPT_DIR/$service_path"
     fi
@@ -1706,6 +1715,157 @@ build_service() {
         print_error "✗ 构建失败: $target_image"
         return 1
     fi
+}
+
+# 前端构建函数 - 使用本地npm构建替代Docker构建
+build_frontend() {
+    local frontend_path="$SCRIPT_DIR/src/frontend"
+
+    print_info "=========================================="
+    print_info "🚀 前端构建 (本地npm构建)"
+    print_info "=========================================="
+
+    # 检查前端目录是否存在
+    if [[ ! -d "$frontend_path" ]]; then
+        print_error "前端目录不存在: $frontend_path"
+        return 1
+    fi
+
+    # 检查package.json是否存在
+    if [[ ! -f "$frontend_path/package.json" ]]; then
+        print_error "package.json文件不存在: $frontend_path/package.json"
+        return 1
+    fi
+
+    print_info "前端构建目录: $frontend_path"
+    print_info "使用本地npm进行构建"
+
+    # 检查Node.js和npm是否安装
+    if ! command -v node &> /dev/null; then
+        print_error "Node.js 未安装，请先安装 Node.js"
+        print_info "推荐使用 nvm 安装: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
+        return 1
+    fi
+
+    if ! command -v npm &> /dev/null; then
+        print_error "npm 未安装，请先安装 npm"
+        return 1
+    fi
+
+    # 检查Node.js版本
+    local node_version
+    node_version=$(node --version | sed 's/v//')
+    print_info "Node.js版本: $node_version"
+
+    # 检查npm版本
+    local npm_version
+    npm_version=$(npm --version)
+    print_info "npm版本: $npm_version"
+
+    # 进入前端目录
+    cd "$frontend_path" || {
+        print_error "无法进入前端目录: $frontend_path"
+        return 1
+    }
+
+    # 设置npm镜像源为中国镜像（如果需要）
+    if [[ "${USE_CHINA_MIRROR:-false}" == "true" ]]; then
+        print_info "设置npm镜像源为中国镜像"
+        npm config set registry https://registry.npmmirror.com
+        npm config set sass_binary_site https://npmmirror.com/mirrors/node-sass/
+        npm config set electron_mirror https://npmmirror.com/mirrors/electron/
+        npm config set puppeteer_download_host https://npmmirror.com/mirrors
+    fi
+
+    # 清理之前的构建产物
+    print_info "清理之前的构建产物..."
+    if [[ -d "build" ]]; then
+        rm -rf build
+        print_info "已清理 build 目录"
+    fi
+    if [[ -d "node_modules" ]]; then
+        rm -rf node_modules
+        print_info "已清理 node_modules 目录"
+    fi
+
+    # 安装依赖
+    print_info "安装npm依赖..."
+    if [[ -f "yarn.lock" ]]; then
+        print_info "检测到yarn.lock，使用yarn安装依赖"
+        if ! command -v yarn &> /dev/null; then
+            print_error "yarn 未安装，请先安装 yarn: npm install -g yarn"
+            return 1
+        fi
+        if ! yarn install --frozen-lockfile; then
+            print_error "yarn依赖安装失败"
+            return 1
+        fi
+    else
+        print_info "使用npm安装依赖"
+        if ! npm install; then
+            print_error "npm依赖安装失败"
+            return 1
+        fi
+    fi
+
+    # 设置构建环境变量
+    print_info "设置构建环境变量..."
+    export NODE_ENV="${MODE:-production}"
+    
+    # 根据标志设置源码映射
+    if [[ "${DISABLE_SOURCE_MAPS:-false}" == "true" ]]; then
+        export GENERATE_SOURCEMAP="false"
+        print_info "禁用源码映射生成"
+    else
+        export GENERATE_SOURCEMAP="${GENERATE_SOURCEMAP:-false}"
+    fi
+
+    # 设置React应用环境变量
+    if [[ -n "${REACT_APP_API_URL:-}" ]]; then
+        export REACT_APP_API_URL="$REACT_APP_API_URL"
+        print_info "设置 REACT_APP_API_URL=$REACT_APP_API_URL"
+    fi
+
+    if [[ -n "${REACT_APP_JUPYTERHUB_URL:-}" ]]; then
+        export REACT_APP_JUPYTERHUB_URL="$REACT_APP_JUPYTERHUB_URL"
+        print_info "设置 REACT_APP_JUPYTERHUB_URL=$REACT_APP_JUPYTERHUB_URL"
+    fi
+
+    # 构建应用
+    print_info "开始构建React应用..."
+    if [[ -f "yarn.lock" ]]; then
+        if ! yarn build; then
+            print_error "yarn构建失败"
+            return 1
+        fi
+    else
+        if ! npm run build; then
+            print_error "npm构建失败"
+            return 1
+        fi
+    fi
+
+    # 检查构建结果
+    if [[ ! -d "build" ]]; then
+        print_error "构建失败，未找到build目录"
+        return 1
+    fi
+
+    # 显示构建结果信息
+    local build_size
+    build_size=$(du -sh build | cut -f1)
+    print_success "前端构建成功!"
+    print_info "构建产物大小: $build_size"
+    print_info "构建目录: $frontend_path/build"
+
+    # 列出构建文件
+    print_info "构建文件列表:"
+    ls -la build/
+
+    # 返回到原始目录
+    cd - > /dev/null || true
+
+    return 0
 }
 
 # 构建所有服务镜像
@@ -3644,11 +3804,14 @@ reset_database() {
 show_help() {
     echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
     echo
-    echo "用法: $0 [--force|--skip-pull] <命令> [参数...]"
+    echo "用法: $0 [--force|--skip-pull|--china-mirror|--local-frontend|--no-source-maps] <命令> [参数...]"
     echo
     echo "全局选项:"
-    echo "  --force      - 强制重新构建/跳过镜像拉取"
-    echo "  --skip-pull  - 跳过镜像拉取，使用本地镜像"
+    echo "  --force           - 强制重新构建/跳过镜像拉取"
+    echo "  --skip-pull       - 跳过镜像拉取，使用本地镜像"
+    echo "  --china-mirror    - 使用中国npm镜像加速前端构建"
+    echo "  --local-frontend  - 启用本地前端构建模式（使用本地Node.js/npm）"
+    echo "  --no-source-maps  - 禁用源码映射生成（优化构建性能）"
     echo
     echo "主要命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
@@ -3737,6 +3900,11 @@ show_help() {
     echo "  $0 harbor-pull-deps aiharbor.msxf.local/aihpc             # 拉取依赖镜像"
     echo "  docker compose -f docker-compose.yml.example up -d        # 启动服务"
     echo
+    echo "  # 本地前端开发构建"
+    echo "  $0 --local-frontend build frontend test-v0.3.5        # 使用本地npm构建前端"
+    echo "  $0 --china-mirror --local-frontend build frontend     # 使用中国镜像加速构建"
+    echo "  $0 --no-source-maps --local-frontend build frontend   # 禁用源码映射优化构建"
+    echo
     echo "  # 本地开发测试"
     echo "  $0 build-all test-v0.3.5                              # 构建测试版本"
     echo "  docker compose -f docker-compose.yml.example up -d backend frontend  # 启动核心服务"
@@ -3777,7 +3945,7 @@ show_help() {
 
 # 主函数
 main() {
-    # 预处理命令行参数，检查 --force 和 --skip-pull 标志
+    # 预处理命令行参数，检查各种标志
     local args=()
     for arg in "$@"; do
         if [[ "$arg" == "--force" ]]; then
@@ -3786,6 +3954,15 @@ main() {
         elif [[ "$arg" == "--skip-pull" ]]; then
             SKIP_PULL=true
             print_info "启用跳过拉取模式"
+        elif [[ "$arg" == "--china-mirror" ]]; then
+            USE_CHINA_MIRROR=true
+            print_info "启用中国镜像加速"
+        elif [[ "$arg" == "--local-frontend" ]]; then
+            USE_LOCAL_FRONTEND=true
+            print_info "启用本地前端构建模式"
+        elif [[ "$arg" == "--no-source-maps" ]]; then
+            DISABLE_SOURCE_MAPS=true
+            print_info "禁用源码映射生成"
         else
             args+=("$arg")
         fi

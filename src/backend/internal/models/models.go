@@ -55,6 +55,10 @@ type RegisterRequest struct {
 	Department string `json:"department" binding:"omitempty"`
 	// Optional desired role; maps to RBAC and K8s ClusterRole (viewer|user|admin)
 	Role       string `json:"role" binding:"omitempty,oneof=viewer user admin"`
+	// Role template for predefined role assignments
+	RoleTemplate string `json:"role_template" binding:"omitempty,oneof=model-developer sre engineer"`
+	// Registration requires admin approval
+	RequiresApproval bool `json:"requires_approval" binding:"omitempty"`
 }
 
 // ChangePasswordRequest 修改密码请求结构

@@ -14,6 +14,19 @@ const (
 	ProviderLocal    AIProvider = "local"
 	ProviderMCP      AIProvider = "mcp"
 	ProviderCustom   AIProvider = "custom"
+	ProviderDeepSeek AIProvider = "deepseek"
+	ProviderGLM      AIProvider = "glm"
+	ProviderQwen     AIProvider = "qwen"
+)
+
+// AIModelType AI模型类型
+type AIModelType string
+
+const (
+	ModelTypeChat       AIModelType = "chat"
+	ModelTypeCompletion AIModelType = "completion"
+	ModelTypeEmbedding  AIModelType = "embedding"
+	ModelTypeImage      AIModelType = "image"
 )
 
 // AIAssistantConfig AI助手配置
@@ -21,16 +34,30 @@ type AIAssistantConfig struct {
 	ID                uint           `json:"id" gorm:"primaryKey"`
 	Name              string         `json:"name" gorm:"not null;size:100"`
 	Provider          AIProvider     `json:"provider" gorm:"not null"`
+	ModelType         AIModelType    `json:"model_type" gorm:"default:'chat'"`
 	APIKey            string         `json:"api_key,omitempty" gorm:"type:text"` // 加密存储
+	APISecret         string         `json:"api_secret,omitempty" gorm:"type:text"` // 额外的密钥
 	APIEndpoint       string         `json:"api_endpoint" gorm:"size:500"`
 	Model             string         `json:"model" gorm:"size:100"`
 	MaxTokens         int            `json:"max_tokens" gorm:"default:4096"`
 	Temperature       float32        `json:"temperature" gorm:"default:0.7"`
+	TopP              float32        `json:"top_p" gorm:"default:1.0"`
+	FrequencyPenalty  float32        `json:"frequency_penalty" gorm:"default:0.0"`
+	PresencePenalty   float32        `json:"presence_penalty" gorm:"default:0.0"`
 	SystemPrompt      string         `json:"system_prompt" gorm:"type:text"`
 	IsEnabled         bool           `json:"is_enabled" gorm:"default:true"`
 	IsDefault         bool           `json:"is_default" gorm:"default:false"`
 	MCPConfig         *MCPConfig     `json:"mcp_config,omitempty" gorm:"type:text"` // JSON存储MCP配置
 	RateLimitPerHour  int            `json:"rate_limit_per_hour" gorm:"default:100"`
+	RateLimitPerDay   int            `json:"rate_limit_per_day" gorm:"default:1000"`
+	TimeoutSeconds    int            `json:"timeout_seconds" gorm:"default:60"`
+	RetryAttempts     int            `json:"retry_attempts" gorm:"default:3"`
+	Headers           string         `json:"headers" gorm:"type:text"` // JSON格式的额外请求头
+	Parameters        string         `json:"parameters" gorm:"type:text"` // JSON格式的额外参数
+	Description       string         `json:"description" gorm:"size:500"`
+	IconURL           string         `json:"icon_url" gorm:"size:500"`
+	Category          string         `json:"category" gorm:"size:50"` // 模型分类，如：通用对话、代码生成、专业领域等
+	Tags              string         `json:"tags" gorm:"type:text"` // JSON格式的标签数组
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 	DeletedAt         gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`

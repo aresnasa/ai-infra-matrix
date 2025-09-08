@@ -40,18 +40,24 @@ WORKDIR /app
 # 复制package.json和package-lock.json
 COPY package*.json ./
 
+# 配置npm镜像源为中国镜像
+RUN npm config set registry https://registry.npmmirror.com
+
 # 安装依赖
-RUN npm install
+RUN npm install --verbose
 
 # 复制源代码
 COPY . .
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
+ARG REACT_APP_JUPYTERHUB_URL=/jupyter
+ARG VERSION="dev"
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
+ENV REACT_APP_JUPYTERHUB_URL=$REACT_APP_JUPYTERHUB_URL
+ENV APP_VERSION=${VERSION}
 
-# 设置阿里云npm镜像并构建应用
-RUN npm config set registry https://registry.npmmirror.com
+# 构建应用
 RUN npm run build
 
 # 使用nginx作为生产环境镜像

@@ -29,6 +29,7 @@ import {
 } from '@ant-design/icons';
 import { aiAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import AIRobotIcon from './AIRobotIcon';
 import './AIAssistantFloat.css';
 
 const { TextArea } = Input;
@@ -124,7 +125,7 @@ const AIAssistantFloat = () => {
     }
   };
 
-  // 发送消息（异步版本）
+  // 发送消息（增强版本，包含更好的错误处理和状态管理）
   const sendMessage = async () => {
     if (!inputMessage.trim()) return;
 
@@ -140,12 +141,13 @@ const AIAssistantFloat = () => {
     setInputMessage('');
     setSendingMessage(true);
 
-    // 添加用户消息到界面
+    // 添加用户消息到界面（带时间戳）
     const newUserMessage = {
       id: Date.now(),
       role: 'user',
       content: userMessage,
       created_at: new Date().toISOString(),
+      status: 'sent', // 添加消息状态
     };
     setMessages(prev => [...prev, newUserMessage]);
 
@@ -154,37 +156,45 @@ const AIAssistantFloat = () => {
       const response = await aiAPI.sendMessage(conversationToUse.id, userMessage);
       const { message_id, status } = response.data;
       
-      // 添加状态消息
+      // 添加状态消息（带加载动画）
       const statusMessage = {
         id: message_id,
         role: 'system',
-        content: '正在处理您的请求...',
+        content: 'AI正在思考中...',
         created_at: new Date().toISOString(),
         isStatus: true,
+        status: 'processing',
       };
       setMessages(prev => [...prev, statusMessage]);
       
-      // 轮询消息状态
+      // 轮询消息状态（增强版本）
       pollMessageStatus(message_id, conversationToUse.id);
       
     } catch (error) {
       console.error('发送消息失败:', error);
-      message.error('发送消息失败');
-      // 移除用户消息
-      setMessages(prev => prev.filter(msg => msg.id !== newUserMessage.id));
+      
+      // 更新用户消息状态为失败
+      setMessages(prev => prev.map(msg => 
+        msg.id === newUserMessage.id 
+          ? { ...msg, status: 'failed', error: '发送失败' }
+          : msg
+      ));
+      
+      message.error('发送消息失败，请重试');
     } finally {
       setSendingMessage(false);
     }
   };
 
-  // 轮询消息状态
+  // 轮询消息状态（增强版本）
   const pollMessageStatus = async (messageId, conversationId, maxAttempts = 30) => {
     let attempts = 0;
     
     const poll = async () => {
       try {
+        attempts++;
         const response = await aiAPI.getMessageStatus(messageId);
-        const { status, result, error } = response.data.data;
+        const { status, result, error, tokens_used } = response.data.data;
         
         if (status === 'completed') {
           // 移除状态消息，添加AI回复
@@ -196,54 +206,94 @@ const AIAssistantFloat = () => {
               role: 'assistant',
               content: result,
               created_at: new Date().toISOString(),
+              tokens_used: tokens_used,
+              status: 'completed',
             };
             setMessages(prev => [...prev, aiMessage]);
+            
+            // 显示token使用信息
+            if (tokens_used) {
+              message.success(`AI回复完成，使用了 ${tokens_used} 个tokens`);
+            }
           }
           
-          // 刷新对话列表
+          // 刷新对话列表以更新统计信息
           fetchConversations();
           return;
+          
         } else if (status === 'failed') {
           // 更新状态消息为错误信息
           setMessages(prev => prev.map(msg => 
             msg.id === messageId 
-              ? { ...msg, content: `处理失败: ${error || '未知错误'}`, isError: true }
+              ? { 
+                  ...msg, 
+                  content: `处理失败: ${error || '未知错误'}`, 
+                  isError: true,
+                  status: 'failed'
+                }
               : msg
           ));
+          
+          message.error(`AI处理失败: ${error || '未知错误'}`);
           return;
+          
         } else if (status === 'processing') {
-          // 更新状态消息
+          // 更新状态消息内容
+          const processingMessages = [
+            'AI正在思考中...',
+            'AI正在分析您的请求...',
+            'AI正在生成回复...',
+            'AI正在优化回答...',
+          ];
+          
+          const messageIndex = Math.floor(attempts / 3) % processingMessages.length;
           setMessages(prev => prev.map(msg => 
             msg.id === messageId 
-              ? { ...msg, content: 'AI正在思考中...' }
+              ? { ...msg, content: processingMessages[messageIndex] }
               : msg
           ));
+          
+          // 继续轮询
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 2000);
+          } else {
+            // 超时处理
+            setMessages(prev => prev.map(msg => 
+              msg.id === messageId 
+                ? { 
+                    ...msg, 
+                    content: '处理超时，请稍后重试', 
+                    isError: true,
+                    status: 'timeout'
+                  }
+                : msg
+            ));
+            message.warning('AI处理超时，请稍后重试');
+          }
         }
         
-        // 继续轮询
-        attempts++;
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 2000); // 2秒后再次查询
-        } else {
-          // 超时处理
-          setMessages(prev => prev.map(msg => 
-            msg.id === messageId 
-              ? { ...msg, content: '处理超时，请重试', isError: true }
-              : msg
-          ));
-        }
       } catch (error) {
         console.error('查询消息状态失败:', error);
-        setMessages(prev => prev.map(msg => 
-          msg.id === messageId 
-            ? { ...msg, content: '状态查询失败', isError: true }
-            : msg
-        ));
+        
+        if (attempts < maxAttempts) {
+          setTimeout(poll, 3000); // 增加重试间隔
+        } else {
+          setMessages(prev => prev.map(msg => 
+            msg.id === messageId 
+              ? { 
+                  ...msg, 
+                  content: '网络错误，请检查连接后重试', 
+                  isError: true,
+                  status: 'network_error'
+                }
+              : msg
+          ));
+          message.error('网络错误，无法获取AI回复');
+        }
       }
     };
     
-    // 开始轮询
-    setTimeout(poll, 1000); // 1秒后开始查询
+    setTimeout(poll, 1000);
   };
 
   // 快速聊天（异步版本）
@@ -373,7 +423,7 @@ const AIAssistantFloat = () => {
     <>
       {/* 悬浮按钮 */}
       <FloatButton
-        icon={<RobotOutlined />}
+        icon={<AIRobotIcon size={28} animated={true} />}
         tooltip="AI助手"
         onClick={() => setVisible(true)}
         style={{
@@ -386,7 +436,7 @@ const AIAssistantFloat = () => {
       <Drawer
         title={
           <Space>
-            <RobotOutlined />
+            <AIRobotIcon size={20} animated={false} />
             <span>AI助手</span>
             {configs.length > 0 && (
               <Select
@@ -416,7 +466,7 @@ const AIAssistantFloat = () => {
           // 无配置时的提示界面
           <div style={{ padding: 24, textAlign: 'center', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ textAlign: 'center' }}>
-              <RobotOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
+              <AIRobotIcon size={48} animated={true} style={{ marginBottom: 16 }} />
               <Title level={4}>AI助手未配置</Title>
               <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
                 需要配置AI服务后才能开始智能对话体验。
@@ -551,7 +601,7 @@ const AIAssistantFloat = () => {
                               <Space direction="vertical" style={{ width: '100%' }}>
                                 <Space>
                                   <Avatar
-                                    icon={message.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
+                                    icon={message.role === 'user' ? <UserOutlined /> : <AIRobotIcon size={16} animated={false} />}
                                     size="small"
                                   />
                                   <Text strong>
@@ -586,7 +636,7 @@ const AIAssistantFloat = () => {
               ) : (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
                   <div style={{ textAlign: 'center' }}>
-                    <RobotOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
+                    <AIRobotIcon size={48} animated={true} style={{ marginBottom: 16 }} />
                     <Title level={4}>欢迎使用AI助手</Title>
                     <Text type="secondary">选择一个对话开始聊天，或创建新对话</Text>
                   </div>

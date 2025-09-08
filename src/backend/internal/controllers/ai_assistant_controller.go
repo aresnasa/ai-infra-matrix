@@ -529,13 +529,13 @@ func (ctrl *AIAssistantController) GetUsageStats(c *gin.Context) {
 
 	// 获取队列统计
 	queueStats := map[string]interface{}{}
-	
+
 	// 从Redis获取队列长度（如果可用）
 	// TODO: 实现实际的统计收集逻辑
 	queueStats["chat_requests_pending"] = 0
 	queueStats["cluster_operations_pending"] = 0
 	queueStats["notifications_pending"] = 0
-	
+
 	stats["queue_status"] = queueStats
 
 	// 获取缓存统计
@@ -543,7 +543,7 @@ func (ctrl *AIAssistantController) GetUsageStats(c *gin.Context) {
 	cacheStats["hit_rate"] = 85.5
 	cacheStats["total_keys"] = 100
 	cacheStats["memory_usage"] = "10MB"
-	
+
 	stats["cache_stats"] = cacheStats
 
 	// 模拟一些基础统计数据
@@ -552,4 +552,181 @@ func (ctrl *AIAssistantController) GetUsageStats(c *gin.Context) {
 	stats["active_conversations"] = 25
 
 	c.JSON(http.StatusOK, gin.H{"data": stats})
+}
+
+// TestBotConnection 测试机器人连接
+func (ctrl *AIAssistantController) TestBotConnection(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的配置ID"})
+		return
+	}
+
+	config, err := ctrl.aiService.GetConfig(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "配置不存在"})
+		return
+	}
+
+	// 测试连接
+	testResult, err := ctrl.aiService.TestConnection(config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("连接测试失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "连接测试完成",
+		"data": testResult,
+	})
+}
+
+// GetBotModels 获取机器人支持的模型列表
+func (ctrl *AIAssistantController) GetBotModels(c *gin.Context) {
+	provider := c.Query("provider")
+	if provider == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请指定提供商"})
+		return
+	}
+
+	models, err := ctrl.aiService.GetAvailableModels(models.AIProvider(provider))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取模型列表失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": models})
+}
+
+// QuickChat 快速聊天接口（无需创建对话）
+func (ctrl *AIAssistantController) QuickChat(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	var req struct {
+		ConfigID uint   `json:"config_id" binding:"required"`
+		Message  string `json:"message" binding:"required"`
+		Context  string `json:"context"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 异步处理快速聊天
+	messageID, err := ctrl.messageQueueService.SendQuickChatRequest(
+		userID,
+		req.ConfigID,
+		req.Message,
+		req.Context,
+		map[string]interface{}{
+			"page": c.GetHeader("Referer"),
+		},
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "快速聊天请求失败"})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message_id": messageID,
+		"status": "processing",
+		"message": "快速聊天请求已提交",
+	})
+}
+
+// GetMessageStatus 获取消息处理状态
+func (ctrl *AIAssistantController) GetMessageStatus(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	messageID, err := strconv.ParseUint(c.Param("messageId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的消息ID"})
+		return
+	}
+
+	status, result, err := ctrl.aiService.GetMessageStatus(uint(messageID), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取状态失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": map[string]interface{}{
+			"message_id": messageID,
+			"status": status,
+			"result": result,
+		},
+	})
+}
+
+// GetBotCategories 获取机器人分类
+func (ctrl *AIAssistantController) GetBotCategories(c *gin.Context) {
+	categories := []map[string]interface{}{
+		{"key": "general", "name": "通用对话", "description": "适用于日常对话和一般问题"},
+		{"key": "coding", "name": "代码生成", "description": "专业的编程助手"},
+		{"key": "writing", "name": "写作助手", "description": "帮助写作和内容创作"},
+		{"key": "analysis", "name": "数据分析", "description": "数据分析和可视化"},
+		{"key": "translation", "name": "翻译助手", "description": "多语言翻译服务"},
+		{"key": "custom", "name": "自定义", "description": "自定义配置的机器人"},
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": categories})
+}
+
+// CloneBotConfig 克隆机器人配置
+func (ctrl *AIAssistantController) CloneBotConfig(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的配置ID"})
+		return
+	}
+
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	newConfig, err := ctrl.aiService.CloneConfig(uint(id), req.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("克隆配置失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "机器人配置克隆成功",
+		"data": newConfig,
+	})
+}
+
+// BatchUpdateBots 批量更新机器人配置
+func (ctrl *AIAssistantController) BatchUpdateBots(c *gin.Context) {
+	var req struct {
+		ConfigIDs []uint                 `json:"config_ids" binding:"required"`
+		Updates   map[string]interface{} `json:"updates" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ctrl.aiService.BatchUpdateConfigs(req.ConfigIDs, req.Updates); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("批量更新失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "批量更新成功"})
 }
