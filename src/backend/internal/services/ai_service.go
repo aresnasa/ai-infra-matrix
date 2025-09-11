@@ -1,16 +1,15 @@
 package services
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services/ai_providers"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -55,13 +54,15 @@ type aiServiceImpl struct {
 	messagePersistence *MessagePersistenceService
 	messageRetrieval   *MessageRetrievalService
 	kafkaService       *KafkaMessageService
+	providerFactory    ai_providers.ProviderFactory
 }
 
 // NewAIService 创建AI服务实例
 func NewAIService() AIService {
 	return &aiServiceImpl{
-		db:            database.DB,
-		cryptoService: database.CryptoService,
+		db:              database.DB,
+		cryptoService:   database.CryptoService,
+		providerFactory: ai_providers.NewProviderFactory(),
 	}
 }
 
@@ -79,6 +80,7 @@ func NewAIServiceWithDependencies(
 		messagePersistence: messagePersistence,
 		messageRetrieval:   messageRetrieval,
 		kafkaService:       kafkaService,
+		providerFactory:    ai_providers.NewProviderFactory(),
 	}
 }
 
@@ -225,6 +227,15 @@ func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*m
 		return nil, err
 	}
 
+	// 解密API密钥
+	if config.APIKey != "" {
+		decryptedKey, err := s.cryptoService.Decrypt(config.APIKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt API key: %v", err)
+		}
+		config.APIKey = decryptedKey
+	}
+
 	// 保存用户消息
 	userMsg := &models.AIMessage{
 		ConversationID: conversationID,
@@ -245,27 +256,77 @@ func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*m
 		}
 	}
 
+	// 创建AI提供商
+	provider, err := s.providerFactory.CreateProvider(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AI provider: %v", err)
+	}
+
+	// 获取历史消息
+	var historyMessages []models.AIMessage
+	s.db.Where("conversation_id = ?", conversationID).
+		Order("created_at ASC").
+		Limit(20). // 限制历史消息数量
+		Find(&historyMessages)
+
+	// 构建消息历史
+	chatMessages := make([]ai_providers.ChatMessage, 0, len(historyMessages)+1)
+	for _, msg := range historyMessages {
+		chatMessages = append(chatMessages, ai_providers.ChatMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+
+	// 添加当前用户消息
+	chatMessages = append(chatMessages, ai_providers.ChatMessage{
+		Role:    "user",
+		Content: userMessage,
+	})
+
+	// 构建请求
+	request := ai_providers.ChatRequest{
+		Model:        config.Model,
+		Messages:     chatMessages,
+		MaxTokens:    config.MaxTokens,
+		Temperature:  config.Temperature,
+		SystemPrompt: config.SystemPrompt,
+	}
+
 	// 调用AI API
+	ctx := context.Background()
 	startTime := time.Now()
-	aiResponse, tokensUsed, err := s.callAIAPI(config, conversation, userMessage)
+	response, err := provider.Chat(ctx, request)
 	responseTime := int(time.Since(startTime).Milliseconds())
 
 	// 记录使用统计
+	tokensUsed := 0
+	if response != nil {
+		tokensUsed = response.TokensUsed
+	}
 	s.RecordUsage(conversation.UserID, config.ID, tokensUsed, responseTime, err == nil)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("AI API call failed: %v", err)
 	}
 
 	// 保存AI回复
 	aiMsg := &models.AIMessage{
 		ConversationID: conversationID,
 		Role:           "assistant",
-		Content:        aiResponse,
-		TokensUsed:     tokensUsed,
-		ResponseTime:   responseTime,
+		Content:        response.Content,
+		TokensUsed:     response.TokensUsed,
+		ResponseTime:   response.ResponseTime,
+		Metadata:       "", // 可以存储response.Metadata的JSON
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
+	}
+
+	// 序列化metadata
+	if response.Metadata != nil {
+		if metadataBytes, err := json.Marshal(response.Metadata); err == nil {
+			aiMsg.Metadata = string(metadataBytes)
+		}
 	}
 
 	// 使用消息持久化服务保存AI回复
@@ -278,18 +339,19 @@ func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*m
 			return nil, err
 		}
 		// 更新对话的tokens使用量
-		conversation.TokensUsed += tokensUsed
+		conversation.TokensUsed += response.TokensUsed
 		s.db.Save(conversation)
 	}
 
 	// 发送消息事件到Kafka
 	if s.kafkaService != nil {
 		if err := s.kafkaService.SendChatMessage(conversation.UserID, &conversationID, userMessage, map[string]interface{}{
-			"ai_response": aiResponse,
-			"tokens_used": tokensUsed,
-			"response_time": responseTime,
+			"ai_response": response.Content,
+			"tokens_used": response.TokensUsed,
+			"provider":    string(config.Provider),
+			"model":       config.Model,
 		}); err != nil {
-			logrus.Warnf("Failed to send message to Kafka: %v", err)
+			logrus.Errorf("Failed to send message to Kafka: %v", err)
 		}
 	}
 
@@ -324,204 +386,6 @@ func (s *aiServiceImpl) GetMessages(conversationID uint) ([]models.AIMessage, er
 	return messages, err
 }
 
-// callAIAPI 调用AI API
-func (s *aiServiceImpl) callAIAPI(config *models.AIAssistantConfig, conversation *models.AIConversation, userMessage string) (string, int, error) {
-	switch config.Provider {
-	case models.ProviderOpenAI:
-		return s.callOpenAI(config, conversation, userMessage)
-	case models.ProviderClaude:
-		return s.callClaude(config, conversation, userMessage)
-	case models.ProviderMCP:
-		return s.callMCP(config, conversation, userMessage)
-	default:
-		return "", 0, fmt.Errorf("unsupported AI provider: %s", config.Provider)
-	}
-}
-
-// callOpenAI 调用OpenAI API
-func (s *aiServiceImpl) callOpenAI(config *models.AIAssistantConfig, conversation *models.AIConversation, userMessage string) (string, int, error) {
-	// 构建消息历史
-	messages := []map[string]string{
-		{"role": "system", "content": config.SystemPrompt},
-	}
-
-	// 添加历史消息（最近的20条）
-	var historyMessages []models.AIMessage
-	s.db.Where("conversation_id = ?", conversation.ID).
-		Order("created_at DESC").
-		Limit(20).
-		Find(&historyMessages)
-
-	for i := len(historyMessages) - 1; i >= 0; i-- {
-		msg := historyMessages[i]
-		messages = append(messages, map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		})
-	}
-
-	// 添加当前用户消息
-	messages = append(messages, map[string]string{
-		"role":    "user",
-		"content": userMessage,
-	})
-
-	// 构建请求体
-	requestBody := map[string]interface{}{
-		"model":       config.Model,
-		"messages":    messages,
-		"max_tokens":  config.MaxTokens,
-		"temperature": config.Temperature,
-	}
-
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", 0, err
-	}
-
-	// 发送请求
-	req, err := http.NewRequest("POST", config.APIEndpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", 0, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", 0, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", 0, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", 0, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// 解析响应
-	var response struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			TotalTokens int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", 0, err
-	}
-
-	if len(response.Choices) == 0 {
-		return "", 0, fmt.Errorf("no response from AI")
-	}
-
-	return response.Choices[0].Message.Content, response.Usage.TotalTokens, nil
-}
-
-// callClaude 调用Claude API
-func (s *aiServiceImpl) callClaude(config *models.AIAssistantConfig, conversation *models.AIConversation, userMessage string) (string, int, error) {
-	// 构建消息历史
-	messages := []map[string]string{}
-
-	// 添加历史消息（最近的20条）
-	var historyMessages []models.AIMessage
-	s.db.Where("conversation_id = ?", conversation.ID).
-		Order("created_at DESC").
-		Limit(20).
-		Find(&historyMessages)
-
-	for i := len(historyMessages) - 1; i >= 0; i-- {
-		msg := historyMessages[i]
-		messages = append(messages, map[string]string{
-			"role":    msg.Role,
-			"content": msg.Content,
-		})
-	}
-
-	// 添加当前用户消息
-	messages = append(messages, map[string]string{
-		"role":    "user",
-		"content": userMessage,
-	})
-
-	// 构建请求体
-	requestBody := map[string]interface{}{
-		"model":       config.Model,
-		"max_tokens":  config.MaxTokens,
-		"messages":    messages,
-		"system":      config.SystemPrompt,
-	}
-
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return "", 0, err
-	}
-
-	// 发送请求
-	req, err := http.NewRequest("POST", config.APIEndpoint, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", 0, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", config.APIKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", 0, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", 0, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", 0, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// 解析响应
-	var response struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", 0, err
-	}
-
-	if len(response.Content) == 0 {
-		return "", 0, fmt.Errorf("no response from AI")
-	}
-
-	totalTokens := response.Usage.InputTokens + response.Usage.OutputTokens
-	return response.Content[0].Text, totalTokens, nil
-}
-
-// callMCP 调用MCP协议
-func (s *aiServiceImpl) callMCP(config *models.AIAssistantConfig, conversation *models.AIConversation, userMessage string) (string, int, error) {
-	// MCP协议实现（预留接口）
-	// 这里可以实现Model Context Protocol的具体逻辑
-	return "MCP功能正在开发中...", 0, nil
-}
-
 // 统计功能
 func (s *aiServiceImpl) GetUsageStats(userID uint, startDate, endDate time.Time) ([]models.AIUsageStats, error) {
 	var stats []models.AIUsageStats
@@ -531,202 +395,135 @@ func (s *aiServiceImpl) GetUsageStats(userID uint, startDate, endDate time.Time)
 	return stats, err
 }
 
-func (s *aiServiceImpl) RecordUsage(userID, configID uint, tokensUsed, responseTime int, success bool) error {
-	today := time.Now().Truncate(24 * time.Hour)
-
-	var stat models.AIUsageStats
-	err := s.db.Where("user_id = ? AND config_id = ? AND date = ?", userID, configID, today).
-		First(&stat).Error
-
-	if err == gorm.ErrRecordNotFound {
-		// 创建新记录
-		stat = models.AIUsageStats{
-			UserID:          userID,
-			ConfigID:        configID,
-			Date:            today,
-			RequestCount:    1,
-			TokensUsed:      tokensUsed,
-			SuccessCount:    0,
-			ErrorCount:      0,
-			AverageResponse: responseTime,
-		}
-
-		if success {
-			stat.SuccessCount = 1
-		} else {
-			stat.ErrorCount = 1
-		}
-
-		return s.db.Create(&stat).Error
-	} else if err != nil {
-		return err
-	} else {
-		// 更新现有记录
-		stat.RequestCount++
-		stat.TokensUsed += tokensUsed
-
-		if success {
-			stat.SuccessCount++
-		} else {
-			stat.ErrorCount++
-		}
-
-		// 计算平均响应时间
-		stat.AverageResponse = (stat.AverageResponse*(stat.RequestCount-1) + responseTime) / stat.RequestCount
-
-		return s.db.Save(&stat).Error
+func (s *aiServiceImpl) RecordUsage(userID, configID uint, tokenUsed, responseTime int, success bool) error {
+	stats := &models.AIUsageStats{
+		UserID:          userID,
+		ConfigID:        configID,
+		Date:            time.Now().Truncate(24 * time.Hour),
+		TokensUsed:      tokenUsed,
+		RequestCount:    1,
+		SuccessCount:    0,
+		ErrorCount:      0,
+		AverageResponse: responseTime,
 	}
+
+	if success {
+		stats.SuccessCount = 1
+	} else {
+		stats.ErrorCount = 1
+	}
+
+	// 使用UPSERT语法更新或插入统计数据
+	err := s.db.Raw(`
+		INSERT INTO ai_usage_stats (user_id, config_id, date, tokens_used, request_count, success_count, error_count, average_response, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+		ON CONFLICT (user_id, config_id, date)
+		DO UPDATE SET
+			tokens_used = ai_usage_stats.tokens_used + EXCLUDED.tokens_used,
+			request_count = ai_usage_stats.request_count + EXCLUDED.request_count,
+			success_count = ai_usage_stats.success_count + EXCLUDED.success_count,
+			error_count = ai_usage_stats.error_count + EXCLUDED.error_count,
+			average_response = (ai_usage_stats.average_response + EXCLUDED.average_response) / 2,
+			updated_at = NOW()
+	`, userID, configID, stats.Date, tokenUsed, 1, stats.SuccessCount, stats.ErrorCount, responseTime).Error
+
+	return err
 }
 
 // TestConnection 测试机器人连接
 func (s *aiServiceImpl) TestConnection(config *models.AIAssistantConfig) (map[string]interface{}, error) {
 	result := map[string]interface{}{
-		"status": "unknown",
-		"message": "",
+		"status":        "unknown",
+		"message":       "",
 		"response_time": 0,
 	}
 
 	startTime := time.Now()
 
-	switch config.Provider {
-	case models.ProviderOpenAI:
-		result = s.testOpenAIConnection(config)
-	case models.ProviderClaude:
-		result = s.testClaudeConnection(config)
-	case models.ProviderDeepSeek:
-		result = s.testDeepSeekConnection(config)
-	case models.ProviderGLM:
-		result = s.testGLMConnection(config)
-	case models.ProviderQwen:
-		result = s.testQwenConnection(config)
-	default:
-		result["status"] = "unsupported"
-		result["message"] = "不支持的提供商类型"
+	// 解密API密钥
+	if config.APIKey != "" {
+		decryptedKey, err := s.cryptoService.Decrypt(config.APIKey)
+		if err != nil {
+			result["status"] = "error"
+			result["message"] = "Failed to decrypt API key"
+			return result, err
+		}
+		config.APIKey = decryptedKey
 	}
 
+	// 创建AI提供商
+	provider, err := s.providerFactory.CreateProvider(config)
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = fmt.Sprintf("Failed to create provider: %v", err)
+		result["response_time"] = int(time.Since(startTime).Milliseconds())
+		return result, err
+	}
+
+	// 测试连接
+	ctx := context.Background()
+	err = provider.TestConnection(ctx)
+	
 	result["response_time"] = int(time.Since(startTime).Milliseconds())
+	
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = err.Error()
+		return result, err
+	}
+
+	result["status"] = "success"
+	result["message"] = "Connection test successful"
+	result["provider"] = provider.GetName()
+	result["capabilities"] = provider.GetSupportedCapabilities()
+
 	return result, nil
-}
-
-// testOpenAIConnection 测试OpenAI连接
-func (s *aiServiceImpl) testOpenAIConnection(config *models.AIAssistantConfig) map[string]interface{} {
-	// 简单的HTTP请求测试
-	client := &http.Client{Timeout: time.Duration(config.TimeoutSeconds) * time.Second}
-
-	testPayload := map[string]interface{}{
-		"model": config.Model,
-		"messages": []map[string]string{
-			{"role": "user", "content": "Hello"},
-		},
-		"max_tokens": 10,
-	}
-
-	jsonData, _ := json.Marshal(testPayload)
-
-	req, err := http.NewRequest("POST", config.APIEndpoint+"/chat/completions", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return map[string]interface{}{
-			"status": "error",
-			"message": fmt.Sprintf("创建请求失败: %v", err),
-		}
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+config.APIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return map[string]interface{}{
-			"status": "error",
-			"message": fmt.Sprintf("连接失败: %v", err),
-		}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 200 {
-		return map[string]interface{}{
-			"status": "success",
-			"message": "连接成功",
-		}
-	} else {
-		return map[string]interface{}{
-			"status": "error",
-			"message": fmt.Sprintf("API返回错误状态码: %d", resp.StatusCode),
-		}
-	}
-}
-
-// testClaudeConnection 测试Claude连接
-func (s *aiServiceImpl) testClaudeConnection(config *models.AIAssistantConfig) map[string]interface{} {
-	// 类似OpenAI的测试逻辑
-	return map[string]interface{}{
-		"status": "success",
-		"message": "Claude连接测试完成",
-	}
-}
-
-// testDeepSeekConnection 测试DeepSeek连接
-func (s *aiServiceImpl) testDeepSeekConnection(config *models.AIAssistantConfig) map[string]interface{} {
-	return map[string]interface{}{
-		"status": "success",
-		"message": "DeepSeek连接测试完成",
-	}
-}
-
-// testGLMConnection 测试GLM连接
-func (s *aiServiceImpl) testGLMConnection(config *models.AIAssistantConfig) map[string]interface{} {
-	return map[string]interface{}{
-		"status": "success",
-		"message": "GLM连接测试完成",
-	}
-}
-
-// testQwenConnection 测试Qwen连接
-func (s *aiServiceImpl) testQwenConnection(config *models.AIAssistantConfig) map[string]interface{} {
-	return map[string]interface{}{
-		"status": "success",
-		"message": "Qwen连接测试完成",
-	}
 }
 
 // GetAvailableModels 获取指定提供商的可用模型列表
 func (s *aiServiceImpl) GetAvailableModels(provider models.AIProvider) ([]map[string]interface{}, error) {
-	availableModels := []map[string]interface{}{}
-
-	switch provider {
-	case models.ProviderOpenAI:
-		availableModels = []map[string]interface{}{
-			{"id": "gpt-4", "name": "GPT-4", "description": "最先进的GPT模型"},
-			{"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "description": "快速且经济的模型"},
-			{"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "description": "GPT-4的优化版本"},
-		}
-	case models.ProviderClaude:
-		availableModels = []map[string]interface{}{
-			{"id": "claude-3-opus", "name": "Claude 3 Opus", "description": "最强大的Claude模型"},
-			{"id": "claude-3-sonnet", "name": "Claude 3 Sonnet", "description": "平衡性能和速度"},
-			{"id": "claude-3-haiku", "name": "Claude 3 Haiku", "description": "快速且经济的模型"},
-		}
-	case models.ProviderDeepSeek:
-		availableModels = []map[string]interface{}{
-			{"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "DeepSeek对话模型"},
-			{"id": "deepseek-coder", "name": "DeepSeek Coder", "description": "代码生成专用模型"},
-		}
-	case models.ProviderGLM:
-		availableModels = []map[string]interface{}{
-			{"id": "glm-4", "name": "GLM-4", "description": "智谱GLM-4模型"},
-			{"id": "glm-3-turbo", "name": "GLM-3 Turbo", "description": "GLM-3的优化版本"},
-		}
-	case models.ProviderQwen:
-		availableModels = []map[string]interface{}{
-			{"id": "qwen-max", "name": "Qwen Max", "description": "通义千问最大模型"},
-			{"id": "qwen-plus", "name": "Qwen Plus", "description": "通义千问增强版"},
-			{"id": "qwen-turbo", "name": "Qwen Turbo", "description": "通义千问快速版"},
-		}
-	default:
-		return availableModels, fmt.Errorf("不支持的提供商: %s", provider)
+	// 创建一个临时配置来获取提供商
+	tempConfig := &models.AIAssistantConfig{
+		Provider: provider,
+		APIKey:   "temp", // 临时密钥，仅用于创建提供商实例
 	}
 
-	return availableModels, nil
+	aiProvider, err := s.providerFactory.CreateProvider(tempConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider: %v", err)
+	}
+
+	ctx := context.Background()
+	models, err := aiProvider.GetAvailableModels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get models: %v", err)
+	}
+
+	// 转换为map格式以保持向后兼容
+	result := make([]map[string]interface{}, 0, len(models))
+	for _, model := range models {
+		modelMap := map[string]interface{}{
+			"id":          model.ID,
+			"name":        model.Name,
+			"provider":    model.Provider,
+			"type":        model.Type,
+			"max_tokens":  model.MaxTokens,
+			"capabilities": model.Capabilities,
+			"description": fmt.Sprintf("%s - 最大tokens: %d", model.Name, model.MaxTokens),
+		}
+		
+		// 添加成本信息（如果有）
+		if model.Cost.InputTokenPrice > 0 || model.Cost.OutputTokenPrice > 0 {
+			modelMap["cost"] = map[string]interface{}{
+				"input_token_price":  model.Cost.InputTokenPrice,
+				"output_token_price": model.Cost.OutputTokenPrice,
+			}
+		}
+		
+		result = append(result, modelMap)
+	}
+
+	return result, nil
 }
 
 // GetMessageStatus 获取消息处理状态

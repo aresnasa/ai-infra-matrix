@@ -82,11 +82,11 @@ type MCPTool struct {
 type AIConversation struct {
 	ID           uint                `json:"id" gorm:"primaryKey"`
 	UserID       uint                `json:"user_id" gorm:"not null;index"`
-	User         *User               `json:"user,omitempty"`
+	User         *User               `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	Title        string              `json:"title" gorm:"size:200"`
 	ConfigID     uint                `json:"config_id" gorm:"not null;index"`
-	Config       *AIAssistantConfig  `json:"config,omitempty"`
-	Messages     []AIMessage         `json:"messages,omitempty" gorm:"-"`
+	Config       *AIAssistantConfig  `json:"config,omitempty" gorm:"foreignKey:ConfigID"`
+	Messages     []AIMessage         `json:"messages,omitempty" gorm:"foreignKey:ConversationID;constraint:OnDelete:CASCADE"`
 	Context      string              `json:"context" gorm:"type:text"` // 项目上下文等
 	IsActive     bool                `json:"is_active" gorm:"default:true"`
 	TokensUsed   int                 `json:"tokens_used" gorm:"default:0"`
@@ -97,16 +97,17 @@ type AIConversation struct {
 
 // AIMessage AI对话消息
 type AIMessage struct {
-	ID             uint           `json:"id" gorm:"primaryKey"`
-	ConversationID uint           `json:"conversation_id" gorm:"not null;index"`
-	Role           string         `json:"role" gorm:"not null"` // user, assistant, system
-	Content        string         `json:"content" gorm:"type:text;not null"`
-	Metadata       string         `json:"metadata" gorm:"type:text"` // JSON格式的元数据
-	TokensUsed     int            `json:"tokens_used" gorm:"default:0"`
-	ResponseTime   int            `json:"response_time"` // 响应时间（毫秒）
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	ID             uint               `json:"id" gorm:"primaryKey"`
+	ConversationID uint               `json:"conversation_id" gorm:"not null;index"`
+	Conversation   *AIConversation    `json:"conversation,omitempty" gorm:"foreignKey:ConversationID"`
+	Role           string             `json:"role" gorm:"not null"` // user, assistant, system
+	Content        string             `json:"content" gorm:"type:text;not null"`
+	Metadata       string             `json:"metadata" gorm:"type:text"` // JSON格式的元数据
+	TokensUsed     int                `json:"tokens_used" gorm:"default:0"`
+	ResponseTime   int                `json:"response_time"` // 响应时间（毫秒）
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt     `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 // AIUsageStats AI使用统计
