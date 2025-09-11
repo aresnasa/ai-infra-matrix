@@ -627,6 +627,10 @@ func main() {
 			ai.GET("/conversations", aiController.ListConversations)
 			ai.GET("/conversations/:id", aiController.GetConversation)
 			ai.DELETE("/conversations/:id", aiController.DeleteConversation)
+			
+			// 对话控制
+			ai.PATCH("/conversations/:id/stop", aiController.StopConversation)
+			ai.PATCH("/conversations/:id/resume", aiController.ResumeConversation)
 
 			// 消息处理（异步版本）
 			ai.POST("/conversations/:id/messages", aiController.SendMessage)

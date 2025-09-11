@@ -307,6 +307,58 @@ func (ctrl *AIAssistantController) DeleteConversation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "对话删除成功"})
 }
 
+// StopConversation 停止对话
+func (ctrl *AIAssistantController) StopConversation(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的对话ID"})
+		return
+	}
+
+	if err := ctrl.aiService.StopConversation(uint(id), userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "对话已停止",
+		"conversation_id": id,
+		"status": "stopped",
+	})
+}
+
+// ResumeConversation 恢复对话
+func (ctrl *AIAssistantController) ResumeConversation(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的对话ID"})
+		return
+	}
+
+	if err := ctrl.aiService.ResumeConversation(uint(id), userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "对话已恢复",
+		"conversation_id": id,
+		"status": "active",
+	})
+}
+
 // SendMessage 发送消息（异步版本）
 func (ctrl *AIAssistantController) SendMessage(c *gin.Context) {
 	userID, exists := middleware.GetCurrentUserID(c)
