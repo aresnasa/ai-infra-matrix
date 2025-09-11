@@ -11,6 +11,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -49,15 +50,35 @@ type AIService interface {
 
 // aiServiceImpl AI服务实现
 type aiServiceImpl struct {
-	db *gorm.DB
-	cryptoService *utils.CryptoService
+	db                 *gorm.DB
+	cryptoService      *utils.CryptoService
+	messagePersistence *MessagePersistenceService
+	messageRetrieval   *MessageRetrievalService
+	kafkaService       *KafkaMessageService
 }
 
 // NewAIService 创建AI服务实例
 func NewAIService() AIService {
 	return &aiServiceImpl{
-		db: database.DB,
+		db:            database.DB,
 		cryptoService: database.CryptoService,
+	}
+}
+
+// NewAIServiceWithDependencies 创建带有依赖的AI服务实例
+func NewAIServiceWithDependencies(
+	db *gorm.DB,
+	cryptoService *utils.CryptoService,
+	messagePersistence *MessagePersistenceService,
+	messageRetrieval *MessageRetrievalService,
+	kafkaService *KafkaMessageService,
+) AIService {
+	return &aiServiceImpl{
+		db:                 db,
+		cryptoService:      cryptoService,
+		messagePersistence: messagePersistence,
+		messageRetrieval:   messageRetrieval,
+		kafkaService:       kafkaService,
 	}
 }
 
@@ -209,10 +230,19 @@ func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*m
 		ConversationID: conversationID,
 		Role:           "user",
 		Content:        userMessage,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
-	if err := s.db.Create(userMsg).Error; err != nil {
-		return nil, err
+	// 使用消息持久化服务保存用户消息
+	if s.messagePersistence != nil {
+		if err := s.messagePersistence.SaveMessage(userMsg); err != nil {
+			return nil, fmt.Errorf("failed to save user message: %v", err)
+		}
+	} else {
+		if err := s.db.Create(userMsg).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	// 调用AI API
@@ -234,20 +264,58 @@ func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*m
 		Content:        aiResponse,
 		TokensUsed:     tokensUsed,
 		ResponseTime:   responseTime,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
-	if err := s.db.Create(aiMsg).Error; err != nil {
-		return nil, err
+	// 使用消息持久化服务保存AI回复
+	if s.messagePersistence != nil {
+		if err := s.messagePersistence.SaveMessage(aiMsg); err != nil {
+			return nil, fmt.Errorf("failed to save AI message: %v", err)
+		}
+	} else {
+		if err := s.db.Create(aiMsg).Error; err != nil {
+			return nil, err
+		}
+		// 更新对话的tokens使用量
+		conversation.TokensUsed += tokensUsed
+		s.db.Save(conversation)
 	}
 
-	// 更新对话的tokens使用量
-	conversation.TokensUsed += tokensUsed
-	s.db.Save(conversation)
+	// 发送消息事件到Kafka
+	if s.kafkaService != nil {
+		if err := s.kafkaService.SendChatMessage(conversation.UserID, &conversationID, userMessage, map[string]interface{}{
+			"ai_response": aiResponse,
+			"tokens_used": tokensUsed,
+			"response_time": responseTime,
+		}); err != nil {
+			logrus.Warnf("Failed to send message to Kafka: %v", err)
+		}
+	}
 
 	return aiMsg, nil
 }
 
 func (s *aiServiceImpl) GetMessages(conversationID uint) ([]models.AIMessage, error) {
+	// 使用优化的消息检索服务
+	if s.messageRetrieval != nil {
+		messages, err := s.messageRetrieval.GetMessagesWithOptimization(conversationID, 0, &MessageQueryOptions{
+			SortBy:    "created_at",
+			SortOrder: "asc",
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// 转换类型
+		result := make([]models.AIMessage, len(messages))
+		for i, msg := range messages {
+			result[i] = *msg
+		}
+		return result, nil
+	}
+
+	// 回退到原始实现
 	var messages []models.AIMessage
 	err := s.db.Where("conversation_id = ?", conversationID).
 		Order("created_at ASC").
@@ -623,42 +691,42 @@ func (s *aiServiceImpl) testQwenConnection(config *models.AIAssistantConfig) map
 
 // GetAvailableModels 获取指定提供商的可用模型列表
 func (s *aiServiceImpl) GetAvailableModels(provider models.AIProvider) ([]map[string]interface{}, error) {
-	models := []map[string]interface{}{}
+	availableModels := []map[string]interface{}{}
 
 	switch provider {
 	case models.ProviderOpenAI:
-		models = []map[string]interface{}{
+		availableModels = []map[string]interface{}{
 			{"id": "gpt-4", "name": "GPT-4", "description": "最先进的GPT模型"},
 			{"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "description": "快速且经济的模型"},
 			{"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "description": "GPT-4的优化版本"},
 		}
 	case models.ProviderClaude:
-		models = []map[string]interface{}{
+		availableModels = []map[string]interface{}{
 			{"id": "claude-3-opus", "name": "Claude 3 Opus", "description": "最强大的Claude模型"},
 			{"id": "claude-3-sonnet", "name": "Claude 3 Sonnet", "description": "平衡性能和速度"},
 			{"id": "claude-3-haiku", "name": "Claude 3 Haiku", "description": "快速且经济的模型"},
 		}
 	case models.ProviderDeepSeek:
-		models = []map[string]interface{}{
+		availableModels = []map[string]interface{}{
 			{"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "DeepSeek对话模型"},
 			{"id": "deepseek-coder", "name": "DeepSeek Coder", "description": "代码生成专用模型"},
 		}
 	case models.ProviderGLM:
-		models = []map[string]interface{}{
+		availableModels = []map[string]interface{}{
 			{"id": "glm-4", "name": "GLM-4", "description": "智谱GLM-4模型"},
 			{"id": "glm-3-turbo", "name": "GLM-3 Turbo", "description": "GLM-3的优化版本"},
 		}
 	case models.ProviderQwen:
-		models = []map[string]interface{}{
+		availableModels = []map[string]interface{}{
 			{"id": "qwen-max", "name": "Qwen Max", "description": "通义千问最大模型"},
 			{"id": "qwen-plus", "name": "Qwen Plus", "description": "通义千问增强版"},
 			{"id": "qwen-turbo", "name": "Qwen Turbo", "description": "通义千问快速版"},
 		}
 	default:
-		return models, fmt.Errorf("不支持的提供商: %s", provider)
+		return availableModels, fmt.Errorf("不支持的提供商: %s", provider)
 	}
 
-	return models, nil
+	return availableModels, nil
 }
 
 // GetMessageStatus 获取消息处理状态

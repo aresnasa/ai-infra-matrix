@@ -504,6 +504,55 @@ render_jupyterhub_templates() {
     echo
 }
 
+# 渲染Docker Compose配置模板
+render_docker_compose_templates() {
+    print_info "===========================================" 
+    print_info "渲染 Docker Compose 配置模板"
+    print_info "==========================================="
+    
+    # 加载环境变量
+    load_environment_variables
+    
+    local template_file="$SCRIPT_DIR/docker-compose.yml.example"
+    local output_file="$SCRIPT_DIR/docker-compose.yml"
+    
+    if [[ ! -f "$template_file" ]]; then
+        print_error "Docker Compose模板文件不存在: $template_file"
+        return 1
+    fi
+    
+    print_info "从模板生成 docker-compose.yml"
+    print_info "模板文件: $template_file"
+    print_info "输出文件: $output_file"
+    
+    # 创建备份
+    if [[ -f "$output_file" ]]; then
+        print_info "备份现有文件: ${output_file}.backup"
+        cp "$output_file" "${output_file}.backup"
+    fi
+    
+    # 设置默认的Kafka环境变量
+    export KAFKA_ENABLED="${KAFKA_ENABLED:-true}"
+    export KAFKA_EXTERNAL_PORT="${KAFKA_EXTERNAL_PORT:-9094}"
+    export KAFKA_UI_PORT="${KAFKA_UI_PORT:-9095}"
+    export KAFKA_RETENTION_HOURS="${KAFKA_RETENTION_HOURS:-168}"
+    export KAFKA_CLUSTER_ID="${KAFKA_CLUSTER_ID:-gYf__u4_TgSoREBUnP-YzQ}"
+    
+    # 复制模板文件到目标位置
+    cp "$template_file" "$output_file"
+    
+    print_success "✓ Docker Compose 模板渲染完成"
+    print_info "生成的文件: $output_file"
+    
+    # 验证生成的文件
+    if docker compose -f "$output_file" config --quiet 2>/dev/null; then
+        print_success "✓ Docker Compose 配置语法验证通过"
+    else
+        print_warning "⚠ Docker Compose 配置语法验证失败，请检查生成的文件"
+    fi
+    echo
+}
+
 # 设置JupyterHub特定变量
 setup_jupyterhub_variables() {
     # 从环境变量或.env文件中读取JupyterHub配置
@@ -3800,6 +3849,212 @@ reset_database() {
     fi
 }
 
+# Kafka服务管理函数
+# 启动Kafka服务 (KRaft模式)
+start_kafka_services() {
+    print_info "启动Kafka服务 (KRaft模式)..."
+    local compose_file="${1:-docker-compose.yml}"
+    
+    # 首先渲染docker-compose.yml模板
+    if [[ "$compose_file" == "docker-compose.yml" ]]; then
+        print_info "渲染Docker Compose模板..."
+        render_docker_compose_templates
+    fi
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "未找到 docker-compose 文件: $compose_file"
+        return 1
+    fi
+    
+    print_info "启动 Kafka (KRaft模式，无需Zookeeper)..."
+    docker compose -f "$compose_file" up -d kafka
+    
+    # 等待Kafka启动
+    print_info "等待 Kafka 启动..."
+    sleep 20
+    
+    print_info "启动 Kafka UI..."
+    docker compose -f "$compose_file" up -d kafka-ui
+    
+    print_success "✓ Kafka服务启动完成 (KRaft模式)"
+    print_info "Kafka UI 访问地址: http://localhost:9095"
+    print_info "Kafka Bootstrap Server: localhost:9094"
+}
+
+# 检查Kafka服务状态
+check_kafka_status() {
+    print_info "检查Kafka服务状态 (KRaft模式)..."
+    local compose_file="${1:-docker-compose.yml}"
+    
+    # 检查服务状态
+    echo "Kafka服务状态:"
+    docker compose -f "$compose_file" ps kafka kafka-ui
+    
+    # 检查Kafka连接性
+    print_info "检查Kafka连接性..."
+    if docker compose -f "$compose_file" exec kafka kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
+        print_success "✓ Kafka服务运行正常 (KRaft模式)"
+        
+        # 显示集群信息
+        print_info "Kafka集群信息:"
+        docker compose -f "$compose_file" exec kafka kafka-broker-api-versions --bootstrap-server localhost:9092 | head -5
+    else
+        print_error "✗ Kafka服务连接失败"
+        return 1
+    fi
+}
+
+# 创建Kafka测试主题
+create_kafka_test_topic() {
+    local topic_name="${1:-test-topic}"
+    local partitions="${2:-3}"
+    local replication_factor="${3:-1}"
+    local compose_file="${4:-docker-compose.yml}"
+    
+    print_info "创建Kafka测试主题: $topic_name"
+    
+    docker compose -f "$compose_file" exec kafka kafka-topics \
+        --create \
+        --bootstrap-server localhost:9092 \
+        --topic "$topic_name" \
+        --partitions "$partitions" \
+        --replication-factor "$replication_factor"
+    
+    if [[ $? -eq 0 ]]; then
+        print_success "✓ 主题 '$topic_name' 创建成功"
+    else
+        print_error "✗ 主题 '$topic_name' 创建失败"
+        return 1
+    fi
+}
+
+# 列出Kafka主题
+list_kafka_topics() {
+    local compose_file="${1:-docker-compose.yml}"
+    
+    print_info "Kafka主题列表:"
+    docker compose -f "$compose_file" exec kafka kafka-topics \
+        --bootstrap-server localhost:9092 \
+        --list
+}
+
+# 发送测试消息到Kafka
+send_kafka_test_message() {
+    local topic_name="${1:-test-topic}"
+    local message="${2:-Hello Kafka from AI Infrastructure Matrix}"
+    local compose_file="${3:-docker-compose.yml}"
+    
+    print_info "发送测试消息到主题: $topic_name"
+    
+    echo "$message" | docker compose -f "$compose_file" exec -T kafka kafka-console-producer \
+        --bootstrap-server localhost:9092 \
+        --topic "$topic_name"
+    
+    if [[ $? -eq 0 ]]; then
+        print_success "✓ 消息发送成功"
+    else
+        print_error "✗ 消息发送失败"
+        return 1
+    fi
+}
+
+# 消费Kafka测试消息
+consume_kafka_test_message() {
+    local topic_name="${1:-test-topic}"
+    local max_messages="${2:-5}"
+    local compose_file="${3:-docker-compose.yml}"
+    
+    print_info "从主题 '$topic_name' 消费消息 (最多 $max_messages 条):"
+    
+    docker compose -f "$compose_file" exec kafka kafka-console-consumer \
+        --bootstrap-server localhost:9092 \
+        --topic "$topic_name" \
+        --from-beginning \
+        --max-messages "$max_messages"
+}
+
+# 完整的Kafka测试流程
+test_kafka_full() {
+    local compose_file="${1:-docker-compose.yml}"
+    local topic_name="ai-infra-test-$(date +%s)"
+    
+    print_info "=========================================="
+    print_info "开始Kafka完整测试流程"
+    print_info "=========================================="
+    
+    # 1. 检查服务状态
+    check_kafka_status "$compose_file" || return 1
+    
+    # 2. 创建测试主题
+    create_kafka_test_topic "$topic_name" 3 1 "$compose_file" || return 1
+    
+    # 3. 列出主题
+    list_kafka_topics "$compose_file"
+    
+    # 4. 发送测试消息
+    send_kafka_test_message "$topic_name" "Test message 1: $(date)" "$compose_file" || return 1
+    send_kafka_test_message "$topic_name" "Test message 2: System check" "$compose_file" || return 1
+    send_kafka_test_message "$topic_name" "Test message 3: Integration test" "$compose_file" || return 1
+    
+    # 5. 消费消息
+    print_info "等待消息传播..."
+    sleep 2
+    consume_kafka_test_message "$topic_name" 10 "$compose_file"
+    
+    # 6. 清理测试主题
+    print_info "清理测试主题: $topic_name"
+    docker compose -f "$compose_file" exec kafka kafka-topics \
+        --delete \
+        --bootstrap-server localhost:9092 \
+        --topic "$topic_name"
+    
+    print_success "✓ Kafka完整测试完成"
+    print_info "Kafka UI管理界面: http://localhost:9095"
+}
+
+# 停止Kafka服务
+stop_kafka_services() {
+    local compose_file="${1:-docker-compose.yml}"
+    
+    print_info "停止Kafka服务 (KRaft模式)..."
+    docker compose -f "$compose_file" stop kafka-ui kafka
+    print_success "✓ Kafka服务已停止"
+}
+
+# 重启Kafka服务
+restart_kafka_services() {
+    local compose_file="${1:-docker-compose.yml}"
+    
+    print_info "重启Kafka服务 (KRaft模式)..."
+    stop_kafka_services "$compose_file"
+    sleep 5
+    start_kafka_services "$compose_file"
+}
+
+# 查看Kafka日志
+show_kafka_logs() {
+    local service="${1:-kafka}"
+    local compose_file="${2:-docker-compose.yml}"
+    local follow="${3:-}"
+    
+    case "$service" in
+        "kafka-ui"|"ui")
+            if [[ "$follow" == "--follow" || "$follow" == "-f" ]]; then
+                docker compose -f "$compose_file" logs -f kafka-ui
+            else
+                docker compose -f "$compose_file" logs --tail=50 kafka-ui
+            fi
+            ;;
+        "kafka"|*)
+            if [[ "$follow" == "--follow" || "$follow" == "-f" ]]; then
+                docker compose -f "$compose_file" logs -f kafka
+            else
+                docker compose -f "$compose_file" logs --tail=50 kafka
+            fi
+            ;;
+    esac
+}
+
 # 显示帮助信息
 show_help() {
     echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
@@ -3838,6 +4093,15 @@ show_help() {
     echo "  prod-logs [service] [--follow]  - 查看日志"
     echo "  generate-passwords [file] [--force] - 生成生产环境强密码"
     echo
+    echo "Kafka服务管理 (KRaft模式):"
+    echo "  kafka-start [compose-file]      - 启动Kafka服务 (KRaft模式，无需Zookeeper)"
+    echo "  kafka-stop [compose-file]       - 停止Kafka服务"
+    echo "  kafka-restart [compose-file]    - 重启Kafka服务"
+    echo "  kafka-status [compose-file]     - 检查Kafka服务状态"
+    echo "  kafka-test [compose-file]       - 运行完整Kafka测试流程"
+    echo "  kafka-topics [compose-file]     - 列出Kafka主题"
+    echo "  kafka-logs [service] [compose-file] [--follow] - 查看日志 (service: kafka|kafka-ui)"
+    echo
     echo "工具命令:"
     echo "  clean [tag] [--force]           - 清理镜像"
     echo "  clean-all [--force]             - 完整清理（镜像、容器、数据卷、配置文件）"
@@ -3845,7 +4109,7 @@ show_help() {
     echo "  verify <registry> [tag]         - 验证镜像"
     echo "  create-env [dev|prod] [--force] - 创建环境配置"
     echo "  validate-env                    - 校验环境配置"
-    echo "  render-templates [nginx|jupyterhub|all] - 渲染配置模板"
+    echo "  render-templates [nginx|jupyterhub|docker-compose|all] - 渲染配置模板"
     echo "  version                         - 显示版本"
     echo "  help                            - 显示帮助"
     echo
@@ -3933,6 +4197,42 @@ show_help() {
     echo "  # 快速切换部署端口"
     echo "  $0 update-port 8080 && $0 build nginx --force        # 切换到8080端口并更新配置"
     echo "  $0 update-port 9000 && $0 build nginx --force        # 切换到9000端口并更新配置"
+    echo
+    echo "===================================================================================="
+    echo "📊 Kafka服务管理实例 (KRaft模式):"
+    echo "===================================================================================="
+    echo "  # 启动Kafka服务集群 (KRaft模式，性能更优)"
+    echo "  $0 kafka-start                                       # 启动Kafka服务 (无需Zookeeper)"
+    echo "  $0 kafka-status                                      # 检查服务状态"
+    echo
+    echo "  # 完整Kafka测试流程"
+    echo "  $0 kafka-test                                        # 自动创建主题、发送消息、消费消息"
+    echo "  $0 kafka-topics                                      # 列出所有主题"
+    echo
+    echo "  # 日志查看和调试"
+    echo "  $0 kafka-logs kafka --follow                         # 查看Kafka实时日志"
+    echo "  $0 kafka-logs kafka-ui                               # 查看Kafka UI日志"
+    echo
+    echo "  # 服务管理"
+    echo "  $0 kafka-restart                                     # 重启Kafka服务"
+    echo "  $0 kafka-stop                                        # 停止Kafka服务"
+    echo
+    echo "  # Kafka UI管理界面访问"
+    echo "  # http://localhost:9095                              # Kafka管理界面"
+    echo "  # Bootstrap Server: localhost:9094                  # 外部连接地址"
+    echo
+    echo "===================================================================================="
+    echo "📋 模板渲染和配置管理实例:"
+    echo "===================================================================================="
+    echo "  # 渲染docker-compose.yml配置"
+    echo "  $0 render-templates docker-compose                   # 从example生成docker-compose.yml"
+    echo "  $0 render-templates all                              # 渲染所有配置模板"
+    echo
+    echo "  # 完整的Kafka部署流程"
+    echo "  $0 render-templates docker-compose                   # 1. 生成最新配置"
+    echo "  $0 kafka-start                                       # 2. 启动Kafka服务"
+    echo "  $0 kafka-test                                        # 3. 测试Kafka功能"
+    echo
     echo
     echo "===================================================================================="
     echo "⚠️  重要提醒:"
@@ -4367,13 +4667,17 @@ main() {
                 "jupyterhub")
                     render_jupyterhub_templates
                     ;;
+                "docker-compose"|"compose")
+                    render_docker_compose_templates
+                    ;;
                 "all")
                     render_nginx_templates
                     render_jupyterhub_templates
+                    render_docker_compose_templates
                     ;;
                 *)
                     print_error "未知的模板类型: $2"
-                    print_info "可用模板类型: nginx, jupyterhub, all"
+                    print_info "可用模板类型: nginx, jupyterhub, docker-compose, all"
                     exit 1
                     ;;
             esac
@@ -4393,6 +4697,38 @@ main() {
             
         "validate-env")
             validate_env_consistency
+            ;;
+            
+        "kafka-start")
+            start_kafka_services "${2:-docker-compose.yml}"
+            ;;
+            
+        "kafka-stop")
+            stop_kafka_services "${2:-docker-compose.yml}"
+            ;;
+            
+        "kafka-restart")
+            restart_kafka_services "${2:-docker-compose.yml}"
+            ;;
+            
+        "kafka-status")
+            check_kafka_status "${2:-docker-compose.yml}"
+            ;;
+            
+        "kafka-test")
+            test_kafka_full "${2:-docker-compose.yml}"
+            ;;
+            
+        "kafka-topics")
+            list_kafka_topics "${2:-docker-compose.yml}"
+            ;;
+            
+        "kafka-logs")
+            if [[ -z "$2" ]]; then
+                show_kafka_logs "kafka" "${3:-docker-compose.yml}" "$4"
+            else
+                show_kafka_logs "$2" "${3:-docker-compose.yml}" "$4"
+            fi
             ;;
             
         "help"|"-h"|"--help")

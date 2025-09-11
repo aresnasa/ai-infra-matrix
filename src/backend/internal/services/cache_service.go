@@ -24,6 +24,11 @@ type CacheService interface {
 	GetMessages(key string) []models.AIMessage
 	AppendMessage(key string, message *models.AIMessage) error
 	DeleteMessages(key string) error
+	
+	// 单个消息缓存
+	SetMessage(key string, message *models.AIMessage, duration time.Duration) error
+	GetMessage(key string) *models.AIMessage
+	Delete(key string) error
 
 	// 配置缓存
 	SetConfigs(configs []models.AIAssistantConfig, duration time.Duration) error
@@ -352,4 +357,38 @@ func (c *cacheServiceImpl) GetCacheStats() (*CacheStats, error) {
 	logrus.Debugf("Redis Info - Memory: %s", memory)
 
 	return stats, nil
+}
+
+// SetMessage 设置单个消息缓存
+func (c *cacheServiceImpl) SetMessage(key string, message *models.AIMessage, duration time.Duration) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %v", err)
+	}
+
+	return c.redis.Set(c.ctx, key, data, duration).Err()
+}
+
+// GetMessage 获取单个消息缓存
+func (c *cacheServiceImpl) GetMessage(key string) *models.AIMessage {
+	data, err := c.redis.Get(c.ctx, key).Result()
+	if err != nil {
+		if err != redis.Nil {
+			logrus.Errorf("Failed to get message from cache: %v", err)
+		}
+		return nil
+	}
+
+	var message models.AIMessage
+	if err := json.Unmarshal([]byte(data), &message); err != nil {
+		logrus.Errorf("Failed to unmarshal message: %v", err)
+		return nil
+	}
+
+	return &message
+}
+
+// Delete 删除缓存键
+func (c *cacheServiceImpl) Delete(key string) error {
+	return c.redis.Del(c.ctx, key).Err()
 }

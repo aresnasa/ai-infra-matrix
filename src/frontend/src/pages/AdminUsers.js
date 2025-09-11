@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, message, Divider, Drawer } from 'antd';
-import { UserOutlined, EditOutlined, DeleteOutlined, PlusOutlined, KeyOutlined, TeamOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, message, Divider, Drawer, Tabs, Descriptions, Alert } from 'antd';
+import { UserOutlined, EditOutlined, DeleteOutlined, PlusOutlined, KeyOutlined, TeamOutlined, CheckOutlined, CloseOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { adminAPI } from '../services/api';
 
 const { Option } = Select;
+const { TabPane } = Tabs;
 
 const AdminUsers = () => {
   const [users, setUsers] = useState([]);
@@ -22,8 +23,16 @@ const AdminUsers = () => {
     total: 0,
   });
 
+  // 审批相关状态
+  const [pendingApprovals, setPendingApprovals] = useState([]);
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [approvalModalVisible, setApprovalModalVisible] = useState(false);
+  const [selectedApproval, setSelectedApproval] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
   useEffect(() => {
     fetchUsers();
+    fetchPendingApprovals();
   }, [pagination.current, pagination.pageSize]);
 
   const fetchUsers = async () => {
@@ -56,6 +65,15 @@ const AdminUsers = () => {
       message.error('获取用户列表失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPendingApprovals = async () => {
+    try {
+      const response = await adminAPI.getPendingApprovals();
+      setPendingApprovals(response.data || []);
+    } catch (error) {
+      console.error('获取待审批申请失败:', error);
     }
   };
 
@@ -92,6 +110,55 @@ const AdminUsers = () => {
       group_ids: user.user_groups?.map(group => group.id) || []
     });
     setUserGroupsDrawerVisible(true);
+  };
+
+  // 审批相关方法
+  const handleApprove = async (approval) => {
+    setApprovalLoading(true);
+    try {
+      await adminAPI.approveRegistration(approval.id);
+      message.success('注册申请已批准');
+      fetchPendingApprovals();
+      fetchUsers();
+    } catch (error) {
+      message.error('批准失败：' + (error.response?.data?.error || '未知错误'));
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  const handleReject = (approval) => {
+    setSelectedApproval(approval);
+    setRejectReason('');
+    setApprovalModalVisible(true);
+  };
+
+  const handleRejectConfirm = async () => {
+    if (!rejectReason.trim()) {
+      message.error('请填写拒绝原因');
+      return;
+    }
+
+    setApprovalLoading(true);
+    try {
+      await adminAPI.rejectRegistration(selectedApproval.id, rejectReason);
+      message.success('注册申请已拒绝');
+      setApprovalModalVisible(false);
+      fetchPendingApprovals();
+    } catch (error) {
+      message.error('拒绝失败：' + (error.response?.data?.error || '未知错误'));
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  const getRoleTemplateName = (template) => {
+    const templates = {
+      'model-developer': '模型开发人员',
+      'sre': 'SRE工程师',
+      'engineer': '工程研发人员'
+    };
+    return templates[template] || template;
   };
 
   const handleResetPasswordOk = async () => {
@@ -288,25 +355,110 @@ const AdminUsers = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ marginBottom: 16 }}>
         <h2>用户管理</h2>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => setModalVisible(true)}
-        >
-          添加用户
-        </Button>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={users}
-        loading={loading}
-        pagination={pagination}
-        onChange={handleTableChange}
-        rowKey="id"
-      />
+      <Tabs defaultActiveKey="users" type="card">
+        <TabPane tab="用户列表" key="users">
+          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+            <span>管理现有用户账户</span>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setModalVisible(true)}
+            >
+              添加用户
+            </Button>
+          </div>
+
+          <Table
+            columns={columns}
+            dataSource={users}
+            loading={loading}
+            pagination={pagination}
+            onChange={handleTableChange}
+            rowKey="id"
+          />
+        </TabPane>
+
+        <TabPane tab={`注册审批 (${pendingApprovals.length})`} key="approvals">
+          <div style={{ marginBottom: 16 }}>
+            <Alert
+              message="待审批的注册申请"
+              description="以下用户已提交注册申请，需要管理员审批后才能使用系统。"
+              type="info"
+              showIcon
+            />
+          </div>
+
+          <Table
+            dataSource={pendingApprovals}
+            rowKey="id"
+            loading={approvalLoading}
+            columns={[
+              {
+                title: '用户名',
+                dataIndex: 'username',
+                key: 'username',
+                render: (text) => (
+                  <Space>
+                    <UserOutlined />
+                    {text}
+                  </Space>
+                ),
+              },
+              {
+                title: '邮箱',
+                dataIndex: 'email',
+                key: 'email',
+              },
+              {
+                title: '部门',
+                dataIndex: 'department',
+                key: 'department',
+              },
+              {
+                title: '角色模板',
+                dataIndex: 'role_template',
+                key: 'role_template',
+                render: (template) => (
+                  <Tag color="blue">{getRoleTemplateName(template)}</Tag>
+                ),
+              },
+              {
+                title: '申请时间',
+                dataIndex: 'created_at',
+                key: 'created_at',
+                render: (text) => new Date(text).toLocaleString('zh-CN'),
+              },
+              {
+                title: '操作',
+                key: 'action',
+                render: (_, record) => (
+                  <Space>
+                    <Button
+                      type="primary"
+                      icon={<CheckOutlined />}
+                      onClick={() => handleApprove(record)}
+                      loading={approvalLoading}
+                    >
+                      批准
+                    </Button>
+                    <Button
+                      danger
+                      icon={<CloseOutlined />}
+                      onClick={() => handleReject(record)}
+                    >
+                      拒绝
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </TabPane>
+      </Tabs>
 
       <Modal
         title={editingUser ? '编辑用户' : '添加用户'}
@@ -511,6 +663,45 @@ const AdminUsers = () => {
           </div>
         </Form>
       </Drawer>
+
+      {/* 审批拒绝模态框 */}
+      <Modal
+        title="拒绝注册申请"
+        open={approvalModalVisible}
+        onOk={handleRejectConfirm}
+        onCancel={() => {
+          setApprovalModalVisible(false);
+          setSelectedApproval(null);
+          setRejectReason('');
+        }}
+        okText="确认拒绝"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        confirmLoading={approvalLoading}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Descriptions title="申请信息" size="small" column={1}>
+            <Descriptions.Item label="用户名">{selectedApproval?.username}</Descriptions.Item>
+            <Descriptions.Item label="邮箱">{selectedApproval?.email}</Descriptions.Item>
+            <Descriptions.Item label="部门">{selectedApproval?.department}</Descriptions.Item>
+            <Descriptions.Item label="角色模板">{getRoleTemplateName(selectedApproval?.role_template)}</Descriptions.Item>
+          </Descriptions>
+        </div>
+        <Form layout="vertical">
+          <Form.Item
+            label="拒绝原因"
+            required
+            rules={[{ required: true, message: '请填写拒绝原因' }]}
+          >
+            <Input.TextArea
+              rows={4}
+              placeholder="请说明拒绝该注册申请的原因..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };

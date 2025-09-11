@@ -90,7 +90,7 @@ services:
       KAFKA_BACKGROUND_THREADS: 10
       
       # 集群元数据配置（KRaft）
-      CLUSTER_ID: 'gYf__u4_TgSoREBUnP-YzQ'
+      CLUSTER_ID: 'bff7db2a-59dd-4d6c-bc3c-96a2b652eef0'
       
       TZ: Asia/Shanghai
     expose:

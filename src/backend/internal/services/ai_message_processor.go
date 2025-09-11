@@ -14,6 +14,8 @@ type AIMessageProcessor struct {
 	aiService           AIService
 	messageQueueService MessageQueueService
 	cacheService        CacheService
+	messagePersistence  *MessagePersistenceService
+	kafkaService        *KafkaMessageService
 }
 
 // NewAIMessageProcessor 创建AI消息处理器
@@ -22,6 +24,22 @@ func NewAIMessageProcessor(aiService AIService, messageQueueService MessageQueue
 		aiService:           aiService,
 		messageQueueService: messageQueueService,
 		cacheService:        NewCacheService(),
+	}
+}
+
+// NewAIMessageProcessorWithDependencies 创建带有完整依赖的AI消息处理器
+func NewAIMessageProcessorWithDependencies(
+	aiService AIService,
+	messageQueueService MessageQueueService,
+	messagePersistence *MessagePersistenceService,
+	kafkaService *KafkaMessageService,
+) *AIMessageProcessor {
+	return &AIMessageProcessor{
+		aiService:           aiService,
+		messageQueueService: messageQueueService,
+		cacheService:        NewCacheService(),
+		messagePersistence:  messagePersistence,
+		kafkaService:        kafkaService,
 	}
 }
 
@@ -81,7 +99,7 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 	// 检查缓存中是否有最近的对话
 	cacheKey := fmt.Sprintf("conversation:%d", conversationID)
 	cachedConversation := p.cacheService.GetConversation(cacheKey)
-	
+
 	var conversation *models.AIConversation
 	if cachedConversation != nil {
 		conversation = cachedConversation
@@ -95,6 +113,22 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 		p.cacheService.SetConversation(cacheKey, conversation, 30*time.Minute)
 	}
 
+	// 保存用户消息到数据库
+	userMessage := &models.AIMessage{
+		ConversationID: conversationID,
+		Role:           "user",
+		Content:        message.Content,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	if p.messagePersistence != nil {
+		if err := p.messagePersistence.SaveMessage(userMessage); err != nil {
+			logrus.Errorf("Failed to save user message: %v", err)
+			// 继续处理，不影响主流程
+		}
+	}
+
 	// 发送消息并获取AI回复
 	aiMessage, err := p.aiService.SendMessage(conversationID, message.Content)
 	if err != nil {
@@ -104,6 +138,22 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 	// 缓存最新消息
 	messagesKey := fmt.Sprintf("messages:%d", conversationID)
 	p.cacheService.AppendMessage(messagesKey, aiMessage)
+
+	// 发送到Kafka进行流处理
+	if p.kafkaService != nil {
+		if err := p.kafkaService.CacheMessage(conversationID, aiMessage); err != nil {
+			logrus.Warnf("Failed to send message to Kafka: %v", err)
+		}
+
+		// 发送消息事件
+		if err := p.kafkaService.SendMessageEvent("message_processed", message.ID, message.UserID, map[string]interface{}{
+			"conversation_id": conversationID,
+			"ai_message_id":   aiMessage.ID,
+			"tokens_used":     aiMessage.TokensUsed,
+		}); err != nil {
+			logrus.Warnf("Failed to send message event to Kafka: %v", err)
+		}
+	}
 
 	// 更新成功状态
 	status.Status = "completed"

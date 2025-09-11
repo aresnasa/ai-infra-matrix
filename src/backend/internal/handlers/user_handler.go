@@ -42,6 +42,42 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 	}
 }
 
+// ValidateLDAP LDAP验证
+// @Summary LDAP账户验证
+// @Description 验证用户在LDAP中的账户信息
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Param request body models.LoginRequest true "LDAP验证信息"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/validate-ldap [post]
+func (h *UserHandler) ValidateLDAP(c *gin.Context) {
+	var req models.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "valid": false})
+		return
+	}
+
+	// LDAP验证
+	ldapUser, err := h.ldapService.AuthenticateUser(req.Username, req.Password)
+	if err != nil {
+		logrus.WithError(err).Error("LDAP validation failed")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "LDAP验证失败: 用户不存在或密码错误",
+			"valid": false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "LDAP验证成功",
+		"valid": true,
+		"ldap_user": ldapUser,
+	})
+}
+
 // Register 用户注册
 // @Summary 用户注册
 // @Description 创建新用户账户
@@ -1091,4 +1127,153 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// GetPendingApprovals 获取待审批的注册申请
+// @Summary 获取待审批的注册申请
+// @Description 获取所有待审批的注册申请列表
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {array} models.RegistrationApproval
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/approvals/pending [get]
+func (h *UserHandler) GetPendingApprovals(c *gin.Context) {
+	approvals, err := h.userService.GetPendingApprovals()
+	if err != nil {
+		logrus.Error("Get pending approvals error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取待审批申请失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, approvals)
+}
+
+// ApproveRegistration 批准注册申请
+// @Summary 批准注册申请
+// @Description 批准指定的注册申请
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "审批ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/approvals/{id}/approve [post]
+func (h *UserHandler) ApproveRegistration(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的审批ID"})
+		return
+	}
+
+	// 获取当前管理员用户ID
+	adminID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	err = h.userService.ApproveRegistration(uint(id), adminID.(uint))
+	if err != nil {
+		logrus.Error("Approve registration error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "注册申请已批准"})
+}
+
+// RejectRegistration 拒绝注册申请
+// @Summary 拒绝注册申请
+// @Description 拒绝指定的注册申请
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "审批ID"
+// @Param request body map[string]string true "拒绝原因"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/approvals/{id}/reject [post]
+func (h *UserHandler) RejectRegistration(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的审批ID"})
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取当前管理员用户ID
+	adminID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	err = h.userService.RejectRegistration(uint(id), adminID.(uint), req.Reason)
+	if err != nil {
+		logrus.Error("Reject registration error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "注册申请已拒绝"})
+}
+
+// GetAllUsers 获取所有用户（管理员功能）
+// @Summary 获取所有用户
+// @Description 分页获取所有用户列表（管理员功能）
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/users [get]
+func (h *UserHandler) GetAllUsers(c *gin.Context) {
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("page_size", "10")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	pageSize, err := strconv.Atoi(pageSizeStr)
+	if err != nil || pageSize < 1 || pageSize > 100 {
+		pageSize = 10
+	}
+
+	users, total, err := h.userService.GetUsers(page, pageSize)
+	if err != nil {
+		logrus.Error("Get all users error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户列表失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
+		"total": total,
+		"page":  page,
+		"page_size": pageSize,
+	})
 }

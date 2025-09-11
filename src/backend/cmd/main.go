@@ -265,6 +265,7 @@ func main() {
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", userHandler.Register)
+		auth.POST("/validate-ldap", userHandler.ValidateLDAP)
 		auth.POST("/login", userHandler.Login)
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
 		auth.POST("/refresh", userHandler.RefreshToken)
@@ -481,6 +482,11 @@ func main() {
 			admin.PUT("/users/:id/status", adminController.UpdateUserStatus)
 			admin.PUT("/users/:id/status-enhanced", adminController.UpdateUserStatusEnhanced)
 			admin.DELETE("/users/:id", adminController.DeleteUser)
+			
+			// 注册审批管理
+			admin.GET("/approvals/pending", userHandler.GetPendingApprovals)
+			admin.POST("/approvals/:id/approve", userHandler.ApproveRegistration)
+			admin.POST("/approvals/:id/reject", userHandler.RejectRegistration)
 			
 			// 项目管理
 			admin.GET("/projects", adminController.GetAllProjects)

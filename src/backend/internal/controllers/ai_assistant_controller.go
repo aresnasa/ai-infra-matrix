@@ -2,30 +2,83 @@ package controllers
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 // AIAssistantController AI助手控制器
 type AIAssistantController struct {
-	aiService           services.AIService
-	messageQueueService services.MessageQueueService
-	cacheService        services.CacheService
+	aiService             services.AIService
+	messageQueueService   services.MessageQueueService
+	cacheService          services.CacheService
+	messagePersistence    *services.MessagePersistenceService
+	messageRetrieval      *services.MessageRetrievalService
+	kafkaService          *services.KafkaMessageService
 }
 
 // NewAIAssistantController 创建AI助手控制器
 func NewAIAssistantController() *AIAssistantController {
+	// 初始化基础服务
+	aiSvc := services.NewAIService()
+	messageQueueSvc := services.NewMessageQueueService()
+	cacheSvc := services.NewCacheService()
+
+	// 初始化Kafka服务（如果配置了）
+	var kafkaSvc *services.KafkaMessageService
+	if kafkaBrokers := os.Getenv("KAFKA_BROKERS"); kafkaBrokers != "" {
+		brokers := strings.Split(kafkaBrokers, ",")
+		var err error
+		kafkaSvc, err = services.NewKafkaMessageService(brokers)
+		if err != nil {
+			logrus.Warnf("Failed to initialize Kafka service: %v", err)
+		}
+	}
+
+	// 初始化消息持久化服务
+	messagePersistenceSvc := services.NewMessagePersistenceService(
+		database.DB,
+		kafkaSvc,
+		messageQueueSvc,
+	)
+
+	// 初始化消息检索服务
+	messageRetrievalSvc := services.NewMessageRetrievalService(
+		messagePersistenceSvc,
+		kafkaSvc,
+		cacheSvc,
+		messageQueueSvc,
+	)
+
+	// 使用带有依赖的AI服务
+	if kafkaSvc != nil {
+		aiSvc = services.NewAIServiceWithDependencies(
+			database.DB,
+			database.CryptoService,
+			messagePersistenceSvc,
+			messageRetrievalSvc,
+			kafkaSvc,
+		)
+	}
+
 	return &AIAssistantController{
-		aiService:           services.NewAIService(),
-		messageQueueService: services.NewMessageQueueService(),
-		cacheService:        services.NewCacheService(),
+		aiService:           aiSvc,
+		messageQueueService: messageQueueSvc,
+		cacheService:        cacheSvc,
+		messagePersistence:  messagePersistenceSvc,
+		messageRetrieval:    messageRetrievalSvc,
+		kafkaService:        kafkaSvc,
 	}
 }
 
@@ -123,7 +176,7 @@ func (ctrl *AIAssistantController) CreateConversation(c *gin.Context) {
 	}
 
 	var req struct {
-		ConfigID uint   `json:"config_id" binding:"required"`
+		ConfigID *uint  `json:"config_id"` // 使ConfigID可选
 		Title    string `json:"title"`
 		Context  string `json:"context"`
 	}
@@ -133,11 +186,25 @@ func (ctrl *AIAssistantController) CreateConversation(c *gin.Context) {
 		return
 	}
 
+	// 如果没有提供ConfigID，使用默认配置
+	var configID uint
+	if req.ConfigID != nil {
+		configID = *req.ConfigID
+	} else {
+		// 获取默认配置
+		defaultConfig, err := ctrl.aiService.GetDefaultConfig()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法获取默认AI配置: " + err.Error()})
+			return
+		}
+		configID = defaultConfig.ID
+	}
+
 	if req.Title == "" {
 		req.Title = "新对话"
 	}
 
-	conversation, err := ctrl.aiService.CreateConversation(userID, req.ConfigID, req.Title, req.Context)
+	conversation, err := ctrl.aiService.CreateConversation(userID, configID, req.Title, req.Context)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -298,63 +365,6 @@ func (ctrl *AIAssistantController) SendMessage(c *gin.Context) {
 	})
 }
 
-// QuickChat 快速聊天（异步版本）
-func (ctrl *AIAssistantController) QuickChat(c *gin.Context) {
-	userID, exists := middleware.GetCurrentUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
-		return
-	}
-
-	var req struct {
-		Message string `json:"message" binding:"required"`
-		Context string `json:"context"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 异步发送到队列（无对话ID，将自动创建新对话）
-	messageID, err := ctrl.messageQueueService.SendChatRequest(
-		userID, 
-		nil, 
-		req.Message, 
-		map[string]interface{}{
-			"page": req.Context,
-			"type": "quick_chat",
-		},
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "快速聊天失败"})
-		return
-	}
-
-	c.JSON(http.StatusAccepted, gin.H{
-		"message_id": messageID,
-		"status": "pending",
-		"message": "正在处理您的请求",
-	})
-}
-
-// GetMessageStatus 获取消息处理状态
-func (ctrl *AIAssistantController) GetMessageStatus(c *gin.Context) {
-	messageID := c.Param("message_id")
-	if messageID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "消息ID不能为空"})
-		return
-	}
-
-	status, err := ctrl.messageQueueService.GetMessageStatus(messageID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "消息状态不存在"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": status})
-}
-
 // GetMessages 获取对话消息（增强缓存版本）
 func (ctrl *AIAssistantController) GetMessages(c *gin.Context) {
 	userID, exists := middleware.GetCurrentUserID(c)
@@ -381,26 +391,37 @@ func (ctrl *AIAssistantController) GetMessages(c *gin.Context) {
 		return
 	}
 
-	// 先从缓存获取消息
-	cacheKey := fmt.Sprintf("messages:%d", conversationID)
-	cachedMessages := ctrl.cacheService.GetMessages(cacheKey)
-	
-	if cachedMessages != nil {
-		c.JSON(http.StatusOK, gin.H{"data": cachedMessages, "from_cache": true})
-		return
+	// 解析查询参数
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	keyword := c.Query("keyword")
+
+	options := &services.MessageQueryOptions{
+		Limit:   limit,
+		Offset:  offset,
+		Keyword: keyword,
+		SortBy:  "created_at",
+		SortOrder: "asc",
 	}
 
-	// 缓存未命中，从数据库获取
-	messages, err := ctrl.aiService.GetMessages(uint(conversationID))
+	// 使用优化的消息检索服务
+	messages, err := ctrl.messageRetrieval.GetMessagesWithOptimization(uint(conversationID), userID, options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 缓存结果
-	ctrl.cacheService.SetMessages(cacheKey, messages, 24*time.Hour)
+	// 转换消息格式
+	result := make([]models.AIMessage, len(messages))
+	for i, msg := range messages {
+		result[i] = *msg
+	}
 
-	c.JSON(http.StatusOK, gin.H{"data": messages, "from_cache": false})
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
+		"from_cache": c.GetBool("from_cache"),
+		"total": len(result),
+	})
 }
 
 // SubmitClusterOperation 提交集群操作请求
@@ -607,7 +628,7 @@ func (ctrl *AIAssistantController) QuickChat(c *gin.Context) {
 	}
 
 	var req struct {
-		ConfigID uint   `json:"config_id" binding:"required"`
+		ConfigID *uint  `json:"config_id"` // 使ConfigID可选
 		Message  string `json:"message" binding:"required"`
 		Context  string `json:"context"`
 	}
@@ -617,14 +638,30 @@ func (ctrl *AIAssistantController) QuickChat(c *gin.Context) {
 		return
 	}
 
+	// 如果没有提供ConfigID，使用默认配置
+	var configID uint
+	if req.ConfigID != nil {
+		configID = *req.ConfigID
+	} else {
+		// 获取默认配置
+		defaultConfig, err := ctrl.aiService.GetDefaultConfig()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法获取默认AI配置: " + err.Error()})
+			return
+		}
+		configID = defaultConfig.ID
+	}
+
 	// 异步处理快速聊天
-	messageID, err := ctrl.messageQueueService.SendQuickChatRequest(
+	messageID, err := ctrl.messageQueueService.SendChatRequest(
 		userID,
-		req.ConfigID,
+		nil, // 无对话ID，自动创建新对话
 		req.Message,
-		req.Context,
 		map[string]interface{}{
 			"page": c.GetHeader("Referer"),
+			"type": "quick_chat",
+			"config_id": configID,
+			"context": req.Context,
 		},
 	)
 	if err != nil {
@@ -668,18 +705,188 @@ func (ctrl *AIAssistantController) GetMessageStatus(c *gin.Context) {
 	})
 }
 
-// GetBotCategories 获取机器人分类
-func (ctrl *AIAssistantController) GetBotCategories(c *gin.Context) {
-	categories := []map[string]interface{}{
-		{"key": "general", "name": "通用对话", "description": "适用于日常对话和一般问题"},
-		{"key": "coding", "name": "代码生成", "description": "专业的编程助手"},
-		{"key": "writing", "name": "写作助手", "description": "帮助写作和内容创作"},
-		{"key": "analysis", "name": "数据分析", "description": "数据分析和可视化"},
-		{"key": "translation", "name": "翻译助手", "description": "多语言翻译服务"},
-		{"key": "custom", "name": "自定义", "description": "自定义配置的机器人"},
+// SearchMessages 搜索消息
+func (ctrl *AIAssistantController) SearchMessages(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": categories})
+	conversationID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的对话ID"})
+		return
+	}
+
+	keyword := c.Query("keyword")
+	if keyword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "搜索关键词不能为空"})
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+
+	// 使用消息检索服务搜索
+	messages, err := ctrl.messageRetrieval.SearchMessagesInConversation(uint(conversationID), userID, keyword, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 转换消息格式
+	result := make([]models.AIMessage, len(messages))
+	for i, msg := range messages {
+		result[i] = *msg
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
+		"total": len(result),
+		"keyword": keyword,
+	})
+}
+
+// GetMessageStats 获取消息统计
+func (ctrl *AIAssistantController) GetMessageStats(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 解析时间参数
+	startDateStr := c.DefaultQuery("start_date", "")
+	endDateStr := c.DefaultQuery("end_date", "")
+
+	var startDate, endDate time.Time
+	var err error
+
+	if startDateStr != "" {
+		startDate, err = time.Parse("2006-01-02", startDateStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的开始日期格式"})
+			return
+		}
+	} else {
+		startDate = time.Now().AddDate(0, -1, 0) // 默认一个月前
+	}
+
+	if endDateStr != "" {
+		endDate, err = time.Parse("2006-01-02", endDateStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的结束日期格式"})
+			return
+		}
+	} else {
+		endDate = time.Now()
+	}
+
+	// 获取统计信息
+	stats, err := ctrl.messagePersistence.GetMessageStats(userID, startDate, endDate)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": stats})
+}
+
+// DeleteMessage 删除消息
+func (ctrl *AIAssistantController) DeleteMessage(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	messageID, err := strconv.ParseUint(c.Param("messageId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的消息ID"})
+		return
+	}
+
+	// 删除消息
+	if err := ctrl.messagePersistence.DeleteMessage(uint(messageID), userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 使相关缓存失效
+	conversationID, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	if conversationID > 0 {
+		ctrl.messageRetrieval.InvalidateCache(uint(conversationID))
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "消息删除成功"})
+}
+
+// StreamMessages 流式获取消息
+func (ctrl *AIAssistantController) StreamMessages(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	conversationID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的对话ID"})
+		return
+	}
+
+	lastMessageID, _ := strconv.ParseUint(c.DefaultQuery("last_message_id", "0"), 10, 32)
+
+	// 获取消息流
+	messageChan, err := ctrl.messageRetrieval.StreamMessages(uint(conversationID), userID, uint(lastMessageID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 设置SSE头
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	// 发送消息流
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case message, ok := <-messageChan:
+			if !ok {
+				return false
+			}
+
+			// 发送SSE事件
+			c.SSEvent("message", message)
+			return true
+		case <-c.Request.Context().Done():
+			return false
+		}
+	})
+}
+
+// PreloadMessages 预加载消息到缓存
+func (ctrl *AIAssistantController) PreloadMessages(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	conversationID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的对话ID"})
+		return
+	}
+
+	// 预加载消息
+	if err := ctrl.messageRetrieval.PreloadMessages(uint(conversationID), userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "消息预加载完成"})
 }
 
 // CloneBotConfig 克隆机器人配置

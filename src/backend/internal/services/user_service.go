@@ -34,7 +34,7 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 	}
 
 	// LDAP验证：检查用户是否在LDAP中存在
-	ldapUser, err := s.ldapService.AuthenticateUser(req.Username, req.Password)
+	_, err := s.ldapService.AuthenticateUser(req.Username, req.Password)
 	if err != nil {
 		return nil, errors.New("LDAP验证失败: 用户不存在或密码错误")
 	}
@@ -96,7 +96,7 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 
 	// 如果指定了角色模板，为用户分配角色
 	if req.RoleTemplate != "" {
-		if err := s.rbacService.AssignRoleToUser(user.ID, req.RoleTemplate); err != nil {
+		if err := s.rbacService.AssignRoleTemplateToUser(user.ID, req.RoleTemplate); err != nil {
 			tx.Rollback()
 			return nil, errors.New("分配角色模板失败: " + err.Error())
 		}
@@ -329,4 +329,101 @@ func (s *UserService) GetUserByUsername(username string) (*models.User, error) {
 func (s *UserService) CreateUserDirectly(user *models.User) error {
 	db := database.DB
 	return db.Create(user).Error
+}
+
+// GetPendingApprovals 获取待审批的注册申请
+func (s *UserService) GetPendingApprovals() ([]models.RegistrationApproval, error) {
+	db := database.DB
+	var approvals []models.RegistrationApproval
+	err := db.Where("status = ?", "pending").Preload("User").Find(&approvals).Error
+	return approvals, err
+}
+
+// ApproveRegistration 审批注册申请
+func (s *UserService) ApproveRegistration(approvalID uint, adminID uint) error {
+	db := database.DB
+	
+	var approval models.RegistrationApproval
+	if err := db.First(&approval, approvalID).Error; err != nil {
+		return errors.New("审批记录不存在")
+	}
+	
+	if approval.Status != "pending" {
+		return errors.New("该申请已被处理")
+	}
+	
+	// 开始事务
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+	
+	now := time.Now()
+	approval.Status = "approved"
+	approval.ApprovedBy = &adminID
+	approval.ApprovedAt = &now
+	
+	if err := tx.Save(&approval).Error; err != nil {
+		tx.Rollback()
+		return errors.New("更新审批状态失败")
+	}
+	
+	// 创建用户
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("temp_password"), bcrypt.DefaultCost)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	
+	user := &models.User{
+		Username:      approval.Username,
+		Email:         approval.Email,
+		Password:      string(hashedPassword),
+		IsActive:      true,
+		AuthSource:    "ldap",
+		DashboardRole: "user", // 默认角色
+	}
+	
+	if err := tx.Create(user).Error; err != nil {
+		tx.Rollback()
+		return errors.New("创建用户失败")
+	}
+	
+	// 如果指定了角色模板，为用户分配角色
+	if approval.RoleTemplate != "" {
+		if err := s.rbacService.AssignRoleTemplateToUser(user.ID, approval.RoleTemplate); err != nil {
+			tx.Rollback()
+			return errors.New("分配角色模板失败: " + err.Error())
+		}
+	}
+	
+	if err := tx.Commit().Error; err != nil {
+		return errors.New("提交事务失败")
+	}
+	
+	return nil
+}
+
+// RejectRegistration 拒绝注册申请
+func (s *UserService) RejectRegistration(approvalID uint, adminID uint, reason string) error {
+	db := database.DB
+	
+	var approval models.RegistrationApproval
+	if err := db.First(&approval, approvalID).Error; err != nil {
+		return errors.New("审批记录不存在")
+	}
+	
+	if approval.Status != "pending" {
+		return errors.New("该申请已被处理")
+	}
+	
+	now := time.Now()
+	approval.Status = "rejected"
+	approval.RejectedBy = &adminID
+	approval.RejectedAt = &now
+	approval.RejectReason = reason
+	
+	return db.Save(&approval).Error
 }

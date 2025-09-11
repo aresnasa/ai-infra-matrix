@@ -808,8 +808,8 @@ func (s *RBACService) GetRoleTemplates() map[string]RoleTemplate {
 	return RoleTemplates
 }
 
-// AssignRoleToUser 为用户分配角色模板
-func (s *RBACService) AssignRoleToUser(userID uint, templateName string) error {
+// AssignRoleTemplateToUser 为用户分配角色模板
+func (s *RBACService) AssignRoleTemplateToUser(userID uint, templateName string) error {
 	// 创建或获取角色模板
 	role, err := s.CreateRoleTemplate(templateName)
 	if err != nil {

@@ -55,6 +55,12 @@ RUN go mod download || (sleep 5 && go mod download) || \
 # Copy source code
 COPY . .
 
+    # Add required dependencies for Kafka
+    RUN go get github.com/IBM/sarama@latest || \
+        (sleep 3 && go get github.com/IBM/sarama@latest) || \
+        (export GOPROXY=direct && go get github.com/IBM/sarama@latest)# Update go.mod and go.sum
+RUN go mod tidy
+
 # Build the application with JupyterHub integration
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/main.go

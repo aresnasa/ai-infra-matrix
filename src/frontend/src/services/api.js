@@ -128,6 +128,8 @@ const createCachedRequest = (requestFn, enableCache = true) => {
 // 认证API - 关键API不缓存，避免安全问题
 export const authAPI = {
   login: (credentials) => api.post('/auth/login', credentials),
+  register: (userData) => api.post('/auth/register', userData),
+  validateLDAP: (credentials) => api.post('/auth/validate-ldap', credentials),
   logout: () => api.post('/auth/logout'),
   getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
   getProfile: createCachedRequest(() => api.get('/auth/me'), true), 
@@ -433,7 +435,17 @@ export const adminAPI = {
   
   // 增强用户管理功能
   getUserWithAuthSource: (id) => api.get(`/admin/users/${id}/auth-source`),
-  resetUserPassword: (id) => api.post(`/admin/enhanced-users/${id}/reset-password`),
+  resetUserPassword: (id, data) => api.post(`/admin/enhanced-users/${id}/reset-password`, data),
+  updateUserGroups: (id, data) => api.put(`/admin/enhanced-users/${id}/groups`, data),
+  updateUserStatusEnhanced: (id, data) => api.put(`/admin/enhanced-users/${id}/status`, data),
+  
+  // 注册审批功能
+  getPendingApprovals: () => api.get('/admin/approvals/pending'),
+  approveRegistration: (id) => api.post(`/admin/approvals/${id}/approve`),
+  rejectRegistration: (id, reason) => api.post(`/admin/approvals/${id}/reject`, { reason }),
+  
+  // 获取所有用户（分页）
+  getAllUsers: (params) => api.get('/admin/users', { params }),
   
   // 统计信息
   getSystemStats: () => api.get('/admin/stats'),

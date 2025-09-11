@@ -1,0 +1,103 @@
+# AI Assistant Configuration Template
+# Copy this file to config/ai_assistant.yaml and modify as needed
+
+# Kafka Configuration
+kafka:
+  enabled: true
+  brokers:
+    - "localhost:9092"
+    - "localhost:9093"
+    - "localhost:9094"
+  topics:
+    ai_chat_messages: "ai-chat-messages"
+    ai_message_events: "ai-message-events"
+    ai_message_cache: "ai-message-cache"
+  consumer_group: "ai-service-consumer"
+
+# Redis Configuration
+redis:
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+
+# Database Configuration
+database:
+  driver: "mysql"
+  host: "localhost"
+  port: 3306
+  username: "ai_user"
+  password: "your_password"
+  database: "ai_infra_matrix"
+  max_connections: 20
+  max_idle_connections: 10
+
+# Message Processing Configuration
+message_processing:
+  max_concurrent_requests: 10
+  request_timeout_seconds: 60
+  retry_attempts: 3
+  retry_delay_seconds: 5
+
+# Cache Configuration
+cache:
+  default_ttl_seconds: 3600
+  message_cache_ttl_seconds: 86400
+  conversation_cache_ttl_seconds: 1800
+  cleanup_interval_seconds: 3600
+
+# Message Persistence Configuration
+message_persistence:
+  batch_size: 100
+  archive_after_days: 90
+  cleanup_interval_hours: 24
+  enable_auto_archive: true
+
+# AI Service Configuration
+ai_service:
+  default_provider: "openai"
+  request_timeout_seconds: 60
+  max_tokens_per_request: 4096
+  rate_limit_per_hour: 100
+  rate_limit_per_day: 1000
+
+# Logging Configuration
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+  enable_file_logging: true
+  log_file_path: "/var/log/ai-infra-matrix/ai_assistant.log"
+  max_file_size_mb: 100
+  max_backups: 10
+
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  health_check_interval_seconds: 30
+  enable_prometheus: true
+
+# Security Configuration
+security:
+  enable_encryption: true
+  encryption_key_rotation_days: 30
+  enable_audit_logging: true
+  max_request_size_mb: 10
+
+# Performance Configuration
+performance:
+  enable_connection_pooling: true
+  connection_pool_size: 20
+  enable_circuit_breaker: true
+  circuit_breaker_timeout_seconds: 30
+  enable_request_caching: true
+
+# Notification Configuration
+notifications:
+  enabled: true
+  realtime_enabled: true
+  email_enabled: false
+  webhook_enabled: false
+  slack_enabled: false
