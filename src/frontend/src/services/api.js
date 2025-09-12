@@ -480,6 +480,7 @@ export const aiAPI = {
   sendMessage: (conversationId, message) => api.post(`/ai/conversations/${conversationId}/messages`, { message }),
   getMessages: (conversationId) => api.get(`/ai/conversations/${conversationId}/messages`),
   getMessageStatus: (messageId) => api.get(`/ai/messages/${messageId}/status`),
+  stopMessage: (messageId) => api.patch(`/ai/messages/${messageId}/stop`),
 
   // 快速聊天（异步版本）
   quickChat: (message, context) => api.post('/ai/quick-chat', { message, context }),

@@ -95,7 +95,7 @@ jupyterhub:
     singleuser:
       image:
         name: "ai-infra-singleuser"
-        tag: "v0.3.6-dev"
+        tag: "v0.0.3.3"
 ```
 
 ### 服务端点

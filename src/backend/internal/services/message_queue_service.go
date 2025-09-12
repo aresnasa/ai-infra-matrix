@@ -60,6 +60,11 @@ type MessageQueueService interface {
 	SetMessageStatus(messageID string, status *MessageStatus) error
 	GetMessageStatus(messageID string) (*MessageStatus, error)
 	
+	// 消息控制
+	StopMessage(messageID string, userID uint) error
+	CanUserStopMessage(messageID string, userID uint) (bool, error)
+	IsMessageStopped(messageID string) bool
+	
 	// 健康检查
 	HealthCheck() error
 }
@@ -111,6 +116,13 @@ func (s *messageQueueServiceImpl) SendMessage(streamName string, message *Messag
 		CreatedAt: time.Now(),
 	}
 	s.SetMessageStatus(message.ID, status)
+
+	// 保存消息详情以供权限验证使用
+	messageDetailsKey := fmt.Sprintf("message:details:%s", message.ID)
+	err = s.redis.Set(s.ctx, messageDetailsKey, messageData, 30*time.Minute).Err() // 30分钟过期
+	if err != nil {
+		logrus.Errorf("保存消息详情失败: %v", err)
+	}
 
 	logrus.Infof("Message sent to stream %s: %s", streamName, message.ID)
 	return nil
@@ -313,4 +325,92 @@ func (s *messageQueueServiceImpl) HealthCheck() error {
 	}
 
 	return nil
+}
+
+// StopMessage 停止消息处理
+func (s *messageQueueServiceImpl) StopMessage(messageID string, userID uint) error {
+	// 首先检查消息是否可以被停止
+	canStop, err := s.CanUserStopMessage(messageID, userID)
+	if err != nil {
+		return fmt.Errorf("检查停止权限失败: %v", err)
+	}
+	
+	if !canStop {
+		return fmt.Errorf("用户无权停止此消息处理")
+	}
+
+	// 设置停止标志
+	stopKey := fmt.Sprintf("message:stop:%s", messageID)
+	err = s.redis.Set(s.ctx, stopKey, userID, 5*time.Minute).Err()
+	if err != nil {
+		return fmt.Errorf("设置停止标志失败: %v", err)
+	}
+
+	// 更新消息状态为已停止
+	status := &MessageStatus{
+		ID:          messageID,
+		Status:      "stopped",
+		Error:       fmt.Sprintf("用户 %d 主动停止", userID),
+		ProcessedAt: time.Now(),
+	}
+	
+	err = s.SetMessageStatus(messageID, status)
+	if err != nil {
+		logrus.Errorf("更新消息状态失败: %v", err)
+	}
+
+	logrus.Infof("消息 %s 已被用户 %d 停止", messageID, userID)
+	return nil
+}
+
+// CanUserStopMessage 检查用户是否可以停止指定消息
+func (s *messageQueueServiceImpl) CanUserStopMessage(messageID string, userID uint) (bool, error) {
+	// 获取消息状态
+	status, err := s.GetMessageStatus(messageID)
+	if err != nil {
+		return false, fmt.Errorf("获取消息状态失败: %v", err)
+	}
+	
+	if status == nil {
+		return false, fmt.Errorf("消息不存在")
+	}
+
+	// 检查消息是否正在处理中
+	if status.Status != "processing" && status.Status != "pending" {
+		return false, fmt.Errorf("消息状态为 %s，无法停止", status.Status)
+	}
+
+	// 从Redis中获取消息详情以验证用户权限
+	messageKey := fmt.Sprintf("message:details:%s", messageID)
+	messageData, err := s.redis.Get(s.ctx, messageKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return false, fmt.Errorf("消息详情不存在")
+		}
+		return false, fmt.Errorf("获取消息详情失败: %v", err)
+	}
+
+	var message Message
+	err = json.Unmarshal([]byte(messageData), &message)
+	if err != nil {
+		return false, fmt.Errorf("解析消息详情失败: %v", err)
+	}
+
+	// 检查用户权限 - 只有消息创建者可以停止
+	if message.UserID != userID {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// IsMessageStopped 检查消息是否被停止（供消息处理器使用）
+func (s *messageQueueServiceImpl) IsMessageStopped(messageID string) bool {
+	stopKey := fmt.Sprintf("message:stop:%s", messageID)
+	exists, err := s.redis.Exists(s.ctx, stopKey).Result()
+	if err != nil {
+		logrus.Errorf("检查消息停止标志失败: %v", err)
+		return false
+	}
+	return exists > 0
 }

@@ -30,14 +30,12 @@ type AIService interface {
 	ListUserConversations(userID uint) ([]models.AIConversation, error)
 	UpdateConversation(conversation *models.AIConversation) error
 	DeleteConversation(id uint) error
+	StopConversation(id uint, userID uint) error
+	ResumeConversation(id uint, userID uint) error
 
 	// 消息处理
 	SendMessage(conversationID uint, userMessage string) (*models.AIMessage, error)
 	GetMessages(conversationID uint) ([]models.AIMessage, error)
-	
-	// 对话控制
-	StopConversation(conversationID uint, userID uint) error
-	ResumeConversation(conversationID uint, userID uint) error
 
 	// 统计
 	GetUsageStats(userID uint, startDate, endDate time.Time) ([]models.AIUsageStats, error)
@@ -217,17 +215,70 @@ func (s *aiServiceImpl) DeleteConversation(id uint) error {
 	return s.db.Delete(&models.AIConversation{}, id).Error
 }
 
+// StopConversation 停止对话
+func (s *aiServiceImpl) StopConversation(id uint, userID uint) error {
+	// 验证对话是否属于用户
+	var conversation models.AIConversation
+	if err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&conversation).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("对话不存在或无权访问")
+		}
+		return fmt.Errorf("查询对话失败: %v", err)
+	}
+
+	// 更新对话状态为停止
+	updates := map[string]interface{}{
+		"status": "stopped",
+		"updated_at": time.Now(),
+	}
+	
+	if err := s.db.Model(&conversation).Updates(updates).Error; err != nil {
+		return fmt.Errorf("停止对话失败: %v", err)
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"conversation_id": id,
+		"user_id": userID,
+	}).Info("对话已停止")
+
+	return nil
+}
+
+// ResumeConversation 恢复对话
+func (s *aiServiceImpl) ResumeConversation(id uint, userID uint) error {
+	// 验证对话是否属于用户
+	var conversation models.AIConversation
+	if err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&conversation).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("对话不存在或无权访问")
+		}
+		return fmt.Errorf("查询对话失败: %v", err)
+	}
+
+	// 更新对话状态为活跃
+	updates := map[string]interface{}{
+		"status": "active",
+		"updated_at": time.Now(),
+	}
+	
+	if err := s.db.Model(&conversation).Updates(updates).Error; err != nil {
+		return fmt.Errorf("恢复对话失败: %v", err)
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"conversation_id": id,
+		"user_id": userID,
+	}).Info("对话已恢复")
+
+	return nil
+}
+
 // 消息处理
 func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*models.AIMessage, error) {
 	// 获取对话信息
 	conversation, err := s.GetConversation(conversationID)
 	if err != nil {
 		return nil, err
-	}
-
-	// 检查对话是否处于激活状态
-	if !conversation.IsActive {
-		return nil, fmt.Errorf("对话已停止，无法发送消息。请先恢复对话或创建新对话")
 	}
 
 	// 获取配置信息
@@ -573,66 +624,4 @@ func (s *aiServiceImpl) BatchUpdateConfigs(configIDs []uint, updates map[string]
 	return s.db.Model(&models.AIAssistantConfig{}).
 		Where("id IN ?", configIDs).
 		Updates(updates).Error
-}
-
-// StopConversation 停止对话
-func (s *aiServiceImpl) StopConversation(conversationID uint, userID uint) error {
-	// 检查对话是否存在且属于该用户
-	var conversation models.AIConversation
-	err := s.db.Where("id = ? AND user_id = ?", conversationID, userID).First(&conversation).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return fmt.Errorf("对话不存在或无权限访问")
-		}
-		return err
-	}
-
-	// 检查对话是否已经停止
-	if !conversation.IsActive {
-		return fmt.Errorf("对话已经处于停止状态")
-	}
-
-	// 更新对话状态为停止
-	err = s.db.Model(&conversation).Update("is_active", false).Error
-	if err != nil {
-		return fmt.Errorf("停止对话失败: %v", err)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"conversation_id": conversationID,
-		"user_id":         userID,
-	}).Info("用户主动停止了对话")
-
-	return nil
-}
-
-// ResumeConversation 恢复对话
-func (s *aiServiceImpl) ResumeConversation(conversationID uint, userID uint) error {
-	// 检查对话是否存在且属于该用户
-	var conversation models.AIConversation
-	err := s.db.Where("id = ? AND user_id = ?", conversationID, userID).First(&conversation).Error
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return fmt.Errorf("对话不存在或无权限访问")
-		}
-		return err
-	}
-
-	// 检查对话是否已经激活
-	if conversation.IsActive {
-		return fmt.Errorf("对话已经处于激活状态")
-	}
-
-	// 更新对话状态为激活
-	err = s.db.Model(&conversation).Update("is_active", true).Error
-	if err != nil {
-		return fmt.Errorf("恢复对话失败: %v", err)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"conversation_id": conversationID,
-		"user_id":         userID,
-	}).Info("用户恢复了对话")
-
-	return nil
 }

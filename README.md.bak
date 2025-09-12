@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docker](https://img.shields.io/badge/Docker-20.10+-blue.svg)](https://www.docker.com/)
-[![Version](https://img.shields.io/badge/Version-v0.3.6-dev-green.svg)](https://github.com/aresnasa/ai-infra-matrix)
+[![Version](https://img.shields.io/badge/Version-v0.0.3.3-green.svg)](https://github.com/aresnasa/ai-infra-matrix)
 
 > 企业级AI基础设施平台 - 集成机器学习、开发协作与统一认证
 
@@ -197,7 +197,7 @@ cd ai-infra-matrix
 
 ```bash
 # 多架构构建并推送
-./scripts/build.sh prod --multi-arch --registry docker.io/username --push --version v0.3.6-dev
+./scripts/build.sh prod --multi-arch --registry docker.io/username --push --version v0.0.3.3
 ```
 
 ## 🎯 主要功能

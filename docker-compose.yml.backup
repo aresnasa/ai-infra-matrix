@@ -180,13 +180,13 @@ services:
 
   # 后端初始化服务 - 创建admin用户和基础数据
   backend-init:
-    image: ai-infra-backend-init:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-backend-init:${IMAGE_TAG:-v0.3.5}
     build:
       context: ./src/backend
       dockerfile: Dockerfile
       target: backend-init
       args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-backend-init
     env_file:
     - .env.prod
@@ -217,13 +217,13 @@ services:
 
   # 后端 API 服务
   backend:
-    image: ai-infra-backend:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-backend:${IMAGE_TAG:-v0.3.5}
     build:
       context: ./src/backend
       dockerfile: Dockerfile
       target: backend
       args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-backend
     env_file:
     - .env.prod
@@ -279,14 +279,14 @@ services:
 
   # 前端应用服务
   frontend:
-    image: ai-infra-frontend:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-frontend:${IMAGE_TAG:-v0.3.5}
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
       args:
         REACT_APP_API_URL: /api
         REACT_APP_JUPYTERHUB_URL: /jupyter
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-frontend
     environment:
       TZ: Asia/Shanghai
@@ -307,7 +307,7 @@ services:
 
   # JupyterHub 统一认证服务
   jupyterhub:
-    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.3.5}
     env_file:
     - .env.prod
     build:
@@ -315,7 +315,7 @@ services:
       dockerfile: Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: "1"
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-jupyterhub
     environment:
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
@@ -342,7 +342,7 @@ services:
       - AI_INFRA_API_TOKEN=ai-infra-hub-token
       - JUPYTERHUB_AUTO_LOGIN=true
       - JUPYTERHUB_DEV_MODE=true
-      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.3.6-dev}
+      - JUPYTERHUB_IMAGE=ai-infra-singleuser:${IMAGE_TAG:-v0.3.5}
       - JUPYTERHUB_NETWORK=ai-infra-network
       - JUPYTERHUB_MEM_LIMIT=3G
       - JUPYTERHUB_CPU_LIMIT=1.0
@@ -387,12 +387,12 @@ services:
 
   # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
   singleuser-builder:
-    image: ai-infra-singleuser:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-singleuser:${IMAGE_TAG:-v0.3.5}
     build:
       context: ./src/singleuser
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     command: ["true"]
     networks:
       - ai-infra-network
@@ -400,12 +400,12 @@ services:
 
   # SaltStack 配置管理服务
   saltstack:
-    image: ai-infra-saltstack:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-saltstack:${IMAGE_TAG:-v0.3.5}
     build:
       context: ./src/saltstack
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-saltstack
     env_file:
     - .env.prod
@@ -439,14 +439,14 @@ services:
 
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
-    image: ai-infra-nginx:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-nginx:${IMAGE_TAG:-v0.3.5}
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
       args:
         DEBUG_MODE: ${DEBUG_MODE:-false}
         BUILD_ENV: ${BUILD_ENV:-production}
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.5}
     container_name: ai-infra-nginx
     ports:
       - "8080:80"
@@ -530,7 +530,7 @@ services:
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:
-    image: ai-infra-gitea:${IMAGE_TAG:-v0.3.6-dev}
+    image: ai-infra-gitea:${IMAGE_TAG:-v0.3.5}
     build:
       context: ./src/gitea
       dockerfile: Dockerfile

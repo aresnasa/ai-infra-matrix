@@ -26,6 +26,7 @@ import {
   BulbOutlined,
   MoreOutlined,
   SettingOutlined,
+  StopOutlined,
 } from '@ant-design/icons';
 import { aiAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -45,6 +46,7 @@ const AIAssistantFloat = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [processingMessageId, setProcessingMessageId] = useState(null);
   const [configs, setConfigs] = useState([]);
   const [selectedConfig, setSelectedConfig] = useState(null);
   const messagesEndRef = useRef(null);
@@ -125,6 +127,35 @@ const AIAssistantFloat = () => {
     }
   };
 
+  // 停止消息处理
+  const stopMessage = async (messageId) => {
+    try {
+      await aiAPI.stopMessage(messageId);
+      
+      // 更新消息状态为已停止
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId 
+          ? { 
+              ...msg, 
+              content: '消息处理已停止', 
+              isError: false,
+              status: 'stopped',
+              isStopped: true
+            }
+          : msg
+      ));
+      
+      // 清除处理中的消息ID
+      setProcessingMessageId(null);
+      setSendingMessage(false);
+      
+      message.info('消息处理已停止');
+    } catch (error) {
+      console.error('停止消息失败:', error);
+      message.error('停止消息失败');
+    }
+  };
+
   // 发送消息（增强版本，包含更好的错误处理和状态管理）
   const sendMessage = async () => {
     if (!inputMessage.trim()) return;
@@ -155,6 +186,9 @@ const AIAssistantFloat = () => {
       // 发送异步请求
       const response = await aiAPI.sendMessage(conversationToUse.id, userMessage);
       const { message_id, status } = response.data;
+      
+      // 设置正在处理的消息ID
+      setProcessingMessageId(message_id);
       
       // 添加状态消息（带加载动画）
       const statusMessage = {
@@ -200,6 +234,10 @@ const AIAssistantFloat = () => {
           // 移除状态消息，添加AI回复
           setMessages(prev => prev.filter(msg => msg.id !== messageId));
           
+          // 清除正在处理的消息ID
+          setProcessingMessageId(null);
+          setSendingMessage(false);
+          
           if (result) {
             const aiMessage = {
               id: `ai_${Date.now()}`,
@@ -234,7 +272,32 @@ const AIAssistantFloat = () => {
               : msg
           ));
           
+          // 清除正在处理的消息ID
+          setProcessingMessageId(null);
+          setSendingMessage(false);
+          
           message.error(`AI处理失败: ${error || '未知错误'}`);
+          return;
+          
+        } else if (status === 'stopped') {
+          // 消息已被停止
+          setMessages(prev => prev.map(msg => 
+            msg.id === messageId 
+              ? { 
+                  ...msg, 
+                  content: '消息处理已停止', 
+                  isError: false,
+                  status: 'stopped',
+                  isStopped: true
+                }
+              : msg
+          ));
+          
+          // 清除正在处理的消息ID
+          setProcessingMessageId(null);
+          setSendingMessage(false);
+          
+          message.info('消息处理已停止');
           return;
           
         } else if (status === 'processing') {
@@ -268,6 +331,9 @@ const AIAssistantFloat = () => {
                   }
                 : msg
             ));
+            // 清除正在处理的消息ID
+            setProcessingMessageId(null);
+            setSendingMessage(false);
             message.warning('AI处理超时，请稍后重试');
           }
         }
@@ -288,6 +354,9 @@ const AIAssistantFloat = () => {
                 }
               : msg
           ));
+          // 清除正在处理的消息ID
+          setProcessingMessageId(null);
+          setSendingMessage(false);
           message.error('网络错误，无法获取AI回复');
         }
       }
@@ -654,16 +723,30 @@ const AIAssistantFloat = () => {
                     autoSize={{ minRows: 1, maxRows: 4 }}
                     disabled={sendingMessage}
                   />
-                  <Button
-                    type="primary"
-                    icon={<SendOutlined />}
-                    onClick={currentConversation ? sendMessage : quickChat}
-                    loading={sendingMessage}
-                    disabled={!inputMessage.trim()}
-                  />
+                  {processingMessageId ? (
+                    // 显示停止按钮
+                    <Button
+                      type="primary"
+                      danger
+                      icon={<StopOutlined />}
+                      onClick={() => stopMessage(processingMessageId)}
+                      loading={false}
+                    />
+                  ) : (
+                    // 显示发送按钮
+                    <Button
+                      type="primary"
+                      icon={<SendOutlined />}
+                      onClick={currentConversation ? sendMessage : quickChat}
+                      loading={sendingMessage}
+                      disabled={!inputMessage.trim()}
+                    />
+                  )}
                 </Space.Compact>
                 <div style={{ marginTop: 8, fontSize: 11, color: '#999' }}>
-                  {currentConversation ? (
+                  {processingMessageId ? (
+                    <Text type="secondary" style={{ color: '#ff4d4f' }}>AI正在处理中，点击停止按钮可中断...</Text>
+                  ) : currentConversation ? (
                     <Text type="secondary">当前对话：{currentConversation.title}</Text>
                   ) : (
                     <Text type="secondary">快速模式：将自动创建新对话</Text>

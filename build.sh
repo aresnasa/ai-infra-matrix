@@ -149,7 +149,61 @@ get_production_dependencies() {
 
 # 初始化配置
 DEFAULT_IMAGE_TAG=$(read_config "project" "version" 2>/dev/null || echo "")
-[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.5"
+[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.6-dev"
+
+# 动态更新版本标签函数
+update_version_if_provided() {
+    local new_version=""
+    local args=("$@")
+    
+    # 查找传入参数中的版本信息
+    for i in "${!args[@]}"; do
+        local arg="${args[i]}"
+        
+        # 检查是否是版本格式的参数 (v*.*.* 格式)
+        if [[ "$arg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            new_version="$arg"
+            print_info "检测到版本参数: $new_version，更新默认版本标签"
+            break
+        fi
+        
+        # 检查常见的版本标签格式 (如 test-v0.3.6-dev)
+        if [[ "$arg" =~ ^[a-zA-Z0-9-]*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            new_version="$arg"
+            print_info "检测到版本参数: $new_version，更新默认版本标签"
+            break
+        fi
+    done
+    
+    # 如果找到新版本，更新默认标签和相关变量
+    if [[ -n "$new_version" ]]; then
+        # 提取纯版本号（去掉前缀）
+        local clean_version=$(echo "$new_version" | sed -E 's/^[a-zA-Z0-9-]*?(v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?)$/\1/')
+        if [[ -n "$clean_version" ]]; then
+            DEFAULT_IMAGE_TAG="$clean_version"
+            print_success "版本标签已更新为: $DEFAULT_IMAGE_TAG"
+            
+            # 更新环境变量以确保一致性
+            export IMAGE_TAG="$DEFAULT_IMAGE_TAG"
+            
+            # 动态更新相关的版本引用
+            dynamic_update_version_refs "$DEFAULT_IMAGE_TAG"
+        fi
+    fi
+}
+
+# 动态更新版本引用函数
+dynamic_update_version_refs() {
+    local new_version="$1"
+    
+    # 更新JupyterHub镜像版本引用
+    if [[ -n "$JUPYTERHUB_IMAGE" ]]; then
+        # 提取镜像名称部分，替换版本标签
+        local image_base=$(echo "$JUPYTERHUB_IMAGE" | cut -d':' -f1)
+        export JUPYTERHUB_IMAGE="${image_base}:${new_version}"
+        print_info "JupyterHub镜像版本已更新为: $JUPYTERHUB_IMAGE"
+    fi
+}
 
 # 动态加载服务和依赖配置
 SRC_SERVICES=$(get_all_services | tr '\n' ' ')
@@ -1568,7 +1622,7 @@ get_private_image_name() {
 get_mapped_private_image() {
     local original_image="$1"
     local registry="$2"
-    local target_tag="${3:-v0.3.5}"  # 默认目标git版本
+    local target_tag="${3:-v0.3.6-dev}"  # 默认目标git版本
     local mapping_file="$SCRIPT_DIR/config/image-mapping.conf"
     
     if [[ -z "$registry" ]]; then
@@ -1713,7 +1767,7 @@ build_service() {
     # 构建镜像
     print_info "  → 正在构建镜像..."
     
-    # 特殊处理nginx、jupyterhub和frontend的构建上下文
+    # 特殊处理nginx和jupyterhub的构建上下文
     local build_context
     if [[ "$service" == "nginx" ]]; then
         # nginx构建前先渲染模板
@@ -1725,15 +1779,6 @@ build_service() {
         print_info "  → jupyterhub构建前渲染配置模板..."
         render_jupyterhub_templates
         build_context="$SCRIPT_DIR/$service_path"
-    elif [[ "$service" == "frontend" ]]; then
-        # frontend使用专用构建函数，不在这里重复构建
-        print_info "  → 使用专用前端构建函数..."
-        if ! build_frontend; then
-            print_error "前端构建失败"
-            return 1
-        fi
-        # 前端构建完成后，直接返回成功
-        return 0
     else
         build_context="$SCRIPT_DIR/$service_path"
     fi
@@ -1766,155 +1811,11 @@ build_service() {
     fi
 }
 
-# 前端构建函数 - 使用本地npm构建替代Docker构建
+# 前端构建函数 - 已移除本地npm构建，现在使用Docker构建
+# 这个函数已被废弃，前端现在使用标准的Docker构建流程
 build_frontend() {
-    local frontend_path="$SCRIPT_DIR/src/frontend"
-
-    print_info "=========================================="
-    print_info "🚀 前端构建 (本地npm构建)"
-    print_info "=========================================="
-
-    # 检查前端目录是否存在
-    if [[ ! -d "$frontend_path" ]]; then
-        print_error "前端目录不存在: $frontend_path"
-        return 1
-    fi
-
-    # 检查package.json是否存在
-    if [[ ! -f "$frontend_path/package.json" ]]; then
-        print_error "package.json文件不存在: $frontend_path/package.json"
-        return 1
-    fi
-
-    print_info "前端构建目录: $frontend_path"
-    print_info "使用本地npm进行构建"
-
-    # 检查Node.js和npm是否安装
-    if ! command -v node &> /dev/null; then
-        print_error "Node.js 未安装，请先安装 Node.js"
-        print_info "推荐使用 nvm 安装: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash"
-        return 1
-    fi
-
-    if ! command -v npm &> /dev/null; then
-        print_error "npm 未安装，请先安装 npm"
-        return 1
-    fi
-
-    # 检查Node.js版本
-    local node_version
-    node_version=$(node --version | sed 's/v//')
-    print_info "Node.js版本: $node_version"
-
-    # 检查npm版本
-    local npm_version
-    npm_version=$(npm --version)
-    print_info "npm版本: $npm_version"
-
-    # 进入前端目录
-    cd "$frontend_path" || {
-        print_error "无法进入前端目录: $frontend_path"
-        return 1
-    }
-
-    # 设置npm镜像源为中国镜像（如果需要）
-    if [[ "${USE_CHINA_MIRROR:-false}" == "true" ]]; then
-        print_info "设置npm镜像源为中国镜像"
-        npm config set registry https://registry.npmmirror.com
-        npm config set sass_binary_site https://npmmirror.com/mirrors/node-sass/
-        npm config set electron_mirror https://npmmirror.com/mirrors/electron/
-        npm config set puppeteer_download_host https://npmmirror.com/mirrors
-    fi
-
-    # 清理之前的构建产物
-    print_info "清理之前的构建产物..."
-    if [[ -d "build" ]]; then
-        rm -rf build
-        print_info "已清理 build 目录"
-    fi
-    if [[ -d "node_modules" ]]; then
-        rm -rf node_modules
-        print_info "已清理 node_modules 目录"
-    fi
-
-    # 安装依赖
-    print_info "安装npm依赖..."
-    if [[ -f "yarn.lock" ]]; then
-        print_info "检测到yarn.lock，使用yarn安装依赖"
-        if ! command -v yarn &> /dev/null; then
-            print_error "yarn 未安装，请先安装 yarn: npm install -g yarn"
-            return 1
-        fi
-        if ! yarn install --frozen-lockfile; then
-            print_error "yarn依赖安装失败"
-            return 1
-        fi
-    else
-        print_info "使用npm安装依赖"
-        if ! npm install; then
-            print_error "npm依赖安装失败"
-            return 1
-        fi
-    fi
-
-    # 设置构建环境变量
-    print_info "设置构建环境变量..."
-    export NODE_ENV="${MODE:-production}"
-    
-    # 根据标志设置源码映射
-    if [[ "${DISABLE_SOURCE_MAPS:-false}" == "true" ]]; then
-        export GENERATE_SOURCEMAP="false"
-        print_info "禁用源码映射生成"
-    else
-        export GENERATE_SOURCEMAP="${GENERATE_SOURCEMAP:-false}"
-    fi
-
-    # 设置React应用环境变量
-    if [[ -n "${REACT_APP_API_URL:-}" ]]; then
-        export REACT_APP_API_URL="$REACT_APP_API_URL"
-        print_info "设置 REACT_APP_API_URL=$REACT_APP_API_URL"
-    fi
-
-    if [[ -n "${REACT_APP_JUPYTERHUB_URL:-}" ]]; then
-        export REACT_APP_JUPYTERHUB_URL="$REACT_APP_JUPYTERHUB_URL"
-        print_info "设置 REACT_APP_JUPYTERHUB_URL=$REACT_APP_JUPYTERHUB_URL"
-    fi
-
-    # 构建应用
-    print_info "开始构建React应用..."
-    if [[ -f "yarn.lock" ]]; then
-        if ! yarn build; then
-            print_error "yarn构建失败"
-            return 1
-        fi
-    else
-        if ! npm run build; then
-            print_error "npm构建失败"
-            return 1
-        fi
-    fi
-
-    # 检查构建结果
-    if [[ ! -d "build" ]]; then
-        print_error "构建失败，未找到build目录"
-        return 1
-    fi
-
-    # 显示构建结果信息
-    local build_size
-    build_size=$(du -sh build | cut -f1)
-    print_success "前端构建成功!"
-    print_info "构建产物大小: $build_size"
-    print_info "构建目录: $frontend_path/build"
-
-    # 列出构建文件
-    print_info "构建文件列表:"
-    ls -la build/
-
-    # 返回到原始目录
-    cd - > /dev/null || true
-
-    return 0
+    print_error "此函数已废弃，前端现在使用Docker容器构建"
+    return 1
 }
 
 # 构建所有服务镜像
@@ -2329,7 +2230,7 @@ push_production_dependencies() {
     print_info "=========================================="
     print_info "推送生产环境依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.5)"
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.6-dev)"
     
     # 使用生产环境依赖镜像列表
     local dependency_images
@@ -3400,11 +3301,11 @@ verify_image() {
 # 验证私有仓库中的所有AI-Infra镜像
 verify_private_images() {
     local registry="$1"
-    local tag="${2:-v0.3.5}"
+    local tag="${2:-v0.3.6-dev}"
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify <registry_base> [tag]"
-        print_info "示例: verify aiharbor.msxf.local/aihpc v0.3.5"
+        print_info "示例: verify aiharbor.msxf.local/aihpc v0.3.6-dev"
         return 1
     fi
     
@@ -3520,7 +3421,7 @@ verify_private_images() {
 # 快速验证关键镜像
 verify_key_images() {
     local registry="$1"
-    local tag="${2:-v0.3.5}"
+    local tag="${2:-v0.3.6-dev}"
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify-key <registry_base> [tag]"
@@ -4059,13 +3960,12 @@ show_kafka_logs() {
 show_help() {
     echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
     echo
-    echo "用法: $0 [--force|--skip-pull|--china-mirror|--local-frontend|--no-source-maps] <命令> [参数...]"
+    echo "用法: $0 [--force|--skip-pull|--china-mirror|--no-source-maps] <命令> [参数...]"
     echo
     echo "全局选项:"
     echo "  --force           - 强制重新构建/跳过镜像拉取"
     echo "  --skip-pull       - 跳过镜像拉取，使用本地镜像"
     echo "  --china-mirror    - 使用中国npm镜像加速前端构建"
-    echo "  --local-frontend  - 启用本地前端构建模式（使用本地Node.js/npm）"
     echo "  --no-source-maps  - 禁用源码映射生成（优化构建性能）"
     echo
     echo "主要命令:"
@@ -4164,13 +4064,9 @@ show_help() {
     echo "  $0 harbor-pull-deps aiharbor.msxf.local/aihpc             # 拉取依赖镜像"
     echo "  docker compose -f docker-compose.yml.example up -d        # 启动服务"
     echo
-    echo "  # 本地前端开发构建"
-    echo "  $0 --local-frontend build frontend test-v0.3.5        # 使用本地npm构建前端"
-    echo "  $0 --china-mirror --local-frontend build frontend     # 使用中国镜像加速构建"
-    echo "  $0 --no-source-maps --local-frontend build frontend   # 禁用源码映射优化构建"
-    echo
     echo "  # 本地开发测试"
-    echo "  $0 build-all test-v0.3.5                              # 构建测试版本"
+    echo "  $0 build-all test-v0.3.6-dev                          # 构建测试版本"
+    echo "  $0 build frontend v0.3.6-dev                          # 构建前端（Docker容器内）"
     echo "  docker compose -f docker-compose.yml.example up -d backend frontend  # 启动核心服务"
     echo
     echo "  # 单服务调试"
@@ -4257,9 +4153,6 @@ main() {
         elif [[ "$arg" == "--china-mirror" ]]; then
             USE_CHINA_MIRROR=true
             print_info "启用中国镜像加速"
-        elif [[ "$arg" == "--local-frontend" ]]; then
-            USE_LOCAL_FRONTEND=true
-            print_info "启用本地前端构建模式"
         elif [[ "$arg" == "--no-source-maps" ]]; then
             DISABLE_SOURCE_MAPS=true
             print_info "禁用源码映射生成"
@@ -4270,6 +4163,9 @@ main() {
     
     # 重新设置位置参数
     set -- "${args[@]}"
+    
+    # 动态更新版本标签（如果提供了版本参数）
+    update_version_if_provided "$@"
     
     # 早期Docker Compose兼容性检查
     if [[ "${1:-}" != "version" && "${1:-}" != "help" && "${1:-}" != "-h" && "${1:-}" != "--help" ]]; then
@@ -4368,7 +4264,7 @@ main() {
         "build-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 build-env aiharbor.msxf.local/aihpc v0.3.5"
+                print_info "示例: $0 build-env aiharbor.msxf.local/aihpc v0.3.6-dev"
                 exit 1
             fi
             build_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -4377,7 +4273,7 @@ main() {
         "intranet-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 intranet-env aiharbor.msxf.local/aihpc v0.3.5"
+                print_info "示例: $0 intranet-env aiharbor.msxf.local/aihpc v0.3.6-dev"
                 exit 1
             fi
             intranet_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -4456,7 +4352,7 @@ main() {
                 print_info "用法: $0 deps-pull <registry> [tag]"
                 exit 1
             fi
-            pull_and_tag_dependencies "$2" "${3:-v0.3.5}"
+            pull_and_tag_dependencies "$2" "${3:-v0.3.6-dev}"
             ;;
             
         "deps-push")
@@ -4465,7 +4361,7 @@ main() {
                 print_info "用法: $0 deps-push <registry> [tag]"
                 exit 1
             fi
-            push_dependencies "$2" "${3:-v0.3.5}"
+            push_dependencies "$2" "${3:-v0.3.6-dev}"
             ;;
             
         "deps-all")
@@ -4473,7 +4369,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-v0.3.5}"
+            local deps_tag="${3:-v0.3.6-dev}"
             print_info "执行完整的依赖镜像操作..."
             if pull_and_tag_dependencies "$2" "$deps_tag"; then
                 push_dependencies "$2" "$deps_tag"
@@ -4507,7 +4403,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-v0.3.5}"
+            local deps_tag="${3:-v0.3.6-dev}"
             print_info "执行生产环境依赖镜像操作（排除测试工具）..."
             if pull_and_tag_production_dependencies "$2" "$deps_tag"; then
                 push_production_dependencies "$2" "$deps_tag"
@@ -4590,7 +4486,7 @@ main() {
                 print_info "用法: $0 verify <registry> [tag]"
                 exit 1
             fi
-            verify_private_images "$2" "${3:-v0.3.5}"
+            verify_private_images "$2" "${3:-v0.3.6-dev}"
             ;;
             
         "verify-key")
@@ -4599,7 +4495,7 @@ main() {
                 print_info "用法: $0 verify-key <registry> [tag]"
                 exit 1
             fi
-            verify_key_images "$2" "${3:-v0.3.5}"
+            verify_key_images "$2" "${3:-v0.3.6-dev}"
             ;;
             
         "clean")

@@ -30,7 +30,7 @@ print_error() {
 
 # 默认参数
 REGISTRY="aiharbor.msxf.local/aihpc"
-TAG="v0.3.6-dev"
+TAG="v0.3.5"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 显示使用说明

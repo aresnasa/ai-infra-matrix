@@ -636,6 +636,7 @@ func main() {
 			ai.POST("/conversations/:id/messages", aiController.SendMessage)
 			ai.GET("/conversations/:id/messages", aiController.GetMessages)
 			ai.GET("/messages/:message_id/status", aiController.GetMessageStatus)
+			ai.PATCH("/messages/:message_id/stop", aiController.StopMessage)
 
 			// 快速聊天（异步版本）
 			ai.POST("/quick-chat", aiController.QuickChat)

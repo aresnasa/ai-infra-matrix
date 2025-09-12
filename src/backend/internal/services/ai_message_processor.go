@@ -75,6 +75,12 @@ func (p *AIMessageProcessor) Start() error {
 func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 	logrus.Infof("Processing chat request: %s", message.ID)
 
+	// 检查消息是否已被停止
+	if p.isMessageStopped(message.ID) {
+		logrus.Infof("消息 %s 已被停止，跳过处理", message.ID)
+		return p.markMessageStopped(message.ID)
+	}
+
 	// 更新处理状态
 	status := &MessageStatus{
 		ID:     message.ID,
@@ -87,6 +93,11 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 
 	// 如果没有对话ID，创建新对话
 	if message.ConversationID == nil {
+		// 在创建对话前再次检查是否被停止
+		if p.isMessageStopped(message.ID) {
+			return p.markMessageStopped(message.ID)
+		}
+		
 		conversation, createErr := p.createConversationFromContext(message)
 		if createErr != nil {
 			return fmt.Errorf("failed to create conversation: %v", createErr)
@@ -129,10 +140,21 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 		}
 	}
 
+	// 在发送到AI前最后检查一次是否被停止
+	if p.isMessageStopped(message.ID) {
+		return p.markMessageStopped(message.ID)
+	}
+
 	// 发送消息并获取AI回复
 	aiMessage, err := p.aiService.SendMessage(conversationID, message.Content)
 	if err != nil {
 		return fmt.Errorf("failed to send message to AI: %v", err)
+	}
+
+	// 处理完成后检查是否被停止（虽然AI已经处理了，但可以标记状态）
+	if p.isMessageStopped(message.ID) {
+		logrus.Infof("消息 %s 在AI处理完成后被标记为停止", message.ID)
+		return p.markMessageStopped(message.ID)
 	}
 
 	// 缓存最新消息
@@ -399,4 +421,34 @@ type ClusterOperation struct {
 	Content    string                 `json:"content"`
 	Parameters map[string]interface{} `json:"parameters"`
 	CreatedAt  time.Time              `json:"created_at"`
+}
+
+// isMessageStopped 检查消息是否被停止
+func (p *AIMessageProcessor) isMessageStopped(messageID string) bool {
+	// 检查消息队列服务中的停止标志
+	if mqsImpl, ok := p.messageQueueService.(*messageQueueServiceImpl); ok {
+		return mqsImpl.IsMessageStopped(messageID)
+	}
+	
+	// 如果无法访问实现细节，返回false
+	return false
+}
+
+// markMessageStopped 标记消息为已停止状态
+func (p *AIMessageProcessor) markMessageStopped(messageID string) error {
+	status := &MessageStatus{
+		ID:          messageID,
+		Status:      "stopped",
+		Error:       "消息处理已被用户停止",
+		ProcessedAt: time.Now(),
+	}
+	
+	err := p.messageQueueService.SetMessageStatus(messageID, status)
+	if err != nil {
+		logrus.Errorf("更新消息停止状态失败: %v", err)
+		return fmt.Errorf("更新消息停止状态失败: %v", err)
+	}
+	
+	logrus.Infof("消息 %s 已标记为停止状态", messageID)
+	return nil
 }

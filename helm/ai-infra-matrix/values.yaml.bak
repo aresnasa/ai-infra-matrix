@@ -67,7 +67,7 @@ env:
   CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-dev"
   JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
   JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
-  JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.6-dev"
+  JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.5"
   JUPYTERHUB_NETWORK: "ai-infra-network"
   JUPYTERHUB_MEM_LIMIT: "2G"
   JUPYTERHUB_CPU_LIMIT: "1.0"
@@ -179,7 +179,7 @@ jupyterhub:
       
   env:
     JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
-    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.6-dev"
+    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.5"
     JUPYTERHUB_NETWORK: "pod"  # Kubernetes模式下使用pod网络
     JUPYTERHUB_MEM_LIMIT: "2G"
     JUPYTERHUB_CPU_LIMIT: "1.0"

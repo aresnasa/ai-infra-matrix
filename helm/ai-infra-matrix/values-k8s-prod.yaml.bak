@@ -27,7 +27,7 @@ jupyterhub:
   enabled: true
   image:
     repository: "ai-infra-jupyterhub"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.5"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -55,7 +55,7 @@ jupyterhub:
       
   env:
     JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
-    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.6-dev"
+    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.5"
     JUPYTERHUB_NETWORK: "pod"
     JUPYTERHUB_MEM_LIMIT: "2G"
     JUPYTERHUB_CPU_LIMIT: "1.0"
@@ -90,7 +90,7 @@ jupyterhub:
   singleuser:
     image:
       repository: "ai-infra-singleuser"
-      tag: "v0.3.6-dev"
+      tag: "v0.3.5"
       pullPolicy: "IfNotPresent"
     resources:
       limit:
@@ -181,7 +181,7 @@ backend:
   enabled: true
   image:
     repository: "ai-infra-backend"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.5"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -197,7 +197,7 @@ frontend:
   enabled: true
   image:
     repository: "ai-infra-frontend"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.5"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -208,7 +208,7 @@ nginx:
   enabled: true
   image:
     repository: "ai-infra-nginx"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.5"
     pullPolicy: "IfNotPresent"
   service:
     type: "NodePort"  # 使用NodePort对外暴露
@@ -220,7 +220,7 @@ gitea:
   enabled: true
   image:
     repository: "ai-infra-gitea"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.5"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"

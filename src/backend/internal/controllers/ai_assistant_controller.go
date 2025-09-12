@@ -989,3 +989,50 @@ func (ctrl *AIAssistantController) BatchUpdateBots(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "批量更新成功"})
 }
+
+// StopMessage 停止消息处理
+func (ctrl *AIAssistantController) StopMessage(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	messageID := c.Param("messageId")
+	if messageID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "消息ID不能为空"})
+		return
+	}
+
+	// 检查消息权限 - 确保用户只能停止自己的消息
+	canStop, err := ctrl.messageQueueService.CanUserStopMessage(messageID, userID)
+	if err != nil {
+		logrus.Errorf("检查消息停止权限失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查权限失败"})
+		return
+	}
+
+	if !canStop {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权停止此消息处理"})
+		return
+	}
+
+	// 停止消息处理
+	err = ctrl.messageQueueService.StopMessage(messageID, userID)
+	if err != nil {
+		logrus.Errorf("停止消息处理失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "停止消息处理失败"})
+		return
+	}
+
+	// 记录停止操作
+	logrus.Infof("用户 %d 停止了消息 %s 的处理", userID, messageID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "消息处理已停止",
+		"message_id": messageID,
+		"status": "stopped",
+		"stopped_by": userID,
+		"stopped_at": time.Now().Format(time.RFC3339),
+	})
+}
