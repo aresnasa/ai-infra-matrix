@@ -2905,17 +2905,85 @@ start_production() {
     if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" up -d; then
         print_success "✓ 生产环境启动成功"
         echo
-        print_info "查看服务状态:"
-        ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps
-        return 0
+        
+        # 等待所有服务启动完成
+        print_info "等待所有服务启动完成..."
+        if wait_for_services_healthy "$compose_file" "$env_file"; then
+            print_success "✓ 所有服务已启动并运行正常"
+            echo
+            print_info "最终服务状态:"
+            ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps
+            echo
+            print_info "🎉 生产环境部署完成！"
+            print_info "=========================================="
+            print_info "访问地址:"
+            print_info "  主页: http://localhost/"
+            print_info "  JupyterHub: http://localhost/jupyterhub/"
+            print_info "  Gitea: http://localhost/gitea/"
+            print_info ""
+            print_info "管理命令:"
+            print_info "  查看状态: $0 prod-status"
+            print_info "  查看日志: $0 prod-logs [service]"
+            print_info "  停止服务: $0 prod-down"
+            return 0
+        else
+            print_error "✗ 部分服务启动失败，请检查日志"
+            print_info "查看详细日志: $0 prod-logs"
+            print_info "查看服务状态: $0 prod-status"
+            return 1
+        fi
     else
         print_error "✗ 生产环境启动失败"
         return 1
     fi
 }
 
-# 检查并构建缺失的镜像
-# 标记本地镜像为新的registry标签
+# 等待所有服务启动完成并检查健康状态
+wait_for_services_healthy() {
+    local compose_file="$1"
+    local env_file="$2"
+    local max_wait_time=300  # 最大等待时间5分钟
+    local check_interval=10  # 每10秒检查一次
+    local elapsed=0
+    
+    print_info "开始监控服务健康状态..."
+    
+    while [[ $elapsed -lt $max_wait_time ]]; do
+        # 获取所有服务的状态
+        local services_status=$(ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps --format "table {{.Name}}\t{{.Status}}")
+        
+        # 跳过表头
+        local services_info=$(echo "$services_status" | tail -n +2)
+        
+        # 检查是否有服务失败
+        if echo "$services_info" | grep -q "Exit"; then
+            print_error "发现服务启动失败:"
+            echo "$services_info" | grep "Exit"
+            return 1
+        fi
+        
+        # 检查所有服务是否都健康或运行中
+        local total_services=$(echo "$services_info" | wc -l)
+        local healthy_services=$(echo "$services_info" | grep -E "(healthy|running|Up)" | wc -l)
+        
+        if [[ $healthy_services -eq $total_services ]]; then
+            print_success "所有 $total_services 个服务都已启动并运行正常"
+            return 0
+        fi
+        
+        # 显示当前进度
+        local progress=$((elapsed * 100 / max_wait_time))
+        print_info "等待服务启动... ($elapsed/$max_wait_time 秒) - $healthy_services/$total_services 服务就绪"
+        
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+    
+    print_error "等待超时：部分服务未能正常启动"
+    print_info "当前服务状态:"
+    ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" ps
+    return 1
+}
 tag_local_images_for_registry() {
     local registry="$1"
     local tag="$2"

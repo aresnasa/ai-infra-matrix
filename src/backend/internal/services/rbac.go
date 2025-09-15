@@ -557,6 +557,22 @@ func (s *RBACService) InitializeDefaultRBAC() error {
 		}
 	}
 
+	// 创建admin角色（如果不存在），与super-admin拥有相同权限
+	var adminRole models.Role
+	err = s.db.Where("name = ?", "admin").First(&adminRole).Error
+	if err == gorm.ErrRecordNotFound {
+		// 获取超级管理员权限ID
+		var superAdminPermission models.Permission
+		if err := s.db.Where("resource = ? AND verb = ? AND scope = ?", "*", "*", "*").First(&superAdminPermission).Error; err != nil {
+			return fmt.Errorf("找不到超级管理员权限: %v", err)
+		}
+
+		_, err := s.CreateRole("admin", "管理员角色", []uint{superAdminPermission.ID}, true)
+		if err != nil {
+			return fmt.Errorf("创建管理员角色失败: %v", err)
+		}
+	}
+
 	var userRole models.Role
 	err = s.db.Where("name = ?", "user").First(&userRole).Error
 	if err == gorm.ErrRecordNotFound {

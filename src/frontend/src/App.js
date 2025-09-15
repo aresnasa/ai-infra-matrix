@@ -10,11 +10,13 @@ import withLazyLoading from './components/withLazyLoading';
 import AIAssistantFloat from './components/AIAssistantFloat';
 import { useSmartPreload } from './hooks/usePagePreload';
 import { useAPIHealth } from './hooks/useAPIHealth'; // 使用优化版本
+import { usePerformanceMonitor } from './hooks/usePerformanceMonitor';
 import AuthPage from './pages/AuthPage';
 import { authAPI } from './services/api';
 import { authCache } from './utils/authCache';
 import { apiRequestManager } from './utils/apiRequestManager';
-import { usePerformanceMonitor } from './utils/performanceMonitor';
+import { hasRoutePermission } from './utils/permissions';
+import ProtectedRoute, { AdminProtectedRoute, TeamProtectedRoute } from './components/ProtectedRoute';
 import './App.css';
 
 // 懒加载组件 - 使用增强的懒加载包装
@@ -49,6 +51,9 @@ const AdminTrash = withLazyLoading(React.lazy(() => import('./pages/AdminTrash')
 });
 const AdminTest = withLazyLoading(React.lazy(() => import('./pages/AdminTest')), {
   loadingText: '正在加载系统测试...'
+});
+const KafkaUIPage = withLazyLoading(React.lazy(() => import('./pages/KafkaUIPage')), {
+  loadingText: '正在加载Kafka UI...'
 });
 
 // Kubernetes和Ansible管理页面懒加载
@@ -452,132 +457,187 @@ function App() {
                     />
                     <Route path="/profile" element={<UserProfile />} />
                     
-                    {/* Kubernetes和Ansible管理页面 */}
-                    <Route 
-                      path="/kubernetes" 
+                    {/* Kubernetes和Ansible管理页面 - 只允许SRE团队 */}
+                    <Route
+                      path="/kubernetes"
                       element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <KubernetesManagement />
-                        </Suspense>
-                      } 
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <KubernetesManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
                     />
-                    <Route 
-                      path="/ansible" 
+                    <Route
+                      path="/ansible"
                       element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <AnsibleManagement />
-                        </Suspense>
-                      } 
-                    />
-                    
-                    {/* Embedded Jupyter page (same-origin iframe) */}
-                    <Route 
-                      path="/jupyter" 
-                      element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <EmbeddedJupyter />
-                        </Suspense>
-                      } 
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <AnsibleManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
                     />
 
-                    {/* Slurm dashboard page */}
-                    <Route 
-                      path="/slurm" 
+                    {/* Embedded Jupyter page - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/jupyter"
                       element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <SlurmDashboard />
-                        </Suspense>
-                      } 
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <EmbeddedJupyter />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
                     />
 
-                    {/* SaltStack dashboard page */}
-                    <Route 
-                      path="/saltstack" 
+                    {/* JupyterHub - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/jupyterhub"
                       element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <SaltStackDashboard />
-                        </Suspense>
-                      } 
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <JupyterHubPage />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* Slurm dashboard page - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/slurm"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <SlurmDashboard />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* SaltStack dashboard page - 只允许SRE团队 */}
+                    <Route
+                      path="/saltstack"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <SaltStackDashboard />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* Kafka UI management page - 只允许审计团队 */}
+                    <Route
+                      path="/kafka-ui"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['audit']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <KafkaUIPage />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
                     />
                     
-                    {/* 管理员路由 - 支持 admin 和 super-admin 角色 */}
-                    {(user?.role === 'admin' || user?.role === 'super-admin' || (user?.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'))) && (
-                      <>
-                        <Route path="/admin" element={<AdminCenter />} />
-                        <Route 
-                          path="/admin/test" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <AdminTest />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/users" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <EnhancedUserManagement />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/projects" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <AdminProjects />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/auth" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <AdminAuthSettings />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/ldap" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <AdminLDAP />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/trash" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <AdminTrash />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/debug" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <DebugPage />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/ai-assistant" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <AIAssistantManagement />
-                            </Suspense>
-                          } 
-                        />
-                        <Route 
-                          path="/admin/jupyterhub" 
-                          element={
-                            <Suspense fallback={<AdminLoadingFallback />}>
-                              <JupyterHubManagement />
-                            </Suspense>
-                          } 
-                        />
-                      </>
-                    )}
+                    {/* 管理员路由 - 只允许管理员访问 */}
+                    <Route
+                      path="/admin"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <AdminCenter />
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/test"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <AdminTest />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/users"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <EnhancedUserManagement />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/projects"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <AdminProjects />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/auth"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <AdminAuthSettings />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/ldap"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <AdminLDAP />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/trash"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <AdminTrash />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/debug"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <DebugPage />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/ai-assistant"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <AIAssistantManagement />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/jupyterhub"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <JupyterHubManagement />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
                     <Route path="/login" element={<Navigate to="/projects" replace />} />
                   </Routes>
                 </Suspense>

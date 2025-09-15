@@ -127,14 +127,23 @@ const AIAssistantFloat = () => {
     }
   };
 
-  // 停止消息处理
-  const stopMessage = async (messageId) => {
+    // 停止消息处理（增强版本）
+  const stopMessage = async () => {
+    if (!processingMessageId) {
+      console.log('⚠️ 没有正在处理的消息');
+      return;
+    }
+    
+    console.log('⏹️ 正在停止消息处理:', processingMessageId);
+    
     try {
-      await aiAPI.stopMessage(messageId);
+      // 调用API停止消息
+      const response = await aiAPI.stopMessage(processingMessageId);
+      console.log('✅ 停止消息API响应:', response.data);
       
       // 更新消息状态为已停止
       setMessages(prev => prev.map(msg => 
-        msg.id === messageId 
+        msg.id === processingMessageId 
           ? { 
               ...msg, 
               content: '消息处理已停止', 
@@ -145,14 +154,33 @@ const AIAssistantFloat = () => {
           : msg
       ));
       
-      // 清除处理中的消息ID
+      // 清除正在处理的消息ID
       setProcessingMessageId(null);
       setSendingMessage(false);
       
       message.info('消息处理已停止');
+      
     } catch (error) {
-      console.error('停止消息失败:', error);
-      message.error('停止消息失败');
+      console.error('❌ 停止消息失败:', error);
+      
+      // 即使API调用失败，也更新本地状态
+      setMessages(prev => prev.map(msg => 
+        msg.id === processingMessageId 
+          ? { 
+              ...msg, 
+              content: '停止请求已发送', 
+              isError: false,
+              status: 'stopping',
+              isStopped: true
+            }
+          : msg
+      ));
+      
+      // 清除正在处理的消息ID
+      setProcessingMessageId(null);
+      setSendingMessage(false);
+      
+      message.warning('停止请求已发送，但可能需要等待AI处理完成');
     }
   };
 
@@ -198,7 +226,10 @@ const AIAssistantFloat = () => {
         created_at: new Date().toISOString(),
         isStatus: true,
         status: 'processing',
+        isProcessing: true, // 添加处理标识
       };
+      
+      console.log('📝 添加状态消息:', statusMessage);
       setMessages(prev => [...prev, statusMessage]);
       
       // 轮询消息状态（增强版本）
@@ -220,17 +251,29 @@ const AIAssistantFloat = () => {
     }
   };
 
-  // 轮询消息状态（增强版本）
+  // 轮询消息状态（增强版本，修复状态显示问题）
   const pollMessageStatus = async (messageId, conversationId, maxAttempts = 30) => {
     let attempts = 0;
+    let lastStatus = 'processing';
+    
+    console.log('🔄 开始轮询消息状态:', messageId);
     
     const poll = async () => {
       try {
         attempts++;
+        console.log(`📊 轮询尝试 ${attempts}/${maxAttempts}, 消息ID: ${messageId}`);
+        
         const response = await aiAPI.getMessageStatus(messageId);
         const { status, result, error, tokens_used } = response.data.data;
         
+        console.log('📋 消息状态响应:', { status, result: result?.substring(0, 100), error, tokens_used });
+        
+        // 更新最后状态
+        lastStatus = status;
+        
         if (status === 'completed') {
+          console.log('✅ 消息处理完成');
+          
           // 移除状态消息，添加AI回复
           setMessages(prev => prev.filter(msg => msg.id !== messageId));
           
@@ -260,6 +303,8 @@ const AIAssistantFloat = () => {
           return;
           
         } else if (status === 'failed') {
+          console.log('❌ 消息处理失败:', error);
+          
           // 更新状态消息为错误信息
           setMessages(prev => prev.map(msg => 
             msg.id === messageId 
@@ -280,6 +325,8 @@ const AIAssistantFloat = () => {
           return;
           
         } else if (status === 'stopped') {
+          console.log('⏹️ 消息已被停止');
+          
           // 消息已被停止
           setMessages(prev => prev.map(msg => 
             msg.id === messageId 
@@ -301,6 +348,8 @@ const AIAssistantFloat = () => {
           return;
           
         } else if (status === 'processing') {
+          console.log('🔄 消息正在处理中...');
+          
           // 更新状态消息内容
           const processingMessages = [
             'AI正在思考中...',
@@ -310,16 +359,27 @@ const AIAssistantFloat = () => {
           ];
           
           const messageIndex = Math.floor(attempts / 3) % processingMessages.length;
+          const currentMessage = processingMessages[messageIndex];
+          
+          console.log(`📝 更新状态消息: "${currentMessage}"`);
+          
           setMessages(prev => prev.map(msg => 
             msg.id === messageId 
-              ? { ...msg, content: processingMessages[messageIndex] }
+              ? { 
+                  ...msg, 
+                  content: currentMessage,
+                  status: 'processing'
+                }
               : msg
           ));
           
           // 继续轮询
           if (attempts < maxAttempts) {
+            console.log(`⏰ ${attempts}/${maxAttempts} 轮询继续...`);
             setTimeout(poll, 2000);
           } else {
+            console.log('⏰ 轮询超时');
+            
             // 超时处理
             setMessages(prev => prev.map(msg => 
               msg.id === messageId 
@@ -336,14 +396,38 @@ const AIAssistantFloat = () => {
             setSendingMessage(false);
             message.warning('AI处理超时，请稍后重试');
           }
+        } else {
+          console.log('⚠️ 未知状态:', status);
+          
+          // 未知状态，继续轮询
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 2000);
+          } else {
+            setMessages(prev => prev.map(msg => 
+              msg.id === messageId 
+                ? { 
+                    ...msg, 
+                    content: '处理状态未知，请稍后重试', 
+                    isError: true,
+                    status: 'unknown'
+                  }
+                : msg
+            ));
+            setProcessingMessageId(null);
+            setSendingMessage(false);
+            message.warning('处理状态未知，请稍后重试');
+          }
         }
         
       } catch (error) {
-        console.error('查询消息状态失败:', error);
+        console.error('❌ 查询消息状态失败:', error);
         
         if (attempts < maxAttempts) {
+          console.log(`🔄 网络错误重试 ${attempts}/${maxAttempts}`);
           setTimeout(poll, 3000); // 增加重试间隔
         } else {
+          console.log('❌ 网络错误重试次数用尽');
+          
           setMessages(prev => prev.map(msg => 
             msg.id === messageId 
               ? { 
@@ -362,6 +446,7 @@ const AIAssistantFloat = () => {
       }
     };
     
+    console.log('🚀 启动轮询...');
     setTimeout(poll, 1000);
   };
 
@@ -670,7 +755,9 @@ const AIAssistantFloat = () => {
                               <Space direction="vertical" style={{ width: '100%' }}>
                                 <Space>
                                   <Avatar
-                                    icon={message.role === 'user' ? <UserOutlined /> : <AIRobotIcon size={16} animated={false} />}
+                                    icon={message.role === 'user' ? <UserOutlined /> : 
+                                          message.role === 'system' ? <SettingOutlined /> : 
+                                          <AIRobotIcon size={16} animated={message.isProcessing || false} />}
                                     size="small"
                                   />
                                   <Text strong>
@@ -679,6 +766,31 @@ const AIAssistantFloat = () => {
                                   </Text>
                                   {message.isStatus && (
                                     <Spin size="small" />
+                                  )}
+                                  {message.status === 'processing' && (
+                                    <Tag color="processing" style={{ fontSize: 10 }}>
+                                      处理中
+                                    </Tag>
+                                  )}
+                                  {message.status === 'timeout' && (
+                                    <Tag color="warning" style={{ fontSize: 10 }}>
+                                      超时
+                                    </Tag>
+                                  )}
+                                  {message.status === 'failed' && (
+                                    <Tag color="error" style={{ fontSize: 10 }}>
+                                      失败
+                                    </Tag>
+                                  )}
+                                  {message.status === 'stopped' && (
+                                    <Tag color="default" style={{ fontSize: 10 }}>
+                                      已停止
+                                    </Tag>
+                                  )}
+                                  {message.status === 'completed' && (
+                                    <Tag color="success" style={{ fontSize: 10 }}>
+                                      完成
+                                    </Tag>
                                   )}
                                   {message.tokens_used && (
                                     <Tag color="blue" style={{ fontSize: 10 }}>
@@ -689,9 +801,16 @@ const AIAssistantFloat = () => {
                                 <Text style={{ 
                                   whiteSpace: 'pre-wrap', 
                                   fontSize: 13,
-                                  color: message.isError ? '#ff4d4f' : 'inherit'
+                                  color: message.isError ? '#ff4d4f' : 
+                                         message.isStatus ? '#1890ff' : 'inherit',
+                                  fontStyle: message.isStatus ? 'italic' : 'normal',
                                 }}>
                                   {message.content}
+                                  {message.isProcessing && (
+                                    <span style={{ marginLeft: 8 }}>
+                                      <Spin size="small" />
+                                    </span>
+                                  )}
                                 </Text>
                               </Space>
                             </Card>
@@ -724,14 +843,24 @@ const AIAssistantFloat = () => {
                     disabled={sendingMessage}
                   />
                   {processingMessageId ? (
-                    // 显示停止按钮
+                    // 显示停止按钮（增强版本）
                     <Button
                       type="primary"
                       danger
                       icon={<StopOutlined />}
-                      onClick={() => stopMessage(processingMessageId)}
+                      onClick={() => {
+                        console.log('🛑 用户点击停止按钮，处理消息ID:', processingMessageId);
+                        stopMessage();
+                      }}
                       loading={false}
-                    />
+                      style={{
+                        backgroundColor: '#ff4d4f',
+                        borderColor: '#ff4d4f',
+                        boxShadow: '0 2px 8px rgba(255, 77, 79, 0.3)',
+                      }}
+                    >
+                      停止
+                    </Button>
                   ) : (
                     // 显示发送按钮
                     <Button
@@ -745,7 +874,12 @@ const AIAssistantFloat = () => {
                 </Space.Compact>
                 <div style={{ marginTop: 8, fontSize: 11, color: '#999' }}>
                   {processingMessageId ? (
-                    <Text type="secondary" style={{ color: '#ff4d4f' }}>AI正在处理中，点击停止按钮可中断...</Text>
+                    <Space>
+                      <Spin size="small" />
+                      <Text type="secondary" style={{ color: '#1890ff' }}>
+                        AI正在处理中，点击停止按钮可中断...
+                      </Text>
+                    </Space>
                   ) : currentConversation ? (
                     <Text type="secondary">当前对话：{currentConversation.title}</Text>
                   ) : (

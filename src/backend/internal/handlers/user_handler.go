@@ -326,18 +326,21 @@ func (h *UserHandler) assignAdminRoleIfNeeded(userID uint) error {
 	
 	hasAdminRole := false
 	for _, role := range roles {
-		if role.Name == "admin" {
+		if role.Name == "admin" || role.Name == "super-admin" {
 			hasAdminRole = true
 			break
 		}
 	}
 	
 	if !hasAdminRole {
-		// 查找管理员角色ID
+		// 首先尝试查找super-admin角色
 		var adminRole models.Role
-		if err := h.db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
-			logrus.WithError(err).Error("Failed to find admin role")
-			return err
+		if err := h.db.Where("name = ?", "super-admin").First(&adminRole).Error; err != nil {
+			// 如果找不到super-admin，尝试查找admin角色
+			if err := h.db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
+				logrus.WithError(err).Error("Failed to find admin or super-admin role")
+				return err
+			}
 		}
 		
 		// 分配管理员角色

@@ -28,6 +28,7 @@ export const useAuth = () => {
         console.log('useAuth - profile response:', userData);
         console.log('useAuth - user role:', userData.role);
         console.log('useAuth - user roles:', userData.roles);
+        console.log('useAuth - user role_template:', userData.role_template);
         
         // 使用API返回的最新用户信息
         setUser(userData);

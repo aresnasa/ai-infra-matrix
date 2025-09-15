@@ -65,6 +65,14 @@ func main() {
 		logrus.Info("RBAC system initialized successfully")
 	}
 
+	// 初始化默认admin用户
+	userService := services.NewUserService()
+	if err := initializeDefaultAdmin(userService, rbacService); err != nil {
+		logrus.WithError(err).Error("Failed to initialize default admin user")
+	} else {
+		logrus.Info("Default admin user initialized successfully")
+	}
+
 	// 连接Redis
 	if err := cache.Connect(cfg); err != nil {
 		logrus.Fatal("Failed to connect to Redis:", err)

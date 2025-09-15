@@ -7,22 +7,28 @@ import './Auth.css';
 const { TabPane } = Tabs;
 const { Option } = Select;
 
-// 角色模板配置
+// 角色模板配置 - 根据团队权限重新定义
 const ROLE_TEMPLATES = {
-  'model-developer': {
-    name: '模型开发人员',
-    description: '主要关注Jupyter环境，用于AI模型开发和数据分析',
-    permissions: ['JupyterHub访问', '项目管理', '数据分析工具']
+  'data-developer': {
+    name: '数据开发团队',
+    description: '专注于数据分析和模型开发，主要使用Jupyter和Slurm环境',
+    permissions: ['JupyterHub访问', 'Slurm作业调度', '项目管理', '数据分析工具'],
+    allowedRoutes: ['/projects', '/jupyterhub', '/slurm', '/dashboard', '/enhanced-dashboard'],
+    restrictedRoutes: ['/admin', '/saltstack', '/ansible', '/kubernetes', '/kafka-ui']
   },
   'sre': {
-    name: 'SRE工程师',
-    description: '关注SaltStack、Ansible和K8s基础设施运维',
-    permissions: ['SaltStack管理', 'Ansible自动化', 'Kubernetes集群管理', '主机管理']
+    name: 'SRE运维团队',
+    description: '负责基础设施运维，拥有SaltStack、Ansible和K8s管理权限',
+    permissions: ['SaltStack管理', 'Ansible自动化', 'Kubernetes集群管理', '主机管理', '系统监控', '日志管理'],
+    allowedRoutes: ['/projects', '/jupyterhub', '/slurm', '/saltstack', '/ansible', '/kubernetes', '/dashboard', '/enhanced-dashboard', '/admin'],
+    restrictedRoutes: []
   },
-  'engineer': {
-    name: '工程研发人员',
-    description: '主要关注K8s环境，用于应用开发和部署',
-    permissions: ['Kubernetes管理', '项目管理', 'CI/CD流程', '主机管理']
+  'audit': {
+    name: '审计审核团队',
+    description: '负责系统审计和聊天机器人审核，拥有Kafka和审核工具权限',
+    permissions: ['Kafka消息队列管理', '聊天机器人审核', '系统审计', '日志分析', '合规检查'],
+    allowedRoutes: ['/projects', '/kafka-ui', '/dashboard', '/enhanced-dashboard', '/audit-logs'],
+    restrictedRoutes: ['/admin', '/saltstack', '/ansible', '/kubernetes', '/jupyterhub', '/slurm']
   }
 };
 

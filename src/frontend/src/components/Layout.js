@@ -4,6 +4,7 @@ import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlin
 import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
+import { getAvailableMenuItems, isAdmin, getUserRoleDisplayName } from '../utils/permissions';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -12,19 +13,23 @@ const Layout = ({ children, user, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 检查用户是否为管理员（支持 admin 和 super-admin 角色）
-  const isAdmin = user?.role === 'admin' || user?.role === 'super-admin' || 
-    (user?.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'));
+  // 获取用户权限信息
+  const userIsAdmin = isAdmin(user);
+  const availableMenuItems = getAvailableMenuItems(user);
+  const userRoleDisplayName = getUserRoleDisplayName(user);
 
   console.log('=== Layout权限检查 ===');
   console.log('用户信息:', user);
   console.log('用户角色:', user?.role);
   console.log('用户权限组:', user?.roles);
-  console.log('是否管理员:', isAdmin);
+  console.log('角色模板:', user?.role_template || user?.roleTemplate);
+  console.log('是否管理员:', userIsAdmin);
+  console.log('可用菜单项:', availableMenuItems);
   console.log('当前路径:', location.pathname);
   console.log('========================');
 
-  const menuItems = [
+  // 完整的菜单项配置
+  const allMenuItems = [
     {
       key: '/dashboard',
       icon: <CustomMenuIcons.Dashboard />,
@@ -70,7 +75,18 @@ const Layout = ({ children, user, onLogout }) => {
       icon: <CustomMenuIcons.Menu size={16} />,
       label: 'SaltStack',
     },
+    {
+      key: '/kafka-ui',
+      icon: <CloudServerOutlined />,
+      label: 'Kafka UI',
+    },
   ];
+
+  // 根据用户权限过滤菜单项
+  const menuItems = allMenuItems.filter(item => {
+    const menuKey = item.key.replace('/', '');
+    return availableMenuItems.includes(menuKey) || availableMenuItems.includes(item.key);
+  });
 
   // 管理中心下拉菜单项
   const adminMenuItems = [
@@ -240,7 +256,7 @@ const Layout = ({ children, user, onLogout }) => {
         </div>
           
         {/* 右侧管理员菜单 */}
-        {isAdmin && (
+        {userIsAdmin && (
           <Dropdown
             menu={{ items: adminMenuItems }}
             placement="bottomRight"
@@ -273,7 +289,7 @@ const Layout = ({ children, user, onLogout }) => {
           <Space style={{ cursor: 'pointer', color: '#fff', marginLeft: '16px' }}>
             <Avatar icon={<UserOutlined />} />
             <span>{user?.username}</span>
-            {isAdmin && (
+            {userIsAdmin && (
               <span style={{ 
                 background: '#52c41a', 
                 padding: '2px 6px', 
@@ -281,6 +297,16 @@ const Layout = ({ children, user, onLogout }) => {
                 fontSize: '12px' 
               }}>
                 管理员
+              </span>
+            )}
+            {!userIsAdmin && userRoleDisplayName !== '未知用户' && (
+              <span style={{ 
+                background: '#1890ff', 
+                padding: '2px 6px', 
+                borderRadius: '4px',
+                fontSize: '12px' 
+              }}>
+                {userRoleDisplayName}
               </span>
             )}
           </Space>

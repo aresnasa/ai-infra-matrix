@@ -1,0 +1,6 @@
+kafka:
+  clusters:
+    - name: ai-infra-kafka-kraft
+      bootstrapServers: kafka:9092
+      properties:
+        security.protocol: PLAINTEXT

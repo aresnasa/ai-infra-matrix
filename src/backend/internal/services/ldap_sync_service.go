@@ -330,14 +330,17 @@ func (s *LDAPSyncService) isUserAdmin(userGroups []string, adminGroupsConfig str
 
 // assignAdminRole 分配管理员角色
 func (s *LDAPSyncService) assignAdminRole(userID uint, result *SyncResult) error {
-	// 查找管理员角色
+	// 首先尝试查找super-admin角色，如果找不到则使用admin角色
 	var adminRole models.Role
-	if err := s.db.Where("name = ?", models.RoleAdmin).First(&adminRole).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			log.Printf("管理员角色不存在，跳过角色分配")
-			return nil
+	if err := s.db.Where("name = ?", models.RoleSuperAdmin).First(&adminRole).Error; err != nil {
+		// 如果找不到super-admin，尝试查找admin角色
+		if err := s.db.Where("name = ?", models.RoleAdmin).First(&adminRole).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				log.Printf("管理员角色不存在，跳过角色分配")
+				return nil
+			}
+			return fmt.Errorf("查询管理员角色失败: %v", err)
 		}
-		return fmt.Errorf("查询管理员角色失败: %v", err)
 	}
 
 	// 检查用户是否已有管理员角色

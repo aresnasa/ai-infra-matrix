@@ -27,6 +27,7 @@ type User struct {
 	AuthSource    string    `json:"auth_source" gorm:"default:'local';size:50"` // 认证来源: local, ldap
 	LDAPDn        string    `json:"ldap_dn,omitempty" gorm:"size:500"`          // LDAP用户的DN
 	DashboardRole string    `json:"dashboard_role" gorm:"size:50"`              // 仪表板角色
+	RoleTemplate  string    `json:"role_template" gorm:"size:50"`               // 角色模板
 	LastLogin     *time.Time `json:"last_login,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`

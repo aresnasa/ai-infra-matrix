@@ -79,6 +79,7 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 		IsActive:      true,
 		AuthSource:    "ldap", // 设置认证源为LDAP
 		DashboardRole: req.Role,
+		RoleTemplate:  req.RoleTemplate, // 设置角色模板
 	}
 
 	// 开始事务
