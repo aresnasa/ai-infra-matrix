@@ -15,13 +15,103 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/controllers"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	_ "github.com/aresnasa/ai-infra-matrix/src/backend/docs"
 	
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/swaggo/files"
 	"github.com/swaggo/gin-swagger"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
+
+// initializeDefaultAdmin 初始化默认admin用户并关联到admin角色
+func initializeDefaultAdmin(userService *services.UserService, rbacService *services.RBACService) error {
+	db := database.DB
+	
+	// 检查admin用户是否已存在
+	var existingAdmin models.User
+	err := db.Where("username = ?", "admin").First(&existingAdmin).Error
+	if err == nil {
+		// admin用户已存在，检查是否已关联admin角色
+		var adminRole models.Role
+		if err := db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
+			logrus.WithError(err).Error("Admin role not found")
+			return err
+		}
+		
+		// 检查用户是否已有admin角色
+		var userRole models.UserRole
+		err = db.Where("user_id = ? AND role_id = ?", existingAdmin.ID, adminRole.ID).First(&userRole).Error
+		if err == gorm.ErrRecordNotFound {
+			// 用户没有admin角色，分配admin角色
+			if err := rbacService.AssignRoleToUser(existingAdmin.ID, adminRole.ID); err != nil {
+				logrus.WithError(err).Error("Failed to assign admin role to existing admin user")
+				return err
+			}
+			logrus.Info("Admin role assigned to existing admin user")
+		}
+		
+		// 设置role_template字段
+		if existingAdmin.RoleTemplate == "" {
+			existingAdmin.RoleTemplate = "admin"
+			if err := db.Save(&existingAdmin).Error; err != nil {
+				logrus.WithError(err).Error("Failed to update admin user role_template")
+			}
+		}
+		
+		logrus.Info("Admin user already exists and is properly configured")
+		return nil
+	} else if err != gorm.ErrRecordNotFound {
+		logrus.WithError(err).Error("Failed to check for existing admin user")
+		return err
+	}
+	
+	// 创建默认admin用户
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to hash admin password")
+		return err
+	}
+	
+	admin := &models.User{
+		Username:      "admin",
+		Email:         "admin@example.com",
+		Password:      string(hashedPassword),
+		IsActive:      true,
+		AuthSource:    "local",
+		DashboardRole: "admin",
+		RoleTemplate:  "admin",
+	}
+	
+	if err := db.Create(admin).Error; err != nil {
+		logrus.WithError(err).Error("Failed to create admin user")
+		return err
+	}
+	
+	// 获取admin角色
+	var adminRole models.Role
+	if err := db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
+		logrus.WithError(err).Error("Admin role not found")
+		return err
+	}
+	
+	// 为admin用户分配admin角色
+	if err := rbacService.AssignRoleToUser(admin.ID, adminRole.ID); err != nil {
+		logrus.WithError(err).Error("Failed to assign admin role to admin user")
+		return err
+	}
+	
+	logrus.WithFields(logrus.Fields{
+		"username": admin.Username,
+		"email":    admin.Email,
+	}).Info("Default admin user created successfully")
+	logrus.Info("Default admin credentials - Username: admin, Password: admin123")
+	logrus.Info("Please change the admin password after first login!")
+	
+	return nil
+}
 
 // @title AI-Infra-Matrix API
 // @version 1.0

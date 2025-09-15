@@ -86,9 +86,20 @@ export const useAuth = () => {
    */
   const handleLogout = useCallback(() => {
     console.log('useAuth - handling logout');
-    authAPI.logout();
+    
+    // 立即清除用户状态，防止重新检查认证
     setUser(null);
-    setAuthChecked(false);
+    
+    // 清除localStorage中的认证信息
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('token_expires');
+    
+    // 调用API登出
+    authAPI.logout();
+    
+    // 设置认证状态为已检查完成（登出状态）
+    setAuthChecked(true);
   }, []);
 
   /**

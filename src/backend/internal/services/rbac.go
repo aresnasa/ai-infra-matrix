@@ -433,6 +433,30 @@ type RoleTemplate struct {
 
 // 预定义角色模板
 var RoleTemplates = map[string]RoleTemplate{
+	"admin": {
+		Name:        "admin",
+		Description: "系统管理员 - 拥有所有权限",
+		Permissions: []models.Permission{
+			{Resource: "*", Verb: "*", Scope: "*"},
+		},
+		IsSystem: true,
+	},
+	"data-developer": {
+		Name:        "data-developer",
+		Description: "数据开发人员 - 主要关注数据处理和分析",
+		Permissions: []models.Permission{
+			{Resource: "projects", Verb: "create", Scope: "*"},
+			{Resource: "projects", Verb: "read", Scope: "*"},
+			{Resource: "projects", Verb: "update", Scope: "*"},
+			{Resource: "projects", Verb: "delete", Scope: "own"},
+			{Resource: "hosts", Verb: "read", Scope: "*"},
+			{Resource: "variables", Verb: "create", Scope: "*"},
+			{Resource: "variables", Verb: "read", Scope: "*"},
+			{Resource: "variables", Verb: "update", Scope: "*"},
+			{Resource: "variables", Verb: "delete", Scope: "own"},
+		},
+		IsSystem: true,
+	},
 	"model-developer": {
 		Name:        "model-developer",
 		Description: "模型开发人员 - 主要关注Jupyter环境",

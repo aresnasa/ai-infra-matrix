@@ -357,9 +357,12 @@ function App() {
 
   const handleLogout = () => {
     console.log('=== 处理登出 ===');
-    authAPI.logout();
+    
+    // 立即清除本地状态
     clearUserState();
-    setAuthChecked(false);
+    
+    // 调用authAPI登出，这会清除token并重定向
+    authAPI.logout();
   };
 
   // 渲染加载状态
