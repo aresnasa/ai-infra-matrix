@@ -5120,6 +5120,11 @@ show_help() {
     echo "    • ci-build: 适用于有外网访问的构建环境，完成构建、推送全流程"
     echo "    • prod-start: 适用于无外网访问的生产环境，拉取镜像并启动服务"
     echo
+    echo "自动化补丁管理:"
+    echo "  patch <patch-name> [service] [rebuild] - 应用代码补丁并重建服务"
+    echo "  generate-patch <service> [output]    - 生成服务补丁文件"
+    echo "    可用补丁: ldap-fix, cors-fix, frontend-build-fix, backend-auth-fix, custom"
+    echo
     echo "依赖镜像:"
     echo "  deps-pull <registry> [tag]      - 拉取依赖镜像"
     echo "  deps-push <registry> [tag]      - 推送依赖镜像"
@@ -5200,6 +5205,21 @@ show_help() {
     echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0"
     echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0 192.168.1.100 8080   # 指定访问地址和端口"
     echo "  $0 prod-start \"\" v1.0.0                          # 使用本地镜像启动"
+    echo
+    echo "===================================================================================="
+    echo "🔧 自动化补丁管理实例:"
+    echo "===================================================================================="
+    echo "  # 修复LDAP字段映射问题（自动应用补丁并重建）"
+    echo "  $0 patch ldap-fix"
+    echo
+    echo "  # 应用补丁但不重建服务"
+    echo "  $0 patch ldap-fix \"\" false"
+    echo
+    echo "  # 生成自定义补丁文件"
+    echo "  $0 generate-patch backend ./backend-fix.patch"
+    echo
+    echo "  # 应用自定义补丁"
+    echo "  $0 patch custom backend"
     echo
     echo "===================================================================================="
     echo "🔧 统一构建和部署实例 (高级用户使用):"
@@ -6165,6 +6185,418 @@ EOF
         print_info "请检查上述错误信息并重新运行失败的步骤"
         return 1
     fi
+}
+
+# ====================================================
+# 自动化补丁管理系统
+# ====================================================
+
+# 应用代码补丁
+apply_patch() {
+    local patch_name="${1:-}"
+    local target_service="${2:-}"
+    local rebuild="${3:-true}"
+    
+    if [[ -z "$patch_name" ]]; then
+        print_error "请指定要应用的补丁名称"
+        list_available_patches
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "应用代码补丁: $patch_name"
+    print_info "=========================================="
+    
+    case "$patch_name" in
+        "ldap-fix"|"ldap-field-fix")
+            apply_ldap_field_fix "$rebuild"
+            ;;
+        "cors-fix")
+            apply_cors_fix "$rebuild"
+            ;;
+        "frontend-build-fix")
+            apply_frontend_build_fix "$rebuild"
+            ;;
+        "backend-auth-fix")
+            apply_backend_auth_fix "$rebuild"
+            ;;
+        "custom")
+            if [[ -z "$target_service" ]]; then
+                print_error "自定义补丁需要指定目标服务"
+                return 1
+            fi
+            apply_custom_patch "$target_service" "$rebuild"
+            ;;
+        *)
+            print_error "未知的补丁: $patch_name"
+            list_available_patches
+            return 1
+            ;;
+    esac
+}
+
+# 列出可用的补丁
+list_available_patches() {
+    print_info "可用的补丁:"
+    echo "  • ldap-fix          - 修复LDAP字段映射问题"
+    echo "  • cors-fix          - 修复CORS跨域问题"
+    echo "  • frontend-build-fix - 修复前端构建问题"
+    echo "  • backend-auth-fix  - 修复后端认证问题"
+    echo "  • custom            - 应用自定义补丁 (需要指定服务)"
+    echo
+    echo "用法: $0 patch <patch-name> [service] [rebuild=true|false]"
+    echo "示例:"
+    echo "  $0 patch ldap-fix                    # 应用LDAP修复并重建"
+    echo "  $0 patch ldap-fix \"\" false           # 应用LDAP修复但不重建"
+    echo "  $0 patch custom backend              # 应用自定义后端补丁"
+}
+
+# LDAP字段修复补丁
+apply_ldap_field_fix() {
+    local rebuild="${1:-true}"
+    
+    print_info "应用LDAP字段映射修复补丁..."
+    
+    local models_file="$SCRIPT_DIR/src/backend/internal/models/models.go"
+    local ldap_file="$SCRIPT_DIR/src/backend/internal/services/ldap.go"
+    
+    # 检查文件是否存在
+    if [[ ! -f "$models_file" ]]; then
+        print_error "找不到models文件: $models_file"
+        return 1
+    fi
+    
+    if [[ ! -f "$ldap_file" ]]; then
+        print_error "找不到LDAP服务文件: $ldap_file"
+        return 1
+    fi
+    
+    print_info "步骤1: 备份原始文件..."
+    cp "$models_file" "${models_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$ldap_file" "${ldap_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    
+    print_info "步骤2: 修复LDAPTestRequest结构体..."
+    # 修复models.go中的LDAPTestRequest结构体
+    if grep -q "type LDAPTestRequest struct" "$models_file"; then
+        # 使用临时文件进行替换
+        local temp_file=$(mktemp)
+        cat > "$temp_file" << 'MODELS_PATCH_EOF'
+type LDAPTestRequest struct {
+	Server         string `json:"server" validate:"required"`
+	Port           int    `json:"port" validate:"required,min=1,max=65535"`
+	BindDN         string `json:"bind_dn" validate:"required"`
+	BindPassword   string `json:"bind_password" validate:"required"`
+	BaseDN         string `json:"base_dn" validate:"required"`
+	UserFilter     string `json:"user_filter"`
+	// 支持前端的字段名
+	EnableTLS      bool   `json:"enable_tls"`
+	SkipTLSVerify  bool   `json:"skip_tls_verify"`
+	// 兼容后端原有字段名
+	UseSSL         bool   `json:"use_ssl"`
+	SkipVerify     bool   `json:"skip_verify"`
+}
+MODELS_PATCH_EOF
+        
+        # 替换结构体定义
+        awk '
+        /^type LDAPTestRequest struct/ {
+            # 输出新的结构体定义
+            while ((getline line < "'$temp_file'") > 0) {
+                print line
+            }
+            close("'$temp_file'")
+            # 跳过原有的结构体定义直到找到下一个类型定义或空行
+            while (getline && !/^type|^$|^\/\/|^func/) {
+                continue
+            }
+            if ($0 ~ /^type|^func/) {
+                print $0
+            }
+            next
+        }
+        { print }
+        ' "$models_file" > "${models_file}.tmp" && mv "${models_file}.tmp" "$models_file"
+        
+        rm -f "$temp_file"
+        print_success "✓ LDAPTestRequest结构体已更新"
+    else
+        print_warning "未找到LDAPTestRequest结构体定义"
+    fi
+    
+    print_info "步骤3: 修复LDAP服务连接逻辑..."
+    # 修复ldap.go中的TestLDAPConnection函数
+    if grep -q "func.*TestLDAPConnection" "$ldap_file"; then
+        # 创建临时补丁文件
+        local temp_patch=$(mktemp)
+        cat > "$temp_patch" << 'LDAP_PATCH_EOF'
+	// 兼容前端字段名映射
+	if req.EnableTLS && !req.UseSSL {
+		req.UseSSL = req.EnableTLS
+	}
+	if req.SkipTLSVerify && !req.SkipVerify {
+		req.SkipVerify = req.SkipTLSVerify
+	}
+LDAP_PATCH_EOF
+        
+        # 在TestLDAPConnection函数开始后插入映射逻辑
+        awk -v patch_file="$temp_patch" '
+        /func.*TestLDAPConnection.*{/ {
+            print $0
+            # 读取下一行
+            if (getline > 0) {
+                print $0
+                # 插入补丁内容
+                while ((getline line < patch_file) > 0) {
+                    print line
+                }
+                close(patch_file)
+            }
+            next
+        }
+        { print }
+        ' "$ldap_file" > "${ldap_file}.tmp" && mv "${ldap_file}.tmp" "$ldap_file"
+        
+        rm -f "$temp_patch"
+        print_success "✓ LDAP连接逻辑已更新"
+    else
+        print_warning "未找到TestLDAPConnection函数"
+    fi
+    
+    print_info "步骤4: 验证代码语法..."
+    if command -v go >/dev/null 2>&1; then
+        cd "$SCRIPT_DIR/src/backend" && go mod tidy >/dev/null 2>&1
+        if go build -o /tmp/backend_test ./cmd/server >/dev/null 2>&1; then
+            print_success "✓ 代码语法检查通过"
+            rm -f /tmp/backend_test
+        else
+            print_error "代码语法检查失败，可能需要手动调整"
+        fi
+        cd "$SCRIPT_DIR"
+    else
+        print_warning "未安装Go，跳过语法检查"
+    fi
+    
+    if [[ "$rebuild" == "true" ]]; then
+        print_info "步骤5: 重建后端服务..."
+        if rebuild_service "backend" "true"; then
+            print_success "✓ 后端服务重建完成"
+            
+            print_info "步骤6: 重启后端服务..."
+            if docker compose restart backend >/dev/null 2>&1; then
+                print_success "✓ 后端服务重启完成"
+                
+                # 等待服务启动
+                sleep 3
+                
+                # 检查服务状态
+                if check_service_health "backend"; then
+                    print_success "✓ LDAP修复补丁应用成功！"
+                    print_info "现在可以测试LDAP连接功能"
+                else
+                    print_error "后端服务启动异常，请检查日志"
+                    return 1
+                fi
+            else
+                print_error "后端服务重启失败"
+                return 1
+            fi
+        else
+            print_error "后端服务重建失败"
+            return 1
+        fi
+    else
+        print_success "✓ LDAP修复补丁应用完成（未重建服务）"
+        print_info "请手动重建并重启服务: $0 build backend && docker compose restart backend"
+    fi
+}
+
+# 重建指定服务
+rebuild_service() {
+    local service="$1"
+    local force_no_cache="${2:-false}"
+    
+    print_info "重建服务: $service"
+    
+    if [[ "$force_no_cache" == "true" ]]; then
+        # 强制重建，不使用缓存
+        if build_service "$service" "$DEFAULT_IMAGE_TAG" "" "--no-cache"; then
+            return 0
+        else
+            return 1
+        fi
+    else
+        # 正常重建
+        if build_service "$service" "$DEFAULT_IMAGE_TAG"; then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
+# 检查服务健康状态
+check_service_health() {
+    local service="$1"
+    local timeout=30
+    local count=0
+    
+    print_info "检查服务健康状态: $service"
+    
+    while [[ $count -lt $timeout ]]; do
+        if docker compose ps --filter "status=running" 2>/dev/null | grep -q "$service"; then
+            case "$service" in
+                "backend")
+                    # 检查后端API - 通过nginx代理
+                    if curl -s -f --connect-timeout 5 "http://localhost:8080/api/health" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                    # 备用：直接检查后端端口（如果nginx未启动）
+                    if curl -s -f --connect-timeout 5 "http://localhost:8082/api/health" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                    ;;
+                "frontend")
+                    # 检查前端 - 通过nginx代理
+                    if curl -s -f --connect-timeout 5 "http://localhost:8080" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                    # 备用：直接检查前端端口
+                    if curl -s -f --connect-timeout 5 "http://localhost:3000" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                    ;;
+                "nginx")
+                    # 检查nginx主页
+                    if curl -s -f --connect-timeout 5 "http://localhost:8080" >/dev/null 2>&1; then
+                        return 0
+                    fi
+                    ;;
+                *)
+                    # 其他服务只检查容器状态
+                    print_success "✓ $service 容器运行中"
+                    return 0
+                    ;;
+            esac
+        fi
+        
+        sleep 1
+        count=$((count + 1))
+    done
+    
+    print_error "服务健康检查失败: $service"
+    print_info "容器状态:"
+    docker compose ps "$service" 2>/dev/null || true
+    print_info "最近的日志:"
+    docker compose logs --tail=5 "$service" 2>/dev/null || true
+    return 1
+}
+
+# CORS修复补丁
+apply_cors_fix() {
+    local rebuild="${1:-true}"
+    
+    print_info "应用CORS跨域修复补丁..."
+    print_warning "CORS修复补丁尚未实现"
+    # TODO: 实现CORS修复逻辑
+}
+
+# 前端构建修复补丁
+apply_frontend_build_fix() {
+    local rebuild="${1:-true}"
+    
+    print_info "应用前端构建修复补丁..."
+    print_warning "前端构建修复补丁尚未实现" 
+    # TODO: 实现前端构建修复逻辑
+}
+
+# 后端认证修复补丁
+apply_backend_auth_fix() {
+    local rebuild="${1:-true}"
+    
+    print_info "应用后端认证修复补丁..."
+    print_warning "后端认证修复补丁尚未实现"
+    # TODO: 实现后端认证修复逻辑
+}
+
+# 应用自定义补丁
+apply_custom_patch() {
+    local service="$1"
+    local rebuild="${2:-true}"
+    
+    print_info "应用自定义补丁到服务: $service"
+    
+    local patch_dir="$SCRIPT_DIR/patches"
+    local patch_file="$patch_dir/${service}.patch"
+    
+    if [[ ! -f "$patch_file" ]]; then
+        print_error "找不到补丁文件: $patch_file"
+        print_info "请在 $patch_dir 目录下创建 ${service}.patch 文件"
+        return 1
+    fi
+    
+    print_info "应用补丁文件: $patch_file"
+    
+    # 应用git patch
+    if patch -p1 < "$patch_file" 2>/dev/null; then
+        print_success "✓ 补丁应用成功"
+        
+        if [[ "$rebuild" == "true" ]]; then
+            print_info "重建服务: $service"
+            if rebuild_service "$service" "true"; then
+                print_success "✓ 服务重建完成"
+            else
+                print_error "服务重建失败"
+                return 1
+            fi
+        fi
+    else
+        print_error "补丁应用失败，请检查补丁文件格式"
+        return 1
+    fi
+}
+
+# 生成补丁文件
+generate_patch() {
+    local service="${1:-}"
+    local output_file="${2:-}"
+    
+    if [[ -z "$service" ]]; then
+        print_error "请指定要生成补丁的服务"
+        print_info "可用服务: backend frontend nginx jupyterhub"
+        return 1
+    fi
+    
+    if [[ -z "$output_file" ]]; then
+        output_file="$SCRIPT_DIR/patches/${service}_$(date +%Y%m%d_%H%M%S).patch"
+    fi
+    
+    print_info "生成服务补丁: $service"
+    
+    # 创建patches目录
+    mkdir -p "$SCRIPT_DIR/patches"
+    
+    local service_dir="$SCRIPT_DIR/src/$service"
+    
+    if [[ ! -d "$service_dir" ]]; then
+        print_error "服务目录不存在: $service_dir"
+        return 1
+    fi
+    
+    # 生成git diff补丁
+    cd "$SCRIPT_DIR"
+    if git diff --no-index /dev/null "$service_dir" > "$output_file" 2>/dev/null; then
+        print_success "✓ 补丁文件已生成: $output_file"
+    else
+        # 尝试生成基于当前变更的补丁
+        if git diff HEAD -- "src/$service" > "$output_file" 2>/dev/null; then
+            print_success "✓ 基于git变更的补丁文件已生成: $output_file"
+        else
+            print_error "补丁生成失败"
+            return 1
+        fi
+    fi
+    
+    print_info "补丁文件大小: $(wc -l < "$output_file") 行"
 }
 
 # ====================================================
@@ -7377,6 +7809,58 @@ main() {
             fi
             
             prod_start_complete "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}" "$4" "$5"
+            ;;
+            
+        # 自动化补丁管理命令
+        "patch")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" || -z "$2" ]]; then
+                echo "patch - 自动化代码补丁管理"
+                echo
+                echo "用法: $0 patch <patch-name> [service] [rebuild]"
+                echo
+                echo "参数:"
+                echo "  patch-name      补丁名称 (必需)"
+                echo "  service         目标服务 (自定义补丁时必需)"
+                echo "  rebuild         是否重建服务 (默认: true)"
+                echo
+                echo "功能:"
+                echo "  • 自动应用预定义的代码修复"
+                echo "  • 备份原始文件"
+                echo "  • 验证代码语法"
+                echo "  • 自动重建和重启服务"
+                echo
+                echo "可用补丁:"
+                list_available_patches
+                return 0
+            fi
+            
+            apply_patch "$2" "$3" "$4"
+            ;;
+            
+        "generate-patch")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "generate-patch - 生成服务补丁文件"
+                echo
+                echo "用法: $0 generate-patch <service> [output-file]"
+                echo
+                echo "参数:"
+                echo "  service         目标服务名称 (必需)"
+                echo "  output-file     输出补丁文件路径 (可选)"
+                echo
+                echo "功能:"
+                echo "  • 基于当前代码变更生成补丁文件"
+                echo "  • 支持git diff格式"
+                echo "  • 可用于代码分发和应用"
+                echo
+                echo "示例:"
+                echo "  $0 generate-patch backend"
+                echo "  $0 generate-patch frontend ./my-frontend.patch"
+                return 0
+            fi
+            
+            generate_patch "$2" "$3"
             ;;
             
         "help"|"-h"|"--help")

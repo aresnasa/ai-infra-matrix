@@ -488,17 +488,19 @@ type LDAPConfigRequest struct {
 
 // LDAPTestRequest LDAP测试连接请求
 type LDAPTestRequest struct {
-	Server       string `json:"server" binding:"required"`
-	Port         int    `json:"port" binding:"required"`
-	BindDN       string `json:"bind_dn" binding:"required"`
-	BindPassword string `json:"bind_password" binding:"required"`
-	BaseDN       string `json:"base_dn" binding:"required"`
-	UserFilter   string `json:"user_filter" binding:"required"`
-	UseSSL       bool   `json:"use_ssl"`
-	SkipVerify   bool   `json:"skip_verify"`
+	Server         string `json:"server" validate:"required"`
+	Port           int    `json:"port" validate:"required,min=1,max=65535"`
+	BindDN         string `json:"bind_dn" validate:"required"`
+	BindPassword   string `json:"bind_password" validate:"required"`
+	BaseDN         string `json:"base_dn" validate:"required"`
+	UserFilter     string `json:"user_filter"`
+	// 支持前端的字段名
+	EnableTLS      bool   `json:"enable_tls"`
+	SkipTLSVerify  bool   `json:"skip_tls_verify"`
+	// 兼容后端原有字段名
+	UseSSL         bool   `json:"use_ssl"`
+	SkipVerify     bool   `json:"skip_verify"`
 }
-
-// 权限检查请求结构
 type PermissionCheckRequest struct {
 	Resource  string `json:"resource" binding:"required"`
 	Verb      string `json:"verb" binding:"required"`

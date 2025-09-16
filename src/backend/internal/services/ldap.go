@@ -391,6 +391,14 @@ func (ls *LDAPService) UpdateLDAPConfig(req *models.LDAPConfigRequest) (*models.
 
 // TestLDAPConnection 测试LDAP连接
 func (ls *LDAPService) TestLDAPConnection(req *models.LDAPTestRequest) error {
+	// 兼容前端字段名映射
+	if req.EnableTLS && !req.UseSSL {
+		req.UseSSL = req.EnableTLS
+	}
+	if req.SkipTLSVerify && !req.SkipVerify {
+		req.SkipVerify = req.SkipTLSVerify
+	}
+	
 	config := &models.LDAPConfig{
 		Server:       req.Server,
 		Port:         req.Port,
@@ -398,8 +406,8 @@ func (ls *LDAPService) TestLDAPConnection(req *models.LDAPTestRequest) error {
 		BindPassword: req.BindPassword,
 		BaseDN:       req.BaseDN,
 		UserFilter:   req.UserFilter,
-		UseSSL:       req.UseSSL,
-		SkipVerify:   req.SkipVerify,
+		UseSSL:       req.UseSSL || req.EnableTLS,       // 兼容前端字段
+		SkipVerify:   req.SkipVerify || req.SkipTLSVerify, // 兼容前端字段
 	}
 	
 	response := ls.TestConnection(config)
