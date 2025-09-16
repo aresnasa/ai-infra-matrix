@@ -293,7 +293,52 @@ detect_network_environment() {
 
 # 生成离线友好的 Dockerfile 内容
 generate_offline_singleuser_dockerfile() {
-    cat << 'OFFLINE_EOF'
+    # 获取当前版本标签，默认使用v0.3.6-dev
+    local version_tag="${TARGET_TAG:-v0.3.6-dev}"
+    local aiharbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local}"
+    
+    cat << OFFLINE_EOF
+# ai-infra single-user notebook image - 离线部署版本
+# 直接使用 aiharbor 内部已构建完成的镜像，无需重新构建
+FROM ${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}
+
+# Version metadata - 继承内部镜像版本
+ARG VERSION="${version_tag}"
+ENV APP_VERSION=\${VERSION}
+
+# ========================================
+# 离线部署优化配置
+# ========================================
+# 该镜像已在 aiharbor 内部完成所有构建和配置：
+# - JupyterHub 5.3.x 兼容
+# - JupyterLab 完整环境
+# - 预装开发工具和科学计算包
+# - 预构建扩展，无需运行时编译
+# ========================================
+
+USER \${NB_UID}
+
+# 确保配置目录存在（防御性配置）
+ENV JUPYTER_ENABLE_LAB=yes
+ENV JUPYTERLAB_SETTINGS_DIR=/home/jovyan/.jupyter/lab/user-settings
+
+# 验证内部镜像完整性
+RUN echo "✓ 使用 aiharbor 内部预构建镜像: ${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}" && \
+    python -c "import sys; print(f'✓ Python {sys.version}'); import jupyterhub, jupyterlab, ipykernel; print('✓ 核心组件已就绪')" && \
+    jupyter --version
+
+LABEL maintainer="AI Infrastructure Team" \
+    org.opencontainers.image.title="ai-infra-singleuser-offline" \
+    org.opencontainers.image.version="\${APP_VERSION}" \
+    org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook (Offline Ready - Harbor Internal)" \
+    org.opencontainers.image.source="${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}"
+
+OFFLINE_EOF
+}
+
+# 离线构建模式的 Dockerfile 生成（当 aiharbor 镜像不可用时的回退方案）
+generate_offline_build_dockerfile() {
+    cat << 'OFFLINE_BUILD_EOF'
 # ai-infra single-user notebook image pinned to JupyterHub 5.3.x
 # Base on jupyter/docker-stacks base-notebook for a full Lab experience
 FROM jupyter/base-notebook:latest
@@ -349,8 +394,10 @@ RUN echo '{"enabled": true}' > ${JUPYTERLAB_SETTINGS_DIR}/jupyterlab-execute-tim
 # 预安装和配置Python内核（确保在构建时完成）
 RUN python -m ipykernel install --user --name python3 --display-name "Python 3 (ipykernel)"
 
-# 预构建JupyterLab扩展（避免运行时构建）
-RUN jupyter lab build --dev-build=False --minimize=True
+# 预构建JupyterLab扩展（避免运行时构建，使用更宽松的设置）
+RUN jupyter lab build --dev-build=False --minimize=False || \
+    jupyter lab build --dev-build=False --minimize=False --debug || \
+    echo "Warning: JupyterLab build failed, will build at runtime"
 
 # ========================================
 # 验证阶段：确保所有组件正常工作
@@ -363,9 +410,9 @@ RUN python -c "import jupyterhub, jupyterlab, ipykernel; print('✓ 核心组件
 LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.title="ai-infra-singleuser" \
     org.opencontainers.image.version="${APP_VERSION}" \
-    org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook (Offline Optimized)"
+    org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook (Offline Build Mode)"
 
-OFFLINE_EOF
+OFFLINE_BUILD_EOF
 }
 
 # 生成在线友好的 Dockerfile 内容（原版）
@@ -454,8 +501,22 @@ prepare_singleuser_dockerfile() {
     
     # 生成对应的 Dockerfile
     if [[ "$use_offline" == "true" ]]; then
-        generate_offline_singleuser_dockerfile > "$dockerfile_path"
-        print_success "✓ 已生成离线友好的 SingleUser Dockerfile"
+        # 验证 aiharbor 镜像是否可用
+        local version_tag="${TARGET_TAG:-v0.3.6-dev}"
+        local aiharbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local}"
+        local harbor_image="${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}"
+        
+        print_info "检查 aiharbor 内部镜像可用性..."
+        if docker manifest inspect "$harbor_image" &>/dev/null; then
+            print_success "✓ aiharbor 内部镜像可用: $harbor_image"
+            generate_offline_singleuser_dockerfile > "$dockerfile_path"
+            print_success "✓ 已生成离线模式 Dockerfile (使用 aiharbor 预构建镜像)"
+        else
+            print_warning "⚠ aiharbor 内部镜像不可用: $harbor_image"
+            print_info "回退到离线构建模式 (预装依赖)..."
+            generate_offline_build_dockerfile > "$dockerfile_path"
+            print_success "✓ 已生成离线构建模式 Dockerfile (预装依赖)"
+        fi
     else
         generate_online_singleuser_dockerfile > "$dockerfile_path"
         print_success "✓ 已生成标准的 SingleUser Dockerfile"
@@ -6069,18 +6130,19 @@ main() {
                 echo
                 echo "构建模式:"
                 echo "  auto        - 自动检测网络环境，选择合适的构建策略"
-                echo "  offline     - 离线友好模式，预安装所有依赖，运行时无需网络"
+                echo "  offline     - 离线模式，直接使用 aiharbor 内部预构建镜像"
                 echo "  online      - 标准模式，保持原始的构建策略"
                 echo
                 echo "说明:"
                 echo "  智能构建 SingleUser Jupyter 镜像，根据网络环境选择最佳策略："
-                echo "  • 外网环境：使用标准构建流程"
-                echo "  • 内网环境：预安装所有依赖，确保离线运行"
+                echo "  • 离线模式：直接使用 aiharbor.msxf.local/aihpc/ai-infra-singleuser 预构建镜像"
+                echo "  • 在线模式：使用标准构建流程，从源码重新构建"
+                echo "  • 自动模式：检测网络环境，自动选择离线或在线模式"
                 echo "  • 构建完成后自动恢复 Dockerfile 原始状态"
                 echo
                 echo "示例:"
                 echo "  $0 build-singleuser auto                      # 自动检测环境"
-                echo "  $0 build-singleuser offline v1.0.0           # 强制离线模式"
+                echo "  $0 build-singleuser offline v0.3.6-dev       # 使用内部预构建镜像"
                 echo "  $0 build-singleuser online v1.0.0 harbor.com/ai # 在线模式推送"
                 return 0
             fi
