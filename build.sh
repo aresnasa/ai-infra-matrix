@@ -261,6 +261,224 @@ print_warning() {
 }
 
 # ==========================================
+# 智能构建功能 - SingleUser 镜像优化
+# ==========================================
+
+# 检测网络环境（内网/外网）
+detect_network_environment() {
+    local timeout=5
+    
+    # 检测方法1：尝试连接常见的外网地址
+    if timeout $timeout ping -c 1 8.8.8.8 >/dev/null 2>&1 || 
+       timeout $timeout ping -c 1 mirrors.aliyun.com >/dev/null 2>&1; then
+        echo "external"
+        return 0
+    fi
+    
+    # 检测方法2：检查是否能访问 PyPI 镜像
+    if timeout $timeout curl -s --connect-timeout $timeout https://mirrors.aliyun.com/pypi/simple/ >/dev/null 2>&1; then
+        echo "external"
+        return 0
+    fi
+    
+    # 检测方法3：检查环境变量标识
+    if [[ "${AI_INFRA_NETWORK_ENV}" == "internal" ]] || [[ "${NETWORK_ENV}" == "internal" ]]; then
+        echo "internal"
+        return 0
+    fi
+    
+    # 默认判定为内网环境（安全起见）
+    echo "internal"
+}
+
+# 生成离线友好的 Dockerfile 内容
+generate_offline_singleuser_dockerfile() {
+    cat << 'OFFLINE_EOF'
+# ai-infra single-user notebook image pinned to JupyterHub 5.3.x
+# Base on jupyter/docker-stacks base-notebook for a full Lab experience
+FROM jupyter/base-notebook:latest
+
+# Version metadata
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
+USER root
+
+# ========================================
+# 构建阶段：预安装所有必要的Python包
+# ========================================
+# 配置pip镜像源（构建时使用，运行时不依赖网络）
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com
+
+# 安装所有必要的Python包（构建阶段完成，运行时无需网络）
+RUN pip install --no-cache-dir \
+    "jupyterhub==5.3.*" \
+    ipykernel \
+    jupyterlab \
+    jupyterlab-execute-time \
+    jupyterlab-code-formatter \
+    jupyterlab-lsp \
+    python-lsp-server[all]
+
+# 安装额外的开发工具（可选，在构建时决定是否包含）
+RUN pip install --no-cache-dir \
+    numpy \
+    pandas \
+    matplotlib \
+    seaborn \
+    scikit-learn \
+    requests
+
+# ========================================
+# 配置阶段：设置Jupyter环境
+# ========================================
+# 预启用JupyterLab
+ENV JUPYTER_ENABLE_LAB=yes
+
+# 切换到普通用户进行配置
+USER ${NB_UID}
+
+# 预配置JupyterLab设置目录
+ENV JUPYTERLAB_SETTINGS_DIR=/home/jovyan/.jupyter/lab/user-settings
+RUN mkdir -p ${JUPYTERLAB_SETTINGS_DIR}/jupyterlab-execute-time
+
+# 预启用执行时间显示扩展
+RUN echo '{"enabled": true}' > ${JUPYTERLAB_SETTINGS_DIR}/jupyterlab-execute-time/plugin.jupyterlab-settings
+
+# 预安装和配置Python内核（确保在构建时完成）
+RUN python -m ipykernel install --user --name python3 --display-name "Python 3 (ipykernel)"
+
+# 预构建JupyterLab扩展（避免运行时构建）
+RUN jupyter lab build --dev-build=False --minimize=True
+
+# ========================================
+# 验证阶段：确保所有组件正常工作
+# ========================================
+# 验证关键组件是否正确安装
+RUN python -c "import jupyterhub, jupyterlab, ipykernel; print('✓ 核心组件验证成功')" && \
+    jupyter --version && \
+    jupyter lab --version
+
+LABEL maintainer="AI Infrastructure Team" \
+    org.opencontainers.image.title="ai-infra-singleuser" \
+    org.opencontainers.image.version="${APP_VERSION}" \
+    org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook (Offline Optimized)"
+
+OFFLINE_EOF
+}
+
+# 生成在线友好的 Dockerfile 内容（原版）
+generate_online_singleuser_dockerfile() {
+    cat << 'ONLINE_EOF'
+# ai-infra single-user notebook image pinned to JupyterHub 5.3.x
+# Base on jupyter/docker-stacks base-notebook for a full Lab experience
+FROM jupyter/base-notebook:latest
+
+# Version metadata
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
+
+USER root
+
+# Align jupyterhub-singleuser with Hub 5.3.x to avoid auth/redirect quirks
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip install --no-cache-dir \
+	"jupyterhub==5.3.*" \
+	ipykernel \
+	jupyterlab \
+	jupyterlab-execute-time \
+	jupyterlab-code-formatter \
+	jupyterlab-lsp \
+	python-lsp-server[all]
+
+# Optional: pre-enable Lab (the base image already does, keep explicit)
+ENV JUPYTER_ENABLE_LAB=yes
+
+# Pre-enable execute time display
+ENV JUPYTERLAB_SETTINGS_DIR=/home/jovyan/.jupyter/lab/user-settings
+USER ${NB_UID}
+RUN mkdir -p ${JUPYTERLAB_SETTINGS_DIR}/jupyterlab-execute-time && \
+	echo '{"enabled": true}' > ${JUPYTERLAB_SETTINGS_DIR}/jupyterlab-execute-time/plugin.jupyterlab-settings || true
+
+# Ensure ipykernel is available
+RUN python -m ipykernel install --user --name python3 --display-name "Python 3 (ipykernel)" || true
+
+LABEL maintainer="AI Infrastructure Team" \
+	org.opencontainers.image.title="ai-infra-singleuser" \
+	org.opencontainers.image.version="${APP_VERSION}" \
+	org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook"
+
+ONLINE_EOF
+}
+
+# 智能准备 SingleUser Dockerfile
+prepare_singleuser_dockerfile() {
+    local service_path="$1"
+    local network_env="$2"
+    local force_mode="${3:-auto}"  # auto, offline, online
+    
+    local dockerfile_path="$SCRIPT_DIR/$service_path/Dockerfile"
+    local dockerfile_backup="$SCRIPT_DIR/$service_path/Dockerfile.backup"
+    
+    # 备份原始 Dockerfile（如果还没备份）
+    if [[ ! -f "$dockerfile_backup" ]]; then
+        if [[ -f "$dockerfile_path" ]]; then
+            cp "$dockerfile_path" "$dockerfile_backup"
+            print_info "已备份原始 Dockerfile: $dockerfile_backup"
+        fi
+    fi
+    
+    # 根据环境和强制模式决定使用哪种模板
+    local use_offline=false
+    case "$force_mode" in
+        "offline")
+            use_offline=true
+            print_info "强制使用离线模式构建 SingleUser 镜像"
+            ;;
+        "online")
+            use_offline=false
+            print_info "强制使用在线模式构建 SingleUser 镜像"
+            ;;
+        "auto"|*)
+            if [[ "$network_env" == "internal" ]]; then
+                use_offline=true
+                print_info "检测到内网环境，使用离线友好模式构建 SingleUser 镜像"
+            else
+                use_offline=false
+                print_info "检测到外网环境，使用标准模式构建 SingleUser 镜像"
+            fi
+            ;;
+    esac
+    
+    # 生成对应的 Dockerfile
+    if [[ "$use_offline" == "true" ]]; then
+        generate_offline_singleuser_dockerfile > "$dockerfile_path"
+        print_success "✓ 已生成离线友好的 SingleUser Dockerfile"
+    else
+        generate_online_singleuser_dockerfile > "$dockerfile_path"
+        print_success "✓ 已生成标准的 SingleUser Dockerfile"
+    fi
+}
+
+# 恢复 SingleUser Dockerfile 到原始状态
+restore_singleuser_dockerfile() {
+    local service_path="$1"
+    local dockerfile_path="$SCRIPT_DIR/$service_path/Dockerfile"
+    local dockerfile_backup="$SCRIPT_DIR/$service_path/Dockerfile.backup"
+    
+    if [[ -f "$dockerfile_backup" ]]; then
+        cp "$dockerfile_backup" "$dockerfile_path"
+        print_success "✓ 已恢复 SingleUser Dockerfile 到原始状态"
+        return 0
+    else
+        print_warning "未找到 Dockerfile 备份文件，无法恢复"
+        return 1
+    fi
+}
+
+# ==========================================
 # 模板渲染功能
 # ==========================================
 
@@ -1820,6 +2038,26 @@ build_service() {
     # 构建镜像
     print_info "  → 正在构建镜像..."
     
+    # ========================================
+    # SingleUser 智能构建处理
+    # ========================================
+    if [[ "$service" == "singleuser" ]]; then
+        print_info "  → 检测网络环境以优化 SingleUser 构建..."
+        local network_env=$(detect_network_environment)
+        print_info "  → 网络环境: $network_env"
+        
+        # 检查是否有强制模式参数
+        local force_mode="auto"
+        if [[ "${SINGLEUSER_BUILD_MODE:-}" == "offline" ]]; then
+            force_mode="offline"
+        elif [[ "${SINGLEUSER_BUILD_MODE:-}" == "online" ]]; then
+            force_mode="online"
+        fi
+        
+        # 智能准备 Dockerfile
+        prepare_singleuser_dockerfile "$service_path" "$network_env" "$force_mode"
+    fi
+    
     # 特殊处理nginx和jupyterhub的构建上下文
     local build_context
     if [[ "$service" == "nginx" ]]; then
@@ -1857,9 +2095,26 @@ build_service() {
             fi
         fi
         
+        # ========================================
+        # SingleUser 构建后清理
+        # ========================================
+        if [[ "$service" == "singleuser" ]]; then
+            print_info "  → 恢复 SingleUser Dockerfile 到原始状态..."
+            restore_singleuser_dockerfile "$service_path"
+        fi
+        
         return 0
     else
         print_error "✗ 构建失败: $target_image"
+        
+        # ========================================
+        # SingleUser 构建失败时也需要清理
+        # ========================================
+        if [[ "$service" == "singleuser" ]]; then
+            print_info "  → 构建失败，恢复 SingleUser Dockerfile 到原始状态..."
+            restore_singleuser_dockerfile "$service_path"
+        fi
+        
         return 1
     fi
 }
@@ -4669,6 +4924,12 @@ show_help() {
     echo "  push-to-internal <registry> [tag] [include_kafka] - 推送镜像到内部仓库"
     echo "  prepare-offline <registry> [tag] [output_dir] [include_kafka] - 准备完整离线部署包"
     echo
+    echo "SingleUser 智能构建:"
+    echo "  build-singleuser [mode] [tag] [registry] - 智能构建SingleUser镜像"
+    echo "    模式: auto (自动检测), offline (离线友好), online (标准模式)"
+    echo "  detect-network                  - 检测当前网络环境"
+    echo "  restore-singleuser              - 恢复SingleUser Dockerfile到原始状态"
+    echo
     echo "工具命令:"
     echo "  clean [tag] [--force]           - 清理镜像"
     echo "  clean-all [--force]             - 完整清理（镜像、容器、数据卷、配置文件）"
@@ -5791,6 +6052,80 @@ main() {
             fi
             
             create_env_from_template "$env_type" "$force"
+            ;;
+            
+        # SingleUser 智能构建命令
+        "build-singleuser")
+            # 处理帮助参数
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "build-singleuser - SingleUser 镜像智能构建"
+                echo
+                echo "用法: $0 build-singleuser [mode] [tag] [registry]"
+                echo
+                echo "参数:"
+                echo "  mode        构建模式 (默认: auto)"
+                echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+                echo "  registry    私有仓库地址 (可选)"
+                echo
+                echo "构建模式:"
+                echo "  auto        - 自动检测网络环境，选择合适的构建策略"
+                echo "  offline     - 离线友好模式，预安装所有依赖，运行时无需网络"
+                echo "  online      - 标准模式，保持原始的构建策略"
+                echo
+                echo "说明:"
+                echo "  智能构建 SingleUser Jupyter 镜像，根据网络环境选择最佳策略："
+                echo "  • 外网环境：使用标准构建流程"
+                echo "  • 内网环境：预安装所有依赖，确保离线运行"
+                echo "  • 构建完成后自动恢复 Dockerfile 原始状态"
+                echo
+                echo "示例:"
+                echo "  $0 build-singleuser auto                      # 自动检测环境"
+                echo "  $0 build-singleuser offline v1.0.0           # 强制离线模式"
+                echo "  $0 build-singleuser online v1.0.0 harbor.com/ai # 在线模式推送"
+                return 0
+            fi
+            
+            local mode="${2:-auto}"  # auto, offline, online
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local registry="${4:-}"
+            
+            case "$mode" in
+                "auto"|"offline"|"online")
+                    # 设置构建模式环境变量
+                    export SINGLEUSER_BUILD_MODE="$mode"
+                    print_info "设置 SingleUser 构建模式: $mode"
+                    build_service "singleuser" "$tag" "$registry"
+                    ;;
+                *)
+                    print_error "无效的构建模式: $mode"
+                    print_info "可用模式: auto (自动检测), offline (离线友好), online (标准模式)"
+                    exit 1
+                    ;;
+            esac
+            ;;
+            
+        "detect-network")
+            local env=$(detect_network_environment)
+            print_info "当前网络环境: $env"
+            case "$env" in
+                "external")
+                    print_success "✓ 检测到外网环境，可以正常访问外部服务"
+                    ;;
+                "internal")
+                    print_warning "⚠ 检测到内网环境，建议使用离线友好的构建模式"
+                    print_info "建议运行: $0 build-singleuser offline"
+                    ;;
+            esac
+            ;;
+            
+        "restore-singleuser")
+            local service_path="src/singleuser"
+            if restore_singleuser_dockerfile "$service_path"; then
+                print_success "✓ SingleUser Dockerfile 已恢复到原始状态"
+            else
+                print_error "✗ 恢复失败"
+                exit 1
+            fi
             ;;
             
         # 更新外部主机配置命令
