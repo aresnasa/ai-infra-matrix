@@ -885,6 +885,33 @@ replace_template_passwords() {
 
 # 生成环境文件从模板
 create_env_from_template() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "create-env - 从模板创建环境配置文件"
+        echo
+        echo "用法: $0 create-env [env_type] [--force]"
+        echo
+        echo "参数:"
+        echo "  env_type    环境类型: dev|development|prod|production (默认: dev)"
+        echo "  --force     强制覆盖已存在的配置文件"
+        echo
+        echo "说明:"
+        echo "  从模板文件创建环境配置文件："
+        echo "  • dev环境: .env.example → .env"
+        echo "  • prod环境: .env.prod.example → .env.prod"
+        echo "  • 自动生成安全密码"
+        echo "  • 创建相关依赖配置文件"
+        echo
+        echo "环境类型:"
+        echo "  dev/development  - 开发环境配置"
+        echo "  prod/production  - 生产环境配置（包含密码生成）"
+        echo
+        echo "示例:"
+        echo "  $0 create-env dev"
+        echo "  $0 create-env prod --force"
+        return 0
+    fi
+    
     local env_type="${1:-dev}"  # dev 或 prod
     local force="${2:-false}"
     
@@ -1720,6 +1747,32 @@ check_dockerfile() {
 
 # 构建单个服务镜像
 build_service() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "build-service - 构建指定服务"
+        echo
+        echo "用法: $0 build-service <service> [tag] [registry]"
+        echo
+        echo "参数:"
+        echo "  service     服务名称 (必需)"
+        echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo "  registry    私有仓库地址 (可选)"
+        echo
+        echo "说明:"
+        echo "  构建指定的服务Docker镜像，支持："
+        echo "  • 本地构建和标记"
+        echo "  • 私有仓库推送"
+        echo "  • Dockerfile检查"
+        echo "  • 自动化构建流程"
+        echo
+        echo "可用服务: $SRC_SERVICES"
+        echo
+        echo "示例:"
+        echo "  $0 build-service frontend v1.0.0"
+        echo "  $0 build-service api v1.0.0 harbor.company.com/ai-infra"
+        return 0
+    fi
+    
     local service="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local registry="${3:-}"
@@ -1970,6 +2023,31 @@ push_all_services() {
 
 # 一键构建并推送
 build_and_push_all() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "build-push - 一键构建并推送所有服务"
+        echo
+        echo "用法: $0 build-push <registry> [tag]"
+        echo
+        echo "参数:"
+        echo "  registry    目标仓库地址 (必需)"
+        echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo
+        echo "说明:"
+        echo "  自动化构建和推送所有AI-Infra服务，包括："
+        echo "  • 第一阶段：构建所有服务镜像"
+        echo "  • 第二阶段：推送所有镜像到目标仓库"
+        echo "  • 错误处理和进度报告"
+        echo "  • 完整的构建推送流程"
+        echo
+        echo "构建服务: $SRC_SERVICES"
+        echo
+        echo "示例:"
+        echo "  $0 build-push harbor.company.com/ai-infra v1.0.0"
+        echo "  $0 build-push registry.internal.com/project v0.3.6-dev"
+        return 0
+    fi
+    
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
     local registry="$2"
     
@@ -2916,8 +2994,343 @@ pull_images_from_registry() {
     fi
 }
 
+# ==========================================
+# 镜像完整性检查和统一标记管理
+# ==========================================
+
+# 获取所有必需的镜像列表（从docker-compose配置提取）
+get_required_images() {
+    local compose_file="${1:-docker-compose.yml}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    # AI-Infra服务镜像
+    local ai_infra_images=(
+        "ai-infra-backend:$tag"
+        "ai-infra-backend-init:$tag"
+        "ai-infra-frontend:$tag"
+        "ai-infra-jupyterhub:$tag"
+        "ai-infra-gitea:$tag"
+        "ai-infra-nginx:$tag"
+        "ai-infra-saltstack:$tag"
+        "ai-infra-singleuser:$tag"
+    )
+    
+    # 依赖镜像（从映射配置获取）
+    local dependency_images=(
+        "postgres:15-alpine"
+        "redis:7-alpine"
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "minio/minio:latest"
+        "osixia/openldap:stable"
+        "osixia/phpldapadmin:stable"
+        "redislabs/redisinsight:latest"
+        "confluentinc/cp-kafka:7.5.0"
+        "provectuslabs/kafka-ui:latest"
+    )
+    
+    # 合并所有镜像
+    local all_images=("${ai_infra_images[@]}" "${dependency_images[@]}")
+    printf '%s\n' "${all_images[@]}"
+}
+
+# 检查镜像完整性 - 验证所有必需的镜像是否存在
+check_images_completeness() {
+    local registry="$1"
+    local tag="$2"
+    local compose_file="${3:-docker-compose.yml}"
+    
+    print_info "检查镜像完整性..."
+    
+    # 获取所有必需的镜像
+    local required_images
+    mapfile -t required_images < <(get_required_images "$compose_file" "$tag")
+    
+    local missing_images=()
+    local present_images=()
+    local total_count=${#required_images[@]}
+    
+    for image in "${required_images[@]}"; do
+        # 对于AI-Infra镜像，检查是否存在
+        if [[ "$image" == ai-infra-* ]]; then
+            if docker image inspect "$image" >/dev/null 2>&1; then
+                present_images+=("$image")
+            else
+                missing_images+=("$image")
+            fi
+        else
+            # 对于依赖镜像，如果指定了registry，检查转换后的镜像
+            if [[ -n "$registry" ]]; then
+                local target_image
+                target_image=$(get_mapped_private_image "$image" "$registry" "$tag")
+                if docker image inspect "$target_image" >/dev/null 2>&1; then
+                    present_images+=("$target_image")
+                elif docker image inspect "$image" >/dev/null 2>&1; then
+                    # 原始镜像存在，但转换后的不存在
+                    missing_images+=("$target_image (需要从 $image 转换)")
+                else
+                    missing_images+=("$target_image")
+                fi
+            else
+                if docker image inspect "$image" >/dev/null 2>&1; then
+                    present_images+=("$image")
+                else
+                    missing_images+=("$image")
+                fi
+            fi
+        fi
+    done
+    
+    print_info "镜像完整性检查结果:"
+    print_success "  ✓ 可用镜像: ${#present_images[@]}/$total_count"
+    
+    if [[ ${#missing_images[@]} -gt 0 ]]; then
+        print_warning "  ⚠ 缺失镜像: ${#missing_images[@]}/$total_count"
+        for missing in "${missing_images[@]}"; do
+            echo "    - $missing"
+        done
+        return 1
+    else
+        print_success "  🎉 所有镜像都已准备就绪！"
+        return 0
+    fi
+}
+
+# 统一标记转换函数 - 将公共镜像tag为aiharbor内部版本
+convert_images_to_unified_tags() {
+    local registry="$1"
+    local tag="$2"
+    
+    if [[ -z "$registry" ]]; then
+        print_info "未指定registry，跳过镜像统一标记"
+        return 0
+    fi
+    
+    print_info "=========================================="
+    print_info "统一标记镜像到内部版本"
+    print_info "=========================================="
+    print_info "目标Registry: $registry"
+    print_info "统一标签: $tag"
+    echo
+    
+    # 获取需要转换的依赖镜像（不包括AI-Infra服务镜像）
+    local dependency_images=(
+        "postgres:15-alpine"
+        "redis:7-alpine"
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "minio/minio:latest"
+        "osixia/openldap:stable"
+        "osixia/phpldapadmin:stable"
+        "redislabs/redisinsight:latest"
+        "confluentinc/cp-kafka:7.5.0"
+        "provectuslabs/kafka-ui:latest"
+    )
+    
+    local converted_count=0
+    local failed_count=0
+    local skipped_count=0
+    
+    for source_image in "${dependency_images[@]}"; do
+        # 使用映射配置生成目标镜像名
+        local target_image
+        target_image=$(get_mapped_private_image "$source_image" "$registry" "$tag")
+        
+        print_info "→ 处理依赖镜像: $source_image"
+        print_info "  目标镜像: $target_image"
+        
+        # 检查目标镜像是否已存在
+        if docker image inspect "$target_image" >/dev/null 2>&1; then
+            print_success "  ✓ 目标镜像已存在，跳过转换"
+            ((skipped_count++))
+            continue
+        fi
+        
+        # 检查源镜像是否存在
+        if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+            print_warning "  ⚠ 源镜像不存在: $source_image"
+            print_info "  → 尝试拉取源镜像..."
+            if docker pull "$source_image"; then
+                print_success "  ✓ 源镜像拉取成功"
+            else
+                print_error "  ✗ 源镜像拉取失败: $source_image"
+                ((failed_count++))
+                continue
+            fi
+        fi
+        
+        # 执行标记转换
+        if docker tag "$source_image" "$target_image"; then
+            print_success "  ✓ 镜像转换成功: $source_image → $target_image"
+            ((converted_count++))
+        else
+            print_error "  ✗ 镜像转换失败: $source_image → $target_image"
+            ((failed_count++))
+        fi
+        echo
+    done
+    
+    # 对AI-Infra服务镜像进行registry标记
+    print_info "标记AI-Infra服务镜像..."
+    local ai_infra_services=("backend" "backend-init" "frontend" "jupyterhub" "gitea" "nginx" "saltstack" "singleuser")
+    
+    for service in "${ai_infra_services[@]}"; do
+        local source_image="ai-infra-${service}:${tag}"
+        local target_image="${registry}/ai-infra-${service}:${tag}"
+        
+        print_info "→ 处理服务镜像: $source_image"
+        
+        # 检查目标镜像是否已存在
+        if docker image inspect "$target_image" >/dev/null 2>&1; then
+            print_success "  ✓ 已存在: $target_image"
+            ((skipped_count++))
+            continue
+        fi
+        
+        # 检查源镜像是否存在
+        if docker image inspect "$source_image" >/dev/null 2>&1; then
+            if docker tag "$source_image" "$target_image"; then
+                print_success "  ✓ 标记成功: $source_image → $target_image"
+                ((converted_count++))
+            else
+                print_error "  ✗ 标记失败: $source_image → $target_image"
+                ((failed_count++))
+            fi
+        else
+            print_warning "  ⚠ 源镜像不存在: $source_image (需要先构建或拉取)"
+            ((failed_count++))
+        fi
+    done
+    
+    echo
+    print_info "=========================================="
+    print_info "镜像统一标记完成统计:"
+    print_success "  ✓ 成功转换: $converted_count 个"
+    print_info "  → 已存在跳过: $skipped_count 个"
+    
+    if [[ $failed_count -gt 0 ]]; then
+        print_error "  ✗ 转换失败: $failed_count 个"
+        return 1
+    else
+        print_success "  🎉 所有镜像统一标记完成！"
+        return 0
+    fi
+}
+
+# 智能镜像准备函数 - 组合完整性检查、统一标记和拉取
+prepare_images_intelligently() {
+    local registry="$1"
+    local tag="$2"
+    local compose_file="${3:-docker-compose.yml}"
+    
+    print_info "=========================================="
+    print_info "智能镜像准备"
+    print_info "=========================================="
+    print_info "Registry: ${registry:-'(本地模式)'}"
+    print_info "Tag: $tag"
+    echo
+    
+    # 步骤1: 检查镜像完整性
+    print_info "步骤 1/3: 检查镜像完整性..."
+    local images_complete=false
+    if check_images_completeness "$registry" "$tag" "$compose_file"; then
+        images_complete=true
+        print_success "✓ 镜像完整性检查通过"
+    else
+        print_warning "⚠ 存在缺失镜像，继续处理..."
+    fi
+    
+    # 如果指定了registry且镜像不完整，尝试统一标记转换
+    if [[ -n "$registry" && "$images_complete" == "false" ]]; then
+        echo
+        print_info "步骤 2/3: 统一标记镜像转换..."
+        if convert_images_to_unified_tags "$registry" "$tag"; then
+            print_success "✓ 镜像统一标记完成"
+            
+            # 再次检查完整性
+            print_info "重新检查镜像完整性..."
+            if check_images_completeness "$registry" "$tag" "$compose_file"; then
+                images_complete=true
+                print_success "✓ 镜像完整性检查通过"
+            fi
+        else
+            print_warning "⚠ 部分镜像标记转换失败"
+        fi
+    fi
+    
+    # 步骤3: 如果仍不完整，尝试拉取缺失镜像
+    if [[ "$images_complete" == "false" ]]; then
+        echo
+        print_info "步骤 3/3: 拉取缺失镜像..."
+        if [[ -n "$registry" ]]; then
+            # 从指定registry拉取
+            if pull_images_from_registry "$registry" "$tag"; then
+                print_success "✓ 缺失镜像拉取完成"
+                images_complete=true
+            else
+                print_error "✗ 从registry拉取镜像失败"
+            fi
+        else
+            # 使用docker-compose pull拉取官方镜像
+            print_info "使用docker-compose拉取官方镜像..."
+            local env_file
+            env_file=$(detect_env_file)
+            if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" pull; then
+                print_success "✓ 官方镜像拉取完成"
+                images_complete=true
+            else
+                print_error "✗ 官方镜像拉取失败"
+            fi
+        fi
+    fi
+    
+    echo
+    print_info "=========================================="
+    if [[ "$images_complete" == "true" ]]; then
+        print_success "🎉 镜像准备完成，可以启动服务！"
+        return 0
+    else
+        print_error "❌ 镜像准备失败，部分镜像仍然缺失"
+        print_info "建议操作："
+        print_info "1. 检查网络连接和仓库权限"
+        print_info "2. 手动拉取缺失镜像"
+        print_info "3. 或使用 --force 参数强制启动"
+        return 1
+    fi
+}
+
 # 启动生产环境
 start_production() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "prod-up - 启动生产环境"
+        echo
+        echo "用法: $0 prod-up [registry] [tag] [--force]"
+        echo
+        echo "参数:"
+        echo "  registry    私有仓库地址 (可选，留空使用本地镜像)"
+        echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo "  --force     强制使用本地镜像，跳过镜像检查"
+        echo
+        echo "说明:"
+        echo "  启动生产环境的所有服务，包括："
+        echo "  • 智能镜像准备和检查"
+        echo "  • 环境配置生成"
+        echo "  • 服务启动和健康检查"
+        echo "  • 自动化部署流程"
+        echo
+        echo "环境文件优先级:"
+        echo "  1. .env.prod (生产环境专用)"
+        echo "  2. .env (开发环境)"
+        echo
+        echo "示例:"
+        echo "  $0 prod-up                                    # 使用本地镜像启动"
+        echo "  $0 prod-up harbor.company.com/ai-infra v1.0.0 # 使用私有仓库镜像"
+        echo "  $0 prod-up aiharbor.msxf.local/aihpc v1.0.0  # 使用内部仓库镜像"
+        echo "  $0 prod-up registry.local v1.0.0 --force     # 强制使用本地镜像"
+        return 0
+    fi
+    
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local force_local="${3:-false}"  # 新增参数：是否强制使用本地镜像
@@ -2969,46 +3382,48 @@ start_production() {
     print_info "=========================================="
     print_info "配置文件: $compose_file"
     print_info "环境文件: $env_file"
-    print_info "Registry: $registry"
+    print_info "Registry: ${registry:-'(本地模式)'}"
     print_info "标签: $tag"
     if [[ "$force_local" == "true" ]]; then
-        print_info "模式: 强制使用本地镜像 (跳过拉取)"
+        print_info "模式: 强制使用本地镜像 (跳过智能处理)"
     fi
     echo
     
-    # 根据 force_local 参数和 registry 参数决定镜像获取策略
+    # 智能镜像处理策略
     if [[ "$force_local" == "true" ]]; then
-        print_info "跳过镜像拉取，使用本地已有镜像..."
+        print_info "强制本地模式 - 跳过智能镜像处理..."
         
-        # 如果指定了registry，标记本地镜像为新的registry标签
+        # 如果指定了registry，只做简单标记
         if [[ -n "$registry" ]]; then
+            print_info "为本地镜像添加 registry 标签..."
             tag_local_images_for_registry "$registry" "$tag"
         fi
         
-        # 检查并构建缺失的镜像（包括有build配置的服务）
+        # 检查并构建缺失的镜像
         print_info "检查并构建需要的镜像..."
         if ! check_and_build_missing_images "$compose_file" "$env_file" "$registry" "$tag"; then
             print_warning "部分镜像构建失败，继续尝试启动..."
         fi
-    elif [[ -n "$registry" ]]; then
-        # 当指定了registry时，优先从registry拉取镜像
-        print_info "从私有仓库拉取镜像: $registry"
-        if ! pull_images_from_registry "$registry" "$tag" "$env_file"; then
-            print_error "从私有仓库拉取镜像失败: $registry"
-            print_info "建议操作："
-            print_info "1. 检查仓库连接和权限"
-            print_info "2. 使用 --force 参数强制使用本地镜像: $0 prod-up --force $registry $tag"
-            print_info "3. 或先拉取镜像: $0 harbor-pull-all $registry $tag"
+    else
+        # 使用智能镜像准备功能
+        print_info "执行智能镜像准备..."
+        if ! prepare_images_intelligently "$registry" "$tag" "$compose_file"; then
+            print_error "智能镜像准备失败"
+            print_info ""
+            print_info "可选的解决方案："
+            print_info "1. 使用 --force 强制启动: $0 prod-up $registry $tag --force"
+            print_info "2. 手动拉取镜像: $0 harbor-pull-all $registry $tag"
+            print_info "3. 检查网络和仓库权限"
             return 1
         fi
-    else
-        # 使用默认的docker-compose pull（适用于官方镜像或已配置的镜像）
-        print_info "拉取所有镜像..."
-        if ! ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" pull; then
-            print_error "镜像拉取失败"
-            return 1
+        
+        # 检查并构建需要构建的镜像（如有build配置的服务）
+        print_info "检查并构建需要构建的镜像..."
+        if ! check_and_build_missing_images "$compose_file" "$env_file" "$registry" "$tag"; then
+            print_warning "部分镜像构建失败，继续尝试启动..."
         fi
     fi
+    
     
     print_info "启动生产环境..."
     if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" up -d; then
@@ -3043,6 +3458,7 @@ start_production() {
         fi
     else
         print_error "✗ 生产环境启动失败"
+        print_info "请检查错误信息并查看日志: $0 prod-logs"
         return 1
     fi
 }
@@ -3286,6 +3702,28 @@ build_service_if_missing() {
 
 # 停止生产环境
 stop_production() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "prod-down - 停止生产环境"
+        echo
+        echo "用法: $0 prod-down"
+        echo
+        echo "说明:"
+        echo "  安全停止生产环境的所有服务，包括："
+        echo "  • 停止所有Docker Compose服务"
+        echo "  • 清理临时数据"
+        echo "  • 保留持久化数据"
+        echo "  • 自动检测环境配置文件"
+        echo
+        echo "环境文件优先级:"
+        echo "  1. .env.prod (生产环境专用)"
+        echo "  2. .env (开发环境)"
+        echo
+        echo "示例:"
+        echo "  $0 prod-down"
+        return 0
+    fi
+    
     local compose_file="docker-compose.yml"
     
     if [[ ! -f "$compose_file" ]]; then
@@ -3321,6 +3759,29 @@ stop_production() {
 
 # 重启生产环境
 restart_production() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "prod-restart - 重启生产环境"
+        echo
+        echo "用法: $0 prod-restart [registry] [tag]"
+        echo
+        echo "参数:"
+        echo "  registry    私有仓库地址 (可选，留空使用本地镜像)"
+        echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo
+        echo "说明:"
+        echo "  重启生产环境的所有服务，包括："
+        echo "  • 安全停止所有服务"
+        echo "  • 等待服务完全停止"
+        echo "  • 重新启动所有服务"
+        echo "  • 相当于先执行 prod-down 再执行 prod-up"
+        echo
+        echo "示例:"
+        echo "  $0 prod-restart"
+        echo "  $0 prod-restart harbor.company.com/ai-infra v1.0.0"
+        return 0
+    fi
+    
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
@@ -3340,6 +3801,30 @@ restart_production() {
 
 # 查看生产环境状态
 production_status() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "prod-status - 查看生产环境状态"
+        echo
+        echo "用法: $0 prod-status"
+        echo
+        echo "说明:"
+        echo "  查看生产环境所有服务的运行状态，包括："
+        echo "  • 容器运行状态"
+        echo "  • 端口映射信息"
+        echo "  • 资源使用情况"
+        echo "  • 健康检查状态"
+        echo
+        echo "显示信息:"
+        echo "  • 服务名称和状态"
+        echo "  • 启动时间和运行时长"
+        echo "  • 端口映射"
+        echo "  • 容器ID和镜像版本"
+        echo
+        echo "示例:"
+        echo "  $0 prod-status"
+        return 0
+    fi
+    
     local compose_file="docker-compose.yml"
     
     if [[ ! -f "$compose_file" ]]; then
@@ -4344,6 +4829,28 @@ show_help() {
 
 # 导出离线镜像
 export_offline_images() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "export-offline - 导出离线镜像包"
+        echo
+        echo "用法: $0 export-offline [output_dir] [tag] [include_kafka]"
+        echo
+        echo "参数:"
+        echo "  output_dir     输出目录 (默认: ./offline-images)"
+        echo "  tag           镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo "  include_kafka  是否包含Kafka镜像 (默认: true)"
+        echo
+        echo "说明:"
+        echo "  导出所有AI-Infra服务镜像和依赖镜像到指定目录"
+        echo "  自动生成镜像清单文件和导入脚本"
+        echo "  支持包含或排除Kafka相关镜像"
+        echo
+        echo "示例:"
+        echo "  $0 export-offline ./my-images v1.0.0 true"
+        echo "  $0 export-offline ./images v0.3.6-dev false"
+        return 0
+    fi
+    
     local output_dir="${1:-./offline-images}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local include_kafka="${3:-true}"
@@ -4577,6 +5084,28 @@ EOF
 
 # 推送镜像到内部仓库（用于离线部署准备）
 push_to_internal_registry() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "push-to-internal - 推送镜像到内部仓库"
+        echo
+        echo "用法: $0 push-to-internal <registry> [tag] [include_kafka]"
+        echo
+        echo "参数:"
+        echo "  registry      内部仓库地址 (必需)"
+        echo "  tag          镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo "  include_kafka 是否包含Kafka镜像 (默认: true)"
+        echo
+        echo "说明:"
+        echo "  将所有AI-Infra服务镜像和依赖镜像推送到指定的内部仓库"
+        echo "  支持Harbor等私有仓库格式"
+        echo "  自动使用镜像映射配置进行标记转换"
+        echo
+        echo "示例:"
+        echo "  $0 push-to-internal harbor.company.com/ai-infra v1.0.0 true"
+        echo "  $0 push-to-internal registry.internal.com/project v0.3.6-dev false"
+        return 0
+    fi
+    
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local include_kafka="${3:-true}"
@@ -4727,6 +5256,31 @@ push_to_internal_registry() {
 
 # 准备离线部署包（导出镜像 + 推送到内部仓库）
 prepare_offline_deployment() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "prepare-offline - 准备完整离线部署包"
+        echo
+        echo "用法: $0 prepare-offline <registry> [tag] [output_dir] [include_kafka]"
+        echo
+        echo "参数:"
+        echo "  registry      内部仓库地址 (必需)"
+        echo "  tag          镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+        echo "  output_dir    输出目录 (默认: ./offline-deployment)"
+        echo "  include_kafka 是否包含Kafka镜像 (默认: true)"
+        echo
+        echo "说明:"
+        echo "  完整的离线部署包准备，包括:"
+        echo "  • 导出离线镜像文件到本地"
+        echo "  • 推送镜像到内部仓库"
+        echo "  • 生成部署配置文件"
+        echo "  • 创建自动部署脚本和文档"
+        echo
+        echo "示例:"
+        echo "  $0 prepare-offline harbor.company.com/ai-infra v1.0.0 ./offline true"
+        echo "  $0 prepare-offline registry.internal.com/project v0.3.6-dev ./deploy false"
+        return 0
+    fi
+    
     local registry="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local output_dir="${3:-./offline-deployment}"
