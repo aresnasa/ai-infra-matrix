@@ -3615,6 +3615,98 @@ prepare_images_intelligently() {
     fi
 }
 
+# 替换 docker-compose.yml 中的镜像名称为内部映射版本
+replace_images_in_compose_file() {
+    local compose_file="$1"
+    local registry="$2"
+    local tag="$3"
+    local backup_file="${compose_file}.backup.$(date +%s)"
+    
+    print_info "替换 compose 文件中的镜像名称为内部版本..."
+    
+    # 备份原始文件
+    cp "$compose_file" "$backup_file"
+    print_info "已备份原始文件: $backup_file"
+    
+    # 获取需要替换的镜像列表和映射
+    local temp_compose="$compose_file.tmp"
+    cp "$compose_file" "$temp_compose"
+    
+    # 替换第三方依赖镜像
+    local dependency_replacements=(
+        "confluentinc/cp-kafka:7.5.0|${registry}/cp-kafka:${tag}"
+        "provectuslabs/kafka-ui:latest|${registry}/kafka-ui:${tag}"
+        "postgres:15-alpine|${registry}/postgres:${tag}"
+        "redis:7-alpine|${registry}/redis:${tag}"
+        "nginx:1.27-alpine|${registry}/nginx:${tag}"
+        "tecnativa/tcp-proxy:latest|${registry}/tcp-proxy:${tag}"
+        "minio/minio:latest|${registry}/minio:${tag}"
+        "osixia/openldap:stable|${registry}/openldap:${tag}"
+        "osixia/phpldapadmin:stable|${registry}/phpldapadmin:${tag}"
+        "redislabs/redisinsight:latest|${registry}/redisinsight:${tag}"
+        "quay.io/minio/minio:latest|${registry}/minio:${tag}"
+    )
+    
+    local replacement_count=0
+    for replacement in "${dependency_replacements[@]}"; do
+        local source_image="${replacement%%|*}"
+        local target_image="${replacement##*|}"
+        
+        # 检查文件中是否包含该镜像
+        if grep -q "$source_image" "$temp_compose"; then
+            print_info "  替换: $source_image → $target_image"
+            # 使用 sed 进行替换，处理可能的特殊字符
+            sed -i.bak "s|image: $source_image|image: $target_image|g" "$temp_compose"
+            ((replacement_count++))
+        fi
+    done
+    
+    # 删除sed备份文件
+    rm -f "$temp_compose.bak"
+    
+    # 替换AI-Infra服务镜像（如果指定了registry）
+    if [[ -n "$registry" ]]; then
+        local ai_infra_services=("backend" "backend-init" "frontend" "jupyterhub" "gitea" "nginx" "saltstack" "singleuser")
+        for service in "${ai_infra_services[@]}"; do
+            local source_pattern="ai-infra-${service}:\${IMAGE_TAG:-v0.3.6-dev}"
+            local target_replacement="${registry}/ai-infra-${service}:${tag}"
+            
+            if grep -q "ai-infra-${service}:" "$temp_compose"; then
+                print_info "  替换服务镜像: ai-infra-${service} → $target_replacement"
+                sed -i.bak "s|image: ai-infra-${service}:\${IMAGE_TAG:-[^}]*}|image: $target_replacement|g" "$temp_compose"
+                sed -i.bak "s|image: ai-infra-${service}:\${IMAGE_TAG}|image: $target_replacement|g" "$temp_compose"
+                sed -i.bak "s|image: ai-infra-${service}:${tag}|image: $target_replacement|g" "$temp_compose"
+                ((replacement_count++))
+            fi
+        done
+        rm -f "$temp_compose.bak"
+    fi
+    
+    # 如果有替换，使用临时文件
+    if [[ $replacement_count -gt 0 ]]; then
+        mv "$temp_compose" "$compose_file"
+        print_success "✓ 已替换 $replacement_count 个镜像名称"
+        echo "$backup_file"  # 返回备份文件路径
+    else
+        rm -f "$temp_compose"
+        print_info "未找到需要替换的镜像，保持原样"
+        rm -f "$backup_file"  # 删除不需要的备份
+        echo ""  # 返回空字符串
+    fi
+}
+
+# 恢复原始 docker-compose.yml 文件
+restore_compose_file() {
+    local compose_file="$1"
+    local backup_file="$2"
+    
+    if [[ -n "$backup_file" && -f "$backup_file" ]]; then
+        print_info "恢复原始 compose 文件..."
+        mv "$backup_file" "$compose_file"
+        print_success "✓ 已恢复原始 docker-compose.yml"
+    fi
+}
+
 # 启动生产环境
 start_production() {
     # 处理帮助参数
@@ -3740,9 +3832,17 @@ start_production() {
         fi
     fi
     
+    # 针对内部仓库的特殊处理：替换compose文件中的镜像名称
+    local backup_file=""
+    if [[ -n "$registry" ]]; then
+        print_info "针对内部仓库进行镜像名称替换..."
+        backup_file=$(replace_images_in_compose_file "$compose_file" "$registry" "$tag")
+    fi
     
     print_info "启动生产环境..."
+    local startup_success=false
     if ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" up -d; then
+        startup_success=true
         print_success "✓ 生产环境启动成功"
         echo
         
@@ -3765,16 +3865,24 @@ start_production() {
             print_info "  查看状态: $0 prod-status"
             print_info "  查看日志: $0 prod-logs [service]"
             print_info "  停止服务: $0 prod-down"
-            return 0
         else
             print_error "✗ 部分服务启动失败，请检查日志"
             print_info "查看详细日志: $0 prod-logs"
             print_info "查看服务状态: $0 prod-status"
-            return 1
+            startup_success=false
         fi
     else
         print_error "✗ 生产环境启动失败"
         print_info "请检查错误信息并查看日志: $0 prod-logs"
+        startup_success=false
+    fi
+    
+    # 恢复原始compose文件
+    restore_compose_file "$compose_file" "$backup_file"
+    
+    if [[ "$startup_success" == "true" ]]; then
+        return 0
+    else
         return 1
     fi
 }
