@@ -6734,6 +6734,17 @@ prod_start_complete() {
     local external_host="$3"
     local external_port="${4:-8080}"
     
+    # 检测 docker compose 命令（优先 v2: docker compose，其次 v1: docker-compose）
+    local COMPOSE_BIN=""
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE_BIN="docker compose"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_BIN="docker-compose"
+    else
+        print_error "未检测到 docker compose 或 docker-compose 命令"
+        return 1
+    fi
+    
     print_info "=========================================="
     print_info "生产环境服务启动流程开始"
     if [[ -n "$registry" ]]; then
@@ -6818,9 +6829,9 @@ prod_start_complete() {
     
     # 步骤5: 停止现有服务（如果正在运行）
     print_info "步骤5: 停止现有服务..."
-    if docker compose ps --services --filter "status=running" 2>/dev/null | grep -q .; then
+    if $COMPOSE_BIN ps --services --filter "status=running" 2>/dev/null | grep -q .; then
         print_info "发现正在运行的服务，正在停止..."
-        docker compose down --remove-orphans >/dev/null 2>&1
+        $COMPOSE_BIN down --remove-orphans >/dev/null 2>&1
         print_success "现有服务已停止"
     else
         print_info "没有正在运行的服务"
@@ -6828,7 +6839,7 @@ prod_start_complete() {
     
     # 步骤6: 启动所有服务
     print_info "步骤6: 启动所有服务..."
-    if ! docker compose up -d; then
+    if ! $COMPOSE_BIN up -d; then
         print_error "服务启动失败"
         return 1
     fi
@@ -6846,7 +6857,7 @@ prod_start_complete() {
     while IFS= read -r service; do
         if [[ -n "$service" ]]; then
             total_services=$((total_services + 1))
-            local status=$(docker compose ps --services --filter "status=running" 2>/dev/null | grep "^${service}$" || echo "")
+            local status=$($COMPOSE_BIN ps --services --filter "status=running" 2>/dev/null | grep "^${service}$" || echo "")
             if [[ -n "$status" ]]; then
                 running_services=$((running_services + 1))
                 print_success "✓ $service"
@@ -6855,7 +6866,7 @@ prod_start_complete() {
                 print_error "✗ $service"
             fi
         fi
-    done < <(docker compose ps --services 2>/dev/null)
+    done < <($COMPOSE_BIN ps --services 2>/dev/null)
     
     # 步骤8: 显示结果
     print_info "=========================================="
@@ -6866,17 +6877,17 @@ prod_start_complete() {
         print_info "默认管理员: admin/admin123"
         print_info ""
         print_info "服务检查命令:"
-        print_info "• 查看服务状态: docker compose ps"
-        print_info "• 查看服务日志: docker compose logs [服务名]"
-        print_info "• 停止所有服务: docker compose down"
-        print_info "• 重启所有服务: docker compose restart"
+        print_info "• 查看服务状态: $COMPOSE_BIN ps"
+        print_info "• 查看服务日志: $COMPOSE_BIN logs [服务名]"
+        print_info "• 停止所有服务: $COMPOSE_BIN down"
+        print_info "• 重启所有服务: $COMPOSE_BIN restart"
     else
         print_warning "部分服务启动失败 ($running_services/$total_services)"
         print_warning "失败的服务: ${failed_services[*]}"
         print_info "=========================================="
         print_info "请检查失败服务的日志:"
         for service in "${failed_services[@]}"; do
-            print_info "• docker compose logs $service"
+            print_info "• $COMPOSE_BIN logs $service"
         done
         return 1
     fi
