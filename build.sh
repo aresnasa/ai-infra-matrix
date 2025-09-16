@@ -2819,6 +2819,103 @@ deploy_to_host() {
 }
 
 
+# 从指定的私有仓库拉取镜像
+pull_images_from_registry() {
+    local registry="$1"
+    local tag="$2"
+    local env_file="$3"
+    
+    print_info "从私有仓库拉取镜像..."
+    print_info "  仓库地址: $registry"
+    print_info "  镜像标签: $tag"
+    
+    local success_count=0
+    local total_count=0
+    local failed_images=()
+    
+    # 拉取AI-Infra服务镜像
+    print_info "拉取AI-Infra服务镜像..."
+    for service in $SRC_SERVICES; do
+        total_count=$((total_count + 1))
+        local target_image="${registry}/ai-infra-${service}:${tag}"
+        local local_image="ai-infra-${service}:${tag}"
+        
+        print_info "→ 拉取: $target_image"
+        if docker pull "$target_image"; then
+            # 标记为本地镜像名
+            if docker tag "$target_image" "$local_image"; then
+                print_success "  ✓ 拉取并标记成功: $local_image"
+                success_count=$((success_count + 1))
+            else
+                print_error "  ✗ 标记失败: $local_image"
+                failed_images+=("$target_image")
+            fi
+        else
+            print_error "  ✗ 拉取失败: $target_image"
+            failed_images+=("$target_image")
+        fi
+    done
+    
+    # 拉取依赖镜像
+    print_info "拉取依赖镜像..."
+    local dependency_images
+    dependency_images=$(collect_dependency_images)
+    
+    for dep_image in $dependency_images; do
+        if [[ -z "$dep_image" ]]; then
+            continue
+        fi
+        
+        total_count=$((total_count + 1))
+        # 使用映射配置获取私有仓库中的镜像名
+        local target_image
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        print_info "→ 拉取依赖: $target_image"
+        if docker pull "$target_image"; then
+            # 标记为原始镜像名
+            if docker tag "$target_image" "$dep_image"; then
+                print_success "  ✓ 拉取并标记成功: $dep_image"
+                success_count=$((success_count + 1))
+            else
+                print_error "  ✗ 标记失败: $dep_image"
+                failed_images+=("$target_image")
+            fi
+        else
+            print_warning "  ! 私有仓库拉取失败，尝试官方源: $dep_image"
+            # 回退到官方镜像拉取
+            if docker pull "$dep_image"; then
+                print_success "  ✓ 从官方源拉取成功: $dep_image"
+                success_count=$((success_count + 1))
+            else
+                print_error "  ✗ 所有源都拉取失败: $dep_image"
+                failed_images+=("$dep_image")
+            fi
+        fi
+    done
+    
+    print_info "=========================================="
+    print_info "镜像拉取统计: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        print_warning "以下镜像拉取失败:"
+        for failed_image in "${failed_images[@]}"; do
+            echo "  - $failed_image"
+        done
+        
+        # 如果有镜像拉取失败，但不是全部失败，给出选择
+        if [[ $success_count -gt 0 ]]; then
+            print_warning "部分镜像拉取成功，是否继续启动服务？"
+            return 0  # 允许继续，但会有警告
+        else
+            return 1  # 全部失败，返回错误
+        fi
+    else
+        print_success "🎉 所有镜像拉取成功！"
+        return 0
+    fi
+}
+
 # 启动生产环境
 start_production() {
     local registry="$1"
@@ -2879,7 +2976,7 @@ start_production() {
     fi
     echo
     
-    # 根据 force_local 参数决定是否拉取镜像
+    # 根据 force_local 参数和 registry 参数决定镜像获取策略
     if [[ "$force_local" == "true" ]]; then
         print_info "跳过镜像拉取，使用本地已有镜像..."
         
@@ -2893,7 +2990,19 @@ start_production() {
         if ! check_and_build_missing_images "$compose_file" "$env_file" "$registry" "$tag"; then
             print_warning "部分镜像构建失败，继续尝试启动..."
         fi
+    elif [[ -n "$registry" ]]; then
+        # 当指定了registry时，优先从registry拉取镜像
+        print_info "从私有仓库拉取镜像: $registry"
+        if ! pull_images_from_registry "$registry" "$tag" "$env_file"; then
+            print_error "从私有仓库拉取镜像失败: $registry"
+            print_info "建议操作："
+            print_info "1. 检查仓库连接和权限"
+            print_info "2. 使用 --force 参数强制使用本地镜像: $0 prod-up --force $registry $tag"
+            print_info "3. 或先拉取镜像: $0 harbor-pull-all $registry $tag"
+            return 1
+        fi
     else
+        # 使用默认的docker-compose pull（适用于官方镜像或已配置的镜像）
         print_info "拉取所有镜像..."
         if ! ENV_FILE="$env_file" docker-compose -f "$compose_file" --env-file "$env_file" pull; then
             print_error "镜像拉取失败"
