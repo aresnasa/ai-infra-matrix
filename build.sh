@@ -5114,6 +5114,12 @@ show_help() {
     echo "  build-push <registry> [tag]     - 构建并推送所有服务"
     echo "  push-all <registry> [tag]       - 推送所有服务"
     echo
+    echo "CI/CD和生产环境命令 (重点推荐):"
+    echo "  ci-build <registry> [tag] [host]     - CI/CD完整构建流程（外网环境）"
+    echo "  prod-start [registry] [tag] [host] [port] - 生产环境服务启动（内网环境）"
+    echo "    • ci-build: 适用于有外网访问的构建环境，完成构建、推送全流程"
+    echo "    • prod-start: 适用于无外网访问的生产环境，拉取镜像并启动服务"
+    echo
     echo "依赖镜像:"
     echo "  deps-pull <registry> [tag]      - 拉取依赖镜像"
     echo "  deps-push <registry> [tag]      - 推送依赖镜像"
@@ -5184,7 +5190,19 @@ show_help() {
     echo "  quick-deploy [port] [host]      - 一键更新配置并重新部署（默认8080 auto）"
     echo
     echo "===================================================================================="
-    echo "� 统一构建和部署实例 (推荐新用户使用):"
+    echo "🚀 CI/CD和生产环境部署实例 (强烈推荐):"
+    echo "===================================================================================="
+    echo "  # CI/CD环境 (有外网访问): 完整构建并推送到仓库"
+    echo "  $0 ci-build harbor.company.com/ai-infra v1.0.0"
+    echo "  $0 ci-build harbor.company.com/ai-infra v1.0.0 192.168.1.100   # 指定外部访问地址"
+    echo
+    echo "  # 生产环境 (无外网访问): 从内部仓库启动服务"
+    echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0"
+    echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0 192.168.1.100 8080   # 指定访问地址和端口"
+    echo "  $0 prod-start \"\" v1.0.0                          # 使用本地镜像启动"
+    echo
+    echo "===================================================================================="
+    echo "🔧 统一构建和部署实例 (高级用户使用):"
     echo "===================================================================================="
     echo "  # 一键构建、推送、部署到生产环境 (所有服务一条命令搞定)"
     echo "  $0 unified-all aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http"
@@ -6150,6 +6168,291 @@ EOF
 }
 
 # ====================================================
+# CI/CD构建和生产环境启动函数
+# ====================================================
+
+# CI/CD完整构建流程 - 适用于有外网访问的构建环境
+ci_build_complete() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local external_host="$3"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "必须指定目标镜像仓库地址"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "CI/CD完整构建流程开始"
+    print_info "目标仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "=========================================="
+    
+    # 检测网络环境
+    local network_env=$(detect_network_environment)
+    if [[ "$network_env" == "internal" ]]; then
+        print_warning "检测到内网环境，此命令适用于外网环境"
+        print_info "如果确认有外网访问，请继续；否则请使用 prod-start 命令"
+        read -p "是否继续? (y/N): " continue_build
+        if [[ "$continue_build" != "y" && "$continue_build" != "Y" ]]; then
+            print_info "构建已取消"
+            return 0
+        fi
+    fi
+    
+    # 步骤1: 检测和设置外部主机地址
+    if [[ -n "$external_host" ]]; then
+        print_info "步骤1: 使用指定的外部主机地址: $external_host"
+    else
+        print_info "步骤1: 自动检测外部主机地址..."
+        if [[ -f "$SCRIPT_DIR/scripts/detect-external-host.sh" ]]; then
+            external_host=$(cd "$SCRIPT_DIR" && bash scripts/detect-external-host.sh | grep "检测到的主机地址:" | cut -d: -f2 | xargs)
+            if [[ -n "$external_host" && "$external_host" != "localhost" ]]; then
+                print_success "自动检测到外部主机: $external_host"
+            else
+                external_host="localhost"
+                print_warning "未检测到外部主机，使用默认地址: $external_host"
+            fi
+        else
+            external_host="localhost"
+            print_warning "检测脚本不存在，使用默认地址: $external_host"
+        fi
+    fi
+    
+    # 步骤2: 生成配置模板
+    print_info "步骤2: 生成配置模板..."
+    if ! render_env_template "$external_host" "8080" "http"; then
+        print_error "配置模板生成失败"
+        return 1
+    fi
+    
+    if ! render_nginx_templates; then
+        print_error "Nginx模板渲染失败"
+        return 1
+    fi
+    
+    if ! render_jupyterhub_templates; then
+        print_error "JupyterHub模板渲染失败"
+        return 1
+    fi
+    
+    # 步骤3: 拉取并重新标记依赖镜像
+    print_info "步骤3: 拉取并重新标记依赖镜像..."
+    if ! pull_and_tag_dependencies "$registry" "$tag"; then
+        print_error "依赖镜像处理失败"
+        return 1
+    fi
+    
+    # 步骤4: 构建所有服务镜像
+    print_info "步骤4: 构建所有服务镜像..."
+    if ! build_all_services "$tag" "$registry"; then
+        print_error "服务镜像构建失败"
+        return 1
+    fi
+    
+    # 步骤5: 推送所有镜像到仓库
+    print_info "步骤5: 推送所有镜像到仓库..."
+    if ! push_all_services "$tag" "$registry"; then
+        print_error "服务镜像推送失败"
+        return 1
+    fi
+    
+    if ! push_dependencies "$registry" "$tag"; then
+        print_error "依赖镜像推送失败"
+        return 1
+    fi
+    
+    # 步骤6: 生成生产环境配置文件
+    print_info "步骤6: 生成生产环境配置文件..."
+    if ! render_docker_compose_templates "$registry" "$tag"; then
+        print_error "Docker Compose配置生成失败"
+        return 1
+    fi
+    
+    # 步骤7: 生成生产环境变量文件
+    print_info "步骤7: 生成生产环境变量文件..."
+    if ! create_production_env "production" "$registry" "$tag"; then
+        print_error "生产环境变量文件生成失败"
+        return 1
+    fi
+    
+    print_success "=========================================="
+    print_success "CI/CD构建流程完成！"
+    print_success "=========================================="
+    print_info "镜像仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "外部访问: http://$external_host:8080"
+    print_info ""
+    print_info "生成的文件:"
+    print_info "• docker-compose.yml - 生产环境服务配置"
+    print_info "• .env.prod - 生产环境变量"
+    print_info "• src/nginx/conf.d/ - Nginx配置文件"
+    print_info "• src/jupyterhub/ - JupyterHub配置文件"
+    print_info ""
+    print_info "下一步: 将这些文件部署到生产环境，并运行："
+    print_info "  $0 prod-start $registry $tag $external_host"
+    
+    return 0
+}
+
+# 生产环境服务启动 - 适用于无外网访问的生产环境
+prod_start_complete() {
+    local registry="$1"  # 可选，如果为空则使用本地镜像
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local external_host="$3"
+    local external_port="${4:-8080}"
+    
+    print_info "=========================================="
+    print_info "生产环境服务启动流程开始"
+    if [[ -n "$registry" ]]; then
+        print_info "镜像仓库: $registry"
+    else
+        print_info "使用本地镜像"
+    fi
+    print_info "镜像标签: $tag"
+    print_info "外部端口: $external_port"
+    print_info "=========================================="
+    
+    # 步骤1: 检测和设置外部主机地址
+    if [[ -n "$external_host" ]]; then
+        print_info "步骤1: 使用指定的外部主机地址: $external_host"
+    else
+        print_info "步骤1: 自动检测外部主机地址..."
+        if [[ -f "$SCRIPT_DIR/scripts/detect-external-host.sh" ]]; then
+            external_host=$(cd "$SCRIPT_DIR" && bash scripts/detect-external-host.sh | grep "检测到的主机地址:" | cut -d: -f2 | xargs)
+            if [[ -n "$external_host" && "$external_host" != "localhost" ]]; then
+                print_success "自动检测到外部主机: $external_host"
+            else
+                external_host="localhost"
+                print_warning "未检测到外部主机，使用默认地址: $external_host"
+            fi
+        else
+            external_host="localhost"
+            print_warning "检测脚本不存在，使用默认地址: $external_host"
+        fi
+    fi
+    
+    # 步骤2: 从内部仓库拉取镜像（如果指定了registry）
+    if [[ -n "$registry" ]]; then
+        print_info "步骤2: 从内部仓库拉取镜像..."
+        
+        # 拉取服务镜像
+        if ! pull_aiharbor_services "$registry" "$tag"; then
+            print_warning "从内部仓库拉取服务镜像失败，尝试使用本地镜像"
+        else
+            print_success "服务镜像拉取完成"
+        fi
+        
+        # 拉取依赖镜像
+        if ! pull_aiharbor_dependencies "$registry" "$tag"; then
+            print_warning "从内部仓库拉取依赖镜像失败，尝试使用本地镜像"
+        else
+            print_success "依赖镜像拉取完成"
+        fi
+    else
+        print_info "步骤2: 跳过镜像拉取，使用本地镜像"
+    fi
+    
+    # 步骤3: 生成配置模板
+    print_info "步骤3: 生成生产环境配置..."
+    if ! render_env_template "$external_host" "$external_port" "http"; then
+        print_error "环境配置生成失败"
+        return 1
+    fi
+    
+    if ! render_nginx_templates; then
+        print_error "Nginx配置生成失败"
+        return 1
+    fi
+    
+    if ! render_jupyterhub_templates; then
+        print_error "JupyterHub配置生成失败"
+        return 1
+    fi
+    
+    # 步骤4: 生成Docker Compose配置
+    print_info "步骤4: 生成Docker Compose配置..."
+    if [[ -n "$registry" ]]; then
+        if ! render_docker_compose_templates "$registry" "$tag"; then
+            print_error "Docker Compose配置生成失败"
+            return 1
+        fi
+    else
+        if ! render_docker_compose_templates "" "$tag"; then
+            print_error "Docker Compose配置生成失败"  
+            return 1
+        fi
+    fi
+    
+    # 步骤5: 停止现有服务（如果正在运行）
+    print_info "步骤5: 停止现有服务..."
+    if docker compose ps --services --filter "status=running" 2>/dev/null | grep -q .; then
+        print_info "发现正在运行的服务，正在停止..."
+        docker compose down --remove-orphans >/dev/null 2>&1
+        print_success "现有服务已停止"
+    else
+        print_info "没有正在运行的服务"
+    fi
+    
+    # 步骤6: 启动所有服务
+    print_info "步骤6: 启动所有服务..."
+    if ! docker compose up -d; then
+        print_error "服务启动失败"
+        return 1
+    fi
+    
+    # 等待服务启动
+    print_info "等待服务启动..."
+    sleep 5
+    
+    # 步骤7: 检查服务状态
+    print_info "步骤7: 检查服务状态..."
+    local failed_services=()
+    local total_services=0
+    local running_services=0
+    
+    while IFS= read -r service; do
+        if [[ -n "$service" ]]; then
+            total_services=$((total_services + 1))
+            local status=$(docker compose ps --services --filter "status=running" 2>/dev/null | grep "^${service}$" || echo "")
+            if [[ -n "$status" ]]; then
+                running_services=$((running_services + 1))
+                print_success "✓ $service"
+            else
+                failed_services+=("$service")
+                print_error "✗ $service"
+            fi
+        fi
+    done < <(docker compose ps --services 2>/dev/null)
+    
+    # 步骤8: 显示结果
+    print_info "=========================================="
+    if [[ ${#failed_services[@]} -eq 0 ]]; then
+        print_success "所有服务启动成功！($running_services/$total_services)"
+        print_success "=========================================="
+        print_info "系统访问地址: http://$external_host:$external_port"
+        print_info "默认管理员: admin/admin123"
+        print_info ""
+        print_info "服务检查命令:"
+        print_info "• 查看服务状态: docker compose ps"
+        print_info "• 查看服务日志: docker compose logs [服务名]"
+        print_info "• 停止所有服务: docker compose down"
+        print_info "• 重启所有服务: docker compose restart"
+    else
+        print_warning "部分服务启动失败 ($running_services/$total_services)"
+        print_warning "失败的服务: ${failed_services[*]}"
+        print_info "=========================================="
+        print_info "请检查失败服务的日志:"
+        for service in "${failed_services[@]}"; do
+            print_info "• docker compose logs $service"
+        done
+        return 1
+    fi
+    
+    return 0
+}
+
+# ====================================================
 # 统一构建和部署函数 - 公共参数接口
 # ====================================================
 
@@ -7006,6 +7309,74 @@ main() {
             local output_dir="${4:-./offline-deployment}"
             local include_kafka="${5:-true}"
             prepare_offline_deployment "$registry" "$tag" "$output_dir" "$include_kafka"
+            ;;
+            
+        # CI/CD构建命令（适用于能访问外网的构建环境）
+        "ci-build")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "ci-build - CI/CD完整构建流程（适用于外网环境）"
+                echo
+                echo "用法: $0 ci-build <registry> [tag] [external_host]"
+                echo
+                echo "参数:"
+                echo "  registry        目标镜像仓库地址 (必需)"
+                echo "  tag             镜像标签 (默认: $DEFAULT_IMAGE_TAG)" 
+                echo "  external_host   外部访问地址 (默认: 自动检测)"
+                echo
+                echo "功能:"
+                echo "  • 自动生成配置模板"
+                echo "  • 构建所有服务镜像"
+                echo "  • 拉取并重新标记依赖镜像"
+                echo "  • 推送所有镜像到指定仓库"
+                echo "  • 生成生产环境配置文件"
+                echo
+                echo "示例:"
+                echo "  $0 ci-build harbor.company.com/ai-infra"
+                echo "  $0 ci-build harbor.company.com/ai-infra v1.0.0"
+                echo "  $0 ci-build harbor.company.com/ai-infra v1.0.0 192.168.1.100"
+                return 0
+            fi
+            
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标镜像仓库地址"
+                print_info "用法: $0 ci-build <registry> [tag] [external_host]"
+                print_info "使用 '$0 ci-build --help' 查看详细说明"
+                exit 1
+            fi
+            
+            ci_build_complete "$2" "${3:-$DEFAULT_IMAGE_TAG}" "$4"
+            ;;
+            
+        # 生产环境启动命令（适用于无外网访问的生产环境）
+        "prod-start")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "prod-start - 生产环境服务启动（适用于内网环境）"
+                echo
+                echo "用法: $0 prod-start [registry] [tag] [external_host] [external_port]"
+                echo
+                echo "参数:"
+                echo "  registry        内部镜像仓库地址 (可选，默认使用本地镜像)"
+                echo "  tag             镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+                echo "  external_host   外部访问地址 (默认: 自动检测)"
+                echo "  external_port   外部访问端口 (默认: 8080)"
+                echo
+                echo "功能:"
+                echo "  • 从内部仓库拉取镜像（如果指定）"
+                echo "  • 生成生产环境配置"
+                echo "  • 启动所有服务"
+                echo "  • 检查服务状态"
+                echo
+                echo "示例:"
+                echo "  $0 prod-start                                      # 使用本地镜像"
+                echo "  $0 prod-start aiharbor.msxf.local/aihpc          # 从内部仓库拉取"
+                echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0   # 指定版本"
+                echo "  $0 prod-start \"\" v1.0.0 192.168.1.100 80         # 本地镜像+自定义地址"
+                return 0
+            fi
+            
+            prod_start_complete "${2:-}" "${3:-$DEFAULT_IMAGE_TAG}" "$4" "$5"
             ;;
             
         "help"|"-h"|"--help")
