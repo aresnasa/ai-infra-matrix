@@ -7,7 +7,7 @@ services:
     image: postgres:15-alpine
     container_name: ai-infra-postgres
     env_file:
-    - .env.prod
+    - .env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -32,7 +32,7 @@ services:
     image: redis:7-alpine
     container_name: ai-infra-redis
     env_file:
-    - .env.prod
+    - .env
     # Defer expansion of REDIS_PASSWORD to the container environment
     command: ["sh", "-c", "exec redis-server --requirepass \"$${REDIS_PASSWORD}\""]
     expose:
@@ -136,7 +136,7 @@ services:
     image: osixia/openldap:stable
     container_name: ai-infra-openldap
     env_file:
-    - .env.prod
+    - .env
     environment:
       LDAP_ORGANISATION: "AI Infrastructure"
       LDAP_DOMAIN: "ai-infra.com"
@@ -188,7 +188,7 @@ services:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: ai-infra-backend-init
     env_file:
-    - .env.prod
+    - .env
     environment:
       - DB_HOST=${POSTGRES_HOST:-postgres}
       - DB_PORT=${POSTGRES_PORT:-5432}
@@ -225,7 +225,7 @@ services:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: ai-infra-backend
     env_file:
-    - .env.prod
+    - .env
     environment:
       DB_HOST: "${POSTGRES_HOST:-postgres}"
       DB_PORT: "${POSTGRES_PORT:-5432}"
@@ -308,7 +308,7 @@ services:
   jupyterhub:
     image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.3.6-dev}
     env_file:
-    - .env.prod
+    - .env
     build:
       context: ./src/jupyterhub
       dockerfile: Dockerfile
@@ -407,7 +407,7 @@ services:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: ai-infra-saltstack
     env_file:
-    - .env.prod
+    - .env
     environment:
       - TZ=Asia/Shanghai
       - SALT_MASTER_HOST=saltstack
@@ -454,7 +454,7 @@ services:
     volumes:
       - nginx_logs:/var/log/nginx
     env_file:
-    - .env.prod
+    - .env
     environment:
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - BUILD_ENV=${BUILD_ENV:-production}
@@ -535,7 +535,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai-infra-gitea
     env_file:
-    - .env.prod
+    - .env
     environment:
       USER_UID: "1000"
       USER_GID: "1000"
@@ -607,7 +607,7 @@ services:
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
     env_file:
-    - .env.prod
+    - .env
     environment:
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}

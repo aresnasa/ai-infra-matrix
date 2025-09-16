@@ -839,9 +839,32 @@ render_jupyterhub_templates() {
 
 # 渲染Docker Compose配置模板
 render_docker_compose_templates() {
+    # 处理帮助参数
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "render-docker-compose-templates - 渲染Docker Compose配置"
+        echo
+        echo "用法: $0 render-templates docker-compose [registry] [tag]"
+        echo
+        echo "参数:"
+        echo "  registry    私有仓库地址 (可选，默认不替换为内部镜像)"
+        echo "  tag         镜像标签 (可选，默认: $DEFAULT_IMAGE_TAG)"
+        echo
+        echo "说明:"
+        echo "  从 docker-compose.yml.example 生成 docker-compose.yml"
+        echo "  如果指定了 registry，将替换所有镜像为内部仓库版本"
+        echo
+        echo "示例:"
+        echo "  $0 render-templates docker-compose                           # 基础渲染"
+        echo "  $0 render-templates docker-compose aiharbor.msxf.local/aihpc v1.0.0  # 替换为内部镜像"
+        return 0
+    fi
+
     print_info "===========================================" 
     print_info "渲染 Docker Compose 配置模板"
     print_info "==========================================="
+    
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
     # 加载环境变量
     load_environment_variables
@@ -857,6 +880,10 @@ render_docker_compose_templates() {
     print_info "从模板生成 docker-compose.yml"
     print_info "模板文件: $template_file"
     print_info "输出文件: $output_file"
+    if [[ -n "$registry" ]]; then
+        print_info "内部镜像仓库: $registry"
+        print_info "镜像标签: $tag"
+    fi
     
     # 创建备份
     if [[ -f "$output_file" ]]; then
@@ -873,6 +900,17 @@ render_docker_compose_templates() {
     
     # 复制模板文件到目标位置
     cp "$template_file" "$output_file"
+    
+    # 如果指定了registry，进行镜像替换
+    if [[ -n "$registry" ]]; then
+        print_info "替换镜像为内部仓库版本..."
+        local backup_file=$(replace_images_in_compose_file "$output_file" "$registry" "$tag")
+        if [[ -n "$backup_file" ]]; then
+            print_success "✓ 镜像替换完成，备份文件: $backup_file"
+        else
+            print_info "未进行镜像替换"
+        fi
+    fi
     
     print_success "✓ Docker Compose 模板渲染完成"
     print_info "生成的文件: $output_file"
@@ -3635,16 +3673,30 @@ replace_images_in_compose_file() {
     # 替换第三方依赖镜像
     local dependency_replacements=(
         "confluentinc/cp-kafka:7.5.0|${registry}/cp-kafka:${tag}"
+        "confluentinc/cp-kafka:7.4.0|${registry}/cp-kafka:${tag}"
+        "confluentinc/cp-kafka:latest|${registry}/cp-kafka:${tag}"
         "provectuslabs/kafka-ui:latest|${registry}/kafka-ui:${tag}"
         "postgres:15-alpine|${registry}/postgres:${tag}"
+        "postgres:latest|${registry}/postgres:${tag}"
         "redis:7-alpine|${registry}/redis:${tag}"
+        "redis:latest|${registry}/redis:${tag}"
         "nginx:1.27-alpine|${registry}/nginx:${tag}"
+        "nginx:stable-alpine-perl|${registry}/nginx:${tag}"
+        "nginx:latest|${registry}/nginx:${tag}"
         "tecnativa/tcp-proxy:latest|${registry}/tcp-proxy:${tag}"
+        "tecnativa/tcp-proxy|${registry}/tcp-proxy:${tag}"
         "minio/minio:latest|${registry}/minio:${tag}"
         "osixia/openldap:stable|${registry}/openldap:${tag}"
+        "osixia/openldap:latest|${registry}/openldap:${tag}"
         "osixia/phpldapadmin:stable|${registry}/phpldapadmin:${tag}"
+        "osixia/phpldapadmin:latest|${registry}/phpldapadmin:${tag}"
         "redislabs/redisinsight:latest|${registry}/redisinsight:${tag}"
         "quay.io/minio/minio:latest|${registry}/minio:${tag}"
+        "gitea/gitea:1.24.5|${registry}/gitea:${tag}"
+        "jupyter/base-notebook:latest|${registry}/base-notebook:${tag}"
+        "node:22-alpine|${registry}/node:${tag}"
+        "golang:1.25-alpine|${registry}/golang:${tag}"
+        "python:3.13-alpine|${registry}/python:${tag}"
     )
     
     local replacement_count=0
@@ -3757,18 +3809,19 @@ start_production() {
         registry=""
     fi
     
-    # 检测环境文件 - 生产环境优先使用 .env.prod
-    local env_file
-    if [[ -f ".env.prod" ]]; then
-        env_file=".env.prod"
-        print_info "使用生产环境文件: $env_file"
-    else
-        env_file=$(detect_env_file)
-        if [[ $? -ne 0 ]]; then
+    # 检测环境文件 - 统一使用 .env 文件
+    local env_file=".env"
+    if [[ ! -f "$env_file" ]]; then
+        print_warning "环境文件不存在，从模板创建: $env_file"
+        if [[ -f ".env.example" ]]; then
+            cp ".env.example" "$env_file"
+            print_success "✓ 已从 .env.example 创建环境文件"
+        else
+            print_error "模板文件 .env.example 不存在"
             return 1
         fi
-        print_warning "未找到 .env.prod，使用: $env_file"
     fi
+    print_info "使用环境文件: $env_file"
     
     # 验证环境文件
     if ! validate_env_file "$env_file"; then
@@ -5093,6 +5146,21 @@ show_help() {
     echo "  push-to-internal <registry> [tag] [include_kafka] - 推送镜像到内部仓库"
     echo "  prepare-offline <registry> [tag] [output_dir] [include_kafka] - 准备完整离线部署包"
     echo
+    echo "统一构建和部署 (公共参数接口):"
+    echo "  unified-build <registry> <tag> <host> <port> <scheme>     - 统一构建所有镜像"
+    echo "  unified-build-push <registry> <tag> <host> <port> <scheme> - 统一构建并推送所有镜像" 
+    echo "  unified-deploy <registry> <tag> <host> <port> <scheme> [compose] - 统一部署服务"
+    echo "  unified-all <registry> <tag> <host> <port> <scheme> [compose]    - 一键构建、推送、部署"
+    echo "  all-in-one <registry> <tag> <host> <port> <scheme> [compose]     - 一键构建、推送、部署 (别名)"
+    echo
+    echo "  参数说明:"
+    echo "    registry: 镜像仓库地址 (默认: aiharbor.msxf.local/aihpc)"
+    echo "    tag:      镜像标签 (默认: $DEFAULT_IMAGE_TAG)" 
+    echo "    host:     外部访问主机 (默认: 172.20.10.11)"
+    echo "    port:     外部访问端口 (默认: 80)"
+    echo "    scheme:   访问协议 (默认: http)"
+    echo "    compose:  docker-compose文件 (默认: docker-compose.yml)"
+    echo
     echo "SingleUser 智能构建:"
     echo "  build-singleuser [mode] [tag] [registry] - 智能构建SingleUser镜像"
     echo "    模式: auto (自动检测), offline (离线友好), online (标准模式)"
@@ -5116,7 +5184,25 @@ show_help() {
     echo "  quick-deploy [port] [host]      - 一键更新配置并重新部署（默认8080 auto）"
     echo
     echo "===================================================================================="
-    echo "📦 CI/CD服务器运行实例 (构建和推送镜像):"
+    echo "� 统一构建和部署实例 (推荐新用户使用):"
+    echo "===================================================================================="
+    echo "  # 一键构建、推送、部署到生产环境 (所有服务一条命令搞定)"
+    echo "  $0 unified-all aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http"
+    echo
+    echo "  # 分步骤统一操作"
+    echo "  $0 unified-build-push aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http   # 构建并推送"
+    echo "  $0 unified-deploy aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http       # 部署启动"
+    echo
+    echo "  # 本地开发环境快速启动 (使用默认参数)"
+    echo "  $0 unified-all                                      # 使用所有默认值"
+    echo "  # 等价于: $0 unified-all aiharbor.msxf.local/aihpc $DEFAULT_IMAGE_TAG 172.20.10.11 80 http"
+    echo
+    echo "  # 自定义域名和端口"
+    echo "  $0 unified-all harbor.company.com/ai v2.0.0 ai.company.com 8080 https"
+    echo "  # 访问地址: https://ai.company.com:8080"
+    echo
+    echo "===================================================================================="
+    echo "�📦 CI/CD服务器运行实例 (构建和推送镜像):"
     echo "===================================================================================="
     echo "  # 构建所有服务并推送到私有仓库"
     echo "  $0 build-push harbor.example.com/ai-infra v1.2.0"
@@ -6063,6 +6149,228 @@ EOF
     fi
 }
 
+# ====================================================
+# 统一构建和部署函数 - 公共参数接口
+# ====================================================
+
+# 统一构建所有镜像
+# 用法: build_all_unified <registry> <tag> <external_host> <external_port> <external_scheme>
+build_all_unified() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local external_host="${3:-172.20.10.11}"
+    local external_port="${4:-80}"
+    local external_scheme="${5:-http}"
+    
+    print_info "开始统一构建所有镜像..."
+    print_info "Registry: $registry"
+    print_info "Tag: $tag"
+    print_info "External Host: $external_host"
+    print_info "External Port: $external_port"
+    print_info "External Scheme: $external_scheme"
+    
+    # 渲染环境模板
+    print_info "渲染环境配置模板..."
+    if ! render_env_template "$external_host" "$external_port" "$external_scheme"; then
+        print_error "环境模板渲染失败"
+        return 1
+    fi
+    
+    # 构建所有服务镜像
+    print_info "构建所有服务镜像..."
+    if ! build_all_services "$tag" "$registry"; then
+        print_error "服务镜像构建失败"
+        return 1
+    fi
+    
+    print_success "统一构建完成！"
+    print_info "镜像已构建到: $registry"
+    print_info "镜像标签: $tag"
+    return 0
+}
+
+# 统一构建并推送所有镜像
+# 用法: build_and_push_unified <registry> <tag> <external_host> <external_port> <external_scheme>
+build_and_push_unified() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local external_host="${3:-172.20.10.11}"
+    local external_port="${4:-80}"
+    local external_scheme="${5:-http}"
+    
+    print_info "开始统一构建和推送所有镜像..."
+    print_info "Registry: $registry"
+    print_info "Tag: $tag"
+    print_info "External Host: $external_host"
+    print_info "External Port: $external_port"
+    print_info "External Scheme: $external_scheme"
+    
+    # 渲染环境模板
+    print_info "渲染环境配置模板..."
+    if ! render_env_template "$external_host" "$external_port" "$external_scheme"; then
+        print_error "环境模板渲染失败"
+        return 1
+    fi
+    
+    # 构建和推送所有镜像
+    print_info "构建和推送所有镜像..."
+    if ! build_and_push_all "$registry" "$tag"; then
+        print_error "镜像构建和推送失败"
+        return 1
+    fi
+    
+    print_success "统一构建和推送完成！"
+    print_info "镜像已推送到: $registry"
+    print_info "镜像标签: $tag"
+    return 0
+}
+
+# 统一部署服务
+# 用法: deploy_unified <registry> <tag> <external_host> <external_port> <external_scheme> [compose_file]
+deploy_unified() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local external_host="${3:-172.20.10.11}"
+    local external_port="${4:-80}"
+    local external_scheme="${5:-http}"
+    local compose_file="${6:-docker-compose.yml}"
+    
+    print_info "开始统一部署服务..."
+    print_info "Registry: $registry"
+    print_info "Tag: $tag"
+    print_info "External Host: $external_host"
+    print_info "External Port: $external_port"
+    print_info "External Scheme: $external_scheme"
+    print_info "Compose File: $compose_file"
+    
+    # 渲染环境模板
+    print_info "渲染环境配置模板..."
+    if ! render_env_template "$external_host" "$external_port" "$external_scheme"; then
+        print_error "环境模板渲染失败"
+        return 1
+    fi
+    
+    # 渲染Docker Compose文件
+    print_info "渲染Docker Compose配置..."
+    if ! render_compose_template "$compose_file"; then
+        print_error "Docker Compose模板渲染失败"
+        return 1
+    fi
+    
+    # 启动服务
+    print_info "启动生产环境服务..."
+    if ! start_production "$compose_file"; then
+        print_error "服务启动失败"
+        return 1
+    fi
+    
+    print_success "统一部署完成！"
+    print_info "服务已启动，访问地址: $external_scheme://$external_host:$external_port"
+    return 0
+}
+
+# 一键构建和部署
+# 用法: build_deploy_all <registry> <tag> <external_host> <external_port> <external_scheme> [compose_file]
+build_deploy_all() {
+    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local external_host="${3:-172.20.10.11}"
+    local external_port="${4:-80}"
+    local external_scheme="${5:-http}"
+    local compose_file="${6:-docker-compose.yml}"
+    
+    print_info "开始一键构建和部署流程..."
+    print_info "Registry: $registry"
+    print_info "Tag: $tag"
+    print_info "External Host: $external_host"
+    print_info "External Port: $external_port"
+    print_info "External Scheme: $external_scheme"
+    print_info "Compose File: $compose_file"
+    
+    # Step 1: 构建并推送镜像
+    print_info "=== 第1步: 构建并推送镜像 ==="
+    if ! build_and_push_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme"; then
+        print_error "构建和推送阶段失败"
+        return 1
+    fi
+    
+    # Step 2: 部署服务
+    print_info "=== 第2步: 部署服务 ==="
+    if ! deploy_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme" "$compose_file"; then
+        print_error "部署阶段失败"
+        return 1
+    fi
+    
+    print_success "一键构建和部署完成！"
+    print_info "所有服务已成功构建、推送并启动"
+    print_info "访问地址: $external_scheme://$external_host:$external_port"
+    return 0
+}
+
+# 环境模板渲染函数
+render_env_template() {
+    local external_host="$1"
+    local external_port="$2"
+    local external_scheme="$3"
+    
+    if [[ ! -f ".env.example" ]]; then
+        print_error "环境模板文件 .env.example 不存在"
+        return 1
+    fi
+    
+    # 导出环境变量供envsubst使用
+    export EXTERNAL_HOST="$external_host"
+    export EXTERNAL_PORT="$external_port"
+    export EXTERNAL_SCHEME="$external_scheme"
+    
+    # 使用envsubst渲染模板
+    if command -v envsubst >/dev/null 2>&1; then
+        print_info "使用 envsubst 渲染环境模板..."
+        if envsubst < .env.example > .env.tmp && mv .env.tmp .env; then
+            print_success "环境模板渲染成功"
+            return 0
+        else
+            print_error "envsubst 渲染失败"
+            rm -f .env.tmp
+            return 1
+        fi
+    else
+        # 回退到简单的sed替换
+        print_info "使用 sed 渲染环境模板..."
+        if sed -e "s/\${EXTERNAL_HOST}/$external_host/g" \
+               -e "s/\${EXTERNAL_PORT}/$external_port/g" \
+               -e "s/\${EXTERNAL_SCHEME}/$external_scheme/g" \
+               .env.example > .env.tmp && mv .env.tmp .env; then
+            print_success "环境模板渲染成功"
+            return 0
+        else
+            print_error "sed 渲染失败"
+            rm -f .env.tmp
+            return 1
+        fi
+    fi
+}
+
+# Docker Compose模板渲染函数
+render_compose_template() {
+    local compose_file="$1"
+    local template_file="${compose_file}.example"
+    
+    if [[ ! -f "$template_file" ]]; then
+        print_warning "Docker Compose模板文件 $template_file 不存在，跳过渲染"
+        return 0
+    fi
+    
+    print_info "渲染 $template_file 到 $compose_file..."
+    if cp "$template_file" "$compose_file"; then
+        print_success "Docker Compose模板渲染成功"
+        return 0
+    else
+        print_error "Docker Compose模板渲染失败"
+        return 1
+    fi
+}
+
 # 主函数
 main() {
     # 预处理命令行参数，检查各种标志
@@ -6563,12 +6871,14 @@ main() {
                     render_jupyterhub_templates
                     ;;
                 "docker-compose"|"compose")
-                    render_docker_compose_templates
+                    # 第3个参数是registry，第4个参数是tag
+                    render_docker_compose_templates "$3" "$4"
                     ;;
                 "all")
                     render_nginx_templates
                     render_jupyterhub_templates
-                    render_docker_compose_templates
+                    # 对于all模式，如果指定了registry参数，也传递给docker-compose
+                    render_docker_compose_templates "$3" "$4"
                     ;;
                 *)
                     print_error "未知的模板类型: $2"
@@ -6644,6 +6954,45 @@ main() {
             local tag="${3:-$DEFAULT_IMAGE_TAG}"
             local include_kafka="${4:-true}"
             push_to_internal_registry "$registry" "$tag" "$include_kafka"
+            ;;
+            
+        # 统一构建和部署命令
+        "unified-build")
+            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local external_host="${4:-172.20.10.11}"
+            local external_port="${5:-80}"
+            local external_scheme="${6:-http}"
+            build_all_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme"
+            ;;
+            
+        "unified-build-push")
+            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local external_host="${4:-172.20.10.11}"
+            local external_port="${5:-80}"
+            local external_scheme="${6:-http}"
+            build_and_push_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme"
+            ;;
+            
+        "unified-deploy")
+            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local external_host="${4:-172.20.10.11}"
+            local external_port="${5:-80}"
+            local external_scheme="${6:-http}"
+            local compose_file="${7:-docker-compose.yml}"
+            deploy_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme" "$compose_file"
+            ;;
+            
+        "unified-all"|"all-in-one")
+            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local external_host="${4:-172.20.10.11}"
+            local external_port="${5:-80}"
+            local external_scheme="${6:-http}"
+            local compose_file="${7:-docker-compose.yml}"
+            build_deploy_all "$registry" "$tag" "$external_host" "$external_port" "$external_scheme" "$compose_file"
             ;;
             
         "prepare-offline")
