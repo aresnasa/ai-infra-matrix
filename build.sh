@@ -4070,6 +4070,11 @@ show_help() {
     echo "  kafka-topics [compose-file]     - 列出Kafka主题"
     echo "  kafka-logs [service] [compose-file] [--follow] - 查看日志 (service: kafka|kafka-ui)"
     echo
+    echo "离线部署:"
+    echo "  export-offline [output_dir] [tag] [include_kafka] - 导出离线镜像包"
+    echo "  push-to-internal <registry> [tag] [include_kafka] - 推送镜像到内部仓库"
+    echo "  prepare-offline <registry> [tag] [output_dir] [include_kafka] - 准备完整离线部署包"
+    echo
     echo "工具命令:"
     echo "  clean [tag] [--force]           - 清理镜像"
     echo "  clean-all [--force]             - 完整清理（镜像、容器、数据卷、配置文件）"
@@ -4186,7 +4191,24 @@ show_help() {
     echo "  # Bootstrap Server: localhost:9094                  # 外部连接地址"
     echo
     echo "===================================================================================="
-    echo "📋 模板渲染和配置管理实例:"
+    echo "� 离线部署实例:"
+    echo "===================================================================================="
+    echo "  # 导出离线镜像包（包含Kafka）"
+    echo "  $0 export-offline ./offline-images v1.2.0 true"
+    echo
+    echo "  # 推送镜像到内部仓库"
+    echo "  $0 push-to-internal harbor.company.com/ai-infra v1.2.0 true"
+    echo
+    echo "  # 准备完整离线部署包（导出+推送+配置）"
+    echo "  $0 prepare-offline harbor.company.com/ai-infra v1.2.0 ./offline-deployment true"
+    echo
+    echo "  # 离线环境部署流程"
+    echo "  # 1. 复制离线部署包到目标环境"
+    echo "  # 2. cd offline-deployment && ./deploy-offline.sh"
+    echo "  # 3. 或手动: ./images/import-images.sh && docker compose up -d"
+    echo
+    echo "===================================================================================="
+    echo "�📋 模板渲染和配置管理实例:"
     echo "===================================================================================="
     echo "  # 渲染docker-compose.yml配置"
     echo "  $0 render-templates docker-compose                   # 从example生成docker-compose.yml"
@@ -4205,6 +4227,747 @@ show_help() {
     echo "  • 生产环境配置文件 docker-compose.yml 会被自动生成，请勿手动编辑"
     echo "  • 服务访问端口: Web界面:8080, JupyterHub:8088, Gitea:3010"
     echo "===================================================================================="
+}
+
+# ==========================================
+# 离线部署功能
+# ==========================================
+
+# 导出离线镜像
+export_offline_images() {
+    local output_dir="${1:-./offline-images}"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local include_kafka="${3:-true}"
+    
+    print_info "=========================================="
+    print_info "导出离线镜像"
+    print_info "=========================================="
+    print_info "输出目录: $output_dir"
+    print_info "镜像标签: $tag"
+    print_info "包含Kafka: $include_kafka"
+    echo
+    
+    # 创建输出目录
+    mkdir -p "$output_dir"
+    
+    # 导出AI-Infra服务镜像
+    print_info "📦 导出AI-Infra服务镜像..."
+    local services_exported=0
+    local services_failed=()
+    
+    for service in $SRC_SERVICES; do
+        local image_name="ai-infra-${service}:${tag}"
+        local output_file="${output_dir}/ai-infra-${service}-${tag}.tar"
+        
+        print_info "→ 导出: $image_name"
+        if docker image inspect "$image_name" >/dev/null 2>&1; then
+            if docker save "$image_name" -o "$output_file"; then
+                print_success "  ✓ 导出成功: $(basename "$output_file")"
+                services_exported=$((services_exported + 1))
+            else
+                print_error "  ✗ 导出失败: $image_name"
+                services_failed+=("$service")
+            fi
+        else
+            print_warning "  ! 镜像不存在，跳过: $image_name"
+            services_failed+=("$service")
+        fi
+    done
+    
+    # 导出依赖镜像
+    print_info "📦 导出依赖镜像..."
+    local dependencies_exported=0
+    local dependencies_failed=()
+    
+    # 基础依赖镜像
+    local base_dependencies=(
+        "postgres:15-alpine"
+        "redis:7-alpine"
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "minio/minio:latest"
+        "osixia/openldap:stable"
+        "osixia/phpldapadmin:stable"
+        "redislabs/redisinsight:latest"
+    )
+    
+    # 如果包含Kafka，添加Kafka相关镜像
+    if [[ "$include_kafka" == "true" ]]; then
+        local kafka_dependencies=(
+            "confluentinc/cp-kafka:7.5.0"
+            "provectuslabs/kafka-ui:latest"
+        )
+        base_dependencies+=("${kafka_dependencies[@]}")
+        print_info "  包含Kafka镜像: confluentinc/cp-kafka:7.5.0, provectuslabs/kafka-ui:latest"
+    fi
+    
+    for dep_image in "${base_dependencies[@]}"; do
+        # 生成安全的文件名
+        local safe_name=$(echo "$dep_image" | sed 's|/|-|g' | sed 's|:|_|g')
+        local output_file="${output_dir}/${safe_name}.tar"
+        
+        print_info "→ 导出: $dep_image"
+        if docker image inspect "$dep_image" >/dev/null 2>&1; then
+            if docker save "$dep_image" -o "$output_file"; then
+                print_success "  ✓ 导出成功: $(basename "$output_file")"
+                dependencies_exported=$((dependencies_exported + 1))
+            else
+                print_error "  ✗ 导出失败: $dep_image"
+                dependencies_failed+=("$dep_image")
+            fi
+        else
+            print_warning "  ! 镜像不存在，跳过: $dep_image"
+            dependencies_failed+=("$dep_image")
+        fi
+    done
+    
+    # 生成镜像清单文件
+    print_info "📋 生成镜像清单..."
+    local manifest_file="${output_dir}/images-manifest.txt"
+    cat > "$manifest_file" << EOF
+# AI Infrastructure Matrix 离线镜像清单
+# 生成时间: $(date)
+# 镜像标签: $tag
+# 包含Kafka: $include_kafka
+
+# AI-Infra服务镜像 (${services_exported}个)
+EOF
+    
+    for service in $SRC_SERVICES; do
+        local image_name="ai-infra-${service}:${tag}"
+        local output_file="ai-infra-${service}-${tag}.tar"
+        if docker image inspect "$image_name" >/dev/null 2>&1; then
+            echo "$image_name|$output_file" >> "$manifest_file"
+        fi
+    done
+    
+    echo "" >> "$manifest_file"
+    echo "# 依赖镜像 (${dependencies_exported}个)" >> "$manifest_file"
+    
+    for dep_image in "${base_dependencies[@]}"; do
+        local safe_name=$(echo "$dep_image" | sed 's|/|-|g' | sed 's|:|_|g')
+        local output_file="${safe_name}.tar"
+        if docker image inspect "$dep_image" >/dev/null 2>&1; then
+            echo "$dep_image|$output_file" >> "$manifest_file"
+        fi
+    done
+    
+    # 生成导入脚本
+    print_info "📜 生成导入脚本..."
+    local import_script="${output_dir}/import-images.sh"
+    cat > "$import_script" << 'EOF'
+#!/bin/bash
+
+# AI Infrastructure Matrix 离线镜像导入脚本
+# 使用方法: ./import-images.sh [镜像目录]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGES_DIR="${1:-$SCRIPT_DIR}"
+MANIFEST_FILE="${IMAGES_DIR}/images-manifest.txt"
+
+print_info() {
+    echo -e "\033[32m[INFO]\033[0m $1"
+}
+
+print_success() {
+    echo -e "\033[32m[SUCCESS]\033[0m $1"
+}
+
+print_error() {
+    echo -e "\033[31m[ERROR]\033[0m $1"
+}
+
+if [[ ! -f "$MANIFEST_FILE" ]]; then
+    print_error "镜像清单文件不存在: $MANIFEST_FILE"
+    exit 1
+fi
+
+print_info "=========================================="
+print_info "导入离线镜像"
+print_info "=========================================="
+print_info "镜像目录: $IMAGES_DIR"
+print_info "清单文件: $MANIFEST_FILE"
+echo
+
+imported_count=0
+failed_count=0
+
+while IFS='|' read -r image_name tar_file; do
+    # 跳过注释和空行
+    [[ "$image_name" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "$image_name" ]] && continue
+    
+    local tar_path="${IMAGES_DIR}/${tar_file}"
+    
+    if [[ -f "$tar_path" ]]; then
+        print_info "→ 导入: $image_name"
+        if docker load -i "$tar_path"; then
+            print_success "  ✓ 导入成功: $image_name"
+            imported_count=$((imported_count + 1))
+        else
+            print_error "  ✗ 导入失败: $image_name"
+            failed_count=$((failed_count + 1))
+        fi
+    else
+        print_error "  ✗ 镜像文件不存在: $tar_path"
+        failed_count=$((failed_count + 1))
+    fi
+done < "$MANIFEST_FILE"
+
+echo
+print_info "=========================================="
+print_success "导入完成: $imported_count 成功, $failed_count 失败"
+
+if [[ $failed_count -eq 0 ]]; then
+    print_success "🎉 所有镜像导入成功！"
+    echo
+    print_info "接下来可以："
+    print_info "1. 检查镜像: docker images | grep -E 'ai-infra|postgres|redis'"
+    print_info "2. 启动服务: docker compose -f docker-compose.yml.example up -d"
+else
+    print_error "部分镜像导入失败，请检查错误信息"
+fi
+EOF
+    
+    chmod +x "$import_script"
+    
+    # 生成统计信息
+    print_info "=========================================="
+    print_success "离线镜像导出完成！"
+    echo
+    print_info "📊 导出统计:"
+    print_info "  • AI-Infra服务镜像: $services_exported 个"
+    print_info "  • 依赖镜像: $dependencies_exported 个"
+    print_info "  • 总计: $((services_exported + dependencies_exported)) 个"
+    echo
+    
+    if [[ ${#services_failed[@]} -gt 0 || ${#dependencies_failed[@]} -gt 0 ]]; then
+        print_warning "⚠️  部分镜像导出失败:"
+        if [[ ${#services_failed[@]} -gt 0 ]]; then
+            print_warning "  失败的服务: ${services_failed[*]}"
+        fi
+        if [[ ${#dependencies_failed[@]} -gt 0 ]]; then
+            print_warning "  失败的依赖: ${dependencies_failed[*]}"
+        fi
+    fi
+    
+    print_info "📁 输出文件:"
+    print_info "  • 镜像目录: $output_dir"
+    print_info "  • 镜像清单: $manifest_file"
+    print_info "  • 导入脚本: $import_script"
+    echo
+    print_info "📋 使用方法:"
+    print_info "1. 将整个 $output_dir 目录复制到离线环境"
+    print_info "2. 在离线环境运行: cd $output_dir && ./import-images.sh"
+    print_info "3. 启动服务: docker compose -f docker-compose.yml.example up -d"
+    
+    return 0
+}
+
+# 推送镜像到内部仓库（用于离线部署准备）
+push_to_internal_registry() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local include_kafka="${3:-true}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "请指定内部仓库地址"
+        print_info "用法: push-to-internal <registry> [tag] [include_kafka]"
+        print_info "示例: push-to-internal harbor.company.com/ai-infra v1.0.0 true"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "推送镜像到内部仓库"
+    print_info "=========================================="
+    print_info "内部仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "包含Kafka: $include_kafka"
+    echo
+    
+    local total_pushed=0
+    local total_failed=0
+    local failed_images=()
+    
+    # 推送AI-Infra服务镜像
+    print_info "🚀 推送AI-Infra服务镜像..."
+    for service in $SRC_SERVICES; do
+        local local_image="ai-infra-${service}:${tag}"
+        local target_image="${registry}/ai-infra-${service}:${tag}"
+        
+        print_info "→ 推送: $service"
+        print_info "  本地镜像: $local_image"
+        print_info "  目标镜像: $target_image"
+        
+        # 检查本地镜像是否存在
+        if ! docker image inspect "$local_image" >/dev/null 2>&1; then
+            print_error "  ✗ 本地镜像不存在: $local_image"
+            failed_images+=("$local_image")
+            total_failed=$((total_failed + 1))
+            continue
+        fi
+        
+        # 标记镜像
+        if docker tag "$local_image" "$target_image"; then
+            print_success "  ✓ 标记成功"
+        else
+            print_error "  ✗ 标记失败: $target_image"
+            failed_images+=("$local_image")
+            total_failed=$((total_failed + 1))
+            continue
+        fi
+        
+        # 推送镜像
+        if docker push "$target_image"; then
+            print_success "  ✓ 推送成功: $target_image"
+            total_pushed=$((total_pushed + 1))
+        else
+            print_error "  ✗ 推送失败: $target_image"
+            failed_images+=("$target_image")
+            total_failed=$((total_failed + 1))
+        fi
+        echo
+    done
+    
+    # 推送依赖镜像
+    print_info "🚀 推送依赖镜像..."
+    local base_dependencies=(
+        "postgres:15-alpine"
+        "redis:7-alpine"
+        "nginx:1.27-alpine"
+        "tecnativa/tcp-proxy:latest"
+        "minio/minio:latest"
+        "osixia/openldap:stable"
+        "osixia/phpldapadmin:stable"
+        "redislabs/redisinsight:latest"
+    )
+    
+    # 如果包含Kafka，添加Kafka相关镜像
+    if [[ "$include_kafka" == "true" ]]; then
+        local kafka_dependencies=(
+            "confluentinc/cp-kafka:7.5.0"
+            "provectuslabs/kafka-ui:latest"
+        )
+        base_dependencies+=("${kafka_dependencies[@]}")
+        print_info "  包含Kafka镜像推送"
+    fi
+    
+    for dep_image in "${base_dependencies[@]}"; do
+        # 使用映射配置生成目标镜像名
+        local target_image
+        target_image=$(get_mapped_private_image "$dep_image" "$registry" "$tag")
+        
+        print_info "→ 推送依赖: $dep_image"
+        print_info "  目标镜像: $target_image"
+        
+        # 检查本地镜像是否存在
+        if ! docker image inspect "$dep_image" >/dev/null 2>&1; then
+            print_warning "  ! 本地镜像不存在，尝试拉取: $dep_image"
+            if ! docker pull "$dep_image"; then
+                print_error "  ✗ 拉取失败: $dep_image"
+                failed_images+=("$dep_image")
+                total_failed=$((total_failed + 1))
+                continue
+            fi
+        fi
+        
+        # 标记镜像
+        if docker tag "$dep_image" "$target_image"; then
+            print_success "  ✓ 标记成功"
+        else
+            print_error "  ✗ 标记失败: $target_image"
+            failed_images+=("$dep_image")
+            total_failed=$((total_failed + 1))
+            continue
+        fi
+        
+        # 推送镜像
+        if docker push "$target_image"; then
+            print_success "  ✓ 推送成功: $target_image"
+            total_pushed=$((total_pushed + 1))
+        else
+            print_error "  ✗ 推送失败: $target_image"
+            failed_images+=("$target_image")
+            total_failed=$((total_failed + 1))
+        fi
+        echo
+    done
+    
+    # 输出统计信息
+    print_info "=========================================="
+    print_success "推送完成统计:"
+    print_success "  • 成功推送: $total_pushed 个镜像"
+    if [[ $total_failed -gt 0 ]]; then
+        print_error "  • 失败推送: $total_failed 个镜像"
+        print_warning "失败的镜像:"
+        for failed_image in "${failed_images[@]}"; do
+            echo "    - $failed_image"
+        done
+        return 1
+    else
+        print_success "🎉 所有镜像推送成功！"
+        print_info ""
+        print_info "内部仓库已准备就绪，现在可以在离线环境："
+        print_info "1. 拉取镜像: ./build.sh harbor-pull-all $registry $tag"
+        print_info "2. 启动服务: docker compose -f docker-compose.yml.example up -d"
+        return 0
+    fi
+}
+
+# 准备离线部署包（导出镜像 + 推送到内部仓库）
+prepare_offline_deployment() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local output_dir="${3:-./offline-deployment}"
+    local include_kafka="${4:-true}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "请指定内部仓库地址"
+        print_info "用法: prepare-offline <registry> [tag] [output_dir] [include_kafka]"
+        print_info "示例: prepare-offline harbor.company.com/ai-infra v1.0.0 ./offline true"
+        return 1
+    fi
+    
+    print_info "=========================================="
+    print_info "准备离线部署包"
+    print_info "=========================================="
+    print_info "内部仓库: $registry"
+    print_info "镜像标签: $tag"
+    print_info "输出目录: $output_dir"
+    print_info "包含Kafka: $include_kafka"
+    echo
+    
+    local overall_success=true
+    
+    # 步骤1: 导出离线镜像
+    print_info "步骤 1/3: 导出离线镜像..."
+    local images_dir="${output_dir}/images"
+    if ! export_offline_images "$images_dir" "$tag" "$include_kafka"; then
+        print_error "离线镜像导出失败"
+        overall_success=false
+    fi
+    
+    echo
+    # 步骤2: 推送到内部仓库
+    print_info "步骤 2/3: 推送镜像到内部仓库..."
+    if ! push_to_internal_registry "$registry" "$tag" "$include_kafka"; then
+        print_error "镜像推送到内部仓库失败"
+        overall_success=false
+    fi
+    
+    echo
+    # 步骤3: 生成部署配置
+    print_info "步骤 3/3: 生成部署配置..."
+    mkdir -p "$output_dir"
+    
+    # 复制部署文件
+    if [[ -f "docker-compose.yml.example" ]]; then
+        cp "docker-compose.yml.example" "${output_dir}/docker-compose.yml.example"
+        print_success "  ✓ 复制 docker-compose.yml.example"
+    fi
+    
+    if [[ -f ".env.example" ]]; then
+        cp ".env.example" "${output_dir}/.env.example"
+        print_success "  ✓ 复制 .env.example"
+    fi
+    
+    if [[ -f "build.sh" ]]; then
+        cp "build.sh" "${output_dir}/build.sh"
+        chmod +x "${output_dir}/build.sh"
+        print_success "  ✓ 复制 build.sh"
+    fi
+    
+    # 复制配置目录
+    if [[ -d "config" ]]; then
+        cp -r "config" "${output_dir}/"
+        print_success "  ✓ 复制配置目录"
+    fi
+    
+    # 生成离线部署脚本
+    local deploy_script="${output_dir}/deploy-offline.sh"
+    cat > "$deploy_script" << EOF
+#!/bin/bash
+
+# AI Infrastructure Matrix 离线部署脚本
+# 使用方法: ./deploy-offline.sh [registry] [tag]
+
+set -e
+
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+REGISTRY="${registry}"
+TAG="${tag}"
+INCLUDE_KAFKA="${include_kafka}"
+
+print_info() {
+    echo -e "\033[32m[INFO]\033[0m \$1"
+}
+
+print_success() {
+    echo -e "\033[32m[SUCCESS]\033[0m \$1"
+}
+
+print_error() {
+    echo -e "\033[31m[ERROR]\033[0m \$1"
+}
+
+print_info "=========================================="
+print_info "AI Infrastructure Matrix 离线部署"
+print_info "=========================================="
+print_info "内部仓库: \${1:-\$REGISTRY}"
+print_info "镜像标签: \${2:-\$TAG}"
+print_info "包含Kafka: \$INCLUDE_KAFKA"
+echo
+
+FINAL_REGISTRY="\${1:-\$REGISTRY}"
+FINAL_TAG="\${2:-\$TAG}"
+
+# 检查Docker环境
+if ! command -v docker >/dev/null 2>&1; then
+    print_error "Docker未安装或不可用"
+    exit 1
+fi
+
+if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+    print_error "Docker Compose未安装或不可用"
+    exit 1
+fi
+
+# 选择部署方式
+echo "请选择部署方式："
+echo "1) 从内部仓库拉取镜像 (推荐)"
+echo "2) 从本地tar文件导入镜像"
+echo
+
+read -p "请输入选择 (1-2): " deploy_mode
+
+case "\$deploy_mode" in
+    "1")
+        print_info "从内部仓库拉取镜像..."
+        if [[ -z "\$FINAL_REGISTRY" ]]; then
+            print_error "请指定内部仓库地址"
+            print_info "用法: ./deploy-offline.sh <registry> [tag]"
+            exit 1
+        fi
+        
+        # 使用build.sh拉取镜像
+        if [[ -f "./build.sh" ]]; then
+            print_info "拉取所有镜像..."
+            if ./build.sh harbor-pull-all "\$FINAL_REGISTRY" "\$FINAL_TAG"; then
+                print_success "✓ 镜像拉取成功"
+            else
+                print_error "镜像拉取失败"
+                exit 1
+            fi
+        else
+            print_error "build.sh文件不存在"
+            exit 1
+        fi
+        ;;
+        
+    "2")
+        print_info "从本地tar文件导入镜像..."
+        if [[ -f "./images/import-images.sh" ]]; then
+            cd images && ./import-images.sh
+            cd ..
+            print_success "✓ 镜像导入成功"
+        else
+            print_error "镜像导入脚本不存在: ./images/import-images.sh"
+            exit 1
+        fi
+        ;;
+        
+    *)
+        print_error "无效选择"
+        exit 1
+        ;;
+esac
+
+# 生成环境配置
+print_info "生成环境配置..."
+if [[ ! -f ".env" ]]; then
+    if [[ -f ".env.example" ]]; then
+        cp ".env.example" ".env"
+        print_success "✓ 创建环境配置文件"
+    else
+        print_error "环境模板文件不存在"
+        exit 1
+    fi
+fi
+
+# 启动服务
+print_info "启动服务..."
+if docker compose -f docker-compose.yml.example up -d; then
+    print_success "✅ 服务启动成功！"
+    echo
+    print_info "访问地址:"
+    print_info "  • 主页: http://localhost:8080"
+    print_info "  • JupyterHub: http://localhost:8088/jupyter/"
+    print_info "  • Gitea: http://localhost:3010/gitea/"
+    if [[ "\$INCLUDE_KAFKA" == "true" ]]; then
+        print_info "  • Kafka UI: http://localhost:9095"
+    fi
+    echo
+    print_info "管理命令:"
+    print_info "  • 查看状态: docker compose ps"
+    print_info "  • 查看日志: docker compose logs -f [service]"
+    print_info "  • 停止服务: docker compose down"
+else
+    print_error "服务启动失败"
+    exit 1
+fi
+EOF
+    
+    chmod +x "$deploy_script"
+    print_success "  ✓ 生成离线部署脚本: $deploy_script"
+    
+    # 生成README文档
+    local readme_file="${output_dir}/README.md"
+    cat > "$readme_file" << EOF
+# AI Infrastructure Matrix 离线部署包
+
+## 概述
+
+此离线部署包包含了 AI Infrastructure Matrix 在离线环境中运行所需的所有组件。
+
+## 目录结构
+
+\`\`\`
+offline-deployment/
+├── images/                    # 离线镜像文件
+│   ├── *.tar                 # 镜像tar文件
+│   ├── images-manifest.txt   # 镜像清单
+│   └── import-images.sh      # 镜像导入脚本
+├── config/                   # 配置文件目录
+├── docker-compose.yml.example # Docker Compose配置
+├── .env.example             # 环境变量模板
+├── build.sh                 # 构建管理脚本
+├── deploy-offline.sh        # 离线部署脚本
+└── README.md               # 本文档
+\`\`\`
+
+## 部署信息
+
+- **内部仓库**: \`${registry}\`
+- **镜像标签**: \`${tag}\`
+- **包含Kafka**: \`${include_kafka}\`
+- **生成时间**: \`$(date)\`
+
+## 快速部署
+
+### 方式1: 使用自动部署脚本（推荐）
+
+\`\`\`bash
+chmod +x deploy-offline.sh
+./deploy-offline.sh
+\`\`\`
+
+### 方式2: 手动部署
+
+#### 从内部仓库拉取镜像
+
+\`\`\`bash
+# 1. 拉取所有镜像
+./build.sh harbor-pull-all ${registry} ${tag}
+
+# 2. 生成环境配置
+cp .env.example .env
+
+# 3. 启动服务
+docker compose -f docker-compose.yml.example up -d
+\`\`\`
+
+#### 从本地镜像文件导入
+
+\`\`\`bash
+# 1. 导入镜像
+cd images && ./import-images.sh && cd ..
+
+# 2. 生成环境配置
+cp .env.example .env
+
+# 3. 启动服务
+docker compose -f docker-compose.yml.example up -d
+\`\`\`
+
+## 访问地址
+
+部署成功后，可以通过以下地址访问：
+
+- **主页**: http://localhost:8080
+- **JupyterHub**: http://localhost:8088/jupyter/
+- **Gitea**: http://localhost:3010/gitea/
+EOF
+
+    if [[ "$include_kafka" == "true" ]]; then
+        echo "- **Kafka UI**: http://localhost:9095" >> "$readme_file"
+    fi
+
+    cat >> "$readme_file" << EOF
+
+## 管理命令
+
+\`\`\`bash
+# 查看服务状态
+docker compose ps
+
+# 查看服务日志
+docker compose logs -f [service]
+
+# 停止所有服务
+docker compose down
+
+# 重启服务
+docker compose restart [service]
+\`\`\`
+
+## 故障排除
+
+### 常见问题
+
+1. **端口冲突**: 如果遇到端口冲突，修改 \`.env\` 文件中的端口配置
+2. **镜像拉取失败**: 检查内部仓库连接和权限
+3. **服务启动失败**: 查看具体服务日志 \`docker compose logs [service]\`
+
+### 获取帮助
+
+查看更多管理命令：
+\`\`\`bash
+./build.sh help
+\`\`\`
+
+## 技术支持
+
+如需技术支持，请参考项目文档或联系管理员。
+EOF
+    
+    print_success "  ✓ 生成README文档: $readme_file"
+    
+    # 最终汇总
+    echo
+    print_info "=========================================="
+    if [[ "$overall_success" == "true" ]]; then
+        print_success "🎉 离线部署包准备完成！"
+        print_info ""
+        print_info "📁 输出目录: $output_dir"
+        print_info "📊 包含内容:"
+        print_info "  • 离线镜像文件: $(ls "${images_dir}"/*.tar 2>/dev/null | wc -l) 个"
+        print_info "  • 部署配置文件"
+        print_info "  • 自动部署脚本"
+        print_info "  • 详细文档"
+        print_info ""
+        print_info "📋 使用方法:"
+        print_info "1. 将整个 $output_dir 目录复制到离线环境"
+        print_info "2. 在离线环境运行: cd $output_dir && ./deploy-offline.sh"
+        print_info ""
+        print_info "🌐 内部仓库镜像已推送至: $registry"
+        return 0
+    else
+        print_warning "⚠️  离线部署包准备部分完成"
+        print_info "请检查上述错误信息并重新运行失败的步骤"
+        return 1
+    fi
 }
 
 # 主函数
@@ -4693,6 +5456,39 @@ main() {
             else
                 show_kafka_logs "$2" "${3:-docker-compose.yml}" "$4"
             fi
+            ;;
+            
+        # 离线部署命令
+        "export-offline")
+            local output_dir="${2:-./offline-images}"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local include_kafka="${4:-true}"
+            export_offline_images "$output_dir" "$tag" "$include_kafka"
+            ;;
+            
+        "push-to-internal")
+            if [[ -z "$2" ]]; then
+                print_error "请指定内部仓库地址"
+                print_info "用法: $0 push-to-internal <registry> [tag] [include_kafka]"
+                exit 1
+            fi
+            local registry="$2"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local include_kafka="${4:-true}"
+            push_to_internal_registry "$registry" "$tag" "$include_kafka"
+            ;;
+            
+        "prepare-offline")
+            if [[ -z "$2" ]]; then
+                print_error "请指定内部仓库地址"
+                print_info "用法: $0 prepare-offline <registry> [tag] [output_dir] [include_kafka]"
+                exit 1
+            fi
+            local registry="$2"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local output_dir="${4:-./offline-deployment}"
+            local include_kafka="${5:-true}"
+            prepare_offline_deployment "$registry" "$tag" "$output_dir" "$include_kafka"
             ;;
             
         "help"|"-h"|"--help")
