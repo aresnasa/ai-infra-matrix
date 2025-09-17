@@ -10,11 +10,15 @@ import (
 )
 
 type LDAPService struct {
-	db *gorm.DB
+	db             *gorm.DB
+	connectionHelper *LDAPConnectionHelper
 }
 
 func NewLDAPService(db *gorm.DB) *LDAPService {
-	return &LDAPService{db: db}
+	return &LDAPService{
+		db:             db,
+		connectionHelper: NewLDAPConnectionHelper(),
+	}
 }
 
 // GetConfig 获取LDAP配置
@@ -46,6 +50,11 @@ func (ls *LDAPService) GetConfig() (*models.LDAPConfig, error) {
 
 // UpdateConfig 更新LDAP配置
 func (ls *LDAPService) UpdateConfig(config *models.LDAPConfig) error {
+	// 验证配置
+	if err := ls.validateConfig(config); err != nil {
+		return fmt.Errorf("配置验证失败: %v", err)
+	}
+	
 	var existingConfig models.LDAPConfig
 	err := ls.db.First(&existingConfig).Error
 	if err == gorm.ErrRecordNotFound {
@@ -58,63 +67,67 @@ func (ls *LDAPService) UpdateConfig(config *models.LDAPConfig) error {
 	return ls.db.Save(config).Error
 }
 
+// validateConfig 验证LDAP配置
+func (ls *LDAPService) validateConfig(config *models.LDAPConfig) error {
+	if config.Server == "" {
+		return fmt.Errorf("LDAP服务器地址不能为空")
+	}
+	
+	if config.Port <= 0 || config.Port > 65535 {
+		return fmt.Errorf("端口号必须在1-65535之间")
+	}
+	
+	if config.BaseDN == "" {
+		return fmt.Errorf("BaseDN不能为空")
+	}
+	
+	// Windows AD 特殊验证
+	if ls.isWindowsAD(config) {
+		return ls.validateWindowsAD(config)
+	}
+	
+	return nil
+}
+
+// isWindowsAD 检测是否为Windows Active Directory
+func (ls *LDAPService) isWindowsAD(config *models.LDAPConfig) bool {
+	// 简单检测：Windows AD 通常使用389/636端口，BaseDN包含dc=
+	return (config.Port == 389 || config.Port == 636) && 
+		   (len(config.BaseDN) > 3 && config.BaseDN[:3] == "dc=")
+}
+
+// validateWindowsAD 验证Windows AD配置
+func (ls *LDAPService) validateWindowsAD(config *models.LDAPConfig) error {
+	// Windows AD 特殊要求
+	if config.BindDN == "" {
+		return fmt.Errorf("Windows AD 需要提供绑定用户DN")
+	}
+	
+	if config.BindPassword == "" {
+		return fmt.Errorf("Windows AD 需要提供绑定用户密码")
+	}
+	
+	// 建议使用SSL连接
+	if !config.UseSSL && config.Port != 389 {
+		// 这是警告，不阻止配置
+	}
+	
+	return nil
+}
+
 // TestConnection 测试LDAP连接
 func (ls *LDAPService) TestConnection(config *models.LDAPConfig) *models.LDAPTestResponse {
-	// 构建连接地址
-	addr := fmt.Sprintf("%s:%d", config.Server, config.Port)
-	
-	var conn *ldap.Conn
-	var err error
-	
-	if config.UseSSL {
-		conn, err = ldap.DialTLS("tcp", addr, nil)
-	} else {
-		conn, err = ldap.Dial("tcp", addr)
-	}
-	
-	if err != nil {
+	// 验证配置
+	if err := ls.validateConfig(config); err != nil {
 		return &models.LDAPTestResponse{
 			Success: false,
-			Message: "连接LDAP服务器失败",
-			Details: err.Error(),
-		}
-	}
-	defer conn.Close()
-	
-	// 测试绑定
-	if config.BindDN != "" {
-		err = conn.Bind(config.BindDN, config.BindPassword)
-		if err != nil {
-			return &models.LDAPTestResponse{
-				Success: false,
-				Message: "LDAP绑定失败",
-				Details: err.Error(),
-			}
-		}
-	}
-	
-	// 测试搜索
-	searchRequest := ldap.NewSearchRequest(
-		config.BaseDN,
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 0, false,
-		"(objectClass=*)",
-		[]string{"dn"},
-		nil,
-	)
-	
-	_, err = conn.Search(searchRequest)
-	if err != nil {
-		return &models.LDAPTestResponse{
-			Success: false,
-			Message: "LDAP搜索测试失败",
+			Message: "配置验证失败",
 			Details: err.Error(),
 		}
 	}
 	
-	return &models.LDAPTestResponse{
-		Success: true,
-		Message: "LDAP连接测试成功",
-	}
+	// 使用助手类进行连接测试，包含重试机制
+	return ls.connectionHelper.TestConnectionWithRetry(config, 3)
 }
 
 // SyncUsers 同步LDAP用户
@@ -389,16 +402,20 @@ func (ls *LDAPService) UpdateLDAPConfig(req *models.LDAPConfigRequest) (*models.
 	return config, nil
 }
 
-// TestLDAPConnection 测试LDAP连接
+// TestLDAPConnection 测试LDAP连接 - 管理员接口使用
 func (ls *LDAPService) TestLDAPConnection(req *models.LDAPTestRequest) error {
-	// 兼容前端字段名映射
-	if req.EnableTLS && !req.UseSSL {
-		req.UseSSL = req.EnableTLS
+	// 验证请求参数
+	if req.Server == "" {
+		return fmt.Errorf("LDAP服务器地址不能为空")
 	}
-	if req.SkipTLSVerify && !req.SkipVerify {
-		req.SkipVerify = req.SkipTLSVerify
+	if req.Port <= 0 || req.Port > 65535 {
+		return fmt.Errorf("端口号必须在1-65535之间")
+	}
+	if req.BaseDN == "" {
+		return fmt.Errorf("BaseDN不能为空")
 	}
 	
+	// 构建配置
 	config := &models.LDAPConfig{
 		Server:       req.Server,
 		Port:         req.Port,
@@ -406,13 +423,14 @@ func (ls *LDAPService) TestLDAPConnection(req *models.LDAPTestRequest) error {
 		BindPassword: req.BindPassword,
 		BaseDN:       req.BaseDN,
 		UserFilter:   req.UserFilter,
-		UseSSL:       req.UseSSL || req.EnableTLS,       // 兼容前端字段
-		SkipVerify:   req.SkipVerify || req.SkipTLSVerify, // 兼容前端字段
+		UseSSL:       req.UseSSL,
+		SkipVerify:   req.SkipVerify,
 	}
 	
+	// 使用新的测试连接方法
 	response := ls.TestConnection(config)
 	if !response.Success {
-		return fmt.Errorf(response.Message)
+		return fmt.Errorf("%s: %s", response.Message, response.Details)
 	}
 	
 	return nil

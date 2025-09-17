@@ -494,12 +494,11 @@ type LDAPTestRequest struct {
 	BindPassword   string `json:"bind_password" validate:"required"`
 	BaseDN         string `json:"base_dn" validate:"required"`
 	UserFilter     string `json:"user_filter"`
-	// 支持前端的字段名
-	EnableTLS      bool   `json:"enable_tls"`
-	SkipTLSVerify  bool   `json:"skip_tls_verify"`
-	// 兼容后端原有字段名
 	UseSSL         bool   `json:"use_ssl"`
 	SkipVerify     bool   `json:"skip_verify"`
+	// Windows兼容性字段
+	Timeout        int    `json:"timeout,omitempty"`        // 连接超时时间(秒)
+	MaxConnections int    `json:"max_connections,omitempty"` // 最大连接数
 }
 type PermissionCheckRequest struct {
 	Resource  string `json:"resource" binding:"required"`
