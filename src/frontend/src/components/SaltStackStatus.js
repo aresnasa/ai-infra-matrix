@@ -243,7 +243,7 @@ const SaltStackStatus = () => {
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         最后连接: {new Date(minion.last_seen).toLocaleString('zh-CN')}
                       </Text>
-                      {minion.grains?.roles && (
+                      {minion.grains?.roles && Array.isArray(minion.grains.roles) && (
                         <Space size={4}>
                           {minion.grains.roles.map(role => (
                             <Tag key={role} size="small">{role}</Tag>

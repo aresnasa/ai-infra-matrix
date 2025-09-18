@@ -141,7 +141,7 @@ const AuthPage = ({ onLogin }) => {
             <Divider style={{ margin: '8px 0' }} />
             <strong>包含权限：</strong>
             <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
-              {template.permissions.map((perm, index) => (
+              {(template.permissions || []).map((perm, index) => (
                 <li key={index}>{perm}</li>
               ))}
             </ul>
@@ -302,7 +302,7 @@ const AuthPage = ({ onLogin }) => {
                       onChange={handleRoleTemplateChange}
                       size="large"
                     >
-                      {Object.entries(ROLE_TEMPLATES).map(([key, template]) => (
+                      {Object.entries(ROLE_TEMPLATES || {}).map(([key, template]) => (
                         <Option key={key} value={key}>
                           {template.name}
                         </Option>

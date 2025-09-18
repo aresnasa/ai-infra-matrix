@@ -196,7 +196,7 @@ const ProjectList = ({ onError, retryCount }) => {
             </Empty>
           ) : (
             <Row gutter={[16, 16]}>
-              {projects.map(project => (
+              {(projects || []).map(project => (
                 <Col xs={24} sm={12} lg={8} xl={6} key={project.id}>
                   <Card
                     className="project-card"

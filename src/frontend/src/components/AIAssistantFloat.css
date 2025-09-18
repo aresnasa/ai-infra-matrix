@@ -31,6 +31,242 @@
   transform: scale(1.05) translateY(0px);
 }
 
+/* AI助手侧边面板样式 */
+.ai-assistant-panel {
+  position: fixed;
+  top: 0;
+  right: -500px;
+  width: 400px;
+  height: 100vh;
+  background: #ffffff;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-left: 1px solid #e8e8e8;
+}
+
+.ai-assistant-panel-visible {
+  right: 0;
+}
+
+.ai-assistant-panel-locked {
+  width: 450px;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+  border-left: 2px solid #52c41a;
+}
+
+.ai-assistant-panel-locked::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: linear-gradient(180deg, #52c41a 0%, #73d13d 50%, #52c41a 100%);
+  animation: lockIndicator 2s ease-in-out infinite;
+}
+
+@keyframes lockIndicator {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOut {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.ai-assistant-panel.ai-assistant-panel-visible {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* 锁定状态下的特殊样式 */
+.ai-assistant-panel-locked .ant-btn[title*="解除锁定"] {
+  color: #52c41a !important;
+  background: rgba(82, 196, 26, 0.1);
+}
+
+.ai-assistant-panel-locked .ant-btn[title*="解除锁定"]:hover {
+  background: rgba(82, 196, 26, 0.2);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .ai-assistant-panel {
+    width: 100vw;
+    right: -100vw;
+  }
+  
+  .ai-assistant-panel-locked {
+    width: 100vw;
+  }
+}
+
+/* 模型配置选择器样式 */
+.config-selector .ant-select-selector {
+  border-radius: 6px !important;
+}
+
+.config-selector .ant-select-selection-item {
+  display: flex;
+  align-items: center;
+}
+
+/* 模型配置弹窗样式 */
+.ai-model-config-modal .ant-modal-header {
+  background: linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-bottom: 1px solid #e1e5e9;
+}
+
+.ai-model-config-modal .ant-modal-title {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+/* 模型列表项悬停效果 */
+.ai-model-config-modal .ant-list-item:hover {
+  background-color: #f8fafc !important;
+  border-color: #3b82f6 !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+  transition: all 0.2s ease;
+}
+
+/* 选中的模型项样式 */
+.ai-model-config-modal .ant-list-item[style*="f6ffed"] {
+  border-color: #52c41a !important;
+  box-shadow: 0 2px 8px rgba(82, 196, 26, 0.1);
+}
+
+/* 面板拖拽调整大小样式 */
+.ai-assistant-panel-resizing {
+  user-select: none;
+  pointer-events: none;
+}
+
+.ai-assistant-panel-resizing * {
+  pointer-events: none;
+}
+
+.resize-handle {
+  position: absolute;
+  left: -5px;
+  top: 0;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10000;
+  background: transparent;
+}
+
+.resize-handle:hover .resize-indicator {
+  background: #1890ff !important;
+  opacity: 0.8;
+}
+
+.resize-indicator {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 30px;
+  background: #d9d9d9;
+  border-radius: 1px;
+  transition: all 0.2s ease;
+}
+
+/* 增强的模型选择器样式 */
+.config-selector .ant-select-selector {
+  border-radius: 6px !important;
+  transition: all 0.2s ease;
+}
+
+.config-selector:hover .ant-select-selector {
+  border-color: #40a9ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.config-selector .ant-select-selection-item {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+}
+
+.config-selector .ant-select-arrow {
+  color: #1890ff;
+}
+
+/* 下拉选项样式增强 */
+.config-selector .ant-select-dropdown .ant-select-item {
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 2px 4px;
+}
+
+.config-selector .ant-select-dropdown .ant-select-item:hover {
+  background-color: #f0f9ff;
+  border-radius: 4px;
+}
+
+.config-selector .ant-select-dropdown .ant-select-item-option-selected {
+  background-color: #e6f7ff;
+  border: 1px solid #91d5ff;
+}
+
+/* RESTful配置表单样式 */
+.ai-model-config-modal .ant-collapse-item .ant-collapse-content {
+  background-color: #f8fafc;
+  border-radius: 6px;
+}
+
+.ai-model-config-modal .ant-form-item {
+  margin-bottom: 12px;
+}
+
+.ai-model-config-modal .ant-form-item-label > label {
+  font-weight: 500;
+  color: #374151;
+}
+
+.ai-model-config-modal .ant-input,
+.ai-model-config-modal .ant-input-password,
+.ai-model-config-modal .ant-select-selector {
+  border-radius: 4px;
+}
+
+.ai-model-config-modal .ant-radio-group {
+  display: flex;
+  gap: 16px;
+}
+
+.ai-model-config-modal .ant-radio-wrapper {
+  margin-right: 0;
+}
+
 /* AI助手抽屉样式 */
 .ai-assistant-drawer .ant-drawer-body {
   padding: 0;
@@ -280,4 +516,64 @@
 .ai-assistant-drawer .conversation-list::-webkit-scrollbar-thumb:hover,
 .ai-assistant-drawer .messages-container::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
+}
+
+/* 锁定状态样式 */
+.ai-assistant-drawer.locked {
+  z-index: 999 !important; /* 降低层级避免遮挡主界面 */
+}
+
+.ai-assistant-drawer.locked .ant-drawer-mask {
+  display: none !important; /* 移除遮罩，不影响主界面 */
+}
+
+.ai-assistant-drawer.locked .ant-drawer-content {
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.25) !important; /* 增强边框阴影以突出显示 */
+  border-left: 4px solid #1890ff; /* 加强锁定状态指示 */
+  backdrop-filter: blur(0px) !important; /* 移除背景模糊 */
+}
+
+.ai-assistant-drawer.locked .ant-drawer-header {
+  background: linear-gradient(90deg, #e6f7ff 0%, #f0f9ff 100%) !important; /* 锁定状态标题背景 */
+  border-bottom: 2px solid #1890ff;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.15) !important;
+}
+
+/* 非锁定状态的样式调整 */
+.ai-assistant-drawer:not(.locked) .ant-drawer-mask {
+  background-color: rgba(0, 0, 0, 0.3) !important; /* 降低遮罩透明度 */
+}
+
+/* 锁定按钮样式 */
+.ai-assistant-drawer .ant-drawer-title .ant-btn {
+  transition: all 0.3s ease;
+  margin-left: 8px;
+}
+
+.ai-assistant-drawer .ant-drawer-title .ant-btn:hover {
+  transform: scale(1.05);
+}
+
+/* 锁定状态的额外视觉提示 */
+.ai-assistant-drawer.locked::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -8px;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, #1890ff 0%, #40a9ff 50%, #1890ff 100%);
+  z-index: 1001;
+  animation: lockedPulse 2s ease-in-out infinite alternate;
+}
+
+@keyframes lockedPulse {
+  0% {
+    opacity: 0.8;
+    box-shadow: -2px 0 8px rgba(24, 144, 255, 0.3);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: -2px 0 16px rgba(24, 144, 255, 0.6);
+  }
 }

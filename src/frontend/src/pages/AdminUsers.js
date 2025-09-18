@@ -256,7 +256,7 @@ const AdminUsers = () => {
     
     return (
       <div>
-        {roles.map((roleObj, index) => {
+        {(roles || []).map((roleObj, index) => {
           const roleName = roleObj?.name || roleObj;
           const config = roleMap[roleName] || { color: 'default', text: roleName };
           return <Tag key={index} color={config.color}>{config.text}</Tag>;

@@ -614,7 +614,7 @@ const AnsibleManagement = () => {
                 label="关联集群"
               >
                 <Select placeholder="选择关联的Kubernetes集群" allowClear>
-                  {clusters.map(cluster => (
+                  {(clusters || []).map(cluster => (
                     <Option key={cluster.id} value={cluster.id}>
                       {cluster.name}
                     </Option>
@@ -882,7 +882,7 @@ const AnsibleManagement = () => {
                   label="目标集群"
                 >
                   <Select placeholder="选择目标Kubernetes集群">
-                    {clusters.map(cluster => (
+                    {(clusters || []).map(cluster => (
                       <Option key={cluster.id} value={cluster.id}>
                         {cluster.name}
                       </Option>
@@ -1009,7 +1009,7 @@ const AnsibleManagement = () => {
               label="关联集群"
             >
               <Select placeholder="选择关联的Kubernetes集群">
-                {clusters.map(cluster => (
+                {(clusters || []).map(cluster => (
                   <Option key={cluster.id} value={cluster.id}>
                     {cluster.name}
                   </Option>

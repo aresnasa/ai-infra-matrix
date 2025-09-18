@@ -272,25 +272,35 @@ const EnhancedUserManagement = () => {
       title: '角色',
       dataIndex: 'roles',
       key: 'roles',
-      render: (roles) => (
-        <>
-          {roles?.map(role => (
-            <Tag key={role.id} color="green">{role.name}</Tag>
-          ))}
-        </>
-      )
+      render: (roles) => {
+        if (!roles || !Array.isArray(roles)) {
+          return <Tag color="default">无角色</Tag>;
+        }
+        return (
+          <>
+            {roles.map(role => (
+              <Tag key={role.id} color="green">{role.name}</Tag>
+            ))}
+          </>
+        );
+      }
     },
     {
       title: '用户组',
       dataIndex: 'user_groups',
       key: 'user_groups',
-      render: (groups) => (
-        <>
-          {groups?.map(group => (
-            <Tag key={group.id} color="purple">{group.name}</Tag>
-          ))}
-        </>
-      )
+      render: (groups) => {
+        if (!groups || !Array.isArray(groups)) {
+          return <Tag color="default">无用户组</Tag>;
+        }
+        return (
+          <>
+            {groups.map(group => (
+              <Tag key={group.id} color="purple">{group.name}</Tag>
+            ))}
+          </>
+        );
+      }
     },
     {
       title: '状态',

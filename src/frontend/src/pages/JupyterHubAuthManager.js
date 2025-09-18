@@ -256,7 +256,7 @@ const JupyterHubAuthManager = () => {
               </Descriptions.Item>
               <Descriptions.Item label="管理员用户">
                 <Space wrap>
-                  {authConfig.admin_users.map(user => (
+                  {(authConfig.admin_users || []).map(user => (
                     <Tag key={user} color="orange">{user}</Tag>
                   ))}
                 </Space>
@@ -357,7 +357,7 @@ const JupyterHubAuthManager = () => {
               </Descriptions.Item>
               <Descriptions.Item label="角色">
                 <Space wrap>
-                  {tokenInfo.user.roles.map(role => (
+                  {(tokenInfo.user.roles || []).map(role => (
                     <Tag key={role} color="blue">{role}</Tag>
                   ))}
                 </Space>

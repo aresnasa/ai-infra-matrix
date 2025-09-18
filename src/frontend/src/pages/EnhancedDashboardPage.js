@@ -542,7 +542,7 @@ const EnhancedDashboardPage = () => {
         <Tag color={authSourceColors[user.auth_source] || 'default'}>
           {user.auth_source === 'ldap' ? 'LDAP' : '本地'}
         </Tag>
-        {user.roles && user.roles.map(role => (
+        {user.roles && Array.isArray(user.roles) && user.roles.map(role => (
           <Tag key={role} color="purple">{role}</Tag>
         ))}
       </Space>
@@ -943,7 +943,7 @@ const EnhancedDashboardPage = () => {
                 <Divider />
                 <Text strong>包含组件：</Text>
                 <ul>
-                  {template.widgets.map((widget, index) => (
+                  {(template.widgets || []).map((widget, index) => (
                     <li key={index}>
                       {IFRAME_TYPES[widget.type]?.icon} {widget.title}
                       {!hasWidgetPermission(widget.type) && (

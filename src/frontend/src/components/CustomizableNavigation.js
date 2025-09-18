@@ -98,25 +98,24 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   const [isDragging, setIsDragging] = useState(false);
 
   // 检查用户权限
-  const hasRole = (requiredRoles) => {
-    if (!user || !requiredRoles) return false;
-    
-    const userRole = user.role;
-    const userRoles = user.roles?.map(r => r.name) || [];
-    
-    return requiredRoles.some(role => 
-      userRole === role || userRoles.includes(role)
-    );
-  };
-
-  // 加载用户自定义导航配置
+  const hasRole = (requiredRoles, userRoles = []) => {
+    if (!Array.isArray(requiredRoles) || requiredRoles.length === 0) return true;
+    if (!Array.isArray(userRoles) || userRoles.length === 0) return false;
+    return requiredRoles.some(role => userRoles.includes(role));
+  };  // 加载用户自定义导航配置
   const loadNavigationConfig = async () => {
     try {
       setLoading(true);
       const response = await navigationAPI.getUserNavigationConfig();
       if (response.data && response.data.data && response.data.data.length > 0) {
         console.log('加载用户自定义导航配置:', response.data.data);
-        setNavItems(response.data.data);
+        // 确保每个导航项的roles是数组格式
+        const dataArray = Array.isArray(response.data.data) ? response.data.data : [];
+        const formattedItems = dataArray.map(item => ({
+          ...item,
+          roles: Array.isArray(item.roles) ? item.roles : (item.roles ? [item.roles] : [])
+        }));
+        setNavItems(formattedItems);
       } else {
         console.log('使用默认导航配置');
         setNavItems(DEFAULT_NAV_ITEMS);
@@ -183,8 +182,9 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
 
   // 获取可见且有权限的导航项
   const getVisibleNavItems = () => {
+    const userRoles = user?.roles?.map(r => r.name) || [];
     return navItems
-      .filter(item => item.visible && hasRole(item.roles))
+      .filter(item => item.visible && hasRole(item.roles, userRoles))
       .sort((a, b) => a.order - b.order);
   };
 
@@ -231,7 +231,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                       size="small"
                       style={{
                         marginBottom: 8,
-                        opacity: !hasRole(item.roles) ? 0.5 : 1,
+                        opacity: !hasRole(item.roles, user?.roles?.map(r => r.name) || []) ? 0.5 : 1,
                         backgroundColor: snapshot.isDragging ? '#f0f0f0' : '#fff',
                         transform: snapshot.isDragging ? 'rotate(5deg)' : 'none',
                         ...provided.draggableProps.style
@@ -243,7 +243,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                             <DragOutlined style={{ color: '#999' }} />
                           </div>
                           <span>{item.label}</span>
-                          {!hasRole(item.roles) && (
+                          {!hasRole(item.roles, user?.roles?.map(r => r.name) || []) && (
                             <Text type="secondary" style={{ marginLeft: 8 }}>
                               (无权限)
                             </Text>
@@ -254,7 +254,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                             <Button
                               type="text"
                               size="small"
-                              disabled={!hasRole(item.roles)}
+                              disabled={!hasRole(item.roles, user?.roles?.map(r => r.name) || [])}
                               icon={item.visible ? <EyeOutlined /> : <EyeInvisibleOutlined />}
                               onClick={() => toggleItemVisibility(item.id)}
                             />

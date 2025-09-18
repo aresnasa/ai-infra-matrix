@@ -158,18 +158,20 @@ export const hasRoutePermission = (route, user) => {
   if (!roleTemplate || !ROLE_PERMISSIONS[roleTemplate]) {
     // 如果没有角色模板，默认只允许基本路由
     const basicRoutes = ['/projects', '/dashboard', '/enhanced-dashboard', '/profile'];
-    return basicRoutes.some(basicRoute => route.startsWith(basicRoute));
+    return Array.isArray(basicRoutes) ? basicRoutes.some(basicRoute => route.startsWith(basicRoute)) : false;
   }
 
   const permissions = ROLE_PERMISSIONS[roleTemplate];
 
   // 检查是否在允许路由列表中
-  const isAllowed = permissions.allowedRoutes.some(allowedRoute =>
+  const allowedRoutes = Array.isArray(permissions.allowedRoutes) ? permissions.allowedRoutes : [];
+  const isAllowed = allowedRoutes.some(allowedRoute =>
     route.startsWith(allowedRoute)
   );
 
   // 检查是否在限制路由列表中
-  const isRestricted = permissions.restrictedRoutes.some(restrictedRoute =>
+  const restrictedRoutes = Array.isArray(permissions.restrictedRoutes) ? permissions.restrictedRoutes : [];
+  const isRestricted = restrictedRoutes.some(restrictedRoute =>
     route.startsWith(restrictedRoute)
   );
 

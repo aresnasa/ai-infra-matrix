@@ -629,7 +629,7 @@ const AdminLDAPCenter = () => {
       )}
 
       <Card title="同步历史">
-        {syncHistory.length > 0 ? (
+        {Array.isArray(syncHistory) && syncHistory.length > 0 ? (
           <Timeline>
             {syncHistory.map((record, index) => (
               <Timeline.Item
