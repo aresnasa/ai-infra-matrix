@@ -48,9 +48,20 @@ func (c *AdminController) GetAllUsers(ctx *gin.Context) {
 		return
 	}
 
-	// 分页参数
+	// 分页参数，支持两种参数名称
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
+	
+	// 支持 limit 和 page_size 两种参数名称
+	limitStr := ctx.Query("limit")
+	if limitStr == "" {
+		limitStr = ctx.DefaultQuery("page_size", "10")
+	}
+	limit, _ := strconv.Atoi(limitStr)
+	
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+	
 	offset := (page - 1) * limit
 
 	var users []models.User
@@ -58,21 +69,31 @@ func (c *AdminController) GetAllUsers(ctx *gin.Context) {
 
 	// 获取总数
 	if err := c.db.Model(&models.User{}).Count(&total).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		logrus.Error("Count users error:", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户总数失败"})
 		return
 	}
 
 	// 获取用户列表，预加载角色和用户组
 	if err := c.db.Preload("Roles").Preload("UserGroups").
 		Offset(offset).Limit(limit).Find(&users).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		logrus.Error("Get users error:", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户列表失败"})
 		return
 	}
+
+	// 确保返回的users字段始终是数组，即使为空
+	if users == nil {
+		users = []models.User{}
+	}
+
+	logrus.Infof("GetAllUsers: found %d users, total: %d", len(users), total)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"users": users,
 		"total": total,
 		"page":  page,
+		"page_size": limit, // 同时返回两种字段名
 		"limit": limit,
 	})
 }

@@ -43,9 +43,29 @@ const AdminUsers = () => {
         page_size: pagination.pageSize,
       });
       
+      console.log('API响应:', response);
+      
+      // 安全地获取用户数据，确保它是数组
+      const usersData = response.data?.users || response.data || [];
+      const totalCount = response.data?.total || 0;
+      
+      // 确保usersData是数组
+      const safeUsersData = Array.isArray(usersData) ? usersData : [];
+      
+      if (safeUsersData.length === 0) {
+        console.log('没有找到用户数据或只有admin用户');
+        setUsers([]);
+        setPagination(prev => ({
+          ...prev,
+          total: totalCount,
+        }));
+        setLoading(false);
+        return;
+      }
+      
       // 获取每个用户的详细信息，包括认证来源
       const usersWithAuthSource = await Promise.all(
-        (response.data.users || []).map(async (user) => {
+        safeUsersData.map(async (user) => {
           try {
             const userDetail = await adminAPI.getUserWithAuthSource(user.id);
             return { ...user, ...userDetail.data };
@@ -59,10 +79,17 @@ const AdminUsers = () => {
       setUsers(usersWithAuthSource);
       setPagination(prev => ({
         ...prev,
-        total: response.data.total || 0,
+        total: totalCount,
       }));
     } catch (error) {
-      message.error('获取用户列表失败');
+      console.error('获取用户列表失败:', error);
+      message.error(`获取用户列表失败: ${error.message || '未知错误'}`);
+      // 设置空数组避免map错误
+      setUsers([]);
+      setPagination(prev => ({
+        ...prev,
+        total: 0,
+      }));
     } finally {
       setLoading(false);
     }
@@ -71,9 +98,14 @@ const AdminUsers = () => {
   const fetchPendingApprovals = async () => {
     try {
       const response = await adminAPI.getPendingApprovals();
-      setPendingApprovals(response.data || []);
+      const approvalsData = response.data || [];
+      // 确保是数组类型
+      const safeApprovalsData = Array.isArray(approvalsData) ? approvalsData : [];
+      setPendingApprovals(safeApprovalsData);
     } catch (error) {
       console.error('获取待审批申请失败:', error);
+      // 设置空数组避免错误
+      setPendingApprovals([]);
     }
   };
 
@@ -389,6 +421,27 @@ const AdminUsers = () => {
             </Button>
           </div>
 
+          {/* 用户状态提示 */}
+          {users.length === 0 && !loading && (
+            <Alert
+              message="用户信息"
+              description="当前系统中没有找到其他用户，只有admin管理员账户。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+          
+          {users.length === 1 && users[0]?.username === 'admin' && !loading && (
+            <Alert
+              message="用户信息"
+              description="当前系统中只有一个admin管理员用户，其他用户数量为0。您可以通过上方的'添加用户'按钮创建新用户。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+
           <Table
             columns={columns}
             dataSource={users}
@@ -396,6 +449,9 @@ const AdminUsers = () => {
             pagination={pagination}
             onChange={handleTableChange}
             rowKey="id"
+            locale={{
+              emptyText: loading ? '加载中...' : '暂无用户数据'
+            }}
           />
         </TabPane>
 

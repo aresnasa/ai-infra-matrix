@@ -153,7 +153,28 @@ func (s *aiServiceImpl) UpdateConfig(config *models.AIAssistantConfig) error {
 }
 
 func (s *aiServiceImpl) DeleteConfig(id uint) error {
-	return s.db.Delete(&models.AIAssistantConfig{}, id).Error
+	// 检查配置是否存在
+	var config models.AIAssistantConfig
+	if err := s.db.First(&config, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("配置不存在")
+		}
+		return fmt.Errorf("查询配置失败: %v", err)
+	}
+
+	// 检查是否有对话正在使用此配置
+	var conversationCount int64
+	if err := s.db.Model(&models.AIConversation{}).Where("config_id = ?", id).Count(&conversationCount).Error; err != nil {
+		logrus.Warnf("检查关联对话失败: %v", err)
+	}
+
+	// 软删除配置
+	if err := s.db.Delete(&config).Error; err != nil {
+		return fmt.Errorf("删除配置失败: %v", err)
+	}
+
+	logrus.Infof("配置删除成功: ID=%d, Name=%s, 关联对话数=%d", id, config.Name, conversationCount)
+	return nil
 }
 
 func (s *aiServiceImpl) ListConfigs() ([]models.AIAssistantConfig, error) {

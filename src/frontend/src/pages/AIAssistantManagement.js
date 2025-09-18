@@ -180,6 +180,23 @@ const AIAssistantManagement = () => {
 
   useEffect(() => {
     loadData();
+    
+    // 监听来自AI助手浮动窗口的配置更新事件
+    const handleConfigUpdate = (e) => {
+      console.log('🔄 检测到AI配置更新，重新加载数据...');
+      loadData();
+    };
+    
+    // 监听storage事件 (跨组件通信)
+    window.addEventListener('storage', handleConfigUpdate);
+    
+    // 监听自定义事件 (同页面组件通信)
+    window.addEventListener('ai-config-updated', handleConfigUpdate);
+    
+    return () => {
+      window.removeEventListener('storage', handleConfigUpdate);
+      window.removeEventListener('ai-config-updated', handleConfigUpdate);
+    };
   }, []);
 
   const handleCreateConfig = () => {

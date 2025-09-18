@@ -278,6 +278,15 @@ const AIAssistantFloat = () => {
       
       // 刷新配置列表以显示新增的配置
       await fetchConfigs();
+      
+      // 通知其他组件配置已更新 (用于AI助手管理页面同步)
+      localStorage.setItem('ai-config-updated', Date.now().toString());
+      window.dispatchEvent(new Event('storage'));
+      
+      // 触发自定义事件 (同页面组件通信)
+      window.dispatchEvent(new CustomEvent('ai-config-updated', {
+        detail: { action: 'created', config: configData }
+      }));
     } catch (error) {
       console.error('❌ 保存RESTful配置失败:', error);
       const errorMsg = error.response?.data?.message || error.message || '保存配置失败';
@@ -1167,7 +1176,8 @@ const AIAssistantFloat = () => {
           <Space>
             <AIRobotIcon size={20} animated={false} />
             <span style={{ fontSize: 16, fontWeight: 500 }}>AI助手</span>
-            {configs.length > 0 && (
+            {/* 模型选择器 */}
+            {configs.length > 0 ? (
               <Space size={4}>
                 <Select
                   value={selectedConfig}
@@ -1190,6 +1200,8 @@ const AIAssistantFloat = () => {
                   placeholder="选择AI模型"
                   optionLabelProp="label"
                   dropdownStyle={{ minWidth: 280 }} // 下拉框最小宽度
+                  notFoundContent="暂无可用配置"
+                  loading={!configs.length}
                 >
                   {configs.map(config => (
                     <Option 
@@ -1216,6 +1228,23 @@ const AIAssistantFloat = () => {
                     </Option>
                   ))}
                 </Select>
+                <Tooltip title="配置自定义模型地址">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => {
+                      setShowModelConfig(true);
+                      // 打开配置弹窗时刷新配置列表
+                      fetchConfigs();
+                    }}
+                    style={{ color: '#1890ff' }}
+                  />
+                </Tooltip>
+              </Space>
+            ) : (
+              <Space size={4}>
+                <span style={{ color: '#999', fontSize: 12 }}>暂无配置</span>
                 <Tooltip title="配置自定义模型地址">
                   <Button
                     type="text"
