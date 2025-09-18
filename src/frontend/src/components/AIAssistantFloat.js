@@ -94,14 +94,15 @@ const AIAssistantFloat = () => {
   const getModelIcon = (model) => {
     if (!model) return <RobotOutlined />;
     
-    const modelName = model.name?.toLowerCase() || '';
-    const modelType = model.model_type?.toLowerCase() || '';
+    const modelName = (model.name || '').toLowerCase();
+    const modelType = (model.model_type || '').toLowerCase();
+    const provider = (model.provider || '').toLowerCase();
     
-    if (modelName.includes('gpt') || modelType.includes('openai')) {
+    if (modelName.includes('gpt') || modelType.includes('openai') || provider.includes('openai')) {
       return <ThunderboltOutlined style={{ color: '#10B981' }} />;
-    } else if (modelName.includes('claude') || modelType.includes('anthropic')) {
+    } else if (modelName.includes('claude') || modelType.includes('anthropic') || provider.includes('claude')) {
       return <BulbOutlined style={{ color: '#F59E0B' }} />;
-    } else if (modelName.includes('gemini') || modelType.includes('google')) {
+    } else if (modelName.includes('gemini') || modelType.includes('google') || provider.includes('google')) {
       return <ApiOutlined style={{ color: '#3B82F6' }} />;
     } else {
       return <RobotOutlined style={{ color: '#8B5CF6' }} />;
@@ -322,12 +323,85 @@ const AIAssistantFloat = () => {
     try {
       console.log('📡 开始获取AI配置列表...');
       const response = await aiAPI.getConfigs();
-      console.log('✅ 获取配置响应:', response.data);
+      console.log('✅ 获取配置响应:', response);
+      console.log('✅ 原始响应数据:', response.data);
       
-      const configData = response.data.data || response.data || [];
+      let configData = [];
+      
+      // 处理不同的响应格式
+      if (response.data) {
+        if (response.data.data && Array.isArray(response.data.data)) {
+          configData = response.data.data;
+        } else if (Array.isArray(response.data)) {
+          configData = response.data;
+        } else if (response.data.configs && Array.isArray(response.data.configs)) {
+          configData = response.data.configs;
+        } else {
+          console.warn('⚠️ 未知的响应格式，尝试作为数组处理:', response.data);
+          configData = [];
+        }
+      }
+      
       console.log('📋 处理后的配置数据:', configData);
+      console.log('📋 配置数据类型:', Array.isArray(configData) ? 'Array' : typeof configData);
+      console.log('📋 配置数量:', configData.length);
       
-      setConfigs(configData);
+      if (!Array.isArray(configData)) {
+        console.error('❌ 配置数据不是数组:', configData);
+        setConfigs([]);
+        message.warning('配置数据格式错误，请联系管理员检查');
+        return;
+      }
+      
+      // 确保每个配置都有有效的ID
+      const validConfigs = configData.filter(config => {
+        const hasId = config.id && typeof config.id === 'number';
+        const hasName = config.name && typeof config.name === 'string';
+        if (!hasId) console.warn('⚠️ 配置缺少ID:', config);
+        if (!hasName) console.warn('⚠️ 配置缺少名称:', config);
+        return hasId && hasName;
+      });
+      
+      console.log('✅ 有效配置数量:', validConfigs.length);
+      
+      // 如果没有有效配置，尝试创建一个默认配置
+      if (validConfigs.length === 0) {
+        console.warn('⚠️ 没有有效配置，尝试创建默认配置...');
+        try {
+          const defaultConfig = {
+            name: '默认 OpenAI GPT-4',
+            provider: 'openai',
+            model: 'gpt-4',
+            api_endpoint: 'https://api.openai.com/v1',
+            max_tokens: 4096,
+            temperature: 0.7,
+            system_prompt: '你是一个智能的AI助手，请提供准确、有用的回答。',
+            is_enabled: true,
+            is_default: true,
+            description: '默认的OpenAI GPT-4模型配置',
+            category: '通用对话'
+          };
+          
+          console.log('🔧 尝试创建默认配置:', defaultConfig);
+          const createResponse = await aiAPI.createConfig(defaultConfig);
+          console.log('✅ 默认配置创建成功:', createResponse);
+          
+          // 重新获取配置列表
+          setTimeout(() => {
+            fetchConfigs();
+          }, 1000);
+          
+          message.info('正在创建默认配置，请稍候...');
+          return;
+        } catch (createError) {
+          console.error('❌ 创建默认配置失败:', createError);
+          message.error('无法创建默认配置，请联系管理员');
+          setConfigs([]);
+          return;
+        }
+      }
+      
+      setConfigs(validConfigs);
       
       // 获取用户之前保存的选择
       const savedConfigId = localStorage.getItem('ai-assistant-selected-config');
@@ -335,33 +409,70 @@ const AIAssistantFloat = () => {
       
       if (savedConfigId) {
         // 检查保存的配置是否仍然存在
-        const savedConfig = configData.find(config => config.id === parseInt(savedConfigId));
+        const savedConfig = validConfigs.find(config => config.id === parseInt(savedConfigId));
         if (savedConfig) {
           console.log('📋 恢复用户之前的选择:', savedConfig.name);
           targetConfigId = savedConfig.id;
+        } else {
+          console.log('⚠️ 保存的配置不存在，清除localStorage');
+          localStorage.removeItem('ai-assistant-selected-config');
         }
       }
       
       // 如果没有保存的配置或配置不存在，则选择默认配置
       if (!targetConfigId) {
-        const defaultConfig = configData.find(config => config.is_default);
+        const defaultConfig = validConfigs.find(config => config.is_default);
         if (defaultConfig) {
           console.log('🎯 使用默认配置:', defaultConfig.name);
           targetConfigId = defaultConfig.id;
-        } else if (configData.length > 0) {
-          console.log('🎯 使用第一个配置:', configData[0].name);
-          targetConfigId = configData[0].id;
+        } else if (validConfigs.length > 0) {
+          console.log('🎯 使用第一个配置:', validConfigs[0].name);
+          targetConfigId = validConfigs[0].id;
         }
       }
       
       // 只有在当前没有选择配置时才设置，避免覆盖用户当前的选择
       if (targetConfigId && !selectedConfig) {
+        console.log('🎯 设置选中配置:', targetConfigId);
+        setSelectedConfig(targetConfigId);
+      } else if (targetConfigId && selectedConfig && selectedConfig !== targetConfigId) {
+        console.log('🎯 更新选中配置:', targetConfigId, '(之前:', selectedConfig, ')');
         setSelectedConfig(targetConfigId);
       }
     } catch (error) {
       console.error('❌ 获取AI配置失败:', error);
       console.error('错误详情:', error.response?.data || error.message);
-      message.error('获取AI配置失败，请检查网络连接或联系管理员');
+      console.error('错误堆栈:', error.stack);
+      
+      // 根据错误类型提供不同的处理
+      if (error.response) {
+        const status = error.response.status;
+        const errorData = error.response.data;
+        
+        if (status === 401) {
+          message.error('认证失败，请重新登录');
+          console.log('🔑 认证失败，可能需要登录');
+        } else if (status === 403) {
+          message.error('权限不足，无法访问AI配置');
+          console.log('🚫 权限不足');
+        } else if (status === 404) {
+          message.error('API端点不存在，请检查配置');
+          console.log('🔍 API端点未找到');
+        } else if (status >= 500) {
+          message.error('服务器内部错误，请稍后重试');
+          console.log('🔥 服务器错误');
+        } else {
+          message.error(`获取配置失败: ${errorData?.message || error.message}`);
+        }
+      } else if (error.request) {
+        message.error('网络连接失败，请检查网络连接');
+        console.log('🌐 网络连接问题');
+      } else {
+        message.error('未知错误，请联系管理员');
+        console.log('❓ 未知错误');
+      }
+      
+      setConfigs([]);
     }
   };
 
@@ -1177,89 +1288,112 @@ const AIAssistantFloat = () => {
             <AIRobotIcon size={20} animated={false} />
             <span style={{ fontSize: 16, fontWeight: 500 }}>AI助手</span>
             {/* 模型选择器 */}
-            {configs.length > 0 ? (
-              <Space size={4}>
-                <Select
-                  value={selectedConfig}
-                  onChange={(value) => {
-                    console.log('🔄 切换模型配置:', value);
-                    setSelectedConfig(value);
-                    
-                    // 保存用户选择到localStorage
-                    localStorage.setItem('ai-assistant-selected-config', value.toString());
-                    
-                    const selected = configs.find(c => c.id === value);
-                    if (selected) {
-                      console.log('✅ 已选择模型:', selected.name);
-                      message.success(`已切换到模型: ${selected.name}`);
-                    }
-                  }}
-                  style={{ width: Math.min(220, panelWidth * 0.4) }} // 动态宽度
-                  size="small"
-                  className="config-selector"
-                  placeholder="选择AI模型"
-                  optionLabelProp="label"
-                  dropdownStyle={{ minWidth: 280 }} // 下拉框最小宽度
-                  notFoundContent="暂无可用配置"
-                  loading={!configs.length}
-                >
-                  {configs.map(config => (
-                    <Option 
-                      key={config.id} 
-                      value={config.id}
-                      label={
-                        <Space size={4}>
-                          {getModelIcon(config)}
-                          <span>{config.name}</span>
-                          {getModelStatusTag(config)}
-                        </Space>
+            <Space size={4}>
+              {configs.length > 0 ? (
+                <>
+                  <Select
+                    value={selectedConfig}
+                    onChange={(value) => {
+                      console.log('🔄 切换模型配置:', value, 'from:', selectedConfig);
+                      setSelectedConfig(value);
+                      
+                      // 保存用户选择到localStorage
+                      localStorage.setItem('ai-assistant-selected-config', value.toString());
+                      
+                      const selected = configs.find(c => c.id === value);
+                      if (selected) {
+                        console.log('✅ 已选择模型:', selected.name);
+                        message.success(`已切换到模型: ${selected.name}`);
+                        
+                        // 触发配置更新事件
+                        window.dispatchEvent(new CustomEvent('ai-config-updated', {
+                          detail: { configId: value, config: selected }
+                        }));
+                      } else {
+                        console.warn('⚠️ 未找到选中的配置:', value);
                       }
-                    >
-                      <Space size={8}>
-                        {getModelIcon(config)}
-                        <div>
-                          <div style={{ fontWeight: 500 }}>{config.name}</div>
-                          <div style={{ fontSize: 11, color: '#999' }}>
-                            {config.model_type || 'AI模型'} • {config.api_endpoint ? '自定义地址' : '默认配置'}
-                          </div>
-                        </div>
-                        {getModelStatusTag(config)}
-                      </Space>
-                    </Option>
-                  ))}
-                </Select>
-                <Tooltip title="配置自定义模型地址">
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => {
-                      setShowModelConfig(true);
-                      // 打开配置弹窗时刷新配置列表
-                      fetchConfigs();
                     }}
-                    style={{ color: '#1890ff' }}
-                  />
-                </Tooltip>
-              </Space>
-            ) : (
-              <Space size={4}>
-                <span style={{ color: '#999', fontSize: 12 }}>暂无配置</span>
-                <Tooltip title="配置自定义模型地址">
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => {
-                      setShowModelConfig(true);
-                      // 打开配置弹窗时刷新配置列表
-                      fetchConfigs();
+                    onDropdownVisibleChange={(open) => {
+                      console.log('📋 下拉框状态变化:', open, '配置数量:', configs.length);
                     }}
-                    style={{ color: '#1890ff' }}
-                  />
-                </Tooltip>
-              </Space>
-            )}
+                    onClick={() => {
+                      console.log('🖱️ Select组件被点击，当前配置:', configs);
+                    }}
+                    style={{ width: Math.min(220, panelWidth * 0.4) }} // 动态宽度
+                    size="small"
+                    className="config-selector"
+                    placeholder="选择AI模型"
+                    optionLabelProp="label"
+                    dropdownStyle={{ minWidth: 280, zIndex: 10001 }} // 增加z-index确保显示在最前面
+                    notFoundContent="暂无可用配置"
+                    loading={loading}
+                    allowClear={false}
+                    disabled={configs.length === 0}
+                    getPopupContainer={(trigger) => trigger.parentNode} // 确保下拉框在正确的容器中渲染
+                  >
+                    {configs.map(config => {
+                      console.log('🎨 渲染配置选项:', config.id, config.name, config);
+                      return (
+                        <Option 
+                          key={config.id} 
+                          value={config.id}
+                          label={
+                            <Space size={4}>
+                              {getModelIcon(config)}
+                              <span>{config.name}</span>
+                              {getModelStatusTag(config)}
+                            </Space>
+                          }
+                        >
+                          <Space size={8}>
+                            {getModelIcon(config)}
+                            <div>
+                              <div style={{ fontWeight: 500 }}>{config.name}</div>
+                              <div style={{ fontSize: 11, color: '#999' }}>
+                                {config.model || 'AI模型'} • {config.api_endpoint ? '自定义地址' : '默认配置'}
+                              </div>
+                            </div>
+                            {getModelStatusTag(config)}
+                          </Space>
+                        </Option>
+                      );
+                    })}
+                  </Select>
+                  <Tooltip title="配置自定义模型地址">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        setShowModelConfig(true);
+                        // 打开配置弹窗时刷新配置列表
+                        fetchConfigs();
+                      }}
+                      style={{ color: '#1890ff' }}
+                    />
+                  </Tooltip>
+                </>
+              ) : (
+                <>
+                  <span style={{ color: '#999', fontSize: 12 }}>
+                    {loading ? '加载配置中...' : '暂无配置'}
+                  </span>
+                  <Tooltip title="配置自定义模型地址">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        setShowModelConfig(true);
+                        // 打开配置弹窗时刷新配置列表
+                        fetchConfigs();
+                      }}
+                      style={{ color: '#1890ff' }}
+                    />
+                  </Tooltip>
+                </>
+              )}
+            </Space>
           </Space>
           <Space>
             <Tooltip title="锁定面板">

@@ -652,59 +652,84 @@ func (s *aiServiceImpl) BatchUpdateConfigs(configIDs []uint, updates map[string]
 func (s *aiServiceImpl) InitDefaultConfigs() error {
 	logrus.Info("正在初始化默认AI配置...")
 
-	// 检查是否已存在默认配置
-	var existingCount int64
-	err := s.db.Model(&models.AIAssistantConfig{}).Where("is_default = ? OR provider IN ?", true, []models.AIProvider{models.ProviderOpenAI, models.ProviderClaude}).Count(&existingCount).Error
+	// 检查是否已存在基础配置
+	var totalCount int64
+	err := s.db.Model(&models.AIAssistantConfig{}).Count(&totalCount).Error
 	if err != nil {
 		return fmt.Errorf("检查现有配置失败: %v", err)
 	}
 
-	// 如果已存在默认配置，跳过初始化
-	if existingCount > 0 {
-		logrus.Info("默认AI配置已存在，跳过初始化")
-		return nil
+	// 检查是否存在默认配置
+	var defaultCount int64
+	err = s.db.Model(&models.AIAssistantConfig{}).Where("is_default = ?", true).Count(&defaultCount).Error
+	if err != nil {
+		return fmt.Errorf("检查默认配置失败: %v", err)
 	}
 
-	// 创建默认的OpenAI配置
-	openaiConfig := &models.AIAssistantConfig{
-		Name:         "默认 OpenAI GPT-4",
-		Provider:     models.ProviderOpenAI,
-		ModelType:    models.ModelTypeChat,
-		APIEndpoint:  "https://api.openai.com/v1",
-		Model:        "gpt-4",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		TopP:         1.0,
-		SystemPrompt: "你是一个智能的AI助手，请提供准确、有用的回答。",
-		IsEnabled:    true,
-		IsDefault:    true, // 设为默认配置
+	// 如果没有任何配置，创建默认配置
+	if totalCount == 0 {
+		logrus.Info("数据库中没有AI配置，开始创建默认配置...")
+
+		// 创建默认的OpenAI配置
+		openaiConfig := &models.AIAssistantConfig{
+			Name:         "默认 OpenAI GPT-4",
+			Provider:     models.ProviderOpenAI,
+			ModelType:    models.ModelTypeChat,
+			APIEndpoint:  "https://api.openai.com/v1",
+			Model:        "gpt-4",
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是一个智能的AI助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    true, // 设为默认配置
+			Description:  "默认的OpenAI GPT-4模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := s.CreateConfig(openaiConfig); err != nil {
+			logrus.Errorf("创建默认OpenAI配置失败: %v", err)
+			return fmt.Errorf("创建默认OpenAI配置失败: %v", err)
+		}
+
+		// 创建默认的Claude配置
+		claudeConfig := &models.AIAssistantConfig{
+			Name:         "默认 Claude 3.5 Sonnet",
+			Provider:     models.ProviderClaude,
+			ModelType:    models.ModelTypeChat,
+			APIEndpoint:  "https://api.anthropic.com",
+			Model:        "claude-3-5-sonnet-20241022",
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
+			IsEnabled:    true,
+			IsDefault:    false, // 只有一个默认配置
+			Description:  "默认的Claude 3.5 Sonnet模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := s.CreateConfig(claudeConfig); err != nil {
+			logrus.Errorf("创建默认Claude配置失败: %v", err)
+			return fmt.Errorf("创建默认Claude配置失败: %v", err)
+		}
+
+		logrus.Infof("默认AI配置初始化完成，创建了 %d 个基础配置", 2)
+	} else if defaultCount == 0 {
+		// 如果有配置但没有默认配置，将第一个启用的配置设为默认
+		var firstConfig models.AIAssistantConfig
+		err := s.db.Where("is_enabled = ?", true).First(&firstConfig).Error
+		if err == nil {
+			firstConfig.IsDefault = true
+			if updateErr := s.db.Save(&firstConfig).Error; updateErr != nil {
+				logrus.Warnf("设置默认配置失败: %v", updateErr)
+			} else {
+				logrus.Infof("将配置 '%s' 设为默认配置", firstConfig.Name)
+			}
+		}
+	} else {
+		logrus.Infof("检测到 %d 个配置，包含 %d 个默认配置，跳过初始化", totalCount, defaultCount)
 	}
 
-	if err := s.CreateConfig(openaiConfig); err != nil {
-		logrus.Errorf("创建默认OpenAI配置失败: %v", err)
-		return fmt.Errorf("创建默认OpenAI配置失败: %v", err)
-	}
-
-	// 创建默认的Claude配置
-	claudeConfig := &models.AIAssistantConfig{
-		Name:         "默认 Claude 3.5 Sonnet",
-		Provider:     models.ProviderClaude,
-		ModelType:    models.ModelTypeChat,
-		APIEndpoint:  "https://api.anthropic.com",
-		Model:        "claude-3-5-sonnet-20241022",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		TopP:         1.0,
-		SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
-		IsEnabled:    true,
-		IsDefault:    false, // 只有一个默认配置
-	}
-
-	if err := s.CreateConfig(claudeConfig); err != nil {
-		logrus.Errorf("创建默认Claude配置失败: %v", err)
-		return fmt.Errorf("创建默认Claude配置失败: %v", err)
-	}
-
-	logrus.Info("默认AI配置初始化完成")
 	return nil
 }
