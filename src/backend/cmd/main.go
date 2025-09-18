@@ -175,6 +175,14 @@ func main() {
 		logrus.Info("AI Gateway initialized successfully")
 	}
 
+	// 初始化AI默认配置
+	aiService := services.NewAIService()
+	if err := aiService.InitDefaultConfigs(); err != nil {
+		logrus.WithError(err).Error("Failed to initialize default AI configurations")
+	} else {
+		logrus.Info("Default AI configurations initialized successfully")
+	}
+
 	// 设置JWT密钥
 	jwt.SetSecret(cfg.JWTSecret)
 

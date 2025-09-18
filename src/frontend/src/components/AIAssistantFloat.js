@@ -64,6 +64,7 @@ const AIAssistantFloat = () => {
   const [configs, setConfigs] = useState([]);
   const [selectedConfig, setSelectedConfig] = useState(null);
   const [showModelConfig, setShowModelConfig] = useState(false); // 控制模型配置弹窗
+  const [modelSearchText, setModelSearchText] = useState(''); // 模型配置搜索文本
   const [customModelUrl, setCustomModelUrl] = useState(''); // 自定义模型地址
   const [customRestfulConfig, setCustomRestfulConfig] = useState({ // RESTful接口配置
     name: '',
@@ -284,6 +285,29 @@ const AIAssistantFloat = () => {
     }
   };
 
+  // 过滤模型配置的函数
+  const getFilteredConfigs = () => {
+    if (!modelSearchText.trim()) {
+      return configs; // 没有搜索文本时返回所有配置
+    }
+    
+    const searchText = modelSearchText.toLowerCase();
+    return configs.filter(config => {
+      const modelName = (config.name || '').toLowerCase();
+      const modelType = (config.model_type || '').toLowerCase();
+      const apiUrl = (config.api_endpoint || '').toLowerCase();
+      const description = (config.description || '').toLowerCase();
+      const provider = (config.provider || '').toLowerCase();
+      
+      // 支持按名称、类型、API地址、描述、提供商进行模糊搜索
+      return modelName.includes(searchText) || 
+             modelType.includes(searchText) || 
+             apiUrl.includes(searchText) ||
+             description.includes(searchText) ||
+             provider.includes(searchText);
+    });
+  };
+
   // 获取配置列表
   const fetchConfigs = async () => {
     try {
@@ -296,16 +320,34 @@ const AIAssistantFloat = () => {
       
       setConfigs(configData);
       
-      // 选择默认配置
-      const defaultConfig = configData.find(config => config.is_default);
-      if (defaultConfig) {
-        console.log('🎯 使用默认配置:', defaultConfig.name);
-        setSelectedConfig(defaultConfig.id);
-      } else if (configData.length > 0) {
-        console.log('🎯 使用第一个配置:', configData[0].name);
-        setSelectedConfig(configData[0].id);
-      } else {
-        console.log('⚠️ 没有可用的AI配置');
+      // 获取用户之前保存的选择
+      const savedConfigId = localStorage.getItem('ai-assistant-selected-config');
+      let targetConfigId = null;
+      
+      if (savedConfigId) {
+        // 检查保存的配置是否仍然存在
+        const savedConfig = configData.find(config => config.id === parseInt(savedConfigId));
+        if (savedConfig) {
+          console.log('📋 恢复用户之前的选择:', savedConfig.name);
+          targetConfigId = savedConfig.id;
+        }
+      }
+      
+      // 如果没有保存的配置或配置不存在，则选择默认配置
+      if (!targetConfigId) {
+        const defaultConfig = configData.find(config => config.is_default);
+        if (defaultConfig) {
+          console.log('🎯 使用默认配置:', defaultConfig.name);
+          targetConfigId = defaultConfig.id;
+        } else if (configData.length > 0) {
+          console.log('🎯 使用第一个配置:', configData[0].name);
+          targetConfigId = configData[0].id;
+        }
+      }
+      
+      // 只有在当前没有选择配置时才设置，避免覆盖用户当前的选择
+      if (targetConfigId && !selectedConfig) {
+        setSelectedConfig(targetConfigId);
       }
     } catch (error) {
       console.error('❌ 获取AI配置失败:', error);
@@ -1068,7 +1110,11 @@ const AIAssistantFloat = () => {
       <FloatButton
         icon={<AIRobotIcon size={28} animated={true} />}
         tooltip="AI助手"
-        onClick={() => setVisible(true)}
+        onClick={() => {
+          console.log('🔄 打开AI助手，刷新配置列表...');
+          setVisible(true);
+          fetchConfigs(); // 每次打开时刷新配置以确保数据同步
+        }}
         style={{
           right: 24,
           bottom: 24,
@@ -1128,6 +1174,10 @@ const AIAssistantFloat = () => {
                   onChange={(value) => {
                     console.log('🔄 切换模型配置:', value);
                     setSelectedConfig(value);
+                    
+                    // 保存用户选择到localStorage
+                    localStorage.setItem('ai-assistant-selected-config', value.toString());
+                    
                     const selected = configs.find(c => c.id === value);
                     if (selected) {
                       console.log('✅ 已选择模型:', selected.name);
@@ -1140,22 +1190,6 @@ const AIAssistantFloat = () => {
                   placeholder="选择AI模型"
                   optionLabelProp="label"
                   dropdownStyle={{ minWidth: 280 }} // 下拉框最小宽度
-                  showSearch
-                  filterOption={(input, option) => {
-                    // 安全地获取模型配置数据进行搜索
-                    const config = configs.find(c => c.id === option?.value);
-                    if (!config) return false;
-                    
-                    const searchText = input?.toLowerCase() || '';
-                    const modelName = (config.name || '').toLowerCase();
-                    const modelType = (config.model_type || '').toLowerCase();
-                    const apiUrl = (config.api_endpoint || '').toLowerCase();
-                    
-                    // 支持按名称、类型、API地址搜索
-                    return modelName.includes(searchText) || 
-                           modelType.includes(searchText) || 
-                           apiUrl.includes(searchText);
-                  }}
                 >
                   {configs.map(config => (
                     <Option 
@@ -1568,73 +1602,108 @@ const AIAssistantFloat = () => {
             <span style={{ fontSize: 14, fontWeight: 500 }}>可用模型列表</span>
           </Divider>
 
+          {/* 模型搜索框 */}
+          <Input
+            prefix={<MessageOutlined style={{ color: '#1890ff' }} />}
+            placeholder="搜索模型名称、类型或API地址（忽略大小写）"
+            value={modelSearchText}
+            onChange={(e) => setModelSearchText(e.target.value)}
+            allowClear
+            size="small"
+            style={{ marginBottom: 16 }}
+          />
+
           {/* 模型列表 */}
           <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-            {configs.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 20 }}>
-                <RobotOutlined style={{ fontSize: 32, color: '#d9d9d9', marginBottom: 8 }} />
-                <div style={{ color: '#999' }}>暂无可用的AI模型配置</div>
-                <Button 
-                  type="link" 
-                  onClick={() => {
-                    setShowModelConfig(false);
-                    navigate('/admin/ai-configs');
-                  }}
-                >
-                  前往配置
-                </Button>
-              </div>
-            ) : (
-              <List
-                dataSource={configs}
-                renderItem={(config) => (
-                  <List.Item
-                    style={{
-                      padding: '12px 16px',
-                      cursor: 'pointer',
-                      borderRadius: 8,
-                      marginBottom: 8,
-                      border: '1px solid #f0f0f0',
-                      backgroundColor: config.id === selectedConfig ? '#f6ffed' : '#fafafa',
-                    }}
-                    onClick={() => {
-                      setSelectedConfig(config.id);
-                      message.success(`已选择模型: ${config.name}`);
-                    }}
-                  >
-                    <List.Item.Meta
-                      avatar={<Avatar icon={getModelIcon(config)} />}
-                      title={
-                        <Space>
-                          <span style={{ fontWeight: 500 }}>{config.name}</span>
-                          {getModelStatusTag(config)}
-                          {config.id === selectedConfig && (
-                            <Tag color="green" size="small">当前使用</Tag>
-                          )}
-                        </Space>
-                      }
-                      description={
-                        <div>
-                          <div style={{ marginBottom: 4 }}>
-                            类型: {config.model_type || 'AI模型'}
+            {(() => {
+              const filteredConfigs = getFilteredConfigs();
+              
+              if (configs.length === 0) {
+                return (
+                  <div style={{ textAlign: 'center', padding: 20 }}>
+                    <RobotOutlined style={{ fontSize: 32, color: '#d9d9d9', marginBottom: 8 }} />
+                    <div style={{ color: '#999' }}>暂无可用的AI模型配置</div>
+                    <Button 
+                      type="link" 
+                      onClick={() => {
+                        setShowModelConfig(false);
+                        navigate('/admin/ai-configs');
+                      }}
+                    >
+                      前往配置
+                    </Button>
+                  </div>
+                );
+              }
+              
+              if (filteredConfigs.length === 0 && modelSearchText.trim()) {
+                return (
+                  <div style={{ textAlign: 'center', padding: 20 }}>
+                    <MessageOutlined style={{ fontSize: 32, color: '#d9d9d9', marginBottom: 8 }} />
+                    <div style={{ color: '#999' }}>没有找到匹配 "{modelSearchText}" 的模型配置</div>
+                    <Button 
+                      type="link" 
+                      onClick={() => setModelSearchText('')}
+                      size="small"
+                    >
+                      清除搜索
+                    </Button>
+                  </div>
+                );
+              }
+              
+              return (
+                <List
+                  dataSource={filteredConfigs}
+                  renderItem={(config) => (
+                    <List.Item
+                      style={{
+                        padding: '12px 16px',
+                        cursor: 'pointer',
+                        borderRadius: 8,
+                        marginBottom: 8,
+                        border: '1px solid #f0f0f0',
+                        backgroundColor: config.id === selectedConfig ? '#f6ffed' : '#fafafa',
+                      }}
+                      onClick={() => {
+                        setSelectedConfig(config.id);
+                        message.success(`已选择模型: ${config.name}`);
+                      }}
+                    >
+                      <List.Item.Meta
+                        avatar={<Avatar icon={getModelIcon(config)} />}
+                        title={
+                          <Space>
+                            <span style={{ fontWeight: 500 }}>{config.name}</span>
+                            {getModelStatusTag(config)}
+                            {config.id === selectedConfig && (
+                              <Tag color="green" size="small">当前使用</Tag>
+                            )}
+                          </Space>
+                        }
+                        description={
+                          <div>
+                            <div style={{ marginBottom: 4 }}>
+                              类型: {config.model_type || 'AI模型'} • 提供商: {config.provider || '未知'}
+                            </div>
+                            {config.api_endpoint && (
+                              <div style={{ fontSize: 12, color: '#666' }}>
+                                API地址: {config.api_endpoint}
+                              </div>
+                            )}
+                            {config.description && (
+                              <div style={{ fontSize: 12, color: '#999' }}>
+                                {config.description}
+                              </div>
+                            )}
                           </div>
-                          {config.api_endpoint && (
-                            <div style={{ fontSize: 12, color: '#666' }}>
-                              API地址: {config.api_endpoint}
-                            </div>
-                          )}
-                          {config.description && (
-                            <div style={{ fontSize: 12, color: '#999' }}>
-                              {config.description}
-                            </div>
-                          )}
-                        </div>
-                      }
-                    />
-                  </List.Item>
-                )}
-              />
-            )}
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              );
+            })()}
           </div>
 
           <Divider orientation="left" orientationMargin="0">

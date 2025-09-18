@@ -23,6 +23,7 @@ type AIService interface {
 	UpdateConfig(config *models.AIAssistantConfig) error
 	DeleteConfig(id uint) error
 	ListConfigs() ([]models.AIAssistantConfig, error)
+	InitDefaultConfigs() error
 
 	// 对话管理
 	CreateConversation(userID uint, configID uint, title string, context string) (*models.AIConversation, error)
@@ -624,4 +625,65 @@ func (s *aiServiceImpl) BatchUpdateConfigs(configIDs []uint, updates map[string]
 	return s.db.Model(&models.AIAssistantConfig{}).
 		Where("id IN ?", configIDs).
 		Updates(updates).Error
+}
+
+// InitDefaultConfigs 初始化默认的OpenAI和Claude配置
+func (s *aiServiceImpl) InitDefaultConfigs() error {
+	logrus.Info("正在初始化默认AI配置...")
+
+	// 检查是否已存在默认配置
+	var existingCount int64
+	err := s.db.Model(&models.AIAssistantConfig{}).Where("is_default = ? OR provider IN ?", true, []models.AIProvider{models.ProviderOpenAI, models.ProviderClaude}).Count(&existingCount).Error
+	if err != nil {
+		return fmt.Errorf("检查现有配置失败: %v", err)
+	}
+
+	// 如果已存在默认配置，跳过初始化
+	if existingCount > 0 {
+		logrus.Info("默认AI配置已存在，跳过初始化")
+		return nil
+	}
+
+	// 创建默认的OpenAI配置
+	openaiConfig := &models.AIAssistantConfig{
+		Name:         "默认 OpenAI GPT-4",
+		Provider:     models.ProviderOpenAI,
+		ModelType:    models.ModelTypeChat,
+		APIEndpoint:  "https://api.openai.com/v1",
+		Model:        "gpt-4",
+		MaxTokens:    4096,
+		Temperature:  0.7,
+		TopP:         1.0,
+		SystemPrompt: "你是一个智能的AI助手，请提供准确、有用的回答。",
+		IsEnabled:    true,
+		IsDefault:    true, // 设为默认配置
+	}
+
+	if err := s.CreateConfig(openaiConfig); err != nil {
+		logrus.Errorf("创建默认OpenAI配置失败: %v", err)
+		return fmt.Errorf("创建默认OpenAI配置失败: %v", err)
+	}
+
+	// 创建默认的Claude配置
+	claudeConfig := &models.AIAssistantConfig{
+		Name:         "默认 Claude 3.5 Sonnet",
+		Provider:     models.ProviderClaude,
+		ModelType:    models.ModelTypeChat,
+		APIEndpoint:  "https://api.anthropic.com",
+		Model:        "claude-3-5-sonnet-20241022",
+		MaxTokens:    4096,
+		Temperature:  0.7,
+		TopP:         1.0,
+		SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
+		IsEnabled:    true,
+		IsDefault:    false, // 只有一个默认配置
+	}
+
+	if err := s.CreateConfig(claudeConfig); err != nil {
+		logrus.Errorf("创建默认Claude配置失败: %v", err)
+		return fmt.Errorf("创建默认Claude配置失败: %v", err)
+	}
+
+	logrus.Info("默认AI配置初始化完成")
+	return nil
 }
