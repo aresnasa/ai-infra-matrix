@@ -88,15 +88,6 @@ const DEFAULT_NAV_ITEMS = [
     visible: true,
     order: 6,
     roles: ['admin', 'super-admin']
-  },
-  {
-    id: 'ldap-management',
-    key: '/ldap-management',
-    label: 'LDAP用户管理',
-    icon: 'TeamOutlined',
-    visible: true,
-    order: 7,
-    roles: ['admin', 'super-admin']
   }
 ];
 

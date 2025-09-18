@@ -413,6 +413,7 @@ func main() {
 			users.DELETE("/:id", userHandler.DeleteUser)
 			users.PUT("/:id/reset-password", userHandler.AdminResetPassword)
 			users.PUT("/:id/groups", userHandler.AdminUpdateUserGroups)
+			users.PUT("/:id/status", userHandler.ToggleUserStatus)
 		}
 
 		// 增强用户管理路由（管理员）
@@ -597,17 +598,16 @@ func main() {
 			admin.DELETE("/projects/:id/force-delete", adminController.ForceDeleteProject)
 			admin.DELETE("/projects/trash/clear", adminController.ClearTrash)
 			
-			// LDAP配置管理
+			// LDAP管理相关接口
 			admin.GET("/ldap/config", adminController.GetLDAPConfig)
 			admin.PUT("/ldap/config", adminController.UpdateLDAPConfig)
 			admin.POST("/ldap/test", adminController.TestLDAPConnection)
+			admin.GET("/ldap/users", adminController.GetLDAPUsers)
 			
-			// LDAP同步管理
+			// LDAP同步相关接口
 			admin.POST("/ldap/sync", adminController.SyncLDAPUsers)
 			admin.GET("/ldap/sync/:sync_id/status", adminController.GetLDAPSyncStatus)
-			admin.GET("/ldap/sync/history", adminController.GetLDAPSyncHistory)
-			
-			// 系统统计
+			admin.GET("/ldap/sync/history", adminController.GetLDAPSyncHistory)			// 系统统计
 			admin.GET("/stats", adminController.GetSystemStats)
 			admin.GET("/user-stats", adminController.GetUserStatistics)
 			

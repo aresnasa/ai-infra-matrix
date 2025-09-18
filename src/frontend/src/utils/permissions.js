@@ -20,8 +20,7 @@ export const ROLE_PERMISSIONS = {
       '/saltstack',
       '/ansible',
       '/kubernetes',
-      '/kafka-ui',
-      '/ldap-management'
+      '/kafka-ui'
     ],
     menuItems: [
       'dashboard',
@@ -98,7 +97,6 @@ export const ROLE_PERMISSIONS = {
       '/ansible',
       '/kubernetes',
       '/kafka-ui',
-      '/ldap-management',
       '/dashboard',
       '/enhanced-dashboard',
       '/admin',

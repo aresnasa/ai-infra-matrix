@@ -85,7 +85,7 @@ export const useSmartPreload = (user) => {
       case 'admin-auth':
         return import('../pages/AdminAuthSettings');
       case 'admin-ldap':
-        return import('../pages/AdminLDAP');
+        return import('../pages/AdminLDAPCenter');
       case 'admin-test':
         return import('../pages/AdminTest');
       case 'admin-trash':
@@ -127,7 +127,7 @@ export const usePagePreload = (preloadPages = []) => {
             await import('../pages/AdminAuthSettings');
             break;
           case 'admin-ldap':
-            await import('../pages/AdminLDAP');
+            await import('../pages/AdminLDAPCenter');
             break;
           case 'admin-test':
             await import('../pages/AdminTest');

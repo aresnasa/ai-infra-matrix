@@ -409,6 +409,7 @@ export const adminAPI = {
   createUser: (userData) => api.post('/admin/users', userData),
   updateUser: (id, userData) => api.put(`/admin/users/${id}`, userData),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
+  toggleUserStatus: (id, isActive) => api.put(`/users/${id}/status`, { is_active: isActive }),
   
   // 项目管理
   getProjects: () => api.get('/admin/projects'),
@@ -456,6 +457,7 @@ export const adminAPI = {
   updateLDAPConfig: (config) => api.put('/admin/ldap/config', config),
   testLDAPConnection: (config) => api.post('/admin/ldap/test', config),
   syncLDAPUsers: (options = {}) => api.post('/admin/ldap/sync', options),
+  getLDAPUsers: () => api.get('/admin/ldap/users'),
   getLDAPSyncStatus: (syncId) => api.get(`/admin/ldap/sync/${syncId}/status`),
   getLDAPSyncHistory: (limit = 10) => api.get(`/admin/ldap/sync/history?limit=${limit}`),
 };

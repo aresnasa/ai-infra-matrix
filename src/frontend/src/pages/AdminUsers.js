@@ -79,11 +79,16 @@ const AdminUsers = () => {
 
   const handleEdit = (user) => {
     setEditingUser(user);
+    // 临时处理：将角色数组转换为单个角色用于编辑
+    const primaryRole = user.roles && user.roles.length > 0 
+      ? (user.roles[0]?.name || user.roles[0]) 
+      : user.role; // 回退到旧的 role 字段
+    
     form.setFieldsValue({
       username: user.username,
       email: user.email,
       status: user.status,
-      role: user.role,
+      role: primaryRole,
     });
     setModalVisible(true);
   };
@@ -238,14 +243,26 @@ const AdminUsers = () => {
     return <Tag color={config.color}>{config.text}</Tag>;
   };
 
-  const getRoleTag = (role) => {
+  const getRoleTag = (roles) => {
+    if (!Array.isArray(roles) || roles.length === 0) {
+      return <Tag color="default">无角色</Tag>;
+    }
+    
     const roleMap = {
       'admin': { color: 'purple', text: '管理员' },
       'user': { color: 'blue', text: '普通用户' },
       'viewer': { color: 'cyan', text: '查看者' },
     };
-    const config = roleMap[role] || { color: 'default', text: role };
-    return <Tag color={config.color}>{config.text}</Tag>;
+    
+    return (
+      <div>
+        {roles.map((roleObj, index) => {
+          const roleName = roleObj?.name || roleObj;
+          const config = roleMap[roleName] || { color: 'default', text: roleName };
+          return <Tag key={index} color={config.color}>{config.text}</Tag>;
+        })}
+      </div>
+    );
   };
 
   const columns = [
@@ -285,8 +302,8 @@ const AdminUsers = () => {
     },
     {
       title: '角色',
-      dataIndex: 'role',
-      key: 'role',
+      dataIndex: 'roles',
+      key: 'roles',
       render: getRoleTag,
     },
     {
@@ -331,7 +348,7 @@ const AdminUsers = () => {
           </Button>
           <Popconfirm
             title={
-              record.auth_source === 'local' && record.role === 'admin' 
+              record.auth_source === 'local' && record.roles?.some(role => (role?.name || role) === 'admin')
                 ? "警告：这是本地管理员账户，删除后可能无法恢复管理权限。确定要删除吗？"
                 : "确定要删除这个用户吗？"
             }
@@ -343,7 +360,7 @@ const AdminUsers = () => {
               type="link"
               danger
               icon={<DeleteOutlined />}
-              disabled={record.auth_source === 'local' && record.role === 'admin' && record.status === 'active'}
+              disabled={record.auth_source === 'local' && record.roles?.some(role => (role?.name || role) === 'admin') && record.status === 'active'}
             >
               删除
             </Button>
@@ -532,7 +549,7 @@ const AdminUsers = () => {
           >
             <Select 
               placeholder="请选择状态"
-              disabled={editingUser?.auth_source === 'local' && editingUser?.role === 'admin'}
+              disabled={editingUser?.auth_source === 'local' && editingUser?.roles?.some(role => (role?.name || role) === 'admin')}
             >
               <Option value="active">激活</Option>
               <Option value="inactive">停用</Option>
@@ -540,7 +557,7 @@ const AdminUsers = () => {
             </Select>
           </Form.Item>
           
-          {editingUser?.auth_source === 'local' && editingUser?.role === 'admin' && (
+          {editingUser?.auth_source === 'local' && editingUser?.roles?.some(role => (role?.name || role) === 'admin') && (
             <div style={{ 
               padding: '12px', 
               backgroundColor: '#fff7e6', 

@@ -789,6 +789,41 @@ func (c *AdminController) GetLDAPSyncHistory(ctx *gin.Context) {
 	})
 }
 
+// GetLDAPUsers 获取LDAP用户列表（管理员专用）
+// @Summary 获取LDAP用户列表
+// @Description 管理员获取LDAP服务器中的用户列表（只读）
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param query query string false "搜索查询"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/ldap/users [get]
+func (c *AdminController) GetLDAPUsers(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "users", "read", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	query := ctx.Query("query")
+	if query == "" {
+		query = "*" // 默认查询所有用户
+	}
+	
+	users, err := c.ldapService.SearchUsers(query)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取LDAP用户失败: " + err.Error(),
+		})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{
+		"users": users,
+		"count": len(users),
+	})
+}
+
 // GetProjectsTrash 获取回收站中的项目（管理员专用）
 // @Summary 获取回收站项目
 // @Description 管理员获取回收站中的所有项目

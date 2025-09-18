@@ -397,7 +397,7 @@ const EnhancedUserManagement = () => {
         }
       >
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-          {userGroups.map(group => (
+          {userGroups?.map(group => (
             <Tag 
               key={group.id} 
               color="purple" 
@@ -406,7 +406,7 @@ const EnhancedUserManagement = () => {
             >
               <TeamOutlined /> {group.name} ({group.users?.length || 0})
             </Tag>
-          ))}
+          )) || []}
         </div>
       </Card>
 
@@ -500,9 +500,9 @@ const EnhancedUserManagement = () => {
             label="角色"
           >
             <Select mode="multiple" placeholder="选择角色">
-              {roles.map(role => (
+              {roles?.map(role => (
                 <Option key={role.id} value={role.id}>{role.name}</Option>
-              ))}
+              )) || []}
             </Select>
           </Form.Item>
 
@@ -511,9 +511,9 @@ const EnhancedUserManagement = () => {
             label="用户组"
           >
             <Select mode="multiple" placeholder="选择用户组">
-              {userGroups.map(group => (
+              {userGroups?.map(group => (
                 <Option key={group.id} value={group.id}>{group.name}</Option>
-              ))}
+              )) || []}
             </Select>
           </Form.Item>
 

@@ -425,6 +425,69 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
 }
 
+// ToggleUserStatus 切换用户启用/禁用状态（管理员功能）
+// @Summary 切换用户状态
+// @Description 启用或禁用指定用户（仅管理员），不会影响LDAP数据
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Param status body bool true "用户状态"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Router /users/{id}/status [put]
+func (h *UserHandler) ToggleUserStatus(c *gin.Context) {
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var req struct {
+		IsActive bool `json:"is_active"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// 防止禁用自己
+	currentUserID, _ := middleware.GetCurrentUserID(c)
+	if uint(userID) == currentUserID && !req.IsActive {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot disable yourself"})
+		return
+	}
+
+	// 更新用户状态
+	updates := map[string]interface{}{
+		"is_active": req.IsActive,
+		"updated_at": time.Now(),
+	}
+	
+	if err := h.userService.UpdateUser(uint(userID), updates); err != nil {
+		logrus.Error("Toggle user status error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to toggle user status"})
+		return
+	}
+
+	status := "enabled"
+	if !req.IsActive {
+		status = "disabled"
+	}
+
+	logrus.Infof("Admin user %d %s user %d", currentUserID, status, userID)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("User %s successfully", status),
+		"user_id": userID,
+		"is_active": req.IsActive,
+	})
+}
+
 // Logout 用户退出登录
 // @Summary 用户退出登录
 // @Description 清除用户会话和token

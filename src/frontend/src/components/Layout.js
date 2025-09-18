@@ -103,15 +103,9 @@ const Layout = ({ children, user, onLogout }) => {
       onClick: () => navigate('/admin/projects'),
     },
     {
-      key: '/admin/auth',
-      icon: <SafetyOutlined />,
-      label: 'LDAP认证设置',
-      onClick: () => navigate('/admin/auth'),
-    },
-    {
       key: '/admin/ldap',
       icon: <TeamOutlined />,
-      label: 'LDAP管理',
+      label: 'LDAP管理中心',
       onClick: () => navigate('/admin/ldap'),
     },
     {
@@ -173,8 +167,6 @@ const Layout = ({ children, user, onLogout }) => {
       selectedKeys = ['/slurm'];
     } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {
       selectedKeys = ['/saltstack'];
-    } else if (pathname === '/ldap-management' || pathname.startsWith('/ldap-management')) {
-      selectedKeys = ['/ldap-management'];
     }
     
     // 如果是管理员页面，确保管理中心子菜单展开

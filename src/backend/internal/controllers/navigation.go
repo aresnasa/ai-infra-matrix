@@ -98,15 +98,6 @@ var DefaultNavigationItems = []NavigationItem{
 		Order:   6,
 		Roles:   []string{"admin", "super-admin"},
 	},
-	{
-		ID:      "ldap-management",
-		Key:     "/ldap-management",
-		Label:   "LDAP用户管理",
-		Icon:    "TeamOutlined",
-		Visible: true,
-		Order:   7,
-		Roles:   []string{"admin", "super-admin"},
-	},
 }
 
 // GetNavigationConfig 获取用户导航配置

@@ -9,7 +9,6 @@ import {
   BarChartOutlined 
 } from '@ant-design/icons';
 import EnhancedDashboardPage from '../pages/EnhancedDashboardPage';
-import MultiUserLDAPManagement from '../pages/MultiUserLDAPManagement';
 import { authAPI, adminAPI } from '../services/api';
 
 const { TabPane } = Tabs;
@@ -184,31 +183,6 @@ const DashboardIntegration = () => {
             <EnhancedDashboardPage />
           </TabPane>
 
-          {currentUser?.role === 'admin' && (
-            <TabPane
-              tab={
-                <Space>
-                  <TeamOutlined />
-                  <span>LDAP用户管理</span>
-                  {userStats?.pendingSyncUsers > 0 && getTabBadge(userStats.pendingSyncUsers, 'warning')}
-                </Space>
-              }
-              key="ldap"
-            >
-              <div style={{ background: '#fafafa', padding: 16, borderRadius: 6, marginBottom: 16 }}>
-                <h4 style={{ margin: 0, marginBottom: 8 }}>🔧 管理功能</h4>
-                <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12 }}>
-                  <li>🔄 LDAP用户自动同步与手动同步</li>
-                  <li>👥 用户组织架构管理与权限分配</li>
-                  <li>📊 用户统计信息与活跃度分析</li>
-                  <li>🔍 LDAP连接测试与配置验证</li>
-                  <li>📋 同步历史记录与状态监控</li>
-                </ul>
-              </div>
-              <MultiUserLDAPManagement />
-            </TabPane>
-          )}
-
           <TabPane
             tab={
               <Space>
@@ -246,7 +220,6 @@ const DashboardIntegration = () => {
                 <ol>
                   <li>在"增强仪表板"标签页中配置和管理iframe部件</li>
                   <li>拖拽部件重新排序，系统会自动保存配置</li>
-                  <li>管理员可在"LDAP用户管理"中配置用户同步</li>
                   <li>支持导入导出仪表板配置，便于团队协作</li>
                 </ol>
               </div>

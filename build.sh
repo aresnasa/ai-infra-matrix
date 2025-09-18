@@ -10,10 +10,19 @@ set -e
 detect_os() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "macOS"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    elif [[ "$OSTYPE" == "linux-gnu"* ]] || [[ "$OSTYPE" == "linux"* ]]; then
         echo "Linux"
+    elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then
+        echo "Windows"
     else
-        echo "Other"
+        # 备用检测方法
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            echo "macOS"
+        elif [[ "$(uname -s)" == "Linux" ]]; then
+            echo "Linux"
+        else
+            echo "Other"
+        fi
     fi
 }
 
@@ -31,6 +40,99 @@ print_error() {
 
 print_info() {
     echo -e "\033[32m[INFO]\033[0m $1"
+}
+
+# 跨平台兼容函数
+# sed命令跨平台兼容包装器
+sed_inplace() {
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i '.bak' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
+# 清理备份文件
+cleanup_backup_files() {
+    local dir="${1:-.}"
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        find "$dir" -name "*.bak" -type f -delete 2>/dev/null || true
+    fi
+}
+
+# Docker Compose命令兼容性检测
+get_docker_compose_cmd() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        echo "docker-compose"
+    elif docker compose version >/dev/null 2>&1; then
+        echo "docker compose"
+    else
+        print_error "未找到docker-compose或docker compose命令"
+        return 1
+    fi
+}
+
+# 获取网络接口命令（跨平台）
+get_network_info_cmd() {
+    case "$OS_TYPE" in
+        "macOS")
+            echo "ifconfig"
+            ;;
+        "Linux")
+            if command -v ip >/dev/null 2>&1; then
+                echo "ip"
+            elif command -v ifconfig >/dev/null 2>&1; then
+                echo "ifconfig"
+            else
+                echo "none"
+            fi
+            ;;
+        *)
+            echo "none"
+            ;;
+    esac
+}
+
+# 平台兼容性验证
+verify_platform_compatibility() {
+    print_info "检查平台兼容性..."
+    print_info "检测到操作系统: $OS_TYPE"
+    
+    # 检查必要的命令
+    local missing_commands=()
+    local commands=("docker" "git" "curl" "awk" "sed" "find")
+    
+    for cmd in "${commands[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            missing_commands+=("$cmd")
+        fi
+    done
+    
+    # 检查Docker Compose
+    if ! get_docker_compose_cmd >/dev/null 2>&1; then
+        missing_commands+=("docker-compose")
+    fi
+    
+    if [[ ${#missing_commands[@]} -gt 0 ]]; then
+        print_error "缺少必要的命令: ${missing_commands[*]}"
+        print_info "安装建议："
+        
+        case "$OS_TYPE" in
+            "macOS")
+                print_info "  使用Homebrew安装: brew install ${missing_commands[*]}"
+                ;;
+            "Linux")
+                print_info "  使用包管理器安装，例如："
+                print_info "  Ubuntu/Debian: sudo apt-get install ${missing_commands[*]}"
+                print_info "  CentOS/RHEL: sudo yum install ${missing_commands[*]}"
+                ;;
+        esac
+        
+        return 1
+    fi
+    
+    print_success "✓ 平台兼容性检查通过"
+    return 0
 }
 
 # ==========================================
@@ -163,14 +265,14 @@ update_version_if_provided() {
         # 检查是否是版本格式的参数 (v*.*.* 格式)
         if [[ "$arg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
-            print_info "检测到版本参数: $new_version，更新默认版本标签"
+            print_info "检测到版本参数: \$new_version，更新默认版本标签"
             break
         fi
         
         # 检查常见的版本标签格式 (如 test-v0.3.6-dev)
         if [[ "$arg" =~ ^[a-zA-Z0-9-]*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
-            print_info "检测到版本参数: $new_version，更新默认版本标签"
+            print_info "检测到版本参数: \$new_version，更新默认版本标签"
             break
         fi
     done
@@ -178,7 +280,7 @@ update_version_if_provided() {
     # 如果找到新版本，更新默认标签和相关变量
     if [[ -n "$new_version" ]]; then
         # 提取纯版本号（去掉前缀）
-        local clean_version=$(echo "$new_version" | sed -E 's/^[a-zA-Z0-9-]*?(v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?)$/\1/')
+        local clean_version=$(echo "$new_version" | sed -E 's/^[a-zA-Z0-9-]*(v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?)$/\1/')
         if [[ -n "$clean_version" ]]; then
             DEFAULT_IMAGE_TAG="$clean_version"
             print_success "版本标签已更新为: $DEFAULT_IMAGE_TAG"
@@ -1256,10 +1358,10 @@ create_env_from_template() {
             
             # 应用生产环境特殊配置
             print_info "应用生产环境配置..."
-            sed -i.bak 's/DEBUG_MODE=true/DEBUG_MODE=false/g' "$target_file" 2>/dev/null || true
-            sed -i.bak 's/LOG_LEVEL=debug/LOG_LEVEL=info/g' "$target_file" 2>/dev/null || true
-            sed -i.bak 's/BUILD_ENV=development/BUILD_ENV=production/g' "$target_file" 2>/dev/null || true
-            rm -f "${target_file}.bak"
+            sed_inplace 's/DEBUG_MODE=true/DEBUG_MODE=false/g' "$target_file" 2>/dev/null || true
+            sed_inplace 's/LOG_LEVEL=debug/LOG_LEVEL=info/g' "$target_file" 2>/dev/null || true
+            sed_inplace 's/BUILD_ENV=development/BUILD_ENV=production/g' "$target_file" 2>/dev/null || true
+            cleanup_backup_files
             
             return 0
         else
@@ -1503,7 +1605,8 @@ update_external_host_config() {
         # 更新EXTERNAL_HOST
         if grep -q "^EXTERNAL_HOST=" "$env_file"; then
             # 更新现有的EXTERNAL_HOST
-            if sed -i.tmp "s/^EXTERNAL_HOST=.*/EXTERNAL_HOST=$host_ip/" "$env_file" && rm -f "${env_file}.tmp"; then
+            if sed_inplace "s/^EXTERNAL_HOST=.*/EXTERNAL_HOST=$host_ip/" "$env_file"; then
+                cleanup_backup_files "$(dirname "$env_file")"
                 print_success "  ✓ 更新EXTERNAL_HOST=$host_ip"
             else
                 print_error "  ✗ 更新EXTERNAL_HOST失败"
@@ -1592,7 +1695,8 @@ update_external_port_config() {
         # 更新EXTERNAL_PORT
         if grep -q "^EXTERNAL_PORT=" "$env_file"; then
             # 更新现有的EXTERNAL_PORT
-            if sed -i.tmp "s/^EXTERNAL_PORT=.*/EXTERNAL_PORT=$port/" "$env_file" && rm -f "${env_file}.tmp"; then
+            if sed_inplace "s/^EXTERNAL_PORT=.*/EXTERNAL_PORT=$port/" "$env_file"; then
+                cleanup_backup_files "$(dirname "$env_file")"
                 print_success "  ✓ 更新EXTERNAL_PORT=$port"
             else
                 print_error "  ✗ 更新EXTERNAL_PORT失败"
@@ -3198,20 +3302,12 @@ deploy_to_host() {
     print_info "更新.env.prod中的HOST配置..."
     
     # 使用sed命令更新配置
-    if [[ "$OS_TYPE" == "macOS" ]]; then
-        sed -i.bak "s|^DOMAIN=.*|DOMAIN=$host|g" .env.prod
-        sed -i.bak "s|^PUBLIC_HOST=.*|PUBLIC_HOST=$public_host|g" .env.prod  
-        sed -i.bak "s|^JUPYTERHUB_PUBLIC_HOST=.*|JUPYTERHUB_PUBLIC_HOST=$public_host|g" .env.prod
-        sed -i.bak "s|^JUPYTERHUB_CORS_ORIGIN=.*|JUPYTERHUB_CORS_ORIGIN=$public_protocol://$public_host|g" .env.prod
-        sed -i.bak "s|^ROOT_URL=.*|ROOT_URL=$public_protocol://$public_host/gitea/|g" .env.prod
-        rm -f .env.prod.bak
-    else
-        sed -i "s|^DOMAIN=.*|DOMAIN=$host|g" .env.prod
-        sed -i "s|^PUBLIC_HOST=.*|PUBLIC_HOST=$public_host|g" .env.prod
-        sed -i "s|^JUPYTERHUB_PUBLIC_HOST=.*|JUPYTERHUB_PUBLIC_HOST=$public_host|g" .env.prod
-        sed -i "s|^JUPYTERHUB_CORS_ORIGIN=.*|JUPYTERHUB_CORS_ORIGIN=$public_protocol://$public_host|g" .env.prod
-        sed -i "s|^ROOT_URL=.*|ROOT_URL=$public_protocol://$public_host/gitea/|g" .env.prod
-    fi
+    sed_inplace "s|^DOMAIN=.*|DOMAIN=$host|g" .env.prod
+    sed_inplace "s|^PUBLIC_HOST=.*|PUBLIC_HOST=$public_host|g" .env.prod  
+    sed_inplace "s|^JUPYTERHUB_PUBLIC_HOST=.*|JUPYTERHUB_PUBLIC_HOST=$public_host|g" .env.prod
+    sed_inplace "s|^JUPYTERHUB_CORS_ORIGIN=.*|JUPYTERHUB_CORS_ORIGIN=$public_protocol://$public_host|g" .env.prod
+    sed_inplace "s|^ROOT_URL=.*|ROOT_URL=$public_protocol://$public_host/gitea/|g" .env.prod
+    cleanup_backup_files
     
     print_success "✓ HOST配置更新完成"
     
@@ -3708,13 +3804,13 @@ replace_images_in_compose_file() {
         if grep -q "$source_image" "$temp_compose"; then
             print_info "  替换: $source_image → $target_image"
             # 使用 sed 进行替换，处理可能的特殊字符
-            sed -i.bak "s|image: $source_image|image: $target_image|g" "$temp_compose"
+            sed_inplace "s|image: $source_image|image: $target_image|g" "$temp_compose"
             ((replacement_count++))
         fi
     done
     
-    # 删除sed备份文件
-    rm -f "$temp_compose.bak"
+    # 清理备份文件
+    cleanup_backup_files "$(dirname "$temp_compose")"
     
     # 替换AI-Infra服务镜像（如果指定了registry）
     if [[ -n "$registry" ]]; then
@@ -3725,13 +3821,13 @@ replace_images_in_compose_file() {
             
             if grep -q "ai-infra-${service}:" "$temp_compose"; then
                 print_info "  替换服务镜像: ai-infra-${service} → $target_replacement"
-                sed -i.bak "s|image: ai-infra-${service}:\${IMAGE_TAG:-[^}]*}|image: $target_replacement|g" "$temp_compose"
-                sed -i.bak "s|image: ai-infra-${service}:\${IMAGE_TAG}|image: $target_replacement|g" "$temp_compose"
-                sed -i.bak "s|image: ai-infra-${service}:${tag}|image: $target_replacement|g" "$temp_compose"
+                sed_inplace "s|image: ai-infra-${service}:\${IMAGE_TAG:-[^}]*}|image: $target_replacement|g" "$temp_compose"
+                sed_inplace "s|image: ai-infra-${service}:\${IMAGE_TAG}|image: $target_replacement|g" "$temp_compose"
+                sed_inplace "s|image: ai-infra-${service}:${tag}|image: $target_replacement|g" "$temp_compose"
                 ((replacement_count++))
             fi
         done
-        rm -f "$temp_compose.bak"
+        cleanup_backup_files "$(dirname "$temp_compose")"
     fi
     
     # 如果有替换，使用临时文件

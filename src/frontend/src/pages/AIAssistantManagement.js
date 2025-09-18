@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Card, 
   Button, 
@@ -13,7 +13,6 @@ import {
   Row,
   Col,
   Statistic,
-  Divider,
   Space,
   Tag,
   Tooltip,
@@ -25,93 +24,93 @@ import {
   PlusOutlined, 
   EditOutlined, 
   DeleteOutlined,
-  CopyOutlined,
   RobotOutlined,
-  ApiOutlined,
   MessageOutlined,
   BarChartOutlined,
-  KeyOutlined
+  SettingOutlined
 } from '@ant-design/icons';
 import { aiAPI } from '../services/api';
-import { CustomMenuIcons } from '../components/CustomIcons';
 
 const { Option } = Select;
-const { TabPane } = Tabs;
 const { TextArea } = Input;
 
 const AIAssistantManagement = () => {
-  console.log('=== AIAssistantManagement 组件开始渲染 ===');
-  
-  // 状态初始化 - 确保所有数组状态都有默认值
   const [configs, setConfigs] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [usage, setUsage] = useState([]);
   const [loading, setLoading] = useState(false);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [editingConfig, setEditingConfig] = useState(null);
-  const [configForm] = Form.useForm();
   const [error, setError] = useState(null);
   
-  console.log('AIAssistantManagement 状态初始化完成, configs:', configs, 'conversations:', conversations, 'usage:', usage);
+  const [configForm] = Form.useForm();
 
-  // AI提供商选项 - 扩展支持更多提供商
-  const aiProviders = [
-    { value: 'openai', label: 'OpenAI' },
-    { value: 'claude', label: 'Claude (Anthropic)' },
-    { value: 'deepseek', label: 'DeepSeek' },
-    { value: 'glm', label: '智谱GLM' },
-    { value: 'qwen', label: '通义千问' },
-    { value: 'mcp', label: 'Model Context Protocol' },
-    { value: 'custom', label: '自定义' }
-  ];
-
-  // 模型类型选项
-  const modelTypes = [
-    { value: 'chat', label: '对话模型' },
-    { value: 'completion', label: '补全模型' },
-    { value: 'embedding', label: '嵌入模型' },
-    { value: 'image', label: '图像生成' },
-    { value: 'audio', label: '音频处理' },
-    { value: 'custom', label: '自定义' }
-  ];
-
-  // 机器人分类选项
-  const botCategories = [
-    { value: 'general', label: '通用对话' },
-    { value: 'coding', label: '代码生成' },
-    { value: 'writing', label: '写作助手' },
-    { value: 'analysis', label: '数据分析' },
-    { value: 'translation', label: '翻译助手' },
-    { value: 'research', label: '研究助手' },
-    { value: 'education', label: '教育助手' },
-    { value: 'business', label: '商业助手' },
-    { value: 'creative', label: '创意助手' },
-    { value: 'custom', label: '自定义' }
-  ];
-
-  // 安全的数组检查函数
-  const ensureArray = (data, fallback = []) => {
-    if (Array.isArray(data)) {
-      return data;
+  // 更强的数组确保函数
+  const ensureArray = (data) => {
+    try {
+      // 如果已经是数组，直接返回
+      if (Array.isArray(data)) {
+        return data;
+      }
+      
+      // 处理 axios 响应格式 { data: [...] }
+      if (data && typeof data === 'object' && Array.isArray(data.data)) {
+        return data.data;
+      }
+      
+      // 处理单个对象的情况
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        return [data];
+      }
+      
+      // 处理 null, undefined, 或其他类型
+      console.warn('ensureArray: 数据类型异常，返回空数组:', typeof data, data);
+      return [];
+    } catch (error) {
+      console.error('ensureArray error:', error);
+      return [];
     }
-    console.warn('Data is not an array:', data);
-    return fallback;
   };
 
-  // 安全的统计计算函数
-  const calculateStats = () => {
-    const safeUsage = ensureArray(usage);
-    console.log('计算统计，使用数据:', safeUsage);
-    
+  const calculateStats = (usageData) => {
     try {
-      return {
-        totalRequests: safeUsage.reduce((sum, item) => sum + (Number(item?.request_count) || 0), 0),
-        totalTokens: safeUsage.reduce((sum, item) => sum + (Number(item?.token_used) || 0), 0),
-        totalCost: safeUsage.reduce((sum, item) => sum + (Number(item?.total_cost) || 0), 0),
-        activeUsers: new Set(safeUsage.map(item => item?.user_id).filter(Boolean)).size
-      };
+      // 双重确保 usageData 是数组
+      const safeUsageData = ensureArray(usageData);
+      
+      console.log('calculateStats input:', usageData, 'processed:', safeUsageData);
+      
+      if (safeUsageData.length === 0) {
+        return {
+          totalRequests: 0,
+          totalTokens: 0,
+          totalCost: 0,
+          activeUsers: 0
+        };
+      }
+
+      const stats = safeUsageData.reduce((acc, item) => {
+        // 安全地获取数值，确保不是 undefined 或 null
+        const requests = Number(item?.requests) || 0;
+        const tokens = Number(item?.tokens) || 0;
+        const cost = Number(item?.cost) || 0;
+        
+        acc.totalRequests += requests;
+        acc.totalTokens += tokens;
+        acc.totalCost += cost;
+        
+        return acc;
+      }, { totalRequests: 0, totalTokens: 0, totalCost: 0 });
+
+      // 计算唯一用户数 - 更安全的方式
+      const uniqueUsers = safeUsageData
+        .map(item => item?.user_id)
+        .filter(userId => userId !== null && userId !== undefined && userId !== '');
+      stats.activeUsers = new Set(uniqueUsers).size;
+      
+      console.log('calculateStats result:', stats);
+      return stats;
     } catch (error) {
-      console.error('统计计算错误:', error);
+      console.error('计算统计数据失败:', error, 'input data:', usageData);
       return {
         totalRequests: 0,
         totalTokens: 0,
@@ -121,97 +120,68 @@ const AIAssistantManagement = () => {
     }
   };
 
-  // 加载数据
-  useEffect(() => {
-    console.log('=== useEffect 执行，开始加载数据 ===');
-    const loadData = async () => {
-      try {
-        await Promise.all([
-          loadConfigs(),
-          loadConversations(),
-          loadUsage()
-        ]);
-      } catch (error) {
-        console.error('数据加载失败:', error);
-        setError(error.message);
-      }
-    };
-    loadData();
-  }, []);
+  // 强制数组检查 - 在计算和渲染时确保数据类型安全
+  const safeConfigs = useMemo(() => ensureArray(configs), [configs]);
+  const safeConversations = useMemo(() => ensureArray(conversations), [conversations]);
+  const safeUsage = useMemo(() => ensureArray(usage), [usage]);
 
-  const loadConfigs = async () => {
-    console.log('开始加载 configs...');
+  // 使用 useMemo 来优化 stats 计算，避免每次渲染都重新计算
+  const stats = useMemo(() => calculateStats(safeUsage), [safeUsage]);
+
+  const loadData = async () => {
     try {
       setLoading(true);
-      const response = await aiAPI.getConfigs();
-      console.log('配置响应:', response);
+      setError(null);
       
-      if (!response || !response.data) {
-        console.warn('Invalid response structure:', response);
-        setConfigs([]);
-        return;
-      }
+      console.log('开始加载数据...');
       
-      const configData = response.data.data || response.data || [];
-      const safeConfigs = ensureArray(configData);
-      console.log('安全的配置数据:', safeConfigs);
-      setConfigs(safeConfigs);
+      const [configsRes, conversationsRes, usageRes] = await Promise.all([
+        aiAPI.getConfigs().catch(err => {
+          console.warn('加载配置失败:', err);
+          return { data: [] };
+        }),
+        aiAPI.getConversations().catch(err => {
+          console.warn('加载对话失败:', err);
+          return { data: [] };
+        }),
+        aiAPI.getUsage().catch(err => {
+          console.warn('加载使用统计失败:', err);
+          return { data: [] };
+        })
+      ]);
+
+      console.log('API响应:', { configsRes, conversationsRes, usageRes });
+
+      // 确保数据是数组格式
+      const configsArray = ensureArray(configsRes);
+      const conversationsArray = ensureArray(conversationsRes);
+      const usageArray = ensureArray(usageRes);
+
+      console.log('处理后的数据:', { configsArray, conversationsArray, usageArray });
+
+      setConfigs(configsArray);
+      setConversations(conversationsArray);
+      setUsage(usageArray);
+      
     } catch (error) {
-      console.error('加载AI配置失败:', error);
-      message.error('加载AI配置失败: ' + error.message);
+      console.error('加载数据失败:', error);
+      const errorMsg = error.response?.data?.message || error.message || '加载数据失败';
+      setError(errorMsg);
+      message.error(errorMsg);
+      
+      // 设置默认空数组防止map错误
       setConfigs([]);
+      setConversations([]);
+      setUsage([]);
     } finally {
       setLoading(false);
     }
   };
 
-    const loadConversations = async () => {
-    console.log('开始加载 conversations...');
-    try {
-      const response = await aiAPI.getConversations();
-      console.log('对话响应:', response);
-      
-      if (!response || !response.data) {
-        console.warn('Invalid response structure:', response);
-        setConversations([]);
-        return;
-      }
-      
-      const conversationData = response.data.data || response.data || [];
-      const safeConversations = ensureArray(conversationData);
-      console.log('安全的对话数据:', safeConversations);
-      setConversations(safeConversations);
-    } catch (error) {
-      console.error('加载对话记录失败:', error);
-      message.error('加载对话记录失败: ' + error.message);
-      setConversations([]);
-    }
-  };
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  const loadUsage = async () => {
-    console.log('开始加载 usage...');
-    try {
-      const response = await aiAPI.getUsage();
-      console.log('使用统计响应:', response);
-      
-      if (!response || !response.data) {
-        console.warn('Invalid response structure:', response);
-        setUsage([]);
-        return;
-      }
-      
-      const usageData = response.data.data || response.data || [];
-      const safeUsage = ensureArray(usageData);
-      console.log('安全的使用统计数据:', safeUsage);
-      setUsage(safeUsage);
-    } catch (error) {
-      console.error('加载使用统计失败:', error);
-      message.error('加载使用统计失败: ' + error.message);
-      setUsage([]);
-    }
-  };
-
-  // 配置管理
   const handleCreateConfig = () => {
     setEditingConfig(null);
     configForm.resetFields();
@@ -220,304 +190,61 @@ const AIAssistantManagement = () => {
 
   const handleEditConfig = (config) => {
     setEditingConfig(config);
-    configForm.setFieldsValue({
-      ...config,
-      api_key: '********' // 隐藏API密钥
-    });
+    configForm.setFieldsValue(config);
     setConfigModalVisible(true);
   };
 
-  const handleDeleteConfig = async (id) => {
-    try {
-      await aiAPI.deleteConfig(id);
-      message.success('删除成功');
-      loadConfigs();
-    } catch (error) {
-      message.error('删除失败');
-    }
-  };
-
-  const handleCloneConfig = async (config) => {
-    try {
-      const clonedConfig = {
-        ...config,
-        name: `${config.name} (副本)`,
-        is_default: false,
-        enabled: false
-      };
-      delete clonedConfig.id;
-      delete clonedConfig.created_at;
-      delete clonedConfig.updated_at;
-      
-      await aiAPI.createConfig(clonedConfig);
-      message.success('克隆成功');
-      loadConfigs();
-    } catch (error) {
-      message.error('克隆失败');
-    }
-  };
-
-  const handleConfigSubmit = async (values) => {
+  const handleDeleteConfig = async (configId) => {
     try {
       setLoading(true);
-      if (editingConfig) {
-        // 如果API密钥没有改变，不发送
-        if (values.api_key === '********') {
-          delete values.api_key;
-        }
-        await aiAPI.updateConfig(editingConfig.id, values);
-        message.success('更新成功');
-      } else {
-        await aiAPI.createConfig(values);
-        message.success('创建成功');
-      }
-      setConfigModalVisible(false);
-      loadConfigs();
+      await aiAPI.deleteConfig(configId);
+      message.success('配置删除成功');
+      await loadData();
     } catch (error) {
-      message.error(editingConfig ? '更新失败' : '创建失败');
+      message.error('删除配置失败');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleToggleConfig = async (id, enabled) => {
+  const handleConfigSubmit = async (values) => {
     try {
-      await aiAPI.updateConfig(id, { enabled });
-      message.success(enabled ? '已启用' : '已禁用');
-      loadConfigs();
+      if (editingConfig) {
+        await aiAPI.updateConfig(editingConfig.id, values);
+        message.success('配置更新成功');
+      } else {
+        await aiAPI.createConfig(values);
+        message.success('配置创建成功');
+      }
+      setConfigModalVisible(false);
+      await loadData();
     } catch (error) {
-      message.error('操作失败');
+      message.error('保存配置失败');
     }
   };
 
-  // 清理对话历史
-  const handleClearConversations = async () => {
+  // 安全渲染函数 - 捕获任何渲染错误
+  const renderSafely = (renderFn, fallback = null) => {
     try {
-      await aiAPI.clearConversations();
-      message.success('清理成功');
-      loadConversations();
+      return renderFn();
     } catch (error) {
-      message.error('清理失败');
+      console.error('Render error caught:', error);
+      return fallback || <Alert message="组件渲染错误" type="error" />;
     }
   };
-
-  // 配置表格列
-  const configColumns = [
-    {
-      title: '名称',
-      dataIndex: 'name',
-      key: 'name',
-      width: 120,
-    },
-    {
-      title: '提供商',
-      dataIndex: 'provider',
-      key: 'provider',
-      width: 100,
-      render: (provider) => {
-        const providerInfo = aiProviders.find(p => p.value === provider);
-        return <Tag color="blue">{providerInfo?.label || provider}</Tag>;
-      }
-    },
-    {
-      title: '模型类型',
-      dataIndex: 'model_type',
-      key: 'model_type',
-      width: 100,
-      render: (modelType) => {
-        const typeMap = {
-          'chat': '对话',
-          'completion': '补全',
-          'embedding': '嵌入',
-          'image': '图像',
-          'audio': '音频',
-          'custom': '自定义'
-        };
-        return <Tag color="purple">{typeMap[modelType] || modelType}</Tag>;
-      }
-    },
-    {
-      title: '模型',
-      dataIndex: 'model',
-      key: 'model',
-      width: 120,
-    },
-    {
-      title: '类别',
-      dataIndex: 'category',
-      key: 'category',
-      width: 100,
-      render: (category) => category ? <Tag color="orange">{category}</Tag> : '-'
-    },
-    {
-      title: '描述',
-      dataIndex: 'description',
-      key: 'description',
-      width: 150,
-      ellipsis: true,
-      render: (desc) => desc || '-'
-    },
-    {
-      title: '状态',
-      dataIndex: 'enabled',
-      key: 'enabled',
-      width: 80,
-      render: (enabled, record) => (
-        <Switch
-          checked={enabled}
-          onChange={(checked) => handleToggleConfig(record.id, checked)}
-          checkedChildren="启用"
-          unCheckedChildren="禁用"
-        />
-      )
-    },
-    {
-      title: '默认',
-      dataIndex: 'is_default',
-      key: 'is_default',
-      width: 80,
-      render: (isDefault) => (
-        isDefault ? <Tag color="green">默认</Tag> : null
-      )
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 150,
-      render: (time) => new Date(time).toLocaleString()
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 120,
-      render: (_, record) => (
-        <Space>
-          <Tooltip title="编辑">
-            <Button 
-              type="text" 
-              icon={<EditOutlined />} 
-              onClick={() => handleEditConfig(record)}
-            />
-          </Tooltip>
-          <Tooltip title="克隆">
-            <Button 
-              type="text" 
-              icon={<CopyOutlined />} 
-              onClick={() => handleCloneConfig(record)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="确定要删除这个配置吗？"
-            onConfirm={() => handleDeleteConfig(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Tooltip title="删除">
-              <Button 
-                type="text" 
-                danger 
-                icon={<DeleteOutlined />}
-              />
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
-  // 对话表格列
-  const conversationColumns = [
-    {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 80,
-    },
-    {
-      title: '用户',
-      dataIndex: 'user_id',
-      key: 'user_id',
-      width: 100,
-    },
-    {
-      title: '消息数',
-      dataIndex: 'message_count',
-      key: 'message_count',
-      width: 100,
-    },
-    {
-      title: '最后消息',
-      dataIndex: 'last_message_at',
-      key: 'last_message_at',
-      render: (time) => time ? new Date(time).toLocaleString() : '-'
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (time) => new Date(time).toLocaleString()
-    },
-  ];
-
-  // 使用统计表格列
-  const usageColumns = [
-    {
-      title: '用户ID',
-      dataIndex: 'user_id',
-      key: 'user_id',
-    },
-    {
-      title: '配置',
-      dataIndex: 'config_name',
-      key: 'config_name',
-    },
-    {
-      title: '请求数',
-      dataIndex: 'request_count',
-      key: 'request_count',
-    },
-    {
-      title: 'Token使用',
-      dataIndex: 'token_used',
-      key: 'token_used',
-    },
-    {
-      title: '总费用',
-      dataIndex: 'total_cost',
-      key: 'total_cost',
-      render: (cost) => `$${(cost || 0).toFixed(4)}`
-    },
-    {
-      title: '日期',
-      dataIndex: 'date',
-      key: 'date',
-    },
-  ];
-
-  // 获取统计数据
-  const stats = calculateStats();
-
-  if (error) {
-    return (
-      <div style={{ padding: '24px' }}>
-        <Alert
-          message="加载失败"
-          description={error}
-          type="error"
-          showIcon
-          action={
-            <Button onClick={() => window.location.reload()}>
-              重新加载
-            </Button>
-          }
-        />
-      </div>
-    );
-  }
 
   return (
     <div style={{ padding: '24px' }}>
+      {error && (
+        <Alert
+          message="加载错误"
+          description={error}
+          type="error"
+          showIcon
+          style={{ marginBottom: '16px' }}
+        />
+      )}
+      
       <Spin spinning={loading}>
         <Card 
           title={
@@ -527,219 +254,299 @@ const AIAssistantManagement = () => {
             </span>
           }
         >
-          <Tabs defaultActiveKey="configs">
-        <TabPane 
-          tab={
-            <span>
-              <CustomMenuIcons.Menu size={16} />
-              AI配置
-            </span>
-          } 
-          key="configs"
-        >
-          <Card
-            title="AI提供商配置"
-            extra={
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />}
-                onClick={handleCreateConfig}
-              >
-                添加配置
-              </Button>
-            }
-          >
-            <Table
-              columns={configColumns}
-              dataSource={ensureArray(configs)}
-              rowKey="id"
-              loading={loading}
-              pagination={{ pageSize: 10 }}
+          {/* 添加调试信息 */}
+          {process.env.NODE_ENV === 'development' && (
+            <div style={{ marginBottom: '16px', fontSize: '12px', color: '#666' }}>
+              Debug: configs={Array.isArray(safeConfigs) ? safeConfigs.length : 'not array'}, 
+              conversations={Array.isArray(safeConversations) ? safeConversations.length : 'not array'}, 
+              usage={Array.isArray(safeUsage) ? safeUsage.length : 'not array'}
+            </div>
+          )}
+          
+          {renderSafely(() => (
+            <Tabs 
+              defaultActiveKey="configs" 
+              size="large"
+              items={[
+                {
+                  key: 'configs',
+                  label: (
+                    <span>
+                      <SettingOutlined style={{ marginRight: '4px' }} />
+                      AI配置
+                    </span>
+                  ),
+                  children: renderSafely(() => (
+                    <Card 
+                      title="AI提供商配置"
+                      extra={
+                        <Button 
+                          type="primary" 
+                          icon={<PlusOutlined />}
+                          onClick={handleCreateConfig}
+                        >
+                          新增配置
+                        </Button>
+                      }
+                    >
+                      <Table
+                        columns={[
+                          {
+                            title: '配置名称',
+                            dataIndex: 'name',
+                            key: 'name'
+                          },
+                          {
+                            title: '提供商',
+                            dataIndex: 'provider',
+                            key: 'provider',
+                            render: (provider) => (
+                              <Tag color="blue">{provider}</Tag>
+                            )
+                          },
+                          {
+                            title: '模型',
+                            dataIndex: 'model',
+                            key: 'model'
+                          },
+                          {
+                            title: '状态',
+                            dataIndex: 'is_enabled',
+                            key: 'is_enabled',
+                            render: (enabled) => (
+                              <Tag color={enabled ? 'green' : 'red'}>
+                                {enabled ? '启用' : '禁用'}
+                              </Tag>
+                            )
+                          },
+                          {
+                            title: '操作',
+                            key: 'actions',
+                            render: (_, record) => (
+                              <Space>
+                                <Tooltip title="编辑配置">
+                                  <Button 
+                                    type="link" 
+                                    icon={<EditOutlined />}
+                                    onClick={() => handleEditConfig(record)}
+                                  />
+                                </Tooltip>
+                                <Popconfirm
+                                  title="确定删除此配置吗？"
+                                  onConfirm={() => handleDeleteConfig(record.id)}
+                                >
+                                  <Tooltip title="删除配置">
+                                    <Button 
+                                      type="link" 
+                                      danger 
+                                      icon={<DeleteOutlined />}
+                                    />
+                                  </Tooltip>
+                                </Popconfirm>
+                              </Space>
+                            )
+                          }
+                        ]}
+                        dataSource={safeConfigs}
+                        rowKey={(record) => record?.id || Math.random()}
+                        loading={loading}
+                        pagination={{ pageSize: 10 }}
+                      />
+                    </Card>
+                  ))
+                },
+                {
+                  key: 'conversations',
+                  label: (
+                    <span>
+                      <MessageOutlined style={{ marginRight: '4px' }} />
+                      对话记录
+                    </span>
+                  ),
+                  children: renderSafely(() => (
+                    <Card title="对话记录">
+                      <Table
+                        columns={[
+                          {
+                            title: '对话标题',
+                            dataIndex: 'title',
+                            key: 'title'
+                          },
+                          {
+                            title: '用户ID',
+                            dataIndex: 'user_id',
+                            key: 'user_id'
+                          },
+                          {
+                            title: '创建时间',
+                            dataIndex: 'created_at',
+                            key: 'created_at',
+                            render: (time) => time ? new Date(time).toLocaleString() : ''
+                          }
+                        ]}
+                        dataSource={safeConversations}
+                        rowKey={(record) => record?.id || Math.random()}
+                        loading={loading}
+                        pagination={{ pageSize: 10 }}
+                      />
+                    </Card>
+                  ))
+                },
+                {
+                  key: 'usage',
+                  label: (
+                    <span>
+                      <BarChartOutlined style={{ marginRight: '4px' }} />
+                      使用统计
+                    </span>
+                  ),
+                  children: renderSafely(() => (
+                    <Card title="使用统计">
+                      <Row gutter={16} style={{ marginBottom: 16 }}>
+                        <Col span={6}>
+                          <Statistic title="总请求数" value={stats?.totalRequests || 0} />
+                        </Col>
+                        <Col span={6}>
+                          <Statistic title="总Token数" value={stats?.totalTokens || 0} />
+                        </Col>
+                        <Col span={6}>
+                          <Statistic 
+                            title="总费用" 
+                            value={stats?.totalCost || 0} 
+                            precision={4} 
+                            prefix="$" 
+                          />
+                        </Col>
+                        <Col span={6}>
+                          <Statistic title="活跃用户" value={stats?.activeUsers || 0} />
+                        </Col>
+                      </Row>
+                      <Table
+                        columns={[
+                          {
+                            title: '日期',
+                            dataIndex: 'date',
+                            key: 'date'
+                          },
+                          {
+                            title: '用户',
+                            dataIndex: 'user_id',
+                            key: 'user_id'
+                          },
+                          {
+                            title: '请求数',
+                            dataIndex: 'requests',
+                            key: 'requests'
+                          },
+                          {
+                            title: 'Token数',
+                            dataIndex: 'tokens',
+                            key: 'tokens'
+                          }
+                        ]}
+                        dataSource={safeUsage}
+                        rowKey={(record, index) => record?.id || index}
+                        loading={loading}
+                        pagination={{ pageSize: 10 }}
+                      />
+                    </Card>
+                  ))
+                }
+              ]}
             />
-          </Card>
-        </TabPane>
+          ))}
+        </Card>
+      </Spin>
 
-        <TabPane 
-          tab={
-            <span>
-              <MessageOutlined />
-              对话管理
-            </span>
-          } 
-          key="conversations"
+      {/* 开发调试信息 */}
+      {process.env.NODE_ENV === 'development' && (
+        <Card 
+          title="调试信息" 
+          style={{ marginTop: 16 }}
+          size="small"
         >
-          <Card
-            title="对话记录"
-            extra={
-              <Popconfirm
-                title="确定要清理所有对话记录吗？"
-                onConfirm={handleClearConversations}
-                okText="确定"
-                cancelText="取消"
-              >
-                <Button danger>
-                  清理对话记录
-                </Button>
-              </Popconfirm>
-            }
-          >
-            <Table
-              columns={conversationColumns}
-              dataSource={ensureArray(conversations)}
-              rowKey="id"
-              pagination={{ pageSize: 10 }}
-            />
-          </Card>
-        </TabPane>
+          <div style={{ fontSize: '12px', fontFamily: 'monospace', background: '#f5f5f5', padding: '8px', borderRadius: '4px' }}>
+            <div><strong>原始数据类型:</strong></div>
+            <div>configs: {typeof configs} ({Array.isArray(configs) ? 'array' : 'not array'})</div>
+            <div>conversations: {typeof conversations} ({Array.isArray(conversations) ? 'array' : 'not array'})</div>
+            <div>usage: {typeof usage} ({Array.isArray(usage) ? 'array' : 'not array'})</div>
+            <div style={{ marginTop: 8 }}><strong>安全数据长度:</strong></div>
+            <div>safeConfigs: {safeConfigs?.length || 0}</div>
+            <div>safeConversations: {safeConversations?.length || 0}</div>
+            <div>safeUsage: {safeUsage?.length || 0}</div>
+            <div style={{ marginTop: 8 }}><strong>统计信息:</strong></div>
+            <pre style={{ margin: 0, fontSize: '10px' }}>{JSON.stringify(stats, null, 2)}</pre>
+          </div>
+        </Card>
+      )}
 
-        <TabPane 
-          tab={
-            <span>
-              <BarChartOutlined />
-              使用统计
-            </span>
-          } 
-          key="usage"
-        >
-          <Card title="使用统计">
-            <Row gutter={16} style={{ marginBottom: '24px' }}>
-              <Col span={6}>
-                <Statistic
-                  title="总请求数"
-                  value={stats.totalRequests}
-                />
-              </Col>
-              <Col span={6}>
-                <Statistic
-                  title="总Token使用"
-                  value={stats.totalTokens}
-                />
-              </Col>
-              <Col span={6}>
-                <Statistic
-                  title="总费用"
-                  value={stats.totalCost}
-                  precision={4}
-                  prefix="$"
-                />
-              </Col>
-              <Col span={6}>
-                <Statistic
-                  title="活跃用户"
-                  value={stats.activeUsers}
-                />
-              </Col>
-            </Row>
-            
-            <Divider />
-            
-            <Table
-              columns={usageColumns}
-              dataSource={Array.isArray(usage) ? usage : []}
-              rowKey={(record) => `${record.user_id}-${record.date}`}
-              pagination={{ pageSize: 10 }}
-            />
-          </Card>
-        </TabPane>
-      </Tabs>
-
-      {/* 配置编辑模态框 */}
       <Modal
-        title={editingConfig ? '编辑AI配置' : '添加AI配置'}
+        title={editingConfig ? '编辑AI配置' : '新增AI配置'}
         open={configModalVisible}
         onCancel={() => setConfigModalVisible(false)}
         onOk={() => configForm.submit()}
-        confirmLoading={loading}
-        width={600}
+        width={800}
       >
         <Form
           form={configForm}
           layout="vertical"
           onFinish={handleConfigSubmit}
         >
-          <Form.Item
-            name="name"
-            label="配置名称"
-            rules={[{ required: true, message: '请输入配置名称' }]}
-          >
-            <Input placeholder="例如：GPT-4配置" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="name"
+                label="配置名称"
+                rules={[{ required: true, message: '请输入配置名称' }]}
+              >
+                <Input placeholder="输入配置名称" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="provider"
+                label="AI提供商"
+                rules={[{ required: true, message: '请选择AI提供商' }]}
+              >
+                <Select placeholder="选择AI提供商">
+                  <Option value="openai">OpenAI</Option>
+                  <Option value="claude">Claude</Option>
+                  <Option value="deepseek">DeepSeek</Option>
+                  <Option value="glm">GLM</Option>
+                  <Option value="qwen">Qwen</Option>
+                  <Option value="local">本地模型</Option>
+                  <Option value="mcp">MCP协议</Option>
+                  <Option value="custom">自定义</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
-          <Form.Item
-            name="provider"
-            label="AI提供商"
-            rules={[{ required: true, message: '请选择AI提供商' }]}
-          >
-            <Select placeholder="选择AI提供商">
-              {aiProviders.map(provider => (
-                <Option key={provider.value} value={provider.value}>
-                  {provider.label}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="model_type"
-            label="模型类型"
-            rules={[{ required: true, message: '请选择模型类型' }]}
-          >
-            <Select placeholder="选择模型类型">
-              {modelTypes.map(type => (
-                <Option key={type.value} value={type.value}>
-                  {type.label}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="model"
-            label="模型名称"
-            rules={[{ required: true, message: '请输入模型名称' }]}
-          >
-            <Input placeholder="例如：gpt-4、claude-3-opus" />
-          </Form.Item>
-
-          <Form.Item
-            name="category"
-            label="机器人分类"
-          >
-            <Select placeholder="选择机器人分类">
-              {botCategories.map(category => (
-                <Option key={category.value} value={category.value}>
-                  {category.label}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="model"
+                label="模型名称"
+                rules={[{ required: true, message: '请输入模型名称' }]}
+              >
+                <Input placeholder="如 gpt-3.5-turbo" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="api_endpoint"
+                label="API端点"
+              >
+                <Input placeholder="如 https://api.openai.com/v1" />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item
             name="api_key"
             label="API密钥"
-            rules={[{ required: !editingConfig, message: '请输入API密钥' }]}
           >
-            <Input.Password
-              placeholder={editingConfig ? "留空表示不修改" : "请输入API密钥"}
-              prefix={<KeyOutlined />}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="api_secret"
-            label="API密钥(备用)"
-          >
-            <Input.Password
-              placeholder="可选，某些提供商需要额外的密钥"
-              prefix={<KeyOutlined />}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="api_endpoint"
-            label="API端点"
-          >
-            <Input placeholder="API基础URL，例如：https://api.openai.com/v1" />
+            <Input.Password placeholder="输入API密钥" />
           </Form.Item>
 
           <Row gutter={16}>
@@ -748,15 +555,15 @@ const AIAssistantManagement = () => {
                 name="max_tokens"
                 label="最大Token数"
               >
-                <Input type="number" placeholder="例如：4096" />
+                <Input type="number" placeholder="4096" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
                 name="temperature"
-                label="温度参数"
+                label="温度"
               >
-                <Input type="number" step="0.1" min="0" max="2" placeholder="0.0-2.0" />
+                <Input type="number" step="0.1" placeholder="0.7" />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -764,53 +571,7 @@ const AIAssistantManagement = () => {
                 name="top_p"
                 label="Top P"
               >
-                <Input type="number" step="0.1" min="0" max="1" placeholder="0.0-1.0" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="frequency_penalty"
-                label="频率惩罚"
-              >
-                <Input type="number" step="0.1" min="-2" max="2" placeholder="-2.0-2.0" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="presence_penalty"
-                label="存在惩罚"
-              >
-                <Input type="number" step="0.1" min="-2" max="2" placeholder="-2.0-2.0" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item
-                name="rate_limit_per_hour"
-                label="每小时限额"
-              >
-                <Input type="number" placeholder="例如：100" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name="rate_limit_per_day"
-                label="每日限额"
-              >
-                <Input type="number" placeholder="例如：1000" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name="timeout_seconds"
-                label="超时时间(秒)"
-              >
-                <Input type="number" placeholder="例如：60" />
+                <Input type="number" step="0.1" placeholder="1.0" />
               </Form.Item>
             </Col>
           </Row>
@@ -819,72 +580,23 @@ const AIAssistantManagement = () => {
             name="system_prompt"
             label="系统提示词"
           >
-            <TextArea
-              rows={3}
-              placeholder="可选，自定义系统提示词"
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="description"
-            label="机器人描述"
-          >
-            <TextArea
-              rows={2}
-              placeholder="描述这个机器人的用途和特点"
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="icon_url"
-            label="图标URL"
-          >
-            <Input placeholder="可选，自定义机器人图标URL" />
-          </Form.Item>
-
-          <Form.Item
-            name="tags"
-            label="标签"
-          >
-            <Select
-              mode="tags"
-              placeholder="添加标签来分类机器人"
-              tokenSeparators={[',']}
-            />
+            <TextArea rows={4} placeholder="输入系统提示词" />
           </Form.Item>
 
           <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item
-                name="enabled"
-                label="启用状态"
-                valuePropName="checked"
-              >
-                <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+            <Col span={12}>
+              <Form.Item name="is_enabled" valuePropName="checked">
+                <Switch /> 启用此配置
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item
-                name="is_default"
-                label="设为默认"
-                valuePropName="checked"
-              >
-                <Switch checkedChildren="是" unCheckedChildren="否" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name="retry_attempts"
-                label="重试次数"
-              >
-                <Input type="number" min="0" max="10" placeholder="0-10" />
+            <Col span={12}>
+              <Form.Item name="is_default" valuePropName="checked">
+                <Switch /> 设为默认配置
               </Form.Item>
             </Col>
           </Row>
         </Form>
       </Modal>
-        </Card>
-      </Spin>
     </div>
   );
 };

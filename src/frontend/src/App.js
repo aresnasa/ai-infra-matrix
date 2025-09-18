@@ -43,6 +43,9 @@ const AdminProjects = withLazyLoading(React.lazy(() => import('./pages/AdminProj
 const AdminLDAP = withLazyLoading(React.lazy(() => import('./pages/AdminLDAP')), {
   loadingText: '正在加载LDAP配置...'
 });
+const AdminLDAPCenter = withLazyLoading(React.lazy(() => import('./pages/AdminLDAPCenter')), {
+  loadingText: '正在加载LDAP管理中心...'
+});
 const AdminAuthSettings = withLazyLoading(React.lazy(() => import('./pages/AdminAuthSettings')), {
   loadingText: '正在加载认证设置...'
 });
@@ -97,9 +100,6 @@ const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')
 });
 
 // 新增功能页面懒加载
-const MultiUserLDAPManagement = withLazyLoading(React.lazy(() => import('./pages/MultiUserLDAPManagement')), {
-  loadingText: '正在加载LDAP用户管理...'
-});
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
 });
@@ -421,16 +421,6 @@ function App() {
                   <Routes>
                     <Route path="/" element={<Navigate to="/projects" replace />} />
                     
-                    {/* LDAP多用户管理 */}
-                    <Route 
-                      path="/ldap-management" 
-                      element={
-                        <Suspense fallback={<LazyLoadingSpinner />}>
-                          <MultiUserLDAPManagement />
-                        </Suspense>
-                      } 
-                    />
-                    
                     {/* Legacy redirects for Slurm paths to keep old links working */}
                     <Route path="/jupyter/with-slurm" element={<Navigate to="/slurm" replace />} />
                     <Route path="/jupyter/slurm" element={<Navigate to="/slurm" replace />} />
@@ -596,7 +586,7 @@ function App() {
                       element={
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
-                            <AdminLDAP />
+                            <AdminLDAPCenter />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

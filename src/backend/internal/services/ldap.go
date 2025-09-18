@@ -27,15 +27,26 @@ func (ls *LDAPService) GetConfig() (*models.LDAPConfig, error) {
 	err := ls.db.First(&config).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// 返回默认配置
+			// 返回默认配置，使用环境变量配置
 			return &models.LDAPConfig{
+				Server:           "openldap", // 默认使用Docker服务名
 				Port:             389,
 				UseSSL:           false,
+				BaseDN:           "dc=ai-infra,dc=com",
+				BindDN:           "cn=admin,dc=ai-infra,dc=com",
+				BindPassword:     "admin123",
+				UsersOU:          "ou=users,dc=ai-infra,dc=com",
+				UserFilter:       "(uid=%s)",
 				UsernameAttr:     "uid",
 				EmailAttr:        "mail",
-				DisplayNameAttr:  "cn",
+				DisplayNameAttr:  "displayName",
+				NameAttr:         "cn",
+				GroupsOU:         "ou=groups,dc=ai-infra,dc=com",
 				GroupNameAttr:    "cn",
 				MemberAttr:       "member",
+				AdminGroupDN:     "cn=administrators,ou=groups,dc=ai-infra,dc=com",
+				GroupMemberAttr:  "member",
+				IsEnabled:        true,
 				SyncEnabled:      false,
 				AutoCreateUser:   true,
 				AutoCreateGroup:  true,
@@ -454,16 +465,31 @@ func (ls *LDAPService) AuthenticateUser(username, password string) (*models.LDAP
 	}
 	defer conn.Close()
 	
+	// 使用管理员身份绑定进行搜索
+	err = conn.Bind(config.BindDN, config.BindPassword)
+	if err != nil {
+		return nil, fmt.Errorf("LDAP管理员绑定失败: %v", err)
+	}
+	
+	// 确定搜索基础DN - 优先使用UsersOU，回退到BaseDN
+	searchBaseDN := config.BaseDN
+	if config.UsersOU != "" {
+		searchBaseDN = config.UsersOU
+	}
+	
+	// 构建用户过滤器
+	userFilter := fmt.Sprintf(config.UserFilter, username)
+	
 	// 搜索用户
 	searchRequest := ldap.NewSearchRequest(
-		config.BaseDN,
+		searchBaseDN,
 		ldap.ScopeWholeSubtree,
 		ldap.NeverDerefAliases,
 		0,
 		0,
 		false,
-		fmt.Sprintf("(&%s(%s=%s))", config.UserFilter, config.UsernameAttr, username),
-		[]string{config.UsernameAttr, config.EmailAttr, config.NameAttr, "dn"},
+		userFilter,
+		[]string{config.UsernameAttr, config.EmailAttr, config.NameAttr, config.DisplayNameAttr, "dn"},
 		nil,
 	)
 	
@@ -542,7 +568,8 @@ func (ls *LDAPService) IsUserAdmin(ldapUser *models.LDAPUser) bool {
 	return len(searchResult.Entries) > 0
 }
 
-// CreateUser 创建LDAP用户 (暂不实现，返回错误)
+// CreateUser LDAP服务为只读模式，禁止创建用户
+// 所有用户管理应通过企业LDAP系统进行，本系统仅同步和认证
 func (ls *LDAPService) CreateUser(username, password, email, displayName, department string) error {
-	return fmt.Errorf("LDAP用户创建功能暂未实现")
+	return fmt.Errorf("LDAP服务为只读模式，不支持创建用户。请通过企业LDAP系统管理用户")
 }

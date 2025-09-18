@@ -85,13 +85,6 @@ const OverviewPage = ({ user }) => {
       adminOnly: true
     },
     {
-      title: '用户管理',
-      icon: <UserOutlined />,
-      onClick: () => navigate('/ldap-management'),
-      description: '管理系统用户',
-      adminOnly: true
-    },
-    {
       title: '代码仓库',
       icon: <BranchesOutlined />,
       onClick: () => navigate('/gitea'),
