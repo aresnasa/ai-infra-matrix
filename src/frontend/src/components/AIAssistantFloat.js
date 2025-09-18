@@ -66,6 +66,7 @@ const AIAssistantFloat = () => {
   const [showModelConfig, setShowModelConfig] = useState(false); // 控制模型配置弹窗
   const [customModelUrl, setCustomModelUrl] = useState(''); // 自定义模型地址
   const [customRestfulConfig, setCustomRestfulConfig] = useState({ // RESTful接口配置
+    name: '',
     apiUrl: '',
     method: 'POST',
     headers: {},
@@ -112,7 +113,7 @@ const AIAssistantFloat = () => {
     
     if (model.is_default) {
       return <Tag color="green" size="small">默认</Tag>;
-    } else if (model.api_url && model.api_url !== '') {
+    } else if (model.api_endpoint && model.api_endpoint !== '') {
       return <Tag color="blue" size="small">自定义</Tag>;
     }
     return null;
@@ -222,15 +223,64 @@ const AIAssistantFloat = () => {
   // 保存自定义RESTful配置
   const saveCustomRestfulConfig = async () => {
     try {
-      // 这里可以调用API保存配置
-      console.log('保存RESTful配置:', customRestfulConfig);
-      message.success('RESTful配置保存成功');
+      // 验证必填字段
+      if (!customRestfulConfig.apiUrl) {
+        message.error('请填写API地址');
+        return;
+      }
+      
+      if (!customRestfulConfig.name) {
+        message.error('请填写配置名称');
+        return;
+      }
+
+      // 构造配置数据，映射到后端字段格式
+      const configData = {
+        name: customRestfulConfig.name,
+        provider: 'custom',
+        model: 'custom-restful-model',
+        api_endpoint: customRestfulConfig.apiUrl,
+        api_key: customRestfulConfig.authValue,
+        headers: JSON.stringify(customRestfulConfig.headers), // 转换为JSON字符串
+        parameters: JSON.stringify({
+          method: customRestfulConfig.method,
+          requestFormat: customRestfulConfig.requestFormat,
+          authType: customRestfulConfig.authType
+        }),
+        description: `通过AI助手浮窗创建的RESTful配置`,
+        category: '自定义接口',
+        max_tokens: 4096,
+        temperature: 0.7,
+        top_p: 1.0,
+        is_enabled: true,
+        is_default: false
+      };
+
+      console.log('📡 保存RESTful配置到后端:', configData);
+      
+      // 调用API创建配置
+      await aiAPI.createConfig(configData);
+      
+      message.success('RESTful配置保存成功，已同步到AI助手管理');
       setShowModelConfig(false);
-      // 刷新配置列表
-      fetchConfigs();
+      
+      // 重置表单
+      setCustomRestfulConfig({
+        name: '',
+        apiUrl: '',
+        method: 'POST',
+        headers: {},
+        requestFormat: 'openai',
+        authType: 'bearer',
+        authValue: ''
+      });
+      
+      // 刷新配置列表以显示新增的配置
+      await fetchConfigs();
     } catch (error) {
-      console.error('保存RESTful配置失败:', error);
-      message.error('保存配置失败');
+      console.error('❌ 保存RESTful配置失败:', error);
+      const errorMsg = error.response?.data?.message || error.message || '保存配置失败';
+      message.error(`保存配置失败: ${errorMsg}`);
     }
   };
 
@@ -908,11 +958,22 @@ const AIAssistantFloat = () => {
     }, 100);
   };
 
-  // 初始化
+  // 初始化和配置同步
   useEffect(() => {
     if (visible) {
       fetchConfigs();
       fetchConversations();
+      
+      // 设置定时同步配置（每30秒检查一次）
+      const syncInterval = setInterval(() => {
+        console.log('🔄 定时同步AI配置列表...');
+        fetchConfigs();
+      }, 30000);
+
+      // 清理定时器
+      return () => {
+        clearInterval(syncInterval);
+      };
     }
   }, [visible]);
 
@@ -1088,7 +1149,7 @@ const AIAssistantFloat = () => {
                     const searchText = input?.toLowerCase() || '';
                     const modelName = (config.name || '').toLowerCase();
                     const modelType = (config.model_type || '').toLowerCase();
-                    const apiUrl = (config.api_url || '').toLowerCase();
+                    const apiUrl = (config.api_endpoint || '').toLowerCase();
                     
                     // 支持按名称、类型、API地址搜索
                     return modelName.includes(searchText) || 
@@ -1113,7 +1174,7 @@ const AIAssistantFloat = () => {
                         <div>
                           <div style={{ fontWeight: 500 }}>{config.name}</div>
                           <div style={{ fontSize: 11, color: '#999' }}>
-                            {config.model_type || 'AI模型'} • {config.api_url ? '自定义地址' : '默认配置'}
+                            {config.model_type || 'AI模型'} • {config.api_endpoint ? '自定义地址' : '默认配置'}
                           </div>
                         </div>
                         {getModelStatusTag(config)}
@@ -1489,9 +1550,9 @@ const AIAssistantFloat = () => {
                     <div style={{ fontSize: 12, color: '#666' }}>
                       类型: {configs.find(c => c.id === selectedConfig)?.model_type || 'AI模型'}
                     </div>
-                    {configs.find(c => c.id === selectedConfig)?.api_url && (
+                    {configs.find(c => c.id === selectedConfig)?.api_endpoint && (
                       <div style={{ fontSize: 12, color: '#666' }}>
-                        地址: {configs.find(c => c.id === selectedConfig)?.api_url}
+                        地址: {configs.find(c => c.id === selectedConfig)?.api_endpoint}
                       </div>
                     )}
                   </div>
@@ -1557,9 +1618,9 @@ const AIAssistantFloat = () => {
                           <div style={{ marginBottom: 4 }}>
                             类型: {config.model_type || 'AI模型'}
                           </div>
-                          {config.api_url && (
+                          {config.api_endpoint && (
                             <div style={{ fontSize: 12, color: '#666' }}>
-                              API地址: {config.api_url}
+                              API地址: {config.api_endpoint}
                             </div>
                           )}
                           {config.description && (
@@ -1598,6 +1659,15 @@ const AIAssistantFloat = () => {
                 ),
                 children: (
                   <Form layout="vertical" size="small">
+                    <Form.Item label="配置名称" required>
+                      <Input
+                        value={customRestfulConfig.name || ''}
+                        onChange={(e) => setCustomRestfulConfig(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="为您的自定义配置起个名字"
+                        prefix={<EditOutlined />}
+                      />
+                    </Form.Item>
+
                     <Form.Item label="API地址" required>
                       <Input
                         value={customRestfulConfig.apiUrl}
