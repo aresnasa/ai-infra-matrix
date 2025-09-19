@@ -688,8 +688,8 @@ func (s *aiServiceImpl) InitDefaultConfigs() error {
 		}
 
 		if err := s.CreateConfig(openaiConfig); err != nil {
-			logrus.Errorf("创建默认OpenAI配置失败: %v", err)
-			return fmt.Errorf("创建默认OpenAI配置失败: %v", err)
+			logrus.Errorf("创建OpenAI配置失败: %v", err)
+			return fmt.Errorf("创建OpenAI配置失败: %v", err)
 		}
 
 		// 创建默认的Claude配置
@@ -710,8 +710,8 @@ func (s *aiServiceImpl) InitDefaultConfigs() error {
 		}
 
 		if err := s.CreateConfig(claudeConfig); err != nil {
-			logrus.Errorf("创建默认Claude配置失败: %v", err)
-			return fmt.Errorf("创建默认Claude配置失败: %v", err)
+			logrus.Errorf("创建Claude配置失败: %v", err)
+			return fmt.Errorf("创建Claude配置失败: %v", err)
 		}
 
 		logrus.Infof("默认AI配置初始化完成，创建了 %d 个基础配置", 2)

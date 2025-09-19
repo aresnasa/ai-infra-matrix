@@ -597,9 +597,9 @@ func initializeDefaultAIConfigs() {
 		return
 	}
 
-	// 创建默认OpenAI配置（需要用户后续配置API密钥）
+	// 创建OpenAI配置（需要用户后续配置API密钥）
 	openaiConfig := &models.AIAssistantConfig{
-		Name:         "默认OpenAI配置",
+		Name:         "OpenAI配置",
 		Provider:     "openai",
 		Model:        "gpt-3.5-turbo",
 		APIKey:       "", // 空密钥，需要管理员后续配置
@@ -617,9 +617,9 @@ func initializeDefaultAIConfigs() {
 		log.Println("✓ Created default OpenAI configuration")
 	}
 
-	// 创建默认Claude配置（需要用户后续配置API密钥）
+	// 创建Claude配置（需要用户后续配置API密钥）
 	claudeConfig := &models.AIAssistantConfig{
-		Name:         "默认Claude配置",
+		Name:         "Claude配置",
 		Provider:     "claude",
 		Model:        "claude-3-haiku-20240307",
 		APIKey:       "", // 空密钥，需要管理员后续配置
