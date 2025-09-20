@@ -716,3 +716,154 @@ type RegistrationApproval struct {
 func (RegistrationApproval) TableName() string {
 	return "registration_approvals"
 }
+
+// ==================== 作业管理相关模型 ====================
+
+// Job 作业表
+type Job struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	UserID      uint      `json:"user_id" gorm:"not null;index"`
+	ClusterID   string    `json:"cluster_id" gorm:"not null;size:100;index"`
+	JobID       uint32    `json:"job_id" gorm:"not null;index"` // SLURM作业ID
+	Name        string    `json:"name" gorm:"not null;size:255"`
+	Command     string    `json:"command" gorm:"type:text"`
+	WorkingDir  string    `json:"working_dir" gorm:"size:500"`
+	Status      string    `json:"status" gorm:"not null;size:50;index"` // PENDING, RUNNING, COMPLETED, FAILED, CANCELLED
+	ExitCode    *int      `json:"exit_code,omitempty"`
+	SubmitTime  time.Time `json:"submit_time"`
+	StartTime   *time.Time `json:"start_time,omitempty"`
+	EndTime     *time.Time `json:"end_time,omitempty"`
+	Partition   string    `json:"partition" gorm:"size:100"`
+	Nodes       int       `json:"nodes" gorm:"default:1"`
+	CPUs        int       `json:"cpus" gorm:"default:1"`
+	Memory      string    `json:"memory" gorm:"size:50"` // e.g., "4G", "8000M"
+	TimeLimit   string    `json:"time_limit" gorm:"size:50"` // e.g., "01:00:00"
+	StdOut      string    `json:"std_out" gorm:"size:500"`
+	StdErr      string    `json:"std_err" gorm:"size:500"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	// 关联关系
+	User    User    `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Cluster Cluster `json:"cluster,omitempty" gorm:"foreignKey:ClusterID"`
+}
+
+func (Job) TableName() string {
+	return "jobs"
+}
+
+// Cluster 集群表
+type Cluster struct {
+	ID          string `json:"id" gorm:"primaryKey;size:100"`
+	Name        string `json:"name" gorm:"not null;size:255"`
+	Description string `json:"description" gorm:"type:text"`
+	Host        string `json:"host" gorm:"not null;size:255"`
+	Port        int    `json:"port" gorm:"default:22"`
+	Status      string `json:"status" gorm:"not null;default:'active';size:20"` // active, inactive, maintenance
+	Config      string `json:"config" gorm:"type:json"` // 集群配置JSON
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	// 关联关系
+	Jobs []Job `json:"jobs,omitempty" gorm:"foreignKey:ClusterID"`
+}
+
+func (Cluster) TableName() string {
+	return "clusters"
+}
+
+// JobTemplate 作业模板表
+type JobTemplate struct {
+	ID          uint   `json:"id" gorm:"primaryKey"`
+	Name        string `json:"name" gorm:"not null;size:255"`
+	Description string `json:"description" gorm:"type:text"`
+	Command     string `json:"command" gorm:"type:text"`
+	Partition   string `json:"partition" gorm:"size:100"`
+	Nodes       int    `json:"nodes" gorm:"default:1"`
+	CPUs        int    `json:"cpus" gorm:"default:1"`
+	Memory      string `json:"memory" gorm:"size:50"`
+	TimeLimit   string `json:"time_limit" gorm:"size:50"`
+	IsPublic    bool   `json:"is_public" gorm:"default:false"`
+	UserID      uint   `json:"user_id" gorm:"index"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	// 关联关系
+	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+func (JobTemplate) TableName() string {
+	return "job_templates"
+}
+
+// ==================== API 请求/响应模型 ====================
+
+// SubmitJobRequest 提交作业请求
+type SubmitJobRequest struct {
+	UserID     string `json:"user_id"`
+	ClusterID  string `json:"cluster_id" binding:"required"`
+	Name       string `json:"name" binding:"required"`
+	Command    string `json:"command" binding:"required"`
+	WorkingDir string `json:"working_dir"`
+	Partition  string `json:"partition"`
+	Nodes      int    `json:"nodes"`
+	CPUs       int    `json:"cpus"`
+	Memory     string `json:"memory"`
+	TimeLimit  string `json:"time_limit"`
+}
+
+// JobListResponse 作业列表响应
+type JobListResponse struct {
+	Jobs     []Job `json:"jobs"`
+	Total    int64 `json:"total"`
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+}
+
+// JobOutput 作业输出
+type JobOutput struct {
+	JobID   uint32 `json:"job_id"`
+	StdOut  string `json:"stdout"`
+	StdErr  string `json:"stderr"`
+	ExitCode *int  `json:"exit_code,omitempty"`
+}
+
+// ClusterInfo 集群信息
+type ClusterInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Partitions  []PartitionInfo `json:"partitions"`
+}
+
+// PartitionInfo 分区信息
+type PartitionInfo struct {
+	Name     string `json:"name"`
+	Nodes    int    `json:"nodes"`
+	State    string `json:"state"`
+	CPUs     int    `json:"cpus"`
+	Memory   string `json:"memory"`
+	TimeLimit string `json:"time_limit"`
+}
+
+// FileInfo 文件信息
+type FileInfo struct {
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	IsDir   bool      `json:"is_dir"`
+	ModTime time.Time `json:"mod_time"`
+	Mode    string    `json:"mode"`
+}
+
+// DashboardStats 仪表板统计
+type DashboardStats struct {
+	TotalJobs     int64 `json:"total_jobs"`
+	RunningJobs   int64 `json:"running_jobs"`
+	PendingJobs   int64 `json:"pending_jobs"`
+	CompletedJobs int64 `json:"completed_jobs"`
+	FailedJobs    int64 `json:"failed_jobs"`
+	TotalClusters int   `json:"total_clusters"`
+	ActiveClusters int  `json:"active_clusters"`
+}

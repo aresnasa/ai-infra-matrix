@@ -183,6 +183,12 @@ func main() {
 		logrus.Info("Default AI configurations initialized successfully")
 	}
 
+	// 初始化作业管理服务
+	slurmService := services.NewSlurmService()
+	sshService := services.NewSSHService()
+	cacheService := services.NewCacheService(cache.RDB)
+	jobService := services.NewJobService(database.DB, slurmService, sshService, cacheService)
+
 	// 设置JWT密钥
 	jwt.SetSecret(cfg.JWTSecret)
 
@@ -692,121 +698,44 @@ func main() {
 			slurm.GET("/summary", slurmController.GetSummary)
 			slurm.GET("/nodes", slurmController.GetNodes)
 			slurm.GET("/jobs", slurmController.GetJobs)
+
+			// 扩缩容相关路由
+			slurm.GET("/scaling/status", slurmController.GetScalingStatus)
+			slurm.POST("/scaling/scale-up", slurmController.ScaleUp)
+			slurm.POST("/scaling/scale-down", slurmController.ScaleDown)
+
+			// 节点模板管理
+			slurm.GET("/node-templates", slurmController.GetNodeTemplates)
+			slurm.POST("/node-templates", slurmController.CreateNodeTemplate)
+			slurm.PUT("/node-templates/:id", slurmController.UpdateNodeTemplate)
+			slurm.DELETE("/node-templates/:id", slurmController.DeleteNodeTemplate)
+
+			// SaltStack集成
+			slurm.GET("/saltstack/integration", slurmController.GetSaltStackIntegration)
+			slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)
+			slurm.POST("/saltstack/execute", slurmController.ExecuteSaltCommand)
+			slurm.GET("/saltstack/jobs", slurmController.GetSaltJobs)
 		}
 
-		// SaltStack 路由（需要认证）
-		saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
-		saltstack := api.Group("/saltstack")
-		saltstack.Use(middleware.AuthMiddlewareWithSession())
+		// 作业管理路由（需要认证）
+		jobController := controllers.NewJobController(jobService)
+		jobs := api.Group("/jobs")
+		jobs.Use(middleware.AuthMiddlewareWithSession())
 		{
-			saltstack.GET("/status", saltStackHandler.GetSaltStackStatus)
-			saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
-			saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
-			saltstack.POST("/execute", middleware.RBACMiddleware(database.DB, "saltstack", "execute"), saltStackHandler.ExecuteSaltCommand)
+			jobs.GET("", jobController.ListJobs)
+			jobs.POST("", jobController.SubmitJob)
+			jobs.GET("/:jobId", jobController.GetJobDetail)
+			jobs.POST("/:jobId/cancel", jobController.CancelJob)
+			jobs.GET("/:jobId/output", jobController.GetJobOutput)
 		}
 
-		// 导航配置路由（需要认证）
-		navigationController := controllers.NewNavigationController()
-		navigation := api.Group("/navigation")
-		navigation.Use(middleware.AuthMiddlewareWithSession())
+		// 仪表板统计路由（需要认证）
+		dashboard := api.Group("/dashboard")
+		dashboard.Use(middleware.AuthMiddlewareWithSession())
 		{
-			navigation.GET("/config", navigationController.GetNavigationConfig)
-			navigation.PUT("/config", navigationController.SaveNavigationConfig)
-			navigation.DELETE("/config", navigationController.ResetNavigationConfig)
-			navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
+			dashboard.GET("/stats", jobController.GetDashboardStats)
 		}
-
-		// AI 助手路由（需要认证）
-		aiController := controllers.NewAIAssistantController()
-		ai := api.Group("/ai")
-		ai.Use(middleware.AuthMiddlewareWithSession())
-		{
-			// 配置管理（管理员权限）
-			ai.POST("/configs", middleware.AdminOnlyMiddleware(database.DB), aiController.CreateConfig)
-			ai.GET("/configs", aiController.ListConfigs)
-			ai.GET("/configs/:id", aiController.GetConfig)
-			ai.PUT("/configs/:id", middleware.AdminOnlyMiddleware(database.DB), aiController.UpdateConfig)
-			ai.DELETE("/configs/:id", middleware.AdminOnlyMiddleware(database.DB), aiController.DeleteConfig)
-
-			// 对话管理
-			ai.POST("/conversations", aiController.CreateConversation)
-			ai.GET("/conversations", aiController.ListConversations)
-			ai.GET("/conversations/:id", aiController.GetConversation)
-			ai.DELETE("/conversations/:id", aiController.DeleteConversation)
-			
-			// 对话控制
-			ai.PATCH("/conversations/:id/stop", aiController.StopConversation)
-			ai.PATCH("/conversations/:id/resume", aiController.ResumeConversation)
-
-			// 消息处理（异步版本）
-			ai.POST("/conversations/:id/messages", aiController.SendMessage)
-			ai.GET("/conversations/:id/messages", aiController.GetMessages)
-			ai.GET("/messages/:message_id/status", aiController.GetMessageStatus)
-			ai.PATCH("/messages/:message_id/stop", aiController.StopMessage)
-
-			// 快速聊天（异步版本）
-			ai.POST("/quick-chat", aiController.QuickChat)
-
-			// 集群操作
-			ai.POST("/cluster-operations", aiController.SubmitClusterOperation)
-			ai.GET("/operations/:operation_id/status", aiController.GetOperationStatus)
-
-			// 系统健康检查
-			ai.GET("/health", aiController.GetSystemHealth)
-
-			// 使用统计
-			ai.GET("/usage-stats", aiController.GetUsageStats)
-
-			// 异步API子路由组（为测试提供专用端点）
-			async := ai.Group("/async")
-			{
-				// 系统健康检查
-				async.GET("/health", aiController.GetSystemHealth)
-				
-				// 快速聊天（异步版本）
-				async.POST("/quick-chat", aiController.QuickChat)
-				
-				// 消息状态检查
-				async.GET("/messages/:message_id/status", aiController.GetMessageStatus)
-				
-				// 集群操作
-				async.POST("/cluster-operations", aiController.SubmitClusterOperation)
-				async.GET("/operations/:operation_id/status", aiController.GetOperationStatus)
-				
-				// 使用统计
-				async.GET("/usage-stats", aiController.GetUsageStats)
-			}
-		}
-
-		// JupyterLab 模板管理路由（需要认证）
-		jupyterLabController := controllers.NewJupyterLabTemplateController()
-		jupyterlab := api.Group("/jupyterlab")
-		jupyterlab.Use(middleware.AuthMiddlewareWithSession())
-		{
-			// 模板管理
-			jupyterlab.GET("/templates", jupyterLabController.ListTemplates)
-			jupyterlab.POST("/templates", jupyterLabController.CreateTemplate)
-			jupyterlab.GET("/templates/:id", jupyterLabController.GetTemplate)
-			jupyterlab.PUT("/templates/:id", jupyterLabController.UpdateTemplate)
-			jupyterlab.DELETE("/templates/:id", jupyterLabController.DeleteTemplate)
-			jupyterlab.POST("/templates/:id/clone", jupyterLabController.CloneTemplate)
-			jupyterlab.POST("/templates/:id/default", jupyterLabController.SetDefaultTemplate)
-			jupyterlab.GET("/templates/:id/export", jupyterLabController.ExportTemplate)
-			jupyterlab.POST("/templates/import", jupyterLabController.ImportTemplate)
-			
-			// 实例管理
-			jupyterlab.GET("/instances", jupyterLabController.ListInstances)
-			jupyterlab.POST("/instances", jupyterLabController.CreateInstance)
-			jupyterlab.GET("/instances/:id", jupyterLabController.GetInstance)
-			jupyterlab.DELETE("/instances/:id", jupyterLabController.DeleteInstance)
-		}
-
-		// 管理员可以创建预定义模板
-		jupyterlabAdmin := api.Group("/jupyterlab/admin")
-		jupyterlabAdmin.Use(middleware.AuthMiddlewareWithSession(), middleware.AdminMiddleware())
-		{
-			jupyterlabAdmin.POST("/create-predefined-templates", jupyterLabController.CreatePredefinedTemplates)
-		}
+	}
 
 	// 优雅关闭
 	c := make(chan os.Signal, 1)

@@ -405,61 +405,61 @@ export const playbookAPI = {
 // 管理员API
 export const adminAPI = {
   // 用户管理
-  getUsers: () => api.get('/admin/users'),
-  createUser: (userData) => api.post('/admin/users', userData),
-  updateUser: (id, userData) => api.put(`/admin/users/${id}`, userData),
-  deleteUser: (id) => api.delete(`/admin/users/${id}`),
-  toggleUserStatus: (id, isActive) => api.put(`/users/${id}/status`, { is_active: isActive }),
+  getUsers: () => api.get('admin/users'),
+  createUser: (userData) => api.post('admin/users', userData),
+  updateUser: (id, userData) => api.put(`admin/users/${id}`, userData),
+  deleteUser: (id) => api.delete(`admin/users/${id}`),
+  toggleUserStatus: (id, isActive) => api.put(`users/${id}/status`, { is_active: isActive }),
   
   // 项目管理
-  getProjects: () => api.get('/admin/projects'),
-  updateProject: (id, projectData) => api.put(`/admin/projects/${id}`, projectData),
-  deleteProject: (id) => api.delete(`/admin/projects/${id}`),
+  getProjects: () => api.get('admin/projects'),
+  updateProject: (id, projectData) => api.put(`admin/projects/${id}`, projectData),
+  deleteProject: (id) => api.delete(`admin/projects/${id}`),
   
   // 系统设置
-  getSystemSettings: () => api.get('/admin/settings'),
-  updateSystemSettings: (settings) => api.put('/admin/settings', settings),
+  getSystemSettings: () => api.get('admin/settings'),
+  updateSystemSettings: (settings) => api.put('admin/settings', settings),
   
   // LDAP设置
-  getLDAPSettings: () => api.get('/admin/ldap'),
-  updateLDAPSettings: (settings) => api.put('/admin/ldap', settings),
-  testLDAPConnection: (settings) => api.post('/admin/ldap/test', settings),
+  getLDAPSettings: () => api.get('admin/ldap'),
+  updateLDAPSettings: (settings) => api.put('admin/ldap', settings),
+  testLDAPConnection: (settings) => api.post('admin/ldap/test', settings),
   
   // 认证设置
-  getAuthSettings: () => api.get('/admin/auth'),
-  updateAuthSettings: (settings) => api.put('/admin/auth', settings),
+  getAuthSettings: () => api.get('admin/auth'),
+  updateAuthSettings: (settings) => api.put('admin/auth', settings),
   
   // 回收站
-  getTrashItems: () => api.get('/admin/trash'),
-  restoreTrashItem: (id) => api.post(`/admin/trash/${id}/restore`),
-  permanentDeleteTrashItem: (id) => api.delete(`/admin/trash/${id}/permanent`),
+  getTrashItems: () => api.get('admin/trash'),
+  restoreTrashItem: (id) => api.post(`admin/trash/${id}/restore`),
+  permanentDeleteTrashItem: (id) => api.delete(`admin/trash/${id}/permanent`),
   
   // 增强用户管理功能
-  getUserWithAuthSource: (id) => api.get(`/admin/users/${id}/auth-source`),
-  resetUserPassword: (id, data) => api.post(`/admin/enhanced-users/${id}/reset-password`, data),
-  updateUserGroups: (id, data) => api.put(`/admin/enhanced-users/${id}/groups`, data),
-  updateUserStatusEnhanced: (id, data) => api.put(`/admin/enhanced-users/${id}/status`, data),
+  getUserWithAuthSource: (id) => api.get(`admin/users/${id}/auth-source`),
+  resetUserPassword: (id, data) => api.post(`admin/enhanced-users/${id}/reset-password`, data),
+  updateUserGroups: (id, data) => api.put(`admin/enhanced-users/${id}/groups`, data),
+  updateUserStatusEnhanced: (id, data) => api.put(`admin/enhanced-users/${id}/status`, data),
   
   // 注册审批功能
-  getPendingApprovals: () => api.get('/admin/approvals/pending'),
-  approveRegistration: (id) => api.post(`/admin/approvals/${id}/approve`),
-  rejectRegistration: (id, reason) => api.post(`/admin/approvals/${id}/reject`, { reason }),
+  getPendingApprovals: () => api.get('admin/approvals/pending'),
+  approveRegistration: (id) => api.post(`admin/approvals/${id}/approve`),
+  rejectRegistration: (id, reason) => api.post(`admin/approvals/${id}/reject`, { reason }),
   
   // 获取所有用户（分页）
-  getAllUsers: (params) => api.get('/admin/users', { params }),
+  getAllUsers: (params) => api.get('admin/users', { params }),
   
   // 统计信息
-  getSystemStats: () => api.get('/admin/stats'),
-  getUserStatistics: () => api.get('/admin/user-stats'),
+  getSystemStats: () => api.get('admin/stats'),
+  getUserStatistics: () => api.get('admin/user-stats'),
   
   // 增强LDAP管理
-  getLDAPConfig: () => api.get('/admin/ldap/config'),
-  updateLDAPConfig: (config) => api.put('/admin/ldap/config', config),
-  testLDAPConnection: (config) => api.post('/admin/ldap/test', config),
-  syncLDAPUsers: (options = {}) => api.post('/admin/ldap/sync', options),
-  getLDAPUsers: () => api.get('/admin/ldap/users'),
-  getLDAPSyncStatus: (syncId) => api.get(`/admin/ldap/sync/${syncId}/status`),
-  getLDAPSyncHistory: (limit = 10) => api.get(`/admin/ldap/sync/history?limit=${limit}`),
+  getLDAPConfig: () => api.get('admin/ldap/config'),
+  updateLDAPConfig: (config) => api.put('admin/ldap/config', config),
+  testLDAPConnection: (config) => api.post('admin/ldap/test', config),
+  syncLDAPUsers: (options = {}) => api.post('admin/ldap/sync', options),
+  getLDAPUsers: () => api.get('admin/ldap/users'),
+  getLDAPSyncStatus: (syncId) => api.get(`admin/ldap/sync/${syncId}/status`),
+  getLDAPSyncHistory: (limit = 10) => api.get(`admin/ldap/sync/history?limit=${limit}`),
 };
 
 // AI助手API
@@ -518,6 +518,14 @@ export const slurmAPI = {
   getSummary: () => api.get('/slurm/summary'),
   getNodes: () => api.get('/slurm/nodes'),
   getJobs: () => api.get('/slurm/jobs'),
+  // 扩缩容相关 API
+  getScalingStatus: () => api.get('/slurm/scaling/status'),
+  scaleUp: (nodes) => api.post('/slurm/scaling/scale-up', { nodes }),
+  scaleDown: (nodeIds) => api.post('/slurm/scaling/scale-down', { node_ids: nodeIds }),
+  getNodeTemplates: () => api.get('/slurm/node-templates'),
+  createNodeTemplate: (template) => api.post('/slurm/node-templates', template),
+  updateNodeTemplate: (id, template) => api.put(`/slurm/node-templates/${id}`, template),
+  deleteNodeTemplate: (id) => api.delete(`/slurm/node-templates/${id}`),
 };
 
 // SaltStack API
@@ -526,6 +534,18 @@ export const saltStackAPI = {
   getMinions: () => api.get('/saltstack/minions'),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   executeCommand: (command) => api.post('/saltstack/execute', command),
+  // SaltStack 集成 API
+  getSaltStackIntegration: () => api.get('/slurm/saltstack/integration'),
+  deploySaltMinion: (nodeConfig) => api.post('/slurm/saltstack/deploy-minion', nodeConfig),
+  executeSaltCommand: (command) => api.post('/slurm/saltstack/execute', command),
+  getSaltJobs: () => api.get('/slurm/saltstack/jobs'),
+  // SaltStack 状态管理
+  acceptMinion: (minionId) => api.post(`/saltstack/minions/${minionId}/accept`),
+  rejectMinion: (minionId) => api.post(`/saltstack/minions/${minionId}/reject`),
+  deleteMinion: (minionId) => api.delete(`/saltstack/minions/${minionId}`),
+  // SaltStack 批量操作
+  batchExecute: (targets, command) => api.post('/saltstack/batch-execute', { targets, command }),
+  getMinionDetails: (minionId) => api.get(`/saltstack/minions/${minionId}/details`),
 };
 
 // 增强用户管理API

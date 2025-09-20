@@ -89,11 +89,14 @@ const JupyterHubPage = withLazyLoading(React.lazy(() => import('./pages/JupyterH
 const EmbeddedJupyter = withLazyLoading(React.lazy(() => import('./pages/EmbeddedJupyter')), {
   loadingText: '正在加载Jupyter环境...'
 });
-const SlurmDashboard = withLazyLoading(React.lazy(() => import('./pages/SlurmDashboard')), {
-  loadingText: '正在加载Slurm仪表板...'
-});
 const SaltStackDashboard = withLazyLoading(React.lazy(() => import('./pages/SaltStackDashboard')), {
   loadingText: '正在加载SaltStack仪表板...'
+});
+const SlurmScalingPage = withLazyLoading(React.lazy(() => import('./pages/SlurmScalingPage')), {
+  loadingText: '正在加载SLURM扩缩容页面...'
+});
+const JobManagement = withLazyLoading(React.lazy(() => import('./pages/JobManagement')), {
+  loadingText: '正在加载作业管理...'
 });
 const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')), {
   loadingText: '正在加载Gitea...'
@@ -502,7 +505,25 @@ function App() {
                       element={
                         <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
-                            <SlurmDashboard />
+                            <SlurmScalingPage />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* SLURM扩缩容自动化页面 - 重定向到主SLURM页面 */}
+                    <Route
+                      path="/slurm-scaling"
+                      element={<Navigate to="/slurm" replace />}
+                    />
+
+                    {/* Job management page - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/jobs"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <JobManagement />
                           </Suspense>
                         </TeamProtectedRoute>
                       }
@@ -556,7 +577,7 @@ function App() {
                       element={
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
-                            <EnhancedUserManagement />
+                            <AdminUsers />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

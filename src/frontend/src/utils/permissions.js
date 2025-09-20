@@ -10,13 +10,14 @@ export const ROLE_PERMISSIONS = {
     allowedRoutes: [
       '/projects',
       '/jupyterhub',
-      '/slurm',
       '/dashboard',
       '/enhanced-dashboard',
-      '/profile'
+      '/profile',
+      '/jobs'
     ],
     restrictedRoutes: [
       '/admin',
+      '/slurm',
       '/saltstack',
       '/ansible',
       '/kubernetes',
@@ -27,7 +28,7 @@ export const ROLE_PERMISSIONS = {
       'enhanced-dashboard',
       'projects',
       'jupyterhub',
-      'slurm'
+      'jobs'
     ]
   },
   'sre': {
@@ -42,7 +43,8 @@ export const ROLE_PERMISSIONS = {
       '/dashboard',
       '/enhanced-dashboard',
       '/admin',
-      '/profile'
+      '/profile',
+      '/jobs'
     ],
     restrictedRoutes: [],
     menuItems: [
@@ -54,6 +56,7 @@ export const ROLE_PERMISSIONS = {
       'ansible',
       'jupyterhub',
       'slurm',
+      'jobs',
       'saltstack',
       'kafka-ui',
       'admin'
@@ -107,7 +110,8 @@ export const ROLE_PERMISSIONS = {
       '/settings',
       '/logs',
       '/monitoring',
-      '/system-info'
+      '/system-info',
+      '/jobs'
     ],
     restrictedRoutes: [], // 管理员没有任何限制
     menuItems: [
@@ -119,6 +123,7 @@ export const ROLE_PERMISSIONS = {
       'ansible',
       'jupyterhub',
       'slurm',
+      'jobs',
       'saltstack',
       'kafka-ui',
       'admin',
@@ -197,6 +202,7 @@ export const getAvailableMenuItems = (user) => {
       'ansible',
       'jupyterhub',
       'slurm',
+      'jobs',
       'saltstack',
       'kafka-ui',
       'admin'

@@ -68,7 +68,12 @@ const Layout = ({ children, user, onLogout }) => {
     {
       key: '/slurm',
       icon: <ClusterOutlined />,
-      label: 'Slurm',
+      label: 'SLURM扩缩容',
+    },
+    {
+      key: '/jobs',
+      icon: <FileTextOutlined />,
+      label: '作业管理',
     },
     {
       key: '/saltstack',
@@ -165,6 +170,8 @@ const Layout = ({ children, user, onLogout }) => {
       selectedKeys = ['/ansible'];
     } else if (pathname === '/slurm' || pathname.startsWith('/slurm')) {
       selectedKeys = ['/slurm'];
+    } else if (pathname === '/jobs' || pathname.startsWith('/jobs')) {
+      selectedKeys = ['/jobs'];
     } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {
       selectedKeys = ['/saltstack'];
     }

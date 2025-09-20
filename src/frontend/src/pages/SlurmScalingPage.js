@@ -1,0 +1,736 @@
+import React, { useEffect, useState } from 'react';
+import {
+  Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button,
+  Typography, Modal, Form, Input, Select, message, Progress, List,
+  Descriptions, Badge, Tabs, Divider, Tooltip, Popconfirm, Checkbox
+} from 'antd';
+import {
+  PlusOutlined, MinusOutlined, ReloadOutlined, ThunderboltOutlined,
+  DesktopOutlined, ClusterOutlined, NodeIndexOutlined, ApiOutlined,
+  CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined,
+  PlayCircleOutlined, StopOutlined, SettingOutlined
+} from '@ant-design/icons';
+import { slurmAPI } from '../services/api';
+
+const { Title, Text, Paragraph } = Typography;
+const { TabPane } = Tabs;
+const { Option } = Select;
+const { TextArea } = Input;
+
+// 扩展的 SLURM API
+const extendedSlurmAPI = {
+  ...slurmAPI,
+  // 扩缩容相关 API
+  getScalingStatus: () => slurmAPI.get('/slurm/scaling/status'),
+  scaleUp: (nodes) => slurmAPI.post('/slurm/scaling/scale-up', { nodes }),
+  scaleDown: (nodeIds) => slurmAPI.post('/slurm/scaling/scale-down', { node_ids: nodeIds }),
+  getNodeTemplates: () => slurmAPI.get('/slurm/node-templates'),
+  createNodeTemplate: (template) => slurmAPI.post('/slurm/node-templates', template),
+  deleteNodeTemplate: (id) => slurmAPI.delete(`/slurm/node-templates/${id}`),
+  // SaltStack 联动 API
+  getSaltStackIntegration: () => slurmAPI.get('/slurm/saltstack/integration'),
+  deploySaltMinion: (nodeConfig) => slurmAPI.post('/slurm/saltstack/deploy-minion', nodeConfig),
+  executeSaltCommand: (command) => slurmAPI.post('/slurm/saltstack/execute', command),
+  getSaltJobs: () => slurmAPI.get('/slurm/saltstack/jobs'),
+};
+
+const SlurmScalingPage = () => {
+  // 基础状态
+  const [summary, setSummary] = useState(null);
+  const [nodes, setNodes] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // 扩缩容相关状态
+  const [scalingStatus, setScalingStatus] = useState(null);
+  const [nodeTemplates, setNodeTemplates] = useState([]);
+  const [saltIntegration, setSaltIntegration] = useState(null);
+  const [saltJobs, setSaltJobs] = useState([]);
+
+  // 模态框状态
+  const [scaleUpModal, setScaleUpModal] = useState(false);
+  const [scaleDownModal, setScaleDownModal] = useState(false);
+  const [templateModal, setTemplateModal] = useState(false);
+  const [saltCommandModal, setSaltCommandModal] = useState(false);
+
+  // 表单
+  const [scaleUpForm] = Form.useForm();
+  const [templateForm] = Form.useForm();
+  const [saltCommandForm] = Form.useForm();
+
+  // 表格列定义
+  const nodeColumns = [
+    { title: '节点名称', dataIndex: 'name', key: 'name' },
+    { title: '分区', dataIndex: 'partition', key: 'partition' },
+    { title: '状态', dataIndex: 'state', key: 'state',
+      render: (state) => <Tag color={getNodeStateColor(state)}>{state}</Tag> },
+    { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
+    { title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb' },
+    { title: 'SaltStack状态', dataIndex: 'saltstack_status', key: 'saltstack_status',
+      render: (status) => <Badge status={getSaltStatus(status)} text={status || '未配置'} /> },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record) => (
+        <Space size="small">
+          <Tooltip title="重新初始化">
+            <Button size="small" icon={<ReloadOutlined />} />
+          </Tooltip>
+          <Popconfirm
+            title="确定要移除此节点吗？"
+            onConfirm={() => handleScaleDown([record.name])}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Button size="small" danger icon={<MinusOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  const templateColumns = [
+    { title: '模板名称', dataIndex: 'name', key: 'name' },
+    { title: 'CPU核心数', dataIndex: 'cpus', key: 'cpus' },
+    { title: '内存(GB)', dataIndex: 'memory_gb', key: 'memory_gb' },
+    { title: '磁盘(GB)', dataIndex: 'disk_gb', key: 'disk_gb' },
+    { title: '操作系统', dataIndex: 'os', key: 'os' },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record) => (
+        <Space size="small">
+          <Button size="small" onClick={() => handleUseTemplate(record)}>
+            使用
+          </Button>
+          <Button size="small" danger onClick={() => handleDeleteTemplate(record.id)}>
+            删除
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
+  // 工具函数
+  const getNodeStateColor = (state) => {
+    if (!state) return 'default';
+    const stateStr = state.toLowerCase();
+    if (stateStr.includes('idle')) return 'green';
+    if (stateStr.includes('alloc')) return 'blue';
+    if (stateStr.includes('down')) return 'red';
+    if (stateStr.includes('maint')) return 'orange';
+    return 'default';
+  };
+
+  const getSaltStatus = (status) => {
+    if (!status) return 'default';
+    const statusStr = status.toLowerCase();
+    if (statusStr.includes('up') || statusStr.includes('online')) return 'success';
+    if (statusStr.includes('down') || statusStr.includes('offline')) return 'error';
+    if (statusStr.includes('pending')) return 'processing';
+    return 'default';
+  };
+
+  // 数据加载函数
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [
+        summaryRes, nodesRes, jobsRes,
+        scalingRes, templatesRes, saltRes, saltJobsRes
+      ] = await Promise.all([
+        slurmAPI.getSummary(),
+        slurmAPI.getNodes(),
+        slurmAPI.getJobs(),
+        extendedSlurmAPI.getScalingStatus(),
+        extendedSlurmAPI.getNodeTemplates(),
+        extendedSlurmAPI.getSaltStackIntegration(),
+        extendedSlurmAPI.getSaltJobs(),
+      ]);
+
+      setSummary(summaryRes.data?.data);
+      setNodes(nodesRes.data?.data || []);
+      setJobs(jobsRes.data?.data || []);
+      setScalingStatus(scalingRes.data?.data);
+      setNodeTemplates(templatesRes.data?.data || []);
+      setSaltIntegration(saltRes.data?.data);
+      setSaltJobs(saltJobsRes.data?.data || []);
+      setError(null);
+    } catch (e) {
+      console.error('加载数据失败', e);
+      setError(e);
+      message.error('加载数据失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 扩缩容处理函数
+  const handleScaleUp = async (values) => {
+    try {
+      const response = await extendedSlurmAPI.scaleUp(values.nodes);
+      message.success('扩容任务已提交');
+      setScaleUpModal(false);
+      scaleUpForm.resetFields();
+      loadData();
+    } catch (e) {
+      message.error('扩容失败: ' + e.message);
+    }
+  };
+
+  const handleScaleDown = async (nodeIds) => {
+    try {
+      await extendedSlurmAPI.scaleDown(nodeIds);
+      message.success('缩容任务已提交');
+      loadData();
+    } catch (e) {
+      message.error('缩容失败: ' + e.message);
+    }
+  };
+
+  const handleCreateTemplate = async (values) => {
+    try {
+      await extendedSlurmAPI.createNodeTemplate(values);
+      message.success('节点模板创建成功');
+      setTemplateModal(false);
+      templateForm.resetFields();
+      loadData();
+    } catch (e) {
+      message.error('创建模板失败: ' + e.message);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId) => {
+    try {
+      await extendedSlurmAPI.deleteNodeTemplate(templateId);
+      message.success('模板删除成功');
+      loadData();
+    } catch (e) {
+      message.error('删除模板失败: ' + e.message);
+    }
+  };
+
+  const handleUseTemplate = (template) => {
+    scaleUpForm.setFieldsValue({
+      cpus: template.cpus,
+      memory_gb: template.memory_gb,
+      disk_gb: template.disk_gb,
+      os: template.os,
+    });
+    setScaleUpModal(true);
+  };
+
+  const handleExecuteSaltCommand = async (values) => {
+    try {
+      await extendedSlurmAPI.executeSaltCommand(values);
+      message.success('SaltStack 命令已执行');
+      setSaltCommandModal(false);
+      saltCommandForm.resetFields();
+      loadData();
+    } catch (e) {
+      message.error('执行命令失败: ' + e.message);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 30000); // 30秒刷新
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading && !summary) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <Spin size="large" />
+        <div style={{ marginTop: 16 }}>加载 SLURM 集群状态...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 24 }}>
+      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Title level={2}>
+            <ClusterOutlined /> SLURM 弹性扩缩容管理
+          </Title>
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setScaleUpModal(true)}
+            >
+              扩容节点
+            </Button>
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={() => setSaltCommandModal(true)}
+            >
+              SaltStack 命令
+            </Button>
+          </Space>
+        </div>
+
+        {error && (
+          <Alert
+            type="error"
+            showIcon
+            message="数据加载失败"
+            description="请检查后端服务是否正常运行"
+          />
+        )}
+
+        {/* 集群概览 */}
+        <Row gutter={16}>
+          <Col span={4}>
+            <Card>
+              <Statistic
+                title="总节点数"
+                value={summary?.nodes_total || 0}
+                prefix={<NodeIndexOutlined />}
+                loading={loading}
+              />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card>
+              <Statistic
+                title="空闲节点"
+                value={summary?.nodes_idle || 0}
+                valueStyle={{ color: '#3f8600' }}
+                loading={loading}
+              />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card>
+              <Statistic
+                title="运行节点"
+                value={summary?.nodes_alloc || 0}
+                valueStyle={{ color: '#1890ff' }}
+                loading={loading}
+              />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card>
+              <Statistic
+                title="运行作业"
+                value={summary?.jobs_running || 0}
+                prefix={<PlayCircleOutlined />}
+                loading={loading}
+              />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card>
+              <Statistic
+                title="等待作业"
+                value={summary?.jobs_pending || 0}
+                valueStyle={{ color: '#faad14' }}
+                loading={loading}
+              />
+            </Card>
+          </Col>
+          <Col span={4}>
+            <Card>
+              <Statistic
+                title="SaltStack Minions"
+                value={saltIntegration?.connected_minions || 0}
+                prefix={<ApiOutlined />}
+                loading={loading}
+              />
+            </Card>
+          </Col>
+        </Row>
+
+        {/* 扩缩容状态 */}
+        {scalingStatus && (
+          <Card title="扩缩容状态" extra={<Badge status={scalingStatus.active ? 'processing' : 'success'} />}>
+            <Row gutter={16}>
+              <Col span={6}>
+                <Statistic title="活跃任务" value={scalingStatus.active_tasks || 0} />
+              </Col>
+              <Col span={6}>
+                <Statistic title="成功节点" value={scalingStatus.success_nodes || 0} />
+              </Col>
+              <Col span={6}>
+                <Statistic title="失败节点" value={scalingStatus.failed_nodes || 0} />
+              </Col>
+              <Col span={6}>
+                <Progress
+                  percent={scalingStatus.progress || 0}
+                  status={scalingStatus.active ? 'active' : 'success'}
+                />
+              </Col>
+            </Row>
+          </Card>
+        )}
+
+        <Tabs defaultActiveKey="nodes" type="card">
+          <TabPane tab={<span><DesktopOutlined />节点管理</span>} key="nodes">
+            <Card title="集群节点" extra={
+              <Space>
+                <Button icon={<PlusOutlined />} onClick={() => setScaleUpModal(true)}>
+                  添加节点
+                </Button>
+                <Button icon={<SettingOutlined />} onClick={() => setTemplateModal(true)}>
+                  管理模板
+                </Button>
+              </Space>
+            }>
+              <Table
+                rowKey="name"
+                dataSource={nodes}
+                columns={nodeColumns}
+                size="small"
+                pagination={{ pageSize: 10 }}
+                loading={loading}
+              />
+            </Card>
+          </TabPane>
+
+          <TabPane tab={<span><PlayCircleOutlined />作业队列</span>} key="jobs">
+            <Card title="作业状态">
+              <Table
+                rowKey="id"
+                dataSource={jobs}
+                columns={[
+                  { title: '作业ID', dataIndex: 'id', key: 'id' },
+                  { title: '名称', dataIndex: 'name', key: 'name' },
+                  { title: '用户', dataIndex: 'user', key: 'user' },
+                  { title: '状态', dataIndex: 'state', key: 'state',
+                    render: (state) => <Tag color={state === 'RUNNING' ? 'blue' : state === 'PENDING' ? 'orange' : 'default'}>{state}</Tag> },
+                  { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
+                  { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
+                ]}
+                size="small"
+                pagination={{ pageSize: 10 }}
+                loading={loading}
+              />
+            </Card>
+          </TabPane>
+
+          <TabPane tab={<span><ThunderboltOutlined />SaltStack 集成</span>} key="saltstack">
+            <Row gutter={16}>
+              <Col span={12}>
+                <Card title="SaltStack 状态">
+                  <Descriptions column={2} size="small">
+                    <Descriptions.Item label="Master状态">
+                      <Badge status={saltIntegration?.master_status === 'up' ? 'success' : 'error'}
+                             text={saltIntegration?.master_status || '未知'} />
+                    </Descriptions.Item>
+                    <Descriptions.Item label="API状态">
+                      <Badge status={saltIntegration?.api_status === 'up' ? 'success' : 'error'}
+                             text={saltIntegration?.api_status || '未知'} />
+                    </Descriptions.Item>
+                    <Descriptions.Item label="连接的Minions">
+                      {saltIntegration?.connected_minions || 0}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="活跃作业">
+                      {saltJobs?.length || 0}
+                    </Descriptions.Item>
+                  </Descriptions>
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card title="最近 SaltStack 作业">
+                  <List
+                    size="small"
+                    dataSource={saltJobs?.slice(0, 5) || []}
+                    renderItem={(job) => (
+                      <List.Item>
+                        <List.Item.Meta
+                          title={<Text strong>{job.function}</Text>}
+                          description={`${job.target} - ${job.status}`}
+                        />
+                        <Badge status={getSaltStatus(job.status)} />
+                      </List.Item>
+                    )}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          </TabPane>
+
+          <TabPane tab={<span><SettingOutlined />节点模板</span>} key="templates">
+            <Card title="节点配置模板" extra={
+              <Button icon={<PlusOutlined />} onClick={() => setTemplateModal(true)}>
+                新建模板
+              </Button>
+            }>
+              <Table
+                rowKey="id"
+                dataSource={nodeTemplates}
+                columns={templateColumns}
+                size="small"
+                pagination={{ pageSize: 10 }}
+                loading={loading}
+              />
+            </Card>
+          </TabPane>
+        </Tabs>
+      </Space>
+
+      {/* 扩容模态框 */}
+      <Modal
+        title="扩容 SLURM 节点"
+        open={scaleUpModal}
+        onCancel={() => setScaleUpModal(false)}
+        footer={null}
+        width={600}
+      >
+        <Form
+          form={scaleUpForm}
+          layout="vertical"
+          onFinish={handleScaleUp}
+        >
+          <Form.Item
+            name="nodes"
+            label="节点配置"
+            rules={[{ required: true, message: '请配置要添加的节点' }]}
+          >
+            <TextArea
+              placeholder="每行一个节点配置，格式: hostname ip_address [其他参数]"
+              rows={6}
+              style={{ fontFamily: 'monospace' }}
+            />
+          </Form.Item>
+
+          <Divider>节点规格</Divider>
+
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="cpus" label="CPU核心数">
+                <Input placeholder="例如: 4" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="memory_gb" label="内存(GB)">
+                <Input placeholder="例如: 8" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="disk_gb" label="磁盘(GB)">
+                <Input placeholder="例如: 100" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item name="os" label="操作系统">
+            <Select placeholder="选择操作系统">
+              <Option value="ubuntu20.04">Ubuntu 20.04</Option>
+              <Option value="ubuntu22.04">Ubuntu 22.04</Option>
+              <Option value="centos7">CentOS 7</Option>
+              <Option value="centos8">CentOS 8</Option>
+              <Option value="rocky8">Rocky Linux 8</Option>
+              <Option value="alpine3.18">Alpine 3.18</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item name="auto_deploy_salt" valuePropName="checked">
+            <Checkbox>自动部署 SaltStack Minion</Checkbox>
+          </Form.Item>
+
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Space>
+              <Button onClick={() => setScaleUpModal(false)}>取消</Button>
+              <Button type="primary" htmlType="submit">
+                开始扩容
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 缩容模态框 */}
+      <Modal
+        title="缩容 SLURM 节点"
+        open={scaleDownModal}
+        onCancel={() => setScaleDownModal(false)}
+        footer={null}
+        width={500}
+      >
+        <Alert
+          message="警告"
+          description="缩容操作将永久移除选中的节点，请确认这些节点上的作业已完成或已迁移。"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
+        <Form layout="vertical">
+          <Form.Item label="选择要移除的节点">
+            <Select
+              mode="multiple"
+              placeholder="选择节点"
+              style={{ width: '100%' }}
+            >
+              {nodes.filter(node => node.state?.toLowerCase().includes('idle')).map(node => (
+                <Option key={node.name} value={node.name}>
+                  {node.name} ({node.state})
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Space>
+              <Button onClick={() => setScaleDownModal(false)}>取消</Button>
+              <Button danger htmlType="submit">
+                确认缩容
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 节点模板模态框 */}
+      <Modal
+        title="节点配置模板"
+        open={templateModal}
+        onCancel={() => setTemplateModal(false)}
+        footer={null}
+        width={600}
+      >
+        <Form
+          form={templateForm}
+          layout="vertical"
+          onFinish={handleCreateTemplate}
+        >
+          <Form.Item
+            name="name"
+            label="模板名称"
+            rules={[{ required: true, message: '请输入模板名称' }]}
+          >
+            <Input placeholder="例如: compute-node-medium" />
+          </Form.Item>
+
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item
+                name="cpus"
+                label="CPU核心数"
+                rules={[{ required: true, message: '请输入CPU核心数' }]}
+              >
+                <Input type="number" placeholder="4" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="memory_gb"
+                label="内存(GB)"
+                rules={[{ required: true, message: '请输入内存大小' }]}
+              >
+                <Input type="number" placeholder="8" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="disk_gb"
+                label="磁盘(GB)"
+                rules={[{ required: true, message: '请输入磁盘大小' }]}
+              >
+                <Input type="number" placeholder="100" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item
+            name="os"
+            label="操作系统"
+            rules={[{ required: true, message: '请选择操作系统' }]}
+          >
+            <Select placeholder="选择操作系统">
+              <Option value="ubuntu20.04">Ubuntu 20.04</Option>
+              <Option value="ubuntu22.04">Ubuntu 22.04</Option>
+              <Option value="centos7">CentOS 7</Option>
+              <Option value="centos8">CentOS 8</Option>
+              <Option value="rocky8">Rocky Linux 8</Option>
+              <Option value="alpine3.18">Alpine 3.18</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item name="description" label="描述">
+            <TextArea placeholder="模板描述信息" rows={2} />
+          </Form.Item>
+
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Space>
+              <Button onClick={() => setTemplateModal(false)}>取消</Button>
+              <Button type="primary" htmlType="submit">
+                创建模板
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* SaltStack 命令模态框 */}
+      <Modal
+        title="执行 SaltStack 命令"
+        open={saltCommandModal}
+        onCancel={() => setSaltCommandModal(false)}
+        footer={null}
+        width={700}
+      >
+        <Form
+          form={saltCommandForm}
+          layout="vertical"
+          onFinish={handleExecuteSaltCommand}
+        >
+          <Form.Item
+            name="target"
+            label="目标节点"
+            rules={[{ required: true, message: '请选择目标节点' }]}
+          >
+            <Select placeholder="选择目标节点或输入模式">
+              <Option value="*">所有节点 (*)</Option>
+              <Option value="compute*">计算节点 (compute*)</Option>
+              <Option value="login*">登录节点 (login*)</Option>
+              <Option value="storage*">存储节点 (storage*)</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="function"
+            label="Salt 函数"
+            rules={[{ required: true, message: '请输入Salt函数' }]}
+          >
+            <Input placeholder="例如: cmd.run, pkg.install, service.restart" />
+          </Form.Item>
+
+          <Form.Item
+            name="arguments"
+            label="参数"
+          >
+            <TextArea
+              placeholder="函数参数，每行一个参数"
+              rows={3}
+              style={{ fontFamily: 'monospace' }}
+            />
+          </Form.Item>
+
+          <Form.Item name="description" label="描述">
+            <Input placeholder="命令描述" />
+          </Form.Item>
+
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Space>
+              <Button onClick={() => setSaltCommandModal(false)}>取消</Button>
+              <Button type="primary" htmlType="submit">
+                执行命令
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  );
+};
+
+export default SlurmScalingPage;

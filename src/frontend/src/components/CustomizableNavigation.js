@@ -74,11 +74,11 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'slurm',
     key: '/slurm',
-    label: 'Slurm',
+    label: 'SLURM扩缩容',
     icon: 'ClusterOutlined',
     visible: true,
     order: 5,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'saltstack',

@@ -4,6 +4,7 @@ import (
     "bufio"
     "context"
     "errors"
+    "fmt"
     "os/exec"
     "strconv"
     "strings"
@@ -289,3 +290,161 @@ func binaryExists(name string) bool {
 }
 
 var ErrNotAvailable = errors.New("slurm tools not available")
+
+// ScalingStatus 扩缩容状态
+type ScalingStatus struct {
+    ActiveOperations []ScalingOperation `json:"active_operations"`
+    RecentOperations []ScalingOperation `json:"recent_operations"`
+    NodeTemplates    []NodeTemplate     `json:"node_templates"`
+}
+
+// ScalingOperation 扩缩容操作
+type ScalingOperation struct {
+    ID          string    `json:"id"`
+    Type        string    `json:"type"` // "scale-up" or "scale-down"
+    Status      string    `json:"status"`
+    Nodes       []string  `json:"nodes"`
+    StartedAt   time.Time `json:"started_at"`
+    CompletedAt *time.Time `json:"completed_at,omitempty"`
+    Error       string    `json:"error,omitempty"`
+}
+
+// NodeConfig 节点配置
+type NodeConfig struct {
+    Host     string `json:"host"`
+    Port     int    `json:"port"`
+    User     string `json:"user"`
+    KeyPath  string `json:"key_path"`
+    Password string `json:"password"`
+    MinionID string `json:"minion_id"`
+}
+
+// NodeTemplate 节点模板
+type NodeTemplate struct {
+    ID          string            `json:"id"`
+    Name        string            `json:"name"`
+    Description string            `json:"description"`
+    Config      NodeConfig        `json:"config"`
+    Tags        []string          `json:"tags"`
+    CreatedAt   time.Time         `json:"created_at"`
+    UpdatedAt   time.Time         `json:"updated_at"`
+}
+
+// ScalingResult 扩缩容结果
+type ScalingResult struct {
+    OperationID string                 `json:"operation_id"`
+    Success     bool                   `json:"success"`
+    Results     []NodeScalingResult    `json:"results"`
+}
+
+// NodeScalingResult 节点扩缩容结果
+type NodeScalingResult struct {
+    NodeID  string `json:"node_id"`
+    Success bool   `json:"success"`
+    Message string `json:"message"`
+}
+
+// GetScalingStatus 获取扩缩容状态
+func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, error) {
+    // 这里应该从数据库或缓存中获取实际的状态
+    // 目前返回模拟数据
+    return &ScalingStatus{
+        ActiveOperations: []ScalingOperation{},
+        RecentOperations: []ScalingOperation{
+            {
+                ID:        "op-001",
+                Type:      "scale-up",
+                Status:    "completed",
+                Nodes:     []string{"node001", "node002"},
+                StartedAt: time.Now().Add(-1 * time.Hour),
+                CompletedAt: &[]time.Time{time.Now().Add(-30 * time.Minute)}[0],
+            },
+        },
+        NodeTemplates: []NodeTemplate{},
+    }, nil
+}
+
+// ScaleUp 执行扩容操作
+func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*ScalingResult, error) {
+    // 这里应该实现实际的SLURM节点扩容逻辑
+    // 包括更新slurm.conf、重新加载配置等
+
+    result := &ScalingResult{
+        OperationID: generateOperationID(),
+        Success:     true,
+        Results:     []NodeScalingResult{},
+    }
+
+    // 处理节点配置
+    for _, node := range nodes {
+        result.Results = append(result.Results, NodeScalingResult{
+            NodeID:  node.Host,
+            Success: true,
+            Message: "节点已成功添加到SLURM集群",
+        })
+    }
+
+    return result, nil
+}
+
+// ScaleDown 执行缩容操作
+func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*ScalingResult, error) {
+    // 这里应该实现实际的SLURM节点缩容逻辑
+    // 包括从集群中移除节点、更新配置等
+
+    result := &ScalingResult{
+        OperationID: generateOperationID(),
+        Success:     true,
+        Results:     []NodeScalingResult{},
+    }
+
+    // 模拟缩容操作
+    for _, nodeID := range nodeIDs {
+        result.Results = append(result.Results, NodeScalingResult{
+            NodeID:  nodeID,
+            Success: true,
+            Message: "节点已成功从SLURM集群中移除",
+        })
+    }
+
+    return result, nil
+}
+
+// GetNodeTemplates 获取节点模板列表
+func (s *SlurmService) GetNodeTemplates(ctx context.Context) ([]NodeTemplate, error) {
+    // 这里应该从数据库中获取节点模板
+    // 目前返回空列表
+    return []NodeTemplate{}, nil
+}
+
+// CreateNodeTemplate 创建节点模板
+func (s *SlurmService) CreateNodeTemplate(ctx context.Context, template *NodeTemplate) error {
+    // 这里应该将模板保存到数据库
+    template.ID = generateTemplateID()
+    template.CreatedAt = time.Now()
+    template.UpdatedAt = time.Now()
+    return nil
+}
+
+// UpdateNodeTemplate 更新节点模板
+func (s *SlurmService) UpdateNodeTemplate(ctx context.Context, id string, template *NodeTemplate) error {
+    // 这里应该更新数据库中的模板
+    template.UpdatedAt = time.Now()
+    return nil
+}
+
+// DeleteNodeTemplate 删除节点模板
+func (s *SlurmService) DeleteNodeTemplate(ctx context.Context, id string) error {
+    // 这里应该从数据库中删除模板
+    return nil
+}
+
+// generateOperationID 生成操作ID
+func generateOperationID() string {
+    return fmt.Sprintf("op-%d", time.Now().Unix())
+}
+
+// generateTemplateID 生成模板ID
+func generateTemplateID() string {
+    return fmt.Sprintf("tmpl-%d", time.Now().Unix())
+}

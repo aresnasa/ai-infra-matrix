@@ -436,6 +436,103 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # SLURM Operator Manager - SLURM集群管理控制器
+  slurm-operator-manager:
+    image: ai-infra-slurm-operator-manager:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/slurm-operator
+      dockerfile: Dockerfile
+      target: manager
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+    container_name: ai-infra-slurm-operator-manager
+    env_file:
+    - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - WATCH_NAMESPACE=${SLURM_WATCH_NAMESPACE:-ai-infra}
+      - POD_NAME=slurm-operator-manager
+      - OPERATOR_NAME=slurm-operator
+      - ACCOUNTING_WORKERS=${SLURM_ACCOUNTING_WORKERS:-4}
+      - CONTROLLER_WORKERS=${SLURM_CONTROLLER_WORKERS:-4}
+      - LOGINSET_WORKERS=${SLURM_LOGINSET_WORKERS:-4}
+      - NODESET_WORKERS=${SLURM_NODESET_WORKERS:-4}
+      - RESTAPI_WORKERS=${SLURM_RESTAPI_WORKERS:-4}
+      - TOKEN_WORKERS=${SLURM_TOKEN_WORKERS:-4}
+      - SLURMCLIENT_WORKERS=${SLURM_SLURMCLIENT_WORKERS:-2}
+      - LOG_LEVEL=${SLURM_LOG_LEVEL:-info}
+      # Kubernetes 相关配置
+      - KUBECONFIG=/etc/kubernetes/config
+      - KUBERNETES_SERVICE_HOST=${KUBERNETES_SERVICE_HOST:-kubernetes.docker.internal}
+      - KUBERNETES_SERVICE_PORT=${KUBERNETES_SERVICE_PORT:-6443}
+    expose:
+      - "9443"  # Webhook 端口
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - slurm_operator_data:/var/lib/slurm-operator
+    extra_hosts:
+      - "kubernetes.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # SLURM Operator Webhook - SLURM集群验证Webhook
+  slurm-operator-webhook:
+    image: ai-infra-slurm-operator-webhook:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/slurm-operator
+      dockerfile: Dockerfile
+      target: webhook
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+    container_name: ai-infra-slurm-operator-webhook
+    env_file:
+    - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - POD_NAME=slurm-operator-webhook
+      - OPERATOR_NAME=slurm-operator
+      - WEBHOOK_TIMEOUT_SECONDS=${SLURM_WEBHOOK_TIMEOUT:-10}
+      - LOG_LEVEL=${SLURM_WEBHOOK_LOG_LEVEL:-info}
+      # Kubernetes 相关配置
+      - KUBECONFIG=/etc/kubernetes/config
+      - KUBERNETES_SERVICE_HOST=${KUBERNETES_SERVICE_HOST:-kubernetes.docker.internal}
+      - KUBERNETES_SERVICE_PORT=${KUBERNETES_SERVICE_PORT:-6443}
+    expose:
+      - "9443"  # Webhook 服务端口
+    volumes:
+      - slurm_operator_webhook_data:/var/lib/slurm-operator-webhook
+      - slurm_operator_certs:/etc/ssl/certs/slurm-operator
+    extra_hosts:
+      - "kubernetes.docker.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      slurm-operator-manager:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
     image: ai-infra-nginx:${IMAGE_TAG:-v0.3.6-dev}
@@ -484,6 +581,10 @@ services:
         condition: service_healthy
       saltstack:
         condition: service_healthy
+      slurm-operator-manager:
+        condition: service_healthy
+      slurm-operator-webhook:
+        condition: service_healthy
     networks:
       - ai-infra-network
     healthcheck:
@@ -525,6 +626,130 @@ services:
       - redis
     networks:
       - ai-infra-network
+    restart: unless-stopped
+
+  # OpenSCOW 数据库 (MySQL)
+  openscow-db:
+    image: mysql:8
+    container_name: ai-infra-openscow-db
+    env_file:
+    - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${OPENSCOW_MYSQL_ROOT_PASSWORD:-openscowroot}
+      MYSQL_DATABASE: scow
+      MYSQL_USER: scow
+      MYSQL_PASSWORD: ${OPENSCOW_MYSQL_PASSWORD:-openscowpass}
+      TZ: Asia/Shanghai
+    expose:
+      - "3306"
+    volumes:
+      - openscow_db_data:/var/lib/mysql
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "scow", "-p${OPENSCOW_MYSQL_PASSWORD:-openscowpass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # OpenSCOW Redis
+  openscow-redis:
+    image: redis:7-alpine
+    container_name: ai-infra-openscow-redis
+    env_file:
+    - .env
+    command: ["sh", "-c", "exec redis-server --requirepass \"$${OPENSCOW_REDIS_PASSWORD:-openscowredis}\" --appendonly yes"]
+    expose:
+      - "6379"
+    volumes:
+      - openscow_redis_data:/data
+    networks:
+      - ai-infra-network
+    environment:
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${OPENSCOW_REDIS_PASSWORD:-openscowredis}\" ping || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # OpenSCOW SSH 服务器
+  openscow-ssh:
+    image: alpine-ssh
+    container_name: ai-infra-openscow-ssh
+    build:
+      context: ./src/openscow/dev/ssh-server
+    env_file:
+    - .env
+    environment:
+      TZ: Asia/Shanghai
+    expose:
+      - "22"
+    volumes:
+      - openscow_ssh_data:/home
+      - openscow_ssh_keys:/etc/ssh/keys
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # OpenSCOW 主应用服务
+  openscow:
+    image: ai-infra-openscow:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/openscow
+      dockerfile: docker/Dockerfile.scow
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+    container_name: ai-infra-openscow
+    env_file:
+    - .env
+    environment:
+      # 数据库配置
+      DB_HOST: openscow-db
+      DB_PORT: 3306
+      DB_NAME: scow
+      DB_USER: scow
+      DB_PASSWORD: ${OPENSCOW_MYSQL_PASSWORD:-openscowpass}
+      # Redis 配置
+      REDIS_HOST: openscow-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${OPENSCOW_REDIS_PASSWORD:-openscowredis}
+      # SSH 配置
+      SSH_HOST: openscow-ssh
+      SSH_PORT: 22
+      # 应用配置
+      SCOW_LAUNCH_APP: portal-web
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+      # 外部访问配置
+      BASE_PATH: /openscow
+      PUBLIC_URL: ${DOMAIN:-localhost}/openscow
+    expose:
+      - "3000"  # 主应用端口
+      - "80"    # Nginx 端口
+      - "5000"  # API 端口
+    volumes:
+      - openscow_data:/app/data
+      - openscow_logs:/app/logs
+    depends_on:
+      openscow-db:
+        condition: service_healthy
+      openscow-redis:
+        condition: service_healthy
+      openscow-ssh:
+        condition: service_started
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   # Gitea 代码托管服务（可选，供门户内嵌）
@@ -652,6 +877,12 @@ volumes:
     name: ai-infra-salt-logs
   salt_keys:
     name: ai-infra-salt-keys
+  slurm_operator_data:
+    name: ai-infra-slurm-operator-data
+  slurm_operator_webhook_data:
+    name: ai-infra-slurm-operator-webhook-data
+  slurm_operator_certs:
+    name: ai-infra-slurm-operator-certs
   gitea_data:
     name: ai-infra-gitea-data
   minio_data:
