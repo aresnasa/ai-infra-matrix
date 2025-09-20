@@ -88,7 +88,7 @@ func (js *JobService) SubmitJob(ctx context.Context, req *models.SubmitJobReques
 		Status:     "PENDING",
 		Partition:  req.Partition,
 		Nodes:      req.Nodes,
-		CPUs:       req.CUs,
+		CPUs:       req.CPUs,
 		Memory:     req.Memory,
 		TimeLimit:  req.TimeLimit,
 		SubmitTime: time.Now(),
@@ -126,7 +126,7 @@ func (js *JobService) submitToSlurm(job *models.Job) error {
 
 	// 上传脚本到集群
 	scriptPath := fmt.Sprintf("/tmp/job_%d.sh", job.ID)
-	if err := js.sshSvc.UploadFile(cluster.Host, cluster.Port, "root", "", script, scriptPath); err != nil {
+	if err := js.sshSvc.UploadFile(cluster.Host, cluster.Port, "root", "", []byte(script), scriptPath); err != nil {
 		return fmt.Errorf("upload script failed: %w", err)
 	}
 
@@ -285,10 +285,10 @@ func (js *JobService) GetJobOutput(ctx context.Context, userID, clusterID string
 }
 
 // GetDashboardStats 获取仪表板统计信息
-func (js *JobService) GetDashboardStats(ctx context.Context, userID string) (*models.DashboardStats, error) {
+func (js *JobService) GetDashboardStats(ctx context.Context, userID string) (*models.JobDashboardStats, error) {
 	userIDUint, _ := strconv.ParseUint(userID, 10, 32)
 
-	var stats models.DashboardStats
+	var stats models.JobDashboardStats
 
 	// 作业统计
 	js.db.Model(&models.Job{}).Where("user_id = ?", userIDUint).Count(&stats.TotalJobs)

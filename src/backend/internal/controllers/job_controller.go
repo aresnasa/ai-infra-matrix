@@ -282,7 +282,7 @@ func (jc *JobController) GetJobOutput(c *gin.Context) {
 // @Tags 作业管理
 // @Accept json
 // @Produce json
-// @Success 200 {object} models.Response{data=models.DashboardStats}
+// @Success 200 {object} models.Response{data=models.JobDashboardStats}
 // @Router /api/dashboard/stats [get]
 func (jc *JobController) GetDashboardStats(c *gin.Context) {
 	userID := c.GetString("user_id")

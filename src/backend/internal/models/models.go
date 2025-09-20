@@ -8,6 +8,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// Response 通用API响应结构
+type Response struct {
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
 // 角色常量
 const (
 	RoleAdmin    = "admin"
@@ -857,13 +864,13 @@ type FileInfo struct {
 	Mode    string    `json:"mode"`
 }
 
-// DashboardStats 仪表板统计
-type DashboardStats struct {
-	TotalJobs     int64 `json:"total_jobs"`
-	RunningJobs   int64 `json:"running_jobs"`
-	PendingJobs   int64 `json:"pending_jobs"`
-	CompletedJobs int64 `json:"completed_jobs"`
-	FailedJobs    int64 `json:"failed_jobs"`
-	TotalClusters int   `json:"total_clusters"`
-	ActiveClusters int  `json:"active_clusters"`
+// JobDashboardStats 作业仪表板统计
+type JobDashboardStats struct {
+	TotalJobs      int64 `json:"total_jobs"`
+	RunningJobs    int64 `json:"running_jobs"`
+	PendingJobs    int64 `json:"pending_jobs"`
+	CompletedJobs  int64 `json:"completed_jobs"`
+	FailedJobs     int64 `json:"failed_jobs"`
+	TotalClusters  int64 `json:"total_clusters"`
+	ActiveClusters int64 `json:"active_clusters"`
 }

@@ -354,3 +354,29 @@ func (s *SSHService) executeCommandOnHost(conn SSHConnection, command string) De
 	result.Output = output
 	return result
 }
+
+// ExecuteCommand 在指定主机上执行命令（导出方法，便于其他服务直接调用）
+func (s *SSHService) ExecuteCommand(host string, port int, user, password, command string) (string, error) {
+	conn := SSHConnection{Host: host, Port: port, User: user, Password: password, KeyPath: s.config.DefaultKeyPath}
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
+	return s.executeCommand(client, command)
+}
+
+// UploadFile 将内容写入远程文件（通过heredoc创建，避免外部SFTP依赖）
+func (s *SSHService) UploadFile(host string, port int, user, password string, content []byte, remotePath string) error {
+	// 使用单引号heredoc确保内容按字面量写入，避免变量和转义展开
+	// 外层使用双引号包裹 -c 字符串，内部使用单引号包裹 EOF 标记，保证内容完全原样写入
+	cmd := fmt.Sprintf("/bin/sh -c \"cat > %s <<'EOF'\n%s\nEOF\nchmod +x %s\"", remotePath, string(content), remotePath)
+	_, err := s.ExecuteCommand(host, port, user, password, cmd)
+	return err
+}
+
+// ReadFile 读取远程文件内容
+func (s *SSHService) ReadFile(host string, port int, user, password, remotePath string) (string, error) {
+	cmd := fmt.Sprintf("/bin/sh -c 'cat %s'", remotePath)
+	return s.ExecuteCommand(host, port, user, password, cmd)
+}
