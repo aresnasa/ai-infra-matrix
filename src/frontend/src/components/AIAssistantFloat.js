@@ -50,6 +50,26 @@ const { TextArea } = Input;
 const { Text, Title } = Typography;
 const { Option } = Select;
 
+// 获取当前用户信息的工具函数
+const getCurrentUser = () => {
+  try {
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      return JSON.parse(savedUser);
+    }
+  } catch (error) {
+    console.warn('Failed to parse user from localStorage:', error);
+  }
+  return null;
+};
+
+// 检查是否为管理员的工具函数
+const isUserAdmin = (user) => {
+  if (!user) return false;
+  return user.role === 'admin' || user.role === 'super-admin' ||
+         (user.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'));
+};
+
 const AIAssistantFloat = () => {
   const navigate = useNavigate();
   const [visible, setVisible] = useState(false); // 控制面板显示/隐藏
@@ -225,6 +245,13 @@ const AIAssistantFloat = () => {
   // 保存自定义RESTful配置
   const saveCustomRestfulConfig = async () => {
     try {
+      // 检查管理员权限
+      const currentUser = getCurrentUser();
+      if (!isUserAdmin(currentUser)) {
+        message.error('只有管理员才能创建AI模型配置，请联系管理员');
+        return;
+      }
+      
       // 验证必填字段
       if (!customRestfulConfig.apiUrl) {
         message.error('请填写API地址');
@@ -235,6 +262,8 @@ const AIAssistantFloat = () => {
         message.error('请填写配置名称');
         return;
       }
+
+      console.log('🔐 管理员权限验证通过，创建配置...');
 
       // 构造配置数据，映射到后端字段格式
       const configData = {
@@ -281,13 +310,19 @@ const AIAssistantFloat = () => {
       await fetchConfigs();
       
       // 通知其他组件配置已更新 (用于AI助手管理页面同步)
+      console.log('🔔 通知AI助手管理页面配置已更新');
       localStorage.setItem('ai-config-updated', Date.now().toString());
-      window.dispatchEvent(new Event('storage'));
       
-      // 触发自定义事件 (同页面组件通信)
-      window.dispatchEvent(new CustomEvent('ai-config-updated', {
-        detail: { action: 'created', config: configData }
-      }));
+      // 使用 setTimeout 确保 localStorage 事件能被正确触发
+      setTimeout(() => {
+        window.dispatchEvent(new Event('storage'));
+        
+        // 触发自定义事件 (同页面组件通信)
+        window.dispatchEvent(new CustomEvent('ai-config-updated', {
+          detail: { action: 'created', config: configData, timestamp: Date.now() }
+        }));
+        console.log('🔔 配置更新事件已发送');
+      }, 100);
     } catch (error) {
       console.error('❌ 保存RESTful配置失败:', error);
       const errorMsg = error.response?.data?.message || error.message || '保存配置失败';
@@ -1359,17 +1394,22 @@ const AIAssistantFloat = () => {
                       );
                     })}
                   </Select>
-                  <Tooltip title="配置自定义模型地址">
+                  <Tooltip title={isUserAdmin(getCurrentUser()) ? "配置自定义模型地址" : "只有管理员能配置AI模型"}>
                     <Button
                       type="text"
                       size="small"
                       icon={<EditOutlined />}
                       onClick={() => {
+                        const currentUser = getCurrentUser();
+                        if (!isUserAdmin(currentUser)) {
+                          message.warning('只有管理员才能配置AI模型，请联系管理员');
+                          return;
+                        }
                         setShowModelConfig(true);
                         // 打开配置弹窗时刷新配置列表
                         fetchConfigs();
                       }}
-                      style={{ color: '#1890ff' }}
+                      style={{ color: isUserAdmin(getCurrentUser()) ? '#1890ff' : '#d9d9d9' }}
                     />
                   </Tooltip>
                 </>
@@ -1378,17 +1418,22 @@ const AIAssistantFloat = () => {
                   <span style={{ color: '#999', fontSize: 12 }}>
                     {loading ? '加载配置中...' : '暂无配置'}
                   </span>
-                  <Tooltip title="配置自定义模型地址">
+                  <Tooltip title={isUserAdmin(getCurrentUser()) ? "配置自定义模型地址" : "只有管理员能配置AI模型"}>
                     <Button
                       type="text"
                       size="small"
                       icon={<EditOutlined />}
                       onClick={() => {
+                        const currentUser = getCurrentUser();
+                        if (!isUserAdmin(currentUser)) {
+                          message.warning('只有管理员才能配置AI模型，请联系管理员');
+                          return;
+                        }
                         setShowModelConfig(true);
                         // 打开配置弹窗时刷新配置列表
                         fetchConfigs();
                       }}
-                      style={{ color: '#1890ff' }}
+                      style={{ color: isUserAdmin(getCurrentUser()) ? '#1890ff' : '#d9d9d9' }}
                     />
                   </Tooltip>
                 </>
@@ -1447,25 +1492,37 @@ const AIAssistantFloat = () => {
                 可以配置OpenAI、Claude等AI服务
               </Text>
               <Space direction="vertical" size="middle">
-                <Button 
-                  type="primary" 
-                  icon={<SettingOutlined />}
-                  onClick={() => {
-                    setVisible(false);
-                    navigate('/admin/ai-configs');
-                  }}
-                  size="large"
-                >
-                  配置AI模型
-                </Button>
+                {isUserAdmin(getCurrentUser()) ? (
+                  <Button 
+                    type="primary" 
+                    icon={<SettingOutlined />}
+                    onClick={() => {
+                      setVisible(false);
+                      navigate('/admin/ai-assistant');
+                    }}
+                    size="large"
+                  >
+                    配置AI模型
+                  </Button>
+                ) : (
+                  <Button 
+                    type="primary" 
+                    icon={<MessageOutlined />}
+                    disabled
+                    size="large"
+                    title="联系管理员配置AI模型"
+                  >
+                    AI模型未配置
+                  </Button>
+                )}
                 <Button 
                   type="default"
                   onClick={() => {
                     setVisible(false);
-                    navigate('/admin');
+                    navigate(isUserAdmin(getCurrentUser()) ? '/admin' : '/dashboard');
                   }}
                 >
-                  进入管理中心
+                  {isUserAdmin(getCurrentUser()) ? '进入管理中心' : '返回主页面'}
                 </Button>
               </Space>
             </div>

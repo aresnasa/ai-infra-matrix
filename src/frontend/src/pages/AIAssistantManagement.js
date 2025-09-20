@@ -30,9 +30,23 @@ import {
   SettingOutlined
 } from '@ant-design/icons';
 import { aiAPI } from '../services/api';
+import { isAdmin } from '../utils/permissions';
 
 const { Option } = Select;
 const { TextArea } = Input;
+
+// 获取当前用户信息的工具函数
+const getCurrentUser = () => {
+  try {
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      return JSON.parse(savedUser);
+    }
+  } catch (error) {
+    console.warn('Failed to parse user from localStorage:', error);
+  }
+  return null;
+};
 
 const AIAssistantManagement = () => {
   const [configs, setConfigs] = useState([]);
@@ -45,29 +59,24 @@ const AIAssistantManagement = () => {
   
   const [configForm] = Form.useForm();
 
-  // 更强的数组确保函数
+  // 更强的数组确保函数，兼容多种后端返回格式
   const ensureArray = (data) => {
     try {
-      // 如果已经是数组，直接返回
-      if (Array.isArray(data)) {
-        return data;
+      if (!data) return [];
+      if (Array.isArray(data)) return data;
+      // axios 响应格式 { data: [...] }
+      if (data.data && Array.isArray(data.data)) return data.data;
+      // { configs: [...] }
+      if (data.configs && Array.isArray(data.configs)) return data.configs;
+      // 直接是对象数组
+      if (typeof data === 'object' && Array.isArray(Object.values(data)) && Object.values(data).every(v => typeof v === 'object')) {
+        return Object.values(data);
       }
-      
-      // 处理 axios 响应格式 { data: [...] }
-      if (data && typeof data === 'object' && Array.isArray(data.data)) {
-        return data.data;
-      }
-      
-      // 处理单个对象的情况
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        return [data];
-      }
-      
-      // 处理 null, undefined, 或其他类型
-      console.warn('ensureArray: 数据类型异常，返回空数组:', typeof data, data);
+      // 单个对象
+      if (typeof data === 'object') return [data];
       return [];
     } catch (error) {
-      console.error('ensureArray error:', error);
+      console.error('ensureArray error:', error, data);
       return [];
     }
   };
@@ -152,8 +161,16 @@ const AIAssistantManagement = () => {
 
       console.log('API响应:', { configsRes, conversationsRes, usageRes });
 
-      // 确保数据是数组格式
-      const configsArray = ensureArray(configsRes);
+      // 修正 configsRes 结构，确保为数据数组
+      let configsArray = [];
+      if (Array.isArray(configsRes) && configsRes.length > 0 && configsRes[0].data && Array.isArray(configsRes[0].data.data)) {
+        configsArray = configsRes[0].data.data;
+      } else if (configsRes.data && Array.isArray(configsRes.data.data)) {
+        configsArray = configsRes.data.data;
+      } else {
+        configsArray = ensureArray(configsRes);
+      }
+
       const conversationsArray = ensureArray(conversationsRes);
       const usageArray = ensureArray(usageRes);
 
@@ -183,8 +200,14 @@ const AIAssistantManagement = () => {
     
     // 监听来自AI助手浮动窗口的配置更新事件
     const handleConfigUpdate = (e) => {
-      console.log('🔄 检测到AI配置更新，重新加载数据...');
-      loadData();
+      console.log('🔄 AI助手管理页面 - 检测到AI配置更新事件:', e);
+      console.log('🔄 事件详情:', e.detail || 'storage事件');
+      console.log('🔄 重新加载配置数据...');
+      
+      // 延迟刷新，确保后端数据已经更新
+      setTimeout(() => {
+        loadData();
+      }, 200);
     };
     
     // 监听storage事件 (跨组件通信)
@@ -193,25 +216,43 @@ const AIAssistantManagement = () => {
     // 监听自定义事件 (同页面组件通信)
     window.addEventListener('ai-config-updated', handleConfigUpdate);
     
+    console.log('🎧 AI助手管理页面 - 已注册配置更新监听器');
+    
     return () => {
+      console.log('🔇 AI助手管理页面 - 移除配置更新监听器');
       window.removeEventListener('storage', handleConfigUpdate);
       window.removeEventListener('ai-config-updated', handleConfigUpdate);
     };
   }, []);
 
   const handleCreateConfig = () => {
+    const currentUser = getCurrentUser();
+    if (!isAdmin(currentUser)) {
+      message.error('只有管理员才能创建AI模型配置');
+      return;
+    }
     setEditingConfig(null);
     configForm.resetFields();
     setConfigModalVisible(true);
   };
 
   const handleEditConfig = (config) => {
+    const currentUser = getCurrentUser();
+    if (!isAdmin(currentUser)) {
+      message.error('只有管理员才能编辑AI模型配置');
+      return;
+    }
     setEditingConfig(config);
     configForm.setFieldsValue(config);
     setConfigModalVisible(true);
   };
 
   const handleDeleteConfig = async (configId) => {
+    const currentUser = getCurrentUser();
+    if (!isAdmin(currentUser)) {
+      message.error('只有管理员才能删除AI模型配置');
+      return;
+    }
     try {
       setLoading(true);
       await aiAPI.deleteConfig(configId);
@@ -225,6 +266,11 @@ const AIAssistantManagement = () => {
   };
 
   const handleConfigSubmit = async (values) => {
+    const currentUser = getCurrentUser();
+    if (!isAdmin(currentUser)) {
+      message.error('只有管理员才能保存AI模型配置');
+      return;
+    }
     try {
       if (editingConfig) {
         await aiAPI.updateConfig(editingConfig.id, values);
@@ -252,6 +298,13 @@ const AIAssistantManagement = () => {
 
   return (
     <div style={{ padding: '24px' }}>
+      {/*
+      <div style={{ background: '#fffbe6', color: '#ad8b00', padding: '8px', marginBottom: 8, fontSize: 12, borderRadius: 4 }}>
+        <div>原始 configs 类型: {typeof configs} {Array.isArray(configs) ? '(array)' : ''}</div>
+        <div>原始 configs 内容: <pre style={{ margin: 0, fontSize: 10, whiteSpace: 'pre-wrap' }}>{JSON.stringify(configs, null, 2)}</pre></div>
+        <div>处理后 safeConfigs 长度: {safeConfigs?.length || 0}</div>
+      </div>
+      */}
       {error && (
         <Alert
           message="加载错误"
@@ -261,7 +314,6 @@ const AIAssistantManagement = () => {
           style={{ marginBottom: '16px' }}
         />
       )}
-      
       <Spin spinning={loading}>
         <Card 
           title={
@@ -301,6 +353,8 @@ const AIAssistantManagement = () => {
                           type="primary" 
                           icon={<PlusOutlined />}
                           onClick={handleCreateConfig}
+                          disabled={!isAdmin(getCurrentUser())}
+                          title={!isAdmin(getCurrentUser()) ? "只有管理员能创建配置" : ""}
                         >
                           新增配置
                         </Button>
@@ -339,29 +393,36 @@ const AIAssistantManagement = () => {
                           {
                             title: '操作',
                             key: 'actions',
-                            render: (_, record) => (
-                              <Space>
-                                <Tooltip title="编辑配置">
-                                  <Button 
-                                    type="link" 
-                                    icon={<EditOutlined />}
-                                    onClick={() => handleEditConfig(record)}
-                                  />
-                                </Tooltip>
-                                <Popconfirm
-                                  title="确定删除此配置吗？"
-                                  onConfirm={() => handleDeleteConfig(record.id)}
-                                >
-                                  <Tooltip title="删除配置">
+                            render: (_, record) => {
+                              const currentUser = getCurrentUser();
+                              const admin = isAdmin(currentUser);
+                              return (
+                                <Space>
+                                  <Tooltip title={admin ? "编辑配置" : "只有管理员能编辑配置"}>
                                     <Button 
                                       type="link" 
-                                      danger 
-                                      icon={<DeleteOutlined />}
+                                      icon={<EditOutlined />}
+                                      onClick={() => admin ? handleEditConfig(record) : message.warning('只有管理员能编辑配置')}
+                                      disabled={!admin}
                                     />
                                   </Tooltip>
-                                </Popconfirm>
-                              </Space>
-                            )
+                                  <Popconfirm
+                                    title={admin ? "确定删除此配置吗？" : "只有管理员能删除配置"}
+                                    onConfirm={() => admin ? handleDeleteConfig(record.id) : message.warning('只有管理员能删除配置')}
+                                    disabled={!admin}
+                                  >
+                                    <Tooltip title={admin ? "删除配置" : "只有管理员能删除配置"}>
+                                      <Button 
+                                        type="link" 
+                                        danger 
+                                        icon={<DeleteOutlined />}
+                                        disabled={!admin}
+                                      />
+                                    </Tooltip>
+                                  </Popconfirm>
+                                </Space>
+                              );
+                            }
                           }
                         ]}
                         dataSource={safeConfigs}
