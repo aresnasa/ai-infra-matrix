@@ -186,7 +186,7 @@ func main() {
 	// 初始化作业管理服务
 	slurmService := services.NewSlurmService()
 	sshService := services.NewSSHService()
-	cacheService := services.NewCacheService(cache.RDB)
+	cacheService := services.NewCacheService()
 	jobService := services.NewJobService(database.DB, slurmService, sshService, cacheService)
 
 	// 设置JWT密钥
@@ -327,9 +327,49 @@ func main() {
 	// Swagger文档
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	// 设置 API 路由
+	setupAPIRoutes(r, cfg, jobService)
+
+	// 优雅关闭
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-c
+		logrus.Info("Shutting down server...")
+		
+		// 关闭AI网关服务
+		if err := services.ShutdownAIGateway(); err != nil {
+			logrus.Error("Error shutting down AI Gateway:", err)
+		}
+		
+		// 关闭数据库连接
+		if err := database.Close(); err != nil {
+			logrus.Error("Error closing database:", err)
+		}
+		
+		// 关闭Redis连接
+		if err := cache.Close(); err != nil {
+			logrus.Error("Error closing Redis:", err)
+		}
+		
+		os.Exit(0)
+		}()
+
+	// 启动服务器
+	logrus.WithField("port", cfg.Port).Info("Server starting...")
+	logrus.WithField("port", cfg.Port).Info("Swagger documentation available at: http://localhost:" + cfg.Port + "/swagger/index.html")
+	
+	if err := r.Run(":" + cfg.Port); err != nil {
+		logrus.Fatal("Failed to start server:", err)
+	}
+}
+
+// setupAPIRoutes 注册所有 API 路由，保持 main 简洁并避免花括号错配
+func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobService) {
 	// API路由组
 	api := r.Group("/api")
-	
+
 	// 健康检查端点
 	api.GET("/health", func(c *gin.Context) {
 		// 检查数据库连接
@@ -368,12 +408,12 @@ func main() {
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	})
-	
+
 	// 鉴权路由（公开）
 	userHandler := handlers.NewUserHandler(database.DB)
 	// JupyterHub认证处理器（在多个地方使用）
 	jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
-	
+
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", userHandler.Register)
@@ -404,20 +444,20 @@ func main() {
 		auth.POST("/refresh-jupyterhub-token", middleware.AuthMiddlewareWithSession(), jupyterHubAuthHandler.RefreshJupyterHubToken)
 	}
 
-		// JupyterHub前端访问路由
-		jupyter := api.Group("/jupyter")
+	// JupyterHub前端访问路由
+	jupyter := api.Group("/jupyter")
+	{
+		// 需要认证的路由
+		jupyterAuth := jupyter.Group("")
+		jupyterAuth.Use(middleware.AuthMiddlewareWithSession())
 		{
-			// 需要认证的路由
-			jupyterAuth := jupyter.Group("")
-			jupyterAuth.Use(middleware.AuthMiddlewareWithSession())
-			{
-				jupyterAuth.POST("/access", jupyterHubAuthHandler.HandleJupyterHubAccess)
-				jupyterAuth.GET("/status", jupyterHubAuthHandler.GetJupyterHubAccessStatus)
-			}
-			
-			// 公共路由（用于检查服务状态）
-			jupyter.GET("/health", jupyterHubAuthHandler.GetJupyterHubStatus)
+			jupyterAuth.POST("/access", jupyterHubAuthHandler.HandleJupyterHubAccess)
+			jupyterAuth.GET("/status", jupyterHubAuthHandler.GetJupyterHubAccessStatus)
 		}
+		
+		// 公共路由（用于检查服务状态）
+		jupyter.GET("/health", jupyterHubAuthHandler.GetJupyterHubStatus)
+	}
 
 		// 用户管理路由（管理员）
 		users := api.Group("/users")
@@ -735,39 +775,5 @@ func main() {
 		{
 			dashboard.GET("/stats", jobController.GetDashboardStats)
 		}
-	}
 
-	// 优雅关闭
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-c
-		logrus.Info("Shutting down server...")
-		
-		// 关闭AI网关服务
-		if err := services.ShutdownAIGateway(); err != nil {
-			logrus.Error("Error shutting down AI Gateway:", err)
-		}
-		
-		// 关闭数据库连接
-		if err := database.Close(); err != nil {
-			logrus.Error("Error closing database:", err)
-		}
-		
-		// 关闭Redis连接
-		if err := cache.Close(); err != nil {
-			logrus.Error("Error closing Redis:", err)
-		}
-		
-		os.Exit(0)
-	}()
-
-	// 启动服务器
-	logrus.WithField("port", cfg.Port).Info("Server starting...")
-	logrus.WithField("port", cfg.Port).Info("Swagger documentation available at: http://localhost:" + cfg.Port + "/swagger/index.html")
-	
-	if err := r.Run(":" + cfg.Port); err != nil {
-		logrus.Fatal("Failed to start server:", err)
-	}
 }

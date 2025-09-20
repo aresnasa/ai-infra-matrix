@@ -16,11 +16,11 @@ type JobService struct {
 	db         *gorm.DB
 	slurmSvc   *SlurmService
 	sshSvc     *SSHService
-	cacheSvc   *CacheService
+	cacheSvc   CacheService
 }
 
 // NewJobService 创建作业服务
-func NewJobService(db *gorm.DB, slurmSvc *SlurmService, sshSvc *SSHService, cacheSvc *CacheService) *JobService {
+func NewJobService(db *gorm.DB, slurmSvc *SlurmService, sshSvc *SSHService, cacheSvc CacheService) *JobService {
 	return &JobService{
 		db:       db,
 		slurmSvc: slurmSvc,
