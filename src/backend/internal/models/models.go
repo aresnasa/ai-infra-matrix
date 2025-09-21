@@ -759,6 +759,12 @@ func (Job) TableName() string {
 	return "jobs"
 }
 
+// JobStatus 作业状态信息
+type JobStatus struct {
+	JobID uint32 `json:"job_id"`
+	State string `json:"state"` // PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, etc.
+}
+
 // Cluster 集群表
 type Cluster struct {
 	ID          string `json:"id" gorm:"primaryKey;size:100"`

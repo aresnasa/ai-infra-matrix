@@ -194,7 +194,7 @@ func (js *JobService) buildSlurmScript(job *models.Job) string {
 }
 
 // CancelJob 取消作业
-func (js *JobService) CancelJob(ctx context.Context, userID, clusterID string, jobID uint32) error {
+func (js *JobService) CancelJob(ctx context.Context, userID, clusterID string, jobID uint) error {
 	// 验证作业所有权
 	var job models.Job
 	userIDUint, _ := strconv.ParseUint(userID, 10, 32)
@@ -232,7 +232,7 @@ func (js *JobService) CancelJob(ctx context.Context, userID, clusterID string, j
 }
 
 // GetJobDetail 获取作业详情
-func (js *JobService) GetJobDetail(ctx context.Context, userID, clusterID string, jobID uint32) (*models.Job, error) {
+func (js *JobService) GetJobDetail(ctx context.Context, userID, clusterID string, jobID uint) (*models.Job, error) {
 	var job models.Job
 	userIDUint, _ := strconv.ParseUint(userID, 10, 32)
 
@@ -248,7 +248,7 @@ func (js *JobService) GetJobDetail(ctx context.Context, userID, clusterID string
 }
 
 // GetJobOutput 获取作业输出
-func (js *JobService) GetJobOutput(ctx context.Context, userID, clusterID string, jobID uint32) (*models.JobOutput, error) {
+func (js *JobService) GetJobOutput(ctx context.Context, userID, clusterID string, jobID uint) (*models.JobOutput, error) {
 	job, err := js.GetJobDetail(ctx, userID, clusterID, jobID)
 	if err != nil {
 		return nil, err
@@ -304,14 +304,49 @@ func (js *JobService) GetDashboardStats(ctx context.Context, userID string) (*mo
 	return &stats, nil
 }
 
-// ListClusters 获取集群列表
-func (js *JobService) ListClusters(ctx context.Context) ([]models.Cluster, error) {
-	var clusters []models.Cluster
-	if err := js.db.Where("status = 'active'").Find(&clusters).Error; err != nil {
-		return nil, fmt.Errorf("query clusters failed: %w", err)
+// GetJobStatus 获取作业状态
+func (js *JobService) GetJobStatus(ctx context.Context, jobID uint) (*models.JobStatus, error) {
+	// 获取作业信息
+	var job models.Job
+	if err := js.db.Where("id = ?", jobID).First(&job).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("job not found")
+		}
+		return nil, fmt.Errorf("query job failed: %w", err)
 	}
 
-	return clusters, nil
+	// 获取集群信息
+	var cluster models.Cluster
+	if err := js.db.Where("id = ?", job.ClusterID).First(&cluster).Error; err != nil {
+		return nil, fmt.Errorf("get cluster info failed: %w", err)
+	}
+
+	// 查询SLURM作业状态
+	cmd := fmt.Sprintf("squeue -h -j %d -o '%%T'", job.JobID)
+	output, err := js.sshSvc.ExecuteCommand(cluster.Host, cluster.Port, "root", "", cmd)
+	if err != nil {
+		// 如果squeue失败，可能是作业已完成，尝试sacct
+		cmd = fmt.Sprintf("sacct -j %d --format=State -n", job.JobID)
+		output, err = js.sshSvc.ExecuteCommand(cluster.Host, cluster.Port, "root", "", cmd)
+		if err != nil {
+			return nil, fmt.Errorf("query job status failed: %w", err)
+		}
+	}
+
+	state := strings.TrimSpace(output)
+	if state == "" {
+		state = "UNKNOWN"
+	}
+
+	// 更新数据库状态
+	job.Status = state
+	job.UpdatedAt = time.Now()
+	js.db.Save(&job)
+
+	return &models.JobStatus{
+		JobID: job.JobID,
+		State: state,
+	}, nil
 }
 
 // GetClusterInfo 获取集群详细信息
@@ -335,4 +370,14 @@ func (js *JobService) GetClusterInfo(ctx context.Context, clusterID string) (*mo
 	}
 
 	return clusterInfo, nil
+}
+
+// ListClusters 获取集群列表
+func (js *JobService) ListClusters(ctx context.Context) ([]models.Cluster, error) {
+	var clusters []models.Cluster
+	if err := js.db.Where("status = 'active'").Find(&clusters).Error; err != nil {
+		return nil, fmt.Errorf("query clusters failed: %w", err)
+	}
+
+	return clusters, nil
 }

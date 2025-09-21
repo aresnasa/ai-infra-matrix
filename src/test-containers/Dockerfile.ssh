@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.6
+# Ubuntu 22.04 with OpenSSH server (password auth)
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Use Aliyun mirrors and install OpenSSH server
+RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -Ei 's/ jammy ([^\n]*)/ jammy \1 universe multiverse restricted/g; s/ jammy-updates ([^\n]*)/ jammy-updates \1 universe multiverse restricted/g; s/ jammy-security ([^\n]*)/ jammy-security \1 universe multiverse restricted/g' /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create sshd runtime dir
+RUN mkdir -p /var/run/sshd /home/tester && chmod 0755 /var/run/sshd
+
+# Create user 'tester' with password and setup ssh
+RUN useradd -m -s /bin/bash tester \
+    && echo 'tester:tester123' | chpasswd \
+    && mkdir -p /home/tester/.ssh \
+    && chown -R tester:tester /home/tester/.ssh \
+    && chmod 700 /home/tester/.ssh
+
+# Harden sshd: disable root login, permit password auth for tester
+RUN sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && printf "\nUseDNS no\nClientAliveInterval 60\nClientAliveCountMax 3\n" >> /etc/ssh/sshd_config
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd","-D","-e"]

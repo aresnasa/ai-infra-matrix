@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -115,6 +117,127 @@ func (jc *JobController) SubmitJob(c *gin.Context) {
 	})
 }
 
+// SubmitJobAsync 异步提交作业
+// @Summary 异步提交作业
+// @Description 异步提交新的作业并返回操作ID用于进度跟踪
+// @Tags 作业管理
+// @Accept json
+// @Produce json
+// @Param request body models.SubmitJobRequest true "作业提交请求"
+// @Success 202 {object} models.Response{data=map[string]string}
+// @Router /api/jobs/async [post]
+func (jc *JobController) SubmitJobAsync(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, models.Response{
+			Code:    401,
+			Message: "用户未认证",
+		})
+		return
+	}
+
+	var req models.SubmitJobRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: "请求参数错误: " + err.Error(),
+		})
+		return
+	}
+
+	req.UserID = userID
+
+	pm := services.GetProgressManager()
+	op := pm.Start("job:submit", "开始提交作业")
+
+	go func(opID string, r models.SubmitJobRequest) {
+		failed := false
+		defer func() {
+			pm.Complete(opID, failed, "作业提交完成")
+		}()
+
+		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "submit", Message: "提交作业到Slurm"})
+		job, err := jc.jobService.SubmitJob(context.Background(), &r)
+		if err != nil {
+			failed = true
+			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "submit", Message: err.Error()})
+			return
+		}
+
+		pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "submit", Message: "作业提交成功", Data: job})
+
+		// Poll job status
+		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "monitor", Message: "监控作业状态"})
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				status, err := jc.jobService.GetJobStatus(context.Background(), uint(job.ID))
+				if err != nil {
+					pm.Emit(opID, services.ProgressEvent{Type: "step-log", Step: "monitor", Message: "状态检查失败: " + err.Error()})
+					continue
+				}
+				pm.Emit(opID, services.ProgressEvent{Type: "step-log", Step: "monitor", Message: "作业状态: " + status.State, Data: status})
+				if status.State == "COMPLETED" || status.State == "FAILED" || status.State == "CANCELLED" {
+					pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "monitor", Message: "作业完成", Data: status})
+					return
+				}
+			}
+		}
+	}(op.ID, req)
+
+	c.JSON(http.StatusAccepted, models.Response{
+		Code:    202,
+		Message: "作业提交中",
+		Data:    map[string]string{"opId": op.ID},
+	})
+}
+
+// GetJobStatus 获取作业状态
+// @Summary 获取作业状态
+// @Description 获取指定作业的当前状态和阶段
+// @Tags 作业管理
+// @Accept json
+// @Produce json
+// @Param jobId path int true "作业ID"
+// @Success 200 {object} models.Response{data=models.JobStatus}
+// @Router /api/jobs/{jobId}/status [get]
+func (jc *JobController) GetJobStatus(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, models.Response{
+			Code:    401,
+			Message: "用户未认证",
+		})
+		return
+	}
+
+	jobID, err := strconv.ParseUint(c.Param("jobId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: "无效的作业ID",
+		})
+		return
+	}
+
+	status, err := jc.jobService.GetJobStatus(c.Request.Context(), uint(jobID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: "获取作业状态失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{
+		Code:    200,
+		Message: "success",
+		Data:    status,
+	})
+}
+
 // CancelJob 取消作业
 // @Summary 取消作业
 // @Description 取消指定的作业
@@ -153,7 +276,7 @@ func (jc *JobController) CancelJob(c *gin.Context) {
 		return
 	}
 
-	err = jc.jobService.CancelJob(c.Request.Context(), userID, cluster, uint32(jobID))
+	err = jc.jobService.CancelJob(c.Request.Context(), userID, cluster, uint(jobID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.Response{
 			Code:    500,
@@ -206,7 +329,7 @@ func (jc *JobController) GetJobDetail(c *gin.Context) {
 		return
 	}
 
-	job, err := jc.jobService.GetJobDetail(c.Request.Context(), userID, cluster, uint32(jobID))
+	job, err := jc.jobService.GetJobDetail(c.Request.Context(), userID, cluster, uint(jobID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.Response{
 			Code:    500,
@@ -260,7 +383,7 @@ func (jc *JobController) GetJobOutput(c *gin.Context) {
 		return
 	}
 
-	output, err := jc.jobService.GetJobOutput(c.Request.Context(), userID, cluster, uint32(jobID))
+	output, err := jc.jobService.GetJobOutput(c.Request.Context(), userID, cluster, uint(jobID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.Response{
 			Code:    500,

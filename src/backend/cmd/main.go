@@ -213,6 +213,7 @@ func main() {
 			}
 		}()
 	}
+	// duplicate import removed
 
 	// 启动后台LDAP同步（如果启用）
 	if cfg.LDAP.Enabled && cfg.LDAPSync.Enabled {
@@ -409,6 +410,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		})
 	})
 
+        // removed early unauthenticated slurm routes; see authenticated group below
 	// 鉴权路由（公开）
 	userHandler := handlers.NewUserHandler(database.DB)
 	// JupyterHub认证处理器（在多个地方使用）
@@ -735,13 +737,24 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm := api.Group("/slurm")
 		slurm.Use(middleware.AuthMiddlewareWithSession())
 		{
+			// 基础信息
 			slurm.GET("/summary", slurmController.GetSummary)
 			slurm.GET("/nodes", slurmController.GetNodes)
 			slurm.GET("/jobs", slurmController.GetJobs)
 
+			// 仓库与节点初始化
+			slurm.POST("/repo/setup", slurmController.SetupRepo)
+			slurm.POST("/init-nodes", slurmController.InitNodes)
+			// 异步版本 + 进度流
+			slurm.POST("/repo/setup/async", slurmController.SetupRepoAsync)
+			slurm.POST("/init-nodes/async", slurmController.InitNodesAsync)
+			slurm.GET("/progress/:opId", slurmController.GetProgress)
+			slurm.GET("/progress/:opId/stream", slurmController.StreamProgress)
+
 			// 扩缩容相关路由
 			slurm.GET("/scaling/status", slurmController.GetScalingStatus)
 			slurm.POST("/scaling/scale-up", slurmController.ScaleUp)
+			slurm.POST("/scaling/scale-up/async", slurmController.ScaleUpAsync)
 			slurm.POST("/scaling/scale-down", slurmController.ScaleDown)
 
 			// 节点模板管理
@@ -754,6 +767,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			slurm.GET("/saltstack/integration", slurmController.GetSaltStackIntegration)
 			slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)
 			slurm.POST("/saltstack/execute", slurmController.ExecuteSaltCommand)
+			slurm.POST("/saltstack/execute/async", slurmController.ExecuteSaltCommandAsync)
 			slurm.GET("/saltstack/jobs", slurmController.GetSaltJobs)
 		}
 
@@ -764,7 +778,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		{
 			jobs.GET("", jobController.ListJobs)
 			jobs.POST("", jobController.SubmitJob)
+			jobs.POST("/async", jobController.SubmitJobAsync)
 			jobs.GET("/:jobId", jobController.GetJobDetail)
+			jobs.GET("/:jobId/status", jobController.GetJobStatus)
 			jobs.POST("/:jobId/cancel", jobController.CancelJob)
 			jobs.GET("/:jobId/output", jobController.GetJobOutput)
 			jobs.GET("/clusters", jobController.ListClusters)

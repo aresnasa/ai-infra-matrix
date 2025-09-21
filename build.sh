@@ -224,7 +224,7 @@ read_config() {
 # 获取所有服务名称
 get_all_services() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init"
+        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-build"
         return
     fi
     
@@ -372,6 +372,8 @@ get_service_path() {
             "singleuser") echo "src/singleuser" ;;
             "gitea") echo "src/gitea" ;;
             "backend-init") echo "src/backend" ;;  # backend-init 使用 backend 的 Dockerfile
+            "apphub") echo "src/apphub" ;;
+            "slurm-build") echo "src/slurm-build" ;;
             *) echo "" ;;
         esac
     else
@@ -963,6 +965,98 @@ render_jupyterhub_templates() {
     
     print_success "✓ JupyterHub 模板渲染完成"
     echo
+}
+
+# 复制Slurm包到apphub
+copy_slurm_packages_to_apphub() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    
+    print_info "==========================================="
+    print_info "复制 Slurm 包到 apphub"
+    print_info "==========================================="
+    
+    local apphub_container="ai-infra-apphub-temp"
+    local apphub_image="ai-infra-apphub:$tag"
+    local slurm_container="ai-infra-slurm-build-temp"
+    local slurm_image="ai-infra-slurm-build:$tag"
+    
+    # 检查镜像是否存在
+    if ! docker image inspect "$slurm_image" >/dev/null 2>&1; then
+        print_error "Slurm构建镜像不存在: $slurm_image"
+        return 1
+    fi
+    
+    if ! docker image inspect "$apphub_image" >/dev/null 2>&1; then
+        print_error "Apphub镜像不存在: $apphub_image"
+        return 1
+    fi
+    
+    # 创建临时容器来提取deb文件
+    print_info "创建临时Slurm容器提取deb文件..."
+    if ! docker create --name "$slurm_container" "$slurm_image" >/dev/null; then
+        print_error "创建Slurm临时容器失败"
+        return 1
+    fi
+    
+    # 创建临时apphub容器准备接收文件
+    print_info "创建临时apphub容器..."
+    if ! docker create --name "$apphub_container" "$apphub_image" >/dev/null; then
+        print_error "创建apphub临时容器失败"
+        docker rm -f "$slurm_container" >/dev/null 2>&1 || true
+        return 1
+    fi
+    
+    # 从slurm容器复制deb文件到apphub容器
+    print_info "复制deb文件到apphub..."
+    local success=true
+    
+    # 复制所有.deb文件
+    if docker cp "$slurm_container:/build/slurm-*.deb" "$apphub_container:/usr/share/nginx/html/deb/" 2>/dev/null; then
+        print_info "✓ 复制Slurm deb文件成功"
+    else
+        print_warning "未找到Slurm deb文件，跳过复制"
+        success=false
+    fi
+    
+    # 复制所有.rpm文件（如果有）
+    if docker cp "$slurm_container:/build/slurm-*.rpm" "$apphub_container:/usr/share/nginx/html/rpm/" 2>/dev/null; then
+        print_info "✓ 复制Slurm rpm文件成功"
+    else
+        print_info "未找到Slurm rpm文件"
+    fi
+    
+    # 如果复制了deb文件，重新生成Packages.gz
+    if [[ "$success" == "true" ]]; then
+        print_info "重新生成deb包索引..."
+        if docker exec "$apphub_container" /entrypoint.sh regenerate-index; then
+            print_info "✓ deb包索引更新成功"
+        else
+            print_warning "deb包索引更新失败"
+        fi
+    fi
+    
+    # 提交apphub容器为新镜像
+    print_info "提交更新后的apphub镜像..."
+    local new_apphub_image="ai-infra-apphub:$tag"
+    if docker commit "$apphub_container" "$new_apphub_image" >/dev/null; then
+        print_success "✓ apphub镜像更新成功: $new_apphub_image"
+    else
+        print_error "apphub镜像提交失败"
+        success=false
+    fi
+    
+    # 清理临时容器
+    print_info "清理临时容器..."
+    docker rm -f "$slurm_container" >/dev/null 2>&1 || true
+    docker rm -f "$apphub_container" >/dev/null 2>&1 || true
+    
+    if [[ "$success" == "true" ]]; then
+        print_success "✓ Slurm包复制到apphub完成"
+        return 0
+    else
+        print_warning "Slurm包复制过程有问题，但不影响构建流程"
+        return 1
+    fi
 }
 
 # 渲染Docker Compose配置模板
@@ -2454,6 +2548,16 @@ build_all_services() {
     
     print_info "=========================================="
     print_success "构建完成: $success_count/$total_count 成功"
+    
+    # 如果slurm-build构建成功，复制包到apphub
+    if [[ " ${all_services[*]} " =~ " slurm-build " ]] && [[ ! " ${failed_services[*]} " =~ " slurm-build " ]]; then
+        print_info "复制Slurm包到apphub..."
+        if copy_slurm_packages_to_apphub "$tag"; then
+            print_success "✓ Slurm包复制完成"
+        else
+            print_warning "Slurm包复制失败，但构建流程继续"
+        fi
+    fi
     
     if [[ ${#failed_services[@]} -gt 0 ]]; then
         print_warning "失败的服务: ${failed_services[*]}"

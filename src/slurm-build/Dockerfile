@@ -6,7 +6,7 @@ FROM ubuntu:22.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Accept optional tarball path relative to build context root
-ARG SLURM_TARBALL_PATH=src/slurm/slurm-25.05.3.tar.bz2
+ARG SLURM_TARBALL_PATH=slurm-25.05.3.tar.bz2
 
 # Install build prerequisites (use Aliyun Ubuntu mirrors for faster downloads in CN)
 RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list \

@@ -10,7 +10,7 @@ import {
   CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined,
   PlayCircleOutlined, StopOutlined, SettingOutlined
 } from '@ant-design/icons';
-import { slurmAPI } from '../services/api';
+import { slurmAPI, saltStackAPI } from '../services/api';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -20,18 +20,18 @@ const { TextArea } = Input;
 // 扩展的 SLURM API
 const extendedSlurmAPI = {
   ...slurmAPI,
-  // 扩缩容相关 API
-  getScalingStatus: () => slurmAPI.get('/slurm/scaling/status'),
-  scaleUp: (nodes) => slurmAPI.post('/slurm/scaling/scale-up', { nodes }),
-  scaleDown: (nodeIds) => slurmAPI.post('/slurm/scaling/scale-down', { node_ids: nodeIds }),
-  getNodeTemplates: () => slurmAPI.get('/slurm/node-templates'),
-  createNodeTemplate: (template) => slurmAPI.post('/slurm/node-templates', template),
-  deleteNodeTemplate: (id) => slurmAPI.delete(`/slurm/node-templates/${id}`),
-  // SaltStack 联动 API
-  getSaltStackIntegration: () => slurmAPI.get('/slurm/saltstack/integration'),
-  deploySaltMinion: (nodeConfig) => slurmAPI.post('/slurm/saltstack/deploy-minion', nodeConfig),
-  executeSaltCommand: (command) => slurmAPI.post('/slurm/saltstack/execute', command),
-  getSaltJobs: () => slurmAPI.get('/slurm/saltstack/jobs'),
+  // 扩缩容相关 API（直接复用已在 services/api.js 中定义的方法）
+  getScalingStatus: () => slurmAPI.getScalingStatus(),
+  scaleUp: (nodes) => slurmAPI.scaleUp(nodes),
+  scaleDown: (nodeIds) => slurmAPI.scaleDown(nodeIds),
+  getNodeTemplates: () => slurmAPI.getNodeTemplates(),
+  createNodeTemplate: (template) => slurmAPI.createNodeTemplate(template),
+  deleteNodeTemplate: (id) => slurmAPI.deleteNodeTemplate(id),
+  // SaltStack 联动 API（使用 saltStackAPI 封装）
+  getSaltStackIntegration: () => saltStackAPI.getSaltStackIntegration(),
+  deploySaltMinion: (nodeConfig) => saltStackAPI.deploySaltMinion(nodeConfig),
+  executeSaltCommand: (command) => saltStackAPI.executeSaltCommand(command),
+  getSaltJobs: () => saltStackAPI.getSaltJobs(),
 };
 
 const SlurmScalingPage = () => {
@@ -169,13 +169,47 @@ const SlurmScalingPage = () => {
   // 扩缩容处理函数
   const handleScaleUp = async (values) => {
     try {
-      const response = await extendedSlurmAPI.scaleUp(values.nodes);
+      // 将多行文本解析为 NodeConfig 数组（与后端契约一致）
+      const nodes = String(values.nodes || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((line) => {
+          // 支持 user@host 形式，或仅 host
+          let user = 'root';
+          let host = line;
+          if (line.includes('@')) {
+            const [u, h] = line.split('@');
+            if (u && h) {
+              user = u;
+              host = h.split(/\s+/)[0];
+            }
+          } else {
+            host = line.split(/\s+/)[0];
+          }
+          return {
+            host,
+            port: 22,
+            user,
+            key_path: '',
+            password: '',
+            minion_id: host,
+          };
+        });
+
+      if (!nodes.length) {
+        message.warning('请至少填写一个节点');
+        return;
+      }
+
+      await extendedSlurmAPI.scaleUp(nodes);
       message.success('扩容任务已提交');
       setScaleUpModal(false);
       scaleUpForm.resetFields();
       loadData();
     } catch (e) {
-      message.error('扩容失败: ' + e.message);
+      const errMsg = e?.response?.data?.error || e.message || '未知错误';
+      message.error('扩容失败: ' + errMsg);
     }
   };
 

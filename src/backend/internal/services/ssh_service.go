@@ -55,6 +55,56 @@ type SaltStackDeploymentConfig struct {
 	AutoAccept bool
 }
 
+// SetupSimpleDebRepo 在远程主机上安装nginx与dpkg-dev并创建简单的deb仓库目录结构
+func (s *SSHService) SetupSimpleDebRepo(host string, port int, user, password, basePath string, enableIndex bool) error {
+	if port == 0 { port = 22 }
+	// 安装必要组件并创建目录
+	cmds := []string{
+		`/bin/sh -lc 'if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y nginx dpkg-dev && systemctl enable nginx || true && systemctl restart nginx || true; elif command -v yum >/dev/null 2>&1; then yum install -y nginx createrepo; systemctl enable nginx || true; systemctl restart nginx || true; elif command -v dnf >/dev/null 2>&1; then dnf install -y nginx createrepo; systemctl enable nginx || true; systemctl restart nginx || true; else echo "Unsupported distro"; exit 1; fi'`,
+		"/bin/sh -lc 'mkdir -p " + basePath + "'",
+	}
+	for _, cmd := range cmds {
+		if _, err := s.ExecuteCommand(host, port, user, password, cmd); err != nil {
+			return err
+		}
+	}
+	if enableIndex {
+		// 生成Packages索引（仅Deb系）
+		idx := "/bin/sh -lc 'if command -v apt-ftparchive >/dev/null 2>&1; then (cd " + basePath + " && apt-ftparchive packages . > Packages && gzip -f Packages); fi'"
+		if _, err := s.ExecuteCommand(host, port, user, password, idx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ConfigureAptRepo 写入sources.list.d源并更新缓存
+func (s *SSHService) ConfigureAptRepo(host string, port int, user, password, repoURL string) error {
+	if port == 0 { port = 22 }
+	// 仅对Deb系系统执行
+	cmd := `/bin/sh -lc 'if command -v apt-get >/dev/null 2>&1; then echo "deb [trusted=yes] ` + repoURL + ` ./" >/etc/apt/sources.list.d/ai-infra-slurm.list && apt-get update; else echo "Non Debian-based OS, skipping"; fi'`
+	_, err := s.ExecuteCommand(host, port, user, password, cmd)
+	return err
+}
+
+// InstallSlurm 安装并配置slurm组件，role: controller|node
+func (s *SSHService) InstallSlurm(host string, port int, user, password, role string) (string, error) {
+	if port == 0 { port = 22 }
+	pkgCmd := "/bin/sh -lc 'if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get install -y slurmctld slurmd slurm-client; elif command -v yum >/dev/null 2>&1; then yum install -y slurm slurmctld slurmd; elif command -v dnf >/dev/null 2>&1; then dnf install -y slurm slurmctld slurmd; else echo Unsupported; exit 1; fi'"
+	out, err := s.ExecuteCommand(host, port, user, password, pkgCmd)
+	if err != nil { return out, err }
+
+	// 根据角色启用服务
+	var enable string
+	if role == "controller" {
+		enable = "/bin/sh -lc 'systemctl enable slurmctld || true; systemctl restart slurmctld || true'"
+	} else {
+		enable = "/bin/sh -lc 'systemctl enable slurmd || true; systemctl restart slurmd || true'"
+	}
+	out2, err := s.ExecuteCommand(host, port, user, password, enable)
+	return out + "\n" + out2, err
+}
+
 // NewSSHService 创建新的SSH服务
 func NewSSHService() *SSHService {
 	return &SSHService{

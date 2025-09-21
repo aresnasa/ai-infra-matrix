@@ -485,7 +485,7 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # SLURM Operator Manager - SLURM集群管理控制器
+  # SLURM Operator Manager - SLURM控制器
   slurm-operator-manager:
     image: ai-infra-slurm-operator-manager:${IMAGE_TAG:-v0.3.6-dev}
     build:
