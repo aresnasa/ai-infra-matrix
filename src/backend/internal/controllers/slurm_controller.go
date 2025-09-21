@@ -7,6 +7,7 @@ import (
     "net/http"
     "time"
 
+    "github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
     "github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
     "github.com/gin-gonic/gin"
 )

@@ -269,6 +269,40 @@ func binaryExists(name string) bool {
 
 var ErrNotAvailable = errors.New("slurm tools not available")
 
+// SlurmSummary SLURM集群摘要信息
+type SlurmSummary struct {
+	NodesTotal  int       `json:"nodes_total"`
+	NodesIdle   int       `json:"nodes_idle"`
+	NodesAlloc  int       `json:"nodes_alloc"`
+	Partitions  int       `json:"partitions"`
+	JobsRunning int       `json:"jobs_running"`
+	JobsPending int       `json:"jobs_pending"`
+	JobsOther   int       `json:"jobs_other"`
+	Demo        bool      `json:"demo"`
+	GeneratedAt time.Time `json:"generated_at"`
+}
+
+// SlurmNode SLURM节点信息
+type SlurmNode struct {
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	CPUs      string `json:"cpus"`
+	MemoryMB  string `json:"memory_mb"`
+	Partition string `json:"partition"`
+}
+
+// SlurmJob SLURM作业信息
+type SlurmJob struct {
+	ID        string `json:"id"`
+	User      string `json:"user"`
+	State     string `json:"state"`
+	Elapsed   string `json:"elapsed"`
+	Nodes     string `json:"nodes"`
+	Reason    string `json:"reason"`
+	Name      string `json:"name"`
+	Partition string `json:"partition"`
+}
+
 // ScalingStatus 扩缩容状态
 type ScalingStatus struct {
     ActiveOperations []ScalingOperation `json:"active_operations"`
@@ -398,11 +432,21 @@ func (s *SlurmService) GetNodeTemplates(ctx context.Context) ([]NodeTemplate, er
 	// 转换为服务层结构
 	result := make([]NodeTemplate, len(templates))
 	for i, t := range templates {
+		// 将模型层的 NodeConfig 转换为服务层的 NodeConfig
+		serviceConfig := NodeConfig{
+			Host:     t.Config.Partitions[0], // 使用第一个分区作为主机名（临时方案）
+			Port:     22,                     // 默认SSH端口
+			User:     "root",                 // 默认用户
+			KeyPath:  "",
+			Password: "",
+			MinionID: "",
+		}
+
 		result[i] = NodeTemplate{
 			ID:          t.ID,
 			Name:        t.Name,
 			Description: t.Description,
-			Config:      t.Config,
+			Config:      serviceConfig,
 			Tags:        t.Tags,
 			CreatedAt:   t.CreatedAt,
 			UpdatedAt:   t.UpdatedAt,
@@ -416,11 +460,19 @@ func (s *SlurmService) CreateNodeTemplate(ctx context.Context, template *NodeTem
 	// 获取当前用户ID（需要从context中获取，这里暂时使用默认值）
 	userID := uint(1) // TODO: 从JWT中获取用户ID
 
+	// 将服务层的 NodeConfig 转换为模型层的 NodeConfig
+	modelConfig := models.NodeConfig{
+		Partitions:     []string{template.Config.Host}, // 使用主机名作为分区
+		Features:       []string{},
+		CustomSettings: map[string]string{},
+		Mounts:         []models.MountConfig{},
+	}
+
 	model := &models.NodeTemplate{
 		ID:          generateTemplateID(),
 		Name:        template.Name,
 		Description: template.Description,
-		Config:      template.Config,
+		Config:      modelConfig,
 		Tags:        template.Tags,
 		CreatedBy:   userID,
 		CreatedAt:   time.Now(),
@@ -444,9 +496,17 @@ func (s *SlurmService) UpdateNodeTemplate(ctx context.Context, id string, templa
 		return err
 	}
 
+	// 将服务层的 NodeConfig 转换为模型层的 NodeConfig
+	modelConfig := models.NodeConfig{
+		Partitions:     []string{template.Config.Host}, // 使用主机名作为分区
+		Features:       []string{},
+		CustomSettings: map[string]string{},
+		Mounts:         []models.MountConfig{},
+	}
+
 	model.Name = template.Name
 	model.Description = template.Description
-	model.Config = template.Config
+	model.Config = modelConfig
 	model.Tags = template.Tags
 	model.UpdatedAt = time.Now()
 
