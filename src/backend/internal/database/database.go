@@ -6,7 +6,7 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-    
+
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -24,12 +24,12 @@ func GetDB() *gorm.DB {
 func Connect(cfg *config.Config) error {
 	// 初始化加密服务
 	InitCrypto(cfg)
-	
+
 	logrus.WithFields(logrus.Fields{
-		"host": cfg.Database.Host,
-		"port": cfg.Database.Port,
+		"host":     cfg.Database.Host,
+		"port":     cfg.Database.Port,
 		"database": cfg.Database.DBName,
-		"user": cfg.Database.User,
+		"user":     cfg.Database.User,
 	}).Info("Connecting to database")
 
 	// 根据应用日志级别设置GORM日志级别（OceanBase 和 Postgres 复用）
@@ -58,15 +58,15 @@ func Connect(cfg *config.Config) error {
 			cfg.OceanBase.Params,
 		)
 		logrus.WithFields(logrus.Fields{
-			"host": cfg.OceanBase.Host,
-			"port": cfg.OceanBase.Port,
+			"host":     cfg.OceanBase.Host,
+			"port":     cfg.OceanBase.Port,
 			"database": cfg.OceanBase.DBName,
-			"user": cfg.OceanBase.User,
+			"user":     cfg.OceanBase.User,
 		}).Info("Connecting to OceanBase (MySQL protocol)")
 
 		var err error
 		DB, err = gorm.Open(mysql.Open(obDSN), &gorm.Config{
-			Logger: logger.Default.LogMode(gormLogLevel),
+			Logger:  logger.Default.LogMode(gormLogLevel),
 			NowFunc: func() time.Time { return time.Now().Local() },
 		})
 		if err != nil {
@@ -85,8 +85,8 @@ func Connect(cfg *config.Config) error {
 		sqlDB.SetConnMaxLifetime(time.Hour)
 
 		logrus.WithFields(logrus.Fields{
-			"max_idle_conns": 10,
-			"max_open_conns": 100,
+			"max_idle_conns":    10,
+			"max_open_conns":    100,
 			"conn_max_lifetime": "1h",
 		}).Debug("OceanBase connection pool configured")
 
@@ -107,11 +107,13 @@ func Connect(cfg *config.Config) error {
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(gormLogLevel),
+		// 先禁用外键自动创建，待所有表创建后再手动添加，避免创建顺序导致的引用错误
+		DisableForeignKeyConstraintWhenMigrating: true,
 		NowFunc: func() time.Time {
 			return time.Now().Local()
 		},
 	})
-	
+
 	if err != nil {
 		logrus.WithError(err).Error("Failed to connect to database")
 		return fmt.Errorf("failed to connect to database: %w", err)
@@ -129,8 +131,8 @@ func Connect(cfg *config.Config) error {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	logrus.WithFields(logrus.Fields{
-		"max_idle_conns": 10,
-		"max_open_conns": 100,
+		"max_idle_conns":    10,
+		"max_open_conns":    100,
 		"conn_max_lifetime": "1h",
 	}).Debug("Database connection pool configured")
 
@@ -140,8 +142,11 @@ func Connect(cfg *config.Config) error {
 
 func Migrate() error {
 	logrus.Info("Starting database migration...")
-	
-	err := DB.AutoMigrate(
+
+	// 一次性迁移所有表，让GORM自动处理表创建顺序
+	logrus.Info("Migrating all tables...")
+	if err := DB.AutoMigrate(
+		// 基础表
 		&models.User{},
 		&models.Project{},
 		&models.Host{},
@@ -176,10 +181,24 @@ func Migrate() error {
 		&models.JupyterLabTemplate{},
 		&models.JupyterLabResourceQuota{},
 		&models.JupyterLabInstance{},
-	)
-	if err != nil {
-		logrus.Errorf("Database migration failed: %v", err)
+		// SLURM集群相关模型 - 先创建主表
+		&models.SlurmCluster{},
+		&models.SlurmNode{},
+		&models.ClusterDeployment{},
+		&models.NodeInstallTask{},
+		&models.DeploymentStep{},
+		&models.InstallStep{},
+		&models.SSHExecutionLog{},
+	); err != nil {
+		logrus.WithError(err).Error("Database migration failed")
 		return fmt.Errorf("database migration failed: %w", err)
+	}
+
+	// 所有表创建完成后，按顺序补充外键约束（PostgreSQL）
+	// 这样可以避免 AutoMigrate 在创建子表时引用父表尚未存在导致的 42P01 错误
+	if err := addForeignKeys(); err != nil {
+		logrus.WithError(err).Error("Failed to add foreign key constraints after migration")
+		return err
 	}
 
 	// 注册GORM钩子用于自动加密/解密
@@ -188,7 +207,97 @@ func Migrate() error {
 		return fmt.Errorf("failed to register encryption hooks: %w", err)
 	}
 
-	logrus.Info("Database migration completed")
+	logrus.Info("Database migration completed successfully")
+	return nil
+}
+
+// addForeignKeys 在表全部创建后补充必要的外键约束（幂等）
+func addForeignKeys() error {
+	// 仅在 PostgreSQL 下执行外键补充，其他方言（如 OceanBase/MySQL）跳过
+	if DB == nil || DB.Dialector == nil || DB.Dialector.Name() != "postgres" {
+		logrus.Debug("Skipping addForeignKeys: not a PostgreSQL dialect")
+		return nil
+	}
+
+	// install_steps.task_id -> node_install_tasks.id（删除任务时级联删除步骤）
+	if err := addForeignKeyIfNotExists(
+		"install_steps", "task_id", "node_install_tasks", "id",
+		"fk_install_steps_task", "CASCADE", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_install_steps_task: %w", err)
+	}
+
+	// node_install_tasks.node_id -> slurm_nodes.id（删除节点时级联删除其任务）
+	if err := addForeignKeyIfNotExists(
+		"node_install_tasks", "node_id", "slurm_nodes", "id",
+		"fk_node_install_tasks_node", "CASCADE", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_node_install_tasks_node: %w", err)
+	}
+
+	// node_install_tasks.deployment_id -> cluster_deployments.id（删除部署时将引用置空）
+	if err := addForeignKeyIfNotExists(
+		"node_install_tasks", "deployment_id", "cluster_deployments", "id",
+		"fk_node_install_tasks_deployment", "SET NULL", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_node_install_tasks_deployment: %w", err)
+	}
+
+	// deployment_steps.deployment_id -> cluster_deployments.id（删除部署时级联删除步骤）
+	if err := addForeignKeyIfNotExists(
+		"deployment_steps", "deployment_id", "cluster_deployments", "id",
+		"fk_deployment_steps_deployment", "CASCADE", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_deployment_steps_deployment: %w", err)
+	}
+
+	// ssh_execution_logs.node_id -> slurm_nodes.id（节点删除时置空日志引用）
+	if err := addForeignKeyIfNotExists(
+		"ssh_execution_logs", "node_id", "slurm_nodes", "id",
+		"fk_ssh_logs_node", "SET NULL", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_ssh_logs_node: %w", err)
+	}
+
+	// ssh_execution_logs.task_id -> node_install_tasks.id（任务删除时置空日志引用）
+	if err := addForeignKeyIfNotExists(
+		"ssh_execution_logs", "task_id", "node_install_tasks", "id",
+		"fk_ssh_logs_task", "SET NULL", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_ssh_logs_task: %w", err)
+	}
+
+	// ssh_execution_logs.step_id -> deployment_steps.id（步骤删除时置空日志引用）
+	if err := addForeignKeyIfNotExists(
+		"ssh_execution_logs", "step_id", "deployment_steps", "id",
+		"fk_ssh_logs_step", "SET NULL", "CASCADE",
+	); err != nil {
+		return fmt.Errorf("add fk_ssh_logs_step: %w", err)
+	}
+
+	logrus.Info("Foreign key constraints ensured successfully")
+	return nil
+}
+
+// addForeignKeyIfNotExists 仅当约束不存在时添加外键（PostgreSQL）
+func addForeignKeyIfNotExists(table, column, refTable, refColumn, constraint, onDelete, onUpdate string) error {
+	// 使用 DO $$ 块检查 pg_constraint 中是否已存在该约束，避免重复创建
+	sql := fmt.Sprintf(`
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint WHERE conname = '%s'
+	) THEN
+		ALTER TABLE "%s" ADD CONSTRAINT "%s"
+		FOREIGN KEY ("%s") REFERENCES "%s"("%s")
+		ON UPDATE %s ON DELETE %s;
+	END IF;
+END
+$$;`, constraint, table, constraint, column, refTable, refColumn, onUpdate, onDelete)
+
+	if err := DB.Exec(sql).Error; err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -240,7 +349,7 @@ func registerEncryptionHooks() error {
 				logrus.Debug("KubeConfig decrypted during query operation")
 			}
 		}
-		
+
 		// 处理切片对象
 		if clusters, ok := db.Statement.Dest.(*[]models.KubernetesCluster); ok {
 			for i := range *clusters {
@@ -303,7 +412,7 @@ func registerEncryptionHooks() error {
 				logrus.Debug("LDAP BindPassword decrypted during query operation")
 			}
 		}
-		
+
 		// 处理切片对象
 		if configs, ok := db.Statement.Dest.(*[]models.LDAPConfig); ok {
 			for i := range *configs {
@@ -366,7 +475,7 @@ func registerEncryptionHooks() error {
 				logrus.Debug("AI API key decrypted during query operation")
 			}
 		}
-		
+
 		// 处理切片对象
 		if configs, ok := db.Statement.Dest.(*[]models.AIAssistantConfig); ok {
 			for i := range *configs {

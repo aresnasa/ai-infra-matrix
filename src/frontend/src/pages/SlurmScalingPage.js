@@ -11,6 +11,7 @@ import {
   PlayCircleOutlined, StopOutlined, SettingOutlined
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
+import SlurmTaskBar from '../components/SlurmTaskBar';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -284,6 +285,7 @@ const SlurmScalingPage = () => {
 
   return (
     <div style={{ padding: 24 }}>
+      <SlurmTaskBar style={{ marginBottom: 12 }} />
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={2}>

@@ -239,7 +239,7 @@ get_all_services() {
 # 获取所有依赖镜像（包含测试工具和构建依赖）
 get_all_dependencies() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
+        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.6 jupyter/base-notebook:latest"
         return
     fi
     
@@ -346,7 +346,7 @@ collect_dependency_images() {
     fi
     
     # 使用统一的静态依赖列表，确保与get_all_dependencies一致
-    echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
+    echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.6 jupyter/base-notebook:latest"
 }
 
 # 批量下载基础镜像
@@ -3132,7 +3132,7 @@ push_build_dependencies() {
         "nginx:stable-alpine-perl"
         "golang:1.25-alpine"
         "python:3.13-alpine"
-        "gitea/gitea:1.24.5"
+        "gitea/gitea:1.24.6"
         "jupyter/base-notebook:latest"
     )
     
@@ -3250,7 +3250,7 @@ pull_aiharbor_dependencies() {
     # 从配置文件或预定义列表收集依赖镜像
     local dependency_images=$(get_all_dependencies | tr '\n' ' ')
     if [[ -z "$dependency_images" ]]; then
-        dependency_images="postgres:15-alpine redis:7-alpine nginx:1.27-alpine tecnativa/tcp-proxy minio/minio:latest osixia/openldap:stable osixia/phpldapadmin:stable redislabs/redisinsight:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
+        dependency_images="postgres:15-alpine redis:7-alpine nginx:1.27-alpine tecnativa/tcp-proxy minio/minio:latest osixia/openldap:stable osixia/phpldapadmin:stable redislabs/redisinsight:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.6 jupyter/base-notebook:latest"
     fi
     
     print_info "依赖镜像列表: $dependency_images"
@@ -4086,7 +4086,7 @@ replace_images_in_compose_file() {
         "osixia/phpldapadmin:latest|${registry}/phpldapadmin:${tag}"
         "redislabs/redisinsight:latest|${registry}/redisinsight:${tag}"
         "quay.io/minio/minio:latest|${registry}/minio:${tag}"
-        "gitea/gitea:1.24.5|${registry}/gitea:${tag}"
+        "gitea/gitea:1.24.6|${registry}/gitea:${tag}"
         "jupyter/base-notebook:latest|${registry}/base-notebook:${tag}"
         "node:22-alpine|${registry}/node:${tag}"
         "golang:1.25-alpine|${registry}/golang:${tag}"
@@ -4440,7 +4440,7 @@ tag_local_images_for_registry() {
         "nginx:stable-alpine-perl"
         "golang:1.25-alpine"
         "python:3.13-alpine"
-        "gitea/gitea:1.24.5"
+        "gitea/gitea:1.24.6"
         "jupyter/base-notebook:latest"
     )
     
