@@ -22,11 +22,11 @@ type SSHService struct {
 
 // SSHConfig SSH服务配置
 type SSHConfig struct {
-	DefaultUser     string
-	DefaultKeyPath  string
-	ConnectTimeout  time.Duration
-	CommandTimeout  time.Duration
-	MaxConcurrency  int
+	DefaultUser    string
+	DefaultKeyPath string
+	ConnectTimeout time.Duration
+	CommandTimeout time.Duration
+	MaxConcurrency int
 }
 
 // SSHConnection SSH连接信息
@@ -40,10 +40,10 @@ type SSHConnection struct {
 
 // DeploymentResult 部署结果
 type DeploymentResult struct {
-	Host    string
-	Success bool
-	Output  string
-	Error   string
+	Host     string
+	Success  bool
+	Output   string
+	Error    string
 	Duration time.Duration
 }
 
@@ -57,7 +57,9 @@ type SaltStackDeploymentConfig struct {
 
 // SetupSimpleDebRepo 在远程主机上安装nginx与dpkg-dev并创建简单的deb仓库目录结构
 func (s *SSHService) SetupSimpleDebRepo(host string, port int, user, password, basePath string, enableIndex bool) error {
-	if port == 0 { port = 22 }
+	if port == 0 {
+		port = 22
+	}
 	// 安装必要组件并创建目录
 	cmds := []string{
 		`/bin/sh -lc 'if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y nginx dpkg-dev && systemctl enable nginx || true && systemctl restart nginx || true; elif command -v yum >/dev/null 2>&1; then yum install -y nginx createrepo; systemctl enable nginx || true; systemctl restart nginx || true; elif command -v dnf >/dev/null 2>&1; then dnf install -y nginx createrepo; systemctl enable nginx || true; systemctl restart nginx || true; else echo "Unsupported distro"; exit 1; fi'`,
@@ -80,7 +82,9 @@ func (s *SSHService) SetupSimpleDebRepo(host string, port int, user, password, b
 
 // ConfigureAptRepo 写入sources.list.d源并更新缓存
 func (s *SSHService) ConfigureAptRepo(host string, port int, user, password, repoURL string) error {
-	if port == 0 { port = 22 }
+	if port == 0 {
+		port = 22
+	}
 	// 仅对Deb系系统执行
 	cmd := `/bin/sh -lc 'if command -v apt-get >/dev/null 2>&1; then echo "deb [trusted=yes] ` + repoURL + ` ./" >/etc/apt/sources.list.d/ai-infra-slurm.list && apt-get update; else echo "Non Debian-based OS, skipping"; fi'`
 	_, err := s.ExecuteCommand(host, port, user, password, cmd)
@@ -89,10 +93,14 @@ func (s *SSHService) ConfigureAptRepo(host string, port int, user, password, rep
 
 // InstallSlurm 安装并配置slurm组件，role: controller|node
 func (s *SSHService) InstallSlurm(host string, port int, user, password, role string) (string, error) {
-	if port == 0 { port = 22 }
+	if port == 0 {
+		port = 22
+	}
 	pkgCmd := "/bin/sh -lc 'if command -v apt-get >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get install -y slurmctld slurmd slurm-client; elif command -v yum >/dev/null 2>&1; then yum install -y slurm slurmctld slurmd; elif command -v dnf >/dev/null 2>&1; then dnf install -y slurm slurmctld slurmd; else echo Unsupported; exit 1; fi'"
 	out, err := s.ExecuteCommand(host, port, user, password, pkgCmd)
-	if err != nil { return out, err }
+	if err != nil {
+		return out, err
+	}
 
 	// 根据角色启用服务
 	var enable string
@@ -109,11 +117,11 @@ func (s *SSHService) InstallSlurm(host string, port int, user, password, role st
 func NewSSHService() *SSHService {
 	return &SSHService{
 		config: &SSHConfig{
-			DefaultUser:     "root",
-			DefaultKeyPath:  "/root/.ssh/id_rsa",
-			ConnectTimeout:  10 * time.Second,
-			CommandTimeout:  30 * time.Second,
-			MaxConcurrency:  10,
+			DefaultUser:    "root",
+			DefaultKeyPath: "/root/.ssh/id_rsa",
+			ConnectTimeout: 10 * time.Second,
+			CommandTimeout: 30 * time.Second,
+			MaxConcurrency: 10,
 		},
 	}
 }
@@ -175,8 +183,8 @@ func (s *SSHService) deploySingleMinion(ctx context.Context, conn SSHConnection,
 // connectSSH 建立SSH连接
 func (s *SSHService) connectSSH(conn SSHConnection) (*ssh.Client, error) {
 	config := &ssh.ClientConfig{
-		User: conn.User,
-		Auth: []ssh.AuthMethod{},
+		User:            conn.User,
+		Auth:            []ssh.AuthMethod{},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         s.config.ConnectTimeout,
 	}
@@ -439,7 +447,9 @@ func (s *SSHService) UploadBinaryFile(host string, port int, user, password stri
 	_, _ = s.ExecuteCommand(host, port, user, password, fmt.Sprintf("/bin/sh -lc 'rm -f %s'", tmp))
 	for i := 0; i < len(b64); i += chunkSize {
 		end := i + chunkSize
-		if end > len(b64) { end = len(b64) }
+		if end > len(b64) {
+			end = len(b64)
+		}
 		chunk := b64[i:end]
 		// 逐块追加
 		cmd := fmt.Sprintf("/bin/sh -lc 'printf %s >> %s'", singleQuote(chunk), tmp)

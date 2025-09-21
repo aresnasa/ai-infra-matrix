@@ -1,0 +1,55 @@
+# Test SSH Containers for SaltStack Client Installation Testing
+version: '3.8'
+
+services:
+  # SSH测试容器1
+  test-ssh01:
+    build:
+      context: ./src/test-containers
+      dockerfile: Dockerfile.ssh
+    container_name: test-ssh01
+    hostname: test-ssh01
+    environment:
+      - SSH_PASSWORD=testpass123
+      - ROOT_PASSWORD=rootpass123
+    ports:
+      - "2201:22"
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # SSH测试容器2
+  test-ssh02:
+    build:
+      context: ./src/test-containers
+      dockerfile: Dockerfile.ssh
+    container_name: test-ssh02
+    hostname: test-ssh02
+    environment:
+      - SSH_PASSWORD=testpass123
+      - ROOT_PASSWORD=rootpass123
+    ports:
+      - "2202:22"
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # SSH测试容器3
+  test-ssh03:
+    build:
+      context: ./src/test-containers
+      dockerfile: Dockerfile.ssh
+    container_name: test-ssh03
+    hostname: test-ssh03
+    environment:
+      - SSH_PASSWORD=testpass123
+      - ROOT_PASSWORD=rootpass123
+    ports:
+      - "2203:22"
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+networks:
+  ai-infra-network:
+    external: true

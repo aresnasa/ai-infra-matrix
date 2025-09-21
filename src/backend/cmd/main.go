@@ -763,6 +763,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)
 		slurm.POST("/saltstack/execute/async", slurmController.ExecuteSaltCommandAsync)
 		slurm.POST("/saltstack/execute", slurmController.ExecuteSaltCommand)
+		slurm.GET("/saltstack/jobs", slurmController.GetSaltJobs)
 
 		// 节点模板路由
 		slurm.GET("/node-templates", slurmController.GetNodeTemplates)
@@ -815,4 +816,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		files.POST("/upload", filesCtrl.Upload)
 	}
 
+	// 作业模板管理路由（需要认证）
+	jobTemplateController := controllers.NewJobTemplateController(database.DB)
+	jobTemplateController.RegisterRoutes(api)
 }

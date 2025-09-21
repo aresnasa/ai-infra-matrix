@@ -3,6 +3,8 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 )
@@ -251,7 +255,7 @@ func (s *SaltStackClientService) runInstallTask(ctx context.Context, task *Insta
 }
 
 // detectOSInfo 检测操作系统信息
-func (s *SaltStackClientService) detectOSInfo(client *ssh.Client) (*OSInfo, error) {
+func (s *SaltStackClientService) detectOSInfo(client *ssh.Client) (*models.OSInfo, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %v", err)
@@ -281,7 +285,7 @@ func (s *SaltStackClientService) detectOSInfo(client *ssh.Client) (*OSInfo, erro
 		return nil, fmt.Errorf("failed to run detection command: %v", err)
 	}
 
-	osInfo := &OSInfo{}
+	osInfo := &models.OSInfo{}
 	lines := strings.Split(output.String(), "\n")
 	for _, line := range lines {
 		parts := strings.SplitN(line, ":", 2)
@@ -430,6 +434,87 @@ func (s *SaltStackClientService) ListInstallTasks() []*InstallTask {
 	}
 
 	return tasks
+}
+
+// generateTaskID 生成唯一任务ID
+func generateTaskID() string {
+	bytes := make([]byte, 8)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
+// SaveTaskToDB 将任务保存到数据库
+func (s *SaltStackClientService) SaveTaskToDB(task *InstallTask, userID uint) error {
+	if database.DB == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	saltTask := &models.SaltStackTask{
+		TaskID:     task.ID,
+		TaskType:   "install",
+		Status:     task.Status,
+		TargetHost: task.Host,
+		Command:    fmt.Sprintf("salt-minion install on %s", task.Host),
+		Output:     task.Message,
+		Progress:   task.Progress,
+		UserID:     userID,
+		StartTime:  &task.StartAt,
+	}
+
+	if task.EndAt != nil {
+		saltTask.EndTime = task.EndAt
+		if task.EndAt.After(task.StartAt) {
+			saltTask.Duration = task.EndAt.Sub(task.StartAt).Milliseconds()
+		}
+	}
+
+	if task.Status == "failed" {
+		saltTask.ErrorMsg = task.Message
+	}
+
+	return database.DB.Create(saltTask).Error
+}
+
+// UpdateTaskInDB 更新数据库中的任务状态
+func (s *SaltStackClientService) UpdateTaskInDB(task *InstallTask) error {
+	if database.DB == nil {
+		return nil // 如果数据库未初始化，静默忽略
+	}
+
+	updates := map[string]interface{}{
+		"status":   task.Status,
+		"output":   task.Message,
+		"progress": task.Progress,
+	}
+
+	if task.EndAt != nil {
+		updates["end_time"] = task.EndAt
+		updates["duration"] = task.EndAt.Sub(task.StartAt).Milliseconds()
+	}
+
+	if task.Status == "failed" {
+		updates["error_msg"] = task.Message
+	}
+
+	return database.DB.Model(&models.SaltStackTask{}).
+		Where("task_id = ?", task.ID).
+		Updates(updates).Error
+}
+
+// LogTaskStep 记录任务步骤到数据库
+func (s *SaltStackClientService) LogTaskStep(taskID, level, message string) error {
+	if database.DB == nil {
+		return nil
+	}
+
+	taskLog := &models.TaskLog{
+		TaskID:    taskID,
+		LogLevel:  level,
+		Message:   message,
+		Timestamp: time.Now(),
+	}
+
+	return database.DB.Create(taskLog).Error
 }
 
 // 辅助方法

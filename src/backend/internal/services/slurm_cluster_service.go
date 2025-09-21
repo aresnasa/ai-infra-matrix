@@ -15,13 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// OSInfo 操作系统信息
-type OSInfo struct {
-	OS      string `json:"os"`
-	Version string `json:"version"`
-	Arch    string `json:"arch"`
-}
-
 // SlurmClusterService SLURM集群管理服务，整合SaltStack和SSH功能
 type SlurmClusterService struct {
 	db              *gorm.DB

@@ -94,9 +94,18 @@ func (js *JobService) SubmitJob(ctx context.Context, req *models.SubmitJobReques
 		SubmitTime: time.Now(),
 	}
 
-	// 保存到数据库
+	// 保存到数据库以获得作业ID
 	if err := js.db.Create(job).Error; err != nil {
 		return nil, fmt.Errorf("create job failed: %w", err)
+	}
+
+	// 设置输出文件路径
+	job.StdOut = fmt.Sprintf("/tmp/slurm_job_%d.out", job.ID)
+	job.StdErr = fmt.Sprintf("/tmp/slurm_job_%d.err", job.ID)
+	
+	// 更新作业记录中的输出路径
+	if err := js.db.Save(job).Error; err != nil {
+		return nil, fmt.Errorf("update job output paths failed: %w", err)
 	}
 
 	// 异步提交到SLURM
@@ -121,74 +130,124 @@ func (js *JobService) submitToSlurm(job *models.Job) error {
 	// 通过SSH提交到集群
 	cluster := &models.Cluster{ID: job.ClusterID}
 	if err := js.db.First(cluster).Error; err != nil {
+		js.updateJobStatus(job, "FAILED", fmt.Sprintf("Failed to get cluster info: %v", err))
 		return fmt.Errorf("get cluster info failed: %w", err)
 	}
 
 	// 上传脚本到集群
 	scriptPath := fmt.Sprintf("/tmp/job_%d.sh", job.ID)
 	if err := js.sshSvc.UploadFile(cluster.Host, cluster.Port, "root", "", []byte(script), scriptPath); err != nil {
+		js.updateJobStatus(job, "FAILED", fmt.Sprintf("Failed to upload script: %v", err))
 		return fmt.Errorf("upload script failed: %w", err)
+	}
+
+	// 设置脚本可执行权限
+	chmodCmd := fmt.Sprintf("chmod +x %s", scriptPath)
+	if _, err := js.sshSvc.ExecuteCommand(cluster.Host, cluster.Port, "root", "", chmodCmd); err != nil {
+		js.updateJobStatus(job, "FAILED", fmt.Sprintf("Failed to set script permissions: %v", err))
+		return fmt.Errorf("set script permissions failed: %w", err)
 	}
 
 	// 提交作业
 	cmd := fmt.Sprintf("sbatch %s", scriptPath)
 	output, err := js.sshSvc.ExecuteCommand(cluster.Host, cluster.Port, "root", "", cmd)
 	if err != nil {
+		js.updateJobStatus(job, "FAILED", fmt.Sprintf("Failed to submit job: %v", err))
 		return fmt.Errorf("submit job failed: %w", err)
 	}
 
 	// 解析作业ID
-	jobIDStr := strings.TrimSpace(strings.TrimPrefix(output, "Submitted batch job "))
+	jobIDStr := strings.TrimSpace(output)
+	
+	// SLURM sbatch 通常返回 "Submitted batch job JOBID"
+	if strings.HasPrefix(jobIDStr, "Submitted batch job ") {
+		jobIDStr = strings.TrimPrefix(jobIDStr, "Submitted batch job ")
+	}
+	
 	jobID, err := strconv.ParseUint(jobIDStr, 10, 32)
 	if err != nil {
+		js.updateJobStatus(job, "FAILED", fmt.Sprintf("Failed to parse job ID from output: %s", output))
 		return fmt.Errorf("parse job ID failed: %w", err)
 	}
 
 	// 更新作业记录
 	job.JobID = uint32(jobID)
-	job.Status = "PENDING"
+	job.Status = "SUBMITTED"
 	job.UpdatedAt = time.Now()
 
 	if err := js.db.Save(job).Error; err != nil {
-		return fmt.Errorf("update job failed: %w", err)
+		// 即使数据库更新失败，作业已经提交了，记录警告但不返回错误
+		fmt.Printf("Warning: failed to update job record: %v\n", err)
+	}
+
+	// 清理临时脚本文件
+	cleanupCmd := fmt.Sprintf("rm -f %s", scriptPath)
+	if _, err := js.sshSvc.ExecuteCommand(cluster.Host, cluster.Port, "root", "", cleanupCmd); err != nil {
+		// 清理失败不应该影响作业提交
+		fmt.Printf("Warning: failed to cleanup script file: %v\n", err)
 	}
 
 	return nil
 }
 
+// updateJobStatus 更新作业状态的辅助方法
+func (js *JobService) updateJobStatus(job *models.Job, status, message string) {
+	job.Status = status
+	job.UpdatedAt = time.Now()
+	
+	if status == "FAILED" && message != "" {
+		// 可以添加一个错误消息字段到 Job 模型中
+		fmt.Printf("Job %d failed: %s\n", job.ID, message)
+	}
+	
+	js.db.Save(job)
+}
+
 // buildSlurmScript 构建SLURM作业脚本
 func (js *JobService) buildSlurmScript(job *models.Job) string {
 	script := fmt.Sprintf(`#!/bin/bash
-#SBATCH --job-name=%s
-#SBATCH --output=%s
-#SBATCH --error=%s
-`, job.Name, job.StdOut, job.StdErr)
+#SBATCH --job-name=%s`, job.Name)
 
+	// 设置输出和错误文件
+	if job.StdOut != "" {
+		script += fmt.Sprintf("\n#SBATCH --output=%s", job.StdOut)
+	}
+	if job.StdErr != "" {
+		script += fmt.Sprintf("\n#SBATCH --error=%s", job.StdErr)
+	}
+
+	// 设置分区
 	if job.Partition != "" {
-		script += fmt.Sprintf("#SBATCH --partition=%s\n", job.Partition)
+		script += fmt.Sprintf("\n#SBATCH --partition=%s", job.Partition)
 	}
 
+	// 设置节点数
 	if job.Nodes > 0 {
-		script += fmt.Sprintf("#SBATCH --nodes=%d\n", job.Nodes)
+		script += fmt.Sprintf("\n#SBATCH --nodes=%d", job.Nodes)
 	}
 
+	// 设置CPU数量
 	if job.CPUs > 0 {
-		script += fmt.Sprintf("#SBATCH --ntasks=%d\n", job.CPUs)
+		script += fmt.Sprintf("\n#SBATCH --ntasks=%d", job.CPUs)
 	}
 
+	// 设置内存
 	if job.Memory != "" {
-		script += fmt.Sprintf("#SBATCH --mem=%s\n", job.Memory)
+		script += fmt.Sprintf("\n#SBATCH --mem=%s", job.Memory)
 	}
 
+	// 设置时间限制
 	if job.TimeLimit != "" {
-		script += fmt.Sprintf("#SBATCH --time=%s\n", job.TimeLimit)
+		script += fmt.Sprintf("\n#SBATCH --time=%s", job.TimeLimit)
 	}
 
+	// 设置工作目录
 	if job.WorkingDir != "" {
-		script += fmt.Sprintf("#SBATCH --chdir=%s\n", job.WorkingDir)
+		script += fmt.Sprintf("\n#SBATCH --chdir=%s", job.WorkingDir)
 	}
 
-	script += "\n" + job.Command + "\n"
+	// 添加空行和用户命令
+	script += "\n\n# User command\n" + job.Command + "\n"
 
 	return script
 }

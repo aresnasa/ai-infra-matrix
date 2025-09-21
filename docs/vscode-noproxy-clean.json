@@ -1,8 +1,6 @@
 {
-    "locale": "en",
     "http.proxySupport": "on",
     "http.noProxy": [
-        "*.cn",
         "localhost",
         "127.0.0.1",
         "::1",
@@ -10,6 +8,7 @@
         "*.internal",
         "*.intranet",
         "10.*",
+        "192.168.*",
         "172.16.*",
         "172.17.*",
         "172.18.*",
@@ -26,6 +25,12 @@
         "172.29.*",
         "172.30.*",
         "172.31.*",
-        "192.168.*"
+        "*.cluster.local",
+        "*.svc.cluster.local",
+        "*.corp",
+        "*.company",
+        "*.dev",
+        "*.test",
+        "*.staging"
     ]
 }

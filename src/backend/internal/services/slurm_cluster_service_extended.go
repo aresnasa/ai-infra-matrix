@@ -160,7 +160,7 @@ func (s *SlurmClusterService) testNodeSSHConnection(node *models.SlurmNode) erro
 }
 
 // detectOSInfo 检测操作系统信息
-func (s *SlurmClusterService) detectOSInfo(client *ssh.Client, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) (*OSInfo, error) {
+func (s *SlurmClusterService) detectOSInfo(client *ssh.Client, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) (*models.OSInfo, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return nil, err
@@ -212,7 +212,7 @@ func (s *SlurmClusterService) detectOSInfo(client *ssh.Client, sessionID string,
 	sshLog.ExitCode = 0
 	s.db.Create(sshLog)
 
-	osInfo := &OSInfo{}
+	osInfo := &models.OSInfo{}
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		parts := strings.SplitN(line, ":", 2)
@@ -237,7 +237,7 @@ func (s *SlurmClusterService) detectOSInfo(client *ssh.Client, sessionID string,
 }
 
 // installSaltRepository 安装SaltStack仓库
-func (s *SlurmClusterService) installSaltRepository(client *ssh.Client, osInfo *OSInfo, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) error {
+func (s *SlurmClusterService) installSaltRepository(client *ssh.Client, osInfo *models.OSInfo, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) error {
 	var cmd string
 
 	switch osInfo.OS {
@@ -261,7 +261,7 @@ func (s *SlurmClusterService) installSaltRepository(client *ssh.Client, osInfo *
 }
 
 // installSaltMinionPackage 安装Salt Minion包
-func (s *SlurmClusterService) installSaltMinionPackage(client *ssh.Client, osInfo *OSInfo, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) error {
+func (s *SlurmClusterService) installSaltMinionPackage(client *ssh.Client, osInfo *models.OSInfo, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) error {
 	var cmd string
 
 	switch osInfo.OS {
