@@ -249,7 +249,10 @@ func (c *SlurmController) ScaleUp(ctx *gin.Context) {
         return
     }
 
-    ctx.JSON(http.StatusOK, gin.H{"data": scaleResults})
+    ctx.JSON(http.StatusOK, gin.H{
+        "saltstack_deployment": results,
+        "scale_results": scaleResults,
+    })
 }
 
 // POST /api/slurm/scaling/scale-down
@@ -481,6 +484,43 @@ func (c *SlurmController) GetProgress(ctx *gin.Context) {
         return
     }
     ctx.JSON(http.StatusOK, gin.H{"data": snap})
+}
+
+// GET /api/slurm/tasks - 获取所有任务列表
+func (c *SlurmController) GetTasks(ctx *gin.Context) {
+    pm := services.GetProgressManager()
+    tasks := pm.ListOperations()
+    
+    // 转换任务数据为前端友好的格式
+    taskList := make([]gin.H, 0, len(tasks))
+    for _, task := range tasks {
+        taskData := gin.H{
+            "id":          task.ID,
+            "name":        task.Name,
+            "status":      string(task.Status),
+            "started_at":  task.StartedAt.Unix(),
+            "completed_at": task.CompletedAt.Unix(),
+            "duration":    0,
+        }
+        
+        if !task.CompletedAt.IsZero() {
+            taskData["duration"] = task.CompletedAt.Sub(task.StartedAt).Seconds()
+        } else {
+            taskData["duration"] = time.Since(task.StartedAt).Seconds()
+        }
+        
+        // 获取最新进度事件
+        if len(task.Events) > 0 {
+            latestEvent := task.Events[len(task.Events)-1]
+            taskData["current_step"] = latestEvent.Step
+            taskData["progress"] = latestEvent.Progress
+            taskData["last_message"] = latestEvent.Message
+        }
+        
+        taskList = append(taskList, taskData)
+    }
+    
+    ctx.JSON(http.StatusOK, gin.H{"data": taskList})
 }
 
 // GET /api/slurm/progress/:opId/stream (SSE)

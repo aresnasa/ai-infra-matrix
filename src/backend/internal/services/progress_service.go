@@ -194,3 +194,15 @@ func (pm *ProgressManager) Complete(id string, failed bool, message string) {
     op.publish(ProgressEvent{OpID: id, Type: "complete", Step: "complete", Message: message, TS: time.Now().UnixMilli()})
     op.complete(failed)
 }
+
+// ListOperations returns a list of all operations (for task management UI).
+func (pm *ProgressManager) ListOperations() []*Operation {
+    pm.mu.RLock()
+    defer pm.mu.RUnlock()
+    
+    ops := make([]*Operation, 0, len(pm.ops))
+    for _, op := range pm.ops {
+        ops = append(ops, op)
+    }
+    return ops
+}

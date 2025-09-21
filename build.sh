@@ -291,14 +291,14 @@ update_version_if_provided() {
         # 检查是否是版本格式的参数 (v*.*.* 格式)
         if [[ "$arg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
-            print_info "检测到版本参数: \$new_version，更新默认版本标签"
+            print_info "检测到版本参数: $new_version，更新默认版本标签"
             break
         fi
         
         # 检查常见的版本标签格式 (如 test-v0.3.6-dev)
         if [[ "$arg" =~ ^[a-zA-Z0-9-]*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
-            print_info "检测到版本参数: \$new_version，更新默认版本标签"
+            print_info "检测到版本参数: $new_version，更新默认版本标签"
             break
         fi
     done
@@ -347,6 +347,109 @@ collect_dependency_images() {
     
     # 使用统一的静态依赖列表，确保与get_all_dependencies一致
     echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.5 jupyter/base-notebook:latest"
+}
+
+# 批量下载基础镜像
+batch_download_base_images() {
+    print_info "=========================================="
+    print_info "批量下载基础镜像"
+    print_info "=========================================="
+    
+    local all_base_images=""
+    local unique_images=""
+    
+    # 1. 收集依赖镜像
+    print_info "收集依赖镜像..."
+    local dependency_images
+    dependency_images=$(collect_dependency_images)
+    for dep_image in $dependency_images; do
+        if [[ -n "$dep_image" ]]; then
+            all_base_images="$all_base_images $dep_image"
+        fi
+    done
+    
+    # 2. 收集服务基础镜像（从Dockerfile解析FROM指令）
+    print_info "收集服务基础镜像..."
+    for service in $SRC_SERVICES; do
+        local service_path
+        service_path=$(get_service_path "$service")
+        
+        if [[ -n "$service_path" && -f "$service_path/Dockerfile" ]]; then
+            # 解析Dockerfile中的FROM指令
+            local from_images
+            from_images=$(grep -i '^FROM ' "$service_path/Dockerfile" | sed 's/^FROM //' | sed 's/ AS .*$//' | tr -d '\r')
+            
+            for from_image in $from_images; do
+                # 跳过ARG变量和条件FROM
+                if [[ "$from_image" != *'$'* && "$from_image" != *'${'* && "$from_image" != *'--'* ]]; then
+                    all_base_images="$all_base_images $from_image"
+                fi
+            done
+        fi
+    done
+    
+    # 3. 去重镜像列表
+    for image in $all_base_images; do
+        if [[ ! " $unique_images " =~ " $image " ]]; then
+            unique_images="$unique_images $image"
+        fi
+    done
+    
+    # 4. 批量下载镜像
+    local image_count=$(echo "$unique_images" | wc -w)
+    print_info "开始批量下载 $image_count 个基础镜像..."
+    local success_count=0
+    local total_count=0
+    local failed_images=()
+    
+    # 重试下载函数
+    retry_pull_image() {
+        local image="$1"
+        local max_retries="${2:-3}"
+        local retry_count=0
+        
+        while [[ $retry_count -lt $max_retries ]]; do
+            if docker pull "$image" 2>/dev/null; then
+                return 0
+            else
+                retry_count=$((retry_count + 1))
+                if [[ $retry_count -lt $max_retries ]]; then
+                    print_warning "  ↻ 下载失败，重试 $retry_count/$max_retries: $image"
+                    sleep 2  # 等待2秒后重试
+                fi
+            fi
+        done
+        return 1
+    }
+    
+    for image in $unique_images; do
+        if [[ -z "$image" ]]; then
+            continue
+        fi
+        
+        total_count=$((total_count + 1))
+        print_info "→ 下载: $image"
+        
+        if retry_pull_image "$image"; then
+            print_success "  ✓ 下载成功: $image"
+            success_count=$((success_count + 1))
+        else
+            print_error "  ✗ 下载失败 (重试3次): $image"
+            failed_images+=("$image")
+        fi
+    done
+    
+    print_info "=========================================="
+    print_success "基础镜像下载完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        print_warning "下载失败的镜像: ${failed_images[*]}"
+        print_warning "这些镜像将在构建过程中重试下载"
+        return 1
+    else
+        print_success "🎉 所有基础镜像下载成功！"
+        return 0
+    fi
 }
 
 # Mock 数据测试相关配置
@@ -2520,6 +2623,13 @@ build_all_services() {
         print_info "目标仓库: $registry"
     else
         print_info "目标仓库: 本地构建"
+    fi
+    echo
+    
+    # 批量下载基础镜像
+    print_info "预先下载所有基础镜像..."
+    if ! batch_download_base_images; then
+        print_warning "部分基础镜像下载失败，但构建流程将继续"
     fi
     echo
     

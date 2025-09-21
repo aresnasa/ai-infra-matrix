@@ -77,7 +77,7 @@ retag_deps_images() {
         "redis:7:aiharbor.msxf.local/aihpc/redis:v0.3.5"
         "redis:latest:aiharbor.msxf.local/aihpc/redis:v0.3.5"
         "nginx:1.27-alpine:aiharbor.msxf.local/aihpc/nginx:v0.3.5"
-        "nginx:alpine:aiharbor.msxf.local/aihpc/nginx:v0.3.5"
+        "nginx:stable-alpine-perl:aiharbor.msxf.local/aihpc/nginx:v0.3.5"
         "nginx:latest:aiharbor.msxf.local/aihpc/nginx:v0.3.5"
         "quay.io/minio/minio:latest:aiharbor.msxf.local/aihpc/minio:v0.3.5"
         "minio/minio:latest:aiharbor.msxf.local/aihpc/minio:v0.3.5"

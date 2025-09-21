@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 # Build Slurm deb packages using Ubuntu 22.04 and the local slurm source tarball
 # Reference steps adapted from USTC guide: https://scc.ustc.edu.cn/hmli/doc/linux/slurm-install/slurm-install.html
 

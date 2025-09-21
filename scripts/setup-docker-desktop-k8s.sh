@@ -113,7 +113,7 @@ metadata:
 spec:
   containers:
   - name: test-container
-    image: nginx:alpine
+    image: nginx:stable-alpine-perl
     ports:
     - containerPort: 80
   restartPolicy: Never

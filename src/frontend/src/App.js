@@ -95,6 +95,9 @@ const SaltStackDashboard = withLazyLoading(React.lazy(() => import('./pages/Salt
 const SlurmScalingPage = withLazyLoading(React.lazy(() => import('./pages/SlurmScalingPage')), {
   loadingText: '正在加载SLURM页面...'
 });
+const SlurmTasksPage = withLazyLoading(React.lazy(() => import('./pages/SlurmTasksPage')), {
+  loadingText: '正在加载任务管理页面...'
+});
 const JobManagement = withLazyLoading(React.lazy(() => import('./pages/JobManagement')), {
   loadingText: '正在加载作业管理...'
 });
@@ -518,6 +521,18 @@ function App() {
                     <Route
                       path="/slurm-scaling"
                       element={<Navigate to="/slurm" replace />}
+                    />
+
+                    {/* SLURM任务管理页面 */}
+                    <Route
+                      path="/slurm-tasks"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <SlurmTasksPage />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
                     />
 
                     {/* Job management page - 允许数据开发和SRE团队 */}

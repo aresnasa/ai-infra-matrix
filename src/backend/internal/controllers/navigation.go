@@ -90,12 +90,21 @@ var DefaultNavigationItems = []NavigationItem{
 		Roles:   []string{"admin", "super-admin"},
 	},
 	{
+		ID:      "slurm-tasks",
+		Key:     "/slurm-tasks",
+		Label:   "Slurm任务",
+		Icon:    "ThunderboltOutlined",
+		Visible: true,
+		Order:   6,
+		Roles:   []string{"admin", "super-admin"},
+	},
+	{
 		ID:      "saltstack",
 		Key:     "/saltstack",
 		Label:   "SaltStack",
 		Icon:    "ControlOutlined",
 		Visible: true,
-		Order:   6,
+		Order:   7,
 		Roles:   []string{"admin", "super-admin"},
 	},
 }

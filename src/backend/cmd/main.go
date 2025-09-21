@@ -750,25 +750,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			slurm.POST("/init-nodes/async", slurmController.InitNodesAsync)
 			slurm.GET("/progress/:opId", slurmController.GetProgress)
 			slurm.GET("/progress/:opId/stream", slurmController.StreamProgress)
-
-			// 扩缩容相关路由
-			slurm.GET("/scaling/status", slurmController.GetScalingStatus)
-			slurm.POST("/scaling/scale-up", slurmController.ScaleUp)
-			slurm.POST("/scaling/scale-up/async", slurmController.ScaleUpAsync)
-			slurm.POST("/scaling/scale-down", slurmController.ScaleDown)
-
-			// 节点模板管理
-			slurm.GET("/node-templates", slurmController.GetNodeTemplates)
-			slurm.POST("/node-templates", slurmController.CreateNodeTemplate)
-			slurm.PUT("/node-templates/:id", slurmController.UpdateNodeTemplate)
-			slurm.DELETE("/node-templates/:id", slurmController.DeleteNodeTemplate)
-
-			// SaltStack集成
-			slurm.GET("/saltstack/integration", slurmController.GetSaltStackIntegration)
-			slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)
-			slurm.POST("/saltstack/execute", slurmController.ExecuteSaltCommand)
-			slurm.POST("/saltstack/execute/async", slurmController.ExecuteSaltCommandAsync)
-			slurm.GET("/saltstack/jobs", slurmController.GetSaltJobs)
+			slurm.GET("/tasks", slurmController.GetTasks)
 		}
 
 		// 作业管理路由（需要认证）

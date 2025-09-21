@@ -526,6 +526,9 @@ export const slurmAPI = {
   createNodeTemplate: (template) => api.post('/slurm/node-templates', template),
   updateNodeTemplate: (id, template) => api.put(`/slurm/node-templates/${id}`, template),
   deleteNodeTemplate: (id) => api.delete(`/slurm/node-templates/${id}`),
+  // 任务管理 API
+  getTasks: () => api.get('/slurm/tasks'),
+  getProgress: (opId) => api.get(`/slurm/progress/${opId}`),
 };
 
 // SaltStack API
