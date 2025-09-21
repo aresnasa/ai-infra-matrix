@@ -309,3 +309,37 @@ func (jc *JobController) GetDashboardStats(c *gin.Context) {
 		Data:    stats,
 	})
 }
+
+// ListClusters 获取可用集群列表
+// @Summary 获取集群列表
+// @Description 获取系统中已激活的计算集群列表
+// @Tags 作业管理
+// @Accept json
+// @Produce json
+// @Success 200 {object} models.Response{data=[]models.Cluster}
+// @Router /api/jobs/clusters [get]
+func (jc *JobController) ListClusters(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, models.Response{
+			Code:    401,
+			Message: "用户未认证",
+		})
+		return
+	}
+
+	clusters, err := jc.jobService.ListClusters(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: "获取集群列表失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{
+		Code:    200,
+		Message: "success",
+		Data:    clusters,
+	})
+}

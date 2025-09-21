@@ -6,11 +6,12 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-	
+    
+	"github.com/sirupsen/logrus"
+	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"github.com/sirupsen/logrus"
 )
 
 var DB *gorm.DB
@@ -31,16 +32,7 @@ func Connect(cfg *config.Config) error {
 		"user": cfg.Database.User,
 	}).Info("Connecting to database")
 
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
-		cfg.Database.Host,
-		cfg.Database.User,
-		cfg.Database.Password,
-		cfg.Database.DBName,
-		cfg.Database.Port,
-		cfg.Database.SSLMode,
-	)
-
-	// 根据应用日志级别设置GORM日志级别
+	// 根据应用日志级别设置GORM日志级别（OceanBase 和 Postgres 复用）
 	var gormLogLevel logger.LogLevel
 	appLogLevel := logrus.GetLevel()
 	switch appLogLevel {
@@ -54,6 +46,63 @@ func Connect(cfg *config.Config) error {
 		gormLogLevel = logger.Error // 只显示错误
 		logrus.Debug("GORM logging set to Error level (errors only)")
 	}
+
+	// OceanBase 优先（如果启用）
+	if cfg.OceanBase.Enabled {
+		obDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
+			cfg.OceanBase.User,
+			cfg.OceanBase.Password,
+			cfg.OceanBase.Host,
+			cfg.OceanBase.Port,
+			cfg.OceanBase.DBName,
+			cfg.OceanBase.Params,
+		)
+		logrus.WithFields(logrus.Fields{
+			"host": cfg.OceanBase.Host,
+			"port": cfg.OceanBase.Port,
+			"database": cfg.OceanBase.DBName,
+			"user": cfg.OceanBase.User,
+		}).Info("Connecting to OceanBase (MySQL protocol)")
+
+		var err error
+		DB, err = gorm.Open(mysql.Open(obDSN), &gorm.Config{
+			Logger: logger.Default.LogMode(gormLogLevel),
+			NowFunc: func() time.Time { return time.Now().Local() },
+		})
+		if err != nil {
+			logrus.WithError(err).Error("Failed to connect to OceanBase")
+			return fmt.Errorf("failed to connect to OceanBase: %w", err)
+		}
+
+		// 配置连接池
+		sqlDB, err := DB.DB()
+		if err != nil {
+			logrus.WithError(err).Error("Failed to get OceanBase database instance")
+			return fmt.Errorf("failed to get OceanBase database instance: %w", err)
+		}
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetConnMaxLifetime(time.Hour)
+
+		logrus.WithFields(logrus.Fields{
+			"max_idle_conns": 10,
+			"max_open_conns": 100,
+			"conn_max_lifetime": "1h",
+		}).Debug("OceanBase connection pool configured")
+
+		logrus.Info("OceanBase connected successfully")
+		return nil
+	}
+
+	// 默认使用 Postgres
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.DBName,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
 
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -85,7 +134,7 @@ func Connect(cfg *config.Config) error {
 		"conn_max_lifetime": "1h",
 	}).Debug("Database connection pool configured")
 
-	logrus.Info("Database connected successfully")
+	logrus.Info("PostgreSQL connected successfully")
 	return nil
 }
 

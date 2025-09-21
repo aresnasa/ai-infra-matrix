@@ -68,12 +68,17 @@ const Layout = ({ children, user, onLogout }) => {
     {
       key: '/slurm',
       icon: <ClusterOutlined />,
-      label: 'SLURM扩缩容',
+      label: 'SLURM',
     },
     {
       key: '/jobs',
       icon: <FileTextOutlined />,
       label: '作业管理',
+    },
+    {
+      key: '/files',
+      icon: <FileTextOutlined />,
+      label: '文件管理',
     },
     {
       key: '/saltstack',
@@ -172,6 +177,8 @@ const Layout = ({ children, user, onLogout }) => {
       selectedKeys = ['/slurm'];
     } else if (pathname === '/jobs' || pathname.startsWith('/jobs')) {
       selectedKeys = ['/jobs'];
+    } else if (pathname === '/files' || pathname.startsWith('/files')) {
+      selectedKeys = ['/files'];
     } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {
       selectedKeys = ['/saltstack'];
     }

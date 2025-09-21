@@ -3,6 +3,7 @@ package services
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -368,15 +369,51 @@ func (s *SSHService) ExecuteCommand(host string, port int, user, password, comma
 
 // UploadFile 将内容写入远程文件（通过heredoc创建，避免外部SFTP依赖）
 func (s *SSHService) UploadFile(host string, port int, user, password string, content []byte, remotePath string) error {
-	// 使用单引号heredoc确保内容按字面量写入，避免变量和转义展开
-	// 外层使用双引号包裹 -c 字符串，内部使用单引号包裹 EOF 标记，保证内容完全原样写入
-	cmd := fmt.Sprintf("/bin/sh -c \"cat > %s <<'EOF'\n%s\nEOF\nchmod +x %s\"", remotePath, string(content), remotePath)
-	_, err := s.ExecuteCommand(host, port, user, password, cmd)
-	return err
+	// 为了避免二进制内容被shell转义破坏，使用base64安全传输
+	return s.UploadBinaryFile(host, port, user, password, content, remotePath, true)
 }
 
 // ReadFile 读取远程文件内容
 func (s *SSHService) ReadFile(host string, port int, user, password, remotePath string) (string, error) {
 	cmd := fmt.Sprintf("/bin/sh -c 'cat %s'", remotePath)
 	return s.ExecuteCommand(host, port, user, password, cmd)
+}
+
+// UploadBinaryFile 以base64方式安全上传二进制到远程，并可选设置可执行权限
+func (s *SSHService) UploadBinaryFile(host string, port int, user, password string, content []byte, remotePath string, makeExecutable bool) error {
+	// 分块写入临时b64文件，避免命令长度限制
+	b64 := base64.StdEncoding.EncodeToString(content)
+	const chunkSize = 32 * 1024
+	tmp := "/tmp/.aimatrix_upload.b64"
+	// 清理旧文件
+	_, _ = s.ExecuteCommand(host, port, user, password, fmt.Sprintf("/bin/sh -lc 'rm -f %s'", tmp))
+	for i := 0; i < len(b64); i += chunkSize {
+		end := i + chunkSize
+		if end > len(b64) { end = len(b64) }
+		chunk := b64[i:end]
+		// 逐块追加
+		cmd := fmt.Sprintf("/bin/sh -lc 'printf %s >> %s'", singleQuote(chunk), tmp)
+		if _, err := s.ExecuteCommand(host, port, user, password, cmd); err != nil {
+			return err
+		}
+	}
+	// 解码并写入目标
+	finalize := fmt.Sprintf("/bin/sh -lc 'base64 -d %s > %s'", tmp, remotePath)
+	if _, err := s.ExecuteCommand(host, port, user, password, finalize); err != nil {
+		return err
+	}
+	// 设置权限
+	if makeExecutable {
+		if _, err := s.ExecuteCommand(host, port, user, password, fmt.Sprintf("/bin/sh -lc 'chmod +x %s'", remotePath)); err != nil {
+			return err
+		}
+	}
+	// 清理临时文件
+	_, _ = s.ExecuteCommand(host, port, user, password, fmt.Sprintf("/bin/sh -lc 'rm -f %s'", tmp))
+	return nil
+}
+
+// singleQuote 将字符串安全包装为单引号shell字面量
+func singleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

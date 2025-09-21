@@ -27,6 +27,33 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # OceanBase 社区版（单机）
+  # 参考: https://www.oceanbase.com/docs/community-observer-cn-10000000001878977
+  oceanbase:
+    image: oceanbase/oceanbase-ce:4.3.5-lts
+    container_name: ai-infra-oceanbase
+    environment:
+      TZ: Asia/Shanghai
+    # 对外映射 2881 端口，供客户端连接（obclient, JDBC等）
+    ports:
+      - "2881:2881"
+    expose:
+      - "2881"
+    # 初始化SQL脚本目录，容器启动时会自动执行 /root/boot/init.d 下的 *.sql / *.sh
+    # 可通过 OCEANBASE_INIT_DIR 指定宿主机路径（默认 ./data/oceanbase/init.d）
+    volumes:
+      - ${OCEANBASE_INIT_DIR:-./data/oceanbase/init.d}:/root/boot/init.d:ro
+    networks:
+      - ai-infra-network
+    healthcheck:
+      # OceanBase 默认监听 2881，使用 nc 探测端口存活
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2881"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
   # Redis 缓存服务
   redis:
     image: redis:7-alpine
@@ -190,11 +217,20 @@ services:
     env_file:
     - .env
     environment:
+      # 默认仍支持 Postgres（未启用 OceanBase 时）
       - DB_HOST=${POSTGRES_HOST:-postgres}
       - DB_PORT=${POSTGRES_PORT:-5432}
       - DB_USER=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - DB_NAME=${POSTGRES_DB:-ansible_playbook_generator}
+      # OceanBase（可选）
+      - OB_ENABLED=${OB_ENABLED:-false}
+      - OB_HOST=${OB_HOST:-oceanbase}
+      - OB_PORT=${OB_PORT:-2881}
+      - OB_USER=${OB_USER:-root@sys}
+      - OB_PASSWORD=${OB_PASSWORD:-}
+      - OB_DB=${OB_DB:-aimatrix}
+      - OB_PARAMS=${OB_PARAMS:-charset=utf8mb4&parseTime=True&loc=Local}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_PASSWORD=${REDIS_PASSWORD}
@@ -204,6 +240,8 @@ services:
       - TZ=Asia/Shanghai
     command: ["./init"]
     depends_on:
+      oceanbase:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -227,11 +265,20 @@ services:
     env_file:
     - .env
     environment:
+      # 默认仍支持 Postgres
       DB_HOST: "${POSTGRES_HOST:-postgres}"
       DB_PORT: "${POSTGRES_PORT:-5432}"
       DB_USER: "${POSTGRES_USER:-postgres}"
       DB_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
       DB_NAME: "${POSTGRES_DB:-ansible_playbook_generator}"
+      # 开启 OceanBase 将覆盖上面的连接，后端将优先使用 OceanBase
+      OB_ENABLED: "${OB_ENABLED:-false}"
+      OB_HOST: "${OB_HOST:-oceanbase}"
+      OB_PORT: "${OB_PORT:-2881}"
+      OB_USER: "${OB_USER:-root@sys}"
+      OB_PASSWORD: "${OB_PASSWORD:-}"
+      OB_DB: "${OB_DB:-aimatrix}"
+      OB_PARAMS: "${OB_PARAMS:-charset=utf8mb4&parseTime=True&loc=Local}"
       REDIS_HOST: "${REDIS_HOST:-redis}"
       REDIS_PORT: "${REDIS_PORT:-6379}"
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
@@ -255,6 +302,8 @@ services:
       - "kubernetes.docker.internal:host-gateway"
       - "host.docker.internal:host-gateway"
     depends_on:
+      oceanbase:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -436,7 +485,7 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # SLURM Operator Manager - SLURM集群管理控制器
+  # SLURM Operator Manager - SLURM控制器
   slurm-operator-manager:
     image: ai-infra-slurm-operator-manager:${IMAGE_TAG:-v0.3.6-dev}
     build:
@@ -628,129 +677,6 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
-  # OpenSCOW 数据库 (MySQL)
-  openscow-db:
-    image: mysql:8
-    container_name: ai-infra-openscow-db
-    env_file:
-    - .env
-    environment:
-      MYSQL_ROOT_PASSWORD: ${OPENSCOW_MYSQL_ROOT_PASSWORD:-openscowroot}
-      MYSQL_DATABASE: scow
-      MYSQL_USER: scow
-      MYSQL_PASSWORD: ${OPENSCOW_MYSQL_PASSWORD:-openscowpass}
-      TZ: Asia/Shanghai
-    expose:
-      - "3306"
-    volumes:
-      - openscow_db_data:/var/lib/mysql
-    networks:
-      - ai-infra-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "scow", "-p${OPENSCOW_MYSQL_PASSWORD:-openscowpass}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-  # OpenSCOW Redis
-  openscow-redis:
-    image: redis:7-alpine
-    container_name: ai-infra-openscow-redis
-    env_file:
-    - .env
-    command: ["sh", "-c", "exec redis-server --requirepass \"$${OPENSCOW_REDIS_PASSWORD:-openscowredis}\" --appendonly yes"]
-    expose:
-      - "6379"
-    volumes:
-      - openscow_redis_data:/data
-    networks:
-      - ai-infra-network
-    environment:
-      TZ: Asia/Shanghai
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${OPENSCOW_REDIS_PASSWORD:-openscowredis}\" ping || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-
-  # OpenSCOW SSH 服务器
-  openscow-ssh:
-    image: alpine-ssh
-    container_name: ai-infra-openscow-ssh
-    build:
-      context: ./src/openscow/dev/ssh-server
-    env_file:
-    - .env
-    environment:
-      TZ: Asia/Shanghai
-    expose:
-      - "22"
-    volumes:
-      - openscow_ssh_data:/home
-      - openscow_ssh_keys:/etc/ssh/keys
-    networks:
-      - ai-infra-network
-    restart: unless-stopped
-
-  # OpenSCOW 主应用服务
-  openscow:
-    image: ai-infra-openscow:${IMAGE_TAG:-v0.3.6-dev}
-    build:
-      context: ./src/openscow
-      dockerfile: docker/Dockerfile.scow
-      args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
-    container_name: ai-infra-openscow
-    env_file:
-    - .env
-    environment:
-      # 数据库配置
-      DB_HOST: openscow-db
-      DB_PORT: 3306
-      DB_NAME: scow
-      DB_USER: scow
-      DB_PASSWORD: ${OPENSCOW_MYSQL_PASSWORD:-openscowpass}
-      # Redis 配置
-      REDIS_HOST: openscow-redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${OPENSCOW_REDIS_PASSWORD:-openscowredis}
-      # SSH 配置
-      SSH_HOST: openscow-ssh
-      SSH_PORT: 22
-      # 应用配置
-      SCOW_LAUNCH_APP: portal-web
-      NODE_ENV: production
-      TZ: Asia/Shanghai
-      # 外部访问配置
-      BASE_PATH: /openscow
-      PUBLIC_URL: ${DOMAIN:-localhost}/openscow
-    expose:
-      - "3000"  # 主应用端口
-      - "80"    # Nginx 端口
-      - "5000"  # API 端口
-    volumes:
-      - openscow_data:/app/data
-      - openscow_logs:/app/logs
-    depends_on:
-      openscow-db:
-        condition: service_healthy
-      openscow-redis:
-        condition: service_healthy
-      openscow-ssh:
-        condition: service_started
-    networks:
-      - ai-infra-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:

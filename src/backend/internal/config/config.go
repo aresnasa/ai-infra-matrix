@@ -13,6 +13,9 @@ type Config struct {
 	
 	// 数据库配置
 	Database DatabaseConfig
+
+	// OceanBase 可选配置（MySQL 协议）
+	OceanBase OceanBaseConfig
 	
 	// Redis配置
 	Redis RedisConfig
@@ -47,6 +50,18 @@ type DatabaseConfig struct {
 	Password string
 	DBName   string
 	SSLMode  string
+}
+
+// OceanBaseConfig 兼容 MySQL 协议
+type OceanBaseConfig struct {
+	Enabled  bool
+	Host     string
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	// 额外参数，例如 charset、parseTime
+	Params   string
 }
 
 type RedisConfig struct {
@@ -153,6 +168,7 @@ func Load() (*Config, error) {
 
 	dbPort, _ := strconv.Atoi(getEnv("DB_PORT", "5432"))
 	redisPort, _ := strconv.Atoi(getEnv("REDIS_PORT", "6379"))
+	obPort, _ := strconv.Atoi(getEnv("OB_PORT", "2881"))
 	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
 
 	config := &Config{
@@ -170,6 +186,15 @@ func Load() (*Config, error) {
 			Port:     redisPort,
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       redisDB,
+		},
+		OceanBase: OceanBaseConfig{
+			Enabled:  getEnv("OB_ENABLED", "false") == "true",
+			Host:     getEnv("OB_HOST", "oceanbase"),
+			Port:     obPort,
+			User:     getEnv("OB_USER", "root@sys"),
+			Password: getEnv("OB_PASSWORD", ""),
+			DBName:   getEnv("OB_DB", "aimatrix"),
+			Params:   getEnv("OB_PARAMS", "charset=utf8mb4&parseTime=True&loc=Local"),
 		},
 		JWTSecret: getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 		EncryptionKey: getEnv("ENCRYPTION_KEY", "your-encryption-key-change-in-production-32-bytes"),

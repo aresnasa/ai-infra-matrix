@@ -60,6 +60,32 @@ cleanup_backup_files() {
     fi
 }
 
+# 在指定环境文件中创建或更新一个变量（默认 .env）
+# 用法: set_or_update_env_var VAR VALUE [FILE]
+set_or_update_env_var() {
+    local var_name="$1"
+    local var_value="$2"
+    local env_file="${3:-$SCRIPT_DIR/.env}"
+
+    if [[ -z "$var_name" ]]; then
+        return 1
+    fi
+
+    # 确保环境文件存在
+    if [[ ! -f "$env_file" ]]; then
+        touch "$env_file"
+    fi
+
+    # 更新或追加变量
+    if grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
+        sed_inplace "s|^${var_name}=.*|${var_name}=${var_value}|g" "$env_file"
+    else
+        echo "${var_name}=${var_value}" >> "$env_file"
+    fi
+
+    cleanup_backup_files "$(dirname "$env_file")"
+}
+
 # Docker Compose命令兼容性检测
 get_docker_compose_cmd() {
     if command -v docker-compose >/dev/null 2>&1; then
@@ -945,19 +971,23 @@ render_docker_compose_templates() {
     if [[ "$1" == "--help" || "$1" == "-h" ]]; then
         echo "render-docker-compose-templates - 渲染Docker Compose配置"
         echo
-        echo "用法: $0 render-templates docker-compose [registry] [tag]"
+        echo "用法: $0 render-templates docker-compose [registry] [tag] [--oceanbase-init-dir <path>]"
         echo
         echo "参数:"
         echo "  registry    私有仓库地址 (可选，默认不替换为内部镜像)"
         echo "  tag         镜像标签 (可选，默认: $DEFAULT_IMAGE_TAG)"
+        echo "  --oceanbase-init-dir, -O  指定宿主机上的 OceanBase 初始化脚本目录 (可选)"
         echo
         echo "说明:"
         echo "  从 docker-compose.yml.example 生成 docker-compose.yml"
         echo "  如果指定了 registry，将替换所有镜像为内部仓库版本"
+        echo "  如果指定了 --oceanbase-init-dir，将把该路径写入 .env 文件中的 OCEANBASE_INIT_DIR 变量"
         echo
         echo "示例:"
-        echo "  $0 render-templates docker-compose                           # 基础渲染"
-        echo "  $0 render-templates docker-compose aiharbor.msxf.local/aihpc v1.0.0  # 替换为内部镜像"
+        echo "  $0 render-templates docker-compose                                         # 基础渲染"
+        echo "  $0 render-templates docker-compose aiharbor.msxf.local/aihpc v1.0.0       # 替换为内部镜像"
+        echo "  $0 render-templates docker-compose --oceanbase-init-dir ./data/ob/init.d  # 指定OceanBase初始化目录"
+        echo "  $0 render-templates docker-compose --openscow-db-dir ./data/openscow/mysql # 指定OpenSCOW MySQL数据目录"
         return 0
     fi
 
@@ -965,8 +995,38 @@ render_docker_compose_templates() {
     print_info "渲染 Docker Compose 配置模板"
     print_info "==========================================="
     
-    local registry="$1"
-    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local registry=""
+    local tag="$DEFAULT_IMAGE_TAG"
+    local oceanbase_init_dir=""
+    local openscow_db_dir=""
+
+    # 简单参数解析：支持位置参数 (registry, tag) 和 --oceanbase-init-dir/-O
+    # 收集非选项参数
+    local positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --oceanbase-init-dir|-O)
+                oceanbase_init_dir="$2"
+                shift 2
+                ;;
+            --openscow-db-dir)
+                openscow_db_dir="$2"
+                shift 2
+                ;;
+            --)
+                shift; break ;;
+            -* )
+                # 未知选项，跳过
+                shift ;;
+            * )
+                positional+=("$1"); shift ;;
+        esac
+    done
+    # 剩余的都作为位置参数追加
+    while [[ $# -gt 0 ]]; do positional+=("$1"); shift; done
+    # 解析位置参数：最多两个
+    if [[ ${#positional[@]} -ge 1 ]]; then registry="${positional[0]}"; fi
+    if [[ ${#positional[@]} -ge 2 ]]; then tag="${positional[1]}"; fi
     
     # 加载环境变量
     load_environment_variables
@@ -986,6 +1046,12 @@ render_docker_compose_templates() {
         print_info "内部镜像仓库: $registry"
         print_info "镜像标签: $tag"
     fi
+    if [[ -n "$oceanbase_init_dir" ]]; then
+        print_info "OceanBase 初始化目录: $oceanbase_init_dir"
+    fi
+    if [[ -n "$openscow_db_dir" ]]; then
+        print_info "OpenSCOW MySQL 数据目录: $openscow_db_dir"
+    fi
     
     # 创建备份
     if [[ -f "$output_file" ]]; then
@@ -1000,8 +1066,26 @@ render_docker_compose_templates() {
     export KAFKA_RETENTION_HOURS="${KAFKA_RETENTION_HOURS:-168}"
     export KAFKA_CLUSTER_ID="${KAFKA_CLUSTER_ID:-gYf__u4_TgSoREBUnP-YzQ}"
     
+    # 如果指定了 OceanBase 初始化目录，则写入 .env 以便 compose 中的占位符能取到值
+    if [[ -n "$oceanbase_init_dir" ]]; then
+        set_or_update_env_var "OCEANBASE_INIT_DIR" "$oceanbase_init_dir" "$SCRIPT_DIR/.env"
+        print_success "✓ 已更新 .env: OCEANBASE_INIT_DIR=$oceanbase_init_dir"
+    fi
+
+    # 如果指定了 OpenSCOW MySQL 数据目录，则写入 .env
+    if [[ -n "$openscow_db_dir" ]]; then
+        set_or_update_env_var "OPENSCOW_DB_DIR" "$openscow_db_dir" "$SCRIPT_DIR/.env"
+        print_success "✓ 已更新 .env: OPENSCOW_DB_DIR=$openscow_db_dir"
+    fi
+
     # 复制模板文件到目标位置
     cp "$template_file" "$output_file"
+
+    # 兼容性修复：如果模板/旧版本里仍有 openscow_db_data 命名卷引用，替换为绑定挂载变量
+    if grep -q "openscow_db_data:/var/lib/mysql" "$output_file" 2>/dev/null; then
+        sed_inplace "s|openscow_db_data:/var/lib/mysql|\${OPENSCOW_DB_DIR:-./data/openscow/mysql}:/var/lib/mysql|g" "$output_file"
+        print_info "已将 legacy openscow_db_data 命名卷替换为绑定挂载"
+    fi
     
     # 如果指定了registry，进行镜像替换
     if [[ -n "$registry" ]]; then
@@ -5282,6 +5366,7 @@ show_help() {
     echo "  create-env [dev|prod] [--force] - 创建环境配置"
     echo "  validate-env                    - 校验环境配置"
     echo "  render-templates [nginx|jupyterhub|docker-compose|all] - 渲染配置模板"
+    echo "    • docker-compose 额外参数: --oceanbase-init-dir <path> 指定 OceanBase 初始化目录"
     echo "  version                         - 显示版本"
     echo "  help                            - 显示帮助"
     echo
@@ -5456,6 +5541,7 @@ show_help() {
     echo "===================================================================================="
     echo "  # 渲染docker-compose.yml配置"
     echo "  $0 render-templates docker-compose                   # 从example生成docker-compose.yml"
+    echo "  $0 render-templates docker-compose --oceanbase-init-dir ./data/oceanbase/init.d"
     echo "  $0 render-templates all                              # 渲染所有配置模板"
     echo
     echo "  # 完整的Kafka部署流程"
@@ -7713,14 +7799,17 @@ main() {
                     render_jupyterhub_templates
                     ;;
                 "docker-compose"|"compose")
-                    # 第3个参数是registry，第4个参数是tag
-                    render_docker_compose_templates "$3" "$4"
+                    # 支持 registry/tag 以及附加可选参数（例如 --oceanbase-init-dir）
+                    # 将从第3个参数开始的所有参数透传给渲染函数
+                    shift 2
+                    render_docker_compose_templates "$@"
                     ;;
                 "all")
                     render_nginx_templates
                     render_jupyterhub_templates
-                    # 对于all模式，如果指定了registry参数，也传递给docker-compose
-                    render_docker_compose_templates "$3" "$4"
+                    # 对于all模式，透传后续参数给 docker-compose 渲染
+                    shift 2
+                    render_docker_compose_templates "$@"
                     ;;
                 *)
                     print_error "未知的模板类型: $2"

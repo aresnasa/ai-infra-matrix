@@ -74,7 +74,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'slurm',
     key: '/slurm',
-    label: 'SLURM扩缩容',
+    label: 'SLURM',
     icon: 'ClusterOutlined',
     visible: true,
     order: 5,

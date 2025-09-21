@@ -28,7 +28,8 @@ export const ROLE_PERMISSIONS = {
       'enhanced-dashboard',
       'projects',
       'jupyterhub',
-      'jobs'
+      'jobs',
+      'files'
     ]
   },
   'sre': {
@@ -57,6 +58,7 @@ export const ROLE_PERMISSIONS = {
       'jupyterhub',
       'slurm',
       'jobs',
+      'files',
       'saltstack',
       'kafka-ui',
       'admin'
@@ -124,6 +126,7 @@ export const ROLE_PERMISSIONS = {
       'jupyterhub',
       'slurm',
       'jobs',
+  'files',
       'saltstack',
       'kafka-ui',
       'admin',
@@ -203,6 +206,7 @@ export const getAvailableMenuItems = (user) => {
       'jupyterhub',
       'slurm',
       'jobs',
+      'files',
       'saltstack',
       'kafka-ui',
       'admin'

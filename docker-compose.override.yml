@@ -1,0 +1,32 @@
+# Local override to bypass pulling heavy OceanBase image when OB is disabled
+# Compose automatically loads this file alongside docker-compose.yml
+services:
+  oceanbase:
+    image: busybox:latest
+    container_name: ai-infra-oceanbase
+    command: ["sh", "-c", "echo 'OceanBase disabled for local dev; using Postgres instead.'; sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo ok"]
+      interval: 5s
+      timeout: 2s
+      retries: 1
+      start_period: 1s
+    networks:
+      - ai-infra-network
+  # Silence platform warning for ARM Macs by explicitly selecting the image platform used upstream
+  k8s-proxy:
+    platform: linux/amd64
+  slurm-operator-manager:
+    image: busybox:latest
+    command: ["sh", "-c", "echo 'Slurm operator manager disabled for local dev'; sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo ok"]
+    networks:
+      - ai-infra-network
+  slurm-operator-webhook:
+    image: busybox:latest
+    command: ["sh", "-c", "echo 'Slurm operator webhook disabled for local dev'; sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo ok"]
+    networks:
+      - ai-infra-network

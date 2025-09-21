@@ -3,7 +3,7 @@ import { message } from 'antd';
 import { apiRequestManager } from '../utils/apiRequestManager';
 
 // 创建axios实例
-const api = axios.create({
+export const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || '/api',
   timeout: 30000,
   headers: {
@@ -612,6 +612,27 @@ export const jupyterLabAPI = {
   
   // 管理员功能
   createPredefinedTemplates: () => api.post('/jupyterlab/admin/create-predefined-templates'),
+};
+
+// Add Files API for remote file browsing and transfer
+export const filesAPI = {
+  // List directory contents on a given cluster
+  list: (cluster, path) => api.get('/files', { params: { cluster, path } }),
+  // Download a file (returns blob)
+  download: (cluster, path) => api.get('/files/download', {
+    params: { cluster, path },
+    responseType: 'blob',
+  }),
+  // Upload a file (multipart)
+  upload: (cluster, path, file) => {
+    const form = new FormData();
+    form.append('cluster', cluster);
+    form.append('path', path);
+    form.append('file', file);
+    return api.post('/files/upload', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
 };
 
 export default api;

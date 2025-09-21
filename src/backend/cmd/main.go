@@ -328,7 +328,7 @@ func main() {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// 设置 API 路由
-	setupAPIRoutes(r, cfg, jobService)
+	setupAPIRoutes(r, cfg, jobService, sshService)
 
 	// 优雅关闭
 	c := make(chan os.Signal, 1)
@@ -366,7 +366,7 @@ func main() {
 }
 
 // setupAPIRoutes 注册所有 API 路由，保持 main 简洁并避免花括号错配
-func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobService) {
+func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobService, sshService *services.SSHService) {
 	// API路由组
 	api := r.Group("/api")
 
@@ -767,6 +767,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			jobs.GET("/:jobId", jobController.GetJobDetail)
 			jobs.POST("/:jobId/cancel", jobController.CancelJob)
 			jobs.GET("/:jobId/output", jobController.GetJobOutput)
+			jobs.GET("/clusters", jobController.ListClusters)
 		}
 
 		// 仪表板统计路由（需要认证）
@@ -774,6 +775,20 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		dashboard.Use(middleware.AuthMiddlewareWithSession())
 		{
 			dashboard.GET("/stats", jobController.GetDashboardStats)
+		}
+
+		// 文件浏览与传输（需要认证）
+		filesSvc := services.NewFilesService(database.DB, sshService)
+		filesCtrl := controllers.NewFilesController(filesSvc)
+		files := api.Group("/files")
+		files.Use(middleware.AuthMiddlewareWithSession())
+		{
+			// 列表: GET /api/files?cluster=...&path=/path
+			files.GET("", filesCtrl.List)
+			// 下载: GET /api/files/download?cluster=...&path=/file
+			files.GET("/download", filesCtrl.Download)
+			// 上传: POST multipart /api/files/upload (cluster, path, file)
+			files.POST("/upload", filesCtrl.Upload)
 		}
 
 }

@@ -93,7 +93,7 @@ const SaltStackDashboard = withLazyLoading(React.lazy(() => import('./pages/Salt
   loadingText: '正在加载SaltStack仪表板...'
 });
 const SlurmScalingPage = withLazyLoading(React.lazy(() => import('./pages/SlurmScalingPage')), {
-  loadingText: '正在加载SLURM扩缩容页面...'
+  loadingText: '正在加载SLURM页面...'
 });
 const JobManagement = withLazyLoading(React.lazy(() => import('./pages/JobManagement')), {
   loadingText: '正在加载作业管理...'
@@ -106,6 +106,9 @@ const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
 });
+const FileBrowser = withLazyLoading(React.lazy(() => import('./pages/FileBrowser')),
+  { loadingText: '正在加载文件浏览器...' }
+);
 
 function App() {
   const [user, setUser] = useState(null);
@@ -511,7 +514,7 @@ function App() {
                       }
                     />
 
-                    {/* SLURM扩缩容自动化页面 - 重定向到主SLURM页面 */}
+                    {/* SLURM自动化页面 - 重定向到主SLURM页面 */}
                     <Route
                       path="/slurm-scaling"
                       element={<Navigate to="/slurm" replace />}
@@ -524,6 +527,18 @@ function App() {
                         <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <JobManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* File browser - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/files"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <FileBrowser />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

@@ -103,22 +103,24 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/.env
 RUN mkdir -p outputs uploads
 
 # 创建等待数据库的脚本
-RUN echo '#!/bin/bash' > /wait-for-postgres.sh && \
-    echo 'set -e' >> /wait-for-postgres.sh && \
-    echo 'echo "Waiting for PostgreSQL to be ready..."' >> /wait-for-postgres.sh && \
-    echo 'until nc -z postgres 5432; do' >> /wait-for-postgres.sh && \
-    echo '  echo "Database is unavailable - sleeping"' >> /wait-for-postgres.sh && \
-    echo '  sleep 1' >> /wait-for-postgres.sh && \
-    echo 'done' >> /wait-for-postgres.sh && \
-    echo 'echo "Database is ready - starting application"' >> /wait-for-postgres.sh && \
-    echo 'exec "$@"' >> /wait-for-postgres.sh && \
-    chmod +x /wait-for-postgres.sh
+RUN echo '#!/bin/bash' > /wait-for-db.sh && \
+    echo 'set -e' >> /wait-for-db.sh && \
+    echo 'if [ "${OB_ENABLED}" = "true" ]; then' >> /wait-for-db.sh && \
+    echo '  echo "Waiting for OceanBase (${OB_HOST:-oceanbase}:${OB_PORT:-2881})..."' >> /wait-for-db.sh && \
+    echo '  until nc -z "${OB_HOST:-oceanbase}" "${OB_PORT:-2881}"; do echo "OceanBase unavailable - sleeping"; sleep 1; done' >> /wait-for-db.sh && \
+    echo 'else' >> /wait-for-db.sh && \
+    echo '  echo "Waiting for PostgreSQL (${DB_HOST:-postgres}:${DB_PORT:-5432})..."' >> /wait-for-db.sh && \
+    echo '  until nc -z "${DB_HOST:-postgres}" "${DB_PORT:-5432}"; do echo "PostgreSQL unavailable - sleeping"; sleep 1; done' >> /wait-for-db.sh && \
+    echo 'fi' >> /wait-for-db.sh && \
+    echo 'echo "Database is ready - starting application"' >> /wait-for-db.sh && \
+    echo 'exec "$@"' >> /wait-for-db.sh && \
+    chmod +x /wait-for-db.sh
 
 # Expose port
 EXPOSE 8082
 
 # Run with database wait
-CMD ["bash", "-c", "echo 'Waiting for database...' && while ! nc -z postgres 5432; do sleep 1; done && echo 'Database ready!' && ./main"]
+CMD ["bash", "-c", "/wait-for-db.sh ./main"]
 
 LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.title="ai-infra-backend" \
@@ -182,20 +184,22 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/.env
 # Create necessary directories
 RUN mkdir -p outputs uploads
 
-# Create wait script for database initialization
-RUN echo '#!/bin/bash' > /wait-for-postgres-init.sh && \
-    echo 'set -e' >> /wait-for-postgres-init.sh && \
-    echo 'echo "Waiting for PostgreSQL to be ready for initialization..."' >> /wait-for-postgres-init.sh && \
-    echo 'until nc -z postgres 5432; do' >> /wait-for-postgres-init.sh && \
-    echo '  echo "Database is unavailable - sleeping"' >> /wait-for-postgres-init.sh && \
-    echo '  sleep 1' >> /wait-for-postgres-init.sh && \
-    echo 'done' >> /wait-for-postgres-init.sh && \
-    echo 'echo "Database is ready - running initialization"' >> /wait-for-postgres-init.sh && \
-    echo './init' >> /wait-for-postgres-init.sh && \
-    chmod +x /wait-for-postgres-init.sh
+# Create wait script for database initialization (OceanBase or PostgreSQL)
+RUN echo '#!/bin/bash' > /wait-for-db-init.sh && \
+    echo 'set -e' >> /wait-for-db-init.sh && \
+    echo 'if [ "${OB_ENABLED}" = "true" ]; then' >> /wait-for-db-init.sh && \
+    echo '  echo "Waiting for OceanBase (${OB_HOST:-oceanbase}:${OB_PORT:-2881}) for initialization..."' >> /wait-for-db-init.sh && \
+    echo '  until nc -z "${OB_HOST:-oceanbase}" "${OB_PORT:-2881}"; do echo "OceanBase unavailable - sleeping"; sleep 1; done' >> /wait-for-db-init.sh && \
+    echo 'else' >> /wait-for-db-init.sh && \
+    echo '  echo "Waiting for PostgreSQL (${DB_HOST:-postgres}:${DB_PORT:-5432}) for initialization..."' >> /wait-for-db-init.sh && \
+    echo '  until nc -z "${DB_HOST:-postgres}" "${DB_PORT:-5432}"; do echo "PostgreSQL unavailable - sleeping"; sleep 1; done' >> /wait-for-db-init.sh && \
+    echo 'fi' >> /wait-for-db-init.sh && \
+    echo 'echo "Database is ready - running initialization"' >> /wait-for-db-init.sh && \
+    echo './init' >> /wait-for-db-init.sh && \
+    chmod +x /wait-for-db-init.sh
 
 # Run initialization
-CMD ["bash", "/wait-for-postgres-init.sh"]
+CMD ["bash", "/wait-for-db-init.sh"]
 
 LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.title="ai-infra-backend-init" \
