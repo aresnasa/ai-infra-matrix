@@ -20,7 +20,7 @@ type SlurmController struct {
 
 func NewSlurmController() *SlurmController {
     return &SlurmController{
-        svc:     services.NewSlurmService(),
+        svc:     services.NewSlurmServiceWithDB(database.DB),
         sshSvc:  services.NewSSHService(),
         saltSvc: services.NewSaltStackService(),
     }

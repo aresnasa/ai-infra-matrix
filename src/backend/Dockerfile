@@ -2,7 +2,7 @@
 FROM golang:1.25-alpine AS builder
 
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn
+ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
@@ -21,27 +21,34 @@ RUN set -eux; \
         echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
+        apk add --no-cache git ca-certificates && \
         echo "成功使用阿里云镜像源"; \
     } || { \
         echo "阿里云镜像源失败，尝试清华源..."; \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
+        apk add --no-cache git ca-certificates && \
         echo "成功使用清华源"; \
     } || { \
         echo "清华源失败，尝试中科大源..."; \
         echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
+        apk add --no-cache git ca-certificates && \
         echo "成功使用中科大源"; \
     } || { \
         echo "所有国内源都失败，使用官方源..."; \
         cp /etc/apk/repositories.bak /etc/apk/repositories && \
         apk update && \
+        apk add --no-cache git ca-certificates && \
         echo "使用官方源"; \
     }
 
 ENV GO111MODULE=on
+ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOSUMDB=off
+ENV CGO_ENABLED=0
 
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
@@ -49,16 +56,40 @@ WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 COPY go.mod go.sum ./
 
 # Download dependencies with retry and fallback
-RUN go mod download || (sleep 5 && go mod download) || \
-    (export GOPROXY=direct && go mod download)
+RUN set -eux; \
+    echo "Starting Go module download..."; \
+    # 第一次尝试：使用默认代理
+    if go mod download; then \
+        echo "Go modules downloaded successfully"; \
+    else \
+        echo "First attempt failed, trying with different proxy..."; \
+        # 第二次尝试：只使用官方代理
+        export GOPROXY=https://proxy.golang.org,direct && \
+        if go mod download; then \
+            echo "Go modules downloaded with official proxy"; \
+        else \
+            echo "Second attempt failed, trying direct..."; \
+            # 第三次尝试：直接连接
+            export GOPROXY=direct && \
+            if go mod download; then \
+                echo "Go modules downloaded directly"; \
+            else \
+                echo "All download attempts failed, trying with increased timeout..."; \
+                # 第四次尝试：增加超时时间
+                export GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct && \
+                export GOSUMDB=off && \
+                timeout 300 go mod download || \
+                (echo "Final attempt with all proxies..." && \
+                 export GOPROXY=https://goproxy.cn,https://proxy.golang.org,https://goproxy.io,direct && \
+                 go mod download); \
+            fi; \
+        fi; \
+    fi
 
 # Copy source code
 COPY . .
 
-    # Add required dependencies for Kafka
-    RUN go get github.com/IBM/sarama@latest || \
-        (sleep 3 && go get github.com/IBM/sarama@latest) || \
-        (export GOPROXY=direct && go get github.com/IBM/sarama@latest)# Update go.mod and go.sum
+# Update go.mod and go.sum
 RUN go mod tidy
 
 # Build the application with JupyterHub integration
@@ -70,7 +101,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test
 FROM golang:1.25-alpine AS backend
 
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn
+ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOSUMDB=off
 
 # Keep version metadata available in the final image, too
 ARG VERSION="dev"
@@ -147,23 +179,27 @@ RUN set -eux; \
         echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
+        apk add --no-cache git ca-certificates && \
         echo "成功使用阿里云镜像源"; \
     } || { \
         echo "阿里云镜像源失败，尝试清华源..."; \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
+        apk add --no-cache git ca-certificates && \
         echo "成功使用清华源"; \
     } || { \
         echo "清华源失败，尝试中科大源..."; \
         echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
+        apk add --no-cache git ca-certificates && \
         echo "成功使用中科大源"; \
     } || { \
         echo "所有国内源都失败，使用官方源..."; \
         cp /etc/apk/repositories.bak /etc/apk/repositories && \
         apk update && \
+        apk add --no-cache git ca-certificates && \
         echo "使用官方源"; \
     }
 

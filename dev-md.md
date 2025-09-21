@@ -10,4 +10,5 @@
 10. 现在读取整个项目，完成我之前描述的功能，现在期望的是将saltstack和slurm进行融合构建出一个快速部署和扩缩容slurm集群的平台，使用go的ssh库安装saltstack的客户端到test-ssh容器，然后使用saltstack控制节点的slurm程序安装，请继续。按照我的需求设计backend程序和frontend页面，做到输入过程记录到数据库中同时将ssh过程也记录下来避免黑箱，保证全程的透明方便排查错误。
 11. 移除了foreign_key_checks，pgsql支持Foreign Key Constraint
 12. 在slurm页面增加一个任务拦，所有提交的任务都能在那里显示
-13.
+13. 需要实现提交任务自动安装saltstack的客户端，同时需要在任务页面中能够查看到，继续修复
+14. 

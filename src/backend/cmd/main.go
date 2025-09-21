@@ -763,6 +763,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)
 		slurm.POST("/saltstack/execute/async", slurmController.ExecuteSaltCommandAsync)
 		slurm.POST("/saltstack/execute", slurmController.ExecuteSaltCommand)
+
+		// 节点模板路由
+		slurm.GET("/node-templates", slurmController.GetNodeTemplates)
+		slurm.POST("/node-templates", slurmController.CreateNodeTemplate)
+		slurm.PUT("/node-templates/:id", slurmController.UpdateNodeTemplate)
+		slurm.DELETE("/node-templates/:id", slurmController.DeleteNodeTemplate)
 	}
 
 	// SaltStack 客户端管理路由（需要认证）

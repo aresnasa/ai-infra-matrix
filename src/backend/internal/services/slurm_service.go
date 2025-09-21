@@ -9,46 +9,24 @@ import (
     "strconv"
     "strings"
     "time"
+
+    "github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+    "gorm.io/gorm"
 )
 
 // Slurm service provides lightweight access to Slurm cluster metrics by shelling out
 // to common CLI tools (sinfo, squeue). When CLIs are unavailable, it returns demo data.
 
-type SlurmService struct{}
-
-type SlurmSummary struct {
-    NodesTotal   int       `json:"nodes_total"`
-    NodesIdle    int       `json:"nodes_idle"`
-    NodesAlloc   int       `json:"nodes_alloc"`
-    Partitions   int       `json:"partitions"`
-    JobsRunning  int       `json:"jobs_running"`
-    JobsPending  int       `json:"jobs_pending"`
-    JobsOther    int       `json:"jobs_other"`
-    Demo         bool      `json:"demo"`
-    GeneratedAt  time.Time `json:"generated_at"`
-}
-
-type SlurmNode struct {
-    Name      string `json:"name"`
-    State     string `json:"state"`
-    CPUs      string `json:"cpus"`
-    MemoryMB  string `json:"memory_mb"`
-    Partition string `json:"partition"`
-}
-
-type SlurmJob struct {
-    ID        string `json:"id"`
-    Name      string `json:"name"`
-    User      string `json:"user"`
-    State     string `json:"state"`
-    Elapsed   string `json:"elapsed"`
-    Nodes     string `json:"nodes"`
-    Reason    string `json:"reason"`
-    Partition string `json:"partition"`
+type SlurmService struct {
+    db *gorm.DB
 }
 
 func NewSlurmService() *SlurmService {
     return &SlurmService{}
+}
+
+func NewSlurmServiceWithDB(db *gorm.DB) *SlurmService {
+    return &SlurmService{db: db}
 }
 
 func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
@@ -412,31 +390,72 @@ func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*Scalin
 
 // GetNodeTemplates 获取节点模板列表
 func (s *SlurmService) GetNodeTemplates(ctx context.Context) ([]NodeTemplate, error) {
-    // 这里应该从数据库中获取节点模板
-    // 目前返回空列表
-    return []NodeTemplate{}, nil
+	var templates []models.NodeTemplate
+	if err := s.db.Find(&templates).Error; err != nil {
+		return nil, err
+	}
+
+	// 转换为服务层结构
+	result := make([]NodeTemplate, len(templates))
+	for i, t := range templates {
+		result[i] = NodeTemplate{
+			ID:          t.ID,
+			Name:        t.Name,
+			Description: t.Description,
+			Config:      t.Config,
+			Tags:        t.Tags,
+			CreatedAt:   t.CreatedAt,
+			UpdatedAt:   t.UpdatedAt,
+		}
+	}
+	return result, nil
 }
 
 // CreateNodeTemplate 创建节点模板
 func (s *SlurmService) CreateNodeTemplate(ctx context.Context, template *NodeTemplate) error {
-    // 这里应该将模板保存到数据库
-    template.ID = generateTemplateID()
-    template.CreatedAt = time.Now()
-    template.UpdatedAt = time.Now()
-    return nil
+	// 获取当前用户ID（需要从context中获取，这里暂时使用默认值）
+	userID := uint(1) // TODO: 从JWT中获取用户ID
+
+	model := &models.NodeTemplate{
+		ID:          generateTemplateID(),
+		Name:        template.Name,
+		Description: template.Description,
+		Config:      template.Config,
+		Tags:        template.Tags,
+		CreatedBy:   userID,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := s.db.Create(model).Error; err != nil {
+		return err
+	}
+
+	template.ID = model.ID
+	template.CreatedAt = model.CreatedAt
+	template.UpdatedAt = model.UpdatedAt
+	return nil
 }
 
 // UpdateNodeTemplate 更新节点模板
 func (s *SlurmService) UpdateNodeTemplate(ctx context.Context, id string, template *NodeTemplate) error {
-    // 这里应该更新数据库中的模板
-    template.UpdatedAt = time.Now()
-    return nil
+	var model models.NodeTemplate
+	if err := s.db.Where("id = ?", id).First(&model).Error; err != nil {
+		return err
+	}
+
+	model.Name = template.Name
+	model.Description = template.Description
+	model.Config = template.Config
+	model.Tags = template.Tags
+	model.UpdatedAt = time.Now()
+
+	return s.db.Save(&model).Error
 }
 
 // DeleteNodeTemplate 删除节点模板
 func (s *SlurmService) DeleteNodeTemplate(ctx context.Context, id string) error {
-    // 这里应该从数据库中删除模板
-    return nil
+	return s.db.Where("id = ?", id).Delete(&models.NodeTemplate{}).Error
 }
 
 // generateOperationID 生成操作ID

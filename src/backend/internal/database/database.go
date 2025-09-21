@@ -189,6 +189,7 @@ func Migrate() error {
 		&models.DeploymentStep{},
 		&models.InstallStep{},
 		&models.SSHExecutionLog{},
+		&models.NodeTemplate{},
 	); err != nil {
 		logrus.WithError(err).Error("Database migration failed")
 		return fmt.Errorf("database migration failed: %w", err)

@@ -184,6 +184,22 @@ type SSHExecutionLog struct {
 	Step DeploymentStep  `json:"step,omitempty" gorm:"-"`
 }
 
+// NodeTemplate 节点模板模型
+type NodeTemplate struct {
+	ID          string         `json:"id" gorm:"primaryKey;size:100"`
+	Name        string         `json:"name" gorm:"not null;size:100"`
+	Description string         `json:"description" gorm:"size:500"`
+	Config      NodeConfig     `json:"config" gorm:"type:json"`
+	Tags        StringArray    `json:"tags" gorm:"type:json"`
+	CreatedBy   uint           `json:"created_by"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+
+	// 关联关系
+	User User `json:"user,omitempty" gorm:"foreignKey:CreatedBy"`
+}
+
 // JSON字段类型定义
 type ClusterConfig struct {
 	SlurmVersion   string            `json:"slurm_version"`
