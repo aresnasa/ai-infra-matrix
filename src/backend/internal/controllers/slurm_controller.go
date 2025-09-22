@@ -1269,7 +1269,7 @@ func (c *SlurmController) convertToInstallationSteps(serviceSteps []services.Ste
 
 // GetInstallationTasks 获取安装任务列表
 func (c *SlurmController) GetInstallationTasks(ctx *gin.Context) {
-	db := c.DB
+	db := database.DB
 	
 	var tasks []models.InstallationTask
 	
@@ -1312,7 +1312,7 @@ func (c *SlurmController) GetInstallationTasks(ctx *gin.Context) {
 
 // GetInstallationTask 获取单个安装任务详情
 func (c *SlurmController) GetInstallationTask(ctx *gin.Context) {
-	db := c.DB
+	db := database.DB
 	
 	taskIDStr := ctx.Param("id")
 	taskID, err := strconv.ParseUint(taskIDStr, 10, 32)
