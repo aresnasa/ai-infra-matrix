@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     systemd \
     init \
+    dnsutils \
+    iputils-ping \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建SSH运行目录

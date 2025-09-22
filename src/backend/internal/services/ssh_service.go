@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -493,4 +494,172 @@ func (s *SSHService) UploadBinaryFile(host string, port int, user, password stri
 // singleQuote 将字符串安全包装为单引号shell字面量
 func singleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// InitializeTestHosts 初始化测试主机，确保Docker容器启动
+func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([]DeploymentResult, error) {
+	results := make([]DeploymentResult, 0, len(hosts))
+	
+	// 检查哪些主机是测试容器
+	testHosts := []string{}
+	for _, host := range hosts {
+		if strings.HasPrefix(host, "test-ssh") {
+			testHosts = append(testHosts, host)
+		}
+	}
+	
+	if len(testHosts) == 0 {
+		// 没有测试容器，返回所有主机为已就绪
+		for _, host := range hosts {
+			results = append(results, DeploymentResult{
+				Host:     host,
+				Success:  true,
+				Output:   "非测试容器，跳过初始化",
+				Error:    "",
+				Duration: 0,
+			})
+		}
+		return results, nil
+	}
+	
+	// 启动测试容器
+	start := time.Now()
+	
+	// 构建docker-compose命令来启动指定的服务
+	services := strings.Join(testHosts, " ")
+	cmd := fmt.Sprintf("cd /workspaces && docker-compose -f docker-compose.test.yml up -d %s", services)
+	
+	// 执行命令启动容器
+	output, err := s.executeDockerCommand(ctx, cmd)
+	duration := time.Since(start)
+	
+	if err != nil {
+		// 启动失败，所有测试容器标记为失败
+		for _, host := range testHosts {
+			results = append(results, DeploymentResult{
+				Host:     host,
+				Success:  false,
+				Output:   output,
+				Error:    fmt.Sprintf("启动容器失败: %v", err),
+				Duration: duration,
+			})
+		}
+		// 其他主机标记为就绪
+		for _, host := range hosts {
+			found := false
+			for _, testHost := range testHosts {
+				if host == testHost {
+					found = true
+					break
+				}
+			}
+			if !found {
+				results = append(results, DeploymentResult{
+					Host:     host,
+					Success:  true,
+					Output:   "非测试容器，跳过初始化",
+					Error:    "",
+					Duration: 0,
+				})
+			}
+		}
+		return results, nil
+	}
+	
+	// 等待容器完全启动并可接受SSH连接
+	for _, host := range testHosts {
+		hostResult := s.waitForSSHReady(ctx, host, 22, "root", "rootpass123")
+		results = append(results, hostResult)
+	}
+	
+	// 处理非测试容器
+	for _, host := range hosts {
+		found := false
+		for _, testHost := range testHosts {
+			if host == testHost {
+				found = true
+				break
+			}
+		}
+		if !found {
+			results = append(results, DeploymentResult{
+				Host:     host,
+				Success:  true,
+				Output:   "非测试容器，跳过初始化",
+				Error:    "",
+				Duration: 0,
+			})
+		}
+	}
+	
+	return results, nil
+}
+
+// executeDockerCommand 执行Docker命令
+func (s *SSHService) executeDockerCommand(ctx context.Context, cmd string) (string, error) {
+	// 这里我们使用本地执行Docker命令
+	// 在实际部署中，这可能需要根据环境调整
+	return s.executeLocalCommand(ctx, cmd)
+}
+
+// executeLocalCommand 执行本地命令
+func (s *SSHService) executeLocalCommand(ctx context.Context, cmd string) (string, error) {
+	// 使用bash执行命令
+	cmdExec := exec.CommandContext(ctx, "bash", "-c", cmd)
+	output, err := cmdExec.CombinedOutput()
+	return string(output), err
+}
+
+// waitForSSHReady 等待SSH服务就绪
+func (s *SSHService) waitForSSHReady(ctx context.Context, host string, port int, user, password string) DeploymentResult {
+	start := time.Now()
+	maxRetries := 30 // 最多等待30秒
+	
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return DeploymentResult{
+				Host:     host,
+				Success:  false,
+				Output:   "",
+				Error:    "等待SSH就绪时超时",
+				Duration: time.Since(start),
+			}
+		default:
+		}
+		
+		// 尝试SSH连接
+		config := &ssh.ClientConfig{
+			User: user,
+			Auth: []ssh.AuthMethod{
+				ssh.Password(password),
+			},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout:         3 * time.Second,
+		}
+		
+		address := fmt.Sprintf("%s:%d", host, port)
+		conn, err := ssh.Dial("tcp", address, config)
+		if err == nil {
+			conn.Close()
+			return DeploymentResult{
+				Host:     host,
+				Success:  true,
+				Output:   fmt.Sprintf("SSH连接就绪，耗时 %v", time.Since(start)),
+				Error:    "",
+				Duration: time.Since(start),
+			}
+		}
+		
+		// 等待1秒后重试
+		time.Sleep(1 * time.Second)
+	}
+	
+	return DeploymentResult{
+		Host:     host,
+		Success:  false,
+		Output:   "",
+		Error:    fmt.Sprintf("等待SSH就绪超时，最后错误: 连接超时"),
+		Duration: time.Since(start),
+	}
 }

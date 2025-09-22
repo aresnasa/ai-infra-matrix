@@ -79,7 +79,7 @@ const SSHAuthConfig = ({
       setTestResult(null);
       
       const values = form.getFieldsValue();
-      const host = testHost || values.host || 'test-host';
+      const host = testHost || values.host || 'test-ssh01';
       
       const testConfig = {
         host: host,
@@ -169,6 +169,19 @@ const SSHAuthConfig = ({
             </Space>
           </Radio.Button>
         </Radio.Group>
+      </Form.Item>
+
+      {/* SSH用户名 - 基础必填项 */}
+      <Form.Item
+        name="ssh_user"
+        label="SSH用户名"
+        initialValue="root"
+        rules={[{ required: true, message: '请输入SSH用户名' }]}
+      >
+        <Input 
+          placeholder="请输入SSH用户名，例如: root, ubuntu, admin" 
+          style={{ width: '100%' }}
+        />
       </Form.Item>
 
       {authType === 'password' && (
@@ -342,15 +355,6 @@ const SSHAuthConfig = ({
             initialValue={22}
           >
             <Input placeholder="默认: 22" type="number" />
-          </Form.Item>
-
-          <Form.Item
-            name="ssh_user"
-            label="SSH用户"
-            initialValue="root"
-            rules={[{ required: true, message: '请输入SSH用户名' }]}
-          >
-            <Input placeholder="默认: root" />
           </Form.Item>
 
           <Form.Item

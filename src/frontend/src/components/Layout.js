@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
-import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
+import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
@@ -79,6 +79,11 @@ const Layout = ({ children, user, onLogout }) => {
       key: '/job-templates',
       icon: <CodeOutlined />,
       label: '作业模板',
+    },
+    {
+      key: '/ssh-test',
+      icon: <KeyOutlined />,
+      label: 'SSH测试',
     },
     {
       key: '/files',

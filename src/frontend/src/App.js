@@ -104,6 +104,9 @@ const JobManagement = withLazyLoading(React.lazy(() => import('./pages/JobManage
 const JobTemplateManagement = withLazyLoading(React.lazy(() => import('./pages/JobTemplateManagement')), {
   loadingText: '正在加载模板管理...'
 });
+const SSHConnectionTest = withLazyLoading(React.lazy(() => import('./pages/SSHConnectionTest')), {
+  loadingText: '正在加载SSH测试工具...'
+});
 const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')), {
   loadingText: '正在加载Gitea...'
 });
@@ -557,6 +560,18 @@ function App() {
                         <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <JobTemplateManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* SSH Connection Test - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/ssh-test"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <SSHConnectionTest />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

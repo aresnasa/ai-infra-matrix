@@ -529,6 +529,10 @@ export const slurmAPI = {
   // 任务管理 API
   getTasks: () => api.get('/slurm/tasks'),
   getProgress: (opId) => api.get(`/slurm/progress/${opId}`),
+  // SSH连接测试 API
+  testSSHConnection: (nodeConfig) => api.post('/slurm/ssh/test-connection', nodeConfig),
+  // 主机初始化 API
+  initializeHosts: (hosts) => api.post('/slurm/hosts/initialize', { hosts }),
 };
 
 // SaltStack API

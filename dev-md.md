@@ -13,3 +13,9 @@
 13. 需要实现提交任务自动安装saltstack的客户端，同时需要在任务页面中能够查看到，继续修复
 14. http://localhost:8080/api/slurm/saltstack/jobs报错404，这里需要实现后端ssh的客户端和安装saltstack的代码然后暴露出api给到frontend调用，否则无法完成任务，请继续
 15. 这里需要一个子页面能够管理不同的sbatch脚本模板，用户可以自行管理模板，实现这个目标
+16. 需要修改前端能够解析多行输入扩容 SLURM 节点，节点配置，支持解析多行hostname或者ip输入test-ssh01，test-ssh02，test-ssh03，能够支持解析端口，这里端口如果不统一支持解析IP:port这种格式或者hostname:port这种格式，调整前端
+17. root@test-ssh01:22\nroot@test-ssh02:22\nroot@test-ssh03:22使用这个输入，报错：{"duration":8004,"error":"SSH连接失败: dial tcp: lookup test-host on 127.0.0.11:53: server misbehaving","host":"test-host","output":"","success":false}，需要修复，这里期望的是能够解析这种多行输入
+18. 同时还需要解析不输入端口，test-ssh01这种简单的hosts或者IP172.16.0.23类似这种的，同时前端需要能够校验用户输入的是否正确如果格式错误需要提前提示客户检查配置。
+19. SSH连接测试失败: SSH连接失败: dial tcp: lookup test-ssh01 on 127.0.0.11:53: no such host报错换了，现在是前端无法解析这个了，这里应该是frontend填写表单，然后发送给backend执行初始化，请按照这个思路进行修改
+20. 修复通过backend安装好minion后无法在saltstack集群中看到新节点的问题，这里需要交叉检查所有后端代码及saltstack集成的问题。无法连接到SaltStack请确认SaltStack服务正在运行且后端API可达。报错
+21. 

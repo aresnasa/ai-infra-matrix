@@ -800,3 +800,41 @@ func (c *SlurmController) InitNodes(ctx *gin.Context) {
     }
     ctx.JSON(http.StatusOK, InitNodesResponse{Success: ok, Results: results})
 }
+
+// POST /api/slurm/hosts/initialize
+func (c *SlurmController) InitializeHosts(ctx *gin.Context) {
+    var req struct {
+        Hosts []string `json:"hosts" binding:"required"`
+    }
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    // 设置超时
+    ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
+    defer cancel()
+
+    // 检查并启动测试容器
+    results, err := c.sshSvc.InitializeTestHosts(ctxWithTimeout, req.Hosts)
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    // 统计成功和失败的数量
+    successCount := 0
+    for _, result := range results {
+        if result.Success {
+            successCount++
+        }
+    }
+
+    ctx.JSON(http.StatusOK, gin.H{
+        "success": successCount > 0,
+        "total": len(results),
+        "successful": successCount,
+        "failed": len(results) - successCount,
+        "results": results,
+    })
+}

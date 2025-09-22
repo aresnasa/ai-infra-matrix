@@ -14,7 +14,8 @@ export const ROLE_PERMISSIONS = {
       '/enhanced-dashboard',
       '/profile',
       '/jobs',
-      '/job-templates'
+      '/job-templates',
+      '/ssh-test'
     ],
     restrictedRoutes: [
       '/admin',
@@ -31,6 +32,7 @@ export const ROLE_PERMISSIONS = {
       'jupyterhub',
       'jobs',
       'job-templates',
+      'ssh-test',
       'files'
     ]
   },
@@ -48,7 +50,8 @@ export const ROLE_PERMISSIONS = {
       '/admin',
       '/profile',
       '/jobs',
-      '/job-templates'
+      '/job-templates',
+      '/ssh-test'
     ],
     restrictedRoutes: [],
     menuItems: [
@@ -62,6 +65,7 @@ export const ROLE_PERMISSIONS = {
       'slurm',
       'jobs',
       'job-templates',
+      'ssh-test',
       'files',
       'saltstack',
       'kafka-ui',
