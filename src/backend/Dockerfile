@@ -116,8 +116,12 @@ RUN set -eux; \
     done
 
 # 更新apk索引并设置时区为上海，添加必要工具
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl
+RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen || \
+    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-keygen
+
+# 安装SLURM客户端工具（如果可用）
+RUN apk add --no-cache slurm || echo "SLURM not available in Alpine, will use demo data"
+
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
@@ -131,8 +135,17 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test
 # Copy environment configuration file (if exists)
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/.env* ./
 
-# Create necessary directories
-RUN mkdir -p outputs uploads
+# Create necessary directories including SSH
+RUN mkdir -p outputs uploads ~/.ssh
+
+# Generate SSH key pair for SLURM node management
+RUN ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N "" -C "ai-infra-backend@container"
+
+# Set proper permissions for SSH directory and keys
+RUN chmod 700 ~/.ssh && chmod 600 ~/.ssh/id_rsa && chmod 644 ~/.ssh/id_rsa.pub
+
+# Copy private key to a location that can be accessed after build
+RUN cp ~/.ssh/id_rsa /tmp/backend_id_rsa && cp ~/.ssh/id_rsa.pub /tmp/backend_id_rsa.pub
 
 # 创建等待数据库的脚本
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \

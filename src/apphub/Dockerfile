@@ -1,8 +1,7 @@
 FROM nginx:stable-alpine-perl
 
-# Install tools for repo management (deb packages only)
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-    apk update && \
+# Install tools for repo management (deb packages only)  
+RUN apk update && \
     apk add --no-cache dpkg-dev
 
 # Copy nginx config

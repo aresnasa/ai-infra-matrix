@@ -70,7 +70,26 @@ func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) 
     cmd := exec.CommandContext(ctx, "sinfo", "-N", "-o", "%N|%T|%C|%m|%P")
     out, err := cmd.Output()
     if err != nil {
-        // demo data
+        // Try to get data from database first
+        if s.db != nil {
+            var dbNodes []models.SlurmNode
+            if err := s.db.Find(&dbNodes).Error; err == nil && len(dbNodes) > 0 {
+                // Convert database nodes to service nodes
+                var nodes []SlurmNode
+                for _, dbNode := range dbNodes {
+                    nodes = append(nodes, SlurmNode{
+                        Name:      dbNode.NodeName,
+                        State:     dbNode.Status,
+                        CPUs:      fmt.Sprintf("%d", dbNode.CPUs),
+                        MemoryMB:  fmt.Sprintf("%d", dbNode.Memory),
+                        Partition: "compute", // 默认分区
+                    })
+                }
+                return nodes, false, nil
+            }
+        }
+        
+        // Fallback to demo data if both sinfo and database are unavailable
         return []SlurmNode{
             {Name: "node-a", State: "idle", CPUs: "4", MemoryMB: "16384", Partition: "debug"},
             {Name: "node-b", State: "alloc", CPUs: "8", MemoryMB: "32768", Partition: "compute"},

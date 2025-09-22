@@ -19,3 +19,7 @@ src/frontend/node_modules/
 patches/
 third_party/
 src/openscow/
+backup/
+
+#pkgs
+pkgs/

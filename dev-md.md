@@ -18,4 +18,7 @@
 18. 同时还需要解析不输入端口，test-ssh01这种简单的hosts或者IP172.16.0.23类似这种的，同时前端需要能够校验用户输入的是否正确如果格式错误需要提前提示客户检查配置。
 19. SSH连接测试失败: SSH连接失败: dial tcp: lookup test-ssh01 on 127.0.0.11:53: no such host报错换了，现在是前端无法解析这个了，这里应该是frontend填写表单，然后发送给backend执行初始化，请按照这个思路进行修改
 20. 修复通过backend安装好minion后无法在saltstack集群中看到新节点的问题，这里需要交叉检查所有后端代码及saltstack集成的问题。无法连接到SaltStack请确认SaltStack服务正在运行且后端API可达。报错
-21. 
+21. 这里的go程序不能写死masterURL: "http://saltstack:8000",而是通过读取.env文件进行配置，这里需要增加.env.example和build.sh脚本来适配
+22. 检查全局配置能够支持saltstack相关的服务部署，这里需要避免服务的端口冲突
+23. 现在需要使用nginx构建一个apphub作为本项目的二进制包仓库（存放saltstack-minions客户端和slurm客户端，包括rpm和deb包）
+24. 现在使用curl测试添加test-ssh01到slurm集群，需要通过go的ssh自动安装saltstack-minions客户端，保证salt的正常，可以通过go的ssh安装minions客户端和slurm客户端，然后记录相关的任务提交日志和任务详情到pgsql中，deb包的源头已经在slurm-deb:25.05.3容器镜像中，需要先将这个容器中的文件拷贝出来放到pkgs/slurm-deb中，然后使用nginx作为deb源/rpm源

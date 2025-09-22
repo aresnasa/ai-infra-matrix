@@ -3,13 +3,19 @@ package controllers
 import (
     "context"
     "encoding/json"
+    "errors"
     "fmt"
     "net/http"
+    "os"
+    "strconv"
+    "strings"
     "time"
 
     "github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
     "github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+    "github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
     "github.com/gin-gonic/gin"
+    "gorm.io/gorm"
 )
 
 // SlurmController 提供Slurm集群初始化与仓库配置能力，并包含扩缩容与SaltStack集成
@@ -162,7 +168,7 @@ func (c *SlurmController) ScaleUpAsync(ctx *gin.Context) {
 
         // SaltStack部署配置
         saltConfig := services.SaltStackDeploymentConfig{
-            MasterHost: "salt-master", // 从配置中获取
+            MasterHost: getSaltStackMasterHost(), // 从环境变量读取
             MasterPort: 4506,
             AutoAccept: true,
         }
@@ -231,7 +237,7 @@ func (c *SlurmController) ScaleUp(ctx *gin.Context) {
 
     // SaltStack部署配置
     saltConfig := services.SaltStackDeploymentConfig{
-        MasterHost: "salt-master", // 从配置中获取
+        MasterHost: getSaltStackMasterHost(), // 从环境变量读取
         MasterPort: 4506,
         AutoAccept: true,
     }
@@ -381,7 +387,7 @@ func (c *SlurmController) DeploySaltMinion(ctx *gin.Context) {
     }
 
     saltConfig := services.SaltStackDeploymentConfig{
-        MasterHost: "salt-master", // 从配置中获取
+        MasterHost: getSaltStackMasterHost(), // 从环境变量读取
         MasterPort: 4506,
         MinionID:   req.MinionID,
         AutoAccept: true,
@@ -788,6 +794,13 @@ func (c *SlurmController) InitNodes(ctx *gin.Context) {
             results = append(results, HostResult{Host: host, Success: false, Output: out, Error: err.Error(), TookMS: time.Since(start).Milliseconds()})
             continue
         }
+        
+        // 成功安装后，将节点添加到SLURM集群数据库
+        if err := c.addNodeToCluster(host, port, n.SSH.User, n.Role); err != nil {
+            // 记录警告但不失败，因为SLURM已经安装成功
+            out += fmt.Sprintf("\n警告: 添加节点到集群失败: %v", err)
+        }
+        
         results = append(results, HostResult{Host: host, Success: true, Output: out, TookMS: time.Since(start).Milliseconds()})
     }
 
@@ -837,4 +850,496 @@ func (c *SlurmController) InitializeHosts(ctx *gin.Context) {
         "failed": len(results) - successCount,
         "results": results,
     })
+}
+
+// getSaltStackMasterHost 从环境变量读取SaltStack Master主机地址
+func getSaltStackMasterHost() string {
+    masterHost := os.Getenv("SALTSTACK_MASTER_HOST")
+    if masterHost == "" {
+        masterHost = "saltstack" // 默认容器名
+    }
+    return masterHost
+}
+
+// addNodeToCluster 添加节点到SLURM集群数据库
+func (sc *SlurmController) addNodeToCluster(host string, port int, user, role string) error {
+    db := database.GetDB()
+    if db == nil {
+        return fmt.Errorf("database connection is nil")
+    }
+
+    // 检查是否已存在该节点
+    var existingNode models.SlurmNode
+    err := db.Where("host = ?", host).First(&existingNode).Error
+    if err == nil {
+        // 节点已存在，更新状态
+        return db.Model(&existingNode).Updates(models.SlurmNode{
+            Status:   "active",
+            Port:     port,
+            Username: user,
+            NodeType: role,
+        }).Error
+    }
+
+    // 创建新节点记录 - 需要有一个默认的ClusterID
+    // 这里使用ClusterID为1，在实际应用中应该根据业务逻辑确定
+    node := models.SlurmNode{
+        ClusterID:  1, // 默认集群ID
+        NodeName:   host,
+        NodeType:   role,
+        Host:       host,
+        Port:       port,
+        Username:   user,
+        Status:     "active",
+        AuthType:   "password", // 默认认证方式
+        CreatedAt:  time.Now(),
+        UpdatedAt:  time.Now(),
+    }
+
+    return db.Create(&node).Error
+}
+
+// --- 新增：使用AppHub的自动安装API ---
+
+// InstallPackagesRequest 安装包请求
+type InstallPackagesRequest struct {
+    Hosts             []HostConfig         `json:"hosts" binding:"required"`
+    AppHubURL         string               `json:"appHubURL" binding:"required"`
+    SaltMasterHost    string               `json:"saltMasterHost"`
+    SaltMasterPort    int                  `json:"saltMasterPort"`
+    EnableSaltMinion  bool                 `json:"enableSaltMinion"`
+    EnableSlurmClient bool                 `json:"enableSlurmClient"`
+    SlurmRole         string               `json:"slurmRole"` // controller|compute
+}
+
+// HostConfig 主机配置
+type HostConfig struct {
+    Host     string `json:"host" binding:"required"`
+    Port     int    `json:"port"`
+    User     string `json:"user" binding:"required"`
+    Password string `json:"password"`
+    MinionID string `json:"minionId"` // 可选的Minion ID
+}
+
+// InstallPackagesResponse 安装包响应
+type InstallPackagesResponse struct {
+    Success bool                     `json:"success"`
+    Message string                   `json:"message"`
+    Results []InstallationHostResult `json:"results"`
+}
+
+// InstallationHostResult 主机安装结果
+type InstallationHostResult struct {
+    Host     string                          `json:"host"`
+    Success  bool                            `json:"success"`
+    Error    string                          `json:"error"`
+    Duration string                          `json:"duration"`
+    Steps    []services.StepResult           `json:"steps"`
+}
+
+// POST /api/slurm/install-packages
+func (c *SlurmController) InstallPackages(ctx *gin.Context) {
+    var req InstallPackagesRequest
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+        return
+    }
+
+    // 转换为SSH连接配置
+    connections := make([]services.SSHConnection, len(req.Hosts))
+    for i, host := range req.Hosts {
+        port := host.Port
+        if port == 0 {
+            port = 22
+        }
+        connections[i] = services.SSHConnection{
+            Host:     host.Host,
+            Port:     port,
+            User:     host.User,
+            Password: host.Password,
+        }
+    }
+
+    // 构建安装配置
+    installConfig := services.PackageInstallationConfig{
+        AppHubConfig: services.AppHubConfig{
+            BaseURL: req.AppHubURL,
+        },
+        SaltMasterHost:    req.SaltMasterHost,
+        SaltMasterPort:    req.SaltMasterPort,
+        SlurmRole:         req.SlurmRole,
+        EnableSaltMinion:  req.EnableSaltMinion,
+        EnableSlurmClient: req.EnableSlurmClient,
+    }
+
+    // 设置默认值
+    if installConfig.SaltMasterHost == "" {
+        installConfig.SaltMasterHost = "saltstack" // 默认使用容器名
+    }
+    if installConfig.SaltMasterPort == 0 {
+        installConfig.SaltMasterPort = 4506
+    }
+    if installConfig.SlurmRole == "" {
+        installConfig.SlurmRole = "compute"
+    }
+
+    // 执行安装
+    results, err := c.sshSvc.InstallPackagesOnHosts(context.Background(), connections, installConfig)
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{
+            "error": "安装过程中发生错误: " + err.Error(),
+        })
+        return
+    }
+
+    // 转换结果格式
+    hostResults := make([]InstallationHostResult, len(results))
+    allSuccess := true
+    for i, result := range results {
+        hostResults[i] = InstallationHostResult{
+            Host:     result.Host,
+            Success:  result.Success,
+            Error:    result.Error,
+            Duration: result.Duration.String(),
+            Steps:    result.Steps,
+        }
+        if !result.Success {
+            allSuccess = false
+        }
+    }
+
+    // 记录安装任务到数据库
+    go c.recordInstallationTask(req, results)
+
+    message := "安装任务完成"
+    if !allSuccess {
+        message = "部分主机安装失败，请查看详细结果"
+    }
+
+    ctx.JSON(http.StatusOK, InstallPackagesResponse{
+        Success: allSuccess,
+        Message: message,
+        Results: hostResults,
+    })
+}
+
+// POST /api/slurm/install-test-nodes
+// 专门用于测试节点的快速安装（test-ssh01, test-ssh02, test-ssh03）
+func (c *SlurmController) InstallTestNodes(ctx *gin.Context) {
+    type TestNodesInstallRequest struct {
+        Nodes             []string `json:"nodes" binding:"required"`
+        AppHubURL         string   `json:"appHubURL" binding:"required"`
+        EnableSaltMinion  bool     `json:"enableSaltMinion"`
+        EnableSlurmClient bool     `json:"enableSlurmClient"`
+    }
+
+    var req TestNodesInstallRequest
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+        return
+    }
+
+    // 首先初始化测试容器
+    results, err := c.sshSvc.InitializeTestHosts(context.Background(), req.Nodes)
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{
+            "error": "初始化测试容器失败: " + err.Error(),
+        })
+        return
+    }
+
+    // 检查初始化结果
+    var failedHosts []string
+    for _, result := range results {
+        if !result.Success {
+            failedHosts = append(failedHosts, result.Host)
+        }
+    }
+
+    if len(failedHosts) > 0 {
+        ctx.JSON(http.StatusInternalServerError, gin.H{
+            "error": fmt.Sprintf("以下测试容器初始化失败: %v", failedHosts),
+            "results": results,
+        })
+        return
+    }
+
+    // 构建SSH连接（测试容器使用固定的凭据）
+    connections := make([]services.SSHConnection, len(req.Nodes))
+    for i, host := range req.Nodes {
+        connections[i] = services.SSHConnection{
+            Host:     host,
+            Port:     22,
+            User:     "root",
+            Password: "rootpass123", // 测试容器的默认密码
+        }
+    }
+
+    // 构建安装配置
+    installConfig := services.PackageInstallationConfig{
+        AppHubConfig: services.AppHubConfig{
+            BaseURL: req.AppHubURL,
+        },
+        SaltMasterHost:    "saltstack",
+        SaltMasterPort:    4506,
+        SlurmRole:         "compute",
+        EnableSaltMinion:  req.EnableSaltMinion,
+        EnableSlurmClient: req.EnableSlurmClient,
+    }
+
+    // 执行安装
+    installResults, err := c.sshSvc.InstallPackagesOnHosts(context.Background(), connections, installConfig)
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{
+            "error": "安装过程中发生错误: " + err.Error(),
+        })
+        return
+    }
+
+    // 转换结果格式
+    hostResults := make([]InstallationHostResult, len(installResults))
+    allSuccess := true
+    for i, result := range installResults {
+        hostResults[i] = InstallationHostResult{
+            Host:     result.Host,
+            Success:  result.Success,
+            Error:    result.Error,
+            Duration: result.Duration.String(),
+            Steps:    result.Steps,
+        }
+        if !result.Success {
+            allSuccess = false
+        }
+    }
+
+    message := "测试节点安装任务完成"
+    if !allSuccess {
+        message = "部分测试节点安装失败，请查看详细结果"
+    }
+
+    ctx.JSON(http.StatusOK, InstallPackagesResponse{
+        Success: allSuccess,
+        Message: message,
+        Results: hostResults,
+    })
+}
+
+// recordInstallationTask 记录安装任务到数据库
+func (c *SlurmController) recordInstallationTask(req InstallPackagesRequest, results []services.InstallationResult) {
+	db := database.DB
+	
+	// 创建安装任务记录
+	task := models.InstallationTask{
+		TaskName:     fmt.Sprintf("安装包到 %d 个主机", len(req.Hosts)),
+		TaskType:     c.getTaskType(req.EnableSaltMinion, req.EnableSlurmClient),
+		Status:       "completed",
+		TotalHosts:   len(req.Hosts),
+		SuccessHosts: 0,
+		FailedHosts:  0,
+		StartTime:    time.Now().Add(-c.calculateTotalDuration(results)),
+	}
+	
+	// 设置配置信息
+	if err := task.SetConfig(req); err != nil {
+		fmt.Printf("设置任务配置失败: %v\n", err)
+	}
+	
+	// 创建任务记录
+	if err := db.Create(&task).Error; err != nil {
+		fmt.Printf("创建任务记录失败: %v\n", err)
+		return
+	}
+	
+	// 创建主机结果记录
+	for _, result := range results {
+		hostResult := models.InstallationHostResult{
+			TaskID:   task.ID,
+			Host:     result.Host,
+			Port:     22, // 默认端口
+			User:     c.findUserForHost(req.Hosts, result.Host),
+			Status:   c.getResultStatus(result.Success),
+			Error:    result.Error,
+			Duration: result.Duration.Milliseconds(),
+			Output:   c.formatStepsOutput(result.Steps),
+		}
+		
+		// 转换安装步骤
+		installationSteps := c.convertToInstallationSteps(result.Steps)
+		if err := hostResult.SetSteps(installationSteps); err != nil {
+			fmt.Printf("设置主机步骤失败: %v\n", err)
+		}
+		
+		// 创建主机结果记录
+		if err := db.Create(&hostResult).Error; err != nil {
+			fmt.Printf("创建主机结果记录失败: %v\n", err)
+			continue
+		}
+		
+		// 更新统计
+		if result.Success {
+			task.SuccessHosts++
+		} else {
+			task.FailedHosts++
+		}
+	}
+	
+	// 更新任务统计
+	task.UpdateHostStats()
+	if err := db.Save(&task).Error; err != nil {
+		fmt.Printf("更新任务统计失败: %v\n", err)
+	}
+	
+	fmt.Printf("安装任务记录完成 - 任务ID: %d, 成功: %d, 失败: %d\n", 
+		task.ID, task.SuccessHosts, task.FailedHosts)
+}
+
+// 辅助方法
+func (c *SlurmController) getTaskType(saltEnabled, slurmEnabled bool) string {
+	if saltEnabled && slurmEnabled {
+		return "combined"
+	} else if saltEnabled {
+		return "saltstack"
+	} else if slurmEnabled {
+		return "slurm"
+	}
+	return "unknown"
+}
+
+func (c *SlurmController) calculateTotalDuration(results []services.InstallationResult) time.Duration {
+	if len(results) == 0 {
+		return 0
+	}
+	
+	// 取最长的执行时间作为总时间（因为是并发执行）
+	maxDuration := time.Duration(0)
+	for _, result := range results {
+		if result.Duration > maxDuration {
+			maxDuration = result.Duration
+		}
+	}
+	return maxDuration
+}
+
+func (c *SlurmController) findUserForHost(hosts []HostConfig, targetHost string) string {
+	for _, host := range hosts {
+		if host.Host == targetHost {
+			return host.User
+		}
+	}
+	return "unknown"
+}
+
+func (c *SlurmController) getResultStatus(success bool) string {
+	if success {
+		return "success"
+	}
+	return "failed"
+}
+
+func (c *SlurmController) formatStepsOutput(steps []services.StepResult) string {
+	var output strings.Builder
+	for _, step := range steps {
+		fmt.Fprintf(&output, "=== %s ===\n", step.Name)
+		fmt.Fprintf(&output, "状态: %s\n", c.getResultStatus(step.Success))
+		if step.Error != "" {
+			fmt.Fprintf(&output, "错误: %s\n", step.Error)
+		}
+		fmt.Fprintf(&output, "耗时: %s\n", step.Duration.String())
+		fmt.Fprintf(&output, "输出:\n%s\n\n", step.Output)
+	}
+	return output.String()
+}
+
+func (c *SlurmController) convertToInstallationSteps(serviceSteps []services.StepResult) []models.InstallationStep {
+	steps := make([]models.InstallationStep, len(serviceSteps))
+	for i, step := range serviceSteps {
+		steps[i] = models.InstallationStep{
+			Name:        step.Name,
+			Description: step.Name, // 使用名称作为描述
+			Status:      c.getResultStatus(step.Success),
+			Output:      step.Output,
+			Error:       step.Error,
+			StartTime:   step.Timestamp,
+			EndTime:     step.Timestamp.Add(step.Duration),
+			Duration:    step.Duration.Milliseconds(),
+		}
+	}
+	return steps
+}
+
+// GetInstallationTasks 获取安装任务列表
+func (c *SlurmController) GetInstallationTasks(ctx *gin.Context) {
+	db := c.DB
+	
+	var tasks []models.InstallationTask
+	
+	// 获取查询参数
+	limit := 50 // 默认限制
+	if limitStr := ctx.Query("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	
+	taskType := ctx.Query("type")
+	status := ctx.Query("status")
+	
+	// 构建查询
+	query := db.Model(&models.InstallationTask{})
+	
+	if taskType != "" {
+		query = query.Where("task_type = ?", taskType)
+	}
+	
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	
+	// 预加载关联的主机结果
+	if err := query.Preload("HostResults").Order("created_at DESC").Limit(limit).Find(&tasks).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "获取安装任务列表失败",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{
+		"tasks": tasks,
+		"count": len(tasks),
+	})
+}
+
+// GetInstallationTask 获取单个安装任务详情
+func (c *SlurmController) GetInstallationTask(ctx *gin.Context) {
+	db := c.DB
+	
+	taskIDStr := ctx.Param("id")
+	taskID, err := strconv.ParseUint(taskIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "无效的任务ID",
+		})
+		return
+	}
+	
+	var task models.InstallationTask
+	
+	// 查找任务并预加载关联数据
+	if err := db.Preload("HostResults").First(&task, taskID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ctx.JSON(http.StatusNotFound, gin.H{
+				"error": "任务不存在",
+			})
+			return
+		}
+		
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "获取任务详情失败",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, task)
 }

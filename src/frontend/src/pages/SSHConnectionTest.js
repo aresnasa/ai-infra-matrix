@@ -19,7 +19,7 @@ const SSHConnectionTest = () => {
   const [initializing, setInitializing] = useState(false);
   const [initResults, setInitResults] = useState([]);
   
-  console.log('SSHConnectionTest 组件版本: v2.1 - 修复 test-host 问题');
+  console.log('SSHConnectionTest v2.1 - 修复 test-host 问题');
 
   const validateHostInput = (input) => {
     const errors = [];
@@ -29,11 +29,11 @@ const SSHConnectionTest = () => {
       const trimmedLine = line.trim();
       if (!trimmedLine) return;
       
-      // 检查基本格式
+      const lineNumber = index + 1;
       const hasAt = trimmedLine.includes('@');
       const hasColon = trimmedLine.includes(':');
       
-      // 用于IPv6地址检查
+      // 检测IPv6格式
       const isIPv6 = trimmedLine.startsWith('[') && trimmedLine.includes(']:');
       
       if (hasAt) {
@@ -41,582 +41,369 @@ const SSHConnectionTest = () => {
         const userPart = trimmedLine.substring(0, atIndex);
         const hostPart = trimmedLine.substring(atIndex + 1);
         
-        // 验证用户名部分
-        if (!userPart || userPart.includes(' ') || userPart.includes('\t')) {
-          errors.push(`第${index + 1}行：用户名格式错误 "${userPart}"`);
+        if (!userPart.trim()) {
+          errors.push(`第${lineNumber}行: 用户名不能为空`);
         }
         
-        // 验证主机部分
-        if (!hostPart) {
-          errors.push(`第${index + 1}行：主机名不能为空`);
+        if (!hostPart.trim()) {
+          errors.push(`第${lineNumber}行: 主机地址不能为空`);
         } else {
-          validateHostPart(hostPart, index + 1, errors, isIPv6);
+          validateHostPart(hostPart, lineNumber, errors, isIPv6);
         }
       } else {
-        // 没有用户名，整行都是主机部分
-        validateHostPart(trimmedLine, index + 1, errors, isIPv6);
+        validateHostPart(trimmedLine, lineNumber, errors, isIPv6);
       }
     });
     
     return errors;
   };
-  
+
   const validateHostPart = (hostPart, lineNumber, errors, isIPv6) => {
     if (isIPv6) {
-      // IPv6格式验证 [address]:port
+      // IPv6格式验证 [host]:port
       const match = hostPart.match(/^\[(.+)\]:(\d+)$/);
       if (!match) {
-        errors.push(`第${lineNumber}行：IPv6格式错误，应为 [地址]:端口 格式`);
+        errors.push(`第${lineNumber}行: IPv6格式应为 [host]:port`);
         return;
       }
-      
       const port = parseInt(match[2], 10);
       if (port < 1 || port > 65535) {
-        errors.push(`第${lineNumber}行：端口号 ${port} 不在有效范围 (1-65535)`);
+        errors.push(`第${lineNumber}行: 端口号必须在1-65535之间`);
       }
     } else if (hostPart.includes(':')) {
-      // IPv4或主机名带端口
+      // IPv4或主机名:端口格式
       const lastColonIndex = hostPart.lastIndexOf(':');
       const hostName = hostPart.substring(0, lastColonIndex);
       const portPart = hostPart.substring(lastColonIndex + 1);
       
-      if (!hostName) {
-        errors.push(`第${lineNumber}行：主机名不能为空`);
+      if (!hostName.trim()) {
+        errors.push(`第${lineNumber}行: 主机名不能为空`);
+      } else {
+        validateHostName(hostName, lineNumber, errors);
       }
       
-      if (!/^\d+$/.test(portPart)) {
-        errors.push(`第${lineNumber}行：端口 "${portPart}" 必须是数字`);
+      if (!portPart.trim()) {
+        errors.push(`第${lineNumber}行: 端口号不能为空`);
       } else {
         const port = parseInt(portPart, 10);
-        if (port < 1 || port > 65535) {
-          errors.push(`第${lineNumber}行：端口号 ${port} 不在有效范围 (1-65535)`);
+        if (isNaN(port) || port < 1 || port > 65535) {
+          errors.push(`第${lineNumber}行: 端口号必须是1-65535之间的数字`);
         }
       }
-      
-      validateHostName(hostName, lineNumber, errors);
     } else {
-      // 只有主机名或IP，没有端口
+      // 只有主机名，没有端口
       validateHostName(hostPart, lineNumber, errors);
     }
   };
-  
+
   const validateHostName = (hostName, lineNumber, errors) => {
-    if (!hostName) {
-      errors.push(`第${lineNumber}行：主机名不能为空`);
+    if (!hostName.trim()) {
+      errors.push(`第${lineNumber}行: 主机名不能为空`);
       return;
     }
     
-    // 检查主机名是否包含空格或制表符
-    if (hostName.includes(' ') || hostName.includes('\t')) {
-      errors.push(`第${lineNumber}行：主机名 "${hostName}" 不能包含空格`);
-      return;
-    }
-    
-    // IPv4地址格式检查
+    // IPv4格式验证
     const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
     const ipv4Match = hostName.match(ipv4Regex);
+    
     if (ipv4Match) {
-      // 验证IPv4地址的每个数字段
-      const octets = ipv4Match.slice(1, 5).map(Number);
-      if (octets.some(octet => octet > 255)) {
-        errors.push(`第${lineNumber}行：IP地址 "${hostName}" 格式错误，每段不能大于255`);
+      // 验证IPv4各段
+      for (let i = 1; i <= 4; i++) {
+        const octet = parseInt(ipv4Match[i], 10);
+        if (octet > 255) {
+          errors.push(`第${lineNumber}行: IPv4地址格式不正确`);
+          break;
+        }
       }
-      return;
-    }
-    
-    // 主机名格式检查（允许字母、数字、点、连字符）
-    const hostnameRegex = /^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
-    if (!hostnameRegex.test(hostName)) {
-      errors.push(`第${lineNumber}行：主机名 "${hostName}" 格式错误，只能包含字母、数字、点和连字符`);
-    }
-  };
-
-  const handleInputChange = (e) => {
-    const value = e.target.value;
-    const errors = validateHostInput(value);
-    
-    if (errors.length > 0) {
-      // 显示前3个错误
-      const displayErrors = errors.slice(0, 3);
-      const moreCount = errors.length - 3;
-      let errorMessage = displayErrors.join('\n');
-      if (moreCount > 0) {
-        errorMessage += `\n... 还有 ${moreCount} 个错误`;
-      }
-      
-      form.setFields([{
-        name: 'hosts',
-        errors: [errorMessage]
-      }]);
     } else {
-      form.setFields([{
-        name: 'hosts',
-        errors: []
-      }]);
+      // 主机名格式验证
+      const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
+      if (!hostnameRegex.test(hostName)) {
+        errors.push(`第${lineNumber}行: 主机名格式不正确`);
+      }
     }
   };
 
   const handleQuickTest = () => {
-    // 直接测试解析逻辑，不依赖表单状态
-    const testInput = "root@test-ssh01:22\nroot@test-ssh02:22\nroot@test-ssh03:22";
-    const lines = testInput.split('\n').filter(line => line.trim());
+    console.log('=== 🧪 调试解析逻辑开始 ===');
+    const inputValue = form.getFieldValue('hosts') || '';
+    console.log('表单输入值:', JSON.stringify(inputValue));
     
-    lines.forEach(line => {
-      line = line.trim();
-      let user = 'root';
-      let host = '';
-      let port = 22;
+    const lines = inputValue.split('\n').filter(line => line.trim());
+    console.log('解析的行数:', lines.length);
+    
+    lines.forEach((line, index) => {
+      console.log(`行 ${index + 1}: "${line}"`);
       
-      if (line.includes('@')) {
-        const atIndex = line.indexOf('@');
-        user = line.substring(0, atIndex).trim();
-        host = line.substring(atIndex + 1).trim();
-      } else {
-        host = line;
+      const config = parseHostLine(line.trim());
+      console.log(`解析结果 ${index + 1}:`, config);
+    });
+    
+    console.log('=== 🧪 调试解析逻辑结束 ===');
+    message.success('调试输出已打印到控制台，请查看开发者工具');
+  };
+
+  const parseHostLine = (line) => {
+    console.log('输入行:', JSON.stringify(line));
+    
+    if (!line || !line.trim()) {
+      return null;
+    }
+    
+    let user = 'root';
+    let host = '';
+    let port = 22;
+    
+    const trimmedLine = line.trim();
+    console.log('清理后的行:', JSON.stringify(trimmedLine));
+    
+    let workingLine = trimmedLine;
+    
+    // 处理 user@host:port 格式
+    if (workingLine.includes('@')) {
+      const atIndex = workingLine.indexOf('@');
+      user = workingLine.substring(0, atIndex).trim();
+      workingLine = workingLine.substring(atIndex + 1).trim();
+      console.log('提取的用户名:', JSON.stringify(user));
+      console.log('剩余部分:', JSON.stringify(workingLine));
+    }
+    
+    // 处理 host:port 格式
+    if (workingLine.includes(':') && !workingLine.startsWith('[')) {
+      const lastColonIndex = workingLine.lastIndexOf(':');
+      host = workingLine.substring(0, lastColonIndex).trim();
+      const portStr = workingLine.substring(lastColonIndex + 1).trim();
+      const parsedPort = parseInt(portStr, 10);
+      if (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+        port = parsedPort;
       }
-      
-      if (host.includes(':')) {
-        const lastColonIndex = host.lastIndexOf(':');
-        const portPart = host.substring(lastColonIndex + 1);
-        
-        if (/^\d+$/.test(portPart)) {
-          const parsedPort = parseInt(portPart, 10);
-          if (parsedPort > 0 && parsedPort <= 65535) {
-            host = host.substring(0, lastColonIndex);
-            port = parsedPort;
-          }
+      console.log('提取的主机:', JSON.stringify(host));
+      console.log('提取的端口:', port);
+    } else if (workingLine.startsWith('[') && workingLine.includes(']:')) {
+      // IPv6 格式 [host]:port
+      const match = workingLine.match(/^\[(.+)\]:(\d+)$/);
+      if (match) {
+        host = match[1].trim();
+        const parsedPort = parseInt(match[2], 10);
+        if (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+          port = parsedPort;
         }
+      } else {
+        host = workingLine;
+      }
+    } else {
+      // 只有主机名
+      host = workingLine;
+      console.log('仅主机名:', JSON.stringify(host));
+    }
+    
+    const result = { user, host, port };
+    console.log('最终解析结果:', result);
+    return result;
+  };
+
+  const handleTest = async () => {
+    try {
+      const formData = await form.validateFields();
+      console.log('=== 开始SSH连接测试 ===');
+      console.log('表单数据:', formData);
+      console.log('主机输入原始值:', JSON.stringify(formData.hosts));
+      
+      const validationErrors = validateHostInput(formData.hosts);
+      if (validationErrors.length > 0) {
+        message.error('输入格式错误，请检查主机配置');
+        setTestResults(validationErrors.map(error => ({
+          host: 'validation-error',
+          success: false,
+          message: error,
+          duration: 0
+        })));
+        return;
       }
       
-      console.log('快速测试解析结果:', {
-        originalLine: line,
-        user: user,
-        host: host,
-        port: port
-      });
-    });
-    
-    message.info('解析测试完成，请查看控制台输出');
-  };
-
-  const handleQuickFix = () => {
-    const correctHosts = "test-ssh01\ntest-ssh02\ntest-ssh03";
-    
-    // 强制清除任何可能的缓存状态
-    form.resetFields();
-    
-    // 设置新的值
-    form.setFieldsValue({ 
-      hosts: correctHosts,
-      ssh_user: 'root',
-      ssh_port: 22,
-      password: 'rootpass123'
-    });
-    
-    form.setFields([{
-      name: 'hosts',
-      errors: []
-    }]);
-    
-    message.success('已重置表单并设置正确的测试容器配置');
-  };
-
-  const handleTest = async (values) => {
-    try {
       setTesting(true);
       setTestResults([]);
-      setInitResults([]);
       
-      console.log('=== SSH 连接测试调试信息 ===');
-      console.log('表单输入值:', values);
-      console.log('原始 hosts 字段:', values.hosts);
-      
-      // 增强的主机列表解析逻辑
-      const hosts = values.hosts
-        .split('\n')
-        .filter(line => line.trim())
-        .map(line => {
-          line = line.trim();
-          let user = values.ssh_user || 'root';
-          let host = '';
-          let port = values.ssh_port || 22;
-          
-          console.log('处理行:', line);
-          
-          // 解析用户名@主机:端口格式 (user@host:port)
-          if (line.includes('@')) {
-            const atIndex = line.indexOf('@');
-            user = line.substring(0, atIndex).trim();
-            host = line.substring(atIndex + 1).trim();
-            console.log('解析 @ 格式 - 用户:', user, '主机部分:', host);
-          } else {
-            // 没有用户名，整行都是主机部分
-            host = line;
-            console.log('无用户名格式 - 主机部分:', host);
-          }
-          
-          // 解析主机:端口格式 (支持IPv4, IPv6, 主机名)
-          if (host.includes(':')) {
-            // 处理IPv6地址 [::1]:22 格式
-            if (host.startsWith('[') && host.includes(']:')) {
-              const match = host.match(/^\[(.+)\]:(\d+)$/);
-              if (match) {
-                host = match[1];
-                port = parseInt(match[2], 10);
-                console.log('IPv6 格式 - 主机:', host, '端口:', port);
-              }
-            } 
-            // 处理IPv4和主机名 host:port 格式
-            else {
-              const lastColonIndex = host.lastIndexOf(':');
-              const portPart = host.substring(lastColonIndex + 1);
-              
-              // 验证端口是否为数字
-              if (/^\d+$/.test(portPart)) {
-                const parsedPort = parseInt(portPart, 10);
-                if (parsedPort > 0 && parsedPort <= 65535) {
-                  host = host.substring(0, lastColonIndex);
-                  port = parsedPort;
-                  console.log('主机:端口 格式 - 主机:', host, '端口:', port);
-                }
-              }
-            }
-          }
-          
-          const result = { 
-            host: host.trim(), 
-            user: user.trim(), 
-            port: port,
-            originalInput: line
-          };
-          
-          console.log('解析结果:', result);
-          return result;
-        })
-        .filter(item => item.host && item.user); // 过滤无效条目
-
-      console.log('最终主机列表:', hosts);
-
-      if (hosts.length === 0) {
-        message.warning('请至少输入一个有效的主机地址');
-        return;
-      }
-
-      // 第一步：主机初始化
+      // 首先初始化主机
       console.log('开始主机初始化...');
       setInitializing(true);
-      
-      const hostList = hosts.map(h => h.host);
-      console.log('需要初始化的主机:', hostList);
-      
       try {
-        const initResponse = await slurmAPI.initializeHosts(hostList);
+        const initResponse = await slurmAPI.initializeTestHosts({
+          hosts: formData.hosts.split('\n').filter(line => line.trim())
+        });
         console.log('主机初始化响应:', initResponse);
-        setInitResults(initResponse.data.results || []);
-        
-        if (!initResponse.data.success) {
-          message.error(`主机初始化失败：${initResponse.data.failed}/${initResponse.data.total} 个主机初始化失败`);
-          return;
-        } else {
-          message.success(`主机初始化成功：${initResponse.data.successful}/${initResponse.data.total} 个主机已就绪`);
-        }
+        setInitResults(initResponse.results || []);
       } catch (error) {
-        console.error('主机初始化错误:', error);
-        message.error('主机初始化失败: ' + (error.response?.data?.error || error.message));
-        return;
+        console.error('主机初始化失败:', error);
+        message.warning('主机初始化失败，但仍尝试连接测试');
+        setInitResults([]);
       } finally {
         setInitializing(false);
       }
-
-      // 等待一小段时间让容器完全启动
-      console.log('等待容器完全启动...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // 第二步：SSH连接测试
-      console.log('开始SSH连接测试...');
+      
+      const lines = formData.hosts.split('\n').filter(line => line.trim());
+      console.log('处理的主机行:', lines);
+      
       const results = [];
       
-      // 并发测试所有主机
-      const testPromises = hosts.map(async ({ host, user, port, originalInput }) => {
-        const testConfig = {
-          host: host,
-          port: port,
-          user: user,
-          password: values.password || '',
-          key_path: values.key_path || '',
-          private_key: values.private_key || '',
-        };
-
-        console.log('发送到后端的配置:', testConfig);
-
-        try {
-          const response = await slurmAPI.testSSHConnection(testConfig);
-          return {
-            host: `${host}:${port}`,
-            user,
-            success: response.data.success,
-            message: response.data.message,
-            output: response.data.output,
-            duration: response.data.duration,
-            error: null,
-            originalInput
-          };
-        } catch (error) {
-          const errorMessage = error.response?.data?.error || error.message || '未知错误';
-          let enhancedError = errorMessage;
-          
-          // 增强DNS解析错误提示
-          if (errorMessage.includes('no such host') || errorMessage.includes('server misbehaving')) {
-            if (errorMessage.includes('test-host')) {
-              enhancedError = `主机名 'test-host' 不存在。请使用正确的测试容器名称：test-ssh01, test-ssh02, test-ssh03`;
-            } else {
-              enhancedError = `DNS解析失败：${errorMessage}。请检查主机名是否正确，或使用IP地址。如果是测试容器，请确保已正确初始化。`;
-            }
-          }
-          
-          return {
-            host: `${host}:${port}`,
-            user,
-            success: false,
-            message: '连接失败',
-            output: error.response?.data?.output || '',
-            duration: 0,
-            error: enhancedError,
-            originalInput,
-            canQuickFix: errorMessage.includes('test-host')
-          };
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        console.log(`处理行 ${i + 1}:`, JSON.stringify(line));
+        
+        const config = parseHostLine(line);
+        console.log(`行 ${i + 1} 解析结果:`, config);
+        
+        if (!config || !config.host) {
+          console.warn(`跳过无效行 ${i + 1}:`, line);
+          continue;
         }
-      });
-
-      const testResults = await Promise.all(testPromises);
-      setTestResults(testResults);
-      
-      const successCount = testResults.filter(r => r.success).length;
-      const totalCount = testResults.length;
-      
-      if (successCount === totalCount) {
-        message.success(`所有 ${totalCount} 个主机连接测试成功！`);
-      } else {
-        message.warning(`${successCount}/${totalCount} 个主机连接成功`);
+        
+        console.log(`准备测试连接 ${i + 1}:`, {
+          host: config.host,
+          port: config.port,
+          user: config.user,
+          password: formData.password
+        });
+        
+        try {
+          const result = await slurmAPI.testSSHConnection({
+            host: config.host,
+            port: config.port,
+            user: config.user,
+            password: formData.password
+          });
+          console.log(`连接结果 ${i + 1}:`, result);
+          
+          const processedResult = {
+            host: config.host,
+            port: config.port,
+            user: config.user,
+            success: result.success || false,
+            message: result.error || result.message || (result.success ? '连接成功' : '连接失败'),
+            duration: result.duration || 0,
+            canQuickFix: !result.success && (
+              result.error?.includes('test-host') || 
+              result.error?.includes('no such host') ||
+              result.message?.includes('test-host')
+            )
+          };
+          
+          results.push(processedResult);
+        } catch (error) {
+          console.error(`连接测试失败 ${i + 1}:`, error);
+          results.push({
+            host: config.host,
+            port: config.port,
+            user: config.user,
+            success: false,
+            message: `连接失败: ${error.message}`,
+            duration: 0,
+            canQuickFix: error.message?.includes('test-host')
+          });
+        }
       }
-
+      
+      console.log('所有连接测试完成:', results);
+      setTestResults(results);
+      
+      const successCount = results.filter(r => r.success).length;
+      if (successCount === results.length) {
+        message.success(`全部${results.length}台主机连接成功！`);
+      } else if (successCount > 0) {
+        message.warning(`${successCount}/${results.length}台主机连接成功`);
+      } else {
+        message.error('所有主机连接失败，请检查配置');
+      }
+      
     } catch (error) {
-      message.error('测试过程出错: ' + error.message);
+      console.error('测试过程失败:', error);
+      message.error('测试失败: ' + error.message);
     } finally {
       setTesting(false);
-      setInitializing(false);
     }
   };
 
+  const handleQuickFix = () => {
+    console.log('执行快速修复...');
+    form.setFieldsValue({
+      hosts: 'test-ssh01\ntest-ssh02\ntest-ssh03'
+    });
+    setTestResults([]);
+    message.success('已重置为预设的测试容器配置');
+  };
+
   const renderInitResult = (result, index) => {
-    const { Host, Success, Output, Error, Duration } = result;
-    
     return (
-      <Card
-        key={index}
-        size="small"
+      <Alert
+        key={`init-${index}`}
+        message={`主机初始化: ${result.host || '未知'}`}
+        description={result.message || result.error || '初始化完成'}
+        type={result.success ? "success" : "warning"}
+        showIcon
         style={{ marginBottom: 8 }}
-        title={
-          <Space>
-            {Success ? (
-              <CheckCircleOutlined style={{ color: '#52c41a' }} />
-            ) : (
-              <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-            )}
-            <Text strong>{Host}</Text>
-            <Tag color={Success ? 'success' : 'error'}>
-              {Success ? '已就绪' : '初始化失败'}
-            </Tag>
-            {Duration > 0 && (
-              <Tag color="blue">{Duration}ms</Tag>
-            )}
-          </Space>
-        }
-      >
-        {Success ? (
-          <div>
-            <Text type="success">{Output || '主机初始化成功'}</Text>
-          </div>
-        ) : (
-          <div>
-            <Text type="danger">{Error || '初始化失败'}</Text>
-            {Output && (
-              <pre style={{
-                marginTop: 8,
-                fontSize: '11px',
-                backgroundColor: '#fff2f0',
-                padding: '8px',
-                borderRadius: '4px',
-                maxHeight: '120px',
-                overflow: 'auto'
-              }}>
-                {Output}
-              </pre>
-            )}
-          </div>
-        )}
-      </Card>
+      />
     );
   };
 
   const renderTestResult = (result, index) => {
-    const { host, user, success, message: msg, output, duration, error, originalInput, canQuickFix } = result;
-    
+    const getStatusIcon = () => {
+      if (result.success) {
+        return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
+      } else {
+        return <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />;
+      }
+    };
+
+    const getStatusColor = () => {
+      return result.success ? '#f6ffed' : '#fff2f0';
+    };
+
     return (
-      <Card
-        key={index}
-        size="small"
-        style={{ marginBottom: 8 }}
-        title={
-          <Space>
-            {success ? (
-              <CheckCircleOutlined style={{ color: '#52c41a' }} />
-            ) : (
-              <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-            )}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-              <Text strong>{user}@{host}</Text>
-              {originalInput && originalInput !== `${user}@${host}` && (
-                <Text style={{ fontSize: '11px', color: '#888' }}>
-                  原始输入: {originalInput}
-                </Text>
-              )}
+      <div key={index} style={{ 
+        marginBottom: 16, 
+        padding: 16, 
+        border: `1px solid ${result.success ? '#b7eb8f' : '#ffb3b3'}`,
+        borderRadius: 8,
+        backgroundColor: getStatusColor()
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+          {getStatusIcon()}
+          <Text strong style={{ marginLeft: 8, fontSize: 16 }}>
+            {result.user}@{result.host}:{result.port}
+          </Text>
+          <Tag color={result.success ? 'success' : 'error'} style={{ marginLeft: 12 }}>
+            {result.success ? '连接成功' : '连接失败'}
+          </Tag>
+        </div>
+        
+        <div style={{ marginLeft: 24 }}>
+          <Text type={result.success ? "success" : "danger"}>
+            {result.message}
+          </Text>
+          
+          {result.duration > 0 && (
+            <div style={{ marginTop: 4 }}>
+              <Text type="secondary">耗时: {result.duration}ms</Text>
             </div>
-            <Tag color={success ? 'success' : 'error'}>
-              {success ? '成功' : '失败'}
-            </Tag>
-            {success && duration && (
-              <Tag color="blue">{duration}ms</Tag>
-            )}
-          </Space>
-        }
-      >
-        {success ? (
-          <div>
-            <Text type="success">{msg}</Text>
-            {output && (
-              <pre style={{
-                marginTop: 8,
-                fontSize: '11px',
-                backgroundColor: '#f6f8fa',
-                padding: '8px',
-                borderRadius: '4px',
-                maxHeight: '120px',
-                overflow: 'auto'
-              }}>
-                {output}
-              </pre>
-            )}
-          </div>
-        ) : (
-          <div>
-            <Text type="danger">{error}</Text>
-            {canQuickFix && (
-              <div style={{ marginTop: 8 }}>
-                <Button 
-                  type="primary" 
-                  size="small" 
-                  onClick={handleQuickFix}
-                >
-                  🔧 快速修复：使用正确的测试容器名称
-                </Button>
-              </div>
-            )}
-            {output && (
-              <pre style={{
-                marginTop: 8,
-                fontSize: '11px',
-                backgroundColor: '#fff2f0',
-                padding: '8px',
-                borderRadius: '4px',
-                maxHeight: '120px',
-                overflow: 'auto'
-              }}>
-                {output}
-              </pre>
-            )}
-          </div>
-        )}
-      </Card>
-    );
-  };
-    
-    return (
-      <Card
-        key={index}
-        size="small"
-        style={{ marginBottom: 8 }}
-        title={
-          <Space>
-            {success ? (
-              <CheckCircleOutlined style={{ color: '#52c41a' }} />
-            ) : (
-              <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-            )}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-              <Text strong>{user}@{host}</Text>
-              {originalInput && originalInput !== `${user}@${host}` && (
-                <Text style={{ fontSize: '11px', color: '#888' }}>
-                  原始输入: {originalInput}
-                </Text>
-              )}
+          )}
+          
+          {result.canQuickFix && (
+            <div style={{ marginTop: 8 }}>
+              <Button 
+                size="small" 
+                type="link" 
+                onClick={handleQuickFix}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                🔧 点击快速修复
+              </Button>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                (将重置为预设测试容器)
+              </Text>
             </div>
-            <Tag color={success ? 'success' : 'error'}>
-              {success ? '成功' : '失败'}
-            </Tag>
-            {success && duration && (
-              <Tag color="blue">{duration}ms</Tag>
-            )}
-          </Space>
-        }
-      >
-        {success ? (
-          <div>
-            <Text type="success">{msg}</Text>
-            {output && (
-              <pre style={{
-                marginTop: 8,
-                fontSize: '11px',
-                backgroundColor: '#f6f8fa',
-                padding: '8px',
-                borderRadius: '4px',
-                maxHeight: '120px',
-                overflow: 'auto'
-              }}>
-                {output}
-              </pre>
-            )}
-          </div>
-        ) : (
-          <div>
-            <Text type="danger">{error}</Text>
-            {canQuickFix && (
-              <div style={{ marginTop: 8 }}>
-                <Button 
-                  type="primary" 
-                  size="small" 
-                  onClick={handleQuickFix}
-                >
-                  🔧 快速修复：使用正确的测试容器名称
-                </Button>
-              </div>
-            )}
-            {output && (
-              <pre style={{
-                marginTop: 8,
-                fontSize: '11px',
-                backgroundColor: '#fff2f0',
-                padding: '8px',
-                borderRadius: '4px',
-                maxHeight: '120px',
-                overflow: 'auto'
-              }}>
-                {output}
-              </pre>
-            )}
-          </div>
-        )}
-      </Card>
+          )}
+        </div>
+      </div>
     );
   };
 
@@ -683,107 +470,66 @@ const SSHConnectionTest = () => {
           >
             <Alert
               message="SSH连接测试工具"
-              description={
-                <div>
-                  <p>支持批量测试多个主机的SSH连接，自动验证输入格式并提供详细错误提示。</p>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                    <div>
-                      <p><strong>📝 基本格式：</strong></p>
-                      <ul style={{ paddingLeft: '16px' }}>
-                        <li><code>test-ssh01</code> - 主机名（使用默认端口）</li>
-                        <li><code>192.168.1.100</code> - IP地址（使用默认端口）</li>
-                        <li><code>user@host</code> - 指定用户名</li>
-                      </ul>
-                    </div>
-                    <div>
-                      <p><strong>🔌 端口格式：</strong></p>
-                      <ul style={{ paddingLeft: '16px' }}>
-                        <li><code>host:2222</code> - 主机名 + 端口</li>
-                        <li><code>192.168.1.100:22</code> - IP + 端口</li>
-                        <li><code>user@host:port</code> - 完整格式</li>
-                      </ul>
-                    </div>
-                    <div>
-                      <p><strong>🌐 IPv6支持：</strong></p>
-                      <ul style={{ paddingLeft: '16px' }}>
-                        <li><code>[::1]:22</code> - IPv6 + 端口</li>
-                        <li><code>user@[::1]:22</code> - IPv6完整格式</li>
-                      </ul>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#f0f2f5', borderRadius: '6px' }}>
-                    <p><strong>🧪 可用测试容器：</strong></p>
-                    <div style={{ fontFamily: 'monospace', fontSize: '13px' }}>
-                      <span style={{ color: '#1890ff' }}>test-ssh01</span>, <span style={{ color: '#1890ff' }}>test-ssh02</span>, <span style={{ color: '#1890ff' }}>test-ssh03</span> 
-                      <span style={{ marginLeft: '12px', color: '#666' }}>（默认用户: <code>root</code>，密码: <code>rootpass123</code>）</span>
-                    </div>
-                  </div>
-                  <p style={{ marginTop: '12px', marginBottom: 0, fontSize: '13px', color: '#666' }}>
-                    � 系统会自动验证输入格式，发现错误时会实时显示提示信息。支持的端口范围：1-65535
-                  </p>
-                </div>
-              }
+              description="输入主机地址进行批量SSH连接测试。支持多种格式：主机名、IP地址、用户@主机:端口等。"
               type="info"
               showIcon
               style={{ marginBottom: 24 }}
             />
-
+            
             <Form
               form={form}
               layout="vertical"
-              onFinish={handleTest}
               initialValues={{
-                hosts: "test-ssh01\ntest-ssh02\ntest-ssh03"
+                hosts: 'root@test-ssh01:22\nroot@test-ssh02:22\nroot@test-ssh03:22',
+                password: 'rootpass123'
               }}
             >
               <Form.Item
+                label="主机列表"
                 name="hosts"
-                label="目标主机列表"
                 rules={[{ required: true, message: '请输入要测试的主机列表' }]}
-                validateStatus="validating"
+                extra="每行一个主机，支持格式：主机名、IP地址、用户@主机:端口"
               >
                 <Input.TextArea
-                  placeholder="支持多种格式，每行一个地址:&#10;test-ssh01 (主机名)&#10;192.168.1.100 (IP地址)&#10;test-ssh02:2222 (主机名:端口)&#10;192.168.1.101:22 (IP:端口)&#10;root@test-ssh03:22 (用户@主机:端口)&#10;admin@192.168.1.102 (用户@IP)&#10;[::1]:22 (IPv6)&#10;user@[2001:db8::1]:2222 (用户@IPv6)"
                   rows={8}
-                  style={{ fontFamily: 'monospace' }}
-                  onChange={handleInputChange}
+                  placeholder={`示例格式：
+test-ssh01
+192.168.1.100:22
+root@test-ssh02:22
+user@192.168.1.101:2222
+[::1]:22`}
                 />
               </Form.Item>
 
-              {/* SSH认证配置 */}
-              <SSHAuthConfig
-                form={form}
-                initialValues={{
-                  authType: 'password',
-                  ssh_user: 'root',
-                  ssh_port: 22
-                }}
-                showAdvanced={true}
-                showTestConnection={false}
-                size="default"
-              />
+              <SSHAuthConfig />
 
-              <Form.Item style={{ textAlign: 'center' }}>
-                <Space size="middle">
-                  <Button
-                    type="default"
-                    onClick={handleQuickTest}
-                    size="small"
+              <Form.Item>
+                <Space>
+                  <Button 
+                    type="primary" 
+                    onClick={handleTest} 
+                    loading={testing}
+                    icon={testing ? <LoadingOutlined /> : <KeyOutlined />}
                   >
-                    🧪 调试解析逻辑
+                    {initializing ? '正在初始化...' : (testing ? '测试中...' : '开始批量测试')}
                   </Button>
-                  <Button
-                    type="primary"
-                    htmlType="submit"
-                    loading={testing || initializing}
-                    size="large"
-                    icon={testing || initializing ? <LoadingOutlined /> : <ExperimentOutlined />}
-                  >
-                    {initializing ? '正在初始化主机...' : testing ? '正在测试连接...' : '开始批量测试'}
+                  
+                  <Button onClick={handleQuickTest}>
+                    🧪 调试解析逻辑
                   </Button>
                 </Space>
               </Form.Item>
             </Form>
+
+            {/* 初始化结果 */}
+            {initResults.length > 0 && (
+              <>
+                <Divider>主机初始化结果</Divider>
+                <div style={{ maxHeight: '200px', overflow: 'auto' }}>
+                  {initResults.map((result, index) => renderInitResult(result, index))}
+                </div>
+              </>
+            )}
 
             {/* 测试结果 */}
             {testResults.length > 0 && (

@@ -772,6 +772,14 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.POST("/node-templates", slurmController.CreateNodeTemplate)
 		slurm.PUT("/node-templates/:id", slurmController.UpdateNodeTemplate)
 		slurm.DELETE("/node-templates/:id", slurmController.DeleteNodeTemplate)
+
+		// 新增：基于AppHub的包安装路由
+		slurm.POST("/install-packages", slurmController.InstallPackages)
+		slurm.POST("/install-test-nodes", slurmController.InstallTestNodes)
+		
+		// 安装任务查询路由
+		slurm.GET("/installation-tasks", slurmController.GetInstallationTasks)
+		slurm.GET("/installation-tasks/:id", slurmController.GetInstallationTask)
 	}
 
 	// SaltStack 客户端管理路由（需要认证）
@@ -795,6 +803,17 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		jobs.POST("/:jobId/cancel", jobController.CancelJob)
 		jobs.GET("/:jobId/output", jobController.GetJobOutput)
 		jobs.GET("/clusters", jobController.ListClusters)
+	}
+
+	// SaltStack 管理路由（需要认证）
+	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
+	saltstack := api.Group("/saltstack")
+	saltstack.Use(middleware.AuthMiddlewareWithSession())
+	{
+		saltstack.GET("/status", saltStackHandler.GetSaltStackStatus)
+		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
+		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
+		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
 	}
 
 	// 仪表板统计路由（需要认证）

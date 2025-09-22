@@ -36,25 +36,31 @@ RUN set -eux; \
         echo "使用官方源"; \
     }
 
-# 更新包索引并安装必要依赖
-RUN apk add --no-cache \
+# 更新包索引并安装基础依赖
+RUN apk update && apk add --no-cache \
     ca-certificates \
     curl \
     openssl \
     bash \
     wget \
-    shadow \
     gcc \
     python3-dev \
     musl-dev \
     libffi-dev \
     openssl-dev \
     build-base \
-    linux-headers \
-    openssh \
+    linux-headers
+
+# 安装网络和系统工具
+RUN apk add --no-cache \
+    openssh-client \
+    netcat-openbsd \
+    shadow
+
+# 安装LDAP相关依赖
+RUN apk add --no-cache \
     openldap-dev \
-    cyrus-sasl-dev \
-    netcat-openbsd
+    cyrus-sasl-dev || echo "LDAP packages skipped"
 
 # 配置pip使用中国镜像源
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
@@ -99,10 +105,14 @@ RUN mkdir -p /etc/salt/master.d \
     && mkdir -p /var/log/salt \
     && mkdir -p /var/run/salt
 
+# 创建saltapi用户用于API认证
+RUN adduser -D -s /bin/sh saltapi
+
 # 复制配置文件和脚本
 COPY salt-master.conf /etc/salt/master.d/master.conf
 COPY salt-api.conf /etc/salt/master.d/api.conf
 COPY salt-minion.conf /etc/salt/minion.d/minion.conf
+COPY salt-users.conf /etc/salt/master.d/users.conf
 COPY salt-states/ /srv/salt/
 COPY salt-pillar/ /srv/pillar/
 COPY docker-entrypoint.sh /docker-entrypoint.sh

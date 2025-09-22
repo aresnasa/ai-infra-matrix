@@ -86,6 +86,275 @@ set_or_update_env_var() {
     cleanup_backup_files "$(dirname "$env_file")"
 }
 
+# 设置SaltStack默认配置
+setup_saltstack_defaults() {
+    local env_file="$1"
+    
+    if [[ -z "$env_file" ]] || [[ ! -f "$env_file" ]]; then
+        print_error "环境文件不存在: $env_file"
+        return 1
+    fi
+    
+    print_info "设置SaltStack默认配置..."
+    
+    # SaltStack Master 主机配置
+    if ! grep -q "^SALTSTACK_MASTER_HOST=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALTSTACK_MASTER_HOST" "saltstack" "$env_file"
+        print_info "✓ 设置默认值: SALTSTACK_MASTER_HOST=saltstack"
+    fi
+    
+    # SaltStack Master API URL
+    if ! grep -q "^SALTSTACK_MASTER_URL=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALTSTACK_MASTER_URL" "http://saltstack:8002" "$env_file"
+        print_info "✓ 设置默认值: SALTSTACK_MASTER_URL=http://saltstack:8002"
+    fi
+    
+    # SaltStack API Token (可选)
+    if ! grep -q "^SALTSTACK_API_TOKEN=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALTSTACK_API_TOKEN" "" "$env_file"
+        print_info "✓ 设置默认值: SALTSTACK_API_TOKEN=(空，可选配置)"
+    fi
+    
+    # SaltStack API 端口配置
+    if ! grep -q "^SALT_API_PORT=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALT_API_PORT" "8002" "$env_file"
+        print_info "✓ 设置默认值: SALT_API_PORT=8002"
+    fi
+    
+    # SaltStack Master 主机配置 (兼容旧版本)
+    if ! grep -q "^SALT_MASTER_HOST=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALT_MASTER_HOST" "saltstack" "$env_file"
+        print_info "✓ 设置默认值: SALT_MASTER_HOST=saltstack"
+    fi
+    
+    # SaltStack API 认证配置
+    if ! grep -q "^SALT_API_USERNAME=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALT_API_USERNAME" "saltapi" "$env_file"
+        print_info "✓ 设置默认值: SALT_API_USERNAME=saltapi"
+    fi
+    
+    if ! grep -q "^SALT_API_PASSWORD=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALT_API_PASSWORD" "" "$env_file"
+        print_info "✓ 设置默认值: SALT_API_PASSWORD=(空)"
+    fi
+    
+    if ! grep -q "^SALT_API_EAUTH=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALT_API_EAUTH" "file" "$env_file"
+        print_info "✓ 设置默认值: SALT_API_EAUTH=file"
+    fi
+    
+    print_success "✓ SaltStack默认配置设置完成"
+}
+
+# ==========================================
+# IP地址检测和模板渲染功能（从env-manager.sh集成）
+# ==========================================
+
+# 网络接口配置
+DEFAULT_NETWORK_INTERFACE="ens0"
+FALLBACK_INTERFACES=("eth0" "enp0s3" "wlan0" "wlp2s0")
+
+# 检测指定网卡的IP地址
+detect_interface_ip() {
+    local interface="${1:-$DEFAULT_NETWORK_INTERFACE}"
+    local ip=""
+    
+    # 方法1: 使用ip命令（Linux优先）
+    if command -v ip >/dev/null 2>&1; then
+        ip=$(ip addr show "$interface" 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+    fi
+    
+    # 方法2: 使用ifconfig命令（macOS和旧版Linux）
+    if [[ -z "$ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            "macOS")
+                ip=$(ifconfig "$interface" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | awk '{print $2}' | head -1)
+                ;;
+            *)
+                ip=$(ifconfig "$interface" 2>/dev/null | grep -oP 'inet addr:\K[0-9.]+' | head -1)
+                if [[ -z "$ip" ]]; then
+                    # 新版本ifconfig格式
+                    ip=$(ifconfig "$interface" 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+                fi
+                ;;
+        esac
+    fi
+    
+    echo "$ip"
+}
+
+# 自动检测外部主机IP（增强版）
+auto_detect_external_ip_enhanced() {
+    local detected_ip=""
+    
+    print_info "自动检测外部主机IP..."
+    
+    # 优先检测指定网卡
+    detected_ip=$(detect_interface_ip "$DEFAULT_NETWORK_INTERFACE")
+    
+    # 如果指定网卡没有IP，尝试其他网卡
+    if [[ -z "$detected_ip" ]]; then
+        for interface in "${FALLBACK_INTERFACES[@]}"; do
+            print_info "尝试检测网卡: $interface"
+            detected_ip=$(detect_interface_ip "$interface")
+            if [[ -n "$detected_ip" ]]; then
+                print_success "在网卡 $interface 上检测到IP: $detected_ip"
+                break
+            fi
+        done
+    else
+        print_success "在网卡 $DEFAULT_NETWORK_INTERFACE 上检测到IP: $detected_ip"
+    fi
+    
+    # 方法3: 通过默认路由检测
+    if [[ -z "$detected_ip" ]] && command -v ip >/dev/null 2>&1; then
+        detected_ip=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
+        [[ -n "$detected_ip" ]] && print_success "通过默认路由检测到IP: $detected_ip"
+    fi
+    
+    # 方法4: 通过ifconfig检测任意可用IP（排除127.0.0.1）
+    if [[ -z "$detected_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            "macOS")
+                detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                ;;
+            *)
+                detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                ;;
+        esac
+        [[ -n "$detected_ip" ]] && print_success "通过ifconfig检测到IP: $detected_ip"
+    fi
+    
+    # 备用方案: 使用localhost
+    if [[ -z "$detected_ip" ]]; then
+        detected_ip="localhost"
+        print_warning "无法自动检测外部IP，使用默认值: localhost"
+    fi
+    
+    echo "$detected_ip"
+}
+
+# 静默版本的IP检测（仅返回IP，不输出日志）
+auto_detect_external_ip_silent() {
+    local detected_ip=""
+    
+    # 优先检测指定网卡
+    detected_ip=$(detect_interface_ip "$DEFAULT_NETWORK_INTERFACE")
+    
+    # 如果指定网卡没有IP，尝试其他网卡
+    if [[ -z "$detected_ip" ]]; then
+        for interface in "${FALLBACK_INTERFACES[@]}"; do
+            detected_ip=$(detect_interface_ip "$interface")
+            [[ -n "$detected_ip" ]] && break
+        done
+    fi
+    
+    # 方法3: 通过默认路由检测
+    if [[ -z "$detected_ip" ]] && command -v ip >/dev/null 2>&1; then
+        detected_ip=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
+    fi
+    
+    # 方法4: 通过ifconfig检测任意可用IP（排除127.0.0.1）
+    if [[ -z "$detected_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            "macOS")
+                detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                ;;
+            *)
+                detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                ;;
+        esac
+    fi
+    
+    # 备用方案: 使用localhost
+    if [[ -z "$detected_ip" ]]; then
+        detected_ip="localhost"
+    fi
+    
+    echo "$detected_ip"
+}
+
+# 增强型环境变量模板渲染
+render_env_template_enhanced() {
+    local template_file="$1"
+    local output_file="$2"
+    local external_host="$3"
+    local external_port="${4:-8080}"
+    local external_scheme="${5:-http}"
+    local force="${6:-false}"
+    
+    if [[ ! -f "$template_file" ]]; then
+        print_error "模板文件不存在: $template_file"
+        return 1
+    fi
+    
+    # 检查目标文件是否已存在
+    if [[ -f "$output_file" ]] && [[ "$force" != "true" ]]; then
+        print_warning "环境文件已存在: $output_file"
+        print_info "如需强制覆盖，请使用 --force 参数"
+        read -p "是否覆盖现有文件? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_info "操作已取消"
+            return 0
+        fi
+    fi
+    
+    print_info "渲染环境变量模板..."
+    print_info "  模板文件: $template_file"
+    print_info "  输出文件: $output_file"
+    print_info "  外部主机: $external_host"
+    print_info "  外部端口: $external_port"
+    print_info "  外部协议: $external_scheme"
+    
+    # 创建备份目录
+    mkdir -p "$SCRIPT_DIR/backup"
+    
+    # 创建备份
+    if [[ -f "$output_file" ]]; then
+        local backup_name="$(basename "$output_file").backup-$(date +%Y%m%d-%H%M%S)"
+        cp "$output_file" "$SCRIPT_DIR/backup/$backup_name"
+        print_info "已备份原文件: $backup_name"
+    fi
+    
+    # 读取模板内容并替换变量
+    local temp_content
+    temp_content=$(cat "$template_file")
+    
+    # 计算各种端口值
+    local jupyterhub_port=$((external_port + 8))
+    local gitea_port=$((external_port - 5070))
+    local apphub_port=$((external_port + 10))
+    local https_port=$((external_port + 363))
+    local debug_port=$((external_port - 79))
+    
+    # 替换基本模板变量
+    temp_content="${temp_content//\$\{EXTERNAL_HOST\}/$external_host}"
+    temp_content="${temp_content//\$\{EXTERNAL_PORT\}/$external_port}"
+    temp_content="${temp_content//\$\{EXTERNAL_SCHEME\}/$external_scheme}"
+    
+    # 替换计算后的端口变量
+    temp_content="${temp_content//\$\{JUPYTERHUB_PORT\}/$jupyterhub_port}"
+    temp_content="${temp_content//\$\{JUPYTERHUB_EXTERNAL_PORT\}/$jupyterhub_port}"
+    temp_content="${temp_content//\$\{GITEA_PORT\}/$gitea_port}"
+    temp_content="${temp_content//\$\{GITEA_EXTERNAL_PORT\}/$gitea_port}"
+    temp_content="${temp_content//\$\{APPHUB_PORT\}/$apphub_port}"
+    temp_content="${temp_content//\$\{HTTPS_PORT\}/$https_port}"
+    temp_content="${temp_content//\$\{DEBUG_PORT\}/$debug_port}"
+    
+    print_info "  计算的端口值:"
+    print_info "    JupyterHub: $jupyterhub_port"
+    print_info "    Gitea: $gitea_port"
+    print_info "    AppHub: $apphub_port"
+    print_info "    HTTPS: $https_port"
+    print_info "    Debug: $debug_port"
+    
+    # 写入输出文件
+    echo "$temp_content" > "$output_file"
+    
+    print_success "✓ 模板渲染完成: $output_file"
+}
+
 # Docker Compose命令兼容性检测
 get_docker_compose_cmd() {
     if command -v docker-compose >/dev/null 2>&1; then
@@ -1667,17 +1936,29 @@ create_env_from_template() {
     if cp "$template_file" "$target_file"; then
         print_success "✓ 创建环境文件: $target_file (从 $template_file)"
         
-        # 加载环境变量
-        load_environment_variables
+        # 自动检测外部主机IP
+        local detected_host
+        if [[ "$force" == "true" ]] || [[ ! -f "$target_file" ]] || ! grep -q "^EXTERNAL_HOST=" "$target_file"; then
+            detected_host=$(auto_detect_external_ip_silent)
+        else
+            # 从现有文件读取EXTERNAL_HOST
+            detected_host=$(grep "^EXTERNAL_HOST=" "$target_file" | cut -d'=' -f2)
+            if [[ -z "$detected_host" ]]; then
+                detected_host=$(auto_detect_external_ip_silent)
+            fi
+        fi
         
-        # 进行基本的外部变量替换
-        local temp_content=$(cat "$target_file")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_HOST}|$EXTERNAL_HOST|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_PORT}|$EXTERNAL_PORT|g")
-        temp_content=$(echo "$temp_content" | sed "s|\\\${EXTERNAL_SCHEME}|$EXTERNAL_SCHEME|g")
-        echo "$temp_content" > "$target_file"
+        # 设置默认端口和协议
+        local external_port="${EXTERNAL_PORT:-8080}"
+        local external_scheme="${EXTERNAL_SCHEME:-http}"
         
-        print_success "✓ 应用外部变量替换: EXTERNAL_HOST=$EXTERNAL_HOST, EXTERNAL_PORT=$EXTERNAL_PORT"
+        print_info "使用外部配置: HOST=$detected_host, PORT=$external_port, SCHEME=$external_scheme"
+        
+        # 使用增强型模板渲染
+        render_env_template_enhanced "$template_file" "$target_file" "$detected_host" "$external_port" "$external_scheme" "true"
+        
+        # 设置SaltStack默认配置（如果未设置）
+        setup_saltstack_defaults "$target_file"
         
         # 检查并创建backend目录的环境文件
         if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
@@ -5578,6 +5859,7 @@ show_help() {
     echo "  reset-db [--force]              - 重置数据库（仅删除数据库数据卷）"
     echo "  verify <registry> [tag]         - 验证镜像"
     echo "  create-env [dev|prod] [--force] - 创建环境配置"
+    echo "  detect-ip [interface] [--all]   - 检测网卡IP地址（支持自动检测和指定网卡）"
     echo "  validate-env                    - 校验环境配置"
     echo "  render-templates [nginx|jupyterhub|docker-compose|all] - 渲染配置模板"
     echo "    • docker-compose 额外参数: --oceanbase-init-dir <path> 指定 OceanBase 初始化目录"
@@ -7671,6 +7953,64 @@ main() {
             fi
             
             create_env_from_template "$env_type" "$force"
+            ;;
+            
+        # IP地址检测命令
+        "detect-ip")
+            local interface="${2:-$DEFAULT_NETWORK_INTERFACE}"
+            local show_all="${3:-false}"
+            
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "detect-ip - 检测网卡IP地址"
+                echo
+                echo "用法: $0 detect-ip [interface] [--all]"
+                echo
+                echo "参数:"
+                echo "  interface   网卡名称 (默认: $DEFAULT_NETWORK_INTERFACE)"
+                echo "  --all       显示所有网卡信息"
+                echo
+                echo "示例:"
+                echo "  $0 detect-ip                # 检测默认网卡($DEFAULT_NETWORK_INTERFACE)"
+                echo "  $0 detect-ip eth0           # 检测eth0网卡"
+                echo "  $0 detect-ip --all          # 显示所有网卡信息"
+                return 0
+            fi
+            
+            if [[ "$show_all" == "--all" ]] || [[ "$show_all" == "-a" ]] || [[ "$interface" == "--all" ]] || [[ "$interface" == "-a" ]]; then
+                print_info "检测所有网卡IP地址..."
+                echo
+                
+                # 显示所有网卡信息
+                local interfaces=("$DEFAULT_NETWORK_INTERFACE" "${FALLBACK_INTERFACES[@]}")
+                for iface in "${interfaces[@]}"; do
+                    local ip
+                    ip=$(detect_interface_ip "$iface")
+                    if [[ -n "$ip" ]]; then
+                        echo "  $iface: $ip"
+                    else
+                        echo "  $iface: (未找到IP)"
+                    fi
+                done
+                
+                echo
+                print_info "自动检测结果:"
+                auto_detect_external_ip_enhanced
+            else
+                if [[ -n "$interface" ]] && [[ "$interface" != "$DEFAULT_NETWORK_INTERFACE" ]] && [[ "$interface" != "--all" ]] && [[ "$interface" != "-a" ]]; then
+                    # 检测指定网卡
+                    local ip
+                    ip=$(detect_interface_ip "$interface")
+                    if [[ -n "$ip" ]]; then
+                        echo "$ip"
+                    else
+                        print_warning "网卡 $interface 未找到IP地址"
+                        return 1
+                    fi
+                else
+                    # 自动检测
+                    auto_detect_external_ip_enhanced
+                fi
+            fi
             ;;
             
         # SingleUser 智能构建命令

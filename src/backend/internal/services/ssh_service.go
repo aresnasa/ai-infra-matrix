@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,6 +27,51 @@ type SSHConfig struct {
 	ConnectTimeout time.Duration
 	CommandTimeout time.Duration
 	MaxConcurrency int
+}
+
+// AppHubConfig AppHub包仓库配置
+type AppHubConfig struct {
+	BaseURL  string // AppHub的基础URL，如 http://192.168.0.200:8090
+	Username string // 用户名（可选）
+	Password string // 密码（可选）
+}
+
+// PackageInstallationConfig 包安装配置
+type PackageInstallationConfig struct {
+	AppHubConfig       AppHubConfig
+	SaltMasterHost     string
+	SaltMasterPort     int
+	MinionID           string
+	SlurmRole          string // controller|compute
+	EnableSaltMinion   bool
+	EnableSlurmClient  bool
+}
+
+// InstallationStep 安装步骤
+type InstallationStep struct {
+	Name        string
+	Description string
+	Commands    []string
+	Critical    bool // 是否为关键步骤，失败时停止安装
+}
+
+// InstallationResult 完整安装结果
+type InstallationResult struct {
+	Host     string
+	Success  bool
+	Steps    []StepResult
+	Duration time.Duration
+	Error    string
+}
+
+// StepResult 步骤执行结果
+type StepResult struct {
+	Name        string
+	Success     bool
+	Output      string
+	Error       string
+	Duration    time.Duration
+	Timestamp   time.Time
 }
 
 // SSHConnection SSH连接信息
@@ -126,6 +170,435 @@ func NewSSHService() *SSHService {
 			MaxConcurrency: 10,
 		},
 	}
+}
+
+// InstallPackagesOnHosts 在多个主机上并发安装SaltStack Minion和SLURM客户端
+func (s *SSHService) InstallPackagesOnHosts(ctx context.Context, connections []SSHConnection, config PackageInstallationConfig) ([]InstallationResult, error) {
+	results := make([]InstallationResult, len(connections))
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, s.config.MaxConcurrency)
+
+	for i, conn := range connections {
+		wg.Add(1)
+		go func(index int, connection SSHConnection) {
+			defer wg.Done()
+
+			// 获取信号量
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			startTime := time.Now()
+			result := s.installPackagesOnSingleHost(ctx, connection, config)
+			result.Duration = time.Since(startTime)
+			results[index] = result
+		}(i, conn)
+	}
+
+	wg.Wait()
+	return results, nil
+}
+
+// installPackagesOnSingleHost 在单个主机上安装包
+func (s *SSHService) installPackagesOnSingleHost(ctx context.Context, conn SSHConnection, config PackageInstallationConfig) InstallationResult {
+	result := InstallationResult{
+		Host:    conn.Host,
+		Success: false,
+		Steps:   []StepResult{},
+	}
+
+	// 建立SSH连接
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		result.Error = fmt.Sprintf("SSH连接失败: %v", err)
+		return result
+	}
+	defer client.Close()
+
+	// 生成安装步骤
+	steps := s.generateInstallationSteps(config, conn.Host)
+
+	// 执行所有步骤
+	allSuccess := true
+	for _, step := range steps {
+		stepResult := s.executeInstallationStep(client, step)
+		result.Steps = append(result.Steps, stepResult)
+
+		if !stepResult.Success && step.Critical {
+			allSuccess = false
+			result.Error = fmt.Sprintf("关键步骤失败: %s", step.Name)
+			break
+		}
+	}
+
+	result.Success = allSuccess
+	return result
+}
+
+// generateInstallationSteps 生成安装步骤
+func (s *SSHService) generateInstallationSteps(config PackageInstallationConfig, hostname string) []InstallationStep {
+	var steps []InstallationStep
+
+	// 1. 系统检查和初始化
+	steps = append(steps, InstallationStep{
+		Name:        "system_check",
+		Description: "检查系统信息和网络连接",
+		Critical:    true,
+		Commands: []string{
+			"uname -a",
+			"cat /etc/os-release",
+			"free -h",
+			"df -h",
+			"ping -c 3 " + s.extractHostFromURL(config.AppHubConfig.BaseURL),
+		},
+	})
+
+	// 2. 配置APT源（仅Debian/Ubuntu系统）
+	steps = append(steps, InstallationStep{
+		Name:        "configure_apt_source",
+		Description: "配置AppHub APT源",
+		Critical:    false,
+		Commands: []string{
+			s.getConfigureAptSourceCommand(config.AppHubConfig.BaseURL),
+		},
+	})
+
+	// 3. 更新包索引
+	steps = append(steps, InstallationStep{
+		Name:        "update_packages",
+		Description: "更新系统包索引",
+		Critical:    true,
+		Commands: []string{
+			s.getUpdatePackagesCommand(),
+		},
+	})
+
+	// 4. 安装基础工具
+	steps = append(steps, InstallationStep{
+		Name:        "install_basic_tools",
+		Description: "安装基础工具和依赖",
+		Critical:    true,
+		Commands: []string{
+			s.getInstallBasicToolsCommand(),
+		},
+	})
+
+	// 5. 安装SaltStack Minion（如果启用）
+	if config.EnableSaltMinion {
+		steps = append(steps, InstallationStep{
+			Name:        "install_saltstack_minion",
+			Description: "安装和配置SaltStack Minion",
+			Critical:    true,
+			Commands: []string{
+				s.getInstallSaltMinionCommand(),
+				s.getConfigureSaltMinionCommand(config.SaltMasterHost, config.SaltMasterPort, s.getMinionID(config.MinionID, hostname)),
+				"systemctl enable salt-minion",
+				"systemctl start salt-minion",
+			},
+		})
+	}
+
+	// 6. 安装SLURM客户端（如果启用）
+	if config.EnableSlurmClient {
+		steps = append(steps, InstallationStep{
+			Name:        "install_slurm_client",
+			Description: "安装SLURM客户端组件",
+			Critical:    false,
+			Commands: []string{
+				s.getInstallSlurmClientCommand(config.AppHubConfig.BaseURL),
+			},
+		})
+
+		// 7. 配置SLURM节点
+		steps = append(steps, InstallationStep{
+			Name:        "configure_slurm_node",
+			Description: "配置SLURM节点",
+			Critical:    false,
+			Commands: []string{
+				s.getConfigureSlurmNodeCommand(config.SlurmRole, hostname),
+			},
+		})
+	}
+
+	// 8. 最终验证
+	steps = append(steps, InstallationStep{
+		Name:        "final_verification",
+		Description: "验证安装结果",
+		Critical:    false,
+		Commands:    s.getVerificationCommands(config.EnableSaltMinion, config.EnableSlurmClient),
+	})
+
+	return steps
+}
+
+// executeInstallationStep 执行安装步骤
+func (s *SSHService) executeInstallationStep(client *ssh.Client, step InstallationStep) StepResult {
+	result := StepResult{
+		Name:      step.Name,
+		Success:   true,
+		Timestamp: time.Now(),
+	}
+
+	start := time.Now()
+	var output strings.Builder
+
+	for i, command := range step.Commands {
+		fmt.Fprintf(&output, "\n--- 执行命令 %d/%d ---\n", i+1, len(step.Commands))
+		fmt.Fprintf(&output, "命令: %s\n", command)
+
+		cmdOutput, err := s.executeCommand(client, command)
+		fmt.Fprintf(&output, "%s", cmdOutput)
+
+		if err != nil {
+			result.Success = false
+			result.Error = fmt.Sprintf("命令执行失败: %v", err)
+			fmt.Fprintf(&output, "错误: %s\n", err.Error())
+			break
+		}
+	}
+
+	result.Output = output.String()
+	result.Duration = time.Since(start)
+
+	return result
+}
+
+// 以下是各种命令生成函数
+
+// extractHostFromURL 从URL中提取主机名
+func (s *SSHService) extractHostFromURL(url string) string {
+	// 简单的URL解析，提取主机部分
+	if strings.HasPrefix(url, "http://") {
+		url = strings.TrimPrefix(url, "http://")
+	} else if strings.HasPrefix(url, "https://") {
+		url = strings.TrimPrefix(url, "https://")
+	}
+	
+	if colonIndex := strings.Index(url, ":"); colonIndex != -1 {
+		url = url[:colonIndex]
+	}
+	
+	if slashIndex := strings.Index(url, "/"); slashIndex != -1 {
+		url = url[:slashIndex]
+	}
+	
+	return url
+}
+
+// getConfigureAptSourceCommand 获取配置APT源的命令
+func (s *SSHService) getConfigureAptSourceCommand(appHubURL string) string {
+	return fmt.Sprintf(`
+if command -v apt-get >/dev/null 2>&1; then
+    echo "deb [trusted=yes] %s/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-matrix.list
+    echo "配置了AI Infrastructure Matrix APT源"
+else
+    echo "非Debian/Ubuntu系统，跳过APT源配置"
+fi
+`, appHubURL)
+}
+
+// getUpdatePackagesCommand 获取更新包索引的命令
+func (s *SSHService) getUpdatePackagesCommand() string {
+	return `
+if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+elif command -v yum >/dev/null 2>&1; then
+    yum makecache -y
+elif command -v dnf >/dev/null 2>&1; then
+    dnf makecache -y
+elif command -v zypper >/dev/null 2>&1; then
+    zypper refresh
+else
+    echo "未识别的包管理器"
+    exit 1
+fi
+`
+}
+
+// getInstallBasicToolsCommand 获取安装基础工具的命令
+func (s *SSHService) getInstallBasicToolsCommand() string {
+	return `
+if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y curl wget gnupg2 ca-certificates lsb-release systemd
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y curl wget gnupg2 ca-certificates redhat-lsb-core systemd
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y curl wget gnupg2 ca-certificates redhat-lsb systemd
+elif command -v zypper >/dev/null 2>&1; then
+    zypper install -y curl wget gpg2 ca-certificates lsb-release systemd
+else
+    echo "未识别的包管理器"
+    exit 1
+fi
+`
+}
+
+// getInstallSaltMinionCommand 获取安装SaltStack Minion的命令
+func (s *SSHService) getInstallSaltMinionCommand() string {
+	return `
+if command -v apt-get >/dev/null 2>&1; then
+    # Ubuntu/Debian
+    export DEBIAN_FRONTEND=noninteractive
+    curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public | apt-key add -
+    echo "deb https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltstack.list
+    apt-get update -y
+    apt-get install -y salt-minion
+elif command -v yum >/dev/null 2>&1; then
+    # CentOS/RHEL
+    yum install -y https://packages.broadcom.com/artifactory/saltproject-rpm/salt-3007-1.el8.noarch.rpm
+    yum install -y salt-minion
+elif command -v dnf >/dev/null 2>&1; then
+    # Fedora
+    dnf install -y https://packages.broadcom.com/artifactory/saltproject-rpm/salt-3007-1.fc36.noarch.rpm
+    dnf install -y salt-minion
+else
+    echo "暂不支持的系统类型，尝试通用安装方法"
+    curl -L https://bootstrap.saltproject.io -o install_salt.sh
+    sh install_salt.sh -M -A 192.168.0.200
+fi
+`
+}
+
+// getConfigureSaltMinionCommand 获取配置SaltStack Minion的命令
+func (s *SSHService) getConfigureSaltMinionCommand(masterHost string, masterPort int, minionID string) string {
+	if masterPort == 0 {
+		masterPort = 4506
+	}
+
+	return fmt.Sprintf(`
+mkdir -p /etc/salt
+cat > /etc/salt/minion << 'EOF'
+master: %s
+master_port: %d
+id: %s
+log_level: info
+log_file: /var/log/salt/minion
+
+# 网络配置
+master_alive_interval: 30
+master_tries: 3
+ping_interval: 0
+
+# 安全配置
+open_mode: False
+auto_accept_grains: False
+
+# 性能配置
+multiprocessing: True
+process_count_max: 4
+EOF
+
+# 创建日志目录
+mkdir -p /var/log/salt
+chown -R root:root /etc/salt /var/log/salt
+chmod -R 644 /etc/salt/minion
+`, masterHost, masterPort, minionID)
+}
+
+// getInstallSlurmClientCommand 获取安装SLURM客户端的命令
+func (s *SSHService) getInstallSlurmClientCommand(appHubURL string) string {
+	return fmt.Sprintf(`
+if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    # 从AppHub安装SLURM包
+    apt-get install -y slurm-smd-client slurm-smd-slurmd || {
+        echo "从APT源安装失败，尝试直接下载安装"
+        cd /tmp
+        wget -q %s/pkgs/slurm-deb/slurm-smd-client_25.05.3-1_arm64.deb
+        wget -q %s/pkgs/slurm-deb/slurm-smd-slurmd_25.05.3-1_arm64.deb
+        dpkg -i slurm-smd-client_25.05.3-1_arm64.deb slurm-smd-slurmd_25.05.3-1_arm64.deb || true
+        apt-get install -f -y
+    }
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y slurm slurm-slurmd
+elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y slurm slurm-slurmd
+else
+    echo "不支持的包管理器，跳过SLURM客户端安装"
+    exit 1
+fi
+`, appHubURL, appHubURL)
+}
+
+// getConfigureSlurmNodeCommand 获取配置SLURM节点的命令
+func (s *SSHService) getConfigureSlurmNodeCommand(role, hostname string) string {
+	return fmt.Sprintf(`
+# 创建SLURM配置目录
+mkdir -p /etc/slurm /var/log/slurm /var/spool/slurm
+
+# 创建基础的slurm.conf配置
+cat > /etc/slurm/slurm.conf << 'EOF'
+# SLURM配置文件
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-controller
+ControlAddr=slurm-controller
+
+# 认证和安全
+AuthType=auth/munge
+CryptoType=crypto/munge
+
+# 调度器配置
+SchedulerType=sched/backfill
+SelectType=select/cons_res
+SelectTypeParameters=CR_Core
+
+# 日志配置
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdSpoolDir=/var/spool/slurm
+
+# 节点配置
+NodeName=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000 State=UNKNOWN
+PartitionName=compute Nodes=%s Default=YES MaxTime=INFINITE State=UP
+EOF
+
+# 设置权限
+chown -R slurm:slurm /var/log/slurm /var/spool/slurm /etc/slurm 2>/dev/null || true
+chmod 644 /etc/slurm/slurm.conf
+
+# 根据角色启用相应服务
+if [ "%s" = "controller" ]; then
+    systemctl enable slurmctld 2>/dev/null || true
+else
+    systemctl enable slurmd 2>/dev/null || true
+fi
+`, hostname, hostname, role)
+}
+
+// getMinionID 获取Minion ID
+func (s *SSHService) getMinionID(configuredID, hostname string) string {
+	if configuredID != "" {
+		return configuredID
+	}
+	return hostname
+}
+
+// getVerificationCommands 获取验证命令
+func (s *SSHService) getVerificationCommands(saltEnabled, slurmEnabled bool) []string {
+	commands := []string{
+		"echo '=== 系统状态 ==='",
+		"uptime",
+		"free -h",
+	}
+
+	if saltEnabled {
+		commands = append(commands,
+			"echo '=== SaltStack Minion 状态 ==='",
+			"systemctl status salt-minion --no-pager -l",
+			"salt-minion --version 2>/dev/null || echo 'salt-minion版本检查失败'",
+		)
+	}
+
+	if slurmEnabled {
+		commands = append(commands,
+			"echo '=== SLURM 状态 ==='",
+			"systemctl status slurmd --no-pager -l 2>/dev/null || echo 'slurmd未运行'",
+			"sinfo --version 2>/dev/null || echo 'SLURM客户端工具未安装'",
+		)
+	}
+
+	return commands
 }
 
 // DeploySaltMinion 并发部署SaltStack Minion到多个节点
@@ -297,11 +770,18 @@ func (s *SSHService) getMinionConfigCommand(config SaltStackDeploymentConfig) st
 		minionID = "$(hostname)"
 	}
 
+	// 使用正确的master地址格式，不包含端口号在master字段中
+	masterHost := config.MasterHost
+	if config.MasterPort != 4506 && config.MasterPort != 0 {
+		masterHost = fmt.Sprintf("%s:%d", config.MasterHost, config.MasterPort)
+	}
+
 	return fmt.Sprintf(`
 cat > /etc/salt/minion << EOF
 master: %s
 id: %s
 log_level: info
+master_port: %d
 EOF
 
 # 如果需要自动接受密钥
@@ -309,8 +789,9 @@ if [ "%t" = "true" ]; then
     echo "auto_accept: True" >> /etc/salt/minion
 fi
 `,
-		net.JoinHostPort(config.MasterHost, fmt.Sprintf("%d", config.MasterPort)),
+		masterHost,
 		minionID,
+		config.MasterPort,
 		config.AutoAccept)
 }
 

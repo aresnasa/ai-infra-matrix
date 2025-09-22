@@ -17,6 +17,33 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# 网络接口配置
+DEFAULT_NETWORK_INTERFACE="ens0"
+FALLBACK_INTERFACES=("eth0" "enp0s3" "wlan0" "wlp2s0")
+
+# 操作系统检测
+detect_os() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "macOS"
+    elif [[ "$OSTYPE" == "linux-gnu"* ]] || [[ "$OSTYPE" == "linux"* ]]; then
+        echo "Linux"
+    elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then
+        echo "Windows"
+    else
+        # 备用检测方法
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            echo "macOS"
+        elif [[ "$(uname -s)" == "Linux" ]]; then
+            echo "Linux"
+        else
+            echo "Other"
+        fi
+    fi
+}
+
+# 操作系统类型
+OS_TYPE=$(detect_os)
+
 # 项目根目录
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="$PROJECT_ROOT/backup"
@@ -48,24 +75,31 @@ AI Infrastructure Matrix - 环境变量管理脚本
     $0 [命令] [选项]
 
 命令:
-    switch <env>        切换环境 (dev|prod)
-    validate           验证当前环境配置
-    helm-sync          同步环境变量到 Helm values
-    backup             备份当前环境配置
-    restore <backup>   恢复指定备份
-    compare            比较开发和生产环境差异
-    help               显示此帮助信息
+    switch <env>          切换环境 (dev|prod)
+    validate             验证当前环境配置
+    helm-sync            同步环境变量到 Helm values
+    backup               备份当前环境配置
+    restore <backup>     恢复指定备份
+    compare              比较开发和生产环境差异
+    detect-ip [iface]    检测IP地址 (默认检测ens0，支持--all)
+    render-template      渲染环境变量模板
+    help                 显示此帮助信息
 
 选项:
     --force            强制执行，跳过确认
     --dry-run          预览模式，不执行实际操作
 
 示例:
-    $0 switch dev                    # 切换到开发环境
-    $0 switch prod --force          # 强制切换到生产环境
-    $0 validate                     # 验证当前配置
-    $0 helm-sync                    # 同步到 Helm
-    $0 compare                      # 比较环境差异
+    $0 switch dev                       # 切换到开发环境
+    $0 switch prod --force             # 强制切换到生产环境
+    $0 validate                        # 验证当前配置
+    $0 helm-sync                       # 同步到 Helm
+    $0 compare                         # 比较环境差异
+    $0 detect-ip                       # 检测ens0网卡IP地址
+    $0 detect-ip eth0                  # 检测eth0网卡IP地址
+    $0 detect-ip --all                 # 检测所有网卡IP地址
+    $0 render-template                 # 使用自动检测的IP渲染.env文件
+    $0 render-template .env.example .env 192.168.0.200 8080 http
 
 EOF
 }
@@ -371,6 +405,214 @@ restore_backup() {
     validate_environment
 }
 
+# ==========================================
+# IP地址检测和模板渲染功能（从build.sh集成）
+# ==========================================
+
+# 跨平台sed命令包装器
+sed_inplace() {
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        sed -i '.bak' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
+# 清理备份文件
+cleanup_backup_files() {
+    local dir="${1:-.}"
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        find "$dir" -name "*.bak" -type f -delete 2>/dev/null || true
+    fi
+}
+
+# 检测指定网卡的IP地址
+detect_interface_ip() {
+    local interface="${1:-$DEFAULT_NETWORK_INTERFACE}"
+    local ip=""
+    
+    # 方法1: 使用ip命令（Linux优先）
+    if command -v ip >/dev/null 2>&1; then
+        ip=$(ip addr show "$interface" 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+    fi
+    
+    # 方法2: 使用ifconfig命令（macOS和旧版Linux）
+    if [[ -z "$ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            "macOS")
+                ip=$(ifconfig "$interface" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | awk '{print $2}' | head -1)
+                ;;
+            *)
+                ip=$(ifconfig "$interface" 2>/dev/null | grep -oP 'inet addr:\K[0-9.]+' | head -1)
+                if [[ -z "$ip" ]]; then
+                    # 新版本ifconfig格式
+                    ip=$(ifconfig "$interface" 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+                fi
+                ;;
+        esac
+    fi
+    
+    echo "$ip"
+}
+
+# 自动检测外部主机IP
+auto_detect_external_ip() {
+    local detected_ip=""
+    
+    log_info "自动检测外部主机IP..."
+    
+    # 优先检测指定网卡
+    detected_ip=$(detect_interface_ip "$DEFAULT_NETWORK_INTERFACE")
+    
+    # 如果指定网卡没有IP，尝试其他网卡
+    if [[ -z "$detected_ip" ]]; then
+        for interface in "${FALLBACK_INTERFACES[@]}"; do
+            log_info "尝试检测网卡: $interface"
+            detected_ip=$(detect_interface_ip "$interface")
+            if [[ -n "$detected_ip" ]]; then
+                log_success "在网卡 $interface 上检测到IP: $detected_ip"
+                break
+            fi
+        done
+    else
+        log_success "在网卡 $DEFAULT_NETWORK_INTERFACE 上检测到IP: $detected_ip"
+    fi
+    
+    # 方法3: 通过默认路由检测
+    if [[ -z "$detected_ip" ]] && command -v ip >/dev/null 2>&1; then
+        detected_ip=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
+        [[ -n "$detected_ip" ]] && log_success "通过默认路由检测到IP: $detected_ip"
+    fi
+    
+    # 方法4: 通过ifconfig检测任意可用IP（排除127.0.0.1）
+    if [[ -z "$detected_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+        case "$OS_TYPE" in
+            "macOS")
+                detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                ;;
+            *)
+                detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                ;;
+        esac
+        [[ -n "$detected_ip" ]] && log_success "通过ifconfig检测到IP: $detected_ip"
+    fi
+    
+    # 备用方案: 使用localhost
+    if [[ -z "$detected_ip" ]]; then
+        detected_ip="localhost"
+        log_warning "无法自动检测外部IP，使用默认值: localhost"
+    fi
+    
+    echo "$detected_ip"
+}
+
+# 渲染环境变量模板
+render_env_template() {
+    local template_file="$1"
+    local output_file="$2"
+    local external_host="$3"
+    local external_port="${4:-8080}"
+    local external_scheme="${5:-http}"
+    
+    if [[ ! -f "$template_file" ]]; then
+        log_error "模板文件不存在: $template_file"
+        return 1
+    fi
+    
+    log_info "渲染环境变量模板..."
+    log_info "  模板文件: $template_file"
+    log_info "  输出文件: $output_file"
+    log_info "  外部主机: $external_host"
+    log_info "  外部端口: $external_port"
+    log_info "  外部协议: $external_scheme"
+    
+    # 读取模板内容
+    local temp_content
+    temp_content=$(cat "$template_file")
+    
+    # 替换模板变量
+    temp_content="${temp_content//\$\{EXTERNAL_HOST\}/$external_host}"
+    temp_content="${temp_content//\$\{EXTERNAL_PORT\}/$external_port}"
+    temp_content="${temp_content//\$\{EXTERNAL_SCHEME\}/$external_scheme}"
+    
+    # 写入输出文件
+    echo "$temp_content" > "$output_file"
+    
+    log_success "✓ 模板渲染完成: $output_file"
+}
+
+# IP地址检测命令
+detect_ip() {
+    local interface="${1:-$DEFAULT_NETWORK_INTERFACE}"
+    local show_all="${2:-false}"
+    
+    if [[ "$show_all" == "--all" ]] || [[ "$show_all" == "-a" ]]; then
+        log_info "检测所有网卡IP地址..."
+        echo
+        
+        # 显示所有网卡信息
+        local interfaces=("$DEFAULT_NETWORK_INTERFACE" "${FALLBACK_INTERFACES[@]}")
+        for iface in "${interfaces[@]}"; do
+            local ip
+            ip=$(detect_interface_ip "$iface")
+            if [[ -n "$ip" ]]; then
+                echo "  $iface: $ip"
+            else
+                echo "  $iface: (未找到IP)"
+            fi
+        done
+        
+        echo
+        log_info "自动检测结果:"
+        auto_detect_external_ip
+    else
+        if [[ -n "$interface" ]] && [[ "$interface" != "$DEFAULT_NETWORK_INTERFACE" ]] && [[ "$interface" != "--all" ]] && [[ "$interface" != "-a" ]]; then
+            # 检测指定网卡
+            local ip
+            ip=$(detect_interface_ip "$interface")
+            if [[ -n "$ip" ]]; then
+                echo "$ip"
+            else
+                log_warning "网卡 $interface 未找到IP地址"
+                return 1
+            fi
+        else
+            # 自动检测
+            auto_detect_external_ip
+        fi
+    fi
+}
+
+# 渲染模板命令
+render_template() {
+    local template_file="${1:-$PROJECT_ROOT/.env.example}"
+    local output_file="${2:-$PROJECT_ROOT/.env}"
+    local external_host="$3"
+    local external_port="${4:-8080}"
+    local external_scheme="${5:-http}"
+    
+    # 如果没有指定external_host，自动检测
+    if [[ -z "$external_host" ]]; then
+        external_host=$(auto_detect_external_ip 2>/dev/null | tail -1)
+    fi
+    
+    # 确保备份目录存在
+    mkdir -p "$BACKUP_DIR"
+    
+    # 创建备份
+    if [[ -f "$output_file" ]]; then
+        local backup_name="$(basename "$output_file").backup-$(date +%Y%m%d-%H%M%S)"
+        cp "$output_file" "$BACKUP_DIR/$backup_name"
+        log_info "已备份原文件: $backup_name"
+    fi
+    
+    # 渲染模板
+    render_env_template "$template_file" "$output_file" "$external_host" "$external_port" "$external_scheme"
+    
+    # 清理备份文件
+    cleanup_backup_files "$PROJECT_ROOT"
+}
+
 # 主函数
 main() {
     cd "$PROJECT_ROOT"
@@ -393,6 +635,12 @@ main() {
             ;;
         "compare")
             compare_environments
+            ;;
+        "detect-ip")
+            detect_ip "$2" "$3"
+            ;;
+        "render-template")
+            render_template "$2" "$3" "$4" "$5" "$6"
             ;;
         "help"|"--help"|"-h")
             show_help
