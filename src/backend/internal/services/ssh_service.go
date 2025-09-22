@@ -31,11 +31,12 @@ type SSHConfig struct {
 
 // SSHConnection SSH连接信息
 type SSHConnection struct {
-	Host     string
-	Port     int
-	User     string
-	KeyPath  string
-	Password string
+	Host       string
+	Port       int
+	User       string
+	KeyPath    string
+	PrivateKey string // 新增：内联私钥内容
+	Password   string
 }
 
 // DeploymentResult 部署结果
@@ -190,10 +191,17 @@ func (s *SSHService) connectSSH(conn SSHConnection) (*ssh.Client, error) {
 	}
 
 	// 添加认证方法
-	if conn.KeyPath != "" {
+	// 优先使用内联私钥
+	if conn.PrivateKey != "" {
+		key, err := s.parsePrivateKeyFromString(conn.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("解析内联私钥失败: %v", err)
+		}
+		config.Auth = append(config.Auth, ssh.PublicKeys(key))
+	} else if conn.KeyPath != "" {
 		key, err := s.loadPrivateKey(conn.KeyPath)
 		if err != nil {
-			return nil, fmt.Errorf("加载私钥失败: %v", err)
+			return nil, fmt.Errorf("加载私钥文件失败: %v", err)
 		}
 		config.Auth = append(config.Auth, ssh.PublicKeys(key))
 	}
@@ -222,6 +230,15 @@ func (s *SSHService) loadPrivateKey(keyPath string) (ssh.Signer, error) {
 		return nil, err
 	}
 
+	return key, nil
+}
+
+// parsePrivateKeyFromString 从字符串解析私钥
+func (s *SSHService) parsePrivateKeyFromString(keyContent string) (ssh.Signer, error) {
+	key, err := ssh.ParsePrivateKey([]byte(keyContent))
+	if err != nil {
+		return nil, err
+	}
 	return key, nil
 }
 

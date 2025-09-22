@@ -101,6 +101,9 @@ const SlurmTasksPage = withLazyLoading(React.lazy(() => import('./pages/SlurmTas
 const JobManagement = withLazyLoading(React.lazy(() => import('./pages/JobManagement')), {
   loadingText: '正在加载作业管理...'
 });
+const JobTemplateManagement = withLazyLoading(React.lazy(() => import('./pages/JobTemplateManagement')), {
+  loadingText: '正在加载模板管理...'
+});
 const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')), {
   loadingText: '正在加载Gitea...'
 });
@@ -542,6 +545,18 @@ function App() {
                         <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <JobManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* Job template management page - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/job-templates"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <JobTemplateManagement />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

@@ -310,7 +310,7 @@ func (s *SaltStackClientService) detectOSInfo(client *ssh.Client) (*models.OSInf
 }
 
 // getSaltStackBinary 从AppHub获取SaltStack二进制包
-func (s *SaltStackClientService) getSaltStackBinary(osInfo *OSInfo, version string) (*AppHubBinary, error) {
+func (s *SaltStackClientService) getSaltStackBinary(osInfo *models.OSInfo, version string) (*AppHubBinary, error) {
 	// 这里应该调用AppHub服务获取二进制包
 	// 暂时返回模拟数据
 	return &AppHubBinary{

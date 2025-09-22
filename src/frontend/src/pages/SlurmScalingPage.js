@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import SlurmTaskBar from '../components/SlurmTaskBar';
+import SSHAuthConfig from '../components/SSHAuthConfig';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -177,7 +178,7 @@ const SlurmScalingPage = () => {
         .filter(Boolean)
         .map((line) => {
           // 支持 user@host 形式，或仅 host
-          let user = 'root';
+          let user = values.ssh_user || 'root';
           let host = line;
           if (line.includes('@')) {
             const [u, h] = line.split('@');
@@ -188,18 +189,46 @@ const SlurmScalingPage = () => {
           } else {
             host = line.split(/\s+/)[0];
           }
-          return {
+          
+          // 构建SSH认证信息
+          const nodeConfig = {
             host,
-            port: 22,
+            port: values.ssh_port || 22,
             user,
-            key_path: '',
-            password: '',
             minion_id: host,
           };
+
+          // 根据认证类型添加认证信息
+          if (values.authType === 'password' && values.password) {
+            nodeConfig.password = values.password;
+            nodeConfig.key_path = ''; // 确保密钥路径为空
+          } else if (values.authType === 'key') {
+            if (values.private_key) {
+              // 如果提供了私钥内容，使用内联私钥
+              nodeConfig.private_key = values.private_key;
+              nodeConfig.key_path = ''; // 内联私钥时路径为空
+            } else if (values.key_path) {
+              // 如果只提供了路径，使用文件路径
+              nodeConfig.key_path = values.key_path;
+            }
+            nodeConfig.password = ''; // 确保密码为空
+          }
+
+          return nodeConfig;
         });
 
       if (!nodes.length) {
         message.warning('请至少填写一个节点');
+        return;
+      }
+
+      // 验证SSH认证信息
+      const hasValidAuth = nodes.every(node => 
+        node.password || node.key_path || node.private_key
+      );
+      
+      if (!hasValidAuth) {
+        message.error('请配置SSH认证信息（密码或密钥）');
         return;
       }
 
@@ -518,7 +547,7 @@ const SlurmScalingPage = () => {
         open={scaleUpModal}
         onCancel={() => setScaleUpModal(false)}
         footer={null}
-        width={600}
+        width={800}
       >
         <Form
           form={scaleUpForm}
@@ -531,11 +560,23 @@ const SlurmScalingPage = () => {
             rules={[{ required: true, message: '请配置要添加的节点' }]}
           >
             <TextArea
-              placeholder="每行一个节点配置，格式: hostname ip_address [其他参数]"
+              placeholder="每行一个节点配置，格式: hostname 或 user@hostname&#10;例如:&#10;worker01&#10;worker02&#10;root@worker03"
               rows={6}
               style={{ fontFamily: 'monospace' }}
             />
           </Form.Item>
+
+          {/* SSH认证配置 */}
+          <SSHAuthConfig 
+            form={scaleUpForm}
+            initialValues={{
+              authType: 'password',
+              ssh_user: 'root',
+              ssh_port: 22
+            }}
+            showAdvanced={true}
+            size="small"
+          />
 
           <Divider>节点规格</Divider>
 

@@ -372,11 +372,12 @@ func (c *SlurmController) DeploySaltMinion(ctx *gin.Context) {
     defer cancel()
 
     connection := services.SSHConnection{
-        Host:     req.Host,
-        Port:     req.Port,
-        User:     req.User,
-        KeyPath:  req.KeyPath,
-        Password: req.Password,
+        Host:       req.Host,
+        Port:       req.Port,
+        User:       req.User,
+        KeyPath:    req.KeyPath,
+        PrivateKey: req.PrivateKey,
+        Password:   req.Password,
     }
 
     saltConfig := services.SaltStackDeploymentConfig{
@@ -397,6 +398,62 @@ func (c *SlurmController) DeploySaltMinion(ctx *gin.Context) {
     } else {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": "部署失败"})
     }
+}
+
+// POST /api/slurm/ssh/test-connection
+func (c *SlurmController) TestSSHConnection(ctx *gin.Context) {
+    var req services.NodeConfig
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    // 设置合理的超时
+    ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 15*time.Second)
+    defer cancel()
+
+    connection := services.SSHConnection{
+        Host:       req.Host,
+        Port:       req.Port,
+        User:       req.User,
+        KeyPath:    req.KeyPath,
+        PrivateKey: req.PrivateKey,
+        Password:   req.Password,
+    }
+
+    // 测试SSH连接并执行简单命令
+    testCommand := "whoami && uname -a && echo 'SSH连接测试成功'"
+    results, err := c.sshSvc.ExecuteCommandOnHosts(ctxWithTimeout, []services.SSHConnection{connection}, testCommand)
+    
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    if len(results) == 0 {
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": "未获取到测试结果"})
+        return
+    }
+
+    result := results[0]
+    if !result.Success {
+        ctx.JSON(http.StatusBadRequest, gin.H{
+            "success": false, 
+            "error": result.Error,
+            "output": result.Output,
+            "host": result.Host,
+            "duration": result.Duration.Milliseconds(),
+        })
+        return
+    }
+
+    ctx.JSON(http.StatusOK, gin.H{
+        "success": true,
+        "message": "SSH连接测试成功",
+        "output": result.Output,
+        "host": result.Host,
+        "duration": result.Duration.Milliseconds(),
+    })
 }
 
 // POST /api/slurm/saltstack/execute/async

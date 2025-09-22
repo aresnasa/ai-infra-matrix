@@ -13,7 +13,8 @@ export const ROLE_PERMISSIONS = {
       '/dashboard',
       '/enhanced-dashboard',
       '/profile',
-      '/jobs'
+      '/jobs',
+      '/job-templates'
     ],
     restrictedRoutes: [
       '/admin',
@@ -29,6 +30,7 @@ export const ROLE_PERMISSIONS = {
       'projects',
       'jupyterhub',
       'jobs',
+      'job-templates',
       'files'
     ]
   },
@@ -45,7 +47,8 @@ export const ROLE_PERMISSIONS = {
       '/enhanced-dashboard',
       '/admin',
       '/profile',
-      '/jobs'
+      '/jobs',
+      '/job-templates'
     ],
     restrictedRoutes: [],
     menuItems: [
@@ -58,6 +61,7 @@ export const ROLE_PERMISSIONS = {
       'jupyterhub',
       'slurm',
       'jobs',
+      'job-templates',
       'files',
       'saltstack',
       'kafka-ui',
@@ -206,6 +210,7 @@ export const getAvailableMenuItems = (user) => {
       'jupyterhub',
       'slurm',
       'jobs',
+      'job-templates',
       'files',
       'saltstack',
       'kafka-ui',

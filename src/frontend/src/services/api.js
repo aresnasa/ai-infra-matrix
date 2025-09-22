@@ -540,6 +540,7 @@ export const saltStackAPI = {
   // SaltStack 集成 API
   getSaltStackIntegration: () => api.get('/slurm/saltstack/integration'),
   deploySaltMinion: (nodeConfig) => api.post('/slurm/saltstack/deploy-minion', nodeConfig),
+  testSSHConnection: (nodeConfig) => api.post('/slurm/ssh/test-connection', nodeConfig),
   executeSaltCommand: (command) => api.post('/slurm/saltstack/execute', command),
   getSaltJobs: () => api.get('/slurm/saltstack/jobs'),
   // SaltStack 状态管理

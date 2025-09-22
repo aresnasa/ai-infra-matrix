@@ -323,12 +323,13 @@ type ScalingOperation struct {
 
 // NodeConfig 节点配置
 type NodeConfig struct {
-    Host     string `json:"host"`
-    Port     int    `json:"port"`
-    User     string `json:"user"`
-    KeyPath  string `json:"key_path"`
-    Password string `json:"password"`
-    MinionID string `json:"minion_id"`
+    Host       string `json:"host"`
+    Port       int    `json:"port"`
+    User       string `json:"user"`
+    KeyPath    string `json:"key_path"`
+    PrivateKey string `json:"private_key"` // 新增：内联私钥内容
+    Password   string `json:"password"`
+    MinionID   string `json:"minion_id"`
 }
 
 // NodeTemplate 节点模板

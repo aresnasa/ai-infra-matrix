@@ -76,6 +76,11 @@ const Layout = ({ children, user, onLogout }) => {
       label: '作业管理',
     },
     {
+      key: '/job-templates',
+      icon: <CodeOutlined />,
+      label: '作业模板',
+    },
+    {
       key: '/files',
       icon: <FileTextOutlined />,
       label: '文件管理',
@@ -177,6 +182,8 @@ const Layout = ({ children, user, onLogout }) => {
       selectedKeys = ['/slurm'];
     } else if (pathname === '/jobs' || pathname.startsWith('/jobs')) {
       selectedKeys = ['/jobs'];
+    } else if (pathname === '/job-templates' || pathname.startsWith('/job-templates')) {
+      selectedKeys = ['/job-templates'];
     } else if (pathname === '/files' || pathname.startsWith('/files')) {
       selectedKeys = ['/files'];
     } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {

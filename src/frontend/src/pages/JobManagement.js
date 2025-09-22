@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Table, Button, Modal, Form, Input, Select, message, Tag, Space,
-  Card, Row, Col, Statistic, Progress, Descriptions, Tabs
+  Card, Row, Col, Statistic, Progress, Descriptions, Tabs, Typography, Tooltip
 } from 'antd';
 import {
   PlusOutlined, PlayCircleOutlined, StopOutlined,
@@ -14,16 +14,19 @@ import axios from 'axios';
 const { Option } = Select;
 const { TextArea } = Input;
 const { TabPane } = Tabs;
+const { Text } = Typography;
 
 const JobManagement = () => {
   const [jobs, setJobs] = useState([]);
   const [clusters, setClusters] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [submitModalVisible, setSubmitModalVisible] = useState(false);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [outputModalVisible, setOutputModalVisible] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
   const [jobOutput, setJobOutput] = useState(null);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [stats, setStats] = useState({
     totalJobs: 0,
     runningJobs: 0,
@@ -67,6 +70,20 @@ const JobManagement = () => {
     }
   };
 
+  // 获取模板列表
+  const fetchTemplates = async () => {
+    try {
+      const response = await axios.get('/api/job-templates', {
+        params: { page: 1, page_size: 100, is_public: true }
+      });
+      if (response.data.code === 200) {
+        setTemplates(response.data.data.templates || []);
+      }
+    } catch (error) {
+      console.error('获取模板列表失败:', error);
+    }
+  };
+
   // 获取统计信息
   const fetchStats = async () => {
     try {
@@ -79,6 +96,7 @@ const JobManagement = () => {
 
   useEffect(() => {
     fetchClusters();
+    fetchTemplates();
     fetchStats();
   }, []);
 
@@ -93,11 +111,36 @@ const JobManagement = () => {
       message.success('作业提交成功');
       setSubmitModalVisible(false);
       form.resetFields();
+      setSelectedTemplate(null);
       fetchJobs();
       fetchStats();
     } catch (error) {
       message.error('提交作业失败: ' + error.message);
     }
+  };
+
+  // 应用模板
+  const applyTemplate = (templateId) => {
+    const template = templates.find(t => t.id === templateId);
+    if (template) {
+      setSelectedTemplate(template);
+      form.setFieldsValue({
+        name: template.name,
+        command: template.command,
+        partition: template.partition,
+        nodes: template.nodes,
+        cpus: template.cpus,
+        memory: template.memory,
+        time_limit: template.time_limit,
+      });
+      message.success('模板应用成功');
+    }
+  };
+
+  // 清除模板
+  const clearTemplate = () => {
+    setSelectedTemplate(null);
+    form.resetFields();
   };
 
   // 取消作业
@@ -364,15 +407,66 @@ const JobManagement = () => {
         onCancel={() => {
           setSubmitModalVisible(false);
           form.resetFields();
+          setSelectedTemplate(null);
         }}
         footer={null}
-        width={600}
+        width={800}
       >
         <Form
           form={form}
           layout="vertical"
           onFinish={handleSubmitJob}
         >
+          {/* 模板选择区域 */}
+          <Card style={{ marginBottom: 16, backgroundColor: '#f9f9f9' }} size="small">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ flex: 1 }}>
+                <Text strong>模板选择：</Text>
+                <Select
+                  placeholder="选择一个模板（可选）"
+                  allowClear
+                  style={{ width: '100%', marginLeft: 8 }}
+                  value={selectedTemplate?.id}
+                  onChange={(templateId) => {
+                    if (templateId) {
+                      applyTemplate(templateId);
+                    } else {
+                      clearTemplate();
+                    }
+                  }}
+                >
+                  {templates.map(template => (
+                    <Select.Option key={template.id} value={template.id}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span>{template.name}</span>
+                        <Tag color="blue" size="small">{template.category}</Tag>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </div>
+              {selectedTemplate && (
+                <Button 
+                  size="small" 
+                  type="link" 
+                  onClick={clearTemplate}
+                  style={{ marginLeft: 8 }}
+                >
+                  清除模板
+                </Button>
+              )}
+            </div>
+            {selectedTemplate && (
+              <div style={{ marginTop: 8, padding: 8, backgroundColor: '#e6f7ff', borderRadius: 4 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  已应用模板: <Text strong>{selectedTemplate.name}</Text>
+                  {selectedTemplate.description && (
+                    <span> - {selectedTemplate.description}</span>
+                  )}
+                </Text>
+              </div>
+            )}
+          </Card>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item
