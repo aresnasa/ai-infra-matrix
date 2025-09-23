@@ -826,3 +826,67 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 	}
 	return false
 }
+
+// createSLURMDatabase creates SLURM database and user for accounting
+func createSLURMDatabase(cfg *config.Config) error {
+	log.Println("Creating SLURM database and role...")
+
+	// Read SLURM DB settings from env
+	slurmUser := getEnvCompat("SLURM_DB_USER", "slurm")
+	slurmPass := getEnvCompat("SLURM_DB_PASSWORD", "slurm123") 
+	slurmDB := getEnvCompat("SLURM_DB_NAME", "slurm_acct_db")
+
+	log.Printf("SLURM DB settings - User: %s, DB: %s", slurmUser, slurmDB)
+
+	// Connect to system DB
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Create SLURM role if missing
+	log.Printf("Creating SLURM user: %s", slurmUser)
+	createRole := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE USER %s WITH LOGIN PASSWORD '%s'; END IF; END $$;", slurmUser, slurmUser, slurmPass)
+	if err := systemDB.Exec(createRole).Error; err != nil {
+		return fmt.Errorf("failed to ensure SLURM role: %w", err)
+	}
+	log.Printf("✓ SLURM user '%s' created or already exists", slurmUser)
+
+	// Create SLURM DB if missing
+	var exists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", slurmDB).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check SLURM DB existence: %w", err)
+	}
+	
+	if !exists {
+		log.Printf("Creating SLURM database: %s", slurmDB)
+		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", slurmDB, slurmUser)).Error; err != nil {
+			return fmt.Errorf("failed to create SLURM database: %w", err)
+		}
+		log.Printf("✓ SLURM database '%s' created successfully", slurmDB)
+	} else {
+		log.Printf("✓ SLURM database '%s' already exists", slurmDB)
+	}
+
+	// Grant all privileges to SLURM user
+	if err := systemDB.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", slurmDB, slurmUser)).Error; err != nil {
+		log.Printf("Warning: failed to grant privileges on %s to %s: %v", slurmDB, slurmUser, err)
+	} else {
+		log.Printf("✓ Granted all privileges on '%s' to '%s'", slurmDB, slurmUser)
+	}
+
+	log.Println("✓ SLURM database initialization completed!")
+	return nil
+}
