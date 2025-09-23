@@ -31,6 +31,7 @@ RUN apt-get install -y --no-install-recommends \
     munge \
     libmunge2 \
     supervisor \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
             
 # 创建SLURM用户和组

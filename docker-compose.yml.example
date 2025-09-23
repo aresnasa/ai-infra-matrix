@@ -488,6 +488,81 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # SLURM Master 服务
+  slurm-master:
+    image: ai-infra-slurm-master:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/slurm-master
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        APPHUB_URL: http://${EXTERNAL_HOST}:${APPHUB_PORT:-8090}
+    container_name: ai-infra-slurm-master
+    env_file:
+    - .env
+    environment:
+      - TZ=Asia/Shanghai
+      # SLURM 集群配置
+      - SLURM_CLUSTER_NAME=${SLURM_CLUSTER_NAME:-ai-infra-cluster}
+      - SLURM_CONTROL_MACHINE=${SLURM_CONTROLLER_HOST:-slurm-master}
+      - SLURM_CONTROLLER_PORT=${SLURM_CONTROLLER_PORT:-6817}
+      - SLURM_SLURMDBD_HOST=${SLURM_SLURMDBD_HOST:-slurm-master}
+      - SLURM_SLURMDBD_PORT=${SLURM_SLURMDBD_PORT:-6819}
+      # SLURM 数据库配置
+      - SLURM_DB_HOST=${SLURM_DB_HOST:-postgres}
+      - SLURM_DB_PORT=${SLURM_DB_PORT:-5432}
+      - SLURM_DB_NAME=${SLURM_DB_NAME:-slurm_acct_db}
+      - SLURM_DB_USER=${SLURM_DB_USER:-slurm}
+      - SLURM_DB_PASSWORD=${SLURM_DB_PASSWORD:-slurm123}
+      # SLURM 认证配置
+      - SLURM_AUTH_TYPE=${SLURM_AUTH_TYPE:-auth/munge}
+      - SLURM_MUNGE_KEY=${SLURM_MUNGE_KEY:-ai-infra-slurm-munge-key-dev}
+      # SLURM 集群节点配置
+      - SLURM_PARTITION_NAME=${SLURM_PARTITION_NAME:-compute}
+      - SLURM_DEFAULT_PARTITION=${SLURM_DEFAULT_PARTITION:-compute}
+      - SLURM_NODE_PREFIX=${SLURM_NODE_PREFIX:-compute}
+      - SLURM_NODE_COUNT=${SLURM_NODE_COUNT:-3}
+      # SLURM 测试节点配置
+      - SLURM_TEST_NODES=${SLURM_TEST_NODES:-test-ssh01,test-ssh02,test-ssh03}
+      - SLURM_TEST_NODE_CPUS=${SLURM_TEST_NODE_CPUS:-4}
+      - SLURM_TEST_NODE_MEMORY=${SLURM_TEST_NODE_MEMORY:-8192}
+      # SLURM 作业配置
+      - SLURM_MAX_JOB_COUNT=${SLURM_MAX_JOB_COUNT:-10000}
+      - SLURM_MAX_ARRAY_SIZE=${SLURM_MAX_ARRAY_SIZE:-1000}
+      - SLURM_DEFAULT_TIME_LIMIT=${SLURM_DEFAULT_TIME_LIMIT:-01:00:00}
+      - SLURM_MAX_TIME_LIMIT=${SLURM_MAX_TIME_LIMIT:-24:00:00}
+      # 后端服务连接
+      - AI_INFRA_BACKEND_URL=${BACKEND_URL:-http://backend:8082}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+    expose:
+      - "6817"  # SLURM Controller
+      - "6818"  # SLURM Database Daemon
+    ports:
+      - "${EXTERNAL_HOST}:6817:6817"  # SLURM Controller 外部访问
+      - "${EXTERNAL_HOST}:6818:6818"  # SLURM Database Daemon 外部访问
+    volumes:
+      - slurm_master_data:/var/lib/slurm
+      - slurm_master_logs:/var/log/slurm
+      - slurm_master_spool:/var/spool/slurm
+      - slurm_munge_data:/var/lib/munge
+      - ./shared:/srv/shared:rw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      backend-init:
+        condition: service_completed_successfully
+    networks:
+      - ai-infra-network
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
   # SLURM Operator Manager - SLURM控制器
   slurm-operator-manager:
     image: ai-infra-slurm-operator-manager:${IMAGE_TAG:-v0.3.6-dev}
@@ -632,6 +707,8 @@ services:
       jupyterhub:
         condition: service_healthy
       saltstack:
+        condition: service_healthy
+      slurm-master:
         condition: service_healthy
       slurm-operator-manager:
         condition: service_healthy
@@ -830,6 +907,14 @@ volumes:
     name: ai-infra-salt-logs
   salt_keys:
     name: ai-infra-salt-keys
+  slurm_master_data:
+    name: ai-infra-slurm-master-data
+  slurm_master_logs:
+    name: ai-infra-slurm-master-logs
+  slurm_master_spool:
+    name: ai-infra-slurm-master-spool
+  slurm_munge_data:
+    name: ai-infra-slurm-munge-data
   slurm_operator_data:
     name: ai-infra-slurm-operator-data
   slurm_operator_webhook_data:

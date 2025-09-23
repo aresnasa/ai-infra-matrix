@@ -22,3 +22,4 @@
 22. 检查全局配置能够支持saltstack相关的服务部署，这里需要避免服务的端口冲突
 23. 现在需要使用nginx构建一个apphub作为本项目的二进制包仓库（存放saltstack-minions客户端和slurm客户端，包括rpm和deb包）
 24. 现在使用curl测试添加test-ssh01到slurm集群，需要通过go的ssh自动安装saltstack-minions客户端，保证salt的正常，可以通过go的ssh安装minions客户端和slurm客户端，然后记录相关的任务提交日志和任务详情到pgsql中，deb包的源头已经在slurm-deb:25.05.3容器镜像中，需要先将这个容器中的文件拷贝出来放到pkgs/slurm-deb中，然后使用nginx作为deb源/rpm源
+25. 接下来需要调试安装slurm-client和saltstack服务保证能够正确安装saltstack客户端和通过golang的ssh的库安装saltstack，然后再用saltstack触发安装slurm的客户端

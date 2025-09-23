@@ -13,11 +13,12 @@ DbdHost=${SLURM_SLURMDBD_HOST}
 DbdPort=${SLURM_SLURMDBD_PORT}
 
 # 数据库后端配置（使用PostgreSQL）
-StorageType=accounting_storage/mysql
+StorageType=accounting_storage/slurmdbd
 StorageHost=${SLURM_DB_HOST}
 StoragePort=${SLURM_DB_PORT}
 StorageUser=${SLURM_DB_USER}
 StoragePass=${SLURM_DB_PASSWORD}
+StorageLoc=${SLURM_DB_NAME}
 
 # 日志配置
 LogFile=/var/log/slurm/slurmdbd.log
@@ -31,7 +32,6 @@ PidFile=/var/run/slurm/slurmdbd.pid
 
 # 消息超时配置
 MessageTimeout=300
-DBTimeout=300
 
 # 归档配置
 ArchiveEvents=yes
