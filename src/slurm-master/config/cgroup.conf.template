@@ -1,0 +1,29 @@
+#
+# AI Infrastructure Matrix SLURM Cgroup Configuration
+# 控制作业资源使用
+#
+
+CgroupAutomount=yes
+ConstrainCores=yes
+ConstrainDevices=no
+ConstrainRAMSpace=yes
+ConstrainSwapSpace=no
+MemorySwappiness=1
+
+# cgroup挂载点
+CgroupMountpoint="/sys/fs/cgroup"
+CgroupReleaseAgentDir="/etc/slurm/cgroup"
+
+# 允许的资源使用率
+AllowedRAMSpace=95.0
+AllowedSwapSpace=0.0
+
+# 内存限制类型
+MemoryLimitEnforcement=yes
+MemoryLimitThreshold=95
+
+# 任务亲和性
+TaskAffinity=no
+
+# 约束设备
+ConstrainDevices=no

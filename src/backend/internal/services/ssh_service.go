@@ -1003,57 +1003,41 @@ func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([
 		return results, nil
 	}
 	
-	// 启动测试容器
+	// 对于测试容器，假设它们已经在运行，只需要验证连接
 	start := time.Now()
 	
-	// 构建docker-compose命令来启动指定的服务
-	services := strings.Join(testHosts, " ")
-	cmd := fmt.Sprintf("cd /workspaces && docker-compose -f docker-compose.test.yml up -d %s", services)
-	
-	// 执行命令启动容器
-	output, err := s.executeDockerCommand(ctx, cmd)
-	duration := time.Since(start)
-	
-	if err != nil {
-		// 启动失败，所有测试容器标记为失败
-		for _, host := range testHosts {
+	for _, host := range testHosts {
+		// 测试SSH连接到容器
+		conn := SSHConnection{
+			Host:     host,
+			Port:     22,
+			User:     "root",
+			Password: "rootpass123",
+		}
+		
+		output, err := s.TestSSHConnection(ctx, conn)
+		duration := time.Since(start)
+		
+		if err != nil {
 			results = append(results, DeploymentResult{
 				Host:     host,
 				Success:  false,
 				Output:   output,
-				Error:    fmt.Sprintf("启动容器失败: %v", err),
+				Error:    fmt.Sprintf("SSH连接测试失败: %v", err),
+				Duration: duration,
+			})
+		} else {
+			results = append(results, DeploymentResult{
+				Host:     host,
+				Success:  true,
+				Output:   "测试容器连接正常",
+				Error:    "",
 				Duration: duration,
 			})
 		}
-		// 其他主机标记为就绪
-		for _, host := range hosts {
-			found := false
-			for _, testHost := range testHosts {
-				if host == testHost {
-					found = true
-					break
-				}
-			}
-			if !found {
-				results = append(results, DeploymentResult{
-					Host:     host,
-					Success:  true,
-					Output:   "非测试容器，跳过初始化",
-					Error:    "",
-					Duration: 0,
-				})
-			}
-		}
-		return results, nil
 	}
 	
-	// 等待容器完全启动并可接受SSH连接
-	for _, host := range testHosts {
-		hostResult := s.waitForSSHReady(ctx, host, 22, "root", "rootpass123")
-		results = append(results, hostResult)
-	}
-	
-	// 处理非测试容器
+	// 处理其他非测试主机
 	for _, host := range hosts {
 		found := false
 		for _, testHost := range testHosts {
@@ -1143,4 +1127,28 @@ func (s *SSHService) waitForSSHReady(ctx context.Context, host string, port int,
 		Error:    fmt.Sprintf("等待SSH就绪超时，最后错误: 连接超时"),
 		Duration: time.Since(start),
 	}
+}
+
+// TestSSHConnection 测试SSH连接
+func (s *SSHService) TestSSHConnection(ctx context.Context, conn SSHConnection) (string, error) {
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		return "", fmt.Errorf("连接失败: %v", err)
+	}
+	defer client.Close()
+
+	// 创建会话
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("创建会话失败: %v", err)
+	}
+	defer session.Close()
+
+	// 执行简单的测试命令
+	output, err := session.CombinedOutput("echo 'SSH连接测试成功' && whoami && hostname")
+	if err != nil {
+		return string(output), fmt.Errorf("执行测试命令失败: %v", err)
+	}
+
+	return string(output), nil
 }

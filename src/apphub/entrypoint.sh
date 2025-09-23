@@ -13,6 +13,17 @@ regenerate_index() {
             echo "deb index regenerated"
         fi
     fi
+    
+    # Regenerate SLURM deb index
+    if [ -d /usr/share/nginx/html/pkgs/slurm-deb ]; then
+        cd /usr/share/nginx/html/pkgs/slurm-deb
+        if ls *.deb >/dev/null 2>&1; then
+            echo "Regenerating SLURM deb index..."
+            apt-ftparchive packages . > Packages
+            gzip -c Packages > Packages.gz
+            echo "SLURM deb index regenerated"
+        fi
+    fi
 
     # Regenerate rpm index if packages exist
     if [ -d /usr/share/nginx/html/rpm ]; then

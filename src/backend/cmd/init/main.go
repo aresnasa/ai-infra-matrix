@@ -52,6 +52,11 @@ func main() {
 		log.Fatal("Failed to create Gitea database:", err)
 	}
 
+	// 创建SLURM数据库与用户
+	if err := createSLURMDatabase(cfg); err != nil {
+		log.Fatal("Failed to create SLURM database:", err)
+	}
+
 	// 初始化RBAC系统
 	if err := initializeRBAC(); err != nil {
 		log.Fatal("Failed to initialize RBAC:", err)

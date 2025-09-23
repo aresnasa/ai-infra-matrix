@@ -1,0 +1,55 @@
+#
+# AI Infrastructure Matrix SLURM Database Configuration
+# 此文件由环境变量自动生成
+#
+
+# 认证配置
+AuthType=${SLURM_AUTH_TYPE}
+AuthInfo=/etc/munge/munge.key
+
+# 数据库连接配置
+DbdAddr=${SLURM_SLURMDBD_HOST}
+DbdHost=${SLURM_SLURMDBD_HOST}
+DbdPort=${SLURM_SLURMDBD_PORT}
+
+# 数据库后端配置（使用PostgreSQL）
+StorageType=accounting_storage/mysql
+StorageHost=${SLURM_DB_HOST}
+StoragePort=${SLURM_DB_PORT}
+StorageUser=${SLURM_DB_USER}
+StoragePass=${SLURM_DB_PASSWORD}
+
+# 日志配置
+LogFile=/var/log/slurm/slurmdbd.log
+DebugLevel=info
+
+# 运行用户配置
+SlurmUser=slurm
+
+# PID文件配置
+PidFile=/var/run/slurm/slurmdbd.pid
+
+# 消息超时配置
+MessageTimeout=300
+DBTimeout=300
+
+# 归档配置
+ArchiveEvents=yes
+ArchiveJobs=yes
+ArchiveResvs=yes
+ArchiveSteps=no
+ArchiveSuspend=no
+ArchiveTXN=no
+ArchiveUsage=no
+
+# 清理配置
+PurgeEventAfter=1month
+PurgeJobAfter=12month
+PurgeResvAfter=1month
+PurgeStepAfter=1month
+PurgeSuspendAfter=1month
+PurgeTXNAfter=12month
+PurgeUsageAfter=24month
+
+# 提交和限制
+MaxQueryTimeRange=UNLIMITED

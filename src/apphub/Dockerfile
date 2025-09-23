@@ -1,8 +1,9 @@
-FROM nginx:stable-alpine-perl
+FROM nginx:stable
 
 # Install tools for repo management (deb packages only)  
-RUN apk update && \
-    apk add --no-cache dpkg-dev
+RUN apt-get update && \
+    apt-get install -y apt-utils dpkg-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf
