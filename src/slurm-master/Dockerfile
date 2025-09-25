@@ -34,7 +34,7 @@ RUN apt-get install -y --no-install-recommends \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
             
-# 创建SLURM用户和组
+# 安装SLURM包前先创建用户，这样安装过程会自动配置权限
 RUN groupadd -r slurm && useradd -r -g slurm -d /var/lib/slurm -s /bin/bash slurm
 
 # 创建必要的目录
@@ -51,22 +51,24 @@ RUN mkdir -p /etc/slurm \
     /srv/shared \
     /etc/supervisor/conf.d
 
-# 设置目录权限
-RUN chown -R slurm:slurm /var/spool/slurm /var/log/slurm /var/lib/slurm /var/run/slurm /etc/slurm && \
-    chown -R munge:munge /etc/munge /var/lib/munge /var/log/munge /var/run/munge && \
-    chmod 755 /var/spool/slurm /var/log/slurm /var/lib/slurm && \
-    chmod 700 /etc/munge /var/lib/munge && \
-    chmod 755 /var/log/munge /var/run/munge
-
-# 从AppHub安装SLURM包
-ARG APPHUB_URL=http://192.168.0.199:8090
+# 从AppHub安装SLURM 25.02版本包
+ARG APPHUB_URL=http://192.168.0.200:53434
 RUN echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list \
     && apt-get update && apt-get install -y \
     slurm-smd \
     slurm-smd-client \
     slurm-smd-slurmctld \
     slurm-smd-slurmdbd \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# 配置用户组和权限（在SLURM安装后）
+RUN usermod -a -G munge slurm && \
+    chown -R slurm:slurm /var/spool/slurm /var/log/slurm /var/lib/slurm /var/run/slurm /etc/slurm && \
+    chown -R munge:munge /etc/munge /var/lib/munge /var/log/munge /var/run/munge && \
+    chmod 755 /var/spool/slurm /var/log/slurm /var/lib/slurm /var/run/slurm && \
+    chmod 700 /etc/munge /var/lib/munge && \
+    chmod 755 /var/log/munge /var/run/munge && \
+    chmod 640 /etc/munge/munge.key || true
 
 # 复制配置文件模板
 COPY config/ /etc/slurm-templates/

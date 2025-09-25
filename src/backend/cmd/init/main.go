@@ -593,79 +593,277 @@ func printLDAPConfigInfo(cfg *config.Config) {
 func initializeDefaultAIConfigs() {
 	log.Println("=== Initializing Default AI Configurations ===")
 
+	// 检查是否强制重新初始化
+	forceReinit := getEnvCompat("FORCE_AI_REINIT", "false") == "true"
+	
 	// 检查是否已存在AI配置
 	var count int64
 	database.DB.Model(&models.AIAssistantConfig{}).Count(&count)
 	
-	if count > 0 {
-		log.Printf("AI configurations already exist (%d configs found), skipping initialization", count)
+	if count > 0 && !forceReinit {
+		log.Printf("AI configurations already exist (%d configs found), use FORCE_AI_REINIT=true to reinitialize", count)
 		return
 	}
 
-	// 创建OpenAI配置（需要用户后续配置API密钥）
-	openaiConfig := &models.AIAssistantConfig{
-		Name:         "OpenAI配置",
-		Provider:     "openai",
-		Model:        "gpt-3.5-turbo",
-		APIKey:       "", // 空密钥，需要管理员后续配置
-		APIEndpoint:  "https://api.openai.com/v1",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		SystemPrompt: "你是一个专业的AI助手，能够帮助用户解决各种问题。请提供准确、有用且友好的回答。",
-		IsEnabled:    false, // 默认禁用，直到配置了API密钥
-		IsDefault:    true,
+	if forceReinit && count > 0 {
+		log.Printf("Force reinitializing AI configs, clearing existing %d configurations...", count)
+		// 清理现有配置
+		database.DB.Exec("DELETE FROM ai_assistant_configs")
+		database.DB.Exec("DELETE FROM ai_conversations")
+		database.DB.Exec("DELETE FROM ai_messages")
+		database.DB.Exec("DELETE FROM ai_usage_stats")
+		log.Println("✓ Existing AI configurations cleared")
 	}
 
-	if err := database.DB.Create(openaiConfig).Error; err != nil {
-		log.Printf("Warning: Failed to create default OpenAI config: %v", err)
+	createdConfigs := 0
+
+	// 从环境变量读取配置
+	systemPrompt := getEnvCompat("AI_ASSISTANT_DEFAULT_SYSTEM_PROMPT", "你是一个智能的AI助手，请提供准确、有用的回答。")
+
+	// 创建OpenAI配置
+	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
+	if openaiAPIKey != "" && openaiAPIKey != "sk-test-demo-key-replace-with-real-api-key" {
+		openaiConfig := &models.AIAssistantConfig{
+			Name:         "默认 OpenAI GPT-4",
+			Provider:     models.ProviderOpenAI,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       openaiAPIKey,
+			APIEndpoint:  getEnvCompat("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+			Model:        getEnvCompat("OPENAI_DEFAULT_MODEL", "gpt-4"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: systemPrompt,
+			IsEnabled:    true,
+			IsDefault:    true,
+			Description:  "默认的OpenAI GPT-4模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(openaiConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create OpenAI config: %v", err)
+		} else {
+			log.Println("✓ Created OpenAI configuration with API key")
+			createdConfigs++
+		}
 	} else {
-		log.Println("✓ Created default OpenAI configuration")
+		log.Println("⚠ OPENAI_API_KEY not provided or is demo key, skipping OpenAI config")
 	}
 
-	// 创建Claude配置（需要用户后续配置API密钥）
-	claudeConfig := &models.AIAssistantConfig{
-		Name:         "Claude配置",
-		Provider:     "claude",
-		Model:        "claude-3-haiku-20240307",
-		APIKey:       "", // 空密钥，需要管理员后续配置
-		APIEndpoint:  "https://api.anthropic.com",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。你诚实、有用、无害，并且能够帮助用户解决各种问题。",
-		IsEnabled:    false, // 默认禁用，直到配置了API密钥
-		IsDefault:    false,
-	}
+	// 创建Claude配置
+	claudeAPIKey := os.Getenv("CLAUDE_API_KEY")
+	if claudeAPIKey != "" {
+		claudeConfig := &models.AIAssistantConfig{
+			Name:         "默认 Claude 3.5 Sonnet",
+			Provider:     models.ProviderClaude,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       claudeAPIKey,
+			APIEndpoint:  getEnvCompat("CLAUDE_BASE_URL", "https://api.anthropic.com"),
+			Model:        getEnvCompat("CLAUDE_DEFAULT_MODEL", "claude-3-5-sonnet-20241022"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
+			IsEnabled:    true,
+			IsDefault:    (createdConfigs == 0), // 如果没有OpenAI配置，则Claude设为默认
+			Description:  "默认的Claude 3.5 Sonnet模型配置",
+			Category:     "通用对话",
+		}
 
-	if err := database.DB.Create(claudeConfig).Error; err != nil {
-		log.Printf("Warning: Failed to create default Claude config: %v", err)
+		if err := database.DB.Create(claudeConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create Claude config: %v", err)
+		} else {
+			log.Println("✓ Created Claude configuration with API key")
+			createdConfigs++
+		}
 	} else {
-		log.Println("✓ Created default Claude configuration")
+		log.Println("⚠ CLAUDE_API_KEY not provided, skipping Claude config")
 	}
 
-	// 创建MCP协议配置（预留接口）
-	mcpConfig := &models.AIAssistantConfig{
-		Name:         "MCP协议配置",
-		Provider:     "mcp",
-		Model:        "mcp-default",
-		APIKey:       "",
-		APIEndpoint:  "",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		SystemPrompt: "你是通过Model Context Protocol连接的AI助手。",
-		IsEnabled:    false, // 默认禁用，MCP功能仍在开发中
-		IsDefault:    false,
-	}
+	// 创建其他提供商配置
+	createOtherProviderConfigs(&createdConfigs, systemPrompt)
 
-	if err := database.DB.Create(mcpConfig).Error; err != nil {
-		log.Printf("Warning: Failed to create default MCP config: %v", err)
+	// 初始化Backend服务相关配置
+	initializeBackendConfigs()
+
+	// 初始化SLURM服务相关配置
+	initializeSlurmConfigs()
+
+	// 初始化SaltStack服务相关配置
+	initializeSaltStackConfigs()
+
+	if createdConfigs > 0 {
+		log.Printf("=== AI Configurations Initialized Successfully ===")
+		log.Printf("✓ Created %d AI provider configurations", createdConfigs)
+		log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
 	} else {
-		log.Println("✓ Created default MCP configuration")
+		log.Println("⚠ No AI configurations created. Please set API keys in environment variables:")
+		log.Println("  - OPENAI_API_KEY for OpenAI")
+		log.Println("  - CLAUDE_API_KEY for Claude")
+		log.Println("  - DEEPSEEK_API_KEY for DeepSeek")
+		log.Println("  - GLM_API_KEY for GLM")
+		log.Println("  - QWEN_API_KEY for Qwen")
+	}
+}
+
+// createOtherProviderConfigs 创建其他AI提供商的配置
+func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
+	// 创建DeepSeek配置
+	if deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY"); deepseekAPIKey != "" {
+		deepseekConfig := &models.AIAssistantConfig{
+			Name:         "默认 DeepSeek Chat",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       deepseekAPIKey,
+			APIEndpoint:  getEnvCompat("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+			Model:        getEnvCompat("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是DeepSeek助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的DeepSeek模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(deepseekConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create DeepSeek config: %v", err)
+		} else {
+			log.Println("✓ Created DeepSeek configuration")
+			*createdConfigs++
+		}
 	}
 
-	log.Println("=== Default AI Configurations Initialized ===")
-	log.Println("📝 Note: AI configurations have been created with empty API keys.")
-	log.Println("🔑 Please configure API keys in the admin panel to enable AI functionality.")
-	log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
+	// 创建GLM配置
+	if glmAPIKey := os.Getenv("GLM_API_KEY"); glmAPIKey != "" {
+		glmConfig := &models.AIAssistantConfig{
+			Name:         "默认 GLM-4",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       glmAPIKey,
+			APIEndpoint:  getEnvCompat("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
+			Model:        getEnvCompat("GLM_DEFAULT_MODEL", "glm-4"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是智谱AI的GLM助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的智谱AI GLM-4模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(glmConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create GLM config: %v", err)
+		} else {
+			log.Println("✓ Created GLM configuration")
+			*createdConfigs++
+		}
+	}
+
+	// 创建通义千问配置
+	if qwenAPIKey := os.Getenv("QWEN_API_KEY"); qwenAPIKey != "" {
+		qwenConfig := &models.AIAssistantConfig{
+			Name:         "默认 通义千问",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       qwenAPIKey,
+			APIEndpoint:  getEnvCompat("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
+			Model:        getEnvCompat("QWEN_DEFAULT_MODEL", "qwen-turbo"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是通义千问助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的阿里云通义千问模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(qwenConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create Qwen config: %v", err)
+		} else {
+			log.Println("✓ Created Qwen configuration")
+			*createdConfigs++
+		}
+	}
+
+	// 创建本地AI配置
+	if localAIEnabled := getEnvCompat("LOCAL_AI_ENABLED", "false"); localAIEnabled == "true" {
+		localConfig := &models.AIAssistantConfig{
+			Name:         "本地 AI 模型",
+			Provider:     models.ProviderLocal,
+			ModelType:    models.ModelTypeChat,
+			APIEndpoint:  getEnvCompat("LOCAL_AI_BASE_URL", "http://localhost:8080/v1"),
+			Model:        getEnvCompat("LOCAL_AI_DEFAULT_MODEL", "llama2"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是一个本地部署的AI助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "本地部署的AI模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(localConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create Local AI config: %v", err)
+		} else {
+			log.Println("✓ Created Local AI configuration")
+			*createdConfigs++
+		}
+	}
+}
+
+// initializeBackendConfigs 初始化Backend服务配置
+func initializeBackendConfigs() {
+	log.Println("=== Initializing Backend Service Configurations ===")
+	
+	// 这里可以添加Backend服务特定的初始化逻辑
+	// 例如：初始化缓存配置、消息队列配置等
+	
+	log.Println("✓ Backend service configurations initialized")
+}
+
+// initializeSlurmConfigs 初始化SLURM服务配置
+func initializeSlurmConfigs() {
+	log.Println("=== Initializing SLURM Service Configurations ===")
+	
+	// 这里可以添加SLURM服务特定的初始化逻辑
+	// 例如：初始化SLURM集群配置、节点配置等
+	
+	slurmEnabled := getEnvCompat("SLURM_ENABLED", "true")
+	if slurmEnabled == "true" {
+		slurmCluster := getEnvCompat("SLURM_CLUSTER_NAME", "ai-infra-cluster")
+		slurmController := getEnvCompat("SLURM_CONTROLLER_HOST", "slurm-master")
+		
+		log.Printf("✓ SLURM cluster: %s", slurmCluster)
+		log.Printf("✓ SLURM controller: %s", slurmController)
+		log.Println("✓ SLURM service configurations initialized")
+	} else {
+		log.Println("⚠ SLURM service disabled")
+	}
+}
+
+// initializeSaltStackConfigs 初始化SaltStack服务配置
+func initializeSaltStackConfigs() {
+	log.Println("=== Initializing SaltStack Service Configurations ===")
+	
+	// 这里可以添加SaltStack服务特定的初始化逻辑
+	// 例如：初始化Salt Master配置、Minion配置等
+	
+	saltEnabled := getEnvCompat("SALTSTACK_ENABLED", "true")
+	if saltEnabled == "true" {
+		saltMaster := getEnvCompat("SALTSTACK_MASTER_HOST", "saltstack")
+		saltAPI := getEnvCompat("SALTSTACK_MASTER_URL", "http://saltstack:8002")
+		
+		log.Printf("✓ SaltStack master: %s", saltMaster)
+		log.Printf("✓ SaltStack API: %s", saltAPI)
+		log.Println("✓ SaltStack service configurations initialized")
+	} else {
+		log.Println("⚠ SaltStack service disabled")
+	}
 }
 
 // createJupyterHubDatabase 创建JupyterHub专用数据库

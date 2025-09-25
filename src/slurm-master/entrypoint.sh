@@ -49,9 +49,19 @@ wait_for_database() {
     local attempt=1
     
     while [ $attempt -le $max_attempts ]; do
-        if pg_isready -h "$SLURM_DB_HOST" -p "$SLURM_DB_PORT" -U "$SLURM_DB_USER" >/dev/null 2>&1; then
-            echo "✅ 数据库服务已可用"
-            return 0
+        # 检查数据库类型并使用相应的检查方法
+        if [ "$SLURM_DB_PORT" = "3306" ]; then
+            # MySQL检查
+            if nc -z "$SLURM_DB_HOST" "$SLURM_DB_PORT" >/dev/null 2>&1; then
+                echo "✅ 数据库服务已可用"
+                return 0
+            fi
+        else
+            # PostgreSQL检查
+            if pg_isready -h "$SLURM_DB_HOST" -p "$SLURM_DB_PORT" -U "$SLURM_DB_USER" >/dev/null 2>&1; then
+                echo "✅ 数据库服务已可用"
+                return 0
+            fi
         fi
         
         echo "  尝试 $attempt/$max_attempts: 数据库未就绪，等待 5 秒..."
@@ -67,20 +77,35 @@ wait_for_database() {
 init_database() {
     echo "🗄️ 初始化SLURM数据库..."
     
-    # 创建数据库（如果不存在）
-    PGPASSWORD="$POSTGRES_PASSWORD" createdb -h "$SLURM_DB_HOST" -p "$SLURM_DB_PORT" -U "$POSTGRES_USER" "$SLURM_DB_NAME" 2>/dev/null || true
-    
-    # 创建SLURM数据库用户（如果不存在）
-    PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$SLURM_DB_HOST" -p "$SLURM_DB_PORT" -U "$POSTGRES_USER" -d "$SLURM_DB_NAME" -c "
-        DO \$\$
-        BEGIN
-            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$SLURM_DB_USER') THEN
-                CREATE USER $SLURM_DB_USER WITH PASSWORD '$SLURM_DB_PASSWORD';
-            END IF;
-        END
-        \$\$;
-        GRANT ALL PRIVILEGES ON DATABASE $SLURM_DB_NAME TO $SLURM_DB_USER;
-    " 2>/dev/null || echo "  数据库用户可能已存在"
+    if [ "$SLURM_DB_PORT" = "3306" ]; then
+        # MySQL数据库初始化
+        echo "  使用MySQL数据库初始化"
+        # MySQL数据库和用户已在Docker启动时创建，这里只需验证连接
+        # 通过调用后端初始化服务来创建SLURM数据库表
+        if command -v mysql >/dev/null 2>&1; then
+            mysql -h "$SLURM_DB_HOST" -P "$SLURM_DB_PORT" -u "$SLURM_DB_USER" -p"$SLURM_DB_PASSWORD" -e "SELECT 1;" >/dev/null 2>&1 || {
+                echo "❌ MySQL连接失败"
+                exit 1
+            }
+        fi
+    else
+        # PostgreSQL数据库初始化
+        echo "  使用PostgreSQL数据库初始化"
+        # 创建数据库（如果不存在）
+        PGPASSWORD="$POSTGRES_PASSWORD" createdb -h "$SLURM_DB_HOST" -p "$SLURM_DB_PORT" -U "$POSTGRES_USER" "$SLURM_DB_NAME" 2>/dev/null || true
+        
+        # 创建SLURM数据库用户（如果不存在）
+        PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$SLURM_DB_HOST" -p "$SLURM_DB_PORT" -U "$POSTGRES_USER" -d "$SLURM_DB_NAME" -c "
+            DO \$\$
+            BEGIN
+                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$SLURM_DB_USER') THEN
+                    CREATE USER $SLURM_DB_USER WITH PASSWORD '$SLURM_DB_PASSWORD';
+                END IF;
+            END
+            \$\$;
+            GRANT ALL PRIVILEGES ON DATABASE $SLURM_DB_NAME TO $SLURM_DB_USER;
+        " 2>/dev/null || echo "  数据库用户可能已存在"
+    fi
     
     echo "✅ 数据库初始化完成"
 }

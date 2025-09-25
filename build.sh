@@ -324,7 +324,7 @@ render_env_template_enhanced() {
     # 计算各种端口值
     local jupyterhub_port=$((external_port + 8))
     local gitea_port=$((external_port - 5070))
-    local apphub_port=$((external_port + 10))
+    local apphub_port=$((external_port + 45354))  # AppHub包仓库端口，用于内部包管理
     local https_port=$((external_port + 363))
     local debug_port=$((external_port - 79))
     
@@ -493,7 +493,7 @@ read_config() {
 # 获取所有服务名称
 get_all_services() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-build"
+        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-build slurm-master"
         return
     fi
     
@@ -746,6 +746,7 @@ get_service_path() {
             "backend-init") echo "src/backend" ;;  # backend-init 使用 backend 的 Dockerfile
             "apphub") echo "src/apphub" ;;
             "slurm-build") echo "src/slurm-build" ;;
+            "slurm-master") echo "src/slurm-master" ;;
             *) echo "" ;;
         esac
     else
@@ -1573,6 +1574,133 @@ render_docker_compose_templates() {
     else
         print_warning "⚠ Docker Compose 配置语法验证失败，请检查生成的文件"
     fi
+    echo
+}
+
+# 同步 .env 和 .env.example 文件
+sync_env_files() {
+    print_info "==========================================="
+    print_info "同步环境变量配置文件"
+    print_info "==========================================="
+    
+    local env_file="$SCRIPT_DIR/.env"
+    local env_example_file="$SCRIPT_DIR/.env.example"
+    
+    if [[ ! -f "$env_file" ]]; then
+        print_error ".env 文件不存在: $env_file"
+        return 1
+    fi
+    
+    # 创建备份
+    if [[ -f "$env_example_file" ]]; then
+        local backup_name=".env.example.backup-$(date +%Y%m%d-%H%M%S)"
+        cp "$env_example_file" "$SCRIPT_DIR/$backup_name"
+        print_info "已备份现有 .env.example: $backup_name"
+    fi
+    
+    print_info "从 .env 同步配置到 .env.example"
+    print_info "源文件: $env_file"
+    print_info "目标文件: $env_example_file"
+    
+    # 复制 .env 到 .env.example，并替换敏感值为占位符
+    cp "$env_file" "$env_example_file"
+    
+    # 替换敏感信息为占位符变量
+    sed_inplace 's/^EXTERNAL_HOST=.*/EXTERNAL_HOST=${EXTERNAL_HOST}/' "$env_example_file"
+    sed_inplace 's/^DOMAIN=.*/DOMAIN=${EXTERNAL_HOST}/' "$env_example_file"
+    sed_inplace 's/^EXTERNAL_PORT=.*/EXTERNAL_PORT=${EXTERNAL_PORT}/' "$env_example_file"
+    sed_inplace 's/^EXTERNAL_SCHEME=.*/EXTERNAL_SCHEME=${EXTERNAL_SCHEME}/' "$env_example_file"
+    sed_inplace 's/^NGINX_PORT=.*/NGINX_PORT=${EXTERNAL_PORT}/' "$env_example_file"
+    sed_inplace 's/^JUPYTERHUB_EXTERNAL_PORT=.*/JUPYTERHUB_EXTERNAL_PORT=${JUPYTERHUB_PORT}/' "$env_example_file"
+    sed_inplace 's/^GITEA_EXTERNAL_PORT=.*/GITEA_EXTERNAL_PORT=${GITEA_PORT}/' "$env_example_file"
+    sed_inplace 's/^APPHUB_PORT=.*/APPHUB_PORT=${APPHUB_PORT}/' "$env_example_file"
+    sed_inplace 's/^HTTPS_PORT=.*/HTTPS_PORT=${HTTPS_PORT}/' "$env_example_file"
+    sed_inplace 's/^DEBUG_PORT=.*/DEBUG_PORT=${DEBUG_PORT}/' "$env_example_file"
+    
+    # 替换动态生成的 URL 配置为占位符
+    sed_inplace 's/^JUPYTERHUB_PUBLIC_HOST=.*/JUPYTERHUB_PUBLIC_HOST=${EXTERNAL_HOST}:${EXTERNAL_PORT}/' "$env_example_file"
+    sed_inplace 's|^JUPYTERHUB_BASE_URL=.*|JUPYTERHUB_BASE_URL=${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/jupyter/|' "$env_example_file"
+    sed_inplace 's|^JUPYTERHUB_CORS_ORIGIN=.*|JUPYTERHUB_CORS_ORIGIN=${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}|' "$env_example_file"
+    sed_inplace 's|^ROOT_URL=.*|ROOT_URL=${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/gitea/|' "$env_example_file"
+    
+    cleanup_backup_files "$SCRIPT_DIR"
+    
+    print_success "✓ 环境变量文件同步完成"
+    print_info "已将 .env 中的配置同步到 .env.example，并将动态值替换为占位符变量"
+    echo
+}
+
+# 同步所有配置文件
+sync_all_configs() {
+    local force_mode="${1:-false}"
+    
+    print_info "==========================================="
+    print_info "同步所有配置文件"
+    print_info "==========================================="
+    
+    # 1. 同步环境变量文件
+    sync_env_files
+    
+    # 2. 验证 docker-compose.yml 和 docker-compose.yml.example 是否同步
+    local compose_file="$SCRIPT_DIR/docker-compose.yml"
+    local compose_example_file="$SCRIPT_DIR/docker-compose.yml.example"
+    
+    if [[ -f "$compose_file" ]] && [[ -f "$compose_example_file" ]]; then
+        # 比较两个文件的内容（忽略注释和空行）
+        local compose_content=$(grep -v '^[[:space:]]*#' "$compose_file" | grep -v '^[[:space:]]*$' | sort)
+        local example_content=$(grep -v '^[[:space:]]*#' "$compose_example_file" | grep -v '^[[:space:]]*$' | sort)
+        
+        if [[ "$compose_content" == "$example_content" ]]; then
+            print_success "✓ docker-compose.yml 和 docker-compose.yml.example 已同步"
+        else
+            print_warning "⚠ docker-compose.yml 和 docker-compose.yml.example 内容不同步"
+            if [[ "$force_mode" == "true" ]]; then
+                print_info "强制模式：从 docker-compose.yml 更新 docker-compose.yml.example"
+                cp "$compose_file" "$compose_example_file"
+                print_success "✓ 已强制同步 docker-compose 文件"
+            else
+                print_info "建议运行: ./build.sh render-templates docker-compose 重新生成配置"
+            fi
+        fi
+    else
+        print_warning "⚠ docker-compose 文件缺失，建议运行模板渲染"
+    fi
+    
+    # 3. 检查配置文件的一致性
+    print_info "检查配置文件一致性..."
+    
+    local issues_found=0
+    
+    # 检查环境变量是否在两个文件中都存在
+    if [[ -f "$SCRIPT_DIR/.env" ]] && [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+        local env_vars=$(grep -E '^[A-Z_]+=.*' "$SCRIPT_DIR/.env" | cut -d'=' -f1 | sort)
+        local example_vars=$(grep -E '^[A-Z_]+=.*' "$SCRIPT_DIR/.env.example" | cut -d'=' -f1 | sort)
+        
+        # 检查 .env 中的变量是否都在 .env.example 中
+        local missing_in_example=$(comm -23 <(echo "$env_vars") <(echo "$example_vars"))
+        if [[ -n "$missing_in_example" ]]; then
+            print_warning "⚠ 以下变量在 .env 中存在但在 .env.example 中缺失:"
+            echo "$missing_in_example" | sed 's/^/    /'
+            ((issues_found++))
+        fi
+        
+        # 检查 .env.example 中的变量是否都在 .env 中
+        local missing_in_env=$(comm -13 <(echo "$env_vars") <(echo "$example_vars"))
+        if [[ -n "$missing_in_env" ]]; then
+            print_warning "⚠ 以下变量在 .env.example 中存在但在 .env 中缺失:"
+            echo "$missing_in_env" | sed 's/^/    /'
+            ((issues_found++))
+        fi
+    fi
+    
+    if [[ $issues_found -eq 0 ]]; then
+        print_success "✓ 配置文件一致性检查通过"
+    else
+        print_warning "⚠ 发现 $issues_found 个配置不一致问题"
+        print_info "建议手动检查并修复上述问题"
+    fi
+    
+    print_success "✓ 配置文件同步检查完成"
     echo
 }
 
@@ -5861,7 +5989,8 @@ show_help() {
     echo "  create-env [dev|prod] [--force] - 创建环境配置"
     echo "  detect-ip [interface] [--all]   - 检测网卡IP地址（支持自动检测和指定网卡）"
     echo "  validate-env                    - 校验环境配置"
-    echo "  render-templates [nginx|jupyterhub|docker-compose|all] - 渲染配置模板"
+    echo "  render-templates [nginx|jupyterhub|docker-compose|env|all] - 渲染配置模板"
+    echo "  sync-config [force] - 同步所有配置文件(.env, docker-compose.yml)"
     echo "    • docker-compose 额外参数: --oceanbase-init-dir <path> 指定 OceanBase 初始化目录"
     echo "  version                         - 显示版本"
     echo "  help                            - 显示帮助"
@@ -8358,6 +8487,10 @@ main() {
                     shift 2
                     render_docker_compose_templates "$@"
                     ;;
+                "env")
+                    # 同步 .env 和 .env.example 文件
+                    sync_env_files
+                    ;;
                 "all")
                     render_nginx_templates
                     render_jupyterhub_templates
@@ -8367,10 +8500,15 @@ main() {
                     ;;
                 *)
                     print_error "未知的模板类型: $2"
-                    print_info "可用模板类型: nginx, jupyterhub, docker-compose, all"
+                    print_info "可用模板类型: nginx, jupyterhub, docker-compose, env, all"
                     exit 1
                     ;;
             esac
+            ;;
+            
+        "sync-config")
+            # 整体配置同步命令
+            sync_all_configs "${2:-false}"
             ;;
             
         "version")

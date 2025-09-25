@@ -8,7 +8,6 @@ ControlAddr=${SLURM_CONTROLLER_HOST}
 
 # 认证配置
 AuthType=${SLURM_AUTH_TYPE}
-AuthInfo=/etc/munge/munge.key
 
 # 数据库配置
 AccountingStorageType=accounting_storage/slurmdbd
@@ -20,20 +19,8 @@ AccountingStoreFlags=job_comment,job_script,job_env
 
 # 作业调度配置
 SchedulerType=sched/backfill
-SchedulerParameters=default_queue_depth=100,max_rpc_cnt=0,partition_job_depth=0
 SelectType=select/cons_tres
 SelectTypeParameters=CR_Core_Memory
-
-# 作业管理配置
-JobMaxJobs=${SLURM_MAX_JOB_COUNT}
-MaxArraySize=${SLURM_MAX_ARRAY_SIZE}
-DefaultTime=${SLURM_DEFAULT_TIME_LIMIT}
-MaxTime=${SLURM_MAX_TIME_LIMIT}
-
-# 进程跟踪配置
-ProctrackType=proctrack/cgroup
-TaskPlugin=task/cgroup
-TaskPluginParam=SlurmdOffSpec
 
 # 通信配置
 SlurmctldPort=${SLURM_CONTROLLER_PORT}
@@ -54,39 +41,20 @@ SlurmdPidFile=/var/run/slurm/slurmd.pid
 
 # 网络配置
 MessageTimeout=60
-GetEnvTimeout=2
 KillWait=30
 MinJobAge=300
 Waittime=0
 
 # 插件目录
-PluginDir=/usr/lib/x86_64-linux-gnu/slurm-wlm
-PlugStackConfig=/etc/slurm/plugstack.conf
+PluginDir=/usr/lib/aarch64-linux-gnu/slurm
+
+# 资源限制配置
+MaxJobCount=${SLURM_MAX_JOB_COUNT}
+MaxArraySize=${SLURM_MAX_ARRAY_SIZE}
 
 # 计算节点配置
 # 测试节点定义
 NodeName=${SLURM_TEST_NODES} CPUs=${SLURM_TEST_NODE_CPUS} RealMemory=${SLURM_TEST_NODE_MEMORY} Sockets=1 CoresPerSocket=${SLURM_TEST_NODE_CPUS} ThreadsPerCore=1 State=UNKNOWN
 
 # 分区定义
-PartitionName=${SLURM_PARTITION_NAME} Nodes=${SLURM_TEST_NODES} Default=${SLURM_DEFAULT_PARTITION} MaxTime=INFINITE State=UP
-
-# 资源限制配置
-MaxJobCount=${SLURM_MAX_JOB_COUNT}
-MaxSubmitJobs=1000
-MaxStepCount=40000
-MaxTasksPerNode=128
-
-# 高可用配置（单节点模式下禁用）
-# SlurmctldHost=${SLURM_CONTROLLER_HOST}
-
-# cgroup配置支持
-CgroupAutomount=yes
-ConstrainCores=yes
-ConstrainRAMSpace=yes
-ConstrainSwapSpace=no
-ConstrainDevices=no
-AllowedRamSpace=100.0
-AllowedSwapSpace=0.0
-
-# 作业提交控制
-JobSubmitPlugins=lua
+PartitionName=${SLURM_PARTITION_NAME} Nodes=${SLURM_TEST_NODES} Default=YES MaxTime=INFINITE State=UP

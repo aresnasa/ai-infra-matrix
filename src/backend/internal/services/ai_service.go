@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -670,51 +671,100 @@ func (s *aiServiceImpl) InitDefaultConfigs() error {
 	if totalCount == 0 {
 		logrus.Info("数据库中没有AI配置，开始创建默认配置...")
 
-		// 创建默认的OpenAI配置
-		openaiConfig := &models.AIAssistantConfig{
-			Name:         "默认 OpenAI GPT-4",
-			Provider:     models.ProviderOpenAI,
-			ModelType:    models.ModelTypeChat,
-			APIEndpoint:  "https://api.openai.com/v1",
-			Model:        "gpt-4",
-			MaxTokens:    4096,
-			Temperature:  0.7,
-			TopP:         1.0,
-			SystemPrompt: "你是一个智能的AI助手，请提供准确、有用的回答。",
-			IsEnabled:    true,
-			IsDefault:    true, // 设为默认配置
-			Description:  "默认的OpenAI GPT-4模型配置",
-			Category:     "通用对话",
+		// 从环境变量读取配置
+		openaiAPIKey := os.Getenv("OPENAI_API_KEY")
+		openaiBaseURL := os.Getenv("OPENAI_BASE_URL")
+		if openaiBaseURL == "" {
+			openaiBaseURL = "https://api.openai.com/v1"
+		}
+		openaiModel := os.Getenv("OPENAI_DEFAULT_MODEL")
+		if openaiModel == "" {
+			openaiModel = "gpt-4"
 		}
 
-		if err := s.CreateConfig(openaiConfig); err != nil {
-			logrus.Errorf("创建OpenAI配置失败: %v", err)
-			return fmt.Errorf("创建OpenAI配置失败: %v", err)
+		claudeAPIKey := os.Getenv("CLAUDE_API_KEY")
+		claudeBaseURL := os.Getenv("CLAUDE_BASE_URL")
+		if claudeBaseURL == "" {
+			claudeBaseURL = "https://api.anthropic.com"
+		}
+		claudeModel := os.Getenv("CLAUDE_DEFAULT_MODEL")
+		if claudeModel == "" {
+			claudeModel = "claude-3-5-sonnet-20241022"
 		}
 
-		// 创建默认的Claude配置
-		claudeConfig := &models.AIAssistantConfig{
-			Name:         "默认 Claude 3.5 Sonnet",
-			Provider:     models.ProviderClaude,
-			ModelType:    models.ModelTypeChat,
-			APIEndpoint:  "https://api.anthropic.com",
-			Model:        "claude-3-5-sonnet-20241022",
-			MaxTokens:    4096,
-			Temperature:  0.7,
-			TopP:         1.0,
-			SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
-			IsEnabled:    true,
-			IsDefault:    false, // 只有一个默认配置
-			Description:  "默认的Claude 3.5 Sonnet模型配置",
-			Category:     "通用对话",
+		systemPrompt := os.Getenv("AI_ASSISTANT_DEFAULT_SYSTEM_PROMPT")
+		if systemPrompt == "" {
+			systemPrompt = "你是一个智能的AI助手，请提供准确、有用的回答。"
 		}
 
-		if err := s.CreateConfig(claudeConfig); err != nil {
-			logrus.Errorf("创建Claude配置失败: %v", err)
-			return fmt.Errorf("创建Claude配置失败: %v", err)
+		createdConfigs := 0
+
+		// 创建默认的OpenAI配置（如果提供了API密钥）
+		if openaiAPIKey != "" {
+			openaiConfig := &models.AIAssistantConfig{
+				Name:         "默认 OpenAI GPT-4",
+				Provider:     models.ProviderOpenAI,
+				ModelType:    models.ModelTypeChat,
+				APIKey:       openaiAPIKey,
+				APIEndpoint:  openaiBaseURL,
+				Model:        openaiModel,
+				MaxTokens:    4096,
+				Temperature:  0.7,
+				TopP:         1.0,
+				SystemPrompt: systemPrompt,
+				IsEnabled:    true,
+				IsDefault:    true, // 设为默认配置
+				Description:  "默认的OpenAI GPT-4模型配置",
+				Category:     "通用对话",
+			}
+
+			if err := s.CreateConfig(openaiConfig); err != nil {
+				logrus.Errorf("创建OpenAI配置失败: %v", err)
+			} else {
+				logrus.Info("已创建默认OpenAI配置")
+				createdConfigs++
+			}
+		} else {
+			logrus.Warn("未提供OPENAI_API_KEY环境变量，跳过OpenAI配置创建")
 		}
 
-		logrus.Infof("默认AI配置初始化完成，创建了 %d 个基础配置", 2)
+		// 创建默认的Claude配置（如果提供了API密钥）
+		if claudeAPIKey != "" {
+			claudeConfig := &models.AIAssistantConfig{
+				Name:         "默认 Claude 3.5 Sonnet",
+				Provider:     models.ProviderClaude,
+				ModelType:    models.ModelTypeChat,
+				APIKey:       claudeAPIKey,
+				APIEndpoint:  claudeBaseURL,
+				Model:        claudeModel,
+				MaxTokens:    4096,
+				Temperature:  0.7,
+				TopP:         1.0,
+				SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
+				IsEnabled:    true,
+				IsDefault:    (createdConfigs == 0), // 如果没有创建OpenAI配置，则Claude设为默认
+				Description:  "默认的Claude 3.5 Sonnet模型配置",
+				Category:     "通用对话",
+			}
+
+			if err := s.CreateConfig(claudeConfig); err != nil {
+				logrus.Errorf("创建Claude配置失败: %v", err)
+			} else {
+				logrus.Info("已创建默认Claude配置")
+				createdConfigs++
+			}
+		} else {
+			logrus.Warn("未提供CLAUDE_API_KEY环境变量，跳过Claude配置创建")
+		}
+
+		// 创建其他提供商的配置
+		s.createOtherProviderConfigs(&createdConfigs)
+
+		if createdConfigs > 0 {
+			logrus.Infof("默认AI配置初始化完成，创建了 %d 个基础配置", createdConfigs)
+		} else {
+			logrus.Warn("未创建任何AI配置，请检查环境变量设置")
+		}
 	} else if defaultCount == 0 {
 		// 如果有配置但没有默认配置，将第一个启用的配置设为默认
 		var firstConfig models.AIAssistantConfig
@@ -732,4 +782,122 @@ func (s *aiServiceImpl) InitDefaultConfigs() error {
 	}
 
 	return nil
+}
+
+// createOtherProviderConfigs 创建其他AI提供商的配置
+func (s *aiServiceImpl) createOtherProviderConfigs(createdConfigs *int) {
+	// 创建DeepSeek配置
+	if deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY"); deepseekAPIKey != "" {
+		deepseekConfig := &models.AIAssistantConfig{
+			Name:         "默认 DeepSeek Chat",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       deepseekAPIKey,
+			APIEndpoint:  os.Getenv("DEEPSEEK_BASE_URL"),
+			Model:        getEnvOrDefault("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是DeepSeek助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的DeepSeek模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := s.CreateConfig(deepseekConfig); err != nil {
+			logrus.Errorf("创建DeepSeek配置失败: %v", err)
+		} else {
+			logrus.Info("已创建默认DeepSeek配置")
+			*createdConfigs++
+		}
+	}
+
+	// 创建GLM配置
+	if glmAPIKey := os.Getenv("GLM_API_KEY"); glmAPIKey != "" {
+		glmConfig := &models.AIAssistantConfig{
+			Name:         "默认 GLM-4",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       glmAPIKey,
+			APIEndpoint:  os.Getenv("GLM_BASE_URL"),
+			Model:        getEnvOrDefault("GLM_DEFAULT_MODEL", "glm-4"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是智谱AI的GLM助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的智谱AI GLM-4模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := s.CreateConfig(glmConfig); err != nil {
+			logrus.Errorf("创建GLM配置失败: %v", err)
+		} else {
+			logrus.Info("已创建默认GLM配置")
+			*createdConfigs++
+		}
+	}
+
+	// 创建通义千问配置
+	if qwenAPIKey := os.Getenv("QWEN_API_KEY"); qwenAPIKey != "" {
+		qwenConfig := &models.AIAssistantConfig{
+			Name:         "默认 通义千问",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       qwenAPIKey,
+			APIEndpoint:  os.Getenv("QWEN_BASE_URL"),
+			Model:        getEnvOrDefault("QWEN_DEFAULT_MODEL", "qwen-turbo"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是通义千问助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的阿里云通义千问模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := s.CreateConfig(qwenConfig); err != nil {
+			logrus.Errorf("创建通义千问配置失败: %v", err)
+		} else {
+			logrus.Info("已创建默认通义千问配置")
+			*createdConfigs++
+		}
+	}
+
+	// 创建本地AI配置
+	if localAIEnabled := os.Getenv("LOCAL_AI_ENABLED"); localAIEnabled == "true" {
+		localConfig := &models.AIAssistantConfig{
+			Name:         "本地 AI 模型",
+			Provider:     models.ProviderLocal,
+			ModelType:    models.ModelTypeChat,
+			APIEndpoint:  getEnvOrDefault("LOCAL_AI_BASE_URL", "http://localhost:8080/v1"),
+			Model:        getEnvOrDefault("LOCAL_AI_DEFAULT_MODEL", "llama2"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是一个本地部署的AI助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "本地部署的AI模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := s.CreateConfig(localConfig); err != nil {
+			logrus.Errorf("创建本地AI配置失败: %v", err)
+		} else {
+			logrus.Info("已创建默认本地AI配置")
+			*createdConfigs++
+		}
+	}
+}
+
+// getEnvOrDefault 获取环境变量或返回默认值
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

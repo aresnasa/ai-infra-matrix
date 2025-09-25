@@ -111,9 +111,9 @@ check_database_connection() {
     local db_name=${SLURM_DB_NAME:-slurm_acct_db}
     local db_user=${SLURM_DB_USER:-slurm}
     
-    # 检查数据库连接
-    if ! timeout 5 pg_isready -h "$db_host" -p "$db_port" -U "$db_user" -d "$db_name" >/dev/null 2>&1; then
-        log_error "数据库连接失败"
+    # 检查数据库端口连通性
+    if ! timeout 5 nc -z "$db_host" "$db_port" >/dev/null 2>&1; then
+        log_error "数据库端口 $db_host:$db_port 不可达"
         return 1
     fi
     

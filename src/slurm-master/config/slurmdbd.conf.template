@@ -5,15 +5,14 @@
 
 # 认证配置
 AuthType=${SLURM_AUTH_TYPE}
-AuthInfo=/etc/munge/munge.key
 
 # 数据库连接配置
 DbdAddr=${SLURM_SLURMDBD_HOST}
 DbdHost=${SLURM_SLURMDBD_HOST}
 DbdPort=${SLURM_SLURMDBD_PORT}
 
-# 数据库后端配置（使用PostgreSQL）
-StorageType=accounting_storage/slurmdbd
+# 数据库后端配置（使用PostgreSQL通过MySQL插件）
+StorageType=accounting_storage/mysql
 StorageHost=${SLURM_DB_HOST}
 StoragePort=${SLURM_DB_PORT}
 StorageUser=${SLURM_DB_USER}
