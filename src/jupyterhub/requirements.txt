@@ -1,6 +1,6 @@
 # JupyterHub后端集成核心依赖
 jupyterhub==5.3.0
-jupyterlab==4.4.5
+jupyterlab==4.4.8
 notebook==7.4.4
 requests==2.32.4
 tornado==6.5.1
