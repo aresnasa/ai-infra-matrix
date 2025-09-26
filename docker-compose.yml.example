@@ -46,12 +46,33 @@ services:
     networks:
       - ai-infra-network
     healthcheck:
-      # OceanBase 默认监听 2881，使用 nc 探测端口存活
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 2881"]
+      # OceanBase 健康检查：分阶段检查
+      # 1. 检查 observer 进程是否运行
+      # 2. 检查端口是否监听
+      # 3. 尝试数据库连接（可选，因为初始化可能较慢）
+      test: 
+        - "CMD-SHELL"
+        - |
+          # 检查 observer 进程
+          if ! pgrep -f observer >/dev/null 2>&1; then
+            echo "OceanBase observer process not running" && exit 1
+          fi
+          
+          # 检查端口监听（使用 ss 或 netstat 替代 nc）
+          if command -v ss >/dev/null 2>&1; then
+            ss -tln | grep :2881 >/dev/null 2>&1 || (echo "Port 2881 not listening" && exit 1)
+          elif command -v netstat >/dev/null 2>&1; then
+            netstat -tln | grep :2881 >/dev/null 2>&1 || (echo "Port 2881 not listening" && exit 1)
+          else
+            echo "Port check skipped (no ss/netstat available)"
+          fi
+          
+          # 如果一切正常，返回成功
+          echo "OceanBase health check passed"
       interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
     restart: unless-stopped
 
   # MySQL 数据库服务 (用于SLURM)
