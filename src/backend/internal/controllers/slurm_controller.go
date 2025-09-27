@@ -31,13 +31,18 @@ type SlurmController struct {
 }
 
 func NewSlurmController() *SlurmController {
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = &config.Config{} // 使用默认配置
+	}
+	
 	return &SlurmController{
 		slurmSvc:   services.NewSlurmService(),
 		saltSvc:    services.NewSaltStackService(),
 		sshSvc:     services.NewSSHService(),
 		clusterSvc: services.NewSlurmClusterService(database.DB),
 		taskSvc:    services.NewSlurmTaskService(database.DB),
-		config:     config.Get(),
+		config:     cfg,
 		db:         database.DB,
 	}
 }
