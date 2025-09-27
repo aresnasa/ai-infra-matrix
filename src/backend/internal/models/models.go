@@ -773,6 +773,8 @@ type Cluster struct {
 	Description string    `json:"description" gorm:"type:text"`
 	Host        string    `json:"host" gorm:"not null;size:255"`
 	Port        int       `json:"port" gorm:"default:22"`
+	Username    string    `json:"username" gorm:"size:100"`   // SSH用户名
+	Password    string    `json:"password,omitempty" gorm:"size:255"` // SSH密码
 	Status      string    `json:"status" gorm:"not null;default:'active';size:20"` // active, inactive, maintenance
 	Config      string    `json:"config" gorm:"type:json"`                         // 集群配置JSON
 	CreatedAt   time.Time `json:"created_at"`

@@ -751,6 +751,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.GET("/progress/:opId", slurmController.GetProgress)
 		slurm.GET("/progress/:opId/stream", slurmController.StreamProgress)
 		slurm.GET("/tasks", slurmController.GetTasks)
+		slurm.GET("/tasks/statistics", slurmController.GetTaskStatistics)
+		slurm.GET("/tasks/:task_id", slurmController.GetTaskDetail)
+		slurm.POST("/tasks/:task_id/cancel", slurmController.CancelTask)
+		slurm.POST("/tasks/:task_id/retry", slurmController.RetryTask)
+		slurm.DELETE("/tasks/:task_id", slurmController.DeleteTask)
 
 		// 扩缩容相关路由
 		slurm.GET("/scaling/status", slurmController.GetScalingStatus)
@@ -840,4 +845,45 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	// 作业模板管理路由（需要认证）
 	jobTemplateController := controllers.NewJobTemplateController(database.DB)
 	jobTemplateController.RegisterRoutes(api)
+
+	// AI助手管理路由（需要认证）
+	aiAssistantController := controllers.NewAIAssistantController()
+	ai := api.Group("/ai")
+	ai.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// AI配置管理
+		ai.POST("/configs", aiAssistantController.CreateConfig)
+		ai.GET("/configs", aiAssistantController.ListConfigs)
+		ai.GET("/configs/:id", aiAssistantController.GetConfig)
+		ai.PUT("/configs/:id", aiAssistantController.UpdateConfig)
+		ai.DELETE("/configs/:id", aiAssistantController.DeleteConfig)
+
+		// 对话管理
+		ai.POST("/conversations", aiAssistantController.CreateConversation)
+		ai.GET("/conversations", aiAssistantController.ListConversations)
+		ai.GET("/conversations/:id", aiAssistantController.GetConversation)
+		ai.DELETE("/conversations/:id", aiAssistantController.DeleteConversation)
+		ai.POST("/conversations/:id/stop", aiAssistantController.StopConversation)
+		ai.POST("/conversations/:id/resume", aiAssistantController.ResumeConversation)
+
+		// 消息管理
+		ai.POST("/conversations/:id/messages", aiAssistantController.SendMessage)
+		ai.GET("/conversations/:id/messages", aiAssistantController.GetMessages)
+		ai.GET("/messages/:id/status", aiAssistantController.GetMessageStatus)
+
+		// 集群操作
+		ai.POST("/cluster-operations", aiAssistantController.SubmitClusterOperation)
+		ai.GET("/cluster-operations/:id/status", aiAssistantController.GetOperationStatus)
+
+		// 系统监控
+		ai.GET("/system/health", aiAssistantController.GetSystemHealth)
+		ai.GET("/system/usage", aiAssistantController.GetUsageStats)
+
+		// 连接测试
+		ai.POST("/test-connection", aiAssistantController.TestBotConnection)
+		ai.GET("/models", aiAssistantController.GetBotModels)
+
+		// 快速聊天
+		ai.POST("/quick-chat", aiAssistantController.QuickChat)
+	}
 }

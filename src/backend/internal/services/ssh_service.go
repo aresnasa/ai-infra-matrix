@@ -803,8 +803,15 @@ func (s *SSHService) executeCommand(client *ssh.Client, command string) (string,
 	}
 	defer session.Close()
 
-	// 设置命令超时
-	ctx, cancel := context.WithTimeout(context.Background(), s.config.CommandTimeout)
+	// 设置命令超时 - 对于安装命令使用更长的超时时间
+	timeout := s.config.CommandTimeout
+	if strings.Contains(command, "apt-get") || strings.Contains(command, "yum") || 
+	   strings.Contains(command, "dnf") || strings.Contains(command, "zypper") ||
+	   strings.Contains(command, "salt-minion") {
+		timeout = 10 * time.Minute // SaltStack安装使用10分钟超时
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// 获取输出管道

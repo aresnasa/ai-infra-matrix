@@ -232,8 +232,13 @@ const SlurmScalingPage = () => {
         return;
       }
 
-      await extendedSlurmAPI.scaleUp(nodes);
-      message.success('扩容任务已提交');
+      const response = await extendedSlurmAPI.scaleUp(nodes);
+      const opId = response.data?.opId;
+      if (opId) {
+        message.success(`扩容任务已提交（任务ID: ${opId}），可在任务页面查看进度`);
+      } else {
+        message.success('扩容任务已提交');
+      }
       setScaleUpModal(false);
       scaleUpForm.resetFields();
       loadData();

@@ -90,6 +90,16 @@ func (jc *JobController) SubmitJob(c *gin.Context) {
 		return
 	}
 
+	// 转换userID为uint类型
+	userIDUint, err := strconv.ParseUint(userID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: "无效的用户ID",
+		})
+		return
+	}
+
 	var req models.SubmitJobRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{
@@ -101,7 +111,7 @@ func (jc *JobController) SubmitJob(c *gin.Context) {
 
 	req.UserID = userID
 
-	job, err := jc.jobService.SubmitJob(c.Request.Context(), &req)
+	job, err := jc.jobService.SubmitJob(c.Request.Context(), &req, uint(userIDUint))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.Response{
 			Code:    500,
@@ -156,8 +166,16 @@ func (jc *JobController) SubmitJobAsync(c *gin.Context) {
 			pm.Complete(opID, failed, "作业提交完成")
 		}()
 
+		// 转换userID为uint类型
+		userIDUint, err := strconv.ParseUint(r.UserID, 10, 32)
+		if err != nil {
+			failed = true
+			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "submit", Message: "无效的用户ID: " + err.Error()})
+			return
+		}
+
 		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "submit", Message: "提交作业到Slurm"})
-		job, err := jc.jobService.SubmitJob(context.Background(), &r)
+		job, err := jc.jobService.SubmitJob(context.Background(), &r, uint(userIDUint))
 		if err != nil {
 			failed = true
 			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "submit", Message: err.Error()})

@@ -520,15 +520,20 @@ export const slurmAPI = {
   getJobs: () => api.get('/slurm/jobs'),
   // 扩缩容相关 API
   getScalingStatus: () => api.get('/slurm/scaling/status'),
-  scaleUp: (nodes) => api.post('/slurm/scaling/scale-up', { nodes }),
+  scaleUp: (nodes) => api.post('/slurm/scaling/scale-up/async', { nodes }),
   scaleDown: (nodeIds) => api.post('/slurm/scaling/scale-down', { node_ids: nodeIds }),
   getNodeTemplates: () => api.get('/slurm/node-templates'),
   createNodeTemplate: (template) => api.post('/slurm/node-templates', template),
   updateNodeTemplate: (id, template) => api.put(`/slurm/node-templates/${id}`, template),
   deleteNodeTemplate: (id) => api.delete(`/slurm/node-templates/${id}`),
-  // 任务管理 API
-  getTasks: () => api.get('/slurm/tasks'),
+  // 任务管理 API (基础)
+  getTasks: (params) => api.get('/slurm/tasks', { params }),
   getProgress: (opId) => api.get(`/slurm/progress/${opId}`),
+  // 增强任务管理 API
+  getTaskDetail: (taskId) => api.get(`/slurm/tasks/${taskId}/detail`),
+  getTaskStatistics: (params) => api.get('/slurm/tasks/statistics', { params }),
+  cancelTask: (taskId, reason) => api.post(`/slurm/tasks/${taskId}/cancel`, { reason }),
+  retryTask: (taskId) => api.post(`/slurm/tasks/${taskId}/retry`),
   // SSH连接测试 API
   testSSHConnection: (nodeConfig) => api.post('/slurm/ssh/test-connection', nodeConfig),
   // 主机初始化 API

@@ -11,6 +11,7 @@ import (
     "strings"
     "time"
 
+    "github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
     "github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
     "github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
     "github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -20,17 +21,25 @@ import (
 
 // SlurmController 提供Slurm集群初始化与仓库配置能力，并包含扩缩容与SaltStack集成
 type SlurmController struct {
-    svc     *services.SlurmService
-    sshSvc  *services.SSHService
-    saltSvc *services.SaltStackService
+	slurmSvc    *services.SlurmService
+	saltSvc     *services.SaltStackService
+	sshSvc      *services.SSHService
+	clusterSvc  *services.SlurmClusterService
+	taskSvc     *services.SlurmTaskService
+	config      *config.Config
+	db          *gorm.DB
 }
 
 func NewSlurmController() *SlurmController {
-    return &SlurmController{
-        svc:     services.NewSlurmServiceWithDB(database.DB),
-        sshSvc:  services.NewSSHService(),
-        saltSvc: services.NewSaltStackService(),
-    }
+	return &SlurmController{
+		slurmSvc:   services.NewSlurmService(),
+		saltSvc:    services.NewSaltStackService(),
+		sshSvc:     services.NewSSHService(),
+		clusterSvc: services.NewSlurmClusterService(database.DB),
+		taskSvc:    services.NewSlurmTaskService(database.DB),
+		config:     config.Get(),
+		db:         database.DB,
+	}
 }
 
 // --- 请求与响应结构 ---
@@ -82,7 +91,7 @@ type InitNodesResponse struct {
 func (c *SlurmController) GetSummary(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 4*time.Second)
     defer cancel()
-    sum, err := c.svc.GetSummary(ctxWithTimeout)
+    sum, err := c.slurmSvc.GetSummary(ctxWithTimeout)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -94,7 +103,7 @@ func (c *SlurmController) GetSummary(ctx *gin.Context) {
 func (c *SlurmController) GetNodes(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
-    nodes, demo, err := c.svc.GetNodes(ctxWithTimeout)
+    nodes, demo, err := c.slurmSvc.GetNodes(ctxWithTimeout)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -106,7 +115,7 @@ func (c *SlurmController) GetNodes(ctx *gin.Context) {
 func (c *SlurmController) GetJobs(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
-    jobs, demo, err := c.svc.GetJobs(ctxWithTimeout)
+    jobs, demo, err := c.slurmSvc.GetJobs(ctxWithTimeout)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -129,7 +138,7 @@ func (c *SlurmController) GetScalingStatus(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
 
-    status, err := c.svc.GetScalingStatus(ctxWithTimeout)
+    status, err := c.slurmSvc.GetScalingStatus(ctxWithTimeout)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -197,9 +206,20 @@ func (c *SlurmController) ScaleUpAsync(ctx *gin.Context) {
             }
         }
 
+        pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "add-nodes-to-cluster", Message: "添加节点到SLURM集群数据库"})
+        // 添加节点到数据库
+        for _, node := range r.Nodes {
+            if err := c.addNodeToCluster(node.Host, node.Port, node.User, "compute"); err != nil {
+                failed = true
+                pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "add-nodes-to-cluster", Message: fmt.Sprintf("添加节点 %s 失败: %v", node.Host, err)})
+                continue
+            }
+            pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: fmt.Sprintf("add-node-%s", node.Host), Message: fmt.Sprintf("节点 %s 已添加到集群", node.Host), Host: node.Host})
+        }
+
         pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "scale-up-slurm", Message: "执行Slurm扩容"})
         // 执行扩容操作
-        scaleResults, err := c.svc.ScaleUp(context.Background(), r.Nodes)
+        scaleResults, err := c.slurmSvc.ScaleUp(context.Background(), r.Nodes)
         if err != nil {
             failed = true
             pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "scale-up-slurm", Message: err.Error()})
@@ -250,7 +270,7 @@ func (c *SlurmController) ScaleUp(ctx *gin.Context) {
     }
 
     // 执行扩容操作
-    scaleResults, err := c.svc.ScaleUp(ctxWithTimeout, req.Nodes)
+    scaleResults, err := c.slurmSvc.ScaleUp(ctxWithTimeout, req.Nodes)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -273,7 +293,7 @@ func (c *SlurmController) ScaleDown(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
     defer cancel()
 
-    results, err := c.svc.ScaleDown(ctxWithTimeout, req.NodeIDs)
+    results, err := c.slurmSvc.ScaleDown(ctxWithTimeout, req.NodeIDs)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -287,7 +307,7 @@ func (c *SlurmController) GetNodeTemplates(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
 
-    templates, err := c.svc.GetNodeTemplates(ctxWithTimeout)
+    templates, err := c.slurmSvc.GetNodeTemplates(ctxWithTimeout)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -306,7 +326,7 @@ func (c *SlurmController) CreateNodeTemplate(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
 
-    err := c.svc.CreateNodeTemplate(ctxWithTimeout, &template)
+    err := c.slurmSvc.CreateNodeTemplate(ctxWithTimeout, &template)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -327,7 +347,7 @@ func (c *SlurmController) UpdateNodeTemplate(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
 
-    err := c.svc.UpdateNodeTemplate(ctxWithTimeout, id, &template)
+    err := c.slurmSvc.UpdateNodeTemplate(ctxWithTimeout, id, &template)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -343,7 +363,7 @@ func (c *SlurmController) DeleteNodeTemplate(ctx *gin.Context) {
     ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
     defer cancel()
 
-    err := c.svc.DeleteNodeTemplate(ctxWithTimeout, id)
+    err := c.slurmSvc.DeleteNodeTemplate(ctxWithTimeout, id)
     if err != nil {
         ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
         return
@@ -552,25 +572,100 @@ func (c *SlurmController) GetProgress(ctx *gin.Context) {
 
 // GET /api/slurm/tasks - 获取所有任务列表
 func (c *SlurmController) GetTasks(ctx *gin.Context) {
-    pm := services.GetProgressManager()
-    tasks := pm.ListOperations()
+    // 解析查询参数
+    var req services.TaskListRequest
+    req.Page = 1
+    req.PageSize = 20
     
-    // 转换任务数据为前端友好的格式
-    taskList := make([]gin.H, 0, len(tasks))
-    for _, task := range tasks {
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+        return
+    }
+    
+    // 获取当前用户ID
+    userID, exists := ctx.Get("userID")
+    if exists {
+        if uid, ok := userID.(uint); ok {
+            req.UserID = &uid
+        }
+    }
+    
+    // 查询数据库中的持久化任务记录
+    dbTasks, total, err := c.taskSvc.ListTasks(ctx.Request.Context(), req)
+    if err != nil {
+        ctx.JSON(http.StatusInternalServerError, gin.H{"error": "查询任务列表失败: " + err.Error()})
+        return
+    }
+    
+    // 获取内存中的运行时任务
+    pm := services.GetProgressManager()
+    runtimeTasks := pm.ListOperations()
+    
+    // 合并并格式化任务数据
+    taskList := make([]gin.H, 0, len(dbTasks)+len(runtimeTasks))
+    
+    // 添加数据库任务
+    for _, task := range dbTasks {
+        taskData := gin.H{
+            "id":           task.TaskID,
+            "name":         task.Name,
+            "type":         task.Type,
+            "status":       task.Status,
+            "progress":     task.Progress,
+            "user_id":      task.UserID,
+            "user_name":    "",
+            "target_nodes": task.TargetNodes,
+            "nodes_total":  task.NodesTotal,
+            "nodes_success": task.NodesSuccess,
+            "nodes_failed": task.NodesFailed,
+            "current_step": task.StepsCurrent,
+            "steps_total":  task.StepsTotal,
+            "steps_count":  task.StepsCount,
+            "error_message": task.ErrorMessage,
+            "tags":         task.Tags,
+            "priority":     task.Priority,
+            "retry_count":  task.RetryCount,
+            "max_retries": task.MaxRetries,
+            "created_at":   task.CreatedAt.Unix(),
+            "started_at":   0,
+            "completed_at": 0,
+            "duration":     task.GetFormattedDuration(),
+            "success_rate": task.GetSuccessRate(),
+            "source":       "database",
+        }
+        
+        if task.User != nil {
+            taskData["user_name"] = task.User.Username
+        }
+        
+        if task.StartedAt != nil {
+            taskData["started_at"] = task.StartedAt.Unix()
+        }
+        
+        if task.CompletedAt != nil {
+            taskData["completed_at"] = task.CompletedAt.Unix()
+        }
+        
+        taskList = append(taskList, taskData)
+    }
+    
+    // 添加运行时任务（内存中的）
+    for _, task := range runtimeTasks {
         taskData := gin.H{
             "id":          task.ID,
             "name":        task.Name,
+            "type":        "runtime",
             "status":      string(task.Status),
+            "progress":    0.0,
             "started_at":  task.StartedAt.Unix(),
-            "completed_at": task.CompletedAt.Unix(),
-            "duration":    0,
+            "completed_at": 0,
+            "duration":    time.Since(task.StartedAt).Truncate(time.Second).String(),
+            "source":      "runtime",
         }
         
         if !task.CompletedAt.IsZero() {
-            taskData["duration"] = task.CompletedAt.Sub(task.StartedAt).Seconds()
-        } else {
-            taskData["duration"] = time.Since(task.StartedAt).Seconds()
+            taskData["completed_at"] = task.CompletedAt.Unix()
+            taskData["duration"] = task.CompletedAt.Sub(task.StartedAt).Truncate(time.Second).String()
         }
         
         // 获取最新进度事件
@@ -584,7 +679,20 @@ func (c *SlurmController) GetTasks(ctx *gin.Context) {
         taskList = append(taskList, taskData)
     }
     
-    ctx.JSON(http.StatusOK, gin.H{"data": taskList})
+    // 返回结果
+    response := gin.H{
+        "data": taskList,
+        "pagination": gin.H{
+            "page":      req.Page,
+            "page_size": req.PageSize,
+            "total":     total,
+            "total_pages": (total + int64(req.PageSize) - 1) / int64(req.PageSize),
+        },
+        "runtime_tasks_count": len(runtimeTasks),
+        "db_tasks_count":      len(dbTasks),
+    }
+    
+    ctx.JSON(http.StatusOK, response)
 }
 
 // GET /api/slurm/progress/:opId/stream (SSE)
@@ -868,35 +976,55 @@ func (sc *SlurmController) addNodeToCluster(host string, port int, user, role st
         return fmt.Errorf("database connection is nil")
     }
 
+    var nodeUpdated bool
+
     // 检查是否已存在该节点
     var existingNode models.SlurmNode
     err := db.Where("host = ?", host).First(&existingNode).Error
     if err == nil {
         // 节点已存在，更新状态
-        return db.Model(&existingNode).Updates(models.SlurmNode{
+        err = db.Model(&existingNode).Updates(models.SlurmNode{
             Status:   "active",
             Port:     port,
             Username: user,
             NodeType: role,
+            UpdatedAt: time.Now(),
         }).Error
+        nodeUpdated = true
+    } else {
+        // 创建新节点记录 - 需要有一个默认的ClusterID
+        // 这里使用ClusterID为1，在实际应用中应该根据业务逻辑确定
+        node := models.SlurmNode{
+            ClusterID:  1, // 默认集群ID
+            NodeName:   host,
+            NodeType:   role,
+            Host:       host,
+            Port:       port,
+            Username:   user,
+            Status:     "active",
+            AuthType:   "password", // 默认认证方式
+            CreatedAt:  time.Now(),
+            UpdatedAt:  time.Now(),
+        }
+
+        err = db.Create(&node).Error
+        nodeUpdated = true
     }
 
-    // 创建新节点记录 - 需要有一个默认的ClusterID
-    // 这里使用ClusterID为1，在实际应用中应该根据业务逻辑确定
-    node := models.SlurmNode{
-        ClusterID:  1, // 默认集群ID
-        NodeName:   host,
-        NodeType:   role,
-        Host:       host,
-        Port:       port,
-        Username:   user,
-        Status:     "active",
-        AuthType:   "password", // 默认认证方式
-        CreatedAt:  time.Now(),
-        UpdatedAt:  time.Now(),
+    if err != nil {
+        return fmt.Errorf("failed to save node to database: %w", err)
     }
 
-    return db.Create(&node).Error
+    // 如果节点被添加或更新，重新生成SLURM配置
+    if nodeUpdated {
+        ctx := context.Background()
+        if err := sc.slurmSvc.UpdateSlurmConfig(ctx, sc.sshSvc); err != nil {
+            // 记录警告但不返回错误，因为节点已成功添加到数据库
+            fmt.Printf("Warning: failed to update SLURM config after adding node %s: %v\n", host, err)
+        }
+    }
+
+    return nil
 }
 
 // --- 新增：使用AppHub的自动安装API ---
@@ -1265,6 +1393,228 @@ func (c *SlurmController) convertToInstallationSteps(serviceSteps []services.Ste
 		}
 	}
 	return steps
+}
+
+// GetTaskDetail 获取任务详情
+// @Summary 获取任务详情
+// @Description 获取SLURM任务的详细信息，包括执行日志和事件历史
+// @Tags SLURM
+// @Param task_id path string true "任务ID"
+// @Success 200 {object} services.TaskDetailResponse
+// @Router /api/slurm/tasks/{task_id} [get]
+func (c *SlurmController) GetTaskDetail(ctx *gin.Context) {
+	taskID := ctx.Param("task_id")
+	if taskID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "任务ID不能为空"})
+		return
+	}
+	
+	// 首先尝试从数据库获取
+	detail, err := c.taskSvc.GetTask(ctx.Request.Context(), taskID)
+	if err != nil {
+		// 如果数据库中没有，尝试从运行时获取
+		pm := services.GetProgressManager()
+		snap, ok := pm.Snapshot(taskID)
+		if !ok {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+			return
+		}
+		
+		// 转换运行时任务为响应格式
+		runtimeDetail := gin.H{
+			"task": gin.H{
+				"task_id":    snap.ID,
+				"name":       snap.Name,
+				"type":       "runtime",
+				"status":     string(snap.Status),
+				"started_at": snap.StartedAt,
+				"events":     snap.Events,
+				"source":     "runtime",
+			},
+			"events":     snap.Events,
+			"statistics": gin.H{
+				"total_events":       len(snap.Events),
+				"formatted_duration": time.Since(time.UnixMilli(snap.StartedAt)).Truncate(time.Second).String(),
+			},
+			"can_retry":  false,
+			"can_cancel": snap.Status == "running",
+		}
+		
+		if snap.CompletedAt > 0 {
+			runtimeDetail["task"].(gin.H)["completed_at"] = snap.CompletedAt
+			runtimeDetail["statistics"].(gin.H)["formatted_duration"] = time.UnixMilli(snap.CompletedAt).Sub(time.UnixMilli(snap.StartedAt)).Truncate(time.Second).String()
+		}
+		
+		ctx.JSON(http.StatusOK, gin.H{"data": runtimeDetail})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{"data": detail})
+}
+
+// GetTaskStatistics 获取任务统计信息
+// @Summary 获取任务统计信息
+// @Description 获取指定时间范围内的任务统计信息
+// @Tags SLURM
+// @Param start_date query string false "开始日期 (YYYY-MM-DD)"
+// @Param end_date query string false "结束日期 (YYYY-MM-DD)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/tasks/statistics [get]
+func (c *SlurmController) GetTaskStatistics(ctx *gin.Context) {
+	// 解析时间参数
+	startDateStr := ctx.DefaultQuery("start_date", time.Now().AddDate(0, 0, -30).Format("2006-01-02"))
+	endDateStr := ctx.DefaultQuery("end_date", time.Now().Format("2006-01-02"))
+	
+	startDate, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "开始日期格式错误，请使用 YYYY-MM-DD 格式"})
+		return
+	}
+	
+	endDate, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "结束日期格式错误，请使用 YYYY-MM-DD 格式"})
+		return
+	}
+	
+	// 设置时间范围为当天的结束时间
+	endDate = endDate.Add(24*time.Hour - time.Second)
+	
+	statistics, err := c.taskSvc.GetTaskStatistics(ctx.Request.Context(), startDate, endDate)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取统计信息失败: " + err.Error()})
+		return
+	}
+	
+	// 添加运行时任务统计
+	pm := services.GetProgressManager()
+	runtimeTasks := pm.ListOperations()
+	runtimeStats := gin.H{
+		"total_runtime_tasks": len(runtimeTasks),
+		"runtime_by_status":   make(map[string]int),
+	}
+	
+	for _, task := range runtimeTasks {
+		status := string(task.Status)
+		if count, exists := runtimeStats["runtime_by_status"].(map[string]int)[status]; exists {
+			runtimeStats["runtime_by_status"].(map[string]int)[status] = count + 1
+		} else {
+			runtimeStats["runtime_by_status"].(map[string]int)[status] = 1
+		}
+	}
+	
+	statistics["runtime_stats"] = runtimeStats
+	statistics["date_range"] = gin.H{
+		"start_date": startDate.Format("2006-01-02"),
+		"end_date":   endDate.Format("2006-01-02"),
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{"data": statistics})
+}
+
+// CancelTask 取消任务
+// @Summary 取消任务
+// @Description 取消正在执行或待执行的任务
+// @Tags SLURM
+// @Param task_id path string true "任务ID"
+// @Param reason body object false "取消原因"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/tasks/{task_id}/cancel [post]
+func (c *SlurmController) CancelTask(ctx *gin.Context) {
+	taskID := ctx.Param("task_id")
+	if taskID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "任务ID不能为空"})
+		return
+	}
+	
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		req.Reason = "用户取消"
+	}
+	
+	if req.Reason == "" {
+		req.Reason = "用户取消"
+	}
+	
+	// 尝试取消数据库任务
+	err := c.taskSvc.CancelTask(ctx.Request.Context(), taskID, req.Reason)
+	if err != nil {
+		// 尝试取消运行时任务
+		pm := services.GetProgressManager()
+		if _, exists := pm.Get(taskID); exists {
+			pm.Complete(taskID, true, "任务被用户取消: "+req.Reason)
+			ctx.JSON(http.StatusOK, gin.H{
+				"message": "运行时任务已取消",
+				"task_id": taskID,
+			})
+			return
+		}
+		
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "取消任务失败: " + err.Error()})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "任务已取消",
+		"task_id": taskID,
+	})
+}
+
+// RetryTask 重试任务
+// @Summary 重试任务
+// @Description 重试失败的任务
+// @Tags SLURM
+// @Param task_id path string true "任务ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/tasks/{task_id}/retry [post]
+func (c *SlurmController) RetryTask(ctx *gin.Context) {
+	taskID := ctx.Param("task_id")
+	if taskID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "任务ID不能为空"})
+		return
+	}
+	
+	newTask, err := c.taskSvc.RetryTask(ctx.Request.Context(), taskID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "重试任务失败: " + err.Error()})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":     "重试任务已创建",
+		"original_id": taskID,
+		"new_task_id": newTask.TaskID,
+		"new_task":    newTask,
+	})
+}
+
+// DeleteTask 删除任务
+// @Summary 删除任务
+// @Description 删除已完成或失败的任务记录
+// @Tags SLURM
+// @Param task_id path string true "任务ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/tasks/{task_id} [delete]
+func (c *SlurmController) DeleteTask(ctx *gin.Context) {
+	taskID := ctx.Param("task_id")
+	if taskID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "任务ID不能为空"})
+		return
+	}
+	
+	err := c.taskSvc.DeleteTask(ctx.Request.Context(), taskID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "删除任务失败: " + err.Error()})
+		return
+	}
+	
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "任务已删除",
+		"task_id": taskID,
+	})
 }
 
 // GetInstallationTasks 获取安装任务列表

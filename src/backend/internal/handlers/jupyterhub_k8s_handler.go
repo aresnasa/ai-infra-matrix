@@ -290,7 +290,7 @@ func (h *JupyterHubK8sHandler) GetJobStatus(c *gin.Context) {
 	}
 	
 	response := JobStatusResponse{
-		JobID:        job.ID,
+		JobID:        fmt.Sprintf("%d", job.ID),
 		JobName:      job.Name,
 		Status:       job.Status,
 		CreatedAt:    job.CreatedAt,

@@ -193,6 +193,14 @@ func Migrate() error {
 		// 安装任务相关表
 		&models.InstallationTask{},
 		&models.InstallationHostResult{},
+		// 作业管理相关表
+		&models.Cluster{},
+		&models.Job{},
+		&models.JobTemplate{},
+		// SLURM任务管理相关表
+		&models.SlurmTask{},
+		&models.SlurmTaskEvent{},
+		&models.SlurmTaskStatistics{},
 	); err != nil {
 		logrus.WithError(err).Error("Database migration failed")
 		return fmt.Errorf("database migration failed: %w", err)

@@ -419,6 +419,93 @@ func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*Scalin
     return result, nil
 }
 
+// UpdateSlurmConfig 更新SLURM配置文件并重新加载
+func (s *SlurmService) UpdateSlurmConfig(ctx context.Context, sshSvc SSHServiceInterface) error {
+    // 获取当前所有活跃节点
+    var nodes []models.SlurmNode
+    if err := s.db.Where("status = ?", "active").Find(&nodes).Error; err != nil {
+        return fmt.Errorf("failed to get active nodes: %w", err)
+    }
+
+    // 生成新的slurm.conf内容
+    config := s.generateSlurmConfig(nodes)
+    
+    // 获取SLURM控制器信息
+    controllerHost, controllerPort, err := s.getSlurmControllerInfo()
+    if err != nil {
+        return fmt.Errorf("failed to get SLURM controller info: %w", err)
+    }
+
+    // 上传新的配置文件到控制器
+    configPath := "/etc/slurm/slurm.conf"
+    if err := sshSvc.UploadFile(controllerHost, controllerPort, "root", "", []byte(config), configPath); err != nil {
+        return fmt.Errorf("failed to upload slurm.conf: %w", err)
+    }
+
+    // 重新加载SLURM配置
+    reloadCmd := "scontrol reconfigure"
+    if _, err := sshSvc.ExecuteCommand(controllerHost, controllerPort, "root", "", reloadCmd); err != nil {
+        return fmt.Errorf("failed to reload SLURM config: %w", err)
+    }
+
+    return nil
+}
+
+// generateSlurmConfig 生成SLURM配置文件内容
+func (s *SlurmService) generateSlurmConfig(nodes []models.SlurmNode) string {
+    config := `# SLURM配置文件 - AI Infrastructure Matrix
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-controller
+ControlAddr=slurm-controller
+
+# 认证和安全
+AuthType=auth/munge
+CryptoType=crypto/munge
+
+# 调度器配置
+SchedulerType=sched/backfill
+SelectType=select/cons_res
+SelectTypeParameters=CR_Core
+
+# 日志配置
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdSpoolDir=/var/spool/slurm
+
+# 节点配置
+`
+
+    // 添加节点定义
+    computeNodes := []string{}
+    for _, node := range nodes {
+        if node.NodeType == "compute" || node.NodeType == "node" {
+            nodeConfig := fmt.Sprintf("NodeName=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000 State=UNKNOWN", node.NodeName)
+            config += nodeConfig + "\n"
+            computeNodes = append(computeNodes, node.NodeName)
+        }
+    }
+
+    // 添加分区配置
+    if len(computeNodes) > 0 {
+        partitionConfig := fmt.Sprintf("PartitionName=compute Nodes=%s Default=YES MaxTime=INFINITE State=UP", 
+            strings.Join(computeNodes, ","))
+        config += partitionConfig + "\n"
+    }
+
+    return config
+}
+
+// getSlurmControllerInfo 获取SLURM控制器连接信息
+func (s *SlurmService) getSlurmControllerInfo() (string, int, error) {
+	// 从环境变量或配置中获取SLURM控制器地址
+	// 这里假设使用Docker Compose中的服务名
+	return "slurm-master", 22, nil
+}// SSHServiceInterface 定义SSH服务接口以便测试
+type SSHServiceInterface interface {
+    UploadFile(host string, port int, user, password string, content []byte, remotePath string) error
+    ExecuteCommand(host string, port int, user, password, command string) (string, error)
+}
+
 // ScaleDown 执行缩容操作
 func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*ScalingResult, error) {
     // 这里应该实现实际的SLURM节点缩容逻辑

@@ -3035,6 +3035,17 @@ build_all_services() {
     fi
     echo
     
+    # 同步配置文件（构建前预处理步骤）
+    print_info "=========================================="
+    print_info "同步配置文件"
+    print_info "=========================================="
+    if sync_all_configs; then
+        print_success "✓ 配置文件同步完成"
+    else
+        print_warning "配置文件同步过程中有警告，但构建流程将继续"
+    fi
+    echo
+    
     # 批量下载基础镜像
     print_info "预先下载所有基础镜像..."
     if ! batch_download_base_images; then

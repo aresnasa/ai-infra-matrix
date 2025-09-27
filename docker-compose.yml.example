@@ -636,10 +636,24 @@ services:
       - TOKEN_WORKERS=${SLURM_TOKEN_WORKERS:-4}
       - SLURMCLIENT_WORKERS=${SLURM_SLURMCLIENT_WORKERS:-2}
       - LOG_LEVEL=${SLURM_LOG_LEVEL:-info}
-      # Kubernetes 相关配置
+      # Docker Compose 模式标志
+      - DOCKER_COMPOSE_MODE=true
+      - SLURM_OPERATOR_ENABLED=${SLURM_OPERATOR_ENABLED:-false}
+      # Kubernetes 相关配置（仅在K8s模式下使用）
       - KUBECONFIG=/etc/kubernetes/config
       - KUBERNETES_SERVICE_HOST=${KUBERNETES_SERVICE_HOST:-kubernetes.docker.internal}
       - KUBERNETES_SERVICE_PORT=${KUBERNETES_SERVICE_PORT:-6443}
+    # 使用包装脚本，在Docker Compose模式下以待机模式运行
+    command: >
+      sh -c '
+        if [ "$SLURM_OPERATOR_ENABLED" = "false" ] || [ "$DOCKER_COMPOSE_MODE" = "true" ]; then
+          echo "SLURM Operator Manager running in standby mode (Docker Compose)"
+          echo "Kubernetes environment not available, sleeping..."
+          while true; do sleep 3600; done
+        else
+          exec /manager
+        fi
+      '
     expose:
       - "9443"  # Webhook 端口
     volumes:
@@ -656,7 +670,15 @@ services:
     networks:
       - ai-infra-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      # 在Docker Compose模式下，检查进程是否正常运行（待机模式也算健康）
+      test: 
+        - "CMD-SHELL"
+        - |
+          if [ "$SLURM_OPERATOR_ENABLED" = "false" ] || [ "$DOCKER_COMPOSE_MODE" = "true" ]; then
+            pgrep -f "sleep 3600" >/dev/null && echo "SLURM Operator in standby mode - healthy"
+          else
+            curl -f http://localhost:8080/healthz 2>/dev/null
+          fi
       interval: 30s
       timeout: 10s
       retries: 3

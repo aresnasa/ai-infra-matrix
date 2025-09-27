@@ -13,6 +13,7 @@ docker-compose.yml
 *.env.backup.*
 .env.prod.back*
 .env
+.env.backup.*
 src/jupyterhub/jupyterhub_config_*
 src/nginx/conf.d/includes/gitea.conf
 src/frontend/node_modules/
@@ -20,6 +21,7 @@ patches/
 third_party/
 src/openscow/
 backup/
+
 
 #pkgs
 pkgs/

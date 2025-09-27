@@ -1,0 +1,437 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+// SlurmTaskService SLURM任务服务
+type SlurmTaskService struct {
+	db *gorm.DB
+}
+
+// NewSlurmTaskService 创建SLURM任务服务
+func NewSlurmTaskService(db *gorm.DB) *SlurmTaskService {
+	return &SlurmTaskService{db: db}
+}
+
+// CreateTaskRequest 创建任务请求
+type CreateTaskRequest struct {
+	Name        string                 `json:"name" binding:"required"`
+	Type        string                 `json:"type" binding:"required"`
+	UserID      uint                   `json:"user_id" binding:"required"`
+	ClusterID   *uint                  `json:"cluster_id"`
+	Parameters  map[string]interface{} `json:"parameters"`
+	TargetNodes []string               `json:"target_nodes"`
+	Tags        []string               `json:"tags"`
+	Priority    int                    `json:"priority"`
+	MaxRetries  int                    `json:"max_retries"`
+}
+
+// TaskListRequest 任务列表查询请求
+type TaskListRequest struct {
+	UserID    *uint     `form:"user_id"`
+	Status    string    `form:"status"`
+	Type      string    `form:"type"`
+	StartDate *time.Time `form:"start_date"`
+	EndDate   *time.Time `form:"end_date"`
+	Tags      []string  `form:"tags"`
+	Page      int       `form:"page" binding:"min=1"`
+	PageSize  int       `form:"page_size" binding:"min=1,max=100"`
+	OrderBy   string    `form:"order_by"`
+	OrderDesc bool      `form:"order_desc"`
+}
+
+// TaskDetailResponse 任务详情响应
+type TaskDetailResponse struct {
+	*models.SlurmTask
+	Events      []models.SlurmTaskEvent `json:"events"`
+	Statistics  map[string]interface{}  `json:"statistics"`
+	CanRetry    bool                    `json:"can_retry"`
+	CanCancel   bool                    `json:"can_cancel"`
+}
+
+// CreateTask 创建新任务
+func (s *SlurmTaskService) CreateTask(ctx context.Context, req CreateTaskRequest) (*models.SlurmTask, error) {
+	// 生成唯一任务ID
+	taskID := uuid.New().String()
+	
+	// 序列化参数
+	var parametersJSON models.JSON
+	if req.Parameters != nil {
+		paramBytes, err := json.Marshal(req.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("序列化任务参数失败: %w", err)
+		}
+		parametersJSON = models.JSON(paramBytes)
+	}
+	
+	// 创建任务记录
+	task := &models.SlurmTask{
+		TaskID:      taskID,
+		Name:        req.Name,
+		Type:        req.Type,
+		Status:      "pending",
+		UserID:      req.UserID,
+		ClusterID:   req.ClusterID,
+		Parameters:  parametersJSON,
+		TargetNodes: req.TargetNodes,
+		Tags:        req.Tags,
+		Priority:    req.Priority,
+		MaxRetries:  req.MaxRetries,
+	}
+	
+	if err := s.db.Create(task).Error; err != nil {
+		return nil, fmt.Errorf("创建任务记录失败: %w", err)
+	}
+	
+	// 添加初始事件
+	if err := task.AddEvent(s.db, "created", "initialize", "任务已创建", "", 0, req.Parameters); err != nil {
+		return nil, fmt.Errorf("添加初始事件失败: %w", err)
+	}
+	
+	return task, nil
+}
+
+// GetTask 获取任务详情
+func (s *SlurmTaskService) GetTask(ctx context.Context, taskID string) (*TaskDetailResponse, error) {
+	var task models.SlurmTask
+	err := s.db.Preload("User").Preload("Cluster").
+		Where("task_id = ?", taskID).First(&task).Error
+	if err != nil {
+		return nil, fmt.Errorf("查询任务失败: %w", err)
+	}
+	
+	// 获取任务事件
+	var events []models.SlurmTaskEvent
+	if err := s.db.Where("task_id = ?", task.ID).
+		Order("timestamp ASC").Find(&events).Error; err != nil {
+		return nil, fmt.Errorf("查询任务事件失败: %w", err)
+	}
+	
+	// 计算统计信息
+	statistics := s.calculateStatistics(&task, events)
+	
+	response := &TaskDetailResponse{
+		SlurmTask:   &task,
+		Events:      events,
+		Statistics:  statistics,
+		CanRetry:    s.canRetry(&task),
+		CanCancel:   s.canCancel(&task),
+	}
+	
+	return response, nil
+}
+
+// GetTaskByID 根据数据库ID获取任务
+func (s *SlurmTaskService) GetTaskByID(ctx context.Context, id uint) (*models.SlurmTask, error) {
+	var task models.SlurmTask
+	err := s.db.Preload("User").Preload("Cluster").
+		Where("id = ?", id).First(&task).Error
+	if err != nil {
+		return nil, fmt.Errorf("查询任务失败: %w", err)
+	}
+	return &task, nil
+}
+
+// ListTasks 获取任务列表
+func (s *SlurmTaskService) ListTasks(ctx context.Context, req TaskListRequest) ([]models.SlurmTask, int64, error) {
+	query := s.db.Model(&models.SlurmTask{}).Preload("User")
+	
+	// 应用过滤条件
+	if req.UserID != nil {
+		query = query.Where("user_id = ?", *req.UserID)
+	}
+	
+	if req.Status != "" {
+		query = query.Where("status = ?", req.Status)
+	}
+	
+	if req.Type != "" {
+		query = query.Where("type = ?", req.Type)
+	}
+	
+	if req.StartDate != nil {
+		query = query.Where("created_at >= ?", *req.StartDate)
+	}
+	
+	if req.EndDate != nil {
+		query = query.Where("created_at <= ?", *req.EndDate)
+	}
+	
+	if len(req.Tags) > 0 {
+		for _, tag := range req.Tags {
+			query = query.Where("tags::text LIKE ?", "%"+tag+"%")
+		}
+	}
+	
+	// 计算总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("计算任务总数失败: %w", err)
+	}
+	
+	// 应用排序
+	orderBy := "created_at"
+	if req.OrderBy != "" {
+		orderBy = req.OrderBy
+	}
+	if req.OrderDesc {
+		orderBy += " DESC"
+	} else {
+		orderBy += " ASC"
+	}
+	query = query.Order(orderBy)
+	
+	// 应用分页
+	offset := (req.Page - 1) * req.PageSize
+	query = query.Offset(offset).Limit(req.PageSize)
+	
+	var tasks []models.SlurmTask
+	if err := query.Find(&tasks).Error; err != nil {
+		return nil, 0, fmt.Errorf("查询任务列表失败: %w", err)
+	}
+	
+	return tasks, total, nil
+}
+
+// UpdateTaskStatus 更新任务状态
+func (s *SlurmTaskService) UpdateTaskStatus(ctx context.Context, taskID string, status string, errorMsg ...string) error {
+	var task models.SlurmTask
+	if err := s.db.Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		return fmt.Errorf("查询任务失败: %w", err)
+	}
+	
+	return task.Complete(s.db, status, errorMsg...)
+}
+
+// UpdateTaskProgress 更新任务进度
+func (s *SlurmTaskService) UpdateTaskProgress(ctx context.Context, taskID string, progress float64, currentStep string) error {
+	var task models.SlurmTask
+	if err := s.db.Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		return fmt.Errorf("查询任务失败: %w", err)
+	}
+	
+	return task.UpdateProgress(s.db, progress, currentStep)
+}
+
+// AddTaskEvent 添加任务事件
+func (s *SlurmTaskService) AddTaskEvent(ctx context.Context, taskID string, eventType, step, message, host string, progress float64, data interface{}) error {
+	var task models.SlurmTask
+	if err := s.db.Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		return fmt.Errorf("查询任务失败: %w", err)
+	}
+	
+	return task.AddEvent(s.db, eventType, step, message, host, progress, data)
+}
+
+// StartTask 启动任务
+func (s *SlurmTaskService) StartTask(ctx context.Context, taskID string) error {
+	now := time.Now()
+	err := s.db.Model(&models.SlurmTask{}).
+		Where("task_id = ?", taskID).
+		Updates(map[string]interface{}{
+			"status":     "running",
+			"started_at": now,
+		}).Error
+	
+	if err != nil {
+		return fmt.Errorf("启动任务失败: %w", err)
+	}
+	
+	// 添加启动事件
+	return s.AddTaskEvent(ctx, taskID, "start", "start", "任务开始执行", "", 0, nil)
+}
+
+// CancelTask 取消任务
+func (s *SlurmTaskService) CancelTask(ctx context.Context, taskID string, reason string) error {
+	var task models.SlurmTask
+	if err := s.db.Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		return fmt.Errorf("查询任务失败: %w", err)
+	}
+	
+	if !s.canCancel(&task) {
+		return fmt.Errorf("任务当前状态不支持取消操作")
+	}
+	
+	if err := task.Complete(s.db, "cancelled", reason); err != nil {
+		return fmt.Errorf("取消任务失败: %w", err)
+	}
+	
+	// 添加取消事件
+	return s.AddTaskEvent(ctx, taskID, "cancelled", "cancel", "任务已取消: "+reason, "", task.Progress, nil)
+}
+
+// RetryTask 重试任务
+func (s *SlurmTaskService) RetryTask(ctx context.Context, taskID string) (*models.SlurmTask, error) {
+	var originalTask models.SlurmTask
+	if err := s.db.Where("task_id = ?", taskID).First(&originalTask).Error; err != nil {
+		return nil, fmt.Errorf("查询原任务失败: %w", err)
+	}
+	
+	if !s.canRetry(&originalTask) {
+		return nil, fmt.Errorf("任务当前状态不支持重试操作")
+	}
+	
+	// 解析原任务参数
+	var parameters map[string]interface{}
+	if originalTask.Parameters != nil {
+		if err := json.Unmarshal([]byte(originalTask.Parameters), &parameters); err != nil {
+			return nil, fmt.Errorf("解析原任务参数失败: %w", err)
+		}
+	}
+	
+	// 创建重试任务
+	retryReq := CreateTaskRequest{
+		Name:        originalTask.Name + " (重试)",
+		Type:        originalTask.Type,
+		UserID:      originalTask.UserID,
+		ClusterID:   originalTask.ClusterID,
+		Parameters:  parameters,
+		TargetNodes: originalTask.TargetNodes,
+		Tags:        append(originalTask.Tags, "retry"),
+		Priority:    originalTask.Priority,
+		MaxRetries:  originalTask.MaxRetries,
+	}
+	
+	newTask, err := s.CreateTask(ctx, retryReq)
+	if err != nil {
+		return nil, fmt.Errorf("创建重试任务失败: %w", err)
+	}
+	
+	// 更新原任务重试次数
+	s.db.Model(&originalTask).Update("retry_count", originalTask.RetryCount+1)
+	
+	return newTask, nil
+}
+
+// GetTaskStatistics 获取任务统计信息
+func (s *SlurmTaskService) GetTaskStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+	
+	baseQuery := s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ?", startDate, endDate)
+	
+	// 总任务数
+	var totalTasks int64
+	baseQuery.Count(&totalTasks)
+	stats["total_tasks"] = totalTasks
+	
+	// 按状态统计
+	statusStats := make(map[string]int64)
+	var statusResults []struct {
+		Status string
+		Count  int64
+	}
+	baseQuery.Select("status, count(*) as count").Group("status").Scan(&statusResults)
+	for _, result := range statusResults {
+		statusStats[result.Status] = result.Count
+	}
+	stats["status_stats"] = statusStats
+	
+	// 按类型统计
+	typeStats := make(map[string]int64)
+	var typeResults []struct {
+		Type  string
+		Count int64
+	}
+	baseQuery.Select("type, count(*) as count").Group("type").Scan(&typeResults)
+	for _, result := range typeResults {
+		typeStats[result.Type] = result.Count
+	}
+	stats["type_stats"] = typeStats
+	
+	// 平均执行时间
+	var avgDuration float64
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ? AND duration > 0", startDate, endDate).
+		Select("AVG(duration)").Scan(&avgDuration)
+	stats["avg_duration"] = avgDuration
+	
+	// 成功率
+	var successCount int64
+	baseQuery.Where("status = ?", "completed").Count(&successCount)
+	successRate := float64(0)
+	if totalTasks > 0 {
+		successRate = float64(successCount) / float64(totalTasks) * 100
+	}
+	stats["success_rate"] = successRate
+	
+	return stats, nil
+}
+
+// DeleteTask 删除任务
+func (s *SlurmTaskService) DeleteTask(ctx context.Context, taskID string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+	
+	// 查找任务
+	var task models.SlurmTask
+	if err := tx.Where("task_id = ?", taskID).First(&task).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("查询任务失败: %w", err)
+	}
+	
+	// 删除相关事件
+	if err := tx.Where("task_id = ?", task.ID).Delete(&models.SlurmTaskEvent{}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("删除任务事件失败: %w", err)
+	}
+	
+	// 删除任务
+	if err := tx.Delete(&task).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("删除任务失败: %w", err)
+	}
+	
+	return tx.Commit().Error
+}
+
+// 辅助方法
+
+// calculateStatistics 计算任务统计信息
+func (s *SlurmTaskService) calculateStatistics(task *models.SlurmTask, events []models.SlurmTaskEvent) map[string]interface{} {
+	stats := make(map[string]interface{})
+	
+	stats["total_events"] = len(events)
+	stats["success_rate"] = task.GetSuccessRate()
+	stats["formatted_duration"] = task.GetFormattedDuration()
+	
+	// 事件类型统计
+	eventTypeStats := make(map[string]int)
+	for _, event := range events {
+		eventTypeStats[event.EventType]++
+	}
+	stats["event_type_stats"] = eventTypeStats
+	
+	// 步骤统计
+	stepStats := make(map[string]int)
+	for _, event := range events {
+		if event.Step != "" {
+			stepStats[event.Step]++
+		}
+	}
+	stats["step_stats"] = stepStats
+	
+	return stats
+}
+
+// canRetry 检查任务是否可以重试
+func (s *SlurmTaskService) canRetry(task *models.SlurmTask) bool {
+	return task.Status == "failed" && task.RetryCount < task.MaxRetries
+}
+
+// canCancel 检查任务是否可以取消
+func (s *SlurmTaskService) canCancel(task *models.SlurmTask) bool {
+	return task.Status == "pending" || task.Status == "running"
+}
