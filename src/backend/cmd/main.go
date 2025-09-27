@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -184,7 +185,7 @@ func main() {
 	}
 
 	// 初始化作业管理服务
-	slurmService := services.NewSlurmService()
+	slurmService := services.NewSlurmServiceWithDB(database.DB)
 	sshService := services.NewSSHService()
 	cacheService := services.NewCacheService()
 	jobService := services.NewJobService(database.DB, slurmService, sshService, cacheService)
@@ -732,6 +733,194 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	jupyterHubController := controllers.NewJupyterHubController()
 	jupyterHubController.RegisterRoutes(api)
 
+	// 添加JupyterHub管理页面的静态路由（需要认证）
+	r.GET("/admin/jupyterhub", middleware.AuthMiddlewareWithSession(), func(c *gin.Context) {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JupyterHub 管理中心</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 20px; }
+        .status { display: flex; gap: 20px; margin-bottom: 20px; }
+        .status-card { flex: 1; padding: 15px; background: #f8f9fa; border-radius: 6px; text-align: center; }
+        .iframe-container { height: 600px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
+        iframe { width: 100%; height: 100%; border: none; }
+        .error { color: #dc3545; padding: 10px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 20px; }
+        .loading { text-align: center; padding: 50px; color: #666; }
+        .btn { display: inline-block; padding: 8px 16px; margin: 5px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; }
+        .btn:hover { background: #0056b3; }
+        .btn-secondary { background: #6c757d; }
+        .btn-secondary:hover { background: #545b62; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>JupyterHub 管理中心</h1>
+            <p>管理和监控JupyterHub实例</p>
+            <div>
+                <button class="btn" onclick="refreshStatus()">刷新状态</button>
+                <button class="btn btn-secondary" onclick="toggleIframe()">切换显示模式</button>
+                <a href="/jupyter/" target="_blank" class="btn">访问JupyterHub</a>
+            </div>
+        </div>
+        
+        <div class="status">
+            <div class="status-card">
+                <h3>服务状态</h3>
+                <div id="service-status">检查中...</div>
+            </div>
+            <div class="status-card">
+                <h3>在线用户</h3>
+                <div id="online-users">--</div>
+            </div>
+            <div class="status-card">
+                <h3>运行中服务器</h3>
+                <div id="running-servers">--</div>
+            </div>
+            <div class="status-card">
+                <h3>内存使用</h3>
+                <div id="memory-usage">--</div>
+            </div>
+        </div>
+        
+        <div id="error-message" class="error" style="display: none;"></div>
+        
+        <div class="iframe-container" id="iframe-container">
+            <div class="loading" id="loading">正在加载JupyterHub管理界面...</div>
+            <iframe id="jupyterhub-iframe" style="display: none;"></iframe>
+        </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background: #e9ecef; border-radius: 6px; font-size: 14px;">
+            <h4>使用说明：</h4>
+            <ul>
+                <li>如果iframe无法加载，请点击"访问JupyterHub"按钮在新窗口中打开</li>
+                <li>确保JupyterHub服务正在运行并且网络连接正常</li>
+                <li>管理员功能需要在JupyterHub中配置相应的权限</li>
+                <li>页面每30秒自动刷新状态信息</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        let iframeVisible = true;
+        
+        // 检查JupyterHub状态
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/jupyterhub/status');
+                const data = await response.json();
+                
+                document.getElementById('service-status').innerHTML = 
+                    data.running ? '<span style="color: green;">✅ 运行中</span>' : '<span style="color: red;">❌ 已停止</span>';
+                document.getElementById('online-users').textContent = data.users_online || '0';
+                document.getElementById('running-servers').textContent = data.servers_running || '0';
+                
+                if (data.used_memory_gb && data.total_memory_gb) {
+                    const memUsage = Math.round((data.used_memory_gb / data.total_memory_gb) * 100);
+                    document.getElementById('memory-usage').innerHTML = 
+                        data.used_memory_gb + 'GB/' + data.total_memory_gb + 'GB (' + memUsage + '%)';
+                } else {
+                    document.getElementById('memory-usage').textContent = '--';
+                }
+                
+                if (data.running && iframeVisible) {
+                    loadJupyterHub();
+                } else if (!data.running) {
+                    showError('JupyterHub服务未运行，请检查服务状态');
+                }
+            } catch (error) {
+                console.error('获取状态失败:', error);
+                document.getElementById('service-status').innerHTML = '<span style="color: orange;">⚠️ 连接失败</span>';
+                // 即使状态检查失败，也尝试加载界面
+                if (iframeVisible) {
+                    loadJupyterHub();
+                }
+            }
+        }
+        
+        function loadJupyterHub() {
+            const iframe = document.getElementById('jupyterhub-iframe');
+            const loading = document.getElementById('loading');
+            
+            if (!iframe.src) {
+                iframe.onload = function() {
+                    loading.style.display = 'none';
+                    iframe.style.display = 'block';
+                };
+                
+                iframe.onerror = function() {
+                    showError('无法加载JupyterHub管理界面，请确认JupyterHub服务正常运行');
+                };
+                
+                // 尝试多个可能的路径
+                const paths = ['/hub/admin', '/jupyter/hub/admin', '/admin', '/hub', '/jupyter/'];
+                let currentPathIndex = 0;
+                
+                function tryNextPath() {
+                    if (currentPathIndex < paths.length) {
+                        console.log('尝试路径:', paths[currentPathIndex]);
+                        iframe.src = paths[currentPathIndex];
+                        currentPathIndex++;
+                        
+                        // 3秒后尝试下一个路径（如果当前路径加载失败）
+                        setTimeout(() => {
+                            if (iframe.style.display === 'none') {
+                                tryNextPath();
+                            }
+                        }, 3000);
+                    } else {
+                        showError('尝试了所有可能的JupyterHub路径，但都无法访问。请检查JupyterHub配置，或点击"访问JupyterHub"按钮在新窗口中访问。');
+                    }
+                }
+                
+                tryNextPath();
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            const loading = document.getElementById('loading');
+            
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            loading.style.display = 'none';
+        }
+        
+        function refreshStatus() {
+            document.getElementById('error-message').style.display = 'none';
+            checkStatus();
+        }
+        
+        function toggleIframe() {
+            const container = document.getElementById('iframe-container');
+            iframeVisible = !iframeVisible;
+            
+            if (iframeVisible) {
+                container.style.display = 'block';
+                loadJupyterHub();
+            } else {
+                container.style.display = 'none';
+            }
+        }
+        
+        // 页面加载时检查状态
+        checkStatus();
+        
+        // 每30秒更新一次状态
+        setInterval(checkStatus, 30000);
+    </script>
+</body>
+</html>
+		`)
+	})
+
 	// Slurm 路由（需要认证）
 	slurmController := controllers.NewSlurmController()
 	slurm := api.Group("/slurm")
@@ -778,11 +967,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.PUT("/node-templates/:id", slurmController.UpdateNodeTemplate)
 		slurm.DELETE("/node-templates/:id", slurmController.DeleteNodeTemplate)
 
-		// 新增：基于AppHub的包安装路由
+		// 安装包相关路由
 		slurm.POST("/install-packages", slurmController.InstallPackages)
 		slurm.POST("/install-test-nodes", slurmController.InstallTestNodes)
-		
-		// 安装任务查询路由
 		slurm.GET("/installation-tasks", slurmController.GetInstallationTasks)
 		slurm.GET("/installation-tasks/:id", slurmController.GetInstallationTask)
 	}
@@ -885,5 +1072,26 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// 快速聊天
 		ai.POST("/quick-chat", aiAssistantController.QuickChat)
+	}
+
+	// 对象存储管理路由（需要认证）
+	objectStorageController := controllers.NewObjectStorageController(database.DB)
+	objectStorage := api.Group("/object-storage")
+	objectStorage.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 配置管理
+		objectStorage.GET("/configs", objectStorageController.GetConfigs)
+		objectStorage.GET("/configs/:id", objectStorageController.GetConfig)
+		objectStorage.POST("/configs", objectStorageController.CreateConfig)
+		objectStorage.PUT("/configs/:id", objectStorageController.UpdateConfig)
+		objectStorage.DELETE("/configs/:id", objectStorageController.DeleteConfig)
+		objectStorage.POST("/configs/:id/activate", objectStorageController.SetActiveConfig)
+		
+		// 连接测试和状态检查
+		objectStorage.POST("/test-connection", objectStorageController.TestConnection)
+		objectStorage.GET("/configs/:id/status", objectStorageController.CheckConnectionStatus)
+		
+		// 统计信息
+		objectStorage.GET("/configs/:id/statistics", objectStorageController.GetStatistics)
 	}
 }

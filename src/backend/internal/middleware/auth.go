@@ -47,27 +47,36 @@ func AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// AuthMiddlewareWithSession JWT认证中间件（支持Redis会话）
+// AuthMiddlewareWithSession JWT认证中间件（支持Redis会话和Cookie）
 func AuthMiddlewareWithSession() gin.HandlerFunc {
 	sessionService := services.NewSessionService()
 	
 	return func(c *gin.Context) {
+		var tokenString string
+		
+		// 首先尝试从Authorization头部获取token
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+		if authHeader != "" {
+			// 检查Bearer token格式
+			tokenParts := strings.SplitN(authHeader, " ", 2)
+			if len(tokenParts) == 2 && tokenParts[0] == "Bearer" {
+				tokenString = tokenParts[1]
+			}
+		}
+		
+		// 如果没有Authorization头部，尝试从cookie获取token
+		if tokenString == "" {
+			if cookie, err := c.Cookie("auth_token"); err == nil {
+				tokenString = cookie
+			}
+		}
+		
+		// 如果既没有Authorization头部也没有cookie，返回401
+		if tokenString == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
 			c.Abort()
 			return
 		}
-
-		// 检查Bearer token格式
-		tokenParts := strings.SplitN(authHeader, " ", 2)
-		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
-			c.Abort()
-			return
-		}
-
-		tokenString := tokenParts[1]
 		
 		// 首先检查Redis会话
 		session, err := sessionService.GetSession(tokenString)

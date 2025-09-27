@@ -530,7 +530,7 @@ export const slurmAPI = {
   getTasks: (params) => api.get('/slurm/tasks', { params }),
   getProgress: (opId) => api.get(`/slurm/progress/${opId}`),
   // 增强任务管理 API
-  getTaskDetail: (taskId) => api.get(`/slurm/tasks/${taskId}/detail`),
+  getTaskDetail: (taskId) => api.get(`/slurm/tasks/${taskId}`),
   getTaskStatistics: (params) => api.get('/slurm/tasks/statistics', { params }),
   cancelTask: (taskId, reason) => api.post(`/slurm/tasks/${taskId}/cancel`, { reason }),
   retryTask: (taskId) => api.post(`/slurm/tasks/${taskId}/retry`),
@@ -646,6 +646,76 @@ export const filesAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+};
+
+// 对象存储相关API
+export const objectStorageAPI = {
+  // 获取所有存储配置
+  getConfigs: () => api.get('/object-storage/configs'),
+
+  // 获取单个存储配置
+  getConfig: (id) => api.get(`/object-storage/configs/${id}`),
+
+  // 创建存储配置
+  createConfig: (data) => api.post('/object-storage/configs', data),
+
+  // 更新存储配置
+  updateConfig: (id, data) => api.put(`/object-storage/configs/${id}`, data),
+
+  // 删除存储配置
+  deleteConfig: (id) => api.delete(`/object-storage/configs/${id}`),
+
+  // 设置激活配置
+  setActiveConfig: (id) => api.post(`/object-storage/configs/${id}/activate`),
+
+  // 测试连接
+  testConnection: (config) => api.post('/object-storage/test-connection', config),
+
+  // 检查连接状态
+  checkConnection: (id) => api.get(`/object-storage/configs/${id}/status`),
+
+  // 获取存储统计信息
+  getStatistics: (id) => api.get(`/object-storage/configs/${id}/statistics`),
+
+  // 获取存储桶列表
+  getBuckets: (id) => api.get(`/object-storage/configs/${id}/buckets`),
+
+  // 创建存储桶
+  createBucket: (id, bucketName) => api.post(`/object-storage/configs/${id}/buckets`, { name: bucketName }),
+
+  // 删除存储桶
+  deleteBucket: (id, bucketName) => api.delete(`/object-storage/configs/${id}/buckets/${bucketName}`),
+
+  // 获取对象列表
+  getObjects: (id, bucketName, prefix = '') => api.get(`/object-storage/configs/${id}/buckets/${bucketName}/objects`, {
+    params: { prefix }
+  }),
+
+  // 上传对象
+  uploadObject: (id, bucketName, file, key) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('key', key);
+    
+    return api.post(`/object-storage/configs/${id}/buckets/${bucketName}/objects`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  },
+
+  // 下载对象
+  downloadObject: (id, bucketName, key) => api.get(`/object-storage/configs/${id}/buckets/${bucketName}/objects/${key}/download`, {
+    responseType: 'blob'
+  }),
+
+  // 删除对象
+  deleteObject: (id, bucketName, key) => api.delete(`/object-storage/configs/${id}/buckets/${bucketName}/objects/${key}`),
+
+  // 获取预签名URL
+  getPresignedUrl: (id, bucketName, key, expiry = 3600) => api.post(`/object-storage/configs/${id}/buckets/${bucketName}/objects/${key}/presign`, {
+    expiry
+  })
 };
 
 export default api;

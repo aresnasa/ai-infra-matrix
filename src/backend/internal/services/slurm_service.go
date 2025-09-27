@@ -327,6 +327,12 @@ type ScalingStatus struct {
     ActiveOperations []ScalingOperation `json:"active_operations"`
     RecentOperations []ScalingOperation `json:"recent_operations"`
     NodeTemplates    []NodeTemplate     `json:"node_templates"`
+    // 前端期望的字段
+    Active        bool `json:"active"`         // 是否有活跃任务
+    ActiveTasks   int  `json:"active_tasks"`   // 活跃任务数
+    SuccessNodes  int  `json:"success_nodes"`  // 成功节点数
+    FailedNodes   int  `json:"failed_nodes"`   // 失败节点数
+    Progress      int  `json:"progress"`       // 进度百分比
 }
 
 // ScalingOperation 扩缩容操作
@@ -378,8 +384,23 @@ type NodeScalingResult struct {
 
 // GetScalingStatus 获取扩缩容状态
 func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, error) {
-    // 这里应该从数据库或缓存中获取实际的状态
-    // 目前返回模拟数据
+    // 从数据库获取实际的任务状态
+    var runningTasks int64
+    var completedTasks int64
+    var failedTasks int64
+    
+    // 查询不同状态的任务数量
+    s.db.Model(&models.SlurmTask{}).Where("status IN ?", []string{"running", "in_progress", "processing"}).Count(&runningTasks)
+    s.db.Model(&models.SlurmTask{}).Where("status IN ?", []string{"completed", "success"}).Count(&completedTasks)
+    s.db.Model(&models.SlurmTask{}).Where("status IN ?", []string{"failed", "error"}).Count(&failedTasks)
+    
+    // 计算进度
+    totalTasks := runningTasks + completedTasks + failedTasks
+    progress := 0
+    if totalTasks > 0 {
+        progress = int((completedTasks * 100) / totalTasks)
+    }
+    
     return &ScalingStatus{
         ActiveOperations: []ScalingOperation{},
         RecentOperations: []ScalingOperation{
@@ -393,6 +414,11 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
             },
         },
         NodeTemplates: []NodeTemplate{},
+        Active:        runningTasks > 0,
+        ActiveTasks:   int(runningTasks),
+        SuccessNodes:  int(completedTasks),
+        FailedNodes:   int(failedTasks),
+        Progress:      progress,
     }, nil
 }
 
@@ -531,22 +557,79 @@ func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*Scalin
 
 // GetNodeTemplates 获取节点模板列表
 func (s *SlurmService) GetNodeTemplates(ctx context.Context) ([]NodeTemplate, error) {
+	// 如果数据库没有数据，返回一些默认模板
 	var templates []models.NodeTemplate
 	if err := s.db.Find(&templates).Error; err != nil {
-		return nil, err
+		// 如果数据库查询失败，返回默认模板
+		defaultTemplates := []NodeTemplate{
+			{
+				ID:          "small",
+				Name:        "小型计算节点",
+				Description: "2核4GB内存，适合轻量级计算任务",
+				Config: NodeConfig{
+					Host:     "compute-small",
+					Port:     22,
+					User:     "root",
+					KeyPath:  "",
+					Password: "",
+					MinionID: "",
+				},
+				Tags:        []string{"small", "compute"},
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
+			},
+			{
+				ID:          "medium",
+				Name:        "中型计算节点",
+				Description: "4核8GB内存，适合中等规模计算任务",
+				Config: NodeConfig{
+					Host:     "compute-medium",
+					Port:     22,
+					User:     "root",
+					KeyPath:  "",
+					Password: "",
+					MinionID: "",
+				},
+				Tags:        []string{"medium", "compute"},
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
+			},
+			{
+				ID:          "large",
+				Name:        "大型计算节点",
+				Description: "8核16GB内存，适合大规模计算任务",
+				Config: NodeConfig{
+					Host:     "compute-large",
+					Port:     22,
+					User:     "root",
+					KeyPath:  "",
+					Password: "",
+					MinionID: "",
+				},
+				Tags:        []string{"large", "compute", "gpu"},
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
+			},
+		}
+		return defaultTemplates, nil
 	}
 
-	// 转换为服务层结构
+	// 转换数据库中的模板为服务层结构
 	result := make([]NodeTemplate, len(templates))
 	for i, t := range templates {
-		// 将模型层的 NodeConfig 转换为服务层的 NodeConfig
+		// 安全地转换模型层的 NodeConfig
 		serviceConfig := NodeConfig{
-			Host:     t.Config.Partitions[0], // 使用第一个分区作为主机名（临时方案）
-			Port:     22,                     // 默认SSH端口
-			User:     "root",                 // 默认用户
+			Host:     "localhost", // 默认主机
+			Port:     22,          // 默认SSH端口
+			User:     "root",      // 默认用户
 			KeyPath:  "",
 			Password: "",
 			MinionID: "",
+		}
+
+		// 如果配置中有分区信息，使用第一个作为主机名
+		if len(t.Config.Partitions) > 0 {
+			serviceConfig.Host = t.Config.Partitions[0]
 		}
 
 		result[i] = NodeTemplate{

@@ -38,15 +38,13 @@ RUN set -eux; \
         echo "使用官方源"; \
     }; \
     # 安装必需的运行时依赖
-    apk --no-cache add \
+    apk add --no-cache \
         ca-certificates \
         curl \
         openssl \
         tzdata \
         bash \
         shadow \
-        nodejs \
-        npm \
         netcat-openbsd \
         redis \
         git \
@@ -82,9 +80,15 @@ RUN set -eux; \
         openssl-dev \
         zlib-dev \
     ; \
+    # 配置npm使用阿里云镜像源
+    npm config set registry https://registry.npmmirror.com; \
+    npm config set disturl https://npmmirror.com/mirrors/node; \
+    npm config set sass_binary_site https://npmmirror.com/mirrors/node-sass; \
+    # 安装Python依赖
     pip install --no-cache-dir --prefer-binary psutil>=5.9.0; \
     pip install --no-cache-dir -r requirements.txt; \
     PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl; \
+    # 安装configurable-http-proxy
     npm install -g configurable-http-proxy; \
     apk del .build-deps
 

@@ -37,7 +37,7 @@ func NewSlurmController() *SlurmController {
 	}
 	
 	return &SlurmController{
-		slurmSvc:   services.NewSlurmService(),
+		slurmSvc:   services.NewSlurmServiceWithDB(database.DB),
 		saltSvc:    services.NewSaltStackService(),
 		sshSvc:     services.NewSSHService(),
 		clusterSvc: services.NewSlurmClusterService(database.DB),
@@ -654,23 +654,43 @@ func (c *SlurmController) GetTasks(ctx *gin.Context) {
         taskList = append(taskList, taskData)
     }
     
-    // 添加运行时任务（内存中的）
+    // 添加运行时任务（内存中的）- 创建快照以获取正确的时间戳格式
     for _, task := range runtimeTasks {
+        // 获取任务快照以获得正确的时间戳格式
+        snap, _ := pm.Snapshot(task.ID)
+        
         taskData := gin.H{
-            "id":          task.ID,
-            "name":        task.Name,
-            "type":        "runtime",
-            "status":      string(task.Status),
-            "progress":    0.0,
-            "started_at":  task.StartedAt.Unix(),
-            "completed_at": 0,
-            "duration":    time.Since(task.StartedAt).Truncate(time.Second).String(),
-            "source":      "runtime",
+            "id":            task.ID,
+            "name":          task.Name,
+            "type":          "runtime",
+            "status":        string(task.Status),
+            "progress":      0.0,
+            "user_id":       nil,
+            "user_name":     "系统",
+            "cluster_name":  "默认集群",
+            "target_nodes":  0,
+            "nodes_total":   0,
+            "nodes_success": 0,
+            "nodes_failed":  0,
+            "current_step":  "",
+            "steps_total":   0,
+            "steps_count":   len(task.Events),
+            "error_message": "",
+            "tags":          nil,
+            "priority":      0,
+            "retry_count":   0,
+            "max_retries":   0,
+            "created_at":    snap.StartedAt / 1000, // 转换为秒
+            "started_at":    snap.StartedAt / 1000, // 转换为秒
+            "completed_at":  0,
+            "duration":      time.Since(time.UnixMilli(snap.StartedAt)).Truncate(time.Second).String(),
+            "success_rate":  0.0,
+            "source":        "runtime",
         }
         
-        if !task.CompletedAt.IsZero() {
-            taskData["completed_at"] = task.CompletedAt.Unix()
-            taskData["duration"] = task.CompletedAt.Sub(task.StartedAt).Truncate(time.Second).String()
+        if snap.CompletedAt > 0 {
+            taskData["completed_at"] = snap.CompletedAt / 1000 // 转换为秒
+            taskData["duration"] = time.UnixMilli(snap.CompletedAt).Sub(time.UnixMilli(snap.StartedAt)).Truncate(time.Second).String()
         }
         
         // 获取最新进度事件
@@ -679,22 +699,31 @@ func (c *SlurmController) GetTasks(ctx *gin.Context) {
             taskData["current_step"] = latestEvent.Step
             taskData["progress"] = latestEvent.Progress
             taskData["last_message"] = latestEvent.Message
+            
+            // 如果事件中有错误信息
+            if latestEvent.Type == "error" {
+                taskData["error_message"] = latestEvent.Message
+            }
         }
         
         taskList = append(taskList, taskData)
     }
     
-    // 返回结果
+    // 返回结果 - 匹配前端期望的数据格式
+    totalTasks := total + int64(len(runtimeTasks))
     response := gin.H{
-        "data": taskList,
-        "pagination": gin.H{
-            "page":      req.Page,
-            "page_size": req.PageSize,
-            "total":     total,
-            "total_pages": (total + int64(req.PageSize) - 1) / int64(req.PageSize),
+        "data": gin.H{
+            "tasks": taskList,
+            "total": totalTasks,
+            "pagination": gin.H{
+                "page":        req.Page,
+                "page_size":   req.PageSize,
+                "total":       totalTasks,
+                "total_pages": (totalTasks + int64(req.PageSize) - 1) / int64(req.PageSize),
+            },
+            "runtime_tasks_count": len(runtimeTasks),
+            "db_tasks_count":      len(dbTasks),
         },
-        "runtime_tasks_count": len(runtimeTasks),
-        "db_tasks_count":      len(dbTasks),
     }
     
     ctx.JSON(http.StatusOK, response)

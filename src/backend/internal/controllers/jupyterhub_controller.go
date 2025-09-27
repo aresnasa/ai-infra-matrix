@@ -528,7 +528,7 @@ func (ctrl *JupyterHubController) RegisterRoutes(router *gin.RouterGroup) {
 	
 	// 需要认证的路由
 	authenticated := jupyterhub.Group("")
-	// authenticated.Use(middleware.AuthMiddlewareWithSession()) // 先暂时注释，后续可以启用
+	authenticated.Use(middleware.AuthMiddlewareWithSession())
 
 	{
 		// JupyterHub配置管理

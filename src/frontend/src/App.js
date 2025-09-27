@@ -111,6 +111,17 @@ const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')
   loadingText: '正在加载Gitea...'
 });
 
+// 对象存储相关页面
+const ObjectStoragePage = withLazyLoading(React.lazy(() => import('./pages/ObjectStoragePage')), {
+  loadingText: '正在加载对象存储管理...'
+});
+const MinIOConsolePage = withLazyLoading(React.lazy(() => import('./pages/MinIOConsolePage')), {
+  loadingText: '正在加载MinIO控制台...'
+});
+const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages/admin/ObjectStorageConfigPage')), {
+  loadingText: '正在加载对象存储配置...'
+});
+
 // 新增功能页面懒加载
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
@@ -553,6 +564,30 @@ function App() {
                       }
                     />
 
+                    {/* 对象存储管理页面 - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/object-storage"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <ObjectStoragePage />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* MinIO控制台页面 - 允许数据开发和SRE团队 */}
+                    <Route
+                      path="/object-storage/minio/:configId"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <MinIOConsolePage />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
                     {/* Job template management page - 允许数据开发和SRE团队 */}
                     <Route
                       path="/job-templates"
@@ -708,6 +743,16 @@ function App() {
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <JupyterHubManagement />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/object-storage"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <ObjectStorageConfigPage />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

@@ -201,6 +201,9 @@ func Migrate() error {
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},
 		&models.SlurmTaskStatistics{},
+		// 对象存储相关表
+		&models.ObjectStorageConfig{},
+		&models.ObjectStorageLog{},
 	); err != nil {
 		logrus.WithError(err).Error("Database migration failed")
 		return fmt.Errorf("database migration failed: %w", err)

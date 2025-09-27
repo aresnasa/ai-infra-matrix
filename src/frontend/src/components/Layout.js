@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
-import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined } from '@ant-design/icons';
+import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
@@ -89,6 +89,11 @@ const Layout = ({ children, user, onLogout }) => {
       key: '/files',
       icon: <FileTextOutlined />,
       label: '文件管理',
+    },
+    {
+      key: '/object-storage',
+      icon: <DatabaseOutlined />,
+      label: '对象存储',
     },
     {
       key: '/saltstack',

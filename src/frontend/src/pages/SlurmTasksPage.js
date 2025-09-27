@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Card, Row, Col, Table, Tag, Space, Alert, Spin, Button,
   Typography, Progress, Descriptions, Badge, Tooltip, Modal,
@@ -13,6 +13,7 @@ import {
   DeleteOutlined, InfoCircleOutlined
 } from '@ant-design/icons';
 import { slurmAPI } from '../services/api';
+import { useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
@@ -63,6 +64,9 @@ const { Search } = Input;
 const { Option } = Select;
 
 const SlurmTasksPage = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const autoRefreshRef = useRef(null);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -71,6 +75,9 @@ const SlurmTasksPage = () => {
   const [taskProgress, setTaskProgress] = useState(null);
   const [statistics, setStatistics] = useState(null);
   const [activeTab, setActiveTab] = useState('tasks');
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [refreshInterval, setRefreshInterval] = useState(30000); // 默认30秒
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
   
   // 过滤和搜索状态
   const [filters, setFilters] = useState({
@@ -140,10 +147,20 @@ const SlurmTasksPage = () => {
       dataIndex: 'progress',
       key: 'progress',
       render: (progress, record) => {
-        if (record.status === 'running' && progress !== undefined) {
-          return <Progress percent={Math.round(progress * 100)} size="small" />;
+        // 确保进度值是数字
+        const progressValue = typeof progress === 'number' ? progress : 0;
+        
+        if (record.status === 'running') {
+          const percent = Math.round(progressValue * 100);
+          return <Progress percent={percent} size="small" showInfo={true} />;
+        } else if (record.status === 'completed') {
+          return <Progress percent={100} size="small" status="success" />;
+        } else if (record.status === 'failed') {
+          return <Progress percent={100} size="small" status="exception" />;
+        } else if (record.status === 'pending') {
+          return <Progress percent={0} size="small" />;
         }
-        return record.status === 'completed' ? '100%' : '-';
+        return '-';
       },
     },
     {
@@ -294,9 +311,16 @@ const SlurmTasksPage = () => {
     setTaskDetailModal(true);
 
     try {
-      // 获取详细的任务信息
-      const response = await slurmAPI.getTaskDetail(task.id);
-      const detailData = response.data?.data || {};
+      // 尝试获取详细的任务信息
+      let detailData = {};
+      try {
+        const response = await slurmAPI.getTaskDetail(task.id);
+        detailData = response.data?.data || response.data || {};
+      } catch (detailError) {
+        console.warn('获取任务详情失败，使用基础信息', detailError);
+        // 如果获取详情失败，使用传入的基础任务信息
+        detailData = task;
+      }
       
       setSelectedTask({
         ...task,
@@ -307,14 +331,16 @@ const SlurmTasksPage = () => {
       if (task.status === 'running') {
         try {
           const progressResponse = await slurmAPI.getProgress(task.id);
-          setTaskProgress(progressResponse.data?.data);
+          setTaskProgress(progressResponse.data?.data || progressResponse.data);
         } catch (progressError) {
           console.warn('获取任务进度失败', progressError);
+          // 进度获取失败不影响详情显示
         }
       }
     } catch (e) {
-      console.error('获取任务详情失败', e);
-      message.error('获取任务详情失败');
+      console.error('查看任务详情失败', e);
+      // 即使出错，也显示基础信息
+      setSelectedTask(task);
     }
   };
 
@@ -410,24 +436,99 @@ const SlurmTasksPage = () => {
     setTaskProgress(null);
   };
 
+  // 初始化加载和URL参数处理
   useEffect(() => {
+    // 处理URL参数
+    const searchParams = new URLSearchParams(location.search);
+    const statusParam = searchParams.get('status');
+    const taskIdParam = searchParams.get('taskId');
+    
+    if (statusParam) {
+      setFilters(prev => ({ ...prev, status: statusParam }));
+    }
+    
     if (activeTab === 'tasks') {
-      loadTasks();
+      loadTasks().then(() => {
+        // 如果有指定的任务ID，自动打开详情
+        if (taskIdParam && tasks.length > 0) {
+          const targetTask = tasks.find(task => task.id === taskIdParam);
+          if (targetTask) {
+            handleViewTaskDetail(targetTask);
+          }
+        }
+      });
     } else if (activeTab === 'statistics') {
       loadStatistics();
     }
   }, [filters, pagination.current, pagination.pageSize, activeTab]);
 
-  useEffect(() => {
-    // 设置定时刷新（每30秒）
-    const interval = setInterval(() => {
-      if (activeTab === 'tasks' && tasks.some(task => task.status === 'running')) {
-        loadTasks();
-      }
-    }, 30000);
+  // 智能刷新间隔调整
+  const adjustRefreshInterval = (runningTasksCount) => {
+    if (runningTasksCount === 0) {
+      return 0; // 无运行任务时不刷新
+    } else if (runningTasksCount <= 2) {
+      return 30000; // 1-2个任务：30秒
+    } else if (runningTasksCount <= 5) {
+      return 20000; // 3-5个任务：20秒
+    } else {
+      return 15000; // 5个以上任务：15秒
+    }
+  };
 
-    return () => clearInterval(interval);
-  }, [tasks, activeTab]);
+  // 自动刷新和页面可见性检测
+  useEffect(() => {
+    const runningTasks = tasks.filter(task => 
+      task.status === 'running' || task.status === 'pending'
+    );
+    const runningTasksCount = runningTasks.length;
+    
+    // 清理之前的定时器
+    if (autoRefreshRef.current) {
+      clearInterval(autoRefreshRef.current);
+    }
+
+    // 智能调整刷新间隔
+    const newInterval = adjustRefreshInterval(runningTasksCount);
+    setRefreshInterval(newInterval);
+
+    // 只有在有运行中任务且启用自动刷新时才设置定时器
+    if (activeTab === 'tasks' && runningTasksCount > 0 && isAutoRefreshEnabled && newInterval > 0) {
+      console.log(`设置自动刷新：${newInterval/1000}秒间隔，${runningTasksCount}个运行中任务`);
+      autoRefreshRef.current = setInterval(() => {
+        console.log(`自动刷新任务列表... (${runningTasksCount}个运行中任务)`);
+        loadTasks();
+        setLastRefresh(Date.now());
+      }, newInterval);
+    }
+
+    // 页面可见性变化时的处理（降低频率）
+    let visibilityTimer = null;
+    const handleVisibilityChange = () => {
+      if (!document.hidden && activeTab === 'tasks') {
+        // 防抖处理，避免频繁切换
+        if (visibilityTimer) {
+          clearTimeout(visibilityTimer);
+        }
+        visibilityTimer = setTimeout(() => {
+          console.log('页面变为可见，刷新任务列表...');
+          loadTasks();
+          setLastRefresh(Date.now());
+        }, 1000); // 1秒延迟
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current);
+      }
+      if (visibilityTimer) {
+        clearTimeout(visibilityTimer);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [tasks, activeTab, isAutoRefreshEnabled]);
 
   if (loading && tasks.length === 0) {
     return (
@@ -458,6 +559,36 @@ const SlurmTasksPage = () => {
           message="加载失败"
           description={error}
           type="error"
+          showIcon
+          style={{ marginBottom: '16px' }}
+          action={
+            <Button size="small" onClick={() => loadTasks()}>
+              重试
+            </Button>
+          }
+        />
+      )}
+
+      {tasks.some(task => task.status === 'running') && (
+        <Alert
+          message={`${tasks.filter(task => task.status === 'running').length} 个任务正在运行`}
+          description={
+            <div>
+              {isAutoRefreshEnabled ? (
+                refreshInterval > 0 ? (
+                  `自动刷新已启用，间隔 ${refreshInterval/1000} 秒`
+                ) : (
+                  '无运行任务，自动刷新已暂停'
+                )
+              ) : (
+                '自动刷新已关闭，点击上方按钮手动刷新或启用自动刷新'
+              )}
+              <span style={{ marginLeft: '16px', color: '#666' }}>
+                上次更新: {dayjs(lastRefresh).format('HH:mm:ss')}
+              </span>
+            </div>
+          }
+          type="info"
           showIcon
           style={{ marginBottom: '16px' }}
         />
@@ -523,23 +654,55 @@ const SlurmTasksPage = () => {
                   style={{ width: '100%' }}
                 />
               </Col>
-              <Col xs={24} sm={12} md={4}>
-                <Space>
+              <Col xs={24} sm={12} md={6}>
+                <Space wrap>
                   <Button
                     icon={<FilterOutlined />}
                     onClick={handleResetFilters}
+                    size="small"
                   >
                     重置
                   </Button>
                   <Button
                     icon={<ReloadOutlined />}
-                    onClick={() => loadTasks()}
+                    onClick={() => {
+                      loadTasks();
+                      setLastRefresh(Date.now());
+                    }}
                     loading={loading}
                     type="primary"
+                    size="small"
                   >
                     刷新
                   </Button>
+                  <Button
+                    size="small"
+                    type={isAutoRefreshEnabled ? "primary" : "default"}
+                    onClick={() => setIsAutoRefreshEnabled(!isAutoRefreshEnabled)}
+                    ghost={isAutoRefreshEnabled}
+                    style={{ minWidth: '88px' }}
+                  >
+                    {isAutoRefreshEnabled ? '🔄' : '⏸️'} 自动
+                  </Button>
                 </Space>
+              </Col>
+              <Col xs={24} sm={24} md={8}>
+                <div style={{ 
+                  fontSize: '12px', 
+                  color: '#666',
+                  textAlign: 'right',
+                  padding: '4px 0',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}>
+                  上次更新: {dayjs(lastRefresh).format('HH:mm:ss')}
+                  {refreshInterval > 0 && isAutoRefreshEnabled && (
+                    <span style={{ marginLeft: '8px' }}>
+                      (每{refreshInterval/1000}秒)
+                    </span>
+                  )}
+                </div>
               </Col>
             </Row>
           </Card>
@@ -551,6 +714,11 @@ const SlurmTasksPage = () => {
                 <DesktopOutlined />
                 任务列表
                 <Badge count={pagination.total} />
+                {tasks.some(task => task.status === 'running') && (
+                  <Tag color="blue" icon={<ClockCircleOutlined />}>
+                    {tasks.filter(task => task.status === 'running').length} 个运行中
+                  </Tag>
+                )}
               </Space>
             }
           >
@@ -567,8 +735,10 @@ const SlurmTasksPage = () => {
               }}
               onChange={handleTableChange}
               locale={{
-                emptyText: '暂无任务记录',
+                emptyText: loading ? '加载中...' : '暂无任务记录',
               }}
+              scroll={{ x: 1200 }}
+              size="small"
             />
           </Card>
         </TabPane>

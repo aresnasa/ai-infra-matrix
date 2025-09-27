@@ -9,7 +9,8 @@ import {
   TeamOutlined,
   SafetyOutlined,
   ExperimentOutlined,
-  DashboardOutlined
+  DashboardOutlined,
+  DatabaseOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { usePagePreload } from '../hooks/usePagePreload';
@@ -80,6 +81,15 @@ const AdminCenter = () => {
       path: '/admin/trash',
       color: '#fff2e8',
       priority: 6
+    },
+    {
+      title: '对象存储配置',
+      description: '管理MinIO、S3等对象存储服务配置',
+      icon: <DatabaseOutlined style={{ fontSize: '24px', color: '#13c2c2' }} />,
+      path: '/admin/object-storage',
+      color: '#e6fffb',
+      badge: 'new',
+      priority: 7
     }
   ];
 

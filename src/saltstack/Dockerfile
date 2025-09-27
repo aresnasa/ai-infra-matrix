@@ -3,8 +3,38 @@ FROM python:3.13-alpine
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 更新包索引
-RUN apk update
+# 配置Alpine镜像（多镜像源智能回退配置）
+RUN set -eux; \
+    # 备份原始repositories文件
+    cp /etc/apk/repositories /etc/apk/repositories.bak; \
+    # 获取Alpine版本
+    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
+    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
+    # 尝试阿里云镜像源
+    { \
+        echo "尝试阿里云镜像源..."; \
+        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+        apk update --no-cache && \
+        echo "成功使用阿里云镜像源"; \
+    } || { \
+        echo "阿里云镜像源失败，尝试清华源..."; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+        apk update --no-cache && \
+        echo "成功使用清华源"; \
+    } || { \
+        echo "清华源失败，尝试中科大源..."; \
+        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+        apk update --no-cache && \
+        echo "成功使用中科大源"; \
+    } || { \
+        echo "所有国内源都失败，使用官方源..."; \
+        cp /etc/apk/repositories.bak /etc/apk/repositories && \
+        apk update && \
+        echo "使用官方源"; \
+    }
 
 # 安装基础依赖和编译工具
 RUN apk add --no-cache \
@@ -21,6 +51,12 @@ RUN apk add --no-cache \
         openldap-dev \
         cyrus-sasl-dev \
         linux-headers
+
+# 配置PyPI镜像源
+ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
+    PIP_EXTRA_INDEX_URL="https://pypi.org/simple" \
+    PIP_TRUSTED_HOST="mirrors.aliyun.com" \
+    PIP_TIMEOUT=60
 
 # 安装SaltStack及其Python依赖包
 RUN pip install --no-cache-dir \

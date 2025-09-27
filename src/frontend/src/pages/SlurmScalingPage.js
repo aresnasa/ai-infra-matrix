@@ -8,9 +8,11 @@ import {
   PlusOutlined, MinusOutlined, ReloadOutlined, ThunderboltOutlined,
   DesktopOutlined, ClusterOutlined, NodeIndexOutlined, ApiOutlined,
   CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined,
-  PlayCircleOutlined, StopOutlined, SettingOutlined
+  PlayCircleOutlined, StopOutlined, SettingOutlined, EyeOutlined,
+  BarChartOutlined
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 import SlurmTaskBar from '../components/SlurmTaskBar';
 import SSHAuthConfig from '../components/SSHAuthConfig';
 
@@ -37,6 +39,7 @@ const extendedSlurmAPI = {
 };
 
 const SlurmScalingPage = () => {
+  const navigate = useNavigate();
   // 基础状态
   const [summary, setSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -155,14 +158,55 @@ const SlurmScalingPage = () => {
       setNodes(nodesRes.data?.data || []);
       setJobs(jobsRes.data?.data || []);
       setScalingStatus(scalingRes.data?.data);
-      setNodeTemplates(templatesRes.data?.data || []);
+      // 安全处理模板响应数据
+      try {
+        const templateData = templatesRes.data?.data || [];
+        setNodeTemplates(Array.isArray(templateData) ? templateData : []);
+      } catch (templateError) {
+        console.warn('处理模板数据失败:', templateError);
+        setNodeTemplates([]);
+      }
       setSaltIntegration(saltRes.data?.data);
       setSaltJobs(saltJobsRes.data?.data || []);
       setError(null);
     } catch (e) {
       console.error('加载数据失败', e);
       setError(e);
-      message.error('加载数据失败');
+      
+      // 设置默认数据，避免页面完全无法使用
+      if (nodeTemplates.length === 0) {
+        setNodeTemplates([
+          {
+            id: 'small',
+            name: '小型计算节点',
+            cpus: 2,
+            memory_gb: 4,
+            disk_gb: 50,
+            os: 'ubuntu20.04',
+            description: '2核4GB内存，适合轻量级计算任务'
+          },
+          {
+            id: 'medium', 
+            name: '中型计算节点',
+            cpus: 4,
+            memory_gb: 8,
+            disk_gb: 100,
+            os: 'ubuntu20.04',
+            description: '4核8GB内存，适合中等规模计算任务'
+          },
+          {
+            id: 'large',
+            name: '大型计算节点', 
+            cpus: 8,
+            memory_gb: 16,
+            disk_gb: 200,
+            os: 'ubuntu20.04',
+            description: '8核16GB内存，适合大规模计算任务'
+          }
+        ]);
+      }
+      
+      message.error('部分数据加载失败，已使用默认配置');
     } finally {
       setLoading(false);
     }
@@ -233,9 +277,26 @@ const SlurmScalingPage = () => {
       }
 
       const response = await extendedSlurmAPI.scaleUp(nodes);
-      const opId = response.data?.opId;
+      const opId = response.data?.opId || response.data?.data?.task_id;
+      
       if (opId) {
-        message.success(`扩容任务已提交（任务ID: ${opId}），可在任务页面查看进度`);
+        // 显示带有导航按钮的成功消息
+        message.success({
+          content: (
+            <div>
+              <div>扩容任务已提交（任务ID: {opId}）</div>
+              <Button 
+                size="small" 
+                type="link" 
+                onClick={() => navigate(`/slurm-tasks?taskId=${opId}&status=running`)}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                查看任务进度 →
+              </Button>
+            </div>
+          ),
+          duration: 6, // 延长显示时间
+        });
       } else {
         message.success('扩容任务已提交');
       }
@@ -250,8 +311,30 @@ const SlurmScalingPage = () => {
 
   const handleScaleDown = async (nodeIds) => {
     try {
-      await extendedSlurmAPI.scaleDown(nodeIds);
-      message.success('缩容任务已提交');
+      const response = await extendedSlurmAPI.scaleDown(nodeIds);
+      const opId = response.data?.opId || response.data?.data?.task_id;
+      
+      if (opId) {
+        // 显示带有导航按钮的成功消息
+        message.success({
+          content: (
+            <div>
+              <div>缩容任务已提交（任务ID: {opId}）</div>
+              <Button 
+                size="small" 
+                type="link" 
+                onClick={() => navigate(`/slurm-tasks?taskId=${opId}&status=running`)}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                查看任务进度 →
+              </Button>
+            </div>
+          ),
+          duration: 6,
+        });
+      } else {
+        message.success('缩容任务已提交');
+      }
       loadData();
     } catch (e) {
       message.error('缩容失败: ' + e.message);
@@ -328,6 +411,12 @@ const SlurmScalingPage = () => {
           <Space>
             <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>
               刷新
+            </Button>
+            <Button
+              icon={<EyeOutlined />}
+              onClick={() => navigate('/slurm-tasks')}
+            >
+              任务管理
             </Button>
             <Button
               type="primary"
@@ -541,6 +630,104 @@ const SlurmScalingPage = () => {
                 pagination={{ pageSize: 10 }}
                 loading={loading}
               />
+            </Card>
+          </TabPane>
+
+          <TabPane tab={<span><BarChartOutlined />监控仪表板</span>} key="dashboard">
+            <Card 
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <BarChartOutlined />
+                  <span>SLURM 集群监控</span>
+                  <Badge status="processing" text="实时" />
+                </div>
+              } 
+              style={{ height: '600px' }}
+            >
+              {/* 监控iframe容器 */}
+              <div style={{ height: '520px', border: '1px solid #d9d9d9', borderRadius: '6px', position: 'relative' }}>
+                <iframe
+                  id="slurm-dashboard-iframe"
+                  src={`${window.location.protocol}//${window.location.hostname}:3000/d/slurm/slurm-cluster-dashboard?orgId=1&refresh=30s&kiosk`}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    border: 'none',
+                    borderRadius: '6px'
+                  }}
+                  title="SLURM 集群监控"
+                  onLoad={(e) => {
+                    console.log('SLURM仪表板加载完成');
+                    // 隐藏错误提示
+                    const errorDiv = document.getElementById('dashboard-error');
+                    if (errorDiv) errorDiv.style.display = 'none';
+                  }}
+                  onError={(e) => {
+                    console.error('SLURM仪表板加载失败');
+                    // 显示错误提示
+                    const errorDiv = document.getElementById('dashboard-error');
+                    if (errorDiv) errorDiv.style.display = 'flex';
+                    
+                    // 尝试备用URL
+                    setTimeout(() => {
+                      const iframe = e.target;
+                      if (iframe.src.includes(':3000')) {
+                        iframe.src = `${window.location.protocol}//${window.location.hostname}:8080/d/slurm-cluster/slurm-monitoring`;
+                      }
+                    }, 2000);
+                  }}
+                />
+                
+                {/* 错误提示层 */}
+                <div 
+                  id="dashboard-error"
+                  style={{ 
+                    position: 'absolute', 
+                    top: 0, 
+                    left: 0, 
+                    right: 0, 
+                    bottom: 0, 
+                    display: 'none',
+                    flexDirection: 'column',
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    background: '#f5f5f5',
+                    borderRadius: '6px'
+                  }}
+                >
+                  <ExclamationCircleOutlined style={{ fontSize: '48px', color: '#faad14', marginBottom: '16px' }} />
+                  <Text type="secondary" style={{ fontSize: '16px', marginBottom: '8px' }}>监控面板加载中...</Text>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>如果持续无法加载，请检查Grafana服务是否正常运行</Text>
+                  <Button 
+                    style={{ marginTop: '16px' }} 
+                    onClick={() => {
+                      const iframe = document.getElementById('slurm-dashboard-iframe');
+                      if (iframe) {
+                        iframe.src = iframe.src; // 重新加载
+                      }
+                    }}
+                  >
+                    重新加载
+                  </Button>
+                </div>
+              </div>
+              <div style={{ marginTop: '8px', textAlign: 'center' }}>
+                <Space>
+                  <Text type="secondary">实时监控集群状态和任务进度</Text>
+                  <Button 
+                    size="small" 
+                    icon={<ReloadOutlined />}
+                    onClick={() => {
+                      const iframe = document.querySelector('iframe[title="SLURM Dashboard"]');
+                      if (iframe) {
+                        iframe.src = iframe.src;
+                      }
+                    }}
+                  >
+                    刷新
+                  </Button>
+                </Space>
+              </div>
             </Card>
           </TabPane>
         </Tabs>

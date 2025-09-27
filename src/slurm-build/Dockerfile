@@ -7,16 +7,54 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Accept optional tarball path relative to build context root
 ARG SLURM_TARBALL_PATH=slurm-25.05.3.tar.bz2
 
-# Install build prerequisites (use Aliyun Ubuntu mirrors for faster downloads in CN)
-RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list \
-    # Ensure universe/multiverse/restricted components are enabled for broader build-deps
-    && sed -Ei 's/ jammy ([^\n]*)/ jammy \1 universe multiverse restricted/g; s/ jammy-updates ([^\n]*)/ jammy-updates \1 universe multiverse restricted/g; s/ jammy-security ([^\n]*)/ jammy-security \1 universe multiverse restricted/g' /etc/apt/sources.list \
-    && apt-get update \
-     && apt-get install -y --no-install-recommends \
-       ca-certificates wget curl git gnupg2 \
-         build-essential fakeroot devscripts equivs gdebi-core \
+# 配置APT镜像源和安装构建依赖（分步骤避免网络问题）
+RUN set -eux; \
+    # 备份原始sources.list
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 首先使用官方源安装基础证书
+    apt-get update && apt-get install -y ca-certificates curl; \
+    # 检测架构
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    # 根据架构配置HTTP镜像源（避免SSL问题）
+    if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+        echo "配置ARM64架构的阿里云HTTP镜像源..."; \
+        if timeout 10 curl -s http://mirrors.aliyun.com/ubuntu-ports/dists/jammy/InRelease >/dev/null; then \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+        else \
+            echo "阿里云源不可用，使用官方源"; \
+        fi; \
+    else \
+        echo "配置AMD64架构的阿里云HTTP镜像源..."; \
+        if timeout 10 curl -s http://mirrors.aliyun.com/ubuntu/dists/jammy/InRelease >/dev/null; then \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+        else \
+            echo "阿里云源不可用，使用官方源"; \
+        fi; \
+    fi; \
+    # 测试源并更新包列表
+    apt-get update || { \
+        echo "镜像源失败，回退到官方源..."; \
+        cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        apt-get update; \
+    }
+
+# Install build prerequisites (分组安装减少失败风险)
+RUN apt-get install -y --no-install-recommends \
+       wget git gpg \
+       build-essential fakeroot devscripts equivs gdebi-core \
+       pkg-config debhelper dh-autoreconf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install development libraries (单独安装避免依赖冲突)
+RUN apt-get update && apt-get install -y --no-install-recommends \
        libmunge-dev libmariadb-dev libpam0g-dev libcgroup-dev libhwloc-dev \
-         pkg-config debhelper dh-autoreconf \
     && rm -rf /var/lib/apt/lists/*
 
 # Add a non-root builder user to satisfy debuild (avoids building as root)
