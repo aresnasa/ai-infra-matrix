@@ -67,12 +67,10 @@ FROM nginx:stable-alpine-perl
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（使用阿里云镜像加速），并设置时区为上海
+# 配置Alpine镜像（直接使用阿里云镜像源），并设置时区为上海
 RUN set -eux; \
-	for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
-		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
-		apk update && break || true; \
-	done; \
+	sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories; \
+	apk update || (sleep 5 && apk update) || (sleep 10 && apk update); \
 	apk add --no-cache tzdata
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone

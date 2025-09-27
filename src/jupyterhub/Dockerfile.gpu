@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y \
 # 创建符号链接
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
+# 配置pip使用阿里云镜像源
+RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip3 config set global.trusted-host mirrors.aliyun.com
+
 # 升级pip
 RUN pip3 install --upgrade pip setuptools wheel
 

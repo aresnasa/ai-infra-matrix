@@ -4,6 +4,26 @@ set -e
 # AI Infrastructure Matrix SLURM Master Entrypoint
 echo "🚀 启动 AI Infrastructure Matrix SLURM Master..."
 
+# 检查SLURM安装状态
+if [ -f /opt/slurm-installed ]; then
+    echo "✅ SLURM已安装，使用完整功能模式"
+    SLURM_MODE="full"
+elif [ -f /opt/slurm-demo-mode ]; then
+    echo "⚠️ SLURM未安装，使用演示模式"
+    SLURM_MODE="demo"
+else
+    echo "🔍 检测SLURM安装状态..."
+    if command -v slurmctld >/dev/null 2>&1 && command -v slurmdbd >/dev/null 2>&1; then
+        echo "✅ SLURM已安装"
+        SLURM_MODE="full"
+        touch /opt/slurm-installed
+    else
+        echo "⚠️ SLURM未安装，使用演示模式"
+        SLURM_MODE="demo"
+        touch /opt/slurm-demo-mode
+    fi
+fi
+
 # 环境变量默认值
 export SLURM_CLUSTER_NAME=${SLURM_CLUSTER_NAME:-ai-infra-cluster}
 export SLURM_CONTROLLER_HOST=${SLURM_CONTROLLER_HOST:-slurm-master}
@@ -36,6 +56,7 @@ export SLURM_DEFAULT_TIME_LIMIT=${SLURM_DEFAULT_TIME_LIMIT:-01:00:00}
 export SLURM_MAX_TIME_LIMIT=${SLURM_MAX_TIME_LIMIT:-24:00:00}
 
 echo "📋 SLURM配置摘要："
+echo "  运行模式: $SLURM_MODE"
 echo "  集群名称: $SLURM_CLUSTER_NAME"
 echo "  控制器: $SLURM_CONTROLLER_HOST:$SLURM_CONTROLLER_PORT"
 echo "  数据库: $SLURM_DB_HOST:$SLURM_DB_PORT/$SLURM_DB_NAME"
@@ -175,13 +196,21 @@ trap 'handle_signal' TERM INT
 main() {
     case "${1:-start-services}" in
         start-services)
-            wait_for_database
-            init_database
-            generate_configs
-            setup_munge
-            
-            echo "🎯 启动SLURM服务 (使用supervisor)..."
-            exec supervisord -c /etc/supervisor/conf.d/slurm.conf
+            if [ "$SLURM_MODE" = "full" ]; then
+                wait_for_database
+                init_database
+                generate_configs
+                setup_munge
+                
+                echo "🎯 启动SLURM服务 (使用supervisor)..."
+                exec supervisord -c /etc/supervisor/conf.d/slurm.conf
+            else
+                echo "🎭 启动演示模式..."
+                setup_munge
+                
+                echo "🎯 启动演示服务 (使用supervisor)..."
+                exec supervisord -c /etc/supervisor/conf.d/slurm.conf
+            fi
             ;;
         supervisord)
             # 旧版本兼容性，重定向到start-services

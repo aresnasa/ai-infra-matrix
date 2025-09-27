@@ -58,7 +58,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # 使用阿里云 PyPI 镜像（带官方 PyPI 作为备用源）
 ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
-    PIP_EXTRA_INDEX_URL="https://pypi.org/simple" \
+    PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
     PIP_TRUSTED_HOST="mirrors.aliyun.com" \
     PIP_TIMEOUT=60
 
@@ -82,8 +82,10 @@ RUN set -eux; \
     ; \
     # 配置npm使用阿里云镜像源
     npm config set registry https://registry.npmmirror.com; \
-    npm config set disturl https://npmmirror.com/mirrors/node; \
-    npm config set sass_binary_site https://npmmirror.com/mirrors/node-sass; \
+    # 设置node-gyp镜像环境变量
+    # 配置pip使用阿里云镜像源
+    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/; \
+    pip config set global.trusted-host mirrors.aliyun.com; \
     # 安装Python依赖
     pip install --no-cache-dir --prefer-binary psutil>=5.9.0; \
     pip install --no-cache-dir -r requirements.txt; \

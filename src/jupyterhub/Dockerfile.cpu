@@ -14,6 +14,10 @@ RUN apt-get update && apt-get install -y \
     htop \
     && rm -rf /var/lib/apt/lists/*
 
+# 配置pip使用阿里云镜像源
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com
+
 # 升级pip
 RUN pip install --upgrade pip setuptools wheel
 

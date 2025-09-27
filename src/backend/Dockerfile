@@ -108,12 +108,10 @@ ENV GOSUMDB=off
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（使用阿里云镜像加速）
+# 配置Alpine镜像（直接使用阿里云镜像源）
 RUN set -eux; \
-    for MIR in mirrors.aliyun.com mirrors.ustc.edu.cn mirrors.tuna.tsinghua.edu.cn dl-cdn.alpinelinux.org; do \
-        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
-        apk update && break || true; \
-    done
+    sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories; \
+    apk update || (sleep 5 && apk update) || (sleep 10 && apk update)
 
 # 更新apk索引并设置时区为上海，添加必要工具
 RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen || \

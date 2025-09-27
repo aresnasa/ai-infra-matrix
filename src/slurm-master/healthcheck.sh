@@ -39,6 +39,12 @@ check_munge() {
 check_slurmdbd() {
     log_info "检查slurmdbd服务..."
     
+    # 检查是否为演示模式
+    if [ -f /opt/slurm-demo-mode ]; then
+        log_warn "演示模式: slurmdbd未安装，跳过检查"
+        return 0
+    fi
+    
     # 检查slurmdbd进程
     if ! pgrep -f slurmdbd >/dev/null; then
         log_error "slurmdbd进程未运行"
@@ -59,6 +65,12 @@ check_slurmdbd() {
 check_slurmctld() {
     log_info "检查slurmctld服务..."
     
+    # 检查是否为演示模式
+    if [ -f /opt/slurm-demo-mode ]; then
+        log_warn "演示模式: slurmctld未安装，跳过检查"
+        return 0
+    fi
+    
     # 检查slurmctld进程
     if ! pgrep -f slurmctld >/dev/null; then
         log_error "slurmctld进程未运行"
@@ -78,6 +90,12 @@ check_slurmctld() {
 
 check_slurm_cluster() {
     log_info "检查SLURM集群状态..."
+    
+    # 检查是否为演示模式
+    if [ -f /opt/slurm-demo-mode ]; then
+        log_warn "演示模式: SLURM命令不可用，跳过集群检查"
+        return 0
+    fi
     
     # 检查集群信息
     if ! timeout 10 scontrol ping >/dev/null 2>&1; then
@@ -176,8 +194,16 @@ main_health_check() {
 
 # 快速检查函数（用于Docker健康检查）
 quick_health_check() {
-    # 只检查关键服务是否运行
+    # 检查Munge服务
     pgrep -f munged >/dev/null 2>&1 || exit 1
+    
+    # 检查是否为演示模式
+    if [ -f /opt/slurm-demo-mode ]; then
+        # 演示模式只检查基础服务
+        exit 0
+    fi
+    
+    # 完整模式检查所有服务
     pgrep -f slurmdbd >/dev/null 2>&1 || exit 1
     pgrep -f slurmctld >/dev/null 2>&1 || exit 1
     

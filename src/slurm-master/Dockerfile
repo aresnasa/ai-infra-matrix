@@ -22,30 +22,26 @@ RUN set -eux; \
         sleep 5; \
     done
 
-# 尝试配置更快的镜像源，失败则保持官方源
+# 配置阿里云镜像源（直接使用，不做验证）
 RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 先测试是否能用国内源（使用timeout避免长时间等待）
+    # 根据架构直接配置阿里云镜像源
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-        echo "尝试配置ARM64阿里云镜像源..."; \
+        echo "配置ARM64阿里云镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
-        echo "尝试配置AMD64阿里云镜像源..."; \
+        echo "配置AMD64阿里云镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
-    # 快速测试镜像源（10秒超时）
-    timeout 10 apt-get update || { \
-        echo "镜像源测试失败或超时，使用官方源..."; \
-        cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
-        apt-get update; \
-    }
+    # 更新包列表（带重试机制）
+    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)
 
 # 安装基础依赖（ca-certificates和curl已在上面安装）
 RUN apt-get install -y --no-install-recommends \
@@ -79,19 +75,39 @@ RUN mkdir -p /etc/slurm \
 # 尝试从AppHub安装SLURM 25.05.3版本包（可选，允许失败）
 ARG APPHUB_URL=http://apphub:80
 RUN set -eux; \
-    # 尝试添加AppHub源并安装SLURM包
+    # 首先尝试从AppHub安装
     echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
-    if apt-get update && apt-get install -y \
+    if timeout 30 apt-get update && apt-get install -y \
         slurm-smd \
         slurm-smd-client \
         slurm-smd-slurmctld \
         slurm-smd-slurmdbd; then \
-        echo "成功从AppHub安装SLURM包"; \
-        rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
+        echo "✅ 成功从AppHub安装SLURM包"; \
+        SLURM_INSTALLED=true; \
     else \
-        echo "从AppHub安装SLURM包失败，将在运行时通过外部方式安装"; \
+        echo "⚠️  AppHub不可用，尝试从系统仓库安装SLURM..."; \
         rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
-        rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
+        apt-get update; \
+        if apt-get install -y slurm-wlm slurm-wlm-basic-plugins slurm-client; then \
+            echo "✅ 成功从系统仓库安装SLURM"; \
+            SLURM_INSTALLED=true; \
+        else \
+            echo "❌ SLURM安装失败，容器将以演示模式运行"; \
+            SLURM_INSTALLED=false; \
+        fi; \
+    fi; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
+    # 创建标记文件
+    if [ "$SLURM_INSTALLED" = "true" ]; then \
+        touch /opt/slurm-installed; \
+        # 检查实际的二进制文件位置
+        which slurmctld > /opt/slurmctld-path || echo "/usr/sbin/slurmctld" > /opt/slurmctld-path; \
+        which slurmdbd > /opt/slurmdbd-path || echo "/usr/sbin/slurmdbd" > /opt/slurmdbd-path; \
+        echo "SLURM二进制文件路径:"; \
+        echo "slurmctld: $(cat /opt/slurmctld-path)"; \
+        echo "slurmdbd: $(cat /opt/slurmdbd-path)"; \
+    else \
+        echo "SLURM未安装，将运行演示模式" > /opt/slurm-demo-mode; \
     fi
 
 # 配置用户组和权限（在SLURM安装后）

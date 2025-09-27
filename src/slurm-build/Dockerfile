@@ -11,39 +11,26 @@ ARG SLURM_TARBALL_PATH=slurm-25.05.3.tar.bz2
 RUN set -eux; \
     # 备份原始sources.list
     cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
-    # 首先使用官方源安装基础证书
-    apt-get update && apt-get install -y ca-certificates curl; \
     # 检测架构
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 根据架构配置HTTP镜像源（避免SSL问题）
+    # 根据架构直接配置阿里云镜像源
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "配置ARM64架构的阿里云HTTP镜像源..."; \
-        if timeout 10 curl -s http://mirrors.aliyun.com/ubuntu-ports/dists/jammy/InRelease >/dev/null; then \
-            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
-        else \
-            echo "阿里云源不可用，使用官方源"; \
-        fi; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
         echo "配置AMD64架构的阿里云HTTP镜像源..."; \
-        if timeout 10 curl -s http://mirrors.aliyun.com/ubuntu/dists/jammy/InRelease >/dev/null; then \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
-        else \
-            echo "阿里云源不可用，使用官方源"; \
-        fi; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
-    # 测试源并更新包列表
-    apt-get update || { \
-        echo "镜像源失败，回退到官方源..."; \
-        cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
-        apt-get update; \
-    }
+    # 更新包列表并安装基础工具（带重试机制）
+    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
+    apt-get install -y ca-certificates curl
 
 # Install build prerequisites (分组安装减少失败风险)
 RUN apt-get install -y --no-install-recommends \
