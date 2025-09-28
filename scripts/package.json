@@ -1,0 +1,29 @@
+{
+  "name": "ai-infra-matrix-playwright-tests",
+  "version": "1.0.0",
+  "description": "Playwright tests for AI Infrastructure Matrix object storage functionality",
+  "main": "test-object-storage-playwright.js",
+  "scripts": {
+    "test": "node test-object-storage-playwright.js",
+    "test:headed": "HEADLESS=false node test-object-storage-playwright.js",
+    "test:ci": "HEADLESS=true node test-object-storage-playwright.js",
+    "install-browsers": "npx playwright install"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  },
+  "devDependencies": {},
+  "author": "AI Infrastructure Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aresnasa/ai-infra-matrix.git"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "object-storage",
+    "minio",
+    "iframe"
+  ]
+}

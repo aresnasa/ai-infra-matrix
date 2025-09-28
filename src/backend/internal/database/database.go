@@ -507,6 +507,103 @@ func registerEncryptionHooks() error {
 		return fmt.Errorf("failed to register query hook for AIAssistantConfig: %w", err)
 	}
 
+	// 注册 ObjectStorageConfig 的加密钩子
+	err = DB.Callback().Create().Before("gorm:create").Register("encrypt_object_storage_config", func(db *gorm.DB) {
+		if config, ok := db.Statement.Dest.(*models.ObjectStorageConfig); ok {
+			if CryptoService != nil {
+				if config.AccessKey != "" {
+					encrypted, encErr := CryptoService.EncryptIfNeeded(config.AccessKey)
+					if encErr != nil {
+						logrus.WithError(encErr).Error("Failed to encrypt ObjectStorage AccessKey during create")
+						db.AddError(encErr)
+						return
+					}
+					config.AccessKey = encrypted
+				}
+				if config.SecretKey != "" {
+					encrypted, encErr := CryptoService.EncryptIfNeeded(config.SecretKey)
+					if encErr != nil {
+						logrus.WithError(encErr).Error("Failed to encrypt ObjectStorage SecretKey during create")
+						db.AddError(encErr)
+						return
+					}
+					config.SecretKey = encrypted
+				}
+				logrus.Debug("ObjectStorage credentials encrypted during create operation")
+			}
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to register create hook for ObjectStorageConfig: %w", err)
+	}
+
+	err = DB.Callback().Update().Before("gorm:update").Register("encrypt_object_storage_config_update", func(db *gorm.DB) {
+		if config, ok := db.Statement.Dest.(*models.ObjectStorageConfig); ok {
+			if CryptoService != nil {
+				if config.AccessKey != "" {
+					encrypted, encErr := CryptoService.EncryptIfNeeded(config.AccessKey)
+					if encErr != nil {
+						logrus.WithError(encErr).Error("Failed to encrypt ObjectStorage AccessKey during update")
+						db.AddError(encErr)
+						return
+					}
+					config.AccessKey = encrypted
+				}
+				if config.SecretKey != "" {
+					encrypted, encErr := CryptoService.EncryptIfNeeded(config.SecretKey)
+					if encErr != nil {
+						logrus.WithError(encErr).Error("Failed to encrypt ObjectStorage SecretKey during update")
+						db.AddError(encErr)
+						return
+					}
+					config.SecretKey = encrypted
+				}
+				logrus.Debug("ObjectStorage credentials encrypted during update operation")
+			}
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to register update hook for ObjectStorageConfig: %w", err)
+	}
+
+	err = DB.Callback().Query().After("gorm:after_query").Register("decrypt_object_storage_config", func(db *gorm.DB) {
+		// 处理单个对象
+		if config, ok := db.Statement.Dest.(*models.ObjectStorageConfig); ok {
+			if CryptoService != nil {
+				if config.AccessKey != "" {
+					decrypted := CryptoService.DecryptSafely(config.AccessKey)
+					config.AccessKey = decrypted
+				}
+				if config.SecretKey != "" {
+					decrypted := CryptoService.DecryptSafely(config.SecretKey)
+					config.SecretKey = decrypted
+				}
+				logrus.Debug("ObjectStorage credentials decrypted during query operation")
+			}
+		}
+
+		// 处理切片对象
+		if configs, ok := db.Statement.Dest.(*[]models.ObjectStorageConfig); ok {
+			for i := range *configs {
+				config := &(*configs)[i]
+				if CryptoService != nil {
+					if config.AccessKey != "" {
+						decrypted := CryptoService.DecryptSafely(config.AccessKey)
+						config.AccessKey = decrypted
+					}
+					if config.SecretKey != "" {
+						decrypted := CryptoService.DecryptSafely(config.SecretKey)
+						config.SecretKey = decrypted
+					}
+				}
+			}
+			logrus.Debug("ObjectStorage credentials decrypted during query operation (slice)")
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to register query hook for ObjectStorageConfig: %w", err)
+	}
+
 	logrus.Info("Encryption hooks registered successfully")
 	return nil
 }

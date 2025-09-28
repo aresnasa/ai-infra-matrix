@@ -67,16 +67,29 @@ const MinIOConsolePage = () => {
       setConnectionStatus(status);
       
       if (status === 'connected' && configData.web_url) {
-        // 构建MinIO控制台URL
-        let consoleUrl = configData.web_url;
+        // 优先使用nginx代理路径，以避免跨域问题
+        let consoleUrl;
         
-        // 确保URL格式正确
-        if (!consoleUrl.startsWith('http://') && !consoleUrl.startsWith('https://')) {
-          consoleUrl = `http://${consoleUrl}`;
+        // 检查是否应该使用nginx代理路径
+        const currentHost = window.location.hostname;
+        const currentPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+        const currentOrigin = `${window.location.protocol}//${currentHost}:${currentPort}`;
+        
+        // 如果MinIO配置的web_url包含当前主机，使用nginx代理路径
+        if (configData.web_url.includes(currentHost) || configData.web_url.includes('localhost')) {
+          consoleUrl = `${currentOrigin}/minio-console/`;
+        } else {
+          // 否则使用配置的web_url
+          consoleUrl = configData.web_url;
+          
+          // 确保URL格式正确
+          if (!consoleUrl.startsWith('http://') && !consoleUrl.startsWith('https://')) {
+            consoleUrl = `http://${consoleUrl}`;
+          }
+          
+          // 移除末尾的斜杠
+          consoleUrl = consoleUrl.replace(/\/$/, '');
         }
-        
-        // 移除末尾的斜杠
-        consoleUrl = consoleUrl.replace(/\/$/, '');
         
         setIframeUrl(consoleUrl);
       }

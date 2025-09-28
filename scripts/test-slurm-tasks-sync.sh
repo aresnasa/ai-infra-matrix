@@ -5,7 +5,8 @@
 echo "🚀 测试 SLURM 任务显示和状态同步..."
 
 BASE_URL="http://localhost:8082/api"
-FRONTEND_URL="http://localhost:3000"
+# 使用环境变量或默认8080端口 (生产环境) 而非3000 (开发环境)
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:8080}"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -243,6 +244,7 @@ main() {
     log_info "📱 测试访问："
     echo "   • 任务管理: $FRONTEND_URL/slurm-tasks"
     echo "   • 扩缩容管理: $FRONTEND_URL/slurm-scaling"
+    echo "   • 前端地址可通过 FRONTEND_URL 环境变量自定义"
     echo "=========================================="
 }
 

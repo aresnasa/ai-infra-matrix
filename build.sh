@@ -1048,13 +1048,17 @@ restore_singleuser_dockerfile() {
 
 # 从 docker-compose.yml 加载环境变量
 load_environment_variables() {
-    local env_file="$SCRIPT_DIR/.env.prod"
+    local env_file="$SCRIPT_DIR/.env"
     
     # 检测外部主机地址
     local detected_host="localhost"
     local detected_port="8080"
     
-    if [[ -f "$SCRIPT_DIR/scripts/detect-external-host.sh" ]]; then
+    # 优先从.env文件读取EXTERNAL_HOST
+    if [[ -f "$env_file" ]] && grep -q "^EXTERNAL_HOST=" "$env_file"; then
+        detected_host=$(grep "^EXTERNAL_HOST=" "$env_file" | cut -d= -f2 | sed 's/"//g')
+        print_info "从.env文件读取外部主机: $detected_host"
+    elif [[ -f "$SCRIPT_DIR/scripts/detect-external-host.sh" ]]; then
         detected_host=$(cd "$SCRIPT_DIR" && bash scripts/detect-external-host.sh | grep "检测到的主机地址:" | cut -d: -f2 | xargs)
         if [[ -n "$detected_host" && "$detected_host" != "localhost" ]]; then
             print_info "自动检测到外部主机: $detected_host"
@@ -1085,10 +1089,10 @@ load_environment_variables() {
         done < "$env_file"
     fi
     
-    # 设置动态变量
-    EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
-    EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
-    EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
+    # 设置动态变量并导出
+    export EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
+    export EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
+    export EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
     
     # 从 docker-compose.yml 提取默认值
     if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
@@ -1183,12 +1187,13 @@ render_template() {
     local ADMIN_USERS="${ADMIN_USERS:-'admin'}"
     
     
+    # 导出所有变量供Python渲染器和envsubst使用
+    export BACKEND_HOST BACKEND_PORT FRONTEND_HOST FRONTEND_PORT
+    export JUPYTERHUB_HOST JUPYTERHUB_PORT EXTERNAL_SCHEME EXTERNAL_HOST
+    export GITEA_ALIAS_ADMIN_TO GITEA_ADMIN_EMAIL
+    
     # 备用shell方法：只处理基础变量替换，使用envsubst
     if command -v envsubst >/dev/null 2>&1; then
-        # 导出所有变量供envsubst使用
-        export BACKEND_HOST BACKEND_PORT FRONTEND_HOST FRONTEND_PORT
-        export JUPYTERHUB_HOST JUPYTERHUB_PORT EXTERNAL_SCHEME EXTERNAL_HOST
-        export GITEA_ALIAS_ADMIN_TO GITEA_ADMIN_EMAIL
         export ENVIRONMENT AUTH_TYPE GENERATION_TIME
         export JUPYTERHUB_HUB_PORT JUPYTERHUB_BASE_URL JUPYTERHUB_HUB_CONNECT_HOST
         export JUPYTERHUB_PUBLIC_URL CONFIGPROXY_AUTH_TOKEN JUPYTERHUB_DB_URL
@@ -1233,6 +1238,7 @@ render_nginx_templates() {
     # 渲染includes配置文件  
     render_template "$template_dir/conf.d/includes/gitea.conf.tpl" "$output_dir/conf.d/includes/gitea.conf"
     render_template "$template_dir/conf.d/includes/jupyterhub.conf.tpl" "$output_dir/conf.d/includes/jupyterhub.conf"
+    render_template "$template_dir/conf.d/includes/minio.conf.tpl" "$output_dir/conf.d/includes/minio.conf"
     
     print_success "✓ Nginx 模板渲染完成"
     echo
@@ -3044,6 +3050,40 @@ build_all_services() {
     else
         print_warning "配置文件同步过程中有警告，但构建流程将继续"
     fi
+    echo
+
+    # 渲染配置模板（确保所有服务配置最新）
+    print_info "=========================================="
+    print_info "渲染配置模板"
+    print_info "=========================================="
+    
+    # 渲染 Nginx 配置模板
+    print_info "渲染 Nginx 配置模板..."
+    if render_nginx_templates; then
+        print_success "✓ Nginx 模板渲染完成"
+    else
+        print_warning "Nginx 模板渲染失败，但构建流程将继续"
+    fi
+    
+    # 渲染 JupyterHub 配置模板
+    print_info "渲染 JupyterHub 配置模板..."
+    if render_jupyterhub_templates; then
+        print_success "✓ JupyterHub 模板渲染完成"
+    else
+        print_warning "JupyterHub 模板渲染失败，但构建流程将继续"
+    fi
+    
+    # 渲染 Docker Compose 配置模板（如果需要）
+    if [[ -f "$SCRIPT_DIR/docker-compose.yml.example" ]]; then
+        print_info "渲染 Docker Compose 配置模板..."
+        if render_docker_compose_templates "$registry" "$tag"; then
+            print_success "✓ Docker Compose 模板渲染完成"
+        else
+            print_warning "Docker Compose 模板渲染失败，但构建流程将继续"
+        fi
+    fi
+    
+    print_success "✓ 所有模板渲染完成"
     echo
     
     # 批量下载基础镜像
@@ -7274,12 +7314,13 @@ check_service_health() {
                     fi
                     ;;
                 "frontend")
-                    # 检查前端 - 通过nginx代理
-                    if curl -s -f --connect-timeout 5 "http://localhost:8080" >/dev/null 2>&1; then
+                    # 检查前端 - 通过nginx代理或环境变量指定的端口
+                    local frontend_port="${EXTERNAL_PORT:-8080}"
+                    if curl -s -f --connect-timeout 5 "http://localhost:$frontend_port" >/dev/null 2>&1; then
                         return 0
                     fi
-                    # 备用：直接检查前端端口
-                    if curl -s -f --connect-timeout 5 "http://localhost:3000" >/dev/null 2>&1; then
+                    # 备用：检查容器内的80端口（如果直接访问容器）
+                    if [ "$frontend_port" != "80" ] && curl -s -f --connect-timeout 5 "http://localhost:80" >/dev/null 2>&1; then
                         return 0
                     fi
                     ;;
@@ -7813,21 +7854,33 @@ deploy_unified() {
         print_error "环境模板渲染失败"
         return 1
     fi
-    
+
+    # 渲染Nginx配置模板
+    print_info "渲染Nginx配置模板..."
+    if ! render_nginx_templates; then
+        print_warning "Nginx模板渲染失败，但流程继续"
+    fi
+
+    # 渲染JupyterHub配置模板
+    print_info "渲染JupyterHub配置模板..."
+    if ! render_jupyterhub_templates; then
+        print_warning "JupyterHub模板渲染失败，但流程继续"
+    fi
+
     # 渲染Docker Compose文件
     print_info "渲染Docker Compose配置..."
     if ! render_compose_template "$compose_file"; then
         print_error "Docker Compose模板渲染失败"
         return 1
     fi
-    
+
     # 启动服务
     print_info "启动生产环境服务..."
     if ! start_production "$compose_file"; then
         print_error "服务启动失败"
         return 1
     fi
-    
+
     print_success "统一部署完成！"
     print_info "服务已启动，访问地址: $external_scheme://$external_host:$external_port"
     return 0
@@ -7851,20 +7904,34 @@ build_deploy_all() {
     print_info "External Scheme: $external_scheme"
     print_info "Compose File: $compose_file"
     
+    # Step 0: 渲染所有模板
+    print_info "=== 第0步: 渲染所有配置模板 ==="
+    if ! render_nginx_templates; then
+        print_warning "Nginx模板渲染失败，但流程继续"
+    fi
+    if ! render_jupyterhub_templates; then
+        print_warning "JupyterHub模板渲染失败，但流程继续"
+    fi
+    if [[ -f "$SCRIPT_DIR/docker-compose.yml.example" ]]; then
+        if ! render_docker_compose_templates "$registry" "$tag"; then
+            print_warning "Docker Compose模板渲染失败，但流程继续"
+        fi
+    fi
+
     # Step 1: 构建并推送镜像
     print_info "=== 第1步: 构建并推送镜像 ==="
     if ! build_and_push_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme"; then
         print_error "构建和推送阶段失败"
         return 1
     fi
-    
+
     # Step 2: 部署服务
     print_info "=== 第2步: 部署服务 ==="
     if ! deploy_unified "$registry" "$tag" "$external_host" "$external_port" "$external_scheme" "$compose_file"; then
         print_error "部署阶段失败"
         return 1
     fi
-    
+
     print_success "一键构建和部署完成！"
     print_info "所有服务已成功构建、推送并启动"
     print_info "访问地址: $external_scheme://$external_host:$external_port"

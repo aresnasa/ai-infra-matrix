@@ -6,7 +6,8 @@
 set -e
 
 # 配置
-FRONTEND_URL="http://localhost:3000"
+# 使用环境变量或默认8080端口 (生产环境) 而非3000 (开发环境)
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:8080}"
 BACKEND_URL="http://localhost:8080"
 
 # 颜色定义

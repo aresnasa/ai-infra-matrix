@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Empty, Popover, Space, Tag, Tooltip, Typography } from 'antd';
+import { Badge, Button, Empty, Popover, Space, Tag, Tooltip, Typography, Progress } from 'antd';
 import { ThunderboltOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -32,9 +32,14 @@ const formatTask = (t) => {
     id: t.id,
     name: t.name || t.id,
     status: t.status,
+    progress: t.progress || 0,
+    currentStep: t.current_step || '',
+    lastMessage: t.last_message || '',
     startedAt: t.started_at ? dayjs.unix(t.started_at) : null,
-    completedAt: t.completed_at ? dayjs.unix(t.completed_at) : null,
+    completedAt: t.completed_at && t.completed_at > 0 ? dayjs.unix(t.completed_at) : null,
     latest: t.latest_event || null,
+    duration: t.duration || '',
+    errorMessage: t.error_message || '',
   };
 };
 
@@ -45,23 +50,71 @@ export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, st
 
   const load = async () => {
     setLoading(true);
+    
+    // 检查token是否存在
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.warn('SlurmTaskBar: No authentication token found in localStorage');
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
+    
     try {
+      console.log('SlurmTaskBar: Loading tasks with token:', token.substring(0, 20) + '...');
       const res = await slurmAPI.getTasks();
-      const data = res?.data?.data || [];
-      setTasks(data.map(formatTask));
+      console.log('SLURM Tasks API Response:', res);
+      
+      // 检查嵌套的响应结构: res.data.data.tasks 
+      if (res && res.data && res.data.data && res.data.data.tasks) {
+        const data = res.data.data.tasks;
+        console.log('Parsed tasks data:', data);
+        const formattedTasks = data.map(formatTask);
+        console.log('Formatted tasks:', formattedTasks);
+        setTasks(formattedTasks);
+      } else {
+        console.warn('SlurmTaskBar: Invalid response format:', res);
+        console.warn('SlurmTaskBar: Expected res.data.data.tasks, got:', res?.data);
+        setTasks([]);
+      }
     } catch (e) {
-      // console.debug('Failed to load slurm tasks', e);
+      console.error('SlurmTaskBar: Failed to load slurm tasks:', e);
+      if (e.response) {
+        console.error('SlurmTaskBar: Response status:', e.response.status);
+        console.error('SlurmTaskBar: Response data:', e.response.data);
+      }
+      setTasks([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    console.log('SlurmTaskBar: Component mounted, loading tasks...');
     load();
+    
+    let interval;
     if (refreshInterval > 0) {
-      const t = setInterval(load, refreshInterval);
-      return () => clearInterval(t);
+      interval = setInterval(() => {
+        console.log('SlurmTaskBar: Auto-refreshing tasks...');
+        load();
+      }, refreshInterval);
     }
+    
+    // 监听localStorage变化（token更新）
+    const handleStorageChange = (e) => {
+      if (e.key === 'token') {
+        console.log('SlurmTaskBar: Token changed, reloading tasks');
+        load();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      if (interval) clearInterval(interval);
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, [refreshInterval]);
 
   const items = useMemo(() => tasks.slice(0, maxItems), [tasks, maxItems]);
@@ -72,16 +125,48 @@ export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, st
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务" />
       ) : (
         items.map((t) => (
-          <Space key={t.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Space>
-              <Badge status={badgeStatus(t.status)} />
-              <Text strong>{t.name}</Text>
-              <Tag color="default">{t.status}</Tag>
+          <div key={t.id} style={{ marginBottom: 8, padding: 8, border: '1px solid #f0f0f0', borderRadius: 4 }}>
+            <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+              <Space>
+                <Badge status={badgeStatus(t.status)} />
+                <Text strong>{t.name}</Text>
+                <Tag color={t.status === 'running' ? 'blue' : t.status === 'failed' ? 'red' : 'default'}>
+                  {t.status}
+                </Tag>
+              </Space>
+              <Space>
+                {t.startedAt && <Text type="secondary">{t.startedAt.fromNow()}</Text>}
+              </Space>
             </Space>
-            <Space>
-              {t.startedAt && <Text type="secondary">{t.startedAt.fromNow()}</Text>}
-            </Space>
-          </Space>
+            {t.progress > 0 && (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                  <Text type="secondary">{t.currentStep}</Text>
+                  <Text type="secondary">{Math.round(t.progress * 100)}%</Text>
+                </div>
+                <div style={{ 
+                  width: '100%', 
+                  height: '4px', 
+                  backgroundColor: '#f0f0f0', 
+                  borderRadius: '2px',
+                  overflow: 'hidden',
+                  marginTop: '2px'
+                }}>
+                  <div style={{
+                    width: `${Math.round(t.progress * 100)}%`,
+                    height: '100%',
+                    backgroundColor: t.status === 'running' ? '#1890ff' : t.status === 'failed' ? '#ff4d4f' : '#52c41a',
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+              </div>
+            )}
+            {t.lastMessage && (
+              <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 4 }}>
+                {t.lastMessage}
+              </Text>
+            )}
+          </div>
         ))
       )}
       <Space style={{ width: '100%', justifyContent: 'space-between' }}>

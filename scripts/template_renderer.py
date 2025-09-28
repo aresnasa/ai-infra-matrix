@@ -66,7 +66,11 @@ def get_template_variables():
     # 合并环境变量值，环境变量优先
     variables = {}
     for key, default_value in defaults.items():
-        variables[key] = os.environ.get(key, default_value)
+        env_value = os.environ.get(key)
+        if env_value is not None and env_value != '':
+            variables[key] = env_value
+        else:
+            variables[key] = default_value
     
     return variables
 

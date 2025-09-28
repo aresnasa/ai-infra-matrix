@@ -161,14 +161,17 @@ test_get_task_detail() {
 test_frontend() {
     log_info "测试前端页面可访问性..."
     
+    # 使用环境变量或默认端口8080 (生产环境) 而非3000 (开发环境)
+    FRONTEND_URL="${FRONTEND_URL:-http://localhost:8080}"
+    
     # 测试主页
-    response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000" || echo "000")
+    response=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL" || echo "000")
     
     if [ "$response" = "200" ]; then
-        log_info "✅ 前端服务运行正常"
+        log_info "✅ 前端服务运行正常 ($FRONTEND_URL)"
     else
         log_warn "⚠️  前端服务不可用 (HTTP: $response)"
-        log_info "请确保前端开发服务器正在运行: npm start"
+        log_info "请确保前端服务正在运行，或设置 FRONTEND_URL 环境变量"
     fi
 }
 
@@ -216,8 +219,9 @@ main() {
     log_info "测试完成！"
     echo
     log_info "📋 前端访问地址："
-    echo "   • 任务管理页面: http://localhost:3000/slurm-tasks"
-    echo "   • 主仪表板: http://localhost:3000/dashboard"
+    FRONTEND_BASE_URL="${FRONTEND_URL:-http://localhost:8080}"
+    echo "   • 任务管理页面: $FRONTEND_BASE_URL/slurm-tasks"
+    echo "   • 主仪表板: $FRONTEND_BASE_URL/dashboard"
     echo
     log_info "🔧 API 端点："
     echo "   • GET  $BASE_URL/slurm/tasks - 任务列表"

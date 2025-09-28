@@ -289,7 +289,7 @@ show_urls() {
 🌐 主要服务:
    - 主界面 (Nginx):      http://localhost:8080
    - 后端API:            http://localhost:8082
-   - 前端 (直接):         http://localhost:3000
+   - 前端 (直接):         http://localhost:8080
 
 📊 管理界面:
    - JupyterHub:         http://localhost:8088

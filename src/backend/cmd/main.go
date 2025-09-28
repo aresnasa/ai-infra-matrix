@@ -148,6 +148,11 @@ func main() {
 		logrus.Fatal("Failed to migrate database:", err)
 	}
 
+	// 初始化默认数据
+	if err := database.SeedDefaultData(); err != nil {
+		logrus.WithError(err).Warn("Failed to seed default data, continuing...")
+	}
+
 	// 初始化RBAC系统
 	rbacService := services.NewRBACService(database.DB)
 	if err := rbacService.InitializeDefaultRBAC(); err != nil {

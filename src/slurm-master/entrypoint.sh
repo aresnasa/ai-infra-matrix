@@ -31,9 +31,9 @@ export SLURM_CONTROLLER_PORT=${SLURM_CONTROLLER_PORT:-6817}
 export SLURM_SLURMDBD_HOST=${SLURM_SLURMDBD_HOST:-slurm-master}
 export SLURM_SLURMDBD_PORT=${SLURM_SLURMDBD_PORT:-6818}
 
-# 数据库配置
-export SLURM_DB_HOST=${SLURM_DB_HOST:-postgres}
-export SLURM_DB_PORT=${SLURM_DB_PORT:-5432}
+# 数据库配置 (使用MySQL作为默认，从环境变量读取)
+export SLURM_DB_HOST=${SLURM_DB_HOST:-mysql}
+export SLURM_DB_PORT=${SLURM_DB_PORT:-3306}
 export SLURM_DB_NAME=${SLURM_DB_NAME:-slurm_acct_db}
 export SLURM_DB_USER=${SLURM_DB_USER:-slurm}
 export SLURM_DB_PASSWORD=${SLURM_DB_PASSWORD:-slurm123}
@@ -54,6 +54,69 @@ export SLURM_MAX_JOB_COUNT=${SLURM_MAX_JOB_COUNT:-10000}
 export SLURM_MAX_ARRAY_SIZE=${SLURM_MAX_ARRAY_SIZE:-1000}
 export SLURM_DEFAULT_TIME_LIMIT=${SLURM_DEFAULT_TIME_LIMIT:-01:00:00}
 export SLURM_MAX_TIME_LIMIT=${SLURM_MAX_TIME_LIMIT:-24:00:00}
+
+# 动态检测插件目录
+if [ "$SLURM_MODE" = "full" ]; then
+    echo "🔍 检测SLURM插件目录..."
+    
+    # 检测可能的插件目录位置（优先检查slurm-wlm目录）
+    # 支持不同的架构命名约定
+    arch_dpkg=$(dpkg --print-architecture)
+    arch_gnu=""
+    case "$arch_dpkg" in
+        "amd64") arch_gnu="x86_64-linux-gnu" ;;
+        "arm64") arch_gnu="aarch64-linux-gnu" ;;
+        "armhf") arch_gnu="arm-linux-gnueabihf" ;;
+        *) arch_gnu="$arch_dpkg-linux-gnu" ;;
+    esac
+    
+    POSSIBLE_DIRS=(
+        "/usr/lib/$arch_gnu/slurm-wlm"
+        "/usr/lib/$arch_gnu/slurm"
+        "/usr/lib/$arch_dpkg/slurm-wlm"
+        "/usr/lib/$arch_dpkg/slurm"
+        "/usr/lib64/slurm-wlm"
+        "/usr/lib64/slurm"
+        "/usr/lib/slurm-wlm"
+        "/usr/lib/slurm"
+    )
+    
+    PLUGIN_DIR_FOUND=""
+    for dir in "${POSSIBLE_DIRS[@]}"; do
+        if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
+            PLUGIN_DIR_FOUND="$dir"
+            echo "✅ 找到插件目录: $dir"
+            break
+        fi
+    done
+    
+    if [ -n "$PLUGIN_DIR_FOUND" ]; then
+        export SLURM_PLUGIN_DIR="$PLUGIN_DIR_FOUND"
+    else
+        echo "⚠️  未找到SLURM插件目录，使用默认路径"
+        export SLURM_PLUGIN_DIR="/usr/lib/$(dpkg --print-architecture)/slurm"
+    fi
+else
+    # 演示模式使用默认路径（优先使用slurm-wlm）
+    arch_dpkg=$(dpkg --print-architecture)
+    arch_gnu=""
+    case "$arch_dpkg" in
+        "amd64") arch_gnu="x86_64-linux-gnu" ;;
+        "arm64") arch_gnu="aarch64-linux-gnu" ;;
+        "armhf") arch_gnu="arm-linux-gnueabihf" ;;
+        *) arch_gnu="$arch_dpkg-linux-gnu" ;;
+    esac
+    
+    if [ -d "/usr/lib/$arch_gnu/slurm-wlm" ]; then
+        export SLURM_PLUGIN_DIR="/usr/lib/$arch_gnu/slurm-wlm"
+    elif [ -d "/usr/lib/$arch_gnu/slurm" ]; then
+        export SLURM_PLUGIN_DIR="/usr/lib/$arch_gnu/slurm"
+    elif [ -d "/usr/lib/$arch_dpkg/slurm-wlm" ]; then
+        export SLURM_PLUGIN_DIR="/usr/lib/$arch_dpkg/slurm-wlm"
+    else
+        export SLURM_PLUGIN_DIR="/usr/lib/$arch_dpkg/slurm"
+    fi
+fi
 
 echo "📋 SLURM配置摘要："
 echo "  运行模式: $SLURM_MODE"
