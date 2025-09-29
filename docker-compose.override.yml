@@ -16,6 +16,9 @@ services:
   # Silence platform warning for ARM Macs by explicitly selecting the image platform used upstream
   k8s-proxy:
     platform: linux/amd64
+  backend:
+    environment:
+      E2E_ALLOW_FAKE_LDAP: "true"
   slurm-operator-manager:
     image: busybox:latest
     command: ["sh", "-c", "echo 'Slurm operator manager disabled for local dev'; sleep infinity"]

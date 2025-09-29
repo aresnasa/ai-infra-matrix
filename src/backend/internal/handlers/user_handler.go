@@ -54,6 +54,18 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 // @Failure 401 {object} map[string]interface{}
 // @Router /auth/validate-ldap [post]
 func (h *UserHandler) ValidateLDAP(c *gin.Context) {
+	// E2E test bypass: allow fake LDAP validation when explicitly enabled
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "E2E LDAP validation bypass enabled",
+			"valid":   true,
+			"ldap_user": gin.H{
+				"username": "e2e-bypass",
+			},
+		})
+		return
+	}
+
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "valid": false})
@@ -93,6 +105,40 @@ func (h *UserHandler) Register(c *gin.Context) {
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// E2E test bypass: when enabled, skip LDAP and approval and create an active local user directly
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+		// Ensure username/email uniqueness via service call path
+		user := &models.User{
+			Username:      req.Username,
+			Email:         req.Email,
+			Password:      "", // no local password needed for LDAP-mode users; login uses hybrid/LDAP, but we will also allow local below
+			IsActive:      true,
+			AuthSource:    "ldap",
+			DashboardRole: req.Role,
+			RoleTemplate:  req.RoleTemplate,
+		}
+		// Attempt to set a bcrypt password matching provided value to allow local login in hybrid mode
+		if strings.TrimSpace(req.Password) != "" {
+			if hpw, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost); err == nil {
+				user.Password = string(hpw)
+				user.AuthSource = "local" // mark as local-capable for tests
+			}
+		}
+		if err := h.userService.CreateUserDirectly(user); err != nil {
+			logrus.WithError(err).Error("E2E bypass user creation failed")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user (e2e)"})
+			return
+		}
+		// Assign role template if provided
+		if req.RoleTemplate != "" {
+			if err := h.rbacService.AssignRoleTemplateToUser(user.ID, req.RoleTemplate); err != nil {
+				logrus.WithError(err).Warn("E2E bypass: assign role template failed")
+			}
+		}
+		c.JSON(http.StatusCreated, user)
 		return
 	}
 
@@ -167,6 +213,9 @@ func (h *UserHandler) Register(c *gin.Context) {
 // @Failure 401 {object} map[string]interface{}
 // @Router /auth/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+		logrus.Debug("E2E bypass enabled: hybrid authentication will allow local accounts first")
+	}
 	// 添加调试日志
 	logrus.WithFields(logrus.Fields{
 		"user_agent": c.GetHeader("User-Agent"),
@@ -668,6 +717,77 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "密码重置成功"})
+}
+
+// AdminUpdateRoleTemplate 管理员更新用户的角色模板
+// @Summary 管理员更新用户的角色模板
+// @Description 管理员为指定用户设置角色模板，并自动分配对应的RBAC角色
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Param request body map[string]string true "角色模板信息，如 {\"role_template\": \"data-developer\"}"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Router /users/{id}/role-template [put]
+func (h *UserHandler) AdminUpdateRoleTemplate(c *gin.Context) {
+	// 检查管理员权限
+	currentUserID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	if !h.rbacService.CheckPermission(currentUserID, "users", "update", "*", "") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	// 获取用户ID
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID"})
+		return
+	}
+
+	var req struct {
+		RoleTemplate string `json:"role_template"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if strings.TrimSpace(req.RoleTemplate) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role_template 不能为空"})
+		return
+	}
+
+	// 更新用户role_template字段
+	updates := map[string]interface{}{
+		"role_template": req.RoleTemplate,
+		"updated_at":    time.Now(),
+	}
+	if err := h.userService.UpdateUser(uint(userID), updates); err != nil {
+		logrus.WithError(err).Error("Update user role_template failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新角色模板失败"})
+		return
+	}
+
+	// 分配角色模板对应的RBAC角色（幂等）
+	if err := h.rbacService.AssignRoleTemplateToUser(uint(userID), req.RoleTemplate); err != nil {
+		logrus.WithError(err).Warn("Assign role template to user failed")
+		// 不中断，尽量返回成功并提示
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "角色模板更新成功",
+		"user_id":        userID,
+		"role_template":  req.RoleTemplate,
+	})
 }
 
 // AdminUpdateUserGroups 管理员更新用户的用户组

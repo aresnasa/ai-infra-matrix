@@ -474,6 +474,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		users.GET("", userHandler.GetUsers)
 		users.DELETE("/:id", userHandler.DeleteUser)
 		users.PUT("/:id/reset-password", userHandler.AdminResetPassword)
+		users.PUT("/:id/role-template", userHandler.AdminUpdateRoleTemplate)
 		users.PUT("/:id/groups", userHandler.AdminUpdateUserGroups)
 		users.PUT("/:id/status", userHandler.ToggleUserStatus)
 	}
