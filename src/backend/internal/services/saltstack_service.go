@@ -47,7 +47,20 @@ func NewSaltStackService() *SaltStackService {
 	// 从环境变量读取配置，提供默认值
 	masterURL := os.Getenv("SALTSTACK_MASTER_URL")
 	if masterURL == "" {
-		masterURL = "http://saltstack:8002" // 默认端口与容器配置一致
+		// 兼容按 Host/Port/Scheme 组合的配置，避免写死容器内服务名
+		scheme := os.Getenv("SALT_API_SCHEME")
+		if scheme == "" {
+			scheme = "http"
+		}
+		host := os.Getenv("SALT_MASTER_HOST")
+		if host == "" {
+			host = "localhost"
+		}
+		port := os.Getenv("SALT_API_PORT")
+		if port == "" {
+			port = "8002"
+		}
+		masterURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
 	}
 
 	apiToken := os.Getenv("SALTSTACK_API_TOKEN")

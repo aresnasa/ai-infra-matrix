@@ -98,7 +98,11 @@ func (c *SlurmController) GetSummary(ctx *gin.Context) {
     defer cancel()
     sum, err := c.slurmSvc.GetSummary(ctxWithTimeout)
     if err != nil {
-        ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        status := http.StatusInternalServerError
+        if errors.Is(err, services.ErrNotAvailable) {
+            status = http.StatusBadGateway
+        }
+        ctx.JSON(status, gin.H{"error": err.Error()})
         return
     }
     ctx.JSON(http.StatusOK, gin.H{"data": sum})
@@ -110,7 +114,11 @@ func (c *SlurmController) GetNodes(ctx *gin.Context) {
     defer cancel()
     nodes, demo, err := c.slurmSvc.GetNodes(ctxWithTimeout)
     if err != nil {
-        ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        status := http.StatusInternalServerError
+        if errors.Is(err, services.ErrNotAvailable) {
+            status = http.StatusBadGateway
+        }
+        ctx.JSON(status, gin.H{"error": err.Error()})
         return
     }
     ctx.JSON(http.StatusOK, gin.H{"data": nodes, "demo": demo})
@@ -122,7 +130,11 @@ func (c *SlurmController) GetJobs(ctx *gin.Context) {
     defer cancel()
     jobs, demo, err := c.slurmSvc.GetJobs(ctxWithTimeout)
     if err != nil {
-        ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        status := http.StatusInternalServerError
+        if errors.Is(err, services.ErrNotAvailable) {
+            status = http.StatusBadGateway
+        }
+        ctx.JSON(status, gin.H{"error": err.Error()})
         return
     }
     ctx.JSON(http.StatusOK, gin.H{"data": jobs, "demo": demo})
@@ -185,6 +197,7 @@ func (c *SlurmController) ScaleUpAsync(ctx *gin.Context) {
             MasterHost: getSaltStackMasterHost(), // 从环境变量读取
             MasterPort: 4506,
             AutoAccept: true,
+            AppHubURL:  getAppHubBaseURL(), // 离线/内网安装支持
         }
 
         total := float64(len(connections))
@@ -265,6 +278,7 @@ func (c *SlurmController) ScaleUp(ctx *gin.Context) {
         MasterHost: getSaltStackMasterHost(), // 从环境变量读取
         MasterPort: 4506,
         AutoAccept: true,
+        AppHubURL:  getAppHubBaseURL(), // 离线/内网安装支持
     }
 
     // 并发部署SaltStack Minion
@@ -416,6 +430,7 @@ func (c *SlurmController) DeploySaltMinion(ctx *gin.Context) {
         MasterPort: 4506,
         MinionID:   req.MinionID,
         AutoAccept: true,
+        AppHubURL:  getAppHubBaseURL(), // 离线/内网安装支持
     }
 
     results, err := c.sshSvc.DeploySaltMinion(ctxWithTimeout, []services.SSHConnection{connection}, saltConfig)
@@ -1001,6 +1016,24 @@ func getSaltStackMasterHost() string {
         masterHost = "saltstack" // 默认容器名
     }
     return masterHost
+}
+
+// getAppHubBaseURL 组合AppHub基础URL，基于EXTERNAL_HOST/APPHUB_PORT/EXTERNAL_SCHEME
+func getAppHubBaseURL() string {
+    scheme := os.Getenv("EXTERNAL_SCHEME")
+    if scheme == "" {
+        scheme = "http"
+    }
+    host := os.Getenv("EXTERNAL_HOST")
+    if host == "" {
+        host = "localhost"
+    }
+    port := os.Getenv("APPHUB_PORT")
+    if port == "" {
+        // 与build.sh一致：APPHUB_PORT = EXTERNAL_PORT + 45354，缺省时退回常见端口
+        port = "53434"
+    }
+    return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
 
 // addNodeToCluster 添加节点到SLURM集群数据库

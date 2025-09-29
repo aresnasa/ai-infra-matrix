@@ -856,8 +856,15 @@ func initializeSaltStackConfigs() {
 	saltEnabled := getEnvCompat("SALTSTACK_ENABLED", "true")
 	if saltEnabled == "true" {
 		saltMaster := getEnvCompat("SALTSTACK_MASTER_HOST", "saltstack")
-		saltAPI := getEnvCompat("SALTSTACK_MASTER_URL", "http://saltstack:8002")
-		
+		// 优先使用完整URL，其次按协议/主机/端口拼装，避免写死默认URL
+		saltAPI := strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL"))
+		if saltAPI == "" {
+			scheme := getEnvCompat("SALT_API_SCHEME", "http")
+			host := getEnvCompat("SALT_MASTER_HOST", saltMaster)
+			port := getEnvCompat("SALT_API_PORT", "8002")
+			saltAPI = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+		}
+
 		log.Printf("✓ SaltStack master: %s", saltMaster)
 		log.Printf("✓ SaltStack API: %s", saltAPI)
 		log.Println("✓ SaltStack service configurations initialized")

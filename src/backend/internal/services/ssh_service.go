@@ -93,12 +93,31 @@ type DeploymentResult struct {
 	Duration time.Duration
 }
 
+// ScriptSpec 描述一段可在远程主机上执行的脚本
+// 支持两种来源：
+//  - Content: 内联脚本内容
+//  - URL: 在远程通过 curl/wget 下载的脚本地址
+// 二者至少提供其一；同时提供时优先使用 Content
+type ScriptSpec struct {
+	Name        string            // 脚本名称，仅用于日志
+	Content     string            // 内联脚本内容
+	URL         string            // 远程脚本URL（http/https）
+	Args        []string          // 传递给脚本的参数
+	Env         map[string]string // 环境变量
+	Interpreter string            // 解释器，例如 "/bin/bash"、"/bin/sh"，为空则直接执行脚本
+	UseSudo     bool              // 是否使用sudo -E -n执行
+	WorkDir     string            // 执行前切换的工作目录
+	Timeout     time.Duration     // 单次执行超时时间；为空则使用默认
+}
+
 // SaltStackDeploymentConfig SaltStack部署配置
 type SaltStackDeploymentConfig struct {
 	MasterHost string
 	MasterPort int
 	MinionID   string
 	AutoAccept bool
+	// AppHubURL: 用于离线/内网安装salt-minion的包仓库，例如 http://<external_host>:<apphub_port>
+	AppHubURL  string
 }
 
 // SetupSimpleDebRepo 在远程主机上安装nginx与dpkg-dev并创建简单的deb仓库目录结构
@@ -451,7 +470,9 @@ if command -v apt-get >/dev/null 2>&1; then
 		apt-get update -y || true
 		if ! apt-get install -y salt-minion; then
 			echo "[Salt] Broadcom仓库安装失败，尝试使用官方bootstrap脚本..."
-			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 		fi
 	fi
@@ -463,7 +484,9 @@ elif command -v yum >/dev/null 2>&1; then
 		yum makecache -y || true
 		if ! yum install -y salt-minion; then
 			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
-			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 		fi
 	fi
@@ -474,13 +497,17 @@ elif command -v dnf >/dev/null 2>&1; then
 		dnf makecache -y || true
 		if ! dnf install -y salt-minion; then
 			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
-			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 		fi
 	fi
 else
 	echo "暂不支持的系统类型，尝试通用安装方法"
-	curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+	curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+		|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+		|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 	sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 fi
 `
@@ -752,7 +779,7 @@ func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStack
 		command string
 	}{
 		{"检查系统", "cat /etc/os-release"},
-		{"安装SaltStack", s.getInstallCommand()},
+		{"安装SaltStack", s.getInstallCommandWithAppHub(config)},
 		{"配置Minion", s.getMinionConfigCommand(config)},
 		{"启动服务", "systemctl enable salt-minion 2>/dev/null || true; systemctl daemon-reload 2>/dev/null || true; systemctl start salt-minion 2>/dev/null || service salt-minion start 2>/dev/null || salt-minion -d || true"},
 	{"检查状态", "systemctl status salt-minion --no-pager || journalctl -u salt-minion --no-pager -n 200 || true"},
@@ -788,7 +815,9 @@ if command -v apt-get >/dev/null 2>&1; then
 		apt-get update -y || true
 		if ! apt-get install -y salt-minion; then
 			echo "[Salt] Broadcom仓库安装失败，尝试使用官方bootstrap脚本..."
-			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 		fi
 	fi
@@ -800,7 +829,9 @@ elif command -v yum >/dev/null 2>&1; then
 		yum makecache -y || true
 		if ! yum install -y salt-minion; then
 			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
-			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 		fi
 	fi
@@ -811,7 +842,9 @@ elif command -v dnf >/dev/null 2>&1; then
 		dnf makecache -y || true
 		if ! dnf install -y salt-minion; then
 			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
-			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+				|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 		fi
 	fi
@@ -819,7 +852,9 @@ elif command -v zypper >/dev/null 2>&1; then
 	zypper refresh || true
 	if ! zypper install -y salt-minion; then
 		echo "[Salt] zypper安装失败，尝试bootstrap脚本"
-		curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+		curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+			|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+			|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
 		sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 	fi
 else
@@ -858,11 +893,146 @@ if [ "%t" = "true" ]; then
     echo "auto_accept: True" >> /etc/salt/minion
 fi
 `,
-		masterHost,
-		minionID,
-		config.MasterPort,
-		config.AutoAccept)
+		masterHost, minionID, config.MasterPort, config.AutoAccept)
 }
+
+// getInstallCommandWithAppHub 根据系统获取安装命令（优先使用AppHub离线仓库）
+func (s *SSHService) getInstallCommandWithAppHub(cfg SaltStackDeploymentConfig) string {
+	apphub := strings.TrimSpace(cfg.AppHubURL)
+	// 如果未提供AppHubURL，则回退到原有逻辑
+	if apphub == "" {
+		return s.getInstallCommand()
+	}
+
+	// 生成包含AppHub优先安装的脚本
+	// 目录约定：
+	//  - APT:  ${APPHUB_URL}/pkgs/salt-deb/ (应提供Packages索引)
+	//  - RPM:  ${APPHUB_URL}/pkgs/salt-rpm/ (应提供repodata/repomd.xml)
+	script := fmt.Sprintf(`
+set -e
+APPHUB_URL='%s'
+installed=0
+if command -v apt-get >/dev/null 2>&1; then
+	export DEBIAN_FRONTEND=noninteractive
+	# 检测AppHub APT索引
+	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/salt-deb/Packages"; then
+		echo "[Salt] 使用AppHub APT仓库安装salt-minion: $APPHUB_URL/pkgs/salt-deb"
+		echo "deb [trusted=yes] $APPHUB_URL/pkgs/salt-deb ./" > /etc/apt/sources.list.d/ai-infra-salt.list
+		apt-get update -y || true
+		if apt-get install -y salt-minion; then
+			installed=1
+		else
+			echo "[Salt] 从AppHub APT安装失败，尝试系统仓库/官方渠道..."
+		fi
+	else
+		echo "[Salt] 未检测到AppHub APT索引(Packages)，跳过AppHub APT"
+	fi
+	if [ "$installed" -eq 0 ]; then
+		apt-get update -y || true
+		if ! apt-get install -y salt-minion; then
+			echo "[Salt] apt 安装失败，尝试添加Broadcom Salt仓库 (keyring)..."
+			apt-get install -y curl gnupg2 ca-certificates lsb-release wget || true
+			mkdir -p /usr/share/keyrings
+			curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public -o /usr/share/keyrings/salt-archive-keyring.gpg || true
+			echo "deb [signed-by=/usr/share/keyrings/salt-archive-keyring.gpg] https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltproject.list
+			apt-get update -y || true
+			if ! apt-get install -y salt-minion; then
+				echo "[Salt] Broadcom仓库安装失败，尝试使用官方bootstrap脚本..."
+				curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+					|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+					|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
+				sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+			fi
+		fi
+	fi
+elif command -v yum >/dev/null 2>&1; then
+	# 检测AppHub RPM元数据
+	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/salt-rpm/repodata/repomd.xml"; then
+		echo "[Salt] 使用AppHub YUM仓库安装salt-minion: $APPHUB_URL/pkgs/salt-rpm"
+		cat > /etc/yum.repos.d/ai-infra-salt.repo <<EOF
+[ai-infra-salt]
+name=AI Infra Salt RPMs
+baseurl=$APPHUB_URL/pkgs/salt-rpm
+enabled=1
+gpgcheck=0
+EOF
+		yum clean all || true
+		yum makecache -y || true
+		if yum install -y salt-minion; then
+			installed=1
+		else
+			echo "[Salt] 从AppHub YUM安装失败，尝试系统仓库/官方渠道..."
+		fi
+	else
+		echo "[Salt] 未检测到AppHub YUM元数据，跳过AppHub YUM"
+	fi
+	if [ "$installed" -eq 0 ]; then
+		if ! yum install -y salt-minion; then
+			echo "[Salt] yum 安装失败，尝试添加Salt官方仓库..."
+			yum install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.el8.noarch.rpm || true
+			yum clean all || true
+			yum makecache -y || true
+			if ! yum install -y salt-minion; then
+				echo "[Salt] 官方仓库失败，尝试bootstrap脚本"
+				curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+					|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+					|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
+				sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+			fi
+		fi
+	fi
+elif command -v dnf >/dev/null 2>&1; then
+	# 检测AppHub RPM元数据
+	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/salt-rpm/repodata/repomd.xml"; then
+		echo "[Salt] 使用AppHub DNF仓库安装salt-minion: $APPHUB_URL/pkgs/salt-rpm"
+		cat > /etc/yum.repos.d/ai-infra-salt.repo <<EOF
+[ai-infra-salt]
+name=AI Infra Salt RPMs
+baseurl=$APPHUB_URL/pkgs/salt-rpm
+enabled=1
+gpgcheck=0
+EOF
+		dnf makecache -y || true
+		if dnf install -y salt-minion; then
+			installed=1
+		else
+			echo "[Salt] 从AppHub DNF安装失败，尝试系统仓库/官方渠道..."
+		fi
+	else
+		echo "[Salt] 未检测到AppHub DNF元数据，跳过AppHub DNF"
+	fi
+	if [ "$installed" -eq 0 ]; then
+		if ! dnf install -y salt-minion; then
+			echo "[Salt] dnf 安装失败，尝试添加Salt官方仓库..."
+			dnf install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.fc36.noarch.rpm || true
+			dnf makecache -y || true
+			if ! dnf install -y salt-minion; then
+				echo "[Salt] 官方仓库失败，尝试bootstrap脚本"
+				curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+					|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+					|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
+				sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+			fi
+		fi
+	fi
+elif command -v zypper >/dev/null 2>&1; then
+	zypper refresh || true
+	if ! zypper install -y salt-minion; then
+		echo "[Salt] zypper安装失败，尝试bootstrap脚本"
+		curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+			|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
+			|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
+		sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+	fi
+else
+	echo "不支持的包管理器"
+	exit 1
+fi
+`, apphub)
+
+	return script
+}
+// 注意：保留在服务级别，不再内嵌更大的具体安装脚本；建议未来迁移到通用脚本执行接口
 
 // executeCommand 执行SSH命令
 func (s *SSHService) executeCommand(client *ssh.Client, command string) (string, error) {
@@ -938,6 +1108,59 @@ func (s *SSHService) readOutput(reader io.Reader, output *strings.Builder) {
 	}
 }
 
+// executeCommandWithTimeout 允许为单次执行覆盖超时时间
+func (s *SSHService) executeCommandWithTimeout(client *ssh.Client, command string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		// 使用默认逻辑
+		return s.executeCommand(client, command)
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+
+	if err := session.Start(command); err != nil {
+		return "", err
+	}
+
+	var output strings.Builder
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		s.readOutput(stdout, &output)
+	}()
+
+	go func() {
+		defer wg.Done()
+		s.readOutput(stderr, &output)
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- session.Wait() }()
+
+	select {
+	case err := <-done:
+		wg.Wait()
+		return output.String(), err
+	case <-time.After(timeout):
+		_ = session.Signal(ssh.SIGKILL)
+		return output.String(), fmt.Errorf("命令超时 (%v)", timeout)
+	}
+}
+
 // ExecuteCommandOnHosts 在多个主机上并发执行命令
 func (s *SSHService) ExecuteCommandOnHosts(ctx context.Context, connections []SSHConnection, command string) ([]DeploymentResult, error) {
 	results := make([]DeploymentResult, len(connections))
@@ -987,6 +1210,118 @@ func (s *SSHService) executeCommandOnHost(conn SSHConnection, command string) De
 	result.Success = true
 	result.Output = output
 	return result
+}
+
+// ExecuteScriptOnHosts 在多个主机上并发执行脚本（通用接口）
+func (s *SSHService) ExecuteScriptOnHosts(ctx context.Context, connections []SSHConnection, script ScriptSpec) ([]DeploymentResult, error) {
+	results := make([]DeploymentResult, len(connections))
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, s.config.MaxConcurrency)
+
+	for i, conn := range connections {
+		wg.Add(1)
+		go func(index int, connection SSHConnection) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			start := time.Now()
+			res := s.executeScriptOnHost(ctx, connection, script)
+			res.Duration = time.Since(start)
+			results[index] = res
+		}(i, conn)
+	}
+
+	wg.Wait()
+	return results, nil
+}
+
+// executeScriptOnHost 在单个主机上执行脚本（通用接口）
+func (s *SSHService) executeScriptOnHost(ctx context.Context, conn SSHConnection, spec ScriptSpec) DeploymentResult {
+	result := DeploymentResult{Host: conn.Host}
+
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		result.Error = fmt.Sprintf("SSH连接失败: %v", err)
+		return result
+	}
+	defer client.Close()
+
+	// 1) 准备脚本到远端临时路径
+	remoteScript := "/tmp/aimatrix_script_" + fmt.Sprintf("%d.sh", time.Now().UnixNano())
+
+	if strings.TrimSpace(spec.Content) != "" {
+		// 直接上传内容
+		if err := s.UploadBinaryFile(conn.Host, conn.Port, conn.User, conn.Password, []byte(spec.Content), remoteScript, true); err != nil {
+			result.Error = fmt.Sprintf("上传脚本失败: %v", err)
+			return result
+		}
+	} else if strings.TrimSpace(spec.URL) != "" {
+		// 在远端下载脚本
+		downloadCmd := fmt.Sprintf(`/bin/sh -lc 'curl -fsSL %s -o %s || wget -q %s -O %s; chmod +x %s'`,
+			singleQuote(spec.URL), remoteScript, singleQuote(spec.URL), remoteScript, remoteScript)
+		if out, err := s.executeCommand(client, downloadCmd); err != nil {
+			result.Output = out
+			result.Error = fmt.Sprintf("下载脚本失败: %v", err)
+			return result
+		} else {
+			result.Output += out
+		}
+	} else {
+		result.Error = "ScriptSpec 必须提供 Content 或 URL"
+		return result
+	}
+
+	// 2) 组装执行命令
+	cmd := s.buildScriptExecutionCommand(remoteScript, spec)
+
+	// 3) 按需设置超时并执行
+	out, err := s.executeCommandWithTimeout(client, cmd, spec.Timeout)
+	result.Output += out
+	if err != nil {
+		result.Error = fmt.Sprintf("脚本执行失败: %v", err)
+		return result
+	}
+
+	// 4) 清理临时脚本
+	_, _ = s.executeCommand(client, fmt.Sprintf("/bin/sh -lc 'rm -f %s'", remoteScript))
+
+	result.Success = true
+	return result
+}
+
+// buildScriptExecutionCommand 根据ScriptSpec拼装执行命令
+func (s *SSHService) buildScriptExecutionCommand(remoteScript string, spec ScriptSpec) string {
+	var parts []string
+	// 环境变量
+	if len(spec.Env) > 0 {
+		var exports []string
+		for k, v := range spec.Env {
+			exports = append(exports, fmt.Sprintf("%s=%s", k, singleQuote(v)))
+		}
+		parts = append(parts, strings.Join(exports, " "))
+	}
+	// 切换目录
+	if strings.TrimSpace(spec.WorkDir) != "" {
+		parts = append(parts, "cd "+singleQuote(spec.WorkDir)+" &&")
+	}
+	// 执行器
+	runner := remoteScript
+	if strings.TrimSpace(spec.Interpreter) != "" {
+		runner = fmt.Sprintf("%s %s", spec.Interpreter, remoteScript)
+	}
+	// 参数
+	if len(spec.Args) > 0 {
+		// 简单拼接，调用方需保证参数已做适当转义
+		runner = runner + " " + strings.Join(spec.Args, " ")
+	}
+	// sudo
+	if spec.UseSudo {
+		runner = "sudo -E -n " + runner
+	}
+	parts = append(parts, runner)
+
+	return "/bin/sh -lc " + singleQuote(strings.Join(parts, " "))
 }
 
 // ExecuteCommand 在指定主机上执行命令（导出方法，便于其他服务直接调用）

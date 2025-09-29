@@ -8,12 +8,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"strconv"
 	"time"
+	"sort"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 )
 
 // SaltStackHandler 处理SaltStack相关的API请求
@@ -102,10 +104,15 @@ func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
 
 // getSaltAPIURL 获取Salt API URL
 func (h *SaltStackHandler) getSaltAPIURL() string {
+	// 优先使用完整URL
+	if base := strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL")); base != "" {
+		return base
+	}
+	// 否则按协议/主机/端口组合
+	scheme := getEnv("SALT_API_SCHEME", "http")
 	host := getEnv("SALT_MASTER_HOST", "saltstack")
-	// 默认端口改为 8002，与容器配置一致
 	port := getEnv("SALT_API_PORT", "8002")
-	return fmt.Sprintf("http://%s:%s", host, port)
+	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
 
 // getEnv 获取环境变量，如果不存在则返回默认值
@@ -242,25 +249,22 @@ func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
 
 	// 创建API客户端
 	client := h.newSaltAPIClient()
-	
-	// 尝试连接Salt API
+
+	// 连接Salt API（要求真实集群，失败则返回错误，不再返回演示数据）
 	if err := client.authenticate(); err != nil {
-		// 如果连接失败，返回模拟数据
-		status := h.getDemoSaltStackStatus()
-		h.cacheStatus(&status, 300) // 缓存5分钟
-		c.JSON(http.StatusOK, gin.H{"data": status})
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
 		return
 	}
 
 	// 获取实际状态
 	status, err := h.getRealSaltStackStatus(client)
 	if err != nil {
-		status = h.getDemoSaltStackStatus()
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Salt状态失败: %v", err)})
+		return
 	}
 
-	// 缓存状态
-	h.cacheStatus(&status, 60) // 缓存1分钟
-
+	// 缓存状态（1分钟）
+	h.cacheStatus(&status, 60)
 	c.JSON(http.StatusOK, gin.H{"data": status})
 }
 
@@ -360,37 +364,26 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 
 	// 创建API客户端
 	client := h.newSaltAPIClient()
-	
-	var minions []SaltMinion
-	var demo bool
 
-	// 尝试获取真实数据
-	if err := client.authenticate(); err == nil {
-		realMinions, err := h.getRealMinions(client)
-		if err == nil {
-			minions = realMinions
-		} else {
-			minions = h.getDemoMinions()
-			demo = true
-		}
-	} else {
-		minions = h.getDemoMinions()
-		demo = true
+	// 认证
+	if err := client.authenticate(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+		return
 	}
 
-	// 设置demo标记
-	for i := range minions {
-		if demo {
-			minions[i].Status = "demo"
-		}
+	// 获取真实数据
+	minions, err := h.getRealMinions(client)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Minions失败: %v", err)})
+		return
 	}
 
 	// 缓存数据
 	if data, err := json.Marshal(minions); err == nil {
-		h.cache.Set(context.Background(), "saltstack:minions", string(data), 120*time.Second) // 缓存2分钟
+		h.cache.Set(context.Background(), "saltstack:minions", string(data), 120*time.Second)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": minions, "demo": demo})
+	c.JSON(http.StatusOK, gin.H{"data": minions, "demo": false})
 }
 
 // getDemoMinions 获取演示用的Minion数据
@@ -448,25 +441,76 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 		}
 	}
 
-	// 尝试从缓存获取
-	cacheKey := fmt.Sprintf("saltstack:jobs:%d", limit)
-	if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
-		var jobs []SaltJob
-		if err := json.Unmarshal([]byte(cached), &jobs); err == nil {
-			c.JSON(http.StatusOK, gin.H{"data": jobs})
-			return
-		}
+	// 创建API客户端并认证
+	client := h.newSaltAPIClient()
+	if err := client.authenticate(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+		return
 	}
 
-	// 获取演示数据
-	jobs := h.getDemoJobs(limit)
+	// 获取真实作业数据
+	jobs, err := h.getRealJobs(client, limit)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Jobs失败: %v", err)})
+		return
+	}
 
 	// 缓存数据
+	cacheKey := fmt.Sprintf("saltstack:jobs:%d", limit)
 	if data, err := json.Marshal(jobs); err == nil {
-		h.cache.Set(context.Background(), cacheKey, string(data), 300*time.Second) // 缓存5分钟
+		h.cache.Set(context.Background(), cacheKey, string(data), 300*time.Second)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": jobs, "demo": true})
+	c.JSON(http.StatusOK, gin.H{"data": jobs, "demo": false})
+}
+
+// getRealJobs 通过Salt NetAPI获取真实作业列表
+func (h *SaltStackHandler) getRealJobs(client *saltAPIClient, limit int) ([]SaltJob, error) {
+	// 尝试 GET /jobs
+	resp, err := client.makeRequest("/jobs", "GET", nil)
+	if err != nil {
+		return nil, err
+	}
+	var jobs []SaltJob
+	// 解析常见结构: {"return":[{"jobs": {"<jid>": {..}, ...}}]}
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			// 某些环境直接返回 map[jid]info
+			var jobsMap map[string]interface{}
+			if jm, ok := m["jobs"].(map[string]interface{}); ok {
+				jobsMap = jm
+			} else {
+				// 兼容直接是 jid->info 的情况
+				jobsMap = m
+			}
+			for jid, v := range jobsMap {
+				if info, ok := v.(map[string]interface{}); ok {
+					j := SaltJob{JID: jid}
+					if f, ok := info["Function"].(string); ok { j.Function = f }
+					if t, ok := info["Target"].(string); ok { j.Target = t }
+					if u, ok := info["User"].(string); ok { j.User = u }
+					if args, ok := info["Arguments"].([]interface{}); ok {
+						for _, a := range args { j.Arguments = append(j.Arguments, fmt.Sprint(a)) }
+					}
+					// 尝试解析开始时间
+					if st, ok := info["StartTime"].(string); ok {
+						if ts, err := time.Parse(time.RFC3339, st); err == nil { j.StartTime = ts } else { j.StartTime = time.Now() }
+					} else {
+						j.StartTime = time.Now()
+					}
+					jobs = append(jobs, j)
+				}
+			}
+		}
+	}
+	// 按时间排序并裁剪
+	if len(jobs) > 1 {
+		sort.Slice(jobs, func(i, j int) bool { return jobs[i].StartTime.After(jobs[j].StartTime) })
+	}
+	if limit > 0 && len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+	return jobs, nil
 }
 
 // getDemoJobs 获取演示用的作业数据

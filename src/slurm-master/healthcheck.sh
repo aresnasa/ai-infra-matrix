@@ -129,6 +129,12 @@ check_database_connection() {
     local db_name=${SLURM_DB_NAME:-slurm_acct_db}
     local db_user=${SLURM_DB_USER:-slurm}
     
+    # 演示模式跳过数据库检查
+    if [ -f /opt/slurm-demo-mode ]; then
+        log_warn "演示模式: 跳过数据库检查"
+        return 0
+    fi
+
     # 检查数据库端口连通性
     if ! timeout 5 nc -z "$db_host" "$db_port" >/dev/null 2>&1; then
         log_error "数据库端口 $db_host:$db_port 不可达"
@@ -142,6 +148,12 @@ check_database_connection() {
 check_config_files() {
     log_info "检查配置文件..."
     
+    # 演示模式跳过配置文件检查
+    if [ -f /opt/slurm-demo-mode ]; then
+        log_warn "演示模式: 跳过配置文件检查"
+        return 0
+    fi
+
     local configs=(
         "/etc/slurm/slurm.conf"
         "/etc/slurm/slurmdbd.conf"

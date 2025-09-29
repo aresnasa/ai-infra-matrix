@@ -32,28 +32,56 @@ RUN set -eux; \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "# 官方备用源" >> /etc/apt/sources.list && \
+        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
         echo "配置AMD64阿里云镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "# 官方备用源" >> /etc/apt/sources.list && \
+        echo "deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://archive.ubuntu.com/ubuntu jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
+    # APT 重试与超时配置
+    echo 'Acquire::Retries "5"; Acquire::http::Timeout "30"; Acquire::https::Timeout "30";' > /etc/apt/apt.conf.d/99retries; \
     # 更新包列表（带重试机制）
     apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)
 
 # 安装基础依赖（ca-certificates和curl已在上面安装）
-RUN apt-get install -y --no-install-recommends \
-    wget \
-    netcat \
-    procps \
-    gettext-base \
-    munge \
-    libmunge2 \
-    supervisor \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+RUN set -eux; \
+    # Refresh index right before install to avoid stale caches across layers
+    for i in 1 2 3; do \
+        apt-get -o Acquire::Retries=3 update && break || (echo "apt-get update failed (attempt $i), retrying..." && sleep 5); \
+    done; \
+    # Install with --fix-missing and retries to improve robustness on flaky mirrors
+    apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
+        # networking and diagnostics \
+        curl \
+        wget \
+        telnet \
+        openssh-client \
+    mtr-tiny \
+    netcat-openbsd \
+        # utilities \
+        vim \
+        tree \
+        procps \
+        gettext-base \
+        # slurm prerequisites \
+        munge \
+        libmunge2 \
+        supervisor \
+        postgresql-client \
+    ; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
             
 # 安装SLURM包前先创建用户，这样安装过程会自动配置权限
 RUN groupadd -r slurm && useradd -r -g slurm -d /var/lib/slurm -s /bin/bash slurm

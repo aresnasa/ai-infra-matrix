@@ -103,10 +103,10 @@ setup_saltstack_defaults() {
         print_info "✓ 设置默认值: SALTSTACK_MASTER_HOST=saltstack"
     fi
     
-    # SaltStack Master API URL
+    # SaltStack Master API URL（留空以便后端按协议/主机/端口自动拼装）
     if ! grep -q "^SALTSTACK_MASTER_URL=" "$env_file" 2>/dev/null; then
-        set_or_update_env_var "SALTSTACK_MASTER_URL" "http://saltstack:8002" "$env_file"
-        print_info "✓ 设置默认值: SALTSTACK_MASTER_URL=http://saltstack:8002"
+        set_or_update_env_var "SALTSTACK_MASTER_URL" "" "$env_file"
+        print_info "✓ 设置默认值: SALTSTACK_MASTER_URL=(留空，后端将根据 SALT_API_SCHEME/SALT_MASTER_HOST/SALT_API_PORT 组合)"
     fi
     
     # SaltStack API Token (可选)

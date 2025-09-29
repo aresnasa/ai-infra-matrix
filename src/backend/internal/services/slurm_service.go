@@ -15,7 +15,8 @@ import (
 )
 
 // Slurm service provides lightweight access to Slurm cluster metrics by shelling out
-// to common CLI tools (sinfo, squeue). When CLIs are unavailable, it returns demo data.
+// to common CLI tools (sinfo, squeue). This implementation is strict: it requires
+// real tools/data and no longer falls back to demo data.
 
 type SlurmService struct {
     db *gorm.DB
@@ -30,26 +31,12 @@ func NewSlurmServiceWithDB(db *gorm.DB) *SlurmService {
 }
 
 func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
-    // Try to gather from sinfo/squeue; fallback to demo data if unavailable
+    // Gather from sinfo/squeue; if tools are unavailable, return an error
     nodesTotal, nodesIdle, nodesAlloc, partitions, demo1 := s.getNodeStats(ctx)
     jobsRun, jobsPend, jobsOther, demo2 := s.getJobStats(ctx)
 
-    demo := demo1 || demo2
-    if demo {
-        // Provide a stable small demo when tools missing
-        if nodesTotal == 0 && jobsRun == 0 && jobsPend == 0 {
-            return &SlurmSummary{
-                NodesTotal:  3,
-                NodesIdle:   2,
-                NodesAlloc:  1,
-                Partitions:  2,
-                JobsRunning: 1,
-                JobsPending: 2,
-                JobsOther:   0,
-                Demo:        true,
-                GeneratedAt: time.Now(),
-            }, nil
-        }
+    if demo1 || demo2 {
+        return nil, ErrNotAvailable
     }
 
     return &SlurmSummary{
@@ -60,7 +47,7 @@ func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
         JobsRunning: jobsRun,
         JobsPending: jobsPend,
         JobsOther:   jobsOther,
-        Demo:        demo,
+        Demo:        false,
         GeneratedAt: time.Now(),
     }, nil
 }
@@ -88,13 +75,8 @@ func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) 
                 return nodes, false, nil
             }
         }
-        
-        // Fallback to demo data if both sinfo and database are unavailable
-        return []SlurmNode{
-            {Name: "node-a", State: "idle", CPUs: "4", MemoryMB: "16384", Partition: "debug"},
-            {Name: "node-b", State: "alloc", CPUs: "8", MemoryMB: "32768", Partition: "compute"},
-            {Name: "node-c", State: "idle", CPUs: "16", MemoryMB: "65536", Partition: "compute"},
-        }, true, nil
+        // No CLI and no DB fallback: return error (no demo)
+        return nil, false, ErrNotAvailable
     }
 
     var nodes []SlurmNode
@@ -137,11 +119,8 @@ func (s *SlurmService) GetJobs(ctx context.Context) ([]SlurmJob, bool, error) {
     cmd := exec.CommandContext(ctx, "squeue", "-o", "%i|%u|%T|%M|%D|%R|%j|%P")
     out, err := cmd.Output()
     if err != nil {
-        // demo data
-        return []SlurmJob{
-            {ID: "12345", Name: "train-1", User: "alice", State: "RUNNING", Elapsed: "00:12:34", Nodes: "1", Reason: "None", Partition: "compute"},
-            {ID: "12346", Name: "prep-2", User: "bob", State: "PENDING", Elapsed: "00:00:00", Nodes: "1", Reason: "Priority", Partition: "debug"},
-        }, true, nil
+        // No CLI available: return error (no demo)
+        return nil, false, ErrNotAvailable
     }
 
     var jobs []SlurmJob

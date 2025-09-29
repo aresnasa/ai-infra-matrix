@@ -41,6 +41,19 @@ echo "   ✅ Salt API (端口: 8000)"
 echo "   ✅ AI-Infra-Matrix SSO集成"
 echo "   ✅ 自动密钥管理"
 
+# 配置 Salt API 文件认证凭据（file eauth）
+SALT_API_USER=${SALT_API_USERNAME:-saltapi}
+SALT_API_PASS=${SALT_API_PASSWORD:-}
+EAUTH_FILE=/etc/salt/master.d/eauth.txt
+if [ -n "$SALT_API_PASS" ]; then
+    echo "🔐 生成Salt API文件认证凭据 ($EAUTH_FILE)"
+    mkdir -p "$(dirname "$EAUTH_FILE")"
+    echo "${SALT_API_USER}:${SALT_API_PASS}" > "$EAUTH_FILE"
+    chmod 600 "$EAUTH_FILE" || true
+else
+    echo "⚠️ 未设置 SALT_API_PASSWORD，Salt API 将允许匿名访问公开端点，但需要认证的runner/wheel可能失败"
+fi
+
 # 后台启动Salt API（如果需要）
 if [ "$1" = "salt-master" ]; then
     echo "🌐 启动Salt API服务..."
