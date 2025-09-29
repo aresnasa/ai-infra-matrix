@@ -67,11 +67,17 @@ FROM nginx:stable-alpine-perl
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（直接使用阿里云镜像源），并设置时区为上海
+# 配置Alpine镜像（优先国内镜像，失败则恢复官方源），并尽量安装tzdata但不阻塞构建
 RUN set -eux; \
-	sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories; \
-	apk update || (sleep 5 && apk update) || (sleep 10 && apk update); \
-	apk add --no-cache tzdata
+        cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
+        # 优先切换到阿里云镜像，失败时不阻塞
+        sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories || true; \
+        # 尝试更新并安装tzdata，失败则恢复官方源并再次尝试；仍失败则跳过安装
+        (apk update && apk add --no-cache tzdata) || { \
+            echo "Mirror update failed, restoring official repositories..."; \
+            cp /etc/apk/repositories.bak /etc/apk/repositories || true; \
+            (apk update && apk add --no-cache tzdata) || echo "tzdata install skipped"; \
+        }
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 

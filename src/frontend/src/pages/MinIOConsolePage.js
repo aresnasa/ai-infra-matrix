@@ -27,25 +27,68 @@ const MinIOConsolePage = () => {
   const [autoLoginDone, setAutoLoginDone] = useState(false);
 
   // 尝试对MinIO Console执行同源自动登录（AK/SK）
-  const tryMinIOAutoLogin = async (ak, sk) => {
+  const tryMinIOAutoLogin = async (ak, sk, opts = {}) => {
     if (!ak || !sk) return false;
+    const { csrfToken } = opts || {};
     const endpoints = [
       '/minio-console/api/v1/login',
       '/minio-console/api/login',
     ];
+    // 为兼容不同版本，尝试 JSON 与 x-www-form-urlencoded 两种编码
+    const payloads = [
+      // JSON 变体
+      () => ({ username: ak, password: sk }),
+      () => ({ accessKey: ak, secretKey: sk }),
+      // 表单变体
+      () => new URLSearchParams({ username: ak, password: sk }),
+      () => new URLSearchParams({ accessKey: ak, secretKey: sk }),
+    ];
+    const baseHeaders = {
+      'Accept': 'application/json, text/plain, */*',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': window.location.origin,
+      'Referer': `${window.location.origin}/minio-console/`,
+    };
+    const contentTypes = [
+      'application/json',
+      'application/x-www-form-urlencoded',
+    ];
     for (const ep of endpoints) {
-      try {
-        const resp = await fetch(ep, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ username: ak, password: sk })
-        });
-        if (resp.ok) {
-          return true;
+      for (let i = 0; i < payloads.length; i++) {
+        const makeBody = payloads[i];
+        const isForm = makeBody() instanceof URLSearchParams;
+        const headers = { ...baseHeaders, 'Content-Type': isForm ? contentTypes[1] : contentTypes[0] };
+        if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+        try {
+          const body = isForm ? makeBody() : JSON.stringify(makeBody());
+          const resp = await fetch(ep, {
+            method: 'POST',
+            headers,
+            credentials: 'include',
+            body
+          });
+          if (resp.ok) {
+            // 尝试读取token并写入localStorage，便于控制台SPA识别
+            try {
+              const contentType = resp.headers.get('content-type') || '';
+              if (contentType.includes('application/json')) {
+                const data = await resp.json();
+                const token = data?.token || data?.jwt || data?.id || data?.accessToken || data?.session || '';
+                if (token) {
+                  try {
+                    localStorage.setItem('token', token);
+                    localStorage.setItem('jwt', token);
+                    localStorage.setItem('minio_token', token);
+                    localStorage.setItem('minio_jwt', token);
+                  } catch (_) {}
+                }
+              }
+            } catch (_) {}
+            return true;
+          }
+        } catch (e) {
+          // 忽略，尝试下一个变体
         }
-      } catch (e) {
-        // 忽略，尝试下一个端点
       }
     }
     return false;
@@ -66,11 +109,42 @@ const MinIOConsolePage = () => {
       });
       clearTimeout(timeout);
       if (res.ok || (res.status >= 200 && res.status < 400)) {
+        // 提取可能的CSRF Token（响应头或HTML内容）
+        let csrfToken = res.headers.get('x-csrf-token') || res.headers.get('x-xsrf-token') || '';
+        try {
+          if (!csrfToken) {
+            const html = await res.text();
+            // 常见Meta/隐藏字段标记
+            const metaMatch = html.match(/<meta[^>]*name=["']csrf-token["'][^>]*content=["']([^"']+)["'][^>]*>/i);
+            const meta2Match = html.match(/<meta[^>]*name=["']x-csrf-token["'][^>]*content=["']([^"']+)["'][^>]*>/i);
+            const inputMatch = html.match(/name=["'](?:gorilla\.csrf\.Token|csrf|_csrf|xsrf)["'][^>]*value=["']([^"']+)["']/i);
+            csrfToken = (metaMatch?.[1] || meta2Match?.[1] || inputMatch?.[1] || '').trim();
+          }
+        } catch (_) {}
         // 自动登录（如果还未尝试且拿到了配置中的AK/SK）
         if (!autoLoginDone && configData?.access_key && configData?.secret_key) {
-          const okLogin = await tryMinIOAutoLogin(configData.access_key, configData.secret_key);
-          if (okLogin) {
-            setAutoLoginDone(true);
+          // 先尝试服务端代理设置Cookie（同源，稳定）
+          try {
+            const proxyResp = await fetch('/api/object-storage/minio/console/proxy-login', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+              credentials: 'include',
+              body: JSON.stringify({ access_key: configData.access_key, secret_key: configData.secret_key })
+            });
+            if (proxyResp.ok) {
+              setAutoLoginDone(true);
+            } else {
+              // 回退到前端直连尝试
+              const okLogin = await tryMinIOAutoLogin(configData.access_key, configData.secret_key, { csrfToken });
+              if (okLogin) setAutoLoginDone(true);
+            }
+          } catch (_) {
+            // 回退到前端直连尝试
+            const okLogin = await tryMinIOAutoLogin(configData.access_key, configData.secret_key, { csrfToken });
+            if (okLogin) setAutoLoginDone(true);
           }
         }
         setIframeUrl(sameOriginUrl);
@@ -118,7 +192,7 @@ const MinIOConsolePage = () => {
       console.error('加载配置失败:', error);
       message.error('加载配置失败: ' + (error.response?.data?.error || error.message));
       // 配置加载失败时，尝试直接降级到同源代理
-      await probeAndUseSameOrigin();
+      await prepareSameOriginConsole();
     } finally {
       setLoading(false);
     }

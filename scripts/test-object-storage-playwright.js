@@ -301,6 +301,7 @@ async function testMinIOConsolePage(page) {
 
             // 深入校验：访问iframe内部，确认MinIO控制台实际渲染
             let innerOk = false;
+            let loggedIn = false;
             try {
                 // 获取第一帧（或匹配 /minio-console/ 的帧）
                 const frames = page.frames();
@@ -312,22 +313,56 @@ async function testMinIOConsolePage(page) {
                 }
 
                 if (frame) {
-                    // 尝试多个典型选择器
-                    const selectors = [
-                        'text=/MinIO/i',
-                        'text=/Console/i',
-                        'input[name="username"]',
-                        'input[type="password"]',
-                        'button:has-text("Login"), button:has-text("Log in"), button:has-text("Sign in")'
+                    // 优先等待已登录的控制台UI元素
+                    const loggedInSelectors = [
+                        'text=/Buckets/i',
+                        'a:has-text("Buckets")',
+                        'button:has-text("Create bucket")',
+                        'nav >> text=/Policies|Users|Groups|Access Keys|Settings/i',
+                        '[data-testid="main-navbar"]'
                     ];
-                    for (const sel of selectors) {
+                    for (const sel of loggedInSelectors) {
                         try {
-                            await frame.waitForSelector(sel, { timeout: 5000 });
-                            log('info', `✓ 发现MinIO控制台标识元素: ${sel}`);
+                            await frame.waitForSelector(sel, { timeout: 8000 });
+                            log('info', `✓ 检测到已登录控制台UI元素: ${sel}`);
                             innerOk = true;
+                            loggedIn = true;
                             break;
                         } catch (_) {}
                     }
+
+                    // 如果未检测到已登录UI，再退而求其次判断是否至少渲染了控制台或登录页的标识
+                    if (!innerOk) {
+                        const anySelectors = [
+                            'text=/MinIO/i',
+                            'text=/Console/i',
+                        ];
+                        for (const sel of anySelectors) {
+                            try {
+                                await frame.waitForSelector(sel, { timeout: 5000 });
+                                log('info', `✓ 发现MinIO控制台标识元素: ${sel}`);
+                                innerOk = true;
+                                break;
+                            } catch (_) {}
+                        }
+                    }
+
+                    // 判断是否出现登录表单（如果出现则视为自动登录失败）
+                    try {
+                        const loginInputs = await frame.locator('input[name="username"], input[type="password"]').count();
+                        const loginButtons = await frame.locator('button:has-text("Login"), button:has-text("Log in"), button:has-text("Sign in")').count();
+                        if ((loginInputs > 0 || loginButtons > 0) && !loggedIn) {
+                            log('warn', `检测到登录表单（inputs: ${loginInputs}, buttons: ${loginButtons}），疑似自动登录未生效`);
+                            await takeScreenshot(page, 'minio_console', 'login_form_present');
+                            testResults.failed++;
+                            testResults.details.push({
+                                test: 'minio_console_page',
+                                status: 'FAILED',
+                                message: '检测到MinIO登录表单，自动登录未生效'
+                            });
+                            return false;
+                        }
+                    } catch (_) { /* ignore */ }
                 } else {
                     log('warn', '未能解析到iframe内部frame，可能存在跨域限制');
                 }
@@ -349,12 +384,22 @@ async function testMinIOConsolePage(page) {
                 return false;
             }
 
-            testResults.passed++;
-            testResults.details.push({
-                test: 'minio_console_page',
-                status: 'PASSED',
-                message: 'MinIO控制台页面加载成功（内嵌iframe且内部内容可见）'
-            });
+            if (loggedIn) {
+                testResults.passed++;
+                testResults.details.push({
+                    test: 'minio_console_page',
+                    status: 'PASSED',
+                    message: 'MinIO控制台页面加载成功，且已处于登录状态（无登录表单）'
+                });
+            } else {
+                // 仅渲染但未判断到登录；作为通过但发出提醒
+                testResults.passed++;
+                testResults.details.push({
+                    test: 'minio_console_page',
+                    status: 'PASSED',
+                    message: 'MinIO控制台页面加载成功（已渲染），但未确认登录态'
+                });
+            }
             return true;
         }
 
