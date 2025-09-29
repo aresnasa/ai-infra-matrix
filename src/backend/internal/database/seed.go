@@ -71,6 +71,16 @@ func seedDefaultObjectStorageConfig() error {
 		secretKey = "minioadmin"
 	}
 
+	// 读取区域与SSL设置（可选）
+	region := os.Getenv("MINIO_REGION")
+	if region == "" {
+		region = "us-east-1"
+	}
+	sslEnabled := false
+	if v := os.Getenv("MINIO_USE_SSL"); v != "" {
+		if v == "1" || v == "true" || v == "TRUE" || v == "True" { sslEnabled = true }
+	}
+
 	// 创建默认MinIO配置
 	defaultConfig := &models.ObjectStorageConfig{
 		Name:        "默认MinIO存储",
@@ -79,8 +89,8 @@ func seedDefaultObjectStorageConfig() error {
 		AccessKey:   accessKey,
 		SecretKey:   secretKey,
 		WebURL:      minioConsoleURL,
-		Region:      "us-east-1",
-		SSLEnabled:  false,
+		Region:      region,
+		SSLEnabled:  sslEnabled,
 		IsActive:    true,
 		Status:      "unknown",
 		Description: "系统默认的MinIO对象存储配置",

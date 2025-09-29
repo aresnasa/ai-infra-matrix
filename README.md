@@ -340,3 +340,15 @@ docker compose logs -f [服务名]
 [官网](https://ai-infra-matrix.example.com) • [文档](docs/) • [演示](https://demo.ai-infra-matrix.example.com)
 
 </div>
+
+## 附录：对象存储（MinIO）环境变量速览
+
+- 代理路由：/minio/ (S3 API), /minio-console/ (Web 控制台，可被前端以 iframe 内嵌)
+- 关键环境变量（.env/.env.example）：
+    - MINIO_HOST, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+    - MINIO_REGION（默认 us-east-1）
+    - MINIO_USE_SSL（默认 false）
+    - MINIO_CONSOLE_URL（默认渲染为 ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/minio-console/）
+    - MINIO_BUCKET_GITEA（Gitea 使用的桶名，默认 gitea）
+
+修改上述变量后，重新渲染/构建并重启服务以生效。

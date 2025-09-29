@@ -196,6 +196,8 @@ const Layout = ({ children, user, onLogout }) => {
       selectedKeys = ['/job-templates'];
     } else if (pathname === '/files' || pathname.startsWith('/files')) {
       selectedKeys = ['/files'];
+    } else if (pathname === '/object-storage' || pathname.startsWith('/object-storage')) {
+      selectedKeys = ['/object-storage'];
     } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {
       selectedKeys = ['/saltstack'];
     }

@@ -24,3 +24,4 @@
 24. 现在使用curl测试添加test-ssh01到slurm集群，需要通过go的ssh自动安装saltstack-minions客户端，保证salt的正常，可以通过go的ssh安装minions客户端和slurm客户端，然后记录相关的任务提交日志和任务详情到pgsql中，deb包的源头已经在slurm-deb:25.05.3容器镜像中，需要先将这个容器中的文件拷贝出来放到pkgs/slurm-deb中，然后使用nginx作为deb源/rpm源
 25. 接下来需要调试安装slurm-client和saltstack服务保证能够正确安装saltstack客户端和通过golang的ssh的库安装saltstack，然后再用saltstack触发安装slurm的客户端
 26. 现在需要将minio对象存储单独增加一个页面，就叫对象存储，这里不止需要minio，还可以接入其他对象存储，如果已经配置了minio，则需要一个子页面和slurm等同等的iframe子页面即可，这里还需要在管理中心中增加一个配置页面能够管理对象存储的配置
+27. http://192.168.0.200:8080/object-storage/minio/1现在访问这里能够跳转到minio了，但是有个问题，需要输入minio的ak和sk这两个配置已经在env中申明了，需要在页面中自动配置上，保证无感跳转，调整下这个前端页面，同时，build-all这个函数需要自动适配内网环境和外网环境，保证一个主build-all函数就能在内网机器启动，同时支持在外网机器构建，这里需要读取build.sh的相关函数实现这个功能。

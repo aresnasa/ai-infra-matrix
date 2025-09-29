@@ -17,7 +17,8 @@ import {
   TeamOutlined,
   ControlOutlined,
   ApiOutlined,
-  MenuOutlined
+  MenuOutlined,
+  DatabaseOutlined
 } from '@ant-design/icons';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { navigationAPI } from '../services/api';
@@ -81,12 +82,21 @@ const DEFAULT_NAV_ITEMS = [
     roles: ['sre', 'admin', 'super-admin']
   },
   {
+    id: 'object-storage',
+    key: '/object-storage',
+    label: '对象存储',
+    icon: 'DatabaseOutlined',
+    visible: true,
+    order: 6,
+    roles: ['data-developer', 'sre', 'admin', 'super-admin']
+  },
+  {
     id: 'saltstack',
     key: '/saltstack',
     label: 'SaltStack',
     icon: 'ControlOutlined',
     visible: true,
-    order: 6,
+    order: 7,
     roles: ['admin', 'super-admin']
   }
 ];
@@ -111,10 +121,18 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
         console.log('加载用户自定义导航配置:', response.data.data);
         // 确保每个导航项的roles是数组格式
         const dataArray = Array.isArray(response.data.data) ? response.data.data : [];
-        const formattedItems = dataArray.map(item => ({
+        let formattedItems = dataArray.map(item => ({
           ...item,
           roles: Array.isArray(item.roles) ? item.roles : (item.roles ? [item.roles] : [])
         }));
+        // 将默认项中新增的导航合并进用户配置（保持用户顺序在前）
+        const existingIds = new Set(formattedItems.map(i => i.id));
+        const missingDefaults = DEFAULT_NAV_ITEMS.filter(d => !existingIds.has(d.id));
+        // 追加缺失的默认项到末尾，并为其分配顺序
+        formattedItems = [
+          ...formattedItems,
+          ...missingDefaults.map((d, idx) => ({ ...d, order: (formattedItems.length + idx) }))
+        ];
         setNavItems(formattedItems);
       } else {
         console.log('使用默认导航配置');
@@ -282,6 +300,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     'FileTextOutlined': <FileTextOutlined />,
     'ExperimentTwoTone': <ExperimentTwoTone />,
     'ClusterOutlined': <ClusterOutlined />,
+    'DatabaseOutlined': <DatabaseOutlined />,
     'SettingOutlined': <SettingOutlined />,
     'TeamOutlined': <TeamOutlined />,
     'ControlOutlined': <ControlOutlined />,

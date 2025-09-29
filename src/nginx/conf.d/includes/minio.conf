@@ -2,7 +2,7 @@
 # This file handles MinIO API and Console routing
 
 # MinIO S3 API 路由 (用于API访问)
-location /minio/ {
+location ^~ /minio/ {
     # S3 API 直通代理，不做前缀重写，避免破坏客户端行为
     # 隐藏与浏览器相关的安全头（非必须，防御性处理）
     proxy_hide_header X-Frame-Options;
@@ -13,6 +13,8 @@ location /minio/ {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $external_scheme;
     proxy_set_header X-Forwarded-Host $external_host;
+    # 关闭上游压缩，便于子过滤器改写HTML/资产路径
+    proxy_set_header Accept-Encoding "";
     
     # MinIO S3 API 特定配置
     proxy_set_header X-Forwarded-Server $host;
@@ -38,7 +40,7 @@ location /minio/ {
 }
 
 # MinIO Console Web界面路由 (用于iframe集成)
-location /minio-console/ {
+location ^~ /minio-console/ {
     # 允许在iframe中嵌入MinIO控制台：隐藏上游限制性头
     proxy_hide_header X-Frame-Options;
     proxy_hide_header Content-Security-Policy;
@@ -105,6 +107,15 @@ location /minio-console/ {
     }
     # 允许iframe嵌入MinIO控制台（前端页面以iframe展示）
     # 已在上方通过隐藏上游头与设置合适的 CSP 完成
+
+    # 关键改写：让MinIO Console在子路径正常加载静态资源
+    # 将 <base href="/"> 改为 <base href="/minio-console/">
+    sub_filter_once off;
+    sub_filter_types text/html;
+    sub_filter '<base href="/"' '<base href="/minio-console/"';
+    # 同时兜底改写绝对路径资源到子路径下
+    sub_filter 'href="/' 'href="/minio-console/';
+    sub_filter 'src="/' 'src="/minio-console/';
 }
 
 # MinIO 健康检查

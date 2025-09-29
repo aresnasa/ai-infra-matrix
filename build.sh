@@ -1554,6 +1554,44 @@ render_docker_compose_templates() {
     # 复制模板文件到目标位置
     cp "$template_file" "$output_file"
 
+    # 规范化缩进：修复 env_file 列表项缩进（部分模板中写成与键同缩进，导致 YAML 解析错误）
+    # 规则：将形如
+    #   env_file:\n    - .env
+    # 修正为
+    #   env_file:\n      - .env
+    # 仅对下一行与 env_file: 同缩进且以 "-" 开头的情况做 2 空格缩进调整
+    if command -v python3 >/dev/null 2>&1; then
+        print_info "修正 docker-compose.yml 中 env_file 列表缩进..."
+        python3 - << 'PY' 2>/dev/null || true
+from pathlib import Path
+import re
+
+output_path = Path(r"$output_file")
+text = output_path.read_text(encoding='utf-8')
+lines = text.splitlines()
+
+out = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    out.append(line)
+    m = re.match(r'^(\s*)env_file:\s*$', line)
+    if m and i + 1 < len(lines):
+        indent = m.group(1)
+        nxt = lines[i + 1]
+        # 如果下一行与 env_file: 同缩进且是列表项，则补齐两个空格缩进
+        if re.match(r'^' + re.escape(indent) + r'-\s', nxt):
+            out.append(indent + '  ' + nxt[len(indent):])
+            i += 2
+            continue
+    i += 1
+
+output_path.write_text("\n".join(out) + ("\n" if text.endswith("\n") else ""), encoding='utf-8')
+PY
+    else
+        print_warning "未检测到 python3，跳过 env_file 缩进修复，若解析失败请手动调整模板缩进"
+    fi
+
     # 兼容性修复：如果模板/旧版本里仍有 openscow_db_data 命名卷引用，替换为绑定挂载变量
     if grep -q "openscow_db_data:/var/lib/mysql" "$output_file" 2>/dev/null; then
         sed_inplace "s|openscow_db_data:/var/lib/mysql|\${OPENSCOW_DB_DIR:-./data/openscow/mysql}:/var/lib/mysql|g" "$output_file"
@@ -1617,6 +1655,8 @@ sync_env_files() {
     sed_inplace 's/^EXTERNAL_PORT=.*/EXTERNAL_PORT=${EXTERNAL_PORT}/' "$env_example_file"
     sed_inplace 's/^EXTERNAL_SCHEME=.*/EXTERNAL_SCHEME=${EXTERNAL_SCHEME}/' "$env_example_file"
     sed_inplace 's/^NGINX_PORT=.*/NGINX_PORT=${EXTERNAL_PORT}/' "$env_example_file"
+    # 强制对依赖 EXTERNAL_* 的 URL 使用占位符，避免写死 IP/端口
+    sed_inplace 's#^MINIO_CONSOLE_URL=.*#MINIO_CONSOLE_URL=${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/minio-console/#' "$env_example_file"
     sed_inplace 's/^JUPYTERHUB_EXTERNAL_PORT=.*/JUPYTERHUB_EXTERNAL_PORT=${JUPYTERHUB_PORT}/' "$env_example_file"
     sed_inplace 's/^GITEA_EXTERNAL_PORT=.*/GITEA_EXTERNAL_PORT=${GITEA_PORT}/' "$env_example_file"
     sed_inplace 's/^APPHUB_PORT=.*/APPHUB_PORT=${APPHUB_PORT}/' "$env_example_file"
@@ -1646,6 +1686,12 @@ sync_all_configs() {
     
     # 1. 同步环境变量文件
     sync_env_files
+
+    # 1.1 确保 .env 中具备必要的 MinIO 变量（为现有项目追加默认值）
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        set_or_update_env_var "MINIO_REGION" "${MINIO_REGION:-us-east-1}" "$SCRIPT_DIR/.env"
+        set_or_update_env_var "MINIO_USE_SSL" "${MINIO_USE_SSL:-false}" "$SCRIPT_DIR/.env"
+    fi
     
     # 2. 验证 docker-compose.yml 和 docker-compose.yml.example 是否同步
     local compose_file="$SCRIPT_DIR/docker-compose.yml"
@@ -1659,14 +1705,8 @@ sync_all_configs() {
         if [[ "$compose_content" == "$example_content" ]]; then
             print_success "✓ docker-compose.yml 和 docker-compose.yml.example 已同步"
         else
-            print_warning "⚠ docker-compose.yml 和 docker-compose.yml.example 内容不同步"
-            if [[ "$force_mode" == "true" ]]; then
-                print_info "强制模式：从 docker-compose.yml 更新 docker-compose.yml.example"
-                cp "$compose_file" "$compose_example_file"
-                print_success "✓ 已强制同步 docker-compose 文件"
-            else
-                print_info "建议运行: ./build.sh render-templates docker-compose 重新生成配置"
-            fi
+            print_warning "⚠ docker-compose.yml 与模板不同步（以 docker-compose.yml.example 为准）"
+            print_info "提示：请运行 ./build.sh render-templates docker-compose 以模板为源重新渲染 docker-compose.yml"
         fi
     else
         print_warning "⚠ docker-compose 文件缺失，建议运行模板渲染"
@@ -3136,6 +3176,80 @@ build_all_services() {
         print_success "🎉 所有服务构建成功！"
         return 0
     fi
+}
+
+# 组合式一键构建流程
+# 用法: build_all_pipeline [tag] [registry]
+# 行为:
+#  1) 生成/刷新 .env（等价于: create-env dev [--force]）
+#  2) 同步配置（等价于: sync-config [--force]）
+#  3) 构建所有服务镜像（等价于: build-all [tag] [registry]）
+build_all_pipeline() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local registry="${2:-}"
+
+    # 是否强制模式：沿用全局 FORCE_REBUILD（由 --force 开关控制）
+    local force="false"
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        force="true"
+    fi
+
+    print_info "=========================================="
+    print_info "准备环境配置（create-env dev）"
+    print_info "=========================================="
+    if ! create_env_from_template "dev" "$force"; then
+        print_error "创建/渲染 .env 失败，停止构建"
+        return 1
+    fi
+
+    print_info "=========================================="
+    print_info "同步配置（sync-config）"
+    print_info "=========================================="
+    if ! sync_all_configs "$force"; then
+        print_error "同步配置失败，停止构建"
+        return 1
+    fi
+
+    # 渲染模板（nginx/docker-compose），确保以源模板为准进行生成
+    print_info "=========================================="
+    print_info "渲染配置模板（nginx / docker-compose）"
+    print_info "=========================================="
+    render_nginx_templates || print_warning "Nginx 模板渲染出现问题，请稍后检查"
+    render_docker_compose_templates "$registry" "$tag" || print_warning "Docker Compose 模板渲染出现问题，请稍后检查"
+
+    print_info "=========================================="
+    print_info "开始构建所有服务（build-all）"
+    print_info "标签: $tag  仓库: ${registry:-<本地>}  强制: $force"
+    print_info "=========================================="
+    if ! build_all_services "$tag" "$registry"; then
+        print_error "构建所有服务失败"
+        return 1
+    fi
+
+    # 尝试启动（或重启）服务
+    local compose_cmd
+    compose_cmd=$(detect_compose_command || true)
+    if [[ -n "$compose_cmd" ]]; then
+        print_info "=========================================="
+        print_info "启动（或重启）Docker Compose 服务"
+        print_info "=========================================="
+        # 优先验证配置
+        if $compose_cmd -f "$SCRIPT_DIR/docker-compose.yml" config --quiet 2>/dev/null; then
+            # 尝试优雅重启
+            $compose_cmd down 2>/dev/null || true
+            if $compose_cmd up -d; then
+                print_success "✓ 服务已启动"
+            else
+                print_warning "⚠ 启动失败，请手动检查 docker compose 日志"
+            fi
+        else
+            print_warning "⚠ docker-compose.yml 验证失败，请检查模板源文件和渲染逻辑"
+        fi
+    else
+        print_warning "未检测到 Docker Compose 命令，跳过启动步骤"
+    fi
+
+    print_success "✓ 一键构建流程完成"
 }
 
 # 推送单个服务镜像
@@ -8052,7 +8166,32 @@ main() {
             ;;
             
         "build-all")
-            build_all_services "${2:-$DEFAULT_IMAGE_TAG}" "$3"
+            # 当用户传入 --help/-h 时，仅打印帮助而不执行
+            if [[ "${2:-}" == "--help" || "${2:-}" == "-h" || "${3:-}" == "--help" || "${3:-}" == "-h" ]]; then
+                echo "build-all - 一键生成环境并构建所有服务"
+                echo
+                echo "用法: $0 build-all [tag] [registry] [--force]"
+                echo
+                echo "参数:"
+                echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+                echo "  registry    目标镜像仓库 (可选，默认使用本地构建)"
+                echo "  --force     全局开关：强制覆盖生成 .env 等（可放在任意位置）"
+                echo
+                echo "流程:"
+                echo "  1) create-env dev [--force]  - 从 .env.example 渲染生成 .env"
+                echo "  2) sync-config [--force]     - 同步 .env 到模板、校验 docker-compose"
+                echo "  3) build-all                  - 构建所有服务镜像"
+                echo
+                echo "示例:"
+                echo "  $0 build-all"
+                echo "  $0 build-all v1.0.0"
+                echo "  $0 build-all v1.0.0 harbor.company.com/ai-infra --force"
+                return 0
+            fi
+
+            # 将 build-all 封装为一键流程：create-env dev -> sync-config -> build-all
+            # 仍然支持传入 [tag] [registry]，并继承 --force 标志
+            build_all_pipeline "${2:-$DEFAULT_IMAGE_TAG}" "$3"
             ;;
             
         "test-push")

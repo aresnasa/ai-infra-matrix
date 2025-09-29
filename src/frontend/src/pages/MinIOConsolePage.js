@@ -6,10 +6,11 @@ import {
 import {
   ArrowLeftOutlined, ReloadOutlined, FullscreenOutlined,
   DatabaseOutlined, LinkOutlined, SettingOutlined,
-  ExclamationCircleOutlined, CheckCircleOutlined
+  ExclamationCircleOutlined, CheckCircleOutlined, InfoCircleOutlined
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { objectStorageAPI } from '../services/api';
+import IframeEmbed from '../components/IframeEmbed';
 
 const { Title, Text } = Typography;
 
@@ -22,6 +23,66 @@ const MinIOConsolePage = () => {
   const [connectionStatus, setConnectionStatus] = useState('checking');
   const [iframeUrl, setIframeUrl] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [diagnosticNote, setDiagnosticNote] = useState('');
+  const [autoLoginDone, setAutoLoginDone] = useState(false);
+
+  // 尝试对MinIO Console执行同源自动登录（AK/SK）
+  const tryMinIOAutoLogin = async (ak, sk) => {
+    if (!ak || !sk) return false;
+    const endpoints = [
+      '/minio-console/api/v1/login',
+      '/minio-console/api/login',
+    ];
+    for (const ep of endpoints) {
+      try {
+        const resp = await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ username: ak, password: sk })
+        });
+        if (resp.ok) {
+          return true;
+        }
+      } catch (e) {
+        // 忽略，尝试下一个端点
+      }
+    }
+    return false;
+  };
+
+  // 优先使用同源代理；若提供了config则先尝试自动登录再设置iframe
+  const prepareSameOriginConsole = async (configData) => {
+    const sameOriginUrl = `${window.location.origin}/minio-console/`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const res = await fetch(sameOriginUrl, {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'include',
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (res.ok || (res.status >= 200 && res.status < 400)) {
+        // 自动登录（如果还未尝试且拿到了配置中的AK/SK）
+        if (!autoLoginDone && configData?.access_key && configData?.secret_key) {
+          const okLogin = await tryMinIOAutoLogin(configData.access_key, configData.secret_key);
+          if (okLogin) {
+            setAutoLoginDone(true);
+          }
+        }
+        setIframeUrl(sameOriginUrl);
+        setDiagnosticNote('已使用同源Nginx代理路径集成MinIO控制台');
+        setConnectionStatus('connected');
+        return true;
+      }
+    } catch (e) {
+      clearTimeout(timeout);
+    }
+    return false;
+  };
 
   // 加载配置信息
   const loadConfig = async () => {
@@ -31,15 +92,21 @@ const MinIOConsolePage = () => {
       const configData = response.data?.data;
       
       if (!configData) {
-        message.error('配置不存在');
-        navigate('/object-storage');
-        return;
+        message.warning('未找到对应配置，尝试通过同源代理直接访问MinIO控制台');
+        const ok = await prepareSameOriginConsole();
+        if (!ok) {
+          message.error('配置不存在，且同源代理不可用');
+        }
+        return; // 留在本页以展示降级结果
       }
       
       if (configData.type !== 'minio') {
-        message.error('该配置不是MinIO类型');
-        navigate('/object-storage');
-        return;
+        message.warning('该配置不是MinIO类型，尝试同源代理降级');
+        const ok = await prepareSameOriginConsole();
+        if (!ok) {
+          message.error('非MinIO类型，且同源代理不可用');
+        }
+        return; // 留在本页以展示降级结果
       }
       
       setConfig(configData);
@@ -50,6 +117,8 @@ const MinIOConsolePage = () => {
     } catch (error) {
       console.error('加载配置失败:', error);
       message.error('加载配置失败: ' + (error.response?.data?.error || error.message));
+      // 配置加载失败时，尝试直接降级到同源代理
+      await probeAndUseSameOrigin();
     } finally {
       setLoading(false);
     }
@@ -66,37 +135,36 @@ const MinIOConsolePage = () => {
       
       setConnectionStatus(status);
       
-      if (status === 'connected' && configData.web_url) {
-        // 优先使用nginx代理路径，以避免跨域问题
-        let consoleUrl;
-        
-        // 检查是否应该使用nginx代理路径
-        const currentHost = window.location.hostname;
-        const currentPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-        const currentOrigin = `${window.location.protocol}//${currentHost}:${currentPort}`;
-        
-        // 如果MinIO配置的web_url包含当前主机，使用nginx代理路径
-        if (configData.web_url.includes(currentHost) || configData.web_url.includes('localhost')) {
-          consoleUrl = `${currentOrigin}/minio-console/`;
-        } else {
-          // 否则使用配置的web_url
-          consoleUrl = configData.web_url;
-          
-          // 确保URL格式正确
+      if (status === 'connected') {
+        // 强优先使用同源Nginx代理路径，避免跨域与frame-ancestors限制
+  const ok = await prepareSameOriginConsole(configData);
+        if (ok) return;
+
+        // 降级：使用配置的web_url（可能跨域/被浏览器策略限制）
+        if (configData?.web_url) {
+          let consoleUrl = configData.web_url;
           if (!consoleUrl.startsWith('http://') && !consoleUrl.startsWith('https://')) {
             consoleUrl = `http://${consoleUrl}`;
           }
-          
-          // 移除末尾的斜杠
           consoleUrl = consoleUrl.replace(/\/$/, '');
+          setIframeUrl(consoleUrl);
+          setDiagnosticNote('使用配置的Web控制台地址；如被浏览器策略拦截，请改为同源代理');
+        } else {
+          // 没有可用的web_url时，尝试同源代理兜底
+          const fallbackOk = await prepareSameOriginConsole(configData);
+          if (!fallbackOk) setConnectionStatus('error');
         }
-        
-        setIframeUrl(consoleUrl);
+      } else {
+        // 未连接状态也尝试同源代理兜底
+        const ok = await prepareSameOriginConsole(configData);
+        if (!ok) setConnectionStatus('error');
       }
       
     } catch (error) {
       console.error('检查连接状态失败:', error);
-      setConnectionStatus('error');
+      // 检查失败时也尝试同源代理兜底
+      const ok = await prepareSameOriginConsole(configData);
+      if (!ok) setConnectionStatus('error');
     }
   };
 
@@ -186,12 +254,13 @@ const MinIOConsolePage = () => {
     );
   }
 
-  if (!config) {
+  // 若无法加载配置但已探测到同源代理且构建了iframeUrl，则允许继续渲染控制台（无配置信息降级模式）
+  if (!config && !iframeUrl) {
     return (
       <div style={{ padding: '24px' }}>
         <Alert
           message="配置未找到"
-          description="请检查配置是否存在或返回重新选择"
+          description="请检查配置是否存在或返回重新选择；系统也会尝试通过同源代理自动降级访问 MinIO 控制台。"
           type="error"
           showIcon
           action={
@@ -252,14 +321,16 @@ const MinIOConsolePage = () => {
                       <DatabaseOutlined /> 对象存储
                     </Breadcrumb.Item>
                     <Breadcrumb.Item>MinIO控制台</Breadcrumb.Item>
-                    <Breadcrumb.Item>{config.name}</Breadcrumb.Item>
+                    {config?.name && (
+                      <Breadcrumb.Item>{config.name}</Breadcrumb.Item>
+                    )}
                   </Breadcrumb>
                 </>
               )}
               
               {isFullscreen && (
                 <Title level={5} style={{ margin: 0, color: '#1890ff' }}>
-                  <DatabaseOutlined /> MinIO - {config.name}
+                  <DatabaseOutlined /> MinIO{config?.name ? ` - ${config.name}` : ''}
                 </Title>
               )}
             </Space>
@@ -298,13 +369,22 @@ const MinIOConsolePage = () => {
         
         {!isFullscreen && (
           <div style={{ marginTop: '8px' }}>
-            <Space>
-              <Text type="secondary">
-                <DatabaseOutlined /> {config.endpoint}
-              </Text>
-              {config.web_url && (
+            <Space direction="vertical" size={4}>
+              <Space>
+                {config?.endpoint && (
+                  <Text type="secondary">
+                    <DatabaseOutlined /> {config.endpoint}
+                  </Text>
+                )}
+                {config?.web_url && (
+                  <Text type="secondary">
+                    <LinkOutlined /> {config.web_url}
+                  </Text>
+                )}
+              </Space>
+              {diagnosticNote && (
                 <Text type="secondary">
-                  <LinkOutlined /> {config.web_url}
+                  <InfoCircleOutlined /> {diagnosticNote}
                 </Text>
               )}
             </Space>
@@ -314,22 +394,14 @@ const MinIOConsolePage = () => {
 
       {/* MinIO控制台内容区 */}
       <div style={{ flex: 1, position: 'relative', backgroundColor: '#f5f5f5' }}>
-        {connectionStatus === 'connected' && iframeUrl ? (
-          <iframe
-            id="minio-console-iframe"
+        {iframeUrl ? (
+          <IframeEmbed
             src={iframeUrl}
-            style={{
-              width: '100%',
-              height: '100%',
-              border: 'none',
-              backgroundColor: 'white'
-            }}
-            onLoad={() => {
-              console.log('MinIO控制台加载完成');
-            }}
-            onError={() => {
-              message.error('MinIO控制台加载失败');
-            }}
+            title="MinIO Console"
+            timeoutMs={15000}
+            id="minio-console-iframe"
+            onReady={() => console.log('MinIO控制台加载完成')}
+            onError={(why) => message.error(why || 'MinIO控制台加载失败')}
           />
         ) : connectionStatus === 'checking' ? (
           <div style={{ 
@@ -368,12 +440,14 @@ const MinIOConsolePage = () => {
                     <Button onClick={handleRefresh} icon={<ReloadOutlined />}>
                       重试连接
                     </Button>
-                    <Button 
-                      icon={<SettingOutlined />}
-                      onClick={() => navigate(`/admin/object-storage?edit=${config.id}`)}
-                    >
-                      编辑配置
-                    </Button>
+                    {config?.id && (
+                      <Button 
+                        icon={<SettingOutlined />}
+                        onClick={() => navigate(`/admin/object-storage?edit=${config.id}`)}
+                      >
+                        编辑配置
+                      </Button>
+                    )}
                   </Space>
                 </div>
               </div>

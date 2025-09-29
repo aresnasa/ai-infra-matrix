@@ -22,7 +22,8 @@ patches/
 third_party/
 src/openscow/
 backup/
-
-
+scripts/node_modules
+scripts/test-screenshots
+test-screenshots/
 #pkgs
 pkgs/
