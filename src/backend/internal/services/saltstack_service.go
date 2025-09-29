@@ -47,7 +47,7 @@ func NewSaltStackService() *SaltStackService {
 	// 从环境变量读取配置，提供默认值
 	masterURL := os.Getenv("SALTSTACK_MASTER_URL")
 	if masterURL == "" {
-		masterURL = "http://saltstack:8000" // 默认值
+		masterURL = "http://saltstack:8002" // 默认端口与容器配置一致
 	}
 
 	apiToken := os.Getenv("SALTSTACK_API_TOKEN")

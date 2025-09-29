@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserHandler struct {

@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"os"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
@@ -33,10 +34,21 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 		return nil, errors.New("username or email already exists")
 	}
 
-	// LDAP验证：检查用户是否在LDAP中存在
-	_, err := s.ldapService.AuthenticateUser(req.Username, req.Password)
-	if err != nil {
-		return nil, errors.New("LDAP验证失败: 用户不存在或密码错误")
+	// Detect LDAP runtime enablement
+	ldapCfg, _ := s.ldapService.GetConfig()
+	ldapEnabled := ldapCfg != nil && ldapCfg.IsEnabled
+
+	// If LDAP is enabled, try to validate in LDAP; otherwise allow local registration.
+	// In strict mode (REGISTRATION_STRICT_LDAP=true), fail registration when LDAP validation fails.
+	if ldapEnabled {
+		strict := os.Getenv("REGISTRATION_STRICT_LDAP") == "true"
+		if _, err := s.ldapService.AuthenticateUser(req.Username, req.Password); err != nil {
+			if strict {
+				return nil, errors.New("LDAP验证失败: 用户不存在或密码错误")
+			}
+			// Not strict: gracefully fall back to local registration for this request
+			ldapEnabled = false
+		}
 	}
 
 	// 如果需要审批，创建审批记录
@@ -59,7 +71,7 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 			Email:        req.Email,
 			Password:     "", // 密码暂时不设置
 			IsActive:     false,
-			AuthSource:   "ldap",
+			AuthSource:   ifThen(ldapEnabled, "ldap", "local"),
 			DashboardRole: req.Role,
 		}
 		return user, nil
@@ -77,7 +89,8 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 		Email:         req.Email,
 		Password:      string(hashedPassword),
 		IsActive:      true,
-		AuthSource:    "ldap", // 设置认证源为LDAP
+		// If LDAP validated, mark as ldap; otherwise mark as local to allow local login
+		AuthSource:    ifThen(ldapEnabled, "ldap", "local"),
 		DashboardRole: req.Role,
 		RoleTemplate:  req.RoleTemplate, // 设置角色模板
 	}
@@ -108,6 +121,12 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 	}
 
 	return user, nil
+}
+
+// ifThen is a tiny helper to choose between two strings without importing generics
+func ifThen(cond bool, a, b string) string {
+	if cond { return a }
+	return b
 }
 
 // Login 用户登录

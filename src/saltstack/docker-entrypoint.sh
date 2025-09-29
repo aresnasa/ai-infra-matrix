@@ -44,10 +44,19 @@ echo "   ✅ 自动密钥管理"
 # 后台启动Salt API（如果需要）
 if [ "$1" = "salt-master" ]; then
     echo "🌐 启动Salt API服务..."
+    # 启动Salt API（端口由配置文件控制，默认8002）
     salt-api --daemon || echo "⚠️ Salt API启动失败，继续启动Master"
     
-    echo "🔧 启动Salt Minion (本地测试)..."
-    salt-minion --daemon || echo "⚠️ Salt Minion启动失败，继续启动Master"
+        if [ "${START_LOCAL_MINION:-true}" = "true" ]; then
+            echo "🔧 启动Salt Minion (本地测试)..."
+            # 确保日志目录和文件可写
+            mkdir -p /var/log/salt
+            touch /var/log/salt/minion
+            chmod 644 /var/log/salt/minion || true
+            salt-minion --daemon || echo "⚠️ Salt Minion启动失败，继续启动Master"
+        else
+            echo "ℹ️ 已禁用本地测试Minion启动 (START_LOCAL_MINION=false)"
+        fi
     
     # 等待服务就绪
     sleep 3

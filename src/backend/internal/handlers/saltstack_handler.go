@@ -43,6 +43,17 @@ type SaltStackStatus struct {
 	Services      map[string]string `json:"services"`
 	LastUpdated   time.Time         `json:"last_updated"`
 	Demo          bool              `json:"demo,omitempty"`
+	// 前端兼容字段
+	MasterStatus     string `json:"master_status,omitempty"`
+	APIStatus        string `json:"api_status,omitempty"`
+	MinionsUp        int    `json:"minions_up,omitempty"`
+	MinionsDown      int    `json:"minions_down,omitempty"`
+	SaltVersion      string `json:"salt_version,omitempty"`
+	ConfigFile       string `json:"config_file,omitempty"`
+	LogLevel         string `json:"log_level,omitempty"`
+	CPUUsage         int    `json:"cpu_usage,omitempty"`
+	MemoryUsage      int    `json:"memory_usage,omitempty"`
+	ActiveConnections int   `json:"active_connections,omitempty"`
 }
 
 // SaltMinion Salt Minion信息
@@ -52,6 +63,8 @@ type SaltMinion struct {
 	OS           string            `json:"os"`
 	OSVersion    string            `json:"os_version"`
 	Architecture string            `json:"architecture"`
+	Arch         string            `json:"arch,omitempty"`
+	SaltVersion  string            `json:"salt_version,omitempty"`
 	LastSeen     time.Time         `json:"last_seen"`
 	Grains       map[string]interface{} `json:"grains"`
 	Pillar       map[string]interface{} `json:"pillar,omitempty"`
@@ -90,7 +103,8 @@ func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
 // getSaltAPIURL 获取Salt API URL
 func (h *SaltStackHandler) getSaltAPIURL() string {
 	host := getEnv("SALT_MASTER_HOST", "saltstack")
-	port := getEnv("SALT_API_PORT", "8000")
+	// 默认端口改为 8002，与容器配置一致
+	port := getEnv("SALT_API_PORT", "8002")
 	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
@@ -104,9 +118,51 @@ func getEnv(key, defaultValue string) string {
 
 // authenticate 向Salt API认证 - 临时绕过认证
 func (c *saltAPIClient) authenticate() error {
-	// 暂时跳过认证，直接尝试访问API
-	// Salt API在某些配置下可以无认证访问基础信息
-	return nil
+	username := getEnv("SALT_API_USERNAME", "saltapi")
+	password := os.Getenv("SALT_API_PASSWORD")
+	eauth := getEnv("SALT_API_EAUTH", "file")
+
+	// 如果未配置密码，则尝试无认证直接使用
+	if password == "" {
+		return nil
+	}
+
+	payload := map[string]string{
+		"username": username,
+		"password": password,
+		"eauth":    eauth,
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", c.baseURL+"/login", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("salt api login failed: status %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return err
+	}
+	// 解析 token: 形如 {"return": [{"token": "...", "expire": 1234567890}]}
+	if arr, ok := result["return"].([]interface{}); ok && len(arr) > 0 {
+		if m, ok := arr[0].(map[string]interface{}); ok {
+			if t, ok := m["token"].(string); ok && t != "" {
+				c.token = t
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("salt api login: token not found")
 }
 
 // makeRequest 发送请求到Salt API
@@ -136,12 +192,41 @@ func (c *saltAPIClient) makeRequest(endpoint string, method string, data interfa
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("salt api error: %d %s", resp.StatusCode, string(b))
+	}
+
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+// makeRunner 调用 runner 客户端
+func (c *saltAPIClient) makeRunner(fun string, kwarg map[string]interface{}) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"client": "runner",
+		"fun":    fun,
+	}
+	if kwarg != nil {
+		payload["kwarg"] = kwarg
+	}
+	return c.makeRequest("/", "POST", payload)
+}
+
+// makeWheel 调用 wheel 客户端（如 key.list_all）
+func (c *saltAPIClient) makeWheel(fun string, kwarg map[string]interface{}) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"client": "wheel",
+		"fun":    fun,
+	}
+	if kwarg != nil {
+		payload["kwarg"] = kwarg
+	}
+	return c.makeRequest("/", "POST", payload)
 }
 
 // GetSaltStackStatus 获取SaltStack状态
@@ -181,42 +266,52 @@ func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
 
 // getRealSaltStackStatus 获取真实的SaltStack状态
 func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltStackStatus, error) {
-	// 获取版本信息
-	versionResp, err := client.makeRequest("/", "GET", nil)
+	// 获取 API 根信息（用于APIVersion）
+	apiInfo, _ := client.makeRequest("/", "GET", nil)
+
+	// 获取 up/down 状态
+	manageStatus, err := client.makeRunner("manage.status", nil)
 	if err != nil {
 		return SaltStackStatus{}, err
 	}
+	up, down := h.parseManageStatus(manageStatus)
 
-	// 获取密钥状态
-	keysResp, err := client.makeRequest("/keys", "GET", nil)
+	// 获取 keys
+	keysResp, err := client.makeWheel("key.list_all", nil)
 	if err != nil {
 		return SaltStackStatus{}, err
 	}
+	minions, pre, rejected := h.parseWheelKeys(keysResp)
 
-	// 获取Minion状态
-	minionsResp, err := client.makeRequest("/minions", "GET", nil)
-	if err != nil {
-		return SaltStackStatus{}, err
-	}
-
+	// 构造状态
 	status := SaltStackStatus{
 		Status:           "connected",
-		MasterVersion:    h.extractVersion(versionResp),
-		APIVersion:       "3000.3",
-		Uptime:           time.Now().Unix() - 3600, // 模拟1小时运行时间
-		ConnectedMinions: h.countMinions(minionsResp),
-		AcceptedKeys:     h.extractKeys(keysResp, "minions"),
-		UnacceptedKeys:   h.extractKeys(keysResp, "minions_pre"),
-		RejectedKeys:     h.extractKeys(keysResp, "minions_rejected"),
+		MasterVersion:    h.extractAPISaltVersion(apiInfo),
+		APIVersion:       h.extractAPIVersion(apiInfo),
+		Uptime:           0,
+		ConnectedMinions: len(up),
+		AcceptedKeys:     minions,
+		UnacceptedKeys:   pre,
+		RejectedKeys:     rejected,
 		Services: map[string]string{
 			"salt-master": "running",
 			"salt-api":    "running",
-			"salt-syndic": "stopped",
 		},
 		LastUpdated: time.Now(),
 		Demo:        false,
+		// 兼容字段
+		MasterStatus:  "running",
+		APIStatus:     "running",
+		MinionsUp:     len(up),
+		MinionsDown:   len(down),
+		SaltVersion:   h.extractAPISaltVersion(apiInfo),
+		ConfigFile:    "/etc/salt/master",
+		LogLevel:      "info",
+		CPUUsage:      0,
+		MemoryUsage:   0,
+		ActiveConnections: 0,
 	}
-
+	_ = down // 可用于前端显示 down 数量
 	return status, nil
 }
 
@@ -238,6 +333,17 @@ func (h *SaltStackHandler) getDemoSaltStackStatus() SaltStackStatus {
 		},
 		LastUpdated: time.Now(),
 		Demo:        true,
+		// 兼容字段
+		MasterStatus:  "running",
+		APIStatus:     "running",
+		MinionsUp:     2,
+		MinionsDown:   1,
+		SaltVersion:   "3006.4",
+		ConfigFile:    "/etc/salt/master",
+		LogLevel:      "info",
+		CPUUsage:      12,
+		MemoryUsage:   23,
+		ActiveConnections: 2,
 	}
 }
 
@@ -426,17 +532,23 @@ func (h *SaltStackHandler) cacheStatus(status *SaltStackStatus, seconds int) {
 }
 
 func (h *SaltStackHandler) extractVersion(resp map[string]interface{}) string {
-	if data, ok := resp["data"].(map[string]interface{}); ok {
-		if version, ok := data["version"].(string); ok {
-			return version
-		}
-	}
-	return "3006.4"
+	return h.extractAPISaltVersion(resp)
 }
 
 func (h *SaltStackHandler) countMinions(resp map[string]interface{}) int {
+	// 兼容多种返回格式
 	if data, ok := resp["data"].([]interface{}); ok {
 		return len(data)
+	}
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		switch v := ret[0].(type) {
+		case []interface{}:
+			return len(v)
+		case map[string]interface{}:
+			if minions, ok := v["minions"].([]interface{}); ok {
+				return len(minions)
+			}
+		}
 	}
 	return 0
 }
@@ -453,13 +565,152 @@ func (h *SaltStackHandler) extractKeys(resp map[string]interface{}, keyType stri
 			return result
 		}
 	}
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			// wheel key.list_all 返回嵌套 data.return
+			if data, ok := m["data"].(map[string]interface{}); ok {
+				if r, ok := data["return"].(map[string]interface{}); ok {
+					if keys, ok := r[keyType].([]interface{}); ok {
+						var result []string
+						for _, key := range keys {
+							if str, ok := key.(string); ok {
+								result = append(result, str)
+							}
+						}
+						return result
+					}
+				}
+			}
+		}
+	}
 	return []string{}
 }
 
 func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, error) {
-	// 实现真实的Minion数据获取
-	// 这里可以调用Salt API获取实际数据
-	return nil, fmt.Errorf("not implemented")
+	// 使用 runner manage.status 获取 up/down 列表
+	statusResp, err := client.makeRunner("manage.status", nil)
+	if err != nil {
+		return nil, err
+	}
+	up, down := h.parseManageStatus(statusResp)
+
+	// 将 up 的节点获取详细 grains
+	var minions []SaltMinion
+	for _, id := range up {
+		// GET /minions/{id}
+		r, err := client.makeRequest("/minions/"+id, "GET", nil)
+		if err != nil {
+			// 如果失败，至少添加一个基本项
+			minions = append(minions, SaltMinion{ID: id, Status: "up"})
+			continue
+		}
+		grains := h.parseMinionGrains(r, id)
+		m := SaltMinion{
+			ID:           id,
+			Status:       "up",
+			OS:           fmt.Sprintf("%v", grains["os"]),
+			OSVersion:    fmt.Sprintf("%v", grains["osrelease"]),
+			Architecture: fmt.Sprintf("%v", grains["osarch"]),
+			Arch:         fmt.Sprintf("%v", grains["osarch"]),
+			SaltVersion:  fmt.Sprintf("%v", grains["saltversion"]),
+			LastSeen:     time.Now(),
+			Grains:       grains,
+		}
+		minions = append(minions, m)
+	}
+	// 将 down 的节点也加入列表以便页面展示
+	for _, id := range down {
+		minions = append(minions, SaltMinion{ID: id, Status: "down"})
+	}
+	return minions, nil
+}
+
+// parseManageStatus 解析 manage.status 的返回，得到 up/down 列表
+func (h *SaltStackHandler) parseManageStatus(resp map[string]interface{}) (up []string, down []string) {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if u, ok := m["up"].([]interface{}); ok {
+				for _, v := range u {
+					if s, ok := v.(string); ok {
+						up = append(up, s)
+					}
+				}
+			}
+			if d, ok := m["down"].([]interface{}); ok {
+				for _, v := range d {
+					if s, ok := v.(string); ok {
+						down = append(down, s)
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
+// parseWheelKeys 解析 key.list_all 的返回
+func (h *SaltStackHandler) parseWheelKeys(resp map[string]interface{}) (minions, pre, rejected []string) {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if data, ok := m["data"].(map[string]interface{}); ok {
+				if r, ok := data["return"].(map[string]interface{}); ok {
+					toStrings := func(v interface{}) []string {
+						res := []string{}
+						if arr, ok := v.([]interface{}); ok {
+							for _, it := range arr {
+								if s, ok := it.(string); ok {
+									res = append(res, s)
+								}
+							}
+						}
+						return res
+					}
+					minions = toStrings(r["minions"])        
+					pre = toStrings(r["minions_pre"])        
+					rejected = toStrings(r["minions_rejected"])        
+				}
+			}
+		}
+	}
+	return
+}
+
+// parseMinionGrains 从 GET /minions/{id} 的结果中提取 grains
+func (h *SaltStackHandler) parseMinionGrains(resp map[string]interface{}, id string) map[string]interface{} {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if g, ok := m[id].(map[string]interface{}); ok {
+				return g
+			}
+		}
+	}
+	return map[string]interface{}{}
+}
+
+// extractAPISaltVersion 从 GET / 的返回中尽量提取Salt版本
+func (h *SaltStackHandler) extractAPISaltVersion(resp map[string]interface{}) string {
+	// NetAPI 通常返回 {"return":[{"clients":[...]}]}
+	// 版本信息不稳定，返回空或默认
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if v, ok := m["version"].(string); ok && v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// extractAPIVersion 尝试提取API版本（如无则为空）
+func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if v, ok := m["api_version"].(string); ok && v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // ExecuteSaltCommand 执行Salt命令

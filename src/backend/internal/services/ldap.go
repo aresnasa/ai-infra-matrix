@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/go-ldap/ldap/v3"
 	"gorm.io/gorm"
@@ -23,40 +24,41 @@ func NewLDAPService(db *gorm.DB) *LDAPService {
 
 // GetConfig 获取LDAP配置
 func (ls *LDAPService) GetConfig() (*models.LDAPConfig, error) {
-	var config models.LDAPConfig
-	err := ls.db.First(&config).Error
+	var cfg models.LDAPConfig
+	err := ls.db.First(&cfg).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// 返回默认配置，使用环境变量配置
+			// Fall back to runtime config (.env) defaults when no DB config exists
+			appCfg, _ := config.Load()
 			return &models.LDAPConfig{
-				Server:           "openldap", // 默认使用Docker服务名
-				Port:             389,
-				UseSSL:           false,
-				BaseDN:           "dc=ai-infra,dc=com",
-				BindDN:           "cn=admin,dc=ai-infra,dc=com",
-				BindPassword:     "admin123",
-				UsersOU:          "ou=users,dc=ai-infra,dc=com",
-				UserFilter:       "(uid=%s)",
-				UsernameAttr:     "uid",
-				EmailAttr:        "mail",
-				DisplayNameAttr:  "displayName",
-				NameAttr:         "cn",
-				GroupsOU:         "ou=groups,dc=ai-infra,dc=com",
-				GroupNameAttr:    "cn",
-				MemberAttr:       "member",
-				AdminGroupDN:     "cn=administrators,ou=groups,dc=ai-infra,dc=com",
-				GroupMemberAttr:  "member",
-				IsEnabled:        true,
-				SyncEnabled:      false,
-				AutoCreateUser:   true,
-				AutoCreateGroup:  true,
-				DefaultRole:      "user",
-				SyncStatus:       "never",
+				Server:          appCfg.LDAP.Server,
+				Port:            appCfg.LDAP.Port,
+				UseSSL:          appCfg.LDAP.UseSSL,
+				BaseDN:          appCfg.LDAP.BaseDN,
+				BindDN:          appCfg.LDAP.BindDN,
+				BindPassword:    appCfg.LDAP.BindPassword,
+				UsersOU:         appCfg.LDAP.BaseDN, // if specific OU not set in DB, use BaseDN
+				UserFilter:      appCfg.LDAP.UserFilter,
+				UsernameAttr:    appCfg.LDAP.UserIDAttr,
+				EmailAttr:       appCfg.LDAP.EmailAttr,
+				DisplayNameAttr: appCfg.LDAP.UserNameAttr,
+				NameAttr:        appCfg.LDAP.UserNameAttr,
+				GroupsOU:        appCfg.LDAP.BaseDN,
+				GroupNameAttr:   "cn",
+				MemberAttr:      "member",
+				AdminGroupDN:    "",
+				GroupMemberAttr: "member",
+				IsEnabled:       appCfg.LDAP.Enabled,
+				SyncEnabled:     false,
+				AutoCreateUser:  true,
+				AutoCreateGroup: true,
+				DefaultRole:     "user",
+				SyncStatus:      "never",
 			}, nil
 		}
 		return nil, err
 	}
-	return &config, nil
+	return &cfg, nil
 }
 
 // UpdateConfig 更新LDAP配置

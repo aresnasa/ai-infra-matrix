@@ -89,11 +89,11 @@ COPY salt-pillar/ /srv/pillar/
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-EXPOSE 4505 4506 8000
+EXPOSE 4505 4506 8002
 
 # 增强的健康检查 - 检查Salt Master和API端口
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD nc -z 127.0.0.1 4505 && nc -z 127.0.0.1 4506 && nc -z 127.0.0.1 8000 || exit 1
+    CMD nc -z 127.0.0.1 4505 && nc -z 127.0.0.1 4506 && nc -z 127.0.0.1 8002 || exit 1
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 # 默认启动Salt Master和API（由entrypoint脚本管理）

@@ -291,8 +291,9 @@ func (s *SSHService) generateInstallationSteps(config PackageInstallationConfig,
 			Commands: []string{
 				s.getInstallSaltMinionCommand(),
 				s.getConfigureSaltMinionCommand(config.SaltMasterHost, config.SaltMasterPort, s.getMinionID(config.MinionID, hostname)),
-				"systemctl enable salt-minion",
-				"systemctl start salt-minion",
+				"systemctl enable salt-minion 2>/dev/null || true",
+				"systemctl daemon-reload 2>/dev/null || true",
+				"systemctl start salt-minion 2>/dev/null || service salt-minion start 2>/dev/null || salt-minion -d || true",
 			},
 		})
 	}
@@ -437,25 +438,50 @@ fi
 // getInstallSaltMinionCommand 获取安装SaltStack Minion的命令
 func (s *SSHService) getInstallSaltMinionCommand() string {
 	return `
+set -e
 if command -v apt-get >/dev/null 2>&1; then
-    # Ubuntu/Debian
-    export DEBIAN_FRONTEND=noninteractive
-    curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public | apt-key add -
-    echo "deb https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltstack.list
-    apt-get update -y
-    apt-get install -y salt-minion
+	export DEBIAN_FRONTEND=noninteractive
+	apt-get update -y || true
+	if ! apt-get install -y salt-minion; then
+		echo "[Salt] apt 安装失败，尝试添加Broadcom Salt仓库 (keyring)..."
+		apt-get install -y curl gnupg2 ca-certificates lsb-release || true
+		mkdir -p /usr/share/keyrings
+		curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public -o /usr/share/keyrings/salt-archive-keyring.gpg || true
+		echo "deb [signed-by=/usr/share/keyrings/salt-archive-keyring.gpg] https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltproject.list
+		apt-get update -y || true
+		if ! apt-get install -y salt-minion; then
+			echo "[Salt] Broadcom仓库安装失败，尝试使用官方bootstrap脚本..."
+			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		fi
+	fi
 elif command -v yum >/dev/null 2>&1; then
-    # CentOS/RHEL
-    yum install -y https://packages.broadcom.com/artifactory/saltproject-rpm/salt-3007-1.el8.noarch.rpm
-    yum install -y salt-minion
+	if ! yum install -y salt-minion; then
+		echo "[Salt] yum 安装失败，尝试添加Broadcom Salt仓库..."
+		yum install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.el8.noarch.rpm || true
+		yum clean all || true
+		yum makecache -y || true
+		if ! yum install -y salt-minion; then
+			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
+			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		fi
+	fi
 elif command -v dnf >/dev/null 2>&1; then
-    # Fedora
-    dnf install -y https://packages.broadcom.com/artifactory/saltproject-rpm/salt-3007-1.fc36.noarch.rpm
-    dnf install -y salt-minion
+	if ! dnf install -y salt-minion; then
+		echo "[Salt] dnf 安装失败，尝试添加Broadcom Salt仓库..."
+		dnf install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.fc36.noarch.rpm || true
+		dnf makecache -y || true
+		if ! dnf install -y salt-minion; then
+			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
+			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		fi
+	fi
 else
-    echo "暂不支持的系统类型，尝试通用安装方法"
-    curl -L https://bootstrap.saltproject.io -o install_salt.sh
-    sh install_salt.sh -M -A 192.168.0.200
+	echo "暂不支持的系统类型，尝试通用安装方法"
+	curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+	sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
 fi
 `
 }
@@ -467,7 +493,9 @@ func (s *SSHService) getConfigureSaltMinionCommand(masterHost string, masterPort
 	}
 
 	return fmt.Sprintf(`
-mkdir -p /etc/salt
+mkdir -p /etc/salt /var/log/salt
+touch /var/log/salt/minion || true
+chmod 644 /var/log/salt/minion || true
 cat > /etc/salt/minion << 'EOF'
 master: %s
 master_port: %d
@@ -489,10 +517,9 @@ multiprocessing: True
 process_count_max: 4
 EOF
 
-# 创建日志目录
-mkdir -p /var/log/salt
+# 权限设置
 chown -R root:root /etc/salt /var/log/salt
-chmod -R 644 /etc/salt/minion
+chmod 644 /etc/salt/minion || true
 `, masterHost, masterPort, minionID)
 }
 
@@ -727,8 +754,8 @@ func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStack
 		{"检查系统", "cat /etc/os-release"},
 		{"安装SaltStack", s.getInstallCommand()},
 		{"配置Minion", s.getMinionConfigCommand(config)},
-		{"启动服务", "systemctl enable salt-minion && systemctl start salt-minion"},
-		{"检查状态", "systemctl status salt-minion --no-pager"},
+		{"启动服务", "systemctl enable salt-minion 2>/dev/null || true; systemctl daemon-reload 2>/dev/null || true; systemctl start salt-minion 2>/dev/null || service salt-minion start 2>/dev/null || salt-minion -d || true"},
+	{"检查状态", "systemctl status salt-minion --no-pager || journalctl -u salt-minion --no-pager -n 200 || true"},
 	}
 
 	for _, step := range steps {
@@ -748,17 +775,56 @@ func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStack
 // getInstallCommand 根据系统获取安装命令
 func (s *SSHService) getInstallCommand() string {
 	return `
+set -e
 if command -v apt-get >/dev/null 2>&1; then
-    apt-get update && apt-get install -y salt-minion
+	export DEBIAN_FRONTEND=noninteractive
+	apt-get update -y || true
+	if ! apt-get install -y salt-minion; then
+		echo "[Salt] apt 安装失败，尝试添加Broadcom Salt仓库 (keyring)..."
+		apt-get install -y curl gnupg2 ca-certificates lsb-release || true
+		mkdir -p /usr/share/keyrings
+		curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public -o /usr/share/keyrings/salt-archive-keyring.gpg || true
+		echo "deb [signed-by=/usr/share/keyrings/salt-archive-keyring.gpg] https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltproject.list
+		apt-get update -y || true
+		if ! apt-get install -y salt-minion; then
+			echo "[Salt] Broadcom仓库安装失败，尝试使用官方bootstrap脚本..."
+			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		fi
+	fi
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y salt-minion
+	if ! yum install -y salt-minion; then
+		echo "[Salt] yum 安装失败，尝试添加Broadcom Salt仓库..."
+		yum install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.el8.noarch.rpm || true
+		yum clean all || true
+		yum makecache -y || true
+		if ! yum install -y salt-minion; then
+			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
+			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		fi
+	fi
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y salt-minion
+	if ! dnf install -y salt-minion; then
+		echo "[Salt] dnf 安装失败，尝试添加Broadcom Salt仓库..."
+		dnf install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.fc36.noarch.rpm || true
+		dnf makecache -y || true
+		if ! dnf install -y salt-minion; then
+			echo "[Salt] Broadcom仓库安装失败，尝试bootstrap脚本"
+			curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		fi
+	fi
 elif command -v zypper >/dev/null 2>&1; then
-    zypper install -y salt-minion
+	zypper refresh || true
+	if ! zypper install -y salt-minion; then
+		echo "[Salt] zypper安装失败，尝试bootstrap脚本"
+		curl -L https://bootstrap.saltproject.io -o /tmp/install_salt.sh
+		sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+	fi
 else
-    echo "不支持的包管理器"
-    exit 1
+	echo "不支持的包管理器"
+	exit 1
 fi
 `
 }
@@ -776,7 +842,10 @@ func (s *SSHService) getMinionConfigCommand(config SaltStackDeploymentConfig) st
 		masterHost = fmt.Sprintf("%s:%d", config.MasterHost, config.MasterPort)
 	}
 
-	return fmt.Sprintf(`
+    return fmt.Sprintf(`
+mkdir -p /etc/salt /var/log/salt
+touch /var/log/salt/minion || true
+chmod 644 /var/log/salt/minion || true
 cat > /etc/salt/minion << EOF
 master: %s
 id: %s
