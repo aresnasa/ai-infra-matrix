@@ -3126,10 +3126,15 @@ build_all_services() {
     print_success "✓ 所有模板渲染完成"
     echo
     
-    # 批量下载基础镜像
-    print_info "预先下载所有基础镜像..."
-    if ! batch_download_base_images; then
-        print_warning "部分基础镜像下载失败，但构建流程将继续"
+    # 批量下载基础镜像（外网环境才执行，内网/离线跳过以提升成功率）
+    local net_env=${AI_INFRA_NETWORK_ENV:-$(detect_network_environment)}
+    if [[ "$net_env" == "external" ]]; then
+        print_info "预先下载所有基础镜像（检测到外网环境）..."
+        if ! batch_download_base_images; then
+            print_warning "部分基础镜像下载失败，但构建流程将继续"
+        fi
+    else
+        print_info "检测到内网/离线环境，跳过批量预拉取基础镜像步骤"
     fi
     echo
     
@@ -3197,10 +3202,20 @@ build_all_pipeline() {
     print_info "=========================================="
     print_info "准备环境配置（create-env dev）"
     print_info "=========================================="
+    # 自动检测网络环境（内网/外网），导出并写入.env，供后续步骤使用
+    local NETWORK_ENV_DETECTED
+    NETWORK_ENV_DETECTED=$(detect_network_environment)
+    export AI_INFRA_NETWORK_ENV="$NETWORK_ENV_DETECTED"
+    print_info "网络环境检测: $AI_INFRA_NETWORK_ENV"
+    # 在.env中记录，便于模板/服务识别
+    set_or_update_env_var "AI_INFRA_NETWORK_ENV" "$AI_INFRA_NETWORK_ENV" "$SCRIPT_DIR/.env" || true
+
     if ! create_env_from_template "dev" "$force"; then
         print_error "创建/渲染 .env 失败，停止构建"
         return 1
     fi
+    # 再次写入AI_INFRA_NETWORK_ENV，确保在渲染.env之后持久化
+    set_or_update_env_var "AI_INFRA_NETWORK_ENV" "$AI_INFRA_NETWORK_ENV" "$SCRIPT_DIR/.env" || true
 
     print_info "=========================================="
     print_info "同步配置（sync-config）"
