@@ -66,9 +66,11 @@ RUN pip install --no-cache-dir \
         cherrypy \
         python-ldap \
         pyopenssl \
+        pycryptodome \
         setproctitle \
         distro \
-        looseversion
+        looseversion \
+        backports.ssl-match-hostname
 
 # 创建必要目录
 RUN mkdir -p /etc/salt/master.d \

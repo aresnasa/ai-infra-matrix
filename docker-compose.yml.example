@@ -329,6 +329,8 @@ services:
       LDAP_SERVER: "${LDAP_HOST:-openldap}"
       LDAP_PORT: "${LDAP_PORT:-389}"
       LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=example,dc=org}"
+      # Salt API endpoint for backend NetAPI calls
+      SALTSTACK_MASTER_URL: "http://saltstack:8002"
       # Salt API credentials for NetAPI (fallback defaults used if .env leaves them empty)
       SALT_API_USERNAME: "${SALT_API_USERNAME:-saltapi}"
       SALT_API_PASSWORD: "${SALT_API_PASSWORD:-aiinfra-salt}"
@@ -509,6 +511,8 @@ services:
       - .env
     environment:
       - TZ=Asia/Shanghai
+      # Suppress upstream deprecation warnings to keep logs clean
+      - PYTHONWARNINGS=ignore::DeprecationWarning
       - SALT_MASTER_HOST=saltstack
       - AI_INFRA_BACKEND_URL=${BACKEND_URL:-http://backend:8082}
       - DEBUG_MODE=${DEBUG_MODE:-false}
