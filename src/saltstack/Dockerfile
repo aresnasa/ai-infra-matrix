@@ -1,4 +1,6 @@
-FROM python:3.13-alpine
+# Python 3.13 triggers multiple upstream deprecation warnings in Salt;
+# use a widely-supported runtime for Salt 3006.x
+FROM python:3.12-alpine
 
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
@@ -32,17 +34,21 @@ RUN apk add --no-cache \
         cyrus-sasl-dev \
         linux-headers
 
-# 配置PyPI镜像源
+# 配置PyPI镜像源与Python警告控制（屏蔽冗余的上游弃用告警）
 ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
     PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
     PIP_TRUSTED_HOST="mirrors.aliyun.com" \
-    PIP_TIMEOUT=60
+    PIP_TIMEOUT=60 \
+    PYTHONWARNINGS="ignore::DeprecationWarning"
 
 # 安装SaltStack及其Python依赖包
+# 注意：
+#  - 固定 setuptools<81 以避免 pkg_resources 弃用告警（Salt 仍在使用该API）
+#  - 固定 Salt 到 3006.x（官方支持到 Python 3.12，避免 3.13 带来的不兼容与告警）
 RUN pip install --no-cache-dir \
+        "setuptools<81" \
         packaging \
         wheel \
-        setuptools \
         six \
         pyyaml \
         jinja2 \
@@ -56,7 +62,7 @@ RUN pip install --no-cache-dir \
         pyzmq \
         && \
     pip install --no-cache-dir \
-        salt \
+        "salt==3006.8" \
         cherrypy \
         python-ldap \
         pyopenssl \
