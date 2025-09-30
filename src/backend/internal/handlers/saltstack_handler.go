@@ -1036,7 +1036,9 @@ func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
 	pm := services.GetProgressManager()
 	op := pm.Start("salt:execute-custom", "开始下发自定义命令")
 
-	go func(opID string, r struct{ Target, Language, Code string; Timeout int; User string }) {
+	// Avoid anonymous-struct type mismatch by capturing the bound request
+	r := req
+	go func(opID string) {
 		failed := false
 		defer func() { pm.Complete(opID, failed, "命令执行完成") }()
 
@@ -1105,7 +1107,7 @@ func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
 			}
 		}
 		pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "dispatch", Message: fmt.Sprintf("执行完成，用时 %dms", duration.Milliseconds()), Data: res})
-	}(op.ID, req)
+	}(op.ID)
 
 	c.JSON(http.StatusAccepted, gin.H{"opId": op.ID})
 }
