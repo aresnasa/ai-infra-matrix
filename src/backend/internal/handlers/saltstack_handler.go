@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"time"
 	"sort"
+	"errors"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/gin-gonic/gin"
@@ -285,6 +287,28 @@ func (c *saltAPIClient) makeWheel(fun string, kwarg map[string]interface{}) (map
 	res, err := c.makeRequest("/", "POST", payload)
 	if err != nil {
 		// 针对404进行 /run 回退
+		if strings.Contains(strings.ToLower(err.Error()), "404") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return c.makeRequest("/run", "POST", payload)
+		}
+	}
+	return res, err
+}
+
+// makeLocal 调用 local 客户端（执行到 minion 上）
+func (c *saltAPIClient) makeLocal(fun string, arg []interface{}, kwarg map[string]interface{}) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"client": "local",
+		"fun":    fun,
+	}
+	if len(arg) > 0 {
+		payload["arg"] = arg
+	}
+	if kwarg != nil {
+		payload["kwarg"] = kwarg
+	}
+	// 优先尝试标准根路径
+	res, err := c.makeRequest("/", "POST", payload)
+	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "404") || strings.Contains(strings.ToLower(err.Error()), "not found") {
 			return c.makeRequest("/run", "POST", payload)
 		}
@@ -967,4 +991,238 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// ExecuteCustomCommandAsync 异步执行自定义 Bash/Python 命令（通过 Salt cmd.run 下发）
+// 请求: { target: string, language: "bash"|"python", code: string, timeout?: int }
+// 返回: { opId: string }
+func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
+	var req struct {
+		Target   string `json:"target"`
+		Language string `json:"language"`
+		Code     string `json:"code"`
+		Timeout  int    `json:"timeout"`
+		User     string `json:"user,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 基础校验
+	if req.Target == "" {
+		req.Target = "*"
+	}
+	req.Language = strings.ToLower(strings.TrimSpace(req.Language))
+	if req.Language != "bash" && req.Language != "python" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "language must be 'bash' or 'python'"})
+		return
+	}
+	code := strings.TrimSpace(req.Code)
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code is required"})
+		return
+	}
+	if len(code) > 20000 { // 保护性限制
+		c.JSON(http.StatusBadRequest, gin.H{"error": "code too long (max 20000 chars)"})
+		return
+	}
+
+	// 轻量格式校验（前端也会做一次）
+	if err := validateScriptFormat(req.Language, code); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("format check failed: %v", err)})
+		return
+	}
+
+	pm := services.GetProgressManager()
+	op := pm.Start("salt:execute-custom", "开始下发自定义命令")
+
+	go func(opID string, r struct{ Target, Language, Code string; Timeout int; User string }) {
+		failed := false
+		defer func() { pm.Complete(opID, failed, "命令执行完成") }()
+
+		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "prepare", Message: "准备连接 Salt API"})
+
+		client := h.newSaltAPIClient()
+		if err := client.authenticate(); err != nil {
+			failed = true
+			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "auth", Message: fmt.Sprintf("Salt API 认证失败: %v", err)})
+			return
+		}
+
+		// 构造 cmd.run 参数
+		var cmd string
+		if r.Language == "bash" {
+			cmd = "bash -s"
+		} else {
+			cmd = "python3 -"
+		}
+
+		kwarg := map[string]interface{}{
+			"stdin": r.Code,
+			"python_shell": true,
+		}
+		if r.Timeout > 0 {
+			kwarg["timeout"] = r.Timeout
+		}
+
+		payload := map[string]interface{}{
+			"client":  "local",
+			"tgt":     r.Target,
+			"fun":     "cmd.run",
+			"arg":     []interface{}{cmd},
+			"kwarg":   kwarg,
+		}
+
+		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "dispatch", Message: fmt.Sprintf("下发到目标: %s", r.Target)})
+
+		// 通过 NetAPI 执行
+		start := time.Now()
+		res, err := client.makeRequest("/", "POST", payload)
+		if err != nil {
+			// 回退到 /run
+			if strings.Contains(strings.ToLower(err.Error()), "404") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+				res, err = client.makeRequest("/run", "POST", payload)
+			}
+		}
+		duration := time.Since(start)
+		if err != nil {
+			failed = true
+			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "execute", Message: fmt.Sprintf("执行失败: %v", err)})
+			return
+		}
+
+		// 解析返回，并按 minion 逐项记录
+		results := extractLocalResults(res)
+		if len(results) == 0 {
+			pm.Emit(opID, services.ProgressEvent{Type: "step-log", Step: "result", Message: "无返回或解析失败", Data: res})
+		} else {
+			per := 0.0
+			step := 0
+			for minion, output := range results {
+				step++
+				per = float64(step) / float64(len(results))
+				pm.Emit(opID, services.ProgressEvent{Type: "step-log", Step: "result", Host: minion, Progress: per, Message: "命令输出", Data: map[string]interface{}{"stdout": output}})
+			}
+		}
+		pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "dispatch", Message: fmt.Sprintf("执行完成，用时 %dms", duration.Milliseconds()), Data: res})
+	}(op.ID, req)
+
+	c.JSON(http.StatusAccepted, gin.H{"opId": op.ID})
+}
+
+// GetProgress 返回异步操作的快照
+func (h *SaltStackHandler) GetProgress(c *gin.Context) {
+	opID := c.Param("opId")
+	pm := services.GetProgressManager()
+	snap, ok := pm.Snapshot(opID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "operation not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": snap})
+}
+
+// StreamProgress 以SSE流式输出进度
+func (h *SaltStackHandler) StreamProgress(c *gin.Context) {
+	opID := c.Param("opId")
+	pm := services.GetProgressManager()
+	ch, ok := pm.Subscribe(opID)
+	if !ok {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
+	// 初始快照
+	if snap, ok := pm.Snapshot(opID); ok {
+		b, _ := json.Marshal(snap)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", string(b))
+		flusher.Flush()
+	}
+
+	notify := c.Writer.CloseNotify()
+	for {
+		select {
+		case <-notify:
+			return
+		case ev, more := <-ch:
+			if !more {
+				return
+			}
+			b, _ := json.Marshal(ev)
+			fmt.Fprintf(c.Writer, "data: %s\n\n", string(b))
+			flusher.Flush()
+		}
+	}
+}
+
+// --- 辅助函数 ---
+
+func validateScriptFormat(lang, code string) error {
+	// 基础防御性校验：控制字符与大体结构
+	if strings.ContainsRune(code, '\u0000') {
+		return errors.New("code contains NUL byte")
+	}
+	// 简单括号与引号平衡检查（尽力而为，不保证完全准确）
+	single := 0
+	double := 0
+	for i := 0; i < len(code); i++ {
+		ch := code[i]
+		if ch == '\'' {
+			single ^= 1
+		} else if ch == '"' {
+			double ^= 1
+		}
+	}
+	if single != 0 || double != 0 {
+		return errors.New("unbalanced quotes detected")
+	}
+	// 针对 python：检查缩进混用的一些明显问题
+	if lang == "python" {
+		lines := strings.Split(code, "\n")
+		for _, ln := range lines {
+			if strings.HasPrefix(ln, "\t") && strings.HasPrefix(strings.TrimLeft(ln, "\t"), " ") {
+				return errors.New("mixed tabs and spaces in indentation")
+			}
+		}
+	}
+	return nil
+}
+
+// extractLocalResults 尽力从 local 执行的返回中解析出 minion->输出 的映射
+func extractLocalResults(resp map[string]interface{}) map[string]string {
+	out := map[string]string{}
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			for k, v := range m {
+				switch vv := v.(type) {
+				case string:
+					out[k] = vv
+				case map[string]interface{}:
+					// 某些模块会返回结构化结果，尝试提取 stdout/ret
+					if s, ok := vv["stdout"].(string); ok {
+						out[k] = s
+					} else if s, ok := vv["ret"].(string); ok {
+						out[k] = s
+					} else {
+						b, _ := json.Marshal(vv)
+						out[k] = string(b)
+					}
+				default:
+					b, _ := json.Marshal(v)
+					out[k] = string(b)
+				}
+			}
+		}
+	}
+	return out
 }

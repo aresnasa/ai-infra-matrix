@@ -546,6 +546,14 @@ export const saltStackAPI = {
   getMinions: () => api.get('/saltstack/minions'),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   executeCommand: (command) => api.post('/saltstack/execute', command),
+  // 自定义命令（Bash/Python）异步执行与进度
+  executeCustomAsync: (payload) => api.post('/saltstack/execute-custom/async', payload),
+  getProgress: (opId) => api.get(`/saltstack/progress/${opId}`),
+  streamProgressUrl: (opId) => {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http';
+    const host = window.location.host;
+    return `${proto}://${host}/api/saltstack/progress/${encodeURIComponent(opId)}/stream`;
+  },
   // SaltStack 集成 API
   getSaltStackIntegration: () => api.get('/slurm/saltstack/integration'),
   deploySaltMinion: (nodeConfig) => api.post('/slurm/saltstack/deploy-minion', nodeConfig),

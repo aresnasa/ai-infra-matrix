@@ -1012,6 +1012,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
 		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
 		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
+		// 自定义脚本执行（异步）+ 进度
+		saltstack.POST("/execute-custom/async", saltStackHandler.ExecuteCustomCommandAsync)
+		saltstack.GET("/progress/:opId", saltStackHandler.GetProgress)
+		saltstack.GET("/progress/:opId/stream", saltStackHandler.StreamProgress)
 		// 连接性调试端点（仅限已登录用户调用，用于排查Salt API问题）
 		saltstack.GET("/_debug", saltStackHandler.DebugSaltConnectivity)
 	}

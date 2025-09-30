@@ -13,7 +13,9 @@
     "test:salt:ci": "HEADLESS=true node test-saltstack-playwright.js",
     "test:slurm": "node test-slurm-scaleup-playwright.js",
     "test:slurm:headed": "HEADLESS=false node test-slurm-scaleup-playwright.js",
-    "test:slurm:ci": "HEADLESS=true node test-slurm-scaleup-playwright.js"
+    "test:slurm:ci": "HEADLESS=true node test-slurm-scaleup-playwright.js",
+    "test:salt-exec": "node test-salt-execute-playwright.js",
+    "test:salt-exec:headed": "HEADLESS=false node test-salt-execute-playwright.js"
   },
   "dependencies": {
     "playwright": "^1.40.0"

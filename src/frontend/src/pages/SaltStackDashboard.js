@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs } from 'antd';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message } from 'antd';
 import { 
   CheckCircleOutlined, 
   ExclamationCircleOutlined, 
@@ -12,11 +12,14 @@ import {
   DatabaseOutlined,
   ApiOutlined
 } from '@ant-design/icons';
-import { saltStackAPI } from '../services/api';
+import { saltStackAPI, aiAPI } from '../services/api';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
+
+const { TextArea } = Input;
+const { Option } = Select;
 
 const SaltStackDashboard = () => {
   const [status, setStatus] = useState(null);
@@ -25,6 +28,13 @@ const SaltStackDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [demo, setDemo] = useState(false);
   const [error, setError] = useState(null);
+  // 自定义执行弹窗
+  const [execVisible, setExecVisible] = useState(false);
+  const [execForm] = Form.useForm();
+  const [execRunning, setExecRunning] = useState(false);
+  const [execOpId, setExecOpId] = useState('');
+  const [execEvents, setExecEvents] = useState([]);
+  const sseRef = useRef(null);
 
   const loadStatus = async () => {
     try {
@@ -72,6 +82,111 @@ const SaltStackDashboard = () => {
     const interval = setInterval(loadData, 60000); // 60秒刷新一次，减少对后端的压力
     return () => clearInterval(interval);
   }, []);
+
+  // 关闭SSE
+  const closeSSE = () => {
+    if (sseRef.current) {
+      try { sseRef.current.close?.(); } catch {}
+      sseRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => closeSSE();
+  }, []);
+
+  const validateClientSide = (language, code) => {
+    if (!code || !code.trim()) return '请输入要执行的代码';
+    if (code.length > 20000) return '代码过长，最大20000字符';
+    // 简单引号平衡检查
+    let single = 0, dbl = 0;
+    for (let i = 0; i < code.length; i++) {
+      const ch = code[i];
+      if (ch === '\'') single ^= 1; else if (ch === '"') dbl ^= 1;
+    }
+    if (single || dbl) return '引号不平衡，请检查代码';
+    if (language === 'python') {
+      const lines = code.split('\n');
+      for (const ln of lines) {
+        if (ln.startsWith('\t') && ln.trimStart().startsWith(' ')) return 'Python 缩进混用制表符与空格';
+      }
+    }
+    return '';
+  };
+
+  const openExecModal = () => {
+    setExecVisible(true);
+    setExecEvents([]);
+    setExecOpId('');
+    execForm.setFieldsValue({ target: '*', language: 'bash', code: '# 例如: echo Hello\necho $(hostname)', timeout: 120 });
+  };
+
+  const handleSuggest = async () => {
+    try {
+      const values = await execForm.validateFields(['language', 'code']);
+      const lang = values.language;
+      const prompt = `为 Salt 下发的${lang}脚本提供补全建议，仅给出代码片段，不要解释。`;
+      await aiAPI.quickChat(prompt, 'salt-exec-suggest'); // 预留：后端应返回异步消息ID，这里仅调用以示占位
+      message.info('已发送智能补全请求（占位），后端实现后将展示建议');
+    } catch (e) {
+      // 忽略
+    }
+  };
+
+  const startSSE = (opId) => {
+    closeSSE();
+    const url = saltStackAPI.streamProgressUrl(opId);
+    const es = new EventSource(url, { withCredentials: false });
+    sseRef.current = es;
+    es.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        setExecEvents((prev) => [...prev, data]);
+      } catch {}
+    };
+    es.onerror = () => {
+      // 自动关闭，避免内存泄漏
+      closeSSE();
+    };
+  };
+
+  const handleExecute = async () => {
+    try {
+      const values = await execForm.validateFields();
+      const err = validateClientSide(values.language, values.code);
+      if (err) {
+        message.error(err);
+        return;
+      }
+      setExecRunning(true);
+      setExecEvents([]);
+      const resp = await saltStackAPI.executeCustomAsync({
+        target: values.target,
+        language: values.language,
+        code: values.code,
+        timeout: values.timeout || 120,
+      });
+      const opId = resp.data?.opId || resp.data?.data?.opId || resp.data?.id || resp.data?.op_id;
+      if (!opId) {
+        message.error('未返回操作ID');
+        setExecRunning(false);
+        return;
+      }
+      setExecOpId(opId);
+      startSSE(opId);
+    } catch (e) {
+      message.error('提交执行失败: ' + (e?.response?.data?.error || e.message));
+      setExecRunning(false);
+    }
+  };
+
+  const execFooter = (
+    <Space>
+      <Button onClick={() => setExecVisible(false)} disabled={execRunning}>关闭</Button>
+      <Button onClick={handleSuggest} disabled={execRunning}>智能补全（预留）</Button>
+      <Button type="primary" onClick={handleExecute} loading={execRunning}>执行</Button>
+    </Space>
+  );
 
   const getStatusColor = (state) => {
     switch (state?.toLowerCase()) {
@@ -368,10 +483,7 @@ const SaltStackDashboard = () => {
               </Button>
               <Button 
                 icon={<PlayCircleOutlined />}
-                onClick={() => {
-                  // TODO: 实现执行Salt命令功能
-                  console.log('执行Salt命令功能待实现');
-                }}
+                onClick={openExecModal}
               >
                 执行命令
               </Button>
@@ -386,6 +498,53 @@ const SaltStackDashboard = () => {
               </Button>
             </Space>
           </Card>
+
+          {/* 执行命令弹窗 */}
+          <Modal
+            title="执行自定义命令（Bash / Python）"
+            open={execVisible}
+            onCancel={() => { setExecVisible(false); closeSSE(); setExecRunning(false); }}
+            footer={execFooter}
+            width={900}
+          >
+            <Form form={execForm} layout="vertical">
+              <Form.Item name="target" label="目标节点" rules={[{ required: true, message: '请输入目标，例如 * 或 compute* 或 列表' }]}>
+                <Input placeholder="例如: * 或 compute* 或 ai-infra-web-01" />
+              </Form.Item>
+              <Form.Item name="language" label="语言" rules={[{ required: true }]}> 
+                <Select>
+                  <Option value="bash">Bash</Option>
+                  <Option value="python">Python</Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="code" label="代码" rules={[{ required: true, message: '请输入要执行的代码' }]}>
+                <TextArea rows={10} placeholder="# 在此粘贴脚本..." style={{ fontFamily: 'monospace' }} />
+              </Form.Item>
+              <Form.Item name="timeout" label="超时（秒）">
+                <Input type="number" min={10} max={3600} placeholder="120" />
+              </Form.Item>
+            </Form>
+
+            <Card size="small" title="执行进度" style={{ marginTop: 12 }}>
+              <div style={{ maxHeight: 240, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 8, borderRadius: 6 }}>
+                {execEvents.length === 0 ? (
+                  <Text type="secondary">等待执行或无日志...</Text>
+                ) : (
+                  execEvents.map((ev, idx) => (
+                    <div key={idx} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                      <span style={{ color: '#7aa2f7' }}>[{new Date(ev.ts || Date.now()).toLocaleTimeString()}]</span>
+                      <span style={{ color: ev.type === 'error' ? '#f7768e' : '#9ece6a' }}> {ev.type} </span>
+                      {ev.host ? <span style={{ color: '#bb9af7' }}>({ev.host})</span> : null}
+                      <span> - {ev.message}</span>
+                      {ev.data && (
+                        <pre style={{ margin: 0, color: '#e0af68' }}>{typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data, null, 2)}</pre>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </Modal>
         </Space>
       </Content>
     </Layout>
