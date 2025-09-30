@@ -1012,6 +1012,8 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
 		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
 		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
+		// 连接性调试端点（仅限已登录用户调用，用于排查Salt API问题）
+		saltstack.GET("/_debug", saltStackHandler.DebugSaltConnectivity)
 	}
 
 	// 仪表板统计路由（需要认证）

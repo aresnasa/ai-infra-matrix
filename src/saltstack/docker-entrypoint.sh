@@ -37,7 +37,7 @@ echo "✅ Salt配置文件验证通过"
 echo "✅ SaltStack服务准备完成"
 echo "🚀 支持功能:"
 echo "   ✅ Salt Master (端口: 4505, 4506)"
-echo "   ✅ Salt API (端口: 8000)"
+echo "   ✅ Salt API (端口: 8002)"
 echo "   ✅ AI-Infra-Matrix SSO集成"
 echo "   ✅ 自动密钥管理"
 

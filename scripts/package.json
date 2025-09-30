@@ -7,7 +7,13 @@
     "test": "node test-object-storage-playwright.js",
     "test:headed": "HEADLESS=false node test-object-storage-playwright.js",
     "test:ci": "HEADLESS=true node test-object-storage-playwright.js",
-    "install-browsers": "npx playwright install"
+    "install-browsers": "npx playwright install",
+    "test:salt": "node test-saltstack-playwright.js",
+    "test:salt:headed": "HEADLESS=false node test-saltstack-playwright.js",
+    "test:salt:ci": "HEADLESS=true node test-saltstack-playwright.js",
+    "test:slurm": "node test-slurm-scaleup-playwright.js",
+    "test:slurm:headed": "HEADLESS=false node test-slurm-scaleup-playwright.js",
+    "test:slurm:ci": "HEADLESS=true node test-slurm-scaleup-playwright.js"
   },
   "dependencies": {
     "playwright": "^1.40.0"

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"strconv"
@@ -106,6 +108,11 @@ func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
 func (h *SaltStackHandler) getSaltAPIURL() string {
 	// 优先使用完整URL
 	if base := strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL")); base != "" {
+		// 仅保留协议+主机(含端口)，剥离可能误配的路径（例如 '/app'）
+		if parsed, err := url.Parse(base); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			// 注意：如果 Host 为空但包含在 Opaque 中（罕见），则回退原值
+			return fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		}
 		return base
 	}
 	// 否则按协议/主机/端口组合
@@ -134,12 +141,12 @@ func (c *saltAPIClient) authenticate() error {
 		return nil
 	}
 
+	// Try JSON login first
 	payload := map[string]string{
 		"username": username,
 		"password": password,
 		"eauth":    eauth,
 	}
-
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequest("POST", c.baseURL+"/login", bytes.NewReader(body))
 	if err != nil {
@@ -151,13 +158,46 @@ func (c *saltAPIClient) authenticate() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("salt api login failed: status %d", resp.StatusCode)
+	var result map[string]interface{}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		defer resp.Body.Close()
+		if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+			if arr, ok := result["return"].([]interface{}); ok && len(arr) > 0 {
+				if m, ok := arr[0].(map[string]interface{}); ok {
+					if t, ok := m["token"].(string); ok && t != "" {
+						c.token = t
+						return nil
+					}
+				}
+			}
+		}
+		// fallthrough to form mode if no token
+	} else {
+		// Close body before retry
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 	}
 
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// Fallback: some deployments expect form-encoded login
+	form := url.Values{}
+	form.Set("username", username)
+	form.Set("password", password)
+	form.Set("eauth", eauth)
+	req2, err := http.NewRequest("POST", c.baseURL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp2, err := c.client.Do(req2)
+	if err != nil {
+		return err
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
+		return fmt.Errorf("salt api login failed: status %d", resp2.StatusCode)
+	}
+	result = map[string]interface{}{}
+	if err := json.NewDecoder(resp2.Body).Decode(&result); err != nil {
 		return err
 	}
 	// 解析 token: 形如 {"return": [{"token": "...", "expire": 1234567890}]}
@@ -221,7 +261,15 @@ func (c *saltAPIClient) makeRunner(fun string, kwarg map[string]interface{}) (ma
 	if kwarg != nil {
 		payload["kwarg"] = kwarg
 	}
-	return c.makeRequest("/", "POST", payload)
+	// 优先尝试标准根路径
+	res, err := c.makeRequest("/", "POST", payload)
+	if err != nil {
+		// 某些rest_cherrypy配置使用 /run 作为执行入口，针对404进行回退
+		if strings.Contains(strings.ToLower(err.Error()), "404") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return c.makeRequest("/run", "POST", payload)
+		}
+	}
+	return res, err
 }
 
 // makeWheel 调用 wheel 客户端（如 key.list_all）
@@ -233,7 +281,15 @@ func (c *saltAPIClient) makeWheel(fun string, kwarg map[string]interface{}) (map
 	if kwarg != nil {
 		payload["kwarg"] = kwarg
 	}
-	return c.makeRequest("/", "POST", payload)
+	// 优先尝试标准根路径
+	res, err := c.makeRequest("/", "POST", payload)
+	if err != nil {
+		// 针对404进行 /run 回退
+		if strings.Contains(strings.ToLower(err.Error()), "404") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return c.makeRequest("/run", "POST", payload)
+		}
+	}
+	return res, err
 }
 
 // GetSaltStackStatus 获取SaltStack状态
@@ -266,6 +322,132 @@ func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
 	// 缓存状态（1分钟）
 	h.cacheStatus(&status, 60)
 	c.JSON(http.StatusOK, gin.H{"data": status})
+}
+
+// SaltDebugInfo 用于输出调试信息，便于快速定位集成问题
+type SaltDebugInfo struct {
+	BaseURL       string                 `json:"base_url"`
+	Env           map[string]string      `json:"env"`
+	TCPDial       map[string]interface{} `json:"tcp_dial"`
+	RootGET       map[string]interface{} `json:"root_get"`
+	Login         map[string]interface{} `json:"login"`
+	ManageStatus  map[string]interface{} `json:"manage_status"`
+	KeyListAll    map[string]interface{} `json:"key_list_all"`
+	Timestamp     time.Time              `json:"timestamp"`
+}
+
+// DebugSaltConnectivity 输出Salt API的连通性与基本调用结果
+func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
+	client := h.newSaltAPIClient()
+	res := &SaltDebugInfo{
+		BaseURL:   client.baseURL,
+		Env: map[string]string{
+			"SALTSTACK_MASTER_URL": strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL")),
+			"SALT_API_SCHEME":       getEnv("SALT_API_SCHEME", "http"),
+			"SALT_MASTER_HOST":      getEnv("SALT_MASTER_HOST", "saltstack"),
+			"SALT_API_PORT":         getEnv("SALT_API_PORT", "8002"),
+			"SALT_API_USERNAME":     getEnv("SALT_API_USERNAME", "saltapi"),
+			// 不回显明文密码，只提示是否设置
+			"SALT_API_PASSWORD_SET": func() string { if os.Getenv("SALT_API_PASSWORD") != "" { return "true" }; return "false" }(),
+			"SALT_API_EAUTH":        getEnv("SALT_API_EAUTH", "file"),
+		},
+		TCPDial:      map[string]interface{}{},
+		RootGET:      map[string]interface{}{},
+		Login:        map[string]interface{}{},
+		ManageStatus: map[string]interface{}{},
+		KeyListAll:   map[string]interface{}{},
+		Timestamp:    time.Now(),
+	}
+
+	// 解析 host:port 进行TCP连通性测试
+	hostPort := ""
+	if strings.HasPrefix(client.baseURL, "http://") {
+		hostPort = strings.TrimPrefix(client.baseURL, "http://")
+	} else if strings.HasPrefix(client.baseURL, "https://") {
+		hostPort = strings.TrimPrefix(client.baseURL, "https://")
+	} else {
+		hostPort = client.baseURL
+	}
+	if idx := strings.Index(hostPort, "/"); idx >= 0 { // 去掉路径
+		hostPort = hostPort[:idx]
+	}
+	// 如果没有端口，补全默认端口
+	if !strings.Contains(hostPort, ":") {
+		hostPort = hostPort + ":80"
+	}
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", hostPort, 3*time.Second)
+	if err != nil {
+		res.TCPDial["ok"] = false
+		res.TCPDial["error"] = err.Error()
+	} else {
+		_ = conn.Close()
+		res.TCPDial["ok"] = true
+	}
+	res.TCPDial["duration_ms"] = time.Since(start).Milliseconds()
+	res.TCPDial["target"] = hostPort
+
+	// GET /
+	{   start := time.Now()
+		info, err := client.makeRequest("/", "GET", nil)
+		res.RootGET["duration_ms"] = time.Since(start).Milliseconds()
+		if err != nil {
+			res.RootGET["ok"] = false
+			res.RootGET["error"] = err.Error()
+		} else {
+			res.RootGET["ok"] = true
+			// 尝试提取版本
+			res.RootGET["api_version"] = h.extractAPIVersion(info)
+			res.RootGET["salt_version_hint"] = h.extractAPISaltVersion(info)
+		}
+	}
+
+	// 登录
+	{   start := time.Now()
+		if err := client.authenticate(); err != nil {
+			res.Login["ok"] = false
+			res.Login["error"] = err.Error()
+		} else {
+			res.Login["ok"] = true
+		}
+		res.Login["duration_ms"] = time.Since(start).Milliseconds()
+		res.Login["token_set"] = client.token != ""
+	}
+
+	// runner.manage.status
+	{   start := time.Now()
+		r, err := client.makeRunner("manage.status", nil)
+		res.ManageStatus["duration_ms"] = time.Since(start).Milliseconds()
+		if err != nil {
+			res.ManageStatus["ok"] = false
+			res.ManageStatus["error"] = err.Error()
+		} else {
+			up, down := h.parseManageStatus(r)
+			res.ManageStatus["ok"] = true
+			res.ManageStatus["up_count"] = len(up)
+			res.ManageStatus["down_count"] = len(down)
+			res.ManageStatus["sample_up"] = up
+			res.ManageStatus["sample_down"] = down
+		}
+	}
+
+	// wheel.key.list_all
+	{   start := time.Now()
+		r, err := client.makeWheel("key.list_all", nil)
+		res.KeyListAll["duration_ms"] = time.Since(start).Milliseconds()
+		if err != nil {
+			res.KeyListAll["ok"] = false
+			res.KeyListAll["error"] = err.Error()
+		} else {
+			minions, pre, rejected := h.parseWheelKeys(r)
+			res.KeyListAll["ok"] = true
+			res.KeyListAll["accepted"] = minions
+			res.KeyListAll["pending"] = pre
+			res.KeyListAll["rejected"] = rejected
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
 // getRealSaltStackStatus 获取真实的SaltStack状态
