@@ -881,54 +881,54 @@ apphub:
   restart: unless-stopped
 
 volumes:
-postgres_data:
-  name: ai-infra-postgres-data
-mysql_data:
-  name: ai-infra-mysql-data
-redis_data:
-  name: ai-infra-redis-data
-kafka_data:
-  name: ai-infra-kafka-data
-kafka_logs:
-  name: ai-infra-kafka-logs
-ldap_data:
-  name: ai-infra-ldap-data
-ldap_config:
-  name: ai-infra-ldap-config
-jupyterhub_data:
-  name: ai-infra-jupyterhub-data
-jupyterhub_notebooks:
-  name: ai-infra-jupyterhub-notebooks
-nginx_logs:
-  name: ai-infra-nginx-logs
-salt_data:
-  name: ai-infra-salt-data
-salt_logs:
-  name: ai-infra-salt-logs
-salt_keys:
-  name: ai-infra-salt-keys
-slurm_master_data:
-  name: ai-infra-slurm-master-data
-slurm_master_logs:
-  name: ai-infra-slurm-master-logs
-slurm_master_spool:
-  name: ai-infra-slurm-master-spool
-slurm_munge_data:
-  name: ai-infra-slurm-munge-data
-slurm_operator_data:
-  name: ai-infra-slurm-operator-data
-slurm_operator_webhook_data:
-  name: ai-infra-slurm-operator-webhook-data
-slurm_operator_certs:
-  name: ai-infra-slurm-operator-certs
-gitea_data:
-  name: ai-infra-gitea-data
-minio_data:
-  name: ai-infra-minio-data
-apphub_logs:
-  name: ai-infra-apphub-logs
+  postgres_data:
+    name: ai-infra-postgres-data
+  mysql_data:
+    name: ai-infra-mysql-data
+  redis_data:
+    name: ai-infra-redis-data
+  kafka_data:
+    name: ai-infra-kafka-data
+  kafka_logs:
+    name: ai-infra-kafka-logs
+  ldap_data:
+    name: ai-infra-ldap-data
+  ldap_config:
+    name: ai-infra-ldap-config
+  jupyterhub_data:
+    name: ai-infra-jupyterhub-data
+  jupyterhub_notebooks:
+    name: ai-infra-jupyterhub-notebooks
+  nginx_logs:
+    name: ai-infra-nginx-logs
+  salt_data:
+    name: ai-infra-salt-data
+  salt_logs:
+    name: ai-infra-salt-logs
+  salt_keys:
+    name: ai-infra-salt-keys
+  slurm_master_data:
+    name: ai-infra-slurm-master-data
+  slurm_master_logs:
+    name: ai-infra-slurm-master-logs
+  slurm_master_spool:
+    name: ai-infra-slurm-master-spool
+  slurm_munge_data:
+    name: ai-infra-slurm-munge-data
+  slurm_operator_data:
+    name: ai-infra-slurm-operator-data
+  slurm_operator_webhook_data:
+    name: ai-infra-slurm-operator-webhook-data
+  slurm_operator_certs:
+    name: ai-infra-slurm-operator-certs
+  gitea_data:
+    name: ai-infra-gitea-data
+  minio_data:
+    name: ai-infra-minio-data
+  apphub_logs:
+    name: ai-infra-apphub-logs
 
 networks:
-ai-infra-network:
-  name: ai-infra-network
-  driver: bridge
+  ai-infra-network:
+    name: ai-infra-network
+    driver: bridge
