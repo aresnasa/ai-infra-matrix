@@ -1,38 +1,52 @@
-# Python 3.13 triggers multiple upstream deprecation warnings in Salt;
-# use a widely-supported runtime for Salt 3006.x
-FROM python:3.12-alpine
+FROM ubuntu:22.04
 
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
 
-# 配置Alpine镜像（多镜像源智能回退配置）
+# 配置APT镜像源（阿里云）
 RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 直接配置阿里云镜像源
-    echo "配置阿里云镜像源..."; \
-    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-    apk update --no-cache || (sleep 5 && apk update --no-cache) || (sleep 10 && apk update --no-cache)
+    sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    apt-get update
 
-# 安装基础依赖和编译工具
-RUN apk add --no-cache \
-        bash \
-        curl \
-        openssh-client \
-        netcat-openbsd \
-        gcc \
+# 安装系统依赖、Python环境和编译工具
+RUN set -eux; \
+    apt-get install -y --no-install-recommends \
+        systemd \
+        systemd-sysv \
+        dbus \
+        python3 \
+        python3-pip \
         python3-dev \
-        musl-dev \
+        python3-venv \
+        build-essential \
         libffi-dev \
-        openssl-dev \
-        build-base \
-        openldap-dev \
-        cyrus-sasl-dev \
-        linux-headers
+        libssl-dev \
+        libldap2-dev \
+        libsasl2-dev \
+        curl \
+        wget \
+        netcat-openbsd \
+        openssh-client \
+        ca-certificates \
+        locales \
+        jq \
+        vim-tiny \
+        git \
+        tar \
+        gzip \
+        tini \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 升级pip，解决旧版解析器的依赖冲突问题
+RUN python3 -m pip install --no-cache-dir --upgrade "pip==24.2"
+
+# 配置本地化
+RUN locale-gen zh_CN.UTF-8 en_US.UTF-8
+ENV LANG=zh_CN.UTF-8
+ENV LC_ALL=zh_CN.UTF-8
 
 # 配置PyPI镜像源与Python警告控制（屏蔽冗余的上游弃用告警）
 ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
@@ -42,10 +56,7 @@ ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
     PYTHONWARNINGS="ignore::DeprecationWarning"
 
 # 安装SaltStack及其Python依赖包
-# 注意：
-#  - 固定 setuptools<81 以避免 pkg_resources 弃用告警（Salt 仍在使用该API）
-#  - 固定 Salt 到 3006.x（官方支持到 Python 3.12，避免 3.13 带来的不兼容与告警）
-RUN pip install --no-cache-dir \
+RUN pip3 install --no-cache-dir \
         "setuptools<81" \
         packaging \
         wheel \
@@ -59,14 +70,13 @@ RUN pip install --no-cache-dir \
         requests \
         cryptography \
         cffi \
-        pyzmq \
-        && \
-    pip install --no-cache-dir \
-        "salt==3006.8" \
+        pyzmq==25.0.2 \
+        pycryptodomex \
+    && pip3 install --no-cache-dir --no-deps "salt==3006.8" \
+    && pip3 install --no-cache-dir \
         cherrypy \
         python-ldap \
         pyopenssl \
-        pycryptodome \
         setproctitle \
         distro \
         looseversion \
@@ -85,7 +95,7 @@ RUN mkdir -p /etc/salt/master.d \
     && mkdir -p /var/run/salt
 
 # 创建saltapi用户用于API认证
-RUN adduser -D -s /bin/sh saltapi
+RUN useradd -m -s /bin/bash saltapi
 
 # 复制配置文件和脚本
 COPY salt-master.conf /etc/salt/master.d/master.conf
@@ -103,9 +113,11 @@ EXPOSE 4505 4506 8002
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD nc -z 127.0.0.1 4505 && nc -z 127.0.0.1 4506 && nc -z 127.0.0.1 8002 || exit 1
 
+STOPSIGNAL SIGRTMIN+3
+VOLUME ["/sys/fs/cgroup"]
+
 ENTRYPOINT ["/docker-entrypoint.sh"]
-# 默认启动Salt Master和API（由entrypoint脚本管理）
-CMD ["salt-master", "--log-level=info"]
+CMD ["start-services"]
 
 LABEL maintainer="AI Infrastructure Team" \
       version="${APP_VERSION}" \

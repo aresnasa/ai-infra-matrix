@@ -1,0 +1,8 @@
+{
+  "name": "ai-infra-matrix-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.48.2"
+  }
+}

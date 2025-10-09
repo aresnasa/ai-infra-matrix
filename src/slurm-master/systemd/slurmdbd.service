@@ -1,0 +1,19 @@
+[Unit]
+Description=Slurm Database Daemon
+After=slurm-bootstrap.service munge.service
+Requires=slurm-bootstrap.service munge.service
+
+[Service]
+Type=simple
+User=slurm
+Group=slurm
+EnvironmentFile=-/etc/sysconfig/slurm-env
+WorkingDirectory=/etc/slurm
+ExecStart=/bin/bash -c "${SLURMDBD_BIN:-/usr/sbin/slurmdbd} -D"
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

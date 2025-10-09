@@ -4,11 +4,19 @@ version: '3.8'
 services:
   # SSH测试容器1
   test-ssh01:
+    image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
     build:
       context: ./src/test-containers
       dockerfile: Dockerfile.ssh
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh01
     hostname: test-ssh01
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+    cgroup: host
+    stop_signal: SIGRTMIN+3
     dns_opt:
       - ndots:1
     dns_search:
@@ -18,17 +26,30 @@ services:
       - ROOT_PASSWORD=rootpass123
     ports:
       - "2201:22"
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     networks:
       - ai-infra-network
     restart: unless-stopped
 
   # SSH测试容器2
   test-ssh02:
+    image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
     build:
       context: ./src/test-containers
       dockerfile: Dockerfile.ssh
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh02
     hostname: test-ssh02
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+    cgroup: host
+    stop_signal: SIGRTMIN+3
     dns_opt:
       - ndots:1
     dns_search:
@@ -38,17 +59,30 @@ services:
       - ROOT_PASSWORD=rootpass123
     ports:
       - "2202:22"
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     networks:
       - ai-infra-network
     restart: unless-stopped
 
   # SSH测试容器3
   test-ssh03:
+    image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
     build:
       context: ./src/test-containers
       dockerfile: Dockerfile.ssh
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh03
     hostname: test-ssh03
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+    cgroup: host
+    stop_signal: SIGRTMIN+3
     dns_opt:
       - ndots:1
     dns_search:
@@ -58,6 +92,11 @@ services:
       - ROOT_PASSWORD=rootpass123
     ports:
       - "2203:22"
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     networks:
       - ai-infra-network
     restart: unless-stopped

@@ -1,7 +1,8 @@
 # SSH测试容器 - 用于SaltStack客户端安装测试
 FROM ubuntu:22.04
 
-# 避免交互式安装
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 
@@ -55,6 +56,11 @@ EXPOSE 22
 
 # 预启用systemd管理的SSH服务
 RUN ln -sf /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service
+
+# 添加标签
+LABEL maintainer="AI Infrastructure Team"
+LABEL version="${VERSION}"
+LABEL description="AI Infrastructure Matrix Test SSH Container"
 
 STOPSIGNAL SIGRTMIN+3
 

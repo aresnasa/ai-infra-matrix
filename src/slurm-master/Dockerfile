@@ -9,6 +9,7 @@ LABEL description="AI Infrastructure Matrix SLURM Master Service"
 
 # 避免交互式安装提示
 ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
 ENV TZ=Asia/Shanghai
 
 # 使用官方源先安装基础工具，然后配置镜像源
@@ -63,13 +64,15 @@ RUN set -eux; \
     done; \
     # Install with --fix-missing and retries to improve robustness on flaky mirrors
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
+        systemd \
+        systemd-sysv \
         # networking and diagnostics \
         curl \
         wget \
         telnet \
         openssh-client \
-    mtr-tiny \
-    netcat-openbsd \
+        mtr-tiny \
+        netcat-openbsd \
         # utilities \
         vim \
         tree \
@@ -78,9 +81,8 @@ RUN set -eux; \
         # slurm prerequisites \
         munge \
         libmunge2 \
-        supervisor \
         postgresql-client \
-    ; \
+        default-mysql-client && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
             
 # 安装SLURM包前先创建用户，这样安装过程会自动配置权限
@@ -97,8 +99,7 @@ RUN mkdir -p /etc/slurm \
     /var/lib/munge \
     /var/log/munge \
     /var/run/munge \
-    /srv/shared \
-    /etc/supervisor/conf.d
+    /srv/shared
 
 # 尝试从AppHub安装SLURM 25.05.3版本包（优先级：AppHub > 系统仓库）
 ARG APPHUB_URL=http://apphub:80
@@ -197,14 +198,17 @@ RUN usermod -a -G munge slurm && \
     chmod 755 /var/log/munge /var/run/munge && \
     chmod 640 /etc/munge/munge.key || true
 
-# 复制配置文件模板
+# 复制配置与systemd脚本
 COPY config/ /etc/slurm-templates/
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/slurm-bootstrap.sh
+COPY systemd-entrypoint.sh /usr/local/bin/systemd-entrypoint.sh
 COPY healthcheck.sh /usr/local/bin/healthcheck.sh
-COPY supervisord.conf /etc/supervisor/conf.d/slurm.conf
-
-# 设置脚本权限
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh
+COPY systemd/ /etc/systemd/system/
+RUN chmod +x /usr/local/bin/slurm-bootstrap.sh /usr/local/bin/systemd-entrypoint.sh /usr/local/bin/healthcheck.sh && \
+    ln -sf /etc/systemd/system/slurm-bootstrap.service /etc/systemd/system/multi-user.target.wants/slurm-bootstrap.service && \
+    ln -sf /etc/systemd/system/slurmctld.service /etc/systemd/system/multi-user.target.wants/slurmctld.service && \
+    ln -sf /etc/systemd/system/slurmdbd.service /etc/systemd/system/multi-user.target.wants/slurmdbd.service && \
+    ln -sf /lib/systemd/system/munge.service /etc/systemd/system/multi-user.target.wants/munge.service
 
 # 暴露端口
 EXPOSE 6817 6818
@@ -217,5 +221,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
 WORKDIR /etc/slurm
 
 # 启动脚本
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["start-services"]
+STOPSIGNAL SIGRTMIN+3
+
+VOLUME ["/sys/fs/cgroup"]
+
+ENTRYPOINT ["/usr/local/bin/systemd-entrypoint.sh"]
+CMD ["/sbin/init"]

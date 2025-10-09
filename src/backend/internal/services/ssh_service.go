@@ -38,13 +38,13 @@ type AppHubConfig struct {
 
 // PackageInstallationConfig 包安装配置
 type PackageInstallationConfig struct {
-	AppHubConfig       AppHubConfig
-	SaltMasterHost     string
-	SaltMasterPort     int
-	MinionID           string
-	SlurmRole          string // controller|compute
-	EnableSaltMinion   bool
-	EnableSlurmClient  bool
+	AppHubConfig      AppHubConfig
+	SaltMasterHost    string
+	SaltMasterPort    int
+	MinionID          string
+	SlurmRole         string // controller|compute
+	EnableSaltMinion  bool
+	EnableSlurmClient bool
 }
 
 // InstallationStep 安装步骤
@@ -66,12 +66,12 @@ type InstallationResult struct {
 
 // StepResult 步骤执行结果
 type StepResult struct {
-	Name        string
-	Success     bool
-	Output      string
-	Error       string
-	Duration    time.Duration
-	Timestamp   time.Time
+	Name      string
+	Success   bool
+	Output    string
+	Error     string
+	Duration  time.Duration
+	Timestamp time.Time
 }
 
 // SSHConnection SSH连接信息
@@ -95,8 +95,9 @@ type DeploymentResult struct {
 
 // ScriptSpec 描述一段可在远程主机上执行的脚本
 // 支持两种来源：
-//  - Content: 内联脚本内容
-//  - URL: 在远程通过 curl/wget 下载的脚本地址
+//   - Content: 内联脚本内容
+//   - URL: 在远程通过 curl/wget 下载的脚本地址
+//
 // 二者至少提供其一；同时提供时优先使用 Content
 type ScriptSpec struct {
 	Name        string            // 脚本名称，仅用于日志
@@ -117,7 +118,7 @@ type SaltStackDeploymentConfig struct {
 	MinionID   string
 	AutoAccept bool
 	// AppHubURL: 用于离线/内网安装salt-minion的包仓库，例如 http://<external_host>:<apphub_port>
-	AppHubURL  string
+	AppHubURL string
 }
 
 // SetupSimpleDebRepo 在远程主机上安装nginx与dpkg-dev并创建简单的deb仓库目录结构
@@ -392,15 +393,15 @@ func (s *SSHService) extractHostFromURL(url string) string {
 	} else if strings.HasPrefix(url, "https://") {
 		url = strings.TrimPrefix(url, "https://")
 	}
-	
+
 	if colonIndex := strings.Index(url, ":"); colonIndex != -1 {
 		url = url[:colonIndex]
 	}
-	
+
 	if slashIndex := strings.Index(url, "/"); slashIndex != -1 {
 		url = url[:slashIndex]
 	}
-	
+
 	return url
 }
 
@@ -421,7 +422,18 @@ func (s *SSHService) getUpdatePackagesCommand() string {
 	return `
 if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
+	if ! apt-get update -y; then
+		echo "[Update] apt-get update failed, attempting to repair Salt repositories..."
+		apt-get install -y --no-install-recommends curl wget gnupg2 ca-certificates lsb-release || true
+		mkdir -p /usr/share/keyrings
+		if [ ! -f /usr/share/keyrings/salt-archive-keyring.gpg ]; then
+			curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public -o /usr/share/keyrings/salt-archive-keyring.gpg || true
+		fi
+		echo "deb [signed-by=/usr/share/keyrings/salt-archive-keyring.gpg] https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltproject.list
+		apt-get update -y \
+			|| apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true -y \
+			|| true
+	fi
 elif command -v yum >/dev/null 2>&1; then
     yum makecache -y
 elif command -v dnf >/dev/null 2>&1; then
@@ -553,26 +565,34 @@ chmod 644 /etc/salt/minion || true
 // getInstallSlurmClientCommand 获取安装SLURM客户端的命令
 func (s *SSHService) getInstallSlurmClientCommand(appHubURL string) string {
 	return fmt.Sprintf(`
+APPHUB_URL="%s"
 if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    # 从AppHub安装SLURM包
-    apt-get install -y slurm-smd-client slurm-smd-slurmd || {
-        echo "从APT源安装失败，尝试直接下载安装"
-        cd /tmp
-        wget -q %s/pkgs/slurm-deb/slurm-smd-client_25.05.3-1_arm64.deb
-        wget -q %s/pkgs/slurm-deb/slurm-smd-slurmd_25.05.3-1_arm64.deb
-        dpkg -i slurm-smd-client_25.05.3-1_arm64.deb slurm-smd-slurmd_25.05.3-1_arm64.deb || true
-        apt-get install -f -y
-    }
+	export DEBIAN_FRONTEND=noninteractive
+	apt-get install -y slurm-smd-client slurm-smd-slurmd || {
+		echo "从APT源安装失败，尝试直接下载安装"
+		cd /tmp
+		ARCH=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+		CLIENT_PKG="slurm-smd-client_25.05.3-1_${ARCH}.deb"
+		SLURMD_PKG="slurm-smd-slurmd_25.05.3-1_${ARCH}.deb"
+		if ! wget -q "${APPHUB_URL}/pkgs/slurm-deb/${CLIENT_PKG}"; then
+			echo "下载 ${CLIENT_PKG} 失败" && exit 1
+		fi
+		if ! wget -q "${APPHUB_URL}/pkgs/slurm-deb/${SLURMD_PKG}"; then
+			echo "下载 ${SLURMD_PKG} 失败" && exit 1
+		fi
+		dpkg -i "${CLIENT_PKG}" "${SLURMD_PKG}" || true
+		apt-get install -f -y
+		rm -f "${CLIENT_PKG}" "${SLURMD_PKG}" >/dev/null 2>&1 || true
+	}
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y slurm slurm-slurmd
+	yum install -y slurm slurm-slurmd
 elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y slurm slurm-slurmd
+	dnf install -y slurm slurm-slurmd
 else
-    echo "不支持的包管理器，跳过SLURM客户端安装"
-    exit 1
+	echo "不支持的包管理器，跳过SLURM客户端安装"
+	exit 1
 fi
-`, appHubURL, appHubURL)
+`, appHubURL)
 }
 
 // getConfigureSlurmNodeCommand 获取配置SLURM节点的命令
@@ -782,7 +802,7 @@ func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStack
 		{"安装SaltStack", s.getInstallCommandWithAppHub(config)},
 		{"配置Minion", s.getMinionConfigCommand(config)},
 		{"启动服务", "systemctl enable salt-minion 2>/dev/null || true; systemctl daemon-reload 2>/dev/null || true; systemctl start salt-minion 2>/dev/null || service salt-minion start 2>/dev/null || salt-minion -d || true"},
-	{"检查状态", "systemctl status salt-minion --no-pager || journalctl -u salt-minion --no-pager -n 200 || true"},
+		{"检查状态", "systemctl status salt-minion --no-pager || journalctl -u salt-minion --no-pager -n 200 || true"},
 	}
 
 	for _, step := range steps {
@@ -877,7 +897,7 @@ func (s *SSHService) getMinionConfigCommand(config SaltStackDeploymentConfig) st
 		masterHost = fmt.Sprintf("%s:%d", config.MasterHost, config.MasterPort)
 	}
 
-    return fmt.Sprintf(`
+	return fmt.Sprintf(`
 mkdir -p /etc/salt /var/log/salt
 touch /var/log/salt/minion || true
 chmod 644 /var/log/salt/minion || true
@@ -1032,6 +1052,7 @@ fi
 
 	return script
 }
+
 // 注意：保留在服务级别，不再内嵌更大的具体安装脚本；建议未来迁移到通用脚本执行接口
 
 // executeCommand 执行SSH命令
@@ -1044,12 +1065,12 @@ func (s *SSHService) executeCommand(client *ssh.Client, command string) (string,
 
 	// 设置命令超时 - 对于安装命令使用更长的超时时间
 	timeout := s.config.CommandTimeout
-	if strings.Contains(command, "apt-get") || strings.Contains(command, "yum") || 
-	   strings.Contains(command, "dnf") || strings.Contains(command, "zypper") ||
-	   strings.Contains(command, "salt-minion") {
+	if strings.Contains(command, "apt-get") || strings.Contains(command, "yum") ||
+		strings.Contains(command, "dnf") || strings.Contains(command, "zypper") ||
+		strings.Contains(command, "salt-minion") {
 		timeout = 10 * time.Minute // SaltStack安装使用10分钟超时
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -1391,7 +1412,7 @@ func singleQuote(s string) string {
 // InitializeTestHosts 初始化测试主机，确保Docker容器启动
 func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([]DeploymentResult, error) {
 	results := make([]DeploymentResult, 0, len(hosts))
-	
+
 	// 检查哪些主机是测试容器
 	testHosts := []string{}
 	for _, host := range hosts {
@@ -1399,7 +1420,7 @@ func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([
 			testHosts = append(testHosts, host)
 		}
 	}
-	
+
 	if len(testHosts) == 0 {
 		// 没有测试容器，返回所有主机为已就绪
 		for _, host := range hosts {
@@ -1413,10 +1434,10 @@ func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([
 		}
 		return results, nil
 	}
-	
+
 	// 对于测试容器，假设它们已经在运行，只需要验证连接
 	start := time.Now()
-	
+
 	for _, host := range testHosts {
 		// 测试SSH连接到容器
 		conn := SSHConnection{
@@ -1425,10 +1446,10 @@ func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([
 			User:     "root",
 			Password: "rootpass123",
 		}
-		
+
 		output, err := s.TestSSHConnection(ctx, conn)
 		duration := time.Since(start)
-		
+
 		if err != nil {
 			results = append(results, DeploymentResult{
 				Host:     host,
@@ -1447,7 +1468,7 @@ func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([
 			})
 		}
 	}
-	
+
 	// 处理其他非测试主机
 	for _, host := range hosts {
 		found := false
@@ -1467,7 +1488,7 @@ func (s *SSHService) InitializeTestHosts(ctx context.Context, hosts []string) ([
 			})
 		}
 	}
-	
+
 	return results, nil
 }
 
@@ -1490,7 +1511,7 @@ func (s *SSHService) executeLocalCommand(ctx context.Context, cmd string) (strin
 func (s *SSHService) waitForSSHReady(ctx context.Context, host string, port int, user, password string) DeploymentResult {
 	start := time.Now()
 	maxRetries := 30 // 最多等待30秒
-	
+
 	for i := 0; i < maxRetries; i++ {
 		select {
 		case <-ctx.Done():
@@ -1503,7 +1524,7 @@ func (s *SSHService) waitForSSHReady(ctx context.Context, host string, port int,
 			}
 		default:
 		}
-		
+
 		// 尝试SSH连接
 		config := &ssh.ClientConfig{
 			User: user,
@@ -1513,7 +1534,7 @@ func (s *SSHService) waitForSSHReady(ctx context.Context, host string, port int,
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 			Timeout:         3 * time.Second,
 		}
-		
+
 		address := fmt.Sprintf("%s:%d", host, port)
 		conn, err := ssh.Dial("tcp", address, config)
 		if err == nil {
@@ -1526,11 +1547,11 @@ func (s *SSHService) waitForSSHReady(ctx context.Context, host string, port int,
 				Duration: time.Since(start),
 			}
 		}
-		
+
 		// 等待1秒后重试
 		time.Sleep(1 * time.Second)
 	}
-	
+
 	return DeploymentResult{
 		Host:     host,
 		Success:  false,

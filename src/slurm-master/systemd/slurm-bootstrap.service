@@ -1,0 +1,14 @@
+[Unit]
+Description=SLURM Bootstrap Tasks
+After=network-online.target
+Wants=network-online.target
+Before=munge.service slurmctld.service slurmdbd.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sysconfig/slurm-env
+ExecStart=/usr/local/bin/slurm-bootstrap.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

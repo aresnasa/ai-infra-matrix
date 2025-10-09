@@ -493,7 +493,7 @@ read_config() {
 # 获取所有服务名称
 get_all_services() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-build slurm-master"
+        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-build slurm-master test-containers"
         return
     fi
     
@@ -747,6 +747,7 @@ get_service_path() {
             "apphub") echo "src/apphub" ;;
             "slurm-build") echo "src/slurm-build" ;;
             "slurm-master") echo "src/slurm-master" ;;
+            "test-containers") echo "src/test-containers" ;;
             *) echo "" ;;
         esac
     else
@@ -1388,48 +1389,72 @@ copy_slurm_packages_to_apphub() {
     # 从slurm容器复制deb文件到apphub容器
     print_info "复制deb文件到apphub..."
     local success=true
-    
-    # 复制所有.deb文件
-    if docker cp "$slurm_container:/build/slurm-*.deb" "$apphub_container:/usr/share/nginx/html/deb/" 2>/dev/null; then
-        print_info "✓ 复制Slurm deb文件成功"
-    else
-        print_warning "未找到Slurm deb文件，跳过复制"
-        success=false
-    fi
-    
-    # 复制所有.rpm文件（如果有）
-    if docker cp "$slurm_container:/build/slurm-*.rpm" "$apphub_container:/usr/share/nginx/html/rpm/" 2>/dev/null; then
-        print_info "✓ 复制Slurm rpm文件成功"
-    else
-        print_info "未找到Slurm rpm文件"
-    fi
-    
-    # 如果复制了deb文件，重新生成Packages.gz
+    local deb_copied=false
+
     if [[ "$success" == "true" ]]; then
+        if ! docker start "$apphub_container" >/dev/null 2>&1; then
+            print_error "启动apphub临时容器失败"
+            success=false
+        fi
+    fi
+
+    if [[ "$success" == "true" ]]; then
+        if ! docker exec "$apphub_container" sh -c 'mkdir -p /usr/share/nginx/html/pkgs/slurm-deb'; then
+            print_error "创建Slurm deb目录失败"
+            success=false
+        else
+            docker exec "$apphub_container" sh -c 'rm -f /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null || true' >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if [[ "$success" == "true" ]]; then
+        if docker cp "$slurm_container:/out/." "$apphub_container:/usr/share/nginx/html/pkgs/slurm-deb/" 2>/dev/null; then
+            if docker exec "$apphub_container" sh -c 'ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb >/dev/null 2>&1'; then
+                docker exec "$apphub_container" sh -c 'find /usr/share/nginx/html/pkgs/slurm-deb -maxdepth 1 -type f ! -name "*.deb" -delete' >/dev/null 2>&1 || true
+                print_info "✓ 复制Slurm deb文件成功"
+                deb_copied=true
+            else
+                print_warning "复制完成但未找到任何Slurm deb文件"
+                success=false
+            fi
+        else
+            print_warning "未找到Slurm deb文件，跳过复制"
+            success=false
+        fi
+    fi
+
+    if [[ "$success" == "true" && "$deb_copied" == "true" ]]; then
         print_info "重新生成deb包索引..."
         if docker exec "$apphub_container" /entrypoint.sh regenerate-index; then
             print_info "✓ deb包索引更新成功"
         else
             print_warning "deb包索引更新失败"
+            success=false
         fi
     fi
-    
-    # 提交apphub容器为新镜像
-    print_info "提交更新后的apphub镜像..."
-    local new_apphub_image="ai-infra-apphub:$tag"
-    if docker commit "$apphub_container" "$new_apphub_image" >/dev/null; then
-        print_success "✓ apphub镜像更新成功: $new_apphub_image"
+
+    # 停止apphub容器，准备提交
+    docker stop "$apphub_container" >/dev/null 2>&1 || true
+
+    if [[ "$success" == "true" && "$deb_copied" == "true" ]]; then
+        print_info "提交更新后的apphub镜像..."
+        local new_apphub_image="ai-infra-apphub:$tag"
+        if docker commit "$apphub_container" "$new_apphub_image" >/dev/null; then
+            print_success "✓ apphub镜像更新成功: $new_apphub_image"
+        else
+            print_error "apphub镜像提交失败"
+            success=false
+        fi
     else
-        print_error "apphub镜像提交失败"
-        success=false
+        print_warning "跳过apphub镜像更新（未成功复制Slurm deb包）"
     fi
-    
+
     # 清理临时容器
     print_info "清理临时容器..."
     docker rm -f "$slurm_container" >/dev/null 2>&1 || true
     docker rm -f "$apphub_container" >/dev/null 2>&1 || true
-    
-    if [[ "$success" == "true" ]]; then
+
+    if [[ "$success" == "true" && "$deb_copied" == "true" ]]; then
         print_success "✓ Slurm包复制到apphub完成"
         return 0
     else
