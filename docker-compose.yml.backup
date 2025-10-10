@@ -507,6 +507,12 @@ services:
       args:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: ai-infra-saltstack
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    tmpfs:
+      - /run
+      - /run/lock
     env_file:
       - .env
     environment:
@@ -523,6 +529,7 @@ services:
       - "4506"  # Salt Master Return Port
       - "8002"  # Salt API Port
     volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - salt_data:/var/cache/salt
       - salt_logs:/var/log/salt
       - salt_keys:/etc/salt/pki
@@ -541,7 +548,7 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # SLURM Master 服务
+    # SLURM Master 服务
   slurm-master:
     image: ai-infra-slurm-master:${IMAGE_TAG:-v0.3.6-dev}
     build:
@@ -552,6 +559,12 @@ services:
         APPHUB_URL: http://${EXTERNAL_HOST}:${APPHUB_PORT:-8090}
     container_name: ai-infra-slurm-master
     hostname: slurm-master
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    tmpfs:
+      - /run
+      - /run/lock
     env_file:
       - .env
     environment:
@@ -595,6 +608,7 @@ services:
       - "6817:6817"  # SLURM Controller 外部访问
       - "6818:6818"  # SLURM Database Daemon 外部访问
     volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - slurm_master_data:/var/lib/slurm
       - slurm_master_logs:/var/log/slurm
       - slurm_master_spool:/var/spool/slurm

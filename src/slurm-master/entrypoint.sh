@@ -196,6 +196,14 @@ generate_configs() {
     chmod 644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
     chmod 600 /etc/slurm/slurmdbd.conf
 
+    # Fix SLURM log directory permissions
+    log "INFO" "🔧 修复 SLURM 日志目录权限..."
+    mkdir -p /var/log/slurm
+    chown -R slurm:slurm /var/log/slurm
+    chmod 755 /var/log/slurm
+    # Remove any existing log files created by root and let slurm recreate them
+    rm -f /var/log/slurm/*.log
+
     log "INFO" "✅ 配置文件生成完成"
 }
 
