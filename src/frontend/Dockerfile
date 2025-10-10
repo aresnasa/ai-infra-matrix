@@ -1,38 +1,26 @@
-# 使用Node.js 18作为基础镜像
+# 使用Node.js 22作为基础镜像
 FROM node:22-alpine AS build
 
-# 配置Alpine镜像（多镜像源智能回退配置）
+# 配置Alpine镜像（多镜像源智能回退配置 - 优化版）
 RUN set -eux; \
     # 备份原始repositories文件
     cp /etc/apk/repositories /etc/apk/repositories.bak; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 尝试阿里云镜像源
-    { \
-        echo "尝试阿里云镜像源..."; \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
-        echo "成功使用阿里云镜像源"; \
-    } || { \
-        echo "阿里云镜像源失败，尝试清华源..."; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
-        echo "成功使用清华源"; \
-    } || { \
-        echo "清华源失败，尝试中科大源..."; \
-        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
-        echo "成功使用中科大源"; \
-    } || { \
-        echo "所有国内源都失败，使用官方源..."; \
-        cp /etc/apk/repositories.bak /etc/apk/repositories && \
-        apk update && \
-        echo "使用官方源"; \
-    }
+    # 尝试阿里云镜像源（静默失败检测）
+    (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
+     apk update 2>/dev/null) || \
+    # 清华源回退
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
+     apk update 2>/dev/null) || \
+    # 中科大源回退
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
+     apk update 2>/dev/null) || \
+    # 官方源回退（最终方案）
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update)
 
 # 设置工作目录
 WORKDIR /app
@@ -67,17 +55,25 @@ FROM nginx:stable-alpine-perl
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（优先国内镜像，失败则恢复官方源），并尽量安装tzdata但不阻塞构建
+# 配置Alpine镜像（多镜像源智能回退 - 与build阶段一致）
 RUN set -eux; \
-        cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
-        # 优先切换到阿里云镜像，失败时不阻塞
-        sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories || true; \
-        # 尝试更新并安装tzdata，失败则恢复官方源并再次尝试；仍失败则跳过安装
-        (apk update && apk add --no-cache tzdata) || { \
-            echo "Mirror update failed, restoring official repositories..."; \
-            cp /etc/apk/repositories.bak /etc/apk/repositories || true; \
-            (apk update && apk add --no-cache tzdata) || echo "tzdata install skipped"; \
-        }
+    cp /etc/apk/repositories /etc/apk/repositories.bak; \
+    # 尝试阿里云镜像源（静默失败检测）
+    (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
+     apk update 2>/dev/null && apk add --no-cache tzdata) || \
+    # 清华源回退
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
+     apk update 2>/dev/null && apk add --no-cache tzdata) || \
+    # 中科大源回退
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
+     apk update 2>/dev/null && apk add --no-cache tzdata) || \
+    # 官方源回退（最终方案）
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     apk update && apk add --no-cache tzdata) || \
+    echo "tzdata install skipped"
+
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 

@@ -108,10 +108,22 @@ ENV GOSUMDB=off
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 
-# 配置Alpine镜像（直接使用阿里云镜像源）
+# 配置Alpine镜像（多镜像源智能回退配置）
 RUN set -eux; \
-    sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories; \
-    apk update || (sleep 5 && apk update) || (sleep 10 && apk update)
+    cp /etc/apk/repositories /etc/apk/repositories.bak; \
+    # 尝试阿里云镜像
+    sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories && \
+    (apk update 2>/dev/null || \
+    # 失败则尝试清华镜像
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     sed -i 's#://[^/]\+/alpine#://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories && \
+     apk update 2>/dev/null) || \
+    # 再失败则尝试中科大镜像
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+     sed -i 's#://[^/]\+/alpine#://mirrors.ustc.edu.cn/alpine#g' /etc/apk/repositories && \
+     apk update 2>/dev/null) || \
+    # 最后恢复官方源
+    (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update))
 
 # 更新apk索引并设置时区为上海，添加必要工具
 RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen lsof || \

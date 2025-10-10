@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -125,8 +126,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 测试获取版本信息
-	version, err := kubernetesService.GetClusterVersion(clientset)
+	// 测试获取版本信息（使用新的函数签名）
+	ctx := context.Background()
+	versionInfo, err := kubernetesService.GetClusterVersion(ctx, cluster.KubeConfig)
 	if err != nil {
 		fmt.Printf("❌ Failed to get cluster version: %v\n", err)
 		os.Exit(1)
@@ -140,7 +142,9 @@ func main() {
 	}
 
 	fmt.Printf("✓ Successfully connected to cluster!\n")
-	fmt.Printf("Cluster version: %s\n", version)
+	fmt.Printf("Cluster version: %s (Major: %s, Minor: %s)\n", 
+		versionInfo.GitVersion, versionInfo.Major, versionInfo.Minor)
+	fmt.Printf("Platform: %s\n", versionInfo.Platform)
 	fmt.Printf("Number of nodes: %d\n", len(nodes.Items))
 }
 

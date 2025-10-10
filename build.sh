@@ -33,6 +33,12 @@ CONFIG_FILE="$SCRIPT_DIR/config.toml"
 OS_TYPE=$(detect_os)
 FORCE_REBUILD=false  # 强制重新构建标志
 
+# 构建缓存相关变量
+BUILD_CACHE_DIR="$SCRIPT_DIR/.build-cache"
+BUILD_ID_FILE="$BUILD_CACHE_DIR/build-id.txt"
+BUILD_HISTORY_FILE="$BUILD_CACHE_DIR/build-history.log"
+SKIP_CACHE_CHECK=false  # 跳过缓存检查标志
+
 # 基本输出函数（早期定义，供其他函数使用）
 print_error() {
     echo -e "\033[31m[ERROR]\033[0m $1"
@@ -762,6 +768,281 @@ print_success() {
 
 print_warning() {
     echo -e "\033[33m[WARNING]\033[0m $1"
+}
+
+# ==========================================
+# 智能构建缓存系统
+# ==========================================
+
+# 初始化构建缓存目录
+init_build_cache() {
+    mkdir -p "$BUILD_CACHE_DIR"
+    
+    # 初始化构建ID文件
+    if [[ ! -f "$BUILD_ID_FILE" ]]; then
+        echo "0" > "$BUILD_ID_FILE"
+    fi
+    
+    # 初始化构建历史文件
+    if [[ ! -f "$BUILD_HISTORY_FILE" ]]; then
+        touch "$BUILD_HISTORY_FILE"
+    fi
+}
+
+# 生成新的构建ID
+generate_build_id() {
+    init_build_cache
+    
+    local last_id=$(cat "$BUILD_ID_FILE" 2>/dev/null || echo "0")
+    local new_id=$((last_id + 1))
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    echo "${new_id}_${timestamp}"
+}
+
+# 保存构建ID
+save_build_id() {
+    local build_id="$1"
+    init_build_cache
+    
+    # 提取数字ID部分
+    local numeric_id=$(echo "$build_id" | cut -d'_' -f1)
+    echo "$numeric_id" > "$BUILD_ID_FILE"
+}
+
+# 计算文件或目录的哈希值
+calculate_hash() {
+    local path="$1"
+    
+    if [[ ! -e "$path" ]]; then
+        echo "NOT_EXIST"
+        return 1
+    fi
+    
+    if [[ -d "$path" ]]; then
+        # 目录：计算所有文件的综合哈希
+        # 排除常见的依赖和构建目录以提升性能
+        find "$path" -type f \
+            \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.tsx" -o -name "*.go" -o -name "*.conf" -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" -o -name "Dockerfile" \) \
+            ! -path "*/node_modules/*" \
+            ! -path "*/build/*" \
+            ! -path "*/dist/*" \
+            ! -path "*/.next/*" \
+            ! -path "*/vendor/*" \
+            ! -path "*/__pycache__/*" \
+            ! -path "*/.git/*" \
+            -exec shasum -a 256 {} \; 2>/dev/null | sort | shasum -a 256 | awk '{print $1}'
+    else
+        # 文件：直接计算哈希
+        shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
+    fi
+}
+
+# 计算服务的综合哈希（包含源码、配置、Dockerfile）
+calculate_service_hash() {
+    local service="$1"
+    local service_path=$(get_service_path "$service")
+    
+    if [[ -z "$service_path" ]]; then
+        echo "INVALID_SERVICE"
+        return 1
+    fi
+    
+    local hash_data=""
+    
+    # 1. Dockerfile哈希
+    local dockerfile="$SCRIPT_DIR/$service_path/Dockerfile"
+    if [[ -f "$dockerfile" ]]; then
+        hash_data+="$(calculate_hash "$dockerfile")\n"
+    fi
+    
+    # 2. 源代码目录哈希
+    local src_dir="$SCRIPT_DIR/$service_path"
+    if [[ -d "$src_dir" ]]; then
+        hash_data+="$(calculate_hash "$src_dir")\n"
+    fi
+    
+    # 3. 配置文件哈希（如果有）
+    case "$service" in
+        "nginx")
+            if [[ -d "$SCRIPT_DIR/config/nginx" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/config/nginx")\n"
+            fi
+            ;;
+        "jupyterhub")
+            if [[ -f "$SCRIPT_DIR/config/jupyterhub_config.py" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/config/jupyterhub_config.py")\n"
+            fi
+            ;;
+        "backend"|"backend-init")
+            if [[ -d "$SCRIPT_DIR/src/backend" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/src/backend")\n"
+            fi
+            ;;
+    esac
+    
+    # 计算综合哈希
+    echo -e "$hash_data" | shasum -a 256 | awk '{print $1}'
+}
+
+# 获取镜像中的构建信息标签
+get_image_build_labels() {
+    local image="$1"
+    
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    # 提取所有 build.* 标签
+    docker image inspect "$image" --format '{{range $k, $v := .Config.Labels}}{{if eq (slice $k 0 6) "build."}}{{$k}}={{$v}}{{"\n"}}{{end}}{{end}}' 2>/dev/null
+}
+
+# 检查服务是否需要重新构建
+need_rebuild() {
+    local service="$1"
+    local tag="$2"
+    local image="ai-infra-${service}:${tag}"
+    
+    # 强制重建模式
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        echo "FORCE_REBUILD"
+        return 0
+    fi
+    
+    # 跳过缓存检查
+    if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
+        echo "SKIP_CACHE_CHECK"
+        return 0
+    fi
+    
+    # 镜像不存在，需要构建
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        echo "IMAGE_NOT_EXIST"
+        return 0
+    fi
+    
+    # 计算当前文件哈希
+    local current_hash=$(calculate_service_hash "$service")
+    
+    # 获取镜像中保存的哈希
+    local image_hash=$(docker image inspect "$image" --format '{{index .Config.Labels "build.hash"}}' 2>/dev/null || echo "")
+    
+    # 如果镜像没有哈希标签，需要重建
+    if [[ -z "$image_hash" ]]; then
+        echo "NO_HASH_LABEL"
+        return 0
+    fi
+    
+    # 对比哈希值
+    if [[ "$current_hash" != "$image_hash" ]]; then
+        echo "HASH_CHANGED|old:${image_hash:0:8}|new:${current_hash:0:8}"
+        return 0
+    fi
+    
+    # 无需重建
+    echo "NO_CHANGE"
+    return 1
+}
+
+# 记录构建历史
+log_build_history() {
+    local build_id="$1"
+    local service="$2"
+    local tag="$3"
+    local status="$4"  # SUCCESS/FAILED/SKIPPED
+    local reason="${5:-}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    init_build_cache
+    
+    local log_entry="[$timestamp] BUILD_ID=$build_id SERVICE=$service TAG=$tag STATUS=$status"
+    if [[ -n "$reason" ]]; then
+        log_entry+=" REASON=$reason"
+    fi
+    
+    echo "$log_entry" >> "$BUILD_HISTORY_FILE"
+}
+
+# 保存服务构建信息到缓存
+save_service_build_info() {
+    local service="$1"
+    local tag="$2"
+    local build_id="$3"
+    local service_hash="$4"
+    
+    local cache_dir="$BUILD_CACHE_DIR/$service"
+    mkdir -p "$cache_dir"
+    
+    local build_info_file="$cache_dir/last-build.json"
+    
+    cat > "$build_info_file" <<EOF
+{
+  "service": "$service",
+  "tag": "$tag",
+  "build_id": "$build_id",
+  "hash": "$service_hash",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "image": "ai-infra-${service}:${tag}"
+}
+EOF
+}
+
+# 显示构建缓存统计
+show_build_cache_stats() {
+    echo "=========================================="
+    echo "构建缓存统计"
+    echo "=========================================="
+    
+    if [[ ! -d "$BUILD_CACHE_DIR" ]]; then
+        echo "缓存目录不存在"
+        return
+    fi
+    
+    local total_builds=$(cat "$BUILD_ID_FILE" 2>/dev/null || echo "0")
+    echo "总构建次数: $total_builds"
+    
+    if [[ -f "$BUILD_HISTORY_FILE" ]]; then
+        echo ""
+        echo "最近10次构建:"
+        tail -n 10 "$BUILD_HISTORY_FILE"
+    fi
+    
+    echo ""
+    echo "各服务缓存状态:"
+    for service_dir in "$BUILD_CACHE_DIR"/*; do
+        if [[ -d "$service_dir" ]]; then
+            local service=$(basename "$service_dir")
+            local build_info="$service_dir/last-build.json"
+            if [[ -f "$build_info" ]]; then
+                local last_tag=$(grep '"tag"' "$build_info" | cut -d'"' -f4)
+                local last_time=$(grep '"timestamp"' "$build_info" | cut -d'"' -f4)
+                echo "  • $service: tag=$last_tag, time=$last_time"
+            fi
+        fi
+    done
+}
+
+# 清理构建缓存
+clean_build_cache() {
+    local service="${1:-}"
+    
+    if [[ -n "$service" ]]; then
+        # 清理特定服务的缓存
+        if [[ -d "$BUILD_CACHE_DIR/$service" ]]; then
+            rm -rf "$BUILD_CACHE_DIR/$service"
+            print_success "已清理 $service 的构建缓存"
+        else
+            print_warning "服务 $service 没有构建缓存"
+        fi
+    else
+        # 清理所有缓存
+        if [[ -d "$BUILD_CACHE_DIR" ]]; then
+            rm -rf "$BUILD_CACHE_DIR"
+            print_success "已清理所有构建缓存"
+        else
+            print_warning "构建缓存目录不存在"
+        fi
+    fi
 }
 
 # ==========================================
@@ -3140,16 +3421,56 @@ extract_base_images() {
     
     # 提取所有 FROM 指令中的镜像名称
     # 支持: FROM image:tag, FROM image:tag AS stage, FROM --platform=xxx image:tag
-    grep -E '^\s*FROM\s+' "$dockerfile_path" | \
-        sed -E 's/^\s*FROM\s+(--platform=[^\s]+\s+)?([^\s]+)(\s+AS\s+.*)?$/\2/' | \
+    # 修复：确保正确提取镜像名称，不包含 FROM 关键字
+    # macOS 兼容：使用 grep -i 而不是 sed //I
+    grep -iE '^\s*FROM\s+' "$dockerfile_path" | \
+        sed -E 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]+//' | \
+        sed -E 's/--platform=[^[:space:]]+[[:space:]]+//' | \
+        awk '{print $1}' | \
         grep -v '^$' | \
+        grep -v '^#' | \
         sort -u
 }
 
-# 预拉取 Dockerfile 中的依赖镜像
+# 拉取单个镜像（带重试机制）
+# 参数：
+#   $1: 镜像名称
+#   $2: 最大重试次数（默认3）
+# 返回：
+#   0: 拉取成功或镜像已存在
+#   1: 拉取失败
+pull_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-3}"
+    local retry_count=0
+    
+    # 检查镜像是否已存在
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        return 0
+    fi
+    
+    # 重试拉取
+    while [[ $retry_count -lt $max_retries ]]; do
+        retry_count=$((retry_count + 1))
+        
+        if [[ $retry_count -gt 1 ]]; then
+            print_info "  🔄 重试 $retry_count/$max_retries: $image"
+            sleep 2  # 等待2秒后重试
+        fi
+        
+        if docker pull "$image" 2>&1 | grep -v "Pulling from"; then
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# 预拉取 Dockerfile 中的依赖镜像（带重试机制）
 prefetch_base_images() {
     local dockerfile_path="$1"
     local service_name="${2:-unknown}"
+    local max_retries="${3:-3}"  # 默认重试3次
     
     print_info "📦 预拉取依赖镜像: $service_name"
     
@@ -3168,8 +3489,19 @@ prefetch_base_images() {
     
     # 遍历并拉取每个镜像
     while IFS= read -r image; do
+        # 跳过空行
+        if [[ -z "$image" ]]; then
+            continue
+        fi
+        
         # 跳过内部构建阶段（通常是小写字母开头的别名）
         if [[ "$image" =~ ^[a-z_-]+$ ]]; then
+            print_info "  ⊙ 跳过内部阶段: $image"
+            continue
+        fi
+        
+        # 跳过注释
+        if [[ "$image" =~ ^# ]]; then
             continue
         fi
         
@@ -3180,19 +3512,20 @@ prefetch_base_images() {
             continue
         fi
         
-        # 尝试拉取镜像
+        # 尝试拉取镜像（带重试机制）
         print_info "  ⬇ 正在拉取: $image"
-        if docker pull "$image"; then
+        if pull_image_with_retry "$image" "$max_retries"; then
             print_success "  ✓ 拉取成功: $image"
             ((pull_count++))
         else
-            print_error "  ✗ 拉取失败: $image"
+            print_error "  ✗ 拉取失败（已重试${max_retries}次）: $image"
             ((fail_count++))
             
-            # 如果是关键镜像拉取失败，返回错误
             # 允许某些可选镜像拉取失败（如 scratch）
-            if [[ ! "$image" =~ ^(scratch|)$ ]]; then
-                print_error "  ⚠ 关键镜像拉取失败，可能导致构建失败"
+            if [[ "$image" =~ ^(scratch)$ ]]; then
+                print_info "  ℹ 可选镜像，继续构建流程"
+            else
+                print_warning "  ⚠ 关键镜像拉取失败，构建可能会失败"
             fi
         fi
     done <<< "$base_images"
@@ -3202,10 +3535,12 @@ prefetch_base_images() {
     print_info "  • 新拉取: $pull_count"
     print_info "  • 已存在: $skip_count"
     if [[ $fail_count -gt 0 ]]; then
-        print_error "  • 失败: $fail_count"
-        print_error "⚠ 部分镜像拉取失败，构建可能会出现问题"
+        print_error "  • 失败: $fail_count (已重试${max_retries}次)"
+        print_warning "⚠ 部分镜像拉取失败，但构建流程将继续"
     fi
     
+    # 即使有失败也返回成功，让构建流程继续
+    # Docker build 会在真正需要时再次尝试拉取
     return 0
 }
 
@@ -3265,9 +3600,20 @@ build_service() {
     print_info "  Dockerfile: $service_path/Dockerfile"
     print_info "  目标镜像: $target_image"
     
-    # 检查镜像是否已存在
-    if [[ "$FORCE_REBUILD" == "false" ]] && docker image inspect "$target_image" >/dev/null 2>&1; then
-        print_success "  ✓ 镜像已存在，跳过构建: $target_image"
+    # ========================================
+    # 智能缓存检查
+    # ========================================
+    local build_id=$(generate_build_id)
+    local rebuild_reason=$(need_rebuild "$service" "$tag")
+    local rebuild_code=$?
+    
+    if [[ $rebuild_code -ne 0 ]]; then
+        # 无需重建
+        print_success "  ✓ 镜像无变化，复用缓存: $target_image"
+        print_info "  📋 BUILD_ID: $build_id (SKIPPED)"
+        
+        # 记录跳过的构建
+        log_build_history "$build_id" "$service" "$tag" "SKIPPED" "NO_CHANGE"
         
         # 如果指定了registry，确保本地别名也存在
         if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
@@ -3281,14 +3627,36 @@ build_service() {
         return 0
     fi
     
+    # 显示重建原因
+    case "$rebuild_reason" in
+        "FORCE_REBUILD")
+            print_info "  🔨 强制重建模式"
+            ;;
+        "SKIP_CACHE_CHECK")
+            print_info "  ⏭️  跳过缓存检查"
+            ;;
+        "IMAGE_NOT_EXIST")
+            print_info "  🆕 镜像不存在，需要构建"
+            ;;
+        "NO_HASH_LABEL")
+            print_info "  🏷️  镜像缺少哈希标签，需要重建"
+            ;;
+        HASH_CHANGED*)
+            local old_hash=$(echo "$rebuild_reason" | cut -d'|' -f2 | cut -d':' -f2)
+            local new_hash=$(echo "$rebuild_reason" | cut -d'|' -f3 | cut -d':' -f2)
+            print_info "  🔄 文件已变化，需要重建"
+            print_info "     旧哈希: $old_hash"
+            print_info "     新哈希: $new_hash"
+            ;;
+    esac
+    
+    print_info "  📋 BUILD_ID: $build_id"
+    
     # ========================================
     # 预拉取依赖镜像
     # ========================================
     print_info "  → 预拉取 Dockerfile 依赖镜像..."
     prefetch_base_images "$dockerfile_path" "$service"
-    
-    # 构建镜像
-    print_info "  → 正在构建镜像..."
     
     # ========================================
     # SingleUser 智能构建处理
@@ -3342,9 +3710,51 @@ build_service() {
         cache_arg="--no-cache"
     fi
     
+    # 计算服务哈希并准备构建标签
+    local service_hash=$(calculate_service_hash "$service")
+    local build_timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    
+    local label_args=""
+    label_args+="--label build.id=$build_id "
+    label_args+="--label build.service=$service "
+    label_args+="--label build.tag=$tag "
+    label_args+="--label build.hash=$service_hash "
+    label_args+="--label build.timestamp=$build_timestamp "
+    label_args+="--label build.reason=$rebuild_reason "
+    
+    # 显示详细的构建信息
+    print_info "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "  📦 Docker 构建配置:"
+    print_info "     Dockerfile: $dockerfile_path"
+    print_info "     构建上下文: $build_context"
+    if [[ -n "$target_arg" ]]; then
+        print_info "     构建目标: ${target_arg#--target }"
+    fi
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        print_info "     缓存策略: --no-cache (强制重建)"
+    else
+        print_info "     缓存策略: 使用 Docker 层缓存"
+    fi
+    print_info "     目标镜像: $target_image"
+    print_info "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    print_info "  🔨 开始构建镜像..."
+    echo
+    
     # 使用各自的src子目录作为构建上下文
-    if docker build -f "$dockerfile_path" $target_arg $cache_arg -t "$target_image" "$build_context"; then
+    # 直接显示 docker build 的完整输出，不做过滤
+    if docker build -f "$dockerfile_path" $target_arg $cache_arg $label_args -t "$target_image" "$build_context"; then
+        echo
         print_success "✓ 构建成功: $target_image"
+        
+        # 保存构建ID
+        save_build_id "$build_id"
+        
+        # 保存服务构建信息
+        save_service_build_info "$service" "$tag" "$build_id" "$service_hash"
+        
+        # 记录构建历史
+        log_build_history "$build_id" "$service" "$tag" "SUCCESS" "$rebuild_reason"
         
         # 如果指定了registry，同时创建本地别名
         if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
@@ -3365,6 +3775,9 @@ build_service() {
     else
         print_error "✗ 构建失败: $target_image"
         
+        # 记录失败的构建
+        log_build_history "$build_id" "$service" "$tag" "FAILED" "$rebuild_reason"
+        
         # ========================================
         # SingleUser 构建失败时也需要清理
         # ========================================
@@ -3384,8 +3797,10 @@ build_frontend() {
     return 1
 }
 
-# 批量预拉取所有服务的依赖镜像
+# 批量预拉取所有服务的依赖镜像（带重试机制）
 prefetch_all_base_images() {
+    local max_retries="${1:-3}"  # 默认重试3次
+    
     print_info "=========================================="
     print_info "🚀 批量预拉取所有服务的依赖镜像"
     print_info "=========================================="
@@ -3413,8 +3828,16 @@ prefetch_all_base_images() {
         
         if [[ -n "$images" ]]; then
             while IFS= read -r image; do
+                # 跳过空行
+                if [[ -z "$image" ]]; then
+                    continue
+                fi
                 # 跳过内部构建阶段
                 if [[ "$image" =~ ^[a-z_-]+$ ]]; then
+                    continue
+                fi
+                # 跳过注释
+                if [[ "$image" =~ ^# ]]; then
                     continue
                 fi
                 # 添加到数组（去重将在后面处理）
@@ -3448,13 +3871,13 @@ prefetch_all_base_images() {
             continue
         fi
         
-        # 尝试拉取镜像
+        # 尝试拉取镜像（带重试机制）
         print_info "  ⬇ 正在拉取..."
-        if docker pull "$image" 2>&1 | grep -E '(Downloaded|Digest:|Status:)'; then
+        if pull_image_with_retry "$image" "$max_retries"; then
             print_success "  ✓ 拉取成功"
             ((pull_count++))
         else
-            print_error "  ✗ 拉取失败"
+            print_error "  ✗ 拉取失败（已重试${max_retries}次）"
             ((fail_count++))
         fi
         
@@ -3470,15 +3893,35 @@ prefetch_all_base_images() {
     print_info "  • 已存在: $skip_count"
     
     if [[ $fail_count -gt 0 ]]; then
-        print_error "  • 失败: $fail_count"
-        print_error "⚠ 警告: 部分镜像拉取失败，构建可能会出现问题"
-        print_info "建议: 检查网络连接或使用镜像加速器"
+        print_error "  • 失败: $fail_count (已重试${max_retries}次)"
+        print_error "=========================================="
+        print_error "❌ 基础镜像预拉取失败"
+        print_error "=========================================="
+        print_error "部分关键镜像无法下载，无法继续构建。"
+        print_error ""
+        print_error "失败的镜像数量: $fail_count"
+        print_error "已重试次数: $max_retries"
+        print_error ""
+        print_error "可能的原因："
+        print_error "  1. 网络连接问题"
+        print_error "  2. Docker Hub 访问受限"
+        print_error "  3. 镜像名称或标签错误"
+        print_error ""
+        print_error "解决方案："
+        print_error "  1. 检查网络连接: ping mirrors.aliyun.com"
+        print_error "  2. 配置 Docker 镜像加速器"
+        print_error "  3. 手动拉取失败的镜像验证"
+        print_error "  4. 使用 VPN 或代理"
+        print_error ""
+        print_error "构建已终止，请解决镜像拉取问题后重试。"
+        echo
+        return 1  # 返回失败，终止构建
     else
         print_success "✅ 所有依赖镜像已就绪！"
     fi
     
     echo
-    return 0
+    return 0  # 返回成功，继续构建
 }
 
 # 构建所有服务镜像
@@ -3542,11 +3985,12 @@ build_all_services() {
     print_info "=========================================="
     print_info "步骤 1/5: 预拉取依赖镜像"
     print_info "=========================================="
-    if prefetch_all_base_images; then
-        print_success "✓ 依赖镜像预拉取完成"
-    else
-        print_warning "依赖镜像预拉取有问题，但构建流程将继续"
+    if ! prefetch_all_base_images; then
+        print_error "❌ 预拉取失败，构建终止"
+        print_error "请根据上述错误信息解决镜像拉取问题后重试"
+        return 1
     fi
+    print_success "✓ 依赖镜像预拉取完成"
     echo
     
     # ========================================
@@ -6562,13 +7006,14 @@ show_kafka_logs() {
 show_help() {
     echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
     echo
-    echo "用法: $0 [--force|--skip-pull|--china-mirror|--no-source-maps] <命令> [参数...]"
+    echo "用法: $0 [--force|--skip-pull|--skip-cache-check|--china-mirror|--no-source-maps] <命令> [参数...]"
     echo
     echo "全局选项:"
-    echo "  --force           - 强制重新构建/跳过镜像拉取"
-    echo "  --skip-pull       - 跳过镜像拉取，使用本地镜像"
-    echo "  --china-mirror    - 使用中国npm镜像加速前端构建"
-    echo "  --no-source-maps  - 禁用源码映射生成（优化构建性能）"
+    echo "  --force              - 强制重新构建/跳过镜像拉取"
+    echo "  --skip-pull          - 跳过镜像拉取，使用本地镜像"
+    echo "  --skip-cache-check   - 跳过智能缓存检查，总是构建"
+    echo "  --china-mirror       - 使用中国npm镜像加速前端构建"
+    echo "  --no-source-maps     - 禁用源码映射生成（优化构建性能）"
     echo
     echo "主要命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
@@ -6577,6 +7022,15 @@ show_help() {
     echo "  build-all [tag] [registry]      - 构建所有服务（智能过滤）"
     echo "  build-push <registry> [tag]     - 构建并推送所有服务"
     echo "  push-all <registry> [tag]       - 推送所有服务"
+    echo
+    echo "智能构建缓存（新增）:"
+    echo "  cache-stats                     - 显示构建缓存统计信息"
+    echo "  clean-cache [service]           - 清理构建缓存（不指定则清理所有）"
+    echo "  build-info <service> [tag]      - 显示镜像的构建信息"
+    echo "  • 自动检测文件变化，无变化则复用镜像"
+    echo "  • 每次构建生成唯一BUILD_ID和时间戳"
+    echo "  • 使用SHA256哈希追踪源码和配置变化"
+    echo "  • 使用 --skip-cache-check 跳过缓存检查"
     echo
     echo "智能构建特性（需求32）:"
     echo "  • 自动检测镜像构建状态"
@@ -8629,6 +9083,9 @@ main() {
         elif [[ "$arg" == "--skip-pull" ]]; then
             SKIP_PULL=true
             print_info "启用跳过拉取模式"
+        elif [[ "$arg" == "--skip-cache-check" ]]; then
+            SKIP_CACHE_CHECK=true
+            print_info "启用跳过缓存检查模式"
         elif [[ "$arg" == "--china-mirror" ]]; then
             USE_CHINA_MIRROR=true
             print_info "启用中国镜像加速"
@@ -8682,6 +9139,92 @@ main() {
                 return 0
             fi
             show_build_status "${2:-$DEFAULT_IMAGE_TAG}" "$3"
+            ;;
+        
+        "cache-stats")
+            # 显示构建缓存统计信息
+            if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+                echo "cache-stats - 显示构建缓存统计信息"
+                echo
+                echo "用法: $0 cache-stats"
+                echo
+                echo "说明:"
+                echo "  显示构建缓存的详细信息，包括："
+                echo "  • 总构建次数"
+                echo "  • 最近构建历史"
+                echo "  • 各服务缓存状态"
+                echo
+                echo "示例:"
+                echo "  $0 cache-stats"
+                return 0
+            fi
+            show_build_cache_stats
+            ;;
+        
+        "clean-cache")
+            # 清理构建缓存
+            if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+                echo "clean-cache - 清理构建缓存"
+                echo
+                echo "用法: $0 clean-cache [service]"
+                echo
+                echo "参数:"
+                echo "  service     服务名称 (可选，不指定则清理所有)"
+                echo
+                echo "说明:"
+                echo "  清理构建缓存数据，包括构建历史和哈希记录"
+                echo "  清理后下次构建将重新计算哈希并构建"
+                echo
+                echo "示例:"
+                echo "  $0 clean-cache              # 清理所有缓存"
+                echo "  $0 clean-cache frontend     # 只清理frontend的缓存"
+                return 0
+            fi
+            clean_build_cache "$2"
+            ;;
+            
+        "build-info")
+            # 显示镜像的构建信息
+            if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+                echo "build-info - 显示镜像的构建信息"
+                echo
+                echo "用法: $0 build-info <service> [tag]"
+                echo
+                echo "参数:"
+                echo "  service     服务名称 (必需)"
+                echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+                echo
+                echo "说明:"
+                echo "  显示镜像中嵌入的构建信息，包括："
+                echo "  • 构建ID"
+                echo "  • 构建时间"
+                echo "  • 文件哈希"
+                echo "  • 构建原因"
+                echo
+                echo "示例:"
+                echo "  $0 build-info frontend"
+                echo "  $0 build-info backend v1.0.0"
+                return 0
+            fi
+            
+            if [[ -z "$2" ]]; then
+                print_error "请指定服务名称"
+                exit 1
+            fi
+            
+            local service="$2"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local image="ai-infra-${service}:${tag}"
+            
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                print_error "镜像不存在: $image"
+                exit 1
+            fi
+            
+            echo "=========================================="
+            echo "镜像构建信息: $image"
+            echo "=========================================="
+            get_image_build_labels "$image"
             ;;
             
         "build")

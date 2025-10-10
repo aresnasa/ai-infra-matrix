@@ -12,49 +12,66 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 ENV TZ=Asia/Shanghai
 
-# 使用官方源先安装基础工具，然后配置镜像源
+# 立即配置阿里云镜像源（在第一次 apt-get 之前）
 RUN set -eux; \
     # 备份原始sources.list
     cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
-    # 重试机制安装基础包
-    for i in 1 2 3; do \
-        apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && break; \
-        echo "尝试第 $i 次安装失败，等待重试..."; \
-        sleep 5; \
-    done
-
-# 配置阿里云镜像源（直接使用，不做验证）
-RUN set -eux; \
+    # 检测架构
     ARCH=$(dpkg --print-architecture); \
-    echo "Detected architecture: ${ARCH}"; \
-    # 根据架构直接配置阿里云镜像源
+    echo "🔍 检测到系统架构: ${ARCH}"; \
+    # 根据架构配置阿里云镜像源
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-        echo "配置ARM64阿里云镜像源..."; \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "# 官方备用源" >> /etc/apt/sources.list && \
-        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "⚙️  配置 ARM64 阿里云镜像源..."; \
+        cat > /etc/apt/sources.list <<-'EOF'
+# 阿里云 Ubuntu Ports 镜像源 (ARM64)
+deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse
+
+# 官方备用源
+deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+deb http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+EOF
+	; \
     else \
-        echo "配置AMD64阿里云镜像源..."; \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "# 官方备用源" >> /etc/apt/sources.list && \
-        echo "deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://archive.ubuntu.com/ubuntu jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-        echo "deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "⚙️  配置 AMD64 阿里云镜像源..."; \
+        cat > /etc/apt/sources.list <<-'EOF'
+# 阿里云 Ubuntu 镜像源 (AMD64)
+deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse
+deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse
+
+# 清华大学镜像源（备用）
+deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy main restricted universe multiverse
+deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-security main restricted universe multiverse
+EOF
+	; \
     fi; \
     # APT 重试与超时配置
-    echo 'Acquire::Retries "5"; Acquire::http::Timeout "30"; Acquire::https::Timeout "30";' > /etc/apt/apt.conf.d/99retries; \
-    # 更新包列表（带重试机制）
-    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99retries; \
+    echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/99retries; \
+    echo 'Acquire::https::Timeout "30";' >> /etc/apt/apt.conf.d/99retries; \
+    echo 'Acquire::http::No-Cache "true";' >> /etc/apt/apt.conf.d/99retries; \
+    echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99retries; \
+    # 显示配置的源
+    echo "📋 已配置的APT源:"; \
+    cat /etc/apt/sources.list; \
+    # 更新包列表（带重试机制，使用新配置的阿里云源）
+    echo "🔄 更新软件包列表..."; \
+    for i in 1 2 3; do \
+        if apt-get update; then \
+            echo "✅ 包列表更新成功（第 $i 次尝试）"; \
+            break; \
+        else \
+            echo "⚠️  更新失败，等待重试...（第 $i 次尝试）"; \
+            sleep 5; \
+        fi; \
+    done; \
+    # 安装基础工具（现在使用阿里云源）
+    echo "📦 安装基础工具包..."; \
+    apt-get install -y --no-install-recommends ca-certificates curl
 
 # 安装基础依赖（ca-certificates和curl已在上面安装）
 RUN set -eux; \
