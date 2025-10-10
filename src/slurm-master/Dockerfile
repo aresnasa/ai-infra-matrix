@@ -19,57 +19,98 @@ RUN set -eux; \
     # 检测架构
     ARCH=$(dpkg --print-architecture); \
     echo "🔍 检测到系统架构: ${ARCH}"; \
-    # 根据架构配置阿里云镜像源
+    # 根据架构配置镜像源（多镜像源智能回退）
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-        echo "⚙️  配置 ARM64 阿里云镜像源..."; \
-        cat > /etc/apt/sources.list <<-'EOF'
-# 阿里云 Ubuntu Ports 镜像源 (ARM64)
-deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse
-deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse
-deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse
-deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse
-
-# 官方备用源
-deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-deb http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-EOF
-	; \
-    else \
-        echo "⚙️  配置 AMD64 阿里云镜像源..."; \
-        cat > /etc/apt/sources.list <<-'EOF'
-# 阿里云 Ubuntu 镜像源 (AMD64)
-deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse
-deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse
-deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse
-deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse
-
-# 清华大学镜像源（备用）
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy main restricted universe multiverse
-deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-security main restricted universe multiverse
-EOF
-	; \
-    fi; \
-    # APT 重试与超时配置
-    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99retries; \
-    echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/99retries; \
-    echo 'Acquire::https::Timeout "30";' >> /etc/apt/apt.conf.d/99retries; \
-    echo 'Acquire::http::No-Cache "true";' >> /etc/apt/apt.conf.d/99retries; \
-    echo 'Acquire::http::Pipeline-Depth "0";' >> /etc/apt/apt.conf.d/99retries; \
-    # 显示配置的源
-    echo "📋 已配置的APT源:"; \
-    cat /etc/apt/sources.list; \
-    # 更新包列表（带重试机制，使用新配置的阿里云源）
-    echo "🔄 更新软件包列表..."; \
-    for i in 1 2 3; do \
-        if apt-get update; then \
-            echo "✅ 包列表更新成功（第 $i 次尝试）"; \
-            break; \
+        echo "⚙️  配置 ARM64 镜像源（带智能回退）..."; \
+        # 尝试阿里云源（静默失败检测）
+        { \
+            echo "# 阿里云 Ubuntu Ports 镜像源 (ARM64)"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse"; \
+        } > /etc/apt/sources.list; \
+        if apt-get update 2>/dev/null; then \
+            echo "✅ 成功使用阿里云源"; \
         else \
-            echo "⚠️  更新失败，等待重试...（第 $i 次尝试）"; \
-            sleep 5; \
+            echo "⚠️  阿里云源失败，尝试清华源..."; \
+            cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+            { \
+                echo "# 清华 Ubuntu Ports 镜像源 (ARM64)"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-security main restricted universe multiverse"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse"; \
+            } > /etc/apt/sources.list; \
+            if apt-get update 2>/dev/null; then \
+                echo "✅ 成功使用清华源"; \
+            else \
+                echo "⚠️  清华源失败，尝试中科大源..."; \
+                cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+                { \
+                    echo "# 中科大 Ubuntu Ports 镜像源 (ARM64)"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu-ports/ jammy-security main restricted universe multiverse"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse"; \
+                } > /etc/apt/sources.list; \
+                if apt-get update 2>/dev/null; then \
+                    echo "✅ 成功使用中科大源"; \
+                else \
+                    echo "⚠️  所有国内源都失败，使用官方源..."; \
+                    cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+                    apt-get update; \
+                fi; \
+            fi; \
         fi; \
-    done; \
-    # 安装基础工具（现在使用阿里云源）
+    else \
+        echo "⚙️  配置 AMD64 镜像源（带智能回退）..."; \
+        # 尝试阿里云源（静默失败检测）
+        { \
+            echo "# 阿里云 Ubuntu 镜像源 (AMD64)"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse"; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse"; \
+        } > /etc/apt/sources.list; \
+        if apt-get update 2>/dev/null; then \
+            echo "✅ 成功使用阿里云源"; \
+        else \
+            echo "⚠️  阿里云源失败，尝试清华源..."; \
+            cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+            { \
+                echo "# 清华 Ubuntu 镜像源 (AMD64)"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy main restricted universe multiverse"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-security main restricted universe multiverse"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-updates main restricted universe multiverse"; \
+                echo "deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ jammy-backports main restricted universe multiverse"; \
+            } > /etc/apt/sources.list; \
+            if apt-get update 2>/dev/null; then \
+                echo "✅ 成功使用清华源"; \
+            else \
+                echo "⚠️  清华源失败，尝试中科大源..."; \
+                cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+                { \
+                    echo "# 中科大 Ubuntu 镜像源 (AMD64)"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu/ jammy main restricted universe multiverse"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu/ jammy-security main restricted universe multiverse"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu/ jammy-updates main restricted universe multiverse"; \
+                    echo "deb http://mirrors.ustc.edu.cn/ubuntu/ jammy-backports main restricted universe multiverse"; \
+                } > /etc/apt/sources.list; \
+                if apt-get update 2>/dev/null; then \
+                    echo "✅ 成功使用中科大源"; \
+                else \
+                    echo "⚠️  所有国内源都失败，使用官方源..."; \
+                    cp /etc/apt/sources.list.backup /etc/apt/sources.list; \
+                    apt-get update; \
+                fi; \
+            fi; \
+        fi; \
+    fi; \
+    # 显示最终使用的源
+    echo "📋 最终使用的APT源:"; \
+    cat /etc/apt/sources.list; \
+    # 安装基础工具
     echo "📦 安装基础工具包..."; \
     apt-get install -y --no-install-recommends ca-certificates curl
 
