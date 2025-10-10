@@ -63,6 +63,40 @@ func (ctl *KubernetesResourcesController) DiscoverResources(c *gin.Context) {
     })
 }
 
+// GetClusterVersion 获取集群版本信息
+func (ctl *KubernetesResourcesController) GetClusterVersion(c *gin.Context) {
+    kubeConfig, _, ok := ctl.getClusterKubeConfig(c)
+    if !ok { return }
+
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+    defer cancel()
+
+    versionInfo, err := ctl.svc.GetClusterVersion(ctx, kubeConfig)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, versionInfo)
+}
+
+// EnhancedDiscovery 增强的资源发现，包含 CRD 和版本信息
+func (ctl *KubernetesResourcesController) EnhancedDiscovery(c *gin.Context) {
+    kubeConfig, _, ok := ctl.getClusterKubeConfig(c)
+    if !ok { return }
+
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+    defer cancel()
+
+    result, err := ctl.svc.GetEnhancedDiscovery(ctx, kubeConfig)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, result)
+}
+
 // ListNamespaces 获取命名空间列表
 func (ctl *KubernetesResourcesController) ListNamespaces(c *gin.Context) {
     kubeConfig, _, ok := ctl.getClusterKubeConfig(c)

@@ -2927,6 +2927,288 @@ check_dockerfile() {
     return 0
 }
 
+# ========================================
+# 镜像构建状态检查功能（需求32）
+# ========================================
+
+# 验证镜像是否正确构建
+# 参数：
+#   $1: 镜像名称（含标签）
+# 返回：
+#   0: 镜像存在且有效
+#   1: 镜像不存在或无效
+verify_image_build() {
+    local image_name="$1"
+    
+    if [[ -z "$image_name" ]]; then
+        return 1
+    fi
+    
+    # 检查镜像是否存在
+    if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    # 检查镜像是否有正确的标签和创建时间
+    local image_info
+    image_info=$(docker image inspect "$image_name" --format '{{.Created}}|{{.Size}}' 2>/dev/null)
+    
+    if [[ -z "$image_info" ]]; then
+        return 1
+    fi
+    
+    # 提取创建时间和大小
+    local created_time="${image_info%%|*}"
+    local image_size="${image_info##*|}"
+    
+    # 检查镜像大小（必须大于0）
+    if [[ "$image_size" -eq 0 ]]; then
+        print_error "  ⚠ 镜像大小为0，可能构建失败: $image_name"
+        return 1
+    fi
+    
+    # 检查镜像是否是 scratch 或 dangling
+    local repo_tags
+    repo_tags=$(docker image inspect "$image_name" --format '{{.RepoTags}}' 2>/dev/null)
+    
+    if [[ "$repo_tags" == "[]" ]] || [[ -z "$repo_tags" ]]; then
+        print_error "  ⚠ 镜像没有有效标签: $image_name"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 获取所有服务的构建状态
+# 参数：
+#   $1: 镜像标签（默认：$DEFAULT_IMAGE_TAG）
+#   $2: 私有仓库地址（可选）
+# 输出：
+#   输出服务名称和构建状态到标准输出
+#   格式：service_name|status|image_name
+#   status: OK, MISSING, INVALID
+get_build_status() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local registry="${2:-}"
+    
+    local all_services="$SRC_SERVICES"
+    
+    for service in $all_services; do
+        local base_image="ai-infra-${service}:${tag}"
+        local target_image="$base_image"
+        
+        if [[ -n "$registry" ]]; then
+            target_image=$(get_private_image_name "$base_image" "$registry")
+        fi
+        
+        local status="MISSING"
+        
+        # 检查镜像是否存在
+        if docker image inspect "$target_image" >/dev/null 2>&1; then
+            # 验证镜像是否有效
+            if verify_image_build "$target_image"; then
+                status="OK"
+            else
+                status="INVALID"
+            fi
+        fi
+        
+        echo "${service}|${status}|${target_image}"
+    done
+}
+
+# 显示构建状态报告
+# 参数：
+#   $1: 镜像标签（默认：$DEFAULT_IMAGE_TAG）
+#   $2: 私有仓库地址（可选）
+show_build_status() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local registry="${2:-}"
+    
+    print_info "=========================================="
+    print_info "镜像构建状态报告"
+    print_info "=========================================="
+    print_info "镜像标签: $tag"
+    if [[ -n "$registry" ]]; then
+        print_info "目标仓库: $registry"
+    else
+        print_info "目标仓库: 本地构建"
+    fi
+    echo
+    
+    local ok_count=0
+    local missing_count=0
+    local invalid_count=0
+    local total_count=0
+    
+    # 使用数组存储不同状态的服务
+    local ok_services=()
+    local missing_services=()
+    local invalid_services=()
+    
+    while IFS='|' read -r service status image_name; do
+        total_count=$((total_count + 1))
+        
+        case "$status" in
+            "OK")
+                ok_count=$((ok_count + 1))
+                ok_services+=("$service")
+                ;;
+            "MISSING")
+                missing_count=$((missing_count + 1))
+                missing_services+=("$service")
+                ;;
+            "INVALID")
+                invalid_count=$((invalid_count + 1))
+                invalid_services+=("$service")
+                ;;
+        esac
+    done < <(get_build_status "$tag" "$registry")
+    
+    # 显示统计信息
+    print_info "📊 构建状态统计:"
+    print_success "  ✓ 构建成功: $ok_count/$total_count"
+    if [[ $missing_count -gt 0 ]]; then
+        print_error "  ✗ 缺失镜像: $missing_count/$total_count"
+    fi
+    if [[ $invalid_count -gt 0 ]]; then
+        print_error "  ⚠ 无效镜像: $invalid_count/$total_count"
+    fi
+    echo
+    
+    # 显示成功的服务
+    if [[ ${#ok_services[@]} -gt 0 ]]; then
+        print_success "✓ 构建成功的服务 ($ok_count):"
+        for service in "${ok_services[@]}"; do
+            print_info "  • $service"
+        done
+        echo
+    fi
+    
+    # 显示缺失的服务
+    if [[ ${#missing_services[@]} -gt 0 ]]; then
+        print_error "✗ 缺失镜像的服务 ($missing_count):"
+        for service in "${missing_services[@]}"; do
+            print_info "  • $service"
+        done
+        echo
+    fi
+    
+    # 显示无效的服务
+    if [[ ${#invalid_services[@]} -gt 0 ]]; then
+        print_error "⚠ 镜像无效的服务 ($invalid_count):"
+        for service in "${invalid_services[@]}"; do
+            print_info "  • $service"
+        done
+        echo
+    fi
+    
+    return 0
+}
+
+# 获取需要构建的服务列表
+# 参数：
+#   $1: 镜像标签（默认：$DEFAULT_IMAGE_TAG）
+#   $2: 私有仓库地址（可选）
+# 输出：
+#   需要构建的服务名称（空格分隔）
+get_services_to_build() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local registry="${2:-}"
+    
+    local services_to_build=()
+    
+    while IFS='|' read -r service status image_name; do
+        # 只构建缺失或无效的镜像
+        if [[ "$status" != "OK" ]]; then
+            services_to_build+=("$service")
+        fi
+    done < <(get_build_status "$tag" "$registry")
+    
+    # 输出服务列表（空格分隔）
+    echo "${services_to_build[@]}"
+}
+
+# 提取 Dockerfile 中的基础镜像
+extract_base_images() {
+    local dockerfile_path="$1"
+    
+    if [[ ! -f "$dockerfile_path" ]]; then
+        print_error "Dockerfile 不存在: $dockerfile_path"
+        return 1
+    fi
+    
+    # 提取所有 FROM 指令中的镜像名称
+    # 支持: FROM image:tag, FROM image:tag AS stage, FROM --platform=xxx image:tag
+    grep -E '^\s*FROM\s+' "$dockerfile_path" | \
+        sed -E 's/^\s*FROM\s+(--platform=[^\s]+\s+)?([^\s]+)(\s+AS\s+.*)?$/\2/' | \
+        grep -v '^$' | \
+        sort -u
+}
+
+# 预拉取 Dockerfile 中的依赖镜像
+prefetch_base_images() {
+    local dockerfile_path="$1"
+    local service_name="${2:-unknown}"
+    
+    print_info "📦 预拉取依赖镜像: $service_name"
+    
+    # 提取基础镜像列表
+    local base_images
+    base_images=$(extract_base_images "$dockerfile_path")
+    
+    if [[ -z "$base_images" ]]; then
+        print_info "  → 未找到需要拉取的基础镜像"
+        return 0
+    fi
+    
+    local pull_count=0
+    local skip_count=0
+    local fail_count=0
+    
+    # 遍历并拉取每个镜像
+    while IFS= read -r image; do
+        # 跳过内部构建阶段（通常是小写字母开头的别名）
+        if [[ "$image" =~ ^[a-z_-]+$ ]]; then
+            continue
+        fi
+        
+        # 检查镜像是否已存在
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            print_info "  ✓ 镜像已存在: $image"
+            ((skip_count++))
+            continue
+        fi
+        
+        # 尝试拉取镜像
+        print_info "  ⬇ 正在拉取: $image"
+        if docker pull "$image"; then
+            print_success "  ✓ 拉取成功: $image"
+            ((pull_count++))
+        else
+            print_error "  ✗ 拉取失败: $image"
+            ((fail_count++))
+            
+            # 如果是关键镜像拉取失败，返回错误
+            # 允许某些可选镜像拉取失败（如 scratch）
+            if [[ ! "$image" =~ ^(scratch|)$ ]]; then
+                print_error "  ⚠ 关键镜像拉取失败，可能导致构建失败"
+            fi
+        fi
+    done <<< "$base_images"
+    
+    # 输出统计信息
+    print_info "📊 预拉取统计:"
+    print_info "  • 新拉取: $pull_count"
+    print_info "  • 已存在: $skip_count"
+    if [[ $fail_count -gt 0 ]]; then
+        print_error "  • 失败: $fail_count"
+        print_error "⚠ 部分镜像拉取失败，构建可能会出现问题"
+    fi
+    
+    return 0
+}
+
 # 构建单个服务镜像
 build_service() {
     # 处理帮助参数
@@ -2998,6 +3280,12 @@ build_service() {
         
         return 0
     fi
+    
+    # ========================================
+    # 预拉取依赖镜像
+    # ========================================
+    print_info "  → 预拉取 Dockerfile 依赖镜像..."
+    prefetch_base_images "$dockerfile_path" "$service"
     
     # 构建镜像
     print_info "  → 正在构建镜像..."
@@ -3096,6 +3384,103 @@ build_frontend() {
     return 1
 }
 
+# 批量预拉取所有服务的依赖镜像
+prefetch_all_base_images() {
+    print_info "=========================================="
+    print_info "🚀 批量预拉取所有服务的依赖镜像"
+    print_info "=========================================="
+    
+    # 收集所有 Dockerfile 中的基础镜像
+    local all_images=()
+    local services_list=($SRC_SERVICES)
+    
+    print_info "📋 扫描所有服务的 Dockerfile..."
+    
+    for service in "${services_list[@]}"; do
+        local service_path=$(get_service_path "$service")
+        if [[ -z "$service_path" ]]; then
+            continue
+        fi
+        
+        local dockerfile_path="$SCRIPT_DIR/$service_path/Dockerfile"
+        if [[ ! -f "$dockerfile_path" ]]; then
+            continue
+        fi
+        
+        # 提取该 Dockerfile 的基础镜像
+        local images
+        images=$(extract_base_images "$dockerfile_path")
+        
+        if [[ -n "$images" ]]; then
+            while IFS= read -r image; do
+                # 跳过内部构建阶段
+                if [[ "$image" =~ ^[a-z_-]+$ ]]; then
+                    continue
+                fi
+                # 添加到数组（去重将在后面处理）
+                all_images+=("$image")
+            done <<< "$images"
+        fi
+    done
+    
+    # 去重
+    local unique_images=($(printf '%s\n' "${all_images[@]}" | sort -u))
+    
+    print_info "📦 发现 ${#unique_images[@]} 个唯一的基础镜像"
+    echo
+    
+    # 统计变量
+    local total=${#unique_images[@]}
+    local pull_count=0
+    local skip_count=0
+    local fail_count=0
+    local current=0
+    
+    # 遍历并拉取
+    for image in "${unique_images[@]}"; do
+        ((current++))
+        print_info "[$current/$total] 检查镜像: $image"
+        
+        # 检查镜像是否已存在
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            print_success "  ✓ 已存在，跳过"
+            ((skip_count++))
+            continue
+        fi
+        
+        # 尝试拉取镜像
+        print_info "  ⬇ 正在拉取..."
+        if docker pull "$image" 2>&1 | grep -E '(Downloaded|Digest:|Status:)'; then
+            print_success "  ✓ 拉取成功"
+            ((pull_count++))
+        else
+            print_error "  ✗ 拉取失败"
+            ((fail_count++))
+        fi
+        
+        echo
+    done
+    
+    # 输出最终统计
+    print_info "=========================================="
+    print_info "📊 预拉取完成统计"
+    print_info "=========================================="
+    print_info "  • 总镜像数: $total"
+    print_info "  • 新拉取: $pull_count"
+    print_info "  • 已存在: $skip_count"
+    
+    if [[ $fail_count -gt 0 ]]; then
+        print_error "  • 失败: $fail_count"
+        print_error "⚠ 警告: 部分镜像拉取失败，构建可能会出现问题"
+        print_info "建议: 检查网络连接或使用镜像加速器"
+    else
+        print_success "✅ 所有依赖镜像已就绪！"
+    fi
+    
+    echo
+    return 0
+}
+
 # 构建所有服务镜像
 build_all_services() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
@@ -3112,9 +3497,63 @@ build_all_services() {
     fi
     echo
     
-    # 同步配置文件（构建前预处理步骤）
+    # ========================================
+    # 步骤 0: 检查当前构建状态（需求32）
+    # ========================================
+    if [[ "$FORCE_REBUILD" == "false" ]]; then
+        print_info "=========================================="
+        print_info "步骤 0/5: 检查当前构建状态"
+        print_info "=========================================="
+        
+        # 显示构建状态
+        show_build_status "$tag" "$registry"
+        
+        # 获取需要构建的服务列表
+        local services_to_build
+        services_to_build=$(get_services_to_build "$tag" "$registry")
+        
+        if [[ -z "$services_to_build" ]]; then
+            print_success "=========================================="
+            print_success "✅ 所有服务镜像都已成功构建"
+            print_success "=========================================="
+            print_info "如需强制重建，请使用 --force 参数"
+            return 0
+        fi
+        
+        # 将字符串转换为数组
+        local services_array=($services_to_build)
+        local need_build_count=${#services_array[@]}
+        
+        print_info "📋 需要构建的服务数量: $need_build_count"
+        print_info "服务列表: $services_to_build"
+        echo
+        
+        # 更新要构建的服务列表
+        BUILD_SERVICES="$services_to_build"
+    else
+        print_info "强制重建模式：将重新构建所有服务"
+        BUILD_SERVICES="$SRC_SERVICES"
+    fi
+    echo
+    
+    # ========================================
+    # 步骤 1: 预拉取所有依赖镜像
+    # ========================================
     print_info "=========================================="
-    print_info "同步配置文件"
+    print_info "步骤 1/5: 预拉取依赖镜像"
+    print_info "=========================================="
+    if prefetch_all_base_images; then
+        print_success "✓ 依赖镜像预拉取完成"
+    else
+        print_warning "依赖镜像预拉取有问题，但构建流程将继续"
+    fi
+    echo
+    
+    # ========================================
+    # 步骤 2: 同步配置文件
+    # ========================================
+    print_info "=========================================="
+    print_info "步骤 2/5: 同步配置文件"
     print_info "=========================================="
     if sync_all_configs; then
         print_success "✓ 配置文件同步完成"
@@ -3123,9 +3562,11 @@ build_all_services() {
     fi
     echo
 
-    # 渲染配置模板（确保所有服务配置最新）
+    # ========================================
+    # 步骤 3: 渲染配置模板
+    # ========================================
     print_info "=========================================="
-    print_info "渲染配置模板"
+    print_info "步骤 3/5: 渲染配置模板"
     print_info "=========================================="
     
     # 渲染 Nginx 配置模板
@@ -3157,29 +3598,27 @@ build_all_services() {
     print_success "✓ 所有模板渲染完成"
     echo
     
-    # 批量下载基础镜像（外网环境才执行，内网/离线跳过以提升成功率）
-    local net_env=${AI_INFRA_NETWORK_ENV:-$(detect_network_environment)}
-    if [[ "$net_env" == "external" ]]; then
-        print_info "预先下载所有基础镜像（检测到外网环境）..."
-        if ! batch_download_base_images; then
-            print_warning "部分基础镜像下载失败，但构建流程将继续"
-        fi
-    else
-        print_info "检测到内网/离线环境，跳过批量预拉取基础镜像步骤"
-    fi
-    echo
+    # ========================================
+    # 步骤 4: 构建服务镜像（智能过滤）
+    # ========================================
+    print_info "=========================================="
+    print_info "步骤 4/5: 构建服务镜像"
+    print_info "=========================================="
     
     local success_count=0
     local total_count=0
     local failed_services=()
     
-    # 获取所有服务（包括原扩展组件）
-    local all_services="$SRC_SERVICES"
+    # 使用智能过滤的服务列表（步骤0中设置的BUILD_SERVICES）
+    local all_services="${BUILD_SERVICES:-$SRC_SERVICES}"
     
     # 计算服务总数
     for service in $all_services; do
         total_count=$((total_count + 1))
     done
+    
+    print_info "准备构建 $total_count 个服务"
+    echo
     
     # 构建所有服务
     for service in $all_services; do
@@ -3191,6 +3630,16 @@ build_all_services() {
         fi
         echo
     done
+    
+    # ========================================
+    # 步骤 5: 验证构建结果（需求32）
+    # ========================================
+    print_info "=========================================="
+    print_info "步骤 5/5: 验证构建结果"
+    print_info "=========================================="
+    
+    # 显示最终构建状态
+    show_build_status "$tag" "$registry"
     
     print_info "=========================================="
     print_success "构建完成: $success_count/$total_count 成功"
@@ -6123,10 +6572,17 @@ show_help() {
     echo
     echo "主要命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
+    echo "  check-status [tag] [registry]   - 检查镜像构建状态（需求32）"
     echo "  build <service> [tag] [registry] - 构建单个服务"
-    echo "  build-all [tag] [registry]      - 构建所有服务"
+    echo "  build-all [tag] [registry]      - 构建所有服务（智能过滤）"
     echo "  build-push <registry> [tag]     - 构建并推送所有服务"
     echo "  push-all <registry> [tag]       - 推送所有服务"
+    echo
+    echo "智能构建特性（需求32）:"
+    echo "  • 自动检测镜像构建状态"
+    echo "  • 只构建缺失或无效的镜像"
+    echo "  • 避免 --no-cache 全量构建浪费时间"
+    echo "  • 使用 --force 参数强制重建所有镜像"
     echo
     echo "CI/CD和生产环境命令 (重点推荐):"
     echo "  ci-build <registry> [tag] [host]     - CI/CD完整构建流程（外网环境）"
@@ -8201,6 +8657,32 @@ main() {
         "list")
             list_services "${2:-$DEFAULT_IMAGE_TAG}" "$3"
             ;;
+        
+        "check-status")
+            # 检查镜像构建状态（需求32）
+            if [[ "${2:-}" == "--help" || "${2:-}" == "-h" ]]; then
+                echo "check-status - 检查所有服务的镜像构建状态"
+                echo
+                echo "用法: $0 check-status [tag] [registry]"
+                echo
+                echo "参数:"
+                echo "  tag         镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+                echo "  registry    目标镜像仓库 (可选)"
+                echo
+                echo "说明:"
+                echo "  检查所有服务的镜像构建状态，识别："
+                echo "  • ✓ OK      - 镜像构建成功且有效"
+                echo "  • ✗ MISSING - 镜像不存在"
+                echo "  • ⚠ INVALID - 镜像存在但无效（大小为0或无标签）"
+                echo
+                echo "示例:"
+                echo "  $0 check-status"
+                echo "  $0 check-status v1.0.0"
+                echo "  $0 check-status v1.0.0 harbor.company.com/ai-infra"
+                return 0
+            fi
+            show_build_status "${2:-$DEFAULT_IMAGE_TAG}" "$3"
+            ;;
             
         "build")
             if [[ -z "$2" ]]; then
@@ -8224,9 +8706,14 @@ main() {
                 echo "  --force     全局开关：强制覆盖生成 .env 等（可放在任意位置）"
                 echo
                 echo "流程:"
+                echo "  0) check-status              - 检查当前构建状态，智能过滤"
                 echo "  1) create-env dev [--force]  - 从 .env.example 渲染生成 .env"
                 echo "  2) sync-config [--force]     - 同步 .env 到模板、校验 docker-compose"
                 echo "  3) build-all                  - 构建所有服务镜像"
+                echo
+                echo "智能构建:"
+                echo "  默认只构建缺失或无效的镜像，避免浪费时间"
+                echo "  使用 --force 参数强制重建所有镜像"
                 echo
                 echo "示例:"
                 echo "  $0 build-all"

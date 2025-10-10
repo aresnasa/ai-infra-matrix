@@ -703,6 +703,8 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		kres := controllers.NewKubernetesResourcesController()
 		// 资源发现与命名空间列表
 		k8s.GET("/clusters/:id/discovery", kres.DiscoverResources)
+		k8s.GET("/clusters/:id/version", kres.GetClusterVersion)              // 新增：获取集群版本
+		k8s.GET("/clusters/:id/enhanced-discovery", kres.EnhancedDiscovery)   // 新增：增强发现（含CRD）
 		k8s.GET("/clusters/:id/namespaces", kres.ListNamespaces)
 		// 命名空间内资源
 		k8s.GET("/clusters/:id/namespaces/:namespace/resources/:resource", kres.ListResources)

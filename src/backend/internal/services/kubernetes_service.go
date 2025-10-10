@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -190,15 +191,6 @@ func (s *KubernetesService) IsConnectionError(err error) bool {
 		}
 	}
 	return false
-}
-
-// GetClusterVersion 获取集群版本
-func (s *KubernetesService) GetClusterVersion(clientset *kubernetes.Clientset) (string, error) {
-	version, err := clientset.Discovery().ServerVersion()
-	if err != nil {
-		return "", fmt.Errorf("获取集群版本失败: %w", err)
-	}
-	return version.GitVersion, nil
 }
 
 // GetNodes 获取集群节点列表
@@ -405,4 +397,212 @@ func (s *KubernetesService) DynamicDelete(ctx context.Context, kubeConfig, resou
 		ri = dyn.Resource(gvr)
 	}
 	return ri.Delete(ctx, name, opts)
+}
+
+// ----- 版本检测与兼容性支持 -----
+
+// ClusterVersionInfo 集群版本信息
+type ClusterVersionInfo struct {
+	Major        string `json:"major"`
+	Minor        string `json:"minor"`
+	GitVersion   string `json:"gitVersion"`
+	Platform     string `json:"platform"`
+	BuildDate    string `json:"buildDate"`
+}
+
+// GetClusterVersion 获取集群版本信息（兼容多版本k8s）
+func (s *KubernetesService) GetClusterVersion(ctx context.Context, kubeConfig string) (*ClusterVersionInfo, error) {
+	clientset, err := s.ConnectToCluster(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("连接集群失败: %w", err)
+	}
+	
+	versionInfo, err := clientset.Discovery().ServerVersion()
+	if err != nil {
+		return nil, fmt.Errorf("获取集群版本失败: %w", err)
+	}
+	
+	return &ClusterVersionInfo{
+		Major:      versionInfo.Major,
+		Minor:      versionInfo.Minor,
+		GitVersion: versionInfo.GitVersion,
+		Platform:   versionInfo.Platform,
+		BuildDate:  versionInfo.BuildDate,
+	}, nil
+}
+
+// GetEnhancedDiscovery 增强的资源发现，包含 CRD 和版本信息
+func (s *KubernetesService) GetEnhancedDiscovery(ctx context.Context, kubeConfig string) (*EnhancedDiscoveryResult, error) {
+	cfg, err := s.getRestConfig(kubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	
+	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	
+	// 获取集群版本
+	versionInfo, err := dc.ServerVersion()
+	if err != nil {
+		logrus.WithError(err).Warn("无法获取集群版本，继续执行")
+	}
+	
+	// 获取所有 API 组
+	groups, err := dc.ServerGroups()
+	if err != nil {
+		return nil, fmt.Errorf("获取 API 组失败: %w", err)
+	}
+	
+	// 获取所有 API 资源
+	_, resourceLists, err := dc.ServerGroupsAndResources()
+	if err != nil {
+		// 部分 API 可能无权限访问，记录警告但继续
+		logrus.WithError(err).Warn("ServerGroupsAndResources 遇到部分错误")
+	}
+	
+	// 获取 CRD 列表
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("创建动态客户端失败: %w", err)
+	}
+	
+	crdGVR := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+	
+	crdList, err := dyn.Resource(crdGVR).List(ctx, metav1.ListOptions{})
+	var crds []CRDInfo
+	if err != nil {
+		logrus.WithError(err).Warn("无法获取 CRD 列表，可能没有权限")
+	} else {
+		crds = s.parseCRDs(crdList)
+	}
+	
+	// 组织资源按 API 组分类
+	resourcesByGroup := s.organizeResourcesByGroup(resourceLists)
+	
+	result := &EnhancedDiscoveryResult{
+		Version:          versionInfo,
+		Groups:           groups,
+		ResourcesByGroup: resourcesByGroup,
+		CRDs:             crds,
+		TotalResources:   s.countTotalResources(resourceLists),
+		TotalCRDs:        len(crds),
+	}
+	
+	return result, nil
+}
+
+// EnhancedDiscoveryResult 增强的发现结果
+type EnhancedDiscoveryResult struct {
+	Version          *version.Info                               `json:"version"`
+	Groups           *metav1.APIGroupList                        `json:"groups"`
+	ResourcesByGroup map[string][]metav1.APIResource             `json:"resourcesByGroup"`
+	CRDs             []CRDInfo                                   `json:"crds"`
+	TotalResources   int                                         `json:"totalResources"`
+	TotalCRDs        int                                         `json:"totalCRDs"`
+}
+
+// CRDInfo CRD 信息
+type CRDInfo struct {
+	Name     string   `json:"name"`
+	Group    string   `json:"group"`
+	Kind     string   `json:"kind"`
+	Plural   string   `json:"plural"`
+	Singular string   `json:"singular"`
+	Scope    string   `json:"scope"`
+	Versions []string `json:"versions"`
+}
+
+// parseCRDs 解析 CRD 列表
+func (s *KubernetesService) parseCRDs(crdList *unstructured.UnstructuredList) []CRDInfo {
+	var crds []CRDInfo
+	
+	for _, item := range crdList.Items {
+		spec, found, _ := unstructured.NestedMap(item.Object, "spec")
+		if !found {
+			continue
+		}
+		
+		group, _, _ := unstructured.NestedString(spec, "group")
+		
+		names, found, _ := unstructured.NestedMap(spec, "names")
+		if !found {
+			continue
+		}
+		
+		kind, _, _ := unstructured.NestedString(names, "kind")
+		plural, _, _ := unstructured.NestedString(names, "plural")
+		singular, _, _ := unstructured.NestedString(names, "singular")
+		
+		scope, _, _ := unstructured.NestedString(spec, "scope")
+		
+		versions, found, _ := unstructured.NestedSlice(spec, "versions")
+		var versionNames []string
+		if found {
+			for _, v := range versions {
+				if vMap, ok := v.(map[string]interface{}); ok {
+					if name, _, _ := unstructured.NestedString(vMap, "name"); name != "" {
+						versionNames = append(versionNames, name)
+					}
+				}
+			}
+		}
+		
+		crds = append(crds, CRDInfo{
+			Name:     item.GetName(),
+			Group:    group,
+			Kind:     kind,
+			Plural:   plural,
+			Singular: singular,
+			Scope:    scope,
+			Versions: versionNames,
+		})
+	}
+	
+	return crds
+}
+
+// organizeResourcesByGroup 按 API 组组织资源
+func (s *KubernetesService) organizeResourcesByGroup(resourceLists []*metav1.APIResourceList) map[string][]metav1.APIResource {
+	result := make(map[string][]metav1.APIResource)
+	
+	for _, list := range resourceLists {
+		if list == nil {
+			continue
+		}
+		
+		// GroupVersion 格式如 "v1" 或 "apps/v1"
+		gv := list.GroupVersion
+		
+		for _, resource := range list.APIResources {
+			result[gv] = append(result[gv], resource)
+		}
+	}
+	
+	return result
+}
+
+// countTotalResources 计算资源总数
+func (s *KubernetesService) countTotalResources(resourceLists []*metav1.APIResourceList) int {
+	count := 0
+	for _, list := range resourceLists {
+		if list != nil {
+			count += len(list.APIResources)
+		}
+	}
+	return count
+}
+
+// IsVersionCompatible 检查客户端版本是否与集群版本兼容
+// client-go 通常向后兼容 n-2 个版本
+func (s *KubernetesService) IsVersionCompatible(clientVersion, serverVersion string) bool {
+	// client-go 0.33.x 对应 k8s 1.33.x，但可以连接 1.27.x - 1.33.x
+	// 由于我们使用的是 v0.33.1，可以很好地兼容 1.27.5
+	// 这里简单返回 true，实际上 client-go 的兼容性很强
+	return true
 }

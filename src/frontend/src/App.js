@@ -63,6 +63,9 @@ const KafkaUIPage = withLazyLoading(React.lazy(() => import('./pages/KafkaUIPage
 const KubernetesManagement = withLazyLoading(React.lazy(() => import('./pages/KubernetesManagement')), {
   loadingText: '正在加载Kubernetes管理...'
 });
+const EnhancedKubernetesManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedKubernetesManagement')), {
+  loadingText: '正在加载增强Kubernetes管理...'
+});
 const AnsibleManagement = withLazyLoading(React.lazy(() => import('./pages/AnsibleManagement')), {
   loadingText: '正在加载Ansible管理...'
 });
@@ -483,6 +486,16 @@ function App() {
                         <TeamProtectedRoute user={user} allowedTeams={['sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <KubernetesManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/kubernetes/resources"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <EnhancedKubernetesManagement />
                           </Suspense>
                         </TeamProtectedRoute>
                       }
