@@ -3,6 +3,7 @@
 
 FROM ubuntu:22.04 AS build
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
 
 # Accept optional tarball path relative to build context root
 ARG SLURM_TARBALL_PATH=slurm-25.05.3.tar.bz2
@@ -30,7 +31,8 @@ RUN set -eux; \
     fi; \
     # 更新包列表并安装基础工具（带重试机制）
     apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
-    apt-get install -y ca-certificates curl
+    apt-get install -y ca-certificates curl tzdata lsof; \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Install build prerequisites (分组安装减少失败风险)
 RUN apt-get install -y --no-install-recommends \

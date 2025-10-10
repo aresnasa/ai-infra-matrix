@@ -37,8 +37,14 @@ RUN set -eux; \
         tar \
         gzip \
         tini \
+        lsof \
+        tzdata \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# 配置时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 升级pip，解决旧版解析器的依赖冲突问题
 RUN python3 -m pip install --no-cache-dir --upgrade "pip==24.2"

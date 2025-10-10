@@ -114,8 +114,8 @@ RUN set -eux; \
     apk update || (sleep 5 && apk update) || (sleep 10 && apk update)
 
 # 更新apk索引并设置时区为上海，添加必要工具
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-keygen
+RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen lsof || \
+    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-keygen lsof
 
 # 安装SLURM客户端工具（如果可用）
 RUN apk add --no-cache slurm || echo "SLURM not available in Alpine, will use demo data"

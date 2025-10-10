@@ -5,6 +5,7 @@ ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
+ENV TZ=Asia/Shanghai
 
 # 使用阿里云源加速下载
 RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list
@@ -22,7 +23,12 @@ RUN apt-get update && apt-get install -y \
     dnsutils \
     iputils-ping \
     net-tools \
+    lsof \
+    tzdata \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 配置时区
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 创建SSH运行目录
 RUN mkdir -p /var/run/sshd /run/sshd

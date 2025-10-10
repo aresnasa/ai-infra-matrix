@@ -4,6 +4,7 @@ FROM python:3.13-alpine
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV TZ=Asia/Shanghai
 
 # 基础环境和构建工具（多镜像源智能回退配置）
 RUN set -eux; \
@@ -48,7 +49,8 @@ RUN set -eux; \
         netcat-openbsd \
         redis \
         git \
-    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+        lsof \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 WORKDIR /srv/jupyterhub
 

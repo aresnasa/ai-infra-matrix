@@ -3048,8 +3048,14 @@ build_service() {
         target_arg="--target backend"
     fi
     
+    # 添加 --no-cache 参数（当启用强制重建时）
+    local cache_arg=""
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        cache_arg="--no-cache"
+    fi
+    
     # 使用各自的src子目录作为构建上下文
-    if docker build -f "$dockerfile_path" $target_arg -t "$target_image" "$build_context"; then
+    if docker build -f "$dockerfile_path" $target_arg $cache_arg -t "$target_image" "$build_context"; then
         print_success "✓ 构建成功: $target_image"
         
         # 如果指定了registry，同时创建本地别名

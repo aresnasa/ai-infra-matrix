@@ -10,6 +10,7 @@ COPY src/shared/debug/ /tmp/debug/ble-alpine-perl
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV TZ=Asia/Shanghai
 
 # 构建参数 - 控制是否启用调试模式
 ARG DEBUG_MODE=false
@@ -32,11 +33,11 @@ RUN set -eux; \
 RUN apk add --no-cache \
     curl \
     bash \
-    tzdata
+    tzdata \
+    lsof
 
 # 设置时区
-RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
-    echo "Asia/Shanghai" > /etc/timezone
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 创建必要的目录结构
 RUN mkdir -p /usr/share/nginx/html/sso \

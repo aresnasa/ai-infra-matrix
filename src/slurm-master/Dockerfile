@@ -73,17 +73,22 @@ RUN set -eux; \
         openssh-client \
         mtr-tiny \
         netcat-openbsd \
+        lsof \
         # utilities \
         vim \
         tree \
         procps \
         gettext-base \
+        tzdata \
         # slurm prerequisites \
         munge \
         libmunge2 \
         postgresql-client \
         default-mysql-client && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# 配置时区
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
             
 # 安装SLURM包前先创建用户，这样安装过程会自动配置权限
 RUN groupadd -r slurm && useradd -r -g slurm -d /var/lib/slurm -s /bin/bash slurm
