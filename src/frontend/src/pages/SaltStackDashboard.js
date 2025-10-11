@@ -35,6 +35,17 @@ const SaltStackDashboard = () => {
   const [execOpId, setExecOpId] = useState('');
   const [execEvents, setExecEvents] = useState([]);
   const sseRef = useRef(null);
+  
+  // 配置管理弹窗
+  const [configVisible, setConfigVisible] = useState(false);
+  const [configForm] = Form.useForm();
+  const [configTemplates] = useState([
+    { id: 'nginx', name: 'Nginx 配置', desc: '安装和配置 Nginx Web 服务器' },
+    { id: 'mysql', name: 'MySQL 配置', desc: '安装和配置 MySQL 数据库' },
+    { id: 'docker', name: 'Docker 配置', desc: '安装和配置 Docker 容器引擎' },
+    { id: 'firewall', name: '防火墙配置', desc: '配置系统防火墙规则' },
+    { id: 'user', name: '用户管理', desc: '添加、删除和管理系统用户' },
+  ]);
 
   const loadStatus = async () => {
     try {
@@ -141,19 +152,25 @@ const SaltStackDashboard = () => {
     es.onmessage = (evt) => {
       try {
         const data = JSON.parse(evt.data);
+        console.log('[SSE事件]', data.type, data);
         setExecEvents((prev) => [...prev, data]);
         
-        // 检查是否执行完成
-        if (data.type === 'complete' || data.type === 'step-done' || data.type === 'error') {
+        // 检查是否执行完成 - 只在收到 complete 或 error 事件时停止
+        if (data.type === 'complete' || data.type === 'error') {
+          console.log('[SSE] 收到完成事件，准备停止');
           // 延迟一点点以确保UI更新
           setTimeout(() => {
+            console.log('[SSE] 设置 execRunning = false');
             setExecRunning(false);
             closeSSE();
           }, 300);
         }
-      } catch {}
+      } catch (err) {
+        console.error('[SSE] 解析消息失败:', err);
+      }
     };
-    es.onerror = () => {
+    es.onerror = (err) => {
+      console.error('[SSE] 连接错误:', err);
       // 自动关闭，避免内存泄漏
       closeSSE();
       setExecRunning(false);
@@ -500,8 +517,8 @@ const SaltStackDashboard = () => {
               <Button 
                 icon={<SettingOutlined />}
                 onClick={() => {
-                  // TODO: 实现配置管理功能
-                  console.log('配置管理功能待实现');
+                  setConfigVisible(true);
+                  configForm.setFieldsValue({ target: '*' });
                 }}
               >
                 配置管理
@@ -554,6 +571,61 @@ const SaltStackDashboard = () => {
                 )}
               </div>
             </Card>
+          </Modal>
+
+          {/* 配置管理弹窗 */}
+          <Modal
+            title="Salt 配置模板管理"
+            open={configVisible}
+            onCancel={() => setConfigVisible(false)}
+            footer={[
+              <Button key="cancel" onClick={() => setConfigVisible(false)}>取消</Button>,
+              <Button 
+                key="apply" 
+                type="primary" 
+                onClick={() => {
+                  configForm.validateFields().then(values => {
+                    message.info(`将应用配置模板: ${values.template} 到目标: ${values.target}`);
+                    // TODO: 调用后端 API 应用配置模板
+                    // saltStackAPI.applyTemplate({ template: values.template, target: values.target });
+                    setConfigVisible(false);
+                  });
+                }}
+              >
+                应用配置
+              </Button>,
+            ]}
+            width={700}
+          >
+            <Form form={configForm} layout="vertical">
+              <Form.Item 
+                name="target" 
+                label="目标节点" 
+                rules={[{ required: true, message: '请输入目标节点' }]}
+              >
+                <Input placeholder="例如: * 或 web* 或 db01" />
+              </Form.Item>
+              <Form.Item 
+                name="template" 
+                label="配置模板" 
+                rules={[{ required: true, message: '请选择配置模板' }]}
+              >
+                <Select placeholder="选择要应用的配置模板">
+                  {configTemplates.map(t => (
+                    <Option key={t.id} value={t.id}>
+                      {t.name} - {t.desc}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Alert
+                message="提示"
+                description="选择配置模板后，将通过 Salt State 在目标节点上应用相应的配置。此功能需要后端 API 支持。"
+                type="info"
+                showIcon
+                style={{ marginTop: 16 }}
+              />
+            </Form>
           </Modal>
         </Space>
       </Content>

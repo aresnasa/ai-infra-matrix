@@ -1589,7 +1589,7 @@ render_template() {
     export JUPYTERHUB_HOST JUPYTERHUB_PORT EXTERNAL_SCHEME EXTERNAL_HOST
     export GITEA_ALIAS_ADMIN_TO GITEA_ADMIN_EMAIL
     
-    # 备用shell方法：只处理基础变量替换，使用envsubst
+    # 备用shell方法：处理 {{VAR}} 格式的模板变量
     if command -v envsubst >/dev/null 2>&1; then
         export ENVIRONMENT AUTH_TYPE GENERATION_TIME
         export JUPYTERHUB_HUB_PORT JUPYTERHUB_BASE_URL JUPYTERHUB_HUB_CONNECT_HOST
@@ -1603,10 +1603,23 @@ render_template() {
         export JUPYTERHUB_AUTO_LOGIN AUTH_REFRESH_AGE ADMIN_USERS
         export AUTH_CONFIG SPAWNER_CONFIG SHARED_STORAGE_CONFIG ADDITIONAL_CONFIG
         
-        echo "$template_content" | envsubst > "$output_file"
+        # 使用Python进行模板替换，避免$变量名冲突（nginx配置中有$变量）
+        local python_renderer="$SCRIPT_DIR/scripts/render_template.py"
+        if [[ ! -f "$python_renderer" ]]; then
+            print_error "Python渲染脚本不存在: $python_renderer"
+            return 1
+        fi
+        
+        python3 "$python_renderer" "$template_file" "$output_file"
     else
-        print_warning "envsubst不可用，使用基础字符串替换"
-        echo "$template_content" > "$output_file"
+        print_warning "使用Python进行模板替换"
+        local python_renderer="$SCRIPT_DIR/scripts/render_template.py"
+        if [[ ! -f "$python_renderer" ]]; then
+            print_error "Python渲染脚本不存在: $python_renderer"
+            return 1
+        fi
+        
+        python3 "$python_renderer" "$template_file" "$output_file"
     fi
     
     print_success "✓ 模板渲染完成: $output_file"

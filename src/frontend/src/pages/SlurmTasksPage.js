@@ -179,7 +179,12 @@ const SlurmTasksPage = () => {
       title: '开始时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (timestamp) => timestamp ? dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss') : '-',
+      render: (timestamp) => {
+        if (!timestamp) return '-';
+        // 如果是 Unix 时间戳（秒），转换为毫秒
+        const ts = timestamp < 10000000000 ? timestamp * 1000 : timestamp;
+        return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
+      },
     },
     {
       title: '持续时间',
@@ -187,8 +192,13 @@ const SlurmTasksPage = () => {
       key: 'duration',
       render: (_, record) => {
         if (record.created_at) {
-          const start = dayjs(record.created_at);
-          const end = record.completed_at ? dayjs(record.completed_at) : dayjs();
+          // 如果是 Unix 时间戳（秒），转换为毫秒
+          const startTs = record.created_at < 10000000000 ? record.created_at * 1000 : record.created_at;
+          const endTs = record.completed_at 
+            ? (record.completed_at < 10000000000 ? record.completed_at * 1000 : record.completed_at)
+            : Date.now();
+          const start = dayjs(startTs);
+          const end = dayjs(endTs);
           const duration = end.diff(start, 'second');
           return formatDuration(duration);
         }
@@ -916,18 +926,33 @@ const SlurmTasksPage = () => {
                   {selectedTask.priority || '默认'}
                 </Descriptions.Item>
                 <Descriptions.Item label="创建时间">
-                  {selectedTask.created_at ? dayjs(selectedTask.created_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                  {selectedTask.created_at ? (() => {
+                    const ts = selectedTask.created_at < 10000000000 ? selectedTask.created_at * 1000 : selectedTask.created_at;
+                    return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
+                  })() : '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="开始时间">
-                  {selectedTask.started_at ? dayjs(selectedTask.started_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                  {selectedTask.started_at ? (() => {
+                    const ts = selectedTask.started_at < 10000000000 ? selectedTask.started_at * 1000 : selectedTask.started_at;
+                    return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
+                  })() : '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="完成时间">
-                  {selectedTask.completed_at ? dayjs(selectedTask.completed_at).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                  {selectedTask.completed_at ? (() => {
+                    const ts = selectedTask.completed_at < 10000000000 ? selectedTask.completed_at * 1000 : selectedTask.completed_at;
+                    return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
+                  })() : '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="执行时长">
-                  {selectedTask.created_at && selectedTask.completed_at ? 
-                    formatDuration(dayjs(selectedTask.completed_at).diff(dayjs(selectedTask.started_at || selectedTask.created_at), 'second')) :
-                    selectedTask.started_at ? formatDuration(dayjs().diff(dayjs(selectedTask.started_at), 'second')) : '-'
+                  {selectedTask.created_at && selectedTask.completed_at ? (() => {
+                    const startTs = (selectedTask.started_at || selectedTask.created_at);
+                    const start = startTs < 10000000000 ? startTs * 1000 : startTs;
+                    const end = selectedTask.completed_at < 10000000000 ? selectedTask.completed_at * 1000 : selectedTask.completed_at;
+                    return formatDuration(dayjs(end).diff(dayjs(start), 'second'));
+                  })() : selectedTask.started_at ? (() => {
+                    const ts = selectedTask.started_at < 10000000000 ? selectedTask.started_at * 1000 : selectedTask.started_at;
+                    return formatDuration(dayjs().diff(dayjs(ts), 'second'));
+                  })() : '-'
                   }
                 </Descriptions.Item>
                 <Descriptions.Item label="集群">{selectedTask.cluster_name || '-'}</Descriptions.Item>

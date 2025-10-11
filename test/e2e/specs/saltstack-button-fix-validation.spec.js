@@ -1,7 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
-// SaltStack 命令执行功能 E2E 测试
-// 测试 SaltStack 页面的命令执行功能，包括执行状态和完成状态的正确显示
+// SaltStack 执行按钮修复验证测试
+// 测试修复后的执行按钮能否正确停止 loading 状态
 
 const { test, expect } = require('@playwright/test');
 
@@ -43,11 +43,74 @@ async function waitForSaltStackPageLoad(page) {
   await expect(page.getByText('SaltStack 配置管理')).toBeVisible({ timeout: 15000 });
 }
 
-test.describe('SaltStack 命令执行功能', () => {
+test.describe('SaltStack 执行按钮修复验证', () => {
   test.beforeEach(async ({ page }) => {
     // 每个测试前先登录
     await loginIfNeeded(page);
   });
+
+  test('【修复验证】执行按钮应该在命令完成后正确停止 loading', async ({ page }) => {
+    await page.goto(BASE + '/saltstack');
+    await waitForSaltStackPageLoad(page);
+    
+    // 监听控制台日志以捕获 SSE 事件
+    const sseEvents = [];
+    page.on('console', msg => {
+      const text = msg.text();
+      if (text.includes('[SSE事件]')) {
+        const match = text.match(/\[SSE事件\]\s+(\w+)/);
+        if (match) {
+          sseEvents.push(match[1]);
+          console.log('📨 收到 SSE 事件:', match[1]);
+        }
+      }
+      if (text.includes('[SSE]')) {
+        console.log('🔍', text);
+      }
+    });
+    
+    // 打开执行命令对话框
+    await page.getByRole('button', { name: /执行命令/ }).click();
+    
+    // 等待对话框加载
+    await expect(page.getByText('执行自定义命令')).toBeVisible();
+    
+    // 清空默认代码并输入测试命令
+    const codeTextarea = page.getByLabel('代码');
+    await codeTextarea.clear();
+    await codeTextarea.fill('hostname');
+    
+    // 确保目标节点为 * (所有节点)
+    const targetInput = page.getByLabel('目标节点');
+    await targetInput.clear();
+    await targetInput.fill('*');
+    
+    // 点击执行按钮
+    const executeButton = page.getByRole('button', { name: /执 行/ });
+    await executeButton.click();
+    
+    console.log('⏳ 开始执行，等待按钮进入 loading 状态...');
+    
+    // 验证执行按钮显示 loading 状态
+    await expect(executeButton).toBeDisabled({ timeout: 2000 });
+    console.log('✅ 按钮已进入 loading 状态（禁用）');
+    
+    // 等待执行完成（按钮恢复可用）- 这是修复的关键测试点
+    console.log('⏳ 等待命令执行完成，按钮应该恢复可用...');
+    await expect(executeButton).toBeEnabled({ timeout: 35000 });
+    console.log('✅ 按钮已恢复可用状态 - 修复验证成功！');
+    
+    // 验证看到完成消息
+    const completedVisible = await page.locator('text=/执行完成|complete/').isVisible();
+    expect(completedVisible).toBeTruthy();
+    console.log('✅ 看到执行完成消息');
+    
+    // 验证 SSE 事件流
+    console.log('📊 收到的 SSE 事件:', sseEvents);
+    expect(sseEvents).toContain('complete');
+    console.log('✅ SSE 事件流包含 complete 事件');
+  });
+});
 
   test('应该能打开 SaltStack 页面', async ({ page }) => {
     // 访问 SaltStack 页面
@@ -272,71 +335,5 @@ test.describe('SaltStack 页面状态显示', () => {
     
     // 然后恢复
     await expect(refreshButton).toBeEnabled({ timeout: 10000 });
-  });
-
-  test('【修复验证】执行按钮应该在命令完成后正确停止 loading', async ({ page }) => {
-    await page.goto(BASE + '/saltstack');
-    await waitForSaltStackPageLoad(page);
-    
-    // 监听控制台日志以捕获 SSE 事件
-    const sseEvents = [];
-    page.on('console', msg => {
-      const text = msg.text();
-      if (text.includes('[SSE事件]')) {
-        const match = text.match(/\[SSE事件\]\s+(\w+)/);
-        if (match) {
-          sseEvents.push(match[1]);
-          console.log('📨 收到 SSE 事件:', match[1]);
-        }
-      }
-      if (text.includes('[SSE]')) {
-        console.log('🔍', text);
-      }
-    });
-    
-    // 打开执行命令对话框
-    await page.getByRole('button', { name: /执行命令/ }).click();
-    
-    // 等待对话框加载
-    await expect(page.getByText('执行自定义命令')).toBeVisible();
-    
-    // 清空默认代码并输入测试命令
-    const codeTextarea = page.getByLabel('代码');
-    await codeTextarea.clear();
-    await codeTextarea.fill('hostname');
-    
-    // 确保目标节点为 * (所有节点)
-    const targetInput = page.getByLabel('目标节点');
-    await targetInput.clear();
-    await targetInput.fill('*');
-    
-    // 点击执行按钮
-    const executeButton = page.getByRole('button', { name: /执 行/ });
-    await executeButton.click();
-    
-    console.log('⏳ 开始执行，等待按钮进入 loading 状态...');
-    
-    // 验证执行按钮显示 loading 状态
-    await expect(executeButton).toBeDisabled({ timeout: 2000 });
-    console.log('✅ 按钮已进入 loading 状态（禁用）');
-    
-    // 等待执行完成（按钮恢复可用）- 这是修复的关键测试点
-    console.log('⏳ 等待命令执行完成，按钮应该恢复可用...');
-    await expect(executeButton).toBeEnabled({ timeout: 35000 });
-    console.log('✅ 按钮已恢复可用状态 - 修复验证成功！');
-    
-    // 验证看到完成消息
-    const completedVisible = await page.locator('text=/执行完成|complete/').isVisible();
-    expect(completedVisible).toBeTruthy();
-    console.log('✅ 看到执行完成消息');
-    
-    // 验证 SSE 事件流
-    console.log('📊 收到的 SSE 事件:', sseEvents);
-    if (sseEvents.length > 0) {
-      expect(sseEvents).toContain('complete');
-      console.log('✅ SSE 事件流包含 complete 事件');
-    } else {
-      console.log('⚠️  未捕获到 SSE 事件（前端可能未构建最新代码）');
-    }
   });
 });
