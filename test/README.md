@@ -32,6 +32,11 @@ python run_tests.py --test health
 python run_tests.py --test all -v
 ```
 
+#### 基础测试
+```bash
+python test_basic.py
+```
+
 ### 自定义URL
 ```bash
 python run_tests.py --url http://your-server:8080 --test sso
@@ -39,25 +44,31 @@ python run_tests.py --url http://your-server:8080 --test sso
 
 ## 测试模块
 
-### 1. 统一测试框架 (`unified_test.py`)
+### 1. 基础测试 (`test_basic.py`)
+- 简单的单元测试示例
+- 验证测试框架工作正常
+- 配置文件和报告器测试
+- 无需外部依赖即可运行
+
+### 2. 统一测试框架 (`unified_test.py`)
 - 完整的测试框架
 - 支持多种测试类型
 - 详细的日志输出
 
-### 2. 快速测试 (`quick_test.py`) 
+### 3. 快速测试 (`quick_test.py`) 
 - 最简化的SSO验证
 - 适合快速检查
 
-### 3. SSO专项测试 (`sso_tests.py`)
+### 4. SSO专项测试 (`sso_tests.py`)
 - 专门的SSO功能测试
 - 包含所有SSO相关场景
 
-### 4. 工具模块 (`utils.py`)
+### 5. 工具模块 (`utils.py`)
 - 测试会话管理
 - 验证器
 - 报告器
 
-### 5. 配置文件 (`config.py`)
+### 6. 配置文件 (`config.py`)
 - 测试配置
 - 端点定义
 - 测试场景

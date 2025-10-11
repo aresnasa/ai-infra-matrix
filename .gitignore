@@ -31,3 +31,8 @@ test-screenshots/
 pkgs/
 .build-cache/
 node_modules/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
