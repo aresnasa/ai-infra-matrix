@@ -31,4 +31,7 @@ test-screenshots/
 pkgs/
 .build-cache/
 node_modules/
-.playwright-mcp/
+.playwright-mcp/test/e2e/*.png
+test/e2e/*.png
+.playwright-mcp/test-results/*.png
+*.png
