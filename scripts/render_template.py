@@ -28,14 +28,18 @@ def render_template(template_file, output_file, env_vars=None):
         print(f"错误: 无法读取模板文件 {template_file}: {e}", file=sys.stderr)
         return False
     
-    # 替换 {{VAR}} 格式的变量
+    # 替换 {{VAR}} 和 ${VAR} 格式的变量
     def replace_var(match):
         var_name = match.group(1)
-        value = env_vars.get(var_name, f"{{{{{var_name}}}}}")  # 如果未找到，保留原样
+        value = env_vars.get(var_name, match.group(0))  # 如果未找到，保留原样
         return value
     
-    # 使用正则表达式替换所有 {{VAR}}
+    # 使用正则表达式替换所有 {{VAR}} 和 ${VAR}
+    # 注意：要避免替换 Nginx 变量（如 $http_host, $remote_addr 等）
+    # Nginx 变量通常是 $lowercase_with_underscores 格式
+    # 环境变量是 ${UPPERCASE_WITH_UNDERSCORES} 格式
     content = re.sub(r'\{\{([A-Z_][A-Z0-9_]*)\}\}', replace_var, content)
+    content = re.sub(r'\$\{([A-Z_][A-Z0-9_]*)\}', replace_var, content)
     
     # 写入输出文件
     try:

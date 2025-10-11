@@ -1494,21 +1494,21 @@ load_environment_variables() {
     # 从 docker-compose.yml 提取默认值
     if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
         # 提取环境变量默认值
-        BACKEND_HOST="${ENV_BACKEND_HOST:-backend}"
-        BACKEND_PORT="${ENV_BACKEND_PORT:-8082}"
-        FRONTEND_HOST="${ENV_FRONTEND_HOST:-frontend}"
-        FRONTEND_PORT="${ENV_FRONTEND_PORT:-80}"
-        JUPYTERHUB_HOST="${ENV_JUPYTERHUB_HOST:-jupyterhub}"
-        JUPYTERHUB_PORT="${ENV_JUPYTERHUB_PORT:-8000}"
-        EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
-        EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
-        EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
-        GITEA_ALIAS_ADMIN_TO="${ENV_GITEA_ALIAS_ADMIN_TO:-admin}"
-        GITEA_ADMIN_EMAIL="${ENV_GITEA_ADMIN_EMAIL:-admin@example.com}"
+        export BACKEND_HOST="${ENV_BACKEND_HOST:-backend}"
+        export BACKEND_PORT="${ENV_BACKEND_PORT:-8082}"
+        export FRONTEND_HOST="${ENV_FRONTEND_HOST:-frontend}"
+        export FRONTEND_PORT="${ENV_FRONTEND_PORT:-80}"
+        export JUPYTERHUB_HOST="${ENV_JUPYTERHUB_HOST:-jupyterhub}"
+        export JUPYTERHUB_PORT="${ENV_JUPYTERHUB_PORT:-8000}"
+        export EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
+        export EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
+        export EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
+        export GITEA_ALIAS_ADMIN_TO="${ENV_GITEA_ALIAS_ADMIN_TO:-admin}"
+        export GITEA_ADMIN_EMAIL="${ENV_GITEA_ADMIN_EMAIL:-admin@example.com}"
     fi
 }
 
-# 渲染模板文件
+# 渲染模板文件（纯 Bash 实现，兼容 macOS 和 Linux）
 render_template() {
     local template_file="$1"
     local output_file="$2"
@@ -1525,104 +1525,101 @@ render_template() {
     output_dir=$(dirname "$output_file")
     mkdir -p "$output_dir"
     
-    # 使用Python渲染器来处理模板变量替换，避免shell sed的特殊字符问题
-    if [[ -f "$SCRIPT_DIR/scripts/template_renderer.py" ]]; then
-        python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_file" "$output_file"
-        if [[ $? -eq 0 ]]; then
-            print_success "✓ 模板渲染完成: $output_file"
-            return 0
-        else
-            print_warning "Python模板渲染失败，尝试shell方法..."
-        fi
-    fi
-    
-    # 备用方案：使用shell进行模板变量替换
+    # 读取模板内容
     local template_content
     template_content=$(<"$template_file")
     
-    # 设置所有模板变量的默认值
-    local BACKEND_HOST="${BACKEND_HOST:-backend}"
-    local BACKEND_PORT="${BACKEND_PORT:-8082}"
-    local FRONTEND_HOST="${FRONTEND_HOST:-frontend}"
-    local FRONTEND_PORT="${FRONTEND_PORT:-80}"
-    local JUPYTERHUB_HOST="${JUPYTERHUB_HOST:-jupyterhub}"
-    local JUPYTERHUB_PORT="${JUPYTERHUB_PORT:-8000}"
-    local EXTERNAL_SCHEME="${EXTERNAL_SCHEME:-http}"
-    local EXTERNAL_HOST="${EXTERNAL_HOST:-localhost}"
-    local GITEA_ALIAS_ADMIN_TO="${GITEA_ALIAS_ADMIN_TO:-admin@example.com}"
-    local GITEA_ADMIN_EMAIL="${GITEA_ADMIN_EMAIL:-admin@example.com}"
+    # 使用纯 Bash 进行变量替换
+    # 支持 ${VAR} 和 {{VAR}} 格式，但保留 Nginx 变量（小写的 $var）
+    local result="$template_content"
     
-    # JupyterHub特定变量
-    local ENVIRONMENT="${ENVIRONMENT:-development}"
-    local AUTH_TYPE="${AUTH_TYPE:-local}"
-    local GENERATION_TIME="$(date)"
-    local JUPYTERHUB_HUB_PORT="${JUPYTERHUB_HUB_PORT:-8081}"
-    local JUPYTERHUB_BASE_URL="${JUPYTERHUB_BASE_URL:-/jupyter/}"
-    local JUPYTERHUB_HUB_CONNECT_HOST="${JUPYTERHUB_HUB_CONNECT_HOST:-jupyterhub}"
-    local JUPYTERHUB_PUBLIC_URL="${JUPYTERHUB_PUBLIC_URL:-http://localhost:8080/jupyter/}"
-    local CONFIGPROXY_AUTH_TOKEN="${CONFIGPROXY_AUTH_TOKEN:-ai-infra-proxy-token-dev}"
-    local JUPYTERHUB_DB_URL="${JUPYTERHUB_DB_URL:-sqlite:///jupyterhub.sqlite}"
-    local JUPYTERHUB_LOG_LEVEL="${JUPYTERHUB_LOG_LEVEL:-INFO}"
-    local SESSION_TIMEOUT_DAYS="${SESSION_TIMEOUT_DAYS:-7}"
-    local SINGLEUSER_IMAGE="${SINGLEUSER_IMAGE:-ai-infra-singleuser:latest}"
-    local DOCKER_NETWORK="${DOCKER_NETWORK:-ai-infra-matrix_default}"
-    local JUPYTERHUB_MEM_LIMIT="${JUPYTERHUB_MEM_LIMIT:-2G}"
-    local JUPYTERHUB_CPU_LIMIT="${JUPYTERHUB_CPU_LIMIT:-1.0}"
-    local JUPYTERHUB_MEM_GUARANTEE="${JUPYTERHUB_MEM_GUARANTEE:-1G}"
-    local JUPYTERHUB_CPU_GUARANTEE="${JUPYTERHUB_CPU_GUARANTEE:-0.5}"
-    local USER_STORAGE_CAPACITY="${USER_STORAGE_CAPACITY:-10Gi}"
-    local JUPYTERHUB_STORAGE_CLASS="${JUPYTERHUB_STORAGE_CLASS:-default}"
-    local SHARED_STORAGE_PATH="${SHARED_STORAGE_PATH:-/srv/shared-notebooks}"
-    local AI_INFRA_BACKEND_URL="${AI_INFRA_BACKEND_URL:-http://backend:8082}"
-    local KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-ai-infra-users}"
-    local KUBERNETES_SERVICE_ACCOUNT="${KUBERNETES_SERVICE_ACCOUNT:-ai-infra-matrix-jupyterhub}"
-    local JUPYTERHUB_START_TIMEOUT="${JUPYTERHUB_START_TIMEOUT:-300}"
-    local JUPYTERHUB_HTTP_TIMEOUT="${JUPYTERHUB_HTTP_TIMEOUT:-30}"
-    local JWT_SECRET="${JWT_SECRET:-}"
-    local JUPYTERHUB_AUTO_LOGIN="${JUPYTERHUB_AUTO_LOGIN:-False}"
-    local AUTH_REFRESH_AGE="${AUTH_REFRESH_AGE:-3600}"
-    local ADMIN_USERS="${ADMIN_USERS:-'admin'}"
+    # 定义需要替换的变量列表（大写变量名）
+    local vars_to_replace=(
+        "EXTERNAL_HOST"
+        "EXTERNAL_PORT"
+        "EXTERNAL_SCHEME"
+        "BACKEND_HOST"
+        "BACKEND_PORT"
+        "FRONTEND_HOST"
+        "FRONTEND_PORT"
+        "JUPYTERHUB_HOST"
+        "JUPYTERHUB_PORT"
+        "GITEA_ALIAS_ADMIN_TO"
+        "GITEA_ADMIN_EMAIL"
+        "ENVIRONMENT"
+        "AUTH_TYPE"
+        "GENERATION_TIME"
+        "JUPYTERHUB_HUB_PORT"
+        "JUPYTERHUB_BASE_URL"
+        "JUPYTERHUB_HUB_CONNECT_HOST"
+        "JUPYTERHUB_PUBLIC_URL"
+        "CONFIGPROXY_AUTH_TOKEN"
+        "JUPYTERHUB_DB_URL"
+        "JUPYTERHUB_LOG_LEVEL"
+        "SESSION_TIMEOUT_DAYS"
+        "SINGLEUSER_IMAGE"
+        "DOCKER_NETWORK"
+        "JUPYTERHUB_MEM_LIMIT"
+        "JUPYTERHUB_CPU_LIMIT"
+        "JUPYTERHUB_MEM_GUARANTEE"
+        "JUPYTERHUB_CPU_GUARANTEE"
+        "USER_STORAGE_CAPACITY"
+        "JUPYTERHUB_STORAGE_CLASS"
+        "SHARED_STORAGE_PATH"
+        "AI_INFRA_BACKEND_URL"
+        "KUBERNETES_NAMESPACE"
+        "KUBERNETES_SERVICE_ACCOUNT"
+        "JUPYTERHUB_START_TIMEOUT"
+        "JUPYTERHUB_HTTP_TIMEOUT"
+        "JWT_SECRET"
+        "JUPYTERHUB_AUTO_LOGIN"
+        "AUTH_REFRESH_AGE"
+        "ADMIN_USERS"
+        "AUTH_CONFIG"
+        "SPAWNER_CONFIG"
+        "SHARED_STORAGE_CONFIG"
+        "ADDITIONAL_CONFIG"
+    )
     
-    
-    # 导出所有变量供Python渲染器和envsubst使用
-    export BACKEND_HOST BACKEND_PORT FRONTEND_HOST FRONTEND_PORT
-    export JUPYTERHUB_HOST JUPYTERHUB_PORT EXTERNAL_SCHEME EXTERNAL_HOST
-    export GITEA_ALIAS_ADMIN_TO GITEA_ADMIN_EMAIL
-    
-    # 备用shell方法：处理 {{VAR}} 格式的模板变量
-    if command -v envsubst >/dev/null 2>&1; then
-        export ENVIRONMENT AUTH_TYPE GENERATION_TIME
-        export JUPYTERHUB_HUB_PORT JUPYTERHUB_BASE_URL JUPYTERHUB_HUB_CONNECT_HOST
-        export JUPYTERHUB_PUBLIC_URL CONFIGPROXY_AUTH_TOKEN JUPYTERHUB_DB_URL
-        export JUPYTERHUB_LOG_LEVEL SESSION_TIMEOUT_DAYS SINGLEUSER_IMAGE
-        export DOCKER_NETWORK JUPYTERHUB_MEM_LIMIT JUPYTERHUB_CPU_LIMIT
-        export JUPYTERHUB_MEM_GUARANTEE JUPYTERHUB_CPU_GUARANTEE
-        export USER_STORAGE_CAPACITY JUPYTERHUB_STORAGE_CLASS SHARED_STORAGE_PATH
-        export AI_INFRA_BACKEND_URL KUBERNETES_NAMESPACE KUBERNETES_SERVICE_ACCOUNT
-        export JUPYTERHUB_START_TIMEOUT JUPYTERHUB_HTTP_TIMEOUT JWT_SECRET
-        export JUPYTERHUB_AUTO_LOGIN AUTH_REFRESH_AGE ADMIN_USERS
-        export AUTH_CONFIG SPAWNER_CONFIG SHARED_STORAGE_CONFIG ADDITIONAL_CONFIG
+    # 对每个变量进行替换
+    for var_name in "${vars_to_replace[@]}"; do
+        # 获取变量值
+        local var_value="${!var_name:-}"
         
-        # 使用Python进行模板替换，避免$变量名冲突（nginx配置中有$变量）
-        local python_renderer="$SCRIPT_DIR/scripts/render_template.py"
-        if [[ ! -f "$python_renderer" ]]; then
-            print_error "Python渲染脚本不存在: $python_renderer"
-            return 1
+        # 如果变量为空，跳过替换（保留模板中的占位符）
+        if [[ -z "$var_value" ]]; then
+            continue
         fi
         
-        python3 "$python_renderer" "$template_file" "$output_file"
+        # 转义特殊字符以便在 sed 中使用
+        # macOS 和 Linux 的 sed 都支持这种方式
+        local escaped_value
+        escaped_value=$(printf '%s\n' "$var_value" | sed 's/[&/\]/\\&/g')
+        
+        # 替换 ${VAR} 格式（使用兼容的 sed 语法）
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS (BSD sed)
+            result=$(echo "$result" | sed "s/\${${var_name}}/${escaped_value}/g")
+            # 替换 {{VAR}} 格式
+            result=$(echo "$result" | sed "s/{{${var_name}}}/${escaped_value}/g")
+        else
+            # Linux (GNU sed)
+            result=$(echo "$result" | sed "s/\${${var_name}}/${escaped_value}/g")
+            # 替换 {{VAR}} 格式
+            result=$(echo "$result" | sed "s/{{${var_name}}}/${escaped_value}/g")
+        fi
+    done
+    
+    # 写入输出文件
+    echo "$result" > "$output_file"
+    
+    if [[ $? -eq 0 ]]; then
+        print_success "✓ 模板渲染完成: $output_file"
+        return 0
     else
-        print_warning "使用Python进行模板替换"
-        local python_renderer="$SCRIPT_DIR/scripts/render_template.py"
-        if [[ ! -f "$python_renderer" ]]; then
-            print_error "Python渲染脚本不存在: $python_renderer"
-            return 1
-        fi
-        
-        python3 "$python_renderer" "$template_file" "$output_file"
+        print_error "模板渲染失败: $output_file"
+        return 1
     fi
-    
-    print_success "✓ 模板渲染完成: $output_file"
 }
 
 # 渲染所有nginx模板
@@ -1685,7 +1682,7 @@ render_jupyterhub_templates() {
         if [[ -f "$template_dir/auth_backend.py.tpl" ]]; then
             # 先渲染认证模板到临时文件，再读取内容
             local temp_auth_file="$output_dir/.temp_auth_config.py"
-            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/auth_backend.py.tpl" "$temp_auth_file"
+            render_template "$template_dir/auth_backend.py.tpl" "$temp_auth_file"
             if [[ -f "$temp_auth_file" ]]; then
                 auth_config=$(<"$temp_auth_file")
                 rm -f "$temp_auth_file"
@@ -1695,7 +1692,7 @@ render_jupyterhub_templates() {
         if [[ -f "$template_dir/auth_local.py.tpl" ]]; then
             # 先渲染认证模板到临时文件，再读取内容
             local temp_auth_file="$output_dir/.temp_auth_config.py"
-            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/auth_local.py.tpl" "$temp_auth_file"
+            render_template "$template_dir/auth_local.py.tpl" "$temp_auth_file"
             if [[ -f "$temp_auth_file" ]]; then
                 auth_config=$(<"$temp_auth_file")
                 rm -f "$temp_auth_file"
@@ -1708,7 +1705,7 @@ render_jupyterhub_templates() {
         if [[ -f "$template_dir/spawner_kubernetes.py.tpl" ]]; then
             # 先渲染Spawner模板到临时文件，再读取内容
             local temp_spawner_file="$output_dir/.temp_spawner_config.py"
-            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/spawner_kubernetes.py.tpl" "$temp_spawner_file"
+            render_template "$template_dir/spawner_kubernetes.py.tpl" "$temp_spawner_file"
             if [[ -f "$temp_spawner_file" ]]; then
                 spawner_config=$(<"$temp_spawner_file")
                 rm -f "$temp_spawner_file"
@@ -1717,7 +1714,7 @@ render_jupyterhub_templates() {
             # 处理共享存储配置
             if [[ -f "$template_dir/shared_storage_k8s.py.tpl" ]]; then
                 local temp_storage_file="$output_dir/.temp_storage_config.py"
-                python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/shared_storage_k8s.py.tpl" "$temp_storage_file"
+                render_template "$template_dir/shared_storage_k8s.py.tpl" "$temp_storage_file"
                 if [[ -f "$temp_storage_file" ]]; then
                     shared_storage_config=$(<"$temp_storage_file")
                     rm -f "$temp_storage_file"
@@ -1728,7 +1725,7 @@ render_jupyterhub_templates() {
         if [[ -f "$template_dir/spawner_docker.py.tpl" ]]; then
             # 先渲染Spawner模板到临时文件，再读取内容
             local temp_spawner_file="$output_dir/.temp_spawner_config.py"
-            python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/spawner_docker.py.tpl" "$temp_spawner_file"
+            render_template "$template_dir/spawner_docker.py.tpl" "$temp_spawner_file"
             if [[ -f "$temp_spawner_file" ]]; then
                 spawner_config=$(<"$temp_spawner_file")
                 rm -f "$temp_spawner_file"
@@ -1737,7 +1734,7 @@ render_jupyterhub_templates() {
     fi
     
     
-    # 设置模板变量环境变量供Python渲染器使用
+    # 设置模板变量环境变量
     export AUTH_CONFIG="$auth_config"
     export SPAWNER_CONFIG="$spawner_config"
     export SHARED_STORAGE_CONFIG="$shared_storage_config"
@@ -1745,12 +1742,12 @@ render_jupyterhub_templates() {
     
     # 渲染主配置文件
     if [[ -f "$template_dir/jupyterhub_config.py.tpl" ]]; then
-        python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_generated.py"
+        render_template "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_generated.py"
     fi
     
     # 生成不同环境的配置文件
-    ENVIRONMENT="development" AUTH_TYPE="local" python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_development_generated.py"
-    ENVIRONMENT="production" AUTH_TYPE="backend" USE_CUSTOM_AUTH="true" JUPYTERHUB_SPAWNER="kubernetes" python3 "$SCRIPT_DIR/scripts/template_renderer.py" "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_production_generated.py"
+    ENVIRONMENT="development" AUTH_TYPE="local" render_template "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_development_generated.py"
+    ENVIRONMENT="production" AUTH_TYPE="backend" USE_CUSTOM_AUTH="true" JUPYTERHUB_SPAWNER="kubernetes" render_template "$template_dir/jupyterhub_config.py.tpl" "$output_dir/jupyterhub_config_production_generated.py"
     
     print_success "✓ JupyterHub 模板渲染完成"
     echo
@@ -3601,6 +3598,7 @@ tag_image_smart() {
     local image="$1"
     local network_env="${2:-auto}"
     local harbor_registry="${3:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
+    local auto_pull="${4:-true}"  # 是否自动拉取不存在的镜像（默认启用）
     
     if [[ -z "$image" ]]; then
         print_error "tag_image_smart: 镜像名称不能为空"
@@ -3637,75 +3635,126 @@ tag_image_smart() {
         short_name=$(echo "$base_image" | sed -E 's|^[^/]+/||')
     fi
     
+    # ========================================
+    # 步骤 1: 检查本地是否已有镜像
+    # ========================================
+    local localhost_short="localhost/$short_name"
+    local harbor_image="${harbor_registry}/${base_image}"
+    
+    local has_any_local=false
+    local source_image=""
+    
+    # 按优先级检查本地镜像（任意一个存在即可）
+    for candidate in "$base_image" "$short_name" "$localhost_short"; do
+        if docker image inspect "$candidate" >/dev/null 2>&1; then
+            has_any_local=true
+            source_image="$candidate"
+            print_info "  ✓ 本地已有镜像: $candidate"
+            break
+        fi
+    done
+    
+    # ========================================
+    # 步骤 2: 如果本地不存在，尝试拉取
+    # ========================================
+    if ! $has_any_local && [[ "$auto_pull" == "true" ]]; then
+        print_info "  ⬇ 本地未找到镜像，尝试拉取: $base_image"
+        
+        local pull_success=false
+        case "$network_env" in
+            "internal")
+                # 内网：优先从 Harbor 拉取，失败则尝试公共源
+                if docker pull "$harbor_image" 2>/dev/null; then
+                    print_success "  ✓ 从 Harbor 拉取成功: $harbor_image"
+                    source_image="$harbor_image"
+                    pull_success=true
+                elif docker pull "$base_image" 2>/dev/null; then
+                    print_success "  ✓ 从公共仓库拉取成功: $base_image"
+                    source_image="$base_image"
+                    pull_success=true
+                else
+                    print_error "  ✗ 拉取失败: $harbor_image 和 $base_image"
+                fi
+                ;;
+            "external")
+                # 公网：直接从公共仓库拉取
+                if docker pull "$base_image" 2>/dev/null; then
+                    print_success "  ✓ 拉取成功: $base_image"
+                    source_image="$base_image"
+                    pull_success=true
+                else
+                    print_error "  ✗ 拉取失败: $base_image"
+                fi
+                ;;
+        esac
+        
+        if ! $pull_success; then
+            print_warning "  ⚠️  镜像拉取失败，跳过 tag 操作"
+            return 1
+        fi
+    fi
+    
+    # 如果仍然没有源镜像，则报错
+    if [[ -z "$source_image" ]]; then
+        print_warning "  ✗ 镜像不存在且拉取失败: $base_image"
+        print_info "    💡 请手动拉取镜像:"
+        if [[ "$network_env" == "internal" ]]; then
+            print_info "       docker pull $harbor_image  # 或"
+        fi
+        print_info "       docker pull $base_image"
+        return 1
+    fi
+    
+    # ========================================
+    # 步骤 3: 创建双向 tag（根据网络环境）
+    # ========================================
     # 根据网络环境决定策略
     case "$network_env" in
         "external")
-            # 公网环境：确保所有需要的别名都存在
-            # 对于 osixia/openldap:stable，需要创建：
-            #   - osixia/openldap:stable（完整命名空间）
-            #   - openldap:stable（短名称）
-            #   - localhost/openldap:stable（localhost + 短名称）
+            # 公网环境：创建标准的双向别名 + Harbor tag（如果指定）
+            print_info "  🌐 公网环境：创建 tag 别名"
             
-            print_info "  🌐 公网环境：处理镜像 $base_image"
-            
-            local localhost_short="localhost/$short_name"
             local has_base=false
             local has_short=false
             local has_localhost=false
-            local source_image=""
+            local has_harbor=false
             
-            # 检查完整名称镜像（base_image，可能包含命名空间）
-            if docker image inspect "$base_image" >/dev/null 2>&1; then
-                has_base=true
-                source_image="$base_image"
-                print_info "    ✓ 完整镜像存在: $base_image"
-            fi
-            
-            # 检查短名称镜像（如果与 base_image 不同）
-            if [[ "$short_name" != "$base_image" ]]; then
-                if docker image inspect "$short_name" >/dev/null 2>&1; then
-                    has_short=true
-                    if [[ -z "$source_image" ]]; then
-                        source_image="$short_name"
-                    fi
-                    print_info "    ✓ 短名称镜像存在: $short_name"
-                fi
-            else
-                # base_image 就是短名称
-                has_short=$has_base
-            fi
-            
-            # 检查 localhost/ 版本
-            if docker image inspect "$localhost_short" >/dev/null 2>&1; then
-                has_localhost=true
-                if [[ -z "$source_image" ]]; then
-                    source_image="$localhost_short"
-                fi
-                print_info "    ✓ localhost 镜像存在: $localhost_short"
-            fi
-            
-            # 确保至少有一个源镜像
-            if [[ -z "$source_image" ]]; then
-                print_warning "    ✗ 镜像不存在: $base_image / $short_name / $localhost_short"
-                return 1
-            fi
+            # 检查哪些 tag 已存在
+            docker image inspect "$base_image" >/dev/null 2>&1 && has_base=true
+            docker image inspect "$short_name" >/dev/null 2>&1 && has_short=true
+            docker image inspect "$localhost_short" >/dev/null 2>&1 && has_localhost=true
+            docker image inspect "$harbor_image" >/dev/null 2>&1 && has_harbor=true
             
             # 从源镜像创建所有需要的别名
+            # 1. 标准名称 (base_image)
             if ! $has_base && [[ "$base_image" != "$short_name" ]]; then
                 if docker tag "$source_image" "$base_image" 2>/dev/null; then
                     print_success "    ✓ 已创建别名: $source_image → $base_image"
                 fi
             fi
             
+            # 2. 短名称 (short_name)
             if ! $has_short; then
                 if docker tag "$source_image" "$short_name" 2>/dev/null; then
                     print_success "    ✓ 已创建别名: $source_image → $short_name"
                 fi
             fi
             
+            # 3. localhost 别名 (localhost/short_name)
             if ! $has_localhost; then
                 if docker tag "$source_image" "$localhost_short" 2>/dev/null; then
                     print_success "    ✓ 已创建别名: $source_image → $localhost_short"
+                fi
+            fi
+            
+            # 4. Harbor 完整路径（如果用户明确指定了 harbor_registry）
+            # 这样可以方便后续 docker push 到 Harbor
+            if [[ -n "$harbor_registry" ]] && [[ "$harbor_registry" != "${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}" ]]; then
+                # 用户明确指定了非默认的 Harbor 地址
+                if ! $has_harbor; then
+                    if docker tag "$source_image" "$harbor_image" 2>/dev/null; then
+                        print_success "    ✓ 已创建 Harbor 别名: $source_image → $harbor_image"
+                    fi
                 fi
             fi
             
@@ -3713,98 +3762,49 @@ tag_image_smart() {
             ;;
             
         "internal")
-            # 内网环境：优先使用 Harbor 仓库镜像，降级到本地镜像
-            # 对于 osixia/openldap:stable，需要处理：
-            #   - aiharbor.msxf.local/aihpc/osixia/openldap:stable（Harbor 完整）
-            #   - osixia/openldap:stable（完整命名空间）
-            #   - openldap:stable（短名称）
-            #   - localhost/openldap:stable（localhost + 短名称）
+            # 内网环境：创建标准的双向别名 + Harbor tag
+            print_info "  🏢 内网环境：创建 tag 别名"
             
-            local harbor_image="${harbor_registry}/${base_image}"
-            local localhost_short="localhost/$short_name"
-            
-            print_info "  🏢 内网环境：处理镜像 $base_image"
-            
-            local has_harbor=false
             local has_base=false
             local has_short=false
             local has_localhost=false
-            local source_image=""
+            local has_harbor=false
             
-            # 检查 Harbor 镜像
-            if docker image inspect "$harbor_image" >/dev/null 2>&1; then
-                has_harbor=true
-                source_image="$harbor_image"
-                print_info "    ✓ Harbor 镜像存在: $harbor_image"
-            fi
-            
-            # 检查完整名称镜像
-            if docker image inspect "$base_image" >/dev/null 2>&1; then
-                has_base=true
-                if [[ -z "$source_image" ]]; then
-                    source_image="$base_image"
-                fi
-                print_info "    ✓ 完整镜像存在: $base_image"
-            fi
-            
-            # 检查短名称镜像（如果与 base_image 不同）
-            if [[ "$short_name" != "$base_image" ]]; then
-                if docker image inspect "$short_name" >/dev/null 2>&1; then
-                    has_short=true
-                    if [[ -z "$source_image" ]]; then
-                        source_image="$short_name"
-                    fi
-                    print_info "    ✓ 短名称镜像存在: $short_name"
-                fi
-            else
-                has_short=$has_base
-            fi
-            
-            # 检查 localhost/ 镜像
-            if docker image inspect "$localhost_short" >/dev/null 2>&1; then
-                has_localhost=true
-                if [[ -z "$source_image" ]]; then
-                    source_image="$localhost_short"
-                fi
-                print_info "    ✓ localhost 镜像存在: $localhost_short"
-            fi
-            
-            # 确保至少有一个源镜像
-            if [[ -z "$source_image" ]]; then
-                print_warning "    ✗ 镜像不存在: $harbor_image / $base_image / $short_name / $localhost_short"
-                print_info "    💡 提示：请先拉取镜像"
-                print_info "       docker pull $harbor_image  # 或"
-                print_info "       docker pull $base_image"
-                return 1
-            fi
-            
-            # 提示使用的源镜像
-            if [[ "$source_image" == "$harbor_image" ]]; then
-                print_info "    📦 使用 Harbor 镜像作为源"
-            elif [[ "$source_image" == "$localhost_short" ]]; then
-                print_info "    💡 Harbor 不可用，使用本地 localhost/ 镜像"
-            elif [[ "$source_image" == "$short_name" ]]; then
-                print_info "    💡 Harbor 不可用，使用本地短名称镜像"
-            else
-                print_info "    💡 Harbor 不可用，使用本地完整镜像"
-            fi
+            # 检查哪些 tag 已存在
+            docker image inspect "$base_image" >/dev/null 2>&1 && has_base=true
+            docker image inspect "$short_name" >/dev/null 2>&1 && has_short=true
+            docker image inspect "$localhost_short" >/dev/null 2>&1 && has_localhost=true
+            docker image inspect "$harbor_image" >/dev/null 2>&1 && has_harbor=true
             
             # 从源镜像创建所有需要的别名
+            # 1. 标准名称 (base_image)
             if ! $has_base && [[ "$base_image" != "$short_name" ]]; then
                 if docker tag "$source_image" "$base_image" 2>/dev/null; then
                     print_success "    ✓ 已创建别名: $source_image → $base_image"
                 fi
             fi
             
+            # 2. 短名称 (short_name)
             if ! $has_short; then
                 if docker tag "$source_image" "$short_name" 2>/dev/null; then
                     print_success "    ✓ 已创建别名: $source_image → $short_name"
                 fi
             fi
             
+            # 3. localhost 别名 (localhost/short_name)
             if ! $has_localhost; then
                 if docker tag "$source_image" "$localhost_short" 2>/dev/null; then
                     print_success "    ✓ 已创建别名: $source_image → $localhost_short"
+                fi
+            fi
+            
+            # 4. Harbor 完整路径 (harbor_registry/base_image)
+            # 只有当 harbor_registry 有效且不是源镜像本身时才创建
+            if [[ -n "$harbor_registry" ]] && [[ "$source_image" != "$harbor_image" ]]; then
+                if ! $has_harbor; then
+                    if docker tag "$source_image" "$harbor_image" 2>/dev/null; then
+                        print_success "    ✓ 已创建 Harbor 别名: $source_image → $harbor_image"
+                    fi
                 fi
             fi
             
@@ -3976,6 +3976,9 @@ prefetch_base_images() {
         if docker image inspect "$image" >/dev/null 2>&1; then
             print_info "  ✓ 镜像已存在: $image"
             ((skip_count++))
+            
+            # 即使镜像已存在，也要创建双向tag（确保 localhost/ 别名存在）
+            tag_image_smart "$image" "auto" "" "false" 2>/dev/null || true
             continue
         fi
         
@@ -3986,7 +3989,7 @@ prefetch_base_images() {
             ((pull_count++))
             
             # 拉取成功后自动创建双向tag（localhost/ 前缀 ↔ 原始名称）
-            tag_image_bidirectional "$image" 2>/dev/null || true
+            tag_image_smart "$image" "auto" "" "false" 2>/dev/null || true
         else
             print_error "  ✗ 拉取失败（已重试${max_retries}次）: $image"
             ((fail_count++))
@@ -4453,39 +4456,30 @@ build_all_services() {
     echo
     
     # ========================================
-    # 步骤 1: 预拉取所有依赖镜像
+    # 步骤 1: 智能镜像管理（拉取 + Tag）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 1/6: 预拉取依赖镜像"
-    print_info "=========================================="
-    if ! prefetch_all_base_images; then
-        print_error "❌ 预拉取失败，构建终止"
-        print_error "请根据上述错误信息解决镜像拉取问题后重试"
-        return 1
-    fi
-    print_success "✓ 依赖镜像预拉取完成"
-    echo
-    
-    # ========================================
-    # 步骤 2: 智能镜像别名管理
-    # ========================================
-    print_info "=========================================="
-    print_info "步骤 2/6: 智能镜像别名管理"
+    print_info "步骤 1/5: 智能镜像管理（拉取 + Tag）"
     print_info "=========================================="
     
     # 自动检测网络环境
     local network_env=$(detect_network_environment)
-    print_info "检测到网络环境: $network_env"
+    print_info "🌐 检测到网络环境: $network_env"
     
     # 获取 Harbor 仓库地址
     local harbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}"
+    if [[ "$network_env" == "internal" ]]; then
+        print_info "📦 内网 Harbor 仓库: $harbor_registry"
+    fi
+    echo
     
     # 收集所有需要处理的镜像
     local all_images=()
     
-    # 1. 从 Dockerfile 中提取基础镜像
-    print_info "扫描 Dockerfile 中的基础镜像..."
+    # 1. 从所有 Dockerfile 中提取基础镜像
+    print_info "📋 步骤 1.1: 扫描 Dockerfile 中的基础镜像..."
     local services_list=($SRC_SERVICES)
+    local dockerfile_count=0
     
     for service in "${services_list[@]}"; do
         local service_path=$(get_service_path "$service")
@@ -4498,12 +4492,15 @@ build_all_services() {
             continue
         fi
         
+        ((dockerfile_count++))
+        
         # 提取该 Dockerfile 的基础镜像
         local images
         images=$(extract_base_images "$dockerfile_path")
         
         if [[ -n "$images" ]]; then
             while IFS= read -r image; do
+                # 跳过空行、内部阶段、注释
                 if [[ -z "$image" ]] || [[ "$image" =~ ^[a-z_-]+$ ]] || [[ "$image" =~ ^# ]]; then
                     continue
                 fi
@@ -4512,13 +4509,16 @@ build_all_services() {
         fi
     done
     
-    # 2. 从 docker-compose.yml 中提取第三方镜像（带命名空间的）
-    print_info "扫描 docker-compose.yml 中的第三方镜像..."
+    print_info "  ✓ 扫描了 $dockerfile_count 个 Dockerfile"
+    
+    # 2. 从 docker-compose.yml 中提取第三方镜像
+    print_info "📋 步骤 1.2: 扫描 docker-compose.yml 中的第三方镜像..."
+    local compose_image_count=0
+    
     if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
         local compose_images=$(grep -E '^\s*image:' "$SCRIPT_DIR/docker-compose.yml" | \
             grep -v '\$' | \
             awk '{print $2}' | \
-            grep '/' | \
             sort -u)
         
         if [[ -n "$compose_images" ]]; then
@@ -4526,35 +4526,57 @@ build_all_services() {
                 if [[ -z "$image" ]]; then
                     continue
                 fi
-                # 添加到镜像列表
+                
+                # 跳过本项目构建的镜像（ai-infra-开头）
+                if [[ "$image" =~ ^ai-infra- ]]; then
+                    continue
+                fi
+                
                 all_images+=("$image")
-                print_info "  发现第三方镜像: $image"
+                ((compose_image_count++))
+                print_info "  → 发现: $image"
             done <<< "$compose_images"
         fi
     fi
     
-    # 去重
-    local unique_images=($(printf '%s\n' "${all_images[@]}" | sort -u))
+    print_info "  ✓ 发现 $compose_image_count 个第三方镜像"
+    echo
     
-    if [[ ${#unique_images[@]} -gt 0 ]]; then
-        print_info "为 ${#unique_images[@]} 个镜像创建智能别名..."
-        
-        # 批量处理镜像别名
-        batch_tag_images_smart "$network_env" "$harbor_registry" "${unique_images[@]}" || {
-            print_warning "部分镜像别名创建失败，但构建流程将继续"
-        }
+    # 去重并排序
+    local unique_images=($(printf '%s\n' "${all_images[@]}" | sort -u))
+    local total_images=${#unique_images[@]}
+    
+    if [[ $total_images -eq 0 ]]; then
+        print_warning "⚠️  未发现需要处理的镜像"
+        echo
     else
-        print_info "未发现需要处理的镜像"
+        print_info "📊 汇总统计:"
+        print_info "  • 发现唯一镜像: $total_images 个"
+        print_info "  • 网络环境: $network_env"
+        echo
+        
+        # 3. 批量智能处理镜像（拉取 + Tag）
+        print_info "🔄 步骤 1.3: 批量处理镜像（拉取 + Tag）..."
+        print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo
+        
+        # 调用智能 tag 函数（会自动处理拉取、降级、创建别名）
+        if batch_tag_images_smart "$network_env" "$harbor_registry" "${unique_images[@]}"; then
+            print_success "✅ 所有镜像处理成功"
+        else
+            print_warning "⚠️  部分镜像处理失败，但构建流程将继续"
+            print_info "💡 提示: 构建可能会因缺少基础镜像而失败"
+        fi
     fi
     
-    print_success "✓ 镜像别名管理完成"
+    print_success "✓ 智能镜像管理完成"
     echo
 
     # ========================================
-    # 步骤 3: 同步配置文件
+    # 步骤 2: 同步配置文件
     # ========================================
     print_info "=========================================="
-    print_info "步骤 3/6: 同步配置文件"
+    print_info "步骤 2/5: 同步配置文件"
     print_info "=========================================="
     if sync_all_configs; then
         print_success "✓ 配置文件同步完成"
@@ -4564,10 +4586,10 @@ build_all_services() {
     echo
 
     # ========================================
-    # 步骤 4: 渲染配置模板
+    # 步骤 3: 渲染配置模板
     # ========================================
     print_info "=========================================="
-    print_info "步骤 4/6: 渲染配置模板"
+    print_info "步骤 3/5: 渲染配置模板"
     print_info "=========================================="
     
     # 渲染 Nginx 配置模板
@@ -4600,10 +4622,10 @@ build_all_services() {
     echo
     
     # ========================================
-    # 步骤 5: 构建服务镜像（智能过滤）
+    # 步骤 4: 构建服务镜像（智能过滤）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 5/6: 构建服务镜像"
+    print_info "步骤 4/5: 构建服务镜像"
     print_info "=========================================="
     
     local success_count=0
@@ -4633,10 +4655,10 @@ build_all_services() {
     done
     
     # ========================================
-    # 步骤 6: 验证构建结果（需求32）
+    # 步骤 5: 验证构建结果（需求32）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 6/6: 验证构建结果"
+    print_info "步骤 5/5: 验证构建结果"
     print_info "=========================================="
     
     # 显示最终构建状态

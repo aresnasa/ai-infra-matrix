@@ -102,6 +102,7 @@ const SlurmTasksPage = () => {
       title: '任务名称',
       dataIndex: 'name',
       key: 'name',
+      sorter: (a, b) => (a.name || '').localeCompare(b.name || ''),
       render: (name, record) => (
         <Space>
           {getTaskStatusIcon(record.status)}
@@ -119,6 +120,15 @@ const SlurmTasksPage = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      filters: [
+        { text: '等待中', value: 'pending' },
+        { text: '运行中', value: 'running' },
+        { text: '已完成', value: 'completed' },
+        { text: '失败', value: 'failed' },
+        { text: '已取消', value: 'cancelled' },
+      ],
+      onFilter: (value, record) => record.status === value,
+      sorter: (a, b) => (a.status || '').localeCompare(b.status || ''),
       render: (status) => (
         <Tag color={getTaskStatusColor(status)}>
           {status === 'pending' ? '等待中' :
@@ -133,6 +143,15 @@ const SlurmTasksPage = () => {
       title: '类型',
       dataIndex: 'type',
       key: 'type',
+      filters: [
+        { text: '扩容', value: 'scale_up' },
+        { text: '缩容', value: 'scale_down' },
+        { text: '节点初始化', value: 'node_init' },
+        { text: '集群配置', value: 'cluster_setup' },
+        { text: 'Runtime', value: 'runtime' },
+      ],
+      onFilter: (value, record) => record.type === value,
+      sorter: (a, b) => (a.type || '').localeCompare(b.type || ''),
       render: (type) => (
         <Tag color="blue">
           {type === 'scale_up' ? '扩容' :
@@ -146,6 +165,7 @@ const SlurmTasksPage = () => {
       title: '进度',
       dataIndex: 'progress',
       key: 'progress',
+      sorter: (a, b) => (a.progress || 0) - (b.progress || 0),
       render: (progress, record) => {
         // 确保进度值是数字
         const progressValue = typeof progress === 'number' ? progress : 0;
@@ -167,18 +187,26 @@ const SlurmTasksPage = () => {
       title: '集群',
       dataIndex: 'cluster_name',
       key: 'cluster_name',
+      sorter: (a, b) => (a.cluster_name || '').localeCompare(b.cluster_name || ''),
       render: (name) => name || '-',
     },
     {
       title: '用户',
       dataIndex: 'username',
       key: 'username',
+      sorter: (a, b) => (a.username || '').localeCompare(b.username || ''),
       render: (username) => username || '-',
     },
     {
       title: '开始时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      defaultSortOrder: 'descend',
+      sorter: (a, b) => {
+        const aTime = a.created_at || 0;
+        const bTime = b.created_at || 0;
+        return aTime - bTime;
+      },
       render: (timestamp) => {
         if (!timestamp) return '-';
         // 如果是 Unix 时间戳（秒），转换为毫秒
@@ -190,6 +218,17 @@ const SlurmTasksPage = () => {
       title: '持续时间',
       dataIndex: 'duration',
       key: 'duration',
+      sorter: (a, b) => {
+        const getDuration = (record) => {
+          if (!record.created_at) return 0;
+          const startTs = record.created_at < 10000000000 ? record.created_at * 1000 : record.created_at;
+          const endTs = record.completed_at 
+            ? (record.completed_at < 10000000000 ? record.completed_at * 1000 : record.completed_at)
+            : Date.now();
+          return dayjs(endTs).diff(dayjs(startTs), 'second');
+        };
+        return getDuration(a) - getDuration(b);
+      },
       render: (_, record) => {
         if (record.created_at) {
           // 如果是 Unix 时间戳（秒），转换为毫秒
