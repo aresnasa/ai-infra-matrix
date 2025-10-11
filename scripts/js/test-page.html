@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Infrastructure Matrix - 测试页面</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            display: none;
+        }
+        
+        .status.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            display: block;
+        }
+        
+        .status.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            display: block;
+        }
+        
+        .user-info {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            display: none;
+        }
+        
+        .user-info.show {
+            display: block;
+        }
+        
+        .user-info h3 {
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 18px;
+        }
+        
+        .user-info p {
+            margin: 5px 0;
+            color: #555;
+        }
+        
+        .iframe-container {
+            margin-top: 30px;
+            display: none;
+        }
+        
+        .iframe-container.show {
+            display: block;
+        }
+        
+        .iframe-container h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        iframe {
+            width: 100%;
+            height: 400px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+        }
+        
+        .actions {
+            margin-top: 20px;
+            display: none;
+            gap: 10px;
+        }
+        
+        .actions.show {
+            display: flex;
+        }
+        
+        .actions button {
+            flex: 1;
+            background: #6c757d;
+        }
+        
+        .actions button:hover {
+            background: #5a6268;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 AI Infrastructure Matrix</h1>
+        <p class="subtitle">测试登录和认证功能</p>
+        
+        <div class="form-group">
+            <label for="username">用户名</label>
+            <input type="text" id="username" name="username" placeholder="请输入用户名" value="admin">
+        </div>
+        
+        <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" placeholder="请输入密码" value="admin123">
+        </div>
+        
+        <button type="submit" id="loginBtn" onclick="handleLogin()">登录</button>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="userInfo" class="user-info">
+            <h3>✅ 登录成功</h3>
+            <p><strong>用户名:</strong> <span id="displayUsername"></span></p>
+            <p><strong>Token:</strong> <span id="displayToken"></span></p>
+            <p><strong>过期时间:</strong> <span id="displayExpires"></span></p>
+        </div>
+        
+        <div class="actions" id="actions">
+            <button onclick="checkAuth()">检查认证</button>
+            <button onclick="logout()">登出</button>
+        </div>
+        
+        <div class="iframe-container" id="iframeContainer">
+            <h3>📊 JupyterHub 控制台</h3>
+            <iframe id="jupyterhub-frame" title="JupyterHub Console"></iframe>
+        </div>
+    </div>
+    
+    <script>
+        // 模拟API配置
+        const API_BASE = '/api';
+        
+        // 模拟登录函数
+        async function handleLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const statusDiv = document.getElementById('status');
+            const loginBtn = document.getElementById('loginBtn');
+            
+            // 重置状态
+            statusDiv.className = 'status';
+            statusDiv.textContent = '';
+            
+            // 禁用按钮
+            loginBtn.disabled = true;
+            loginBtn.textContent = '登录中...';
+            
+            try {
+                // 模拟API调用延迟
+                await new Promise(resolve => setTimeout(resolve, 800));
+                
+                // 模拟成功登录
+                if (username === 'admin' && password === 'admin123') {
+                    // 生成模拟token
+                    const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIiwiaWQiOjEsImV4cCI6MTczMzk4MzIwMH0.mock_signature_' + Date.now();
+                    const expiresAt = new Date(Date.now() + 3600000).toISOString();
+                    
+                    // 保存到localStorage
+                    localStorage.setItem('token', token);
+                    localStorage.setItem('token_expires', expiresAt);
+                    localStorage.setItem('username', username);
+                    
+                    // 显示成功状态
+                    statusDiv.className = 'status success';
+                    statusDiv.textContent = '✅ 登录成功！';
+                    
+                    // 显示用户信息
+                    document.getElementById('displayUsername').textContent = username;
+                    document.getElementById('displayToken').textContent = token.substring(0, 30) + '...';
+                    document.getElementById('displayExpires').textContent = new Date(expiresAt).toLocaleString('zh-CN');
+                    document.getElementById('userInfo').className = 'user-info show';
+                    
+                    // 显示操作按钮
+                    document.getElementById('actions').className = 'actions show';
+                    
+                    // 显示iframe
+                    const iframe = document.getElementById('jupyterhub-frame');
+                    iframe.src = 'about:blank'; // 模拟iframe加载
+                    document.getElementById('iframeContainer').className = 'iframe-container show';
+                    
+                } else {
+                    throw new Error('用户名或密码错误');
+                }
+                
+            } catch (error) {
+                statusDiv.className = 'status error';
+                statusDiv.textContent = '❌ ' + error.message;
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = '登录';
+            }
+        }
+        
+        // 检查认证状态
+        async function checkAuth() {
+            const statusDiv = document.getElementById('status');
+            const token = localStorage.getItem('token');
+            
+            if (!token) {
+                statusDiv.className = 'status error';
+                statusDiv.textContent = '❌ 未登录，请先登录';
+                return;
+            }
+            
+            statusDiv.className = 'status success';
+            statusDiv.textContent = '✅ 认证状态有效，Token存在';
+        }
+        
+        // 登出
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('token_expires');
+            localStorage.removeItem('username');
+            
+            document.getElementById('userInfo').className = 'user-info';
+            document.getElementById('actions').className = 'actions';
+            document.getElementById('iframeContainer').className = 'iframe-container';
+            
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status success';
+            statusDiv.textContent = '✅ 已登出';
+            
+            setTimeout(() => {
+                statusDiv.className = 'status';
+                statusDiv.textContent = '';
+            }, 2000);
+        }
+        
+        // 页面加载时检查登录状态
+        window.addEventListener('load', () => {
+            const token = localStorage.getItem('token');
+            if (token) {
+                const username = localStorage.getItem('username');
+                const expiresAt = localStorage.getItem('token_expires');
+                
+                document.getElementById('displayUsername').textContent = username || 'admin';
+                document.getElementById('displayToken').textContent = token.substring(0, 30) + '...';
+                document.getElementById('displayExpires').textContent = new Date(expiresAt).toLocaleString('zh-CN');
+                document.getElementById('userInfo').className = 'user-info show';
+                document.getElementById('actions').className = 'actions show';
+                
+                const statusDiv = document.getElementById('status');
+                statusDiv.className = 'status success';
+                statusDiv.textContent = '✅ 已登录状态';
+            }
+        });
+        
+        // 支持回车键登录
+        document.getElementById('password').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleLogin();
+            }
+        });
+    </script>
+</body>
+</html>

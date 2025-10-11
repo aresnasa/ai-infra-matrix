@@ -15,7 +15,12 @@
     "test:slurm:headed": "HEADLESS=false node test-slurm-scaleup-playwright.js",
     "test:slurm:ci": "HEADLESS=true node test-slurm-scaleup-playwright.js",
     "test:salt-exec": "node test-salt-execute-playwright.js",
-    "test:salt-exec:headed": "HEADLESS=false node test-salt-execute-playwright.js"
+    "test:salt-exec:headed": "HEADLESS=false node test-salt-execute-playwright.js",
+    "test:login": "node js/test-login-playwright.js",
+    "test:login:headed": "HEADLESS=false node js/test-login-playwright.js",
+    "test:login:ci": "HEADLESS=true node js/test-login-playwright.js",
+    "test:mcp": "node js/test-mcp-runner.js",
+    "test:mcp:headed": "HEADLESS=false node js/test-mcp-runner.js"
   },
   "dependencies": {
     "playwright": "^1.40.0"
