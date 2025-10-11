@@ -142,11 +142,21 @@ const SaltStackDashboard = () => {
       try {
         const data = JSON.parse(evt.data);
         setExecEvents((prev) => [...prev, data]);
+        
+        // 检查是否执行完成
+        if (data.type === 'complete' || data.type === 'step-done' || data.type === 'error') {
+          // 延迟一点点以确保UI更新
+          setTimeout(() => {
+            setExecRunning(false);
+            closeSSE();
+          }, 300);
+        }
       } catch {}
     };
     es.onerror = () => {
       // 自动关闭，避免内存泄漏
       closeSSE();
+      setExecRunning(false);
     };
   };
 

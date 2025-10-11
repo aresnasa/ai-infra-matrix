@@ -31,3 +31,4 @@ test-screenshots/
 pkgs/
 .build-cache/
 node_modules/
+.playwright-mcp/
