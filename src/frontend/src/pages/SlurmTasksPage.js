@@ -1031,7 +1031,10 @@ const SlurmTasksPage = () => {
                         <Space>
                           <Text strong>{event.message}</Text>
                           <Text type="secondary" style={{ fontSize: '12px' }}>
-                            {event.created_at ? dayjs(event.created_at).format('YYYY-MM-DD HH:mm:ss') : ''}
+                            {event.created_at ? (() => {
+                              const ts = event.created_at < 10000000000 ? event.created_at * 1000 : event.created_at;
+                              return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
+                            })() : ''}
                           </Text>
                         </Space>
                         {event.details && (
@@ -1054,7 +1057,10 @@ const SlurmTasksPage = () => {
                         <Space>
                           <Text strong>{event.step}</Text>
                           <Text type="secondary">
-                            {new Date(event.ts).toLocaleString()}
+                            {(() => {
+                              const ts = event.ts < 10000000000 ? event.ts * 1000 : event.ts;
+                              return new Date(ts).toLocaleString();
+                            })()}
                           </Text>
                           {event.host && (
                             <Tag size="small" color="blue">{event.host}</Tag>
