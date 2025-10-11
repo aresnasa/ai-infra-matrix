@@ -30,3 +30,4 @@ test-screenshots/
 #pkgs
 pkgs/
 .build-cache/
+node_modules/
