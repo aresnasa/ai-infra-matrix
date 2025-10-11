@@ -109,28 +109,50 @@ setup_saltstack_defaults() {
         print_info "✓ 设置默认值: SALTSTACK_MASTER_HOST=saltstack"
     fi
     
-    # SaltStack Master API URL（留空以便后端按协议/主机/端口自动拼装）
-    if ! grep -q "^SALTSTACK_MASTER_URL=" "$env_file" 2>/dev/null; then
-        set_or_update_env_var "SALTSTACK_MASTER_URL" "" "$env_file"
-        print_info "✓ 设置默认值: SALTSTACK_MASTER_URL=(留空，后端将根据 SALT_API_SCHEME/SALT_MASTER_HOST/SALT_API_PORT 组合)"
-    fi
-    
-    # SaltStack API Token (可选)
-    if ! grep -q "^SALTSTACK_API_TOKEN=" "$env_file" 2>/dev/null; then
-        set_or_update_env_var "SALTSTACK_API_TOKEN" "" "$env_file"
-        print_info "✓ 设置默认值: SALTSTACK_API_TOKEN=(空，可选配置)"
-    fi
-    
-    # SaltStack API 端口配置
+    # SaltStack API 端口配置（需要在 MASTER_URL 之前设置）
     if ! grep -q "^SALT_API_PORT=" "$env_file" 2>/dev/null; then
         set_or_update_env_var "SALT_API_PORT" "8002" "$env_file"
         print_info "✓ 设置默认值: SALT_API_PORT=8002"
+    fi
+    
+    # SaltStack API 协议配置
+    if ! grep -q "^SALT_API_SCHEME=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALT_API_SCHEME" "http" "$env_file"
+        print_info "✓ 设置默认值: SALT_API_SCHEME=http"
     fi
     
     # SaltStack Master 主机配置 (兼容旧版本)
     if ! grep -q "^SALT_MASTER_HOST=" "$env_file" 2>/dev/null; then
         set_or_update_env_var "SALT_MASTER_HOST" "saltstack" "$env_file"
         print_info "✓ 设置默认值: SALT_MASTER_HOST=saltstack"
+    fi
+    
+    # SaltStack Master API URL（自动组合生成完整URL）
+    if ! grep -q "^SALTSTACK_MASTER_URL=" "$env_file" 2>/dev/null; then
+        # 读取已设置的值
+        local salt_scheme=$(grep "^SALT_API_SCHEME=" "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "http")
+        local salt_host=$(grep "^SALT_MASTER_HOST=" "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "saltstack")
+        local salt_port=$(grep "^SALT_API_PORT=" "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "8002")
+        local default_url="${salt_scheme}://${salt_host}:${salt_port}"
+        set_or_update_env_var "SALTSTACK_MASTER_URL" "$default_url" "$env_file"
+        print_info "✓ 设置默认值: SALTSTACK_MASTER_URL=$default_url"
+    else
+        # 如果存在但为空，则自动填充
+        local current_url=$(grep "^SALTSTACK_MASTER_URL=" "$env_file" | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+        if [[ -z "$current_url" ]]; then
+            local salt_scheme=$(grep "^SALT_API_SCHEME=" "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "http")
+            local salt_host=$(grep "^SALT_MASTER_HOST=" "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "saltstack")
+            local salt_port=$(grep "^SALT_API_PORT=" "$env_file" 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "8002")
+            local default_url="${salt_scheme}://${salt_host}:${salt_port}"
+            set_or_update_env_var "SALTSTACK_MASTER_URL" "$default_url" "$env_file"
+            print_info "✓ 自动填充空值: SALTSTACK_MASTER_URL=$default_url"
+        fi
+    fi
+    
+    # SaltStack API Token (可选)
+    if ! grep -q "^SALTSTACK_API_TOKEN=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "SALTSTACK_API_TOKEN" "" "$env_file"
+        print_info "✓ 设置默认值: SALTSTACK_API_TOKEN=(空，可选配置)"
     fi
     
     # SaltStack API 认证配置
@@ -150,6 +172,77 @@ setup_saltstack_defaults() {
     fi
     
     print_success "✓ SaltStack默认配置设置完成"
+}
+
+# 设置其他服务的默认配置
+setup_services_defaults() {
+    local env_file="$1"
+    
+    if [[ -z "$env_file" ]] || [[ ! -f "$env_file" ]]; then
+        print_error "环境文件不存在: $env_file"
+        return 1
+    fi
+    
+    print_info "设置服务默认配置..."
+    
+    # LDAP 配置
+    if ! grep -q "^LDAP_ORGANISATION=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "LDAP_ORGANISATION" "AI Infrastructure" "$env_file"
+    fi
+    
+    if ! grep -q "^LDAP_DOMAIN=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "LDAP_DOMAIN" "ai-infra.com" "$env_file"
+    fi
+    
+    # phpLDAPadmin 配置
+    if ! grep -q "^PHPLDAPADMIN_HTTPS=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "PHPLDAPADMIN_HTTPS" "false" "$env_file"
+    fi
+    
+    # Gitea 配置
+    if ! grep -q "^USER_UID=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "USER_UID" "1000" "$env_file"
+    fi
+    
+    if ! grep -q "^USER_GID=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "USER_GID" "1000" "$env_file"
+    fi
+    
+    if ! grep -q "^GITEA_PROTOCOL=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "GITEA_PROTOCOL" "http" "$env_file"
+    fi
+    
+    if ! grep -q "^GITEA_HTTP_PORT=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "GITEA_HTTP_PORT" "3000" "$env_file"
+    fi
+    
+    if ! grep -q "^GITEA_DATA_PATH=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "GITEA_DATA_PATH" "/data/gitea" "$env_file"
+    fi
+    
+    # K8s Proxy 配置
+    if ! grep -q "^K8S_PROXY_LISTEN=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "K8S_PROXY_LISTEN" "0.0.0.0:6443" "$env_file"
+    fi
+    
+    if ! grep -q "^K8S_PROXY_TALK=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "K8S_PROXY_TALK" "host.docker.internal:6443" "$env_file"
+    fi
+    
+    if ! grep -q "^K8S_PROXY_PRE_RESOLVE=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "K8S_PROXY_PRE_RESOLVE" "0" "$env_file"
+    fi
+    
+    if ! grep -q "^K8S_PROXY_VERBOSE=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "K8S_PROXY_VERBOSE" "1" "$env_file"
+    fi
+    
+    # Docker 构建配置
+    if ! grep -q "^BUILDKIT_INLINE_CACHE=" "$env_file" 2>/dev/null; then
+        set_or_update_env_var "BUILDKIT_INLINE_CACHE" "1" "$env_file"
+    fi
+    
+    print_success "✓ 服务默认配置设置完成"
 }
 
 # ==========================================
@@ -334,6 +427,14 @@ render_env_template_enhanced() {
     local https_port=$((external_port + 363))
     local debug_port=$((external_port - 79))
     
+    # 从模板内容中提取 SaltStack 配置（如果存在）
+    local salt_api_scheme=$(echo "$temp_content" | grep "^SALT_API_SCHEME=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "http")
+    local salt_master_host=$(echo "$temp_content" | grep "^SALT_MASTER_HOST=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "saltstack")
+    local salt_api_port=$(echo "$temp_content" | grep "^SALT_API_PORT=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "8002")
+    
+    # 构建 SALTSTACK_MASTER_URL（按后端期望格式）
+    local saltstack_master_url="${salt_api_scheme}://${salt_master_host}:${salt_api_port}"
+    
     # 替换基本模板变量
     temp_content="${temp_content//\$\{EXTERNAL_HOST\}/$external_host}"
     temp_content="${temp_content//\$\{EXTERNAL_PORT\}/$external_port}"
@@ -348,12 +449,18 @@ render_env_template_enhanced() {
     temp_content="${temp_content//\$\{HTTPS_PORT\}/$https_port}"
     temp_content="${temp_content//\$\{DEBUG_PORT\}/$debug_port}"
     
+    # 替换 SALTSTACK_MASTER_URL（如果模板中为空，则填充拼装的值）
+    if echo "$temp_content" | grep -q "^SALTSTACK_MASTER_URL=$"; then
+        temp_content=$(echo "$temp_content" | sed "s|^SALTSTACK_MASTER_URL=$|SALTSTACK_MASTER_URL=$saltstack_master_url|")
+    fi
+    
     print_info "  计算的端口值:"
     print_info "    JupyterHub: $jupyterhub_port"
     print_info "    Gitea: $gitea_port"
     print_info "    AppHub: $apphub_port"
     print_info "    HTTPS: $https_port"
     print_info "    Debug: $debug_port"
+    print_info "  SaltStack API: $saltstack_master_url"
     
     # 写入输出文件
     echo "$temp_content" > "$output_file"
@@ -499,7 +606,7 @@ read_config() {
 # 获取所有服务名称
 get_all_services() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-build slurm-master test-containers"
+        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-master test-containers"
         return
     fi
     
@@ -751,7 +858,6 @@ get_service_path() {
             "gitea") echo "src/gitea" ;;
             "backend-init") echo "src/backend" ;;  # backend-init 使用 backend 的 Dockerfile
             "apphub") echo "src/apphub" ;;
-            "slurm-build") echo "src/slurm-build" ;;
             "slurm-master") echo "src/slurm-master" ;;
             "test-containers") echo "src/test-containers" ;;
             *) echo "" ;;
@@ -1053,6 +1159,14 @@ clean_build_cache() {
 detect_network_environment() {
     local timeout=5
     
+    # 优先级1：检查强制环境变量（用于测试或特殊场景）
+    # 注意：这是强制覆盖，仅在明确需要时设置
+    if [[ -n "${AI_INFRA_NETWORK_ENV_OVERRIDE}" ]]; then
+        echo "${AI_INFRA_NETWORK_ENV_OVERRIDE}"
+        return 0
+    fi
+    
+    # 优先级2：实际网络检测（推荐）
     # 检测方法1：尝试连接常见的外网地址
     if timeout $timeout ping -c 1 8.8.8.8 >/dev/null 2>&1 || 
        timeout $timeout ping -c 1 mirrors.aliyun.com >/dev/null 2>&1; then
@@ -1060,15 +1174,16 @@ detect_network_environment() {
         return 0
     fi
     
-    # 检测方法2：检查是否能访问 PyPI 镜像
+    # 检测方法2：检查是否能访问公网服务
     if timeout $timeout curl -s --connect-timeout $timeout https://mirrors.aliyun.com/pypi/simple/ >/dev/null 2>&1; then
         echo "external"
         return 0
     fi
     
-    # 检测方法3：检查环境变量标识
-    if [[ "${AI_INFRA_NETWORK_ENV}" == "internal" ]] || [[ "${NETWORK_ENV}" == "internal" ]]; then
-        echo "internal"
+    # 优先级3：.env 文件配置（向后兼容，但不推荐）
+    # 仅在网络检测失败且明确配置时使用
+    if [[ "${AI_INFRA_NETWORK_ENV}" == "external" ]]; then
+        echo "external"
         return 0
     fi
     
@@ -1672,8 +1787,12 @@ copy_slurm_packages_to_apphub() {
     local success=true
     local deb_copied=false
 
+    # 启动apphub容器以便执行命令
     if [[ "$success" == "true" ]]; then
-        if ! docker start "$apphub_container" >/dev/null 2>&1; then
+        print_info "启动apphub容器..."
+        if docker start "$apphub_container" >/dev/null 2>&1; then
+            print_info "✓ apphub容器启动成功"
+        else
             print_error "启动apphub临时容器失败"
             success=false
         fi
@@ -1689,19 +1808,38 @@ copy_slurm_packages_to_apphub() {
     fi
 
     if [[ "$success" == "true" ]]; then
-        if docker cp "$slurm_container:/out/." "$apphub_container:/usr/share/nginx/html/pkgs/slurm-deb/" 2>/dev/null; then
-            if docker exec "$apphub_container" sh -c 'ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb >/dev/null 2>&1'; then
-                docker exec "$apphub_container" sh -c 'find /usr/share/nginx/html/pkgs/slurm-deb -maxdepth 1 -type f ! -name "*.deb" -delete' >/dev/null 2>&1 || true
-                print_info "✓ 复制Slurm deb文件成功"
-                deb_copied=true
+        # Docker不支持容器间直接复制，需要通过临时目录中转
+        local temp_dir="/tmp/slurm-deb-temp-$$"
+        mkdir -p "$temp_dir"
+        
+        # 步骤1: 从slurm容器复制到本地临时目录
+        if docker cp "$slurm_container:/out/." "$temp_dir/" 2>/dev/null; then
+            # 步骤2: 从本地临时目录复制到apphub容器
+            if docker cp "$temp_dir/." "$apphub_container:/usr/share/nginx/html/pkgs/slurm-deb/" 2>/dev/null; then
+                # 步骤3: 验证文件是否成功复制
+                if docker exec "$apphub_container" sh -c 'ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb >/dev/null 2>&1'; then
+                    # 清理非deb文件
+                    docker exec "$apphub_container" sh -c 'find /usr/share/nginx/html/pkgs/slurm-deb -maxdepth 1 -type f ! -name "*.deb" -delete' >/dev/null 2>&1 || true
+                    
+                    # 统计deb文件数量
+                    local deb_count=$(docker exec "$apphub_container" sh -c 'ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l')
+                    print_info "✓ 复制Slurm deb文件成功 (共 ${deb_count} 个)"
+                    deb_copied=true
+                else
+                    print_warning "复制完成但未找到任何Slurm deb文件"
+                    success=false
+                fi
             else
-                print_warning "复制完成但未找到任何Slurm deb文件"
+                print_error "从临时目录复制到apphub容器失败"
                 success=false
             fi
         else
-            print_warning "未找到Slurm deb文件，跳过复制"
+            print_warning "从slurm容器复制deb文件失败"
             success=false
         fi
+        
+        # 清理临时目录
+        rm -rf "$temp_dir"
     fi
 
     if [[ "$success" == "true" && "$deb_copied" == "true" ]]; then
@@ -2439,6 +2577,9 @@ create_env_from_template() {
         
         # 设置SaltStack默认配置（如果未设置）
         setup_saltstack_defaults "$target_file"
+        
+        # 设置其他服务的默认配置（如果未设置）
+        setup_services_defaults "$target_file"
         
         # 检查并创建backend目录的环境文件
         if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
@@ -3432,6 +3573,319 @@ extract_base_images() {
         sort -u
 }
 
+# 智能镜像tag函数 - 根据网络环境自动处理镜像别名
+# 功能：
+#   公网环境：确保原始镜像名称和 localhost/ 前缀版本都存在
+#   内网环境：确保从 Harbor 仓库拉取的镜像有正确的别名
+# 参数：
+#   $1: 镜像名称（可以是原始名称、localhost/ 前缀或 Harbor 完整路径）
+#   $2: 网络环境（可选，auto/external/internal，默认 auto）
+#   $3: Harbor 仓库地址（可选，默认从环境变量读取）
+# 返回：
+#   0: 成功
+#   1: 失败
+tag_image_smart() {
+    local image="$1"
+    local network_env="${2:-auto}"
+    local harbor_registry="${3:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
+    
+    if [[ -z "$image" ]]; then
+        print_error "tag_image_smart: 镜像名称不能为空"
+        return 1
+    fi
+    
+    # 自动检测网络环境
+    if [[ "$network_env" == "auto" ]]; then
+        network_env=$(detect_network_environment)
+    fi
+    
+    # 提取基础镜像名称（智能识别不同类型的镜像前缀）
+    local base_image="$image"
+    local original_image="$image"
+    
+    # 移除 localhost/ 前缀
+    base_image="${base_image#localhost/}"
+    
+    # 智能移除 Harbor 仓库前缀（包含域名的私有仓库）
+    # 规则：如果前缀包含点号（.），则认为是私有仓库域名
+    # 例如：aiharbor.msxf.local/aihpc/redis:7-alpine → redis:7-alpine
+    # 但保留：osixia/openldap:stable → osixia/openldap:stable
+    if [[ "$base_image" =~ ^[^/]+\.[^/]+/ ]]; then
+        # 包含域名的私有仓库，移除仓库前缀
+        # 格式：domain.com/project/image:tag → image:tag
+        base_image=$(echo "$base_image" | sed -E 's|^[^/]+\.[^/]+/[^/]+/||')
+    fi
+    
+    # 提取短名称（移除 Docker Hub 命名空间）
+    # 例如：osixia/openldap:stable → openldap:stable
+    local short_name="$base_image"
+    if [[ "$base_image" =~ ^[^/]+/[^/]+: ]]; then
+        # 包含命名空间（如 osixia/openldap:stable）
+        short_name=$(echo "$base_image" | sed -E 's|^[^/]+/||')
+    fi
+    
+    # 根据网络环境决定策略
+    case "$network_env" in
+        "external")
+            # 公网环境：确保所有需要的别名都存在
+            # 对于 osixia/openldap:stable，需要创建：
+            #   - osixia/openldap:stable（完整命名空间）
+            #   - openldap:stable（短名称）
+            #   - localhost/openldap:stable（localhost + 短名称）
+            
+            print_info "  🌐 公网环境：处理镜像 $base_image"
+            
+            local localhost_short="localhost/$short_name"
+            local has_base=false
+            local has_short=false
+            local has_localhost=false
+            local source_image=""
+            
+            # 检查完整名称镜像（base_image，可能包含命名空间）
+            if docker image inspect "$base_image" >/dev/null 2>&1; then
+                has_base=true
+                source_image="$base_image"
+                print_info "    ✓ 完整镜像存在: $base_image"
+            fi
+            
+            # 检查短名称镜像（如果与 base_image 不同）
+            if [[ "$short_name" != "$base_image" ]]; then
+                if docker image inspect "$short_name" >/dev/null 2>&1; then
+                    has_short=true
+                    if [[ -z "$source_image" ]]; then
+                        source_image="$short_name"
+                    fi
+                    print_info "    ✓ 短名称镜像存在: $short_name"
+                fi
+            else
+                # base_image 就是短名称
+                has_short=$has_base
+            fi
+            
+            # 检查 localhost/ 版本
+            if docker image inspect "$localhost_short" >/dev/null 2>&1; then
+                has_localhost=true
+                if [[ -z "$source_image" ]]; then
+                    source_image="$localhost_short"
+                fi
+                print_info "    ✓ localhost 镜像存在: $localhost_short"
+            fi
+            
+            # 确保至少有一个源镜像
+            if [[ -z "$source_image" ]]; then
+                print_warning "    ✗ 镜像不存在: $base_image / $short_name / $localhost_short"
+                return 1
+            fi
+            
+            # 从源镜像创建所有需要的别名
+            if ! $has_base && [[ "$base_image" != "$short_name" ]]; then
+                if docker tag "$source_image" "$base_image" 2>/dev/null; then
+                    print_success "    ✓ 已创建别名: $source_image → $base_image"
+                fi
+            fi
+            
+            if ! $has_short; then
+                if docker tag "$source_image" "$short_name" 2>/dev/null; then
+                    print_success "    ✓ 已创建别名: $source_image → $short_name"
+                fi
+            fi
+            
+            if ! $has_localhost; then
+                if docker tag "$source_image" "$localhost_short" 2>/dev/null; then
+                    print_success "    ✓ 已创建别名: $source_image → $localhost_short"
+                fi
+            fi
+            
+            return 0
+            ;;
+            
+        "internal")
+            # 内网环境：优先使用 Harbor 仓库镜像，降级到本地镜像
+            # 对于 osixia/openldap:stable，需要处理：
+            #   - aiharbor.msxf.local/aihpc/osixia/openldap:stable（Harbor 完整）
+            #   - osixia/openldap:stable（完整命名空间）
+            #   - openldap:stable（短名称）
+            #   - localhost/openldap:stable（localhost + 短名称）
+            
+            local harbor_image="${harbor_registry}/${base_image}"
+            local localhost_short="localhost/$short_name"
+            
+            print_info "  🏢 内网环境：处理镜像 $base_image"
+            
+            local has_harbor=false
+            local has_base=false
+            local has_short=false
+            local has_localhost=false
+            local source_image=""
+            
+            # 检查 Harbor 镜像
+            if docker image inspect "$harbor_image" >/dev/null 2>&1; then
+                has_harbor=true
+                source_image="$harbor_image"
+                print_info "    ✓ Harbor 镜像存在: $harbor_image"
+            fi
+            
+            # 检查完整名称镜像
+            if docker image inspect "$base_image" >/dev/null 2>&1; then
+                has_base=true
+                if [[ -z "$source_image" ]]; then
+                    source_image="$base_image"
+                fi
+                print_info "    ✓ 完整镜像存在: $base_image"
+            fi
+            
+            # 检查短名称镜像（如果与 base_image 不同）
+            if [[ "$short_name" != "$base_image" ]]; then
+                if docker image inspect "$short_name" >/dev/null 2>&1; then
+                    has_short=true
+                    if [[ -z "$source_image" ]]; then
+                        source_image="$short_name"
+                    fi
+                    print_info "    ✓ 短名称镜像存在: $short_name"
+                fi
+            else
+                has_short=$has_base
+            fi
+            
+            # 检查 localhost/ 镜像
+            if docker image inspect "$localhost_short" >/dev/null 2>&1; then
+                has_localhost=true
+                if [[ -z "$source_image" ]]; then
+                    source_image="$localhost_short"
+                fi
+                print_info "    ✓ localhost 镜像存在: $localhost_short"
+            fi
+            
+            # 确保至少有一个源镜像
+            if [[ -z "$source_image" ]]; then
+                print_warning "    ✗ 镜像不存在: $harbor_image / $base_image / $short_name / $localhost_short"
+                print_info "    💡 提示：请先拉取镜像"
+                print_info "       docker pull $harbor_image  # 或"
+                print_info "       docker pull $base_image"
+                return 1
+            fi
+            
+            # 提示使用的源镜像
+            if [[ "$source_image" == "$harbor_image" ]]; then
+                print_info "    📦 使用 Harbor 镜像作为源"
+            elif [[ "$source_image" == "$localhost_short" ]]; then
+                print_info "    💡 Harbor 不可用，使用本地 localhost/ 镜像"
+            elif [[ "$source_image" == "$short_name" ]]; then
+                print_info "    💡 Harbor 不可用，使用本地短名称镜像"
+            else
+                print_info "    💡 Harbor 不可用，使用本地完整镜像"
+            fi
+            
+            # 从源镜像创建所有需要的别名
+            if ! $has_base && [[ "$base_image" != "$short_name" ]]; then
+                if docker tag "$source_image" "$base_image" 2>/dev/null; then
+                    print_success "    ✓ 已创建别名: $source_image → $base_image"
+                fi
+            fi
+            
+            if ! $has_short; then
+                if docker tag "$source_image" "$short_name" 2>/dev/null; then
+                    print_success "    ✓ 已创建别名: $source_image → $short_name"
+                fi
+            fi
+            
+            if ! $has_localhost; then
+                if docker tag "$source_image" "$localhost_short" 2>/dev/null; then
+                    print_success "    ✓ 已创建别名: $source_image → $localhost_short"
+                fi
+            fi
+            
+            return 0
+            ;;
+            
+        *)
+            print_error "  ✗ 未知网络环境: $network_env"
+            return 1
+            ;;
+    esac
+}
+
+# 双向镜像tag函数（兼容旧版本，内部调用 tag_image_smart）
+tag_image_bidirectional() {
+    local image="$1"
+    tag_image_smart "$image" "auto"
+}
+
+# 批量智能tag镜像列表
+# 参数：
+#   $1: 网络环境（auto/external/internal）
+#   $2: Harbor 仓库地址（可选）
+#   ${@:3}: 镜像名称列表
+# 返回：
+#   0: 全部成功
+#   非0: 部分或全部失败（返回失败的数量）
+batch_tag_images_smart() {
+    local network_env="${1:-auto}"
+    local harbor_registry="${2:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
+    shift 2
+    local images=("$@")
+    
+    local success_count=0
+    local fail_count=0
+    local skip_count=0
+    local total=${#images[@]}
+    
+    if [[ $total -eq 0 ]]; then
+        print_warning "批量智能tag: 镜像列表为空"
+        return 0
+    fi
+    
+    # 自动检测网络环境
+    if [[ "$network_env" == "auto" ]]; then
+        network_env=$(detect_network_environment)
+    fi
+    
+    print_info "=========================================="
+    print_info "🏷️  批量智能tag镜像 (总计: $total)"
+    print_info "=========================================="
+    print_info "网络环境: $network_env"
+    if [[ "$network_env" == "internal" ]]; then
+        print_info "Harbor 仓库: $harbor_registry"
+    fi
+    echo
+    
+    for image in "${images[@]}"; do
+        # 跳过空行
+        if [[ -z "$image" ]]; then
+            continue
+        fi
+        
+        print_info "处理镜像: $image"
+        
+        # 执行智能tag
+        if tag_image_smart "$image" "$network_env" "$harbor_registry"; then
+            ((success_count++))
+        else
+            ((fail_count++))
+        fi
+    done
+    
+    # 输出统计信息
+    echo
+    print_info "📊 智能tag统计:"
+    print_info "  • 成功: $success_count"
+    print_info "  • 失败: $fail_count"
+    print_info "  • 总计: $total"
+    echo
+    
+    return $fail_count
+}
+
+# 批量双向tag镜像列表（兼容旧版本）
+# 参数：
+#   $@: 镜像名称列表
+# 返回：
+#   0: 全部成功
+#   非0: 部分或全部失败（返回失败的数量）
+batch_tag_images_bidirectional() {
+    batch_tag_images_smart "auto" "${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}" "$@"
+}
+
 # 拉取单个镜像（带重试机制）
 # 参数：
 #   $1: 镜像名称
@@ -3517,6 +3971,9 @@ prefetch_base_images() {
         if pull_image_with_retry "$image" "$max_retries"; then
             print_success "  ✓ 拉取成功: $image"
             ((pull_count++))
+            
+            # 拉取成功后自动创建双向tag（localhost/ 前缀 ↔ 原始名称）
+            tag_image_bidirectional "$image" 2>/dev/null || true
         else
             print_error "  ✗ 拉取失败（已重试${max_retries}次）: $image"
             ((fail_count++))
@@ -3876,6 +4333,9 @@ prefetch_all_base_images() {
         if pull_image_with_retry "$image" "$max_retries"; then
             print_success "  ✓ 拉取成功"
             ((pull_count++))
+            
+            # 拉取成功后自动创建双向tag（localhost/ 前缀 ↔ 原始名称）
+            tag_image_bidirectional "$image" 2>/dev/null || true
         else
             print_error "  ✗ 拉取失败（已重试${max_retries}次）"
             ((fail_count++))
@@ -3983,7 +4443,7 @@ build_all_services() {
     # 步骤 1: 预拉取所有依赖镜像
     # ========================================
     print_info "=========================================="
-    print_info "步骤 1/5: 预拉取依赖镜像"
+    print_info "步骤 1/6: 预拉取依赖镜像"
     print_info "=========================================="
     if ! prefetch_all_base_images; then
         print_error "❌ 预拉取失败，构建终止"
@@ -3994,10 +4454,94 @@ build_all_services() {
     echo
     
     # ========================================
-    # 步骤 2: 同步配置文件
+    # 步骤 2: 智能镜像别名管理
     # ========================================
     print_info "=========================================="
-    print_info "步骤 2/5: 同步配置文件"
+    print_info "步骤 2/6: 智能镜像别名管理"
+    print_info "=========================================="
+    
+    # 自动检测网络环境
+    local network_env=$(detect_network_environment)
+    print_info "检测到网络环境: $network_env"
+    
+    # 获取 Harbor 仓库地址
+    local harbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}"
+    
+    # 收集所有需要处理的镜像
+    local all_images=()
+    
+    # 1. 从 Dockerfile 中提取基础镜像
+    print_info "扫描 Dockerfile 中的基础镜像..."
+    local services_list=($SRC_SERVICES)
+    
+    for service in "${services_list[@]}"; do
+        local service_path=$(get_service_path "$service")
+        if [[ -z "$service_path" ]]; then
+            continue
+        fi
+        
+        local dockerfile_path="$SCRIPT_DIR/$service_path/Dockerfile"
+        if [[ ! -f "$dockerfile_path" ]]; then
+            continue
+        fi
+        
+        # 提取该 Dockerfile 的基础镜像
+        local images
+        images=$(extract_base_images "$dockerfile_path")
+        
+        if [[ -n "$images" ]]; then
+            while IFS= read -r image; do
+                if [[ -z "$image" ]] || [[ "$image" =~ ^[a-z_-]+$ ]] || [[ "$image" =~ ^# ]]; then
+                    continue
+                fi
+                all_images+=("$image")
+            done <<< "$images"
+        fi
+    done
+    
+    # 2. 从 docker-compose.yml 中提取第三方镜像（带命名空间的）
+    print_info "扫描 docker-compose.yml 中的第三方镜像..."
+    if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+        local compose_images=$(grep -E '^\s*image:' "$SCRIPT_DIR/docker-compose.yml" | \
+            grep -v '\$' | \
+            awk '{print $2}' | \
+            grep '/' | \
+            sort -u)
+        
+        if [[ -n "$compose_images" ]]; then
+            while IFS= read -r image; do
+                if [[ -z "$image" ]]; then
+                    continue
+                fi
+                # 添加到镜像列表
+                all_images+=("$image")
+                print_info "  发现第三方镜像: $image"
+            done <<< "$compose_images"
+        fi
+    fi
+    
+    # 去重
+    local unique_images=($(printf '%s\n' "${all_images[@]}" | sort -u))
+    
+    if [[ ${#unique_images[@]} -gt 0 ]]; then
+        print_info "为 ${#unique_images[@]} 个镜像创建智能别名..."
+        
+        # 批量处理镜像别名
+        batch_tag_images_smart "$network_env" "$harbor_registry" "${unique_images[@]}" || {
+            print_warning "部分镜像别名创建失败，但构建流程将继续"
+        }
+    else
+        print_info "未发现需要处理的镜像"
+    fi
+    
+    print_success "✓ 镜像别名管理完成"
+    echo
+
+    # ========================================
+    # 步骤 3: 同步配置文件
+    # ========================================
+    print_info "=========================================="
+    print_info "步骤 3/6: 同步配置文件"
     print_info "=========================================="
     if sync_all_configs; then
         print_success "✓ 配置文件同步完成"
@@ -4007,10 +4551,10 @@ build_all_services() {
     echo
 
     # ========================================
-    # 步骤 3: 渲染配置模板
+    # 步骤 4: 渲染配置模板
     # ========================================
     print_info "=========================================="
-    print_info "步骤 3/5: 渲染配置模板"
+    print_info "步骤 4/6: 渲染配置模板"
     print_info "=========================================="
     
     # 渲染 Nginx 配置模板
@@ -4043,10 +4587,10 @@ build_all_services() {
     echo
     
     # ========================================
-    # 步骤 4: 构建服务镜像（智能过滤）
+    # 步骤 5: 构建服务镜像（智能过滤）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 4/5: 构建服务镜像"
+    print_info "步骤 5/6: 构建服务镜像"
     print_info "=========================================="
     
     local success_count=0
@@ -4076,10 +4620,10 @@ build_all_services() {
     done
     
     # ========================================
-    # 步骤 5: 验证构建结果（需求32）
+    # 步骤 6: 验证构建结果（需求32）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 5/5: 验证构建结果"
+    print_info "步骤 6/6: 验证构建结果"
     print_info "=========================================="
     
     # 显示最终构建状态
@@ -4088,15 +4632,8 @@ build_all_services() {
     print_info "=========================================="
     print_success "构建完成: $success_count/$total_count 成功"
     
-    # 如果slurm-build构建成功，复制包到apphub
-    if [[ " ${all_services[*]} " =~ " slurm-build " ]] && [[ ! " ${failed_services[*]} " =~ " slurm-build " ]]; then
-        print_info "复制Slurm包到apphub..."
-        if copy_slurm_packages_to_apphub "$tag"; then
-            print_success "✓ Slurm包复制完成"
-        else
-            print_warning "Slurm包复制失败，但构建流程继续"
-        fi
-    fi
+    # SLURM包已集成到apphub多阶段构建中，无需单独复制
+    # apphub现在包含完整的工具链和SLURM deb包
     
     if [[ ${#failed_services[@]} -gt 0 ]]; then
         print_warning "失败的服务: ${failed_services[*]}"
@@ -9248,20 +9785,31 @@ main() {
                 echo "  registry    目标镜像仓库 (可选，默认使用本地构建)"
                 echo "  --force     全局开关：强制覆盖生成 .env 等（可放在任意位置）"
                 echo
-                echo "流程:"
+                echo "构建流程 (6个步骤):"
                 echo "  0) check-status              - 检查当前构建状态，智能过滤"
-                echo "  1) create-env dev [--force]  - 从 .env.example 渲染生成 .env"
-                echo "  2) sync-config [--force]     - 同步 .env 到模板、校验 docker-compose"
-                echo "  3) build-all                  - 构建所有服务镜像"
+                echo "  1) prefetch-images           - 预拉取所有依赖镜像"
+                echo "  2) smart-tag                 - 智能镜像别名管理（公网/内网自适应）"
+                echo "  3) sync-config               - 同步配置文件"
+                echo "  4) render-templates          - 渲染配置模板"
+                echo "  5) build-services            - 构建服务镜像"
+                echo "  6) verify-result             - 验证构建结果"
                 echo
-                echo "智能构建:"
-                echo "  默认只构建缺失或无效的镜像，避免浪费时间"
-                echo "  使用 --force 参数强制重建所有镜像"
+                echo "智能功能:"
+                echo "  • 智能构建：默认只构建缺失或无效的镜像"
+                echo "  • 网络检测：自动检测公网/内网环境"
+                echo "  • 镜像别名：根据环境自动创建合适的镜像别名"
+                echo "    - 公网环境：原始镜像 → localhost/ 别名"
+                echo "    - 内网环境：Harbor镜像 → 原始镜像 + localhost/ 别名"
+                echo
+                echo "环境变量:"
+                echo "  INTERNAL_REGISTRY            - 内网 Harbor 仓库地址 (默认: aiharbor.msxf.local/aihpc)"
+                echo "  AI_INFRA_NETWORK_ENV         - 强制指定网络环境 (external/internal)"
                 echo
                 echo "示例:"
                 echo "  $0 build-all"
                 echo "  $0 build-all v1.0.0"
                 echo "  $0 build-all v1.0.0 harbor.company.com/ai-infra --force"
+                echo "  INTERNAL_REGISTRY=my-harbor.com/repo $0 build-all"
                 return 0
             fi
 
@@ -9749,6 +10297,133 @@ main() {
                 force="true"
             fi
             clean_all "$force"
+            ;;
+            
+        # 智能镜像tag命令
+        "tag-localhost")
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "tag-localhost - 智能镜像tag管理（支持公网/内网环境）"
+                echo
+                echo "用法: $0 tag-localhost [选项] [image...]"
+                echo
+                echo "选项:"
+                echo "  --network <env>     指定网络环境 (auto/external/internal)"
+                echo "  --harbor <registry> 指定 Harbor 仓库地址"
+                echo
+                echo "参数:"
+                echo "  image               镜像名称（可指定多个）"
+                echo "                      不指定镜像时，自动处理所有 Dockerfile 中的基础镜像"
+                echo
+                echo "网络环境策略:"
+                echo "  auto (默认)         自动检测网络环境并选择合适的策略"
+                echo "  external (公网)     优先使用原始镜像名称，同时创建 localhost/ 别名"
+                echo "  internal (内网)     使用 Harbor 仓库镜像，创建原始名称和 localhost/ 别名"
+                echo
+                echo "功能:"
+                echo "  公网环境："
+                echo "    • 优先使用原始镜像名称（如 redis:7-alpine）"
+                echo "    • 自动创建 localhost/ 前缀别名（兼容性）"
+                echo "  内网环境："
+                echo "    • 从 Harbor 仓库获取镜像（如 aiharbor.msxf.local/aihpc/redis:7-alpine）"
+                echo "    • 创建原始名称别名（如 redis:7-alpine）"
+                echo "    • 创建 localhost/ 别名（如 localhost/redis:7-alpine）"
+                echo
+                echo "应用场景:"
+                echo "  • 公网环境：确保镜像可用，创建兼容性别名"
+                echo "  • 内网环境：从 Harbor 拉取镜像，创建标准别名"
+                echo "  • 混合环境：自动检测并应用最佳策略"
+                echo
+                echo "示例:"
+                echo "  $0 tag-localhost                                    # 自动处理所有依赖镜像"
+                echo "  $0 tag-localhost redis:7-alpine                     # 处理单个镜像"
+                echo "  $0 tag-localhost --network external redis:7-alpine  # 强制公网模式"
+                echo "  $0 tag-localhost --network internal                 # 内网模式处理所有镜像"
+                echo "  $0 tag-localhost --harbor my-harbor.com/repo        # 指定 Harbor 仓库"
+                return 0
+            fi
+            
+            # 解析参数
+            local network_env="auto"
+            local harbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}"
+            local images_to_process=()
+            
+            while [[ $# -gt 1 ]]; do
+                case "$2" in
+                    --network)
+                        network_env="$3"
+                        shift 2
+                        ;;
+                    --harbor)
+                        harbor_registry="$3"
+                        shift 2
+                        ;;
+                    *)
+                        images_to_process+=("$2")
+                        shift
+                        ;;
+                esac
+            done
+            
+            # 如果没有指定镜像，自动从所有 Dockerfile 中提取基础镜像
+            if [[ ${#images_to_process[@]} -eq 0 ]]; then
+                print_info "未指定镜像，将从所有 Dockerfile 中提取基础镜像..."
+                
+                # 动态提取所有 Dockerfile 中的基础镜像
+                local all_images=()
+                local services_list=($SRC_SERVICES)
+                
+                print_info "📋 扫描所有服务的 Dockerfile..."
+                
+                for service in "${services_list[@]}"; do
+                    local service_path=$(get_service_path "$service")
+                    if [[ -z "$service_path" ]]; then
+                        continue
+                    fi
+                    
+                    local dockerfile_path="$SCRIPT_DIR/$service_path/Dockerfile"
+                    if [[ ! -f "$dockerfile_path" ]]; then
+                        continue
+                    fi
+                    
+                    # 提取该 Dockerfile 的基础镜像
+                    local images
+                    images=$(extract_base_images "$dockerfile_path")
+                    
+                    if [[ -n "$images" ]]; then
+                        while IFS= read -r image; do
+                            # 跳过空行
+                            if [[ -z "$image" ]]; then
+                                continue
+                            fi
+                            # 跳过内部构建阶段（只包含小写字母、下划线、连字符的名称）
+                            if [[ "$image" =~ ^[a-z_-]+$ ]]; then
+                                continue
+                            fi
+                            # 跳过注释
+                            if [[ "$image" =~ ^# ]]; then
+                                continue
+                            fi
+                            # 添加到数组
+                            all_images+=("$image")
+                        done <<< "$images"
+                    fi
+                done
+                
+                # 去重并排序
+                local unique_images=($(printf '%s\n' "${all_images[@]}" | sort -u))
+                
+                if [[ ${#unique_images[@]} -eq 0 ]]; then
+                    print_warning "未找到任何基础镜像"
+                    return 0
+                fi
+                
+                print_info "📦 发现 ${#unique_images[@]} 个唯一的基础镜像"
+                
+                batch_tag_images_smart "$network_env" "$harbor_registry" "${unique_images[@]}"
+            else
+                # 处理用户指定的镜像
+                batch_tag_images_smart "$network_env" "$harbor_registry" "${images_to_process[@]}"
+            fi
             ;;
             
         "reset-db")

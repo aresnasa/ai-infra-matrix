@@ -209,12 +209,12 @@ services:
     env_file:
       - .env
     environment:
-      LDAP_ORGANISATION: "AI Infrastructure"
-      LDAP_DOMAIN: "ai-infra.com"
+      LDAP_ORGANISATION: "${LDAP_ORGANISATION:-AI Infrastructure}"
+      LDAP_DOMAIN: "${LDAP_DOMAIN:-ai-infra.com}"
       LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}"
       LDAP_CONFIG_PASSWORD: "${LDAP_CONFIG_PASSWORD}"
-      LDAP_BASE_DN: "dc=ai-infra,dc=com"
-      TZ: Asia/Shanghai
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=ai-infra,dc=com}"
+      TZ: "${TZ:-Asia/Shanghai}"
     expose:
       - "389"
       - "636"
@@ -236,9 +236,9 @@ services:
     image: osixia/phpldapadmin:stable
     container_name: ai-infra-phpldapadmin
     environment:
-      PHPLDAPADMIN_LDAP_HOSTS: openldap
-      PHPLDAPADMIN_HTTPS: "false"
-      TZ: Asia/Shanghai
+      PHPLDAPADMIN_LDAP_HOSTS: "${LDAP_HOST:-openldap}"
+      PHPLDAPADMIN_HTTPS: "${PHPLDAPADMIN_HTTPS:-false}"
+      TZ: "${TZ:-Asia/Shanghai}"
     expose:
       - "80"
     depends_on:
@@ -329,11 +329,16 @@ services:
       LDAP_SERVER: "${LDAP_HOST:-openldap}"
       LDAP_PORT: "${LDAP_PORT:-389}"
       LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=example,dc=org}"
-      # Salt API endpoint for backend NetAPI calls
-      SALTSTACK_MASTER_URL: "http://saltstack:8002"
-      # Salt API credentials for NetAPI (fallback defaults used if .env leaves them empty)
+      # SaltStack 配置
+      SALTSTACK_ENABLED: "${SALTSTACK_ENABLED:-true}"
+      SALTSTACK_MASTER_HOST: "${SALTSTACK_MASTER_HOST:-saltstack}"
+      SALTSTACK_MASTER_URL: "${SALTSTACK_MASTER_URL:-}"
+      SALT_API_SCHEME: "${SALT_API_SCHEME:-http}"
+      SALT_MASTER_HOST: "${SALT_MASTER_HOST:-saltstack}"
+      SALT_API_PORT: "${SALT_API_PORT:-8002}"
       SALT_API_USERNAME: "${SALT_API_USERNAME:-saltapi}"
       SALT_API_PASSWORD: "${SALT_API_PASSWORD:-aiinfra-salt}"
+      SALT_API_EAUTH: "${SALT_API_EAUTH:-file}"
       GITEA_ENABLED: "${GITEA_ENABLED:-true}"
       GITEA_BASE_URL: "${GITEA_BASE_URL:-http://gitea:3000}"
       GITEA_ADMIN_TOKEN: "${GITEA_ADMIN_TOKEN}"
@@ -414,7 +419,7 @@ services:
       context: ./src/jupyterhub
       dockerfile: Dockerfile
       args:
-        BUILDKIT_INLINE_CACHE: "1"
+        BUILDKIT_INLINE_CACHE: "${BUILDKIT_INLINE_CACHE:-1}"
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: ai-infra-jupyterhub
     environment:
@@ -819,11 +824,11 @@ services:
     image: tecnativa/tcp-proxy
     container_name: ai-infra-k8s-proxy
     environment:
-      LISTEN: "0.0.0.0:6443"
-      TALK: "host.docker.internal:6443"
-      PRE_RESOLVE: "0"
-      VERBOSE: "1"
-      TZ: Asia/Shanghai
+      LISTEN: "${K8S_PROXY_LISTEN:-0.0.0.0:6443}"
+      TALK: "${K8S_PROXY_TALK:-host.docker.internal:6443}"
+      PRE_RESOLVE: "${K8S_PROXY_PRE_RESOLVE:-0}"
+      VERBOSE: "${K8S_PROXY_VERBOSE:-1}"
+      TZ: "${TZ:-Asia/Shanghai}"
     expose:
       - "6443"
     extra_hosts:
@@ -858,17 +863,17 @@ services:
     env_file:
       - .env
     environment:
-      USER_UID: "1000"
-      USER_GID: "1000"
+      USER_UID: "${USER_UID:-1000}"
+      USER_GID: "${USER_GID:-1000}"
       ROOT_URL: "${ROOT_URL}"
-      SUBURL: "/gitea"
-      STATIC_URL_PREFIX: "/gitea"
+      SUBURL: "${SUBURL:-/gitea}"
+      STATIC_URL_PREFIX: "${STATIC_URL_PREFIX:-/gitea}"
       GITEA__server__ROOT_URL: "${ROOT_URL}"
-      GITEA__server__SUBURL: "/gitea"
+      GITEA__server__SUBURL: "${SUBURL:-/gitea}"
       DOMAIN: "${DOMAIN}"
-      PROTOCOL: "http"
-      HTTP_PORT: "3000"
-      GITEA_DB_TYPE: "postgres"
+      PROTOCOL: "${GITEA_PROTOCOL:-http}"
+      HTTP_PORT: "${GITEA_HTTP_PORT:-3000}"
+      GITEA_DB_TYPE: "${GITEA_DB_TYPE:-postgres}"
       GITEA_DB_HOST: "${GITEA_DB_HOST:-postgres:5432}"
       GITEA_DB_NAME: "${GITEA_DB_NAME:-gitea}"
       # 注意：以下两行必须使用6个空格缩进，保持与其他 environment 项对齐，否则会导致 YAML 解析错误。
@@ -876,8 +881,8 @@ services:
       GITEA_DB_PASSWD: "${GITEA_DB_PASSWD:-gitea-password}"
       POSTGRES_USER: "${POSTGRES_USER:-postgres}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
-      DISABLE_REGISTRATION: "false"
-      REVERSE_PROXY_TRUSTED_PROXIES: "0.0.0.0/0,::/0"
+      DISABLE_REGISTRATION: "${DISABLE_REGISTRATION:-false}"
+      REVERSE_PROXY_TRUSTED_PROXIES: "${REVERSE_PROXY_TRUSTED_PROXIES:-0.0.0.0/0,::/0}"
       GITEA__auth__REVERSE_PROXY_AUTHENTICATION_USER: "X-WEBAUTH-USER"
       GITEA__auth__REVERSE_PROXY_AUTHENTICATION_EMAIL: "X-WEBAUTH-EMAIL"
       GITEA__auth__REVERSE_PROXY_AUTHENTICATION_FULL_NAME: "X-WEBAUTH-FULLNAME"
@@ -891,14 +896,14 @@ services:
       INITIAL_ADMIN_USERNAME: "${GITEA_ALIAS_ADMIN_TO:-admin}"
       # Admin bootstrap via reverse-proxy SSO only; admin user will be default admin
       GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
-      DATA_PATH: "/data/gitea"
+      DATA_PATH: "${GITEA_DATA_PATH:-/data/gitea}"
       MINIO_ENDPOINT: "${MINIO_HOST:-minio}:${MINIO_PORT:-9000}"
       MINIO_BUCKET: "${MINIO_BUCKET_GITEA:-gitea}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
       MINIO_LOCATION: "${MINIO_REGION:-us-east-1}"
       MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
-      TZ: "Asia/Shanghai"
+      TZ: "${TZ:-Asia/Shanghai}"
     expose:
       - "3000"
       - "22"

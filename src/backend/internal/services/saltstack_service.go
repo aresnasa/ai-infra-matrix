@@ -70,7 +70,7 @@ func NewSaltStackService() *SaltStackService {
 		masterURL: masterURL,
 		apiToken:  apiToken,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 90 * time.Second, // 增加超时时间以支持 SaltStack minions 响应超时（默认60秒）
 		},
 	}
 }
