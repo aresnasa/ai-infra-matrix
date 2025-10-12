@@ -67,6 +67,7 @@ const SlurmTasksPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const autoRefreshRef = useRef(null);
+  const runningTasksCountRef = useRef(0);  // 新增：使用 ref 跟踪运行任务数
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -78,6 +79,7 @@ const SlurmTasksPage = () => {
   const [lastRefresh, setLastRefresh] = useState(Date.now());
   const [refreshInterval, setRefreshInterval] = useState(30000); // 默认30秒
   const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
+  const [taskDetailId, setTaskDetailId] = useState(null); // 用于记录需要打开详情的任务ID
   
   // 过滤和搜索状态
   const [filters, setFilters] = useState({
@@ -330,6 +332,13 @@ const SlurmTasksPage = () => {
         ...prev,
         total: data.total || 0,
       }));
+      
+      // 更新运行任务数的 ref
+      const runningCount = (data.tasks || []).filter(task => 
+        task.status === 'running' || task.status === 'pending'
+      ).length;
+      runningTasksCountRef.current = runningCount;
+      
       setError(null);
     } catch (e) {
       console.error('加载任务列表失败', e);
@@ -494,9 +503,8 @@ const SlurmTasksPage = () => {
     setTaskProgress(null);
   };
 
-  // 初始化加载和URL参数处理
+  // 初始化加载 - 仅在组件挂载时处理URL参数
   useEffect(() => {
-    // 处理URL参数
     const searchParams = new URLSearchParams(location.search);
     const statusParam = searchParams.get('status');
     const taskIdParam = searchParams.get('taskId');
@@ -505,20 +513,34 @@ const SlurmTasksPage = () => {
       setFilters(prev => ({ ...prev, status: statusParam }));
     }
     
+    // 保存 taskId 用于后续打开详情
+    if (taskIdParam) {
+      setTaskDetailId(taskIdParam);
+    }
+  }, []); // 仅在组件挂载时执行一次
+
+  // 监听 filters, pagination, activeTab 变化时加载数据
+  useEffect(() => {
+    console.log('数据加载触发:', { activeTab, filters, pagination: { current: pagination.current, pageSize: pagination.pageSize } });
+    
     if (activeTab === 'tasks') {
-      loadTasks().then(() => {
-        // 如果有指定的任务ID，自动打开详情
-        if (taskIdParam && tasks.length > 0) {
-          const targetTask = tasks.find(task => task.id === taskIdParam);
-          if (targetTask) {
-            handleViewTaskDetail(targetTask);
-          }
-        }
-      });
+      loadTasks();
     } else if (activeTab === 'statistics') {
       loadStatistics();
     }
-  }, [filters, pagination.current, pagination.pageSize, activeTab]);
+  }, [filters.status, filters.jobName, pagination.current, pagination.pageSize, activeTab]);
+
+  // 当任务加载完成后，检查是否需要打开指定任务的详情
+  useEffect(() => {
+    if (taskDetailId && tasks.length > 0 && activeTab === 'tasks') {
+      const targetTask = tasks.find(task => task.id === taskDetailId);
+      if (targetTask) {
+        console.log('自动打开任务详情:', taskDetailId);
+        handleViewTaskDetail(targetTask);
+        setTaskDetailId(null); // 清除标记，避免重复打开
+      }
+    }
+  }, [tasks, taskDetailId, activeTab]);
 
   // Tab 切换时的额外处理
   useEffect(() => {
@@ -529,40 +551,36 @@ const SlurmTasksPage = () => {
     }
   }, [activeTab]);
 
-  // 智能刷新间隔调整
+  // 智能刷新间隔调整 - 保证至少30秒刷新间隔以满足E2E测试要求
   const adjustRefreshInterval = (runningTasksCount) => {
     if (runningTasksCount === 0) {
-      return 0; // 无运行任务时不刷新
+      return 60000; // 无运行任务时降低刷新频率：60秒
     } else if (runningTasksCount <= 2) {
-      return 30000; // 1-2个任务：30秒
+      return 60000; // 1-2个任务：60秒
     } else if (runningTasksCount <= 5) {
-      return 20000; // 3-5个任务：20秒
+      return 45000; // 3-5个任务：45秒
     } else {
-      return 15000; // 5个以上任务：15秒
+      return 30000; // 5个以上任务：30秒（保证不低于30秒）
     }
   };
 
-  // 自动刷新和页面可见性检测
+  // 自动刷新和页面可见性检测 - 优化版本，确保始终有定时器运行
   useEffect(() => {
-    const runningTasks = tasks.filter(task => 
-      task.status === 'running' || task.status === 'pending'
-    );
-    const runningTasksCount = runningTasks.length;
-    
     // 清理之前的定时器
     if (autoRefreshRef.current) {
       clearInterval(autoRefreshRef.current);
+      autoRefreshRef.current = null;
     }
 
-    // 智能调整刷新间隔
-    const newInterval = adjustRefreshInterval(runningTasksCount);
-    setRefreshInterval(newInterval);
-
-    // 只有在有运行中任务且启用自动刷新时才设置定时器
-    if (activeTab === 'tasks' && runningTasksCount > 0 && isAutoRefreshEnabled && newInterval > 0) {
+    // 只有在启用自动刷新且在任务列表 tab 时才设置定时器
+    if (activeTab === 'tasks' && isAutoRefreshEnabled) {
+      const runningTasksCount = runningTasksCountRef.current;
+      const newInterval = adjustRefreshInterval(runningTasksCount);
+      
+      // 始终设置定时器，保证自动刷新功能正常工作
       console.log(`设置自动刷新：${newInterval/1000}秒间隔，${runningTasksCount}个运行中任务`);
       autoRefreshRef.current = setInterval(() => {
-        console.log(`自动刷新任务列表... (${runningTasksCount}个运行中任务)`);
+        console.log(`自动刷新任务列表... (${runningTasksCountRef.current}个运行中任务)`);
         loadTasks();
         setLastRefresh(Date.now());
       }, newInterval);
@@ -571,7 +589,7 @@ const SlurmTasksPage = () => {
     // 页面可见性变化时的处理（降低频率）
     let visibilityTimer = null;
     const handleVisibilityChange = () => {
-      if (!document.hidden && activeTab === 'tasks') {
+      if (!document.hidden && activeTab === 'tasks' && isAutoRefreshEnabled) {
         // 防抖处理，避免频繁切换
         if (visibilityTimer) {
           clearTimeout(visibilityTimer);
@@ -580,7 +598,7 @@ const SlurmTasksPage = () => {
           console.log('页面变为可见，刷新任务列表...');
           loadTasks();
           setLastRefresh(Date.now());
-        }, 1000); // 1秒延迟
+        }, 2000); // 增加到2秒延迟
       }
     };
 
@@ -595,7 +613,25 @@ const SlurmTasksPage = () => {
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [tasks, activeTab, isAutoRefreshEnabled]);
+  }, [activeTab, isAutoRefreshEnabled]); // 只依赖这两个状态，不依赖 tasks
+
+  // 当运行任务数变化时，动态调整刷新间隔
+  useEffect(() => {
+    const runningTasksCount = runningTasksCountRef.current;
+    const newInterval = adjustRefreshInterval(runningTasksCount);
+    setRefreshInterval(newInterval);
+
+    // 如果已有定时器且间隔发生变化，重新设置定时器
+    if (autoRefreshRef.current && isAutoRefreshEnabled && activeTab === 'tasks') {
+      console.log(`运行任务数变化，调整刷新间隔为：${newInterval/1000}秒`);
+      clearInterval(autoRefreshRef.current);
+      autoRefreshRef.current = setInterval(() => {
+        console.log(`自动刷新任务列表... (${runningTasksCountRef.current}个运行中任务)`);
+        loadTasks();
+        setLastRefresh(Date.now());
+      }, newInterval);
+    }
+  }, [tasks, activeTab, isAutoRefreshEnabled]); // 监听 tasks 变化但只调整间隔
 
   if (loading && tasks.length === 0) {
     return (
@@ -642,11 +678,7 @@ const SlurmTasksPage = () => {
           description={
             <div>
               {isAutoRefreshEnabled ? (
-                refreshInterval > 0 ? (
-                  `自动刷新已启用，间隔 ${refreshInterval/1000} 秒`
-                ) : (
-                  '无运行任务，自动刷新已暂停'
-                )
+                `自动刷新已启用，间隔 ${refreshInterval/1000} 秒`
               ) : (
                 '自动刷新已关闭，点击上方按钮手动刷新或启用自动刷新'
               )}

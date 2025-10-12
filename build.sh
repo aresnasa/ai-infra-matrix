@@ -249,9 +249,90 @@ setup_services_defaults() {
 # IP地址检测和模板渲染功能（从env-manager.sh集成）
 # ==========================================
 
-# 网络接口配置
-DEFAULT_NETWORK_INTERFACE="ens0"
-FALLBACK_INTERFACES=("eth0" "enp0s3" "wlan0" "wlp2s0")
+# 网络接口配置（根据操作系统自动选择）
+get_default_network_interface() {
+    case "$OS_TYPE" in
+        "macOS")
+            echo "en0"  # macOS 默认以太网/Wi-Fi
+            ;;
+        *)
+            echo "eth0"  # Linux 默认以太网
+            ;;
+    esac
+}
+
+get_fallback_interfaces() {
+    case "$OS_TYPE" in
+        "macOS")
+            echo "en0 en1 en2 en3 en4 en5"  # macOS 网络接口
+            ;;
+        *)
+            # Linux 常见网络接口类型：
+            # - eth*: 传统命名
+            # - enp*: 新式PCI网卡命名
+            # - ens*: 新式系统命名
+            # - bond*: 网卡绑定
+            # - br*: 网桥接口
+            # - wlan*/wlp*: 无线网卡
+            echo "eth0 eth1 enp0s3 enp0s8 ens33 ens160 ens192 bond0 bond1 br0 br1 wlan0 wlp2s0"
+            ;;
+    esac
+}
+
+# 智能检测活跃的网络接口（优先级：物理网卡 > 绑定接口 > 网桥）
+# 排除虚拟网卡：docker, veth, kubernetes, 虚拟机等
+detect_active_interface() {
+    local active_interfaces=()
+    
+    if command -v ip >/dev/null 2>&1; then
+        # 获取所有 UP 状态且有 IPv4 地址的接口
+        # 排除 loopback、docker、kubernetes、虚拟机等虚拟接口
+        active_interfaces=($(ip -4 addr show | grep -E '^[0-9]+:' | grep 'state UP' | \
+            grep -v 'lo:' | grep -v 'docker' | grep -v 'veth' | \
+            grep -v 'virbr' | grep -v 'vboxnet' | grep -v 'vmnet' | \
+            awk -F': ' '{print $2}' | awk '{print $1}'))
+    elif command -v ifconfig >/dev/null 2>&1; then
+        # 使用 ifconfig 获取活跃接口
+        # macOS: 排除 bridge100 (Kubernetes)、vmnet (VMware)、utun (VPN) 等虚拟接口
+        active_interfaces=($(ifconfig | grep -E '^[a-z]' | grep -v '^lo' | \
+            grep -v 'docker' | grep -v 'veth' | grep -v 'bridge' | \
+            grep -v 'vmnet' | grep -v 'vboxnet' | grep -v 'utun' | \
+            awk '{print $1}' | tr -d ':'))
+    fi
+    
+    # 优先级排序：eth > enp > ens > en (macOS) > bond > br > wlan
+    for prefix in "eth" "enp" "ens" "en" "bond" "br" "wlan"; do
+        for iface in "${active_interfaces[@]}"; do
+            if [[ "$iface" =~ ^${prefix} ]]; then
+                # 额外检查：确保不是 Kubernetes 虚拟网卡 (192.168.65.x, 10.96.x.x 等)
+                local iface_ip=$(detect_interface_ip "$iface")
+                if [[ -n "$iface_ip" ]] && [[ ! "$iface_ip" =~ ^192\.168\.65\. ]] && \
+                   [[ ! "$iface_ip" =~ ^10\.96\. ]] && [[ ! "$iface_ip" =~ ^172\.1[6-9]\. ]] && \
+                   [[ ! "$iface_ip" =~ ^172\.2[0-9]\. ]] && [[ ! "$iface_ip" =~ ^172\.3[0-1]\. ]]; then
+                    echo "$iface"
+                    return 0
+                fi
+            fi
+        done
+    done
+    
+    # 如果没有匹配的，返回第一个活跃接口（但仍需检查 IP 范围）
+    if [[ ${#active_interfaces[@]} -gt 0 ]]; then
+        for iface in "${active_interfaces[@]}"; do
+            local iface_ip=$(detect_interface_ip "$iface")
+            if [[ -n "$iface_ip" ]] && [[ ! "$iface_ip" =~ ^192\.168\.65\. ]] && \
+               [[ ! "$iface_ip" =~ ^10\.96\. ]]; then
+                echo "$iface"
+                return 0
+            fi
+        done
+    fi
+    
+    return 1
+}
+
+DEFAULT_NETWORK_INTERFACE=$(get_default_network_interface)
+FALLBACK_INTERFACES=($(get_fallback_interfaces))
 
 # 检测指定网卡的IP地址
 detect_interface_ip() {
@@ -260,20 +341,23 @@ detect_interface_ip() {
     
     # 方法1: 使用ip命令（Linux优先）
     if command -v ip >/dev/null 2>&1; then
-        ip=$(ip addr show "$interface" 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+        # 使用 ip addr show 获取 IPv4 地址
+        ip=$(ip addr show "$interface" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | awk '{print $2}' | cut -d'/' -f1 | head -1)
     fi
     
     # 方法2: 使用ifconfig命令（macOS和旧版Linux）
     if [[ -z "$ip" ]] && command -v ifconfig >/dev/null 2>&1; then
         case "$OS_TYPE" in
             "macOS")
-                ip=$(ifconfig "$interface" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | awk '{print $2}' | head -1)
+                # macOS ifconfig 格式: inet 192.168.1.100 netmask 0xffffff00 broadcast 192.168.1.255
+                ip=$(ifconfig "$interface" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
                 ;;
             *)
-                ip=$(ifconfig "$interface" 2>/dev/null | grep -oP 'inet addr:\K[0-9.]+' | head -1)
+                # Linux ifconfig 旧格式: inet addr:192.168.1.100
+                ip=$(ifconfig "$interface" 2>/dev/null | grep -E 'inet addr:' | awk -F: '{print $2}' | awk '{print $1}' | head -1)
                 if [[ -z "$ip" ]]; then
-                    # 新版本ifconfig格式
-                    ip=$(ifconfig "$interface" 2>/dev/null | grep -oP 'inet \K[0-9.]+' | head -1)
+                    # Linux ifconfig 新格式: inet 192.168.1.100
+                    ip=$(ifconfig "$interface" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | awk '{print $2}' | head -1)
                 fi
                 ;;
         esac
@@ -288,30 +372,55 @@ auto_detect_external_ip_enhanced() {
     
     print_info "自动检测外部主机IP..."
     
-    # 优先检测指定网卡
+    # 方法1: 智能检测活跃网卡
+    local active_if=$(detect_active_interface)
+    if [[ -n "$active_if" ]]; then
+        print_info "检测到活跃网卡: $active_if"
+        detected_ip=$(detect_interface_ip "$active_if")
+        if [[ -n "$detected_ip" ]]; then
+            print_success "在网卡 $active_if 上检测到IP: $detected_ip"
+            echo "$detected_ip"
+            return 0
+        fi
+    fi
+    
+    # 方法2: 优先检测指定网卡
     detected_ip=$(detect_interface_ip "$DEFAULT_NETWORK_INTERFACE")
-    
-    # 如果指定网卡没有IP，尝试其他网卡
-    if [[ -z "$detected_ip" ]]; then
-        for interface in "${FALLBACK_INTERFACES[@]}"; do
-            print_info "尝试检测网卡: $interface"
-            detected_ip=$(detect_interface_ip "$interface")
-            if [[ -n "$detected_ip" ]]; then
-                print_success "在网卡 $interface 上检测到IP: $detected_ip"
-                break
-            fi
-        done
-    else
+    if [[ -n "$detected_ip" ]]; then
         print_success "在网卡 $DEFAULT_NETWORK_INTERFACE 上检测到IP: $detected_ip"
+        echo "$detected_ip"
+        return 0
     fi
     
-    # 方法3: 通过默认路由检测
-    if [[ -z "$detected_ip" ]] && command -v ip >/dev/null 2>&1; then
-        detected_ip=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
-        [[ -n "$detected_ip" ]] && print_success "通过默认路由检测到IP: $detected_ip"
+    # 方法3: 如果指定网卡没有IP，尝试其他网卡
+    for interface in "${FALLBACK_INTERFACES[@]}"; do
+        print_info "尝试检测网卡: $interface"
+        detected_ip=$(detect_interface_ip "$interface")
+        if [[ -n "$detected_ip" ]]; then
+            print_success "在网卡 $interface 上检测到IP: $detected_ip"
+            echo "$detected_ip"
+            return 0
+        fi
+    done
+    
+    # 方法4: 通过默认路由检测本地IP（不依赖外部网络）
+    if [[ -z "$detected_ip" ]]; then
+        if command -v ip >/dev/null 2>&1; then
+            # Linux: 使用 ip route get 获取本地源地址
+            # 使用内网地址避免依赖外网连接
+            detected_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | head -1)
+            [[ -n "$detected_ip" ]] && print_success "通过默认路由检测到IP: $detected_ip" && echo "$detected_ip" && return 0
+        elif command -v route >/dev/null 2>&1 && [[ "$OS_TYPE" == "macOS" ]]; then
+            # macOS: 使用 route 命令获取默认网关对应的接口
+            local default_if=$(route -n get default 2>/dev/null | grep 'interface:' | awk '{print $2}')
+            if [[ -n "$default_if" ]]; then
+                detected_ip=$(ifconfig "$default_if" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+                [[ -n "$detected_ip" ]] && print_success "通过默认网关接口 $default_if 检测到IP: $detected_ip" && echo "$detected_ip" && return 0
+            fi
+        fi
     fi
     
-    # 方法4: 通过ifconfig检测任意可用IP（排除127.0.0.1）
+    # 方法5: 通过ifconfig检测任意可用IP（排除127.0.0.1）
     if [[ -z "$detected_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
         case "$OS_TYPE" in
             "macOS")
@@ -321,15 +430,12 @@ auto_detect_external_ip_enhanced() {
                 detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
                 ;;
         esac
-        [[ -n "$detected_ip" ]] && print_success "通过ifconfig检测到IP: $detected_ip"
+        [[ -n "$detected_ip" ]] && print_success "通过ifconfig检测到IP: $detected_ip" && echo "$detected_ip" && return 0
     fi
     
     # 备用方案: 使用localhost
-    if [[ -z "$detected_ip" ]]; then
-        detected_ip="localhost"
-        print_warning "无法自动检测外部IP，使用默认值: localhost"
-    fi
-    
+    detected_ip="localhost"
+    print_warning "无法自动检测外部IP，使用默认值: localhost"
     echo "$detected_ip"
 }
 
@@ -337,24 +443,54 @@ auto_detect_external_ip_enhanced() {
 auto_detect_external_ip_silent() {
     local detected_ip=""
     
-    # 优先检测指定网卡
+    # 方法1: 智能检测活跃网卡
+    local active_if=$(detect_active_interface)
+    if [[ -n "$active_if" ]]; then
+        detected_ip=$(detect_interface_ip "$active_if")
+        if [[ -n "$detected_ip" ]]; then
+            echo "$detected_ip"
+            return 0
+        fi
+    fi
+    
+    # 方法2: 优先检测指定网卡
     detected_ip=$(detect_interface_ip "$DEFAULT_NETWORK_INTERFACE")
-    
-    # 如果指定网卡没有IP，尝试其他网卡
-    if [[ -z "$detected_ip" ]]; then
-        for interface in "${FALLBACK_INTERFACES[@]}"; do
-            detected_ip=$(detect_interface_ip "$interface")
-            [[ -n "$detected_ip" ]] && break
-        done
+    if [[ -n "$detected_ip" ]]; then
+        echo "$detected_ip"
+        return 0
     fi
     
-    # 方法3: 通过默认路由检测
-    if [[ -z "$detected_ip" ]] && command -v ip >/dev/null 2>&1; then
-        detected_ip=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1)
+    # 方法3: 如果指定网卡没有IP，尝试其他网卡
+    for interface in "${FALLBACK_INTERFACES[@]}"; do
+        detected_ip=$(detect_interface_ip "$interface")
+        if [[ -n "$detected_ip" ]]; then
+            echo "$detected_ip"
+            return 0
+        fi
+    done
+    
+    # 方法4: 通过默认路由检测本地IP（不依赖外部网络）
+    if command -v ip >/dev/null 2>&1; then
+        # Linux: 使用内网地址避免依赖外网连接
+        detected_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | head -1)
+        if [[ -n "$detected_ip" ]]; then
+            echo "$detected_ip"
+            return 0
+        fi
+    elif command -v route >/dev/null 2>&1 && [[ "$OS_TYPE" == "macOS" ]]; then
+        # macOS: 获取默认网关对应的接口IP
+        local default_if=$(route -n get default 2>/dev/null | grep 'interface:' | awk '{print $2}')
+        if [[ -n "$default_if" ]]; then
+            detected_ip=$(ifconfig "$default_if" 2>/dev/null | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
+            if [[ -n "$detected_ip" ]]; then
+                echo "$detected_ip"
+                return 0
+            fi
+        fi
     fi
     
-    # 方法4: 通过ifconfig检测任意可用IP（排除127.0.0.1）
-    if [[ -z "$detected_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+    # 方法5: 通过ifconfig检测任意可用IP（排除127.0.0.1）
+    if command -v ifconfig >/dev/null 2>&1; then
         case "$OS_TYPE" in
             "macOS")
                 detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
@@ -363,14 +499,14 @@ auto_detect_external_ip_silent() {
                 detected_ip=$(ifconfig | grep -E 'inet\s+[0-9.]+' | grep -v '127.0.0.1' | awk '{print $2}' | head -1)
                 ;;
         esac
+        if [[ -n "$detected_ip" ]]; then
+            echo "$detected_ip"
+            return 0
+        fi
     fi
     
     # 备用方案: 使用localhost
-    if [[ -z "$detected_ip" ]]; then
-        detected_ip="localhost"
-    fi
-    
-    echo "$detected_ip"
+    echo "localhost"
 }
 
 # 增强型环境变量模板渲染
@@ -1205,11 +1341,14 @@ detect_external_host() {
         # - 127.0.0.1 (loopback)
         # - 10.211.* (Parallels 虚拟网络)
         # - 10.37.* (VMware 虚拟网络)
+        # - 10.96.* (Kubernetes Service 网络)
         # - 192.168.64.* (Docker/虚拟机桥接)
+        # - 192.168.65.* (Kubernetes Docker Desktop)
         # - 172.16-31.* (Docker 默认网络)
         detected_ip=$(ifconfig | grep "inet " | grep -v "127.0.0.1" | \
-            grep -v "10.211." | grep -v "10.37." | \
-            grep -v "192.168.64." | grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
+            grep -v "10.211." | grep -v "10.37." | grep -v "10.96." | \
+            grep -v "192.168.64." | grep -v "192.168.65." | \
+            grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
             awk '{print $2}' | head -n1)
     fi
     
@@ -1217,15 +1356,20 @@ detect_external_host() {
     if [[ -z "$detected_ip" ]] && command -v ip &> /dev/null; then
         # 排除虚拟网络接口
         detected_ip=$(ip addr show | grep "inet " | grep -v "127.0.0.1" | \
-            grep -v "10.211." | grep -v "10.37." | \
-            grep -v "192.168.64." | grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
-            grep -v "docker" | grep -v "veth" | \
+            grep -v "10.211." | grep -v "10.37." | grep -v "10.96." | \
+            grep -v "192.168.64." | grep -v "192.168.65." | \
+            grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
+            grep -v "docker" | grep -v "veth" | grep -v "bridge" | \
             awk '{print $2}' | cut -d'/' -f1 | head -n1)
     fi
     
     # 方法3：使用 hostname（通用降级方案）
     if [[ -z "$detected_ip" ]] && command -v hostname &> /dev/null; then
         detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        # 再次检查是否为虚拟IP
+        if [[ "$detected_ip" =~ ^192\.168\.65\. ]] || [[ "$detected_ip" =~ ^10\.96\. ]]; then
+            detected_ip=""
+        fi
     fi
     
     # 方法4：从 .env 文件读取已配置的值（降级方案）
@@ -1295,23 +1439,52 @@ is_domain() {
 # 检查方法: 
 # 1. 环境变量 KUBERNETES_SERVICE_HOST
 # 2. /var/run/secrets/kubernetes.io 目录
-# 3. kubectl 命令可用且可以连接集群
+# 3. kubectl 命令可用且连接的是真实集群（非 Docker Desktop 本地集群）
 detect_k8s_environment() {
-    # 方法1: 检查 K8s 服务环境变量
+    # 优先级0: 检查强制环境变量（用于明确指定）
+    if [[ -n "${AI_INFRA_FORCE_K8S}" ]]; then
+        echo "${AI_INFRA_FORCE_K8S}"
+        return 0
+    fi
+    
+    # 方法1: 检查 K8s 服务环境变量（在 Pod 内运行）
     if [[ -n "${KUBERNETES_SERVICE_HOST}" ]]; then
         echo "true"
         return 0
     fi
     
-    # 方法2: 检查 K8s ServiceAccount 挂载
+    # 方法2: 检查 K8s ServiceAccount 挂载（在 Pod 内运行）
     if [[ -d "/var/run/secrets/kubernetes.io" ]]; then
         echo "true"
         return 0
     fi
     
-    # 方法3: 检查 kubectl 是否可用
+    # 方法3: 检查 kubectl 是否可用且连接的是真实集群
     if command -v kubectl &> /dev/null; then
+        # 检查是否能连接集群
         if kubectl cluster-info &> /dev/null; then
+            # 进一步检查是否为 Docker Desktop 本地集群
+            local k8s_context=$(kubectl config current-context 2>/dev/null)
+            
+            # 排除 Docker Desktop 本地集群的上下文名称
+            if [[ "$k8s_context" =~ docker-desktop|docker-for-desktop|minikube|kind ]]; then
+                # 这是本地开发集群，不视为真实 K8s 环境
+                echo "false"
+                return 1
+            fi
+            
+            # 检查节点数量，单节点很可能是本地环境
+            local node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+            if [[ $node_count -eq 1 ]]; then
+                # 单节点可能是本地环境，进一步检查节点名称
+                local node_name=$(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}')
+                if [[ "$node_name" =~ docker-desktop|minikube|kind ]]; then
+                    echo "false"
+                    return 1
+                fi
+            fi
+            
+            # 通过所有检查，判定为真实 K8s 环境
             echo "true"
             return 0
         fi

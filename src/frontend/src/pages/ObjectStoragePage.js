@@ -6,7 +6,7 @@ import {
 import {
   CloudServerOutlined, DatabaseOutlined, SettingOutlined,
   PlusOutlined, EyeOutlined, ApiOutlined, MonitorOutlined,
-  SafetyOutlined, LinkOutlined, CheckCircleOutlined
+  SafetyOutlined, LinkOutlined, CheckCircleOutlined, ReloadOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { objectStorageAPI } from '../services/api';

@@ -1,137 +1,223 @@
-# Playwright E2E 测试使用指南
+# AI Infrastructure Matrix - E2E Tests
+
+端到端测试套件，使用 Playwright 进行自动化测试。
 
 ## 快速开始
 
-### 1. 安装依赖(如果尚未安装)
+### 1. 安装依赖
+
 ```bash
+npm install
+npm run install:browsers
+```
+
+### 2. 启动服务
+
+```bash
+# 返回项目根目录
+cd ../..
+
+# 启动所有服务
+docker-compose up -d
+
+# 等待服务就绪
+sleep 30
+```
+
+### 3. 运行测试
+
+```bash
+# 返回测试目录
 cd test/e2e
-npm install @playwright/test
-npx playwright install chromium
-```
 
-### 2. 运行核心验证测试
-```bash
-BASE_URL=http://192.168.0.200:8080 npx playwright test specs/final-verification-test.spec.js
-```
+# 运行快速验证测试（推荐）⭐
+npm run test:quick
 
-### 3. 运行调试测试
-```bash
-# 页面加载测试
-BASE_URL=http://192.168.0.200:8080 npx playwright test specs/debug-saltstack.spec.js
+# 运行完整测试套件
+npm run test:full
 
-# 登录测试
-BASE_URL=http://192.168.0.200:8080 npx playwright test specs/debug-login.spec.js
-```
+# 显示浏览器窗口
+npm run test:headed
 
-### 4. 运行所有测试
-```bash
-BASE_URL=http://192.168.0.200:8080 npx playwright test specs/
+# 调试模式
+npm run test:debug
+
+# 使用 UI 模式
+npm run test:ui
 ```
 
 ## 测试文件说明
 
-### 推荐使用的测试
+### 新增测试套件 🆕
 
-#### `specs/final-verification-test.spec.js` ⭐ **推荐**
+#### `specs/quick-validation-test.spec.js` ⭐ **推荐**
+
+快速验证测试，专注于最近修复的功能：
+- ✅ JupyterHub 配置渲染验证
+- ✅ Gitea 静态资源路径验证
+- ✅ Object Storage 自动刷新验证
+- ✅ SLURM Dashboard SaltStack 集成验证
+- ✅ SLURM Tasks 刷新频率优化验证
+- ✅ SLURM Tasks 统计信息验证
+- ✅ 控制台错误检查
+- ✅ 网络请求监控
+- ✅ 性能基准测试
+
+**运行命令**:
+```bash
+npm run test:quick
+```
+
+**预计运行时间**: 约 3-5 分钟
+
+#### `specs/complete-e2e-test.spec.js`
+
+完整的 E2E 测试套件，覆盖所有核心功能：
+- 用户认证流程（登录、登出、错误处理）
+- 核心功能页面访问（项目、SLURM、SaltStack、K8s 等）
+- SLURM 任务管理（列表、筛选、统计、刷新）
+- SaltStack 管理（仪表板、Minion、集成状态）
+- 对象存储管理（页面加载、刷新、Bucket 列表）
+- 管理员功能（用户管理、项目管理、LDAP、配置）
+- 前端优化验证（刷新频率、懒加载、集成显示）
+- 导航和路由测试
+- 错误处理和边界测试
+- 集成测试（完整工作流）
+
+**运行命令**:
+```bash
+npm run test:full
+```
+
+**预计运行时间**: 约 10-15 分钟
+
+### 现有测试文件
+
+#### `specs/final-verification-test.spec.js`
 - **用途**: 验证 SaltStack 执行完成状态修复
 - **测试内容**:
   1. 登录系统
   2. 打开 SaltStack 页面
   3. 执行命令
-  4. **验证执行完成后按钮状态正确恢复**(核心修复点)
+  4. 验证执行完成后按钮状态正确恢复
   5. 验证可重复执行
-- **运行命令**:
-  ```bash
-  BASE_URL=http://192.168.0.200:8080 npx playwright test specs/final-verification-test.spec.js
-  ```
-- **预期结果**: 测试通过,显示"✅✅✅ 测试通过! ✅✅✅"
 
 #### `specs/debug-saltstack.spec.js`
-- **用途**: 调试 SaltStack 页面加载
-- **测试内容**:
-  1. 登录
-  2. 加载 SaltStack 页面
-  3. 输出页面元素信息(标题、按钮等)
-  4. 生成截图
-- **运行命令**:
-  ```bash
-  BASE_URL=http://192.168.0.200:8080 npx playwright test specs/debug-saltstack.spec.js
-  ```
-
-### 调试辅助测试
-
-#### `specs/debug-login.spec.js`
-- 调试登录页面元素
-- 输出按钮和输入框信息
-
-#### `specs/console-debug.spec.js`
-- 查看浏览器控制台输出
-- 检测 JavaScript 错误
-
-#### `specs/simple-saltstack-test.spec.js`
-- 简单的页面加载测试
-- HTML 内容检查
-
-### 完整测试套件
+- 调试 SaltStack 页面加载
+- 输出页面元素信息
+- 生成截图
 
 #### `specs/saltstack-exec.spec.js`
-- **状态**: 需要配置调整才能完全运行
-- **包含**: 11个全面的测试用例
-- **内容**:
-  - 页面加载测试
-  - 对话框打开测试
-  - 命令执行测试
-  - 错误处理测试
-  - 表单验证测试
-  - 实时进度测试
-  - 重复执行测试
-  - 页面状态显示测试
+- 完整的 SaltStack 执行测试套件
+- 包含 11 个全面的测试用例
 
-## 配置说明
+## 环境变量
 
-### 环境变量
-- `BASE_URL`: 测试目标URL (默认: http://localhost:8080)
-- `E2E_USER`: 登录用户名 (默认: admin)
-- `E2E_PASS`: 登录密码 (默认: admin123)
+在运行测试前，可以设置以下环境变量：
 
-### Playwright 配置
-配置文件: `playwright.config.js`
+```bash
+export BASE_URL=http://192.168.0.200:8080
+export ADMIN_USERNAME=admin
+export ADMIN_PASSWORD=admin123
+export TEST_USERNAME=testuser
+export TEST_PASSWORD=test123
+```
+
+## 查看测试报告
+
+```bash
+npm run report
+```
+
+这将在浏览器中打开 HTML 测试报告，包含：
+- 测试结果摘要
+- 失败截图
+- 测试执行视频（如果启用）
+- 详细的测试步骤
+
+## 使用项目根目录的测试脚本
+
+从项目根目录运行测试：
+
+```bash
+# 快速验证测试
+./run-e2e-tests.sh --quick
+
+# 完整测试套件
+./run-e2e-tests.sh --full
+
+# 显示浏览器窗口
+./run-e2e-tests.sh --quick --headed
+
+# 指定不同的 URL
+./run-e2e-tests.sh --quick --url http://localhost:8080
+```
+
+## 故障排查
+
+### 浏览器未安装
+
+```bash
+npm run install:browsers
+```
+
+### 服务未启动
+
+```bash
+# 检查服务状态
+docker-compose ps
+
+# 启动服务
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f frontend
+```
+
+### 超时错误
+
+增加超时时间，修改 `playwright.config.js`:
+
 ```javascript
-{
-  testDir: './specs',
-  timeout: 60000,
-  use: {
-    baseURL: process.env.BASE_URL || 'http://localhost:8080',
-    screenshot: 'only-on-failure',
-    video: 'retain-on-failure'
-  }
-}
+timeout: 60_000, // 增加到 60 秒
 ```
 
-## 常见问题
+### 找不到"执行命令"按钮
 
-### Q: 测试失败显示"test.describe() not expected"
-**A**: 将测试文件移到 `specs/` 目录,或使用不包含 `test.describe()` 的简化测试。
+页面可能还在加载，使用适当的等待逻辑：
 
-### Q: 找不到"执行命令"按钮
-**A**: 页面可能还在加载,建议使用 `final-verification-test.spec.js`,它包含了正确的等待逻辑。
-
-### Q: 如何查看测试截图?
-**A**: 截图保存在 `test/e2e/` 目录下:
-- 成功: `verification-01-page-loaded.png` 等
-- 失败: `test-failed-*.png`
-
-### Q: 如何以 UI 模式运行测试?
-**A**: 
-```bash
-BASE_URL=http://192.168.0.200:8080 npx playwright test --ui
+```javascript
+await page.waitForSelector('button:has-text("执行命令")', { 
+  state: 'visible',
+  timeout: 10000 
+});
 ```
 
-### Q: 如何以调试模式运行?
-**A**:
-```bash
-BASE_URL=http://192.168.0.200:8080 npx playwright test --debug
+## 项目结构
+
 ```
+test/e2e/
+├── specs/                              # 测试规范文件
+│   ├── complete-e2e-test.spec.js      # 🆕 完整测试套件
+│   ├── quick-validation-test.spec.js  # 🆕 快速验证测试
+│   ├── final-verification-test.spec.js
+│   ├── debug-saltstack.spec.js
+│   ├── saltstack-exec.spec.js
+│   └── ...                            # 其他测试文件
+├── test-results/                       # 测试结果输出
+├── playwright.config.js                # Playwright 配置
+├── package.json                        # NPM 配置
+└── README.md                           # 本文件
+```
+
+## 详细文档
+
+查看以下文档获取更多信息：
+
+- [E2E_TESTING_GUIDE.md](../../docs/E2E_TESTING_GUIDE.md) - 完整的测试指南
+- [SLURM_TASKS_REFRESH_OPTIMIZATION.md](../../docs/SLURM_TASKS_REFRESH_OPTIMIZATION.md) - 刷新优化文档
+- [FRONTEND_PAGE_FIXES.md](../../docs/FRONTEND_PAGE_FIXES.md) - 前端修复汇总
+- [SALTSTACK_FIX_TEST_SUMMARY.md](../../docs/SALTSTACK_FIX_TEST_SUMMARY.md) - SaltStack 修复总结
 
 ## 测试最佳实践
 
@@ -140,59 +226,70 @@ BASE_URL=http://192.168.0.200:8080 npx playwright test --debug
    curl http://192.168.0.200:8080
    ```
 
-2. **清理旧的截图**
+2. **清理旧的测试结果**
    ```bash
-   rm -f *.png
    rm -rf test-results/
    ```
 
 3. **查看详细日志**
    ```bash
-   BASE_URL=http://192.168.0.200:8080 npx playwright test --reporter=list
+   npm run test:quick -- --reporter=list
    ```
 
 4. **只运行特定测试**
    ```bash
    # 使用 --grep 过滤
-   npx playwright test --grep "核心功能"
+   npm run test:quick -- --grep "SLURM Tasks"
    ```
 
 ## 贡献指南
 
 ### 添加新测试
+
 1. 在 `specs/` 目录创建新的 `.spec.js` 文件
-2. 参考 `final-verification-test.spec.js` 的结构
-3. 使用 `loginIfNeeded()` 辅助函数处理登录
+2. 参考 `complete-e2e-test.spec.js` 的结构
+3. 使用辅助函数（`login`, `logout`, `waitForPageLoad`）
 4. 添加适当的等待和错误处理
 5. 包含截图便于调试
 
 ### 测试模板
+
 ```javascript
-const { test } = require('@playwright/test');
+const { test, expect } = require('@playwright/test');
 
-const BASE = process.env.BASE_URL || 'http://localhost:8080';
+const TEST_CONFIG = {
+  baseURL: process.env.BASE_URL || 'http://localhost:8080',
+  adminUser: {
+    username: 'admin',
+    password: 'admin123',
+  },
+};
 
-test('我的测试', async ({ page }) => {
-  // 登录
-  await page.goto(BASE + '/');
-  // ... 登录逻辑
-  
-  // 导航
-  await page.goto(BASE + '/your-page');
-  await page.waitForLoadState('load');
-  
-  // 测试逻辑
-  // ...
-  
-  // 截图
-  await page.screenshot({ path: 'my-test.png' });
+async function login(page, username, password) {
+  await page.goto('/');
+  await page.fill('input[type="text"]', username);
+  await page.fill('input[type="password"]', password);
+  await page.click('button[type="submit"]');
+  await page.waitForURL('**/projects', { timeout: 15000 });
+}
+
+test.describe('我的测试套件', () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page, TEST_CONFIG.adminUser.username, TEST_CONFIG.adminUser.password);
+  });
+
+  test('测试功能', async ({ page }) => {
+    await page.goto('/my-page');
+    await expect(page.locator('text=标题')).toBeVisible();
+  });
 });
 ```
 
-## 相关文档
-- [SALTSTACK_FIX_TEST_SUMMARY.md](../docs/SALTSTACK_FIX_TEST_SUMMARY.md) - 修复和测试总结
-- [scripts/js/SALTSTACK-EXEC-FIX.md](../scripts/js/SALTSTACK-EXEC-FIX.md) - 详细修复说明
-- [Playwright 官方文档](https://playwright.dev/)
+## 相关链接
+
+- [Playwright 文档](https://playwright.dev/)
+- [项目主 README](../../README.md)
+- [构建和测试指南](../../docs/BUILD_AND_TEST_GUIDE.md)
 
 ---
-最后更新: 2024-10-11
+最后更新: 2025-01-12
