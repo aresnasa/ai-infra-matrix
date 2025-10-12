@@ -15,6 +15,8 @@ docker-compose.yml
 .env
 .env.backup.*
 .env.example.backup-*
+.env.local
+.env.test
 src/jupyterhub/jupyterhub_config_*
 src/nginx/conf.d/includes/gitea.conf
 src/frontend/node_modules/
