@@ -315,33 +315,47 @@ func (s *SlurmTaskService) RetryTask(ctx context.Context, taskID string) (*model
 func (s *SlurmTaskService) GetTaskStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 	
-	baseQuery := s.db.Model(&models.SlurmTask{}).
-		Where("created_at >= ? AND created_at <= ?", startDate, endDate)
-	
-	// 总任务数
+	// 总任务数 - 使用独立查询
 	var totalTasks int64
-	baseQuery.Count(&totalTasks)
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ?", startDate, endDate).
+		Count(&totalTasks)
 	stats["total_tasks"] = totalTasks
 	
-	// 按状态统计
+	// 按状态统计 - 使用新的查询
 	statusStats := make(map[string]int64)
 	var statusResults []struct {
 		Status string
 		Count  int64
 	}
-	baseQuery.Select("status, count(*) as count").Group("status").Scan(&statusResults)
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ?", startDate, endDate).
+		Select("status, count(*) as count").
+		Group("status").
+		Scan(&statusResults)
+	
 	for _, result := range statusResults {
 		statusStats[result.Status] = result.Count
 	}
 	stats["status_stats"] = statusStats
 	
-	// 按类型统计
+	// 为前端提供单独的字段（方便直接使用）
+	stats["running_tasks"] = statusStats["running"] + statusStats["pending"] + statusStats["in_progress"]
+	stats["completed_tasks"] = statusStats["completed"] + statusStats["success"]
+	stats["failed_tasks"] = statusStats["failed"] + statusStats["error"] + statusStats["cancelled"]
+	
+	// 按类型统计 - 使用新的查询
 	typeStats := make(map[string]int64)
 	var typeResults []struct {
 		Type  string
 		Count int64
 	}
-	baseQuery.Select("type, count(*) as count").Group("type").Scan(&typeResults)
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ?", startDate, endDate).
+		Select("type, count(*) as count").
+		Group("type").
+		Scan(&typeResults)
+	
 	for _, result := range typeResults {
 		typeStats[result.Type] = result.Count
 	}
@@ -356,12 +370,24 @@ func (s *SlurmTaskService) GetTaskStatistics(ctx context.Context, startDate, end
 	
 	// 成功率
 	var successCount int64
-	baseQuery.Where("status = ?", "completed").Count(&successCount)
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ? AND status IN ?", 
+			startDate, endDate, []string{"completed", "success"}).
+		Count(&successCount)
+	
 	successRate := float64(0)
 	if totalTasks > 0 {
 		successRate = float64(successCount) / float64(totalTasks) * 100
 	}
 	stats["success_rate"] = successRate
+	
+	// 活跃用户数（在时间范围内有任务的用户）
+	var activeUsers int64
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at >= ? AND created_at <= ?", startDate, endDate).
+		Distinct("user_id").
+		Count(&activeUsers)
+	stats["active_users"] = activeUsers
 	
 	return stats, nil
 }

@@ -72,15 +72,22 @@ const ObjectStoragePage = () => {
 
   // 自动刷新机制
   useEffect(() => {
-    if (!autoRefreshEnabled) return;
+    if (!autoRefreshEnabled) {
+      console.log('对象存储自动刷新已禁用');
+      return;
+    }
 
-    const interval = setInterval(() => {
+    console.log('启动对象存储自动刷新，间隔: 30秒');
+    const intervalId = setInterval(() => {
       console.log('自动刷新对象存储配置...');
       loadStorageConfigs(true); // 静默刷新
     }, 30000); // 每30秒刷新一次
 
-    return () => clearInterval(interval);
-  }, [autoRefreshEnabled]);
+    return () => {
+      console.log('清除对象存储自动刷新定时器');
+      clearInterval(intervalId);
+    };
+  }, [autoRefreshEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 页面可见性变化时刷新
   useEffect(() => {
