@@ -1191,6 +1191,334 @@ detect_network_environment() {
     echo "internal"
 }
 
+# 检测外部主机地址
+# 用于自动配置 EXTERNAL_HOST 变量
+detect_external_host() {
+    local detected_ip=""
+    
+    # 智能检测：排除虚拟网络接口，优先选择真实的以太网/Wi-Fi接口
+    # macOS 和 Linux 通用方法
+    
+    # 方法1：使用 ifconfig（macOS 和 BSD）
+    if command -v ifconfig &> /dev/null; then
+        # 获取所有 inet 地址，排除：
+        # - 127.0.0.1 (loopback)
+        # - 10.211.* (Parallels 虚拟网络)
+        # - 10.37.* (VMware 虚拟网络)
+        # - 192.168.64.* (Docker/虚拟机桥接)
+        # - 172.16-31.* (Docker 默认网络)
+        detected_ip=$(ifconfig | grep "inet " | grep -v "127.0.0.1" | \
+            grep -v "10.211." | grep -v "10.37." | \
+            grep -v "192.168.64." | grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
+            awk '{print $2}' | head -n1)
+    fi
+    
+    # 方法2：使用 ip（Linux）
+    if [[ -z "$detected_ip" ]] && command -v ip &> /dev/null; then
+        # 排除虚拟网络接口
+        detected_ip=$(ip addr show | grep "inet " | grep -v "127.0.0.1" | \
+            grep -v "10.211." | grep -v "10.37." | \
+            grep -v "192.168.64." | grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
+            grep -v "docker" | grep -v "veth" | \
+            awk '{print $2}' | cut -d'/' -f1 | head -n1)
+    fi
+    
+    # 方法3：使用 hostname（通用降级方案）
+    if [[ -z "$detected_ip" ]] && command -v hostname &> /dev/null; then
+        detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    
+    # 方法4：从 .env 文件读取已配置的值（降级方案）
+    if [[ -z "$detected_ip" ]] && [[ -f ".env" ]]; then
+        detected_ip=$(grep "^EXTERNAL_HOST=" .env 2>/dev/null | cut -d'=' -f2)
+    fi
+    
+    # 如果检测到 IP，返回；否则返回默认值
+    if [[ -n "$detected_ip" ]]; then
+        echo "$detected_ip"
+    else
+        echo "localhost"
+    fi
+}
+
+# 检测或使用域名配置（K8s 集群扩展支持）
+# 优先级: 环境变量 EXTERNAL_DOMAIN > .env 文件 > 自动检测的 IP
+# 用法: detect_external_domain
+detect_external_domain() {
+    local domain=""
+    
+    # 优先级1: 环境变量（用于 K8s 部署时手动指定）
+    if [[ -n "${EXTERNAL_DOMAIN}" ]]; then
+        echo "${EXTERNAL_DOMAIN}"
+        return 0
+    fi
+    
+    # 优先级2: 从 .env 文件读取已配置的域名
+    if [[ -f ".env" ]]; then
+        domain=$(grep "^DOMAIN=" .env 2>/dev/null | cut -d'=' -f2)
+        # 检查是否是域名（包含字母）而非纯 IP
+        if [[ -n "$domain" ]] && [[ "$domain" =~ [a-zA-Z] ]]; then
+            echo "$domain"
+            return 0
+        fi
+    fi
+    
+    # 优先级3: 降级到 IP 地址检测
+    detect_external_host
+}
+
+# 智能选择外部访问地址（域名优先，IP 降级）
+# 返回: 域名或 IP 地址
+# 用法: get_external_address
+get_external_address() {
+    local address=""
+    
+    # 首先尝试获取域名
+    address=$(detect_external_domain)
+    
+    # 如果域名检测失败或返回 localhost，降级到 IP 检测
+    if [[ -z "$address" ]] || [[ "$address" == "localhost" ]]; then
+        address=$(detect_external_host)
+    fi
+    
+    echo "$address"
+}
+
+# 判断地址是否为域名（包含字母）
+# 用法: is_domain "example.com" && echo "是域名"
+is_domain() {
+    local address="$1"
+    [[ "$address" =~ [a-zA-Z] ]]
+}
+
+# 判断是否在 K8s 环境中运行
+# 检查方法: 
+# 1. 环境变量 KUBERNETES_SERVICE_HOST
+# 2. /var/run/secrets/kubernetes.io 目录
+# 3. kubectl 命令可用且可以连接集群
+detect_k8s_environment() {
+    # 方法1: 检查 K8s 服务环境变量
+    if [[ -n "${KUBERNETES_SERVICE_HOST}" ]]; then
+        echo "true"
+        return 0
+    fi
+    
+    # 方法2: 检查 K8s ServiceAccount 挂载
+    if [[ -d "/var/run/secrets/kubernetes.io" ]]; then
+        echo "true"
+        return 0
+    fi
+    
+    # 方法3: 检查 kubectl 是否可用
+    if command -v kubectl &> /dev/null; then
+        if kubectl cluster-info &> /dev/null; then
+            echo "true"
+            return 0
+        fi
+    fi
+    
+    echo "false"
+}
+
+# 获取 K8s 服务的外部访问地址
+# 支持 LoadBalancer、NodePort、Ingress 等多种暴露方式
+# 用法: get_k8s_external_address <service-name> [namespace]
+get_k8s_external_address() {
+    local service_name="${1:-nginx}"
+    local namespace="${2:-${K8S_NAMESPACE:-ai-infra}}"
+    local address=""
+    
+    # 检查 kubectl 是否可用
+    if ! command -v kubectl &> /dev/null; then
+        return 1
+    fi
+    
+    # 方法1: LoadBalancer 类型服务的 External IP
+    address=$(kubectl get svc "$service_name" -n "$namespace" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+    if [[ -n "$address" ]]; then
+        echo "$address"
+        return 0
+    fi
+    
+    # 方法2: LoadBalancer 类型服务的 Hostname（AWS ELB 等）
+    address=$(kubectl get svc "$service_name" -n "$namespace" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+    if [[ -n "$address" ]]; then
+        echo "$address"
+        return 0
+    fi
+    
+    # 方法3: Ingress 的 Host
+    address=$(kubectl get ingress -n "$namespace" -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null)
+    if [[ -n "$address" ]]; then
+        echo "$address"
+        return 0
+    fi
+    
+    # 方法4: 任意节点 IP（NodePort 模式）
+    address=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}' 2>/dev/null)
+    if [[ -n "$address" ]]; then
+        echo "$address"
+        return 0
+    fi
+    
+    # 降级: 获取内部 IP
+    address=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)
+    if [[ -n "$address" ]]; then
+        echo "$address"
+        return 0
+    fi
+    
+    return 1
+}
+
+# 更新 .env 文件中的变量
+# 用法: update_env_variable "VAR_NAME" "var_value"
+update_env_variable() {
+    local var_name="$1"
+    local var_value="$2"
+    local env_file=".env"
+    
+    # 如果 .env 文件不存在，从示例文件创建
+    if [[ ! -f "$env_file" ]]; then
+        if [[ -f "docker-compose.yml.example" ]]; then
+            print_info "创建 .env 文件（基于 docker-compose.yml.example）"
+            # 提取示例文件中的环境变量
+            grep "^[A-Z]" docker-compose.yml.example > "$env_file" 2>/dev/null || touch "$env_file"
+        else
+            print_info "创建空白 .env 文件"
+            touch "$env_file"
+        fi
+    fi
+    
+    # 检查变量是否已存在
+    if grep -q "^${var_name}=" "$env_file"; then
+        # 更新现有变量
+        # macOS 兼容的 sed 语法
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|^${var_name}=.*|${var_name}=${var_value}|" "$env_file"
+        else
+            sed -i "s|^${var_name}=.*|${var_name}=${var_value}|" "$env_file"
+        fi
+        print_info "✓ 更新 ${var_name}=${var_value}"
+    else
+        # 添加新变量
+        echo "${var_name}=${var_value}" >> "$env_file"
+        print_info "✓ 添加 ${var_name}=${var_value}"
+    fi
+}
+
+# 自动生成或更新 .env 文件
+# 基于网络环境检测和系统配置
+# 支持域名和 K8s 集群部署
+generate_or_update_env_file() {
+    print_info "=========================================="
+    print_info "自动检测和配置环境变量"
+    print_info "=========================================="
+    
+    # 1. 检测运行环境
+    local is_k8s=$(detect_k8s_environment)
+    if [[ "$is_k8s" == "true" ]]; then
+        print_info "🎯 检测到 Kubernetes 环境"
+    else
+        print_info "🐳 检测到 Docker Compose 环境"
+    fi
+    
+    # 2. 检测网络环境
+    local detected_env=$(detect_network_environment)
+    print_info "🌐 检测到网络环境: $detected_env"
+    
+    # 3. 智能检测外部访问地址（支持域名和 IP）
+    local detected_address=""
+    
+    if [[ "$is_k8s" == "true" ]]; then
+        # K8s 环境: 尝试获取 LoadBalancer/Ingress 地址
+        detected_address=$(get_k8s_external_address "nginx" "${K8S_NAMESPACE:-ai-infra}")
+        if [[ -z "$detected_address" ]]; then
+            print_warning "⚠️  无法获取 K8s 外部地址，降级到本地检测"
+            detected_address=$(get_external_address)
+        else
+            print_info "☸️  K8s 外部地址: $detected_address"
+        fi
+    else
+        # Docker Compose 环境: 使用本地检测
+        detected_address=$(get_external_address)
+    fi
+    
+    # 判断是域名还是 IP
+    local address_type="IP"
+    if is_domain "$detected_address"; then
+        address_type="域名"
+    fi
+    print_info "🖥️  检测到外部地址: $detected_address ($address_type)"
+    
+    # 4. 读取当前端口配置（如果存在）
+    local current_port="${EXTERNAL_PORT:-8080}"
+    if [[ -f ".env" ]]; then
+        current_port=$(grep "^EXTERNAL_PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "8080")
+    fi
+    print_info "🔌 使用外部端口: $current_port"
+    
+    # 5. 构建完整的基础 URL
+    local base_url="http://${detected_address}:${current_port}"
+    print_info "🌍 基础访问地址: $base_url"
+    
+    # 6. 更新 .env 文件中的所有相关配置
+    print_info ""
+    print_info "📝 更新 .env 文件中的相关配置..."
+    
+    # 基础配置
+    update_env_variable "AI_INFRA_NETWORK_ENV" "$detected_env"
+    update_env_variable "EXTERNAL_HOST" "$detected_address"
+    update_env_variable "DOMAIN" "$detected_address"
+    
+    # MinIO 配置
+    update_env_variable "MINIO_CONSOLE_URL" "${base_url}/minio-console/"
+    
+    # JupyterHub 配置
+    update_env_variable "JUPYTERHUB_PUBLIC_HOST" "${detected_address}:${current_port}"
+    update_env_variable "JUPYTERHUB_BASE_URL" "${base_url}/jupyter/"
+    update_env_variable "JUPYTERHUB_CORS_ORIGIN" "$base_url"
+    
+    # Gitea 配置
+    update_env_variable "ROOT_URL" "${base_url}/gitea/"
+    
+    # 7. 显示更新摘要
+    print_info ""
+    print_info "✅ 环境配置完成："
+    print_info "   - 运行环境: $([ "$is_k8s" == "true" ] && echo "Kubernetes" || echo "Docker Compose")"
+    print_info "   - 网络环境: $detected_env"
+    print_info "   - 外部地址: $detected_address ($address_type)"
+    print_info "   - 外部端口: $current_port"
+    print_info "   - 基础URL: $base_url"
+    print_info ""
+    print_info "📋 已更新的配置项："
+    print_info "   - DOMAIN → $detected_address"
+    print_info "   - MINIO_CONSOLE_URL → ${base_url}/minio-console/"
+    print_info "   - JUPYTERHUB_PUBLIC_HOST → ${detected_address}:${current_port}"
+    print_info "   - JUPYTERHUB_BASE_URL → ${base_url}/jupyter/"
+    print_info "   - JUPYTERHUB_CORS_ORIGIN → $base_url"
+    print_info "   - ROOT_URL → ${base_url}/gitea/"
+    
+    # 8. K8s 环境特殊提示
+    if [[ "$is_k8s" == "true" ]]; then
+        print_info ""
+        print_info "💡 K8s 集群部署提示："
+        print_info "   - 如需使用固定域名，请设置环境变量: export EXTERNAL_DOMAIN=your-domain.com"
+        print_info "   - 如需更新服务地址，请重新运行: ./build.sh build-all"
+    fi
+    
+    # 9. 重新加载环境变量
+    if [[ -f ".env" ]]; then
+        set -a
+        source .env
+        set +a
+        print_info ""
+        print_info "✅ 已重新加载 .env 文件"
+    fi
+    
+    echo
+}
+
 # 生成离线友好的 Dockerfile 内容
 generate_offline_singleuser_dockerfile() {
     # 获取当前版本标签，默认使用v0.3.6-dev
@@ -1581,32 +1909,72 @@ render_template() {
         "ADDITIONAL_CONFIG"
     )
     
+    # 定义可选变量（允许为空，会被替换为空字符串）
+    local optional_vars=(
+        "ADDITIONAL_CONFIG"
+        "SHARED_STORAGE_CONFIG"
+        "GENERATION_TIME"
+    )
+    
     # 对每个变量进行替换
     for var_name in "${vars_to_replace[@]}"; do
         # 获取变量值
         local var_value="${!var_name:-}"
         
-        # 如果变量为空，跳过替换（保留模板中的占位符）
-        if [[ -z "$var_value" ]]; then
+        # 检查是否为可选变量
+        local is_optional=false
+        for opt_var in "${optional_vars[@]}"; do
+            if [[ "$var_name" == "$opt_var" ]]; then
+                is_optional=true
+                break
+            fi
+        done
+        
+        # 如果变量为空且不是可选变量，跳过替换（保留模板中的占位符）
+        if [[ -z "$var_value" ]] && [[ "$is_optional" == "false" ]]; then
             continue
         fi
         
-        # 转义特殊字符以便在 sed 中使用
-        # macOS 和 Linux 的 sed 都支持这种方式
-        local escaped_value
-        escaped_value=$(printf '%s\n' "$var_value" | sed 's/[&/\]/\\&/g')
-        
-        # 替换 ${VAR} 格式（使用兼容的 sed 语法）
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS (BSD sed)
-            result=$(echo "$result" | sed "s/\${${var_name}}/${escaped_value}/g")
-            # 替换 {{VAR}} 格式
-            result=$(echo "$result" | sed "s/{{${var_name}}}/${escaped_value}/g")
+        # 使用 Perl 进行替换（支持多行内容，兼容 macOS 和 Linux）
+        # Perl 的 s/// 操作符可以正确处理包含换行符的替换内容
+        if command -v perl >/dev/null 2>&1; then
+            # 转义特殊字符用于 Perl 正则表达式
+            local escaped_var_name
+            escaped_var_name=$(printf '%s' "$var_name" | perl -pe 's/([\$\{\}\[\]\(\)\.\*\+\?\^\|\\])/\\$1/g')
+            
+            # 使用 Perl 的 quotemeta 函数自动转义替换内容
+            # -0777 让 Perl 读取整个文件为一个字符串（支持多行匹配）
+            result=$(printf '%s' "$result" | perl -0777 -pe "
+                my \$val = q($var_value);
+                s/\\\$\{$escaped_var_name\}/\$val/g;
+                s/\{\{$escaped_var_name\}\}/\$val/g;
+            ")
         else
-            # Linux (GNU sed)
-            result=$(echo "$result" | sed "s/\${${var_name}}/${escaped_value}/g")
-            # 替换 {{VAR}} 格式
-            result=$(echo "$result" | sed "s/{{${var_name}}}/${escaped_value}/g")
+            # 降级到 awk（更通用，但速度较慢）
+            # 临时文件方案，避免 shell 转义问题
+            local tmp_val_file
+            tmp_val_file=$(mktemp)
+            printf '%s' "$var_value" > "$tmp_val_file"
+            
+            result=$(awk -v var_name="$var_name" -v val_file="$tmp_val_file" '
+                BEGIN {
+                    # 读取替换值
+                    while ((getline line < val_file) > 0) {
+                        if (val != "") val = val "\n"
+                        val = val line
+                    }
+                    close(val_file)
+                }
+                {
+                    # 替换 ${VAR} 格式
+                    gsub("\\$\\{" var_name "\\}", val)
+                    # 替换 {{VAR}} 格式
+                    gsub("\\{\\{" var_name "\\}\\}", val)
+                    print
+                }
+            ' <<< "$result")
+            
+            rm -f "$tmp_val_file"
         fi
     done
     
@@ -1735,6 +2103,7 @@ render_jupyterhub_templates() {
     
     
     # 设置模板变量环境变量
+    export GENERATION_TIME=$(date '+%Y-%m-%d %H:%M:%S %Z')
     export AUTH_CONFIG="$auth_config"
     export SPAWNER_CONFIG="$spawner_config"
     export SHARED_STORAGE_CONFIG="$shared_storage_config"
@@ -3644,44 +4013,63 @@ tag_image_smart() {
     local has_any_local=false
     local source_image=""
     
-    # 按优先级检查本地镜像（任意一个存在即可）
-    for candidate in "$base_image" "$short_name" "$localhost_short"; do
-        if docker image inspect "$candidate" >/dev/null 2>&1; then
-            has_any_local=true
-            source_image="$candidate"
-            print_info "  ✓ 本地已有镜像: $candidate"
-            break
-        fi
-    done
+    # 根据网络环境，调整检查优先级
+    if [[ "$network_env" == "internal" ]]; then
+        # 内网环境：优先使用 Harbor 镜像
+        for candidate in "$harbor_image" "$base_image" "$short_name" "$localhost_short"; do
+            if docker image inspect "$candidate" >/dev/null 2>&1; then
+                has_any_local=true
+                source_image="$candidate"
+                if [[ "$candidate" == "$harbor_image" ]]; then
+                    print_info "  ✓ 本地已有 Harbor 镜像: $candidate"
+                else
+                    print_info "  ✓ 本地已有镜像: $candidate"
+                fi
+                break
+            fi
+        done
+    else
+        # 公网环境：按标准优先级检查
+        for candidate in "$base_image" "$short_name" "$localhost_short"; do
+            if docker image inspect "$candidate" >/dev/null 2>&1; then
+                has_any_local=true
+                source_image="$candidate"
+                print_info "  ✓ 本地已有镜像: $candidate"
+                break
+            fi
+        done
+    fi
     
     # ========================================
-    # 步骤 2: 如果本地不存在，尝试拉取
+    # 步骤 2: 如果本地不存在，根据网络环境拉取
     # ========================================
     if ! $has_any_local && [[ "$auto_pull" == "true" ]]; then
-        print_info "  ⬇ 本地未找到镜像，尝试拉取: $base_image"
+        print_info "  ⬇ 本地未找到镜像，开始拉取..."
         
         local pull_success=false
         case "$network_env" in
             "internal")
-                # 内网：优先从 Harbor 拉取，失败则尝试公共源
+                # 内网环境：只从 Harbor 拉取，不拉取公共镜像
+                # 理由：内网环境应该已经有 Harbor 中的镜像，避免访问公网
+                print_info "  📦 内网环境：尝试从 Harbor 拉取 $harbor_image"
                 if docker pull "$harbor_image" 2>/dev/null; then
                     print_success "  ✓ 从 Harbor 拉取成功: $harbor_image"
                     source_image="$harbor_image"
                     pull_success=true
-                elif docker pull "$base_image" 2>/dev/null; then
-                    print_success "  ✓ 从公共仓库拉取成功: $base_image"
-                    source_image="$base_image"
-                    pull_success=true
                 else
-                    print_error "  ✗ 拉取失败: $harbor_image 和 $base_image"
+                    print_error "  ✗ Harbor 拉取失败: $harbor_image"
+                    print_warning "  ⚠️  内网环境下不会尝试从公共仓库拉取"
+                    print_info "  💡 请确保镜像已推送到 Harbor 仓库"
                 fi
                 ;;
             "external")
-                # 公网：直接从公共仓库拉取
+                # 公网环境：从公共仓库拉取，然后 tag 为 Harbor 镜像（准备推送）
+                print_info "  🌐 公网环境：从公共仓库拉取 $base_image"
                 if docker pull "$base_image" 2>/dev/null; then
                     print_success "  ✓ 拉取成功: $base_image"
                     source_image="$base_image"
                     pull_success=true
+                    print_info "  💡 将为该镜像创建 Harbor tag，便于推送到私有仓库"
                 else
                     print_error "  ✗ 拉取失败: $base_image"
                 fi
@@ -3899,16 +4287,18 @@ batch_tag_images_bidirectional() {
     batch_tag_images_smart "auto" "${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}" "$@"
 }
 
-# 拉取单个镜像（带重试机制）
+# 拉取单个镜像（带重试机制 + 网络环境感知）
 # 参数：
 #   $1: 镜像名称
 #   $2: 最大重试次数（默认3）
+#   $3: Harbor 仓库地址（可选，默认 aiharbor.msxf.local/aihpc）
 # 返回：
 #   0: 拉取成功或镜像已存在
 #   1: 拉取失败
 pull_image_with_retry() {
     local image="$1"
     local max_retries="${2:-3}"
+    local harbor_registry="${3:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
     local retry_count=0
     
     # 检查镜像是否已存在
@@ -3916,21 +4306,61 @@ pull_image_with_retry() {
         return 0
     fi
     
-    # 重试拉取
-    while [[ $retry_count -lt $max_retries ]]; do
-        retry_count=$((retry_count + 1))
-        
-        if [[ $retry_count -gt 1 ]]; then
-            print_info "  🔄 重试 $retry_count/$max_retries: $image"
-            sleep 2  # 等待2秒后重试
-        fi
-        
-        if docker pull "$image" 2>&1 | grep -v "Pulling from"; then
-            return 0
-        fi
-    done
+    # 检测网络环境
+    local network_env=$(detect_network_environment)
     
-    return 1
+    # 提取基础镜像名（去除 Harbor 前缀）
+    local base_image="$image"
+    if [[ "$base_image" =~ ^[^/]+\.[^/]+/ ]]; then
+        base_image=$(echo "$base_image" | sed -E 's|^[^/]+\.[^/]+/[^/]+/||')
+    fi
+    
+    # 根据网络环境决定拉取策略
+    case "$network_env" in
+        "internal")
+            # 内网环境：只从 Harbor 拉取
+            local harbor_image="${harbor_registry}/${base_image}"
+            
+            while [[ $retry_count -lt $max_retries ]]; do
+                retry_count=$((retry_count + 1))
+                
+                if [[ $retry_count -gt 1 ]]; then
+                    print_info "  🔄 重试 $retry_count/$max_retries: $harbor_image"
+                    sleep 2
+                fi
+                
+                if docker pull "$harbor_image" 2>&1 | grep -v "Pulling from"; then
+                    # 拉取成功后，tag 为标准名称
+                    if [[ "$harbor_image" != "$image" ]]; then
+                        docker tag "$harbor_image" "$image" 2>/dev/null || true
+                    fi
+                    return 0
+                fi
+            done
+            
+            print_error "  ✗ 从 Harbor 拉取失败（重试${max_retries}次）: $harbor_image"
+            print_warning "  ⚠️  内网环境下不会尝试从公共仓库拉取"
+            return 1
+            ;;
+            
+        "external")
+            # 公网环境：从公共仓库拉取
+            while [[ $retry_count -lt $max_retries ]]; do
+                retry_count=$((retry_count + 1))
+                
+                if [[ $retry_count -gt 1 ]]; then
+                    print_info "  🔄 重试 $retry_count/$max_retries: $image"
+                    sleep 2
+                fi
+                
+                if docker pull "$image" 2>&1 | grep -v "Pulling from"; then
+                    return 0
+                fi
+            done
+            
+            return 1
+            ;;
+    esac
 }
 
 # 预拉取 Dockerfile 中的依赖镜像（带重试机制）
@@ -4417,11 +4847,21 @@ build_all_services() {
     echo
     
     # ========================================
+    # 步骤 -1: 环境检测和配置生成（自动化）
+    # ========================================
+    print_info "=========================================="
+    print_info "步骤 -1/5: 环境检测和配置生成"
+    print_info "=========================================="
+    
+    # 自动检测网络环境并生成/更新 .env 文件
+    generate_or_update_env_file
+    
+    # ========================================
     # 步骤 0: 检查当前构建状态（需求32）
     # ========================================
     if [[ "$FORCE_REBUILD" == "false" ]]; then
         print_info "=========================================="
-        print_info "步骤 0/5: 检查当前构建状态"
+        print_info "步骤 0/6: 检查当前构建状态"
         print_info "=========================================="
         
         # 显示构建状态
@@ -4459,7 +4899,7 @@ build_all_services() {
     # 步骤 1: 智能镜像管理（拉取 + Tag）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 1/5: 智能镜像管理（拉取 + Tag）"
+    print_info "步骤 1/6: 智能镜像管理（拉取 + Tag）"
     print_info "=========================================="
     
     # 自动检测网络环境
@@ -4576,7 +5016,7 @@ build_all_services() {
     # 步骤 2: 同步配置文件
     # ========================================
     print_info "=========================================="
-    print_info "步骤 2/5: 同步配置文件"
+    print_info "步骤 2/6: 同步配置文件"
     print_info "=========================================="
     if sync_all_configs; then
         print_success "✓ 配置文件同步完成"
@@ -4589,7 +5029,7 @@ build_all_services() {
     # 步骤 3: 渲染配置模板
     # ========================================
     print_info "=========================================="
-    print_info "步骤 3/5: 渲染配置模板"
+    print_info "步骤 3/6: 渲染配置模板"
     print_info "=========================================="
     
     # 渲染 Nginx 配置模板
@@ -4622,10 +5062,11 @@ build_all_services() {
     echo
     
     # ========================================
+    # ========================================
     # 步骤 4: 构建服务镜像（智能过滤）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 4/5: 构建服务镜像"
+    print_info "步骤 4/6: 构建服务镜像"
     print_info "=========================================="
     
     local success_count=0
@@ -4658,7 +5099,7 @@ build_all_services() {
     # 步骤 5: 验证构建结果（需求32）
     # ========================================
     print_info "=========================================="
-    print_info "步骤 5/5: 验证构建结果"
+    print_info "步骤 5/6: 验证构建结果"
     print_info "=========================================="
     
     # 显示最终构建状态

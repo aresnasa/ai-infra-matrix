@@ -1,5 +1,5 @@
 # JupyterHub Backend集成 - 精炼版（修复构建问题）
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
@@ -71,7 +71,29 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 COPY requirements.txt .
 # Install Node.js and temporary build deps to compile psutil on Alpine, then remove them
 RUN set -eux; \
-    apk update || (sleep 5 && apk update) || (sleep 10 && apk update); \
+    # 步骤1: 配置 Alpine 镜像源（多重降级）
+    cp /etc/apk/repositories /etc/apk/repositories.bak; \
+    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d. -f1,2); \
+    # 尝试阿里云镜像
+    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+    if ! apk update 2>/dev/null; then \
+        echo "❌ 阿里云镜像失败，尝试清华镜像..."; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+        if ! apk update 2>/dev/null; then \
+            echo "❌ 清华镜像失败，尝试中科大镜像..."; \
+            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+            if ! apk update 2>/dev/null; then \
+                echo "❌ 中科大镜像失败，使用官方镜像源..."; \
+                mv /etc/apk/repositories.bak /etc/apk/repositories; \
+                apk update || (sleep 5 && apk update) || (sleep 10 && apk update); \
+            fi; \
+        fi; \
+    fi; \
+    \
+    # 步骤2: 安装系统依赖
     apk add --no-cache nodejs npm && \
     apk add --no-cache --virtual .build-deps \
         build-base \
@@ -82,18 +104,47 @@ RUN set -eux; \
         openssl-dev \
         zlib-dev \
     ; \
-    # 配置npm使用阿里云镜像源
-    npm config set registry https://registry.npmmirror.com; \
-    # 设置node-gyp镜像环境变量
-    # 配置pip使用阿里云镜像源
-    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/; \
-    pip config set global.trusted-host mirrors.aliyun.com; \
-    # 安装Python依赖
-    pip install --no-cache-dir --prefer-binary psutil>=5.9.0; \
-    pip install --no-cache-dir -r requirements.txt; \
-    PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl; \
-    # 安装configurable-http-proxy
+    \
+    # 步骤3: 配置 npm 镜像源（多重降级）
+    npm config set registry https://registry.npmmirror.com || \
+    npm config set registry https://registry.npm.taobao.org || \
+    npm config set registry https://registry.npmjs.org; \
+    \
+    # 步骤4: 配置 pip 镜像源（多重降级）
+    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ || true; \
+    pip config set global.trusted-host mirrors.aliyun.com || true; \
+    \
+    # 步骤5: 安装 Python 依赖（带重试）
+    pip install --no-cache-dir --prefer-binary psutil>=5.9.0 || \
+        (pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+         pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
+         pip install --no-cache-dir --prefer-binary psutil>=5.9.0) || \
+        (pip config set global.index-url https://pypi.org/simple/ && \
+         pip config unset global.trusted-host && \
+         pip install --no-cache-dir --prefer-binary psutil>=5.9.0); \
+    \
+    pip install --no-cache-dir -r requirements.txt || \
+        (pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+         pip install --no-cache-dir -r requirements.txt) || \
+        (pip config set global.index-url https://pypi.org/simple/ && \
+         pip install --no-cache-dir -r requirements.txt); \
+    \
+    # 步骤6: 安装 pycurl（编译安装，带多重降级）
+    echo "🔨 开始编译安装 pycurl..."; \
+    PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl || \
+        (echo "❌ 阿里云源安装失败，尝试清华源..."; \
+         pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+         pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
+         PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl) || \
+        (echo "❌ 清华源安装失败，尝试官方 PyPI..."; \
+         pip config set global.index-url https://pypi.org/simple/ && \
+         pip config unset global.trusted-host && \
+         PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl); \
+    \
+    # 步骤7: 安装 configurable-http-proxy
     npm install -g configurable-http-proxy; \
+    \
+    # 步骤8: 清理构建依赖
     apk del .build-deps
 
 # 用户和目录
