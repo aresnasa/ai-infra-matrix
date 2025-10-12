@@ -20,10 +20,14 @@ const ObjectStoragePage = () => {
   const [storageConfigs, setStorageConfigs] = useState([]);
   const [activeConfig, setActiveConfig] = useState(null);
   const [statistics, setStatistics] = useState(null);
+  const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
   // 加载存储配置
-  const loadStorageConfigs = async () => {
-    setLoading(true);
+  const loadStorageConfigs = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const response = await objectStorageAPI.getConfigs();
       const configs = response.data?.data || [];
@@ -37,11 +41,17 @@ const ObjectStoragePage = () => {
       if (activeConf) {
         await loadStatistics(activeConf.id);
       }
+      
+      setLastRefresh(Date.now());
     } catch (error) {
       console.error('加载存储配置失败:', error);
-      message.error('加载存储配置失败: ' + (error.response?.data?.error || error.message));
+      if (!silent) {
+        message.error('加载存储配置失败: ' + (error.response?.data?.error || error.message));
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -55,9 +65,35 @@ const ObjectStoragePage = () => {
     }
   };
 
+  // 初始加载
   useEffect(() => {
     loadStorageConfigs();
   }, []);
+
+  // 自动刷新机制
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+
+    const interval = setInterval(() => {
+      console.log('自动刷新对象存储配置...');
+      loadStorageConfigs(true); // 静默刷新
+    }, 30000); // 每30秒刷新一次
+
+    return () => clearInterval(interval);
+  }, [autoRefreshEnabled]);
+
+  // 页面可见性变化时刷新
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && autoRefreshEnabled) {
+        console.log('页面变为可见，刷新对象存储配置...');
+        loadStorageConfigs(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [autoRefreshEnabled]);
 
   // 存储类型配置
   const storageTypeConfigs = {
@@ -185,9 +221,28 @@ const ObjectStoragePage = () => {
           </Title>
           <Paragraph type="secondary">
             统一管理MinIO、S3等各种对象存储服务，提供文件上传、下载和管理功能
+            {lastRefresh && (
+              <span style={{ marginLeft: '16px', fontSize: '12px' }}>
+                上次更新: {new Date(lastRefresh).toLocaleTimeString()}
+              </span>
+            )}
           </Paragraph>
         </div>
         <Space>
+          <Button
+            icon={<ReloadOutlined spin={loading} />}
+            onClick={() => loadStorageConfigs()}
+            loading={loading}
+          >
+            刷新
+          </Button>
+          <Button
+            type={autoRefreshEnabled ? "primary" : "default"}
+            onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+            ghost={autoRefreshEnabled}
+          >
+            {autoRefreshEnabled ? '🔄 自动刷新' : '⏸️ 已暂停'}
+          </Button>
           <Button 
             icon={<SettingOutlined />}
             onClick={() => navigate('/admin/object-storage')}

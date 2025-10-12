@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography } from 'antd';
-import { slurmAPI } from '../services/api';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography, Divider } from 'antd';
+import { slurmAPI, saltStackAPI } from '../services/api';
+import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 const columnsNodes = [
   { title: '节点', dataIndex: 'name', key: 'name' },
@@ -27,7 +28,9 @@ const SlurmDashboard = () => {
   const [summary, setSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const [saltStackData, setSaltStackData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saltStackLoading, setSaltStackLoading] = useState(false);
   const [demo, setDemo] = useState(false);
   const [error, setError] = useState(null);
 
@@ -53,9 +56,26 @@ const SlurmDashboard = () => {
     }
   };
 
+  const loadSaltStackIntegration = async () => {
+    setSaltStackLoading(true);
+    try {
+      const response = await saltStackAPI.getSaltStackIntegration();
+      setSaltStackData(response.data?.data || null);
+    } catch (e) {
+      console.error('加载SaltStack集成数据失败', e);
+      // 不显示错误，因为这是可选功能
+    } finally {
+      setSaltStackLoading(false);
+    }
+  };
+
   useEffect(() => {
     load();
-    const t = setInterval(load, 15000);
+    loadSaltStackIntegration();
+    const t = setInterval(() => {
+      load();
+      loadSaltStackIntegration();
+    }, 15000);
     return () => clearInterval(t);
   }, []);
 
@@ -121,6 +141,78 @@ const SlurmDashboard = () => {
             </Card>
           </Col>
         </Row>
+
+        <Divider />
+
+        {/* SaltStack 集成状态 */}
+        {saltStackData && (
+          <Card 
+            title={
+              <Space>
+                <CloudServerOutlined />
+                <span>SaltStack 集成状态</span>
+                {saltStackData.enabled && (
+                  <Tag color="green" icon={<CheckCircleOutlined />}>已启用</Tag>
+                )}
+                {!saltStackData.enabled && (
+                  <Tag color="default">未启用</Tag>
+                )}
+              </Space>
+            }
+            extra={saltStackLoading ? <Spin size="small" /> : null}
+            style={{ marginBottom: '16px' }}
+          >
+            <Row gutter={16}>
+              <Col span={6}>
+                <Statistic
+                  title="Minion 总数"
+                  value={saltStackData.minions?.total || 0}
+                  prefix={<HddOutlined />}
+                />
+              </Col>
+              <Col span={6}>
+                <Statistic
+                  title="在线 Minion"
+                  value={saltStackData.minions?.online || 0}
+                  valueStyle={{ color: '#3f8600' }}
+                  prefix={<CheckCircleOutlined />}
+                />
+              </Col>
+              <Col span={6}>
+                <Statistic
+                  title="离线 Minion"
+                  value={saltStackData.minions?.offline || 0}
+                  valueStyle={{ color: '#cf1322' }}
+                />
+              </Col>
+              <Col span={6}>
+                <Statistic
+                  title="最近任务"
+                  value={saltStackData.recent_jobs || 0}
+                  prefix={<SyncOutlined />}
+                />
+              </Col>
+            </Row>
+            {saltStackData.minion_list && saltStackData.minion_list.length > 0 && (
+              <div style={{ marginTop: '16px' }}>
+                <Text strong>Minion 节点列表:</Text>
+                <div style={{ marginTop: '8px' }}>
+                  <Space wrap>
+                    {saltStackData.minion_list.map((minion) => (
+                      <Tag
+                        key={minion.id}
+                        color={minion.status === 'online' ? 'green' : 'default'}
+                        icon={minion.status === 'online' ? <CheckCircleOutlined /> : null}
+                      >
+                        {minion.name || minion.id}
+                      </Tag>
+                    ))}
+                  </Space>
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
 
         <Card title="节点列表" extra={!loading ? null : <Spin size="small" />}>
           <Table rowKey="name" dataSource={nodes} columns={columnsNodes} size="small" pagination={{ pageSize: 8 }} />

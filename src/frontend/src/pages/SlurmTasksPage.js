@@ -95,6 +95,7 @@ const SlurmTasksPage = () => {
     pageSize: 10,
     total: 0,
   });
+  const [statisticsLoading, setStatisticsLoading] = useState(false);
 
   // 表格列定义
   const columns = [
@@ -340,6 +341,7 @@ const SlurmTasksPage = () => {
 
   // 加载统计信息
   const loadStatistics = async () => {
+    setStatisticsLoading(true);
     try {
       const params = {};
       if (filters.date_range && Array.isArray(filters.date_range)) {
@@ -347,10 +349,17 @@ const SlurmTasksPage = () => {
         params.end_date = filters.date_range[1].format('YYYY-MM-DD');
       }
 
+      console.log('加载统计信息，参数:', params);
       const response = await slurmAPI.getTaskStatistics(params);
-      setStatistics(response.data?.data || null);
+      const data = response.data?.data || response.data;
+      console.log('统计信息响应:', data);
+      setStatistics(data || null);
     } catch (e) {
       console.error('加载统计信息失败', e);
+      // 设置默认值以避免页面空白
+      setStatistics(null);
+    } finally {
+      setStatisticsLoading(false);
     }
   };
 
@@ -510,6 +519,15 @@ const SlurmTasksPage = () => {
       loadStatistics();
     }
   }, [filters, pagination.current, pagination.pageSize, activeTab]);
+
+  // Tab 切换时的额外处理
+  useEffect(() => {
+    if (activeTab === 'statistics') {
+      // 切换到统计页面时立即加载统计数据
+      console.log('切换到统计页面，加载统计数据...');
+      loadStatistics();
+    }
+  }, [activeTab]);
 
   // 智能刷新间隔调整
   const adjustRefreshInterval = (runningTasksCount) => {
@@ -801,85 +819,115 @@ const SlurmTasksPage = () => {
           }
           key="statistics"
         >
-          {statistics ? (
-            <Row gutter={[16, 16]}>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="总任务数"
-                    value={statistics.total_tasks}
-                    prefix={<DesktopOutlined />}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="运行中"
-                    value={statistics.running_tasks}
-                    prefix={<ClockCircleOutlined />}
-                    valueStyle={{ color: '#1890ff' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="已完成"
-                    value={statistics.completed_tasks}
-                    prefix={<CheckCircleOutlined />}
-                    valueStyle={{ color: '#52c41a' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="失败"
-                    value={statistics.failed_tasks}
-                    prefix={<ExclamationCircleOutlined />}
-                    valueStyle={{ color: '#ff4d4f' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card>
-                  <Statistic
-                    title="成功率"
-                    value={statistics.success_rate}
-                    suffix="%"
-                    precision={1}
-                    prefix={<CheckCircleOutlined />}
-                    valueStyle={{ 
-                      color: statistics.success_rate > 80 ? '#52c41a' : 
-                             statistics.success_rate > 50 ? '#faad14' : '#ff4d4f' 
-                    }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card>
-                  <Statistic
-                    title="平均执行时间"
-                    value={statistics.avg_duration}
-                    suffix="秒"
-                    prefix={<ClockCircleOutlined />}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={8}>
-                <Card>
-                  <Statistic
-                    title="活跃用户数"
-                    value={statistics.active_users}
-                    prefix={<DesktopOutlined />}
-                  />
-                </Card>
-              </Col>
-            </Row>
+          {statisticsLoading ? (
+            <div style={{ textAlign: 'center', padding: '50px' }}>
+              <Spin size="large" />
+              <div style={{ marginTop: '16px' }}>
+                <Text>加载统计信息中...</Text>
+              </div>
+            </div>
+          ) : statistics ? (
+            <>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={12} md={6}>
+                  <Card>
+                    <Statistic
+                      title="总任务数"
+                      value={statistics.total_tasks || 0}
+                      prefix={<DesktopOutlined />}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Card>
+                    <Statistic
+                      title="运行中"
+                      value={statistics.running_tasks || 0}
+                      prefix={<ClockCircleOutlined />}
+                      valueStyle={{ color: '#1890ff' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Card>
+                    <Statistic
+                      title="已完成"
+                      value={statistics.completed_tasks || 0}
+                      prefix={<CheckCircleOutlined />}
+                      valueStyle={{ color: '#52c41a' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                  <Card>
+                    <Statistic
+                      title="失败"
+                      value={statistics.failed_tasks || 0}
+                      prefix={<ExclamationCircleOutlined />}
+                      valueStyle={{ color: '#ff4d4f' }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <Card>
+                    <Statistic
+                      title="成功率"
+                      value={statistics.success_rate || 0}
+                      suffix="%"
+                      precision={1}
+                      prefix={<CheckCircleOutlined />}
+                      valueStyle={{ 
+                        color: (statistics.success_rate || 0) > 80 ? '#52c41a' : 
+                               (statistics.success_rate || 0) > 50 ? '#faad14' : '#ff4d4f' 
+                      }}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <Card>
+                    <Statistic
+                      title="平均执行时间"
+                      value={statistics.avg_duration || 0}
+                      suffix="秒"
+                      prefix={<ClockCircleOutlined />}
+                    />
+                  </Card>
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <Card>
+                    <Statistic
+                      title="活跃用户数"
+                      value={statistics.active_users || 0}
+                      prefix={<DesktopOutlined />}
+                    />
+                  </Card>
+                </Col>
+              </Row>
+              <div style={{ marginTop: '16px', textAlign: 'center' }}>
+                <Button 
+                  icon={<ReloadOutlined />}
+                  onClick={loadStatistics}
+                  loading={statisticsLoading}
+                >
+                  刷新统计
+                </Button>
+              </div>
+            </>
           ) : (
             <Card>
-              <Empty description="暂无统计数据" />
+              <Empty 
+                description="暂无统计数据" 
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              >
+                <Button 
+                  type="primary"
+                  icon={<ReloadOutlined />}
+                  onClick={loadStatistics}
+                  loading={statisticsLoading}
+                >
+                  加载统计信息
+                </Button>
+              </Empty>
             </Card>
           )}
         </TabPane>
