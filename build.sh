@@ -1481,6 +1481,7 @@ generate_or_update_env_file() {
     
     # Gitea 配置
     update_env_variable "ROOT_URL" "${base_url}/gitea/"
+    update_env_variable "STATIC_URL_PREFIX" "/gitea"
     
     # 7. 显示更新摘要
     print_info ""
@@ -1498,6 +1499,7 @@ generate_or_update_env_file() {
     print_info "   - JUPYTERHUB_BASE_URL → ${base_url}/jupyter/"
     print_info "   - JUPYTERHUB_CORS_ORIGIN → $base_url"
     print_info "   - ROOT_URL → ${base_url}/gitea/"
+    print_info "   - STATIC_URL_PREFIX → /gitea"
     
     # 8. K8s 环境特殊提示
     if [[ "$is_k8s" == "true" ]]; then
@@ -2579,9 +2581,30 @@ setup_jupyterhub_variables() {
     ENVIRONMENT="${ENVIRONMENT:-${ENV_ENVIRONMENT:-development}}"
     AUTH_TYPE="${AUTH_TYPE:-${ENV_AUTH_TYPE:-local}}"
     JUPYTERHUB_HUB_PORT="${JUPYTERHUB_HUB_PORT:-${ENV_JUPYTERHUB_HUB_PORT:-8081}}"
-    JUPYTERHUB_BASE_URL="${JUPYTERHUB_BASE_URL:-${ENV_JUPYTERHUB_BASE_URL:-/jupyter/}}"
+    
+    # 从.env读取完整URL，然后提取路径部分用于配置
+    local base_url_from_env="${JUPYTERHUB_BASE_URL:-${ENV_JUPYTERHUB_BASE_URL:-/jupyter/}}"
+    # 如果是完整URL（包含http://或https://），提取路径部分
+    if [[ "$base_url_from_env" =~ ^https?:// ]]; then
+        # 提取URL的路径部分（从第三个/开始）
+        JUPYTERHUB_BASE_URL=$(echo "$base_url_from_env" | sed -E 's|^https?://[^/]+||')
+    else
+        JUPYTERHUB_BASE_URL="$base_url_from_env"
+    fi
+    # 确保路径以/结尾
+    [[ "$JUPYTERHUB_BASE_URL" != */ ]] && JUPYTERHUB_BASE_URL="${JUPYTERHUB_BASE_URL}/"
+    
     JUPYTERHUB_HUB_CONNECT_HOST="${JUPYTERHUB_HUB_CONNECT_HOST:-${ENV_JUPYTERHUB_HUB_CONNECT_HOST:-jupyterhub}}"
-    JUPYTERHUB_PUBLIC_URL="${JUPYTERHUB_PUBLIC_URL:-${ENV_JUPYTERHUB_PUBLIC_URL:-http://localhost:8080/jupyter/}}"
+    
+    # 处理JUPYTERHUB_PUBLIC_URL，保持完整URL格式
+    local public_url_from_env="${JUPYTERHUB_PUBLIC_URL:-${ENV_JUPYTERHUB_PUBLIC_URL:-http://localhost:8080/jupyter/}}"
+    if [[ ! "$public_url_from_env" =~ ^https?:// ]]; then
+        # 如果不是完整URL，从EXTERNAL_*变量构建
+        JUPYTERHUB_PUBLIC_URL="${EXTERNAL_SCHEME:-http}://${EXTERNAL_HOST:-localhost}:${EXTERNAL_PORT:-8080}${JUPYTERHUB_BASE_URL}"
+    else
+        JUPYTERHUB_PUBLIC_URL="$public_url_from_env"
+    fi
+    
     CONFIGPROXY_AUTH_TOKEN="${CONFIGPROXY_AUTH_TOKEN:-${ENV_CONFIGPROXY_AUTH_TOKEN:-}}"
     JUPYTERHUB_DB_URL="${JUPYTERHUB_DB_URL:-${ENV_JUPYTERHUB_DB_URL:-sqlite:///jupyterhub.sqlite}}"
     JUPYTERHUB_LOG_LEVEL="${JUPYTERHUB_LOG_LEVEL:-${ENV_JUPYTERHUB_LOG_LEVEL:-INFO}}"

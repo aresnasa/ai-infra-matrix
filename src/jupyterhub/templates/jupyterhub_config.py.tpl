@@ -14,14 +14,14 @@ c.JupyterHub.hub_ip = '0.0.0.0'
 c.JupyterHub.hub_port = {{JUPYTERHUB_HUB_PORT}}
 c.JupyterHub.port = {{JUPYTERHUB_PORT}}
 
-# Base URL configuration
+# Base URL configuration (path only, e.g., '/jupyter/')
 c.JupyterHub.base_url = '{{JUPYTERHUB_BASE_URL}}'
 c.JupyterHub.bind_url = 'http://0.0.0.0:{{JUPYTERHUB_PORT}}{{JUPYTERHUB_BASE_URL}}'
 
-# Hub connection URL for spawned containers
-c.JupyterHub.hub_connect_url = 'http://{{JUPYTERHUB_HUB_CONNECT_HOST}}:{{JUPYTERHUB_HUB_PORT}}{{JUPYTERHUB_BASE_URL}}'
+# Hub connection URL for spawned containers (internal, no base_url)
+c.JupyterHub.hub_connect_url = 'http://{{JUPYTERHUB_HUB_CONNECT_HOST}}:{{JUPYTERHUB_HUB_PORT}}'
 
-# Public URL configuration
+# Public URL configuration (full URL)
 c.JupyterHub.public_url = '{{JUPYTERHUB_PUBLIC_URL}}'
 
 # Security
