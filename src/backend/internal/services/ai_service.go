@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services/ai_providers"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -49,6 +50,31 @@ type AIService interface {
 	GetMessageStatus(messageID uint, userID uint) (string, interface{}, error)
 	CloneConfig(id uint, newName string) (*models.AIAssistantConfig, error)
 	BatchUpdateConfigs(configIDs []uint, updates map[string]interface{}) error
+	
+	// 模型对比功能
+	CompareModels(conversationID uint, userMessage string, configIDs []uint) (*ModelComparisonResult, error)
+}
+
+// ModelComparisonResult 模型对比结果
+type ModelComparisonResult struct {
+	MessageID string                    `json:"message_id"`
+	UserMessage string                  `json:"user_message"`
+	Results   []ModelComparisonResponse `json:"results"`
+	CreatedAt time.Time                 `json:"created_at"`
+}
+
+// ModelComparisonResponse 单个模型的对比响应
+type ModelComparisonResponse struct {
+	ConfigID     uint                   `json:"config_id"`
+	ConfigName   string                 `json:"config_name"`
+	Provider     string                 `json:"provider"`
+	Model        string                 `json:"model"`
+	Content      string                 `json:"content"`
+	TokensUsed   int                    `json:"tokens_used"`
+	ResponseTime int                    `json:"response_time"`
+	Status       string                 `json:"status"`
+	Error        string                 `json:"error,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // aiServiceImpl AI服务实现
@@ -109,13 +135,9 @@ func (s *aiServiceImpl) GetConfig(id uint) (*models.AIAssistantConfig, error) {
 		return nil, err
 	}
 
-	// 解密API密钥
-	if config.APIKey != "" {
-		decryptedKey, err := s.cryptoService.Decrypt(config.APIKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt API key: %v", err)
-		}
-		config.APIKey = decryptedKey
+	// 安全解密API密钥（如果解密失败，会返回原数据）
+	if config.APIKey != "" && config.APIKey != "***" {
+		config.APIKey = s.cryptoService.DecryptSafely(config.APIKey)
 	}
 
 	return &config, nil
@@ -128,26 +150,35 @@ func (s *aiServiceImpl) GetDefaultConfig() (*models.AIAssistantConfig, error) {
 		return nil, err
 	}
 
-	// 解密API密钥
-	if config.APIKey != "" {
-		decryptedKey, err := s.cryptoService.Decrypt(config.APIKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt API key: %v", err)
-		}
-		config.APIKey = decryptedKey
+	// 安全解密API密钥（如果解密失败，会返回原数据）
+	if config.APIKey != "" && config.APIKey != "***" {
+		config.APIKey = s.cryptoService.DecryptSafely(config.APIKey)
 	}
 
 	return &config, nil
 }
 
 func (s *aiServiceImpl) UpdateConfig(config *models.AIAssistantConfig) error {
-	// 加密API密钥
-	if config.APIKey != "" {
-		encryptedKey, err := s.cryptoService.Encrypt(config.APIKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt API key: %v", err)
+	// 如果API密钥是占位符"***"，则从数据库获取原有密钥
+	if config.APIKey == "***" {
+		var existingConfig models.AIAssistantConfig
+		if err := s.db.First(&existingConfig, config.ID).Error; err != nil {
+			return fmt.Errorf("failed to get existing config: %v", err)
 		}
-		config.APIKey = encryptedKey
+		config.APIKey = existingConfig.APIKey
+		logrus.Debug("API key preserved from existing config (was masked)")
+	} else if config.APIKey != "" {
+		// 只有当API密钥未加密时才加密
+		if !s.cryptoService.IsEncrypted(config.APIKey) {
+			encryptedKey, err := s.cryptoService.Encrypt(config.APIKey)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt API key: %v", err)
+			}
+			config.APIKey = encryptedKey
+			logrus.Debug("API key encrypted during config update")
+		} else {
+			logrus.Debug("API key already encrypted, skipping encryption")
+		}
 	}
 
 	return s.db.Save(config).Error
@@ -181,14 +212,14 @@ func (s *aiServiceImpl) DeleteConfig(id uint) error {
 func (s *aiServiceImpl) ListConfigs() ([]models.AIAssistantConfig, error) {
 	var configs []models.AIAssistantConfig
 	err := s.db.Find(&configs).Error
-	
+
 	// 不返回解密的API密钥（出于安全考虑）
 	for i := range configs {
 		if configs[i].APIKey != "" {
 			configs[i].APIKey = "***"
 		}
 	}
-	
+
 	return configs, err
 }
 
@@ -251,17 +282,17 @@ func (s *aiServiceImpl) StopConversation(id uint, userID uint) error {
 
 	// 更新对话状态为停止
 	updates := map[string]interface{}{
-		"status": "stopped",
+		"status":     "stopped",
 		"updated_at": time.Now(),
 	}
-	
+
 	if err := s.db.Model(&conversation).Updates(updates).Error; err != nil {
 		return fmt.Errorf("停止对话失败: %v", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"conversation_id": id,
-		"user_id": userID,
+		"user_id":         userID,
 	}).Info("对话已停止")
 
 	return nil
@@ -280,17 +311,17 @@ func (s *aiServiceImpl) ResumeConversation(id uint, userID uint) error {
 
 	// 更新对话状态为活跃
 	updates := map[string]interface{}{
-		"status": "active",
+		"status":     "active",
 		"updated_at": time.Now(),
 	}
-	
+
 	if err := s.db.Model(&conversation).Updates(updates).Error; err != nil {
 		return fmt.Errorf("恢复对话失败: %v", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"conversation_id": id,
-		"user_id": userID,
+		"user_id":         userID,
 	}).Info("对话已恢复")
 
 	return nil
@@ -310,13 +341,14 @@ func (s *aiServiceImpl) SendMessage(conversationID uint, userMessage string) (*m
 		return nil, err
 	}
 
-	// 解密API密钥
-	if config.APIKey != "" {
-		decryptedKey, err := s.cryptoService.Decrypt(config.APIKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt API key: %v", err)
+	// 安全解密API密钥（GetConfig已经解密过了，但这里再确认一次）
+	// 注意：GetConfig 已经使用 DecryptSafely 解密了，这里通常不需要再次解密
+	// 但为了兼容性保留此代码，使用安全解密避免重复解密导致错误
+	if config.APIKey != "" && config.APIKey != "***" {
+		// 检查是否已解密（如果看起来像加密数据则尝试解密）
+		if s.cryptoService.IsEncrypted(config.APIKey) {
+			config.APIKey = s.cryptoService.DecryptSafely(config.APIKey)
 		}
-		config.APIKey = decryptedKey
 	}
 
 	// 保存用户消息
@@ -523,15 +555,9 @@ func (s *aiServiceImpl) TestConnection(config *models.AIAssistantConfig) (map[st
 
 	startTime := time.Now()
 
-	// 解密API密钥
-	if config.APIKey != "" {
-		decryptedKey, err := s.cryptoService.Decrypt(config.APIKey)
-		if err != nil {
-			result["status"] = "error"
-			result["message"] = "Failed to decrypt API key"
-			return result, err
-		}
-		config.APIKey = decryptedKey
+	// 安全解密API密钥
+	if config.APIKey != "" && config.APIKey != "***" {
+		config.APIKey = s.cryptoService.DecryptSafely(config.APIKey)
 	}
 
 	// 创建AI提供商
@@ -546,9 +572,9 @@ func (s *aiServiceImpl) TestConnection(config *models.AIAssistantConfig) (map[st
 	// 测试连接
 	ctx := context.Background()
 	err = provider.TestConnection(ctx)
-	
+
 	result["response_time"] = int(time.Since(startTime).Milliseconds())
-	
+
 	if err != nil {
 		result["status"] = "error"
 		result["message"] = err.Error()
@@ -586,15 +612,15 @@ func (s *aiServiceImpl) GetAvailableModels(provider models.AIProvider) ([]map[st
 	result := make([]map[string]interface{}, 0, len(models))
 	for _, model := range models {
 		modelMap := map[string]interface{}{
-			"id":          model.ID,
-			"name":        model.Name,
-			"provider":    model.Provider,
-			"type":        model.Type,
-			"max_tokens":  model.MaxTokens,
+			"id":           model.ID,
+			"name":         model.Name,
+			"provider":     model.Provider,
+			"type":         model.Type,
+			"max_tokens":   model.MaxTokens,
 			"capabilities": model.Capabilities,
-			"description": fmt.Sprintf("%s - 最大tokens: %d", model.Name, model.MaxTokens),
+			"description":  fmt.Sprintf("%s - 最大tokens: %d", model.Name, model.MaxTokens),
 		}
-		
+
 		// 添加成本信息（如果有）
 		if model.Cost.InputTokenPrice > 0 || model.Cost.OutputTokenPrice > 0 {
 			modelMap["cost"] = map[string]interface{}{
@@ -602,7 +628,7 @@ func (s *aiServiceImpl) GetAvailableModels(provider models.AIProvider) ([]map[st
 				"output_token_price": model.Cost.OutputTokenPrice,
 			}
 		}
-		
+
 		result = append(result, modelMap)
 	}
 
@@ -614,7 +640,7 @@ func (s *aiServiceImpl) GetMessageStatus(messageID uint, userID uint) (string, i
 	// 这里应该从消息队列服务或缓存中获取状态
 	// 暂时返回模拟数据
 	return "completed", map[string]interface{}{
-		"content": "这是模拟的AI回复",
+		"content":     "这是模拟的AI回复",
 		"tokens_used": 150,
 	}, nil
 }
@@ -788,28 +814,57 @@ func (s *aiServiceImpl) InitDefaultConfigs() error {
 func (s *aiServiceImpl) createOtherProviderConfigs(createdConfigs *int) {
 	// 创建DeepSeek配置
 	if deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY"); deepseekAPIKey != "" {
-		deepseekConfig := &models.AIAssistantConfig{
-			Name:         "默认 DeepSeek Chat",
-			Provider:     models.ProviderCustom,
+		baseURL := getEnvOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+		
+		// 创建 DeepSeek Chat 配置（非思考模式）
+		chatModel := getEnvOrDefault("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
+		deepseekChatConfig := &models.AIAssistantConfig{
+			Name:         "DeepSeek-V3.2-Exp (Chat)",
+			Provider:     models.ProviderDeepSeek,
 			ModelType:    models.ModelTypeChat,
 			APIKey:       deepseekAPIKey,
-			APIEndpoint:  os.Getenv("DEEPSEEK_BASE_URL"),
-			Model:        getEnvOrDefault("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat"),
-			MaxTokens:    4096,
+			APIEndpoint:  baseURL,
+			Model:        chatModel,
+			MaxTokens:    8192,
 			Temperature:  0.7,
 			TopP:         1.0,
-			SystemPrompt: "你是DeepSeek助手，请提供准确、有用的回答。",
+			SystemPrompt: "你是DeepSeek助手，基于DeepSeek-V3.2-Exp模型。请提供准确、有用的回答。",
 			IsEnabled:    true,
 			IsDefault:    (*createdConfigs == 0),
-			Description:  "默认的DeepSeek模型配置",
+			Description:  "DeepSeek-V3.2-Exp 非思考模式，适合快速对话和一般任务",
 			Category:     "通用对话",
 		}
 
-		if err := s.CreateConfig(deepseekConfig); err != nil {
-			logrus.Errorf("创建DeepSeek配置失败: %v", err)
+		if err := s.CreateConfig(deepseekChatConfig); err != nil {
+			logrus.Errorf("创建DeepSeek Chat配置失败: %v", err)
 		} else {
-			logrus.Info("已创建默认DeepSeek配置")
+			logrus.Info("已创建DeepSeek Chat (V3.2-Exp) 配置")
 			*createdConfigs++
+		}
+
+		// 创建 DeepSeek Reasoner 配置（思考模式）
+		reasonerModel := getEnvOrDefault("DEEPSEEK_REASONER_MODEL", "deepseek-reasoner")
+		deepseekReasonerConfig := &models.AIAssistantConfig{
+			Name:         "DeepSeek-V3.2-Exp (Reasoner)",
+			Provider:     models.ProviderDeepSeek,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       deepseekAPIKey,
+			APIEndpoint:  baseURL,
+			Model:        reasonerModel,
+			MaxTokens:    8192,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是DeepSeek推理助手，基于DeepSeek-V3.2-Exp模型的思考模式。你会深入分析问题并提供详细的推理过程。",
+			IsEnabled:    true,
+			IsDefault:    false,
+			Description:  "DeepSeek-V3.2-Exp 思考模式，适合复杂推理、数学问题和深度分析",
+			Category:     "深度推理",
+		}
+
+		if err := s.CreateConfig(deepseekReasonerConfig); err != nil {
+			logrus.Errorf("创建DeepSeek Reasoner配置失败: %v", err)
+		} else {
+			logrus.Info("已创建DeepSeek Reasoner (V3.2-Exp) 配置")
 		}
 	}
 
@@ -900,4 +955,190 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// CompareModels 对比多个模型的响应
+func (s *aiServiceImpl) CompareModels(conversationID uint, userMessage string, configIDs []uint) (*ModelComparisonResult, error) {
+	if len(configIDs) == 0 {
+		return nil, fmt.Errorf("至少需要选择一个模型进行对比")
+	}
+
+	if len(configIDs) > 5 {
+		return nil, fmt.Errorf("最多同时对比5个模型")
+	}
+
+	// 验证会话存在
+	conversation, err := s.GetConversation(conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("获取会话失败: %v", err)
+	}
+
+	// 生成对比任务ID
+	messageID := fmt.Sprintf("compare_%d_%d", conversationID, time.Now().UnixNano())
+	
+	logrus.WithFields(logrus.Fields{
+		"message_id":       messageID,
+		"conversation_id":  conversationID,
+		"config_count":     len(configIDs),
+	}).Info("开始模型对比")
+
+	// 使用 channel 和 waitgroup 并发调用多个模型
+	type modelResult struct {
+		index    int
+		response *ModelComparisonResponse
+		err      error
+	}
+
+	resultChan := make(chan modelResult, len(configIDs))
+	var wg sync.WaitGroup
+
+	// 并发调用各个模型
+	for i, configID := range configIDs {
+		wg.Add(1)
+		go func(index int, id uint) {
+			defer wg.Done()
+
+			result := &ModelComparisonResponse{
+				ConfigID: id,
+				Status:   "processing",
+			}
+
+			// 获取配置
+			config, err := s.GetConfig(id)
+			if err != nil {
+				result.Status = "error"
+				result.Error = fmt.Sprintf("获取配置失败: %v", err)
+				resultChan <- modelResult{index: index, response: result, err: err}
+				return
+			}
+
+			result.ConfigName = config.Name
+			result.Provider = string(config.Provider)
+			result.Model = config.Model
+
+			// 安全解密API密钥
+			if config.APIKey != "" && config.APIKey != "***" {
+				if s.cryptoService.IsEncrypted(config.APIKey) {
+					config.APIKey = s.cryptoService.DecryptSafely(config.APIKey)
+				}
+			}
+
+			// 创建AI提供商
+			provider, err := s.providerFactory.CreateProvider(config)
+			if err != nil {
+				result.Status = "error"
+				result.Error = fmt.Sprintf("创建AI提供商失败: %v", err)
+				resultChan <- modelResult{index: index, response: result, err: err}
+				return
+			}
+
+			// 获取历史消息（用于上下文）
+			var historyMessages []models.AIMessage
+			s.db.Where("conversation_id = ?", conversationID).
+				Order("created_at ASC").
+				Limit(10). // 限制上下文长度
+				Find(&historyMessages)
+
+			// 构建消息历史
+			chatMessages := make([]ai_providers.ChatMessage, 0, len(historyMessages)+1)
+			for _, msg := range historyMessages {
+				chatMessages = append(chatMessages, ai_providers.ChatMessage{
+					Role:    msg.Role,
+					Content: msg.Content,
+				})
+			}
+
+			// 添加当前用户消息
+			chatMessages = append(chatMessages, ai_providers.ChatMessage{
+				Role:    "user",
+				Content: userMessage,
+			})
+
+			// 构建请求
+			request := ai_providers.ChatRequest{
+				Model:        config.Model,
+				Messages:     chatMessages,
+				MaxTokens:    config.MaxTokens,
+				Temperature:  config.Temperature,
+				SystemPrompt: config.SystemPrompt,
+			}
+
+			// 调用AI API
+			ctx := context.Background()
+			startTime := time.Now()
+			response, err := provider.Chat(ctx, request)
+			responseTime := int(time.Since(startTime).Milliseconds())
+
+			if err != nil {
+				result.Status = "error"
+				result.Error = fmt.Sprintf("AI API调用失败: %v", err)
+				result.ResponseTime = responseTime
+				resultChan <- modelResult{index: index, response: result, err: err}
+				
+				// 记录失败统计
+				s.RecordUsage(conversation.UserID, config.ID, 0, responseTime, false)
+				return
+			}
+
+			// 成功响应
+			result.Status = "success"
+			result.Content = response.Content
+			result.TokensUsed = response.TokensUsed
+			result.ResponseTime = response.ResponseTime
+			result.Metadata = response.Metadata
+
+			// 记录成功统计
+			s.RecordUsage(conversation.UserID, config.ID, response.TokensUsed, responseTime, true)
+
+			resultChan <- modelResult{index: index, response: result, err: nil}
+
+		}(i, configID)
+	}
+
+	// 等待所有协程完成
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// 收集结果
+	results := make([]*ModelComparisonResponse, len(configIDs))
+	for result := range resultChan {
+		results[result.index] = result.response
+	}
+
+	// 统计成功和失败的模型数
+	successCount := 0
+	errorCount := 0
+	for _, result := range results {
+		if result.Status == "success" {
+			successCount++
+		} else {
+			errorCount++
+		}
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"message_id":     messageID,
+		"success_count":  successCount,
+		"error_count":    errorCount,
+		"total_count":    len(configIDs),
+	}).Info("模型对比完成")
+
+	// 构建对比结果（去掉指针）
+	finalResults := make([]ModelComparisonResponse, len(results))
+	for i, r := range results {
+		if r != nil {
+			finalResults[i] = *r
+		}
+	}
+
+	comparisonResult := &ModelComparisonResult{
+		MessageID:   messageID,
+		UserMessage: userMessage,
+		Results:     finalResults,
+		CreatedAt:   time.Now(),
+	}
+
+	return comparisonResult, nil
 }

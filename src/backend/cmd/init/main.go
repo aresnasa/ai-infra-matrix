@@ -10,14 +10,14 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	
+
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"net/http"
-	"strings"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -101,10 +101,10 @@ func handleDatabaseReset(cfg *config.Config) error {
 
 	if exists {
 		log.Printf("Database '%s' already exists", cfg.Database.DBName)
-		
+
 		// 创建备份数据库名称
 		backupDBName := fmt.Sprintf("%s_backup_%s", cfg.Database.DBName, time.Now().Format("20060102_150405"))
-		
+
 		// 备份现有数据库
 		log.Printf("Creating backup database: %s", backupDBName)
 		backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s", backupDBName, cfg.Database.DBName)
@@ -131,7 +131,7 @@ func handleDatabaseReset(cfg *config.Config) error {
 		if err := systemDB.Exec(dropQuery).Error; err != nil {
 			return fmt.Errorf("failed to drop existing database: %w", err)
 		}
-		
+
 		log.Printf("Database '%s' dropped successfully", cfg.Database.DBName)
 	}
 
@@ -153,12 +153,12 @@ func handleDatabaseReset(cfg *config.Config) error {
 
 func initializeRBAC() error {
 	log.Println("Initializing RBAC system...")
-	
+
 	rbacService := services.NewRBACService(database.DB)
 	if err := rbacService.InitializeDefaultRBAC(); err != nil {
 		return fmt.Errorf("failed to initialize RBAC: %w", err)
 	}
-	
+
 	log.Println("RBAC system initialized successfully!")
 	return nil
 }
@@ -166,7 +166,7 @@ func initializeRBAC() error {
 func createDefaultAdmin() {
 	db := database.DB
 	rbacService := services.NewRBACService(db)
-	
+
 	log.Println("Creating default admin user...")
 
 	// 创建默认管理员用户
@@ -208,19 +208,19 @@ func createDefaultAdmin() {
 // initializeLDAPUsers 初始化LDAP用户账户
 func initializeLDAPUsers(cfg *config.Config) {
 	log.Println("Initializing LDAP users...")
-	
+
 	// 检查是否应该初始化LDAP（通过配置控制）
 	if !shouldInitializeLDAP(cfg) {
 		log.Println("LDAP initialization skipped (INIT_LDAP not set to true)")
 		return
 	}
-	
+
 	// 等待LDAP服务启动
 	if !waitForLDAP(cfg) {
 		log.Println("LDAP server not available, skipping LDAP user initialization")
 		return
 	}
-	
+
 	// 连接到LDAP服务器
 	conn, err := connectToLDAP(cfg)
 	if err != nil {
@@ -228,18 +228,18 @@ func initializeLDAPUsers(cfg *config.Config) {
 		return
 	}
 	defer conn.Close()
-	
+
 	// 创建LDAP用户
 	if err := createLDAPUsers(conn, cfg); err != nil {
 		log.Printf("Failed to create LDAP users: %v", err)
 		return
 	}
-	
+
 	log.Println("LDAP users initialized successfully!")
 	log.Printf("Created users:")
 	log.Printf("  - %s (password: %s)", cfg.LDAPInit.AdminUser.UID, cfg.LDAPInit.AdminUser.Password)
 	log.Printf("  - %s (password: %s)", cfg.LDAPInit.RegularUser.UID, cfg.LDAPInit.RegularUser.Password)
-	
+
 	// 输出LDAP配置信息
 	printLDAPConfigInfo(cfg)
 }
@@ -253,13 +253,13 @@ func shouldInitializeLDAP(cfg *config.Config) bool {
 func waitForLDAP(cfg *config.Config) bool {
 	maxRetries := cfg.LDAPInit.RetryCount
 	retryInterval := time.Duration(cfg.LDAPInit.RetryInterval) * time.Second
-	
+
 	for i := 0; i < maxRetries; i++ {
 		if i > 0 {
 			log.Printf("Waiting for LDAP server (attempt %d/%d)...", i+1, maxRetries)
 			time.Sleep(retryInterval)
 		}
-		
+
 		// 尝试连接LDAP服务器
 		conn, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", cfg.LDAP.Server, cfg.LDAP.Port))
 		if err == nil {
@@ -267,10 +267,10 @@ func waitForLDAP(cfg *config.Config) bool {
 			log.Println("LDAP server is ready")
 			return true
 		}
-		
+
 		log.Printf("LDAP server not ready: %v", err)
 	}
-	
+
 	log.Printf("LDAP server not available after %d attempts", maxRetries)
 	return false
 }
@@ -279,13 +279,13 @@ func waitForLDAP(cfg *config.Config) bool {
 func connectToLDAP(cfg *config.Config) (*ldap.Conn, error) {
 	// 连接到LDAP服务器 - 不要包含协议前缀
 	address := fmt.Sprintf("%s:%d", cfg.LDAP.Server, cfg.LDAP.Port)
-	
+
 	log.Printf("Attempting to connect to LDAP server at %s", address)
 	log.Printf("Base DN: %s", cfg.LDAP.BaseDN)
-	
+
 	var conn *ldap.Conn
 	var err error
-	
+
 	// 检查是否使用SSL
 	if cfg.LDAP.UseSSL {
 		log.Printf("Using SSL/TLS connection")
@@ -294,20 +294,20 @@ func connectToLDAP(cfg *config.Config) (*ldap.Conn, error) {
 		log.Printf("Using plain connection")
 		conn, err = ldap.Dial("tcp", address)
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to LDAP server %s: %w", address, err)
 	}
-	
+
 	// 使用管理员账户绑定
 	log.Printf("Attempting to bind as: %s", cfg.LDAP.BindDN)
-	
+
 	err = conn.Bind(cfg.LDAP.BindDN, cfg.LDAP.BindPassword)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to bind to LDAP as admin (%s): %w", cfg.LDAP.BindDN, err)
 	}
-	
+
 	log.Printf("Successfully connected and bound to LDAP server at %s", address)
 	return conn, nil
 }
@@ -317,21 +317,21 @@ func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
 	baseDN := cfg.LDAP.BaseDN
 	peopleDN := fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.PeopleOU, baseDN)
 	groupsDN := fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.GroupsOU, baseDN)
-	
+
 	log.Printf("Creating LDAP users with base DN: %s", baseDN)
 	log.Printf("People DN: %s", peopleDN)
 	log.Printf("Groups DN: %s", groupsDN)
-	
+
 	// 确保组织单位存在
 	if err := ensureOrgUnitsExist(conn, cfg); err != nil {
 		return fmt.Errorf("failed to create organizational units: %w", err)
 	}
-	
+
 	// 创建用户组
 	if err := ensureGroupsExist(conn, cfg, groupsDN, peopleDN); err != nil {
 		return fmt.Errorf("failed to create groups: %w", err)
 	}
-	
+
 	// 创建用户
 	users := []LDAPUser{
 		{
@@ -357,7 +357,7 @@ func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
 			HomeDirectory: cfg.LDAPInit.RegularUser.HomeDirectory,
 		},
 	}
-	
+
 	for _, user := range users {
 		if err := createLDAPUser(conn, user, peopleDN); err != nil {
 			log.Printf("Warning: Failed to create user %s: %v", user.UID, err)
@@ -365,7 +365,7 @@ func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
 			log.Printf("Created LDAP user: %s", user.UID)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -392,13 +392,13 @@ func ensureOrgUnitsExist(conn *ldap.Conn, cfg *config.Config) error {
 		{fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.PeopleOU, baseDN), cfg.LDAPInit.PeopleOU},
 		{fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.GroupsOU, baseDN), cfg.LDAPInit.GroupsOU},
 	}
-	
+
 	for _, unit := range orgUnits {
 		log.Printf("Creating organizational unit: %s", unit.DN)
 		addReq := ldap.NewAddRequest(unit.DN, nil)
 		addReq.Attribute("objectClass", []string{"organizationalUnit"})
 		addReq.Attribute("ou", []string{unit.OU})
-		
+
 		err := conn.Add(addReq)
 		if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
 			return fmt.Errorf("failed to create OU %s: %w", unit.OU, err)
@@ -409,7 +409,7 @@ func ensureOrgUnitsExist(conn *ldap.Conn, cfg *config.Config) error {
 			log.Printf("OU already exists: %s", unit.OU)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -431,32 +431,32 @@ func ensureGroupsExist(conn *ldap.Conn, cfg *config.Config, groupsDN, peopleDN s
 			Members: []string{fmt.Sprintf("uid=%s,%s", cfg.LDAPInit.RegularUser.UID, peopleDN)},
 		},
 	}
-	
+
 	for _, group := range groups {
 		addReq := ldap.NewAddRequest(group.DN, nil)
 		addReq.Attribute("objectClass", []string{"groupOfNames"})
 		addReq.Attribute("cn", []string{group.CN})
 		addReq.Attribute("member", group.Members)
-		
+
 		err := conn.Add(addReq)
 		if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
 			return fmt.Errorf("failed to create group %s: %w", group.CN, err)
 		}
 	}
-	
+
 	return nil
 }
 
 // createLDAPUser 创建LDAP用户
 func createLDAPUser(conn *ldap.Conn, user LDAPUser, peopleDN string) error {
 	userDN := fmt.Sprintf("uid=%s,%s", user.UID, peopleDN)
-	
+
 	// 生成密码哈希 (SSHA)
 	passwordHash, err := generateSSHAPassword(user.Password)
 	if err != nil {
 		return fmt.Errorf("failed to generate password hash: %w", err)
 	}
-	
+
 	addReq := ldap.NewAddRequest(userDN, nil)
 	addReq.Attribute("objectClass", []string{"inetOrgPerson", "posixAccount"})
 	addReq.Attribute("uid", []string{user.UID})
@@ -468,12 +468,12 @@ func createLDAPUser(conn *ldap.Conn, user LDAPUser, peopleDN string) error {
 	addReq.Attribute("uidNumber", []string{fmt.Sprintf("%d", user.UIDNumber)})
 	addReq.Attribute("gidNumber", []string{fmt.Sprintf("%d", user.GIDNumber)})
 	addReq.Attribute("homeDirectory", []string{user.HomeDirectory})
-	
+
 	err = conn.Add(addReq)
 	if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
 		return fmt.Errorf("failed to add user: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -573,17 +573,17 @@ func printLDAPConfigInfo(cfg *config.Config) {
     },
     "admin_group": "cn=%s,ou=%s,%s"
   }
-}`, cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.UseSSL, cfg.LDAP.BaseDN, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, 
-		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN, 
+}`, cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.UseSSL, cfg.LDAP.BaseDN, cfg.LDAP.BindDN, cfg.LDAP.BindPassword,
+		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN,
 		cfg.LDAPInit.AdminGroupCN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
 	log.Println("")
 	log.Println("=== Test Commands ===")
 	log.Println("You can test LDAP connectivity using these commands:")
-	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b '%s' '(objectClass=*)'", 
+	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b '%s' '(objectClass=*)'",
 		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, cfg.LDAP.BaseDN)
 	log.Println("")
-	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b 'ou=%s,%s' '(uid=%s)'", 
-		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, 
+	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b 'ou=%s,%s' '(uid=%s)'",
+		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword,
 		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.AdminUser.UID)
 	log.Println("")
 	log.Println("=== LDAP Configuration Complete ===")
@@ -595,11 +595,11 @@ func initializeDefaultAIConfigs() {
 
 	// 检查是否强制重新初始化
 	forceReinit := getEnvCompat("FORCE_AI_REINIT", "false") == "true"
-	
+
 	// 检查是否已存在AI配置
 	var count int64
 	database.DB.Model(&models.AIAssistantConfig{}).Count(&count)
-	
+
 	if count > 0 && !forceReinit {
 		log.Printf("AI configurations already exist (%d configs found), use FORCE_AI_REINIT=true to reinitialize", count)
 		return
@@ -628,7 +628,7 @@ func initializeDefaultAIConfigs() {
 			Provider:     models.ProviderOpenAI,
 			ModelType:    models.ModelTypeChat,
 			APIKey:       openaiAPIKey,
-			APIEndpoint:  getEnvCompat("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+			APIEndpoint:  getEnvCompat("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"),
 			Model:        getEnvCompat("OPENAI_DEFAULT_MODEL", "gpt-4"),
 			MaxTokens:    4096,
 			Temperature:  0.7,
@@ -710,28 +710,57 @@ func initializeDefaultAIConfigs() {
 func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
 	// 创建DeepSeek配置
 	if deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY"); deepseekAPIKey != "" {
-		deepseekConfig := &models.AIAssistantConfig{
-			Name:         "默认 DeepSeek Chat",
-			Provider:     models.ProviderCustom,
+		baseURL := getEnvCompat("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+		
+		// 创建 DeepSeek Chat 配置（非思考模式）
+		chatModel := getEnvCompat("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
+		deepseekChatConfig := &models.AIAssistantConfig{
+			Name:         "DeepSeek-V3.2-Exp (Chat)",
+			Provider:     models.ProviderDeepSeek,
 			ModelType:    models.ModelTypeChat,
 			APIKey:       deepseekAPIKey,
-			APIEndpoint:  getEnvCompat("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-			Model:        getEnvCompat("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat"),
-			MaxTokens:    4096,
+			APIEndpoint:  baseURL,
+			Model:        chatModel,
+			MaxTokens:    8192,
 			Temperature:  0.7,
 			TopP:         1.0,
-			SystemPrompt: "你是DeepSeek助手，请提供准确、有用的回答。",
+			SystemPrompt: "你是DeepSeek助手，基于DeepSeek-V3.2-Exp模型。请提供准确、有用的回答。",
 			IsEnabled:    true,
 			IsDefault:    (*createdConfigs == 0),
-			Description:  "默认的DeepSeek模型配置",
+			Description:  "DeepSeek-V3.2-Exp 非思考模式，适合快速对话和一般任务",
 			Category:     "通用对话",
 		}
 
-		if err := database.DB.Create(deepseekConfig).Error; err != nil {
-			log.Printf("Warning: Failed to create DeepSeek config: %v", err)
+		if err := database.DB.Create(deepseekChatConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create DeepSeek Chat config: %v", err)
 		} else {
-			log.Println("✓ Created DeepSeek configuration")
+			log.Println("✓ Created DeepSeek Chat (V3.2-Exp) configuration")
 			*createdConfigs++
+		}
+
+		// 创建 DeepSeek Reasoner 配置（思考模式）
+		reasonerModel := getEnvCompat("DEEPSEEK_REASONER_MODEL", "deepseek-reasoner")
+		deepseekReasonerConfig := &models.AIAssistantConfig{
+			Name:         "DeepSeek-V3.2-Exp (Reasoner)",
+			Provider:     models.ProviderDeepSeek,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       deepseekAPIKey,
+			APIEndpoint:  baseURL,
+			Model:        reasonerModel,
+			MaxTokens:    8192,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是DeepSeek推理助手，基于DeepSeek-V3.2-Exp模型的思考模式。你会深入分析问题并提供详细的推理过程。",
+			IsEnabled:    true,
+			IsDefault:    false,
+			Description:  "DeepSeek-V3.2-Exp 思考模式，适合复杂推理、数学问题和深度分析",
+			Category:     "深度推理",
+		}
+
+		if err := database.DB.Create(deepseekReasonerConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create DeepSeek Reasoner config: %v", err)
+		} else {
+			log.Println("✓ Created DeepSeek Reasoner (V3.2-Exp) configuration")
 		}
 	}
 
@@ -819,25 +848,25 @@ func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
 // initializeBackendConfigs 初始化Backend服务配置
 func initializeBackendConfigs() {
 	log.Println("=== Initializing Backend Service Configurations ===")
-	
+
 	// 这里可以添加Backend服务特定的初始化逻辑
 	// 例如：初始化缓存配置、消息队列配置等
-	
+
 	log.Println("✓ Backend service configurations initialized")
 }
 
 // initializeSlurmConfigs 初始化SLURM服务配置
 func initializeSlurmConfigs() {
 	log.Println("=== Initializing SLURM Service Configurations ===")
-	
+
 	// 这里可以添加SLURM服务特定的初始化逻辑
 	// 例如：初始化SLURM集群配置、节点配置等
-	
+
 	slurmEnabled := getEnvCompat("SLURM_ENABLED", "true")
 	if slurmEnabled == "true" {
 		slurmCluster := getEnvCompat("SLURM_CLUSTER_NAME", "ai-infra-cluster")
 		slurmController := getEnvCompat("SLURM_CONTROLLER_HOST", "slurm-master")
-		
+
 		log.Printf("✓ SLURM cluster: %s", slurmCluster)
 		log.Printf("✓ SLURM controller: %s", slurmController)
 		log.Println("✓ SLURM service configurations initialized")
@@ -849,10 +878,10 @@ func initializeSlurmConfigs() {
 // initializeSaltStackConfigs 初始化SaltStack服务配置
 func initializeSaltStackConfigs() {
 	log.Println("=== Initializing SaltStack Service Configurations ===")
-	
+
 	// 这里可以添加SaltStack服务特定的初始化逻辑
 	// 例如：初始化Salt Master配置、Minion配置等
-	
+
 	saltEnabled := getEnvCompat("SALTSTACK_ENABLED", "true")
 	if saltEnabled == "true" {
 		saltMaster := getEnvCompat("SALTSTACK_MASTER_HOST", "saltstack")
@@ -971,7 +1000,9 @@ func createGiteaDatabase(cfg *config.Config) error {
 
 // getEnvCompat reads from process env; used by init which runs inside container
 func getEnvCompat(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" { return v }
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
 	return def
 }
 
@@ -1010,7 +1041,7 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 	base := cfg.Gitea.BaseURL
 	// 去掉末尾斜杠，拼接 API 路径
 	url := fmt.Sprintf("%s/api/v1/version", strings.TrimRight(base, "/"))
-	client := &http.Client{ Timeout: 3 * time.Second }
+	client := &http.Client{Timeout: 3 * time.Second}
 
 	for i := 0; i < maxRetries; i++ {
 		if i > 0 {
@@ -1038,7 +1069,7 @@ func createSLURMDatabase(cfg *config.Config) error {
 
 	// Read SLURM DB settings from env
 	slurmUser := getEnvCompat("SLURM_DB_USER", "slurm")
-	slurmPass := getEnvCompat("SLURM_DB_PASSWORD", "slurm123") 
+	slurmPass := getEnvCompat("SLURM_DB_PASSWORD", "slurm123")
 	slurmDB := getEnvCompat("SLURM_DB_NAME", "slurm_acct_db")
 
 	log.Printf("SLURM DB settings - User: %s, DB: %s", slurmUser, slurmDB)
@@ -1074,7 +1105,7 @@ func createSLURMDatabase(cfg *config.Config) error {
 	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", slurmDB).Scan(&exists).Error; err != nil {
 		return fmt.Errorf("failed to check SLURM DB existence: %w", err)
 	}
-	
+
 	if !exists {
 		log.Printf("Creating SLURM database: %s", slurmDB)
 		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", slurmDB, slurmUser)).Error; err != nil {
