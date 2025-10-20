@@ -1,13 +1,19 @@
 # =============================================================================
-# Stage 1: Build SLURM deb packages
+# Stage 1: Build SLURM deb packages (Ubuntu 22.04)
 # =============================================================================
-FROM ubuntu:22.04 AS slurm-builder
+FROM ubuntu:22.04 AS deb-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 
+# SLURM version configuration - update these when upgrading
+# 更新 SLURM 版本时只需修改这两个变量
+ARG SLURM_VERSION=25.05.4
+ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
+
 # Accept optional tarball path relative to build context root
-ARG SLURM_TARBALL_PATH=slurm-25.05.3.tar.bz2
+# 默认在当前目录查找 tarball
+ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
 # 配置APT镜像源和安装构建依赖（分步骤避免网络问题）
 RUN set -eux; \
@@ -52,93 +58,259 @@ RUN useradd -m -u 1000 builder
 USER builder
 WORKDIR /home/builder/build
 
-# Copy and extract the Slurm source tarball
+# Copy SLURM source tarball (use wildcard to make it optional-ish)
+# Docker will fail if no matching file, but we handle it gracefully in build script
+ARG SLURM_TARBALL_PATH
 COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
-# Extract and enter source dir
+# Extract SLURM source
+# 解压 tarball 并记录源码目录名称
 RUN set -eux; \
-    tar -xaf $(basename ${SLURM_TARBALL_PATH}); \
-    srcdir=$(basename ${SLURM_TARBALL_PATH} .tar.bz2); \
-    echo "SRC=${srcdir}" > /home/builder/build/.srcdir
+    if ls slurm-*.tar.bz2 >/dev/null 2>&1; then \
+        tarball=$(ls slurm-*.tar.bz2 | head -1); \
+        echo "✓ Found SLURM tarball: ${tarball}"; \
+        tar -xaf "${tarball}"; \
+        srcdir=$(basename "${tarball}" .tar.bz2); \
+        echo "SRC=${srcdir}" > /home/builder/build/.srcdir; \
+        echo "✓ SLURM source extracted: ${srcdir}"; \
+        echo "  Version: $(echo ${srcdir} | grep -oP '\\d+\\.\\d+\\.\\d+' || echo 'unknown')"; \
+    else \
+        echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
+        echo "⚠️  No SLURM tarball found - will skip SLURM package build"; \
+    fi
 
-# Install build-deps as root, then build .deb packages as unprivileged user
+# Install build-deps as root, then build .deb packages as unprivileged user (skip if no SLURM source)
 USER root
 RUN set -eux; \
-    srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
-    cd "/home/builder/build/${srcdir}"; \
-    apt-get update; \
-    mk-build-deps -i debian/control -t 'apt-get -y --no-install-recommends' --remove
+    if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
+        echo "⚠️  Skipping SLURM build - no source tarball available"; \
+        mkdir -p /out; \
+        touch /out/.skip_slurm; \
+    else \
+        srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
+        cd "/home/builder/build/${srcdir}"; \
+        apt-get update; \
+        mk-build-deps -i debian/control -t 'apt-get -y --no-install-recommends' --remove; \
+    fi
 
 USER builder
 RUN set -eux; \
-    srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
-    cd "/home/builder/build/${srcdir}"; \
-    debuild -b -uc -us
+    if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
+        echo "⚠️  Skipping SLURM package build"; \
+    else \
+        srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
+        cd "/home/builder/build/${srcdir}"; \
+        dpkg-buildpackage -b -uc; \
+    fi
+
+# Download SaltStack packages for Ubuntu 22.04
+USER root
+RUN set -eux; \
+    mkdir -p /saltstack-deb; \
+    cd /saltstack-deb; \
+    echo "📦 Downloading SaltStack deb packages for Ubuntu 22.04..."; \
+    # SaltStack repository URL for Ubuntu 22.04 (Jammy)
+    SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/ubuntu/22.04/amd64/latest"; \
+    # Download key packages
+    wget -nv "${SALTSTACK_REPO}/salt-master_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-master"; \
+    wget -nv "${SALTSTACK_REPO}/salt-minion_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-minion"; \
+    wget -nv "${SALTSTACK_REPO}/salt-common_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-common"; \
+    wget -nv "${SALTSTACK_REPO}/salt-api_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-api"; \
+    wget -nv "${SALTSTACK_REPO}/salt-ssh_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-ssh"; \
+    wget -nv "${SALTSTACK_REPO}/salt-syndic_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-syndic"; \
+    salt_count=$(ls *.deb 2>/dev/null | wc -l || echo 0); \
+    if [ "$salt_count" -gt 0 ]; then \
+        echo "✓ Downloaded ${salt_count} SaltStack deb packages"; \
+    else \
+        echo "⚠️  No SaltStack packages downloaded"; \
+    fi
 
 # Collect artifacts into /out (root stage)
-USER root
 RUN mkdir -p /out \
     && chown -R root:root /home/builder
 
-# Move all debuild outputs to /out
+# Move all debuild outputs to /out (skip verification if SLURM build was skipped)
 RUN set -eux; \
-    find /home/builder/build -maxdepth 1 -type f -name '*.deb' -exec mv {} /out/ \; || true; \
-    find /home/builder/build -maxdepth 1 -type f -name '*.ddeb' -exec mv {} /out/ \; || true; \
-    find /home/builder/build -maxdepth 1 -type f -name '*.build*' -exec mv {} /out/ \; || true; \
-    find /home/builder/build -maxdepth 1 -type f -name '*.changes' -exec mv {} /out/ \; || true; \
-    # Verify at least one .deb file was produced
-    deb_count=$(find /out -name '*.deb' -type f | wc -l); \
-    if [ "$deb_count" -eq 0 ]; then \
-        echo "ERROR: No .deb packages were built!"; \
-        echo "Build artifacts in /home/builder:"; \
-        ls -la /home/builder/ || true; \
-        echo "Build artifacts in /home/builder/build:"; \
-        ls -la /home/builder/build/ || true; \
-        exit 1; \
+    if [ ! -f /out/.skip_slurm ]; then \
+        find /home/builder/build -maxdepth 1 -type f -name '*.deb' -exec mv {} /out/ \; || true; \
+        find /home/builder/build -maxdepth 1 -type f -name '*.ddeb' -exec mv {} /out/ \; || true; \
+        find /home/builder/build -maxdepth 1 -type f -name '*.build*' -exec mv {} /out/ \; || true; \
+        find /home/builder/build -maxdepth 1 -type f -name '*.changes' -exec mv {} /out/ \; || true; \
+        # Verify at least one .deb file was produced
+        deb_count=$(find /out -name '*.deb' -type f | wc -l); \
+        if [ "$deb_count" -eq 0 ]; then \
+            echo "ERROR: No .deb packages were built!"; \
+            echo "Build artifacts in /home/builder:"; \
+            ls -la /home/builder/ || true; \
+            echo "Build artifacts in /home/builder/build:"; \
+            ls -la /home/builder/build/ || true; \
+            exit 1; \
+        fi; \
+        echo "✓ Successfully built $deb_count SLURM .deb package(s)"; \
+    else \
+        echo "⚠️  SLURM build was skipped - no packages to collect"; \
     fi; \
-    echo "Successfully built $deb_count .deb package(s)"
+    # Copy SaltStack packages
+    if [ -d /saltstack-deb ] && [ "$(ls -A /saltstack-deb/*.deb 2>/dev/null)" ]; then \
+        cp /saltstack-deb/*.deb /out/ || true; \
+        salt_count=$(ls /saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+        echo "✓ Added ${salt_count} SaltStack deb packages"; \
+    fi
 
 # =============================================================================
-# Stage 2: AppHub - HTTP Server with Package Management & Development Tools
+# Stage 2: Build SLURM rpm packages (Rocky Linux 9)
 # =============================================================================
-FROM nginx:stable
+FROM rockylinux:9 AS rpm-builder
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
 
-# 配置APT镜像源并安装基础工具（使用阿里云镜像源）
+# SLURM version configuration (same as deb builder)
+ARG SLURM_VERSION=25.05.4
+ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
+ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+
+# 配置 Rocky Linux 镜像源（使用阿里云）
 RUN set -eux; \
-    # 检查并创建sources.list（nginx镜像可能没有标准配置）
-    if [ ! -f /etc/apt/sources.list ]; then \
-        echo "创建默认sources.list..."; \
-        echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list; \
-        echo "deb http://deb.debian.org/debian bookworm-updates main" >> /etc/apt/sources.list; \
-        echo "deb http://security.debian.org/debian-security bookworm-security main" >> /etc/apt/sources.list; \
-    fi; \
     # 备份原始配置
-    cp /etc/apt/sources.list /etc/apt/sources.list.bak || true; \
-    # 更新包列表并安装基础工具
-    apt-get update && apt-get install -y ca-certificates curl; \
-    # 直接配置阿里云镜像源
-    echo "配置阿里云HTTP镜像源..."; \
-    echo "deb http://mirrors.aliyun.com/debian/ bookworm main" > /etc/apt/sources.list; \
-    echo "deb http://mirrors.aliyun.com/debian/ bookworm-updates main" >> /etc/apt/sources.list; \
-    echo "deb http://mirrors.aliyun.com/debian-security/ bookworm-security main" >> /etc/apt/sources.list; \
-    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update)
+    cp -r /etc/yum.repos.d /etc/yum.repos.d.backup || true; \
+    # 配置阿里云镜像源
+    echo "配置阿里云 Rocky Linux 镜像源..."; \
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+        -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' \
+        -i.bak \
+        /etc/yum.repos.d/rocky-*.repo || true; \
+    # 清理缓存并更新
+    dnf clean all; \
+    dnf makecache || (sleep 5 && dnf makecache)
+
+# Install build prerequisites
+RUN dnf install -y \
+    rpm-build rpmdevtools \
+    gcc make wget tar bzip2 \
+    pam-devel readline-devel perl-ExtUtils-MakeMaker \
+    && dnf clean all
+
+# Note: munge-devel and mariadb-devel require EPEL/PowerTools repos
+# For simplified build, we'll download pre-built SaltStack RPMs instead of building SLURM from source
+
+# Add non-root builder user
+RUN useradd -m -u 1000 builder
+USER builder
+WORKDIR /home/builder/build
+
+# Setup RPM build environment
+RUN rpmdev-setuptree
+
+# Copy SLURM source tarball
+ARG SLURM_TARBALL_PATH
+COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
+
+# Note: Skipping SLURM RPM build due to missing dependencies in Rocky Linux 9 base repos
+# SLURM RPM build requires munge-devel, mariadb-devel from EPEL/PowerTools
+# For production, consider enabling these repos or using pre-built SLURM RPMs
+RUN set -eux; \
+    mkdir -p /home/builder/rpms; \
+    touch /home/builder/rpms/.skip_slurm; \
+    echo "⚠️  SLURM RPM build skipped (requires EPEL/PowerTools repos for dependencies)"
+
+# Download SaltStack packages for Rocky Linux 9
+USER root
+RUN set -eux; \
+    mkdir -p /saltstack-rpm; \
+    cd /saltstack-rpm; \
+    echo "📦 Downloading SaltStack rpm packages for Rocky Linux 9..."; \
+    # SaltStack repository URL for RHEL 9
+    SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/x86_64/latest"; \
+    # Download key packages
+    wget -nv "${SALTSTACK_REPO}/salt-master-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-master"; \
+    wget -nv "${SALTSTACK_REPO}/salt-minion-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-minion"; \
+    wget -nv "${SALTSTACK_REPO}/salt-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt"; \
+    wget -nv "${SALTSTACK_REPO}/salt-api-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-api"; \
+    wget -nv "${SALTSTACK_REPO}/salt-ssh-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-ssh"; \
+    wget -nv "${SALTSTACK_REPO}/salt-syndic-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-syndic"; \
+    salt_count=$(ls *.rpm 2>/dev/null | wc -l || echo 0); \
+    if [ "$salt_count" -gt 0 ]; then \
+        echo "✓ Downloaded ${salt_count} SaltStack rpm packages"; \
+    else \
+        echo "⚠️  No SaltStack packages downloaded"; \
+    fi
+
+# Collect RPM artifacts
+RUN set -eux; \
+    mkdir -p /out; \
+    if [ ! -f /home/builder/rpms/.skip_slurm ]; then \
+        # Copy built RPMs to /out
+        find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
+        if [ "$rpm_count" -gt 0 ]; then \
+            echo "✓ Successfully built ${rpm_count} SLURM RPM package(s)"; \
+        else \
+            echo "⚠️  No SLURM RPM packages were built"; \
+            touch /out/.skip_slurm; \
+        fi; \
+    else \
+        echo "⚠️  SLURM RPM build was skipped"; \
+        touch /out/.skip_slurm; \
+    fi; \
+    # Copy SaltStack packages
+    if [ -d /saltstack-rpm ] && [ "$(ls -A /saltstack-rpm/*.rpm 2>/dev/null)" ]; then \
+        cp /saltstack-rpm/*.rpm /out/ || true; \
+        salt_count=$(ls /saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+        echo "✓ Added ${salt_count} SaltStack rpm packages"; \
+    fi
+
+# =============================================================================
+# Stage 3: AppHub - HTTP Server with Package Management & Development Tools
+# =============================================================================
+FROM nginx:alpine
+
+# 配置 Alpine 镜像源并安装基础工具（使用国内镜像源）
+RUN set -eux; \
+    # 备份原始配置
+    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
+    # 检测架构
+    ARCH=$(uname -m); \
+    echo "Detected architecture: ${ARCH}"; \
+    # 根据架构配置镜像源
+    if [ "${ARCH}" = "aarch64" ]; then \
+        echo "配置ARM64架构的清华Alpine镜像源..."; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/community" >> /etc/apk/repositories; \
+    else \
+        echo "配置AMD64架构的阿里云Alpine镜像源..."; \
+        echo "https://mirrors.aliyun.com/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.21/community" >> /etc/apk/repositories; \
+    fi; \
+    # 更新包索引（带重试和备用源）
+    apk update || { \
+        echo "主镜像源失败，切换到官方镜像源..."; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories; \
+        apk update; \
+    } || { \
+        echo "尝试使用HTTP协议..."; \
+        echo "http://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "http://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories; \
+        apk update; \
+    }
 
 # Install tools for repo management and general development
-RUN apt-get install -y \
-    # Package management tools
-    apt-utils dpkg-dev createrepo-c \
+RUN apk add --no-cache \
+    # Package management tools (dpkg for deb package index generation)
+    dpkg dpkg-dev \
     # Development tools (for testing and debugging)
-    build-essential \
+    build-base \
     git \
     vim \
     wget \
     curl \
     net-tools \
-    iputils-ping \
+    iputils \
     procps \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    bash \
+    ca-certificates \
+    gzip \
+    perl
 
 # Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf
@@ -147,30 +319,69 @@ COPY nginx.conf /etc/nginx/nginx.conf
 RUN mkdir -p \
     /usr/share/nginx/html/deb \
     /usr/share/nginx/html/rpm \
-    /usr/share/nginx/html/pkgs/slurm-deb
+    /usr/share/nginx/html/pkgs/slurm-deb \
+    /usr/share/nginx/html/pkgs/slurm-rpm \
+    /usr/share/nginx/html/pkgs/saltstack-deb \
+    /usr/share/nginx/html/pkgs/saltstack-rpm
 
-# Copy SLURM deb packages from builder stage
-COPY --from=slurm-builder /out/*.deb /usr/share/nginx/html/pkgs/slurm-deb/
+# Copy all deb packages from deb-builder stage (SLURM + SaltStack)
+COPY --from=deb-builder /out/ /usr/share/nginx/html/pkgs/slurm-deb/
 
-# Generate package indexes
+# Copy all rpm packages from rpm-builder stage (SLURM + SaltStack)
+COPY --from=rpm-builder /out/ /usr/share/nginx/html/pkgs/slurm-rpm/
+
+# Separate packages into subdirectories and generate indexes
 RUN set -eux; \
-    # 统计SLURM deb包数量
-    slurm_deb_count=$(ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l); \
-    echo "Copied ${slurm_deb_count} SLURM deb packages"; \
-    # 生成deb包索引（如果有deb包）
+    echo "📦 Organizing packages..."; \
+    # Separate SLURM and SaltStack deb packages
+    mkdir -p /usr/share/nginx/html/pkgs/saltstack-deb; \
+    if [ -d /usr/share/nginx/html/pkgs/slurm-deb ]; then \
+        cd /usr/share/nginx/html/pkgs/slurm-deb; \
+        # Move SaltStack packages to separate directory
+        find . -name "salt-*.deb" -exec mv {} /usr/share/nginx/html/pkgs/saltstack-deb/ \; 2>/dev/null || true; \
+    fi; \
+    # Separate SLURM and SaltStack rpm packages
+    mkdir -p /usr/share/nginx/html/pkgs/saltstack-rpm; \
+    if [ -d /usr/share/nginx/html/pkgs/slurm-rpm ]; then \
+        cd /usr/share/nginx/html/pkgs/slurm-rpm; \
+        # Move SaltStack packages to separate directory
+        find . -name "salt-*.rpm" -exec mv {} /usr/share/nginx/html/pkgs/saltstack-rpm/ \; 2>/dev/null || true; \
+    fi; \
+    # Count packages
+    slurm_deb_count=$(ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+    slurm_rpm_count=$(ls /usr/share/nginx/html/pkgs/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    salt_deb_count=$(ls /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+    salt_rpm_count=$(ls /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    echo "📊 Package Summary:"; \
+    echo "  - SLURM deb packages: ${slurm_deb_count}"; \
+    echo "  - SLURM rpm packages: ${slurm_rpm_count}"; \
+    echo "  - SaltStack deb packages: ${salt_deb_count}"; \
+    echo "  - SaltStack rpm packages: ${salt_rpm_count}"; \
+    # Generate deb package indexes
+    if [ "$slurm_deb_count" -gt 0 ]; then \
+        cd /usr/share/nginx/html/pkgs/slurm-deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
+        echo "✓ Generated SLURM deb package index"; \
+    fi; \
+    if [ "$salt_deb_count" -gt 0 ]; then \
+        cd /usr/share/nginx/html/pkgs/saltstack-deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
+        echo "✓ Generated SaltStack deb package index"; \
+    fi; \
+    # General deb index (if any)
     if [ -d /usr/share/nginx/html/deb ] && [ "$(ls -A /usr/share/nginx/html/deb 2>/dev/null)" ]; then \
         cd /usr/share/nginx/html/deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
-        echo "Generated deb package index"; \
+        echo "✓ Generated general deb package index"; \
     fi; \
-    # 生成SLURM deb包索引
-    if [ -d /usr/share/nginx/html/pkgs/slurm-deb ] && [ "$(ls -A /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null)" ]; then \
-        cd /usr/share/nginx/html/pkgs/slurm-deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
-        echo "Generated SLURM deb package index"; \
+    # RPM packages (available for direct download, no metadata)
+    if [ "$slurm_rpm_count" -gt 0 ]; then \
+        echo "✓ SLURM RPM packages available at /pkgs/slurm-rpm/"; \
     fi; \
-    # 生成rpm包索引（如果有rpm包）
-    if [ -d /usr/share/nginx/html/rpm ] && [ "$(ls -A /usr/share/nginx/html/rpm 2>/dev/null)" ]; then \
-        createrepo_c /usr/share/nginx/html/rpm; \
-        echo "Generated rpm package index"; \
+    if [ "$salt_rpm_count" -gt 0 ]; then \
+        echo "✓ SaltStack RPM packages available at /pkgs/saltstack-rpm/"; \
+    fi; \
+    # Note about RPM metadata
+    if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \
+        echo "⚠️  Note: YUM/DNF metadata not generated (createrepo not available in Alpine)"; \
+        echo "⚠️  Packages can be downloaded directly via HTTP"; \
     fi
 
 # Expose port

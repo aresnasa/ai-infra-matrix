@@ -1458,3 +1458,5 @@
 82. 现在检查build.sh中的循环遍历项目文件然后构建组件的函数，如果有在src中增加文件夹并添加了dockerfile需要能够感知到，然后进行构建
 83. 调整backend的dockerfile，由于slurm依赖ssh-server和client服务，都需要安装
 84. 这里调整下go程序，这里需要支持配置自定义的命令集成到slurm_sevice中，不要写死代码，而是能够读取传参输入，比如将sinfo的完整命令或者squeue的完整命令传递到go程序中然后执行，遮掩更加合理可扩展
+85. find . -name "slurm*.tar.bz2" -o -name "slurm*.tar.gz" 2>/dev/null ./src/apphub/slurm-25.05.4.tar.bz2，使用了新版本，这里需要考虑定期更新版本，然后重新构建，这里要考虑相关的dockerfile更新
+86. 这里改造下apphub的构建dockerfile，期望的是这样，使用ubuntu:22.04构建所有deb相关的包（slurm，saltstack需要从公网下载安装包），使用rocky9构建所有rpm包（slurm，saltstack需要从公网下载安装包），然后拷贝deb和rpm到alpine的nginx中，这里使用多阶段构建apphub。
