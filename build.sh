@@ -1229,6 +1229,170 @@ save_service_build_info() {
 EOF
 }
 
+# 显示构建历史记录
+show_build_history() {
+    local filter_service="$1"
+    local count="${2:-20}"
+    
+    init_build_cache
+    
+    if [[ ! -f "$BUILD_HISTORY_FILE" ]]; then
+        print_info "📋 构建历史记录为空"
+        print_info "提示: 执行构建命令后将自动记录历史"
+        return 0
+    fi
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "📋 构建历史记录"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ -n "$filter_service" ]]; then
+        print_info "🔍 过滤服务: $filter_service"
+    fi
+    print_info "📊 显示记录数: $count"
+    echo
+    
+    # 过滤并显示记录
+    local records
+    if [[ -n "$filter_service" ]]; then
+        records=$(grep "SERVICE=$filter_service " "$BUILD_HISTORY_FILE" | tail -n "$count")
+    else
+        records=$(tail -n "$count" "$BUILD_HISTORY_FILE")
+    fi
+    
+    if [[ -z "$records" ]]; then
+        print_info "没有找到匹配的记录"
+        return 0
+    fi
+    
+    # 表头
+    printf "%-20s %-15s %-20s %-10s %-10s %-20s\n" \
+        "时间" "BUILD_ID" "服务" "标签" "状态" "原因"
+    echo "────────────────────────────────────────────────────────────────────────────────────────────────"
+    
+    # 显示记录（彩色输出）
+    while IFS= read -r line; do
+        # 提取字段
+        local timestamp=$(echo "$line" | sed 's/^\[\([^]]*\)\].*/\1/')
+        local build_id=$(echo "$line" | grep -o 'BUILD_ID=[^ ]*' | cut -d= -f2)
+        local service=$(echo "$line" | grep -o 'SERVICE=[^ ]*' | cut -d= -f2)
+        local tag=$(echo "$line" | grep -o 'TAG=[^ ]*' | cut -d= -f2)
+        local status=$(echo "$line" | grep -o 'STATUS=[^ ]*' | cut -d= -f2)
+        local reason=$(echo "$line" | grep -o 'REASON=.*' | cut -d= -f2 || echo "-")
+        
+        # 根据状态选择颜色
+        case "$status" in
+            "SUCCESS")
+                printf "\033[32m%-20s %-15s %-20s %-10s ✓ SUCCESS  %-20s\033[0m\n" \
+                    "$timestamp" "$build_id" "$service" "$tag" "$reason"
+                ;;
+            "FAILED")
+                printf "\033[31m%-20s %-15s %-20s %-10s ✗ FAILED   %-20s\033[0m\n" \
+                    "$timestamp" "$build_id" "$service" "$tag" "$reason"
+                ;;
+            "SKIPPED")
+                printf "\033[33m%-20s %-15s %-20s %-10s ⊘ SKIPPED  %-20s\033[0m\n" \
+                    "$timestamp" "$build_id" "$service" "$tag" "$reason"
+                ;;
+            *)
+                printf "%-20s %-15s %-20s %-10s %-10s %-20s\n" \
+                    "$timestamp" "$build_id" "$service" "$tag" "$status" "$reason"
+                ;;
+        esac
+    done <<< "$records"
+    
+    echo
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # 统计信息
+    local total_count=$(echo "$records" | wc -l | tr -d ' ')
+    local success_count=$(echo "$records" | grep -c "STATUS=SUCCESS" || echo "0")
+    local failed_count=$(echo "$records" | grep -c "STATUS=FAILED" || echo "0")
+    local skipped_count=$(echo "$records" | grep -c "STATUS=SKIPPED" || echo "0")
+    
+    print_info "📊 统计: 总计=$total_count | 成功=$success_count | 失败=$failed_count | 跳过=$skipped_count"
+}
+
+# 显示镜像构建信息
+show_build_info() {
+    local service="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    local image="ai-infra-${service}:${tag}"
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "🔍 镜像构建信息"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "服务: $service"
+    print_info "镜像: $image"
+    echo
+    
+    # 检查镜像是否存在
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        print_error "镜像不存在: $image"
+        print_info "提示: 使用 './build.sh build $service $tag' 构建镜像"
+        return 1
+    fi
+    
+    print_success "✓ 镜像存在"
+    echo
+    
+    # 获取构建标签
+    local labels=$(get_image_build_labels "$image")
+    
+    if [[ -z "$labels" ]]; then
+        print_warning "镜像没有构建标签（可能是旧版本构建）"
+        echo
+        print_info "基本信息:"
+        docker image inspect "$image" --format \
+            '  创建时间: {{.Created}}
+  大小: {{.Size}} bytes
+  架构: {{.Architecture}}
+  OS: {{.Os}}'
+        return 0
+    fi
+    
+    # 显示构建标签
+    print_info "🏷️  构建标签:"
+    echo "$labels" | while IFS='=' read -r key value; do
+        case "$key" in
+            "build.id")
+                echo "  📋 BUILD_ID: $value"
+                ;;
+            "build.service")
+                echo "  🔧 服务: $value"
+                ;;
+            "build.tag")
+                echo "  🏷️  标签: $value"
+                ;;
+            "build.hash")
+                echo "  #️⃣  哈希: ${value:0:16}..."
+                ;;
+            "build.timestamp")
+                echo "  🕐 时间: $value"
+                ;;
+            "build.reason")
+                echo "  📝 原因: $value"
+                ;;
+        esac
+    done
+    
+    echo
+    print_info "📦 镜像详情:"
+    docker image inspect "$image" --format \
+        '  创建时间: {{.Created}}
+  大小: {{.Size}} bytes
+  架构: {{.Architecture}}
+  OS: {{.Os}}'
+    
+    # 检查缓存文件
+    local cache_file="$BUILD_CACHE_DIR/$service/last-build.json"
+    if [[ -f "$cache_file" ]]; then
+        echo
+        print_info "💾 缓存信息:"
+        cat "$cache_file" | jq -r '. | "  BUILD_ID: \(.build_id)\n  哈希: \(.hash[0:16])...\n  时间戳: \(.timestamp)"' 2>/dev/null || cat "$cache_file"
+    fi
+}
+
 # 显示构建缓存统计
 show_build_cache_stats() {
     echo "=========================================="
@@ -10442,7 +10606,79 @@ main() {
                 print_info "可用服务: $SRC_SERVICES"
                 exit 1
             fi
-            build_service "$2" "${3:-$DEFAULT_IMAGE_TAG}" "$4"
+            
+            # 支持逗号分隔的服务列表: ./build.sh build backend,backend-init --force
+            local services="$2"
+            local tag="${3:-$DEFAULT_IMAGE_TAG}"
+            local registry="$4"
+            
+            # 检查是否有 --force 标志（可能在任意位置）
+            for arg in "$@"; do
+                if [[ "$arg" == "--force" ]]; then
+                    FORCE_REBUILD=true
+                    print_info "🔨 启用强制重建模式"
+                    break
+                fi
+            done
+            
+            # 如果包含逗号，则分割服务列表
+            if [[ "$services" == *","* ]]; then
+                print_info "📦 批量构建模式：检测到多个服务"
+                IFS=',' read -ra service_array <<< "$services"
+                local total=${#service_array[@]}
+                local current=0
+                local failed_services=()
+                
+                print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                print_info "构建计划："
+                for svc in "${service_array[@]}"; do
+                    # 去除前后空格
+                    svc=$(echo "$svc" | xargs)
+                    echo "  • $svc"
+                done
+                print_info "总计: $total 个服务"
+                print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo
+                
+                for svc in "${service_array[@]}"; do
+                    # 去除前后空格
+                    svc=$(echo "$svc" | xargs)
+                    current=$((current + 1))
+                    
+                    echo
+                    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    print_info "[$current/$total] 构建服务: $svc"
+                    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    
+                    if build_service "$svc" "$tag" "$registry"; then
+                        print_success "✓ [$current/$total] $svc 构建成功"
+                    else
+                        print_error "✗ [$current/$total] $svc 构建失败"
+                        failed_services+=("$svc")
+                    fi
+                done
+                
+                echo
+                print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                print_info "📊 批量构建结果汇总"
+                print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                print_info "总服务数: $total"
+                print_info "成功: $((total - ${#failed_services[@]}))"
+                print_info "失败: ${#failed_services[@]}"
+                
+                if [[ ${#failed_services[@]} -gt 0 ]]; then
+                    print_error "失败的服务："
+                    for svc in "${failed_services[@]}"; do
+                        echo "  ✗ $svc"
+                    done
+                    exit 1
+                else
+                    print_success "🎉 所有服务构建成功！"
+                fi
+            else
+                # 单个服务构建
+                build_service "$services" "$tag" "$registry"
+            fi
             ;;
             
         "build-all")
@@ -11389,6 +11625,59 @@ main() {
             fi
             
             generate_patch "$2" "$3"
+            ;;
+            
+        "build-history")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "build-history - 查看构建历史记录"
+                echo
+                echo "用法: $0 build-history [service] [count]"
+                echo
+                echo "参数:"
+                echo "  service         过滤指定服务 (可选)"
+                echo "  count           显示最近N条记录 (默认: 20)"
+                echo
+                echo "功能:"
+                echo "  • 显示构建历史记录"
+                echo "  • 包含 BUILD_ID、服务、标签、状态"
+                echo "  • 支持按服务过滤"
+                echo "  • 彩色输出，易于阅读"
+                echo
+                echo "示例:"
+                echo "  $0 build-history                    # 显示最近20条记录"
+                echo "  $0 build-history backend            # 显示backend的构建历史"
+                echo "  $0 build-history backend 50         # 显示backend最近50条记录"
+                echo "  $0 build-history \"\" 100             # 显示所有服务最近100条记录"
+                return 0
+            fi
+            
+            show_build_history "${2:-}" "${3:-20}"
+            ;;
+            
+        "build-info")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" || -z "$2" ]]; then
+                echo "build-info - 查看镜像构建信息"
+                echo
+                echo "用法: $0 build-info <service> [tag]"
+                echo
+                echo "参数:"
+                echo "  service         服务名称 (必需)"
+                echo "  tag             镜像标签 (默认: $DEFAULT_IMAGE_TAG)"
+                echo
+                echo "功能:"
+                echo "  • 显示镜像的构建标签"
+                echo "  • 包含 BUILD_ID、哈希、时间戳等"
+                echo "  • 验证镜像是否存在"
+                echo
+                echo "示例:"
+                echo "  $0 build-info backend"
+                echo "  $0 build-info frontend v1.0.0"
+                return 0
+            fi
+            
+            show_build_info "$2" "${3:-$DEFAULT_IMAGE_TAG}"
             ;;
             
         "help"|"-h"|"--help")

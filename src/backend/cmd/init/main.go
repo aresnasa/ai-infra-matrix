@@ -11,13 +11,14 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"net/http"
-	"os"
-	"strings"
 )
 
 func main() {
@@ -709,9 +710,22 @@ func initializeDefaultAIConfigs() {
 // createOtherProviderConfigs 创建其他AI提供商的配置
 func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
 	// 创建DeepSeek配置
-	if deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY"); deepseekAPIKey != "" {
+	// 检查是否配置了 DeepSeek 相关环境变量（API Key、Base URL 或 Model）
+	deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY")
+	deepseekBaseURL := os.Getenv("DEEPSEEK_BASE_URL")
+	deepseekChatModel := os.Getenv("DEEPSEEK_CHAT_MODEL")
+	deepseekReasonerModel := os.Getenv("DEEPSEEK_REASONER_MODEL")
+
+	// 只要配置了任意一个 DeepSeek 相关环境变量，就创建默认配置
+	if deepseekAPIKey != "" || deepseekBaseURL != "" || deepseekChatModel != "" || deepseekReasonerModel != "" {
+		// 如果没有 API Key，使用占位符（用户可以后续在管理界面配置）
+		if deepseekAPIKey == "" {
+			deepseekAPIKey = "sk-placeholder-configure-in-admin-panel"
+			log.Println("⚠️  DEEPSEEK_API_KEY 未配置，使用占位符创建默认模型，请在管理面板中配置")
+		}
+
 		baseURL := getEnvCompat("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-		
+
 		// 创建 DeepSeek Chat 配置（非思考模式）
 		chatModel := getEnvCompat("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
 		deepseekChatConfig := &models.AIAssistantConfig{

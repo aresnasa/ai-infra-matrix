@@ -50,17 +50,17 @@ type AIService interface {
 	GetMessageStatus(messageID uint, userID uint) (string, interface{}, error)
 	CloneConfig(id uint, newName string) (*models.AIAssistantConfig, error)
 	BatchUpdateConfigs(configIDs []uint, updates map[string]interface{}) error
-	
+
 	// 模型对比功能
 	CompareModels(conversationID uint, userMessage string, configIDs []uint) (*ModelComparisonResult, error)
 }
 
 // ModelComparisonResult 模型对比结果
 type ModelComparisonResult struct {
-	MessageID string                    `json:"message_id"`
-	UserMessage string                  `json:"user_message"`
-	Results   []ModelComparisonResponse `json:"results"`
-	CreatedAt time.Time                 `json:"created_at"`
+	MessageID   string                    `json:"message_id"`
+	UserMessage string                    `json:"user_message"`
+	Results     []ModelComparisonResponse `json:"results"`
+	CreatedAt   time.Time                 `json:"created_at"`
 }
 
 // ModelComparisonResponse 单个模型的对比响应
@@ -813,9 +813,22 @@ func (s *aiServiceImpl) InitDefaultConfigs() error {
 // createOtherProviderConfigs 创建其他AI提供商的配置
 func (s *aiServiceImpl) createOtherProviderConfigs(createdConfigs *int) {
 	// 创建DeepSeek配置
-	if deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY"); deepseekAPIKey != "" {
+	// 检查是否配置了 DeepSeek 相关环境变量（API Key、Base URL 或 Model）
+	deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY")
+	deepseekBaseURL := os.Getenv("DEEPSEEK_BASE_URL")
+	deepseekChatModel := os.Getenv("DEEPSEEK_CHAT_MODEL")
+	deepseekReasonerModel := os.Getenv("DEEPSEEK_REASONER_MODEL")
+
+	// 只要配置了任意一个 DeepSeek 相关环境变量，就创建默认配置
+	if deepseekAPIKey != "" || deepseekBaseURL != "" || deepseekChatModel != "" || deepseekReasonerModel != "" {
+		// 如果没有 API Key，使用占位符（用户可以后续在管理界面配置）
+		if deepseekAPIKey == "" {
+			deepseekAPIKey = "sk-placeholder-configure-in-admin-panel"
+			logrus.Warn("DEEPSEEK_API_KEY 未配置，使用占位符创建默认模型，请在管理面板中配置")
+		}
+
 		baseURL := getEnvOrDefault("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-		
+
 		// 创建 DeepSeek Chat 配置（非思考模式）
 		chatModel := getEnvOrDefault("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
 		deepseekChatConfig := &models.AIAssistantConfig{
@@ -975,11 +988,11 @@ func (s *aiServiceImpl) CompareModels(conversationID uint, userMessage string, c
 
 	// 生成对比任务ID
 	messageID := fmt.Sprintf("compare_%d_%d", conversationID, time.Now().UnixNano())
-	
+
 	logrus.WithFields(logrus.Fields{
-		"message_id":       messageID,
-		"conversation_id":  conversationID,
-		"config_count":     len(configIDs),
+		"message_id":      messageID,
+		"conversation_id": conversationID,
+		"config_count":    len(configIDs),
 	}).Info("开始模型对比")
 
 	// 使用 channel 和 waitgroup 并发调用多个模型
@@ -1074,7 +1087,7 @@ func (s *aiServiceImpl) CompareModels(conversationID uint, userMessage string, c
 				result.Error = fmt.Sprintf("AI API调用失败: %v", err)
 				result.ResponseTime = responseTime
 				resultChan <- modelResult{index: index, response: result, err: err}
-				
+
 				// 记录失败统计
 				s.RecordUsage(conversation.UserID, config.ID, 0, responseTime, false)
 				return
@@ -1119,10 +1132,10 @@ func (s *aiServiceImpl) CompareModels(conversationID uint, userMessage string, c
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"message_id":     messageID,
-		"success_count":  successCount,
-		"error_count":    errorCount,
-		"total_count":    len(configIDs),
+		"message_id":    messageID,
+		"success_count": successCount,
+		"error_count":   errorCount,
+		"total_count":   len(configIDs),
 	}).Info("模型对比完成")
 
 	// 构建对比结果（去掉指针）

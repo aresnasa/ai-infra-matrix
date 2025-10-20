@@ -1460,3 +1460,72 @@
 84. 这里调整下go程序，这里需要支持配置自定义的命令集成到slurm_sevice中，不要写死代码，而是能够读取传参输入，比如将sinfo的完整命令或者squeue的完整命令传递到go程序中然后执行，遮掩更加合理可扩展
 85. find . -name "slurm*.tar.bz2" -o -name "slurm*.tar.gz" 2>/dev/null ./src/apphub/slurm-25.05.4.tar.bz2，使用了新版本，这里需要考虑定期更新版本，然后重新构建，这里要考虑相关的dockerfile更新
 86. 这里改造下apphub的构建dockerfile，期望的是这样，使用ubuntu:22.04构建所有deb相关的包（slurm，saltstack需要从公网下载安装包），使用rocky9构建所有rpm包（slurm，saltstack需要从公网下载安装包），然后拷贝deb和rpm到alpine的nginx中，这里使用多阶段构建apphub。
+87. 现在调整默认的智能体，golang需要读取env中的deepseek，将deepseek加到默认模型中，然后读取环境变量，不能硬编码到golang中， * 出于与 OpenAI 兼容考虑，您也可以将 base_url 设置为 https://api.deepseek.com/v1 来使用，但注意，此处 v1 与模型版本无关。* deepseek-chat 和 deepseek-reasoner 都已经升级为 DeepSeek-V3.2-Exp。deepseek-chat 对应 DeepSeek-V3.2-Exp 的非思考模式，deepseek-reasoner 对应 DeepSeek-V3.2-Exp 的思考模式。
+88. http://192.168.0.200:8080/admin/ai-assistant这里期望的是增加2个deepseek的模型作为默认的模型，按照这个添加一下配置到默认模型中
+89. 增加build.sh函数支持,分隔的./build.sh build backend,backend-init --force这种形式，然后增加智能构建，能够存构建ID，智能匹配已有镜像
+    
+    **已完成功能：**
+    
+    1. **逗号分隔的服务列表支持** ✅
+       - 语法: `./build.sh build backend,backend-init,frontend --force`
+       - 自动分割服务名，批量构建
+       - 显示构建进度 `[1/3]`, `[2/3]`, `[3/3]`
+       - 汇总构建结果（成功/失败统计）
+       - 支持 `--force` 标志（可在任意位置）
+    
+    2. **智能构建系统** ✅（已存在并增强）
+       - **BUILD_ID 管理**: 自动生成递增的构建 ID（格式：`数字_时间戳`）
+       - **文件哈希追踪**: 计算服务源码、Dockerfile、配置文件的综合哈希
+       - **镜像标签**: 在 Docker 镜像中嵌入构建元数据
+         - `build.id`: 唯一构建标识
+         - `build.service`: 服务名称
+         - `build.tag`: 镜像标签
+         - `build.hash`: 文件哈希（用于变更检测）
+         - `build.timestamp`: 构建时间
+         - `build.reason`: 构建原因
+       - **智能缓存检查**: 自动对比文件哈希，无变化时跳过构建
+       - **构建历史记录**: 所有构建操作记录到 `.build-cache/build-history.log`
+       - **缓存目录**: `.build-cache/` 存储所有构建元数据
+    
+    3. **新增命令** ✅
+       - `./build.sh build-history [service] [count]`: 查看构建历史
+         - 支持按服务过滤
+         - 彩色输出（绿色=成功，红色=失败，黄色=跳过）
+         - 显示统计信息
+       - `./build.sh build-info <service> [tag]`: 查看镜像构建信息
+         - 显示所有构建标签
+         - 显示镜像详情（大小、架构、创建时间）
+         - 显示缓存信息
+    
+    4. **构建流程增强** ✅
+       - 构建前显示详细信息（BUILD_ID、哈希、构建原因）
+       - 智能决策：
+         - 文件无变化 → 跳过构建，复用缓存
+         - 文件已变化 → 显示哈希对比，重新构建
+         - 强制模式 → 忽略缓存，强制重建
+       - 构建后记录历史（SUCCESS/FAILED/SKIPPED）
+    
+    **使用示例：**
+    ```bash
+    # 批量构建多个服务
+    ./build.sh build backend,backend-init,frontend --force
+    
+    # 查看所有构建历史
+    ./build.sh build-history
+    
+    # 查看 backend 的构建历史（最近50条）
+    ./build.sh build-history backend 50
+    
+    # 查看 backend 镜像的构建信息
+    ./build.sh build-info backend
+    
+    # 智能构建（自动跳过无变化的服务）
+    ./build.sh build backend  # 如果文件无变化，会自动跳过
+    ```
+    
+    **技术实现：**
+    - 服务哈希计算：`calculate_service_hash()`
+    - 构建决策：`need_rebuild()` - 返回重建原因或跳过标志
+    - BUILD_ID生成：`generate_build_id()` - 递增ID + 时间戳
+    - 历史记录：`log_build_history()` - 追加到日志文件
+    - 缓存管理：`.build-cache/` 目录存储所有元数据
