@@ -5519,6 +5519,8 @@ sync_env_with_example() {
     cp "$env_file" "$temp_env"
     
     # 读取 .env.example 中的所有变量
+    local changed_vars=()  # 新增：记录值已改变的配置项
+    
     while IFS= read -r line; do
         # 跳过注释和空行
         if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
@@ -5539,6 +5541,10 @@ sync_env_with_example() {
                 if [[ -z "$current_value" ]]; then
                     sed_inplace "s|^${var_name}=.*|${var_name}=${example_value}|g" "$temp_env"
                     updated_vars+=("$var_name (空值 → ${example_value})")
+                elif [[ "$current_value" != "$example_value" ]]; then
+                    # 值不同，记录为可能需要更新的配置
+                    changed_vars+=("$var_name: $current_value → $example_value")
+                    unchanged_vars+=("$var_name")
                 else
                     unchanged_vars+=("$var_name")
                 fi
@@ -5574,10 +5580,22 @@ sync_env_with_example() {
         echo ""
     fi
     
-    if [[ ${#unchanged_vars[@]} -gt 0 ]]; then
-        echo -e "\033[32m保持不变的配置项 (${#unchanged_vars[@]}):\033[0m"
-        echo "  ✓ ${#unchanged_vars[@]} 个配置项值未更改（保留用户自定义值）"
+    if [[ ${#changed_vars[@]} -gt 0 ]]; then
+        echo -e "\033[35m⚠️  .env.example 中值已变化的配置项 (${#changed_vars[@]}):\033[0m"
+        echo -e "\033[90m  (保持当前 .env 中的值，如需更新请手动修改)\033[0m"
+        for var in "${changed_vars[@]}"; do
+            echo "  ⟳ $var"
+        done
         echo ""
+    fi
+    
+    if [[ ${#unchanged_vars[@]} -gt 0 ]]; then
+        local actually_unchanged=$((${#unchanged_vars[@]} - ${#changed_vars[@]}))
+        if [[ $actually_unchanged -gt 0 ]]; then
+            echo -e "\033[32m保持不变的配置项 ($actually_unchanged):\033[0m"
+            echo "  ✓ $actually_unchanged 个配置项值完全匹配"
+            echo ""
+        fi
     fi
     
     # 询问是否应用更改
@@ -5592,30 +5610,86 @@ sync_env_with_example() {
         print_info "CI 环境或强制模式，自动应用更改..."
         mv "$temp_env" "$env_file"
         print_success "✓ 环境变量已同步"
+        
+        # 处理 changed_vars（在自动模式下提示但不自动更新）
+        if [[ ${#changed_vars[@]} -gt 0 ]]; then
+            print_warning "⚠️  注意：有 ${#changed_vars[@]} 个配置项的推荐值已改变"
+            print_info "    如需更新这些值，请手动编辑 .env 或参考 .env.example"
+        fi
     else
         echo ""
         echo -e "\033[1;33m是否应用以上更改？\033[0m"
-        echo "  [y] 是 - 应用更改并继续构建"
+        echo "  [y] 是 - 应用更改（仅新增和空值配置）"
         echo "  [n] 否 - 跳过同步（使用当前 .env）"
         echo "  [d] 查看详细差异"
+        if [[ ${#changed_vars[@]} -gt 0 ]]; then
+            echo "  [u] 更新 - 应用更改并同步已变化的配置值"
+        fi
         echo ""
-        read -p "请选择 [y/n/d]: " -n 1 -r
+        read -p "请选择 [y/n/d/u]: " -n 1 -r
         echo ""
         
         case "$REPLY" in
             [yY])
                 mv "$temp_env" "$env_file"
-                print_success "✓ 环境变量已同步"
+                print_success "✓ 环境变量已同步（保留已有配置值）"
+                if [[ ${#changed_vars[@]} -gt 0 ]]; then
+                    print_warning "⚠️  ${#changed_vars[@]} 个配置项值与 .env.example 不同，已保留当前值"
+                    print_info "    如需更新，请重新运行并选择 [u] 选项"
+                fi
+                ;;
+            [uU])
+                if [[ ${#changed_vars[@]} -gt 0 ]]; then
+                    print_info "正在同步已变化的配置值..."
+                    # 应用 changed_vars 的更新
+                    while IFS= read -r line; do
+                        if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)= ]]; then
+                            local var_name="${BASH_REMATCH[1]}"
+                            local example_value="${line#*=}"
+                            # 检查是否在 changed_vars 中
+                            for changed in "${changed_vars[@]}"; do
+                                if [[ "$changed" =~ ^${var_name}: ]]; then
+                                    sed_inplace "s|^${var_name}=.*|${var_name}=${example_value}|g" "$temp_env"
+                                    break
+                                fi
+                            done
+                        fi
+                    done < "$example_file"
+                fi
+                mv "$temp_env" "$env_file"
+                print_success "✓ 环境变量已完全同步（包括已变化的配置值）"
                 ;;
             [dD])
                 print_info "详细差异对比："
                 diff -u "$env_file" "$temp_env" || true
                 echo ""
-                read -p "是否应用更改？[y/n]: " -n 1 -r
+                echo "是否应用更改？"
+                echo "  [y] 仅新增和空值"
+                echo "  [u] 完全同步（包括变化值）"
+                echo "  [n] 取消"
+                read -p "请选择: " -n 1 -r
                 echo ""
                 if [[ "$REPLY" =~ ^[Yy]$ ]]; then
                     mv "$temp_env" "$env_file"
-                    print_success "✓ 环境变量已同步"
+                    print_success "✓ 环境变量已同步（保留已有配置值）"
+                elif [[ "$REPLY" =~ ^[Uu]$ ]]; then
+                    # 同上面 [uU] 的逻辑
+                    if [[ ${#changed_vars[@]} -gt 0 ]]; then
+                        while IFS= read -r line; do
+                            if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)= ]]; then
+                                local var_name="${BASH_REMATCH[1]}"
+                                local example_value="${line#*=}"
+                                for changed in "${changed_vars[@]}"; do
+                                    if [[ "$changed" =~ ^${var_name}: ]]; then
+                                        sed_inplace "s|^${var_name}=.*|${var_name}=${example_value}|g" "$temp_env"
+                                        break
+                                    fi
+                                done
+                            fi
+                        done < "$example_file"
+                    fi
+                    mv "$temp_env" "$env_file"
+                    print_success "✓ 环境变量已完全同步"
                 else
                     rm -f "$temp_env"
                     print_warning "⚠ 跳过环境变量同步"
@@ -5639,7 +5713,15 @@ sync_env_with_example() {
 #   1. 检查 .env.example 中的所有配置项
 #   2. 如果 .env 中缺失某个配置，自动添加（使用 .env.example 的值）
 #   3. 如果 .env 中某个配置为空值，更新为 .env.example 的值
-#   4. 如果 .env 中已有值，保持不变（保护用户自定义配置）
+#   4. 如果 .env 中已有值但与 .env.example 不同：
+#      - 默认保持不变（保护用户自定义配置）
+#      - 提示用户可选择 [u] 选项同步到推荐值
+#
+# 同步选项说明：
+#   [y] - 仅同步新增和空值配置（安全模式，保护已有值）
+#   [u] - 完全同步，包括更新已变化的配置值（推荐用于更新配置）
+#   [d] - 查看详细差异后决定
+#   [n] - 跳过同步
 #
 # 环境变量优先级（build.sh 构建时）：
 #   1. 当前 shell 环境变量（最高优先级）
@@ -5654,7 +5736,7 @@ sync_env_with_example() {
 #
 # 生产环境建议：
 #   1. 修改 .env.example 中的默认值为生产环境配置
-#   2. 运行 ./build.sh build-all 自动同步到 .env
+#   2. 运行 ./build.sh build-all 选择 [u] 完全同步
 #   3. 或手动编辑 .env 文件
 # ====================================================================
 
@@ -5675,32 +5757,36 @@ build_all_pipeline() {
     fi
 
     print_info "=========================================="
-    print_info "准备环境配置（create-env dev）"
+    print_info "步骤 1: 创建环境配置（create-env dev）"
     print_info "=========================================="
-    
-    # 步骤 0: 同步 .env 和 .env.example，确保配置完整
-    if ! sync_env_with_example "$SCRIPT_DIR/.env" "$SCRIPT_DIR/.env.example"; then
-        print_warning "⚠ 环境变量同步失败，但继续构建流程"
-    fi
-    echo ""
     
     # 自动检测网络环境（内网/外网），导出并写入.env，供后续步骤使用
     local NETWORK_ENV_DETECTED
     NETWORK_ENV_DETECTED=$(detect_network_environment)
     export AI_INFRA_NETWORK_ENV="$NETWORK_ENV_DETECTED"
     print_info "网络环境检测: $AI_INFRA_NETWORK_ENV"
-    # 在.env中记录，便于模板/服务识别
-    set_or_update_env_var "AI_INFRA_NETWORK_ENV" "$AI_INFRA_NETWORK_ENV" "$SCRIPT_DIR/.env" || true
-
+    
+    # 先创建/渲染 .env 文件（从 .env.example 模板生成）
     if ! create_env_from_template "dev" "$force"; then
         print_error "创建/渲染 .env 失败，停止构建"
         return 1
     fi
-    # 再次写入AI_INFRA_NETWORK_ENV，确保在渲染.env之后持久化
+    
+    # 在.env中记录网络环境，便于模板/服务识别
     set_or_update_env_var "AI_INFRA_NETWORK_ENV" "$AI_INFRA_NETWORK_ENV" "$SCRIPT_DIR/.env" || true
+    echo ""
+    
+    print_info "=========================================="
+    print_info "步骤 2: 同步环境变量（sync-env）"
+    print_info "=========================================="
+    # 同步 .env 和 .env.example，确保配置完整（添加缺失项、更新空值）
+    if ! sync_env_with_example "$SCRIPT_DIR/.env" "$SCRIPT_DIR/.env.example"; then
+        print_warning "⚠ 环境变量同步失败，但继续构建流程"
+    fi
+    echo ""
 
     print_info "=========================================="
-    print_info "同步配置（sync-config）"
+    print_info "步骤 3: 同步配置（sync-config）"
     print_info "=========================================="
     if ! sync_all_configs "$force"; then
         print_error "同步配置失败，停止构建"
@@ -5709,13 +5795,13 @@ build_all_pipeline() {
 
     # 渲染模板（nginx/docker-compose），确保以源模板为准进行生成
     print_info "=========================================="
-    print_info "渲染配置模板（nginx / docker-compose）"
+    print_info "步骤 4: 渲染配置模板（nginx / docker-compose）"
     print_info "=========================================="
     render_nginx_templates || print_warning "Nginx 模板渲染出现问题，请稍后检查"
     render_docker_compose_templates "$registry" "$tag" || print_warning "Docker Compose 模板渲染出现问题，请稍后检查"
 
     print_info "=========================================="
-    print_info "开始构建所有服务（build-all）"
+    print_info "步骤 5: 开始构建所有服务（build-all）"
     print_info "标签: $tag  仓库: ${registry:-<本地>}  强制: $force"
     print_info "=========================================="
     if ! build_all_services "$tag" "$registry"; then
@@ -5728,7 +5814,7 @@ build_all_pipeline() {
     compose_cmd=$(detect_compose_command || true)
     if [[ -n "$compose_cmd" ]]; then
         print_info "=========================================="
-        print_info "启动（或重启）Docker Compose 服务"
+        print_info "步骤 6: 启动（或重启）Docker Compose 服务"
         print_info "=========================================="
         # 优先验证配置
         if $compose_cmd -f "$SCRIPT_DIR/docker-compose.yml" config --quiet 2>/dev/null; then
@@ -5746,7 +5832,22 @@ build_all_pipeline() {
         print_warning "未检测到 Docker Compose 命令，跳过启动步骤"
     fi
 
-    print_success "✓ 一键构建流程完成"
+    print_success "=========================================="
+    print_success "✓ 一键构建流程完成！"
+    print_success "=========================================="
+    print_info ""
+    print_info "构建摘要："
+    print_info "  1. ✓ 环境配置已创建/更新: .env"
+    print_info "  2. ✓ 环境变量已同步"
+    print_info "  3. ✓ 配置文件已同步"
+    print_info "  4. ✓ 模板已渲染"
+    print_info "  5. ✓ 镜像已构建: ${tag}"
+    print_info "  6. ✓ 服务已启动"
+    print_info ""
+    print_info "后续操作："
+    print_info "  - 查看服务状态: docker-compose ps"
+    print_info "  - 查看服务日志: docker-compose logs -f [service]"
+    print_info "  - 访问系统: http://${EXTERNAL_HOST:-localhost}:${EXTERNAL_PORT:-8080}"
 }
 
 # 推送单个服务镜像
