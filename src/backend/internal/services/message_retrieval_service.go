@@ -38,12 +38,10 @@ func (s *MessageRetrievalService) GetMessagesWithOptimization(conversationID uin
 		return nil, err
 	}
 
-	// 尝试从缓存获取
-	cacheKey := s.buildCacheKey(conversationID, options)
-	if cachedMessages := s.getFromCache(cacheKey); cachedMessages != nil {
-		logrus.Debugf("Retrieved %d messages from cache for conversation %d", len(cachedMessages), conversationID)
-		return cachedMessages, nil
-	}
+	// ===== 临时禁用缓存读取，确保实时性 =====
+	// 在快速连续的消息处理场景下，缓存可能导致读取到旧数据
+	// 直接从数据库获取最新消息，确保数据一致性
+	logrus.Debugf("Fetching messages from database for conversation %d (cache disabled for real-time consistency)", conversationID)
 
 	// 从数据库获取
 	messages, err := s.getFromDatabase(conversationID, options)
@@ -51,7 +49,9 @@ func (s *MessageRetrievalService) GetMessagesWithOptimization(conversationID uin
 		return nil, err
 	}
 
-	// 缓存结果
+	// 仍然缓存结果（为了兼容性和未来可能的优化）
+	// 但读取时不使用缓存
+	cacheKey := s.buildCacheKey(conversationID, options)
 	s.cacheMessages(cacheKey, messages, options)
 
 	// 发送到Kafka进行流处理
@@ -64,15 +64,15 @@ func (s *MessageRetrievalService) GetMessagesWithOptimization(conversationID uin
 
 // MessageQueryOptions 消息查询选项
 type MessageQueryOptions struct {
-	Limit         int    `json:"limit,omitempty"`
-	Offset        int    `json:"offset,omitempty"`
-	StartDate     *time.Time `json:"start_date,omitempty"`
-	EndDate       *time.Time `json:"end_date,omitempty"`
-	Keyword       string `json:"keyword,omitempty"`
-	Role          string `json:"role,omitempty"` // user, assistant, system
-	SortBy        string `json:"sort_by,omitempty"` // created_at, tokens_used
-	SortOrder     string `json:"sort_order,omitempty"` // asc, desc
-	IncludeMetadata bool   `json:"include_metadata,omitempty"`
+	Limit           int        `json:"limit,omitempty"`
+	Offset          int        `json:"offset,omitempty"`
+	StartDate       *time.Time `json:"start_date,omitempty"`
+	EndDate         *time.Time `json:"end_date,omitempty"`
+	Keyword         string     `json:"keyword,omitempty"`
+	Role            string     `json:"role,omitempty"`       // user, assistant, system
+	SortBy          string     `json:"sort_by,omitempty"`    // created_at, tokens_used
+	SortOrder       string     `json:"sort_order,omitempty"` // asc, desc
+	IncludeMetadata bool       `json:"include_metadata,omitempty"`
 }
 
 // GetMessagesByTimeRange 按时间范围获取消息
@@ -259,7 +259,7 @@ func (s *MessageRetrievalService) getFromCache(cacheKey string) []*models.AIMess
 	if messages == nil {
 		return nil
 	}
-	
+
 	// 转换 []models.AIMessage 到 []*models.AIMessage
 	result := make([]*models.AIMessage, len(messages))
 	for i := range messages {

@@ -69,9 +69,29 @@ test.describe('DeepSeek 完整测试套件', () => {
   });
 
   // 辅助函数：发送消息并等待响应
-  async function sendAndWaitForResponse(request, conversationId, message, maxWaitSeconds = 30) {
+  async function sendAndWaitForResponse(request, conversationId, message, maxWaitSeconds = 60) {
     console.log(`📤 发送消息: "${message}"`);
     
+    // 1. 先获取当前消息列表，记录长度
+    let initialMessageCount = 0;
+    try {
+      const initialResponse = await request.get(
+        `${baseURL}/api/ai/conversations/${conversationId}/messages`,
+        {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        }
+      );
+      if (initialResponse.ok()) {
+        const initialData = await initialResponse.json();
+        const initialMessages = initialData.data || initialData;
+        initialMessageCount = initialMessages.length;
+        console.log(`  📊 当前会话有 ${initialMessageCount} 条消息`);
+      }
+    } catch (e) {
+      console.log(`  ⚠️  无法获取初始消息列表: ${e.message}`);
+    }
+    
+    // 2. 发送新消息
     const sendMessageResponse = await request.post(
       `${baseURL}/api/ai/conversations/${conversationId}/messages`,
       {
@@ -87,13 +107,14 @@ test.describe('DeepSeek 完整测试套件', () => {
     const messageData = await sendMessageResponse.json();
     console.log(`  ✓ 消息已发送 (ID: ${messageData.message_id})`);
 
-    // 等待响应
+    // 3. 等待响应 - 必须等到消息数增加至少2条（user + assistant）
     let aiResponse = null;
     let retries = 0;
-    const maxRetries = maxWaitSeconds / 2;
+    const maxRetries = maxWaitSeconds / 3; // 每3秒轮询一次
+    const expectedMinMessageCount = initialMessageCount + 2; // user消息 + AI响应
 
     while (retries < maxRetries && !aiResponse) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 3000)); // 增加到3秒
       retries++;
 
       const messagesResponse = await request.get(
@@ -106,21 +127,40 @@ test.describe('DeepSeek 完整测试套件', () => {
       if (messagesResponse.ok()) {
         const messagesData = await messagesResponse.json();
         const messages = messagesData.data || messagesData;
-        const assistantMessages = messages.filter(msg => msg.role === 'assistant');
         
-        if (assistantMessages.length > 0) {
-          aiResponse = assistantMessages[assistantMessages.length - 1];
-          break;
+        console.log(`  📊 当前消息数: ${messages.length} (期望 >= ${expectedMinMessageCount})`);
+        
+        // 只有当消息数增加了至少2条时，才检查响应
+        if (messages.length >= expectedMinMessageCount) {
+          // 验证：倒数第二条应该是我们刚发送的user消息
+          const secondLastMessage = messages[messages.length - 2];
+          const lastMessage = messages[messages.length - 1];
+          
+          if (secondLastMessage && secondLastMessage.role === 'user' && 
+              secondLastMessage.content === message &&
+              lastMessage && lastMessage.role === 'assistant') {
+            aiResponse = lastMessage;
+            console.log(`  ✅ 找到对应的AI响应 (消息ID: ${aiResponse.id})`);
+            break;
+          } else {
+            console.log(`  ⚠️  消息对应关系不匹配，继续等待...`);
+            if (secondLastMessage) {
+              console.log(`    - 倒数第二条: ${secondLastMessage.role} "${secondLastMessage.content?.substring(0, 30)}..."`);
+            }
+            if (lastMessage) {
+              console.log(`    - 最后一条: ${lastMessage.role} "${lastMessage.content?.substring(0, 30)}..."`);
+            }
+          }
         }
       }
 
-      if (retries % 3 === 0) {
-        console.log(`  ⏳ 等待中... (${retries * 2}/${maxRetries * 2} 秒)`);
+      if (retries % 5 === 0) {
+        console.log(`  ⏳ 等待中... (${retries * 3}/${maxRetries * 3} 秒)`);
       }
     }
 
     if (!aiResponse) {
-      throw new Error(`未收到 AI 响应 (${maxWaitSeconds} 秒超时)`);
+      throw new Error(`未收到对应的 AI 响应 (${maxWaitSeconds} 秒超时)`);
     }
 
     console.log(`  ✅ 收到响应: "${aiResponse.content.substring(0, 80)}..."`);
