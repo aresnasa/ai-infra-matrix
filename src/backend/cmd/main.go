@@ -21,8 +21,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
-	"github.com/swaggo/files"
-	"github.com/swaggo/gin-swagger"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -703,8 +703,8 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		kres := controllers.NewKubernetesResourcesController()
 		// 资源发现与命名空间列表
 		k8s.GET("/clusters/:id/discovery", kres.DiscoverResources)
-		k8s.GET("/clusters/:id/version", kres.GetClusterVersion)              // 新增：获取集群版本
-		k8s.GET("/clusters/:id/enhanced-discovery", kres.EnhancedDiscovery)   // 新增：增强发现（含CRD）
+		k8s.GET("/clusters/:id/version", kres.GetClusterVersion)            // 新增：获取集群版本
+		k8s.GET("/clusters/:id/enhanced-discovery", kres.EnhancedDiscovery) // 新增：增强发现（含CRD）
 		k8s.GET("/clusters/:id/namespaces", kres.ListNamespaces)
 		// 命名空间内资源
 		k8s.GET("/clusters/:id/namespaces/:namespace/resources/:resource", kres.ListResources)
@@ -1071,6 +1071,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		ai.POST("/conversations/:id/messages", aiAssistantController.SendMessage)
 		ai.GET("/conversations/:id/messages", aiAssistantController.GetMessages)
 		ai.GET("/messages/:id/status", aiAssistantController.GetMessageStatus)
+		ai.PATCH("/messages/:id/stop", aiAssistantController.StopMessage)
 
 		// 集群操作
 		ai.POST("/cluster-operations", aiAssistantController.SubmitClusterOperation)
@@ -1100,11 +1101,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		objectStorage.PUT("/configs/:id", objectStorageController.UpdateConfig)
 		objectStorage.DELETE("/configs/:id", objectStorageController.DeleteConfig)
 		objectStorage.POST("/configs/:id/activate", objectStorageController.SetActiveConfig)
-		
+
 		// 连接测试和状态检查
 		objectStorage.POST("/test-connection", objectStorageController.TestConnection)
 		objectStorage.GET("/configs/:id/status", objectStorageController.CheckConnectionStatus)
-		
+
 		// 统计信息
 		objectStorage.GET("/configs/:id/statistics", objectStorageController.GetStatistics)
 

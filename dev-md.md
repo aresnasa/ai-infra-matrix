@@ -1529,3 +1529,6 @@
     - BUILD_ID生成：`generate_build_id()` - 递增ID + 时间戳
     - 历史记录：`log_build_history()` - 追加到日志文件
     - 缓存管理：`.build-cache/` 目录存储所有元数据
+90. 现在检查slurm集群的状态，使用命令行检查，然后使用@playwright测试，期望的是能够获取slurm集群状态，并且正确的安装slurm客户端
+91. 这里期望的是backend从apphub去下载和安装alpine编译好的slurm客户端。，调整backend的dockerfile（从apphub下载apk包）和apphub的dockerfile（修复构建alpine）
+92. slurm已经下载了调整apphub的dockefile，使用源码打包apk，已经打包了rpm和deb包，参考他们进行构建编译，apphub期望的是构建slurm的deb，rpm和apk包，然后挪到nginx的目录中给其它组件下载

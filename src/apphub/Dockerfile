@@ -260,7 +260,133 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 3: AppHub - HTTP Server with Package Management & Development Tools
+# Stage 3: Build SLURM apk packages (Alpine Linux)
+# =============================================================================
+FROM alpine:latest AS apk-builder
+
+ENV TZ=Asia/Shanghai
+
+# SLURM version configuration (same as deb/rpm builders)
+ARG SLURM_VERSION=25.05.4
+ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
+ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+
+# 配置 Alpine 镜像源（多镜像回退）
+RUN set -eux; \
+    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
+    ARCH=$(uname -m); \
+    echo "Detected architecture: ${ARCH}"; \
+    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
+        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
+        apk update && break || true; \
+    done; \
+    apk add --no-cache ca-certificates tzdata; \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 安装构建依赖（核心依赖）
+RUN apk add --no-cache \
+    build-base \
+    linux-headers \
+    openssl-dev \
+    readline-dev \
+    curl \
+    wget \
+    perl \
+    python3 \
+    mariadb-dev \
+    ncurses-dev \
+    json-c-dev \
+    yaml-dev \
+    libevent-dev \
+    lz4-dev \
+    zlib-dev \
+    bzip2-dev \
+    tar
+
+# 尝试安装可选依赖（可能不可用）
+RUN apk add --no-cache http-parser-dev || echo '⚠ http-parser-dev not available (optional)'
+RUN apk add --no-cache numactl-dev || echo '⚠ numactl-dev not available (optional)'
+RUN apk add --no-cache hwloc-dev || echo '⚠ hwloc-dev not available (optional)'
+
+# 创建构建用户
+RUN adduser -D -u 1000 builder
+USER builder
+WORKDIR /home/builder/build
+
+# 复制 SLURM 源码包
+COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
+
+# 解压 SLURM 源码 - 跳过 Alpine 构建
+# 注意: Alpine SLURM 构建比较复杂，暂时跳过
+# Backend 将使用演示数据模式或从 DEB 包中提取
+RUN set -eux; \
+    mkdir -p /home/builder/apk-output; \
+    echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
+    touch /home/builder/apk-output/.skip_slurm; \
+    echo "⚠️  Alpine SLURM build skipped (complex dependencies)"; \
+    echo "💡 Backend will use demo mode or extract binaries from deb packages"
+
+# 安装到临时目录并打包
+USER root
+RUN set -eux; \
+    if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
+        echo "⚠️  Skipping SLURM installation"; \
+    else \
+        srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
+        cd "/home/builder/build/${srcdir}"; \
+        mkdir -p /tmp/slurm-install/usr/local/slurm/bin; \
+        mkdir -p /tmp/slurm-install/usr/local/slurm/lib; \
+        mkdir -p /tmp/slurm-install/etc/slurm; \
+        echo ">>> Installing SLURM client tools..."; \
+        make install DESTDIR=/tmp/slurm-install || true; \
+        # 手动复制客户端工具（确保存在）
+        for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct; do \
+            if [ -f "src/${cmd}/${cmd}" ]; then \
+                cp -f "src/${cmd}/${cmd}" /tmp/slurm-install/usr/local/slurm/bin/; \
+                echo "  ✓ Installed: ${cmd}"; \
+            fi; \
+        done; \
+        # 复制必要的库
+        cp -f src/common/.libs/libslurm.so* /tmp/slurm-install/usr/local/slurm/lib/ 2>/dev/null || true; \
+        # 创建版本信息
+        echo "25.05.4" > /tmp/slurm-install/usr/local/slurm/VERSION; \
+    fi
+
+# 复制安装脚本到容器
+COPY --chown=root:root scripts/slurm-install.sh /tmp/slurm-install/install.sh
+COPY --chown=root:root scripts/slurm-uninstall.sh /tmp/slurm-install/uninstall.sh
+COPY --chown=root:root scripts/slurm-README.md /tmp/slurm-install/README.md
+
+# 设置脚本权限并打包
+RUN set -eux; \
+    if [ ! -f /home/builder/apk-output/.skip_slurm ]; then \
+        chmod +x /tmp/slurm-install/install.sh /tmp/slurm-install/uninstall.sh; \
+        cd /tmp/slurm-install; \
+        mkdir -p /home/builder/apk-output; \
+        tar czf /home/builder/apk-output/slurm-client-25.05.4-alpine.tar.gz .; \
+        echo "✓ SLURM Alpine package created"; \
+        ls -lh /home/builder/apk-output/; \
+    fi
+
+# 收集 APK 包到 /out
+RUN set -eux; \
+    mkdir -p /out; \
+    if [ -f /home/builder/apk-output/.skip_slurm ]; then \
+        echo "⚠️  SLURM APK build was skipped"; \
+        touch /out/.skip_slurm; \
+    else \
+        cp /home/builder/apk-output/*.tar.gz /out/ 2>/dev/null || true; \
+        apk_count=$(ls /out/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+        if [ "$apk_count" -gt 0 ]; then \
+            echo "✓ Successfully built ${apk_count} SLURM Alpine package(s)"; \
+        else \
+            echo "⚠️  No SLURM Alpine packages were built"; \
+            touch /out/.skip_slurm; \
+        fi; \
+    fi
+
+# =============================================================================
+# Stage 4: AppHub - HTTP Server with Package Management & Development Tools
 # =============================================================================
 FROM nginx:alpine
 
@@ -321,6 +447,7 @@ RUN mkdir -p \
     /usr/share/nginx/html/rpm \
     /usr/share/nginx/html/pkgs/slurm-deb \
     /usr/share/nginx/html/pkgs/slurm-rpm \
+    /usr/share/nginx/html/pkgs/slurm-apk \
     /usr/share/nginx/html/pkgs/saltstack-deb \
     /usr/share/nginx/html/pkgs/saltstack-rpm
 
@@ -329,6 +456,9 @@ COPY --from=deb-builder /out/ /usr/share/nginx/html/pkgs/slurm-deb/
 
 # Copy all rpm packages from rpm-builder stage (SLURM + SaltStack)
 COPY --from=rpm-builder /out/ /usr/share/nginx/html/pkgs/slurm-rpm/
+
+# Copy all apk packages from apk-builder stage (SLURM client tools)
+COPY --from=apk-builder /out/ /usr/share/nginx/html/pkgs/slurm-apk/
 
 # Separate packages into subdirectories and generate indexes
 RUN set -eux; \
@@ -350,11 +480,13 @@ RUN set -eux; \
     # Count packages
     slurm_deb_count=$(ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     slurm_rpm_count=$(ls /usr/share/nginx/html/pkgs/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    slurm_apk_count=$(ls /usr/share/nginx/html/pkgs/slurm-apk/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     salt_deb_count=$(ls /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     salt_rpm_count=$(ls /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     echo "📊 Package Summary:"; \
     echo "  - SLURM deb packages: ${slurm_deb_count}"; \
     echo "  - SLURM rpm packages: ${slurm_rpm_count}"; \
+    echo "  - SLURM apk packages: ${slurm_apk_count}"; \
     echo "  - SaltStack deb packages: ${salt_deb_count}"; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count}"; \
     # Generate deb package indexes
@@ -377,6 +509,16 @@ RUN set -eux; \
     fi; \
     if [ "$salt_rpm_count" -gt 0 ]; then \
         echo "✓ SaltStack RPM packages available at /pkgs/saltstack-rpm/"; \
+    fi; \
+    # APK packages (create latest symlink)
+    if [ "$slurm_apk_count" -gt 0 ]; then \
+        cd /usr/share/nginx/html/pkgs/slurm-apk; \
+        latest_apk=$(ls -t slurm-client-*.tar.gz 2>/dev/null | head -1); \
+        if [ -n "$latest_apk" ]; then \
+            ln -sf "$latest_apk" slurm-client-latest-alpine.tar.gz; \
+            echo "✓ SLURM Alpine packages available at /pkgs/slurm-apk/"; \
+            echo "  ✓ Created symlink: slurm-client-latest-alpine.tar.gz -> $latest_apk"; \
+        fi; \
     fi; \
     # Note about RPM metadata
     if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \

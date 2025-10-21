@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -20,12 +20,12 @@ import (
 
 // AIAssistantController AI助手控制器
 type AIAssistantController struct {
-	aiService             services.AIService
-	messageQueueService   services.MessageQueueService
-	cacheService          services.CacheService
-	messagePersistence    *services.MessagePersistenceService
-	messageRetrieval      *services.MessageRetrievalService
-	kafkaService          *services.KafkaMessageService
+	aiService           services.AIService
+	messageQueueService services.MessageQueueService
+	cacheService        services.CacheService
+	messagePersistence  *services.MessagePersistenceService
+	messageRetrieval    *services.MessageRetrievalService
+	kafkaService        *services.KafkaMessageService
 }
 
 // NewAIAssistantController 创建AI助手控制器
@@ -224,7 +224,7 @@ func (ctrl *AIAssistantController) ListConversations(c *gin.Context) {
 	// 先从缓存获取
 	cacheKey := fmt.Sprintf("user_conversations:%d", userID)
 	cachedConversations := ctrl.cacheService.GetMessages(cacheKey)
-	
+
 	if cachedConversations != nil {
 		c.JSON(http.StatusOK, gin.H{"data": cachedConversations, "from_cache": true})
 		return
@@ -327,9 +327,9 @@ func (ctrl *AIAssistantController) StopConversation(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "对话已停止",
+		"message":         "对话已停止",
 		"conversation_id": id,
-		"status": "stopped",
+		"status":          "stopped",
 	})
 }
 
@@ -353,9 +353,9 @@ func (ctrl *AIAssistantController) ResumeConversation(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "对话已恢复",
+		"message":         "对话已恢复",
 		"conversation_id": id,
-		"status": "active",
+		"status":          "active",
 	})
 }
 
@@ -396,11 +396,11 @@ func (ctrl *AIAssistantController) SendMessage(c *gin.Context) {
 
 	// 异步发送消息到队列
 	messageID, err := ctrl.messageQueueService.SendChatRequest(
-		userID, 
-		&[]uint{uint(conversationID)}[0], 
-		req.Message, 
+		userID,
+		&[]uint{uint(conversationID)}[0],
+		req.Message,
 		map[string]interface{}{
-			"page": c.GetHeader("Referer"),
+			"page":            c.GetHeader("Referer"),
 			"conversation_id": conversationID,
 		},
 	)
@@ -412,8 +412,8 @@ func (ctrl *AIAssistantController) SendMessage(c *gin.Context) {
 	// 立即返回消息ID，前端可以用来查询状态
 	c.JSON(http.StatusAccepted, gin.H{
 		"message_id": messageID,
-		"status": "pending",
-		"message": "消息已提交处理",
+		"status":     "pending",
+		"message":    "消息已提交处理",
 	})
 }
 
@@ -449,10 +449,10 @@ func (ctrl *AIAssistantController) GetMessages(c *gin.Context) {
 	keyword := c.Query("keyword")
 
 	options := &services.MessageQueryOptions{
-		Limit:   limit,
-		Offset:  offset,
-		Keyword: keyword,
-		SortBy:  "created_at",
+		Limit:     limit,
+		Offset:    offset,
+		Keyword:   keyword,
+		SortBy:    "created_at",
 		SortOrder: "asc",
 	}
 
@@ -470,9 +470,9 @@ func (ctrl *AIAssistantController) GetMessages(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": result,
+		"data":       result,
 		"from_cache": c.GetBool("from_cache"),
-		"total": len(result),
+		"total":      len(result),
 	})
 }
 
@@ -507,8 +507,8 @@ func (ctrl *AIAssistantController) SubmitClusterOperation(c *gin.Context) {
 
 	// 发送到集群操作队列
 	operationID, err := ctrl.messageQueueService.SendClusterOperation(
-		userID, 
-		req.Operation, 
+		userID,
+		req.Operation,
 		context,
 	)
 	if err != nil {
@@ -518,8 +518,8 @@ func (ctrl *AIAssistantController) SubmitClusterOperation(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"operation_id": operationID,
-		"status": "pending",
-		"message": "集群操作已提交处理",
+		"status":       "pending",
+		"message":      "集群操作已提交处理",
 	})
 }
 
@@ -544,14 +544,14 @@ func (ctrl *AIAssistantController) GetOperationStatus(c *gin.Context) {
 func (ctrl *AIAssistantController) GetSystemHealth(c *gin.Context) {
 	health := map[string]interface{}{
 		"timestamp": time.Now(),
-		"services": map[string]interface{}{},
+		"services":  map[string]interface{}{},
 	}
 
 	// 检查消息队列健康状态
 	if err := ctrl.messageQueueService.HealthCheck(); err != nil {
 		health["services"].(map[string]interface{})["message_queue"] = map[string]interface{}{
 			"status": "unhealthy",
-			"error": err.Error(),
+			"error":  err.Error(),
 		}
 	} else {
 		health["services"].(map[string]interface{})["message_queue"] = map[string]interface{}{
@@ -563,7 +563,7 @@ func (ctrl *AIAssistantController) GetSystemHealth(c *gin.Context) {
 	if err := ctrl.cacheService.HealthCheck(); err != nil {
 		health["services"].(map[string]interface{})["cache"] = map[string]interface{}{
 			"status": "unhealthy",
-			"error": err.Error(),
+			"error":  err.Error(),
 		}
 	} else {
 		health["services"].(map[string]interface{})["cache"] = map[string]interface{}{
@@ -592,12 +592,12 @@ func (ctrl *AIAssistantController) GetSystemHealth(c *gin.Context) {
 func (ctrl *AIAssistantController) GetUsageStats(c *gin.Context) {
 	// 从缓存或数据库获取使用统计
 	stats := map[string]interface{}{
-		"timestamp": time.Now(),
-		"total_messages": 0,
-		"total_operations": 0,
+		"timestamp":            time.Now(),
+		"total_messages":       0,
+		"total_operations":     0,
 		"active_conversations": 0,
-		"queue_status": map[string]interface{}{},
-		"cache_stats": map[string]interface{}{},
+		"queue_status":         map[string]interface{}{},
+		"cache_stats":          map[string]interface{}{},
 	}
 
 	// 获取队列统计
@@ -650,7 +650,7 @@ func (ctrl *AIAssistantController) TestBotConnection(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "连接测试完成",
-		"data": testResult,
+		"data":    testResult,
 	})
 }
 
@@ -710,10 +710,10 @@ func (ctrl *AIAssistantController) QuickChat(c *gin.Context) {
 		nil, // 无对话ID，自动创建新对话
 		req.Message,
 		map[string]interface{}{
-			"page": c.GetHeader("Referer"),
-			"type": "quick_chat",
+			"page":      c.GetHeader("Referer"),
+			"type":      "quick_chat",
 			"config_id": configID,
-			"context": req.Context,
+			"context":   req.Context,
 		},
 	)
 	if err != nil {
@@ -723,8 +723,8 @@ func (ctrl *AIAssistantController) QuickChat(c *gin.Context) {
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message_id": messageID,
-		"status": "processing",
-		"message": "快速聊天请求已提交",
+		"status":     "processing",
+		"message":    "快速聊天请求已提交",
 	})
 }
 
@@ -736,7 +736,7 @@ func (ctrl *AIAssistantController) GetMessageStatus(c *gin.Context) {
 		return
 	}
 
-	messageID, err := strconv.ParseUint(c.Param("messageId"), 10, 32)
+	messageID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的消息ID"})
 		return
@@ -751,8 +751,8 @@ func (ctrl *AIAssistantController) GetMessageStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": map[string]interface{}{
 			"message_id": messageID,
-			"status": status,
-			"result": result,
+			"status":     status,
+			"result":     result,
 		},
 	})
 }
@@ -793,8 +793,8 @@ func (ctrl *AIAssistantController) SearchMessages(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"data": result,
-		"total": len(result),
+		"data":    result,
+		"total":   len(result),
 		"keyword": keyword,
 	})
 }
@@ -852,7 +852,7 @@ func (ctrl *AIAssistantController) DeleteMessage(c *gin.Context) {
 		return
 	}
 
-	messageID, err := strconv.ParseUint(c.Param("messageId"), 10, 32)
+	messageID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的消息ID"})
 		return
@@ -966,7 +966,7 @@ func (ctrl *AIAssistantController) CloneBotConfig(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "机器人配置克隆成功",
-		"data": newConfig,
+		"data":    newConfig,
 	})
 }
 
@@ -998,7 +998,7 @@ func (ctrl *AIAssistantController) StopMessage(c *gin.Context) {
 		return
 	}
 
-	messageID := c.Param("messageId")
+	messageID := c.Param("id")
 	if messageID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "消息ID不能为空"})
 		return
@@ -1029,9 +1029,9 @@ func (ctrl *AIAssistantController) StopMessage(c *gin.Context) {
 	logrus.Infof("用户 %d 停止了消息 %s 的处理", userID, messageID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "消息处理已停止",
+		"message":    "消息处理已停止",
 		"message_id": messageID,
-		"status": "stopped",
+		"status":     "stopped",
 		"stopped_by": userID,
 		"stopped_at": time.Now().Format(time.RFC3339),
 	})

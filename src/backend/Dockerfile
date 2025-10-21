@@ -126,14 +126,45 @@ RUN set -eux; \
     (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update))
 
 # 更新apk索引并设置时区为上海，添加必要工具
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen lsof || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-keygen lsof
-
-# 安装SLURM客户端工具（如果可用）
-RUN apk add --no-cache slurm || echo "SLURM not available in Alpine, will use demo data"
+RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen lsof wget || \
+    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-keygen lsof wget
 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 从 AppHub 安装预编译的 SLURM 客户端工具
+RUN set -eux; \
+    echo ">>> Installing SLURM client tools from AppHub..."; \
+    # 尝试从 AppHub 下载（支持多种 URL 格式）
+    for APPHUB_URL in http://apphub/pkgs/slurm-apk/slurm-client-latest-alpine.tar.gz \
+                      http://ai-infra-apphub/pkgs/slurm-apk/slurm-client-latest-alpine.tar.gz \
+                      http://192.168.0.200:8081/pkgs/slurm-apk/slurm-client-latest-alpine.tar.gz; do \
+        if wget -q --timeout=10 --tries=2 "$APPHUB_URL" -O /tmp/slurm.tar.gz 2>/dev/null; then \
+            echo "  ✓ Downloaded from: $APPHUB_URL"; \
+            break; \
+        fi; \
+    done; \
+    # 如果下载成功，安装 SLURM 客户端
+    if [ -f /tmp/slurm.tar.gz ] && [ -s /tmp/slurm.tar.gz ]; then \
+        echo ">>> Extracting and installing SLURM client..."; \
+        cd /tmp; \
+        tar xzf slurm.tar.gz; \
+        if [ -f install.sh ]; then \
+            chmod +x install.sh; \
+            ./install.sh; \
+            echo "  ✓ SLURM client installed successfully"; \
+            # 验证安装
+            if command -v sinfo >/dev/null 2>&1; then \
+                echo "  ✓ SLURM version: $(sinfo --version 2>&1 | head -1)"; \
+            fi; \
+        else \
+            echo "  ⚠ install.sh not found in package"; \
+        fi; \
+        rm -rf /tmp/slurm.tar.gz /tmp/install.sh /tmp/uninstall.sh /tmp/README.md /tmp/usr /tmp/etc; \
+    else \
+        echo "  ⚠ SLURM client download failed, will use demo data"; \
+        echo "  ℹ Run './scripts/build-slurm-client-alpine.sh' to build and upload SLURM client package"; \
+    fi
 
 WORKDIR /root/
 
