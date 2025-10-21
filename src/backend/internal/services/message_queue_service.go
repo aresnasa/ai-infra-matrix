@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/cache"
@@ -15,10 +17,10 @@ import (
 type MessageType string
 
 const (
-	MessageTypeChatRequest    MessageType = "chat_request"
-	MessageTypeClusterOp      MessageType = "cluster_operation"
-	MessageTypeNotification   MessageType = "notification"
-	MessageTypeStatusUpdate   MessageType = "status_update"
+	MessageTypeChatRequest  MessageType = "chat_request"
+	MessageTypeClusterOp    MessageType = "cluster_operation"
+	MessageTypeNotification MessageType = "notification"
+	MessageTypeStatusUpdate MessageType = "status_update"
 )
 
 // Message 消息结构
@@ -51,20 +53,20 @@ type MessageQueueService interface {
 	SendMessage(streamName string, message *Message) error
 	SendChatRequest(userID uint, conversationID *uint, content string, context map[string]interface{}) (string, error)
 	SendClusterOperation(userID uint, operation string, params map[string]interface{}) (string, error)
-	
+
 	// 消息消费
 	StartConsumer(streamName, consumerGroup, consumerName string, handler MessageHandler) error
 	StopConsumer(streamName, consumerGroup string) error
-	
+
 	// 状态管理
 	SetMessageStatus(messageID string, status *MessageStatus) error
 	GetMessageStatus(messageID string) (*MessageStatus, error)
-	
+
 	// 消息控制
 	StopMessage(messageID string, userID uint) error
 	CanUserStopMessage(messageID string, userID uint) (bool, error)
 	IsMessageStopped(messageID string) bool
-	
+
 	// 健康检查
 	HealthCheck() error
 }
@@ -77,14 +79,34 @@ type messageQueueServiceImpl struct {
 	redis    *redis.Client
 	ctx      context.Context
 	stopChan chan struct{}
+	// worker pool
+	workerCount    int
+	handlerTimeout time.Duration
 }
 
 // NewMessageQueueService 创建消息队列服务
 func NewMessageQueueService() MessageQueueService {
+	// configurable via environment variables for flexibility and horizontal scaling
+	workerCount := 4
+	if v := os.Getenv("MQ_WORKER_COUNT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			workerCount = n
+		}
+	}
+
+	handlerTimeout := 60 * time.Second
+	if v := os.Getenv("MQ_HANDLER_TIMEOUT_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			handlerTimeout = time.Duration(n) * time.Second
+		}
+	}
+
 	return &messageQueueServiceImpl{
-		redis:    cache.RDB,
-		ctx:      context.Background(),
-		stopChan: make(chan struct{}),
+		redis:          cache.RDB,
+		ctx:            context.Background(),
+		stopChan:       make(chan struct{}),
+		workerCount:    workerCount,
+		handlerTimeout: handlerTimeout,
 	}
 }
 
@@ -131,7 +153,7 @@ func (s *messageQueueServiceImpl) SendMessage(streamName string, message *Messag
 // SendChatRequest 发送聊天请求
 func (s *messageQueueServiceImpl) SendChatRequest(userID uint, conversationID *uint, content string, context map[string]interface{}) (string, error) {
 	messageID := fmt.Sprintf("chat_%d_%d", userID, time.Now().UnixNano())
-	
+
 	message := &Message{
 		ID:             messageID,
 		Type:           MessageTypeChatRequest,
@@ -151,7 +173,7 @@ func (s *messageQueueServiceImpl) SendChatRequest(userID uint, conversationID *u
 // SendClusterOperation 发送集群操作请求
 func (s *messageQueueServiceImpl) SendClusterOperation(userID uint, operation string, params map[string]interface{}) (string, error) {
 	messageID := fmt.Sprintf("cluster_%d_%d", userID, time.Now().UnixNano())
-	
+
 	message := &Message{
 		ID:         messageID,
 		Type:       MessageTypeClusterOp,
@@ -175,22 +197,71 @@ func (s *messageQueueServiceImpl) StartConsumer(streamName, consumerGroup, consu
 		return fmt.Errorf("failed to create consumer group: %v", err)
 	}
 
+	// start a buffered channel for delivering messages to workers
+	msgCh := make(chan redis.XMessage, s.workerCount*2)
+
+	// worker goroutines
+	for i := 0; i < s.workerCount; i++ {
+		workerName := fmt.Sprintf("%s-worker-%d", consumerName, i+1)
+		go func(wname string) {
+			logrus.Infof("Starting worker %s for stream %s", wname, streamName)
+			for {
+				select {
+				case <-s.stopChan:
+					logrus.Infof("Stopping worker %s", wname)
+					return
+				case msg := <-msgCh:
+					// handle message with timeout context
+					done := make(chan error, 1)
+					go func(m redis.XMessage) {
+						done <- s.processMessageWithHandler(streamName, consumerGroup, m, handler)
+					}(msg)
+
+					select {
+					case err := <-done:
+						if err != nil {
+							logrus.Errorf("Worker %s: handler error for msg %s: %v", wname, msg.ID, err)
+						}
+						// ack after processing (success or failure) to avoid blocking the stream
+						errAck := s.redis.XAck(s.ctx, streamName, consumerGroup, msg.ID).Err()
+						if errAck != nil {
+							logrus.Errorf("Failed to XAck message %s from stream %s: %v", msg.ID, streamName, errAck)
+						}
+					case <-time.After(s.handlerTimeout):
+						logrus.Errorf("Worker %s: handler timeout for msg %s after %v", wname, msg.ID, s.handlerTimeout)
+						// mark failed due to timeout
+						mid := getMessageIDFromXMessage(msg)
+						status := &MessageStatus{ID: mid, Status: "failed", Error: "handler timeout", ProcessedAt: time.Now()}
+						s.SetMessageStatus(mid, status)
+						// push to DLQ
+						s.pushToDLQ(streamName, msg)
+						// ack to avoid blocking
+						errAck2 := s.redis.XAck(s.ctx, streamName, consumerGroup, msg.ID).Err()
+						if errAck2 != nil {
+							logrus.Errorf("Failed to XAck message %s from stream %s after timeout: %v", msg.ID, streamName, errAck2)
+						}
+					}
+				}
+			}
+		}(workerName)
+	}
+
+	// reader loop: only XReadGroup and push to msgCh
 	go func() {
 		logrus.Infof("Starting consumer %s in group %s for stream %s", consumerName, consumerGroup, streamName)
-		
 		for {
 			select {
 			case <-s.stopChan:
 				logrus.Infof("Stopping consumer %s", consumerName)
+				close(msgCh)
 				return
 			default:
-				// 读取消息
 				args := &redis.XReadGroupArgs{
 					Group:    consumerGroup,
 					Consumer: consumerName,
 					Streams:  []string{streamName, ">"},
-					Count:    1,
-					Block:    time.Second * 5,
+					Count:    int64(s.workerCount),
+					Block:    time.Second * 2,
 				}
 
 				streams, err := s.redis.XReadGroup(s.ctx, args).Result()
@@ -201,10 +272,16 @@ func (s *messageQueueServiceImpl) StartConsumer(streamName, consumerGroup, consu
 					continue
 				}
 
-				// 处理消息
 				for _, stream := range streams {
 					for _, msg := range stream.Messages {
-						s.processMessage(streamName, consumerGroup, msg, handler)
+						select {
+						case msgCh <- msg:
+						default:
+							// channel full, retry after a short sleep to apply backpressure
+							logrus.Warnf("msgCh full, backpressure on stream %s", streamName)
+							time.Sleep(200 * time.Millisecond)
+							msgCh <- msg
+						}
 					}
 				}
 			}
@@ -237,10 +314,10 @@ func (s *messageQueueServiceImpl) processMessage(streamName, consumerGroup strin
 
 	// 处理消息
 	err := handler(&message)
-	
+
 	if err != nil {
 		logrus.Errorf("Failed to process message %s: %v", message.ID, err)
-		
+
 		// 检查是否需要重试
 		if message.RetryCount < message.MaxRetries {
 			message.RetryCount++
@@ -263,11 +340,99 @@ func (s *messageQueueServiceImpl) processMessage(streamName, consumerGroup strin
 	s.redis.XAck(s.ctx, streamName, consumerGroup, msg.ID)
 }
 
+// processMessageWithHandler is a wrapper that returns an error for use with worker timeouts
+func (s *messageQueueServiceImpl) processMessageWithHandler(streamName, consumerGroup string, msg redis.XMessage, handler MessageHandler) error {
+	// reuse message extraction logic from processMessage but return errors instead of only logging
+	messageData, ok := msg.Values["data"].(string)
+	if !ok {
+		return fmt.Errorf("Invalid message format in stream %s", streamName)
+	}
+
+	var message Message
+	if err := json.Unmarshal([]byte(messageData), &message); err != nil {
+		return fmt.Errorf("Failed to unmarshal message: %v", err)
+	}
+
+	// update status
+	status := &MessageStatus{
+		ID:     message.ID,
+		Status: "processing",
+	}
+	if err := s.SetMessageStatus(message.ID, status); err != nil {
+		logrus.Errorf("Failed to set message status: %v", err)
+	}
+
+	// handler
+	if err := handler(&message); err != nil {
+		// processing failed
+		if message.RetryCount < message.MaxRetries {
+			message.RetryCount++
+			s.retryMessage(streamName, &message)
+			return fmt.Errorf("handler error, scheduled retry: %v", err)
+		}
+
+		status.Status = "failed"
+		status.Error = err.Error()
+		status.ProcessedAt = time.Now()
+		if err2 := s.SetMessageStatus(message.ID, status); err2 != nil {
+			logrus.Errorf("Failed to set failed status: %v", err2)
+		}
+		return err
+	}
+
+	status.Status = "completed"
+	status.ProcessedAt = time.Now()
+	if err := s.SetMessageStatus(message.ID, status); err != nil {
+		logrus.Errorf("Failed to set completed status: %v", err)
+	}
+	return nil
+}
+
+// getMessageIDFromXMessage extracts original message ID from XMessage payload
+func getMessageIDFromXMessage(msg redis.XMessage) string {
+	messageData, ok := msg.Values["data"].(string)
+	if !ok {
+		return ""
+	}
+	var message Message
+	if err := json.Unmarshal([]byte(messageData), &message); err != nil {
+		return ""
+	}
+	return message.ID
+}
+
+// pushToDLQ pushes the raw XMessage into a DLQ stream for later inspection/reprocessing
+func (s *messageQueueServiceImpl) pushToDLQ(originalStream string, msg redis.XMessage) {
+	dlqStream := os.Getenv("MQ_DLQ_STREAM")
+	if dlqStream == "" {
+		dlqStream = "ai:chat:dlq"
+	}
+
+	// preserve original fields
+	messageData, _ := msg.Values["data"].(string)
+	payload := map[string]interface{}{
+		"original_stream": originalStream,
+		"original_id":     msg.ID,
+		"data":            messageData,
+		"pushed_at":       time.Now().Format(time.RFC3339),
+	}
+
+	args := &redis.XAddArgs{
+		Stream: dlqStream,
+		Values: payload,
+	}
+	if _, err := s.redis.XAdd(s.ctx, args).Result(); err != nil {
+		logrus.Errorf("Failed to push message %s to DLQ %s: %v", msg.ID, dlqStream, err)
+	} else {
+		logrus.Infof("Pushed message %s from stream %s to DLQ %s", msg.ID, originalStream, dlqStream)
+	}
+}
+
 // retryMessage 重试消息
 func (s *messageQueueServiceImpl) retryMessage(streamName string, message *Message) {
 	// 指数退避
 	delay := time.Duration(message.RetryCount*message.RetryCount) * time.Second
-	
+
 	go func() {
 		time.Sleep(delay)
 		s.SendMessage(streamName, message)
@@ -334,7 +499,7 @@ func (s *messageQueueServiceImpl) StopMessage(messageID string, userID uint) err
 	if err != nil {
 		return fmt.Errorf("检查停止权限失败: %v", err)
 	}
-	
+
 	if !canStop {
 		return fmt.Errorf("用户无权停止此消息处理")
 	}
@@ -353,7 +518,7 @@ func (s *messageQueueServiceImpl) StopMessage(messageID string, userID uint) err
 		Error:       fmt.Sprintf("用户 %d 主动停止", userID),
 		ProcessedAt: time.Now(),
 	}
-	
+
 	err = s.SetMessageStatus(messageID, status)
 	if err != nil {
 		logrus.Errorf("更新消息状态失败: %v", err)
@@ -370,7 +535,7 @@ func (s *messageQueueServiceImpl) CanUserStopMessage(messageID string, userID ui
 	if err != nil {
 		return false, fmt.Errorf("获取消息状态失败: %v", err)
 	}
-	
+
 	if status == nil {
 		return false, fmt.Errorf("消息不存在")
 	}

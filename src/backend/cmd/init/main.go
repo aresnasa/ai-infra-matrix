@@ -710,19 +710,11 @@ func initializeDefaultAIConfigs() {
 // createOtherProviderConfigs 创建其他AI提供商的配置
 func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
 	// 创建DeepSeek配置
-	// 检查是否配置了 DeepSeek 相关环境变量（API Key、Base URL 或 Model）
+	// 检查是否配置了 DEEPSEEK_API_KEY 环境变量
 	deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY")
-	deepseekBaseURL := os.Getenv("DEEPSEEK_BASE_URL")
-	deepseekChatModel := os.Getenv("DEEPSEEK_CHAT_MODEL")
-	deepseekReasonerModel := os.Getenv("DEEPSEEK_REASONER_MODEL")
 
-	// 只要配置了任意一个 DeepSeek 相关环境变量，就创建默认配置
-	if deepseekAPIKey != "" || deepseekBaseURL != "" || deepseekChatModel != "" || deepseekReasonerModel != "" {
-		// 如果没有 API Key，使用占位符（用户可以后续在管理界面配置）
-		if deepseekAPIKey == "" {
-			deepseekAPIKey = "sk-placeholder-configure-in-admin-panel"
-			log.Println("⚠️  DEEPSEEK_API_KEY 未配置，使用占位符创建默认模型，请在管理面板中配置")
-		}
+	// 只有配置了 DEEPSEEK_API_KEY 才创建 DeepSeek 配置
+	if deepseekAPIKey != "" && deepseekAPIKey != "sk-test-demo-key-replace-with-real-api-key" {
 
 		baseURL := getEnvCompat("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
@@ -775,7 +767,10 @@ func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
 			log.Printf("Warning: Failed to create DeepSeek Reasoner config: %v", err)
 		} else {
 			log.Println("✓ Created DeepSeek Reasoner (V3.2-Exp) configuration")
+			*createdConfigs++
 		}
+	} else {
+		log.Println("⚠ DEEPSEEK_API_KEY not provided or is demo key, skipping DeepSeek config")
 	}
 
 	// 创建GLM配置

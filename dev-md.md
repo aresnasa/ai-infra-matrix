@@ -1532,3 +1532,4 @@
 90. 现在检查slurm集群的状态，使用命令行检查，然后使用@playwright测试，期望的是能够获取slurm集群状态，并且正确的安装slurm客户端
 91. 这里期望的是backend从apphub去下载和安装alpine编译好的slurm客户端。，调整backend的dockerfile（从apphub下载apk包）和apphub的dockerfile（修复构建alpine）
 92. slurm已经下载了调整apphub的dockefile，使用源码打包apk，已经打包了rpm和deb包，参考他们进行构建编译，apphub期望的是构建slurm的deb，rpm和apk包，然后挪到nginx的目录中给其它组件下载
+93. 继续修复后端问题，需要改造了，后续需要支持并发的聊天，redis可以弹性横向扩展，然后kafka也支持横向扩展， 然后修复这个后端消息挤压问题

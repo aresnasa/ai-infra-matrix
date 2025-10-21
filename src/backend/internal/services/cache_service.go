@@ -24,7 +24,8 @@ type CacheService interface {
 	GetMessages(key string) []models.AIMessage
 	AppendMessage(key string, message *models.AIMessage) error
 	DeleteMessages(key string) error
-	
+	DeleteKeysWithPattern(pattern string) error
+
 	// 单个消息缓存
 	SetMessage(key string, message *models.AIMessage, duration time.Duration) error
 	GetMessage(key string) *models.AIMessage
@@ -46,7 +47,7 @@ type CacheService interface {
 
 	// 热点数据预热
 	WarmupCache() error
-	
+
 	// 健康检查
 	HealthCheck() error
 }
@@ -151,6 +152,43 @@ func (c *cacheServiceImpl) AppendMessage(key string, message *models.AIMessage) 
 // DeleteMessages 删除消息缓存
 func (c *cacheServiceImpl) DeleteMessages(key string) error {
 	return c.redis.Del(c.ctx, key).Err()
+}
+
+// DeleteKeysWithPattern 删除匹配指定模式的所有键
+func (c *cacheServiceImpl) DeleteKeysWithPattern(pattern string) error {
+	var cursor uint64
+	var deletedCount int
+
+	for {
+		keys, nextCursor, err := c.redis.Scan(c.ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan keys with pattern %s: %v", pattern, err)
+		}
+
+		if len(keys) > 0 {
+			pipe := c.redis.Pipeline()
+			for _, key := range keys {
+				pipe.Del(c.ctx, key)
+			}
+			_, err := pipe.Exec(c.ctx)
+			if err != nil {
+				logrus.Errorf("Failed to delete keys: %v", err)
+			} else {
+				deletedCount += len(keys)
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if deletedCount > 0 {
+		logrus.Debugf("Deleted %d cache keys matching pattern: %s", deletedCount, pattern)
+	}
+
+	return nil
 }
 
 // SetConfigs 设置配置缓存
@@ -266,7 +304,7 @@ func (c *cacheServiceImpl) WarmupCache() error {
 		logrus.Errorf("Failed to load configs for warmup: %v", err)
 	} else {
 		c.SetConfigs(configs, time.Hour)
-		
+
 		// 查找并缓存默认配置
 		for _, config := range configs {
 			if config.IsDefault && config.IsEnabled {
@@ -294,7 +332,7 @@ func (c *cacheServiceImpl) HealthCheck() error {
 	// 测试基本读写操作
 	testKey := "health_check_test"
 	testValue := "ok"
-	
+
 	err = c.redis.Set(c.ctx, testKey, testValue, time.Minute).Err()
 	if err != nil {
 		return fmt.Errorf("redis write test failed: %v", err)
@@ -317,14 +355,14 @@ func (c *cacheServiceImpl) HealthCheck() error {
 
 // 缓存统计信息
 type CacheStats struct {
-	HitRate           float64 `json:"hit_rate"`
-	MissRate          float64 `json:"miss_rate"`
-	TotalRequests     int64   `json:"total_requests"`
-	CacheHits         int64   `json:"cache_hits"`
-	CacheMisses       int64   `json:"cache_misses"`
-	MemoryUsage       int64   `json:"memory_usage"`
-	KeyCount          int64   `json:"key_count"`
-	ExpiredKeyCount   int64   `json:"expired_key_count"`
+	HitRate         float64 `json:"hit_rate"`
+	MissRate        float64 `json:"miss_rate"`
+	TotalRequests   int64   `json:"total_requests"`
+	CacheHits       int64   `json:"cache_hits"`
+	CacheMisses     int64   `json:"cache_misses"`
+	MemoryUsage     int64   `json:"memory_usage"`
+	KeyCount        int64   `json:"key_count"`
+	ExpiredKeyCount int64   `json:"expired_key_count"`
 }
 
 // GetCacheStats 获取缓存统计信息

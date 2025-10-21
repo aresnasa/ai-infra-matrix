@@ -47,9 +47,9 @@ func NewAIMessageProcessorWithDependencies(
 func (p *AIMessageProcessor) Start() error {
 	// 启动聊天请求处理器
 	err := p.messageQueueService.StartConsumer(
-		"ai:chat:requests", 
-		"chat-processors", 
-		"chat-worker-1", 
+		"ai:chat:requests",
+		"chat-processors",
+		"chat-worker-1",
 		p.handleChatRequest,
 	)
 	if err != nil {
@@ -58,9 +58,9 @@ func (p *AIMessageProcessor) Start() error {
 
 	// 启动集群操作处理器
 	err = p.messageQueueService.StartConsumer(
-		"ai:cluster:operations", 
-		"cluster-ops", 
-		"cluster-worker-1", 
+		"ai:cluster:operations",
+		"cluster-ops",
+		"cluster-worker-1",
 		p.handleClusterOperation,
 	)
 	if err != nil {
@@ -97,7 +97,7 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 		if p.isMessageStopped(message.ID) {
 			return p.markMessageStopped(message.ID)
 		}
-		
+
 		conversation, createErr := p.createConversationFromContext(message)
 		if createErr != nil {
 			return fmt.Errorf("failed to create conversation: %v", createErr)
@@ -160,6 +160,10 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 	// 缓存最新消息
 	messagesKey := fmt.Sprintf("messages:%d", conversationID)
 	p.cacheService.AppendMessage(messagesKey, aiMessage)
+
+	// 使缓存无效化：删除所有带查询参数的缓存键，以便下次从数据库重新加载
+	// 这确保 GET messages API 能获取最新的消息
+	p.cacheService.DeleteKeysWithPattern(fmt.Sprintf("messages:%d:*", conversationID))
 
 	// 发送到Kafka进行流处理
 	if p.kafkaService != nil {
@@ -234,12 +238,12 @@ func (p *AIMessageProcessor) createConversationFromContext(message *Message) (*m
 
 	// 创建对话
 	conversation, err := p.aiService.CreateConversation(
-		message.UserID, 
-		config.ID, 
-		title, 
+		message.UserID,
+		config.ID,
+		title,
 		p.contextToString(message.Context),
 	)
-	
+
 	return conversation, err
 }
 
@@ -257,12 +261,12 @@ func (p *AIMessageProcessor) contextToString(context map[string]interface{}) str
 	if context == nil {
 		return ""
 	}
-	
+
 	data, err := json.Marshal(context)
 	if err != nil {
 		return ""
 	}
-	
+
 	return string(data)
 }
 
@@ -270,10 +274,10 @@ func (p *AIMessageProcessor) contextToString(context map[string]interface{}) str
 func (p *AIMessageProcessor) parseClusterOperation(content string, context map[string]interface{}) (*ClusterOperation, error) {
 	// 使用AI或规则引擎解析操作内容
 	operation := &ClusterOperation{
-		Type:        p.detectOperationType(content),
-		Content:     content,
-		Parameters:  context,
-		CreatedAt:   time.Now(),
+		Type:       p.detectOperationType(content),
+		Content:    content,
+		Parameters: context,
+		CreatedAt:  time.Now(),
 	}
 
 	return operation, nil
@@ -283,14 +287,14 @@ func (p *AIMessageProcessor) parseClusterOperation(content string, context map[s
 func (p *AIMessageProcessor) detectOperationType(content string) string {
 	// 简单的关键词匹配，可以扩展为更复杂的NLP分析
 	keywords := map[string]string{
-		"部署":   "deployment",
+		"部署":     "deployment",
 		"deploy": "deployment",
-		"扩容":   "scaling",
+		"扩容":     "scaling",
 		"scale":  "scaling",
-		"监控":   "monitoring",
-		"查看状态": "status",
-		"删除":   "deletion",
-		"更新":   "update",
+		"监控":     "monitoring",
+		"查看状态":   "status",
+		"删除":     "deletion",
+		"更新":     "update",
 	}
 
 	for keyword, opType := range keywords {
@@ -305,12 +309,12 @@ func (p *AIMessageProcessor) detectOperationType(content string) string {
 // contains 检查字符串是否包含子串（不区分大小写）
 func contains(s, substr string) bool {
 	// 简化版本，实际可以使用更复杂的字符串匹配
-	return len(s) >= len(substr) && 
-		   (s == substr || 
-		    (len(s) > len(substr) && 
-		     (s[:len(substr)] == substr || 
-		      s[len(s)-len(substr):] == substr ||
-		      findInString(s, substr))))
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			(len(s) > len(substr) &&
+				(s[:len(substr)] == substr ||
+					s[len(s)-len(substr):] == substr ||
+					findInString(s, substr))))
 }
 
 func findInString(s, substr string) bool {
@@ -340,30 +344,30 @@ func (p *AIMessageProcessor) executeClusterOperation(operation *ClusterOperation
 func (p *AIMessageProcessor) executeDeployment(operation *ClusterOperation) (string, error) {
 	// 这里集成Ansible或K8s客户端
 	logrus.Infof("Executing deployment operation: %s", operation.Content)
-	
+
 	// 模拟执行结果
-	result := fmt.Sprintf("部署操作已提交执行，操作ID: %s", 
+	result := fmt.Sprintf("部署操作已提交执行，操作ID: %s",
 		fmt.Sprintf("deploy_%d", time.Now().Unix()))
-	
+
 	return result, nil
 }
 
 // executeScaling 执行扩容操作
 func (p *AIMessageProcessor) executeScaling(operation *ClusterOperation) (string, error) {
 	logrus.Infof("Executing scaling operation: %s", operation.Content)
-	
-	result := fmt.Sprintf("扩容操作已提交执行，操作ID: %s", 
+
+	result := fmt.Sprintf("扩容操作已提交执行，操作ID: %s",
 		fmt.Sprintf("scale_%d", time.Now().Unix()))
-	
+
 	return result, nil
 }
 
 // executeMonitoring 执行监控操作
 func (p *AIMessageProcessor) executeMonitoring(operation *ClusterOperation) (string, error) {
 	logrus.Infof("Executing monitoring operation: %s", operation.Content)
-	
+
 	result := fmt.Sprintf("监控查询已完成，数据已更新到仪表板")
-	
+
 	return result, nil
 }
 
@@ -429,7 +433,7 @@ func (p *AIMessageProcessor) isMessageStopped(messageID string) bool {
 	if mqsImpl, ok := p.messageQueueService.(*messageQueueServiceImpl); ok {
 		return mqsImpl.IsMessageStopped(messageID)
 	}
-	
+
 	// 如果无法访问实现细节，返回false
 	return false
 }
@@ -442,13 +446,13 @@ func (p *AIMessageProcessor) markMessageStopped(messageID string) error {
 		Error:       "消息处理已被用户停止",
 		ProcessedAt: time.Now(),
 	}
-	
+
 	err := p.messageQueueService.SetMessageStatus(messageID, status)
 	if err != nil {
 		logrus.Errorf("更新消息停止状态失败: %v", err)
 		return fmt.Errorf("更新消息停止状态失败: %v", err)
 	}
-	
+
 	logrus.Infof("消息 %s 已标记为停止状态", messageID)
 	return nil
 }
