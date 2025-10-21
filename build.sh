@@ -564,12 +564,14 @@ render_env_template_enhanced() {
     local debug_port=$((external_port - 79))
     
     # 从模板内容中提取 SaltStack 配置（如果存在）
-    local salt_api_scheme=$(echo "$temp_content" | grep "^SALT_API_SCHEME=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "http")
-    local salt_master_host=$(echo "$temp_content" | grep "^SALT_MASTER_HOST=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "saltstack")
-    local salt_api_port=$(echo "$temp_content" | grep "^SALT_API_PORT=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "8002")
+    # 优先从当前环境变量读取，其次从模板文件读取，最后使用默认值
+    local salt_api_scheme="${SALT_API_SCHEME:-$(echo "$temp_content" | grep "^SALT_API_SCHEME=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "http")}"
+    local salt_master_host="${SALT_MASTER_HOST:-$(echo "$temp_content" | grep "^SALT_MASTER_HOST=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "saltstack")}"
+    local salt_api_port="${SALT_API_PORT:-$(echo "$temp_content" | grep "^SALT_API_PORT=" | cut -d'=' -f2 | tr -d '"' | tr -d "'" || echo "8000")}"
     
     # 构建 SALTSTACK_MASTER_URL（按后端期望格式）
-    local saltstack_master_url="${salt_api_scheme}://${salt_master_host}:${salt_api_port}"
+    # 如果环境变量中已有完整 URL，优先使用
+    local saltstack_master_url="${SALTSTACK_MASTER_URL:-${salt_api_scheme}://${salt_master_host}:${salt_api_port}}"
     
     # 替换基本模板变量
     temp_content="${temp_content//\$\{EXTERNAL_HOST\}/$external_host}"
@@ -5474,6 +5476,188 @@ build_all_services() {
     fi
 }
 
+# ==========================================
+# 环境变量同步函数
+# ==========================================
+
+# 对比并同步 .env 和 .env.example
+# 确保 .env 包含 .env.example 中的所有配置项
+sync_env_with_example() {
+    local env_file="${1:-$SCRIPT_DIR/.env}"
+    local example_file="${2:-$SCRIPT_DIR/.env.example}"
+    
+    print_info "=========================================="
+    print_info "对比环境变量配置文件"
+    print_info "=========================================="
+    
+    # 检查文件是否存在
+    if [[ ! -f "$example_file" ]]; then
+        print_error ".env.example 不存在: $example_file"
+        return 1
+    fi
+    
+    # 如果 .env 不存在，直接复制
+    if [[ ! -f "$env_file" ]]; then
+        print_info ".env 文件不存在，从 .env.example 创建..."
+        cp "$example_file" "$env_file"
+        print_success "✓ 已创建 .env 文件"
+        return 0
+    fi
+    
+    # 备份当前 .env
+    local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$env_file" "$backup_file"
+    print_info "已备份当前 .env 到: $backup_file"
+    
+    # 提取所有变量名（忽略注释和空行）
+    local missing_vars=()
+    local updated_vars=()
+    local unchanged_vars=()
+    
+    # 临时文件
+    local temp_env="/tmp/.env.merged.$$"
+    cp "$env_file" "$temp_env"
+    
+    # 读取 .env.example 中的所有变量
+    while IFS= read -r line; do
+        # 跳过注释和空行
+        if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+            continue
+        fi
+        
+        # 提取变量名
+        if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)= ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local example_value="${line#*=}"
+            
+            # 检查 .env 中是否存在该变量
+            if grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
+                local current_value
+                current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
+                
+                # 如果值为空，使用 example 中的默认值
+                if [[ -z "$current_value" ]]; then
+                    sed_inplace "s|^${var_name}=.*|${var_name}=${example_value}|g" "$temp_env"
+                    updated_vars+=("$var_name (空值 → ${example_value})")
+                else
+                    unchanged_vars+=("$var_name")
+                fi
+            else
+                # 变量不存在，添加到文件末尾
+                echo "${var_name}=${example_value}" >> "$temp_env"
+                missing_vars+=("$var_name=${example_value}")
+            fi
+        fi
+    done < "$example_file"
+    
+    cleanup_backup_files "/tmp"
+    
+    # 显示差异报告
+    print_info ""
+    print_info "=========================================="
+    print_info "环境变量同步报告"
+    print_info "=========================================="
+    
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        echo -e "\033[33m新增的配置项 (${#missing_vars[@]}):\033[0m"
+        for var in "${missing_vars[@]}"; do
+            echo "  + $var"
+        done
+        echo ""
+    fi
+    
+    if [[ ${#updated_vars[@]} -gt 0 ]]; then
+        echo -e "\033[36m更新的配置项 (${#updated_vars[@]}):\033[0m"
+        for var in "${updated_vars[@]}"; do
+            echo "  ↻ $var"
+        done
+        echo ""
+    fi
+    
+    if [[ ${#unchanged_vars[@]} -gt 0 ]]; then
+        echo -e "\033[32m保持不变的配置项 (${#unchanged_vars[@]}):\033[0m"
+        echo "  ✓ ${#unchanged_vars[@]} 个配置项值未更改（保留用户自定义值）"
+        echo ""
+    fi
+    
+    # 询问是否应用更改
+    if [[ ${#missing_vars[@]} -eq 0 ]] && [[ ${#updated_vars[@]} -eq 0 ]]; then
+        print_success "✓ .env 配置完整，无需同步"
+        rm -f "$temp_env"
+        return 0
+    fi
+    
+    # 交互式确认（CI 环境或 --force 模式自动应用）
+    if [[ -n "${CI:-}" ]] || [[ "$FORCE_REBUILD" == "true" ]]; then
+        print_info "CI 环境或强制模式，自动应用更改..."
+        mv "$temp_env" "$env_file"
+        print_success "✓ 环境变量已同步"
+    else
+        echo ""
+        echo -e "\033[1;33m是否应用以上更改？\033[0m"
+        echo "  [y] 是 - 应用更改并继续构建"
+        echo "  [n] 否 - 跳过同步（使用当前 .env）"
+        echo "  [d] 查看详细差异"
+        echo ""
+        read -p "请选择 [y/n/d]: " -n 1 -r
+        echo ""
+        
+        case "$REPLY" in
+            [yY])
+                mv "$temp_env" "$env_file"
+                print_success "✓ 环境变量已同步"
+                ;;
+            [dD])
+                print_info "详细差异对比："
+                diff -u "$env_file" "$temp_env" || true
+                echo ""
+                read -p "是否应用更改？[y/n]: " -n 1 -r
+                echo ""
+                if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                    mv "$temp_env" "$env_file"
+                    print_success "✓ 环境变量已同步"
+                else
+                    rm -f "$temp_env"
+                    print_warning "⚠ 跳过环境变量同步"
+                fi
+                ;;
+            *)
+                rm -f "$temp_env"
+                print_warning "⚠ 跳过环境变量同步"
+                ;;
+        esac
+    fi
+    
+    print_info "备份文件保存在: $backup_file"
+    return 0
+}
+
+# ====================================================================
+# 环境变量配置说明
+# ====================================================================
+# sync_env_with_example 函数会：
+#   1. 检查 .env.example 中的所有配置项
+#   2. 如果 .env 中缺失某个配置，自动添加（使用 .env.example 的值）
+#   3. 如果 .env 中某个配置为空值，更新为 .env.example 的值
+#   4. 如果 .env 中已有值，保持不变（保护用户自定义配置）
+#
+# 环境变量优先级（build.sh 构建时）：
+#   1. 当前 shell 环境变量（最高优先级）
+#   2. .env 文件中的值
+#   3. .env.example 文件中的默认值
+#   4. 代码中的硬编码默认值（最低优先级，应避免）
+#
+# 示例 - 自定义 Salt API 端口：
+#   export SALT_API_PORT=8888
+#   ./build.sh build-all
+#   # 构建时会使用端口 8888，而不是 .env 中的值
+#
+# 生产环境建议：
+#   1. 修改 .env.example 中的默认值为生产环境配置
+#   2. 运行 ./build.sh build-all 自动同步到 .env
+#   3. 或手动编辑 .env 文件
+# ====================================================================
+
 # 组合式一键构建流程
 # 用法: build_all_pipeline [tag] [registry]
 # 行为:
@@ -5493,6 +5677,13 @@ build_all_pipeline() {
     print_info "=========================================="
     print_info "准备环境配置（create-env dev）"
     print_info "=========================================="
+    
+    # 步骤 0: 同步 .env 和 .env.example，确保配置完整
+    if ! sync_env_with_example "$SCRIPT_DIR/.env" "$SCRIPT_DIR/.env.example"; then
+        print_warning "⚠ 环境变量同步失败，但继续构建流程"
+    fi
+    echo ""
+    
     # 自动检测网络环境（内网/外网），导出并写入.env，供后续步骤使用
     local NETWORK_ENV_DETECTED
     NETWORK_ENV_DETECTED=$(detect_network_environment)

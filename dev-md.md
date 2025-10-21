@@ -1623,4 +1623,5 @@
 99. 使用@playwright测试http://192.168.0.200:8080/saltstack，修复安装slurm和saltstack的问题，调整下js脚本增加相关步骤，之前的e2e中有一些测试脚本了读取并参考那些脚本，期望能够正确的通过apphub安装slurm和saltstack
 100. 现在使用@playwright测试http://192.168.0.200:8080/slurm这里的saltstack集成未能获取到saltstack集群的状态修复一下这个问题，需要改造后端和前端。
 101. 这里要调整下backend的dockerfile这里需要读取项目./.env然后将这些配置作为全局环境变量加到backend中，然后相关配置都是从.env中读取的，不要再读取src/backend/{.env,.env.example}了这些都是之前的配置，归一化所有src下的env到项目根/.env中，统一管理
-102. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
+102. 这里需要调整下build.sh编写一个对比并同步.env和.env.example的函数，使用build.sh build-all后会先检查两个文件的差异保证配置是最全的，然后再构建，不要直接修改.env，检查build.sh程序的render函数，这里会修改，程序最好不要硬编码8000这种过滤，而是通过env进行读取并调整，方便后续生产环境的改造
+103. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
