@@ -173,8 +173,9 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/main
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init .
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test-k8s .
 
-# Copy environment configuration file (if exists)
-COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/.env* ./
+# 注意：不再从 src/backend/.env 读取配置
+# 所有环境变量统一从项目根目录 .env 文件读取，通过 docker-compose.yml 的 env_file 传递
+# 或者在 Kubernetes 中通过 ConfigMap/Secret 注入
 
 # Create necessary directories including SSH
 RUN mkdir -p outputs uploads ~/.ssh
@@ -268,8 +269,9 @@ WORKDIR /root/
 # Copy the init binary from builder stage
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init .
 
-# Copy environment configuration file (if exists)
-COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/.env* ./
+# 注意：不再从 src/backend/.env 读取配置
+# 所有环境变量统一从项目根目录 .env 文件读取，通过 docker-compose.yml 的 env_file 传递
+# 或者在 Kubernetes 中通过 ConfigMap/Secret 注入
 
 # Create necessary directories
 RUN mkdir -p outputs uploads

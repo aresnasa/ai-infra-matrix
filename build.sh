@@ -3257,11 +3257,8 @@ create_env_from_template() {
     # 对于生产环境，使用密码替换功能
     if [[ "$env_type" == "prod" ]] || [[ "$env_type" == "production" ]]; then
         if replace_template_passwords "$template_file" "$target_file" "$force"; then
-            # 检查并创建backend目录的环境文件
-            if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
-                cp "src/backend/.env.example" "src/backend/.env"
-                print_success "✓ 创建后端环境文件: src/backend/.env"
-            fi
+            # 注意：不再创建 src/backend/.env
+            # 所有环境变量统一从项目根目录 .env 读取
             
             # 应用生产环境特殊配置
             print_info "应用生产环境配置..."
@@ -3320,11 +3317,8 @@ create_env_from_template() {
         # 设置其他服务的默认配置（如果未设置）
         setup_services_defaults "$target_file"
         
-        # 检查并创建backend目录的环境文件
-        if [[ ! -f "src/backend/.env" ]] && [[ -f "src/backend/.env.example" ]]; then
-            cp "src/backend/.env.example" "src/backend/.env"
-            print_success "✓ 创建后端环境文件: src/backend/.env"
-        fi
+        # 注意：不再创建 src/backend/.env
+        # 所有环境变量统一从项目根目录 .env 读取
         
         return 0
     else

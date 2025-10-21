@@ -162,37 +162,69 @@ const SlurmDashboard = () => {
             extra={saltStackLoading ? <Spin size="small" /> : null}
             style={{ marginBottom: '16px' }}
           >
+            {/* Master 和 API 状态 */}
+            <Row gutter={16} style={{ marginBottom: '16px' }}>
+              <Col span={8}>
+                <Card size="small">
+                  <Statistic
+                    title="Master 状态"
+                    value={saltStackData.master_status || '未知'}
+                    valueStyle={{ 
+                      color: saltStackData.master_status === 'running' ? '#3f8600' : '#cf1322',
+                      fontSize: '16px'
+                    }}
+                  />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card size="small">
+                  <Statistic
+                    title="API 状态"
+                    value={saltStackData.api_status || '未知'}
+                    valueStyle={{ 
+                      color: saltStackData.api_status === 'connected' ? '#3f8600' : '#cf1322',
+                      fontSize: '16px'
+                    }}
+                  />
+                </Card>
+              </Col>
+              <Col span={8}>
+                <Card size="small">
+                  <Statistic
+                    title="活跃作业"
+                    value={saltStackData.recent_jobs || 0}
+                    prefix={<SyncOutlined />}
+                  />
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Minion 统计 */}
             <Row gutter={16}>
-              <Col span={6}>
+              <Col span={8}>
+                <Statistic
+                  title="连接的 Minions"
+                  value={saltStackData.minions?.online || 0}
+                  valueStyle={{ color: '#3f8600' }}
+                  prefix={<CheckCircleOutlined />}
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="离线 Minions"
+                  value={saltStackData.minions?.offline || 0}
+                  valueStyle={{ color: '#cf1322' }}
+                />
+              </Col>
+              <Col span={8}>
                 <Statistic
                   title="Minion 总数"
                   value={saltStackData.minions?.total || 0}
                   prefix={<HddOutlined />}
                 />
               </Col>
-              <Col span={6}>
-                <Statistic
-                  title="在线 Minion"
-                  value={saltStackData.minions?.online || 0}
-                  valueStyle={{ color: '#3f8600' }}
-                  prefix={<CheckCircleOutlined />}
-                />
-              </Col>
-              <Col span={6}>
-                <Statistic
-                  title="离线 Minion"
-                  value={saltStackData.minions?.offline || 0}
-                  valueStyle={{ color: '#cf1322' }}
-                />
-              </Col>
-              <Col span={6}>
-                <Statistic
-                  title="最近任务"
-                  value={saltStackData.recent_jobs || 0}
-                  prefix={<SyncOutlined />}
-                />
-              </Col>
             </Row>
+
             {saltStackData.minion_list && saltStackData.minion_list.length > 0 && (
               <div style={{ marginTop: '16px' }}>
                 <Text strong>Minion 节点列表:</Text>
@@ -201,7 +233,7 @@ const SlurmDashboard = () => {
                     {saltStackData.minion_list.map((minion) => (
                       <Tag
                         key={minion.id}
-                        color={minion.status === 'online' ? 'green' : 'default'}
+                        color={minion.status === 'online' ? 'green' : minion.status === 'pending' ? 'orange' : 'default'}
                         icon={minion.status === 'online' ? <CheckCircleOutlined /> : null}
                       >
                         {minion.name || minion.id}

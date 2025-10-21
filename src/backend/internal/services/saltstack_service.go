@@ -20,17 +20,17 @@ type SaltStackService struct {
 
 // SaltStackStatus SaltStack状态
 type SaltStackStatus struct {
-	Status        string            `json:"status"`
-	MasterVersion string            `json:"master_version"`
-	APIVersion    string            `json:"api_version"`
-	Uptime        int64             `json:"uptime"`
-	ConnectedMinions int           `json:"connected_minions"`
-	AcceptedKeys  []string          `json:"accepted_keys"`
-	UnacceptedKeys []string         `json:"unaccepted_keys"`
-	RejectedKeys  []string          `json:"rejected_keys"`
-	Services      map[string]string `json:"services"`
-	LastUpdated   time.Time         `json:"last_updated"`
-	Demo          bool              `json:"demo,omitempty"`
+	Status           string            `json:"status"`
+	MasterVersion    string            `json:"master_version"`
+	APIVersion       string            `json:"api_version"`
+	Uptime           int64             `json:"uptime"`
+	ConnectedMinions int               `json:"connected_minions"`
+	AcceptedKeys     []string          `json:"accepted_keys"`
+	UnacceptedKeys   []string          `json:"unaccepted_keys"`
+	RejectedKeys     []string          `json:"rejected_keys"`
+	Services         map[string]string `json:"services"`
+	LastUpdated      time.Time         `json:"last_updated"`
+	Demo             bool              `json:"demo,omitempty"`
 }
 
 // SaltJob SaltStack作业
@@ -80,23 +80,9 @@ func (s *SaltStackService) GetStatus(ctx context.Context) (*SaltStackStatus, err
 	// 首先尝试获取真实的SaltStack状态
 	status, err := s.getRealSaltStatus(ctx)
 	if err != nil {
-		// 如果无法连接到Salt API，返回模拟数据
-		return &SaltStackStatus{
-			Status:           "api_unavailable",
-			MasterVersion:    "3006.1",
-			APIVersion:       "v1",
-			Uptime:           3600,
-			ConnectedMinions: 0,
-			AcceptedKeys:     []string{},
-			UnacceptedKeys:   []string{},
-			RejectedKeys:     []string{},
-			Services: map[string]string{
-				"salt-master": "running",
-				"salt-api":    "unavailable",
-			},
-			LastUpdated: time.Now(),
-			Demo:        true,
-		}, nil
+		// 修复：如果无法连接到Salt API，返回错误而不是演示数据
+		// 这样调用者可以fallback到其他方法获取真实数据
+		return nil, fmt.Errorf("salt API unavailable: %v", err)
 	}
 	return status, nil
 }
@@ -105,7 +91,7 @@ func (s *SaltStackService) GetStatus(ctx context.Context) (*SaltStackStatus, err
 func (s *SaltStackService) getRealSaltStatus(ctx context.Context) (*SaltStackStatus, error) {
 	// 获取密钥状态
 	keysData, err := s.executeSaltCommand(ctx, map[string]interface{}{
-		"fun": "key.list_all",
+		"fun":    "key.list_all",
 		"client": "wheel",
 	})
 	if err != nil {
@@ -114,7 +100,7 @@ func (s *SaltStackService) getRealSaltStatus(ctx context.Context) (*SaltStackSta
 
 	// 获取管理状态
 	_, err = s.executeSaltCommand(ctx, map[string]interface{}{
-		"fun": "manage.status",
+		"fun":    "manage.status",
 		"client": "runner",
 	})
 	if err != nil {
@@ -159,7 +145,7 @@ func (s *SaltStackService) getRealSaltStatus(ctx context.Context) (*SaltStackSta
 	}
 
 	status.ConnectedMinions = len(status.AcceptedKeys)
-	
+
 	return status, nil
 }
 
@@ -179,7 +165,7 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	
+
 	// 如果有API token，添加认证头
 	if s.apiToken != "" {
 		req.Header.Set("X-Auth-Token", s.apiToken)
