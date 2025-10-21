@@ -157,13 +157,32 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 		return p.markMessageStopped(message.ID)
 	}
 
-	// 缓存最新消息
+	// ===== 关键优化：确保缓存一致性 =====
+	// 1. 先删除所有带查询参数的缓存键，防止并发读取到旧数据
+	p.cacheService.DeleteKeysWithPattern(fmt.Sprintf("messages:%d:*", conversationID))
+
+	// 2. 更新基础消息缓存
 	messagesKey := fmt.Sprintf("messages:%d", conversationID)
 	p.cacheService.AppendMessage(messagesKey, aiMessage)
 
-	// 使缓存无效化：删除所有带查询参数的缓存键，以便下次从数据库重新加载
-	// 这确保 GET messages API 能获取最新的消息
-	p.cacheService.DeleteKeysWithPattern(fmt.Sprintf("messages:%d:*", conversationID))
+	// 3. 主动重建最常用查询的缓存（预热）
+	// 从数据库获取最新的完整消息列表
+	if p.messagePersistence != nil {
+		latestMessagesPtr, err := p.messagePersistence.GetMessageHistory(conversationID, 50, 0)
+		if err == nil && len(latestMessagesPtr) > 0 {
+			// 转换指针切片为值切片
+			latestMessages := make([]models.AIMessage, len(latestMessagesPtr))
+			for i, msgPtr := range latestMessagesPtr {
+				latestMessages[i] = *msgPtr
+			}
+			// 缓存最常见的查询：limit=50, sort=created_at_asc
+			commonQueryKey := fmt.Sprintf("messages:%d:limit_50:offset_0:sort_created_at_asc", conversationID)
+			p.cacheService.SetMessages(commonQueryKey, latestMessages, 1*time.Hour)
+			logrus.Debugf("Prewarmed cache for conversation %d with %d messages", conversationID, len(latestMessages))
+		} else if err != nil {
+			logrus.Warnf("Failed to prewarm cache for conversation %d: %v", conversationID, err)
+		}
+	}
 
 	// 发送到Kafka进行流处理
 	if p.kafkaService != nil {

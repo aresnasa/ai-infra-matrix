@@ -267,7 +267,22 @@ func (s *messageQueueServiceImpl) StartConsumer(streamName, consumerGroup, consu
 				streams, err := s.redis.XReadGroup(s.ctx, args).Result()
 				if err != nil {
 					if err != redis.Nil {
-						logrus.Errorf("Error reading from stream %s: %v", streamName, err)
+						// Check if it's a NOGROUP error (consumer group was deleted)
+						if err.Error() == "NOGROUP No such key '"+streamName+"' or consumer group '"+consumerGroup+"' in XREADGROUP with GROUP option" ||
+							(len(err.Error()) > 7 && err.Error()[:7] == "NOGROUP") {
+							logrus.Warnf("Consumer group %s not found for stream %s, recreating...", consumerGroup, streamName)
+							// Try to recreate the consumer group
+							if recreateErr := s.redis.XGroupCreateMkStream(s.ctx, streamName, consumerGroup, "0").Err(); recreateErr != nil {
+								if recreateErr.Error() != "BUSYGROUP Consumer Group name already exists" {
+									logrus.Errorf("Failed to recreate consumer group %s: %v", consumerGroup, recreateErr)
+								}
+							} else {
+								logrus.Infof("Successfully recreated consumer group %s for stream %s", consumerGroup, streamName)
+							}
+							time.Sleep(time.Second) // Brief pause before retrying
+						} else {
+							logrus.Errorf("Error reading from stream %s: %v", streamName, err)
+						}
 					}
 					continue
 				}

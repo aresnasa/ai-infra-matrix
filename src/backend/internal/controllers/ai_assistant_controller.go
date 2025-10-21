@@ -590,39 +590,100 @@ func (ctrl *AIAssistantController) GetSystemHealth(c *gin.Context) {
 
 // GetUsageStats 获取AI系统使用统计
 func (ctrl *AIAssistantController) GetUsageStats(c *gin.Context) {
-	// 从缓存或数据库获取使用统计
+	// 获取当前用户ID（用于统计）
+	userID, exists := middleware.GetCurrentUserID(c)
+	var filterUserID uint
+	if exists {
+		filterUserID = userID
+	}
+
+	// 获取时间范围参数
+	startDateStr := c.Query("start_date")
+	endDateStr := c.Query("end_date")
+
+	// 默认时间范围：最近7天
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -7)
+
+	if startDateStr != "" {
+		if parsedStart, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			startDate = parsedStart
+		}
+	}
+	if endDateStr != "" {
+		if parsedEnd, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			endDate = parsedEnd
+		}
+	}
+
+	// 获取数据库实例
+	db := database.DB
+
+	// 从数据库获取真实统计数据
+	var totalMessages int64
+	var totalConversations int64
+	var activeConversations int64
+	var totalTokensUsed int64
+
+	// 统计所有消息
+	db.Model(&models.AIMessage{}).Where("created_at BETWEEN ? AND ?", startDate, endDate).Count(&totalMessages)
+
+	// 统计对话
+	query := db.Model(&models.AIConversation{}).Where("created_at BETWEEN ? AND ?", startDate, endDate)
+	if filterUserID > 0 {
+		query = query.Where("user_id = ?", filterUserID)
+	}
+	query.Count(&totalConversations)
+
+	// 统计活跃对话（最近有消息的）
+	db.Model(&models.AIConversation{}).
+		Where("is_active = ? AND updated_at BETWEEN ? AND ?", true, startDate, endDate).
+		Count(&activeConversations)
+
+	// 统计token使用
+	db.Model(&models.AIMessage{}).
+		Where("created_at BETWEEN ? AND ?", startDate, endDate).
+		Select("COALESCE(SUM(tokens_used), 0)").
+		Scan(&totalTokensUsed)
+
 	stats := map[string]interface{}{
 		"timestamp":            time.Now(),
-		"total_messages":       0,
-		"total_operations":     0,
-		"active_conversations": 0,
-		"queue_status":         map[string]interface{}{},
-		"cache_stats":          map[string]interface{}{},
+		"total_messages":       totalMessages,
+		"total_conversations":  totalConversations,
+		"active_conversations": activeConversations,
+		"total_tokens_used":    totalTokensUsed,
+		"start_date":           startDate.Format("2006-01-02"),
+		"end_date":             endDate.Format("2006-01-02"),
 	}
 
 	// 获取队列统计
 	queueStats := map[string]interface{}{}
 
-	// 从Redis获取队列长度（如果可用）
-	// TODO: 实现实际的统计收集逻辑
-	queueStats["chat_requests_pending"] = 0
-	queueStats["cluster_operations_pending"] = 0
-	queueStats["notifications_pending"] = 0
+	// 从消息队列服务获取健康状态
+	if ctrl.messageQueueService != nil {
+		if err := ctrl.messageQueueService.HealthCheck(); err == nil {
+			queueStats["status"] = "healthy"
+		} else {
+			queueStats["status"] = "unhealthy"
+			queueStats["error"] = err.Error()
+		}
+	}
 
 	stats["queue_status"] = queueStats
 
-	// 获取缓存统计
-	cacheStats := map[string]interface{}{}
-	cacheStats["hit_rate"] = 85.5
-	cacheStats["total_keys"] = 100
-	cacheStats["memory_usage"] = "10MB"
+	// 按提供商统计消息
+	type ProviderStat struct {
+		Provider string
+		Count    int64
+	}
+	var providerStats []ProviderStat
+	db.Model(&models.AIMessage{}).
+		Select("COALESCE(metadata->>'provider', 'unknown') as provider, COUNT(*) as count").
+		Where("created_at BETWEEN ? AND ?", startDate, endDate).
+		Group("metadata->>'provider'").
+		Scan(&providerStats)
 
-	stats["cache_stats"] = cacheStats
-
-	// 模拟一些基础统计数据
-	stats["total_messages"] = 1000
-	stats["total_operations"] = 150
-	stats["active_conversations"] = 25
+	stats["provider_stats"] = providerStats
 
 	c.JSON(http.StatusOK, gin.H{"data": stats})
 }

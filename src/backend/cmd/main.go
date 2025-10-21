@@ -1080,6 +1080,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// 系统监控
 		ai.GET("/system/health", aiAssistantController.GetSystemHealth)
 		ai.GET("/system/usage", aiAssistantController.GetUsageStats)
+		ai.GET("/usage-stats", aiAssistantController.GetUsageStats) // 别名，兼容前端调用
 
 		// 连接测试
 		ai.POST("/test-connection", aiAssistantController.TestBotConnection)
