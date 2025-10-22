@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/gin-gonic/gin"
 )
 
 // NavigationController 导航配置控制器
@@ -121,7 +121,7 @@ func (nc *NavigationController) GetNavigationConfig(c *gin.Context) {
 	// 查询用户的导航配置
 	var navConfig models.UserNavigationConfig
 	result := database.DB.Where("user_id = ?", userID).First(&navConfig)
-	
+
 	if result.Error != nil {
 		// 如果没有找到配置，返回默认配置
 		c.JSON(http.StatusOK, gin.H{"data": DefaultNavigationItems})
@@ -170,7 +170,7 @@ func (nc *NavigationController) SaveNavigationConfig(c *gin.Context) {
 	// 保存或更新用户配置
 	var navConfig models.UserNavigationConfig
 	result := database.DB.Where("user_id = ?", userID).First(&navConfig)
-	
+
 	if result.Error != nil {
 		// 创建新配置
 		navConfig = models.UserNavigationConfig{

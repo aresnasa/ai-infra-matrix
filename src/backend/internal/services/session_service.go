@@ -9,7 +9,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/cache"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-	
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -77,7 +77,7 @@ func (s *SessionService) CreateSession(user *models.User, token string, ipAddres
 	// 存储到Redis，24小时过期
 	sessionKey := fmt.Sprintf("session:%s", token)
 	ctx := context.Background()
-	
+
 	if err := cache.RDB.Set(ctx, sessionKey, sessionData, 24*time.Hour).Err(); err != nil {
 		return fmt.Errorf("failed to store session in Redis: %w", err)
 	}
@@ -145,37 +145,37 @@ func (s *SessionService) UpdateSession(token string) error {
 func (s *SessionService) UpdateActivity(token string) error {
 	sessionKey := fmt.Sprintf("session:%s", token)
 	ctx := context.Background()
-	
+
 	// 获取现有会话数据
 	sessionData, err := cache.RDB.Get(ctx, sessionKey).Result()
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
-	
+
 	var session UserSession
 	if err := json.Unmarshal([]byte(sessionData), &session); err != nil {
 		return fmt.Errorf("failed to parse session data: %w", err)
 	}
-	
+
 	// 更新最后活动时间
 	session.LastActivity = time.Now()
-	
+
 	// 保存更新后的会话数据
 	updatedData, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session data: %w", err)
 	}
-	
+
 	// 重新设置Redis中的数据，保持原有的TTL
 	ttl, err := cache.RDB.TTL(ctx, sessionKey).Result()
 	if err != nil {
 		return fmt.Errorf("failed to get session TTL: %w", err)
 	}
-	
+
 	if err := cache.RDB.Set(ctx, sessionKey, updatedData, ttl).Err(); err != nil {
 		return fmt.Errorf("failed to update session: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -194,7 +194,7 @@ func (s *SessionService) DeleteSession(token string) error {
 // GetAllActiveSessions 获取所有活跃会话（管理员功能）
 func (s *SessionService) GetAllActiveSessions() ([]UserSession, error) {
 	ctx := context.Background()
-	
+
 	// 获取所有session键
 	keys, err := cache.RDB.Keys(ctx, "session:*").Result()
 	if err != nil {
@@ -254,7 +254,7 @@ func (s *SessionService) SyncSessionsToDatabase() error {
 // CleanupExpiredSessions 清理过期的会话
 func (s *SessionService) CleanupExpiredSessions() error {
 	ctx := context.Background()
-	
+
 	keys, err := cache.RDB.Keys(ctx, "session:*").Result()
 	if err != nil {
 		return fmt.Errorf("failed to get session keys: %w", err)
@@ -336,7 +336,7 @@ func (s *SessionService) RevokeUserSessions(userID uint) error {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"user_id":        userID,
+		"user_id":       userID,
 		"revoked_count": revokedCount,
 	}).Info("User sessions revoked")
 

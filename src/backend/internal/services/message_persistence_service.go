@@ -11,10 +11,10 @@ import (
 
 // MessagePersistenceService 消息持久化服务
 type MessagePersistenceService struct {
-	db               *gorm.DB
-	kafkaService     *KafkaMessageService
-	redisService     *messageQueueServiceImpl
-	messageQueue     MessageQueueService
+	db           *gorm.DB
+	kafkaService *KafkaMessageService
+	redisService *messageQueueServiceImpl
+	messageQueue MessageQueueService
 }
 
 // NewMessagePersistenceService 创建消息持久化服务
@@ -233,10 +233,10 @@ func (s *MessagePersistenceService) ArchiveOldMessages(daysOld int) error {
 // GetMessageStats 获取消息统计信息
 func (s *MessagePersistenceService) GetMessageStats(userID uint, startDate, endDate time.Time) (map[string]interface{}, error) {
 	var stats struct {
-		TotalMessages    int64 `json:"total_messages"`
-		TotalTokens      int64 `json:"total_tokens"`
-		ActiveConversations int64 `json:"active_conversations"`
-		AvgResponseTime  float64 `json:"avg_response_time"`
+		TotalMessages       int64   `json:"total_messages"`
+		TotalTokens         int64   `json:"total_tokens"`
+		ActiveConversations int64   `json:"active_conversations"`
+		AvgResponseTime     float64 `json:"avg_response_time"`
 	}
 
 	// 统计消息数量和tokens

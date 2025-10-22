@@ -7,14 +7,14 @@ import (
 	"strconv"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
 
 type PlaybookHandler struct {
-	playbookService *services.PlaybookService
-	previewService  *services.PlaybookPreviewService
+	playbookService   *services.PlaybookService
+	previewService    *services.PlaybookPreviewService
 	validationService *services.PlaybookValidationService
 }
 
@@ -90,8 +90,8 @@ func (h *PlaybookHandler) DownloadPlaybook(c *gin.Context) {
 
 	logrus.WithFields(logrus.Fields{
 		"generation_id": id,
-		"file_path": filePath,
-		"file_name": fileName,
+		"file_path":     filePath,
+		"file_name":     fileName,
 	}).Info("Starting file download")
 
 	c.Header("Content-Disposition", "attachment; filename="+fileName)
@@ -171,8 +171,8 @@ func (h *PlaybookHandler) ValidatePlaybook(c *gin.Context) {
 
 // CompatibilityRequest 兼容性检查请求
 type CompatibilityRequest struct {
-	ProjectID       uint     `json:"project_id" binding:"required"`
-	TargetVersions  []string `json:"target_versions" binding:"required"`
+	ProjectID      uint     `json:"project_id" binding:"required"`
+	TargetVersions []string `json:"target_versions" binding:"required"`
 }
 
 // @Summary 检查Ansible版本兼容性
@@ -278,11 +278,11 @@ func (h *PlaybookHandler) DownloadPackage(c *gin.Context) {
 
 	// 安全检查：确保路径在outputs目录下，使用绝对路径
 	fullPath := filepath.Join(currentDir, "outputs", "packages", zipPath)
-	
+
 	// 检查文件是否存在
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		logrus.WithFields(logrus.Fields{
-			"zip_path": zipPath,
+			"zip_path":  zipPath,
 			"full_path": fullPath,
 		}).Error("ZIP file not found")
 		c.JSON(http.StatusNotFound, gin.H{"error": "ZIP file not found"})
@@ -290,7 +290,7 @@ func (h *PlaybookHandler) DownloadPackage(c *gin.Context) {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"zip_path": zipPath,
+		"zip_path":  zipPath,
 		"full_path": fullPath,
 	}).Info("Starting ZIP file download")
 

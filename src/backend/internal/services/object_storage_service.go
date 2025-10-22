@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -27,7 +27,7 @@ func NewObjectStorageService(db *gorm.DB) *ObjectStorageService {
 // GetConfigs 获取所有存储配置
 func (s *ObjectStorageService) GetConfigs(userID uint) ([]models.ObjectStorageConfig, error) {
 	var configs []models.ObjectStorageConfig
-	
+
 	err := s.db.Preload("Creator").Find(&configs).Error
 	if err != nil {
 		return nil, fmt.Errorf("获取存储配置失败: %v", err)
@@ -42,7 +42,7 @@ func (s *ObjectStorageService) GetConfigs(userID uint) ([]models.ObjectStorageCo
 // GetConfig 获取单个存储配置
 func (s *ObjectStorageService) GetConfig(id uint) (*models.ObjectStorageConfig, error) {
 	var config models.ObjectStorageConfig
-	
+
 	err := s.db.Preload("Creator").First(&config, id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -82,7 +82,7 @@ func (s *ObjectStorageService) CreateConfig(config *models.ObjectStorageConfig) 
 // UpdateConfig 更新存储配置
 func (s *ObjectStorageService) UpdateConfig(id uint, updates *models.ObjectStorageConfig) error {
 	var config models.ObjectStorageConfig
-	
+
 	err := s.db.First(&config, id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -110,7 +110,7 @@ func (s *ObjectStorageService) UpdateConfig(id uint, updates *models.ObjectStora
 // DeleteConfig 删除存储配置
 func (s *ObjectStorageService) DeleteConfig(id uint) error {
 	var config models.ObjectStorageConfig
-	
+
 	err := s.db.First(&config, id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -135,7 +135,7 @@ func (s *ObjectStorageService) DeleteConfig(id uint) error {
 // SetActiveConfig 设置激活配置
 func (s *ObjectStorageService) SetActiveConfig(id uint) error {
 	var config models.ObjectStorageConfig
-	
+
 	err := s.db.First(&config, id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -305,7 +305,7 @@ func (s *ObjectStorageService) testS3Connection(config *models.ObjectStorageConf
 // testAndUpdateStatus 测试连接并更新状态
 func (s *ObjectStorageService) testAndUpdateStatus(config *models.ObjectStorageConfig) {
 	err := s.TestConnection(config)
-	
+
 	status := "connected"
 	if err != nil {
 		status = "error"
@@ -322,9 +322,9 @@ func (s *ObjectStorageService) testAndUpdateStatus(config *models.ObjectStorageC
 func (s *ObjectStorageService) updateConfigsStatus(configs []models.ObjectStorageConfig) {
 	for _, config := range configs {
 		// 如果最近没有测试过，或者状态未知，进行测试
-		if config.LastTested == nil || 
-		   time.Since(*config.LastTested) > 5*time.Minute ||
-		   config.Status == "" {
+		if config.LastTested == nil ||
+			time.Since(*config.LastTested) > 5*time.Minute ||
+			config.Status == "" {
 			s.testAndUpdateStatus(&config)
 		}
 	}

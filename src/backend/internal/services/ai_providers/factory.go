@@ -75,7 +75,7 @@ func (f *DefaultProviderFactory) createDeepSeekProvider(config *models.AIAssista
 		deepSeekConfig.APIEndpoint = "https://api.deepseek.com/v1/chat/completions"
 	}
 	deepSeekConfig.APIEndpoint = normalizeDeepSeekEndpoint(deepSeekConfig.APIEndpoint)
-	
+
 	// 从环境变量读取默认模型，支持不同模式
 	if deepSeekConfig.Model == "" {
 		// 优先使用 DEEPSEEK_DEFAULT_MODEL，如果未设置则使用 deepseek-chat
@@ -116,7 +116,7 @@ func normalizeDeepSeekEndpoint(endpoint string) string {
 	}
 
 	path := strings.TrimSuffix(parsed.Path, "/")
-	
+
 	// 检查并补全路径
 	switch {
 	case path == "" || path == "/":

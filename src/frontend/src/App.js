@@ -101,6 +101,9 @@ const SlurmScalingPage = withLazyLoading(React.lazy(() => import('./pages/SlurmS
 const SlurmTasksPage = withLazyLoading(React.lazy(() => import('./pages/SlurmTasksPage')), {
   loadingText: '正在加载任务管理页面...'
 });
+const MonitoringPage = withLazyLoading(React.lazy(() => import('./pages/MonitoringPage')), {
+  loadingText: '正在加载监控仪表板...'
+});
 const JobManagement = withLazyLoading(React.lazy(() => import('./pages/JobManagement')), {
   loadingText: '正在加载作业管理...'
 });
@@ -644,6 +647,18 @@ function App() {
                         <TeamProtectedRoute user={user} allowedTeams={['sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <SaltStackDashboard />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+
+                    {/* Monitoring dashboard page (Nightingale) - 只允许SRE团队 */}
+                    <Route
+                      path="/monitoring"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <MonitoringPage />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 type AdminController struct {
@@ -22,7 +22,7 @@ func NewAdminController(db *gorm.DB) *AdminController {
 	ldapService := services.NewLDAPService(db)
 	userService := services.NewUserService()
 	rbacService := services.NewRBACService(db)
-	
+
 	return &AdminController{
 		db:              db,
 		rbacService:     rbacService,
@@ -50,18 +50,18 @@ func (c *AdminController) GetAllUsers(ctx *gin.Context) {
 
 	// 分页参数，支持两种参数名称
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
-	
+
 	// 支持 limit 和 page_size 两种参数名称
 	limitStr := ctx.Query("limit")
 	if limitStr == "" {
 		limitStr = ctx.DefaultQuery("page_size", "10")
 	}
 	limit, _ := strconv.Atoi(limitStr)
-	
+
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
-	
+
 	offset := (page - 1) * limit
 
 	var users []models.User
@@ -90,11 +90,11 @@ func (c *AdminController) GetAllUsers(ctx *gin.Context) {
 	logrus.Infof("GetAllUsers: found %d users, total: %d", len(users), total)
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"users": users,
-		"total": total,
-		"page":  page,
+		"users":     users,
+		"total":     total,
+		"page":      page,
 		"page_size": limit, // 同时返回两种字段名
-		"limit": limit,
+		"limit":     limit,
 	})
 }
 
@@ -170,7 +170,7 @@ func (c *AdminController) GetUserWithAuthSource(ctx *gin.Context) {
 	// 判断用户认证来源
 	authSource := "local"
 	isAdmin := false
-	
+
 	// 检查是否为管理员
 	for _, role := range user.Roles {
 		if role.Name == "admin" {
@@ -178,7 +178,7 @@ func (c *AdminController) GetUserWithAuthSource(ctx *gin.Context) {
 			break
 		}
 	}
-	
+
 	// 检查是否为LDAP用户（没有本地密码或密码为空）
 	if user.Password == "" {
 		authSource = "ldap"
@@ -298,7 +298,7 @@ func (c *AdminController) UpdateUserStatusEnhanced(ctx *gin.Context) {
 	// 保护本地管理员账户不被禁用
 	if isLocalAdmin && !req.IsActive {
 		ctx.JSON(http.StatusForbidden, gin.H{
-			"error": "不能禁用本地管理员账户，这是为了防止失去系统访问权限的安全措施",
+			"error":      "不能禁用本地管理员账户，这是为了防止失去系统访问权限的安全措施",
 			"suggestion": "如需禁用此管理员，请先确保有其他活跃的管理员账户",
 		})
 		return
@@ -306,11 +306,11 @@ func (c *AdminController) UpdateUserStatusEnhanced(ctx *gin.Context) {
 
 	// 记录操作日志
 	logrus.WithFields(logrus.Fields{
-		"operator_id":   userID,
-		"target_user":   user.Username,
-		"action":        "update_status",
-		"new_status":    req.IsActive,
-		"reason":        req.Reason,
+		"operator_id":    userID,
+		"target_user":    user.Username,
+		"action":         "update_status",
+		"new_status":     req.IsActive,
+		"reason":         req.Reason,
 		"is_local_admin": isLocalAdmin,
 	}).Info("User status update")
 
@@ -594,7 +594,7 @@ func (c *AdminController) GetSystemStats(ctx *gin.Context) {
 			"role_count":    roleCount,
 			"group_count":   groupCount,
 		},
-		"active_users":     activeUsers,
+		"active_users":    activeUsers,
 		"recent_projects": recentProjects,
 	})
 }
@@ -743,7 +743,7 @@ func (c *AdminController) SyncLDAPUsers(ctx *gin.Context) {
 
 	// 触发同步
 	syncID := c.ldapSyncService.TriggerSync()
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"message": "LDAP同步已启动",
 		"sync_id": syncID,
@@ -803,7 +803,7 @@ func (c *AdminController) GetLDAPSyncHistory(ctx *gin.Context) {
 	}
 
 	history := c.ldapSyncService.GetSyncHistory(limit)
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"history": history,
 		"count":   len(history),
@@ -830,7 +830,7 @@ func (c *AdminController) GetLDAPUsers(ctx *gin.Context) {
 	if query == "" {
 		query = "*" // 默认查询所有用户
 	}
-	
+
 	users, err := c.ldapService.SearchUsers(query)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -838,7 +838,7 @@ func (c *AdminController) GetLDAPUsers(ctx *gin.Context) {
 		})
 		return
 	}
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"users": users,
 		"count": len(users),
@@ -1011,7 +1011,7 @@ func (c *AdminController) ClearTrash(ctx *gin.Context) {
 
 	if deletedCount == 0 {
 		ctx.JSON(http.StatusOK, gin.H{
-			"message": "回收站已空",
+			"message":       "回收站已空",
 			"deleted_count": 0,
 		})
 		return
@@ -1058,7 +1058,7 @@ func (c *AdminController) ClearTrash(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": "回收站清空成功",
+		"message":       "回收站清空成功",
 		"deleted_count": deletedCount,
 	})
 }

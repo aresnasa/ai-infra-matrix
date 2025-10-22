@@ -3,9 +3,9 @@ package services
 import (
 	"fmt"
 
-	"gorm.io/gorm"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 type RBACService struct {
@@ -22,7 +22,7 @@ func (s *RBACService) CheckPermission(userID uint, resource, verb, scope, namesp
 	if namespace == "" {
 		namespace = "default"
 	}
-	
+
 	// 如果没有指定scope，使用通配符
 	if scope == "" {
 		scope = "*"
@@ -285,7 +285,7 @@ func (s *RBACService) AssignRoleToUser(userID, roleID uint) error {
 		UserID: userID,
 		RoleID: roleID,
 	}
-	
+
 	// 检查是否已经存在
 	var existing models.UserRole
 	err := s.db.Where("user_id = ? AND role_id = ?", userID, roleID).First(&existing).Error
@@ -310,7 +310,7 @@ func (s *RBACService) AssignRoleToUserGroup(userGroupID, roleID uint) error {
 		UserGroupID: userGroupID,
 		RoleID:      roleID,
 	}
-	
+
 	// 检查是否已经存在
 	var existing models.UserGroupRole
 	err := s.db.Where("user_group_id = ? AND role_id = ?", userGroupID, roleID).First(&existing).Error
@@ -330,7 +330,7 @@ func (s *RBACService) AddUserToGroup(userID, userGroupID uint) error {
 		UserID:      userID,
 		UserGroupID: userGroupID,
 	}
-	
+
 	// 检查是否已经存在
 	var existing models.UserGroupMembership
 	err := s.db.Where("user_id = ? AND user_group_id = ?", userID, userGroupID).First(&existing).Error
@@ -425,10 +425,10 @@ func (s *RBACService) CreatePermission(resource, verb, scope, description string
 
 // 角色模板定义
 type RoleTemplate struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
 	Permissions []models.Permission `json:"permissions"`
-	IsSystem    bool   `json:"is_system"`
+	IsSystem    bool                `json:"is_system"`
 }
 
 // 预定义角色模板
@@ -556,7 +556,7 @@ func (s *RBACService) InitializeDefaultRBAC() error {
 
 	for _, permission := range defaultPermissions {
 		var existing models.Permission
-		err := s.db.Where("resource = ? AND verb = ? AND scope = ?", 
+		err := s.db.Where("resource = ? AND verb = ? AND scope = ?",
 			permission.Resource, permission.Verb, permission.Scope).First(&existing).Error
 		if err == gorm.ErrRecordNotFound {
 			if err := s.db.Create(&permission).Error; err != nil {
@@ -604,7 +604,7 @@ func (s *RBACService) InitializeDefaultRBAC() error {
 		var userPermissions []models.Permission
 		resources := []string{"projects", "hosts", "variables", "tasks", "playbooks"}
 		verbs := []string{"create", "read", "update", "delete", "list"}
-		
+
 		if err := s.db.Where("resource IN ? AND verb IN ?", resources, verbs).Find(&userPermissions).Error; err != nil {
 			return fmt.Errorf("找不到用户权限: %v", err)
 		}
@@ -629,7 +629,7 @@ func (s *RBACService) InitializeDefaultRBAC() error {
 		// 检查是否缺少hosts, variables, tasks, playbooks权限
 		resources := []string{"hosts", "variables", "tasks", "playbooks"}
 		verbs := []string{"create", "read", "update", "delete", "list"}
-		
+
 		existingPermissionMap := make(map[string]bool)
 		for _, p := range currentPermissions {
 			key := fmt.Sprintf("%s:%s", p.Resource, p.Verb)

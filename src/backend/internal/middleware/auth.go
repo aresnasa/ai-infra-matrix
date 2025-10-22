@@ -8,7 +8,7 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -50,10 +50,10 @@ func AuthMiddleware() gin.HandlerFunc {
 // AuthMiddlewareWithSession JWT认证中间件（支持Redis会话和Cookie）
 func AuthMiddlewareWithSession() gin.HandlerFunc {
 	sessionService := services.NewSessionService()
-	
+
 	return func(c *gin.Context) {
 		var tokenString string
-		
+
 		// 首先尝试从Authorization头部获取token
 		authHeader := c.GetHeader("Authorization")
 		if authHeader != "" {
@@ -63,21 +63,21 @@ func AuthMiddlewareWithSession() gin.HandlerFunc {
 				tokenString = tokenParts[1]
 			}
 		}
-		
+
 		// 如果没有Authorization头部，尝试从cookie获取token
 		if tokenString == "" {
 			if cookie, err := c.Cookie("auth_token"); err == nil {
 				tokenString = cookie
 			}
 		}
-		
+
 		// 如果既没有Authorization头部也没有cookie，返回401
 		if tokenString == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
 			c.Abort()
 			return
 		}
-		
+
 		// 首先检查Redis会话
 		session, err := sessionService.GetSession(tokenString)
 		if err != nil {
@@ -100,11 +100,11 @@ func AuthMiddlewareWithSession() gin.HandlerFunc {
 			c.Set("username", session.Username)
 			c.Set("roles", session.Roles)
 			c.Set("permissions", session.Permissions)
-			
+
 			// 更新会话活动时间
 			sessionService.UpdateActivity(tokenString)
 		}
-		
+
 		c.Next()
 	}
 }
@@ -179,7 +179,7 @@ func HasRole(c *gin.Context, roleName string) bool {
 	if !ok {
 		return false
 	}
-	
+
 	for _, role := range roles {
 		if role == roleName {
 			return true
@@ -194,7 +194,7 @@ func HasPermission(c *gin.Context, permission string) bool {
 	if !ok {
 		return false
 	}
-	
+
 	for _, perm := range permissions {
 		if perm == permission {
 			return true
@@ -226,5 +226,3 @@ func GetUserID(c *gin.Context) (uint, error) {
 		return 0, errors.New("invalid user ID type")
 	}
 }
-
-

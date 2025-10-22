@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type RBACController struct {
@@ -47,11 +47,11 @@ func (c *RBACController) CheckPermission(ctx *gin.Context) {
 	}
 
 	allowed := c.rbacService.CheckPermission(userID, req.Resource, req.Verb, req.Scope, req.Namespace)
-	
+
 	response := models.PermissionCheckResponse{
 		Allowed: allowed,
 	}
-	
+
 	if !allowed {
 		response.Reason = "权限不足"
 	}

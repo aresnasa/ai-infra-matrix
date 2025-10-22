@@ -13,10 +13,10 @@ import (
 
 // JobService 作业管理服务
 type JobService struct {
-	db         *gorm.DB
-	slurmSvc   *SlurmService
-	sshSvc     *SSHService
-	cacheSvc   CacheService
+	db       *gorm.DB
+	slurmSvc *SlurmService
+	sshSvc   *SSHService
+	cacheSvc CacheService
 }
 
 // NewJobService 创建作业服务
@@ -138,7 +138,7 @@ func (js *JobService) submitToSlurm(job *models.Job) error {
 	if strings.HasPrefix(jobIDStr, "Submitted batch job ") {
 		jobIDStr = strings.TrimPrefix(jobIDStr, "Submitted batch job ")
 	}
-	
+
 	jobID, err := strconv.ParseUint(jobIDStr, 10, 32)
 	if err != nil {
 		js.updateJobStatus(job, "FAILED", fmt.Sprintf("Failed to parse job ID from output: %s", output))
@@ -168,13 +168,13 @@ func (js *JobService) getClusterAuth(cluster *models.Cluster) (string, string) {
 	if cluster.Username != "" {
 		return cluster.Username, cluster.Password
 	}
-	
+
 	var node models.SlurmNode
 	err := js.db.Where("cluster_id = ? AND status = 'active'", cluster.ID).First(&node).Error
 	if err == nil && node.Username != "" {
 		return node.Username, node.Password
 	}
-	
+
 	return "root", ""
 }
 
@@ -182,11 +182,11 @@ func (js *JobService) getClusterAuth(cluster *models.Cluster) (string, string) {
 func (js *JobService) updateJobStatus(job *models.Job, status, message string) {
 	job.Status = status
 	job.UpdatedAt = time.Now()
-	
+
 	if status == "FAILED" && message != "" {
 		fmt.Printf("Job %d failed: %s\n", job.ID, message)
 	}
-	
+
 	js.db.Save(job)
 }
 

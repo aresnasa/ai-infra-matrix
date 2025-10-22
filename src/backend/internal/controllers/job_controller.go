@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/gin-gonic/gin"
 )
 
 // JobController 作业管理控制器
@@ -60,12 +60,12 @@ func (jc *JobController) ListJobs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models.Response{
-		Code: 200,
+		Code:    200,
 		Message: "success",
 		Data: models.JobListResponse{
-			Jobs:  jobs,
-			Total: total,
-			Page:  page,
+			Jobs:     jobs,
+			Total:    total,
+			Page:     page,
 			PageSize: pageSize,
 		},
 	})

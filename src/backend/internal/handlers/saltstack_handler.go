@@ -4,17 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
-	"strings"
-	"strconv"
-	"time"
 	"sort"
-	"errors"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
@@ -38,55 +39,55 @@ func NewSaltStackHandler(cfg *config.Config, cache *redis.Client) *SaltStackHand
 
 // SaltStackStatus SaltStack状态信息
 type SaltStackStatus struct {
-	Status        string            `json:"status"`
-	MasterVersion string            `json:"master_version"`
-	APIVersion    string            `json:"api_version"`
-	Uptime        int64             `json:"uptime"`
-	ConnectedMinions int           `json:"connected_minions"`
-	AcceptedKeys  []string          `json:"accepted_keys"`
-	UnacceptedKeys []string         `json:"unaccepted_keys"`
-	RejectedKeys  []string          `json:"rejected_keys"`
-	Services      map[string]string `json:"services"`
-	LastUpdated   time.Time         `json:"last_updated"`
-	Demo          bool              `json:"demo,omitempty"`
+	Status           string            `json:"status"`
+	MasterVersion    string            `json:"master_version"`
+	APIVersion       string            `json:"api_version"`
+	Uptime           int64             `json:"uptime"`
+	ConnectedMinions int               `json:"connected_minions"`
+	AcceptedKeys     []string          `json:"accepted_keys"`
+	UnacceptedKeys   []string          `json:"unaccepted_keys"`
+	RejectedKeys     []string          `json:"rejected_keys"`
+	Services         map[string]string `json:"services"`
+	LastUpdated      time.Time         `json:"last_updated"`
+	Demo             bool              `json:"demo,omitempty"`
 	// 前端兼容字段
-	MasterStatus     string `json:"master_status,omitempty"`
-	APIStatus        string `json:"api_status,omitempty"`
-	MinionsUp        int    `json:"minions_up,omitempty"`
-	MinionsDown      int    `json:"minions_down,omitempty"`
-	SaltVersion      string `json:"salt_version,omitempty"`
-	ConfigFile       string `json:"config_file,omitempty"`
-	LogLevel         string `json:"log_level,omitempty"`
-	CPUUsage         int    `json:"cpu_usage,omitempty"`
-	MemoryUsage      int    `json:"memory_usage,omitempty"`
-	ActiveConnections int   `json:"active_connections,omitempty"`
+	MasterStatus      string `json:"master_status,omitempty"`
+	APIStatus         string `json:"api_status,omitempty"`
+	MinionsUp         int    `json:"minions_up,omitempty"`
+	MinionsDown       int    `json:"minions_down,omitempty"`
+	SaltVersion       string `json:"salt_version,omitempty"`
+	ConfigFile        string `json:"config_file,omitempty"`
+	LogLevel          string `json:"log_level,omitempty"`
+	CPUUsage          int    `json:"cpu_usage,omitempty"`
+	MemoryUsage       int    `json:"memory_usage,omitempty"`
+	ActiveConnections int    `json:"active_connections,omitempty"`
 }
 
 // SaltMinion Salt Minion信息
 type SaltMinion struct {
-	ID           string            `json:"id"`
-	Status       string            `json:"status"`
-	OS           string            `json:"os"`
-	OSVersion    string            `json:"os_version"`
-	Architecture string            `json:"architecture"`
-	Arch         string            `json:"arch,omitempty"`
-	SaltVersion  string            `json:"salt_version,omitempty"`
-	LastSeen     time.Time         `json:"last_seen"`
+	ID           string                 `json:"id"`
+	Status       string                 `json:"status"`
+	OS           string                 `json:"os"`
+	OSVersion    string                 `json:"os_version"`
+	Architecture string                 `json:"architecture"`
+	Arch         string                 `json:"arch,omitempty"`
+	SaltVersion  string                 `json:"salt_version,omitempty"`
+	LastSeen     time.Time              `json:"last_seen"`
 	Grains       map[string]interface{} `json:"grains"`
 	Pillar       map[string]interface{} `json:"pillar,omitempty"`
 }
 
 // SaltJob Salt作业信息
 type SaltJob struct {
-	JID         string                 `json:"jid"`
-	Function    string                 `json:"function"`
-	Arguments   []string               `json:"arguments"`
-	Target      string                 `json:"target"`
-	StartTime   time.Time             `json:"start_time"`
-	EndTime     *time.Time            `json:"end_time,omitempty"`
-	Status      string                `json:"status"`
-	Result      map[string]interface{} `json:"result,omitempty"`
-	User        string                `json:"user"`
+	JID       string                 `json:"jid"`
+	Function  string                 `json:"function"`
+	Arguments []string               `json:"arguments"`
+	Target    string                 `json:"target"`
+	StartTime time.Time              `json:"start_time"`
+	EndTime   *time.Time             `json:"end_time,omitempty"`
+	Status    string                 `json:"status"`
+	Result    map[string]interface{} `json:"result,omitempty"`
+	User      string                 `json:"user"`
 }
 
 // saltAPIClient SaltStack API客户端
@@ -350,30 +351,35 @@ func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
 
 // SaltDebugInfo 用于输出调试信息，便于快速定位集成问题
 type SaltDebugInfo struct {
-	BaseURL       string                 `json:"base_url"`
-	Env           map[string]string      `json:"env"`
-	TCPDial       map[string]interface{} `json:"tcp_dial"`
-	RootGET       map[string]interface{} `json:"root_get"`
-	Login         map[string]interface{} `json:"login"`
-	ManageStatus  map[string]interface{} `json:"manage_status"`
-	KeyListAll    map[string]interface{} `json:"key_list_all"`
-	Timestamp     time.Time              `json:"timestamp"`
+	BaseURL      string                 `json:"base_url"`
+	Env          map[string]string      `json:"env"`
+	TCPDial      map[string]interface{} `json:"tcp_dial"`
+	RootGET      map[string]interface{} `json:"root_get"`
+	Login        map[string]interface{} `json:"login"`
+	ManageStatus map[string]interface{} `json:"manage_status"`
+	KeyListAll   map[string]interface{} `json:"key_list_all"`
+	Timestamp    time.Time              `json:"timestamp"`
 }
 
 // DebugSaltConnectivity 输出Salt API的连通性与基本调用结果
 func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	client := h.newSaltAPIClient()
 	res := &SaltDebugInfo{
-		BaseURL:   client.baseURL,
+		BaseURL: client.baseURL,
 		Env: map[string]string{
 			"SALTSTACK_MASTER_URL": strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL")),
-			"SALT_API_SCHEME":       getEnv("SALT_API_SCHEME", "http"),
-			"SALT_MASTER_HOST":      getEnv("SALT_MASTER_HOST", "saltstack"),
-			"SALT_API_PORT":         getEnv("SALT_API_PORT", "8002"),
-			"SALT_API_USERNAME":     getEnv("SALT_API_USERNAME", "saltapi"),
+			"SALT_API_SCHEME":      getEnv("SALT_API_SCHEME", "http"),
+			"SALT_MASTER_HOST":     getEnv("SALT_MASTER_HOST", "saltstack"),
+			"SALT_API_PORT":        getEnv("SALT_API_PORT", "8002"),
+			"SALT_API_USERNAME":    getEnv("SALT_API_USERNAME", "saltapi"),
 			// 不回显明文密码，只提示是否设置
-			"SALT_API_PASSWORD_SET": func() string { if os.Getenv("SALT_API_PASSWORD") != "" { return "true" }; return "false" }(),
-			"SALT_API_EAUTH":        getEnv("SALT_API_EAUTH", "file"),
+			"SALT_API_PASSWORD_SET": func() string {
+				if os.Getenv("SALT_API_PASSWORD") != "" {
+					return "true"
+				}
+				return "false"
+			}(),
+			"SALT_API_EAUTH": getEnv("SALT_API_EAUTH", "file"),
 		},
 		TCPDial:      map[string]interface{}{},
 		RootGET:      map[string]interface{}{},
@@ -412,7 +418,8 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	res.TCPDial["target"] = hostPort
 
 	// GET /
-	{   start := time.Now()
+	{
+		start := time.Now()
 		info, err := client.makeRequest("/", "GET", nil)
 		res.RootGET["duration_ms"] = time.Since(start).Milliseconds()
 		if err != nil {
@@ -427,7 +434,8 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	}
 
 	// 登录
-	{   start := time.Now()
+	{
+		start := time.Now()
 		if err := client.authenticate(); err != nil {
 			res.Login["ok"] = false
 			res.Login["error"] = err.Error()
@@ -439,7 +447,8 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	}
 
 	// runner.manage.status
-	{   start := time.Now()
+	{
+		start := time.Now()
 		r, err := client.makeRunner("manage.status", nil)
 		res.ManageStatus["duration_ms"] = time.Since(start).Milliseconds()
 		if err != nil {
@@ -456,7 +465,8 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	}
 
 	// wheel.key.list_all
-	{   start := time.Now()
+	{
+		start := time.Now()
 		r, err := client.makeWheel("key.list_all", nil)
 		res.KeyListAll["duration_ms"] = time.Since(start).Milliseconds()
 		if err != nil {
@@ -510,15 +520,15 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		LastUpdated: time.Now(),
 		Demo:        false,
 		// 兼容字段
-		MasterStatus:  "running",
-		APIStatus:     "running",
-		MinionsUp:     len(up),
-		MinionsDown:   len(down),
-		SaltVersion:   h.extractAPISaltVersion(apiInfo),
-		ConfigFile:    "/etc/salt/master",
-		LogLevel:      "info",
-		CPUUsage:      0,
-		MemoryUsage:   0,
+		MasterStatus:      "running",
+		APIStatus:         "running",
+		MinionsUp:         len(up),
+		MinionsDown:       len(down),
+		SaltVersion:       h.extractAPISaltVersion(apiInfo),
+		ConfigFile:        "/etc/salt/master",
+		LogLevel:          "info",
+		CPUUsage:          0,
+		MemoryUsage:       0,
 		ActiveConnections: 0,
 	}
 	_ = down // 可用于前端显示 down 数量
@@ -544,15 +554,15 @@ func (h *SaltStackHandler) getDemoSaltStackStatus() SaltStackStatus {
 		LastUpdated: time.Now(),
 		Demo:        true,
 		// 兼容字段
-		MasterStatus:  "running",
-		APIStatus:     "running",
-		MinionsUp:     2,
-		MinionsDown:   1,
-		SaltVersion:   "3006.4",
-		ConfigFile:    "/etc/salt/master",
-		LogLevel:      "info",
-		CPUUsage:      12,
-		MemoryUsage:   23,
+		MasterStatus:      "running",
+		APIStatus:         "running",
+		MinionsUp:         2,
+		MinionsDown:       1,
+		SaltVersion:       "3006.4",
+		ConfigFile:        "/etc/salt/master",
+		LogLevel:          "info",
+		CPUUsage:          12,
+		MemoryUsage:       23,
 		ActiveConnections: 2,
 	}
 }
@@ -692,15 +702,27 @@ func (h *SaltStackHandler) getRealJobs(client *saltAPIClient, limit int) ([]Salt
 			for jid, v := range jobsMap {
 				if info, ok := v.(map[string]interface{}); ok {
 					j := SaltJob{JID: jid}
-					if f, ok := info["Function"].(string); ok { j.Function = f }
-					if t, ok := info["Target"].(string); ok { j.Target = t }
-					if u, ok := info["User"].(string); ok { j.User = u }
+					if f, ok := info["Function"].(string); ok {
+						j.Function = f
+					}
+					if t, ok := info["Target"].(string); ok {
+						j.Target = t
+					}
+					if u, ok := info["User"].(string); ok {
+						j.User = u
+					}
 					if args, ok := info["Arguments"].([]interface{}); ok {
-						for _, a := range args { j.Arguments = append(j.Arguments, fmt.Sprint(a)) }
+						for _, a := range args {
+							j.Arguments = append(j.Arguments, fmt.Sprint(a))
+						}
 					}
 					// 尝试解析开始时间
 					if st, ok := info["StartTime"].(string); ok {
-						if ts, err := time.Parse(time.RFC3339, st); err == nil { j.StartTime = ts } else { j.StartTime = time.Now() }
+						if ts, err := time.Parse(time.RFC3339, st); err == nil {
+							j.StartTime = ts
+						} else {
+							j.StartTime = time.Now()
+						}
 					} else {
 						j.StartTime = time.Now()
 					}
@@ -915,9 +937,9 @@ func (h *SaltStackHandler) parseWheelKeys(resp map[string]interface{}) (minions,
 						}
 						return res
 					}
-					minions = toStrings(r["minions"])        
-					pre = toStrings(r["minions_pre"])        
-					rejected = toStrings(r["minions_rejected"])        
+					minions = toStrings(r["minions"])
+					pre = toStrings(r["minions_pre"])
+					rejected = toStrings(r["minions_rejected"])
 				}
 			}
 		}
@@ -966,9 +988,9 @@ func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string
 // ExecuteSaltCommand 执行Salt命令
 func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 	var request struct {
-		Target   string      `json:"target" binding:"required"`
-		Function string      `json:"function" binding:"required"`
-		Args     []string    `json:"args"`
+		Target   string   `json:"target" binding:"required"`
+		Function string   `json:"function" binding:"required"`
+		Args     []string `json:"args"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -1060,7 +1082,7 @@ func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
 		}
 
 		kwarg := map[string]interface{}{
-			"stdin": r.Code,
+			"stdin":        r.Code,
 			"python_shell": true,
 		}
 		if r.Timeout > 0 {
@@ -1068,11 +1090,11 @@ func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
 		}
 
 		payload := map[string]interface{}{
-			"client":  "local",
-			"tgt":     r.Target,
-			"fun":     "cmd.run",
-			"arg":     []interface{}{cmd},
-			"kwarg":   kwarg,
+			"client": "local",
+			"tgt":    r.Target,
+			"fun":    "cmd.run",
+			"arg":    []interface{}{cmd},
+			"kwarg":  kwarg,
 		}
 
 		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "dispatch", Message: fmt.Sprintf("下发到目标: %s", r.Target)})

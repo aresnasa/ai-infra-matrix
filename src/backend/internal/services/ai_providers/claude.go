@@ -50,7 +50,7 @@ func (p *ClaudeProvider) ValidateConfig(config *models.AIAssistantConfig) error 
 // Chat 发送聊天请求
 func (p *ClaudeProvider) Chat(ctx context.Context, request ChatRequest) (*ChatResponse, error) {
 	startTime := time.Now()
-	
+
 	// 构建Claude请求格式
 	messages := make([]map[string]string, 0, len(request.Messages))
 	for _, msg := range request.Messages {
@@ -64,47 +64,47 @@ func (p *ClaudeProvider) Chat(ctx context.Context, request ChatRequest) (*ChatRe
 			"content": msg.Content,
 		})
 	}
-	
+
 	requestBody := map[string]interface{}{
 		"model":      request.Model,
 		"max_tokens": request.MaxTokens,
 		"messages":   messages,
 	}
-	
+
 	// Claude使用system参数而不是system消息
 	if request.SystemPrompt != "" {
 		requestBody["system"] = request.SystemPrompt
 	}
-	
+
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %v", err)
 	}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", p.config.APIEndpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.config.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
-	
+
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %v", err)
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	// 解析Claude响应
 	var claudeResp struct {
 		Content []struct {
@@ -115,18 +115,18 @@ func (p *ClaudeProvider) Chat(ctx context.Context, request ChatRequest) (*ChatRe
 			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	
+
 	if err := json.Unmarshal(body, &claudeResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %v", err)
 	}
-	
+
 	if len(claudeResp.Content) == 0 {
 		return nil, fmt.Errorf("no response from Claude")
 	}
-	
+
 	responseTime := int(time.Since(startTime).Milliseconds())
 	totalTokens := claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens
-	
+
 	return &ChatResponse{
 		Content:      claudeResp.Content[0].Text,
 		TokensUsed:   totalTokens,
@@ -145,11 +145,11 @@ func (p *ClaudeProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, e
 	// Claude模型列表
 	models := []ModelInfo{
 		{
-			ID:          "claude-3-5-sonnet-20241022",
-			Name:        "Claude 3.5 Sonnet",
-			Provider:    "claude",
-			Type:        "chat",
-			MaxTokens:   200000,
+			ID:           "claude-3-5-sonnet-20241022",
+			Name:         "Claude 3.5 Sonnet",
+			Provider:     "claude",
+			Type:         "chat",
+			MaxTokens:    200000,
 			Capabilities: []string{"chat", "analysis", "coding", "vision"},
 			Cost: struct {
 				InputTokenPrice  float64 `json:"input_token_price"`
@@ -157,11 +157,11 @@ func (p *ClaudeProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, e
 			}{InputTokenPrice: 0.003, OutputTokenPrice: 0.015},
 		},
 		{
-			ID:          "claude-3-haiku-20240307",
-			Name:        "Claude 3 Haiku",
-			Provider:    "claude",
-			Type:        "chat",
-			MaxTokens:   200000,
+			ID:           "claude-3-haiku-20240307",
+			Name:         "Claude 3 Haiku",
+			Provider:     "claude",
+			Type:         "chat",
+			MaxTokens:    200000,
 			Capabilities: []string{"chat", "fast_response"},
 			Cost: struct {
 				InputTokenPrice  float64 `json:"input_token_price"`
@@ -169,11 +169,11 @@ func (p *ClaudeProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, e
 			}{InputTokenPrice: 0.00025, OutputTokenPrice: 0.00125},
 		},
 		{
-			ID:          "claude-3-opus-20240229",
-			Name:        "Claude 3 Opus",
-			Provider:    "claude",
-			Type:        "chat",
-			MaxTokens:   200000,
+			ID:           "claude-3-opus-20240229",
+			Name:         "Claude 3 Opus",
+			Provider:     "claude",
+			Type:         "chat",
+			MaxTokens:    200000,
 			Capabilities: []string{"chat", "analysis", "complex_reasoning"},
 			Cost: struct {
 				InputTokenPrice  float64 `json:"input_token_price"`
@@ -181,7 +181,7 @@ func (p *ClaudeProvider) GetAvailableModels(ctx context.Context) ([]ModelInfo, e
 			}{InputTokenPrice: 0.015, OutputTokenPrice: 0.075},
 		},
 	}
-	
+
 	return models, nil
 }
 
@@ -193,7 +193,7 @@ func (p *ClaudeProvider) TestConnection(ctx context.Context) error {
 		MaxTokens:   10,
 		Temperature: 0.1,
 	}
-	
+
 	_, err := p.Chat(ctx, testRequest)
 	return err
 }

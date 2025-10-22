@@ -16,7 +16,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Config load failed: %v", err)
 	}
-	
+
 	// 连接数据库
 	err = database.Connect(cfg)
 	if err != nil {

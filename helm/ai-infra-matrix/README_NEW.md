@@ -238,7 +238,7 @@ kubectl top nodes
 
 ```bash
 # 备份PostgreSQL数据
-kubectl exec -it deployment/ai-infra-matrix-postgresql -n ai-infra-matrix -- pg_dump -U postgres ai_infra_matrix > backup.sql
+kubectl exec -it deployment/ai-infra-matrix-postgresql -n ai_infra_matrix -- pg_dump -U postgres ai_infra_matrix > backup.sql
 
 # 备份PVC数据
 kubectl get pvc -n ai-infra-matrix

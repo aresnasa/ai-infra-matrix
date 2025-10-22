@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -45,7 +45,7 @@ func (ctrl *JupyterHubController) CreateHubConfig(c *gin.Context) {
 	// 测试连接
 	if err := ctrl.service.TestJupyterHubConnection(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed to connect to JupyterHub",
+			"error":   "Failed to connect to JupyterHub",
 			"details": err.Error(),
 		})
 		return
@@ -187,14 +187,14 @@ func (ctrl *JupyterHubController) TestConnection(c *gin.Context) {
 	if err := ctrl.service.TestJupyterHubConnection(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"connected": false,
-			"error": err.Error(),
+			"error":     err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"connected": true,
-		"message": "Connection successful",
+		"message":   "Connection successful",
 	})
 }
 
@@ -253,7 +253,7 @@ func (ctrl *JupyterHubController) GetTasks(c *gin.Context) {
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
-	
+
 	if page < 1 {
 		page = 1
 	}
@@ -497,18 +497,18 @@ func (ctrl *JupyterHubController) GetUserTasks(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"tasks": []map[string]interface{}{
 				{
-					"id":          1,
-					"task_name":   "数据分析任务",
-					"status":      "running",
-					"created_at":  "2025-08-01T10:00:00Z",
-					"progress":    65,
+					"id":         1,
+					"task_name":  "数据分析任务",
+					"status":     "running",
+					"created_at": "2025-08-01T10:00:00Z",
+					"progress":   65,
 				},
 				{
-					"id":          2,
-					"task_name":   "机器学习训练",
-					"status":      "completed",
-					"created_at":  "2025-08-01T09:00:00Z",
-					"progress":    100,
+					"id":         2,
+					"task_name":  "机器学习训练",
+					"status":     "completed",
+					"created_at": "2025-08-01T09:00:00Z",
+					"progress":   100,
 				},
 			},
 			"total": 2,
@@ -525,7 +525,7 @@ func (ctrl *JupyterHubController) GetUserTasks(c *gin.Context) {
 // RegisterRoutes 注册路由
 func (ctrl *JupyterHubController) RegisterRoutes(router *gin.RouterGroup) {
 	jupyterhub := router.Group("/jupyterhub")
-	
+
 	// 需要认证的路由
 	authenticated := jupyterhub.Group("")
 	authenticated.Use(middleware.AuthMiddlewareWithSession())
@@ -549,7 +549,7 @@ func (ctrl *JupyterHubController) RegisterRoutes(router *gin.RouterGroup) {
 		// JupyterHub用户管理
 		authenticated.GET("/users", ctrl.GetJupyterHubUsers)
 	}
-	
+
 	// 公开访问的API（用于前端页面，后续可以添加认证）
 	public := jupyterhub.Group("")
 	{

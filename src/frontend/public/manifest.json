@@ -1,6 +1,6 @@
 {
   "short_name": "AI-Matrix",
-  "name": "AI-Infra-Matrix - 人工智能基础设施管理平台",
+  "name": "ai-infra-matrix - 人工智能基础设施管理平台",
   "description": "集成JupyterHub、Kubernetes、Ansible等服务的智能基础设施管理平台",
   "icons": [
     {

@@ -118,7 +118,7 @@ func (jts *JobTemplateService) ListTemplates(ctx context.Context, userID uint, c
 // UpdateTemplate 更新作业模板
 func (jts *JobTemplateService) UpdateTemplate(ctx context.Context, id uint, userID uint, req *models.UpdateJobTemplateRequest) (*models.JobTemplate, error) {
 	var template models.JobTemplate
-	
+
 	// 检查模板是否存在且用户有权限修改
 	if err := jts.db.Where("id = ? AND user_id = ?", id, userID).First(&template).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -180,7 +180,7 @@ func (jts *JobTemplateService) DeleteTemplate(ctx context.Context, id uint, user
 // GetTemplateCategories 获取模板分类列表
 func (jts *JobTemplateService) GetTemplateCategories(ctx context.Context, userID uint) ([]string, error) {
 	var categories []string
-	
+
 	if err := jts.db.Model(&models.JobTemplate{}).
 		Select("DISTINCT category").
 		Where("(user_id = ? OR is_public = ?) AND category != ''", userID, true).
@@ -259,45 +259,45 @@ func (jts *JobTemplateService) GenerateScriptFromTemplate(template *models.JobTe
 // generateBasicScript 生成基本的 sbatch 脚本
 func (jts *JobTemplateService) generateBasicScript(template *models.JobTemplate, params map[string]string) string {
 	script := "#!/bin/bash\n"
-	
+
 	if template.Name != "" {
 		script += fmt.Sprintf("#SBATCH --job-name=%s\n", template.Name)
 	}
-	
+
 	if template.Partition != "" {
 		script += fmt.Sprintf("#SBATCH --partition=%s\n", template.Partition)
 	}
-	
+
 	if template.Nodes > 0 {
 		script += fmt.Sprintf("#SBATCH --nodes=%d\n", template.Nodes)
 	}
-	
+
 	if template.CPUs > 0 {
 		script += fmt.Sprintf("#SBATCH --ntasks=%d\n", template.CPUs)
 	}
-	
+
 	if template.Memory != "" {
 		script += fmt.Sprintf("#SBATCH --mem=%s\n", template.Memory)
 	}
-	
+
 	if template.TimeLimit != "" {
 		script += fmt.Sprintf("#SBATCH --time=%s\n", template.TimeLimit)
 	}
-	
+
 	if template.WorkingDir != "" {
 		script += fmt.Sprintf("#SBATCH --chdir=%s\n", template.WorkingDir)
 	}
-	
+
 	// 添加输出文件（通过参数传入）
 	if jobID, ok := params["JobID"]; ok {
 		script += fmt.Sprintf("#SBATCH --output=/tmp/slurm_job_%s.out\n", jobID)
 		script += fmt.Sprintf("#SBATCH --error=/tmp/slurm_job_%s.err\n", jobID)
 	}
-	
+
 	script += "\n# User command\n"
 	if template.Command != "" {
 		script += template.Command + "\n"
 	}
-	
+
 	return script
 }

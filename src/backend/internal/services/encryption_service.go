@@ -1,9 +1,10 @@
 package services
 
 import (
+	"fmt"
+
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-	"fmt"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -66,7 +67,7 @@ func (s *EncryptionModelService) EncryptUser(user *models.User) error {
 
 	// 密码通常已经通过bcrypt哈希，这里不需要额外加密
 	// 但如果有其他敏感字段可以在这里处理
-	
+
 	return nil
 }
 

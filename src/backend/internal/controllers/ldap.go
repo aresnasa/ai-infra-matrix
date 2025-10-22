@@ -27,10 +27,10 @@ func (lc *LDAPController) GetConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取LDAP配置失败"})
 		return
 	}
-	
+
 	// 隐藏敏感信息
 	config.BindPassword = ""
-	
+
 	c.JSON(http.StatusOK, gin.H{"data": config})
 }
 
@@ -41,30 +41,30 @@ func (lc *LDAPController) UpdateConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
-	
+
 	if err := lc.ldapService.UpdateConfig(&config); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新LDAP配置失败"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "LDAP配置更新成功"})
 }
 
 // TestConnection 测试LDAP连接
 func (lc *LDAPController) TestConnection(c *gin.Context) {
 	var testReq models.LDAPTestRequest
-	
+
 	// 尝试解析请求体
 	if err := c.ShouldBindJSON(&testReq); err != nil {
 		// 记录详细的解析错误
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求格式错误",
+			"error":   "请求格式错误",
 			"details": err.Error(),
 			"message": "请检查JSON格式是否正确，必填字段: server, port, bind_dn, bind_password, base_dn",
 		})
 		return
 	}
-	
+
 	// 验证必填字段
 	if testReq.Server == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "LDAP服务器地址不能为空"})
@@ -78,7 +78,7 @@ func (lc *LDAPController) TestConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "BaseDN不能为空"})
 		return
 	}
-	
+
 	// 设置Windows兼容的默认值
 	if testReq.Timeout <= 0 {
 		testReq.Timeout = 10 // 默认10秒超时
@@ -86,7 +86,7 @@ func (lc *LDAPController) TestConnection(c *gin.Context) {
 	if testReq.MaxConnections <= 0 {
 		testReq.MaxConnections = 5 // 默认最大5个连接
 	}
-	
+
 	// 构建LDAP配置
 	config := &models.LDAPConfig{
 		Server:       testReq.Server,
@@ -96,10 +96,10 @@ func (lc *LDAPController) TestConnection(c *gin.Context) {
 		BindDN:       testReq.BindDN,
 		BindPassword: testReq.BindPassword,
 	}
-	
+
 	// 测试连接
 	result := lc.ldapService.TestConnection(config)
-	
+
 	// 确保返回正确的HTTP状态码
 	if result.Success {
 		c.JSON(http.StatusOK, result)
@@ -120,13 +120,13 @@ func (lc *LDAPController) SyncUsers(c *gin.Context) {
 			DryRun:        false,
 		}
 	}
-	
+
 	result, err := lc.ldapService.SyncUsers(&options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "LDAP同步失败: " + err.Error()})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
@@ -137,13 +137,13 @@ func (lc *LDAPController) SearchUsers(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "搜索查询不能为空"})
 		return
 	}
-	
+
 	users, err := lc.ldapService.SearchUsers(query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "搜索LDAP用户失败: " + err.Error()})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"data": users})
 }
 
@@ -165,14 +165,14 @@ func (lc *LDAPController) GetRecommendedSettings(c *gin.Context) {
 	if serverType == "" {
 		serverType = "windows" // 默认为Windows AD
 	}
-	
+
 	helper := services.NewLDAPConnectionHelper()
 	settings := helper.GetRecommendedSettings(serverType)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"server_type": serverType,
-		"settings": settings,
-		"message": fmt.Sprintf("推荐的%s LDAP设置", serverType),
+		"settings":    settings,
+		"message":     fmt.Sprintf("推荐的%s LDAP设置", serverType),
 	})
 }
 
@@ -181,12 +181,12 @@ func (lc *LDAPController) ValidateConfig(c *gin.Context) {
 	var config models.LDAPConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "配置格式错误",
+			"error":   "配置格式错误",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// 进行配置验证，但不保存
 	testConfig := &models.LDAPConfig{
 		Server:       config.Server,
@@ -196,18 +196,18 @@ func (lc *LDAPController) ValidateConfig(c *gin.Context) {
 		BindDN:       config.BindDN,
 		BindPassword: config.BindPassword,
 	}
-	
+
 	result := lc.ldapService.TestConnection(testConfig)
-	
+
 	if result.Success {
 		c.JSON(http.StatusOK, gin.H{
-			"valid": true,
+			"valid":   true,
 			"message": "配置验证通过",
 			"details": result.Details,
 		})
 	} else {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"valid": false,
+			"valid":   false,
 			"message": result.Message,
 			"details": result.Details,
 		})

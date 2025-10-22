@@ -178,7 +178,7 @@ func Load() (*Config, error) {
 			Port:     dbPort,
 			User:     getEnv("DB_USER", "postgres"),
 			Password: getEnv("DB_PASSWORD", "postgres"),
-			DBName:   getEnv("DB_NAME", "ai-infra-matrix"),
+			DBName:   getEnv("DB_NAME", "ai_infra_matrix"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{

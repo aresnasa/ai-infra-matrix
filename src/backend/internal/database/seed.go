@@ -1,8 +1,8 @@
 package database
 
 import (
-	"os"
 	"fmt"
+	"os"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/sirupsen/logrus"
@@ -78,7 +78,9 @@ func seedDefaultObjectStorageConfig() error {
 	}
 	sslEnabled := false
 	if v := os.Getenv("MINIO_USE_SSL"); v != "" {
-		if v == "1" || v == "true" || v == "TRUE" || v == "True" { sslEnabled = true }
+		if v == "1" || v == "true" || v == "TRUE" || v == "True" {
+			sslEnabled = true
+		}
 	}
 
 	// 创建默认MinIO配置
@@ -106,7 +108,7 @@ func seedDefaultObjectStorageConfig() error {
 			defaultConfig.CreatedBy = 0
 			result = DB.Omit("created_by").Create(defaultConfig)
 		}
-		
+
 		if result.Error != nil {
 			return fmt.Errorf("failed to create default object storage config: %w", result.Error)
 		}
@@ -130,16 +132,16 @@ func isConstraintError(err error) bool {
 	errStr := err.Error()
 	// PostgreSQL外键约束错误
 	return contains(errStr, "violates foreign key constraint") ||
-		   contains(errStr, "FOREIGN KEY constraint failed") ||
-		   contains(errStr, "foreign key constraint")
+		contains(errStr, "FOREIGN KEY constraint failed") ||
+		contains(errStr, "foreign key constraint")
 }
 
 // contains 检查字符串是否包含子字符串（不区分大小写）
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-		   (s == substr || 
-		    len(s) > len(substr) && 
-		    (containsAt(s, substr, 0) || contains(s[1:], substr)))
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			len(s) > len(substr) &&
+				(containsAt(s, substr, 0) || contains(s[1:], substr)))
 }
 
 // containsAt 检查字符串在指定位置是否包含子字符串

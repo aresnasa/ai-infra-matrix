@@ -23,7 +23,7 @@ func (s *HostService) CreateHost(host *models.Host) error {
 	// 清除相关缓存
 	cache.Delete(cache.HostsKey(host.ProjectID))
 	cache.Delete(cache.ProjectKey(host.ProjectID))
-	
+
 	return nil
 }
 
@@ -31,7 +31,7 @@ func (s *HostService) GetHosts(projectID uint) ([]models.Host, error) {
 	// 先从缓存获取
 	var hosts []models.Host
 	cacheKey := cache.HostsKey(projectID)
-	
+
 	if err := cache.Get(cacheKey, &hosts); err == nil {
 		return hosts, nil
 	}
@@ -43,7 +43,7 @@ func (s *HostService) GetHosts(projectID uint) ([]models.Host, error) {
 
 	// 存入缓存
 	cache.Set(cacheKey, hosts, 30*time.Minute)
-	
+
 	return hosts, nil
 }
 
@@ -56,7 +56,7 @@ func (s *HostService) UpdateHost(id uint, host *models.Host) error {
 	// 清除相关缓存
 	cache.Delete(cache.HostsKey(host.ProjectID))
 	cache.Delete(cache.ProjectKey(host.ProjectID))
-	
+
 	return nil
 }
 
@@ -73,6 +73,6 @@ func (s *HostService) DeleteHost(id uint) error {
 	// 清除相关缓存
 	cache.Delete(cache.HostsKey(host.ProjectID))
 	cache.Delete(cache.ProjectKey(host.ProjectID))
-	
+
 	return nil
 }

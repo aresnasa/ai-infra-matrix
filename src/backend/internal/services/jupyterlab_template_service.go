@@ -20,25 +20,25 @@ type JupyterLabTemplateService interface {
 	UpdateTemplate(template *models.JupyterLabTemplate) error
 	DeleteTemplate(id uint) error
 	SetDefaultTemplate(id uint) error
-	
+
 	// 资源配额管理
 	CreateResourceQuota(quota *models.JupyterLabResourceQuota) error
 	GetResourceQuota(templateID uint) (*models.JupyterLabResourceQuota, error)
 	UpdateResourceQuota(quota *models.JupyterLabResourceQuota) error
 	DeleteResourceQuota(templateID uint) error
-	
+
 	// 实例管理
 	CreateInstance(instance *models.JupyterLabInstance) error
 	GetInstance(id uint) (*models.JupyterLabInstance, error)
 	ListUserInstances(userID uint) ([]models.JupyterLabInstance, error)
 	UpdateInstance(instance *models.JupyterLabInstance) error
 	DeleteInstance(id uint) error
-	
+
 	// 模板克隆和导入导出
 	CloneTemplate(templateID uint, newName string, userID uint) (*models.JupyterLabTemplate, error)
 	ExportTemplate(id uint) (map[string]interface{}, error)
 	ImportTemplate(data map[string]interface{}, userID uint) (*models.JupyterLabTemplate, error)
-	
+
 	// 预定义模板
 	CreatePredefinedTemplates() error
 }
@@ -61,7 +61,7 @@ func (s *jupyterLabTemplateServiceImpl) CreateTemplate(template *models.JupyterL
 	if template.IsDefault {
 		s.db.Model(&models.JupyterLabTemplate{}).Where("is_default = ?", true).Update("is_default", false)
 	}
-	
+
 	return s.db.Create(template).Error
 }
 
@@ -83,16 +83,16 @@ func (s *jupyterLabTemplateServiceImpl) GetTemplateByName(name string) (*models.
 func (s *jupyterLabTemplateServiceImpl) ListTemplates(userID uint, includeInactive bool) ([]models.JupyterLabTemplate, error) {
 	var templates []models.JupyterLabTemplate
 	query := s.db.Preload("ResourceQuota")
-	
+
 	if !includeInactive {
 		query = query.Where("is_active = ?", true)
 	}
-	
+
 	// 用户只能看到自己创建的和公共的模板
 	if userID > 0 {
 		query = query.Where("created_by = ? OR created_by = 0", userID)
 	}
-	
+
 	err := query.Order("is_default DESC, created_at DESC").Find(&templates).Error
 	return templates, err
 }
@@ -103,7 +103,7 @@ func (s *jupyterLabTemplateServiceImpl) UpdateTemplate(template *models.JupyterL
 	if template.IsDefault {
 		s.db.Model(&models.JupyterLabTemplate{}).Where("id != ? AND is_default = ?", template.ID, true).Update("is_default", false)
 	}
-	
+
 	return s.db.Save(template).Error
 }
 
@@ -188,7 +188,7 @@ func (s *jupyterLabTemplateServiceImpl) CloneTemplate(templateID uint, newName s
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// 创建克隆模板
 	cloned := &models.JupyterLabTemplate{
 		Name:            newName,
@@ -205,13 +205,13 @@ func (s *jupyterLabTemplateServiceImpl) CloneTemplate(templateID uint, newName s
 		IsDefault:       false,
 		CreatedBy:       userID,
 	}
-	
+
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// 创建模板
 		if err := tx.Create(cloned).Error; err != nil {
 			return err
 		}
-		
+
 		// 克隆资源配额
 		if original.ResourceQuota != nil {
 			clonedQuota := &models.JupyterLabResourceQuota{
@@ -230,10 +230,10 @@ func (s *jupyterLabTemplateServiceImpl) CloneTemplate(templateID uint, newName s
 				return err
 			}
 		}
-		
+
 		return nil
 	})
-	
+
 	return cloned, err
 }
 
@@ -243,13 +243,13 @@ func (s *jupyterLabTemplateServiceImpl) ExportTemplate(id uint) (map[string]inte
 	if err != nil {
 		return nil, err
 	}
-	
+
 	export := map[string]interface{}{
-		"template": template,
-		"version":  "1.0",
+		"template":    template,
+		"version":     "1.0",
 		"exported_at": time.Now(),
 	}
-	
+
 	return export, nil
 }
 
@@ -259,25 +259,25 @@ func (s *jupyterLabTemplateServiceImpl) ImportTemplate(data map[string]interface
 	if !ok {
 		return nil, fmt.Errorf("invalid template data")
 	}
-	
+
 	// 解析模板数据
 	templateJSON, err := json.Marshal(templateData)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var template models.JupyterLabTemplate
 	if err := json.Unmarshal(templateJSON, &template); err != nil {
 		return nil, err
 	}
-	
+
 	// 重置ID和创建信息
 	template.ID = 0
 	template.CreatedBy = userID
 	template.IsDefault = false
 	template.CreatedAt = time.Time{}
 	template.UpdatedAt = time.Time{}
-	
+
 	// 创建导入的模板
 	err = s.CreateTemplate(&template)
 	return &template, err
@@ -287,14 +287,14 @@ func (s *jupyterLabTemplateServiceImpl) ImportTemplate(data map[string]interface
 func (s *jupyterLabTemplateServiceImpl) CreatePredefinedTemplates() error {
 	predefinedTemplates := []models.JupyterLabTemplate{
 		{
-			Name:          "Python 机器学习模板",
-			Description:   "包含常用机器学习库的Python环境",
-			PythonVersion: "3.11",
-			CondaVersion:  "23.7.0",
-			BaseImage:     "jupyter/datascience-notebook:latest",
-			Requirements:  `["numpy", "pandas", "scikit-learn", "matplotlib", "seaborn", "plotly", "jupyterlab"]`,
-			CondaPackages: `["pytorch", "tensorflow", "xgboost"]`,
-			SystemPackages: `["git", "vim", "curl"]`,
+			Name:            "Python 机器学习模板",
+			Description:     "包含常用机器学习库的Python环境",
+			PythonVersion:   "3.11",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "jupyter/datascience-notebook:latest",
+			Requirements:    `["numpy", "pandas", "scikit-learn", "matplotlib", "seaborn", "plotly", "jupyterlab"]`,
+			CondaPackages:   `["pytorch", "tensorflow", "xgboost"]`,
+			SystemPackages:  `["git", "vim", "curl"]`,
 			EnvironmentVars: `[{"name":"PYTHONPATH","value":"/home/jovyan/work"}]`,
 			StartupScript: `#!/bin/bash
 # 设置工作目录
@@ -306,14 +306,14 @@ exec "$@"`,
 			CreatedBy: 0, // 系统创建
 		},
 		{
-			Name:          "深度学习GPU模板",
-			Description:   "支持GPU的深度学习环境",
-			PythonVersion: "3.11",
-			CondaVersion:  "23.7.0",
-			BaseImage:     "tensorflow/tensorflow:latest-gpu-jupyter",
-			Requirements:  `["numpy", "pandas", "torch", "torchvision", "tensorflow", "keras", "transformers"]`,
-			CondaPackages: `["cudatoolkit", "cudnn"]`,
-			SystemPackages: `["git", "vim", "htop", "nvidia-smi"]`,
+			Name:            "深度学习GPU模板",
+			Description:     "支持GPU的深度学习环境",
+			PythonVersion:   "3.11",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "tensorflow/tensorflow:latest-gpu-jupyter",
+			Requirements:    `["numpy", "pandas", "torch", "torchvision", "tensorflow", "keras", "transformers"]`,
+			CondaPackages:   `["cudatoolkit", "cudnn"]`,
+			SystemPackages:  `["git", "vim", "htop", "nvidia-smi"]`,
 			EnvironmentVars: `[{"name":"CUDA_VISIBLE_DEVICES","value":"0"},{"name":"PYTHONPATH","value":"/home/jovyan/work"}]`,
 			StartupScript: `#!/bin/bash
 # 验证GPU可用性
@@ -325,14 +325,14 @@ exec "$@"`,
 			CreatedBy: 0,
 		},
 		{
-			Name:          "数据科学模板",
-			Description:   "数据分析和可视化环境",
-			PythonVersion: "3.11",
-			CondaVersion:  "23.7.0",
-			BaseImage:     "jupyter/datascience-notebook:latest",
-			Requirements:  `["pandas", "numpy", "scipy", "matplotlib", "seaborn", "plotly", "dash", "streamlit", "jupyter-dash"]`,
-			CondaPackages: `["r-base", "r-ggplot2", "r-dplyr"]`,
-			SystemPackages: `["git", "vim"]`,
+			Name:            "数据科学模板",
+			Description:     "数据分析和可视化环境",
+			PythonVersion:   "3.11",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "jupyter/datascience-notebook:latest",
+			Requirements:    `["pandas", "numpy", "scipy", "matplotlib", "seaborn", "plotly", "dash", "streamlit", "jupyter-dash"]`,
+			CondaPackages:   `["r-base", "r-ggplot2", "r-dplyr"]`,
+			SystemPackages:  `["git", "vim"]`,
 			EnvironmentVars: `[{"name":"PYTHONPATH","value":"/home/jovyan/work"}]`,
 			StartupScript: `#!/bin/bash
 # 设置R环境
@@ -344,7 +344,7 @@ exec "$@"`,
 			CreatedBy: 0,
 		},
 	}
-	
+
 	// 创建对应的资源配额
 	resourceQuotas := []models.JupyterLabResourceQuota{
 		{
@@ -382,7 +382,7 @@ exec "$@"`,
 			MaxLifetime:   10800, // 3小时
 		},
 	}
-	
+
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// 检查是否已经创建过预定义模板
 		var count int64
@@ -390,21 +390,21 @@ exec "$@"`,
 		if count > 0 {
 			return nil // 已经创建过了
 		}
-		
+
 		// 创建模板
 		for _, template := range predefinedTemplates {
 			if err := tx.Create(&template).Error; err != nil {
 				return err
 			}
 		}
-		
+
 		// 创建资源配额
 		for _, quota := range resourceQuotas {
 			if err := tx.Create(&quota).Error; err != nil {
 				return err
 			}
 		}
-		
+
 		return nil
 	})
 }

@@ -1637,3 +1637,5 @@ Denied Keys:
 Unaccepted Keys:
 Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑这里的8000端口是否正确渲染了，修复build.sh渲染代码,后端服务监听的是8002，但是backend的程序则是使用8000访问，这里需要修复go程序中硬编码端口的问题，需要读取环境变量.env中的配置，然后修改.env.example中的相关配置以及build.sh中的render函数，最终组合起来输出
 104. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
+105. 现在调整所有项目代码中的go和js代码将数据库ai-infra-matrix改为ai_infra_matrix这样才能正确的创建数据库
+106. 现在调整前端，将nightingale集成到iframe中，统一由frontend管理，读取https://n9e.github.io/docs/install/configuration/这里有jwt集成的配置

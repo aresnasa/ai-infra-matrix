@@ -21,21 +21,21 @@ func NewEnhancedDashboardController(db *gorm.DB) *EnhancedDashboardController {
 
 // DashboardStatsResponse 仪表板统计响应
 type DashboardStatsResponse struct {
-	TotalWidgets     int                    `json:"total_widgets"`
-	ActiveWidgets    int                    `json:"active_widgets"`
-	WidgetTypes      map[string]int         `json:"widget_types"`
-	WidgetCategories map[string]int         `json:"widget_categories"`
-	UserDashboards   int                    `json:"user_dashboards"`
-	PopularWidgets   []PopularWidget        `json:"popular_widgets"`
-	RecentActivity   []DashboardActivity    `json:"recent_activity"`
-	UsageStats       DashboardUsageStats    `json:"usage_stats"`
+	TotalWidgets     int                 `json:"total_widgets"`
+	ActiveWidgets    int                 `json:"active_widgets"`
+	WidgetTypes      map[string]int      `json:"widget_types"`
+	WidgetCategories map[string]int      `json:"widget_categories"`
+	UserDashboards   int                 `json:"user_dashboards"`
+	PopularWidgets   []PopularWidget     `json:"popular_widgets"`
+	RecentActivity   []DashboardActivity `json:"recent_activity"`
+	UsageStats       DashboardUsageStats `json:"usage_stats"`
 }
 
 type PopularWidget struct {
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Count       int    `json:"count"`
-	Icon        string `json:"icon"`
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+	Icon  string `json:"icon"`
 }
 
 type DashboardActivity struct {
@@ -48,39 +48,39 @@ type DashboardActivity struct {
 }
 
 type DashboardUsageStats struct {
-	TotalUsers        int                   `json:"total_users"`
-	ActiveUsers       int                   `json:"active_users"`
-	AvgWidgetsPerUser float64               `json:"avg_widgets_per_user"`
-	TopUsers          []UserUsageInfo       `json:"top_users"`
-	WidgetCategories  map[string]int        `json:"widget_categories"`
+	TotalUsers        int             `json:"total_users"`
+	ActiveUsers       int             `json:"active_users"`
+	AvgWidgetsPerUser float64         `json:"avg_widgets_per_user"`
+	TopUsers          []UserUsageInfo `json:"top_users"`
+	WidgetCategories  map[string]int  `json:"widget_categories"`
 }
 
 type UserUsageInfo struct {
-	UserID       uint   `json:"user_id"`
-	Username     string `json:"username"`
-	WidgetCount  int    `json:"widget_count"`
+	UserID       uint      `json:"user_id"`
+	Username     string    `json:"username"`
+	WidgetCount  int       `json:"widget_count"`
 	LastActivity time.Time `json:"last_activity"`
 }
 
 // DashboardTemplate 仪表板模板
 type DashboardTemplate struct {
-	ID          uint                     `json:"id" gorm:"primaryKey"`
-	Name        string                   `json:"name" gorm:"not null"`
-	Description string                   `json:"description"`
-	Category    string                   `json:"category"` // developer, admin, researcher, custom
-	IsPublic    bool                     `json:"is_public" gorm:"default:false"`
-	CreatedBy   uint                     `json:"created_by"`
-	Creator     models.User              `json:"creator" gorm:"foreignKey:CreatedBy"`
-	Config      string                   `json:"config" gorm:"type:text"` // JSON配置
-	UsageCount  int                      `json:"usage_count" gorm:"default:0"`
-	CreatedAt   time.Time                `json:"created_at"`
-	UpdatedAt   time.Time                `json:"updated_at"`
+	ID          uint        `json:"id" gorm:"primaryKey"`
+	Name        string      `json:"name" gorm:"not null"`
+	Description string      `json:"description"`
+	Category    string      `json:"category"` // developer, admin, researcher, custom
+	IsPublic    bool        `json:"is_public" gorm:"default:false"`
+	CreatedBy   uint        `json:"created_by"`
+	Creator     models.User `json:"creator" gorm:"foreignKey:CreatedBy"`
+	Config      string      `json:"config" gorm:"type:text"` // JSON配置
+	UsageCount  int         `json:"usage_count" gorm:"default:0"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 // GetDashboardStats 获取仪表板统计信息
 func (edc *EnhancedDashboardController) GetDashboardStats(c *gin.Context) {
 	var stats DashboardStatsResponse
-	
+
 	// 计算总widget数量和活跃widget数量
 	var dashboards []models.Dashboard
 	if err := edc.db.Find(&dashboards).Error; err != nil {
@@ -91,20 +91,20 @@ func (edc *EnhancedDashboardController) GetDashboardStats(c *gin.Context) {
 	stats.UserDashboards = len(dashboards)
 	stats.WidgetTypes = make(map[string]int)
 	stats.WidgetCategories = make(map[string]int)
-	
+
 	totalWidgets := 0
 	activeWidgets := 0
-	
+
 	// Widget类型映射到类别
 	widgetCategories := map[string]string{
-		"JUPYTERHUB":  "development",
-		"GITEA":       "development", 
-		"KUBERNETES":  "infrastructure",
-		"ANSIBLE":     "automation",
-		"SLURM":       "compute",
-		"SALTSTACK":   "infrastructure",
-		"MONITORING":  "monitoring",
-		"CUSTOM":      "custom",
+		"JUPYTERHUB": "development",
+		"GITEA":      "development",
+		"KUBERNETES": "infrastructure",
+		"ANSIBLE":    "automation",
+		"SLURM":      "compute",
+		"SALTSTACK":  "infrastructure",
+		"MONITORING": "monitoring",
+		"CUSTOM":     "custom",
 	}
 
 	for _, dashboard := range dashboards {
@@ -112,21 +112,21 @@ func (edc *EnhancedDashboardController) GetDashboardStats(c *gin.Context) {
 		if err := json.Unmarshal([]byte(dashboard.Config), &config); err != nil {
 			continue
 		}
-		
+
 		for _, widget := range config.Widgets {
 			totalWidgets++
 			stats.WidgetTypes[widget.Type]++
-			
+
 			if category, exists := widgetCategories[widget.Type]; exists {
 				stats.WidgetCategories[category]++
 			}
-			
+
 			if widget.Visible {
 				activeWidgets++
 			}
 		}
 	}
-	
+
 	stats.TotalWidgets = totalWidgets
 	stats.ActiveWidgets = activeWidgets
 
@@ -146,14 +146,14 @@ func (edc *EnhancedDashboardController) GetDashboardStats(c *gin.Context) {
 func (edc *EnhancedDashboardController) getPopularWidgets(widgetTypes map[string]int) []PopularWidget {
 	// Widget类型到显示信息的映射
 	widgetInfo := map[string]map[string]string{
-		"JUPYTERHUB":  {"name": "JupyterHub", "icon": "🚀"},
-		"GITEA":       {"name": "Gitea", "icon": "📚"},
-		"KUBERNETES":  {"name": "Kubernetes", "icon": "☸️"},
-		"ANSIBLE":     {"name": "Ansible", "icon": "🔧"},
-		"SLURM":       {"name": "Slurm", "icon": "🖥️"},
-		"SALTSTACK":   {"name": "SaltStack", "icon": "⚡"},
-		"MONITORING":  {"name": "监控面板", "icon": "📊"},
-		"CUSTOM":      {"name": "自定义", "icon": "🔗"},
+		"JUPYTERHUB": {"name": "JupyterHub", "icon": "🚀"},
+		"GITEA":      {"name": "Gitea", "icon": "📚"},
+		"KUBERNETES": {"name": "Kubernetes", "icon": "☸️"},
+		"ANSIBLE":    {"name": "Ansible", "icon": "🔧"},
+		"SLURM":      {"name": "Slurm", "icon": "🖥️"},
+		"SALTSTACK":  {"name": "SaltStack", "icon": "⚡"},
+		"MONITORING": {"name": "监控面板", "icon": "📊"},
+		"CUSTOM":     {"name": "自定义", "icon": "🔗"},
 	}
 
 	var popular []PopularWidget
@@ -162,7 +162,7 @@ func (edc *EnhancedDashboardController) getPopularWidgets(widgetTypes map[string
 		if info == nil {
 			info = map[string]string{"name": widgetType, "icon": "🔲"}
 		}
-		
+
 		popular = append(popular, PopularWidget{
 			Type:  widgetType,
 			Name:  info["name"],
@@ -193,7 +193,7 @@ func (edc *EnhancedDashboardController) getRecentActivity() []DashboardActivity 
 	// 这里应该从活动日志表获取，简化起见直接返回模拟数据
 	// 在实际实现中，应该有一个单独的活动日志表来记录用户操作
 	var activities []DashboardActivity
-	
+
 	var recentDashboards []models.Dashboard
 	if err := edc.db.Preload("User").
 		Order("updated_at DESC").
@@ -217,38 +217,38 @@ func (edc *EnhancedDashboardController) getRecentActivity() []DashboardActivity 
 // getUsageStats 获取使用统计
 func (edc *EnhancedDashboardController) getUsageStats(dashboards []models.Dashboard) DashboardUsageStats {
 	var stats DashboardUsageStats
-	
+
 	// 计算总用户数
 	var totalUsers int64
 	edc.db.Model(&models.User{}).Count(&totalUsers)
 	stats.TotalUsers = int(totalUsers)
-	
+
 	stats.ActiveUsers = len(dashboards)
-	
+
 	// 计算平均widget数
 	if len(dashboards) > 0 {
 		totalWidgets := 0
 		userWidgetCounts := make(map[uint]int)
-		
+
 		for _, dashboard := range dashboards {
 			var config models.DashboardConfig
 			if err := json.Unmarshal([]byte(dashboard.Config), &config); err != nil {
 				continue
 			}
-			
+
 			widgetCount := len(config.Widgets)
 			totalWidgets += widgetCount
 			userWidgetCounts[dashboard.UserID] = widgetCount
 		}
-		
+
 		stats.AvgWidgetsPerUser = float64(totalWidgets) / float64(len(dashboards))
-		
+
 		// 获取top用户
 		type userWidgetInfo struct {
 			userID      uint
 			widgetCount int
 		}
-		
+
 		var topUsers []userWidgetInfo
 		for userID, count := range userWidgetCounts {
 			topUsers = append(topUsers, userWidgetInfo{
@@ -256,7 +256,7 @@ func (edc *EnhancedDashboardController) getUsageStats(dashboards []models.Dashbo
 				widgetCount: count,
 			})
 		}
-		
+
 		// 排序
 		for i := 0; i < len(topUsers)-1; i++ {
 			for j := i + 1; j < len(topUsers); j++ {
@@ -265,18 +265,18 @@ func (edc *EnhancedDashboardController) getUsageStats(dashboards []models.Dashbo
 				}
 			}
 		}
-		
+
 		// 获取用户信息
 		if len(topUsers) > 5 {
 			topUsers = topUsers[:5]
 		}
-		
+
 		for _, userInfo := range topUsers {
 			var user models.User
 			if err := edc.db.First(&user, userInfo.userID).Error; err == nil {
 				var dashboard models.Dashboard
 				edc.db.Where("user_id = ?", userInfo.userID).First(&dashboard)
-				
+
 				stats.TopUsers = append(stats.TopUsers, UserUsageInfo{
 					UserID:       userInfo.userID,
 					Username:     user.Username,
@@ -286,7 +286,7 @@ func (edc *EnhancedDashboardController) getUsageStats(dashboards []models.Dashbo
 			}
 		}
 	}
-	
+
 	return stats
 }
 
@@ -323,9 +323,9 @@ func (edc *EnhancedDashboardController) GetUserDashboardEnhanced(c *gin.Context)
 		"last_updated": dashboard.UpdatedAt,
 		"created_at":   dashboard.CreatedAt,
 		"meta": gin.H{
-			"total_widgets":  len(config.Widgets),
+			"total_widgets":   len(config.Widgets),
 			"visible_widgets": edc.countVisibleWidgets(config.Widgets),
-			"categories":     edc.categorizeWidgets(config.Widgets),
+			"categories":      edc.categorizeWidgets(config.Widgets),
 		},
 	}
 
@@ -339,15 +339,15 @@ func (edc *EnhancedDashboardController) getDefaultConfigByUserRole(c *gin.Contex
 	if !exists {
 		roles = []string{"user"}
 	}
-	
+
 	roleList := roles.([]string)
-	
+
 	// 根据角色确定默认配置
 	var defaultWidgets []models.DashboardWidget
-	
+
 	isAdmin := edc.hasRole(roleList, "admin")
 	isOperator := edc.hasRole(roleList, "operator")
-	
+
 	if isAdmin {
 		// 管理员默认配置
 		defaultWidgets = []models.DashboardWidget{
@@ -445,7 +445,7 @@ func (edc *EnhancedDashboardController) getDefaultConfigByUserRole(c *gin.Contex
 	return gin.H{
 		"widgets": defaultWidgets,
 		"meta": gin.H{
-			"is_default":     true,
+			"is_default":      true,
 			"recommended_for": edc.getRoleDescription(roleList),
 			"total_widgets":   len(defaultWidgets),
 		},
@@ -487,18 +487,18 @@ func (edc *EnhancedDashboardController) countVisibleWidgets(widgets []models.Das
 // categorizeWidgets 对widget进行分类
 func (edc *EnhancedDashboardController) categorizeWidgets(widgets []models.DashboardWidget) map[string]int {
 	categories := make(map[string]int)
-	
+
 	categoryMap := map[string]string{
-		"JUPYTERHUB":  "development",
-		"GITEA":       "development",
-		"KUBERNETES":  "infrastructure", 
-		"ANSIBLE":     "automation",
-		"SLURM":       "compute",
-		"SALTSTACK":   "infrastructure",
-		"MONITORING":  "monitoring",
-		"CUSTOM":      "custom",
+		"JUPYTERHUB": "development",
+		"GITEA":      "development",
+		"KUBERNETES": "infrastructure",
+		"ANSIBLE":    "automation",
+		"SLURM":      "compute",
+		"SALTSTACK":  "infrastructure",
+		"MONITORING": "monitoring",
+		"CUSTOM":     "custom",
 	}
-	
+
 	for _, widget := range widgets {
 		if category, exists := categoryMap[widget.Type]; exists {
 			categories[category]++
@@ -506,7 +506,7 @@ func (edc *EnhancedDashboardController) categorizeWidgets(widgets []models.Dashb
 			categories["other"]++
 		}
 	}
-	
+
 	return categories
 }
 
@@ -534,7 +534,7 @@ func (edc *EnhancedDashboardController) CloneDashboard(c *gin.Context) {
 	// 创建或更新当前用户的仪表板
 	var userDashboard models.Dashboard
 	err = edc.db.Where("user_id = ?", userID).First(&userDashboard).Error
-	
+
 	if err == gorm.ErrRecordNotFound {
 		// 创建新的仪表板
 		userDashboard = models.Dashboard{
@@ -558,7 +558,7 @@ func (edc *EnhancedDashboardController) CloneDashboard(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "仪表板克隆成功",
+		"message":      "仪表板克隆成功",
 		"dashboard_id": userDashboard.ID,
 	})
 }
@@ -606,8 +606,8 @@ func (edc *EnhancedDashboardController) ImportDashboard(c *gin.Context) {
 	}
 
 	var req struct {
-		Config   string `json:"config" binding:"required"`
-		Overwrite bool  `json:"overwrite"`
+		Config    string `json:"config" binding:"required"`
+		Overwrite bool   `json:"overwrite"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -625,7 +625,7 @@ func (edc *EnhancedDashboardController) ImportDashboard(c *gin.Context) {
 	// 检查用户是否已有仪表板
 	var dashboard models.Dashboard
 	err := edc.db.Where("user_id = ?", userID).First(&dashboard).Error
-	
+
 	if err == gorm.ErrRecordNotFound {
 		// 创建新仪表板
 		dashboard = models.Dashboard{
@@ -645,7 +645,7 @@ func (edc *EnhancedDashboardController) ImportDashboard(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "仪表板已存在，请选择覆盖选项"})
 			return
 		}
-		
+
 		dashboard.Config = req.Config
 		if err := edc.db.Save(&dashboard).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新仪表板失败"})
@@ -654,8 +654,8 @@ func (edc *EnhancedDashboardController) ImportDashboard(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "仪表板导入成功",
-		"dashboard_id": dashboard.ID,
+		"message":       "仪表板导入成功",
+		"dashboard_id":  dashboard.ID,
 		"widgets_count": len(config.Widgets),
 	})
 }
@@ -663,25 +663,25 @@ func (edc *EnhancedDashboardController) ImportDashboard(c *gin.Context) {
 // GetDashboardTemplates 获取仪表板模板列表
 func (edc *EnhancedDashboardController) GetDashboardTemplates(c *gin.Context) {
 	var templates []models.DashboardTemplate
-	
+
 	// 查询所有公共模板和当前用户的私有模板
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
 		return
 	}
-	
+
 	err := edc.db.Where("is_public = ? OR created_by = ?", true, userID).
 		Order("created_at DESC").Find(&templates).Error
-	
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取模板列表失败"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"templates": templates,
-		"total": len(templates),
+		"total":     len(templates),
 	})
 }
 
@@ -692,7 +692,7 @@ func (edc *EnhancedDashboardController) CreateDashboardTemplate(c *gin.Context) 
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
 		return
 	}
-	
+
 	var req struct {
 		Name        string `json:"name" binding:"required"`
 		Description string `json:"description"`
@@ -701,25 +701,25 @@ func (edc *EnhancedDashboardController) CreateDashboardTemplate(c *gin.Context) 
 		IsPublic    bool   `json:"is_public"`
 		Tags        string `json:"tags"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// 验证配置格式
 	var config models.DashboardConfig
 	if err := json.Unmarshal([]byte(req.Config), &config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "配置格式无效"})
 		return
 	}
-	
+
 	template := models.DashboardTemplate{
 		Name:        req.Name,
 		Description: req.Description,
 		Role:        req.Category, // 使用 Role 字段替代 Category
 		Category:    req.Category,
-		Config:      req.Config,   // 存储为JSON字符串
+		Config:      req.Config, // 存储为JSON字符串
 		IsDefault:   false,
 		IsPublic:    req.IsPublic,
 		Tags:        req.Tags,
@@ -727,14 +727,14 @@ func (edc *EnhancedDashboardController) CreateDashboardTemplate(c *gin.Context) 
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
-	
+
 	if err := edc.db.Create(&template).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建模板失败"})
 		return
 	}
-	
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "模板创建成功",
+		"message":  "模板创建成功",
 		"template": template,
 	})
 }
@@ -747,7 +747,7 @@ func (edc *EnhancedDashboardController) UpdateDashboardTemplate(c *gin.Context) 
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
 		return
 	}
-	
+
 	var template models.DashboardTemplate
 	if err := edc.db.First(&template, templateID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -757,13 +757,13 @@ func (edc *EnhancedDashboardController) UpdateDashboardTemplate(c *gin.Context) 
 		}
 		return
 	}
-	
+
 	// 检查权限（只有创建者可以修改）
 	if template.CreatedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权限修改此模板"})
 		return
 	}
-	
+
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -772,12 +772,12 @@ func (edc *EnhancedDashboardController) UpdateDashboardTemplate(c *gin.Context) 
 		IsPublic    bool   `json:"is_public"`
 		Tags        string `json:"tags"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// 验证配置格式（如果提供了新配置）
 	if req.Config != "" {
 		var config models.DashboardConfig
@@ -787,7 +787,7 @@ func (edc *EnhancedDashboardController) UpdateDashboardTemplate(c *gin.Context) 
 		}
 		template.Config = req.Config
 	}
-	
+
 	// 更新字段
 	if req.Name != "" {
 		template.Name = req.Name
@@ -802,14 +802,14 @@ func (edc *EnhancedDashboardController) UpdateDashboardTemplate(c *gin.Context) 
 		template.Tags = req.Tags
 	}
 	template.IsPublic = req.IsPublic
-	
+
 	if err := edc.db.Save(&template).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新模板失败"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "模板更新成功",
+		"message":  "模板更新成功",
 		"template": template,
 	})
 }
@@ -822,7 +822,7 @@ func (edc *EnhancedDashboardController) DeleteDashboardTemplate(c *gin.Context) 
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
 		return
 	}
-	
+
 	var template models.DashboardTemplate
 	if err := edc.db.First(&template, templateID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -832,18 +832,18 @@ func (edc *EnhancedDashboardController) DeleteDashboardTemplate(c *gin.Context) 
 		}
 		return
 	}
-	
+
 	// 检查权限（只有创建者可以删除）
 	if template.CreatedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权限删除此模板"})
 		return
 	}
-	
+
 	if err := edc.db.Delete(&template).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除模板失败"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"message": "模板删除成功"})
 }
 
@@ -855,7 +855,7 @@ func (edc *EnhancedDashboardController) ApplyDashboardTemplate(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
 		return
 	}
-	
+
 	var template models.DashboardTemplate
 	if err := edc.db.First(&template, templateID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -865,17 +865,17 @@ func (edc *EnhancedDashboardController) ApplyDashboardTemplate(c *gin.Context) {
 		}
 		return
 	}
-	
+
 	// 检查模板访问权限
 	if !template.IsPublic && template.CreatedBy != userID.(uint) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权限访问此模板"})
 		return
 	}
-	
+
 	// 查询或创建用户仪表板
 	var dashboard models.Dashboard
 	err := edc.db.Where("user_id = ?", userID).First(&dashboard).Error
-	
+
 	if err == gorm.ErrRecordNotFound {
 		// 创建新仪表板
 		dashboard = models.Dashboard{
@@ -897,10 +897,10 @@ func (edc *EnhancedDashboardController) ApplyDashboardTemplate(c *gin.Context) {
 			return
 		}
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "模板应用成功",
-		"dashboard_id": dashboard.ID,
+		"message":       "模板应用成功",
+		"dashboard_id":  dashboard.ID,
 		"template_name": template.Name,
 	})
 }

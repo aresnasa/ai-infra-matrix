@@ -773,8 +773,8 @@ type Cluster struct {
 	Description string    `json:"description" gorm:"type:text"`
 	Host        string    `json:"host" gorm:"not null;size:255"`
 	Port        int       `json:"port" gorm:"default:22"`
-	Username    string    `json:"username" gorm:"size:100"`   // SSH用户名
-	Password    string    `json:"password,omitempty" gorm:"size:255"` // SSH密码
+	Username    string    `json:"username" gorm:"size:100"`                        // SSH用户名
+	Password    string    `json:"password,omitempty" gorm:"size:255"`              // SSH密码
 	Status      string    `json:"status" gorm:"not null;default:'active';size:20"` // active, inactive, maintenance
 	Config      string    `json:"config" gorm:"type:json"`                         // 集群配置JSON
 	CreatedAt   time.Time `json:"created_at"`
@@ -793,7 +793,7 @@ type JobTemplate struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Name        string    `json:"name" gorm:"not null;size:255"`
 	Description string    `json:"description" gorm:"type:text"`
-	Script      string    `json:"script" gorm:"type:text"` // 完整的sbatch脚本内容
+	Script      string    `json:"script" gorm:"type:text"`  // 完整的sbatch脚本内容
 	Command     string    `json:"command" gorm:"type:text"` // 主要执行命令
 	Partition   string    `json:"partition" gorm:"size:100"`
 	Nodes       int       `json:"nodes" gorm:"default:1"`

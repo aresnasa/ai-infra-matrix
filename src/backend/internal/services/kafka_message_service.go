@@ -64,9 +64,9 @@ func (k *KafkaMessageService) SendMessage(topic string, message *KafkaMessage) e
 	}
 
 	msg := &sarama.ProducerMessage{
-		Topic: topic,
-		Key:   sarama.StringEncoder(fmt.Sprintf("%d", message.UserID)),
-		Value: sarama.StringEncoder(messageData),
+		Topic:     topic,
+		Key:       sarama.StringEncoder(fmt.Sprintf("%d", message.UserID)),
+		Value:     sarama.StringEncoder(messageData),
 		Timestamp: time.Now(),
 	}
 
@@ -100,9 +100,9 @@ func (k *KafkaMessageService) SendMessageEvent(eventType string, messageID strin
 	event := &KafkaMessage{
 		ID:        fmt.Sprintf("event_%s_%d", eventType, time.Now().UnixNano()),
 		Type:      eventType,
-		UserID:   userID,
-		Content:  messageID,
-		Context:  data,
+		UserID:    userID,
+		Content:   messageID,
+		Context:   data,
 		Timestamp: time.Now(),
 	}
 
@@ -120,9 +120,9 @@ func (k *KafkaMessageService) CacheMessage(conversationID uint, message *models.
 	event := &KafkaMessage{
 		ID:        fmt.Sprintf("cache_%d_%d", conversationID, time.Now().UnixNano()),
 		Type:      "cache_message",
-		UserID:   0, // 系统消息
-		Content:  fmt.Sprintf("Cache message for conversation %d", conversationID),
-		Context:  cacheData,
+		UserID:    0, // 系统消息
+		Content:   fmt.Sprintf("Cache message for conversation %d", conversationID),
+		Context:   cacheData,
 		Timestamp: time.Now(),
 	}
 

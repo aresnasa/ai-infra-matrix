@@ -19,7 +19,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Config load failed: %v", err)
 	}
-	
+
 	// 连接数据库
 	err = database.Connect(cfg)
 	if err != nil {
@@ -66,7 +66,7 @@ func main() {
 		}
 		cluster.KubeConfig = decrypted
 		fmt.Println("✓ KubeConfig decrypted successfully")
-		
+
 		// 调试：打印解密后的kubeconfig前200个字符
 		configPreview := cluster.KubeConfig
 		if len(configPreview) > 200 {
@@ -78,7 +78,7 @@ func main() {
 	// Print decrypted kubeconfig for debugging
 	fmt.Println("=== DEBUG: Decrypted Kubeconfig Content ===")
 	fmt.Printf("Length: %d bytes\n", len(cluster.KubeConfig))
-	
+
 	// Print more content to see the structure
 	fmt.Println("Content (first 1000 chars):")
 	if len(cluster.KubeConfig) > 1000 {
@@ -86,13 +86,13 @@ func main() {
 	} else {
 		fmt.Println(string(cluster.KubeConfig))
 	}
-	
+
 	// Check for specific characters that might cause issues
 	content := string(cluster.KubeConfig)
 	fmt.Printf("Contains newlines: %v\n", strings.Contains(content, "\n"))
 	fmt.Printf("Contains carriage returns: %v\n", strings.Contains(content, "\r"))
 	fmt.Printf("Line count: %d\n", strings.Count(content, "\n"))
-	
+
 	// Check for null bytes or other binary data
 	hasNullBytes := false
 	for i, b := range []byte(cluster.KubeConfig) {
@@ -105,7 +105,7 @@ func main() {
 	if !hasNullBytes {
 		fmt.Printf("No null bytes found in kubeconfig\n")
 	}
-	
+
 	fmt.Printf("First 20 bytes (hex): %x\n", []byte(cluster.KubeConfig[:min(20, len(cluster.KubeConfig))]))
 	fmt.Printf("Last 20 bytes (hex): %x\n", []byte(cluster.KubeConfig[max(0, len(cluster.KubeConfig)-20):]))
 	fmt.Println("=== END DEBUG ===")
@@ -142,7 +142,7 @@ func main() {
 	}
 
 	fmt.Printf("✓ Successfully connected to cluster!\n")
-	fmt.Printf("Cluster version: %s (Major: %s, Minor: %s)\n", 
+	fmt.Printf("Cluster version: %s (Major: %s, Minor: %s)\n",
 		versionInfo.GitVersion, versionInfo.Major, versionInfo.Minor)
 	fmt.Printf("Platform: %s\n", versionInfo.Platform)
 	fmt.Printf("Number of nodes: %d\n", len(nodes.Items))

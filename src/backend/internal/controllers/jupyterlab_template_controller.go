@@ -32,16 +32,16 @@ func (ctrl *JupyterLabTemplateController) CreateTemplate(c *gin.Context) {
 	}
 
 	var req struct {
-		Name            string                         `json:"name" binding:"required"`
-		Description     string                         `json:"description"`
-		PythonVersion   string                         `json:"python_version"`
-		CondaVersion    string                         `json:"conda_version"`
-		BaseImage       string                         `json:"base_image"`
-		Requirements    []string                       `json:"requirements"`
-		CondaPackages   []string                       `json:"conda_packages"`
-		SystemPackages  []string                       `json:"system_packages"`
-		EnvironmentVars []models.EnvironmentVariable   `json:"environment_vars"`
-		StartupScript   string                         `json:"startup_script"`
+		Name            string                          `json:"name" binding:"required"`
+		Description     string                          `json:"description"`
+		PythonVersion   string                          `json:"python_version"`
+		CondaVersion    string                          `json:"conda_version"`
+		BaseImage       string                          `json:"base_image"`
+		Requirements    []string                        `json:"requirements"`
+		CondaPackages   []string                        `json:"conda_packages"`
+		SystemPackages  []string                        `json:"system_packages"`
+		EnvironmentVars []models.EnvironmentVariable    `json:"environment_vars"`
+		StartupScript   string                          `json:"startup_script"`
 		ResourceQuota   *models.JupyterLabResourceQuota `json:"resource_quota"`
 	}
 
@@ -155,17 +155,17 @@ func (ctrl *JupyterLabTemplateController) UpdateTemplate(c *gin.Context) {
 	}
 
 	var req struct {
-		Name            string                         `json:"name"`
-		Description     string                         `json:"description"`
-		PythonVersion   string                         `json:"python_version"`
-		CondaVersion    string                         `json:"conda_version"`
-		BaseImage       string                         `json:"base_image"`
-		Requirements    []string                       `json:"requirements"`
-		CondaPackages   []string                       `json:"conda_packages"`
-		SystemPackages  []string                       `json:"system_packages"`
-		EnvironmentVars []models.EnvironmentVariable   `json:"environment_vars"`
-		StartupScript   string                         `json:"startup_script"`
-		IsActive        *bool                          `json:"is_active"`
+		Name            string                          `json:"name"`
+		Description     string                          `json:"description"`
+		PythonVersion   string                          `json:"python_version"`
+		CondaVersion    string                          `json:"conda_version"`
+		BaseImage       string                          `json:"base_image"`
+		Requirements    []string                        `json:"requirements"`
+		CondaPackages   []string                        `json:"conda_packages"`
+		SystemPackages  []string                        `json:"system_packages"`
+		EnvironmentVars []models.EnvironmentVariable    `json:"environment_vars"`
+		StartupScript   string                          `json:"startup_script"`
+		IsActive        *bool                           `json:"is_active"`
 		ResourceQuota   *models.JupyterLabResourceQuota `json:"resource_quota"`
 	}
 

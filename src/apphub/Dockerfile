@@ -169,19 +169,46 @@ ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
-# 配置 Rocky Linux 镜像源（使用阿里云）
+# 配置 Rocky Linux 镜像源（多镜像源回退策略）
 RUN set -eux; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup || true; \
-    # 配置阿里云镜像源
-    echo "配置阿里云 Rocky Linux 镜像源..."; \
-    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-        -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' \
-        -i.bak \
-        /etc/yum.repos.d/rocky-*.repo || true; \
-    # 清理缓存并更新
-    dnf clean all; \
-    dnf makecache || (sleep 5 && dnf makecache)
+    # 尝试多个中国镜像源（按优先级顺序）
+    MIRRORS="mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn mirror.sjtu.edu.cn mirrors.163.com"; \
+    SUCCESS=0; \
+    for MIRROR in $MIRRORS; do \
+        echo "尝试配置 Rocky Linux 镜像源: ${MIRROR}..."; \
+        # 禁用 mirrorlist，使用指定的 baseurl
+        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+            -e "s|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://${MIRROR}/rockylinux|g" \
+            -i.bak \
+            /etc/yum.repos.d/rocky-*.repo || true; \
+        # 清理缓存
+        dnf clean all >/dev/null 2>&1 || true; \
+        # 尝试更新缓存
+        if dnf makecache --timer 2>/dev/null || dnf makecache 2>/dev/null; then \
+            echo "✓ 成功配置镜像源: ${MIRROR}"; \
+            SUCCESS=1; \
+            break; \
+        else \
+            echo "✗ 镜像源 ${MIRROR} 失败，尝试下一个..."; \
+            # 恢复备份
+            cp -r /etc/yum.repos.d.backup/* /etc/yum.repos.d/ 2>/dev/null || true; \
+        fi; \
+    done; \
+    # 如果所有镜像源都失败，尝试使用原始源（HTTP）
+    if [ "$SUCCESS" -eq 0 ]; then \
+        echo "⚠️ 所有中国镜像源失败，尝试使用官方源（HTTP）..."; \
+        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+            -e 's|^#baseurl=https://dl.rockylinux.org/$contentdir|baseurl=http://dl.rockylinux.org/$contentdir|g' \
+            -i.bak \
+            /etc/yum.repos.d/rocky-*.repo || true; \
+        dnf clean all; \
+        dnf makecache --timer || dnf makecache || { \
+            echo "ERROR: 无法配置任何可用的镜像源"; \
+            exit 1; \
+        }; \
+    fi
 
 # Install build prerequisites
 RUN dnf install -y \

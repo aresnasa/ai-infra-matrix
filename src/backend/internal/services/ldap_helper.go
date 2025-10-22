@@ -23,7 +23,7 @@ func NewLDAPConnectionHelper() *LDAPConnectionHelper {
 // TestConnectionWithRetry 带重试的连接测试
 func (h *LDAPConnectionHelper) TestConnectionWithRetry(config *models.LDAPConfig, maxRetries int) *models.LDAPTestResponse {
 	var lastErr error
-	
+
 	for i := 0; i < maxRetries; i++ {
 		result := h.testConnectionOnce(config)
 		if result.Success {
@@ -33,13 +33,13 @@ func (h *LDAPConnectionHelper) TestConnectionWithRetry(config *models.LDAPConfig
 			return result
 		}
 		lastErr = fmt.Errorf(result.Details)
-		
+
 		// 短暂等待后重试
 		if i < maxRetries-1 {
 			time.Sleep(time.Duration(i+1) * time.Second)
 		}
 	}
-	
+
 	return &models.LDAPTestResponse{
 		Success: false,
 		Message: fmt.Sprintf("连接失败，已重试%d次", maxRetries),
@@ -53,7 +53,7 @@ func (h *LDAPConnectionHelper) testConnectionOnce(config *models.LDAPConfig) *mo
 	if runtime.GOOS == "windows" {
 		return h.testConnectionWindows(config)
 	}
-	
+
 	// Unix/Linux处理
 	return h.testConnectionUnix(config)
 }
@@ -61,24 +61,24 @@ func (h *LDAPConnectionHelper) testConnectionOnce(config *models.LDAPConfig) *mo
 // testConnectionWindows Windows专用连接测试
 func (h *LDAPConnectionHelper) testConnectionWindows(config *models.LDAPConfig) *models.LDAPTestResponse {
 	addr := fmt.Sprintf("%s:%d", config.Server, config.Port)
-	
+
 	// Windows环境下使用更长的超时时间
 	timeout := time.Duration(15) * time.Second
-	
+
 	var conn *ldap.Conn
-	
+
 	if config.UseSSL {
 		// Windows AD通常需要更宽松的TLS设置
 		tlsConfig := &tls.Config{
 			ServerName:         config.Server,
-			InsecureSkipVerify: true, // Windows AD环境经常需要跳过证书验证
+			InsecureSkipVerify: true,             // Windows AD环境经常需要跳过证书验证
 			MinVersion:         tls.VersionTLS10, // 兼容旧版本
 		}
-		
+
 		dialer := &net.Dialer{
 			Timeout: timeout,
 		}
-		
+
 		netConn, dialErr := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 		if dialErr != nil {
 			return &models.LDAPTestResponse{
@@ -87,7 +87,7 @@ func (h *LDAPConnectionHelper) testConnectionWindows(config *models.LDAPConfig) 
 				Details: fmt.Sprintf("Windows SSL连接错误: %v", dialErr),
 			}
 		}
-		
+
 		conn = ldap.NewConn(netConn, true)
 		conn.Start()
 	} else {
@@ -95,7 +95,7 @@ func (h *LDAPConnectionHelper) testConnectionWindows(config *models.LDAPConfig) 
 		dialer := &net.Dialer{
 			Timeout: timeout,
 		}
-		
+
 		netConn, dialErr := dialer.Dial("tcp", addr)
 		if dialErr != nil {
 			return &models.LDAPTestResponse{
@@ -104,14 +104,14 @@ func (h *LDAPConnectionHelper) testConnectionWindows(config *models.LDAPConfig) 
 				Details: fmt.Sprintf("Windows网络连接错误: %v (请检查防火墙设置)", dialErr),
 			}
 		}
-		
+
 		conn = ldap.NewConn(netConn, false)
 		conn.Start()
 	}
-	
+
 	defer conn.Close()
 	conn.SetTimeout(timeout)
-	
+
 	// Windows AD绑定测试
 	return h.testBindAndSearch(conn, config, "Windows环境")
 }
@@ -120,10 +120,10 @@ func (h *LDAPConnectionHelper) testConnectionWindows(config *models.LDAPConfig) 
 func (h *LDAPConnectionHelper) testConnectionUnix(config *models.LDAPConfig) *models.LDAPTestResponse {
 	addr := fmt.Sprintf("%s:%d", config.Server, config.Port)
 	timeout := time.Duration(10) * time.Second
-	
+
 	var conn *ldap.Conn
 	var err error
-	
+
 	if config.UseSSL {
 		conn, err = ldap.DialTLS("tcp", addr, &tls.Config{
 			ServerName:         config.Server,
@@ -132,7 +132,7 @@ func (h *LDAPConnectionHelper) testConnectionUnix(config *models.LDAPConfig) *mo
 	} else {
 		conn, err = ldap.Dial("tcp", addr)
 	}
-	
+
 	if err != nil {
 		return &models.LDAPTestResponse{
 			Success: false,
@@ -140,10 +140,10 @@ func (h *LDAPConnectionHelper) testConnectionUnix(config *models.LDAPConfig) *mo
 			Details: fmt.Sprintf("Unix连接错误: %v", err),
 		}
 	}
-	
+
 	defer conn.Close()
 	conn.SetTimeout(timeout)
-	
+
 	return h.testBindAndSearch(conn, config, "Unix/Linux环境")
 }
 
@@ -168,7 +168,7 @@ func (h *LDAPConnectionHelper) testBindAndSearch(conn *ldap.Conn, config *models
 			}
 		}
 	}
-	
+
 	// 测试BaseDN搜索
 	searchRequest := ldap.NewSearchRequest(
 		config.BaseDN,
@@ -181,7 +181,7 @@ func (h *LDAPConnectionHelper) testBindAndSearch(conn *ldap.Conn, config *models
 		[]string{"dn", "objectClass"},
 		nil,
 	)
-	
+
 	searchResult, err := conn.Search(searchRequest)
 	if err != nil {
 		return &models.LDAPTestResponse{
@@ -190,7 +190,7 @@ func (h *LDAPConnectionHelper) testBindAndSearch(conn *ldap.Conn, config *models
 			Details: fmt.Sprintf("%s - BaseDN搜索错误: %v (请检查BaseDN格式)", env, err),
 		}
 	}
-	
+
 	// 成功响应
 	details := fmt.Sprintf("%s - 连接成功到 %s:%d", env, config.Server, config.Port)
 	if config.UseSSL {
@@ -199,7 +199,7 @@ func (h *LDAPConnectionHelper) testBindAndSearch(conn *ldap.Conn, config *models
 	if len(searchResult.Entries) > 0 {
 		details += fmt.Sprintf(", BaseDN有效: %s", config.BaseDN)
 	}
-	
+
 	return &models.LDAPTestResponse{
 		Success: true,
 		Message: "连接测试成功",
@@ -210,7 +210,7 @@ func (h *LDAPConnectionHelper) testBindAndSearch(conn *ldap.Conn, config *models
 // GetRecommendedSettings 获取推荐的Windows AD设置
 func (h *LDAPConnectionHelper) GetRecommendedSettings(serverType string) map[string]interface{} {
 	settings := make(map[string]interface{})
-	
+
 	switch strings.ToLower(serverType) {
 	case "windows", "ad", "activedirectory":
 		settings["port"] = 389
@@ -221,7 +221,7 @@ func (h *LDAPConnectionHelper) GetRecommendedSettings(serverType string) map[str
 		settings["bind_dn_example"] = "cn=ldapuser,cn=Users,dc=example,dc=com"
 		settings["user_filter"] = "(&(objectClass=user)(sAMAccountName=%s))"
 		settings["group_filter"] = "(&(objectClass=group)(cn=%s))"
-		
+
 	case "openldap":
 		settings["port"] = 389
 		settings["use_ssl"] = false
@@ -231,12 +231,12 @@ func (h *LDAPConnectionHelper) GetRecommendedSettings(serverType string) map[str
 		settings["bind_dn_example"] = "cn=admin,dc=example,dc=org"
 		settings["user_filter"] = "(&(objectClass=person)(uid=%s))"
 		settings["group_filter"] = "(&(objectClass=groupOfNames)(cn=%s))"
-		
+
 	default:
 		settings["port"] = 389
 		settings["use_ssl"] = false
 		settings["timeout"] = 10
 	}
-	
+
 	return settings
 }

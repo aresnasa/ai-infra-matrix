@@ -3,10 +3,11 @@ package controllers
 import (
 	"context"
 	"net/http"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -48,18 +49,18 @@ func (ctl *KubernetesController) CreateCluster(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	cluster := models.KubernetesCluster{
-		Name: req.Name,
-		Description: req.Description,
-		APIServer: req.APIServer,
-		KubeConfig: req.KubeConfig,
+		Name:           req.Name,
+		Description:    req.Description,
+		APIServer:      req.APIServer,
+		KubeConfig:     req.KubeConfig,
 		KubeConfigPath: req.KubeConfigPath,
-		Namespace: req.Namespace,
-		Status: "unknown",
-		UserID: userID, // 设置用户ID
+		Namespace:      req.Namespace,
+		Status:         "unknown",
+		UserID:         userID, // 设置用户ID
 	}
-	
+
 	// 如果提供了kubeconfig，尝试自动测试连接
 	if req.KubeConfig != "" {
 		if clientset, err := ctl.service.ConnectToCluster(req.KubeConfig); err == nil {
@@ -74,7 +75,7 @@ func (ctl *KubernetesController) CreateCluster(c *gin.Context) {
 			cluster.Status = "disconnected"
 		}
 	}
-	
+
 	db := database.DB
 	if err := db.Create(&cluster).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -153,7 +154,7 @@ func (ctl *KubernetesController) TestConnection(c *gin.Context) {
 		cluster.Status = "disconnected"
 		db.Save(&cluster)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "连接失败: " + err.Error(),
+			"error":  "连接失败: " + err.Error(),
 			"status": "disconnected",
 		})
 		return
@@ -165,7 +166,7 @@ func (ctl *KubernetesController) TestConnection(c *gin.Context) {
 		cluster.Status = "disconnected"
 		db.Save(&cluster)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "无法获取集群版本: " + err.Error(),
+			"error":  "无法获取集群版本: " + err.Error(),
 			"status": "disconnected",
 		})
 		return
@@ -191,14 +192,14 @@ func (ctl *KubernetesController) TestConnection(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "连接成功",
-		"status": "connected",
+		"message":         "连接成功",
+		"status":          "connected",
 		"cluster_version": version.String(),
-		"node_count": nodeCount,
+		"node_count":      nodeCount,
 		"namespace_count": namespaceCount,
 		"cluster_info": gin.H{
-			"version": version,
-			"nodes": nodeCount,
+			"version":    version,
+			"nodes":      nodeCount,
 			"namespaces": namespaceCount,
 		},
 	})
@@ -236,10 +237,10 @@ func (ctl *KubernetesController) GetClusterInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"cluster": cluster,
-		"nodes_count": len(nodes.Items),
+		"cluster":          cluster,
+		"nodes_count":      len(nodes.Items),
 		"namespaces_count": len(namespaces.Items),
-		"nodes": nodes.Items,
-		"namespaces": namespaces.Items,
+		"nodes":            nodes.Items,
+		"namespaces":       namespaces.Items,
 	})
 }
