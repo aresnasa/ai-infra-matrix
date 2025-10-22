@@ -109,20 +109,36 @@ RUN set -eux; \
     mkdir -p /saltstack-deb; \
     cd /saltstack-deb; \
     echo "📦 Downloading SaltStack deb packages for Ubuntu 22.04..."; \
+    # 检测架构
+    ARCH=$(dpkg --print-architecture); \
+    echo "Architecture: ${ARCH}"; \
     # SaltStack repository URL for Ubuntu 22.04 (Jammy)
-    SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/ubuntu/22.04/amd64/latest"; \
-    # Download key packages
-    wget -nv "${SALTSTACK_REPO}/salt-master_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-master"; \
-    wget -nv "${SALTSTACK_REPO}/salt-minion_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-minion"; \
-    wget -nv "${SALTSTACK_REPO}/salt-common_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-common"; \
-    wget -nv "${SALTSTACK_REPO}/salt-api_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-api"; \
-    wget -nv "${SALTSTACK_REPO}/salt-ssh_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-ssh"; \
-    wget -nv "${SALTSTACK_REPO}/salt-syndic_3007.1-1_amd64.deb" || echo "⚠️  Failed to download salt-syndic"; \
+    if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/ubuntu/22.04/arm64/latest"; \
+        ARCH_SUFFIX="arm64"; \
+    else \
+        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/ubuntu/22.04/amd64/latest"; \
+        ARCH_SUFFIX="amd64"; \
+    fi; \
+    echo "Using SaltStack repo: ${SALTSTACK_REPO}"; \
+    # Download key packages with retry
+    for pkg in salt-master salt-minion salt-common salt-api salt-ssh salt-syndic; do \
+        for attempt in 1 2 3; do \
+            if wget --timeout=30 --tries=3 -nv "${SALTSTACK_REPO}/${pkg}_3007.1-1_${ARCH_SUFFIX}.deb" 2>/dev/null; then \
+                echo "✓ Downloaded: ${pkg}"; \
+                break; \
+            else \
+                echo "⚠️  Attempt ${attempt}/3 failed for ${pkg}"; \
+                sleep 2; \
+            fi; \
+        done || echo "✗ Failed to download ${pkg} after 3 attempts"; \
+    done; \
     salt_count=$(ls *.deb 2>/dev/null | wc -l || echo 0); \
     if [ "$salt_count" -gt 0 ]; then \
         echo "✓ Downloaded ${salt_count} SaltStack deb packages"; \
+        ls -lh *.deb; \
     else \
-        echo "⚠️  No SaltStack packages downloaded"; \
+        echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
     fi
 
 # Collect artifacts into /out (root stage)
@@ -246,20 +262,34 @@ RUN set -eux; \
     mkdir -p /saltstack-rpm; \
     cd /saltstack-rpm; \
     echo "📦 Downloading SaltStack rpm packages for Rocky Linux 9..."; \
+    # 检测架构
+    ARCH=$(uname -m); \
+    echo "Architecture: ${ARCH}"; \
     # SaltStack repository URL for RHEL 9
-    SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/x86_64/latest"; \
-    # Download key packages
-    wget -nv "${SALTSTACK_REPO}/salt-master-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-master"; \
-    wget -nv "${SALTSTACK_REPO}/salt-minion-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-minion"; \
-    wget -nv "${SALTSTACK_REPO}/salt-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt"; \
-    wget -nv "${SALTSTACK_REPO}/salt-api-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-api"; \
-    wget -nv "${SALTSTACK_REPO}/salt-ssh-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-ssh"; \
-    wget -nv "${SALTSTACK_REPO}/salt-syndic-3007.1-1.el9.x86_64.rpm" || echo "⚠️  Failed to download salt-syndic"; \
+    if [ "${ARCH}" = "aarch64" ]; then \
+        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/aarch64/latest"; \
+    else \
+        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/x86_64/latest"; \
+    fi; \
+    echo "Using SaltStack repo: ${SALTSTACK_REPO}"; \
+    # Download key packages with retry
+    for pkg in salt-master salt-minion salt salt-api salt-ssh salt-syndic; do \
+        for attempt in 1 2 3; do \
+            if wget --timeout=30 --tries=3 -nv "${SALTSTACK_REPO}/${pkg}-3007.1-1.el9.${ARCH}.rpm" 2>/dev/null; then \
+                echo "✓ Downloaded: ${pkg}"; \
+                break; \
+            else \
+                echo "⚠️  Attempt ${attempt}/3 failed for ${pkg}"; \
+                sleep 2; \
+            fi; \
+        done || echo "✗ Failed to download ${pkg} after 3 attempts"; \
+    done; \
     salt_count=$(ls *.rpm 2>/dev/null | wc -l || echo 0); \
     if [ "$salt_count" -gt 0 ]; then \
         echo "✓ Downloaded ${salt_count} SaltStack rpm packages"; \
+        ls -lh *.rpm; \
     else \
-        echo "⚠️  No SaltStack packages downloaded"; \
+        echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
     fi
 
 # Collect RPM artifacts
@@ -343,40 +373,94 @@ WORKDIR /home/builder/build
 # 复制 SLURM 源码包
 COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
-# 解压 SLURM 源码 - 跳过 Alpine 构建
-# 注意: Alpine SLURM 构建比较复杂，暂时跳过
-# Backend 将使用演示数据模式或从 DEB 包中提取
+# 解压并编译 SLURM 客户端工具
 RUN set -eux; \
-    mkdir -p /home/builder/apk-output; \
-    echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
-    touch /home/builder/apk-output/.skip_slurm; \
-    echo "⚠️  Alpine SLURM build skipped (complex dependencies)"; \
-    echo "💡 Backend will use demo mode or extract binaries from deb packages"
+    if ls slurm-*.tar.bz2 >/dev/null 2>&1; then \
+        tarball=$(ls slurm-*.tar.bz2 | head -1); \
+        echo "✓ Found SLURM tarball: ${tarball}"; \
+        tar -xaf "${tarball}"; \
+        srcdir=$(basename "${tarball}" .tar.bz2); \
+        echo "SRC=${srcdir}" > /home/builder/build/.srcdir; \
+        echo "✓ SLURM source extracted: ${srcdir}"; \
+        # 配置并编译
+        cd "${srcdir}"; \
+        echo ">>> Configuring SLURM..."; \
+        ./configure \
+            --prefix=/usr/local/slurm \
+            --sysconfdir=/etc/slurm \
+            --disable-debug \
+            --enable-pam \
+            --without-rpath \
+            --with-ssl=/usr || { \
+            echo "⚠️  Configure failed, marking for skip"; \
+            echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
+        }; \
+    else \
+        echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
+        echo "⚠️  No SLURM tarball found - will skip SLURM build"; \
+    fi
+
+# 编译 SLURM
+RUN set -eux; \
+    if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
+        echo "⚠️  Skipping SLURM build"; \
+    else \
+        srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
+        cd "/home/builder/build/${srcdir}"; \
+        echo ">>> Building SLURM client tools..."; \
+        make -j$(nproc) || { \
+            echo "⚠️  Full build failed, trying client tools only"; \
+            for tool in sinfo squeue scontrol scancel sbatch srun salloc sacct; do \
+                make -C "src/${tool}" || echo "⚠️  Failed to build ${tool}"; \
+            done; \
+        }; \
+    fi
 
 # 安装到临时目录并打包
 USER root
 RUN set -eux; \
+    mkdir -p /home/builder/apk-output; \
     if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
         echo "⚠️  Skipping SLURM installation"; \
+        touch /home/builder/apk-output/.skip_slurm; \
     else \
         srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
         cd "/home/builder/build/${srcdir}"; \
+        # 创建安装目录
         mkdir -p /tmp/slurm-install/usr/local/slurm/bin; \
         mkdir -p /tmp/slurm-install/usr/local/slurm/lib; \
         mkdir -p /tmp/slurm-install/etc/slurm; \
         echo ">>> Installing SLURM client tools..."; \
-        make install DESTDIR=/tmp/slurm-install || true; \
-        # 手动复制客户端工具（确保存在）
+        # 复制客户端工具
+        tool_count=0; \
         for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct; do \
+            # 尝试从不同位置查找编译好的工具
             if [ -f "src/${cmd}/${cmd}" ]; then \
                 cp -f "src/${cmd}/${cmd}" /tmp/slurm-install/usr/local/slurm/bin/; \
+                chmod +x /tmp/slurm-install/usr/local/slurm/bin/${cmd}; \
+                tool_count=$((tool_count + 1)); \
                 echo "  ✓ Installed: ${cmd}"; \
+            elif [ -f "src/${cmd}/.libs/${cmd}" ]; then \
+                cp -f "src/${cmd}/.libs/${cmd}" /tmp/slurm-install/usr/local/slurm/bin/; \
+                chmod +x /tmp/slurm-install/usr/local/slurm/bin/${cmd}; \
+                tool_count=$((tool_count + 1)); \
+                echo "  ✓ Installed: ${cmd} (from .libs)"; \
+            else \
+                echo "  ✗ Not found: ${cmd}"; \
             fi; \
         done; \
-        # 复制必要的库
-        cp -f src/common/.libs/libslurm.so* /tmp/slurm-install/usr/local/slurm/lib/ 2>/dev/null || true; \
-        # 创建版本信息
-        echo "25.05.4" > /tmp/slurm-install/usr/local/slurm/VERSION; \
+        # 复制共享库
+        if [ -d "src/common/.libs" ]; then \
+            find src/common/.libs -name "libslurm*.so*" -exec cp -f {} /tmp/slurm-install/usr/local/slurm/lib/ \; 2>/dev/null || true; \
+            echo "  ✓ Copied SLURM libraries"; \
+        fi; \
+        # 创建版本信息和脚本
+        echo "${SLURM_VERSION}" > /tmp/slurm-install/usr/local/slurm/VERSION; \
+        echo "  ✓ Installed ${tool_count} client tools"; \
+        if [ "$tool_count" -eq 0 ]; then \
+            echo "  ⚠️  No tools installed, marking as skipped"; \
+            touch /home/builder/apk-output/.skip_slurm; \
+        fi; \
     fi
 
 # 复制安装脚本到容器
@@ -386,13 +470,21 @@ COPY --chown=root:root scripts/slurm-README.md /tmp/slurm-install/README.md
 
 # 设置脚本权限并打包
 RUN set -eux; \
-    if [ ! -f /home/builder/apk-output/.skip_slurm ]; then \
-        chmod +x /tmp/slurm-install/install.sh /tmp/slurm-install/uninstall.sh; \
+    if [ -f /home/builder/apk-output/.skip_slurm ]; then \
+        echo "⚠️  SLURM build skipped, no package to create"; \
+    else \
+        # 复制安装/卸载脚本
+        if [ -f /tmp/slurm-install/install.sh ]; then \
+            chmod +x /tmp/slurm-install/install.sh /tmp/slurm-install/uninstall.sh; \
+        fi; \
+        # 打包
         cd /tmp/slurm-install; \
-        mkdir -p /home/builder/apk-output; \
-        tar czf /home/builder/apk-output/slurm-client-25.05.4-alpine.tar.gz .; \
-        echo "✓ SLURM Alpine package created"; \
-        ls -lh /home/builder/apk-output/; \
+        tar czf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz .; \
+        echo "✓ SLURM Alpine package created:"; \
+        ls -lh /home/builder/apk-output/*.tar.gz; \
+        # 验证包内容
+        echo "📦 Package contents:"; \
+        tar tzf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz | head -20; \
     fi
 
 # 收集 APK 包到 /out
