@@ -292,6 +292,8 @@ services:
         condition: service_healthy
       openldap:
         condition: service_healthy
+      gitea:
+        condition: service_healthy
     networks:
       - ai-infra-network
     restart: "no"
@@ -914,8 +916,6 @@ services:
       - gitea_data:/data
     depends_on:
       postgres:
-        condition: service_healthy
-      backend:
         condition: service_healthy
     networks:
       - ai-infra-network

@@ -138,7 +138,6 @@ const MonitoringPage = () => {
             border: 'none',
             display: loading ? 'none' : 'block'
           }}
-          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
           allow="fullscreen"
         />
       </Card>
