@@ -2197,6 +2197,8 @@ load_environment_variables() {
         export FRONTEND_PORT="${ENV_FRONTEND_PORT:-80}"
         export JUPYTERHUB_HOST="${ENV_JUPYTERHUB_HOST:-jupyterhub}"
         export JUPYTERHUB_PORT="${ENV_JUPYTERHUB_PORT:-8000}"
+        export NIGHTINGALE_HOST="${ENV_NIGHTINGALE_HOST:-nightingale}"
+        export NIGHTINGALE_PORT="${ENV_NIGHTINGALE_PORT:-17000}"
         export EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
         export EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
         export EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
@@ -2385,18 +2387,7 @@ render_nginx_templates() {
     render_template "$template_dir/conf.d/includes/gitea.conf.tpl" "$output_dir/conf.d/includes/gitea.conf"
     render_template "$template_dir/conf.d/includes/jupyterhub.conf.tpl" "$output_dir/conf.d/includes/jupyterhub.conf"
     render_template "$template_dir/conf.d/includes/minio.conf.tpl" "$output_dir/conf.d/includes/minio.conf"
-    
-    # 渲染 Nightingale 配置（如果启用）
-    if [[ "${NIGHTINGALE_ENABLED:-false}" == "true" ]]; then
-        print_info "Nightingale 已启用，渲染配置文件..."
-        render_template "$template_dir/conf.d/includes/nightingale.conf.tpl" "$output_dir/conf.d/includes/nightingale.conf"
-    else
-        print_info "Nightingale 未启用，跳过配置渲染"
-        # 如果已存在配置文件，创建一个空文件或注释掉的版本
-        if [[ -f "$output_dir/conf.d/includes/nightingale.conf" ]]; then
-            echo "# Nightingale is disabled (NIGHTINGALE_ENABLED=false)" > "$output_dir/conf.d/includes/nightingale.conf"
-        fi
-    fi
+    render_template "$template_dir/conf.d/includes/nightingale.conf.tpl" "$output_dir/conf.d/includes/nightingale.conf"
     
     print_success "✓ Nginx 模板渲染完成"
     echo

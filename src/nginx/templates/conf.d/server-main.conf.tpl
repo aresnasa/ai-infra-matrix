@@ -25,6 +25,10 @@ upstream minio_console {
     server minio:9001;
 }
 
+upstream nightingle_console {
+    server nightingle:17000;
+}
+
 server {
     listen 80;
     server_name _;
@@ -75,6 +79,7 @@ server {
     include /etc/nginx/conf.d/includes/gitea.conf;
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
     include /etc/nginx/conf.d/includes/minio.conf;
+    include /etc/nginx/conf.d/includes/nightingale.conf;
 
     # 后端 API 代理 + CORS
     location /api/ {

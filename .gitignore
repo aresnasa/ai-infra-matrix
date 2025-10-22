@@ -18,7 +18,6 @@ docker-compose.yml
 .env.local
 .env.test
 src/jupyterhub/jupyterhub_config_*
-src/nginx/conf.d/includes/gitea.conf
 src/frontend/node_modules/
 patches/
 third_party/
