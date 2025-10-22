@@ -1,0 +1,1047 @@
+{
+  "timestamp": "2025-10-22T05:05:10.116Z",
+  "baseUrl": "http://192.168.0.200:8080",
+  "apiCalls": [
+    {
+      "timestamp": "2025-10-22T05:05:02.442Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/auth/me",
+      "headers": {
+        "referer": "http://192.168.0.200:8080/login",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "670",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "id": 1,
+        "username": "admin",
+        "email": "admin@example.com",
+        "name": "",
+        "is_active": true,
+        "auth_source": "local",
+        "dashboard_role": "",
+        "role_template": "admin",
+        "last_login": "2025-10-22T13:05:03.394381+08:00",
+        "created_at": "2025-10-22T13:04:28.28029+08:00",
+        "updated_at": "2025-10-22T13:05:03.3945+08:00",
+        "roles": [
+          {
+            "id": 1,
+            "name": "super-admin",
+            "description": "超级管理员角色",
+            "is_system": true,
+            "created_at": "2025-10-22T13:04:28.213737+08:00",
+            "updated_at": "2025-10-22T13:04:28.213737+08:00"
+          },
+          {
+            "id": 2,
+            "name": "admin",
+            "description": "系统管理员 - 拥有所有权限",
+            "is_system": true,
+            "created_at": "2025-10-22T13:04:28.214648+08:00",
+            "updated_at": "2025-10-22T13:04:28.918774+08:00"
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.297Z",
+      "method": "POST",
+      "url": "http://192.168.0.200:8080/api/auth/login",
+      "headers": {
+        "referer": "http://192.168.0.200:8080/login",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/json",
+        "accept-language": "en-US"
+      },
+      "postData": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, http://192.168.0.200:8080",
+        "content-length": "585",
+        "date": "Wed, 22 Oct 2025 05:05:03 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "user": {
+          "id": 1,
+          "username": "admin",
+          "email": "admin@example.com",
+          "name": "",
+          "is_active": true,
+          "auth_source": "local",
+          "dashboard_role": "",
+          "role_template": "admin",
+          "last_login": "2025-10-22T13:05:03.394381839+08:00",
+          "created_at": "2025-10-22T13:04:28.28029+08:00",
+          "updated_at": "2025-10-22T13:05:03.394500006+08:00"
+        },
+        "expires_at": 1761195903
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.520Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/auth/me",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/login",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.578Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/navigation/config",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/projects",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 404,
+      "statusText": "Not Found",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "18",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "text/plain; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": "404 page not found"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.721Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/projects",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/projects",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "2",
+        "date": "Wed, 22 Oct 2025 05:05:03 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": []
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.384Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/slurm",
+      "headers": {
+        "accept-language": "en-US",
+        "upgrade-insecure-requests": "1",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "accept-ranges": "bytes",
+        "cache-control": "no-cache\nno-store, no-cache, must-revalidate",
+        "connection": "keep-alive",
+        "content-length": "643",
+        "content-type": "text/html; charset=utf-8",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "etag": "\"68f7b5df-283\"",
+        "expires": "Wed, 22 Oct 2025 05:05:04 GMT",
+        "last-modified": "Tue, 21 Oct 2025 16:33:35 GMT",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "server": "nginx/1.28.0",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "1; mode=block"
+      },
+      "responseBody": "<!doctype html><html lang=\"zh-cn\"><head><meta charset=\"utf-8\"/><link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\"/><link rel=\"alternate icon\" href=\"/favicon.ico\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><meta name=\"theme-color\" content=\"#000000\"/><meta name=\"description\" content=\"AI-Infra-Matrix - 人工智能基础设施管理平台\"/><title>AI-Infra-Matrix</title><script defer=\"defer\" src=\"/static/js/main.fb217774.js\"></script><link href=\"/static/css/main.d1c2039c.css\" rel=\"stylesheet\"></head><body><noscript>You need to enable JavaScript to run this app.</noscript><div id=\"root\"></div></body></html>"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.426Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/auth/me",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.468Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/navigation/config",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/summary",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "186",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": {
+          "nodes_total": 3,
+          "nodes_idle": 2,
+          "nodes_alloc": 1,
+          "partitions": 2,
+          "jobs_running": 1,
+          "jobs_pending": 2,
+          "jobs_other": 0,
+          "demo": true,
+          "generated_at": "2025-10-22T13:05:05.677418299+08:00"
+        }
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/nodes",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "23",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": [],
+        "demo": true
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/jobs",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "23",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": [],
+        "demo": true
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/scaling/status",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "344",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": {
+          "active_operations": [],
+          "recent_operations": [
+            {
+              "id": "op-001",
+              "type": "scale-up",
+              "status": "completed",
+              "nodes": [
+                "node001",
+                "node002"
+              ],
+              "started_at": "2025-10-22T12:05:05.679832132+08:00",
+              "completed_at": "2025-10-22T12:35:05.679832215+08:00"
+            }
+          ],
+          "node_templates": [],
+          "active": false,
+          "active_tasks": 0,
+          "success_nodes": 0,
+          "failed_nodes": 0,
+          "progress": 0
+        }
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/node-templates",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "11",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": []
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/saltstack/integration",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "355",
+        "date": "Wed, 22 Oct 2025 05:05:06 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": {
+          "api_status": "disconnected",
+          "demo": false,
+          "enabled": false,
+          "last_updated": "2025-10-22T13:05:06.019454632+08:00",
+          "master_status": "connected",
+          "minion_list": [
+            {
+              "id": "salt-master-local",
+              "name": "salt-master-local",
+              "status": "online"
+            }
+          ],
+          "minions": {
+            "offline": 0,
+            "online": 1,
+            "total": 1
+          },
+          "recent_jobs": 0,
+          "services": {
+            "salt-api": "running",
+            "salt-master": "running"
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.672Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/saltstack/jobs",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "170",
+        "date": "Wed, 22 Oct 2025 05:05:05 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": [
+          {
+            "jid": "20231201000000000000",
+            "function": "test.ping",
+            "target": "*",
+            "start_time": "2025-10-22T12:05:05.689237215+08:00",
+            "results": {
+              "minion1": true,
+              "minion2": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-10-22T05:05:06.076Z",
+      "method": "GET",
+      "url": "http://192.168.0.200:8080/api/slurm/tasks",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6ImFkbWluIiwicm9sZXMiOlsic3VwZXItYWRtaW4iLCJhZG1pbiJdLCJwZXJtaXNzaW9ucyI6WyIqOio6KiJdLCJleHAiOjE3NjExOTU5MDMsImlhdCI6MTc2MTEwOTUwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM",
+        "referer": "http://192.168.0.200:8080/slurm",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US"
+      },
+      "postData": null,
+      "status": 200,
+      "statusText": "OK",
+      "responseHeaders": {
+        "access-control-max-age": "86400",
+        "connection": "keep-alive",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, GET, POST, PUT, DELETE, OPTIONS",
+        "access-control-allow-origin": "*, *",
+        "content-length": "139",
+        "date": "Wed, 22 Oct 2025 05:05:06 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "server": "nginx/1.28.0",
+        "access-control-allow-headers": "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, Content-Type, Authorization, X-Requested-With, X-External-Host"
+      },
+      "responseBody": {
+        "data": {
+          "db_tasks_count": 0,
+          "pagination": {
+            "page": 1,
+            "page_size": 20,
+            "total": 0,
+            "total_pages": 0
+          },
+          "runtime_tasks_count": 0,
+          "tasks": [],
+          "total": 0
+        }
+      }
+    }
+  ],
+  "consoleMessages": [
+    {
+      "timestamp": "2025-10-22T05:05:02.406Z",
+      "type": "log",
+      "text": "=== 开始初始化认证状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "检查token: 不存在"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "无token，用户未认证"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "=== App渲染状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "用户已认证: false"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "权限已加载: false"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "用户权限组: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.408Z",
+      "type": "log",
+      "text": "=================="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.455Z",
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "warning",
+      "text": "API健康检查失败: Request failed with status code 401"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "log",
+      "text": "=== App渲染状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "log",
+      "text": "用户已认证: false"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "log",
+      "text": "权限已加载: false"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "log",
+      "text": "用户权限组: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:02.456Z",
+      "type": "log",
+      "text": "=================="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.414Z",
+      "type": "log",
+      "text": "=== 登录API调用成功 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.414Z",
+      "type": "log",
+      "text": "获得token: 是"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.414Z",
+      "type": "log",
+      "text": "登录用户: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.518Z",
+      "type": "log",
+      "text": "=== 处理登录成功 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.518Z",
+      "type": "log",
+      "text": "登录返回的用户数据: {token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkI…UwM30.pSRbQXS0ORQbTfyBVeef5Uh1iYFMtgpRVQHZi2JvlWM, expires_at: 1761195903, user: Object}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.518Z",
+      "type": "log",
+      "text": "✅ 降级SSO状态设置完成"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.518Z",
+      "type": "log",
+      "text": "=== 开始初始化认证状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.518Z",
+      "type": "log",
+      "text": "检查token: 存在"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.518Z",
+      "type": "log",
+      "text": "正在验证token并获取用户权限..."
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.536Z",
+      "type": "log",
+      "text": "后端返回用户数据: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.536Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.536Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.536Z",
+      "type": "log",
+      "text": "✅ 用户权限验证成功"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.536Z",
+      "type": "log",
+      "text": "=== 认证状态初始化完成 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "正在验证token并获取用户权限..."
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "debug",
+      "text": "Using cached response for: GET:()=>l.get(\"/auth/me\")"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "后端返回用户数据: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "✅ 用户权限验证成功"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "=== 登录处理完成 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "=== App渲染状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户已认证: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "权限已加载: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "=================="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "=== Layout权限检查 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户信息: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "角色模板: admin"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "是否管理员: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.537Z",
+      "type": "log",
+      "text": "可用菜单项: [dashboard, enhanced-dashboard, projects, gitea, kubernetes, ansible, jupyterhub, slurm, jobs, files, saltstack, kafka-ui, admin, users, settings, logs, monitoring]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.538Z",
+      "type": "log",
+      "text": "当前路径: /login"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.538Z",
+      "type": "log",
+      "text": "========================"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.576Z",
+      "type": "log",
+      "text": "用户信息已加载，开始加载导航配置: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "=== Layout权限检查 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "用户信息: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "角色模板: admin"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "是否管理员: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "可用菜单项: [dashboard, enhanced-dashboard, projects, gitea, kubernetes, ansible, jupyterhub, slurm, jobs, files, saltstack, kafka-ui, admin, users, settings, logs, monitoring]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "当前路径: /projects"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.586Z",
+      "type": "log",
+      "text": "========================"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.593Z",
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.594Z",
+      "type": "error",
+      "text": "加载导航配置失败: r"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:03.594Z",
+      "type": "log",
+      "text": "使用默认导航配置"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.426Z",
+      "type": "log",
+      "text": "=== 开始初始化认证状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.426Z",
+      "type": "log",
+      "text": "检查token: 存在"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.426Z",
+      "type": "log",
+      "text": "正在验证token并获取用户权限..."
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.426Z",
+      "type": "debug",
+      "text": "Deduplicating request: GET:()=>l.get(\"/auth/me\")"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.437Z",
+      "type": "log",
+      "text": "后端返回用户数据: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.437Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.437Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.437Z",
+      "type": "log",
+      "text": "✅ 用户权限验证成功"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.437Z",
+      "type": "log",
+      "text": "=== 认证状态初始化完成 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "=== App渲染状态 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "用户已认证: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "权限已加载: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "=================="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "=== Layout权限检查 ==="
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "用户信息: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "用户角色: undefined"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "用户权限组: [Object, Object]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "角色模板: admin"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "是否管理员: true"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "可用菜单项: [dashboard, enhanced-dashboard, projects, gitea, kubernetes, ansible, jupyterhub, slurm, jobs, files, saltstack, kafka-ui, admin, users, settings, logs, monitoring]"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "当前路径: /slurm"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.438Z",
+      "type": "log",
+      "text": "========================"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.466Z",
+      "type": "log",
+      "text": "用户信息已加载，开始加载导航配置: {id: 1, username: admin, email: admin@example.com, name: , is_active: true}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.480Z",
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.480Z",
+      "type": "error",
+      "text": "加载导航配置失败: r"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:05.480Z",
+      "type": "log",
+      "text": "使用默认导航配置"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:06.075Z",
+      "type": "log",
+      "text": "SlurmTaskBar: Component mounted, loading tasks..."
+    },
+    {
+      "timestamp": "2025-10-22T05:05:06.075Z",
+      "type": "log",
+      "text": "SlurmTaskBar: Loading tasks with token: eyJhbGciOiJIUzI1NiIs..."
+    },
+    {
+      "timestamp": "2025-10-22T05:05:06.089Z",
+      "type": "log",
+      "text": "SLURM Tasks API Response: {data: Object, status: 200, statusText: OK, headers: Object, config: Object}"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:06.089Z",
+      "type": "log",
+      "text": "Parsed tasks data: []"
+    },
+    {
+      "timestamp": "2025-10-22T05:05:06.089Z",
+      "type": "log",
+      "text": "Formatted tasks: []"
+    }
+  ],
+  "pageErrors": []
+}
