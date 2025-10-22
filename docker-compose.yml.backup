@@ -917,6 +917,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      openldap:
+        condition: service_healthy
     networks:
       - ai-infra-network
     healthcheck:
