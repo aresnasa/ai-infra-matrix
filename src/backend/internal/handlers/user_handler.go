@@ -673,6 +673,11 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
+	// Add headers for ProxyAuth integration (used by nginx auth_request)
+	c.Header("X-User-Name", user.Username)
+	c.Header("X-User-Email", user.Email)
+	c.Header("X-User-ID", fmt.Sprintf("%d", user.ID))
+
 	c.JSON(http.StatusOK, user)
 }
 

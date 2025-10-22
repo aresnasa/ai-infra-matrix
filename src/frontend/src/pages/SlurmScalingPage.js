@@ -644,11 +644,11 @@ const SlurmScalingPage = () => {
               } 
               style={{ height: '600px' }}
             >
-              {/* 监控iframe容器 */}
+              {/* 监控iframe容器 - 使用 Nightingale 监控系统 */}
               <div style={{ height: '520px', border: '1px solid #d9d9d9', borderRadius: '6px', position: 'relative' }}>
                 <iframe
                   id="slurm-dashboard-iframe"
-                  src={`${window.location.protocol}//${window.location.hostname}:3000/d/slurm/slurm-cluster-dashboard?orgId=1&refresh=30s&kiosk`}
+                  src={`${window.location.protocol}//${window.location.hostname}:${window.location.port}/nightingale/`}
                   style={{
                     width: '100%',
                     height: '100%',
@@ -657,63 +657,13 @@ const SlurmScalingPage = () => {
                   }}
                   title="SLURM 集群监控"
                   onLoad={(e) => {
-                    console.log('SLURM仪表板加载完成');
-                    // 隐藏错误提示
-                    const errorDiv = document.getElementById('dashboard-error');
-                    if (errorDiv) errorDiv.style.display = 'none';
-                  }}
-                  onError={(e) => {
-                    console.error('SLURM仪表板加载失败');
-                    // 显示错误提示
-                    const errorDiv = document.getElementById('dashboard-error');
-                    if (errorDiv) errorDiv.style.display = 'flex';
-                    
-                    // 尝试备用URL
-                    setTimeout(() => {
-                      const iframe = e.target;
-                      if (iframe.src.includes(':3000')) {
-                        iframe.src = `${window.location.protocol}//${window.location.hostname}:8080/d/slurm-cluster/slurm-monitoring`;
-                      }
-                    }, 2000);
+                    console.log('Nightingale 监控仪表板加载完成');
                   }}
                 />
-                
-                {/* 错误提示层 */}
-                <div 
-                  id="dashboard-error"
-                  style={{ 
-                    position: 'absolute', 
-                    top: 0, 
-                    left: 0, 
-                    right: 0, 
-                    bottom: 0, 
-                    display: 'none',
-                    flexDirection: 'column',
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    background: '#f5f5f5',
-                    borderRadius: '6px'
-                  }}
-                >
-                  <ExclamationCircleOutlined style={{ fontSize: '48px', color: '#faad14', marginBottom: '16px' }} />
-                  <Text type="secondary" style={{ fontSize: '16px', marginBottom: '8px' }}>监控面板加载中...</Text>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>如果持续无法加载，请检查Grafana服务是否正常运行</Text>
-                  <Button 
-                    style={{ marginTop: '16px' }} 
-                    onClick={() => {
-                      const iframe = document.getElementById('slurm-dashboard-iframe');
-                      if (iframe) {
-                        iframe.src = iframe.src; // 重新加载
-                      }
-                    }}
-                  >
-                    重新加载
-                  </Button>
-                </div>
               </div>
               <div style={{ marginTop: '8px', textAlign: 'center' }}>
                 <Space>
-                  <Text type="secondary">实时监控集群状态和任务进度</Text>
+                  <Text type="secondary">使用 Nightingale 实时监控集群状态和任务进度</Text>
                   <Button 
                     size="small" 
                     icon={<ReloadOutlined />}

@@ -2243,6 +2243,8 @@ render_template() {
         "JUPYTERHUB_PORT"
         "GITEA_ALIAS_ADMIN_TO"
         "GITEA_ADMIN_EMAIL"
+        "NIGHTINGALE_HOST"
+        "NIGHTINGALE_PORT"
         "ENVIRONMENT"
         "AUTH_TYPE"
         "GENERATION_TIME"
@@ -2383,6 +2385,18 @@ render_nginx_templates() {
     render_template "$template_dir/conf.d/includes/gitea.conf.tpl" "$output_dir/conf.d/includes/gitea.conf"
     render_template "$template_dir/conf.d/includes/jupyterhub.conf.tpl" "$output_dir/conf.d/includes/jupyterhub.conf"
     render_template "$template_dir/conf.d/includes/minio.conf.tpl" "$output_dir/conf.d/includes/minio.conf"
+    
+    # 渲染 Nightingale 配置（如果启用）
+    if [[ "${NIGHTINGALE_ENABLED:-false}" == "true" ]]; then
+        print_info "Nightingale 已启用，渲染配置文件..."
+        render_template "$template_dir/conf.d/includes/nightingale.conf.tpl" "$output_dir/conf.d/includes/nightingale.conf"
+    else
+        print_info "Nightingale 未启用，跳过配置渲染"
+        # 如果已存在配置文件，创建一个空文件或注释掉的版本
+        if [[ -f "$output_dir/conf.d/includes/nightingale.conf" ]]; then
+            echo "# Nightingale is disabled (NIGHTINGALE_ENABLED=false)" > "$output_dir/conf.d/includes/nightingale.conf"
+        fi
+    fi
     
     print_success "✓ Nginx 模板渲染完成"
     echo

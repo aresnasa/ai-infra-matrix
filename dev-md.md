@@ -1640,3 +1640,5 @@ Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑�
 105. 现在调整所有项目代码中的go和js代码将数据库ai-infra-matrix改为ai_infra_matrix这样才能正确的创建数据库
 106. 现在调整前端，将nightingale集成到iframe中，统一由frontend管理，读取https://n9e.github.io/docs/install/configuration/这里有jwt集成的配置
 107. 调整下Ubuntu，没能正确的下载saltstack的deb包，同时检查rocky的rpm包，以及alpine的apk，这里的slurm客户端需要编译程序apk/rpm/deb三种格式，然后放到apphub的不同路径下
+108. 不要使用cat创建文件这回导致agent异常，直接使用vscode创建然后使用@playwright测试，参考scripts/e2e下的其它js，请继续
+109. 使用@playwright继续测试，iframe中依然没有nightingale，同时页面http://192.168.18.114:8080/slurm中的监控仪表板未能正确转发到nightingale，同时期望的是nightingale已经通过jwt访问不需要重复登录，修复这个问题

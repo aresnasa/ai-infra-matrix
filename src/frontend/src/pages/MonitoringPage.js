@@ -14,18 +14,22 @@ const MonitoringPage = () => {
   const [iframeKey, setIframeKey] = useState(0);
 
   // Nightingale 服务地址 - 使用环境变量或动态构建
-  // 支持完整URL或仅端口号配置
+  // 支持完整URL或仅端口号配置，默认使用 nginx 代理路径
   const getNightingaleUrl = () => {
     // 优先使用完整的 URL 配置
     if (process.env.REACT_APP_NIGHTINGALE_URL) {
       return process.env.REACT_APP_NIGHTINGALE_URL;
     }
     
-    // 从环境变量读取端口，默认 17000
-    const port = process.env.REACT_APP_NIGHTINGALE_PORT || '17000';
+    // 如果配置了端口，使用直接端口访问
+    if (process.env.REACT_APP_NIGHTINGALE_PORT) {
+      const port = process.env.REACT_APP_NIGHTINGALE_PORT;
+      return `${window.location.protocol}//${window.location.hostname}:${port}`;
+    }
     
-    // 使用当前域名 + 配置的端口
-    return `${window.location.protocol}//${window.location.hostname}:${port}`;
+    // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
+    const currentPort = window.location.port ? `:${window.location.port}` : '';
+    return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
   };
   
   const nightingaleUrl = getNightingaleUrl();
