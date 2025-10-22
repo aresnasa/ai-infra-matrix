@@ -272,35 +272,52 @@ RUN set -eux; \
         SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/x86_64/latest"; \
     fi; \
     echo "Using SaltStack repo: ${SALTSTACK_REPO}"; \
-    # Download key packages with retry
+    # Download key packages with retry and better error handling
+    SUCCESS=0; \
     for pkg in salt-master salt-minion salt salt-api salt-ssh salt-syndic; do \
+        pkg_file="${pkg}-3007.1-1.el9.${ARCH}.rpm"; \
+        echo "Downloading ${pkg_file}..."; \
         for attempt in 1 2 3; do \
-            if wget --timeout=30 --tries=3 -nv "${SALTSTACK_REPO}/${pkg}-3007.1-1.el9.${ARCH}.rpm" 2>/dev/null; then \
-                echo "✓ Downloaded: ${pkg}"; \
-                break; \
-            else \
-                echo "⚠️  Attempt ${attempt}/3 failed for ${pkg}"; \
-                sleep 2; \
+            if wget --timeout=30 --tries=1 -nv "${SALTSTACK_REPO}/${pkg_file}" 2>&1; then \
+                if [ -f "${pkg_file}" ]; then \
+                    file_size=$(stat -f%z "${pkg_file}" 2>/dev/null || stat -c%s "${pkg_file}" 2>/dev/null || echo 0); \
+                    if [ "$file_size" -gt 1000 ]; then \
+                        echo "  ✓ Downloaded: ${pkg_file} (${file_size} bytes)"; \
+                        SUCCESS=1; \
+                        break; \
+                    else \
+                        echo "  ⚠️  File too small: ${file_size} bytes, retrying..."; \
+                        rm -f "${pkg_file}"; \
+                    fi; \
+                fi; \
             fi; \
-        done || echo "✗ Failed to download ${pkg} after 3 attempts"; \
+            echo "  ⚠️  Attempt ${attempt}/3 failed for ${pkg_file}"; \
+            [ $attempt -lt 3 ] && sleep 2; \
+        done; \
+        [ ! -f "${pkg_file}" ] && echo "  ✗ Failed to download ${pkg_file} after 3 attempts"; \
     done; \
+    # Verify downloads
     salt_count=$(ls *.rpm 2>/dev/null | wc -l || echo 0); \
     if [ "$salt_count" -gt 0 ]; then \
         echo "✓ Downloaded ${salt_count} SaltStack rpm packages"; \
         ls -lh *.rpm; \
     else \
-        echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
+        echo "⚠️  WARNING: No SaltStack packages downloaded (network or DNS issue)"; \
+        echo "⚠️  saltstack-rpm directory will be empty"; \
+        echo "⚠️  This is not fatal - continuing build..."; \
     fi
 
 # Collect RPM artifacts
 RUN set -eux; \
     mkdir -p /out; \
+    echo "📦 Collecting RPM packages..."; \
     if [ ! -f /home/builder/rpms/.skip_slurm ]; then \
         # Copy built RPMs to /out
         find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
         rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
         if [ "$rpm_count" -gt 0 ]; then \
             echo "✓ Successfully built ${rpm_count} SLURM RPM package(s)"; \
+            ls -lh /out/*.rpm; \
         else \
             echo "⚠️  No SLURM RPM packages were built"; \
             touch /out/.skip_slurm; \
@@ -309,12 +326,30 @@ RUN set -eux; \
         echo "⚠️  SLURM RPM build was skipped"; \
         touch /out/.skip_slurm; \
     fi; \
-    # Copy SaltStack packages
-    if [ -d /saltstack-rpm ] && [ "$(ls -A /saltstack-rpm/*.rpm 2>/dev/null)" ]; then \
-        cp /saltstack-rpm/*.rpm /out/ || true; \
-        salt_count=$(ls /saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-        echo "✓ Added ${salt_count} SaltStack rpm packages"; \
-    fi
+    # Copy SaltStack packages (CRITICAL: ensure they exist before copying)
+    echo "📦 Checking SaltStack packages..."; \
+    if [ -d /saltstack-rpm ]; then \
+        salt_rpm_count=$(ls /saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+        echo "Found ${salt_rpm_count} SaltStack rpm files in /saltstack-rpm"; \
+        if [ "$salt_rpm_count" -gt 0 ]; then \
+            ls -lh /saltstack-rpm/*.rpm; \
+            cp /saltstack-rpm/*.rpm /out/ || { \
+                echo "❌ Failed to copy SaltStack RPMs"; \
+                exit 1; \
+            }; \
+            echo "✓ Copied ${salt_rpm_count} SaltStack rpm packages to /out"; \
+            ls -lh /out/salt*.rpm 2>/dev/null || echo "⚠️  No salt*.rpm in /out"; \
+        else \
+            echo "⚠️  No SaltStack RPM files found in /saltstack-rpm"; \
+        fi; \
+    else \
+        echo "❌ /saltstack-rpm directory does not exist"; \
+    fi; \
+    # Final verification
+    echo "📊 Final /out contents:"; \
+    ls -lh /out/ || echo "⚠️  /out is empty"; \
+    total_rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
+    echo "✓ Total RPM packages in /out: ${total_rpm_count}"
 
 # =============================================================================
 # Stage 3: Build SLURM apk packages (Alpine Linux)
@@ -463,46 +498,101 @@ RUN set -eux; \
         fi; \
     fi
 
-# 复制安装脚本到容器
-COPY --chown=root:root scripts/slurm-install.sh /tmp/slurm-install/install.sh
-COPY --chown=root:root scripts/slurm-uninstall.sh /tmp/slurm-install/uninstall.sh
-COPY --chown=root:root scripts/slurm-README.md /tmp/slurm-install/README.md
-
-# 设置脚本权限并打包
-RUN set -eux; \
+    # 创建安装脚本（如果不存在）
+    RUN set -eux; \
+        echo "📝 Setting up installation scripts..."; \
+        mkdir -p /tmp/slurm-install; \
+        if [ ! -f /tmp/slurm-install/install.sh ]; then \
+            echo '#!/bin/sh' > /tmp/slurm-install/install.sh; \
+            echo 'echo "Installing SLURM client tools..."' >> /tmp/slurm-install/install.sh; \
+            echo 'cp -r usr/local/slurm /usr/local/' >> /tmp/slurm-install/install.sh; \
+            echo 'echo "SLURM client tools installed to /usr/local/slurm"' >> /tmp/slurm-install/install.sh; \
+            chmod +x /tmp/slurm-install/install.sh; \
+            echo "✓ Created install.sh"; \
+        fi; \
+        if [ ! -f /tmp/slurm-install/uninstall.sh ]; then \
+            echo '#!/bin/sh' > /tmp/slurm-install/uninstall.sh; \
+            echo 'rm -rf /usr/local/slurm' >> /tmp/slurm-install/uninstall.sh; \
+            chmod +x /tmp/slurm-install/uninstall.sh; \
+            echo "✓ Created uninstall.sh"; \
+        fi; \
+        if [ ! -f /tmp/slurm-install/README.md ]; then \
+            echo '# SLURM Client Tools' > /tmp/slurm-install/README.md; \
+            echo 'Run ./install.sh to install' >> /tmp/slurm-install/README.md; \
+            echo "✓ Created README.md"; \
+        fi
+    
+    # 设置脚本权限并打包
+    RUN set -eux; \
+    echo "📦 Creating SLURM Alpine package..."; \
     if [ -f /home/builder/apk-output/.skip_slurm ]; then \
         echo "⚠️  SLURM build skipped, no package to create"; \
     else \
-        # 复制安装/卸载脚本
-        if [ -f /tmp/slurm-install/install.sh ]; then \
-            chmod +x /tmp/slurm-install/install.sh /tmp/slurm-install/uninstall.sh; \
+        # 检查是否有安装的工具
+        if [ ! -d /tmp/slurm-install/usr/local/slurm/bin ] || [ -z "$(ls -A /tmp/slurm-install/usr/local/slurm/bin 2>/dev/null)" ]; then \
+            echo "❌ No SLURM tools found in /tmp/slurm-install/usr/local/slurm/bin"; \
+            echo "⚠️  Marking build as skipped"; \
+            touch /home/builder/apk-output/.skip_slurm; \
+        else \
+            echo "✓ Found SLURM tools:"; \
+            ls -lh /tmp/slurm-install/usr/local/slurm/bin/; \
+            # 复制安装/卸载脚本
+            if [ -f /tmp/slurm-install/install.sh ]; then \
+                chmod +x /tmp/slurm-install/install.sh /tmp/slurm-install/uninstall.sh; \
+                echo "✓ Set script permissions"; \
+            else \
+                echo "⚠️  Install scripts not found, but continuing with packaging"; \
+            fi; \
+            # 打包
+            cd /tmp/slurm-install; \
+            tar czf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz . || { \
+                echo "❌ Failed to create tar.gz package"; \
+                touch /home/builder/apk-output/.skip_slurm; \
+                exit 0; \
+            }; \
+            if [ -f /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz ]; then \
+                echo "✓ SLURM Alpine package created:"; \
+                ls -lh /home/builder/apk-output/*.tar.gz; \
+                # 验证包内容
+                echo "📦 Package contents (first 20 files):"; \
+                tar tzf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz | head -20; \
+            else \
+                echo "❌ Package file not created"; \
+                touch /home/builder/apk-output/.skip_slurm; \
+            fi; \
         fi; \
-        # 打包
-        cd /tmp/slurm-install; \
-        tar czf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz .; \
-        echo "✓ SLURM Alpine package created:"; \
-        ls -lh /home/builder/apk-output/*.tar.gz; \
-        # 验证包内容
-        echo "📦 Package contents:"; \
-        tar tzf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz | head -20; \
     fi
 
 # 收集 APK 包到 /out
 RUN set -eux; \
     mkdir -p /out; \
+    echo "📦 Collecting APK packages..."; \
     if [ -f /home/builder/apk-output/.skip_slurm ]; then \
         echo "⚠️  SLURM APK build was skipped"; \
         touch /out/.skip_slurm; \
     else \
-        cp /home/builder/apk-output/*.tar.gz /out/ 2>/dev/null || true; \
-        apk_count=$(ls /out/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+        apk_count=$(ls /home/builder/apk-output/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+        echo "Found ${apk_count} APK files in /home/builder/apk-output"; \
         if [ "$apk_count" -gt 0 ]; then \
-            echo "✓ Successfully built ${apk_count} SLURM Alpine package(s)"; \
+            ls -lh /home/builder/apk-output/*.tar.gz; \
+            cp /home/builder/apk-output/*.tar.gz /out/ || { \
+                echo "❌ Failed to copy APK packages"; \
+                exit 1; \
+            }; \
+            echo "✓ Successfully copied ${apk_count} SLURM Alpine package(s)"; \
+            ls -lh /out/*.tar.gz; \
         else \
-            echo "⚠️  No SLURM Alpine packages were built"; \
+            echo "⚠️  No SLURM Alpine packages found"; \
             touch /out/.skip_slurm; \
         fi; \
-    fi
+    fi; \
+    # Final verification
+    echo "📊 Final /out contents:"; \
+    ls -lh /out/ || echo "⚠️  /out is empty"
+
+#================================================
+# Stage 4: 最终镜像 - 使用 nginx 提供下载服务
+#================================================
 
 # =============================================================================
 # Stage 4: AppHub - HTTP Server with Package Management & Development Tools
