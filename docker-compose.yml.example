@@ -292,6 +292,8 @@ services:
         condition: service_healthy
       openldap:
         condition: service_healthy
+      gitea:
+        condition: service_healthy
     networks:
       - ai-infra-network
     restart: "no"

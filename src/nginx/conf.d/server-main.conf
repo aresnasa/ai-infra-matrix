@@ -25,8 +25,8 @@ upstream minio_console {
     server minio:9001;
 }
 
-upstream nightingle_console {
-    server nightingle:17000;
+upstream nightingale_console {
+    server nightingale:17000;
 }
 
 server {

@@ -10940,6 +10940,49 @@ main() {
                 fi
             done
             
+            # nginx 特殊处理：先渲染模板，构建后重启
+            if [[ "$services" == "nginx" ]]; then
+                print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                print_info "🔧 Nginx 构建和部署流程"
+                print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                
+                # 1. 渲染模板
+                print_info "步骤 1/3: 渲染 nginx 配置模板..."
+                if ! render_nginx_templates; then
+                    print_error "Nginx 模板渲染失败"
+                    exit 1
+                fi
+                
+                # 2. 构建镜像
+                print_info "步骤 2/3: 构建 nginx 镜像..."
+                if ! build_service "nginx" "$tag" "$registry"; then
+                    print_error "Nginx 镜像构建失败"
+                    exit 1
+                fi
+                
+                # 3. 使用 docker-compose 重建和重启
+                print_info "步骤 3/3: 重启 nginx 服务..."
+                if docker-compose build nginx && docker-compose up -d nginx; then
+                    print_success "✓ Nginx 服务已重启"
+                    print_info "等待服务启动..."
+                    sleep 3
+                    
+                    # 验证服务
+                    if docker-compose ps nginx | grep -q "Up"; then
+                        print_success "🎉 Nginx 部署成功！"
+                        print_info "访问 http://localhost:8080 测试"
+                    else
+                        print_warning "⚠️  Nginx 容器状态异常，请检查日志："
+                        print_info "docker-compose logs nginx"
+                    fi
+                else
+                    print_error "Nginx 服务重启失败"
+                    exit 1
+                fi
+                
+                exit 0
+            fi
+            
             # 如果包含逗号，则分割服务列表
             if [[ "$services" == *","* ]]; then
                 print_info "📦 批量构建模式：检测到多个服务"

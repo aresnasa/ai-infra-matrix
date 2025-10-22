@@ -1052,6 +1052,7 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 	url := fmt.Sprintf("%s/api/v1/version", strings.TrimRight(base, "/"))
 	client := &http.Client{Timeout: 3 * time.Second}
 
+	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		if i > 0 {
 			time.Sleep(interval)
@@ -1059,7 +1060,11 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 		req, _ := http.NewRequest("GET", url, nil)
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("Waiting for Gitea... (%d/%d): %v", i+1, maxRetries, err)
+			lastErr = err
+			// 只在前3次和每5次打印日志，避免日志刷屏
+			if i < 3 || (i+1)%5 == 0 {
+				log.Printf("Waiting for Gitea... (%d/%d): %v", i+1, maxRetries, err)
+			}
 			continue
 		}
 		resp.Body.Close()
@@ -1067,8 +1072,10 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 			log.Println("Gitea is ready")
 			return true
 		}
+		lastErr = fmt.Errorf("status=%d", resp.StatusCode)
 		log.Printf("Gitea not ready, status=%d (%d/%d)", resp.StatusCode, i+1, maxRetries)
 	}
+	log.Printf("Gitea unavailable after %d retries, last error: %v", maxRetries, lastErr)
 	return false
 }
 
