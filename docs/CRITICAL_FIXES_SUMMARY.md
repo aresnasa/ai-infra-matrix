@@ -119,7 +119,7 @@ docker-compose up -d
 ./build.sh version
 
 # 检查PostgreSQL连接
-docker-compose exec postgres psql -U postgres -d ansible_playbook_generator -c "SELECT version();"
+docker-compose exec postgres psql -U postgres -d ai-infra-matrix -c "SELECT version();"
 
 # 查看backend-init容器日志
 docker-compose logs backend-init

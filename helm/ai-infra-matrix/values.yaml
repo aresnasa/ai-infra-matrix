@@ -18,7 +18,7 @@ env:
   NGINX_PORT: "8080"
   POSTGRES_HOST: "postgres"
   POSTGRES_PORT: "5432"
-  POSTGRES_DB: "ansible_playbook_generator"
+  POSTGRES_DB: "ai-infra-matrix"
   POSTGRES_USER: "postgres"
   POSTGRES_PASSWORD: "postgres"
   JUPYTERHUB_DB_NAME: "jupyterhub_db"

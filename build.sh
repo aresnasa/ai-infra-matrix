@@ -741,19 +741,46 @@ read_config() {
     fi
 }
 
-# 获取所有服务名称
+# 获取所有服务名称（动态扫描 src/ 目录）
 get_all_services() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-master test-containers"
-        return
+    local services=""
+    
+    # 优先从配置文件读取
+    if [[ -f "$CONFIG_FILE" ]]; then
+        services=$(awk '
+            /^\[services\.[^]]+\]/ {
+                gsub(/^\[services\.|\]$/, "")
+                print $0
+            }
+        ' "$CONFIG_FILE" | sort)
+        
+        if [[ -n "$services" ]]; then
+            echo "$services"
+            return
+        fi
     fi
     
-    awk '
-        /^\[services\.[^]]+\]/ {
-            gsub(/^\[services\.|\]$/, "")
-            print $0
-        }
-    ' "$CONFIG_FILE" | sort
+    # 动态扫描 src/ 目录下包含 Dockerfile 的子目录
+    if [[ -d "$SCRIPT_DIR/src" ]]; then
+        for dir in "$SCRIPT_DIR/src"/*; do
+            if [[ -d "$dir" && -f "$dir/Dockerfile" ]]; then
+                local service_name=$(basename "$dir")
+                # 跳过隐藏目录和特殊目录
+                if [[ ! "$service_name" =~ ^\. ]]; then
+                    services="$services $service_name"
+                fi
+            fi
+        done
+        
+        # 去重并排序
+        if [[ -n "$services" ]]; then
+            echo "$services" | tr ' ' '\n' | sort -u | tr '\n' ' '
+            return
+        fi
+    fi
+    
+    # 后备方案：使用默认服务列表（向后兼容）
+    echo "backend frontend jupyterhub nginx saltstack singleuser gitea backend-init apphub slurm-master test-containers"
 }
 
 # 获取所有依赖镜像（包含测试工具和构建依赖）
@@ -981,28 +1008,29 @@ MOCK_REDIS_IMAGE="redis:7-alpine"
 get_service_path() {
     local service="$1"
     
-    # 从配置文件读取路径
+    # 优先级1: 从配置文件读取路径
     local path=$(read_config "services" "path" "$service" 2>/dev/null || echo "")
     
-    # 如果配置文件中没有，使用后备方案
-    if [[ -z "$path" ]]; then
-        case "$service" in
-            "backend") echo "src/backend" ;;
-            "frontend") echo "src/frontend" ;;
-            "jupyterhub") echo "src/jupyterhub" ;;
-            "nginx") echo "src/nginx" ;;
-            "saltstack") echo "src/saltstack" ;;
-            "singleuser") echo "src/singleuser" ;;
-            "gitea") echo "src/gitea" ;;
-            "backend-init") echo "src/backend" ;;  # backend-init 使用 backend 的 Dockerfile
-            "apphub") echo "src/apphub" ;;
-            "slurm-master") echo "src/slurm-master" ;;
-            "test-containers") echo "src/test-containers" ;;
-            *) echo "" ;;
-        esac
-    else
+    if [[ -n "$path" ]]; then
         echo "$path"
+        return 0
     fi
+    
+    # 优先级2: 动态查找 src/ 目录下的服务
+    if [[ -d "$SCRIPT_DIR/src/$service" && -f "$SCRIPT_DIR/src/$service/Dockerfile" ]]; then
+        echo "src/$service"
+        return 0
+    fi
+    
+    # 优先级3: 特殊服务的硬编码路径（向后兼容）
+    case "$service" in
+        "backend-init") echo "src/backend" ;;  # backend-init 使用 backend 的 Dockerfile
+        *) 
+            # 未找到服务路径
+            echo ""
+            return 1
+            ;;
+    esac
 }
 
 # 颜色输出函数（扩展）

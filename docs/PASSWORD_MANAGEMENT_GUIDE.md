@@ -121,7 +121,7 @@ REDIS_PASSWORD: F4bG8nM2zX5vC9pL1kR7wQ
 
 ```bash
 # 连接到PostgreSQL数据库
-docker exec -it ai-infra-postgres psql -U postgres -d ansible_playbook_generator
+docker exec -it ai-infra-postgres psql -U postgres -d ai-infra-matrix
 
 # 重置admin用户密码为admin123
 UPDATE users SET password = '$2a$10$example_hash_for_admin123' WHERE username = 'admin';

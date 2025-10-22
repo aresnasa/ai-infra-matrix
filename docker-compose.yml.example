@@ -8,7 +8,7 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ansible_playbook_generator}
+      POSTGRES_DB: ${POSTGRES_DB:-ai-infra-matrix}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       TZ: Asia/Shanghai
@@ -19,7 +19,7 @@ services:
     networks:
       - ai-infra-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ansible_playbook_generator}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ai-infra-matrix}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -266,7 +266,7 @@ services:
       - DB_PORT=${POSTGRES_PORT:-5432}
       - DB_USER=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - DB_NAME=${POSTGRES_DB:-ansible_playbook_generator}
+      - DB_NAME=${POSTGRES_DB:-ai-infra-matrix}
       # OceanBase（可选）
       - OB_ENABLED=${OB_ENABLED:-false}
       - OB_HOST=${OB_HOST:-oceanbase}
@@ -314,7 +314,7 @@ services:
       DB_PORT: "${POSTGRES_PORT:-5432}"
       DB_USER: "${POSTGRES_USER:-postgres}"
       DB_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
-      DB_NAME: "${POSTGRES_DB:-ansible_playbook_generator}"
+      DB_NAME: "${POSTGRES_DB:-ai-infra-matrix}"
       # 开启 OceanBase 将覆盖上面的连接，后端将优先使用 OceanBase
       OB_ENABLED: "${OB_ENABLED:-false}"
       OB_HOST: "${OB_HOST:-oceanbase}"

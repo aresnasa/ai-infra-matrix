@@ -58,7 +58,7 @@ create_test_cluster() {
     print_header "创建测试集群记录"
     
     # 直接在数据库中创建集群记录
-    docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c "
+    docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c "
         INSERT INTO clusters (id, name, description, host, port, username, password, status, created_at, updated_at)
         VALUES ('test-cluster-001', '测试SLURM集群', '用于测试的集群', 'ai-infra-slurm-master', 22, 'root', '', 'active', NOW(), NOW())
         ON CONFLICT (id) DO UPDATE SET
@@ -184,7 +184,7 @@ check_job_database() {
     print_header "检查数据库中的作业记录"
     
     print_info "查询最近的作业记录..."
-    docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c "
+    docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c "
         SELECT id, name, status, cluster_id, job_id, created_at, updated_at 
         FROM jobs 
         ORDER BY created_at DESC 
@@ -192,7 +192,7 @@ check_job_database() {
     "
     
     print_info "查询集群记录..."
-    docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c "
+    docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c "
         SELECT id, name, host, port, username, status, created_at 
         FROM clusters 
         ORDER BY created_at DESC 
@@ -205,12 +205,12 @@ cleanup_test_data() {
     print_header "清理测试数据"
     
     print_info "清理测试作业..."
-    docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c "
+    docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c "
         DELETE FROM jobs WHERE cluster_id = 'test-cluster-001';
     "
     
     print_info "清理测试集群..."
-    docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c "
+    docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c "
         DELETE FROM clusters WHERE id = 'test-cluster-001';
     "
     

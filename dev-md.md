@@ -101,7 +101,7 @@
 41. 现在继续使用@playwright进行测试，测试AI机器人能够正确创建deepseek接口同时保存，这里所有的公网模型使用的ak都是使用本地环境变量，不要直接写死ak到任意文件中，直接使用变量替换，然后测试聊天功能是否正常，都使用@playwright,然后修复报错error: "json: cannot unmarshal string into Go struct field AIAssistantConfig.max_tokens of type int"
 42. 添加模型时：默认的提示词："你是一个专业的程序员\n不要输出高危linux命令，例如rm -rf /,以及其它一些linux常见的高危命令\n",同时需要保留聊天历史记录，在弹框中需要能够查询历史记录，同时支持删除历史记录（但是只做屏蔽，数据库中依然保留完整的聊天历史和模型的回答历史）。
 43. 这里需要修改前端和后端交互逻辑，在前端聊天子页面中切换了模型需要一个机制正确的触发切换或者进行模型选优（同时提交相同的prompt给到不同的模型），用户择优选择更好的建议
-44. 系统失败，处理失败: failed to send message to AI: AI API call failed: API request failed with status 401: {"error":{"message":"Authentication Fails, Your api key: *** is invalid","type":"authentication_error","param":null,"code":"invalid_request_error"}},修复这个ak编码问题，这里在前端页面配置了ak，但是提交任务报错。修复一下，docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c " SELECT id,name,provider,api_endpoint,model,is_default FROM ai_assistant_configs WHERE provider='deepseek' OR name ILIKE '%DeepSeek%';"
+44. 系统失败，处理失败: failed to send message to AI: AI API call failed: API request failed with status 401: {"error":{"message":"Authentication Fails, Your api key: *** is invalid","type":"authentication_error","param":null,"code":"invalid_request_error"}},修复这个ak编码问题，这里在前端页面配置了ak，但是提交任务报错。修复一下，docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c " SELECT id,name,provider,api_endpoint,model,is_default FROM ai_assistant_configs WHERE provider='deepseek' OR name ILIKE '%DeepSeek%';"
     id |       name        | provider |       api_endpoint       |       model       | is_default 
     ----+-------------------+----------+--------------------------+-------------------+------------
     3 | deepseek-reasoner | deepseek | https://api.deepseek.com | deepseek-reasoner | f

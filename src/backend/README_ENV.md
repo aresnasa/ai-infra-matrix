@@ -98,7 +98,7 @@ DB_HOST=postgres
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=your-postgres-password
-DB_NAME=ansible_playbook_generator
+DB_NAME=ai-infra-matrix
 
 # OceanBase（可选）
 OB_ENABLED=false

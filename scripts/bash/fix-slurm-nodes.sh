@@ -84,7 +84,7 @@ show_current_nodes() {
     fi
     
     echo -e "\n=== 数据库中的节点 ==="
-    if docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -c "SELECT node_name, host, port, status, node_type FROM slurm_nodes WHERE status='active';" 2>/dev/null; then
+    if docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -c "SELECT node_name, host, port, status, node_type FROM slurm_nodes WHERE status='active';" 2>/dev/null; then
         print_success "✓ 成功获取数据库节点信息"
     else
         print_warning "⚠ 无法获取数据库节点信息"
@@ -99,7 +99,7 @@ regenerate_slurm_config() {
     
     # 从数据库获取活跃节点
     local nodes_query="SELECT node_name FROM slurm_nodes WHERE status='active' AND node_type IN ('compute', 'node');"
-    local nodes=$(docker exec ai-infra-postgres psql -U postgres -d ansible_playbook_generator -t -c "$nodes_query" 2>/dev/null | xargs)
+    local nodes=$(docker exec ai-infra-postgres psql -U postgres -d ai-infra-matrix -t -c "$nodes_query" 2>/dev/null | xargs)
     
     if [[ -z "$nodes" ]]; then
         print_warning "⚠ 数据库中没有找到活跃的计算节点"

@@ -13,7 +13,7 @@
 # PostgreSQL 数据库配置
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
-POSTGRES_DB=ansible_playbook_generator
+POSTGRES_DB=ai-infra-matrix
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 

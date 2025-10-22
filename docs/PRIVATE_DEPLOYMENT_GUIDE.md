@@ -73,7 +73,7 @@ docker-compose logs -f
 
 #### 数据库配置
 ```bash
-POSTGRES_DB=ansible_playbook_generator
+POSTGRES_DB=ai-infra-matrix
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=<强密码>
 ```
