@@ -1624,4 +1624,16 @@
 100. 现在使用@playwright测试http://192.168.0.200:8080/slurm这里的saltstack集成未能获取到saltstack集群的状态修复一下这个问题，需要改造后端和前端。
 101. 这里要调整下backend的dockerfile这里需要读取项目./.env然后将这些配置作为全局环境变量加到backend中，然后相关配置都是从.env中读取的，不要再读取src/backend/{.env,.env.example}了这些都是之前的配置，归一化所有src下的env到项目根/.env中，统一管理
 102. 这里需要调整下build.sh编写一个对比并同步.env和.env.example的函数，使用build.sh build-all后会先检查两个文件的差异保证配置是最全的，然后再构建，不要直接修改.env，检查build.sh程序的render函数，这里会修改，程序最好不要硬编码8000这种过滤，而是通过env进行读取并调整，方便后续生产环境的改造
-103. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
+103. 现在读取项目配置，使用@playwright测试，http://192.168.18.114:8080/saltstack，现在saltstack服务未能正确显示集群状态，需要修复docker compose exec saltstack salt-key -L
+  Accepted Keys:
+  salt-master-local
+  Denied Keys:
+  Unaccepted Keys:
+  Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑这里的8000端口是否正确渲染了，修复build.sh渲染代码,后端服务监听的是8002，但是backend的程序则是使用8000访问，这里需要修复go程序中硬编码端口的问题，需要读取环境变量.env中的配置，然后修改.env.example中的相关配置以及build.sh中的render函数，最终组合起来输出
+104. 现在读取项目配置，使用@playwright测试，http://192.168.18.114:8080/saltstack，现在saltstack服务未能正确显示集群状态，需要修复docker compose exec saltstack salt-key -L
+Accepted Keys:
+salt-master-local
+Denied Keys:
+Unaccepted Keys:
+Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑这里的8000端口是否正确渲染了，修复build.sh渲染代码,后端服务监听的是8002，但是backend的程序则是使用8000访问，这里需要修复go程序中硬编码端口的问题，需要读取环境变量.env中的配置，然后修改.env.example中的相关配置以及build.sh中的render函数，最终组合起来输出
+104. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
