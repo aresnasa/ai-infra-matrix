@@ -2,6 +2,12 @@
 # Simple reverse proxy with sub_filter for path rewriting
 # Template variables: NIGHTINGALE_HOST, NIGHTINGALE_PORT
 
+# Catch dynamically loaded resources and rewrite to /nightingale/ prefix
+# These resources are loaded by JavaScript and bypass sub_filter
+location ~ ^/(font|js|image|api/n9e)/ {
+    rewrite ^/(.*)$ /nightingale/$1 last;
+}
+
 # Main Nightingale location
 # Use ^~ to stop regex matching (prevents static file location from intercepting)
 location ^~ /nightingale/ {

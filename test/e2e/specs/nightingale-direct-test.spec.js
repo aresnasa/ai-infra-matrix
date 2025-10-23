@@ -4,6 +4,8 @@
 
 const { test } = require('@playwright/test');
 
+const BASE_URL = process.env.BASE_URL || 'http://192.168.0.200:8080';
+
 test('直接访问 Nightingale 测试', async ({ page }) => {
   const allErrors = [];
   const allRequests = [];
@@ -30,8 +32,8 @@ test('直接访问 Nightingale 测试', async ({ page }) => {
     }
   });
   
-  console.log('\n=== 直接访问 Nightingale ===\n');
-  await page.goto('http://192.168.0.200:8080/nightingale/');
+  console.log(`\n=== 直接访问 Nightingale (${BASE_URL}) ===\n`);
+  await page.goto(`${BASE_URL}/nightingale/`);
   
   console.log('\n=== 等待 30 秒 ===\n');
   await page.waitForTimeout(30000);
