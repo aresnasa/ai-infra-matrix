@@ -1621,27 +1621,41 @@
 
   请访问 http://192.168.0.200:8080/slurm 查看页面效果测试出了，无minion，调整测试js增加自动添加ssh-test01-03，3个节点的步骤，然后在测试saltstack集群状态
 99. 使用@playwright测试http://192.168.0.200:8080/saltstack，修复安装slurm和saltstack的问题，调整下js脚本增加相关步骤，之前的e2e中有一些测试脚本了读取并参考那些脚本，期望能够正确的通过apphub安装slurm和saltstack
+     
 100. 现在使用@playwright测试http://192.168.0.200:8080/slurm这里的saltstack集成未能获取到saltstack集群的状态修复一下这个问题，需要改造后端和前端。
+     
 101. 这里要调整下backend的dockerfile这里需要读取项目./.env然后将这些配置作为全局环境变量加到backend中，然后相关配置都是从.env中读取的，不要再读取src/backend/{.env,.env.example}了这些都是之前的配置，归一化所有src下的env到项目根/.env中，统一管理
+
 102. 这里需要调整下build.sh编写一个对比并同步.env和.env.example的函数，使用build.sh build-all后会先检查两个文件的差异保证配置是最全的，然后再构建，不要直接修改.env，检查build.sh程序的render函数，这里会修改，程序最好不要硬编码8000这种过滤，而是通过env进行读取并调整，方便后续生产环境的改造
+
 103. 现在读取项目配置，使用@playwright测试，http://192.168.18.114:8080/saltstack，现在saltstack服务未能正确显示集群状态，需要修复docker compose exec saltstack salt-key -L
   Accepted Keys:
   salt-master-local
   Denied Keys:
   Unaccepted Keys:
   Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑这里的8000端口是否正确渲染了，修复build.sh渲染代码,后端服务监听的是8002，但是backend的程序则是使用8000访问，这里需要修复go程序中硬编码端口的问题，需要读取环境变量.env中的配置，然后修改.env.example中的相关配置以及build.sh中的render函数，最终组合起来输出
-104. 现在读取项目配置，使用@playwright测试，http://192.168.18.114:8080/saltstack，现在saltstack服务未能正确显示集群状态，需要修复docker compose exec saltstack salt-key -L
-Accepted Keys:
-salt-master-local
-Denied Keys:
-Unaccepted Keys:
-Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑这里的8000端口是否正确渲染了，修复build.sh渲染代码,后端服务监听的是8002，但是backend的程序则是使用8000访问，这里需要修复go程序中硬编码端口的问题，需要读取环境变量.env中的配置，然后修改.env.example中的相关配置以及build.sh中的render函数，最终组合起来输出
-104. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
-105. 现在调整所有项目代码中的go和js代码将数据库ai-infra-matrix改为ai_infra_matrix这样才能正确的创建数据库
-106. 现在调整前端，将nightingale集成到iframe中，统一由frontend管理，读取https://n9e.github.io/docs/install/configuration/这里有jwt集成的配置
-107. 调整下Ubuntu，没能正确的下载saltstack的deb包，同时检查rocky的rpm包，以及alpine的apk，这里的slurm客户端需要编译程序apk/rpm/deb三种格式，然后放到apphub的不同路径下
-108. 不要使用cat创建文件这回导致agent异常，直接使用vscode创建然后使用@playwright测试，参考scripts/e2e下的其它js，请继续
-109. 使用@playwright继续测试，iframe中依然没有nightingale，同时页面http://192.168.18.114:8080/slurm中的监控仪表板未能正确转发到nightingale，同时期望的是nightingale已经通过jwt访问不需要重复登录，修复这个问题
-110. 调整下build.sh build nginx的配置支持docker-compose build nginx && docker-compose up -d nginx逻辑，这里使用build.sh build nginx --force未能正确的触发构建
-111. 现在将http://192.168.0.200:8080/nightingale/集成到iframe的主页头中和其它组件放到一起，调整下前端
-112. ❌ [404] http://192.168.0.200:8080/api/navigation/config修复这个问题无法获取配置
+
+104.   现在读取项目配置，使用@playwright测试，http://192.168.18.114:8080/saltstack，现在saltstack服务未能正确显示集群状态，需要修复docker compose exec saltstack salt-key -L
+  Accepted Keys:
+  salt-master-local
+  Denied Keys:
+  Unaccepted Keys:
+  Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑这里的8000端口是否正确渲染了，修复build.sh渲染代码,后端服务监听的是8002，但是backend的程序则是使用8000访问，这里需要修复go程序中硬编码端口的问题，需要读取环境变量.env中的配置，然后修改.env.example中的相关配置以及build.sh中的render函数，最终组合起来输出
+
+105. 现在修复http://192.168.0.200:8080/admin/ai-assistant对话记录，使用统计
+
+106. 现在调整所有项目代码中的go和js代码将数据库ai-infra-matrix改为ai_infra_matrix这样才能正确的创建数据库
+
+107. 现在调整前端，将nightingale集成到iframe中，统一由frontend管理，读取https://n9e.github.io/docs/install/configuration/这里有jwt集成的配置
+
+108. 调整下Ubuntu，没能正确的下载saltstack的deb包，同时检查rocky的rpm包，以及alpine的apk，这里的slurm客户端需要编译程序apk/rpm/deb三种格式，然后放到apphub的不同路径下
+
+109. 不要使用cat创建文件这回导致agent异常，直接使用vscode创建然后使用@playwright测试，参考scripts/e2e下的其它js，请继续
+
+110. 使用@playwright继续测试，iframe中依然没有nightingale，同时页面http://192.168.18.114:8080/slurm中的监控仪表板未能正确转发到nightingale，同时期望的是nightingale已经通过jwt访问不需要重复登录，修复这个问题
+
+111. 调整下build.sh build nginx的配置支持docker-compose build nginx && docker-compose up -d nginx逻辑，这里使用build.sh build nginx --force未能正确的触发构建
+
+112. 现在将http://192.168.0.200:8080/nightingale/集成到iframe的主页头中和其它组件放到一起，调整下前端
+
+113. ❌ [404] http://192.168.0.200:8080/api/navigation/config修复这个问题无法获取配置
