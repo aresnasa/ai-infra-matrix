@@ -1659,3 +1659,5 @@
 112. 现在将http://192.168.0.200:8080/nightingale/集成到iframe的主页头中和其它组件放到一起，调整下前端
 
 113. ❌ [404] http://192.168.0.200:8080/api/navigation/config修复这个问题无法获取配置
+
+114. 最近 SaltStack 作业 test.ping * - undefined，修复http://192.168.0.200:8080/slurm中的问题，@playwright测试并修复问题
