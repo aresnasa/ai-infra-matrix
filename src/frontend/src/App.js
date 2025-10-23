@@ -652,15 +652,15 @@ function App() {
                       }
                     />
 
-                    {/* Monitoring dashboard page (Nightingale) - 只允许SRE团队 */}
+                    {/* Monitoring dashboard page (Nightingale) - 允许管理员访问 */}
                     <Route
                       path="/monitoring"
                       element={
-                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                        <AdminProtectedRoute user={user}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <MonitoringPage />
                           </Suspense>
-                        </TeamProtectedRoute>
+                        </AdminProtectedRoute>
                       }
                     />
 

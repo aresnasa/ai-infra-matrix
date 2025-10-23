@@ -1,53 +1,14 @@
 # Nightingale Monitoring System Proxy Configuration
-# ProxyAuth SSO integration with X-User-Name header
+# Simple reverse proxy with sub_filter for path rewriting
 # Template variables: NIGHTINGALE_HOST, NIGHTINGALE_PORT
 
-# Main Nightingale location - accessible from frontend at /nightingale/
-location /nightingale/ {
-    # Try to get user info from backend, but don't fail if not authenticated
-    auth_request /internal/nightingale-auth;
-    auth_request_set $auth_username $upstream_http_x_user_name;
-    auth_request_set $auth_email $upstream_http_x_user_email;
-    
-    # Allow access even if auth_request returns 401 (unauthenticated)
-    # This enables Nightingale to handle authentication via ProxyAuth with default user
-    error_page 401 = @nightingale_proxy;
-    
-    # Remove /nightingale prefix and proxy to Nightingale
-    # Use proxy_pass with trailing slash to rewrite the path
+# Main Nightingale location
+# Use ^~ to stop regex matching (prevents static file location from intercepting)
+location ^~ /nightingale/ {
+    # Proxy to Nightingale backend (with trailing slash to strip /nightingale prefix)
     proxy_pass http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/;
     
-    # ProxyAuth headers - inject username from authenticated session
-    # If auth failed, $auth_username will be empty and Nightingale will use DefaultRoles
-    proxy_set_header X-User-Name $auth_username;
-    
-    # Standard proxy headers
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    
-    # WebSocket support
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-    
-    # Timeouts
-    proxy_connect_timeout 60s;
-    proxy_send_timeout 60s;
-    proxy_read_timeout 60s;
-    
-    # Buffer settings
-    proxy_buffering off;
-    proxy_request_buffering off;
-}
-
-# Fallback location when auth fails - proxy to Nightingale with anonymous/default user
-location @nightingale_proxy {
-    # Proxy to Nightingale without username (will use DefaultRoles)
-    proxy_pass http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/;
-    
-    # Set default anonymous user for ProxyAuth
+    # ProxyAuth - set default anonymous user
     proxy_set_header X-User-Name "anonymous";
     
     # Standard proxy headers
@@ -56,31 +17,33 @@ location @nightingale_proxy {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     
+    # Disable compression for sub_filter to work
+    proxy_set_header Accept-Encoding "";
+    
+    # Rewrite all absolute paths to include /nightingale prefix
+    # This is needed because Nightingale uses absolute paths like /assets/
+    sub_filter_types text/html application/javascript text/css application/json;
+    sub_filter_once off;
+    sub_filter '="/' '="/nightingale/';
+    sub_filter "='/" "='/nightingale/";
+    
+    # Hide iframe blocking headers
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Content-Security-Policy;
+    
     # WebSocket support
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
     
+    # Enable buffering for sub_filter
+    proxy_buffering on;
+    proxy_buffer_size 128k;
+    proxy_buffers 4 256k;
+    
     # Timeouts
     proxy_connect_timeout 60s;
     proxy_send_timeout 60s;
     proxy_read_timeout 60s;
-    
-    # Buffer settings
-    proxy_buffering off;
-    proxy_request_buffering off;
 }
 
-# Auth subrequest endpoint - get user info from backend and return as headers
-location = /internal/nightingale-auth {
-    internal;
-    proxy_pass http://backend/api/auth/me;
-    proxy_pass_request_body off;
-    proxy_set_header Content-Length "";
-    proxy_set_header Authorization $http_authorization;
-    proxy_set_header Cookie $http_cookie;
-    proxy_set_header X-Original-URI $request_uri;
-    
-    # Backend /api/auth/me endpoint returns user info with these headers:
-    # X-User-Name, X-User-Email, X-User-ID
-}

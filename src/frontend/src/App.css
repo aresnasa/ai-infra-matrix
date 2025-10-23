@@ -14,11 +14,16 @@ code {
 
 .ant-layout {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .ant-layout-content {
   padding: 24px;
   background: #f0f2f5;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Header响应式样式 */

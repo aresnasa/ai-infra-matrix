@@ -2315,13 +2315,23 @@ render_template() {
             local escaped_var_name
             escaped_var_name=$(printf '%s' "$var_name" | perl -pe 's/([\$\{\}\[\]\(\)\.\*\+\?\^\|\\])/\\$1/g')
             
-            # 使用 Perl 的 quotemeta 函数自动转义替换内容
+            # 使用临时文件传递值，避免转义问题
             # -0777 让 Perl 读取整个文件为一个字符串（支持多行匹配）
+            local tmp_val_file
+            tmp_val_file=$(mktemp)
+            printf '%s' "$var_value" > "$tmp_val_file"
+            
             result=$(printf '%s' "$result" | perl -0777 -pe "
-                my \$val = q($var_value);
-                s/\\\$\{$escaped_var_name\}/\$val/g;
-                s/\{\{$escaped_var_name\}\}/\$val/g;
+                # 从文件读取替换值
+                open(my \$fh, '<', '$tmp_val_file') or die;
+                my \$val = do { local \$/; <\$fh> };
+                close(\$fh);
+                # 使用 \Q...\E 将替换值当作字面量（不解释特殊字符）
+                s/\\\$\{$escaped_var_name\}/\Q\$val\E/g;
+                s/\{\{$escaped_var_name\}\}/\Q\$val\E/g;
             ")
+            
+            rm -f "$tmp_val_file"
         else
             # 降级到 awk（更通用，但速度较慢）
             # 临时文件方案，避免 shell 转义问题
@@ -2351,8 +2361,8 @@ render_template() {
         fi
     done
     
-    # 写入输出文件
-    echo "$result" > "$output_file"
+    # 写入输出文件 - 使用 printf 保留所有字符和换行
+    printf '%s' "$result" > "$output_file"
     
     if [[ $? -eq 0 ]]; then
         print_success "✓ 模板渲染完成: $output_file"

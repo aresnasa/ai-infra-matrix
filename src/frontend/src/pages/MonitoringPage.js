@@ -76,11 +76,11 @@ const MonitoringPage = () => {
   };
 
   return (
-    <div style={{ padding: '24px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: 'calc(100vh - 112px)', display: 'flex', flexDirection: 'column' }}>
       <Card 
         title="监控仪表板" 
-        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
-        bodyStyle={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column' }}
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}
+        bodyStyle={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}
         extra={
           <div>
             <Button 
