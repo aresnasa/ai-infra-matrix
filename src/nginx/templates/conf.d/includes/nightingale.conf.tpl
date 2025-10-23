@@ -4,17 +4,51 @@
 
 # Main Nightingale location - accessible from frontend at /nightingale/
 location /nightingale/ {
-    # Get user info from backend via auth_request
+    # Try to get user info from backend, but don't fail if not authenticated
     auth_request /internal/nightingale-auth;
     auth_request_set $auth_username $upstream_http_x_user_name;
     auth_request_set $auth_email $upstream_http_x_user_email;
+    
+    # Allow access even if auth_request returns 401 (unauthenticated)
+    # This enables Nightingale to handle authentication via ProxyAuth with default user
+    error_page 401 = @nightingale_proxy;
     
     # Remove /nightingale prefix and proxy to Nightingale
     # Use proxy_pass with trailing slash to rewrite the path
     proxy_pass http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/;
     
     # ProxyAuth headers - inject username from authenticated session
+    # If auth failed, $auth_username will be empty and Nightingale will use DefaultRoles
     proxy_set_header X-User-Name $auth_username;
+    
+    # Standard proxy headers
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    
+    # WebSocket support
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    
+    # Timeouts
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 60s;
+    proxy_read_timeout 60s;
+    
+    # Buffer settings
+    proxy_buffering off;
+    proxy_request_buffering off;
+}
+
+# Fallback location when auth fails - proxy to Nightingale with anonymous/default user
+location @nightingale_proxy {
+    # Proxy to Nightingale without username (will use DefaultRoles)
+    proxy_pass http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/;
+    
+    # Set default anonymous user for ProxyAuth
+    proxy_set_header X-User-Name "anonymous";
     
     # Standard proxy headers
     proxy_set_header Host $host;
