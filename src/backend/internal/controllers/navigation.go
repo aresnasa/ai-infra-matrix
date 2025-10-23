@@ -45,12 +45,21 @@ var DefaultNavigationItems = []NavigationItem{
 		Roles:   []string{"user", "admin", "super-admin"},
 	},
 	{
+		ID:      "monitoring",
+		Key:     "/monitoring",
+		Label:   "监控仪表板",
+		Icon:    "DashboardOutlined",
+		Visible: true,
+		Order:   1,
+		Roles:   []string{"admin", "super-admin"},
+	},
+	{
 		ID:      "gitea",
 		Key:     "/gitea",
 		Label:   "Gitea",
 		Icon:    "CodeOutlined",
 		Visible: true,
-		Order:   1,
+		Order:   2,
 		Roles:   []string{"user", "admin", "super-admin"},
 	},
 	{
@@ -59,7 +68,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "Kubernetes",
 		Icon:    "CloudServerOutlined",
 		Visible: true,
-		Order:   2,
+		Order:   3,
 		Roles:   []string{"admin", "super-admin"},
 	},
 	{
@@ -68,7 +77,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "Ansible",
 		Icon:    "FileTextOutlined",
 		Visible: true,
-		Order:   3,
+		Order:   4,
 		Roles:   []string{"admin", "super-admin"},
 	},
 	{
@@ -77,7 +86,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "JupyterHub",
 		Icon:    "ExperimentTwoTone",
 		Visible: true,
-		Order:   4,
+		Order:   5,
 		Roles:   []string{"user", "admin", "super-admin"},
 	},
 	{
@@ -86,7 +95,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "Slurm",
 		Icon:    "ClusterOutlined",
 		Visible: true,
-		Order:   5,
+		Order:   6,
 		Roles:   []string{"admin", "super-admin"},
 	},
 	{
@@ -95,7 +104,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "Slurm任务",
 		Icon:    "ThunderboltOutlined",
 		Visible: true,
-		Order:   6,
+		Order:   7,
 		Roles:   []string{"admin", "super-admin"},
 	},
 	{
@@ -104,7 +113,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "SaltStack",
 		Icon:    "ControlOutlined",
 		Visible: true,
-		Order:   7,
+		Order:   8,
 		Roles:   []string{"admin", "super-admin"},
 	},
 }

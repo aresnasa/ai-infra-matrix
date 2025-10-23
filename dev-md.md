@@ -1643,3 +1643,5 @@ Rejected Keys:,没有其它minion节点和master状态，需要修复，怀疑�
 108. 不要使用cat创建文件这回导致agent异常，直接使用vscode创建然后使用@playwright测试，参考scripts/e2e下的其它js，请继续
 109. 使用@playwright继续测试，iframe中依然没有nightingale，同时页面http://192.168.18.114:8080/slurm中的监控仪表板未能正确转发到nightingale，同时期望的是nightingale已经通过jwt访问不需要重复登录，修复这个问题
 110. 调整下build.sh build nginx的配置支持docker-compose build nginx && docker-compose up -d nginx逻辑，这里使用build.sh build nginx --force未能正确的触发构建
+111. 现在将http://192.168.0.200:8080/nightingale/集成到iframe的主页头中和其它组件放到一起，调整下前端
+112. ❌ [404] http://192.168.0.200:8080/api/navigation/config修复这个问题无法获取配置

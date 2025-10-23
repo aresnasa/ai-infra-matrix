@@ -127,6 +127,7 @@ export const ROLE_PERMISSIONS = {
     menuItems: [
       'dashboard',
       'enhanced-dashboard',
+      'monitoring',
       'projects',
       'gitea',
       'kubernetes',
@@ -134,14 +135,13 @@ export const ROLE_PERMISSIONS = {
       'jupyterhub',
       'slurm',
       'jobs',
-  'files',
+      'files',
       'saltstack',
       'kafka-ui',
       'admin',
       'users',
       'settings',
-      'logs',
-      'monitoring'
+      'logs'
     ],
     permissions: [
       '所有系统权限',
@@ -207,6 +207,7 @@ export const getAvailableMenuItems = (user) => {
     return [
       'dashboard',
       'enhanced-dashboard',
+      'monitoring',
       'projects',
       'gitea',
       'kubernetes',

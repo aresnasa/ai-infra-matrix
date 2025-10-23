@@ -8,6 +8,7 @@ import {
   SaveOutlined,
   UndoOutlined,
   ProjectOutlined,
+  DashboardOutlined,
   ExperimentOutlined,
   CodeOutlined,
   CloudServerOutlined,
@@ -35,6 +36,15 @@ const DEFAULT_NAV_ITEMS = [
     visible: true,
     order: 0,
     roles: ['user', 'admin', 'super-admin']
+  },
+  {
+    id: 'monitoring',
+    key: '/monitoring',
+    label: '监控仪表板',
+    icon: 'DashboardOutlined',
+    visible: true,
+    order: 1,
+    roles: ['admin', 'super-admin']
   },
   {
     id: 'gitea',
@@ -294,6 +304,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   // 图标映射
   const iconMap = {
     'ProjectOutlined': <ProjectOutlined />,
+    'DashboardOutlined': <DashboardOutlined />,
     'ExperimentOutlined': <ExperimentOutlined />,
     'CodeOutlined': <CodeOutlined />,
     'CloudServerOutlined': <CloudServerOutlined />,

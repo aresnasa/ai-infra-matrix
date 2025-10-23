@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
-import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined, DatabaseOutlined, DashboardOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
@@ -39,6 +39,11 @@ const Layout = ({ children, user, onLogout }) => {
       key: '/enhanced-dashboard',
       icon: <ExperimentOutlined />,
       label: '增强仪表板',
+    },
+    {
+      key: '/monitoring',
+      icon: <DashboardOutlined />,
+      label: '监控仪表板',
     },
     {
       key: '/projects',
@@ -163,7 +168,13 @@ const Layout = ({ children, user, onLogout }) => {
     // 特殊处理JupyterHub访问
     if (key === '/jupyterhub') {
       // Navigate to embedded Jupyter page for consistent UX
-  navigate('/jupyter');
+      navigate('/jupyter');
+      return;
+    }
+    
+    // 监控仪表板直接导航
+    if (key === '/monitoring') {
+      navigate('/monitoring');
       return;
     }
     
@@ -180,6 +191,8 @@ const Layout = ({ children, user, onLogout }) => {
     // 特殊路径映射
     if (pathname === '/jupyter' || pathname.startsWith('/jupyter')) {
       selectedKeys = ['/jupyterhub'];
+    } else if (pathname === '/monitoring' || pathname.startsWith('/monitoring')) {
+      selectedKeys = ['/monitoring'];
     } else if (pathname === '/gitea' || pathname.startsWith('/gitea')) {
       selectedKeys = ['/gitea'];
     } else if (pathname === '/projects' || pathname.startsWith('/projects')) {
