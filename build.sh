@@ -2308,57 +2308,53 @@ render_template() {
             continue
         fi
         
-        # 使用 Perl 进行替换（支持多行内容，兼容 macOS 和 Linux）
-        # Perl 的 s/// 操作符可以正确处理包含换行符的替换内容
-        if command -v perl >/dev/null 2>&1; then
-            # 转义特殊字符用于 Perl 正则表达式
-            local escaped_var_name
-            escaped_var_name=$(printf '%s' "$var_name" | perl -pe 's/([\$\{\}\[\]\(\)\.\*\+\?\^\|\\])/\\$1/g')
-            
-            # 使用临时文件传递值，避免转义问题
-            # -0777 让 Perl 读取整个文件为一个字符串（支持多行匹配）
-            local tmp_val_file
-            tmp_val_file=$(mktemp)
-            printf '%s' "$var_value" > "$tmp_val_file"
-            
-            result=$(printf '%s' "$result" | perl -0777 -pe "
-                # 从文件读取替换值
-                open(my \$fh, '<', '$tmp_val_file') or die;
-                my \$val = do { local \$/; <\$fh> };
-                close(\$fh);
-                # 使用 \Q...\E 将替换值当作字面量（不解释特殊字符）
-                s/\\\$\{$escaped_var_name\}/\Q\$val\E/g;
-                s/\{\{$escaped_var_name\}\}/\Q\$val\E/g;
-            ")
-            
-            rm -f "$tmp_val_file"
-        else
-            # 降级到 awk（更通用，但速度较慢）
-            # 临时文件方案，避免 shell 转义问题
-            local tmp_val_file
-            tmp_val_file=$(mktemp)
-            printf '%s' "$var_value" > "$tmp_val_file"
-            
-            result=$(awk -v var_name="$var_name" -v val_file="$tmp_val_file" '
-                BEGIN {
-                    # 读取替换值
-                    while ((getline line < val_file) > 0) {
-                        if (val != "") val = val "\n"
-                        val = val line
-                    }
-                    close(val_file)
+        # 使用 awk 进行字面量替换（完全避免正则表达式）
+        # awk 的 index() 和 substr() 函数进行纯字符串匹配和替换
+        local tmp_val_file
+        tmp_val_file=$(mktemp)
+        printf '%s' "$var_value" > "$tmp_val_file"
+        
+        result=$(awk -v var_name="$var_name" -v val_file="$tmp_val_file" '
+            BEGIN {
+                # 读取替换值（支持多行）
+                while ((getline line < val_file) > 0) {
+                    if (NR_val > 1) val = val "\n"
+                    val = val line
+                    NR_val++
                 }
-                {
-                    # 替换 ${VAR} 格式
-                    gsub("\\$\\{" var_name "\\}", val)
-                    # 替换 {{VAR}} 格式
-                    gsub("\\{\\{" var_name "\\}\\}", val)
-                    print
+                close(val_file)
+                
+                # 构建要查找的模式
+                pattern1 = "${" var_name "}"
+                pattern2 = "{{" var_name "}}"
+                len1 = length(pattern1)
+                len2 = length(pattern2)
+            }
+            {
+                line = $0
+                result = ""
+                
+                # 处理 ${VAR} 模式
+                while ((pos = index(line, pattern1)) > 0) {
+                    result = result substr(line, 1, pos - 1) val
+                    line = substr(line, pos + len1)
                 }
-            ' <<< "$result")
-            
-            rm -f "$tmp_val_file"
-        fi
+                result = result line
+                line = result
+                result = ""
+                
+                # 处理 {{VAR}} 模式
+                while ((pos = index(line, pattern2)) > 0) {
+                    result = result substr(line, 1, pos - 1) val
+                    line = substr(line, pos + len2)
+                }
+                result = result line
+                
+                print result
+            }
+        ' <<< "$result")
+        
+        rm -f "$tmp_val_file"
     done
     
     # 写入输出文件 - 使用 printf 保留所有字符和换行

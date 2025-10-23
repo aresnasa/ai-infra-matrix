@@ -1,22 +1,7 @@
 # Nightingale Monitoring System Proxy Configuration
 # Simple reverse proxy with sub_filter for path rewriting
 # Template variables: NIGHTINGALE_HOST, NIGHTINGALE_PORT
-
-# Nightingale API proxy - for API calls from iframe
-location ~ ^/api/n9e/ {
-    rewrite ^/api/n9e/(.*)$ /$1 break;
-    proxy_pass http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}};
-    
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    
-    # WebSocket support
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
-}
+# Note: /api/n9e/ is handled in server-main.conf to ensure proper priority
 
 # Main Nightingale location - must come before regex locations
 # Use ^~ to stop regex matching (prevents static file location from intercepting)

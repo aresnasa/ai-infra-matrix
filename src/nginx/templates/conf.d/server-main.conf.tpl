@@ -81,6 +81,22 @@ server {
     include /etc/nginx/conf.d/includes/minio.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
 
+    # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
+    location ^~ /api/n9e/ {
+        # 不需要 rewrite，直接代理到 Nightingale，保持完整路径
+        proxy_pass http://nightingale_console;
+        
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+    }
+
     # 后端 API 代理 + CORS
     location /api/ {
         proxy_pass http://backend/api/;
