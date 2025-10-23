@@ -1113,4 +1113,15 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// MinIO Console 代理登录（为iframe设置同源Cookie）
 		objectStorage.POST("/minio/console/proxy-login", controllers.MinIOConsoleProxyLogin)
 	}
+
+	// 导航配置管理路由（需要认证）
+	navigationController := controllers.NewNavigationController()
+	navigation := api.Group("/navigation")
+	navigation.Use(middleware.AuthMiddlewareWithSession())
+	{
+		navigation.GET("/config", navigationController.GetNavigationConfig)
+		navigation.POST("/config", navigationController.SaveNavigationConfig)
+		navigation.DELETE("/config", navigationController.ResetNavigationConfig)
+		navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
+	}
 }

@@ -13,7 +13,7 @@ import {
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
-import SlurmTaskBar from '../components/SlurmTaskBar';
+// import SlurmTaskBar from '../components/SlurmTaskBar'; // 已移除，不再需要
 import SSHAuthConfig from '../components/SSHAuthConfig';
 
 const { Title, Text, Paragraph } = Typography;
@@ -402,11 +402,11 @@ const SlurmScalingPage = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      <SlurmTaskBar style={{ marginBottom: 12 }} />
+      {/* 移除 SlurmTaskBar 组件 - 该组件不存在且不需要 */}
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={2}>
-            <ClusterOutlined /> SLURM 弹性扩缩容管理
+            <ClusterOutlined /> SLURM
           </Title>
           <Space>
             <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>

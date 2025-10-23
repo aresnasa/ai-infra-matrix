@@ -25,6 +25,7 @@ src/openscow/
 backup/
 scripts/node_modules
 test/e2e/node_modules/
+test-results/
 test/e2e/test-results/
 scripts/test-screenshots
 test-screenshots/
