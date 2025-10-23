@@ -13,7 +13,6 @@ import {
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
-// import SlurmTaskBar from '../components/SlurmTaskBar'; // 已移除，不再需要
 import SSHAuthConfig from '../components/SSHAuthConfig';
 
 const { Title, Text, Paragraph } = Typography;
@@ -411,12 +410,6 @@ const SlurmScalingPage = () => {
           <Space>
             <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>
               刷新
-            </Button>
-            <Button
-              icon={<EyeOutlined />}
-              onClick={() => navigate('/slurm-tasks')}
-            >
-              任务管理
             </Button>
             <Button
               type="primary"

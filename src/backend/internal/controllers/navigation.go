@@ -92,19 +92,10 @@ var DefaultNavigationItems = []NavigationItem{
 	{
 		ID:      "slurm",
 		Key:     "/slurm",
-		Label:   "Slurm",
+		Label:   "SLURM",
 		Icon:    "ClusterOutlined",
 		Visible: true,
 		Order:   6,
-		Roles:   []string{"admin", "super-admin"},
-	},
-	{
-		ID:      "slurm-tasks",
-		Key:     "/slurm-tasks",
-		Label:   "Slurm任务",
-		Icon:    "ThunderboltOutlined",
-		Visible: true,
-		Order:   7,
 		Roles:   []string{"admin", "super-admin"},
 	},
 	{
@@ -113,7 +104,7 @@ var DefaultNavigationItems = []NavigationItem{
 		Label:   "SaltStack",
 		Icon:    "ControlOutlined",
 		Visible: true,
-		Order:   8,
+		Order:   7,
 		Roles:   []string{"admin", "super-admin"},
 	},
 }

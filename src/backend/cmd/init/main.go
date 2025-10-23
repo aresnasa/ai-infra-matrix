@@ -58,6 +58,11 @@ func main() {
 		log.Fatal("Failed to create SLURM database:", err)
 	}
 
+	// 创建Nightingale数据库与用户
+	if err := createNightingaleDatabase(cfg); err != nil {
+		log.Fatal("Failed to create Nightingale database:", err)
+	}
+
 	// 初始化RBAC系统
 	if err := initializeRBAC(); err != nil {
 		log.Fatal("Failed to initialize RBAC:", err)
@@ -1142,3 +1147,318 @@ func createSLURMDatabase(cfg *config.Config) error {
 	log.Println("✓ SLURM database initialization completed!")
 	return nil
 }
+
+// createNightingaleDatabase creates Nightingale database and initializes admin account using GORM
+func createNightingaleDatabase(cfg *config.Config) error {
+	log.Println("=== Creating Nightingale Database ===")
+
+	// Read Nightingale DB settings from env
+	nightingaleDB := getEnvCompat("NIGHTINGALE_DB_NAME", "nightingale")
+
+	log.Printf("Nightingale DB settings - DB: %s", nightingaleDB)
+
+	// Connect to system DB
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Create Nightingale DB if missing
+	var exists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", nightingaleDB).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check Nightingale DB existence: %w", err)
+	}
+
+	if !exists {
+		log.Printf("Creating Nightingale database: %s", nightingaleDB)
+		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s", nightingaleDB)).Error; err != nil {
+			return fmt.Errorf("failed to create Nightingale database: %w", err)
+		}
+		log.Printf("✓ Nightingale database '%s' created successfully", nightingaleDB)
+	} else {
+		log.Printf("✓ Nightingale database '%s' already exists", nightingaleDB)
+	}
+
+	// Connect to Nightingale database
+	nightingaleDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		nightingaleDB,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	nightingaleDB_conn, err := gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to Nightingale database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := nightingaleDB_conn.DB()
+		sqlDB.Close()
+	}()
+
+	// Auto migrate Nightingale models using GORM
+	log.Println("Running GORM AutoMigrate for Nightingale tables...")
+	nightingaleModels := models.InitNightingaleModels()
+	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
+		return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
+	}
+	log.Println("✓ Nightingale tables created/updated successfully")
+
+	// Initialize default roles
+	if err := initializeNightingaleRoles(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale roles: %v", err)
+	}
+
+	// Initialize admin account synced from main system
+	if err := initializeNightingaleAdmin(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale admin account: %v", err)
+	}
+
+	// Create default business group
+	if err := initializeNightingaleBusiGroup(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale business group: %v", err)
+	}
+
+	log.Println("✓ Nightingale database initialization completed!")
+	return nil
+}
+
+// initializeNightingaleRoles initializes default roles in Nightingale using GORM
+func initializeNightingaleRoles(db *gorm.DB) error {
+	log.Println("Initializing Nightingale roles...")
+
+	// Check if Admin role exists
+	var count int64
+	if err := db.Model(&models.NightingaleRole{}).Where("name = ?", "Admin").Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check role existence: %w", err)
+	}
+
+	if count == 0 {
+		adminRole := &models.NightingaleRole{
+			Name: "Admin",
+			Note: "Administrator role with full permissions",
+		}
+		if err := db.Create(adminRole).Error; err != nil {
+			return fmt.Errorf("failed to create Admin role: %w", err)
+		}
+		log.Println("✓ Admin role created")
+	} else {
+		log.Println("✓ Admin role already exists")
+	}
+
+	// Create Standard role
+	if err := db.Model(&models.NightingaleRole{}).Where("name = ?", "Standard").Count(&count).Error; err == nil && count == 0 {
+		standardRole := &models.NightingaleRole{
+			Name: "Standard",
+			Note: "Standard user role",
+		}
+		db.Create(standardRole)
+		log.Println("✓ Standard role created")
+	}
+
+	// Create Guest role
+	if err := db.Model(&models.NightingaleRole{}).Where("name = ?", "Guest").Count(&count).Error; err == nil && count == 0 {
+		guestRole := &models.NightingaleRole{
+			Name: "Guest",
+			Note: "Guest user role with read-only permissions",
+		}
+		db.Create(guestRole)
+		log.Println("✓ Guest role created")
+	}
+
+	return nil
+}
+
+// initializeNightingaleAdmin syncs admin account from main system to Nightingale using GORM
+func initializeNightingaleAdmin(db *gorm.DB) error {
+	log.Println("Syncing admin account from main system to Nightingale...")
+
+	// Get admin user from main system
+	var mainAdmin models.User
+	if err := database.DB.Where("username = ?", "admin").First(&mainAdmin).Error; err != nil {
+		log.Printf("Warning: Could not find admin user in main system: %v", err)
+		log.Println("Nightingale admin will need to be created manually")
+		return nil
+	}
+
+	// Check if admin already exists in Nightingale
+	var nightingaleAdmin models.NightingaleUser
+	result := db.Where("username = ?", mainAdmin.Username).First(&nightingaleAdmin)
+
+	currentTime := time.Now().Unix()
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create new admin user
+		newAdmin := &models.NightingaleUser{
+			Username:  mainAdmin.Username,
+			Nickname:  mainAdmin.Name,
+			Password:  mainAdmin.Password, // Use bcrypt hash from main system
+			Email:     mainAdmin.Email,
+			Roles:     "Admin",
+			Contacts:  "{}",
+			Maintainer: 1,
+			CreateAt:  currentTime,
+			CreateBy:  "system",
+			UpdateAt:  currentTime,
+			UpdateBy:  "system",
+		}
+
+		if err := db.Create(newAdmin).Error; err != nil {
+			return fmt.Errorf("failed to create admin user: %w", err)
+		}
+
+		log.Printf("✓ Admin user '%s' created in Nightingale", mainAdmin.Username)
+		log.Printf("  Email: %s", mainAdmin.Email)
+		log.Println("  Password synced with main system")
+
+		// Create default user group for admin
+		if err := createNightingaleAdminGroup(db, newAdmin.ID, mainAdmin.Username); err != nil {
+			log.Printf("Warning: Failed to create admin group: %v", err)
+		}
+
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query admin user: %w", result.Error)
+	} else {
+		// Update existing admin user
+		nightingaleAdmin.Password = mainAdmin.Password
+		nightingaleAdmin.Email = mainAdmin.Email
+		nightingaleAdmin.Nickname = mainAdmin.Name
+		nightingaleAdmin.UpdateAt = currentTime
+		nightingaleAdmin.UpdateBy = "system"
+
+		if err := db.Save(&nightingaleAdmin).Error; err != nil {
+			return fmt.Errorf("failed to update admin user: %w", err)
+		}
+
+		log.Printf("✓ Admin user '%s' updated in Nightingale", mainAdmin.Username)
+		log.Println("  Password synced with main system")
+	}
+
+	return nil
+}
+
+// createNightingaleAdminGroup creates a default user group for admin
+func createNightingaleAdminGroup(db *gorm.DB, adminUserID uint, adminUsername string) error {
+	currentTime := time.Now().Unix()
+
+	// Check if admin group already exists
+	var existingGroup models.NightingaleUserGroup
+	result := db.Where("name = ?", "admin-group").First(&existingGroup)
+
+	var groupID uint
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create admin group
+		adminGroup := &models.NightingaleUserGroup{
+			Name:     "admin-group",
+			Note:     "Administrator group",
+			CreateAt: currentTime,
+			CreateBy: adminUsername,
+			UpdateAt: currentTime,
+			UpdateBy: adminUsername,
+		}
+
+		if err := db.Create(adminGroup).Error; err != nil {
+			return fmt.Errorf("failed to create admin group: %w", err)
+		}
+		groupID = adminGroup.ID
+		log.Println("✓ Admin group created")
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query admin group: %w", result.Error)
+	} else {
+		groupID = existingGroup.ID
+		log.Println("✓ Admin group already exists")
+	}
+
+	// Check if admin is already a member
+	var memberCount int64
+	db.Model(&models.NightingaleUserGroupMember{}).Where("group_id = ? AND user_id = ?", groupID, adminUserID).Count(&memberCount)
+
+	if memberCount == 0 {
+		// Add admin to group
+		member := &models.NightingaleUserGroupMember{
+			GroupID: int64(groupID),
+			UserID:  int64(adminUserID),
+		}
+
+		if err := db.Create(member).Error; err != nil {
+			return fmt.Errorf("failed to add admin to group: %w", err)
+		}
+		log.Println("✓ Admin added to admin group")
+	}
+
+	return nil
+}
+
+// initializeNightingaleBusiGroup creates default business group
+func initializeNightingaleBusiGroup(db *gorm.DB) error {
+	log.Println("Initializing default business group...")
+
+	currentTime := time.Now().Unix()
+
+	// Check if default business group exists
+	var existingGroup models.NightingaleBusiGroup
+	result := db.Where("name = ?", "Default Group").First(&existingGroup)
+
+	var groupID uint
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create default business group
+		defaultGroup := &models.NightingaleBusiGroup{
+			Name:       "Default Group",
+			LabelEnable: 0,
+			LabelValue: "",
+			CreateAt:   currentTime,
+			CreateBy:   "system",
+			UpdateAt:   currentTime,
+			UpdateBy:   "system",
+		}
+
+		if err := db.Create(defaultGroup).Error; err != nil {
+			return fmt.Errorf("failed to create default business group: %w", err)
+		}
+		groupID = defaultGroup.ID
+		log.Println("✓ Default business group created")
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query default business group: %w", result.Error)
+	} else {
+		groupID = existingGroup.ID
+		log.Println("✓ Default business group already exists")
+	}
+
+	// Link admin group to business group with rw permission
+	var adminUserGroup models.NightingaleUserGroup
+	if err := db.Where("name = ?", "admin-group").First(&adminUserGroup).Error; err == nil {
+		var memberCount int64
+		db.Model(&models.NightingaleBusiGroupMember{}).Where("busi_group_id = ? AND user_group_id = ?", groupID, adminUserGroup.ID).Count(&memberCount)
+
+		if memberCount == 0 {
+			member := &models.NightingaleBusiGroupMember{
+				BusiGroupID: int64(groupID),
+				UserGroupID: int64(adminUserGroup.ID),
+				PermFlag:    "rw", // read-write permission
+			}
+
+			if err := db.Create(member).Error; err != nil {
+				log.Printf("Warning: Failed to link admin group to business group: %v", err)
+			} else {
+				log.Println("✓ Admin group linked to default business group with rw permission")
+			}
+		}
+	}
+
+	return nil
+}
+

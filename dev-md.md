@@ -1661,3 +1661,5 @@
 113. ❌ [404] http://192.168.0.200:8080/api/navigation/config修复这个问题无法获取配置
 
 114. 最近 SaltStack 作业 test.ping * - undefined，修复http://192.168.0.200:8080/slurm中的问题，@playwright测试并修复问题
+
+115. 需要在创建数据库后直接在nightingale数据库中创建admin账号等，初始化为最高权限，然后相关的权限都是由backend进行管控的，调整一下配置代码和backend代码和backend-init代码，然后安装完saltstack客户端后还需要安装监控客户端并同步配置到nightingale中，使用gorm的特性进行初始化，不要直接写sql
