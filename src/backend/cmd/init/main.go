@@ -1304,17 +1304,17 @@ func initializeNightingaleAdmin(db *gorm.DB) error {
 	if result.Error == gorm.ErrRecordNotFound {
 		// Create new admin user
 		newAdmin := &models.NightingaleUser{
-			Username:  mainAdmin.Username,
-			Nickname:  mainAdmin.Name,
-			Password:  mainAdmin.Password, // Use bcrypt hash from main system
-			Email:     mainAdmin.Email,
-			Roles:     "Admin",
-			Contacts:  "{}",
+			Username:   mainAdmin.Username,
+			Nickname:   mainAdmin.Name,
+			Password:   mainAdmin.Password, // Use bcrypt hash from main system
+			Email:      mainAdmin.Email,
+			Roles:      "Admin",
+			Contacts:   "{}",
 			Maintainer: 1,
-			CreateAt:  currentTime,
-			CreateBy:  "system",
-			UpdateAt:  currentTime,
-			UpdateBy:  "system",
+			CreateAt:   currentTime,
+			CreateBy:   "system",
+			UpdateAt:   currentTime,
+			UpdateBy:   "system",
 		}
 
 		if err := db.Create(newAdmin).Error; err != nil {
@@ -1417,13 +1417,13 @@ func initializeNightingaleBusiGroup(db *gorm.DB) error {
 	if result.Error == gorm.ErrRecordNotFound {
 		// Create default business group
 		defaultGroup := &models.NightingaleBusiGroup{
-			Name:       "Default Group",
+			Name:        "Default Group",
 			LabelEnable: 0,
-			LabelValue: "",
-			CreateAt:   currentTime,
-			CreateBy:   "system",
-			UpdateAt:   currentTime,
-			UpdateBy:   "system",
+			LabelValue:  "",
+			CreateAt:    currentTime,
+			CreateBy:    "system",
+			UpdateAt:    currentTime,
+			UpdateBy:    "system",
 		}
 
 		if err := db.Create(defaultGroup).Error; err != nil {
@@ -1461,4 +1461,3 @@ func initializeNightingaleBusiGroup(db *gorm.DB) error {
 
 	return nil
 }
-

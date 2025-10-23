@@ -9,9 +9,9 @@ type NightingaleUser struct {
 	Phone          string `gorm:"not null;default:'';size:16"`
 	Email          string `gorm:"not null;default:'';size:64"`
 	Portrait       string `gorm:"not null;default:'';size:255"`
-	Roles          string `gorm:"not null;size:255"`        // Admin, Standard, Guest
-	Contacts       string `gorm:"type:text"`                // JSON format
-	Maintainer     int    `gorm:"not null;default:0"`       // 是否为维护者
+	Roles          string `gorm:"not null;size:255"`  // Admin, Standard, Guest
+	Contacts       string `gorm:"type:text"`          // JSON format
+	Maintainer     int    `gorm:"not null;default:0"` // 是否为维护者
 	Belong         string `gorm:"not null;default:'';size:16"`
 	LastActiveTime int64  `gorm:"not null;default:0"`
 	CreateAt       int64  `gorm:"not null;default:0"`
@@ -76,14 +76,14 @@ func (NightingaleTarget) TableName() string {
 
 // NightingaleBusiGroup Nightingale 业务组表
 type NightingaleBusiGroup struct {
-	ID         uint   `gorm:"primaryKey;autoIncrement"`
-	Name       string `gorm:"not null;size:191"`
-	LabelEnable int   `gorm:"not null;default:0"`
-	LabelValue string `gorm:"not null;default:'';size:191"`
-	CreateAt   int64  `gorm:"not null;default:0"`
-	CreateBy   string `gorm:"not null;default:'';size:64"`
-	UpdateAt   int64  `gorm:"not null;default:0"`
-	UpdateBy   string `gorm:"not null;default:'';size:64"`
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	Name        string `gorm:"not null;size:191"`
+	LabelEnable int    `gorm:"not null;default:0"`
+	LabelValue  string `gorm:"not null;default:'';size:191"`
+	CreateAt    int64  `gorm:"not null;default:0"`
+	CreateBy    string `gorm:"not null;default:'';size:64"`
+	UpdateAt    int64  `gorm:"not null;default:0"`
+	UpdateBy    string `gorm:"not null;default:'';size:64"`
 }
 
 func (NightingaleBusiGroup) TableName() string {
