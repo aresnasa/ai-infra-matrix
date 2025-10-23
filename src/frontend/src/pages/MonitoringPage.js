@@ -6,7 +6,6 @@ import '../App.css';
 /**
  * MonitoringPage - 监控仪表板页面
  * 使用 iframe 嵌入 Nightingale 监控系统
- * 通过 ProxyAuth 实现单点登录
  */
 const MonitoringPage = () => {
   const [loading, setLoading] = useState(true);
