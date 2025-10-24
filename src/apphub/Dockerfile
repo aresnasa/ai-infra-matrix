@@ -6,10 +6,26 @@ FROM ubuntu:22.04 AS deb-builder
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 
+# Build control flags - set to "true" to enable building specific components
+# 构建控制开关 - 设置为 "true" 来启用特定组件的构建
+ARG BUILD_SLURM=true
+ARG BUILD_SALTSTACK=true
+ARG BUILD_CATEGRAF=true
+ARG BUILD_SINGULARITY=false
+
 # SLURM version configuration - update these when upgrading
 # 更新 SLURM 版本时只需修改这两个变量
 ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
+
+# SaltStack version configuration
+ARG SALTSTACK_VERSION=v3007.8
+
+# Categraf version configuration
+ARG CATEGRAF_VERSION=v0.4.22
+
+# Singularity version configuration
+ARG SINGULARITY_VERSION=v4.3.4
 
 # Accept optional tarball path relative to build context root
 # 默认在当前目录查找 tarball
@@ -103,42 +119,51 @@ RUN set -eux; \
         dpkg-buildpackage -b -uc; \
     fi
 
-# Download SaltStack packages for Ubuntu 22.04
+# Download SaltStack packages from GitHub releases
 USER root
+ARG BUILD_SALTSTACK
+ARG SALTSTACK_VERSION
 RUN set -eux; \
-    mkdir -p /saltstack-deb; \
-    cd /saltstack-deb; \
-    echo "📦 Downloading SaltStack deb packages for Ubuntu 22.04..."; \
-    # 检测架构
-    ARCH=$(dpkg --print-architecture); \
-    echo "Architecture: ${ARCH}"; \
-    # SaltStack repository URL for Ubuntu 22.04 (Jammy)
-    if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/ubuntu/22.04/arm64/latest"; \
-        ARCH_SUFFIX="arm64"; \
+    if [ "${BUILD_SALTSTACK}" = "true" ]; then \
+        mkdir -p /saltstack-deb; \
+        cd /saltstack-deb; \
+        echo "📦 Downloading SaltStack ${SALTSTACK_VERSION} deb packages from GitHub releases..."; \
+        # 检测架构
+        ARCH=$(dpkg --print-architecture); \
+        echo "Architecture: ${ARCH}"; \
+        # 根据架构确定包后缀
+        if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+            ARCH_SUFFIX="arm64"; \
+        else \
+            ARCH_SUFFIX="amd64"; \
+        fi; \
+        # GitHub releases 基础 URL
+        BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
+        echo "Downloading from: ${BASE_URL}"; \
+        # 下载所有主要的 deb 包
+        for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
+            PKG_FILE="${pkg}_${SALTSTACK_VERSION#v}_${ARCH_SUFFIX}.deb"; \
+            for attempt in 1 2 3; do \
+                if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}" 2>/dev/null; then \
+                    echo "✓ Downloaded: ${PKG_FILE}"; \
+                    break; \
+                else \
+                    echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
+                    sleep 2; \
+                fi; \
+            done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+        done; \
+        # 检查下载结果
+        salt_count=$(ls *.deb 2>/dev/null | wc -l || echo 0); \
+        if [ "$salt_count" -gt 0 ]; then \
+            echo "✓ Downloaded ${salt_count} SaltStack deb packages"; \
+            ls -lh *.deb; \
+        else \
+            echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
+        fi; \
     else \
-        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/ubuntu/22.04/amd64/latest"; \
-        ARCH_SUFFIX="amd64"; \
-    fi; \
-    echo "Using SaltStack repo: ${SALTSTACK_REPO}"; \
-    # Download key packages with retry
-    for pkg in salt-master salt-minion salt-common salt-api salt-ssh salt-syndic; do \
-        for attempt in 1 2 3; do \
-            if wget --timeout=30 --tries=3 -nv "${SALTSTACK_REPO}/${pkg}_3007.1-1_${ARCH_SUFFIX}.deb" 2>/dev/null; then \
-                echo "✓ Downloaded: ${pkg}"; \
-                break; \
-            else \
-                echo "⚠️  Attempt ${attempt}/3 failed for ${pkg}"; \
-                sleep 2; \
-            fi; \
-        done || echo "✗ Failed to download ${pkg} after 3 attempts"; \
-    done; \
-    salt_count=$(ls *.deb 2>/dev/null | wc -l || echo 0); \
-    if [ "$salt_count" -gt 0 ]; then \
-        echo "✓ Downloaded ${salt_count} SaltStack deb packages"; \
-        ls -lh *.deb; \
-    else \
-        echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
+        echo "⏭️  Skipping SaltStack download (BUILD_SALTSTACK=${BUILD_SALTSTACK})"; \
+        mkdir -p /saltstack-deb; \
     fi
 
 # Collect artifacts into /out (root stage)
@@ -171,6 +196,7 @@ RUN set -eux; \
         cp /saltstack-deb/*.deb /out/ || true; \
         salt_count=$(ls /saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
         echo "✓ Added ${salt_count} SaltStack deb packages"; \
+        ls -lh /out/salt*.deb 2>/dev/null || true; \
     fi
 
 # =============================================================================
@@ -180,10 +206,17 @@ FROM rockylinux:9 AS rpm-builder
 
 ENV TZ=Asia/Shanghai
 
+# Build control flags
+ARG BUILD_SLURM=true
+ARG BUILD_SALTSTACK=true
+
 # SLURM version configuration (same as deb builder)
 ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+
+# SaltStack version configuration (same as deb builder)
+ARG SALTSTACK_VERSION=v3007.8
 
 # 配置 Rocky Linux 镜像源（多镜像源回退策略）
 RUN set -eux; \
@@ -256,55 +289,51 @@ RUN set -eux; \
     touch /home/builder/rpms/.skip_slurm; \
     echo "⚠️  SLURM RPM build skipped (requires EPEL/PowerTools repos for dependencies)"
 
-# Download SaltStack packages for Rocky Linux 9
+# Download SaltStack packages from GitHub releases
 USER root
+ARG BUILD_SALTSTACK
+ARG SALTSTACK_VERSION
 RUN set -eux; \
-    mkdir -p /saltstack-rpm; \
-    cd /saltstack-rpm; \
-    echo "📦 Downloading SaltStack rpm packages for Rocky Linux 9..."; \
-    # 检测架构
-    ARCH=$(uname -m); \
-    echo "Architecture: ${ARCH}"; \
-    # SaltStack repository URL for RHEL 9
-    if [ "${ARCH}" = "aarch64" ]; then \
-        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/aarch64/latest"; \
-    else \
-        SALTSTACK_REPO="https://repo.saltproject.io/salt/py3/redhat/9/x86_64/latest"; \
-    fi; \
-    echo "Using SaltStack repo: ${SALTSTACK_REPO}"; \
-    # Download key packages with retry and better error handling
-    SUCCESS=0; \
-    for pkg in salt-master salt-minion salt salt-api salt-ssh salt-syndic; do \
-        pkg_file="${pkg}-3007.1-1.el9.${ARCH}.rpm"; \
-        echo "Downloading ${pkg_file}..."; \
-        for attempt in 1 2 3; do \
-            if wget --timeout=30 --tries=1 -nv "${SALTSTACK_REPO}/${pkg_file}" 2>&1; then \
-                if [ -f "${pkg_file}" ]; then \
-                    file_size=$(stat -f%z "${pkg_file}" 2>/dev/null || stat -c%s "${pkg_file}" 2>/dev/null || echo 0); \
-                    if [ "$file_size" -gt 1000 ]; then \
-                        echo "  ✓ Downloaded: ${pkg_file} (${file_size} bytes)"; \
-                        SUCCESS=1; \
-                        break; \
-                    else \
-                        echo "  ⚠️  File too small: ${file_size} bytes, retrying..."; \
-                        rm -f "${pkg_file}"; \
-                    fi; \
+    if [ "${BUILD_SALTSTACK}" = "true" ]; then \
+        mkdir -p /saltstack-rpm; \
+        cd /saltstack-rpm; \
+        echo "📦 Downloading SaltStack ${SALTSTACK_VERSION} rpm packages from GitHub releases..."; \
+        # 检测架构
+        ARCH=$(uname -m); \
+        echo "Architecture: ${ARCH}"; \
+        # 根据架构确定包后缀
+        if [ "${ARCH}" = "aarch64" ]; then \
+            ARCH_SUFFIX="aarch64"; \
+        else \
+            ARCH_SUFFIX="x86_64"; \
+        fi; \
+        # GitHub releases 基础 URL
+        BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
+        echo "Downloading from: ${BASE_URL}"; \
+        # 下载所有主要的 rpm 包
+        for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
+            PKG_FILE="${pkg}-${SALTSTACK_VERSION#v}-0.${ARCH_SUFFIX}.rpm"; \
+            for attempt in 1 2 3; do \
+                if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}" 2>/dev/null; then \
+                    echo "✓ Downloaded: ${PKG_FILE}"; \
+                    break; \
+                else \
+                    echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
+                    sleep 2; \
                 fi; \
-            fi; \
-            echo "  ⚠️  Attempt ${attempt}/3 failed for ${pkg_file}"; \
-            [ $attempt -lt 3 ] && sleep 2; \
+            done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
         done; \
-        [ ! -f "${pkg_file}" ] && echo "  ✗ Failed to download ${pkg_file} after 3 attempts"; \
-    done; \
-    # Verify downloads
-    salt_count=$(ls *.rpm 2>/dev/null | wc -l || echo 0); \
-    if [ "$salt_count" -gt 0 ]; then \
-        echo "✓ Downloaded ${salt_count} SaltStack rpm packages"; \
-        ls -lh *.rpm; \
+        # 检查下载结果
+        salt_count=$(ls *.rpm 2>/dev/null | wc -l || echo 0); \
+        if [ "$salt_count" -gt 0 ]; then \
+            echo "✓ Downloaded ${salt_count} SaltStack rpm packages"; \
+            ls -lh *.rpm; \
+        else \
+            echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
+        fi; \
     else \
-        echo "⚠️  WARNING: No SaltStack packages downloaded (network or DNS issue)"; \
-        echo "⚠️  saltstack-rpm directory will be empty"; \
-        echo "⚠️  This is not fatal - continuing build..."; \
+        echo "⏭️  Skipping SaltStack download (BUILD_SALTSTACK=${BUILD_SALTSTACK})"; \
+        mkdir -p /saltstack-rpm; \
     fi
 
 # Collect RPM artifacts
@@ -429,11 +458,20 @@ RUN set -eux; \
         else \
             echo "  ⚠ PAM libraries not found, building without PAM"; \
         fi; \
+        # 检查是否有 Munge 支持
+        MUNGE_OPTION="--without-munge"; \
+        if pkg-config --exists munge 2>/dev/null || [ -f /usr/lib/libmunge.so ] || [ -f /usr/lib64/libmunge.so ]; then \
+            echo "  ✓ Munge libraries found, enabling Munge support"; \
+            MUNGE_OPTION="--with-munge"; \
+        else \
+            echo "  ⚠ Munge libraries not found, building without Munge"; \
+        fi; \
         ./configure \
             --prefix=/usr/local/slurm \
             --sysconfdir=/etc/slurm \
             --disable-debug \
             ${PAM_OPTION} \
+            ${MUNGE_OPTION} \
             --without-rpath \
             --with-ssl=/usr || { \
             echo "⚠️  Configure failed, marking for skip"; \
@@ -605,6 +643,9 @@ RUN set -eux; \
 # =============================================================================
 FROM golang:1.25-alpine AS categraf-builder
 
+# Build control flags
+ARG BUILD_CATEGRAF=true
+
 # Categraf version configuration
 ARG CATEGRAF_VERSION=v0.4.22
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
@@ -643,11 +684,17 @@ RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 RUN mkdir -p /out
 
 # 执行构建（使用通用构建脚本）
-RUN CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-    CATEGRAF_REPO=${CATEGRAF_REPO} \
-    BUILD_DIR=/build \
-    OUTPUT_DIR=/out \
-    /scripts/build-app.sh categraf
+ARG BUILD_CATEGRAF
+RUN set -eux; \
+    if [ "${BUILD_CATEGRAF}" = "true" ]; then \
+        CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+        CATEGRAF_REPO=${CATEGRAF_REPO} \
+        BUILD_DIR=/build \
+        OUTPUT_DIR=/out \
+        /scripts/build-app.sh categraf; \
+    else \
+        echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
+    fi
 
 #================================================
 # Stage 5: 最终镜像 - 使用 nginx 提供下载服务

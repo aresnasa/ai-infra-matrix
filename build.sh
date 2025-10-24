@@ -2514,12 +2514,13 @@ get_latest_git_tag() {
     fi
     
     # 使用 git ls-remote 获取所有标签，过滤掉 ^{} 后缀（annotated tags），取最新的版本
+    # 支持两段式（v3007.8）和三段式（v0.4.22）版本号
     local latest_tag
     latest_tag=$(git ls-remote --tags "$repo_url" 2>/dev/null | \
                  grep -v '\^{}' | \
                  awk '{print $2}' | \
                  sed 's|refs/tags/||' | \
-                 grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' | \
+                 grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?' | \
                  sort -V | \
                  tail -1)
     
