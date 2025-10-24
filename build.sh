@@ -2502,6 +2502,159 @@ render_jupyterhub_templates() {
     echo
 }
 
+# 获取 Git 仓库的最新版本标签
+# 参数: $1 - Git 仓库 URL
+# 返回: 最新的版本标签（通过 stdout）
+get_latest_git_tag() {
+    local repo_url="$1"
+    
+    if [[ -z "$repo_url" ]]; then
+        print_error "仓库URL不能为空"
+        return 1
+    fi
+    
+    # 使用 git ls-remote 获取所有标签，过滤掉 ^{} 后缀（annotated tags），取最新的版本
+    local latest_tag
+    latest_tag=$(git ls-remote --tags "$repo_url" 2>/dev/null | \
+                 grep -v '\^{}' | \
+                 awk '{print $2}' | \
+                 sed 's|refs/tags/||' | \
+                 grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' | \
+                 sort -V | \
+                 tail -1)
+    
+    if [[ -z "$latest_tag" ]]; then
+        print_error "无法获取仓库 $repo_url 的最新标签"
+        return 1
+    fi
+    
+    echo "$latest_tag"
+    return 0
+}
+
+# 获取 AppHub 所有应用的最新版本
+# 参数: 无
+# 返回: 通过 stdout 输出每个应用的版本信息
+get_apphub_app_versions() {
+    local config_file="$SCRIPT_DIR/src/apphub/app-repos.conf"
+    
+    if [[ ! -f "$config_file" ]]; then
+        print_error "AppHub 配置文件不存在: $config_file"
+        return 1
+    fi
+    
+    print_info "==========================================="
+    print_info "获取 AppHub 应用最新版本"
+    print_info "==========================================="
+    echo
+    
+    # 读取配置文件并处理每一行
+    local app_name repo_url version_prefix latest_version
+    while IFS='|' read -r app_name repo_url version_prefix || [[ -n "$app_name" ]]; do
+        # 跳过注释和空行
+        [[ "$app_name" =~ ^#.*$ ]] && continue
+        [[ -z "$app_name" ]] && continue
+        
+        # 去除空格
+        app_name=$(echo "$app_name" | xargs)
+        repo_url=$(echo "$repo_url" | xargs)
+        version_prefix=$(echo "$version_prefix" | xargs)
+        
+        print_info "正在获取 $app_name 的最新版本..."
+        
+        # 获取最新标签
+        if latest_version=$(get_latest_git_tag "$repo_url"); then
+            print_success "  ✓ $app_name: $latest_version"
+            echo "    仓库: $repo_url"
+            
+            # 输出为 KEY=VALUE 格式，方便后续处理（转换为大写）
+            local var_name=$(echo "${app_name}_VERSION" | tr '[:lower:]' '[:upper:]')
+            echo "${var_name}=${latest_version}"
+        else
+            print_error "  ✗ 获取 $app_name 版本失败"
+        fi
+        echo
+        
+    done < "$config_file"
+    
+    return 0
+}
+
+# 更新 AppHub Dockerfile 中的版本号
+# 参数: 无（自动检测并更新）
+update_apphub_versions() {
+    local dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+    
+    if [[ ! -f "$dockerfile" ]]; then
+        print_error "AppHub Dockerfile 不存在: $dockerfile"
+        return 1
+    fi
+    
+    print_info "==========================================="
+    print_info "更新 AppHub Dockerfile 版本号"
+    print_info "==========================================="
+    echo
+    
+    # 创建临时文件
+    local temp_file="${dockerfile}.tmp"
+    cp "$dockerfile" "$temp_file"
+    
+    local config_file="$SCRIPT_DIR/src/apphub/app-repos.conf"
+    local updated=false
+    
+    # 读取配置文件并处理每一行
+    local app_name repo_url version_prefix latest_version
+    while IFS='|' read -r app_name repo_url version_prefix || [[ -n "$app_name" ]]; do
+        # 跳过注释和空行
+        [[ "$app_name" =~ ^#.*$ ]] && continue
+        [[ -z "$app_name" ]] && continue
+        
+        # 去除空格
+        app_name=$(echo "$app_name" | xargs)
+        repo_url=$(echo "$repo_url" | xargs)
+        version_prefix=$(echo "$version_prefix" | xargs)
+        
+        print_info "检查 $app_name 版本..."
+        
+        # 获取最新版本
+        if latest_version=$(get_latest_git_tag "$repo_url"); then
+            # 构建变量名（大写）
+            local var_name=$(echo "${app_name}_VERSION" | tr '[:lower:]' '[:upper:]')
+            
+            # 在 Dockerfile 中查找并更新版本
+            local old_version=$(grep "^ARG ${var_name}=" "$temp_file" | head -1 | cut -d'=' -f2)
+            
+            if [[ -n "$old_version" ]]; then
+                if [[ "$old_version" != "$latest_version" ]]; then
+                    print_info "  更新 $app_name: $old_version → $latest_version"
+                    sed_inplace "s|^ARG ${var_name}=.*|ARG ${var_name}=${latest_version}|g" "$temp_file"
+                    updated=true
+                else
+                    print_success "  ✓ $app_name 已是最新版本: $latest_version"
+                fi
+            else
+                print_warning "  未在 Dockerfile 中找到 ARG ${var_name}"
+            fi
+        else
+            print_error "  ✗ 获取 $app_name 版本失败"
+        fi
+        
+    done < "$config_file"
+    
+    echo
+    
+    if [[ "$updated" == "true" ]]; then
+        mv "$temp_file" "$dockerfile"
+        cleanup_backup_files "$(dirname "$dockerfile")"
+        print_success "✓ Dockerfile 版本已更新: $dockerfile"
+    else
+        rm -f "$temp_file"
+        print_info "所有版本已是最新，无需更新"
+    fi
+    
+    return 0
+}
+
 # 复制Slurm包到apphub
 copy_slurm_packages_to_apphub() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
@@ -4955,6 +5108,19 @@ build_service() {
     # ========================================
     print_info "  → 预拉取 Dockerfile 依赖镜像..."
     prefetch_base_images "$dockerfile_path" "$service"
+    
+    # ========================================
+    # AppHub 特殊处理：自动更新应用版本
+    # ========================================
+    if [[ "$service" == "apphub" ]]; then
+        print_info "  → AppHub 构建前检查应用版本..."
+        if update_apphub_versions; then
+            print_info "  ✓ AppHub 应用版本检查完成"
+        else
+            print_warning "  ⚠ AppHub 版本检查失败，继续使用当前版本"
+        fi
+        echo
+    fi
     
     # ========================================
     # SingleUser 智能构建处理
@@ -12046,6 +12212,47 @@ main() {
             fi
             
             show_build_info "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            ;;
+            
+        "apphub-versions")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "apphub-versions - 获取 AppHub 应用最新版本"
+                echo
+                echo "用法: $0 apphub-versions"
+                echo
+                echo "功能:"
+                echo "  • 从 Git 仓库获取所有 AppHub 应用的最新版本标签"
+                echo "  • 读取 src/apphub/app-repos.conf 配置"
+                echo "  • 显示每个应用的版本和仓库信息"
+                echo
+                echo "示例:"
+                echo "  $0 apphub-versions"
+                return 0
+            fi
+            
+            get_apphub_app_versions
+            ;;
+            
+        "apphub-update-versions")
+            # 检查是否需要帮助
+            if [[ "$2" == "--help" || "$2" == "-h" ]]; then
+                echo "apphub-update-versions - 更新 AppHub Dockerfile 版本号"
+                echo
+                echo "用法: $0 apphub-update-versions"
+                echo
+                echo "功能:"
+                echo "  • 自动获取 AppHub 应用的最新版本"
+                echo "  • 更新 src/apphub/Dockerfile 中的 ARG 版本变量"
+                echo "  • 比较当前版本和最新版本"
+                echo "  • 只更新有变化的版本号"
+                echo
+                echo "示例:"
+                echo "  $0 apphub-update-versions"
+                return 0
+            fi
+            
+            update_apphub_versions
             ;;
             
         "help"|"-h"|"--help")

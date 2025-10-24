@@ -590,12 +590,57 @@ RUN set -eux; \
     echo "📊 Final /out contents:"; \
     ls -lh /out/ || echo "⚠️  /out is empty"
 
+# =============================================================================
+# Stage 4: Build Categraf (Multi-Architecture Go Binary)
+# 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
+# =============================================================================
+FROM golang:1.23-alpine AS categraf-builder
+
+# Categraf version configuration
+ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
+
+# 配置 Alpine 镜像源（通用配置）
+RUN set -eux; \
+    ARCH=$(uname -m); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "aarch64" ]; then \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/community" >> /etc/apk/repositories; \
+    else \
+        echo "https://mirrors.aliyun.com/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.21/community" >> /etc/apk/repositories; \
+    fi; \
+    apk update || { \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories; \
+        apk update; \
+    }
+
+# Install build dependencies（通用依赖）
+RUN apk add --no-cache git make bash tar gzip sed coreutils
+
+# 复制通用构建脚本和应用特定脚本
+COPY scripts/build-app.sh /scripts/build-app.sh
+COPY scripts/categraf/ /scripts/categraf/
+RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
+
+# 创建输出目录
+RUN mkdir -p /out
+
+# 执行构建（使用通用构建脚本）
+RUN CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+    CATEGRAF_REPO=${CATEGRAF_REPO} \
+    BUILD_DIR=/build \
+    OUTPUT_DIR=/out \
+    /scripts/build-app.sh categraf
+
 #================================================
-# Stage 4: 最终镜像 - 使用 nginx 提供下载服务
+# Stage 5: 最终镜像 - 使用 nginx 提供下载服务
 #================================================
 
 # =============================================================================
-# Stage 4: AppHub - HTTP Server with Package Management & Development Tools
+# Stage 5: AppHub - HTTP Server with Package Management & Development Tools
 # =============================================================================
 FROM nginx:alpine
 
@@ -658,7 +703,8 @@ RUN mkdir -p \
     /usr/share/nginx/html/pkgs/slurm-rpm \
     /usr/share/nginx/html/pkgs/slurm-apk \
     /usr/share/nginx/html/pkgs/saltstack-deb \
-    /usr/share/nginx/html/pkgs/saltstack-rpm
+    /usr/share/nginx/html/pkgs/saltstack-rpm \
+    /usr/share/nginx/html/pkgs/categraf
 
 # Copy all deb packages from deb-builder stage (SLURM + SaltStack)
 COPY --from=deb-builder /out/ /usr/share/nginx/html/pkgs/slurm-deb/
@@ -668,6 +714,9 @@ COPY --from=rpm-builder /out/ /usr/share/nginx/html/pkgs/slurm-rpm/
 
 # Copy all apk packages from apk-builder stage (SLURM client tools)
 COPY --from=apk-builder /out/ /usr/share/nginx/html/pkgs/slurm-apk/
+
+# Copy Categraf packages from categraf-builder stage
+COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 
 # Separate packages into subdirectories and generate indexes
 RUN set -eux; \
@@ -692,12 +741,14 @@ RUN set -eux; \
     slurm_apk_count=$(ls /usr/share/nginx/html/pkgs/slurm-apk/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     salt_deb_count=$(ls /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     salt_rpm_count=$(ls /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    categraf_count=$(ls /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     echo "📊 Package Summary:"; \
     echo "  - SLURM deb packages: ${slurm_deb_count}"; \
     echo "  - SLURM rpm packages: ${slurm_rpm_count}"; \
     echo "  - SLURM apk packages: ${slurm_apk_count}"; \
     echo "  - SaltStack deb packages: ${salt_deb_count}"; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count}"; \
+    echo "  - Categraf packages: ${categraf_count}"; \
     # Generate deb package indexes
     if [ "$slurm_deb_count" -gt 0 ]; then \
         cd /usr/share/nginx/html/pkgs/slurm-deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
@@ -727,6 +778,23 @@ RUN set -eux; \
             ln -sf "$latest_apk" slurm-client-latest-alpine.tar.gz; \
             echo "✓ SLURM Alpine packages available at /pkgs/slurm-apk/"; \
             echo "  ✓ Created symlink: slurm-client-latest-alpine.tar.gz -> $latest_apk"; \
+        fi; \
+    fi; \
+    # Categraf packages (create latest symlinks)
+    if [ "$categraf_count" -gt 0 ]; then \
+        cd /usr/share/nginx/html/pkgs/categraf; \
+        echo "✓ Categraf packages available at /pkgs/categraf/"; \
+        # Create latest symlink for amd64
+        latest_amd64=$(ls -t categraf-*-linux-amd64.tar.gz 2>/dev/null | head -1); \
+        if [ -n "$latest_amd64" ]; then \
+            ln -sf "$latest_amd64" categraf-latest-linux-amd64.tar.gz; \
+            echo "  ✓ Created symlink: categraf-latest-linux-amd64.tar.gz -> $latest_amd64"; \
+        fi; \
+        # Create latest symlink for arm64
+        latest_arm64=$(ls -t categraf-*-linux-arm64.tar.gz 2>/dev/null | head -1); \
+        if [ -n "$latest_arm64" ]; then \
+            ln -sf "$latest_arm64" categraf-latest-linux-arm64.tar.gz; \
+            echo "  ✓ Created symlink: categraf-latest-linux-arm64.tar.gz -> $latest_arm64"; \
         fi; \
     fi; \
     # Note about RPM metadata
