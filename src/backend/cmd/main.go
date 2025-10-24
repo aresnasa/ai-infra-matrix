@@ -439,8 +439,8 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
 		// JWT令牌验证（用于JupyterHub认证器）
 		auth.POST("/verify-token", userHandler.VerifyJWT)
-		// 简单令牌验证（用于SSO认证）
-		auth.GET("/verify", middleware.AuthMiddleware(), userHandler.VerifyTokenSimple)
+		// 简单令牌验证（用于SSO认证）- 使用 AuthMiddlewareWithSession 支持 Cookie 认证
+		auth.GET("/verify", middleware.AuthMiddlewareWithSession(), userHandler.VerifyTokenSimple)
 
 		// JupyterHub认证路由
 		// JupyterHub令牌生成和验证

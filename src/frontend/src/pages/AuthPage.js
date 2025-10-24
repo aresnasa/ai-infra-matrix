@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Form, Input, Button, Card, message, Tabs, Row, Col, Select, Checkbox, Alert, Descriptions, Divider } from 'antd';
 import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import './Auth.css';
 
@@ -33,6 +34,8 @@ const ROLE_TEMPLATES = {
 };
 
 const AuthPage = ({ onLogin }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
   const [selectedRoleTemplate, setSelectedRoleTemplate] = useState('');
@@ -48,6 +51,7 @@ const AuthPage = ({ onLogin }) => {
       console.log('=== 登录API调用成功 ===');
       console.log('获得token:', token ? '是' : '否');
       console.log('登录用户:', user);
+      console.log('登录前的位置:', location.state?.from);
 
       // 保存token
       localStorage.setItem('token', token);
@@ -59,11 +63,16 @@ const AuthPage = ({ onLogin }) => {
       message.success('登录成功！正在加载权限信息...');
 
       // 传递完整的登录响应数据，包括token信息
-      onLogin({
+      await onLogin({
         token,
         expires_at,
         user
       });
+
+      // 登录成功后，重定向到用户之前想访问的页面
+      const from = location.state?.from?.pathname || '/projects';
+      console.log('登录后重定向到:', from);
+      navigate(from, { replace: true });
 
     } catch (error) {
       console.error('登录失败:', error);

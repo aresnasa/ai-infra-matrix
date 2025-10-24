@@ -785,7 +785,7 @@ function App() {
                         </AdminProtectedRoute>
                       }
                     />
-                    <Route path="/login" element={<Navigate to="/projects" replace />} />
+                    {/* 移除自动重定向 - 让 AuthPage 处理登录后的导航 */}
                   </Routes>
                 </Suspense>
               </ErrorBoundary>

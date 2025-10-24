@@ -1665,3 +1665,5 @@
 115. 需要在创建数据库后直接在nightingale数据库中创建admin账号等，初始化为最高权限，然后相关的权限都是由backend进行管控的，调整一下配置代码和backend代码和backend-init代码，然后安装完saltstack客户端后还需要安装监控客户端并同步配置到nightingale中，使用gorm的特性进行初始化，不要直接写sql
      
 116. @playwright修复http://192.168.18.154:8080/monitoring循环访问http://192.168.18.154:8080/project问题，期望的是跳转到nightingale并使用相关监控服务，监控服务需要使用admin登录系统，同时开启jwt能够实现单点sso登录，请继续修复。
+
+117. 现在使用@playwright测试http://192.168.0.200:8080/monitoring进行验证，目前我用浏览器测试了返回的是白屏不符合期望，需要能够正确的登录nightingale后台，请修复

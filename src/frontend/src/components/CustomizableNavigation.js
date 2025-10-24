@@ -127,11 +127,12 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     try {
       setLoading(true);
       const response = await navigationAPI.getUserNavigationConfig();
-      if (response.data && response.data.data && response.data.data.length > 0) {
-        console.log('加载用户自定义导航配置:', response.data.data);
+      // 添加更安全的数据访问，防止解构失败
+      const responseData = response?.data?.data;
+      if (responseData && Array.isArray(responseData) && responseData.length > 0) {
+        console.log('加载用户自定义导航配置:', responseData);
         // 确保每个导航项的roles是数组格式
-        const dataArray = Array.isArray(response.data.data) ? response.data.data : [];
-        let formattedItems = dataArray.map(item => ({
+        let formattedItems = responseData.map(item => ({
           ...item,
           roles: Array.isArray(item.roles) ? item.roles : (item.roles ? [item.roles] : [])
         }));
@@ -150,7 +151,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
       }
     } catch (error) {
       console.error('加载导航配置失败:', error);
-      console.log('使用默认导航配置');
+      console.log('使用默认导航配置，降级到本地配置');
       setNavItems(DEFAULT_NAV_ITEMS);
     } finally {
       setLoading(false);
