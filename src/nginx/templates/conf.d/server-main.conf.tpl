@@ -87,8 +87,15 @@ server {
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {
+        # SSO Integration: Extract username from JWT token via auth_request
+        auth_request /__auth/verify;
+        auth_request_set $auth_username $upstream_http_x_user;
+        
         # 不需要 rewrite，直接代理到 Nightingale，保持完整路径
         proxy_pass http://nightingale_console;
+        
+        # Pass the authenticated username to Nightingale for ProxyAuth
+        proxy_set_header X-User-Name $auth_username;
         
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -145,6 +152,18 @@ server {
         root /usr/share/nginx/html;
         add_header Content-Type text/html;
         add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # Nightingale static assets - must come before general static file location
+    # These paths are used by Nightingale monitoring system
+    location ~ ^/(font|js|image)/ {
+        proxy_pass http://nightingale_console;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        expires 1d;
+        add_header Cache-Control "public";
     }
 
     # 前端静态资源与入口
