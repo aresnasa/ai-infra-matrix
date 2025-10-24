@@ -27,6 +27,8 @@ const MonitoringPage = () => {
     }
     
     // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
+    // 注意：由于 Nightingale 的客户端路由限制，根路径会显示 404
+    // 用户需要点击左侧菜单中的功能（如仪表板、告警规则等）来访问具体页面
     const currentPort = window.location.port ? `:${window.location.port}` : '';
     return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
   };
