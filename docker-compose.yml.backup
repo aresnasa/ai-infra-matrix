@@ -783,6 +783,9 @@ services:
       - FRONTEND_PORT=${FRONTEND_PORT:-80}
       - JUPYTERHUB_HOST=${JUPYTERHUB_HOST:-jupyterhub}
       - JUPYTERHUB_PORT=${JUPYTERHUB_PORT:-8000}
+      - EXTERNAL_SCHEME=${EXTERNAL_SCHEME:-http}
+      - EXTERNAL_HOST=${EXTERNAL_HOST}
+      - EXTERNAL_PORT=${EXTERNAL_PORT}
       - TZ=Asia/Shanghai
     depends_on:
       postgres:

@@ -3,21 +3,34 @@
 # Template variables: NIGHTINGALE_HOST, NIGHTINGALE_PORT
 # Note: /api/n9e/ is handled in server-main.conf to ensure proper priority
 
+## IMPORTANT: Do NOT globally intercept top-level /js, /image, /font
+## Doing so breaks the frontend SPA and can cause redirect loops.
+## Nightingale assets will be served via the /nightingale/ location below.
+
 # Main Nightingale location - must come before regex locations
 # Use ^~ to stop regex matching (prevents static file location from intercepting)
 location ^~ /nightingale/ {
     # Proxy to Nightingale backend (with trailing slash to strip /nightingale prefix)
     proxy_pass http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/;
     
+    # Ensure redirects and cookies stay under /nightingale/
+    proxy_redirect ~^/(.*)$ /nightingale/$1;
+    proxy_redirect http://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/ /nightingale/;
+    proxy_redirect https://{{NIGHTINGALE_HOST}}:{{NIGHTINGALE_PORT}}/ /nightingale/;
+    proxy_cookie_path / /nightingale/;
+    proxy_cookie_domain {{NIGHTINGALE_HOST}} $http_host;
+    
     # ProxyAuth disabled to enable normal login/logout functionality
     # If you need SSO integration, uncomment and configure properly:
     # proxy_set_header X-User-Name $http_x_user_name;
     
     # Standard proxy headers
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Prefix /nightingale;
     
     # Disable compression for sub_filter to work
     proxy_set_header Accept-Encoding "";
