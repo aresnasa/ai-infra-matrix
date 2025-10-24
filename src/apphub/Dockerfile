@@ -399,6 +399,7 @@ RUN apk add --no-cache \
 RUN apk add --no-cache http-parser-dev || echo '⚠ http-parser-dev not available (optional)'
 RUN apk add --no-cache numactl-dev || echo '⚠ numactl-dev not available (optional)'
 RUN apk add --no-cache hwloc-dev || echo '⚠ hwloc-dev not available (optional)'
+RUN apk add --no-cache linux-pam-dev || echo '⚠ linux-pam-dev not available, will build without PAM'
 
 # 创建构建用户
 RUN adduser -D -u 1000 builder
@@ -419,12 +420,20 @@ RUN set -eux; \
         echo "✓ SLURM source extracted: ${srcdir}"; \
         # 配置并编译
         cd "${srcdir}"; \
-        echo ">>> Configuring SLURM..."; \
+        echo ">>> Configuring SLURM for Alpine..."; \
+        # 检查是否有 PAM 支持
+        PAM_OPTION="--disable-pam"; \
+        if pkg-config --exists pam 2>/dev/null || [ -f /usr/lib/libpam.so ] || [ -f /usr/lib64/libpam.so ]; then \
+            echo "  ✓ PAM libraries found, enabling PAM support"; \
+            PAM_OPTION="--enable-pam"; \
+        else \
+            echo "  ⚠ PAM libraries not found, building without PAM"; \
+        fi; \
         ./configure \
             --prefix=/usr/local/slurm \
             --sysconfdir=/etc/slurm \
             --disable-debug \
-            --enable-pam \
+            ${PAM_OPTION} \
             --without-rpath \
             --with-ssl=/usr || { \
             echo "⚠️  Configure failed, marking for skip"; \
