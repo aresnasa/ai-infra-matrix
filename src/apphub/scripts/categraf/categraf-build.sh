@@ -30,16 +30,16 @@ echo "  Build time: ${BUILD_TIME}"
 # 构建 ldflags
 LDFLAGS="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}"
 
-# 构建 AMD64
+# 构建 AMD64（Categraf v0.4.x main.go 在根目录）
 echo "🔨 Building Categraf for linux/amd64..."
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/categraf-linux-amd64 ./cmd/categraf
+    go build -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/categraf-linux-amd64 .
 echo "✓ Built categraf-linux-amd64"
 
 # 构建 ARM64
 echo "🔨 Building Categraf for linux/arm64..."
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go build -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/categraf-linux-arm64 ./cmd/categraf
+    go build -ldflags "${LDFLAGS}" -o ${BUILD_DIR}/categraf-linux-arm64 .
 echo "✓ Built categraf-linux-arm64"
 
 # 打包 AMD64 版本

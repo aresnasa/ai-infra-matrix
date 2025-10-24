@@ -594,11 +594,16 @@ RUN set -eux; \
 # Stage 4: Build Categraf (Multi-Architecture Go Binary)
 # 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
 # =============================================================================
-FROM golang:1.23-alpine AS categraf-builder
+FROM golang:1.25-alpine AS categraf-builder
 
 # Categraf version configuration
 ARG CATEGRAF_VERSION=v0.4.22
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
+
+# 配置 Go 代理（中国镜像加速）
+ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GO111MODULE=on
+ENV CGO_ENABLED=0
 
 # 配置 Alpine 镜像源（通用配置）
 RUN set -eux; \
