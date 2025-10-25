@@ -2180,7 +2180,10 @@ load_environment_variables() {
             value=${value//\$\{EXTERNAL_SCHEME\}/http}
             
             # 导出带 ENV_ 前缀的版本（向后兼容）
-            eval "ENV_${key}=\${value@Q}"
+            # 使用 printf %q 进行安全的引用转义（兼容 Bash 3.x+）
+            local escaped_value
+            escaped_value=$(printf '%q' "$value")
+            eval "ENV_${key}=${escaped_value}"
             # 同时导出不带前缀的版本（用于模板渲染）
             export "${key}=${value}"
         done < "$env_file"
