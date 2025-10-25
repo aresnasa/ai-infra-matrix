@@ -1671,3 +1671,9 @@
 118. 调整下src/apphub/scripts中的各种脚本挪到单独的文件夹中，然后泛化一下src/apphub/Dockerfile中的相关阶段，泛化一下构建步骤方便后续扩展，这里dockerfile只需要简单的copy scripts/$app/$app-build.sh到容器中就能正确的构建，不要重复编写构建代码，让dockerfile中的代码足够简洁
 
 119. 修复一下访问http://192.168.0.200:8080/monitoring这里刷新后不会显示iframe的问题，使用@playwright测试，这里期望的是刷新页面能够正确的返回带有页面头的主页，参考minio和其它组件的nginx配置进行修复。
+
+120. 现在调整一下前端http://192.168.18.154:8080/slurm，中校验节点配置的前端函数，
+  test-ssh01
+  test-ssh02
+  test-ssh03，
+  填入的所有这些节点都需要分布式的测试，可能需要调整backend，如果一次性加入100个节点需要能够正确的处理测试，请继续

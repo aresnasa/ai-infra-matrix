@@ -594,15 +594,43 @@ const SlurmScalingPage = () => {
                   <List
                     size="small"
                     dataSource={saltJobs?.slice(0, 5) || []}
-                    renderItem={(job) => (
-                      <List.Item>
-                        <List.Item.Meta
-                          title={<Text strong>{job.function}</Text>}
-                          description={`${job.target} - ${job.status}`}
-                        />
-                        <Badge status={getSaltStatus(job.status)} />
-                      </List.Item>
-                    )}
+                    renderItem={(job) => {
+                      // 计算任务状态：根据 results 判断成功/失败
+                      const successCount = Object.values(job.results || {}).filter(v => v === true).length;
+                      const totalCount = Object.keys(job.results || {}).length;
+                      const status = totalCount > 0 && successCount === totalCount ? 'success' : 
+                                     totalCount > 0 && successCount > 0 ? 'warning' : 'error';
+                      const statusText = totalCount > 0 ? `${successCount}/${totalCount} 成功` : '无响应';
+                      
+                      return (
+                        <List.Item>
+                          <List.Item.Meta
+                            title={<Text strong>{job.function}</Text>}
+                            description={
+                              <Space size="small">
+                                <Text type="secondary">{job.target}</Text>
+                                <Text>•</Text>
+                                <Text type="secondary">{statusText}</Text>
+                                {job.start_time && (
+                                  <>
+                                    <Text>•</Text>
+                                    <Text type="secondary">
+                                      {new Date(job.start_time).toLocaleString('zh-CN', {
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </Text>
+                                  </>
+                                )}
+                              </Space>
+                            }
+                          />
+                          <Badge status={status === 'success' ? 'success' : status === 'warning' ? 'warning' : 'error'} />
+                        </List.Item>
+                      );
+                    }}
                   />
                 </Card>
               </Col>

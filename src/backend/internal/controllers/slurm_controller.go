@@ -841,6 +841,88 @@ func (c *SlurmController) TestSSHConnection(ctx *gin.Context) {
 	})
 }
 
+// BatchSSHTestRequest 批量SSH测试请求
+type BatchSSHTestRequest struct {
+	Nodes []services.NodeConfig `json:"nodes" binding:"required,min=1,max=100"`
+}
+
+// POST /api/slurm/ssh/test-batch
+// 批量并发测试SSH连接（支持最多100个节点）
+func (c *SlurmController) TestBatchSSHConnection(ctx *gin.Context) {
+	var req BatchSSHTestRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 设置超时时间，给每个节点15秒，但总时间不超过2分钟
+	timeout := time.Duration(min(len(req.Nodes)*15, 120)) * time.Second
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), timeout)
+	defer cancel()
+
+	// 构建SSH连接列表
+	connections := make([]services.SSHConnection, 0, len(req.Nodes))
+	for _, node := range req.Nodes {
+		connections = append(connections, services.SSHConnection{
+			Host:       node.Host,
+			Port:       node.Port,
+			User:       node.User,
+			KeyPath:    node.KeyPath,
+			PrivateKey: node.PrivateKey,
+			Password:   node.Password,
+		})
+	}
+
+	// 并发执行SSH测试
+	testCommand := "whoami && uname -a && echo 'SSH连接测试成功'"
+	results, err := c.sshSvc.ExecuteCommandOnHosts(ctxWithTimeout, connections, testCommand)
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"results": results,
+		})
+		return
+	}
+
+	// 统计结果
+	successCount := 0
+	failCount := 0
+	resultDetails := make([]gin.H, 0, len(results))
+
+	for _, result := range results {
+		if result.Success {
+			successCount++
+		} else {
+			failCount++
+		}
+
+		resultDetails = append(resultDetails, gin.H{
+			"host":     result.Host,
+			"success":  result.Success,
+			"message":  result.Error,
+			"output":   result.Output,
+			"duration": result.Duration.Milliseconds(),
+		})
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":       successCount > 0 && failCount == 0,
+		"total":         len(results),
+		"success_count": successCount,
+		"fail_count":    failCount,
+		"results":       resultDetails,
+	})
+}
+
+// 辅助函数
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // POST /api/slurm/saltstack/execute/async
 func (c *SlurmController) ExecuteSaltCommandAsync(ctx *gin.Context) {
 	var req struct {
