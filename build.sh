@@ -2179,7 +2179,10 @@ load_environment_variables() {
             value=${value//\$\{EXTERNAL_PORT\}/8080}
             value=${value//\$\{EXTERNAL_SCHEME\}/http}
             
-            eval "ENV_${key}=\"$value\""
+            # 导出带 ENV_ 前缀的版本（向后兼容）
+            eval "ENV_${key}=\${value@Q}"
+            # 同时导出不带前缀的版本（用于模板渲染）
+            export "${key}=${value}"
         done < "$env_file"
     fi
     
@@ -2191,19 +2194,20 @@ load_environment_variables() {
     # 从 docker-compose.yml 提取默认值
     if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
         # 提取环境变量默认值
-        export BACKEND_HOST="${ENV_BACKEND_HOST:-backend}"
-        export BACKEND_PORT="${ENV_BACKEND_PORT:-8082}"
-        export FRONTEND_HOST="${ENV_FRONTEND_HOST:-frontend}"
-        export FRONTEND_PORT="${ENV_FRONTEND_PORT:-80}"
-        export JUPYTERHUB_HOST="${ENV_JUPYTERHUB_HOST:-jupyterhub}"
-        export JUPYTERHUB_PORT="${ENV_JUPYTERHUB_PORT:-8000}"
-        export NIGHTINGALE_HOST="${ENV_NIGHTINGALE_HOST:-nightingale}"
-        export NIGHTINGALE_PORT="${ENV_NIGHTINGALE_PORT:-17000}"
-        export EXTERNAL_SCHEME="${ENV_EXTERNAL_SCHEME:-http}"
-        export EXTERNAL_HOST="${ENV_EXTERNAL_HOST:-$detected_host}"
-        export EXTERNAL_PORT="${ENV_EXTERNAL_PORT:-8080}"
-        export GITEA_ALIAS_ADMIN_TO="${ENV_GITEA_ALIAS_ADMIN_TO:-admin}"
-        export GITEA_ADMIN_EMAIL="${ENV_GITEA_ADMIN_EMAIL:-admin@example.com}"
+        # 尝试从 .env 文件读取，如果不存在则使用默认值
+        export BACKEND_HOST="${BACKEND_HOST:-${ENV_BACKEND_HOST:-backend}}"
+        export BACKEND_PORT="${BACKEND_PORT:-${ENV_BACKEND_PORT:-8082}}"
+        export FRONTEND_HOST="${FRONTEND_HOST:-${ENV_FRONTEND_HOST:-frontend}}"
+        export FRONTEND_PORT="${FRONTEND_PORT:-${ENV_FRONTEND_PORT:-80}}"
+        export JUPYTERHUB_HOST="${JUPYTERHUB_HOST:-${ENV_JUPYTERHUB_HOST:-jupyterhub}}"
+        export JUPYTERHUB_PORT="${JUPYTERHUB_PORT:-${ENV_JUPYTERHUB_PORT:-8000}}"
+        export NIGHTINGALE_HOST="${NIGHTINGALE_HOST:-${ENV_NIGHTINGALE_HOST:-nightingale}}"
+        export NIGHTINGALE_PORT="${NIGHTINGALE_PORT:-${ENV_NIGHTINGALE_PORT:-17000}}"
+        export EXTERNAL_SCHEME="${EXTERNAL_SCHEME:-${ENV_EXTERNAL_SCHEME:-http}}"
+        export EXTERNAL_HOST="${EXTERNAL_HOST:-${ENV_EXTERNAL_HOST:-$detected_host}}"
+        export EXTERNAL_PORT="${EXTERNAL_PORT:-${ENV_EXTERNAL_PORT:-8080}}"
+        export GITEA_ALIAS_ADMIN_TO="${GITEA_ALIAS_ADMIN_TO:-${ENV_GITEA_ALIAS_ADMIN_TO:-admin}}"
+        export GITEA_ADMIN_EMAIL="${GITEA_ADMIN_EMAIL:-${ENV_GITEA_ADMIN_EMAIL:-admin@example.com}}"
     fi
 }
 

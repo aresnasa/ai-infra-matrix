@@ -92,7 +92,7 @@ server {
         auth_request_set $auth_username $upstream_http_x_user;
         
         # 重定向到 Nightingale 的 metric explorer 页面
-        return 301 /nightingale/metric/explorer;
+        return 301 /metric/explorer;
     }
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
