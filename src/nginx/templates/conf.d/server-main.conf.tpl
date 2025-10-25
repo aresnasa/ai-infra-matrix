@@ -79,21 +79,18 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # /monitoring 路径由前端React路由处理（iframe页面），启用SPA fallback
+    location = /monitoring {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        expires -1;
+        try_files $uri $uri/ /index.html;
+    }
+
     # 按模块拆分：各服务路由在独立文件中，便于单独调试
     include /etc/nginx/conf.d/includes/gitea.conf;
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
     include /etc/nginx/conf.d/includes/minio.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
-
-    # Monitoring 路由 - 转发到 Nightingale 的 metric explorer
-    location /monitoring {
-        # SSO Integration: Extract username from JWT token via auth_request
-        auth_request /__auth/verify;
-        auth_request_set $auth_username $upstream_http_x_user;
-        
-        # 重定向到 Nightingale 的 metric explorer 页面
-        return 301 /metric/explorer;
-    }
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {
