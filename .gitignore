@@ -35,4 +35,4 @@ node_modules/
 test/e2e/*.png
 .playwright-mcp/test-results/*.png
 *.png
-src/src/
+src/src/*
