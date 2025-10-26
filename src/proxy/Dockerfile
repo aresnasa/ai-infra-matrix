@@ -1,0 +1,41 @@
+# 网络代理容器 - 将Docker网络中的服务代理到宿主机网络
+# 使用HAProxy作为代理服务器，支持TCP代理多种数据库和服务
+FROM haproxy:2.9-alpine
+
+# 设置维护者信息
+LABEL maintainer="AI Infra Matrix Team"
+LABEL description="Network proxy for exposing Docker internal services to host network"
+
+# 切换到root用户以安装软件包
+USER root
+
+# 安装必要工具
+RUN apk add --no-cache \
+    bash \
+    curl \
+    ca-certificates \
+    tzdata
+
+# 设置时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 复制HAProxy配置文件
+COPY haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
+
+# 创建日志目录
+RUN mkdir -p /var/log/haproxy
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg || exit 1
+
+# 暴露端口
+# PostgreSQL: 5432
+# MySQL: 3306  
+# Redis: 6379
+# OceanBase: 2881
+EXPOSE 5432 3306 6379 2881
+
+# 启动HAProxy
+CMD ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]

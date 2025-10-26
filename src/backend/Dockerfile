@@ -132,38 +132,35 @@ RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 从 AppHub 安装预编译的 SLURM 客户端工具
+# 从 AppHub 安装 SLURM 客户端 APK 包
 RUN set -eux; \
-    echo ">>> Installing SLURM client tools from AppHub..."; \
-    # 尝试从 AppHub 下载（支持多种 URL 格式）
-    for APPHUB_URL in http://apphub/pkgs/slurm-apk/slurm-client-latest-alpine.tar.gz \
-                      http://ai-infra-apphub/pkgs/slurm-apk/slurm-client-latest-alpine.tar.gz \
-                      http://192.168.0.200:8081/pkgs/slurm-apk/slurm-client-latest-alpine.tar.gz; do \
-        if wget -q --timeout=10 --tries=2 "$APPHUB_URL" -O /tmp/slurm.tar.gz 2>/dev/null; then \
-            echo "  ✓ Downloaded from: $APPHUB_URL"; \
+    echo ">>> Installing SLURM client from AppHub APK repository..."; \
+    # 添加 AppHub APK 仓库（支持多种 URL 格式）
+    APPHUB_REPO_ADDED=false; \
+    for APPHUB_URL in http://apphub http://ai-infra-apphub http://192.168.0.200:8081; do \
+        echo "  Trying AppHub: $APPHUB_URL"; \
+        if wget -q --spider --timeout=5 --tries=1 "$APPHUB_URL/apks/alpine/APKINDEX.tar.gz" 2>/dev/null; then \
+            echo "$APPHUB_URL/apks/alpine" >> /etc/apk/repositories; \
+            echo "  ✓ Added AppHub APK repository: $APPHUB_URL/apks/alpine"; \
+            APPHUB_REPO_ADDED=true; \
             break; \
         fi; \
     done; \
-    # 如果下载成功，安装 SLURM 客户端
-    if [ -f /tmp/slurm.tar.gz ] && [ -s /tmp/slurm.tar.gz ]; then \
-        echo ">>> Extracting and installing SLURM client..."; \
-        cd /tmp; \
-        tar xzf slurm.tar.gz; \
-        if [ -f install.sh ]; then \
-            chmod +x install.sh; \
-            ./install.sh; \
-            echo "  ✓ SLURM client installed successfully"; \
-            # 验证安装
-            if command -v sinfo >/dev/null 2>&1; then \
-                echo "  ✓ SLURM version: $(sinfo --version 2>&1 | head -1)"; \
-            fi; \
-        else \
-            echo "  ⚠ install.sh not found in package"; \
+    # 更新 APK 索引
+    if [ "$APPHUB_REPO_ADDED" = "true" ]; then \
+        apk update || echo "  ⚠ AppHub APK index update failed, continuing..."; \
+    fi; \
+    # 尝试安装 SLURM 客户端
+    if apk add --no-cache slurm-client 2>/dev/null; then \
+        echo "  ✓ SLURM client installed from AppHub"; \
+        # 验证安装
+        if command -v sinfo >/dev/null 2>&1; then \
+            sinfo --version 2>&1 | head -1 || echo "  ✓ SLURM commands available"; \
         fi; \
-        rm -rf /tmp/slurm.tar.gz /tmp/install.sh /tmp/uninstall.sh /tmp/README.md /tmp/usr /tmp/etc; \
     else \
-        echo "  ⚠ SLURM client download failed, will use demo data"; \
-        echo "  ℹ Run './scripts/build-slurm-client-alpine.sh' to build and upload SLURM client package"; \
+        echo "  ⚠ SLURM client APK not available in AppHub"; \
+        echo "  ℹ Build and upload: cd src/apphub && ./build-slurm-apk.sh"; \
+        echo "  ℹ Backend will use demo/fallback mode for SLURM operations"; \
     fi
 
 WORKDIR /root/

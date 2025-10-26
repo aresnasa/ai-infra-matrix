@@ -732,6 +732,7 @@ const SlurmScalingPage = () => {
           {/* SSH认证配置 */}
           <SSHAuthConfig 
             form={scaleUpForm}
+            hostFieldName="nodes"
             initialValues={{
               authType: 'password',
               ssh_user: 'root',

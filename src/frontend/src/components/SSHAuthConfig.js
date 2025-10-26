@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Card, Form, Input, Upload, Button, Radio, Divider, Typography,
-  Alert, Space, Tooltip, message, Spin, Result
+  Alert, Space, Tooltip, message, Spin, Result, Table, Tag
 } from 'antd';
 import {
   KeyOutlined, UploadOutlined, EyeInvisibleOutlined, 
@@ -20,6 +20,7 @@ const SSHAuthConfig = ({
   showAdvanced = true,
   showTestConnection = true,
   testHost = '',
+  hostFieldName = 'host',  // 添加：可配置的主机名字段名
   size = 'default' 
 }) => {
   const [authType, setAuthType] = useState(initialValues.authType || 'password');
@@ -79,10 +80,18 @@ const SSHAuthConfig = ({
       setTestResult(null);
       
       const values = form.getFieldsValue();
-      const host = testHost || values.host || 'test-ssh01';
+      // 从配置的字段名获取主机名或使用 testHost
+      const host = testHost || values[hostFieldName] || values.host || 'test-ssh01';
+      
+      // 检查是否是多个主机（支持逗号或换行符分隔）
+      const hosts = host
+        .split(/[,\n]/)  // 按逗号或换行符分割
+        .map(h => h.trim())
+        .filter(h => h);
+      const isBatchTest = hosts.length > 1;
       
       const testConfig = {
-        host: host,
+        host: host,  // 保留原始主机名用于显示
         port: values.ssh_port || 22,
         user: values.ssh_user || 'root',
         password: values.password || '',
@@ -101,18 +110,52 @@ const SSHAuthConfig = ({
         return;
       }
 
-      const response = await slurmAPI.testSSHConnection(testConfig);
-      
-      if (response.data.success) {
-        setTestResult({
-          success: true,
-          message: response.data.message,
-          output: response.data.output,
-          duration: response.data.duration
-        });
-        message.success('SSH连接测试成功！');
+      // 批量测试或单个测试
+      if (isBatchTest) {
+        message.info(`正在测试 ${hosts.length} 个节点的SSH连接...`);
+        
+        // 构建批量测试配置
+        const nodes = hosts.map(h => ({
+          host: h,
+          port: testConfig.port,
+          user: testConfig.user,
+          password: testConfig.password,
+          key_path: testConfig.key_path,
+          private_key: testConfig.private_key,
+        }));
+        
+        const response = await slurmAPI.testBatchSSHConnection(nodes);
+        
+        if (response.data.success) {
+          setTestResult({
+            success: true,
+            batch: true,
+            total: response.data.total,
+            success_count: response.data.success_count,
+            fail_count: response.data.fail_count,
+            results: response.data.results,
+            message: `批量测试完成: ${response.data.success_count}/${response.data.total} 成功`
+          });
+          message.success(`批量测试完成！成功: ${response.data.success_count}, 失败: ${response.data.fail_count}`);
+        } else {
+          throw new Error('批量测试失败');
+        }
       } else {
-        throw new Error(response.data.error || '连接失败');
+        // 单个主机测试
+        const response = await slurmAPI.testSSHConnection(testConfig);
+        
+        if (response.data.success) {
+          setTestResult({
+            success: true,
+            batch: false,
+            message: response.data.message,
+            output: response.data.output,
+            duration: response.data.duration
+          });
+          message.success('SSH连接测试成功！');
+        } else {
+          throw new Error(response.data.error || '连接失败');
+        }
       }
       
     } catch (error) {
@@ -144,7 +187,13 @@ const SSHAuthConfig = ({
     >
       <Alert
         message="SSH认证说明"
-        description="请选择SSH认证方式。推荐使用密钥认证以提高安全性。"
+        description={
+          <div>
+            • 推荐使用密钥认证以提高安全性<br/>
+            • 支持批量测试：主机名用逗号或换行分隔（如：test-ssh01,test-ssh02,test-ssh03 或每行一个主机）<br/>
+            • 批量测试最多支持100个节点
+          </div>
+        }
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
@@ -298,22 +347,82 @@ const SSHAuthConfig = ({
                   <div>
                     {testResult.success ? (
                       <div>
-                        <Text type="success">{testResult.message}</Text>
-                        {testResult.duration && (
-                          <Text type="secondary"> (耗时: {testResult.duration}ms)</Text>
-                        )}
-                        {testResult.output && (
-                          <pre style={{ 
-                            marginTop: 8, 
-                            fontSize: '12px', 
-                            backgroundColor: '#f6f8fa',
-                            padding: '8px',
-                            borderRadius: '4px',
-                            maxHeight: '200px',
-                            overflow: 'auto'
-                          }}>
-                            {testResult.output}
-                          </pre>
+                        {testResult.batch ? (
+                          // 批量测试结果
+                          <div>
+                            <Text type="success">
+                              批量测试完成: {testResult.success_count}/{testResult.total} 成功
+                            </Text>
+                            {testResult.fail_count > 0 && (
+                              <Text type="danger"> ({testResult.fail_count} 失败)</Text>
+                            )}
+                            
+                            {/* 详细结果表格 */}
+                            <Table
+                              dataSource={testResult.results}
+                              size="small"
+                              pagination={{ pageSize: 5 }}
+                              style={{ marginTop: 12 }}
+                              columns={[
+                                {
+                                  title: '主机',
+                                  dataIndex: 'host',
+                                  key: 'host',
+                                  width: 150,
+                                },
+                                {
+                                  title: '状态',
+                                  dataIndex: 'success',
+                                  key: 'success',
+                                  width: 80,
+                                  render: (success) => (
+                                    <Tag color={success ? 'success' : 'error'}>
+                                      {success ? '成功' : '失败'}
+                                    </Tag>
+                                  ),
+                                },
+                                {
+                                  title: '耗时',
+                                  dataIndex: 'duration',
+                                  key: 'duration',
+                                  width: 80,
+                                  render: (ms) => `${ms}ms`,
+                                },
+                                {
+                                  title: '信息',
+                                  dataIndex: 'message',
+                                  key: 'message',
+                                  ellipsis: true,
+                                  render: (msg, record) => (
+                                    <Text type={record.success ? 'secondary' : 'danger'}>
+                                      {msg || record.output?.substring(0, 50) || '-'}
+                                    </Text>
+                                  ),
+                                },
+                              ]}
+                            />
+                          </div>
+                        ) : (
+                          // 单个测试结果
+                          <div>
+                            <Text type="success">{testResult.message}</Text>
+                            {testResult.duration && (
+                              <Text type="secondary"> (耗时: {testResult.duration}ms)</Text>
+                            )}
+                            {testResult.output && (
+                              <pre style={{ 
+                                marginTop: 8, 
+                                fontSize: '12px', 
+                                backgroundColor: '#f6f8fa',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                maxHeight: '200px',
+                                overflow: 'auto'
+                              }}>
+                                {testResult.output}
+                              </pre>
+                            )}
+                          </div>
                         )}
                       </div>
                     ) : (

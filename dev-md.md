@@ -1677,3 +1677,13 @@
   test-ssh02
   test-ssh03，
   填入的所有这些节点都需要分布式的测试，可能需要调整backend，如果一次性加入100个节点需要能够正确的处理测试，请继续
+
+121. 现在需要修复添加slurm节点时任务slurm:scale-up
+  任务详情
+  基本信息
+  参数配置参数配置为空的问题，任何一个任务都需要记录到数据库中为后续的审计和回溯提供依据，统计信息也需要正确的显示
+
+122. 修复docker exec ai-infra-backend "source /etc/profile ;sinfo"
+OCI runtime exec failed: exec failed: unable to start container process: exec: "source /etc/profile ;sinfo": stat source /etc/profile ;sinfo: no such file or directory: unknown，问题，期望的是backend能够正确的安装slurm客户端，然后查询slurm集群状态
+
+123. make[1]: Entering directory '/tmp/slurm-23.11.10'版本不符合期望，已经在apphub中构建过slurm，现在需要调整的是apphub中的apk构建，然后backend中的dockerfile能够直接拉取slurm的apk即可

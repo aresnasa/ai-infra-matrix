@@ -964,6 +964,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.GET("/saltstack/integration", slurmController.GetSaltStackIntegration)
 		slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)
 		slurm.POST("/ssh/test-connection", slurmController.TestSSHConnection)
+		slurm.POST("/ssh/test-batch", slurmController.TestBatchSSHConnection) // 批量测试
 		slurm.POST("/hosts/initialize", slurmController.InitializeHosts)
 		slurm.POST("/saltstack/execute/async", slurmController.ExecuteSaltCommandAsync)
 		slurm.POST("/saltstack/execute", slurmController.ExecuteSaltCommand)

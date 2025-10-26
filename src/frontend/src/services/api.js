@@ -536,6 +536,7 @@ export const slurmAPI = {
   retryTask: (taskId) => api.post(`/slurm/tasks/${taskId}/retry`),
   // SSH连接测试 API
   testSSHConnection: (nodeConfig) => api.post('/slurm/ssh/test-connection', nodeConfig),
+  testBatchSSHConnection: (nodes) => api.post('/slurm/ssh/test-batch', { nodes }), // 批量测试
   // 主机初始化 API
   initializeHosts: (hosts) => api.post('/slurm/hosts/initialize', { hosts }),
 };
