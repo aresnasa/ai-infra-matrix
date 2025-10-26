@@ -8,6 +8,7 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -62,6 +63,15 @@ func (s *SlurmTaskService) CreateTask(ctx context.Context, req CreateTaskRequest
 	// 生成唯一任务ID
 	taskID := uuid.New().String()
 
+	logrus.WithFields(logrus.Fields{
+		"task_id":      taskID,
+		"user_id":      req.UserID,
+		"cluster_id":   req.ClusterID,
+		"target_nodes": req.TargetNodes,
+		"name":         req.Name,
+		"type":         req.Type,
+	}).Debug("CreateTask: 开始创建任务")
+
 	// 序列化参数
 	var parametersJSON models.JSON
 	if req.Parameters != nil {
@@ -87,14 +97,54 @@ func (s *SlurmTaskService) CreateTask(ctx context.Context, req CreateTaskRequest
 		MaxRetries:  req.MaxRetries,
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"task_uuid":    task.TaskID,
+		"user_id":      task.UserID,
+		"cluster_id":   task.ClusterID,
+		"target_nodes": len(task.TargetNodes),
+	}).Debug("CreateTask: 准备插入数据库")
+
 	if err := s.db.Create(task).Error; err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"task_uuid": task.TaskID,
+			"user_id":   task.UserID,
+		}).Error("CreateTask: 数据库插入失败")
 		return nil, fmt.Errorf("创建任务记录失败: %w", err)
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"task_db_id": task.ID,
+		"task_uuid":  task.TaskID,
+	}).Debug("CreateTask: 任务已插入数据库")
+
+	// 确保任务ID已经被数据库填充
+	if task.ID == 0 {
+		logrus.Warn("CreateTask: task.ID 为 0，重新查询")
+		// 重新查询以获取ID
+		if err := s.db.Where("task_id = ?", taskID).First(task).Error; err != nil {
+			return nil, fmt.Errorf("查询新创建的任务失败: %w", err)
+		}
+		logrus.WithField("task_db_id", task.ID).Debug("CreateTask: 重新查询获得ID")
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"task_db_id": task.ID,
+		"task_uuid":  task.TaskID,
+	}).Debug("CreateTask: 准备添加初始事件")
+
 	// 添加初始事件
 	if err := task.AddEvent(s.db, "created", "initialize", "任务已创建", "", 0, req.Parameters); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"task_db_id": task.ID,
+			"task_uuid":  task.TaskID,
+		}).Error("CreateTask: 添加初始事件失败")
 		return nil, fmt.Errorf("添加初始事件失败: %w", err)
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"task_db_id": task.ID,
+		"task_uuid":  task.TaskID,
+	}).Info("CreateTask: 任务创建成功")
 
 	return task, nil
 }
@@ -102,10 +152,16 @@ func (s *SlurmTaskService) CreateTask(ctx context.Context, req CreateTaskRequest
 // GetTask 获取任务详情
 func (s *SlurmTaskService) GetTask(ctx context.Context, taskID string) (*TaskDetailResponse, error) {
 	var task models.SlurmTask
+
+	// 尝试按 task_id (UUID) 查询
 	err := s.db.Preload("User").Preload("Cluster").
 		Where("task_id = ?", taskID).First(&task).Error
 	if err != nil {
-		return nil, fmt.Errorf("查询任务失败: %w", err)
+		// 如果失败，尝试按 id (主键) 查询
+		if err := s.db.Preload("User").Preload("Cluster").
+			Where("id = ?", taskID).First(&task).Error; err != nil {
+			return nil, fmt.Errorf("查询任务失败: %w", err)
+		}
 	}
 
 	// 获取任务事件
@@ -252,8 +308,14 @@ func (s *SlurmTaskService) StartTask(ctx context.Context, taskID string) error {
 // CancelTask 取消任务
 func (s *SlurmTaskService) CancelTask(ctx context.Context, taskID string, reason string) error {
 	var task models.SlurmTask
-	if err := s.db.Where("task_id = ?", taskID).First(&task).Error; err != nil {
-		return fmt.Errorf("查询任务失败: %w", err)
+
+	// 尝试按 task_id (UUID) 查询
+	err := s.db.Where("task_id = ?", taskID).First(&task).Error
+	if err != nil {
+		// 如果失败，尝试按 id (主键) 查询
+		if err := s.db.Where("id = ?", taskID).First(&task).Error; err != nil {
+			return fmt.Errorf("查询任务失败: %w", err)
+		}
 	}
 
 	if !s.canCancel(&task) {
@@ -264,15 +326,21 @@ func (s *SlurmTaskService) CancelTask(ctx context.Context, taskID string, reason
 		return fmt.Errorf("取消任务失败: %w", err)
 	}
 
-	// 添加取消事件
-	return s.AddTaskEvent(ctx, taskID, "cancelled", "cancel", "任务已取消: "+reason, "", task.Progress, nil)
+	// 添加取消事件（使用 task.TaskID 确保是 UUID）
+	return s.AddTaskEvent(ctx, task.TaskID, "cancelled", "cancel", "任务已取消: "+reason, "", task.Progress, nil)
 }
 
 // RetryTask 重试任务
 func (s *SlurmTaskService) RetryTask(ctx context.Context, taskID string) (*models.SlurmTask, error) {
 	var originalTask models.SlurmTask
-	if err := s.db.Where("task_id = ?", taskID).First(&originalTask).Error; err != nil {
-		return nil, fmt.Errorf("查询原任务失败: %w", err)
+
+	// 尝试按 task_id (UUID) 查询
+	err := s.db.Where("task_id = ?", taskID).First(&originalTask).Error
+	if err != nil {
+		// 如果失败，尝试按 id (主键) 查询
+		if err := s.db.Where("id = ?", taskID).First(&originalTask).Error; err != nil {
+			return nil, fmt.Errorf("查询原任务失败: %w", err)
+		}
 	}
 
 	if !s.canRetry(&originalTask) {

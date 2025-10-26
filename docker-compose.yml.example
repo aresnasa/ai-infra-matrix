@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL 数据库服务（主要用于门户与Gitea等组件）
   postgres:

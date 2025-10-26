@@ -13,9 +13,11 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -171,14 +173,77 @@ func (c *SlurmController) ScaleUpAsync(ctx *gin.Context) {
 		return
 	}
 
-	pm := services.GetProgressManager()
-	op := pm.Start("slurm:scale-up", "开始扩容Slurm节点")
+	// 获取当前用户信息
+	userID, exists := middleware.GetCurrentUserID(ctx)
+	if !exists {
+		// 如果没有用户信息，使用系统用户ID 1（需要确保数据库中存在）
+		userID = 1
+		logrus.Warn("ScaleUpAsync: 未找到用户信息，使用系统用户ID 1")
+	}
 
-	go func(opID string, r ScalingRequest) {
+	// 构建目标节点列表
+	targetNodes := make([]string, len(req.Nodes))
+	for i, node := range req.Nodes {
+		targetNodes[i] = node.Host
+	}
+
+	// 创建数据库任务记录
+	taskReq := services.CreateTaskRequest{
+		Name:        "SLURM集群扩容",
+		Type:        "scale_up",
+		UserID:      userID,
+		TargetNodes: targetNodes,
+		Parameters: map[string]interface{}{
+			"nodes":       req.Nodes,
+			"node_count":  len(req.Nodes),
+			"salt_master": getSaltStackMasterHost(),
+			"apphub_url":  getAppHubBaseURL(),
+		},
+		Tags:     []string{"scale-up", "slurm"},
+		Priority: 5, // 普通优先级
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"user_id":      userID,
+		"target_nodes": targetNodes,
+		"node_count":   len(req.Nodes),
+	}).Info("创建扩容任务记录")
+
+	dbTask, err := c.taskSvc.CreateTask(ctx.Request.Context(), taskReq)
+	if err != nil {
+		logrus.WithError(err).Error("创建任务记录失败")
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务记录失败: " + err.Error()})
+		return
+	}
+
+	taskID := dbTask.TaskID
+
+	pm := services.GetProgressManager()
+	op := pm.Start(taskID, "开始扩容Slurm节点")
+
+	go func(opID string, r ScalingRequest, dbTaskID string) {
+		bgCtx := context.Background()
 		failed := false
+		var finalError string
+
 		defer func() {
+			// 完成内存任务
 			pm.Complete(opID, failed, "扩容完成")
+
+			// 更新数据库任务状态
+			status := "completed"
+			if failed {
+				status = "failed"
+			}
+			if err := c.taskSvc.UpdateTaskStatus(bgCtx, dbTaskID, status, finalError); err != nil {
+				fmt.Printf("更新任务状态失败: %v\n", err)
+			}
 		}()
+
+		// 启动任务
+		if err := c.taskSvc.StartTask(bgCtx, dbTaskID); err != nil {
+			fmt.Printf("启动任务失败: %v\n", err)
+		}
 
 		// 转换节点配置
 		connections := make([]services.SSHConnection, len(r.Nodes))
@@ -203,51 +268,77 @@ func (c *SlurmController) ScaleUpAsync(ctx *gin.Context) {
 		total := float64(len(connections))
 		for i, conn := range connections {
 			host := conn.Host
-			pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: fmt.Sprintf("deploy-minion-%s", host), Message: "部署SaltStack Minion", Host: host, Progress: float64(i) / total})
+			progress := float64(i) / total * 100
+			pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: fmt.Sprintf("deploy-minion-%s", host), Message: "部署SaltStack Minion", Host: host, Progress: progress})
+			c.taskSvc.UpdateTaskProgress(bgCtx, dbTaskID, progress, fmt.Sprintf("部署Minion到%s", host))
 		}
 
 		// 并发部署SaltStack Minion
 		results, err := c.sshSvc.DeploySaltMinion(context.Background(), connections, saltConfig)
 		if err != nil {
 			failed = true
+			finalError = err.Error()
 			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "deploy-minions", Message: err.Error()})
+			c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "error", "deploy-minions", "部署Minion失败: "+err.Error(), "", 0, nil)
 			return
 		}
 
+		successCount := 0
+		failedCount := 0
 		for i, result := range results {
 			host := connections[i].Host
+			progress := float64(i+1) / total * 100
 			if result.Success {
-				pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: fmt.Sprintf("deploy-minion-%s", host), Message: "Minion部署成功", Host: host, Progress: float64(i+1) / total})
+				successCount++
+				pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: fmt.Sprintf("deploy-minion-%s", host), Message: "Minion部署成功", Host: host, Progress: progress})
+				c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "success", fmt.Sprintf("deploy-minion-%s", host), "Minion部署成功", host, progress, nil)
 			} else {
 				failed = true
-				pm.Emit(opID, services.ProgressEvent{Type: "error", Step: fmt.Sprintf("deploy-minion-%s", host), Message: result.Error, Host: host, Progress: float64(i+1) / total})
+				failedCount++
+				finalError = result.Error
+				pm.Emit(opID, services.ProgressEvent{Type: "error", Step: fmt.Sprintf("deploy-minion-%s", host), Message: result.Error, Host: host, Progress: progress})
+				c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "error", fmt.Sprintf("deploy-minion-%s", host), "Minion部署失败: "+result.Error, host, progress, nil)
 			}
 		}
 
 		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "add-nodes-to-cluster", Message: "添加节点到SLURM集群数据库"})
+		c.taskSvc.UpdateTaskProgress(bgCtx, dbTaskID, 60, "添加节点到集群数据库")
+
 		// 添加节点到数据库
 		for _, node := range r.Nodes {
 			if err := c.addNodeToCluster(node.Host, node.Port, node.User, "compute"); err != nil {
 				failed = true
+				finalError = err.Error()
 				pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "add-nodes-to-cluster", Message: fmt.Sprintf("添加节点 %s 失败: %v", node.Host, err)})
+				c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "error", "add-nodes", fmt.Sprintf("添加节点%s失败: %v", node.Host, err), node.Host, 60, nil)
 				continue
 			}
 			pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: fmt.Sprintf("add-node-%s", node.Host), Message: fmt.Sprintf("节点 %s 已添加到集群", node.Host), Host: node.Host})
+			c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "success", "add-node", fmt.Sprintf("节点%s已添加到集群", node.Host), node.Host, 60, nil)
 		}
 
 		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "scale-up-slurm", Message: "执行Slurm扩容"})
+		c.taskSvc.UpdateTaskProgress(bgCtx, dbTaskID, 80, "执行SLURM扩容")
+
 		// 执行扩容操作
 		scaleResults, err := c.slurmSvc.ScaleUp(context.Background(), r.Nodes)
 		if err != nil {
 			failed = true
+			finalError = err.Error()
 			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "scale-up-slurm", Message: err.Error()})
+			c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "error", "scale-up", "SLURM扩容失败: "+err.Error(), "", 80, nil)
 			return
 		}
 
 		pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "scale-up-slurm", Message: "Slurm扩容完成", Data: scaleResults})
-	}(op.ID, req)
+		c.taskSvc.UpdateTaskProgress(bgCtx, dbTaskID, 100, "扩容完成")
+		c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "success", "scale-up", "SLURM扩容成功", "", 100, scaleResults)
+	}(op.ID, req, taskID)
 
-	ctx.JSON(http.StatusAccepted, gin.H{"opId": op.ID})
+	ctx.JSON(http.StatusAccepted, gin.H{
+		"opId":   op.ID,
+		"taskId": taskID,
+	})
 }
 
 // POST /api/slurm/scaling/scale-up

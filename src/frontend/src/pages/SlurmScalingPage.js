@@ -14,6 +14,7 @@ import {
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import SSHAuthConfig from '../components/SSHAuthConfig';
+import SlurmTaskBar from '../components/SlurmTaskBar';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -401,7 +402,9 @@ const SlurmScalingPage = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      {/* 移除 SlurmTaskBar 组件 - 该组件不存在且不需要 */}
+      {/* 任务通知栏 */}
+      <SlurmTaskBar style={{ marginBottom: 16 }} />
+      
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={2}>

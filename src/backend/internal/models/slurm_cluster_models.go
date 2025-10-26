@@ -283,9 +283,14 @@ func (sa *StringArray) Scan(value interface{}) error {
 		return nil
 	}
 
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("type assertion to []byte failed")
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("failed to scan StringArray: unsupported type %T", value)
 	}
 
 	return json.Unmarshal(bytes, sa)

@@ -1687,3 +1687,7 @@
 OCI runtime exec failed: exec failed: unable to start container process: exec: "source /etc/profile ;sinfo": stat source /etc/profile ;sinfo: no such file or directory: unknown，问题，期望的是backend能够正确的安装slurm客户端，然后查询slurm集群状态
 
 123. make[1]: Entering directory '/tmp/slurm-23.11.10'版本不符合期望，已经在apphub中构建过slurm，现在需要调整的是apphub中的apk构建，然后backend中的dockerfile能够直接拉取slurm的apk即可
+
+124. 现在需要修复http://192.168.18.154:8080/slurm-tasks中统计信息不准的问题，期望的是能够正确的获取任务信息同时，任务信息会存到数据库中持久化存储
+
+125. 扩容失败: 创建任务记录失败: 创建任务记录失败: ERROR: invalid input syntax for type bigint: "bf821ff2-5b39-4cec-b6be-f3543e571e3b" (SQLSTATE 22P02),backend-init相关代码没有修复初始化数据库类型，请用psql检查并修复go代码，从源头修复。

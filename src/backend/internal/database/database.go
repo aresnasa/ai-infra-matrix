@@ -140,8 +140,79 @@ func Connect(cfg *config.Config) error {
 	return nil
 }
 
+// fixSlurmTasksTableSchema 修复 slurm_tasks 表的 task_id 字段类型
+// 确保 task_id 是 VARCHAR(36) 而不是 bigint
+func fixSlurmTasksTableSchema() error {
+	// 检查表是否存在
+	var exists bool
+	err := DB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'slurm_tasks')").Scan(&exists).Error
+	if err != nil {
+		return fmt.Errorf("check table existence: %w", err)
+	}
+
+	if !exists {
+		logrus.Info("slurm_tasks table does not exist yet, skipping schema fix")
+		return nil
+	}
+
+	// 检查 task_id 字段的当前类型
+	var dataType string
+	err = DB.Raw(`
+		SELECT data_type 
+		FROM information_schema.columns 
+		WHERE table_schema = CURRENT_SCHEMA() 
+		  AND table_name = 'slurm_tasks' 
+		  AND column_name = 'task_id'
+	`).Scan(&dataType).Error
+
+	if err != nil {
+		return fmt.Errorf("check task_id column type: %w", err)
+	}
+
+	logrus.Infof("Current task_id column type: %s", dataType)
+
+	// 如果是 bigint，需要修改为 varchar(36)
+	if dataType == "bigint" {
+		logrus.Info("Fixing task_id column type from bigint to varchar(36)...")
+
+		// 清空表数据（因为类型不兼容）
+		if err := DB.Exec("TRUNCATE TABLE slurm_task_events CASCADE").Error; err != nil {
+			return fmt.Errorf("truncate slurm_task_events: %w", err)
+		}
+		if err := DB.Exec("TRUNCATE TABLE slurm_tasks CASCADE").Error; err != nil {
+			return fmt.Errorf("truncate slurm_tasks: %w", err)
+		}
+
+		// 删除旧索引
+		if err := DB.Exec("DROP INDEX IF EXISTS idx_slurm_tasks_task_id").Error; err != nil {
+			return fmt.Errorf("drop old index: %w", err)
+		}
+
+		// 修改字段类型
+		if err := DB.Exec("ALTER TABLE slurm_tasks ALTER COLUMN task_id TYPE VARCHAR(36)").Error; err != nil {
+			return fmt.Errorf("alter column type: %w", err)
+		}
+
+		// 重建索引
+		if err := DB.Exec("CREATE UNIQUE INDEX idx_slurm_tasks_task_id ON slurm_tasks(task_id)").Error; err != nil {
+			return fmt.Errorf("create unique index: %w", err)
+		}
+
+		logrus.Info("✓ Successfully fixed task_id column type to varchar(36)")
+	} else if dataType == "character varying" {
+		logrus.Info("✓ task_id column type is already varchar, no fix needed")
+	}
+
+	return nil
+}
+
 func Migrate() error {
 	logrus.Info("Starting database migration...")
+
+	// 修复 slurm_tasks 表的 task_id 字段类型（如果需要）
+	if err := fixSlurmTasksTableSchema(); err != nil {
+		logrus.WithError(err).Warn("Failed to fix slurm_tasks table schema, continuing with migration...")
+	}
 
 	// 一次性迁移所有表，让GORM自动处理表创建顺序
 	logrus.Info("Migrating all tables...")
@@ -207,6 +278,14 @@ func Migrate() error {
 	); err != nil {
 		logrus.WithError(err).Error("Database migration failed")
 		return fmt.Errorf("database migration failed: %w", err)
+	}
+
+	// AutoMigrate 完成后，再次修复 slurm_tasks 表的 task_id 字段类型
+	// 这是为了确保即使 GORM 错误地创建了 bigint 类型，我们也能修复它
+	logrus.Info("Post-migration: fixing slurm_tasks table schema...")
+	if err := fixSlurmTasksTableSchema(); err != nil {
+		logrus.WithError(err).Error("Failed to fix slurm_tasks table schema after migration")
+		return fmt.Errorf("failed to fix slurm_tasks table schema: %w", err)
 	}
 
 	// 所有表创建完成后，按顺序补充外键约束（PostgreSQL）
