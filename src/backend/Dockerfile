@@ -132,36 +132,9 @@ RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 从 AppHub 安装 SLURM 客户端 APK 包
-RUN set -eux; \
-    echo ">>> Installing SLURM client from AppHub APK repository..."; \
-    # 添加 AppHub APK 仓库（支持多种 URL 格式）
-    APPHUB_REPO_ADDED=false; \
-    for APPHUB_URL in http://apphub http://ai-infra-apphub http://192.168.0.200:8081; do \
-        echo "  Trying AppHub: $APPHUB_URL"; \
-        if wget -q --spider --timeout=5 --tries=1 "$APPHUB_URL/apks/alpine/APKINDEX.tar.gz" 2>/dev/null; then \
-            echo "$APPHUB_URL/apks/alpine" >> /etc/apk/repositories; \
-            echo "  ✓ Added AppHub APK repository: $APPHUB_URL/apks/alpine"; \
-            APPHUB_REPO_ADDED=true; \
-            break; \
-        fi; \
-    done; \
-    # 更新 APK 索引
-    if [ "$APPHUB_REPO_ADDED" = "true" ]; then \
-        apk update || echo "  ⚠ AppHub APK index update failed, continuing..."; \
-    fi; \
-    # 尝试安装 SLURM 客户端
-    if apk add --no-cache slurm-client 2>/dev/null; then \
-        echo "  ✓ SLURM client installed from AppHub"; \
-        # 验证安装
-        if command -v sinfo >/dev/null 2>&1; then \
-            sinfo --version 2>&1 | head -1 || echo "  ✓ SLURM commands available"; \
-        fi; \
-    else \
-        echo "  ⚠ SLURM client APK not available in AppHub"; \
-        echo "  ℹ Build and upload: cd src/apphub && ./build-slurm-apk.sh"; \
-        echo "  ℹ Backend will use demo/fallback mode for SLURM operations"; \
-    fi
+# 复制 SLURM 运行时安装脚本（在容器启动时执行）
+COPY install-slurm-runtime.sh /install-slurm-runtime.sh
+RUN chmod +x /install-slurm-runtime.sh
 
 WORKDIR /root/
 
@@ -189,6 +162,11 @@ RUN cp ~/.ssh/id_rsa /tmp/backend_id_rsa && cp ~/.ssh/id_rsa.pub /tmp/backend_id
 # 创建等待数据库的脚本
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \
     echo 'set -e' >> /wait-for-db.sh && \
+    echo '# Install SLURM client if not already installed' >> /wait-for-db.sh && \
+    echo 'if [ -f /install-slurm-runtime.sh ] && ! command -v sinfo >/dev/null 2>&1; then' >> /wait-for-db.sh && \
+    echo '  echo ">>> Installing SLURM client tools..."' >> /wait-for-db.sh && \
+    echo '  /install-slurm-runtime.sh || echo "⚠️  SLURM installation skipped"' >> /wait-for-db.sh && \
+    echo 'fi' >> /wait-for-db.sh && \
     echo 'if [ "${OB_ENABLED}" = "true" ]; then' >> /wait-for-db.sh && \
     echo '  echo "Waiting for OceanBase (${OB_HOST:-oceanbase}:${OB_PORT:-2881})..."' >> /wait-for-db.sh && \
     echo '  until nc -z "${OB_HOST:-oceanbase}" "${OB_PORT:-2881}"; do echo "OceanBase unavailable - sleeping"; sleep 1; done' >> /wait-for-db.sh && \

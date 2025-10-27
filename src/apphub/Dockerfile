@@ -381,261 +381,132 @@ RUN set -eux; \
     echo "✓ Total RPM packages in /out: ${total_rpm_count}"
 
 # =============================================================================
-# Stage 3: Build SLURM apk packages (Alpine Linux)
+# Stage 3: Build SLURM binaries (Ubuntu 22.04 with glibc)
+# Alpine uses musl libc which doesn't support cpu_set_t, so we use Ubuntu
 # =============================================================================
-FROM alpine:latest AS apk-builder
+FROM ubuntu:22.04 AS binary-builder
 
+ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 
-# SLURM version configuration (same as deb/rpm builders)
+# SLURM version configuration
 ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
-# 配置 Alpine 镜像源（多镜像回退）
+# 配置 Ubuntu 镜像源（阿里云）并安装所有依赖
 RUN set -eux; \
-    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
-    ARCH=$(uname -m); \
+    # 检测架构
+    ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
-        sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
-        apk update && break || true; \
-    done; \
-    apk add --no-cache ca-certificates tzdata; \
-    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# 安装构建依赖（核心依赖）
-RUN apk add --no-cache \
-    build-base \
-    linux-headers \
-    openssl-dev \
-    readline-dev \
-    curl \
-    wget \
-    perl \
-    python3 \
-    mariadb-dev \
-    ncurses-dev \
-    json-c-dev \
-    yaml-dev \
-    libevent-dev \
-    lz4-dev \
-    zlib-dev \
-    bzip2-dev \
-    tar
-
-# 尝试安装可选依赖（可能不可用）
-RUN apk add --no-cache http-parser-dev || echo '⚠ http-parser-dev not available (optional)'
-RUN apk add --no-cache numactl-dev || echo '⚠ numactl-dev not available (optional)'
-RUN apk add --no-cache hwloc-dev || echo '⚠ hwloc-dev not available (optional)'
-RUN apk add --no-cache linux-pam-dev || echo '⚠ linux-pam-dev not available, will build without PAM'
+    # 备份原始源
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 根据架构配置阿里云镜像源
+    if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+        echo "配置ARM64架构的阿里云镜像源..."; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
+    else \
+        echo "配置AMD64架构的阿里云镜像源..."; \
+        sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list; \
+        sed -i 's|http://security.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    fi; \
+    cat /etc/apt/sources.list; \
+    # 更新包列表（带重试）
+    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
+    # 安装所有依赖
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tzdata \
+        build-essential \
+        wget \
+        tar \
+        bzip2 \
+        python3 \
+        python3-pip \
+        libmunge-dev \
+        libmariadb-dev \
+        libpam0g-dev \
+        libhwloc-dev \
+        libjson-c-dev \
+        libyaml-dev \
+        libssl-dev \
+        libreadline-dev; \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone; \
+    rm -rf /var/lib/apt/lists/*
 
 # 创建构建用户
-RUN adduser -D -u 1000 builder
+RUN useradd -m -u 1000 builder
 USER builder
 WORKDIR /home/builder/build
 
 # 复制 SLURM 源码包
 COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
-# 解压并编译 SLURM 客户端工具
+# 解压并编译 SLURM
 RUN set -eux; \
-    if ls slurm-*.tar.bz2 >/dev/null 2>&1; then \
-        tarball=$(ls slurm-*.tar.bz2 | head -1); \
-        echo "✓ Found SLURM tarball: ${tarball}"; \
-        tar -xaf "${tarball}"; \
-        srcdir=$(basename "${tarball}" .tar.bz2); \
-        echo "SRC=${srcdir}" > /home/builder/build/.srcdir; \
-        echo "✓ SLURM source extracted: ${srcdir}"; \
-        # 配置并编译
-        cd "${srcdir}"; \
-        echo ">>> Configuring SLURM for Alpine..."; \
-        # 检查是否有 PAM 支持
-        PAM_OPTION="--disable-pam"; \
-        if pkg-config --exists pam 2>/dev/null || [ -f /usr/lib/libpam.so ] || [ -f /usr/lib64/libpam.so ]; then \
-            echo "  ✓ PAM libraries found, enabling PAM support"; \
-            PAM_OPTION="--enable-pam"; \
-        else \
-            echo "  ⚠ PAM libraries not found, building without PAM"; \
-        fi; \
-        # 检查是否有 Munge 支持
-        MUNGE_OPTION="--without-munge"; \
-        if pkg-config --exists munge 2>/dev/null || [ -f /usr/lib/libmunge.so ] || [ -f /usr/lib64/libmunge.so ]; then \
-            echo "  ✓ Munge libraries found, enabling Munge support"; \
-            MUNGE_OPTION="--with-munge"; \
-        else \
-            echo "  ⚠ Munge libraries not found, building without Munge"; \
-        fi; \
-        ./configure \
-            --prefix=/usr/local/slurm \
-            --sysconfdir=/etc/slurm \
-            --disable-debug \
-            ${PAM_OPTION} \
-            ${MUNGE_OPTION} \
-            --without-rpath \
-            --with-ssl=/usr || { \
-            echo "⚠️  Configure failed, marking for skip"; \
-            echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
-        }; \
-    else \
-        echo "SKIP_SLURM_BUILD=1" > /home/builder/build/.srcdir; \
-        echo "⚠️  No SLURM tarball found - will skip SLURM build"; \
-    fi
+    tarball=$(ls slurm-*.tar.bz2 | head -1); \
+    echo "✓ Found SLURM tarball: ${tarball}"; \
+    tar -xaf "${tarball}"; \
+    srcdir=$(basename "${tarball}" .tar.bz2); \
+    cd "${srcdir}"; \
+    echo ">>> Configuring SLURM..."; \
+    ./configure \
+        --prefix=/usr/local/slurm \
+        --sysconfdir=/etc/slurm \
+        --disable-debug \
+        --without-rpath 2>&1 | tee /tmp/configure.log || { \
+        echo "❌ Configure failed! Last 50 lines of output:"; \
+        tail -50 /tmp/configure.log; \
+        exit 1; \
+    }; \
+    echo ">>> Building SLURM (this may take 5-10 minutes)..."; \
+    make -j$(nproc) 2>&1 | tee /tmp/make.log || { \
+        echo "❌ Make failed! Last 100 lines of output:"; \
+        tail -100 /tmp/make.log; \
+        exit 1; \
+    }; \
+    echo "✓ SLURM build completed successfully"
 
-# 编译 SLURM
-RUN set -eux; \
-    if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
-        echo "⚠️  Skipping SLURM build"; \
-    else \
-        srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
-        cd "/home/builder/build/${srcdir}"; \
-        echo ">>> Building SLURM client tools..."; \
-        make -j$(nproc) || { \
-            echo "⚠️  Full build failed, trying client tools only"; \
-            for tool in sinfo squeue scontrol scancel sbatch srun salloc sacct; do \
-                make -C "src/${tool}" || echo "⚠️  Failed to build ${tool}"; \
-            done; \
-        }; \
-    fi
-
-# 安装到临时目录并打包
+# 安装到临时目录并收集二进制文件
 USER root
 RUN set -eux; \
-    mkdir -p /home/builder/apk-output; \
-    if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
-        echo "⚠️  Skipping SLURM installation"; \
-        touch /home/builder/apk-output/.skip_slurm; \
-    else \
-        srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
-        cd "/home/builder/build/${srcdir}"; \
-        # 创建安装目录
-        mkdir -p /tmp/slurm-install/usr/local/slurm/bin; \
-        mkdir -p /tmp/slurm-install/usr/local/slurm/lib; \
-        mkdir -p /tmp/slurm-install/etc/slurm; \
-        echo ">>> Installing SLURM client tools..."; \
-        # 复制客户端工具
-        tool_count=0; \
-        for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct; do \
-            # 尝试从不同位置查找编译好的工具
-            if [ -f "src/${cmd}/${cmd}" ]; then \
-                cp -f "src/${cmd}/${cmd}" /tmp/slurm-install/usr/local/slurm/bin/; \
-                chmod +x /tmp/slurm-install/usr/local/slurm/bin/${cmd}; \
-                tool_count=$((tool_count + 1)); \
-                echo "  ✓ Installed: ${cmd}"; \
-            elif [ -f "src/${cmd}/.libs/${cmd}" ]; then \
-                cp -f "src/${cmd}/.libs/${cmd}" /tmp/slurm-install/usr/local/slurm/bin/; \
-                chmod +x /tmp/slurm-install/usr/local/slurm/bin/${cmd}; \
-                tool_count=$((tool_count + 1)); \
-                echo "  ✓ Installed: ${cmd} (from .libs)"; \
-            else \
-                echo "  ✗ Not found: ${cmd}"; \
-            fi; \
-        done; \
-        # 复制共享库
-        if [ -d "src/common/.libs" ]; then \
-            find src/common/.libs -name "libslurm*.so*" -exec cp -f {} /tmp/slurm-install/usr/local/slurm/lib/ \; 2>/dev/null || true; \
-            echo "  ✓ Copied SLURM libraries"; \
-        fi; \
-        # 创建版本信息和脚本
-        echo "${SLURM_VERSION}" > /tmp/slurm-install/usr/local/slurm/VERSION; \
-        echo "  ✓ Installed ${tool_count} client tools"; \
-        if [ "$tool_count" -eq 0 ]; then \
-            echo "  ⚠️  No tools installed, marking as skipped"; \
-            touch /home/builder/apk-output/.skip_slurm; \
-        fi; \
-    fi
-
-    # 创建安装脚本（如果不存在）
-    RUN set -eux; \
-        echo "📝 Setting up installation scripts..."; \
-        mkdir -p /tmp/slurm-install; \
-        if [ ! -f /tmp/slurm-install/install.sh ]; then \
-            echo '#!/bin/sh' > /tmp/slurm-install/install.sh; \
-            echo 'echo "Installing SLURM client tools..."' >> /tmp/slurm-install/install.sh; \
-            echo 'cp -r usr/local/slurm /usr/local/' >> /tmp/slurm-install/install.sh; \
-            echo 'echo "SLURM client tools installed to /usr/local/slurm"' >> /tmp/slurm-install/install.sh; \
-            chmod +x /tmp/slurm-install/install.sh; \
-            echo "✓ Created install.sh"; \
-        fi; \
-        if [ ! -f /tmp/slurm-install/uninstall.sh ]; then \
-            echo '#!/bin/sh' > /tmp/slurm-install/uninstall.sh; \
-            echo 'rm -rf /usr/local/slurm' >> /tmp/slurm-install/uninstall.sh; \
-            chmod +x /tmp/slurm-install/uninstall.sh; \
-            echo "✓ Created uninstall.sh"; \
-        fi; \
-        if [ ! -f /tmp/slurm-install/README.md ]; then \
-            echo '# SLURM Client Tools' > /tmp/slurm-install/README.md; \
-            echo 'Run ./install.sh to install' >> /tmp/slurm-install/README.md; \
-            echo "✓ Created README.md"; \
-        fi
-    
-    # 设置脚本权限并打包
-    RUN set -eux; \
-    echo "📦 Creating SLURM Alpine package..."; \
-    if [ -f /home/builder/apk-output/.skip_slurm ]; then \
-        echo "⚠️  SLURM build skipped, no package to create"; \
-    else \
-        # 检查是否有安装的工具
-        if [ ! -d /tmp/slurm-install/usr/local/slurm/bin ] || [ -z "$(ls -A /tmp/slurm-install/usr/local/slurm/bin 2>/dev/null)" ]; then \
-            echo "❌ No SLURM tools found in /tmp/slurm-install/usr/local/slurm/bin"; \
-            echo "⚠️  Marking build as skipped"; \
-            touch /home/builder/apk-output/.skip_slurm; \
+    cd /home/builder/build/slurm-*; \
+    ARCH=$(uname -m); \
+    echo "Architecture: ${ARCH}"; \
+    mkdir -p /out/packages/${ARCH}; \
+    mkdir -p /out/packages/${ARCH}/bin; \
+    mkdir -p /out/packages/${ARCH}/lib; \
+    echo ">>> Collecting SLURM binaries..."; \
+    for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct sacctmgr; do \
+        if [ -f "src/${cmd}/${cmd}" ]; then \
+            cp -f "src/${cmd}/${cmd}" /out/packages/${ARCH}/bin/; \
+            chmod +x /out/packages/${ARCH}/bin/${cmd}; \
+            echo "  ✓ Collected: ${cmd}"; \
+        elif [ -f "src/${cmd}/.libs/${cmd}" ]; then \
+            cp -f "src/${cmd}/.libs/${cmd}" /out/packages/${ARCH}/bin/; \
+            chmod +x /out/packages/${ARCH}/bin/${cmd}; \
+            echo "  ✓ Collected: ${cmd} (from .libs)"; \
         else \
-            echo "✓ Found SLURM tools:"; \
-            ls -lh /tmp/slurm-install/usr/local/slurm/bin/; \
-            # 复制安装/卸载脚本
-            if [ -f /tmp/slurm-install/install.sh ]; then \
-                chmod +x /tmp/slurm-install/install.sh /tmp/slurm-install/uninstall.sh; \
-                echo "✓ Set script permissions"; \
-            else \
-                echo "⚠️  Install scripts not found, but continuing with packaging"; \
-            fi; \
-            # 打包
-            cd /tmp/slurm-install; \
-            tar czf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz . || { \
-                echo "❌ Failed to create tar.gz package"; \
-                touch /home/builder/apk-output/.skip_slurm; \
-                exit 0; \
-            }; \
-            if [ -f /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz ]; then \
-                echo "✓ SLURM Alpine package created:"; \
-                ls -lh /home/builder/apk-output/*.tar.gz; \
-                # 验证包内容
-                echo "📦 Package contents (first 20 files):"; \
-                tar tzf /home/builder/apk-output/slurm-client-${SLURM_VERSION}-alpine.tar.gz | head -20; \
-            else \
-                echo "❌ Package file not created"; \
-                touch /home/builder/apk-output/.skip_slurm; \
-            fi; \
+            echo "  ✗ Not found: ${cmd}"; \
         fi; \
-    fi
-
-# 收集 APK 包到 /out
-RUN set -eux; \
-    mkdir -p /out; \
-    echo "📦 Collecting APK packages..."; \
-    if [ -f /home/builder/apk-output/.skip_slurm ]; then \
-        echo "⚠️  SLURM APK build was skipped"; \
-        touch /out/.skip_slurm; \
-    else \
-        apk_count=$(ls /home/builder/apk-output/*.tar.gz 2>/dev/null | wc -l || echo 0); \
-        echo "Found ${apk_count} APK files in /home/builder/apk-output"; \
-        if [ "$apk_count" -gt 0 ]; then \
-            ls -lh /home/builder/apk-output/*.tar.gz; \
-            cp /home/builder/apk-output/*.tar.gz /out/ || { \
-                echo "❌ Failed to copy APK packages"; \
-                exit 1; \
-            }; \
-            echo "✓ Successfully copied ${apk_count} SLURM Alpine package(s)"; \
-            ls -lh /out/*.tar.gz; \
-        else \
-            echo "⚠️  No SLURM Alpine packages found"; \
-            touch /out/.skip_slurm; \
-        fi; \
+    done; \
+    echo ">>> Collecting SLURM libraries..."; \
+    if [ -d "src/api/.libs" ]; then \
+        find src/api/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
     fi; \
-    # Final verification
-    echo "📊 Final /out contents:"; \
-    ls -lh /out/ || echo "⚠️  /out is empty"
+    if [ -d "src/common/.libs" ]; then \
+        find src/common/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
+    fi; \
+    echo "${SLURM_VERSION}" > /out/packages/${ARCH}/VERSION; \
+    echo ""; \
+    echo "📦 SLURM binaries for ${ARCH}:"; \
+    ls -lh /out/packages/${ARCH}/bin/ || true; \
+    echo ""; \
+    echo "� SLURM libraries for ${ARCH}:"; \
+    ls -lh /out/packages/${ARCH}/lib/ || true
 
 # =============================================================================
 # Stage 4: Build Categraf (Multi-Architecture Go Binary)
@@ -762,7 +633,7 @@ RUN mkdir -p \
     /usr/share/nginx/html/rpm \
     /usr/share/nginx/html/pkgs/slurm-deb \
     /usr/share/nginx/html/pkgs/slurm-rpm \
-    /usr/share/nginx/html/pkgs/slurm-apk \
+    /usr/share/nginx/html/pkgs/slurm-binaries \
     /usr/share/nginx/html/pkgs/saltstack-deb \
     /usr/share/nginx/html/pkgs/saltstack-rpm \
     /usr/share/nginx/html/pkgs/categraf
@@ -773,8 +644,12 @@ COPY --from=deb-builder /out/ /usr/share/nginx/html/pkgs/slurm-deb/
 # Copy all rpm packages from rpm-builder stage (SLURM + SaltStack)
 COPY --from=rpm-builder /out/ /usr/share/nginx/html/pkgs/slurm-rpm/
 
-# Copy all apk packages from apk-builder stage (SLURM client tools)
-COPY --from=apk-builder /out/ /usr/share/nginx/html/pkgs/slurm-apk/
+# Copy SLURM binaries from binary-builder stage
+COPY --from=binary-builder /out/packages/ /usr/share/nginx/html/pkgs/slurm-binaries/
+
+# Copy SLURM installation script
+COPY packages/install-slurm.sh /usr/share/nginx/html/packages/install-slurm.sh
+RUN chmod +x /usr/share/nginx/html/packages/install-slurm.sh
 
 # Copy Categraf packages from categraf-builder stage
 COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
@@ -799,14 +674,14 @@ RUN set -eux; \
     # Count packages
     slurm_deb_count=$(ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     slurm_rpm_count=$(ls /usr/share/nginx/html/pkgs/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-    slurm_apk_count=$(ls /usr/share/nginx/html/pkgs/slurm-apk/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    slurm_bin_count=$(find /usr/share/nginx/html/pkgs/slurm-binaries -type f -name "s*" 2>/dev/null | wc -l || echo 0); \
     salt_deb_count=$(ls /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     salt_rpm_count=$(ls /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     echo "📊 Package Summary:"; \
     echo "  - SLURM deb packages: ${slurm_deb_count}"; \
     echo "  - SLURM rpm packages: ${slurm_rpm_count}"; \
-    echo "  - SLURM apk packages: ${slurm_apk_count}"; \
+    echo "  - SLURM binaries: ${slurm_bin_count}"; \
     echo "  - SaltStack deb packages: ${salt_deb_count}"; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count}"; \
     echo "  - Categraf packages: ${categraf_count}"; \
@@ -831,15 +706,16 @@ RUN set -eux; \
     if [ "$salt_rpm_count" -gt 0 ]; then \
         echo "✓ SaltStack RPM packages available at /pkgs/saltstack-rpm/"; \
     fi; \
-    # APK packages (create latest symlink)
-    if [ "$slurm_apk_count" -gt 0 ]; then \
-        cd /usr/share/nginx/html/pkgs/slurm-apk; \
-        latest_apk=$(ls -t slurm-client-*.tar.gz 2>/dev/null | head -1); \
-        if [ -n "$latest_apk" ]; then \
-            ln -sf "$latest_apk" slurm-client-latest-alpine.tar.gz; \
-            echo "✓ SLURM Alpine packages available at /pkgs/slurm-apk/"; \
-            echo "  ✓ Created symlink: slurm-client-latest-alpine.tar.gz -> $latest_apk"; \
-        fi; \
+    # SLURM binaries (list architecture directories)
+    if [ "$slurm_bin_count" -gt 0 ]; then \
+        echo "✓ SLURM binaries available at /pkgs/slurm-binaries/"; \
+        for arch_dir in /usr/share/nginx/html/pkgs/slurm-binaries/*; do \
+            if [ -d "$arch_dir" ]; then \
+                arch=$(basename "$arch_dir"); \
+                bin_count=$(ls "$arch_dir/bin/"* 2>/dev/null | wc -l || echo 0); \
+                echo "  ✓ ${arch}: ${bin_count} binaries"; \
+            fi; \
+        done; \
     fi; \
     # Categraf packages (create latest symlinks)
     if [ "$categraf_count" -gt 0 ]; then \

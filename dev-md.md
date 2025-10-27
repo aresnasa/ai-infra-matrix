@@ -1691,3 +1691,9 @@ OCI runtime exec failed: exec failed: unable to start container process: exec: "
 124. 现在需要修复http://192.168.18.154:8080/slurm-tasks中统计信息不准的问题，期望的是能够正确的获取任务信息同时，任务信息会存到数据库中持久化存储
 
 125. 扩容失败: 创建任务记录失败: 创建任务记录失败: ERROR: invalid input syntax for type bigint: "bf821ff2-5b39-4cec-b6be-f3543e571e3b" (SQLSTATE 22P02),backend-init相关代码没有修复初始化数据库类型，请用psql检查并修复go代码，从源头修复。
+     
+126. 这里不能从官方 slurm 下载而是只能从 apphub 去安装，这里需要保证 apphub 能够正确的构建出 rpm 和 deb 以及 apk，需要保证整体可用，请按照我期望的这种方式来调整和检查代码
+
+127. ./build.sh build apphub --force构建程序
+
+128. 读取https://www.cnblogs.com/liu-shaobo/p/13285839.html这个文章调整slurm的构建dockefile脚本，然后继续构建，这里换一种思路，如果slurm只需要构建成bin文件，则只需要考虑源码构建，区分arm和amd64两种架构即可，不需要考虑deb、rpm、apk包了，调整下构建脚本，直接构建成bin文件，然后分别存放到package/{x86_64,arm64}中，然后修改backend安装脚本，将这些bin包放入/usr/local/bin中
