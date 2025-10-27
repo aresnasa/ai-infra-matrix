@@ -267,15 +267,23 @@ RUN set -eux; \
     echo "PowerTools/CRB repository not available"; \
     dnf install -y epel-release || echo "EPEL repository not available"; \
     dnf update -y; \
-    # Install SLURM build dependencies
+    # Install basic build dependencies first
     dnf install -y \
         rpm-build rpmdevtools \
         gcc make wget tar bzip2 \
         pam-devel readline-devel perl-ExtUtils-MakeMaker \
-        munge-devel mariadb-devel \
-        hwloc-devel json-c-devel libyaml-devel \
         openssl-devel \
-    && dnf clean all
+    && dnf clean all; \
+    # Try to install optional dependencies (may not be available)
+    echo "尝试安装可选依赖包..."; \
+    dnf install -y munge-devel 2>/dev/null || echo "⚠️  munge-devel not available"; \
+    dnf install -y mariadb-devel 2>/dev/null || echo "⚠️  mariadb-devel not available"; \
+    dnf install -y mysql-devel 2>/dev/null || echo "⚠️  mysql-devel not available"; \
+    dnf install -y hwloc-devel 2>/dev/null || echo "⚠️  hwloc-devel not available"; \
+    dnf install -y json-c-devel 2>/dev/null || echo "⚠️  json-c-devel not available"; \
+    dnf install -y yaml-devel 2>/dev/null || echo "⚠️  yaml-devel not available (trying libyaml-devel)"; \
+    dnf install -y libyaml-devel 2>/dev/null || echo "⚠️  libyaml-devel not available"; \
+    echo "依赖包安装完成"
 
 # Add non-root builder user
 RUN useradd -m -u 1000 builder
@@ -289,13 +297,47 @@ RUN rpmdev-setuptree
 ARG SLURM_TARBALL_PATH
 COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
-# Note: Skipping SLURM RPM build due to missing dependencies in Rocky Linux 9 base repos
-# SLURM RPM build requires munge-devel, mariadb-devel from EPEL/PowerTools
-# For production, consider enabling these repos or using pre-built SLURM RPMs
+# Build SLURM RPM packages
 RUN set -eux; \
-    mkdir -p /home/builder/rpms; \
-    touch /home/builder/rpms/.skip_slurm; \
-    echo "⚠️  SLURM RPM build skipped (requires EPEL/PowerTools repos for dependencies)"
+    if [ "${BUILD_SLURM}" = "true" ]; then \
+        echo "📦 Building SLURM ${SLURM_VERSION} RPM packages..."; \
+        # Extract source tarball
+        tarball=$(ls slurm-*.tar.bz2 | head -1); \
+        echo "✓ Found SLURM tarball: ${tarball}"; \
+        tar -xaf "${tarball}"; \
+        srcdir=$(basename "${tarball}" .tar.bz2); \
+        cd "${srcdir}"; \
+        # Configure SLURM
+        echo ">>> Configuring SLURM for RPM build..."; \
+        ./configure \
+            --prefix=/usr \
+            --sysconfdir=/etc/slurm \
+            --disable-debug \
+            --with-munge \
+            --enable-pam \
+            --without-rpath 2>&1 | tee /tmp/configure-rpm.log || { \
+            echo "❌ Configure failed! Last 50 lines of output:"; \
+            tail -50 /tmp/configure-rpm.log; \
+            exit 1; \
+        }; \
+        # Build RPM packages using make
+        echo ">>> Building SLURM RPM packages (this may take 10-15 minutes)..."; \
+        make contrib 2>&1 | tee /tmp/make-contrib.log || { \
+            echo "❌ Make contrib failed! Last 100 lines of output:"; \
+            tail -100 /tmp/make-contrib.log; \
+            exit 1; \
+        }; \
+        make rpm 2>&1 | tee /tmp/make-rpm.log || { \
+            echo "❌ Make RPM failed! Last 100 lines of output:"; \
+            tail -100 /tmp/make-rpm.log; \
+            exit 1; \
+        }; \
+        echo "✓ SLURM RPM build completed successfully"; \
+    else \
+        echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
+        mkdir -p /home/builder/rpms; \
+        touch /home/builder/rpms/.skip_slurm; \
+    fi
 
 # Download SaltStack packages from GitHub releases
 USER root
@@ -348,15 +390,21 @@ RUN set -eux; \
 RUN set -eux; \
     mkdir -p /out; \
     echo "📦 Collecting RPM packages..."; \
-    if [ ! -f /home/builder/rpms/.skip_slurm ]; then \
-        # Copy built RPMs to /out
-        find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
-        rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
+    if [ ! -f /home/builder/rpms/.skip_slurm ] && [ "${BUILD_SLURM}" = "true" ]; then \
+        # Find and copy built SLURM RPMs from all possible locations
+        echo ">>> Looking for SLURM RPM packages..."; \
+        # Check rpmbuild directory structure
+        find /home/builder/rpmbuild/RPMS -type f -name '*slurm*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        # Also check the source directory (some builds put RPMs there)
+        find /home/builder/build -type f -name '*slurm*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        # Count collected RPMs
+        rpm_count=$(ls /out/*slurm*.rpm 2>/dev/null | wc -l || echo 0); \
         if [ "$rpm_count" -gt 0 ]; then \
-            echo "✓ Successfully built ${rpm_count} SLURM RPM package(s)"; \
-            ls -lh /out/*.rpm; \
+            echo "✓ Successfully collected ${rpm_count} SLURM RPM package(s)"; \
+            echo ">>> SLURM RPM packages:"; \
+            ls -lh /out/*slurm*.rpm; \
         else \
-            echo "⚠️  No SLURM RPM packages were built"; \
+            echo "⚠️  No SLURM RPM packages were found"; \
             touch /out/.skip_slurm; \
         fi; \
     else \
@@ -766,6 +814,18 @@ RUN set -eux; \
             ln -sf "$latest_arm64" categraf-latest-linux-arm64.tar.gz; \
             echo "  ✓ Created symlink: categraf-latest-linux-arm64.tar.gz -> $latest_arm64"; \
         fi; \
+    fi; \
+    # Create symlinks in top-level directories for easier access
+    echo "🔗 Creating top-level package directory symlinks..."; \
+    # Link SLURM deb packages to /usr/share/nginx/html/deb/
+    if [ "$slurm_deb_count" -gt 0 ]; then \
+        ln -sf ../pkgs/slurm-deb/* /usr/share/nginx/html/deb/ 2>/dev/null || true; \
+        echo "  ✓ Linked SLURM deb packages to /deb/"; \
+    fi; \
+    # Link SLURM rpm packages to /usr/share/nginx/html/rpm/
+    if [ "$slurm_rpm_count" -gt 0 ]; then \
+        ln -sf ../pkgs/slurm-rpm/* /usr/share/nginx/html/rpm/ 2>/dev/null || true; \
+        echo "  ✓ Linked SLURM rpm packages to /rpm/"; \
     fi; \
     # Note about RPM metadata
     if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \
