@@ -1697,3 +1697,5 @@ OCI runtime exec failed: exec failed: unable to start container process: exec: "
 127. ./build.sh build apphub --force构建程序
 
 128. 读取https://www.cnblogs.com/liu-shaobo/p/13285839.html这个文章调整slurm的构建dockefile脚本，然后继续构建，这里换一种思路，如果slurm只需要构建成bin文件，则只需要考虑源码构建，区分arm和amd64两种架构即可，不需要考虑deb、rpm、apk包了，调整下构建脚本，直接构建成bin文件，然后分别存放到package/{x86_64,arm64}中，然后修改backend安装脚本，将这些bin包放入/usr/local/bin中
+
+129. 现在调整build.sh中的构建脚本出了deb外还需要rpm包，检查apphub的dockerfile和build.sh的构建函数

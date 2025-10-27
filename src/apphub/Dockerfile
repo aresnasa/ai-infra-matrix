@@ -259,15 +259,23 @@ RUN set -eux; \
         }; \
     fi
 
-# Install build prerequisites
-RUN dnf install -y \
-    rpm-build rpmdevtools \
-    gcc make wget tar bzip2 \
-    pam-devel readline-devel perl-ExtUtils-MakeMaker \
+# Install build prerequisites and enable required repositories
+RUN set -eux; \
+    # Enable PowerTools/CRB repository for additional development packages
+    dnf config-manager --set-enabled crb 2>/dev/null || \
+    dnf config-manager --set-enabled powertools 2>/dev/null || \
+    echo "PowerTools/CRB repository not available"; \
+    dnf install -y epel-release || echo "EPEL repository not available"; \
+    dnf update -y; \
+    # Install SLURM build dependencies
+    dnf install -y \
+        rpm-build rpmdevtools \
+        gcc make wget tar bzip2 \
+        pam-devel readline-devel perl-ExtUtils-MakeMaker \
+        munge-devel mariadb-devel \
+        hwloc-devel json-c-devel libyaml-devel \
+        openssl-devel \
     && dnf clean all
-
-# Note: munge-devel and mariadb-devel require EPEL/PowerTools repos
-# For simplified build, we'll download pre-built SaltStack RPMs instead of building SLURM from source
 
 # Add non-root builder user
 RUN useradd -m -u 1000 builder
@@ -389,6 +397,9 @@ FROM ubuntu:22.04 AS binary-builder
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 
+# Build control flags
+ARG BUILD_SLURM=true
+
 # SLURM version configuration
 ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
@@ -447,66 +458,79 @@ COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
 # 解压并编译 SLURM
 RUN set -eux; \
-    tarball=$(ls slurm-*.tar.bz2 | head -1); \
-    echo "✓ Found SLURM tarball: ${tarball}"; \
-    tar -xaf "${tarball}"; \
-    srcdir=$(basename "${tarball}" .tar.bz2); \
-    cd "${srcdir}"; \
-    echo ">>> Configuring SLURM..."; \
-    ./configure \
-        --prefix=/usr/local/slurm \
-        --sysconfdir=/etc/slurm \
-        --disable-debug \
-        --without-rpath 2>&1 | tee /tmp/configure.log || { \
-        echo "❌ Configure failed! Last 50 lines of output:"; \
-        tail -50 /tmp/configure.log; \
-        exit 1; \
-    }; \
-    echo ">>> Building SLURM (this may take 5-10 minutes)..."; \
-    make -j$(nproc) 2>&1 | tee /tmp/make.log || { \
-        echo "❌ Make failed! Last 100 lines of output:"; \
-        tail -100 /tmp/make.log; \
-        exit 1; \
-    }; \
-    echo "✓ SLURM build completed successfully"
+    if [ "$BUILD_SLURM" = "true" ]; then \
+        tarball=$(ls slurm-*.tar.bz2 | head -1); \
+        echo "✓ Found SLURM tarball: ${tarball}"; \
+        tar -xaf "${tarball}"; \
+        srcdir=$(basename "${tarball}" .tar.bz2); \
+        cd "${srcdir}"; \
+        echo ">>> Configuring SLURM..."; \
+        ./configure \
+            --prefix=/usr/local/slurm \
+            --sysconfdir=/etc/slurm \
+            --disable-debug \
+            --without-rpath 2>&1 | tee /tmp/configure.log || { \
+            echo "❌ Configure failed! Last 50 lines of output:"; \
+            tail -50 /tmp/configure.log; \
+            exit 1; \
+        }; \
+        echo ">>> Building SLURM (this may take 5-10 minutes)..."; \
+        make -j$(nproc) 2>&1 | tee /tmp/make.log || { \
+            echo "❌ Make failed! Last 100 lines of output:"; \
+            tail -100 /tmp/make.log; \
+            exit 1; \
+        }; \
+        echo "✓ SLURM build completed successfully"; \
+    else \
+        echo "🚫 Skipping SLURM build (BUILD_SLURM=false)"; \
+        mkdir -p /tmp/empty-slurm; \
+        cd /tmp/empty-slurm; \
+        echo "# Empty directory for skipped SLURM build" > README.txt; \
+    fi
 
 # 安装到临时目录并收集二进制文件
 USER root
 RUN set -eux; \
-    cd /home/builder/build/slurm-*; \
-    ARCH=$(uname -m); \
-    echo "Architecture: ${ARCH}"; \
-    mkdir -p /out/packages/${ARCH}; \
-    mkdir -p /out/packages/${ARCH}/bin; \
-    mkdir -p /out/packages/${ARCH}/lib; \
-    echo ">>> Collecting SLURM binaries..."; \
-    for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct sacctmgr; do \
-        if [ -f "src/${cmd}/${cmd}" ]; then \
-            cp -f "src/${cmd}/${cmd}" /out/packages/${ARCH}/bin/; \
-            chmod +x /out/packages/${ARCH}/bin/${cmd}; \
-            echo "  ✓ Collected: ${cmd}"; \
-        elif [ -f "src/${cmd}/.libs/${cmd}" ]; then \
-            cp -f "src/${cmd}/.libs/${cmd}" /out/packages/${ARCH}/bin/; \
-            chmod +x /out/packages/${ARCH}/bin/${cmd}; \
-            echo "  ✓ Collected: ${cmd} (from .libs)"; \
-        else \
-            echo "  ✗ Not found: ${cmd}"; \
+    if [ "$BUILD_SLURM" = "true" ]; then \
+        cd /home/builder/build/slurm-*; \
+        ARCH=$(uname -m); \
+        echo "Architecture: ${ARCH}"; \
+        mkdir -p /out/packages/${ARCH}; \
+        mkdir -p /out/packages/${ARCH}/bin; \
+        mkdir -p /out/packages/${ARCH}/lib; \
+        echo ">>> Collecting SLURM binaries..."; \
+        for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct sacctmgr; do \
+            if [ -f "src/${cmd}/${cmd}" ]; then \
+                cp -f "src/${cmd}/${cmd}" /out/packages/${ARCH}/bin/; \
+                chmod +x /out/packages/${ARCH}/bin/${cmd}; \
+                echo "  ✓ Collected: ${cmd}"; \
+            elif [ -f "src/${cmd}/.libs/${cmd}" ]; then \
+                cp -f "src/${cmd}/.libs/${cmd}" /out/packages/${ARCH}/bin/; \
+                chmod +x /out/packages/${ARCH}/bin/${cmd}; \
+                echo "  ✓ Collected: ${cmd} (from .libs)"; \
+            else \
+                echo "  ✗ Not found: ${cmd}"; \
+            fi; \
+        done; \
+        echo ">>> Collecting SLURM libraries..."; \
+        if [ -d "src/api/.libs" ]; then \
+            find src/api/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
         fi; \
-    done; \
-    echo ">>> Collecting SLURM libraries..."; \
-    if [ -d "src/api/.libs" ]; then \
-        find src/api/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
-    fi; \
-    if [ -d "src/common/.libs" ]; then \
-        find src/common/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
-    fi; \
-    echo "${SLURM_VERSION}" > /out/packages/${ARCH}/VERSION; \
-    echo ""; \
-    echo "📦 SLURM binaries for ${ARCH}:"; \
-    ls -lh /out/packages/${ARCH}/bin/ || true; \
-    echo ""; \
-    echo "� SLURM libraries for ${ARCH}:"; \
-    ls -lh /out/packages/${ARCH}/lib/ || true
+        if [ -d "src/common/.libs" ]; then \
+            find src/common/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
+        fi; \
+        echo "${SLURM_VERSION}" > /out/packages/${ARCH}/VERSION; \
+        echo ""; \
+        echo "📦 SLURM binaries for ${ARCH}:"; \
+        ls -lh /out/packages/${ARCH}/bin/ || true; \
+        echo ""; \
+        echo "📚 SLURM libraries for ${ARCH}:"; \
+        ls -lh /out/packages/${ARCH}/lib/ || true; \
+    else \
+        echo "🚫 Skipping SLURM binary collection (BUILD_SLURM=false)"; \
+        mkdir -p /out/packages/empty; \
+        echo "No SLURM binaries built" > /out/packages/empty/README.txt; \
+    fi
 
 # =============================================================================
 # Stage 4: Build Categraf (Multi-Architecture Go Binary)
@@ -647,9 +671,18 @@ COPY --from=rpm-builder /out/ /usr/share/nginx/html/pkgs/slurm-rpm/
 # Copy SLURM binaries from binary-builder stage
 COPY --from=binary-builder /out/packages/ /usr/share/nginx/html/pkgs/slurm-binaries/
 
-# Copy SLURM installation script
-COPY packages/install-slurm.sh /usr/share/nginx/html/packages/install-slurm.sh
-RUN chmod +x /usr/share/nginx/html/packages/install-slurm.sh
+# Copy scripts for installation
+COPY scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
+COPY scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
+RUN chmod +x /app/scripts/generate-install-script.sh
+
+# Generate SLURM installation script from template
+ARG SLURM_VERSION=25.05.4
+ENV SLURM_VERSION=${SLURM_VERSION}
+ENV APPHUB_BASE_URL=http://localhost:8081
+RUN /app/scripts/generate-install-script.sh \
+    /app/scripts/install-slurm.sh.tmpl \
+    /usr/share/nginx/html/packages/install-slurm.sh
 
 # Copy Categraf packages from categraf-builder stage
 COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/

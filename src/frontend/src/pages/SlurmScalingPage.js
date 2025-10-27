@@ -215,9 +215,13 @@ const SlurmScalingPage = () => {
   // 扩缩容处理函数
   const handleScaleUp = async (values) => {
     try {
-      // 将多行文本解析为 NodeConfig 数组（与后端契约一致）
+      // 将多行文本或逗号分隔文本解析为 NodeConfig 数组（与后端契约一致）
+      // 支持格式：
+      // 1. 每行一个节点（换行分隔）
+      // 2. 逗号分隔的节点列表
+      // 3. 混合使用换行和逗号
       const nodes = String(values.nodes || '')
-        .split('\n')
+        .split(/[\n,]+/)  // 同时支持换行符和逗号作为分隔符
         .map((l) => l.trim())
         .filter(Boolean)
         .map((line) => {
@@ -726,7 +730,7 @@ const SlurmScalingPage = () => {
             rules={[{ required: true, message: '请配置要添加的节点' }]}
           >
             <TextArea
-              placeholder="每行一个节点配置，格式: hostname 或 user@hostname&#10;例如:&#10;worker01&#10;worker02&#10;root@worker03"
+              placeholder="每行一个节点配置，或使用逗号分隔多个节点&#10;格式: hostname 或 user@hostname&#10;例如:&#10;worker01&#10;worker02,worker03&#10;root@worker04"
               rows={6}
               style={{ fontFamily: 'monospace' }}
             />

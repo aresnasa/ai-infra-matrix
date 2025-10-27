@@ -1,0 +1,101 @@
+#!/bin/sh
+# SLURM 客户端安装脚本
+# 由 AppHub 自动生成和提供
+# 版本: {{SLURM_VERSION}}
+
+set -e
+
+echo "========================================"
+echo "Installing SLURM client v{{SLURM_VERSION}}"
+echo "========================================"
+
+# 检测系统架构
+ARCH=$(uname -m)
+case "${ARCH}" in
+    x86_64)
+        ARCH_DIR="x86_64"
+        ;;
+    aarch64|arm64)
+        ARCH_DIR="arm64"
+        ;;
+    *)
+        echo "❌ Unsupported architecture: ${ARCH}"
+        exit 1
+        ;;
+esac
+
+echo ">>> Architecture: ${ARCH} (${ARCH_DIR})"
+
+# AppHub URL（可通过环境变量覆盖）
+APPHUB_URL="${APPHUB_URL:-{{APPHUB_BASE_URL}}}"
+BASE_URL="${APPHUB_URL}/pkgs/slurm-binaries/${ARCH_DIR}"
+
+echo ">>> Source: ${BASE_URL}"
+
+# 创建安装目录
+INSTALL_DIR="/usr/local/slurm"
+BIN_DIR="${INSTALL_DIR}/bin"
+LIB_DIR="${INSTALL_DIR}/lib"
+
+mkdir -p "${BIN_DIR}" "${LIB_DIR}"
+
+# 下载版本信息
+if ! wget --timeout=10 --tries=3 -O "${INSTALL_DIR}/VERSION" "${BASE_URL}/VERSION" 2>/dev/null; then
+    echo "  ⚠️  Could not download VERSION file"
+fi
+
+# 需要下载的二进制文件
+BINARIES="sinfo squeue scontrol scancel sbatch srun salloc sacct sacctmgr"
+
+echo ">>> Downloading SLURM binaries..."
+for bin in ${BINARIES}; do
+    if wget --timeout=30 --tries=3 -O "${BIN_DIR}/${bin}" "${BASE_URL}/bin/${bin}" 2>/dev/null; then
+        chmod +x "${BIN_DIR}/${bin}"
+        echo "  ✓ ${bin}"
+    else
+        echo "  ✗ Failed to download: ${bin}"
+    fi
+done
+
+# 下载库文件（可选）
+echo ">>> Downloading SLURM libraries..."
+if wget --timeout=30 --tries=3 -r -np -nH --cut-dirs=3 -R "index.html*" -P "${LIB_DIR}" "${BASE_URL}/lib/" 2>/dev/null; then
+    echo "  ✓ Libraries downloaded"
+else
+    echo "  ⚠️  Library download failed (optional)"
+fi
+
+# 添加到 PATH
+if ! grep -q "${BIN_DIR}" /etc/profile 2>/dev/null; then
+    echo "export PATH=\${PATH}:${BIN_DIR}" >> /etc/profile
+    echo "export LD_LIBRARY_PATH=\${LD_LIBRARY_PATH}:${LIB_DIR}" >> /etc/profile
+fi
+
+# 创建符号链接到 /usr/local/bin
+echo ">>> Creating symlinks..."
+for bin in ${BINARIES}; do
+    if [ -f "${BIN_DIR}/${bin}" ]; then
+        ln -sf "${BIN_DIR}/${bin}" "/usr/local/bin/${bin}" 2>/dev/null || true
+    fi
+done
+
+# 验证安装
+echo ""
+echo ">>> Verification:"
+if command -v sinfo >/dev/null 2>&1; then
+    sinfo --version 2>/dev/null || echo "sinfo installed but version unavailable"
+    echo ""
+    echo "✓ SLURM client tools installed successfully"
+    echo ""
+    echo "Installed binaries:"
+    for bin in ${BINARIES}; do
+        if [ -x "${BIN_DIR}/${bin}" ]; then
+            echo "  - ${bin}"
+        fi
+    done
+else
+    echo "❌ Installation verification failed"
+    exit 1
+fi
+
+echo "========================================"

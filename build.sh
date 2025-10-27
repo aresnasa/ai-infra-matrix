@@ -5118,8 +5118,9 @@ build_service() {
     prefetch_base_images "$dockerfile_path" "$service"
     
     # ========================================
-    # AppHub 特殊处理：自动更新应用版本
+    # AppHub 特殊处理：自动更新应用版本和组件化构建
     # ========================================
+    local apphub_extra_args=""
     if [[ "$service" == "apphub" ]]; then
         print_info "  → AppHub 构建前检查应用版本..."
         if update_apphub_versions; then
@@ -5128,6 +5129,12 @@ build_service() {
             print_warning "  ⚠ AppHub 版本检查失败，继续使用当前版本"
         fi
         echo
+        
+        # 处理 AppHub 组件化构建参数
+        if [[ -n "${APPHUB_BUILD_ARGS:-}" ]]; then
+            print_info "  → 使用组件化构建参数: ${APPHUB_BUILD_ARGS}"
+            apphub_extra_args="${APPHUB_BUILD_ARGS}"
+        fi
     fi
     
     # ========================================
@@ -5215,7 +5222,7 @@ build_service() {
     
     # 使用各自的src子目录作为构建上下文
     # 直接显示 docker build 的完整输出，不做过滤
-    if docker build -f "$dockerfile_path" $target_arg $cache_arg $label_args -t "$target_image" "$build_context"; then
+    if docker build -f "$dockerfile_path" $target_arg $cache_arg $label_args $apphub_extra_args -t "$target_image" "$build_context"; then
         echo
         print_success "✓ 构建成功: $target_image"
         
@@ -8878,13 +8885,14 @@ show_kafka_logs() {
 show_help() {
     echo "AI Infrastructure Matrix - 构建脚本 v$VERSION"
     echo
-    echo "用法: $0 [--force|--skip-pull|--skip-cache-check|--china-mirror|--no-source-maps] <命令> [参数...]"
+    echo "用法: $0 [--force|--no-cache|--skip-pull|--skip-cache-check|--china-mirror|--no-source-maps] <命令> [参数...]"
     echo
     echo "全局选项:"
     echo "  --force              - 强制重新构建/跳过镜像拉取"
+    echo "  --no-cache           - 禁用 Docker 缓存，强制重新构建所有层"
     echo "  --skip-pull          - 跳过镜像拉取，使用本地镜像"
     echo "  --skip-cache-check   - 跳过智能缓存检查，总是构建"
-    echo "  --china-mirror       - 使用中国npm镜像加速前端构建"
+    echo "  --china-mirror       - 使用中国镜像加速前端构建"
     echo "  --no-source-maps     - 禁用源码映射生成（优化构建性能）"
     echo
     echo "主要命令:"
@@ -8894,6 +8902,23 @@ show_help() {
     echo "  build-all [tag] [registry]      - 构建所有服务（智能过滤）"
     echo "  build-push <registry> [tag]     - 构建并推送所有服务"
     echo "  push-all <registry> [tag]       - 推送所有服务"
+    echo
+    echo "AppHub 组件化构建选项 (用于 build apphub):"
+    echo "  --slurm-only                    - 只构建 SLURM 组件"
+    echo "  --saltstack-only / --salt-only  - 只构建 SaltStack 组件"
+    echo "  --categraf-only                 - 只构建 Categraf 组件"
+    echo "  --no-slurm                      - 跳过 SLURM 构建"
+    echo "  --no-saltstack / --no-salt      - 跳过 SaltStack 构建"
+    echo "  --no-categraf                   - 跳过 Categraf 构建"
+    echo "  --slurm-version=<ver>           - 指定 SLURM 版本 (默认: 25.05.4)"
+    echo "  --salt-version=<ver>            - 指定 SaltStack 版本 (默认: v3007.8)"
+    echo "  --categraf-version=<ver>        - 指定 Categraf 版本 (默认: v0.4.22)"
+    echo
+    echo "AppHub 构建示例:"
+    echo "  $0 build apphub --slurm-only                      # 只构建 SLURM"
+    echo "  $0 build apphub --no-categraf                     # 跳过 Categraf"
+    echo "  $0 build apphub --slurm-version=25.05.5 --force   # 指定版本并强制重建"
+    echo "  $0 build apphub --slurm-only --no-cache          # 只构建 SLURM，无缓存构建"
     echo
     echo "智能构建缓存（新增）:"
     echo "  cache-stats                     - 显示构建缓存统计信息"
@@ -10952,6 +10977,9 @@ main() {
         if [[ "$arg" == "--force" ]]; then
             FORCE_REBUILD=true
             print_info "启用强制重新构建模式"
+        elif [[ "$arg" == "--no-cache" ]]; then
+            FORCE_REBUILD=true
+            print_info "启用无缓存构建模式"
         elif [[ "$arg" == "--skip-pull" ]]; then
             SKIP_PULL=true
             print_info "启用跳过拉取模式"
@@ -11108,17 +11136,68 @@ main() {
             
             # 支持逗号分隔的服务列表: ./build.sh build backend,backend-init --force
             local services="$2"
-            local tag="${3:-$DEFAULT_IMAGE_TAG}"
-            local registry="$4"
             
-            # 检查是否有 --force 标志（可能在任意位置）
+            # 解析 AppHub 组件化构建参数和其他标志
+            local apphub_component=""
+            local apphub_build_args=""
+            local tag=""
+            local registry=""
+            local positional_args=()
+            
+            # 先收集非标志参数
+            shift 2  # 跳过 "build" 和 服务名
             for arg in "$@"; do
                 if [[ "$arg" == "--force" ]]; then
                     FORCE_REBUILD=true
                     print_info "🔨 启用强制重建模式"
-                    break
+                elif [[ "$arg" == "--no-cache" ]]; then
+                    FORCE_REBUILD=true
+                    print_info "🔨 启用无缓存构建模式"
+                elif [[ "$arg" == --slurm-only ]]; then
+                    apphub_component="slurm"
+                    apphub_build_args="--build-arg BUILD_SLURM=true --build-arg BUILD_SALTSTACK=false --build-arg BUILD_CATEGRAF=false"
+                elif [[ "$arg" == --saltstack-only || "$arg" == --salt-only ]]; then
+                    apphub_component="saltstack"
+                    apphub_build_args="--build-arg BUILD_SLURM=false --build-arg BUILD_SALTSTACK=true --build-arg BUILD_CATEGRAF=false"
+                elif [[ "$arg" == --categraf-only ]]; then
+                    apphub_component="categraf"
+                    apphub_build_args="--build-arg BUILD_SLURM=false --build-arg BUILD_SALTSTACK=false --build-arg BUILD_CATEGRAF=true"
+                elif [[ "$arg" == --no-slurm ]]; then
+                    apphub_build_args+=" --build-arg BUILD_SLURM=false"
+                elif [[ "$arg" == --no-saltstack || "$arg" == --no-salt ]]; then
+                    apphub_build_args+=" --build-arg BUILD_SALTSTACK=false"
+                elif [[ "$arg" == --no-categraf ]]; then
+                    apphub_build_args+=" --build-arg BUILD_CATEGRAF=false"
+                elif [[ "$arg" =~ ^--slurm-version= ]]; then
+                    local version="${arg#--slurm-version=}"
+                    apphub_build_args+=" --build-arg SLURM_VERSION=${version}"
+                elif [[ "$arg" =~ ^--salt-version= ]]; then
+                    local version="${arg#--salt-version=}"
+                    apphub_build_args+=" --build-arg SALTSTACK_VERSION=${version}"
+                elif [[ "$arg" =~ ^--categraf-version= ]]; then
+                    local version="${arg#--categraf-version=}"
+                    apphub_build_args+=" --build-arg CATEGRAF_VERSION=${version}"
+                elif [[ "$arg" != --* ]]; then
+                    # 非标志参数，按顺序收集为 tag 和 registry
+                    positional_args+=("$arg")
                 fi
             done
+            
+            # 从收集的位置参数中提取 tag 和 registry
+            tag="${positional_args[0]:-$DEFAULT_IMAGE_TAG}"
+            registry="${positional_args[1]:-}"
+            
+            # 如果是 apphub 且有组件参数，导出环境变量供 build_service 使用
+            if [[ "$services" == "apphub" && -n "$apphub_build_args" ]]; then
+                export APPHUB_BUILD_ARGS="$apphub_build_args"
+                if [[ -n "$apphub_component" ]]; then
+                    print_info "🎯 AppHub 组件化构建: 只构建 $apphub_component"
+                else
+                    print_info "🎯 AppHub 自定义构建参数"
+                fi
+                print_info "   构建参数: $apphub_build_args"
+                echo
+            fi
             
             # nginx 特殊处理：先渲染模板，构建后重启
             if [[ "$services" == "nginx" ]]; then

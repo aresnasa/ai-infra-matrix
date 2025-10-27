@@ -949,20 +949,31 @@ if command -v apt-get >/dev/null 2>&1; then
 	fi
 	if [ "$installed" -eq 0 ]; then
 		apt-get update -y || true
-		if ! apt-get install -y salt-minion; then
-			echo "[Salt] apt 安装失败，尝试添加Broadcom Salt仓库 (keyring)..."
-			apt-get install -y curl gnupg2 ca-certificates lsb-release wget || true
-			mkdir -p /usr/share/keyrings
-			curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public -o /usr/share/keyrings/salt-archive-keyring.gpg || true
+		if apt-get install -y salt-minion; then
+			installed=1
+		fi
+	fi
+	# 如果系统仓库也没有，尝试 Broadcom 仓库
+	if [ "$installed" -eq 0 ]; then
+		echo "[Salt] 系统仓库无salt-minion，尝试添加Broadcom Salt仓库 (keyring)..."
+		apt-get install -y curl gnupg2 ca-certificates lsb-release wget || true
+		mkdir -p /usr/share/keyrings
+		if curl -fsSL --connect-timeout 10 --max-time 30 https://packages.broadcom.com/artifactory/api/security/keypair/SaltProjectKey/public -o /usr/share/keyrings/salt-archive-keyring.gpg; then
 			echo "deb [signed-by=/usr/share/keyrings/salt-archive-keyring.gpg] https://packages.broadcom.com/artifactory/saltproject-deb/ stable main" > /etc/apt/sources.list.d/saltproject.list
 			apt-get update -y || true
-			if ! apt-get install -y salt-minion; then
-				echo "[Salt] Broadcom仓库安装失败，尝试使用官方bootstrap脚本..."
-				curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-					|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-					|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
-				sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+			if apt-get install -y salt-minion; then
+				installed=1
 			fi
+		fi
+	fi
+	# 最后尝试 bootstrap 脚本
+	if [ "$installed" -eq 0 ]; then
+		echo "[Salt] 所有仓库失败，使用官方bootstrap脚本..."
+		if curl -fsSL --connect-timeout 10 --max-time 60 https://bootstrap.saltproject.io -o /tmp/install_salt.sh; then
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		else
+			echo "[Salt] bootstrap脚本下载失败"
+			exit 1
 		fi
 	fi
 elif command -v yum >/dev/null 2>&1; then
@@ -987,18 +998,27 @@ EOF
 		echo "[Salt] 未检测到AppHub YUM元数据，跳过AppHub YUM"
 	fi
 	if [ "$installed" -eq 0 ]; then
-		if ! yum install -y salt-minion; then
-			echo "[Salt] yum 安装失败，尝试添加Salt官方仓库..."
-			yum install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.el8.noarch.rpm || true
+		if yum install -y salt-minion; then
+			installed=1
+		fi
+	fi
+	if [ "$installed" -eq 0 ]; then
+		echo "[Salt] 系统仓库无salt-minion，尝试添加Salt官方仓库..."
+		if yum install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.el8.noarch.rpm; then
 			yum clean all || true
 			yum makecache -y || true
-			if ! yum install -y salt-minion; then
-				echo "[Salt] 官方仓库失败，尝试bootstrap脚本"
-				curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-					|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-					|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
-				sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+			if yum install -y salt-minion; then
+				installed=1
 			fi
+		fi
+	fi
+	if [ "$installed" -eq 0 ]; then
+		echo "[Salt] 所有仓库失败，使用bootstrap脚本"
+		if curl -fsSL --connect-timeout 10 --max-time 60 https://bootstrap.saltproject.io -o /tmp/install_salt.sh; then
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		else
+			echo "[Salt] bootstrap脚本下载失败"
+			exit 1
 		fi
 	fi
 elif command -v dnf >/dev/null 2>&1; then
@@ -1022,27 +1042,41 @@ EOF
 		echo "[Salt] 未检测到AppHub DNF元数据，跳过AppHub DNF"
 	fi
 	if [ "$installed" -eq 0 ]; then
-		if ! dnf install -y salt-minion; then
-			echo "[Salt] dnf 安装失败，尝试添加Salt官方仓库..."
-			dnf install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.fc36.noarch.rpm || true
+		if dnf install -y salt-minion; then
+			installed=1
+		fi
+	fi
+	if [ "$installed" -eq 0 ]; then
+		echo "[Salt] 系统仓库无salt-minion，尝试添加Salt官方仓库..."
+		if dnf install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.fc36.noarch.rpm; then
 			dnf makecache -y || true
-			if ! dnf install -y salt-minion; then
-				echo "[Salt] 官方仓库失败，尝试bootstrap脚本"
-				curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-					|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-					|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
-				sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+			if dnf install -y salt-minion; then
+				installed=1
 			fi
+		fi
+	fi
+	if [ "$installed" -eq 0 ]; then
+		echo "[Salt] 所有仓库失败，使用bootstrap脚本"
+		if curl -fsSL --connect-timeout 10 --max-time 60 https://bootstrap.saltproject.io -o /tmp/install_salt.sh; then
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		else
+			echo "[Salt] bootstrap脚本下载失败"
+			exit 1
 		fi
 	fi
 elif command -v zypper >/dev/null 2>&1; then
 	zypper refresh || true
-	if ! zypper install -y salt-minion; then
+	if zypper install -y salt-minion; then
+		installed=1
+	fi
+	if [ "$installed" -eq 0 ]; then
 		echo "[Salt] zypper安装失败，尝试bootstrap脚本"
-		curl -fsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-			|| curl -kfsSL https://bootstrap.saltproject.io -o /tmp/install_salt.sh \
-			|| wget -q --no-check-certificate https://bootstrap.saltproject.io -O /tmp/install_salt.sh
-		sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		if curl -fsSL --connect-timeout 10 --max-time 60 https://bootstrap.saltproject.io -o /tmp/install_salt.sh; then
+			sh /tmp/install_salt.sh -X || sh /tmp/install_salt.sh || true
+		else
+			echo "[Salt] bootstrap脚本下载失败"
+			exit 1
+		fi
 	fi
 else
 	echo "不支持的包管理器"
@@ -1068,7 +1102,7 @@ func (s *SSHService) executeCommand(client *ssh.Client, command string) (string,
 	if strings.Contains(command, "apt-get") || strings.Contains(command, "yum") ||
 		strings.Contains(command, "dnf") || strings.Contains(command, "zypper") ||
 		strings.Contains(command, "salt-minion") {
-		timeout = 10 * time.Minute // SaltStack安装使用10分钟超时
+		timeout = 20 * time.Minute // SaltStack安装使用20分钟超时（从外网下载可能较慢）
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

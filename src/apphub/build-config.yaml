@@ -1,0 +1,73 @@
+# AppHub 构建配置文件
+# 用于控制各个组件的构建和版本管理
+
+components:
+  slurm:
+    enabled: true
+    version: "25.05.4"
+    tarball: "slurm-25.05.4.tar.bz2"
+    # 构建类型: deb, rpm, binary, all
+    build_types:
+      - binary
+      - deb
+    # 二进制输出目录
+    binary_output: "/usr/share/nginx/html/pkgs/slurm-binaries"
+    # deb包输出目录
+    deb_output: "/usr/share/nginx/html/pkgs/slurm-deb"
+    # 安装脚本模板
+    install_script: "scripts/install-slurm.sh.tmpl"
+    
+  saltstack:
+    enabled: true
+    version: "v3007.8"
+    # SaltStack从GitHub下载预编译包
+    source: "github-release"
+    github_repo: "saltstack/salt"
+    # 需要下载的包
+    packages:
+      - salt-common
+      - salt-master
+      - salt-minion
+      - salt-api
+      - salt-ssh
+      - salt-syndic
+      - salt-cloud
+    output: "/usr/share/nginx/html/pkgs/salt-deb"
+    
+  categraf:
+    enabled: true
+    version: "v0.4.22"
+    source: "git"
+    repo: "https://github.com/flashcatcloud/categraf.git"
+    build_type: "go"
+    output: "/usr/share/nginx/html/pkgs/categraf"
+    
+  singularity:
+    enabled: false
+    version: "v4.3.4"
+    source: "git"
+    repo: "https://github.com/sylabs/singularity.git"
+    build_type: "go"
+    output: "/usr/share/nginx/html/pkgs/singularity"
+
+# 构建选项
+build:
+  # 是否启用并行构建
+  parallel: true
+  # 最大并行任务数
+  max_parallel: 4
+  # 架构支持
+  architectures:
+    - amd64
+    - arm64
+  # 是否在构建失败时继续
+  continue_on_error: false
+  
+# 输出配置
+output:
+  # 包索引生成
+  generate_index: true
+  # 是否验证构建产物
+  verify_artifacts: true
+  # 日志级别
+  log_level: "info"
