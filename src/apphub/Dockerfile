@@ -55,7 +55,7 @@ RUN set -eux; \
     # 更新包列表并安装基础工具（带重试机制）
     apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
     apt-get install -y ca-certificates curl tzdata lsof; \
-    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+    ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 
 # Install build prerequisites (分组安装减少失败风险)
 RUN apt-get install -y --no-install-recommends \
@@ -123,41 +123,61 @@ RUN set -eux; \
 USER root
 ARG BUILD_SALTSTACK
 ARG SALTSTACK_VERSION
+ARG GITHUB_PROXY
 RUN set -eux; \
     if [ "${BUILD_SALTSTACK}" = "true" ]; then \
         mkdir -p /saltstack-deb; \
         cd /saltstack-deb; \
         echo "📦 Downloading SaltStack ${SALTSTACK_VERSION} deb packages from GitHub releases..."; \
-        # 检测架构
-        ARCH=$(dpkg --print-architecture); \
-        echo "Architecture: ${ARCH}"; \
-        # 根据架构确定包后缀
-        if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-            ARCH_SUFFIX="arm64"; \
-        else \
-            ARCH_SUFFIX="amd64"; \
+        # 配置代理（如果提供）
+        if [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+            export ALL_PROXY="${GITHUB_PROXY}"; \
+            export HTTP_PROXY="${GITHUB_PROXY}"; \
+            export HTTPS_PROXY="${GITHUB_PROXY}"; \
+            export http_proxy="${GITHUB_PROXY}"; \
+            export https_proxy="${GITHUB_PROXY}"; \
         fi; \
-        # GitHub releases 基础 URL
+        # GitHub releases 基础 URL (修正版本号格式)
+        VERSION_NUM="${SALTSTACK_VERSION#v}"; \
         BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
         echo "Downloading from: ${BASE_URL}"; \
-        # 下载所有主要的 deb 包
-        for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
-            PKG_FILE="${pkg}_${SALTSTACK_VERSION#v}_${ARCH_SUFFIX}.deb"; \
-            for attempt in 1 2 3; do \
-                if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}" 2>/dev/null; then \
-                    echo "✓ Downloaded: ${PKG_FILE}"; \
-                    break; \
-                else \
-                    echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
-                    sleep 2; \
-                fi; \
-            done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+        echo "Version: ${VERSION_NUM}"; \
+        # 下载两种架构的 deb 包
+        total_downloaded=0; \
+        for ARCH_SUFFIX in amd64 arm64; do \
+            echo ""; \
+            echo "📥 Downloading ${ARCH_SUFFIX} packages..."; \
+            arch_downloaded=0; \
+            # 下载所有主要的 deb 包（修正文件名格式）
+            for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
+                PKG_FILE="${pkg}_${VERSION_NUM}_${ARCH_SUFFIX}.deb"; \
+                echo "Trying to download: ${PKG_FILE}"; \
+                for attempt in 1 2 3; do \
+                    if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}"; then \
+                        echo "✓ Downloaded: ${PKG_FILE}"; \
+                        arch_downloaded=$((arch_downloaded + 1)); \
+                        total_downloaded=$((total_downloaded + 1)); \
+                        break; \
+                    else \
+                        echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
+                        if [ $attempt -lt 3 ]; then sleep 2; fi; \
+                    fi; \
+                done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+            done; \
+            echo "✓ Downloaded ${arch_downloaded} ${ARCH_SUFFIX} packages"; \
         done; \
         # 检查下载结果
-        salt_count=$(ls *.deb 2>/dev/null | wc -l || echo 0); \
-        if [ "$salt_count" -gt 0 ]; then \
-            echo "✓ Downloaded ${salt_count} SaltStack deb packages"; \
-            ls -lh *.deb; \
+        echo ""; \
+        echo "📊 Download Summary:"; \
+        if [ "$total_downloaded" -gt 0 ]; then \
+            echo "✓ Total downloaded: ${total_downloaded} SaltStack deb packages"; \
+            echo ""; \
+            echo "AMD64 packages:"; \
+            ls -lh *_amd64.deb 2>/dev/null || echo "  (none)"; \
+            echo ""; \
+            echo "ARM64 packages:"; \
+            ls -lh *_arm64.deb 2>/dev/null || echo "  (none)"; \
         else \
             echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
         fi; \
@@ -218,46 +238,26 @@ ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 # SaltStack version configuration (same as deb builder)
 ARG SALTSTACK_VERSION=v3007.8
 
-# 配置 Rocky Linux 镜像源（多镜像源回退策略）
+# 配置 Rocky Linux 镜像源（可选，如果网络不好则跳过）
+# 注意：也可以通过 docker build --build-arg HTTP_PROXY=... 使用代理
 RUN set -eux; \
+    echo "尝试配置 Rocky Linux 阿里云镜像源（可选）..."; \
     # 备份原始配置
-    cp -r /etc/yum.repos.d /etc/yum.repos.d.backup || true; \
-    # 尝试多个中国镜像源（按优先级顺序）
-    MIRRORS="mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn mirror.sjtu.edu.cn mirrors.163.com"; \
-    SUCCESS=0; \
-    for MIRROR in $MIRRORS; do \
-        echo "尝试配置 Rocky Linux 镜像源: ${MIRROR}..."; \
-        # 禁用 mirrorlist，使用指定的 baseurl
+    cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
+    # 尝试配置阿里云镜像源
+    ( \
         sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e "s|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=https://${MIRROR}/rockylinux|g" \
+            -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://mirrors.aliyun.com/rockylinux|g' \
             -i.bak \
-            /etc/yum.repos.d/rocky-*.repo || true; \
-        # 清理缓存
-        dnf clean all >/dev/null 2>&1 || true; \
-        # 尝试更新缓存
-        if dnf makecache --timer 2>/dev/null || dnf makecache 2>/dev/null; then \
-            echo "✓ 成功配置镜像源: ${MIRROR}"; \
-            SUCCESS=1; \
-            break; \
-        else \
-            echo "✗ 镜像源 ${MIRROR} 失败，尝试下一个..."; \
-            # 恢复备份
-            cp -r /etc/yum.repos.d.backup/* /etc/yum.repos.d/ 2>/dev/null || true; \
-        fi; \
-    done; \
-    # 如果所有镜像源都失败，尝试使用原始源（HTTP）
-    if [ "$SUCCESS" -eq 0 ]; then \
-        echo "⚠️ 所有中国镜像源失败，尝试使用官方源（HTTP）..."; \
-        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e 's|^#baseurl=https://dl.rockylinux.org/$contentdir|baseurl=http://dl.rockylinux.org/$contentdir|g' \
-            -i.bak \
-            /etc/yum.repos.d/rocky-*.repo || true; \
-        dnf clean all; \
-        dnf makecache --timer || dnf makecache || { \
-            echo "ERROR: 无法配置任何可用的镜像源"; \
-            exit 1; \
-        }; \
-    fi
+            /etc/yum.repos.d/rocky*.repo 2>/dev/null && \
+        dnf clean all 2>/dev/null && \
+        dnf makecache 2>/dev/null && \
+        echo "✓ 成功配置阿里云镜像源" \
+    ) || { \
+        echo "⚠️ 镜像源配置失败，使用默认配置"; \
+        cp -r /etc/yum.repos.d.backup/* /etc/yum.repos.d/ 2>/dev/null || true; \
+        dnf clean all 2>/dev/null || true; \
+    }
 
 # Install build prerequisites and enable required repositories
 RUN set -eux; \
@@ -266,7 +266,8 @@ RUN set -eux; \
     dnf config-manager --set-enabled powertools 2>/dev/null || \
     echo "PowerTools/CRB repository not available"; \
     dnf install -y epel-release || echo "EPEL repository not available"; \
-    dnf update -y; \
+    # 只更新元数据缓存，不更新所有包（避免网络问题）
+    dnf makecache --refresh || dnf makecache || true; \
     # Install basic build dependencies first
     dnf install -y \
         rpm-build rpmdevtools \
@@ -301,12 +302,17 @@ COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 RUN set -eux; \
     if [ "${BUILD_SLURM}" = "true" ]; then \
         echo "📦 Building SLURM ${SLURM_VERSION} RPM packages..."; \
+        cd /home/builder/build; \
         # Extract source tarball
         tarball=$(ls slurm-*.tar.bz2 | head -1); \
         echo "✓ Found SLURM tarball: ${tarball}"; \
         tar -xaf "${tarball}"; \
         srcdir=$(basename "${tarball}" .tar.bz2); \
         cd "${srcdir}"; \
+        # Setup rpmbuild directories
+        echo ">>> Setting up rpmbuild environment..."; \
+        mkdir -p /home/builder/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
+        cp ../"${tarball}" /home/builder/rpmbuild/SOURCES/; \
         # Configure SLURM
         echo ">>> Configuring SLURM for RPM build..."; \
         ./configure \
@@ -320,8 +326,9 @@ RUN set -eux; \
             tail -50 /tmp/configure-rpm.log; \
             exit 1; \
         }; \
-        # Build RPM packages using make
+        # Build RPM packages using make rpm
         echo ">>> Building SLURM RPM packages (this may take 10-15 minutes)..."; \
+        echo ">>> Current directory: $(pwd)"; \
         make contrib 2>&1 | tee /tmp/make-contrib.log || { \
             echo "❌ Make contrib failed! Last 100 lines of output:"; \
             tail -100 /tmp/make-contrib.log; \
@@ -333,6 +340,8 @@ RUN set -eux; \
             exit 1; \
         }; \
         echo "✓ SLURM RPM build completed successfully"; \
+        echo ">>> Listing RPM build output locations:"; \
+        find /home/builder -name "*.rpm" -type f 2>/dev/null | head -20 || echo "No RPMs found yet"; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
         mkdir -p /home/builder/rpms; \
@@ -343,41 +352,61 @@ RUN set -eux; \
 USER root
 ARG BUILD_SALTSTACK
 ARG SALTSTACK_VERSION
+ARG GITHUB_PROXY
 RUN set -eux; \
     if [ "${BUILD_SALTSTACK}" = "true" ]; then \
         mkdir -p /saltstack-rpm; \
         cd /saltstack-rpm; \
         echo "📦 Downloading SaltStack ${SALTSTACK_VERSION} rpm packages from GitHub releases..."; \
-        # 检测架构
-        ARCH=$(uname -m); \
-        echo "Architecture: ${ARCH}"; \
-        # 根据架构确定包后缀
-        if [ "${ARCH}" = "aarch64" ]; then \
-            ARCH_SUFFIX="aarch64"; \
-        else \
-            ARCH_SUFFIX="x86_64"; \
+        # 配置代理（如果提供）
+        if [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+            export ALL_PROXY="${GITHUB_PROXY}"; \
+            export HTTP_PROXY="${GITHUB_PROXY}"; \
+            export HTTPS_PROXY="${GITHUB_PROXY}"; \
+            export http_proxy="${GITHUB_PROXY}"; \
+            export https_proxy="${GITHUB_PROXY}"; \
         fi; \
-        # GitHub releases 基础 URL
+        # GitHub releases 基础 URL (修正版本号格式)
+        VERSION_NUM="${SALTSTACK_VERSION#v}"; \
         BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
         echo "Downloading from: ${BASE_URL}"; \
-        # 下载所有主要的 rpm 包
-        for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
-            PKG_FILE="${pkg}-${SALTSTACK_VERSION#v}-0.${ARCH_SUFFIX}.rpm"; \
-            for attempt in 1 2 3; do \
-                if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}" 2>/dev/null; then \
-                    echo "✓ Downloaded: ${PKG_FILE}"; \
-                    break; \
-                else \
-                    echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
-                    sleep 2; \
-                fi; \
-            done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+        echo "Version: ${VERSION_NUM}"; \
+        # 下载两种架构的 rpm 包
+        total_downloaded=0; \
+        for ARCH_SUFFIX in x86_64 aarch64; do \
+            echo ""; \
+            echo "📥 Downloading ${ARCH_SUFFIX} packages..."; \
+            arch_downloaded=0; \
+            # 下载所有主要的 rpm 包（修正文件名格式）
+            for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
+                PKG_FILE="${pkg}-${VERSION_NUM}-0.${ARCH_SUFFIX}.rpm"; \
+                echo "Trying to download: ${PKG_FILE}"; \
+                for attempt in 1 2 3; do \
+                    if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}"; then \
+                        echo "✓ Downloaded: ${PKG_FILE}"; \
+                        arch_downloaded=$((arch_downloaded + 1)); \
+                        total_downloaded=$((total_downloaded + 1)); \
+                        break; \
+                    else \
+                        echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
+                        if [ $attempt -lt 3 ]; then sleep 2; fi; \
+                    fi; \
+                done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+            done; \
+            echo "✓ Downloaded ${arch_downloaded} ${ARCH_SUFFIX} packages"; \
         done; \
         # 检查下载结果
-        salt_count=$(ls *.rpm 2>/dev/null | wc -l || echo 0); \
-        if [ "$salt_count" -gt 0 ]; then \
-            echo "✓ Downloaded ${salt_count} SaltStack rpm packages"; \
-            ls -lh *.rpm; \
+        echo ""; \
+        echo "📊 Download Summary:"; \
+        if [ "$total_downloaded" -gt 0 ]; then \
+            echo "✓ Total downloaded: ${total_downloaded} SaltStack rpm packages"; \
+            echo ""; \
+            echo "x86_64 packages:"; \
+            ls -lh *.x86_64.rpm 2>/dev/null || echo "  (none)"; \
+            echo ""; \
+            echo "aarch64 packages:"; \
+            ls -lh *.aarch64.rpm 2>/dev/null || echo "  (none)"; \
         else \
             echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
         fi; \
@@ -393,18 +422,34 @@ RUN set -eux; \
     if [ ! -f /home/builder/rpms/.skip_slurm ] && [ "${BUILD_SLURM}" = "true" ]; then \
         # Find and copy built SLURM RPMs from all possible locations
         echo ">>> Looking for SLURM RPM packages..."; \
-        # Check rpmbuild directory structure
-        find /home/builder/rpmbuild/RPMS -type f -name '*slurm*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
-        # Also check the source directory (some builds put RPMs there)
-        find /home/builder/build -type f -name '*slurm*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        echo ">>> Searching in common RPM build locations:"; \
+        # List all possible locations
+        find /home/builder -name "*.rpm" -type f 2>/dev/null | head -20 || echo "No RPMs found with find command"; \
+        # Check rpmbuild directory structure (standard rpmbuild location)
+        if [ -d /home/builder/rpmbuild/RPMS ]; then \
+            echo "  Checking: /home/builder/rpmbuild/RPMS"; \
+            find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        fi; \
+        # Check source directory (make rpm sometimes puts RPMs here)
+        if [ -d /home/builder/build ]; then \
+            echo "  Checking: /home/builder/build"; \
+            find /home/builder/build -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        fi; \
+        # Check home directory root (backup location)
+        echo "  Checking: /home/builder"; \
+        find /home/builder -maxdepth 3 -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        # Remove duplicates and debug symbols if needed
+        cd /out && rm -f *-debuginfo-*.rpm *-debugsource-*.rpm 2>/dev/null || true; \
         # Count collected RPMs
-        rpm_count=$(ls /out/*slurm*.rpm 2>/dev/null | wc -l || echo 0); \
+        rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
         if [ "$rpm_count" -gt 0 ]; then \
             echo "✓ Successfully collected ${rpm_count} SLURM RPM package(s)"; \
             echo ">>> SLURM RPM packages:"; \
-            ls -lh /out/*slurm*.rpm; \
+            ls -lh /out/*.rpm; \
         else \
             echo "⚠️  No SLURM RPM packages were found"; \
+            echo ">>> Listing /home/builder structure for debugging:"; \
+            ls -laR /home/builder/ | head -100 || true; \
             touch /out/.skip_slurm; \
         fi; \
     else \
@@ -493,7 +538,7 @@ RUN set -eux; \
         libyaml-dev \
         libssl-dev \
         libreadline-dev; \
-    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone; \
+    ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone; \
     rm -rf /var/lib/apt/lists/*
 
 # 创建构建用户
@@ -598,25 +643,34 @@ ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
 
-# 配置 Alpine 镜像源（通用配置）
+# 配置 Alpine 镜像源并安装依赖（合并到一个RUN减少层数）
 RUN set -eux; \
+    # 备份并配置镜像源
+    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
     ARCH=$(uname -m); \
     echo "Detected architecture: ${ARCH}"; \
+    # 根据架构配置镜像源
     if [ "${ARCH}" = "aarch64" ]; then \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
     else \
-        echo "https://mirrors.aliyun.com/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
     fi; \
+    # 更新包索引（带重试和备用源）
     apk update || { \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "主镜像源失败，切换到官方源..."; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
         apk update; \
-    }
-
-# Install build dependencies（通用依赖）
-RUN apk add --no-cache git make bash tar gzip sed coreutils
+    } || { \
+        echo "尝试使用HTTP协议..."; \
+        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
+        apk update; \
+    }; \
+    # 安装构建依赖
+    apk add --no-cache git make bash tar gzip sed coreutils
 
 # 复制通用构建脚本和应用特定脚本
 COPY scripts/build-app.sh /scripts/build-app.sh
@@ -628,8 +682,27 @@ RUN mkdir -p /out
 
 # 执行构建（使用通用构建脚本）
 ARG BUILD_CATEGRAF
+ARG GITHUB_PROXY
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
+        # 配置代理（如果提供）
+        if [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
+            export ALL_PROXY="${GITHUB_PROXY}"; \
+            export HTTP_PROXY="${GITHUB_PROXY}"; \
+            export HTTPS_PROXY="${GITHUB_PROXY}"; \
+            export http_proxy="${GITHUB_PROXY}"; \
+            export https_proxy="${GITHUB_PROXY}"; \
+            # 配置 git 使用代理和 SSL
+            git config --global http.proxy "${GITHUB_PROXY}"; \
+            git config --global https.proxy "${GITHUB_PROXY}"; \
+            git config --global http.sslVerify false; \
+            git config --global http.version HTTP/1.1; \
+            echo "✓ Git proxy configured"; \
+        else \
+            echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
+        fi; \
+        echo "Starting Categraf build..."; \
         CATEGRAF_VERSION=${CATEGRAF_VERSION} \
         CATEGRAF_REPO=${CATEGRAF_REPO} \
         BUILD_DIR=/build \
@@ -658,43 +731,50 @@ RUN set -eux; \
     # 根据架构配置镜像源
     if [ "${ARCH}" = "aarch64" ]; then \
         echo "配置ARM64架构的清华Alpine镜像源..."; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
     else \
         echo "配置AMD64架构的阿里云Alpine镜像源..."; \
-        echo "https://mirrors.aliyun.com/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
     fi; \
     # 更新包索引（带重试和备用源）
     apk update || { \
         echo "主镜像源失败，切换到官方镜像源..."; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
         apk update; \
     } || { \
         echo "尝试使用HTTP协议..."; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.21/main" > /etc/apk/repositories; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.21/community" >> /etc/apk/repositories; \
+        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
         apk update; \
     }
 
 # Install tools for repo management and general development
-RUN apk add --no-cache \
-    # Package management tools (dpkg for deb package index generation)
-    dpkg dpkg-dev \
-    # Development tools (for testing and debugging)
-    build-base \
-    git \
-    vim \
-    wget \
-    curl \
-    net-tools \
-    iputils \
-    procps \
-    bash \
-    ca-certificates \
-    gzip \
-    perl
+# Note: Some packages may not be available in Alpine, install what we can
+RUN set -eux; \
+    # Install dpkg tools first (critical for deb package indexing)
+    # Also install zstd for decompressing modern deb packages (Ubuntu 22.04+ uses zstd compression)
+    apk add --no-cache dpkg dpkg-dev zstd || { \
+        echo "⚠️  dpkg packages not available, will skip deb indexing"; \
+    }; \
+    # Install core development and network tools
+    apk add --no-cache \
+        build-base \
+        git \
+        vim \
+        wget \
+        curl \
+        bash \
+        ca-certificates \
+        gzip \
+        perl \
+        || echo "⚠️  Some packages failed to install"; \
+    # Try to install optional network tools (may not be available)
+    apk add --no-cache net-tools 2>/dev/null || echo "⚠️  net-tools not available"; \
+    apk add --no-cache iputils 2>/dev/null || echo "⚠️  iputils not available"; \
+    apk add --no-cache procps 2>/dev/null || echo "⚠️  procps not available"
 
 # Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf

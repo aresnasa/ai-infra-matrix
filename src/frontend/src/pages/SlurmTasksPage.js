@@ -170,11 +170,11 @@ const SlurmTasksPage = () => {
       key: 'progress',
       sorter: (a, b) => (a.progress || 0) - (b.progress || 0),
       render: (progress, record) => {
-        // 确保进度值是数字
+        // 确保进度值是数字（后端返回的已经是0-100的百分比）
         const progressValue = typeof progress === 'number' ? progress : 0;
         
         if (record.status === 'running') {
-          const percent = Math.round(progressValue * 100);
+          const percent = Math.round(progressValue);
           return <Progress percent={percent} size="small" showInfo={true} />;
         } else if (record.status === 'completed') {
           return <Progress percent={100} size="small" status="success" />;
@@ -1094,7 +1094,7 @@ const SlurmTasksPage = () => {
                 <div style={{ marginTop: '16px' }}>
                   <Text strong>当前进度：</Text>
                   <Progress
-                    percent={Math.round(selectedTask.progress * 100)}
+                    percent={Math.round(selectedTask.progress)}
                     status="active"
                     style={{ marginTop: '8px' }}
                   />
@@ -1188,7 +1188,7 @@ const SlurmTasksPage = () => {
                         <Text>{event.message}</Text>
                         {event.progress !== undefined && (
                           <Progress
-                            percent={Math.round(event.progress * 100)}
+                            percent={Math.round(event.progress)}
                             size="small"
                             showInfo={false}
                           />

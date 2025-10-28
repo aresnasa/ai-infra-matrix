@@ -1,0 +1,69 @@
+# Rocky Linux 9 SSH测试容器 - 用于SaltStack客户端安装测试
+FROM rockylinux:9
+
+ENV container=docker
+
+# 配置阿里云镜像源加速
+RUN set -eux; \
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+        -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://mirrors.aliyun.com/rockylinux|g' \
+        -i.bak \
+        /etc/yum.repos.d/rocky*.repo && \
+    dnf clean all && \
+    dnf makecache
+
+# 安装SSH服务器和基本工具
+RUN dnf install -y \
+    systemd \
+    openssh-server \
+    sudo \
+    curl \
+    wget \
+    python3 \
+    python3-pip \
+    bind-utils \
+    iputils \
+    net-tools \
+    && dnf clean all
+
+# 创建SSH运行目录
+RUN mkdir -p /var/run/sshd /run/sshd
+
+# 配置SSH
+RUN echo 'root:rootpass123' | chpasswd
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || \
+    sed -i 's/#PermitRootLogin yes/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || \
+    sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# 生成SSH主机密钥
+RUN ssh-keygen -A
+
+# 创建测试用户
+RUN useradd -m -s /bin/bash testuser
+RUN echo 'testuser:testpass123' | chpasswd
+RUN usermod -aG wheel testuser
+
+# 允许wheel组sudo免密码
+RUN echo '%wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# 配置pip使用阿里云源
+RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip3 config set global.trusted-host mirrors.aliyun.com || true
+
+# 创建工作目录
+RUN mkdir -p /opt/saltstack
+WORKDIR /opt/saltstack
+
+# 暴露SSH端口
+EXPOSE 22
+
+# 启用SSH服务
+RUN systemctl enable sshd
+
+STOPSIGNAL SIGRTMIN+3
+
+VOLUME [ "/sys/fs/cgroup" ]
+
+# 使用systemd作为PID 1
+CMD ["/sbin/init"]

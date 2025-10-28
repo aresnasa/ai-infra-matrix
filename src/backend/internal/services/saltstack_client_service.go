@@ -347,22 +347,68 @@ func (s *SaltStackClientService) installSaltStackMinion(client *ssh.Client, bina
 			sudo mkdir -p /etc/salt
 		`, binary.DownloadURL)
 	case "package":
-		// 根据操作系统使用包管理器安装
+		// 从AppHub下载并安装SaltStack包
 		switch binary.Platform {
 		case "ubuntu", "debian":
-			installCmd = `
+			// 从AppHub获取SaltStack deb包
+			// binary.DownloadURL格式: http://192.168.0.200:53434/pkgs/saltstack-deb/salt-minion_3007.8_arm64.deb
+			installCmd = fmt.Sprintf(`
 				set -e
-				curl -fsSL https://repo.saltproject.io/py3/ubuntu/20.04/amd64/latest/salt-archive-keyring.gpg | sudo apt-key add -
-				echo "deb https://repo.saltproject.io/py3/ubuntu/20.04/amd64/latest focal main" | sudo tee /etc/apt/sources.list.d/salt.list
+				# Download required SaltStack packages from AppHub
+				cd /tmp
+				echo "Downloading SaltStack packages from AppHub..."
+				
+				# Download salt-common (required dependency)
+				APPHUB_BASE=$(dirname "%s")
+				ARCH=$(dpkg --print-architecture 2>/dev/null || echo "arm64")
+				VERSION=$(echo "%s" | grep -oP 'salt-minion_\K[0-9.]+' || echo "3007.8")
+				
+				curl -fsSL "${APPHUB_BASE}/salt-common_${VERSION}_${ARCH}.deb" -o salt-common.deb
+				curl -fsSL "${APPHUB_BASE}/salt-minion_${VERSION}_${ARCH}.deb" -o salt-minion.deb
+				
+				echo "Installing SaltStack packages..."
+				# Install dependencies first
 				sudo apt-get update
-				sudo apt-get install -y salt-minion
-			`
+				sudo apt-get install -y python3 python3-pip python3-setuptools
+				
+				# Install salt-common first (dependency)
+				sudo dpkg -i salt-common.deb || sudo apt-get install -f -y
+				
+				# Install salt-minion
+				sudo dpkg -i salt-minion.deb || sudo apt-get install -f -y
+				
+				# Clean up
+				rm -f salt-common.deb salt-minion.deb
+				
+				echo "SaltStack Minion installed successfully from AppHub"
+			`, binary.DownloadURL, binary.DownloadURL)
 		case "centos", "rhel":
-			installCmd = `
+			// 从AppHub获取SaltStack rpm包
+			installCmd = fmt.Sprintf(`
 				set -e
-				sudo yum install -y https://repo.saltproject.io/py3/redhat/salt-py3-repo-latest.el8.noarch.rpm
-				sudo yum install -y salt-minion
-			`
+				# Download required SaltStack packages from AppHub
+				cd /tmp
+				echo "Downloading SaltStack packages from AppHub..."
+				
+				# Download salt-minion RPM
+				APPHUB_BASE=$(dirname "%s")
+				ARCH=$(uname -m)
+				VERSION=$(echo "%s" | grep -oP 'salt-minion-\K[0-9.]+-[0-9]+' || echo "3007.8-0")
+				
+				curl -fsSL "${APPHUB_BASE}/salt-minion-${VERSION}.${ARCH}.rpm" -o salt-minion.rpm
+				
+				echo "Installing SaltStack packages..."
+				# Install dependencies
+				sudo yum install -y python3 python3-pip
+				
+				# Install salt-minion
+				sudo yum install -y ./salt-minion.rpm
+				
+				# Clean up
+				rm -f salt-minion.rpm
+				
+				echo "SaltStack Minion installed successfully from AppHub"
+			`, binary.DownloadURL, binary.DownloadURL)
 		default:
 			return fmt.Errorf("unsupported platform: %s", binary.Platform)
 		}

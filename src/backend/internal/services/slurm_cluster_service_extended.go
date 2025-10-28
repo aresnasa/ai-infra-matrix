@@ -2,6 +2,8 @@ package services
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -260,20 +262,116 @@ func (s *SlurmClusterService) installSaltRepository(client *ssh.Client, osInfo *
 	return s.executeSSHCommand(client, cmd, sessionID, node, installTask, step)
 }
 
-// installSaltMinionPackage 安装Salt Minion包
+// installSaltMinionPackage 安装Salt Minion包（从AppHub下载）
 func (s *SlurmClusterService) installSaltMinionPackage(client *ssh.Client, osInfo *models.OSInfo, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) error {
-	var cmd string
+	// 获取AppHub配置
+	appHubURL := getAppHubBaseURL()
+	saltVersion := getSaltStackVersion()
 
+	// 根据操作系统选择对应的安装脚本
+	var scriptPath string
 	switch osInfo.OS {
 	case "ubuntu", "debian":
-		cmd = "sudo apt-get install -y salt-minion"
+		scriptPath = "/root/scripts/install-salt-minion-deb.sh"
 	case "centos", "rhel":
-		cmd = "sudo yum install -y salt-minion"
+		scriptPath = "/root/scripts/install-salt-minion-rpm.sh"
 	default:
 		return fmt.Errorf("unsupported OS: %s", osInfo.OS)
 	}
 
-	return s.executeSSHCommand(client, cmd, sessionID, node, installTask, step)
+	// 复制脚本到远程主机
+	if err := s.copyScriptToRemote(client, scriptPath, "/tmp/install-salt-minion.sh"); err != nil {
+		return fmt.Errorf("failed to copy install script: %v", err)
+	}
+
+	// 执行安装脚本
+	cmd := fmt.Sprintf("bash /tmp/install-salt-minion.sh '%s' '%s'", appHubURL, saltVersion)
+	if err := s.executeSSHCommand(client, cmd, sessionID, node, installTask, step); err != nil {
+		return fmt.Errorf("failed to execute install script: %v", err)
+	}
+
+	// 清理远程脚本
+	cleanupCmd := "rm -f /tmp/install-salt-minion.sh"
+	_ = s.executeSSHCommand(client, cleanupCmd, sessionID, node, installTask, step)
+
+	return nil
+}
+
+// copyScriptToRemote 复制脚本文件到远程主机（使用SSH而不是SFTP）
+func (s *SlurmClusterService) copyScriptToRemote(client *ssh.Client, localPath, remotePath string) error {
+	// 读取本地脚本内容
+	scriptContent, err := os.ReadFile(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to read script file %s: %v", localPath, err)
+	}
+
+	// 创建SSH会话
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create SSH session: %v", err)
+	}
+	defer session.Close()
+
+	// 使用 cat 命令将脚本内容写入远程文件
+	// 使用 base64 编码避免特殊字符问题
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %v", err)
+	}
+
+	// 启动命令：接收stdin并写入文件
+	if err := session.Start(fmt.Sprintf("cat > %s && chmod +x %s", remotePath, remotePath)); err != nil {
+		return fmt.Errorf("failed to start copy command: %v", err)
+	}
+
+	// 写入脚本内容
+	if _, err := io.Copy(stdin, strings.NewReader(string(scriptContent))); err != nil {
+		return fmt.Errorf("failed to write script content: %v", err)
+	}
+	stdin.Close()
+
+	// 等待命令完成
+	if err := session.Wait(); err != nil {
+		return fmt.Errorf("failed to complete script copy: %v", err)
+	}
+
+	return nil
+}
+
+// getSaltStackVersion 获取SaltStack版本
+func getSaltStackVersion() string {
+	// 从环境变量读取版本，如果没有则使用默认值
+	if version := os.Getenv("SALTSTACK_VERSION"); version != "" {
+		// 移除可能的 'v' 前缀
+		return strings.TrimPrefix(version, "v")
+	}
+	return "3007.8" // 默认版本
+}
+
+// getAppHubBaseURL 获取AppHub基础URL
+func getAppHubBaseURL() string {
+	// 从环境变量获取，或使用默认值
+	if url := os.Getenv("APPHUB_URL"); url != "" {
+		return strings.TrimSuffix(url, "/")
+	}
+
+	// 构建AppHub URL（与slurm_controller.go中的逻辑一致）
+	externalHost := os.Getenv("EXTERNAL_HOST")
+	if externalHost == "" {
+		externalHost = "localhost"
+	}
+
+	appHubPort := os.Getenv("APPHUB_PORT")
+	if appHubPort == "" {
+		appHubPort = "53434" // 默认端口
+	}
+
+	scheme := os.Getenv("EXTERNAL_SCHEME")
+	if scheme == "" {
+		scheme = "http"
+	}
+
+	return fmt.Sprintf("%s://%s:%s", scheme, externalHost, appHubPort)
 }
 
 // configureSaltMinion 配置Salt Minion

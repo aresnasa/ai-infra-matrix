@@ -101,6 +101,105 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
+  # Rocky Linux SSH测试容器1
+  test-rocky01:
+    image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/test-containers
+      dockerfile: Dockerfile.rocky
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+    container_name: test-rocky01
+    hostname: test-rocky01
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    dns_opt:
+      - ndots:1
+    dns_search:
+      - ai-infra-network
+    environment:
+      - SSH_PASSWORD=testpass123
+      - ROOT_PASSWORD=rootpass123
+    ports:
+      - "2211:22"
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # Rocky Linux SSH测试容器2
+  test-rocky02:
+    image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/test-containers
+      dockerfile: Dockerfile.rocky
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+    container_name: test-rocky02
+    hostname: test-rocky02
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    dns_opt:
+      - ndots:1
+    dns_search:
+      - ai-infra-network
+    environment:
+      - SSH_PASSWORD=testpass123
+      - ROOT_PASSWORD=rootpass123
+    ports:
+      - "2212:22"
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # Rocky Linux SSH测试容器3
+  test-rocky03:
+    image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    build:
+      context: ./src/test-containers
+      dockerfile: Dockerfile.rocky
+      args:
+        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+    container_name: test-rocky03
+    hostname: test-rocky03
+    privileged: true
+    security_opt:
+      - seccomp=unconfined
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    dns_opt:
+      - ndots:1
+    dns_search:
+      - ai-infra-network
+    environment:
+      - SSH_PASSWORD=testpass123
+      - ROOT_PASSWORD=rootpass123
+    ports:
+      - "2213:22"
+    tmpfs:
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
 networks:
   ai-infra-network:
     external: true

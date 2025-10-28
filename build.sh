@@ -5135,6 +5135,18 @@ build_service() {
             print_info "  → 使用组件化构建参数: ${APPHUB_BUILD_ARGS}"
             apphub_extra_args="${APPHUB_BUILD_ARGS}"
         fi
+        
+        # 从 .env 文件读取 GITHUB_PROXY 配置（如果存在）
+        if [[ -f "$SCRIPT_DIR/.env" ]]; then
+            local github_proxy=$(grep "^GITHUB_PROXY=" "$SCRIPT_DIR/.env" | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+            if [[ -n "$github_proxy" ]]; then
+                print_info "  → 使用 GitHub 代理: $github_proxy"
+                apphub_extra_args="$apphub_extra_args --build-arg GITHUB_PROXY=$github_proxy"
+                # 同时设置 HTTP_PROXY 用于 dnf/yum 下载
+                apphub_extra_args="$apphub_extra_args --build-arg HTTP_PROXY=$github_proxy"
+                apphub_extra_args="$apphub_extra_args --build-arg HTTPS_PROXY=$github_proxy"
+            fi
+        fi
     fi
     
     # ========================================

@@ -142,7 +142,7 @@ export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, st
               <div style={{ marginTop: 4 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                   <Text type="secondary">{t.currentStep}</Text>
-                  <Text type="secondary">{Math.round(t.progress * 100)}%</Text>
+                  <Text type="secondary">{Math.round(t.progress)}%</Text>
                 </div>
                 <div style={{ 
                   width: '100%', 
@@ -153,7 +153,7 @@ export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, st
                   marginTop: '2px'
                 }}>
                   <div style={{
-                    width: `${Math.round(t.progress * 100)}%`,
+                    width: `${Math.round(t.progress)}%`,
                     height: '100%',
                     backgroundColor: t.status === 'running' ? '#1890ff' : t.status === 'failed' ? '#ff4d4f' : '#52c41a',
                     transition: 'width 0.3s ease'

@@ -89,8 +89,9 @@ const TaskCard = ({
     );
   }
 
+  // 后端返回的progress已经是百分比(0-100)，不需要再乘100
   const progress = task.status === 'running' && task.progress !== undefined 
-    ? Math.round(task.progress * 100) 
+    ? Math.round(task.progress) 
     : task.status === 'completed' ? 100 : 0;
 
   const duration = task.created_at 
