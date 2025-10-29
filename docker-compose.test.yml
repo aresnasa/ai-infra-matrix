@@ -38,11 +38,6 @@ services:
   # SSH测试容器2
   test-ssh02:
     image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
-    build:
-      context: ./src/test-containers
-      dockerfile: Dockerfile.ssh
-      args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh02
     hostname: test-ssh02
     privileged: true
@@ -71,11 +66,6 @@ services:
   # SSH测试容器3
   test-ssh03:
     image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
-    build:
-      context: ./src/test-containers
-      dockerfile: Dockerfile.ssh
-      args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh03
     hostname: test-ssh03
     privileged: true
@@ -137,11 +127,6 @@ services:
   # Rocky Linux SSH测试容器2
   test-rocky02:
     image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
-    build:
-      context: ./src/test-containers
-      dockerfile: Dockerfile.rocky
-      args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-rocky02
     hostname: test-rocky02
     privileged: true
@@ -170,11 +155,6 @@ services:
   # Rocky Linux SSH测试容器3
   test-rocky03:
     image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
-    build:
-      context: ./src/test-containers
-      dockerfile: Dockerfile.rocky
-      args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-rocky03
     hostname: test-rocky03
     privileged: true
