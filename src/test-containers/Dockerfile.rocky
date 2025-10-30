@@ -24,6 +24,10 @@ RUN dnf install -y --allowerasing \
     bind-utils \
     iputils \
     net-tools \
+    procps-ng \
+    iproute \
+    which \
+    vim-minimal \
     && dnf clean all
 
 # 创建SSH运行目录

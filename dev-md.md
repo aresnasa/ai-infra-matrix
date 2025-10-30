@@ -1716,4 +1716,8 @@ OCI runtime exec failed: exec failed: unable to start container process: exec: "
     未知
     配置文件
     /etc/salt/master，也不符合期望，请自动化测试并自动修复这些问题 
-  131. 现在读取 backend 的安装 minion 的步骤需要将 minion 安装到 Ubuntu 系统或者 rocky 系统中，这里需要按照 apphub 中的相关包进行安装，调整下安装脚本，然后通过 go 的 ssh 安装这些客户端，同时安装 slurm 客户端到不同的节点，这里先测试 ubuntu，目前 3 个节点是 Ubuntu 的，读取docker-compose.test.yml，增加 rocky 系统的 3 个节点，使用@playwright 进行节点扩容测试
+131. 现在读取 backend 的安装 minion 的步骤需要将 minion 安装到 Ubuntu 系统或者 rocky 系统中，这里需要按照 apphub 中的相关包进行安装，调整下安装脚本，然后通过 go 的 ssh 安装这些客户端，同时安装 slurm 客户端到不同的节点，这里先测试 ubuntu，目前 3 个节点是 Ubuntu 的，读取docker-compose.test.yml，增加 rocky 系统的 3 个节点，使用@playwright 进行节点扩容测试
+
+132. 检查 build.sh 渲染函数，需要增加检查本地出口 IP，并修改.env 中GITHUB_PROXY=http://192.168.18.154:7890配置的函数，需要渲染成功再开始构建使用代理访问 github，否则会有问题
+
+133. go的后端需要等待任务真正结束从 saltstack 能欧查看到节点正确加入集群了才能真的成功，这里是并发串行的不能直接成功，修复这个问题

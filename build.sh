@@ -509,6 +509,101 @@ auto_detect_external_ip_silent() {
     echo "localhost"
 }
 
+# 更新 .env 文件中的 GITHUB_PROXY 配置
+# 自动检测本地出口 IP 并更新代理地址
+update_github_proxy_in_env() {
+    local env_file="$SCRIPT_DIR/.env"
+    
+    # 检查 .env 文件是否存在
+    if [[ ! -f "$env_file" ]]; then
+        print_warning "⚠️  .env 文件不存在，跳过 GITHUB_PROXY 更新"
+        return 1
+    fi
+    
+    # 检测当前本地 IP
+    local current_ip=$(auto_detect_external_ip_silent)
+    if [[ -z "$current_ip" ]] || [[ "$current_ip" == "localhost" ]]; then
+        print_warning "⚠️  无法检测本地出口 IP，跳过 GITHUB_PROXY 更新"
+        return 1
+    fi
+    
+    # 读取当前 .env 中的 GITHUB_PROXY 配置
+    local current_proxy=$(grep "^GITHUB_PROXY=" "$env_file" | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    
+    if [[ -z "$current_proxy" ]]; then
+        print_info "ℹ️  .env 中未配置 GITHUB_PROXY，跳过更新"
+        return 0
+    fi
+    
+    # 提取当前配置中的 IP 和端口
+    # 支持格式: http://192.168.18.154:7890 或 192.168.18.154:7890
+    local proxy_ip=""
+    local proxy_port="7890"  # 默认端口
+    
+    if [[ "$current_proxy" =~ http://([0-9.]+):([0-9]+) ]]; then
+        proxy_ip="${BASH_REMATCH[1]}"
+        proxy_port="${BASH_REMATCH[2]}"
+    elif [[ "$current_proxy" =~ ([0-9.]+):([0-9]+) ]]; then
+        proxy_ip="${BASH_REMATCH[1]}"
+        proxy_port="${BASH_REMATCH[2]}"
+    elif [[ "$current_proxy" =~ http://([0-9.]+) ]]; then
+        proxy_ip="${BASH_REMATCH[1]}"
+    elif [[ "$current_proxy" =~ ^([0-9.]+)$ ]]; then
+        proxy_ip="${BASH_REMATCH[1]}"
+    fi
+    
+    # 比较 IP 是否变化
+    if [[ "$proxy_ip" == "$current_ip" ]]; then
+        print_success "✅ GITHUB_PROXY 配置正确: http://$current_ip:$proxy_port"
+        
+        # 验证代理可访问性
+        if command -v curl >/dev/null 2>&1; then
+            if curl -x "http://$current_ip:$proxy_port" -s --connect-timeout 5 --max-time 10 \
+                https://api.github.com >/dev/null 2>&1; then
+                print_success "✅ GitHub 代理连接测试成功"
+                return 0
+            else
+                print_warning "⚠️  GitHub 代理连接测试失败，请检查代理服务是否运行"
+                print_info "   提示: 请确保代理服务在 $current_ip:$proxy_port 上运行"
+                return 1
+            fi
+        fi
+        return 0
+    fi
+    
+    # IP 变化，需要更新
+    local new_proxy="http://$current_ip:$proxy_port"
+    print_info "🔄 检测到本地 IP 变化:"
+    print_info "   旧地址: $proxy_ip → 新地址: $current_ip"
+    print_info "   更新 GITHUB_PROXY: $new_proxy"
+    
+    # 使用 set_or_update_env_var 函数更新配置
+    set_or_update_env_var "GITHUB_PROXY" "$new_proxy"
+    
+    # 验证更新后的代理可访问性
+    if command -v curl >/dev/null 2>&1; then
+        print_info "🔍 测试新代理连接..."
+        if curl -x "$new_proxy" -s --connect-timeout 5 --max-time 10 \
+            https://api.github.com >/dev/null 2>&1; then
+            print_success "✅ GitHub 代理连接测试成功"
+            print_success "✅ GITHUB_PROXY 已更新并验证: $new_proxy"
+            return 0
+        else
+            print_warning "⚠️  GitHub 代理连接测试失败"
+            print_info "   已更新配置为: $new_proxy"
+            print_info "   但代理服务可能未运行，请检查:"
+            print_info "   1. 代理服务是否在 $current_ip:$proxy_port 上运行"
+            print_info "   2. 防火墙是否允许连接"
+            print_info "   3. 代理配置是否正确"
+            return 1
+        fi
+    else
+        print_warning "⚠️  未安装 curl，无法验证代理连接"
+        print_success "✅ GITHUB_PROXY 已更新: $new_proxy (未验证)"
+        return 0
+    fi
+}
+
 # 增强型环境变量模板渲染
 render_env_template_enhanced() {
     local template_file="$1"
@@ -1829,7 +1924,18 @@ generate_or_update_env_file() {
     local base_url="http://${detected_address}:${current_port}"
     print_info "🌍 基础访问地址: $base_url"
     
-    # 6. 更新 .env 文件中的所有相关配置
+    # 6. 检测并更新 GITHUB_PROXY 配置
+    print_info ""
+    print_info "🔍 检测本地出口 IP 并更新 GITHUB_PROXY..."
+    
+    # 调用已有的 update_github_proxy_in_env 函数来处理 GITHUB_PROXY
+    if update_github_proxy_in_env; then
+        print_success "✅ GITHUB_PROXY 配置已验证和更新"
+    else
+        print_warning "⚠️  GITHUB_PROXY 配置验证失败（如不使用代理可忽略）"
+    fi
+    
+    # 7. 更新 .env 文件中的所有相关配置
     print_info ""
     print_info "📝 更新 .env 文件中的相关配置..."
     
@@ -1850,7 +1956,7 @@ generate_or_update_env_file() {
     update_env_variable "ROOT_URL" "${base_url}/gitea/"
     update_env_variable "STATIC_URL_PREFIX" "/gitea"
     
-    # 7. 显示更新摘要
+    # 8. 显示更新摘要
     print_info ""
     print_info "✅ 环境配置完成："
     print_info "   - 运行环境: $([ "$is_k8s" == "true" ] && echo "Kubernetes" || echo "Docker Compose")"
@@ -1858,6 +1964,13 @@ generate_or_update_env_file() {
     print_info "   - 外部地址: $detected_address ($address_type)"
     print_info "   - 外部端口: $current_port"
     print_info "   - 基础URL: $base_url"
+    
+    # 读取当前 GITHUB_PROXY 配置用于显示
+    local current_github_proxy=""
+    if [[ -f ".env" ]]; then
+        current_github_proxy=$(grep "^GITHUB_PROXY=" .env 2>/dev/null | cut -d'=' -f2 || echo "")
+    fi
+    
     print_info ""
     print_info "📋 已更新的配置项："
     print_info "   - DOMAIN → $detected_address"
@@ -1867,8 +1980,11 @@ generate_or_update_env_file() {
     print_info "   - JUPYTERHUB_CORS_ORIGIN → $base_url"
     print_info "   - ROOT_URL → ${base_url}/gitea/"
     print_info "   - STATIC_URL_PREFIX → /gitea"
+    if [[ -n "$current_github_proxy" ]]; then
+        print_info "   - GITHUB_PROXY → $current_github_proxy"
+    fi
     
-    # 8. K8s 环境特殊提示
+    # 9. K8s 环境特殊提示
     if [[ "$is_k8s" == "true" ]]; then
         print_info ""
         print_info "💡 K8s 集群部署提示："
@@ -1876,7 +1992,7 @@ generate_or_update_env_file() {
         print_info "   - 如需更新服务地址，请重新运行: ./build.sh build-all"
     fi
     
-    # 9. 重新加载环境变量
+    # 10. 重新加载环境变量
     if [[ -f ".env" ]]; then
         set -a
         source .env
@@ -5135,6 +5251,16 @@ build_service() {
             print_info "  → 使用组件化构建参数: ${APPHUB_BUILD_ARGS}"
             apphub_extra_args="${APPHUB_BUILD_ARGS}"
         fi
+        
+        # 检查并更新 GITHUB_PROXY 配置
+        print_info "  → 检查 GITHUB_PROXY 配置..."
+        if update_github_proxy_in_env; then
+            print_success "  ✓ GITHUB_PROXY 配置验证通过"
+        else
+            print_warning "  ⚠ GITHUB_PROXY 配置验证失败，构建可能无法访问 GitHub 资源"
+            print_info "  提示: 如果不需要访问 GitHub，可以忽略此警告"
+        fi
+        echo
         
         # 从 .env 文件读取 GITHUB_PROXY 配置（如果存在）
         if [[ -f "$SCRIPT_DIR/.env" ]]; then

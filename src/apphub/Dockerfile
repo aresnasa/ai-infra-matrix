@@ -33,6 +33,11 @@ ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
 # 配置APT镜像源和安装构建依赖（分步骤避免网络问题）
 RUN set -eux; \
+    # 清除可能干扰的代理设置（构建容器内部无法访问宿主机代理）
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy no_proxy NO_PROXY || true; \
+    rm -f /etc/apt/apt.conf.d/*proxy* 2>/dev/null || true; \
+    echo 'Acquire::http::Proxy "false";' > /etc/apt/apt.conf.d/99no-proxy; \
+    echo 'Acquire::https::Proxy "false";' >> /etc/apt/apt.conf.d/99no-proxy; \
     # 备份原始sources.list
     cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
     # 检测架构
@@ -54,7 +59,7 @@ RUN set -eux; \
     fi; \
     # 更新包列表并安装基础工具（带重试机制）
     apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
-    apt-get install -y ca-certificates curl tzdata lsof; \
+    apt-get install -y ca-certificates curl tzdata; \
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 
 # Install build prerequisites (分组安装减少失败风险)
@@ -103,10 +108,26 @@ RUN set -eux; \
         mkdir -p /out; \
         touch /out/.skip_slurm; \
     else \
+        # 清除可能干扰的代理设置
+        unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy no_proxy NO_PROXY || true; \
+        # 清除 apt 代理配置
+        rm -f /etc/apt/apt.conf.d/*proxy* 2>/dev/null || true; \
+        echo 'Acquire::http::Proxy "false";' > /etc/apt/apt.conf.d/99no-proxy; \
+        echo 'Acquire::https::Proxy "false";' >> /etc/apt/apt.conf.d/99no-proxy; \
         srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
         cd "/home/builder/build/${srcdir}"; \
-        apt-get update; \
-        mk-build-deps -i debian/control -t 'apt-get -y --no-install-recommends' --remove; \
+        echo "📦 Updating package list..."; \
+        apt-get update || { \
+            echo "⚠️  Update failed, retrying in 5 seconds..."; \
+            sleep 5; \
+            apt-get update; \
+        }; \
+        echo "📦 Installing build dependencies..."; \
+        mk-build-deps -i debian/control -t 'apt-get -y --no-install-recommends' --remove || { \
+            echo "⚠️  mk-build-deps failed, trying with --fix-missing..."; \
+            apt-get update && apt-get install -y --fix-missing --no-install-recommends -f; \
+            mk-build-deps -i debian/control -t 'apt-get -y --no-install-recommends --fix-missing' --remove; \
+        }; \
     fi
 
 USER builder
@@ -269,12 +290,28 @@ RUN set -eux; \
     # 只更新元数据缓存，不更新所有包（避免网络问题）
     dnf makecache --refresh || dnf makecache || true; \
     # Install basic build dependencies first
+    echo "📦 Installing RPM build tools..."; \
     dnf install -y \
-        rpm-build rpmdevtools \
-        gcc make wget tar bzip2 \
-        pam-devel readline-devel perl-ExtUtils-MakeMaker \
-        openssl-devel \
-    && dnf clean all; \
+        rpm-build \
+        rpmdevtools \
+        redhat-rpm-config \
+        gcc \
+        make \
+        wget \
+        tar \
+        bzip2 \
+        pam-devel \
+        readline-devel \
+        perl-ExtUtils-MakeMaker \
+        openssl-devel; \
+    # Verify rpmdevtools installation
+    echo "✓ Verifying rpmdevtools installation..."; \
+    which rpmdev-setuptree || { \
+        echo "❌ rpmdev-setuptree not found, trying to reinstall..."; \
+        dnf reinstall -y rpmdevtools || dnf install -y rpmdevtools; \
+    }; \
+    which rpmdev-setuptree && echo "✓ rpmdev-setuptree found: $(which rpmdev-setuptree)"; \
+    dnf clean all; \
     # Try to install optional dependencies (may not be available)
     echo "尝试安装可选依赖包..."; \
     dnf install -y munge-devel 2>/dev/null || echo "⚠️  munge-devel not available"; \
@@ -292,7 +329,20 @@ USER builder
 WORKDIR /home/builder/build
 
 # Setup RPM build environment
-RUN rpmdev-setuptree
+RUN set -eux; \
+    echo "📁 Setting up RPM build tree..."; \
+    # Check if rpmdev-setuptree is available
+    if command -v rpmdev-setuptree >/dev/null 2>&1; then \
+        rpmdev-setuptree; \
+        echo "✓ RPM build tree created successfully"; \
+    else \
+        # Manual setup if rpmdev-setuptree is not available
+        echo "⚠️  rpmdev-setuptree not found, creating directories manually..."; \
+        mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
+        echo "%_topdir %(echo \$HOME)/rpmbuild" > ~/.rpmmacros; \
+        echo "✓ RPM build tree created manually"; \
+    fi; \
+    ls -la ~/rpmbuild/ || echo "Warning: rpmbuild directory check failed"
 
 # Copy SLURM source tarball
 ARG SLURM_TARBALL_PATH
@@ -500,11 +550,16 @@ ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
 # 配置 Ubuntu 镜像源（阿里云）并安装所有依赖
 RUN set -eux; \
+    # 清除可能干扰的代理设置（构建容器内部无法访问宿主机代理）
+    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy no_proxy NO_PROXY || true; \
+    rm -f /etc/apt/apt.conf.d/*proxy* 2>/dev/null || true; \
+    echo 'Acquire::http::Proxy "false";' > /etc/apt/apt.conf.d/99no-proxy; \
+    echo 'Acquire::https::Proxy "false";' >> /etc/apt/apt.conf.d/99no-proxy; \
     # 检测架构
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
     # 备份原始源
-    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup || true; \
     # 根据架构配置阿里云镜像源
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "配置ARM64架构的阿里云镜像源..."; \
@@ -514,13 +569,39 @@ RUN set -eux; \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
         echo "配置AMD64架构的阿里云镜像源..."; \
-        sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list; \
-        sed -i 's|http://security.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
+    echo "当前配置的镜像源:"; \
     cat /etc/apt/sources.list; \
-    # 更新包列表（带重试）
-    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
-    # 安装所有依赖
+    # 清理旧缓存
+    rm -rf /var/lib/apt/lists/*; \
+    # 尝试更新包列表（带重试和回退到官方源）
+    if ! apt-get update 2>&1; then \
+        echo "⚠️  阿里云源失败，等待5秒后重试..."; \
+        sleep 5; \
+        if ! apt-get update 2>&1; then \
+            echo "⚠️  仍然失败，切换到官方源..."; \
+            if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+                echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" > /etc/apt/sources.list; \
+                echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+                echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            else \
+                echo "deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse" > /etc/apt/sources.list; \
+                echo "deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+                echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            fi; \
+            echo "使用官方源:"; \
+            cat /etc/apt/sources.list; \
+            rm -rf /var/lib/apt/lists/*; \
+            apt-get update || ( echo "❌ 官方源也失败了！" && exit 1 ); \
+        fi; \
+    fi; \
+    echo "✓ apt-get update 成功"; \
+    # 安装所有依赖（分组安装，提高成功率）
+    echo "安装基础工具..."; \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         tzdata \
@@ -529,7 +610,9 @@ RUN set -eux; \
         tar \
         bzip2 \
         python3 \
-        python3-pip \
+        python3-pip && \
+    echo "安装开发库..."; \
+    apt-get install -y --no-install-recommends \
         libmunge-dev \
         libmariadb-dev \
         libpam0g-dev \
@@ -537,7 +620,10 @@ RUN set -eux; \
         libjson-c-dev \
         libyaml-dev \
         libssl-dev \
-        libreadline-dev; \
+        libreadline-dev || \
+    ( echo "⚠️  libreadline-dev 安装失败，尝试替代包..." && \
+      apt-get install -y --no-install-recommends libreadline8 || \
+      echo "⚠️  继续构建，跳过 readline 库" ); \
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone; \
     rm -rf /var/lib/apt/lists/*
 

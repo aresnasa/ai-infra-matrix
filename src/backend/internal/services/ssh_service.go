@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -698,6 +699,36 @@ func (s *SSHService) DeploySaltMinion(ctx context.Context, connections []SSHConn
 	}
 
 	wg.Wait()
+
+	// 等待所有成功部署的 Minion 被 Master 接受
+	if config.AutoAccept {
+		successfulHosts := []string{}
+		for i, result := range results {
+			if result.Success {
+				successfulHosts = append(successfulHosts, connections[i].Host)
+			}
+		}
+
+		if len(successfulHosts) > 0 {
+			// 等待 Minion 密钥被接受（最多等待5分钟）
+			waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+
+			acceptErrors := s.waitForMinionsAccepted(waitCtx, successfulHosts, config.MasterHost)
+
+			// 更新结果中的错误信息
+			for i, result := range results {
+				if result.Success {
+					host := connections[i].Host
+					if err, exists := acceptErrors[host]; exists && err != nil {
+						results[i].Success = false
+						results[i].Error = fmt.Sprintf("Minion部署成功但未能加入集群: %v", err)
+					}
+				}
+			}
+		}
+	}
+
 	return results, nil
 }
 
@@ -817,6 +848,144 @@ func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStack
 	}
 
 	return output.String(), nil
+}
+
+// waitForMinionsAccepted 等待 Minion 密钥被 Master 接受
+// 返回每个主机的错误信息（如果有）
+func (s *SSHService) waitForMinionsAccepted(ctx context.Context, hosts []string, masterHost string) map[string]error {
+	errors := make(map[string]error)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, host := range hosts {
+		wg.Add(1)
+		go func(h string) {
+			defer wg.Done()
+
+			// 为每个 Minion 设置独立的超时（最多等待 3 分钟）
+			minionCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+			defer cancel()
+
+			err := s.waitForSingleMinionAccepted(minionCtx, h, masterHost)
+			if err != nil {
+				mu.Lock()
+				errors[h] = err
+				mu.Unlock()
+			}
+		}(host)
+	}
+
+	wg.Wait()
+	return errors
+}
+
+// waitForSingleMinionAccepted 等待单个 Minion 被接受
+func (s *SSHService) waitForSingleMinionAccepted(ctx context.Context, host, masterHost string) error {
+	// Minion ID 通常是主机名，但也可能是 FQDN
+	// 我们需要检查可能的 Minion ID 格式
+	possibleMinionIDs := []string{
+		host,                        // 原始主机名/IP
+		strings.Split(host, ".")[0], // 短主机名
+	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("等待超时：Minion未能在指定时间内加入集群")
+		case <-ticker.C:
+			// 检查 Minion 是否已被接受
+			accepted, err := s.checkMinionAccepted(masterHost, possibleMinionIDs)
+			if err != nil {
+				// 继续重试，不立即返回错误
+				continue
+			}
+			if accepted {
+				return nil
+			}
+		}
+	}
+}
+
+// checkMinionAccepted 检查 Minion 是否已被 Master 接受
+func (s *SSHService) checkMinionAccepted(masterHost string, possibleMinionIDs []string) (bool, error) {
+	// 获取 SaltStack 容器名
+	saltContainerName, err := getSaltStackContainerName()
+	if err != nil {
+		return false, err
+	}
+
+	// 使用 docker exec 在 SaltStack 容器中执行 salt-key 命令
+	cmd := exec.Command("docker", "exec", saltContainerName, "salt-key", "-L", "--out=json")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("执行 salt-key 失败: %v, output: %s", err, string(output))
+	}
+
+	// 解析 JSON 输出
+	var keyList struct {
+		MinionsAccepted []string `json:"minions"`
+		MinionsPending  []string `json:"minions_pre"`
+		MinionsRejected []string `json:"minions_rejected"`
+		MinionsDenied   []string `json:"minions_denied"`
+	}
+
+	if err := json.Unmarshal(output, &keyList); err != nil {
+		return false, fmt.Errorf("解析 salt-key 输出失败: %v", err)
+	}
+
+	// 检查是否有任何可能的 Minion ID 已被接受
+	for _, minionID := range possibleMinionIDs {
+		for _, accepted := range keyList.MinionsAccepted {
+			if accepted == minionID {
+				return true, nil
+			}
+		}
+	}
+
+	// 如果在 pending 列表中，尝试自动接受
+	for _, minionID := range possibleMinionIDs {
+		for _, pending := range keyList.MinionsPending {
+			if pending == minionID {
+				// 获取容器名并自动接受密钥
+				saltContainerName, err := getSaltStackContainerName()
+				if err != nil {
+					return false, fmt.Errorf("无法找到 SaltStack 容器进行密钥接受: %v", err)
+				}
+
+				acceptCmd := exec.Command("docker", "exec", saltContainerName, "salt-key", "-y", "-a", minionID)
+				if output, err := acceptCmd.CombinedOutput(); err != nil {
+					return false, fmt.Errorf("自动接受密钥失败: %v, output: %s", err, string(output))
+				}
+				// 接受后立即返回 true
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// getSaltStackContainerName 获取 SaltStack 容器名称
+func getSaltStackContainerName() (string, error) {
+	// 优先使用环境变量
+	if containerName := os.Getenv("SALT_CONTAINER_NAME"); containerName != "" {
+		return containerName, nil
+	}
+
+	// 尝试常见的容器名
+	possibleContainers := []string{"ai-infra-saltstack", "saltstack", "salt-master"}
+	for _, name := range possibleContainers {
+		testCmd := exec.Command("docker", "exec", name, "echo", "test")
+		if err := testCmd.Run(); err == nil {
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("无法找到 SaltStack 容器，尝试了: %v", possibleContainers)
 }
 
 // getInstallCommand 根据系统获取安装命令
