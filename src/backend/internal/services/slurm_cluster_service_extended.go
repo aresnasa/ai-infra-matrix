@@ -266,26 +266,17 @@ func (s *SlurmClusterService) installSaltRepository(client *ssh.Client, osInfo *
 func (s *SlurmClusterService) installSaltMinionPackage(client *ssh.Client, osInfo *models.OSInfo, sessionID string, node *models.SlurmNode, installTask *models.NodeInstallTask, step *models.InstallStep) error {
 	// 获取AppHub配置
 	appHubURL := getAppHubBaseURL()
-	saltVersion := getSaltStackVersion()
 
-	// 根据操作系统选择对应的安装脚本
-	var scriptPath string
-	switch osInfo.OS {
-	case "ubuntu", "debian":
-		scriptPath = "/root/scripts/install-salt-minion-deb.sh"
-	case "centos", "rhel":
-		scriptPath = "/root/scripts/install-salt-minion-rpm.sh"
-	default:
-		return fmt.Errorf("unsupported OS: %s", osInfo.OS)
-	}
+	// 使用统一的安装脚本（支持所有操作系统）
+	scriptPath := "/root/scripts/salt-minion/01-install-salt-minion.sh"
 
 	// 复制脚本到远程主机
 	if err := s.copyScriptToRemote(client, scriptPath, "/tmp/install-salt-minion.sh"); err != nil {
 		return fmt.Errorf("failed to copy install script: %v", err)
 	}
 
-	// 执行安装脚本
-	cmd := fmt.Sprintf("bash /tmp/install-salt-minion.sh '%s' '%s'", appHubURL, saltVersion)
+	// 执行安装脚本（新脚本通过环境变量接收AppHub URL）
+	cmd := fmt.Sprintf("export APPHUB_URL='%s' && bash /tmp/install-salt-minion.sh", appHubURL)
 	if err := s.executeSSHCommand(client, cmd, sessionID, node, installTask, step); err != nil {
 		return fmt.Errorf("failed to execute install script: %v", err)
 	}

@@ -1577,6 +1577,225 @@ clean_build_cache() {
 }
 
 # ==========================================
+# AppHub 包缓存管理系统
+# ==========================================
+
+# 包缓存目录
+PKG_CACHE_DIR="$BUILD_CACHE_DIR/apphub-packages"
+
+# 查找最近成功构建的 AppHub 镜像
+find_latest_apphub_image() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local image_pattern="ai-infra-apphub:${tag}"
+    
+    # 检查镜像是否存在
+    if docker image inspect "$image_pattern" >/dev/null 2>&1; then
+        echo "$image_pattern"
+        return 0
+    fi
+    
+    # 如果指定tag的镜像不存在，尝试查找其他版本
+    local latest_image=$(docker images "ai-infra-apphub" --format "{{.Repository}}:{{.Tag}}" | head -1)
+    if [[ -n "$latest_image" ]]; then
+        echo "$latest_image"
+        return 0
+    fi
+    
+    return 1
+}
+
+# 从镜像中提取包到缓存目录
+extract_packages_from_image() {
+    local image="$1"
+    local cache_dir="${2:-$PKG_CACHE_DIR}"
+    
+    print_info "📦 从镜像提取包: $image"
+    
+    # 创建缓存目录
+    mkdir -p "$cache_dir"
+    
+    # 创建临时容器并复制包
+    local container_id
+    container_id=$(docker create "$image" 2>/dev/null)
+    
+    if [[ -z "$container_id" ]]; then
+        print_error "创建临时容器失败"
+        return 1
+    fi
+    
+    print_info "  → 提取包文件..."
+    
+    # 提取各类包
+    local extract_success=true
+    
+    # SLURM deb 包
+    if docker cp "$container_id:/usr/share/nginx/html/pkgs/slurm-deb" "$cache_dir/" 2>/dev/null; then
+        local deb_count=$(find "$cache_dir/slurm-deb" -name "*.deb" 2>/dev/null | wc -l || echo 0)
+        print_info "  ✓ SLURM deb: $deb_count 个文件"
+    fi
+    
+    # SLURM rpm 包
+    if docker cp "$container_id:/usr/share/nginx/html/pkgs/slurm-rpm" "$cache_dir/" 2>/dev/null; then
+        local rpm_count=$(find "$cache_dir/slurm-rpm" -name "*.rpm" 2>/dev/null | wc -l || echo 0)
+        print_info "  ✓ SLURM rpm: $rpm_count 个文件"
+    fi
+    
+    # SaltStack deb 包
+    if docker cp "$container_id:/usr/share/nginx/html/pkgs/saltstack-deb" "$cache_dir/" 2>/dev/null; then
+        local salt_deb_count=$(find "$cache_dir/saltstack-deb" -name "*.deb" 2>/dev/null | wc -l || echo 0)
+        print_info "  ✓ SaltStack deb: $salt_deb_count 个文件"
+    fi
+    
+    # SaltStack rpm 包
+    if docker cp "$container_id:/usr/share/nginx/html/pkgs/saltstack-rpm" "$cache_dir/" 2>/dev/null; then
+        local salt_rpm_count=$(find "$cache_dir/saltstack-rpm" -name "*.rpm" 2>/dev/null | wc -l || echo 0)
+        print_info "  ✓ SaltStack rpm: $salt_rpm_count 个文件"
+    fi
+    
+    # SLURM 二进制文件
+    if docker cp "$container_id:/usr/share/nginx/html/pkgs/slurm-binaries" "$cache_dir/" 2>/dev/null; then
+        local bin_count=$(find "$cache_dir/slurm-binaries" -type f 2>/dev/null | wc -l || echo 0)
+        print_info "  ✓ SLURM binaries: $bin_count 个文件"
+    fi
+    
+    # Categraf 包
+    if docker cp "$container_id:/usr/share/nginx/html/pkgs/categraf" "$cache_dir/" 2>/dev/null; then
+        local categraf_count=$(find "$cache_dir/categraf" -name "*.tar.gz" 2>/dev/null | wc -l || echo 0)
+        print_info "  ✓ Categraf: $categraf_count 个文件"
+    fi
+    
+    # 清理临时容器
+    docker rm "$container_id" >/dev/null 2>&1
+    
+    print_success "✓ 包提取完成"
+    return 0
+}
+
+# 验证包文件完整性
+verify_package_integrity() {
+    local package_file="$1"
+    local checksum_file="${package_file}.sha256"
+    
+    # 基础检查：文件存在且大小>0
+    if [[ ! -f "$package_file" ]]; then
+        return 1
+    fi
+    
+    local file_size=$(stat -f%z "$package_file" 2>/dev/null || stat -c%s "$package_file" 2>/dev/null || echo 0)
+    if [[ $file_size -eq 0 ]]; then
+        return 1
+    fi
+    
+    # 如果存在校验和文件，进行校验
+    if [[ -f "$checksum_file" ]]; then
+        local expected_sum=$(cat "$checksum_file" | awk '{print $1}')
+        local actual_sum=$(shasum -a 256 "$package_file" 2>/dev/null | awk '{print $1}')
+        
+        if [[ "$expected_sum" != "$actual_sum" ]]; then
+            print_warning "  ⚠ 校验失败: $(basename "$package_file")"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# 统计缓存目录中的有效包
+count_cached_packages() {
+    local cache_dir="${1:-$PKG_CACHE_DIR}"
+    
+    if [[ ! -d "$cache_dir" ]]; then
+        echo "0"
+        return
+    fi
+    
+    local total=0
+    
+    # 统计 SLURM deb
+    if [[ -d "$cache_dir/slurm-deb" ]]; then
+        local count=$(find "$cache_dir/slurm-deb" -name "*.deb" -type f -size +0 2>/dev/null | wc -l || echo 0)
+        total=$((total + count))
+    fi
+    
+    # 统计 SLURM rpm
+    if [[ -d "$cache_dir/slurm-rpm" ]]; then
+        local count=$(find "$cache_dir/slurm-rpm" -name "*.rpm" -type f -size +0 2>/dev/null | wc -l || echo 0)
+        total=$((total + count))
+    fi
+    
+    # 统计 SaltStack deb
+    if [[ -d "$cache_dir/saltstack-deb" ]]; then
+        local count=$(find "$cache_dir/saltstack-deb" -name "*.deb" -type f -size +0 2>/dev/null | wc -l || echo 0)
+        total=$((total + count))
+    fi
+    
+    # 统计 SaltStack rpm
+    if [[ -d "$cache_dir/saltstack-rpm" ]]; then
+        local count=$(find "$cache_dir/saltstack-rpm" -name "*.rpm" -type f -size +0 2>/dev/null | wc -l || echo 0)
+        total=$((total + count))
+    fi
+    
+    # 统计 Categraf
+    if [[ -d "$cache_dir/categraf" ]]; then
+        local count=$(find "$cache_dir/categraf" -name "*.tar.gz" -type f -size +0 2>/dev/null | wc -l || echo 0)
+        total=$((total + count))
+    fi
+    
+    echo "$total"
+}
+
+# 准备 AppHub 包缓存
+prepare_apphub_package_cache() {
+    local tag="${1:-$DEFAULT_IMAGE_TAG}"
+    local force_refresh="${2:-false}"
+    
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_info "📦 AppHub 包缓存管理"
+    print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # 检查是否已有缓存
+    local cached_count=$(count_cached_packages)
+    
+    if [[ $cached_count -gt 0 ]] && [[ "$force_refresh" != "true" ]]; then
+        print_success "✓ 已有包缓存: $cached_count 个文件"
+        print_info "  缓存目录: $PKG_CACHE_DIR"
+        return 0
+    fi
+    
+    # 查找最近的镜像
+    local latest_image=$(find_latest_apphub_image "$tag")
+    
+    if [[ -z "$latest_image" ]]; then
+        print_info "⚠ 未找到可用的 AppHub 镜像，将从头构建"
+        return 0
+    fi
+    
+    print_info "🔍 发现可用镜像: $latest_image"
+    
+    # 提取包
+    if extract_packages_from_image "$latest_image" "$PKG_CACHE_DIR"; then
+        local new_count=$(count_cached_packages)
+        print_success "✓ 包缓存准备完成: $new_count 个文件"
+        print_info "  缓存目录: $PKG_CACHE_DIR"
+        return 0
+    else
+        print_warning "⚠ 包提取失败，将从头构建"
+        return 1
+    fi
+}
+
+# 清理 AppHub 包缓存
+clean_apphub_package_cache() {
+    if [[ -d "$PKG_CACHE_DIR" ]]; then
+        local count=$(count_cached_packages)
+        rm -rf "$PKG_CACHE_DIR"
+        print_success "✓ 已清理 AppHub 包缓存 ($count 个文件)"
+    else
+        print_info "包缓存目录不存在"
+    fi
+}
+
+# ==========================================
 # 智能构建功能 - SingleUser 镜像优化
 # ==========================================
 
@@ -5238,6 +5457,9 @@ build_service() {
     # ========================================
     local apphub_extra_args=""
     if [[ "$service" == "apphub" ]]; then
+        # 启用 Docker BuildKit（必需，用于缓存挂载）
+        export DOCKER_BUILDKIT=1
+        
         print_info "  → AppHub 构建前检查应用版本..."
         if update_apphub_versions; then
             print_info "  ✓ AppHub 应用版本检查完成"
@@ -5246,10 +5468,18 @@ build_service() {
         fi
         echo
         
+        # ========================================
+        # AppHub 包缓存优化
+        # ========================================
+        print_info "  → AppHub 包缓存优化已启用"
+        print_info "  → 使用 BuildKit cache mounts (--mount=type=cache)"
+        print_info "  → 已下载的包将自动缓存并在后续构建中复用"
+        echo
+        
         # 处理 AppHub 组件化构建参数
         if [[ -n "${APPHUB_BUILD_ARGS:-}" ]]; then
             print_info "  → 使用组件化构建参数: ${APPHUB_BUILD_ARGS}"
-            apphub_extra_args="${APPHUB_BUILD_ARGS}"
+            apphub_extra_args="$apphub_extra_args ${APPHUB_BUILD_ARGS}"
         fi
         
         # 检查并更新 GITHUB_PROXY 配置

@@ -13,6 +13,10 @@ ARG BUILD_SALTSTACK=true
 ARG BUILD_CATEGRAF=true
 ARG BUILD_SINGULARITY=false
 
+# Package cache optimization - specify a previous image to copy packages from
+# 包缓存优化 - 指定一个先前的镜像来复制包，避免重复下载
+ARG CACHE_IMAGE=""
+
 # SLURM version configuration - update these when upgrading
 # 更新 SLURM 版本时只需修改这两个变量
 ARG SLURM_VERSION=25.05.4
@@ -145,11 +149,35 @@ USER root
 ARG BUILD_SALTSTACK
 ARG SALTSTACK_VERSION
 ARG GITHUB_PROXY
-RUN set -eux; \
+
+# Use BuildKit cache mount for package caching
+# This allows packages to be reused across builds without re-downloading
+RUN --mount=type=cache,target=/var/cache/saltstack-deb,sharing=locked \
+    set -eux; \
     if [ "${BUILD_SALTSTACK}" = "true" ]; then \
         mkdir -p /saltstack-deb; \
-        cd /saltstack-deb; \
-        echo "📦 Downloading SaltStack ${SALTSTACK_VERSION} deb packages from GitHub releases..."; \
+        cd /var/cache/saltstack-deb; \
+        # ========================================
+        # 包缓存优化：检查并复用缓存中的包
+        # ========================================
+        cached_count=$(ls -1 *.deb 2>/dev/null | wc -l || echo 0); \
+        if [ "$cached_count" -gt 0 ]; then \
+            echo "📦 发现缓存的 SaltStack deb 包: ${cached_count} 个"; \
+            echo "✓ 验证缓存包完整性..."; \
+            # 验证并复制有效的包到目标目录
+            valid_count=0; \
+            for pkg in *.deb; do \
+                if [ -f "$pkg" ] && [ -s "$pkg" ]; then \
+                    cp "$pkg" /saltstack-deb/ 2>/dev/null || true; \
+                    valid_count=$((valid_count + 1)); \
+                fi; \
+            done; \
+            echo "✓ 复制了 ${valid_count} 个有效包到构建目录"; \
+        fi; \
+        # ========================================
+        # 网络下载（仅下载缺失的包）
+        # ========================================
+        echo "📦 检查 SaltStack ${SALTSTACK_VERSION} deb packages..."; \
         # 配置代理（如果提供）
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
@@ -162,45 +190,60 @@ RUN set -eux; \
         # GitHub releases 基础 URL (修正版本号格式)
         VERSION_NUM="${SALTSTACK_VERSION#v}"; \
         BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
-        echo "Downloading from: ${BASE_URL}"; \
         echo "Version: ${VERSION_NUM}"; \
+        echo "Base URL: ${BASE_URL}"; \
         # 下载两种架构的 deb 包
         total_downloaded=0; \
+        total_cached=0; \
         for ARCH_SUFFIX in amd64 arm64; do \
             echo ""; \
-            echo "📥 Downloading ${ARCH_SUFFIX} packages..."; \
-            arch_downloaded=0; \
-            # 下载所有主要的 deb 包（修正文件名格式）
+            echo "📥 Processing ${ARCH_SUFFIX} packages..."; \
+            arch_count=0; \
+            # 检查所有主要的 deb 包
             for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
                 PKG_FILE="${pkg}_${VERSION_NUM}_${ARCH_SUFFIX}.deb"; \
-                echo "Trying to download: ${PKG_FILE}"; \
+                # 检查包是否已存在（从缓存复制或已下载）
+                if [ -f "${PKG_FILE}" ] && [ -s "${PKG_FILE}" ]; then \
+                    echo "✓ Cached: ${PKG_FILE}"; \
+                    total_cached=$((total_cached + 1)); \
+                    arch_count=$((arch_count + 1)); \
+                    continue; \
+                fi; \
+                echo "Downloading: ${PKG_FILE}"; \
                 for attempt in 1 2 3; do \
                     if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}"; then \
                         echo "✓ Downloaded: ${PKG_FILE}"; \
-                        arch_downloaded=$((arch_downloaded + 1)); \
+                        # 生成 SHA256 校验文件（用于后续验证）
+                        shasum -a 256 "${PKG_FILE}" > "${PKG_FILE}.sha256" 2>/dev/null || true; \
+                        # 复制到构建目录
+                        cp "${PKG_FILE}" /saltstack-deb/ 2>/dev/null || true; \
                         total_downloaded=$((total_downloaded + 1)); \
+                        arch_count=$((arch_count + 1)); \
                         break; \
                     else \
-                        echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
+                        echo "⚠️  Attempt ${attempt}/3 failed"; \
                         if [ $attempt -lt 3 ]; then sleep 2; fi; \
                     fi; \
-                done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+                done || echo "✗ Failed to download ${PKG_FILE}"; \
             done; \
-            echo "✓ Downloaded ${arch_downloaded} ${ARCH_SUFFIX} packages"; \
+            echo "✓ ${ARCH_SUFFIX}: ${arch_count} packages available"; \
         done; \
-        # 检查下载结果
+        # 检查结果
         echo ""; \
-        echo "📊 Download Summary:"; \
-        if [ "$total_downloaded" -gt 0 ]; then \
-            echo "✓ Total downloaded: ${total_downloaded} SaltStack deb packages"; \
+        echo "📊 Package Summary:"; \
+        echo "   Cached: ${total_cached}"; \
+        echo "   Downloaded: ${total_downloaded}"; \
+        total_packages=$((total_cached + total_downloaded)); \
+        if [ "$total_packages" -gt 0 ]; then \
+            echo "✓ Total available: ${total_packages} SaltStack deb packages"; \
             echo ""; \
             echo "AMD64 packages:"; \
-            ls -lh *_amd64.deb 2>/dev/null || echo "  (none)"; \
+            ls -lh /saltstack-deb/*_amd64.deb 2>/dev/null || echo "  (none)"; \
             echo ""; \
             echo "ARM64 packages:"; \
-            ls -lh *_arm64.deb 2>/dev/null || echo "  (none)"; \
+            ls -lh /saltstack-deb/*_arm64.deb 2>/dev/null || echo "  (none)"; \
         else \
-            echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
+            echo "⚠️  No SaltStack packages available"; \
         fi; \
     else \
         echo "⏭️  Skipping SaltStack download (BUILD_SALTSTACK=${BUILD_SALTSTACK})"; \
@@ -403,11 +446,35 @@ USER root
 ARG BUILD_SALTSTACK
 ARG SALTSTACK_VERSION
 ARG GITHUB_PROXY
-RUN set -eux; \
+
+# Use BuildKit cache mount for package caching
+# This allows packages to be reused across builds without re-downloading
+RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
+    set -eux; \
     if [ "${BUILD_SALTSTACK}" = "true" ]; then \
         mkdir -p /saltstack-rpm; \
-        cd /saltstack-rpm; \
-        echo "📦 Downloading SaltStack ${SALTSTACK_VERSION} rpm packages from GitHub releases..."; \
+        cd /var/cache/saltstack-rpm; \
+        # ========================================
+        # 包缓存优化：检查并复用缓存中的包
+        # ========================================
+        cached_count=$(ls -1 *.rpm 2>/dev/null | wc -l || echo 0); \
+        if [ "$cached_count" -gt 0 ]; then \
+            echo "� 发现缓存的 SaltStack rpm 包: ${cached_count} 个"; \
+            echo "✓ 验证缓存包完整性..."; \
+            # 验证并复制有效的包到目标目录
+            valid_count=0; \
+            for pkg in *.rpm; do \
+                if [ -f "$pkg" ] && [ -s "$pkg" ]; then \
+                    cp "$pkg" /saltstack-rpm/ 2>/dev/null || true; \
+                    valid_count=$((valid_count + 1)); \
+                fi; \
+            done; \
+            echo "✓ 复制了 ${valid_count} 个有效包到构建目录"; \
+        fi; \
+        # ========================================
+        # 网络下载（仅下载缺失的包）
+        # ========================================
+        echo "📦 检查 SaltStack ${SALTSTACK_VERSION} rpm packages..."; \
         # 配置代理（如果提供）
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
@@ -420,45 +487,61 @@ RUN set -eux; \
         # GitHub releases 基础 URL (修正版本号格式)
         VERSION_NUM="${SALTSTACK_VERSION#v}"; \
         BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
-        echo "Downloading from: ${BASE_URL}"; \
         echo "Version: ${VERSION_NUM}"; \
+        echo "Base URL: ${BASE_URL}"; \
         # 下载两种架构的 rpm 包
         total_downloaded=0; \
+        total_cached=0; \
         for ARCH_SUFFIX in x86_64 aarch64; do \
             echo ""; \
-            echo "📥 Downloading ${ARCH_SUFFIX} packages..."; \
-            arch_downloaded=0; \
-            # 下载所有主要的 rpm 包（修正文件名格式）
+            echo "📥 Processing ${ARCH_SUFFIX} packages..."; \
+            arch_count=0; \
+            # 检查所有主要的 rpm 包
             for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do \
                 PKG_FILE="${pkg}-${VERSION_NUM}-0.${ARCH_SUFFIX}.rpm"; \
-                echo "Trying to download: ${PKG_FILE}"; \
+                # 检查包是否已存在（从缓存复制或已下载）
+                if [ -f "${PKG_FILE}" ] && [ -s "${PKG_FILE}" ]; then \
+                    echo "✓ Cached: ${PKG_FILE}"; \
+                    total_cached=$((total_cached + 1)); \
+                    arch_count=$((arch_count + 1)); \
+                    continue; \
+                fi; \
+                echo "Downloading: ${PKG_FILE}"; \
                 for attempt in 1 2 3; do \
                     if wget --timeout=60 --tries=3 -nv "${BASE_URL}/${PKG_FILE}"; then \
                         echo "✓ Downloaded: ${PKG_FILE}"; \
-                        arch_downloaded=$((arch_downloaded + 1)); \
+                        # 生成 SHA256 校验文件（用于后续验证）
+                        sha256sum "${PKG_FILE}" > "${PKG_FILE}.sha256" 2>/dev/null || \
+                        shasum -a 256 "${PKG_FILE}" > "${PKG_FILE}.sha256" 2>/dev/null || true; \
+                        # 复制到构建目录
+                        cp "${PKG_FILE}" /saltstack-rpm/ 2>/dev/null || true; \
                         total_downloaded=$((total_downloaded + 1)); \
+                        arch_count=$((arch_count + 1)); \
                         break; \
                     else \
-                        echo "⚠️  Attempt ${attempt}/3 failed for ${PKG_FILE}"; \
+                        echo "⚠️  Attempt ${attempt}/3 failed"; \
                         if [ $attempt -lt 3 ]; then sleep 2; fi; \
                     fi; \
-                done || echo "✗ Failed to download ${PKG_FILE} after 3 attempts"; \
+                done || echo "✗ Failed to download ${PKG_FILE}"; \
             done; \
-            echo "✓ Downloaded ${arch_downloaded} ${ARCH_SUFFIX} packages"; \
+            echo "✓ ${ARCH_SUFFIX}: ${arch_count} packages available"; \
         done; \
-        # 检查下载结果
+        # 检查结果
         echo ""; \
-        echo "📊 Download Summary:"; \
-        if [ "$total_downloaded" -gt 0 ]; then \
-            echo "✓ Total downloaded: ${total_downloaded} SaltStack rpm packages"; \
+        echo "📊 Package Summary:"; \
+        echo "   Cached: ${total_cached}"; \
+        echo "   Downloaded: ${total_downloaded}"; \
+        total_packages=$((total_cached + total_downloaded)); \
+        if [ "$total_packages" -gt 0 ]; then \
+            echo "✓ Total available: ${total_packages} SaltStack rpm packages"; \
             echo ""; \
             echo "x86_64 packages:"; \
-            ls -lh *.x86_64.rpm 2>/dev/null || echo "  (none)"; \
+            ls -lh /saltstack-rpm/*.x86_64.rpm 2>/dev/null || echo "  (none)"; \
             echo ""; \
             echo "aarch64 packages:"; \
-            ls -lh *.aarch64.rpm 2>/dev/null || echo "  (none)"; \
+            ls -lh /saltstack-rpm/*.aarch64.rpm 2>/dev/null || echo "  (none)"; \
         else \
-            echo "⚠️  No SaltStack packages downloaded - will continue without them"; \
+            echo "⚠️  No SaltStack packages available"; \
         fi; \
     else \
         echo "⏭️  Skipping SaltStack download (BUILD_SALTSTACK=${BUILD_SALTSTACK})"; \
@@ -529,7 +612,46 @@ RUN set -eux; \
     echo "📊 Final /out contents:"; \
     ls -lh /out/ || echo "⚠️  /out is empty"; \
     total_rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
-    echo "✓ Total RPM packages in /out: ${total_rpm_count}"
+    echo "✓ Total RPM packages in /out: ${total_rpm_count}"; \
+    # Generate RPM repository metadata using createrepo_c (Rocky Linux has it)
+    echo "🔧 Installing createrepo_c for metadata generation..."; \
+    dnf install -y createrepo_c 2>/dev/null || { \
+        echo "⚠️  createrepo_c not available, trying createrepo..."; \
+        dnf install -y createrepo 2>/dev/null || echo "⚠️  No createrepo tools available"; \
+    }; \
+    # Separate SLURM and SaltStack RPMs into subdirectories
+    mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
+    # Check if there are any RPM files to organize
+    if ls /out/*.rpm >/dev/null 2>&1; then \
+        echo "📦 Organizing RPM packages..."; \
+        mv /out/slurm-*.rpm /out/slurm-rpm/ 2>/dev/null || true; \
+        mv /out/salt-*.rpm /out/saltstack-rpm/ 2>/dev/null || true; \
+        # Count packages in each directory
+        slurm_count=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+        salt_count=$(ls /out/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+        echo "  - SLURM RPMs: ${slurm_count}"; \
+        echo "  - SaltStack RPMs: ${salt_count}"; \
+        # Generate metadata for SLURM repository
+        if [ "$slurm_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
+            echo "🔧 Generating SLURM RPM repository metadata..."; \
+            cd /out/slurm-rpm && createrepo_c . && \
+            echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
+        elif [ "$slurm_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
+            echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
+            cd /out/slurm-rpm && createrepo . && \
+            echo "✓ Generated SLURM repodata"; \
+        fi; \
+        # Generate metadata for SaltStack repository
+        if [ "$salt_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
+            echo "🔧 Generating SaltStack RPM repository metadata..."; \
+            cd /out/saltstack-rpm && createrepo_c . && \
+            echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
+        elif [ "$salt_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
+            echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
+            cd /out/saltstack-rpm && createrepo . && \
+            echo "✓ Generated SaltStack repodata"; \
+        fi; \
+    fi
 
 # =============================================================================
 # Stage 3: Build SLURM binaries (Ubuntu 22.04 with glibc)
@@ -845,6 +967,10 @@ RUN set -eux; \
     apk add --no-cache dpkg dpkg-dev zstd || { \
         echo "⚠️  dpkg packages not available, will skip deb indexing"; \
     }; \
+    # Install createrepo_c for RPM repository metadata generation
+    apk add --no-cache createrepo_c || { \
+        echo "⚠️  createrepo_c not available, will skip RPM indexing"; \
+    }; \
     # Install core development and network tools
     apk add --no-cache \
         build-base \
@@ -879,8 +1005,11 @@ RUN mkdir -p \
 # Copy all deb packages from deb-builder stage (SLURM + SaltStack)
 COPY --from=deb-builder /out/ /usr/share/nginx/html/pkgs/slurm-deb/
 
-# Copy all rpm packages from rpm-builder stage (SLURM + SaltStack)
-COPY --from=rpm-builder /out/ /usr/share/nginx/html/pkgs/slurm-rpm/
+# Copy SLURM rpm packages with metadata from rpm-builder stage
+COPY --from=rpm-builder /out/slurm-rpm/ /usr/share/nginx/html/pkgs/slurm-rpm/
+
+# Copy SaltStack rpm packages with metadata from rpm-builder stage
+COPY --from=rpm-builder /out/saltstack-rpm/ /usr/share/nginx/html/pkgs/saltstack-rpm/
 
 # Copy SLURM binaries from binary-builder stage
 COPY --from=binary-builder /out/packages/ /usr/share/nginx/html/pkgs/slurm-binaries/
@@ -901,7 +1030,7 @@ RUN /app/scripts/generate-install-script.sh \
 # Copy Categraf packages from categraf-builder stage
 COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 
-# Separate packages into subdirectories and generate indexes
+# Organize packages and generate DEB indexes (RPM metadata already generated in rpm-builder stage)
 RUN set -eux; \
     echo "📦 Organizing packages..."; \
     # Separate SLURM and SaltStack deb packages
@@ -911,47 +1040,67 @@ RUN set -eux; \
         # Move SaltStack packages to separate directory
         find . -name "salt-*.deb" -exec mv {} /usr/share/nginx/html/pkgs/saltstack-deb/ \; 2>/dev/null || true; \
     fi; \
-    # Separate SLURM and SaltStack rpm packages
-    mkdir -p /usr/share/nginx/html/pkgs/saltstack-rpm; \
-    if [ -d /usr/share/nginx/html/pkgs/slurm-rpm ]; then \
-        cd /usr/share/nginx/html/pkgs/slurm-rpm; \
-        # Move SaltStack packages to separate directory
-        find . -name "salt-*.rpm" -exec mv {} /usr/share/nginx/html/pkgs/saltstack-rpm/ \; 2>/dev/null || true; \
-    fi; \
     # Count packages
-    slurm_deb_count=$(ls /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l || echo 0); \
-    slurm_rpm_count=$(ls /usr/share/nginx/html/pkgs/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    slurm_deb_count=$(ls -1 /usr/share/nginx/html/pkgs/slurm-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+    slurm_rpm_count=$(ls -1 /usr/share/nginx/html/pkgs/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     slurm_bin_count=$(find /usr/share/nginx/html/pkgs/slurm-binaries -type f -name "s*" 2>/dev/null | wc -l || echo 0); \
-    salt_deb_count=$(ls /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
-    salt_rpm_count=$(ls /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-    categraf_count=$(ls /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    salt_deb_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+    salt_rpm_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    # Check if RPM metadata was copied from rpm-builder
+    slurm_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] && echo "yes" || echo "no"); \
+    salt_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ] && echo "yes" || echo "no"); \
     echo "📊 Package Summary:"; \
     echo "  - SLURM deb packages: ${slurm_deb_count}"; \
-    echo "  - SLURM rpm packages: ${slurm_rpm_count}"; \
+    echo "  - SLURM rpm packages: ${slurm_rpm_count} (metadata: ${slurm_rpm_metadata})"; \
     echo "  - SLURM binaries: ${slurm_bin_count}"; \
     echo "  - SaltStack deb packages: ${salt_deb_count}"; \
-    echo "  - SaltStack rpm packages: ${salt_rpm_count}"; \
+    echo "  - SaltStack rpm packages: ${salt_rpm_count} (metadata: ${salt_rpm_metadata})"; \
     echo "  - Categraf packages: ${categraf_count}"; \
-    # Generate deb package indexes
-    if [ "$slurm_deb_count" -gt 0 ]; then \
-        cd /usr/share/nginx/html/pkgs/slurm-deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
-        echo "✓ Generated SLURM deb package index"; \
+    # Generate Debian repository metadata (both Packages and Packages.gz)
+    if [ "$slurm_deb_count" -gt 0 ] && command -v dpkg-scanpackages >/dev/null 2>&1; then \
+        echo "🔧 Generating SLURM DEB repository metadata..."; \
+        cd /usr/share/nginx/html/pkgs/slurm-deb && \
+        dpkg-scanpackages -m . > Packages && \
+        gzip -k -f Packages; \
+        echo "✓ Generated SLURM DEB repository metadata (Packages, Packages.gz)"; \
+    elif [ "$slurm_deb_count" -gt 0 ]; then \
+        echo "⚠️  dpkg-scanpackages not available, SLURM DEB packages available for direct download only"; \
     fi; \
-    if [ "$salt_deb_count" -gt 0 ]; then \
-        cd /usr/share/nginx/html/pkgs/saltstack-deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
-        echo "✓ Generated SaltStack deb package index"; \
+    if [ "$salt_deb_count" -gt 0 ] && command -v dpkg-scanpackages >/dev/null 2>&1; then \
+        echo "🔧 Generating SaltStack DEB repository metadata..."; \
+        cd /usr/share/nginx/html/pkgs/saltstack-deb && \
+        dpkg-scanpackages -m . > Packages && \
+        gzip -k -f Packages; \
+        echo "✓ Generated SaltStack DEB repository metadata (Packages, Packages.gz)"; \
+    elif [ "$salt_deb_count" -gt 0 ]; then \
+        echo "⚠️  dpkg-scanpackages not available, SaltStack DEB packages available for direct download only"; \
     fi; \
     # General deb index (if any)
     if [ -d /usr/share/nginx/html/deb ] && [ "$(ls -A /usr/share/nginx/html/deb 2>/dev/null)" ]; then \
-        cd /usr/share/nginx/html/deb && dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz; \
-        echo "✓ Generated general deb package index"; \
+        if command -v dpkg-scanpackages >/dev/null 2>&1; then \
+            cd /usr/share/nginx/html/deb && \
+            dpkg-scanpackages -m . > Packages && \
+            gzip -k -f Packages; \
+            echo "✓ Generated general deb package index"; \
+        fi; \
     fi; \
-    # RPM packages (available for direct download, no metadata)
+    # RPM metadata was already generated in rpm-builder stage (Rocky Linux has createrepo)
+    # Verify it was copied correctly
     if [ "$slurm_rpm_count" -gt 0 ]; then \
-        echo "✓ SLURM RPM packages available at /pkgs/slurm-rpm/"; \
+        if [ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ]; then \
+            echo "✓ SLURM RPM repository metadata available (repodata/)"; \
+        else \
+            echo "⚠️  SLURM RPM metadata missing - packages available for direct download only"; \
+        fi; \
     fi; \
     if [ "$salt_rpm_count" -gt 0 ]; then \
-        echo "✓ SaltStack RPM packages available at /pkgs/saltstack-rpm/"; \
+        if [ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ]; then \
+            echo "✓ SaltStack RPM repository metadata available (repodata/)"; \
+            ls -la /usr/share/nginx/html/pkgs/saltstack-rpm/repodata/ || true; \
+        else \
+            echo "⚠️  SaltStack RPM metadata missing - packages available for direct download only"; \
+        fi; \
     fi; \
     # SLURM binaries (list architecture directories)
     if [ "$slurm_bin_count" -gt 0 ]; then \

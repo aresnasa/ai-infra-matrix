@@ -1721,3 +1721,13 @@ OCI runtime exec failed: exec failed: unable to start container process: exec: "
 132. 检查 build.sh 渲染函数，需要增加检查本地出口 IP，并修改.env 中GITHUB_PROXY=http://192.168.18.154:7890配置的函数，需要渲染成功再开始构建使用代理访问 github，否则会有问题
 
 133. go的后端需要等待任务真正结束从 saltstack 能欧查看到节点正确加入集群了才能真的成功，这里是并发串行的不能直接成功，修复这个问题
+
+134. 16635354adf4 ai-infra-apphub:v0.3.6-dev "/entrypoint.sh" 21 minutes ago Up 21 minutes (healthy) 192.168.0.200:53434->80/tcp ai-infra-apphub,apphub运行着的，需要改下容器内访问的方式直接访问容器网的 80 即可不需要绕到物理机的 0.200 网络，这样太慢了，直接走容器网就可以调整下
+
+135. 等等这里 ssh_service.go 不要硬编码 bash 脚本还是要读取传参，传参才是真正的 bash 脚本内容，bash 能够归集到 backend/init-bash文件夹下，这里动态的读取文件夹中的 bash 脚本然后串行的顺序执行，这样更加合理
+
+136. 现在检查 go 程序 ssh 安装 saltstack 和 slurm 是否能够正确的安装客户端并获取回调结果，保证安装成功或者失败两种状态才去更新任务数据库，请检查相关逻辑
+
+137. golang 函数只做公共步骤的处理，不用硬编码 bash 脚本进去，而是直接调用 bash 脚本的执行结果，这样可以更好，调整下，不要随意修改 golang 的逻辑而是调整安装脚本，所有的安装逻辑可以封装在 bash 脚本中
+
+138. 现在让我们来优化一下 apphub 构建流程太慢这个需求，目前 apphub 每次使用 build.sh build apphub --force 都会从公网下载所有依赖包并构建，这样非常浪费时间，我想要优化一下，既然已经采用了构建 ID，这里可以根据构建 ID 获取最新的镜像，如果镜像中存在期望的 rpm 、deb、二进制包则不需要重复下载了，校验下文件是否有内容即可，后续考虑直接增加 md5sum 校验或者 sha256 校验，避免重复使用网络下载包，这样不优雅，调整下 build.sh 脚本和 dockerfile

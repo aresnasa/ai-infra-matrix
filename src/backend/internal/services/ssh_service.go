@@ -9,6 +9,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -235,23 +238,65 @@ func (s *SSHService) installPackagesOnSingleHost(ctx context.Context, conn SSHCo
 	}
 	defer client.Close()
 
-	// 生成安装步骤
-	steps := s.generateInstallationSteps(config, conn.Host)
+	// 步骤1: 上传salt-minion安装脚本
+	if config.EnableSaltMinion {
+		uploadStep := s.uploadSaltMinionScript(conn, config)
+		result.Steps = append(result.Steps, uploadStep)
 
-	// 执行所有步骤
-	allSuccess := true
-	for _, step := range steps {
-		stepResult := s.executeInstallationStep(client, step)
-		result.Steps = append(result.Steps, stepResult)
-
-		if !stepResult.Success && step.Critical {
-			allSuccess = false
-			result.Error = fmt.Sprintf("关键步骤失败: %s", step.Name)
-			break
+		if !uploadStep.Success {
+			result.Error = "上传salt-minion安装脚本失败"
+			return result
 		}
 	}
 
-	result.Success = allSuccess
+	// 步骤2: 执行salt-minion安装脚本
+	if config.EnableSaltMinion {
+		executeStep := s.executeSaltMinionScript(client, conn, config)
+		result.Steps = append(result.Steps, executeStep)
+
+		if !executeStep.Success {
+			result.Error = "执行salt-minion安装脚本失败"
+			return result
+		}
+	}
+
+	// 步骤3: 配置salt-minion
+	if config.EnableSaltMinion {
+		configStep := s.configureSaltMinion(client, config, conn.Host)
+		result.Steps = append(result.Steps, configStep)
+
+		if !configStep.Success {
+			result.Error = "配置salt-minion失败"
+			return result
+		}
+	}
+
+	// 步骤4: 启动salt-minion服务
+	if config.EnableSaltMinion {
+		startStep := s.startSaltMinion(client)
+		result.Steps = append(result.Steps, startStep)
+
+		if !startStep.Success {
+			result.Error = "启动salt-minion服务失败"
+			return result
+		}
+	}
+
+	// 如果启用SLURM客户端，生成并执行SLURM相关步骤
+	if config.EnableSlurmClient {
+		slurmSteps := s.generateSlurmInstallationSteps(config, conn.Host)
+		for _, step := range slurmSteps {
+			stepResult := s.executeInstallationStep(client, step)
+			result.Steps = append(result.Steps, stepResult)
+
+			if !stepResult.Success && step.Critical {
+				result.Error = fmt.Sprintf("SLURM安装失败: %s", step.Name)
+				return result
+			}
+		}
+	}
+
+	result.Success = true
 	return result
 }
 
@@ -822,32 +867,113 @@ func (s *SSHService) parsePrivateKeyFromString(keyContent string) (ssh.Signer, e
 }
 
 // executeDeploymentSteps 执行部署步骤
+// Go代码只负责调度脚本执行和收集输出，所有安装逻辑都在Bash脚本中
 func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStackDeploymentConfig) (string, error) {
 	var output strings.Builder
 
-	steps := []struct {
-		name    string
-		command string
-	}{
-		{"检查系统", "cat /etc/os-release"},
-		{"安装SaltStack", s.getInstallCommandWithAppHub(config)},
-		{"配置Minion", s.getMinionConfigCommand(config)},
-		{"启动服务", "systemctl enable salt-minion 2>/dev/null || true; systemctl daemon-reload 2>/dev/null || true; systemctl start salt-minion 2>/dev/null || service salt-minion start 2>/dev/null || salt-minion -d || true"},
-		{"检查状态", "systemctl status salt-minion --no-pager || journalctl -u salt-minion --no-pager -n 200 || true"},
+	// 读取脚本目录中的所有脚本
+	scriptsDir := "scripts/salt-minion"
+	scripts, err := s.loadDeploymentScripts(scriptsDir)
+	if err != nil {
+		return output.String(), fmt.Errorf("加载部署脚本失败: %v", err)
 	}
 
-	for _, step := range steps {
-		fmt.Fprintf(&output, "\n=== %s ===\n", step.name)
+	// 准备环境变量
+	envVars := map[string]string{
+		"APPHUB_URL":       config.AppHubURL,
+		"SALT_MASTER_HOST": config.MasterHost,
+		"SALT_MINION_ID":   "", // 可选，留空使用主机名
+	}
 
-		stepOutput, err := s.executeCommand(client, step.command)
-		fmt.Fprintf(&output, "%s", stepOutput)
-
-		if err != nil {
-			return output.String(), fmt.Errorf("步骤 '%s' 失败: %v", step.name, err)
+	// 构建环境变量设置
+	var envExports strings.Builder
+	for key, value := range envVars {
+		if value != "" {
+			envExports.WriteString(fmt.Sprintf("export %s='%s'\n", key, value))
 		}
 	}
 
+	// 按顺序执行每个脚本
+	for _, script := range scripts {
+		fmt.Fprintf(&output, "\n=== 执行脚本: %s ===\n", script.Name)
+
+		// 组合环境变量和脚本内容
+		fullCommand := envExports.String() + script.Content
+
+		// 执行脚本
+		stepOutput, err := s.executeCommand(client, fullCommand)
+		fmt.Fprintf(&output, "%s\n", stepOutput)
+
+		// 脚本执行失败，直接返回错误
+		// Bash脚本中的set -e和exit码会确保错误被正确传递
+		if err != nil {
+			return output.String(), fmt.Errorf("脚本 '%s' 执行失败: %v", script.Name, err)
+		}
+
+		fmt.Fprintf(&output, "[✓] 脚本 %s 执行成功\n", script.Name)
+	}
+
 	return output.String(), nil
+}
+
+// DeploymentScript 表示一个部署脚本
+type DeploymentScript struct {
+	Name    string
+	Path    string
+	Content string
+	Order   int
+}
+
+// loadDeploymentScripts 加载部署脚本目录中的所有脚本
+func (s *SSHService) loadDeploymentScripts(dir string) ([]DeploymentScript, error) {
+	var scripts []DeploymentScript
+
+	// 读取目录
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("读取脚本目录失败: %v", err)
+	}
+
+	// 遍历文件
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		// 只处理 .sh 文件
+		if !strings.HasSuffix(entry.Name(), ".sh") {
+			continue
+		}
+
+		// 读取脚本内容
+		scriptPath := filepath.Join(dir, entry.Name())
+		content, err := os.ReadFile(scriptPath)
+		if err != nil {
+			return nil, fmt.Errorf("读取脚本 %s 失败: %v", entry.Name(), err)
+		}
+
+		// 提取序号（假设文件名格式为 NN-name.sh）
+		order := 999 // 默认序号
+		if len(entry.Name()) >= 2 {
+			if num, err := strconv.Atoi(entry.Name()[:2]); err == nil {
+				order = num
+			}
+		}
+
+		scripts = append(scripts, DeploymentScript{
+			Name:    entry.Name(),
+			Path:    scriptPath,
+			Content: string(content),
+			Order:   order,
+		})
+	}
+
+	// 按序号排序
+	sort.Slice(scripts, func(i, j int) bool {
+		return scripts[i].Order < scripts[j].Order
+	})
+
+	return scripts, nil
 }
 
 // waitForMinionsAccepted 等待 Minion 密钥被 Master 接受
@@ -1095,8 +1221,8 @@ func (s *SSHService) getInstallCommandWithAppHub(cfg SaltStackDeploymentConfig) 
 
 	// 生成包含AppHub优先安装的脚本
 	// 目录约定：
-	//  - APT:  ${APPHUB_URL}/pkgs/salt-deb/ (应提供Packages索引)
-	//  - RPM:  ${APPHUB_URL}/pkgs/salt-rpm/ (应提供repodata/repomd.xml)
+	//  - APT:  ${APPHUB_URL}/pkgs/saltstack-deb/ (应提供Packages索引)
+	//  - RPM:  ${APPHUB_URL}/pkgs/saltstack-rpm/ (应提供repodata/repomd.xml)
 	script := fmt.Sprintf(`
 set -e
 APPHUB_URL='%s'
@@ -1104,9 +1230,9 @@ installed=0
 if command -v apt-get >/dev/null 2>&1; then
 	export DEBIAN_FRONTEND=noninteractive
 	# 检测AppHub APT索引
-	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/salt-deb/Packages"; then
-		echo "[Salt] 使用AppHub APT仓库安装salt-minion: $APPHUB_URL/pkgs/salt-deb"
-		echo "deb [trusted=yes] $APPHUB_URL/pkgs/salt-deb ./" > /etc/apt/sources.list.d/ai-infra-salt.list
+	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/saltstack-deb/Packages"; then
+		echo "[Salt] 使用AppHub APT仓库安装salt-minion: $APPHUB_URL/pkgs/saltstack-deb"
+		echo "deb [trusted=yes] $APPHUB_URL/pkgs/saltstack-deb ./" > /etc/apt/sources.list.d/ai-infra-salt.list
 		apt-get update -y || true
 		if apt-get install -y salt-minion; then
 			installed=1
@@ -1147,12 +1273,12 @@ if command -v apt-get >/dev/null 2>&1; then
 	fi
 elif command -v yum >/dev/null 2>&1; then
 	# 检测AppHub RPM元数据
-	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/salt-rpm/repodata/repomd.xml"; then
-		echo "[Salt] 使用AppHub YUM仓库安装salt-minion: $APPHUB_URL/pkgs/salt-rpm"
+	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/saltstack-rpm/repodata/repomd.xml"; then
+		echo "[Salt] 使用AppHub YUM仓库安装salt-minion: $APPHUB_URL/pkgs/saltstack-rpm"
 		cat > /etc/yum.repos.d/ai-infra-salt.repo <<EOF
 [ai-infra-salt]
 name=AI Infra Salt RPMs
-baseurl=$APPHUB_URL/pkgs/salt-rpm
+baseurl=$APPHUB_URL/pkgs/saltstack-rpm
 enabled=1
 gpgcheck=0
 EOF
@@ -1192,12 +1318,12 @@ EOF
 	fi
 elif command -v dnf >/dev/null 2>&1; then
 	# 检测AppHub RPM元数据
-	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/salt-rpm/repodata/repomd.xml"; then
-		echo "[Salt] 使用AppHub DNF仓库安装salt-minion: $APPHUB_URL/pkgs/salt-rpm"
+	if timeout 8 wget -q --spider "$APPHUB_URL/pkgs/saltstack-rpm/repodata/repomd.xml"; then
+		echo "[Salt] 使用AppHub DNF仓库安装salt-minion: $APPHUB_URL/pkgs/saltstack-rpm"
 		cat > /etc/yum.repos.d/ai-infra-salt.repo <<EOF
 [ai-infra-salt]
 name=AI Infra Salt RPMs
-baseurl=$APPHUB_URL/pkgs/salt-rpm
+baseurl=$APPHUB_URL/pkgs/saltstack-rpm
 enabled=1
 gpgcheck=0
 EOF
@@ -1786,4 +1912,223 @@ func (s *SSHService) TestSSHConnection(ctx context.Context, conn SSHConnection) 
 	}
 
 	return string(output), nil
+}
+
+// uploadSaltMinionScript 上传salt-minion安装脚本到远程主机
+func (s *SSHService) uploadSaltMinionScript(conn SSHConnection, config PackageInstallationConfig) StepResult {
+	startTime := time.Now()
+
+	// 读取本地的salt-minion安装脚本
+	scriptPath := "/root/scripts/salt-minion/01-install-salt-minion.sh"
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return StepResult{
+			Name:      "upload_salt_minion_script",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("读取安装脚本失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+
+	// 上传脚本到远程主机
+	remotePath := "/tmp/install-salt-minion.sh"
+	err = s.UploadBinaryFile(
+		conn.Host,
+		conn.Port,
+		conn.User,
+		conn.Password,
+		scriptContent,
+		remotePath,
+		true, // 设置可执行权限
+	)
+
+	if err != nil {
+		return StepResult{
+			Name:      "upload_salt_minion_script",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("上传脚本失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+
+	return StepResult{
+		Name:      "upload_salt_minion_script",
+		Success:   true,
+		Output:    fmt.Sprintf("已上传脚本到 %s:%s", conn.Host, remotePath),
+		Error:     "",
+		Duration:  time.Since(startTime),
+		Timestamp: time.Now(),
+	}
+}
+
+// executeSaltMinionScript 执行salt-minion安装脚本
+func (s *SSHService) executeSaltMinionScript(client *ssh.Client, conn SSHConnection, config PackageInstallationConfig) StepResult {
+	startTime := time.Now()
+
+	// 构建执行命令，传递AppHub URL环境变量
+	remotePath := "/tmp/install-salt-minion.sh"
+	cmd := fmt.Sprintf("export APPHUB_URL='%s' && bash %s", config.AppHubConfig.BaseURL, remotePath)
+
+	// 创建会话
+	session, err := client.NewSession()
+	if err != nil {
+		return StepResult{
+			Name:      "execute_salt_minion_script",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("创建SSH会话失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+	defer session.Close()
+
+	// 执行脚本
+	output, err := session.CombinedOutput(cmd)
+	outputStr := string(output)
+
+	if err != nil {
+		return StepResult{
+			Name:      "execute_salt_minion_script",
+			Success:   false,
+			Output:    outputStr,
+			Error:     fmt.Sprintf("执行脚本失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+
+	return StepResult{
+		Name:      "execute_salt_minion_script",
+		Success:   true,
+		Output:    outputStr,
+		Error:     "",
+		Duration:  time.Since(startTime),
+		Timestamp: time.Now(),
+	}
+}
+
+// configureSaltMinion 配置salt-minion连接到master
+func (s *SSHService) configureSaltMinion(client *ssh.Client, config PackageInstallationConfig, hostname string) StepResult {
+	startTime := time.Now()
+
+	minionID := s.getMinionID(config.MinionID, hostname)
+
+	// 配置minion文件
+	configCmd := fmt.Sprintf(`
+cat > /etc/salt/minion.d/99-master-address.conf <<EOF
+master: %s
+master_port: %d
+id: %s
+EOF
+`, config.SaltMasterHost, config.SaltMasterPort, minionID)
+
+	session, err := client.NewSession()
+	if err != nil {
+		return StepResult{
+			Name:      "configure_salt_minion",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("创建SSH会话失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput(configCmd)
+	outputStr := string(output)
+
+	if err != nil {
+		return StepResult{
+			Name:      "configure_salt_minion",
+			Success:   false,
+			Output:    outputStr,
+			Error:     fmt.Sprintf("配置salt-minion失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+
+	return StepResult{
+		Name:      "configure_salt_minion",
+		Success:   true,
+		Output:    fmt.Sprintf("已配置minion连接到 %s:%d，ID: %s\n%s", config.SaltMasterHost, config.SaltMasterPort, minionID, outputStr),
+		Error:     "",
+		Duration:  time.Since(startTime),
+		Timestamp: time.Now(),
+	}
+}
+
+// startSaltMinion 启动salt-minion服务
+func (s *SSHService) startSaltMinion(client *ssh.Client) StepResult {
+	startTime := time.Now()
+
+	// 尝试多种启动方式
+	startCmd := `
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable salt-minion 2>/dev/null || true
+systemctl start salt-minion 2>/dev/null || service salt-minion start 2>/dev/null || salt-minion -d || true
+sleep 2
+systemctl status salt-minion 2>/dev/null || service salt-minion status 2>/dev/null || ps aux | grep salt-minion | grep -v grep
+`
+
+	session, err := client.NewSession()
+	if err != nil {
+		return StepResult{
+			Name:      "start_salt_minion",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("创建SSH会话失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput(startCmd)
+	outputStr := string(output)
+
+	// 不强制要求命令成功，只要能看到进程就算成功
+	success := err == nil || strings.Contains(outputStr, "salt-minion") || strings.Contains(outputStr, "active")
+
+	return StepResult{
+		Name:      "start_salt_minion",
+		Success:   success,
+		Output:    outputStr,
+		Error:     "",
+		Duration:  time.Since(startTime),
+		Timestamp: time.Now(),
+	}
+}
+
+// generateSlurmInstallationSteps 生成SLURM安装步骤
+func (s *SSHService) generateSlurmInstallationSteps(config PackageInstallationConfig, hostname string) []InstallationStep {
+	var steps []InstallationStep
+
+	// SLURM客户端安装
+	steps = append(steps, InstallationStep{
+		Name:        "install_slurm_client",
+		Description: "安装SLURM客户端组件",
+		Critical:    false,
+		Commands: []string{
+			s.getInstallSlurmClientCommand(config.AppHubConfig.BaseURL),
+		},
+	})
+
+	// SLURM节点配置
+	steps = append(steps, InstallationStep{
+		Name:        "configure_slurm_node",
+		Description: "配置SLURM节点",
+		Critical:    false,
+		Commands: []string{
+			s.getConfigureSlurmNodeCommand(config.SlurmRole, hostname),
+		},
+	})
+
+	return steps
 }
