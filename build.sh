@@ -3375,6 +3375,127 @@ sync_env_files() {
     echo
 }
 
+# 从.env同步组件版本到各个Dockerfile
+# 读取.env中的版本变量并更新到对应的Dockerfile中
+sync_component_versions_from_env() {
+    local env_file="$SCRIPT_DIR/.env"
+    
+    if [[ ! -f "$env_file" ]]; then
+        print_warning "⚠ .env文件不存在，跳过版本同步"
+        return 0
+    fi
+    
+    print_info "同步组件版本（从 .env 到 Dockerfile）..."
+    
+    local updated_count=0
+    
+    # 1. 同步 SaltStack 版本
+    local saltstack_version
+    saltstack_version=$(grep "^SALTSTACK_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    
+    if [[ -n "$saltstack_version" ]]; then
+        # 1.1 更新 SaltStack Dockerfile
+        local saltstack_dockerfile="$SCRIPT_DIR/src/saltstack/Dockerfile"
+        if [[ -f "$saltstack_dockerfile" ]]; then
+            local current_version
+            current_version=$(grep 'pip3 install.*salt==' "$saltstack_dockerfile" | sed -E 's/.*salt==([0-9.]+).*/\1/' || echo "")
+            
+            if [[ -n "$current_version" ]] && [[ "$current_version" != "$saltstack_version" ]]; then
+                print_info "  [SaltStack Master] $current_version → $saltstack_version"
+                sed_inplace "s/salt==[0-9.]\\+/salt==$saltstack_version/g" "$saltstack_dockerfile"
+                ((updated_count++))
+            elif [[ "$current_version" == "$saltstack_version" ]]; then
+                print_success "  ✓ SaltStack Master: $saltstack_version"
+            fi
+        fi
+        
+        # 1.2 更新 AppHub Dockerfile 中的 SALTSTACK_VERSION
+        local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+        if [[ -f "$apphub_dockerfile" ]]; then
+            # 需要保留 'v' 前缀
+            local apphub_salt_version="v${saltstack_version}"
+            local current_apphub_version
+            current_apphub_version=$(grep "^ARG SALTSTACK_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            
+            if [[ -n "$current_apphub_version" ]] && [[ "$current_apphub_version" != "$apphub_salt_version" ]]; then
+                print_info "  [AppHub SaltStack] $current_apphub_version → $apphub_salt_version"
+                sed_inplace "s|^ARG SALTSTACK_VERSION=.*|ARG SALTSTACK_VERSION=$apphub_salt_version|g" "$apphub_dockerfile"
+                ((updated_count++))
+            elif [[ "$current_apphub_version" == "$apphub_salt_version" ]]; then
+                print_success "  ✓ AppHub SaltStack: $apphub_salt_version"
+            fi
+        fi
+    fi
+    
+    # 2. 同步 SLURM 版本
+    local slurm_version
+    slurm_version=$(grep "^SLURM_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    
+    if [[ -n "$slurm_version" ]]; then
+        local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+        if [[ -f "$apphub_dockerfile" ]]; then
+            local current_slurm_version
+            current_slurm_version=$(grep "^ARG SLURM_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            
+            if [[ -n "$current_slurm_version" ]] && [[ "$current_slurm_version" != "$slurm_version" ]]; then
+                print_info "  [AppHub SLURM] $current_slurm_version → $slurm_version"
+                sed_inplace "s|^ARG SLURM_VERSION=.*|ARG SLURM_VERSION=$slurm_version|g" "$apphub_dockerfile"
+                ((updated_count++))
+            elif [[ "$current_slurm_version" == "$slurm_version" ]]; then
+                print_success "  ✓ AppHub SLURM: $slurm_version"
+            fi
+        fi
+    fi
+    
+    # 3. 同步 Categraf 版本
+    local categraf_version
+    categraf_version=$(grep "^CATEGRAF_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    
+    if [[ -n "$categraf_version" ]]; then
+        local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+        if [[ -f "$apphub_dockerfile" ]]; then
+            local current_categraf_version
+            current_categraf_version=$(grep "^ARG CATEGRAF_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            
+            if [[ -n "$current_categraf_version" ]] && [[ "$current_categraf_version" != "$categraf_version" ]]; then
+                print_info "  [AppHub Categraf] $current_categraf_version → $categraf_version"
+                sed_inplace "s|^ARG CATEGRAF_VERSION=.*|ARG CATEGRAF_VERSION=$categraf_version|g" "$apphub_dockerfile"
+                ((updated_count++))
+            elif [[ "$current_categraf_version" == "$categraf_version" ]]; then
+                print_success "  ✓ AppHub Categraf: $categraf_version"
+            fi
+        fi
+    fi
+    
+    # 4. 同步 Singularity 版本
+    local singularity_version
+    singularity_version=$(grep "^SINGULARITY_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    
+    if [[ -n "$singularity_version" ]]; then
+        local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+        if [[ -f "$apphub_dockerfile" ]]; then
+            local current_singularity_version
+            current_singularity_version=$(grep "^ARG SINGULARITY_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            
+            if [[ -n "$current_singularity_version" ]] && [[ "$current_singularity_version" != "$singularity_version" ]]; then
+                print_info "  [AppHub Singularity] $current_singularity_version → $singularity_version"
+                sed_inplace "s|^ARG SINGULARITY_VERSION=.*|ARG SINGULARITY_VERSION=$singularity_version|g" "$apphub_dockerfile"
+                ((updated_count++))
+            elif [[ "$current_singularity_version" == "$singularity_version" ]]; then
+                print_success "  ✓ AppHub Singularity: $singularity_version"
+            fi
+        fi
+    fi
+    
+    if [[ $updated_count -gt 0 ]]; then
+        print_success "✓ 已更新 $updated_count 个组件版本"
+    else
+        print_success "✓ 所有组件版本已是最新"
+    fi
+    
+    echo
+}
+
 # 同步所有配置文件
 sync_all_configs() {
     local force_mode="${1:-false}"
@@ -3391,6 +3512,9 @@ sync_all_configs() {
         set_or_update_env_var "MINIO_REGION" "${MINIO_REGION:-us-east-1}" "$SCRIPT_DIR/.env"
         set_or_update_env_var "MINIO_USE_SSL" "${MINIO_USE_SSL:-false}" "$SCRIPT_DIR/.env"
     fi
+    
+    # 1.2 同步组件版本（从.env读取并更新到Dockerfile）
+    sync_component_versions_from_env
     
     # 2. 验证 docker-compose.yml 和 docker-compose.yml.example 是否同步
     local compose_file="$SCRIPT_DIR/docker-compose.yml"

@@ -2,9 +2,15 @@ package services
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -400,8 +406,7 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 
 // ScaleUp 执行扩容操作
 func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*ScalingResult, error) {
-	// 这里应该实现实际的SLURM节点扩容逻辑
-	// 包括更新slurm.conf、重新加载配置等
+	log.Printf("[DEBUG] ScaleUp: 开始扩容操作，节点数量: %d", len(nodes))
 
 	result := &ScalingResult{
 		OperationID: generateOperationID(),
@@ -409,8 +414,46 @@ func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*Scalin
 		Results:     []NodeScalingResult{},
 	}
 
-	// 处理节点配置
+	// 1. 更新数据库中的节点状态为active
 	for _, node := range nodes {
+		// 查找或创建节点记录
+		var dbNode models.SlurmNode
+		err := s.db.Where("host = ? OR node_name = ?", node.Host, node.MinionID).First(&dbNode).Error
+
+		if err == gorm.ErrRecordNotFound {
+			// 节点不存在，跳过（应该在之前的步骤中创建）
+			log.Printf("[WARN] 节点 %s 在数据库中不存在，跳过", node.Host)
+			result.Results = append(result.Results, NodeScalingResult{
+				NodeID:  node.Host,
+				Success: false,
+				Message: "节点在数据库中不存在",
+			})
+			continue
+		} else if err != nil {
+			log.Printf("[ERROR] 查询节点 %s 失败: %v", node.Host, err)
+			result.Results = append(result.Results, NodeScalingResult{
+				NodeID:  node.Host,
+				Success: false,
+				Message: fmt.Sprintf("数据库错误: %v", err),
+			})
+			continue
+		}
+
+		// 更新节点状态为active
+		if err := s.db.Model(&dbNode).Updates(map[string]interface{}{
+			"status":         "active",
+			"salt_minion_id": node.MinionID,
+		}).Error; err != nil {
+			log.Printf("[ERROR] 更新节点 %s 状态失败: %v", node.Host, err)
+			result.Results = append(result.Results, NodeScalingResult{
+				NodeID:  node.Host,
+				Success: false,
+				Message: fmt.Sprintf("更新状态失败: %v", err),
+			})
+			continue
+		}
+
+		log.Printf("[DEBUG] 节点 %s 状态已更新为 active", node.Host)
 		result.Results = append(result.Results, NodeScalingResult{
 			NodeID:  node.Host,
 			Success: true,
@@ -418,10 +461,218 @@ func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*Scalin
 		})
 	}
 
+	// 2. 生成并更新SLURM配置
+	log.Printf("[DEBUG] ScaleUp: 开始更新SLURM配置")
+	if err := s.updateSlurmConfigAndReload(ctx); err != nil {
+		log.Printf("[ERROR] 更新SLURM配置失败: %v", err)
+		// 不返回错误，因为节点状态已更新，可以手动重新加载配置
+		result.Success = false
+		for i := range result.Results {
+			if result.Results[i].Success {
+				result.Results[i].Message += " (SLURM配置更新失败，需要手动reload)"
+			}
+		}
+	} else {
+		log.Printf("[DEBUG] ScaleUp: SLURM配置更新成功")
+	}
+
 	return result, nil
 }
 
-// UpdateSlurmConfig 更新SLURM配置文件并重新加载
+// updateSlurmConfigAndReload 更新SLURM配置并重新加载
+func (s *SlurmService) updateSlurmConfigAndReload(ctx context.Context) error {
+	// 获取所有active状态的节点
+	var nodes []models.SlurmNode
+	if err := s.db.Where("status = ?", "active").Find(&nodes).Error; err != nil {
+		return fmt.Errorf("获取active节点失败: %w", err)
+	}
+
+	log.Printf("[DEBUG] 找到 %d 个active节点", len(nodes))
+
+	if len(nodes) == 0 {
+		return fmt.Errorf("没有active状态的节点")
+	}
+
+	// 生成SLURM配置
+	config := s.generateSlurmConfig(nodes)
+	log.Printf("[DEBUG] 生成的SLURM配置:\n%s", config)
+
+	// 通过Salt API更新SLURM master的配置文件
+	if err := s.updateSlurmMasterConfig(ctx, config); err != nil {
+		return fmt.Errorf("更新SLURM master配置失败: %w", err)
+	}
+
+	// 重新加载SLURM配置
+	if err := s.reloadSlurmConfig(ctx); err != nil {
+		return fmt.Errorf("重新加载SLURM配置失败: %w", err)
+	}
+
+	return nil
+}
+
+// updateSlurmMasterConfig 通过Salt API更新SLURM master的配置文件
+func (s *SlurmService) updateSlurmMasterConfig(ctx context.Context, config string) error {
+	log.Printf("[DEBUG] 开始通过Salt API更新SLURM配置")
+
+	// 获取Salt API认证token
+	token, err := s.getSaltAPIToken(ctx)
+	if err != nil {
+		return fmt.Errorf("获取Salt API token失败: %w", err)
+	}
+
+	// 使用file.write写入配置文件
+	cmd := map[string]interface{}{
+		"client": "local",
+		"tgt":    "slurm-master",
+		"fun":    "file.write",
+		"arg":    []interface{}{"/etc/slurm/slurm.conf", config},
+	}
+
+	_, err = s.executeSaltCommand(ctx, token, cmd)
+	if err != nil {
+		return fmt.Errorf("通过Salt API写入配置失败: %w", err)
+	}
+
+	log.Printf("[DEBUG] SLURM配置文件已更新")
+	return nil
+}
+
+// reloadSlurmConfig 通过Salt API重新加载SLURM配置
+func (s *SlurmService) reloadSlurmConfig(ctx context.Context) error {
+	log.Printf("[DEBUG] 开始重新加载SLURM配置")
+
+	token, err := s.getSaltAPIToken(ctx)
+	if err != nil {
+		return fmt.Errorf("获取Salt API token失败: %w", err)
+	}
+
+	// 执行scontrol reconfigure
+	cmd := map[string]interface{}{
+		"client": "local",
+		"tgt":    "slurm-master",
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"scontrol reconfigure"},
+	}
+
+	result, err := s.executeSaltCommand(ctx, token, cmd)
+	if err != nil {
+		return fmt.Errorf("执行scontrol reconfigure失败: %w", err)
+	}
+
+	log.Printf("[DEBUG] scontrol reconfigure结果: %v", result)
+	return nil
+}
+
+// getSaltAPIToken 获取Salt API认证token
+func (s *SlurmService) getSaltAPIToken(ctx context.Context) (string, error) {
+	saltAPIURL := os.Getenv("SALTSTACK_MASTER_URL")
+	if saltAPIURL == "" {
+		saltAPIURL = "http://saltstack:8002"
+	}
+
+	username := os.Getenv("SALT_API_USERNAME")
+	if username == "" {
+		username = "saltapi"
+	}
+	password := os.Getenv("SALT_API_PASSWORD")
+	if password == "" {
+		password = "your-salt-api-password"
+	}
+	eauth := os.Getenv("SALT_API_EAUTH")
+	if eauth == "" {
+		eauth = "file"
+	}
+
+	// 认证请求
+	authPayload := map[string]string{
+		"username": username,
+		"password": password,
+		"eauth":    eauth,
+	}
+
+	jsonData, err := json.Marshal(authPayload)
+	if err != nil {
+		return "", fmt.Errorf("序列化认证数据失败: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", saltAPIURL+"/login", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("创建认证请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("发送认证请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("认证失败 (状态码 %d): %s", resp.StatusCode, string(body))
+	}
+
+	var authResult map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&authResult); err != nil {
+		return "", fmt.Errorf("解析认证响应失败: %w", err)
+	}
+
+	// 提取token
+	var token string
+	if returnData, ok := authResult["return"].([]interface{}); ok && len(returnData) > 0 {
+		if tokenData, ok := returnData[0].(map[string]interface{}); ok {
+			if t, ok := tokenData["token"].(string); ok {
+				token = t
+			}
+		}
+	}
+
+	if token == "" {
+		return "", fmt.Errorf("未能从认证响应中获取token")
+	}
+
+	return token, nil
+}
+
+// executeSaltCommand 执行Salt命令
+func (s *SlurmService) executeSaltCommand(ctx context.Context, token string, cmd map[string]interface{}) (map[string]interface{}, error) {
+	saltAPIURL := os.Getenv("SALTSTACK_MASTER_URL")
+	if saltAPIURL == "" {
+		saltAPIURL = "http://saltstack:8002"
+	}
+
+	jsonData, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("序列化命令数据失败: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", saltAPIURL+"/", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", token)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("请求失败 (状态码 %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	return result, nil
+} // UpdateSlurmConfig 更新SLURM配置文件并重新加载
 func (s *SlurmService) UpdateSlurmConfig(ctx context.Context, sshSvc SSHServiceInterface) error {
 	// 获取当前所有活跃节点
 	var nodes []models.SlurmNode

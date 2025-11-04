@@ -78,7 +78,7 @@ RUN pip3 install --no-cache-dir \
         cffi \
         pyzmq==25.0.2 \
         pycryptodomex \
-    && pip3 install --no-cache-dir --no-deps "salt==3006.8" \
+    && pip3 install --no-cache-dir --no-deps "salt==3007.8" \
     && pip3 install --no-cache-dir \
         cherrypy \
         python-ldap \

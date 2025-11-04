@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1037,36 +1039,139 @@ func (s *SSHService) waitForSingleMinionAccepted(ctx context.Context, host, mast
 
 // checkMinionAccepted 检查 Minion 是否已被 Master 接受
 func (s *SSHService) checkMinionAccepted(masterHost string, possibleMinionIDs []string) (bool, error) {
-	// 获取 SaltStack 容器名
-	saltContainerName, err := getSaltStackContainerName()
+	// 使用 Salt API 检查 minion 状态（不依赖 docker CLI）
+	saltAPIURL := os.Getenv("SALTSTACK_MASTER_URL")
+	if saltAPIURL == "" {
+		// 构建默认 URL
+		scheme := os.Getenv("SALT_API_SCHEME")
+		if scheme == "" {
+			scheme = "http"
+		}
+		host := os.Getenv("SALT_MASTER_HOST")
+		if host == "" {
+			host = "saltstack"
+		}
+		port := os.Getenv("SALT_API_PORT")
+		if port == "" {
+			port = "8002"
+		}
+		saltAPIURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	}
+
+	username := os.Getenv("SALT_API_USERNAME")
+	if username == "" {
+		username = "saltapi"
+	}
+	password := os.Getenv("SALT_API_PASSWORD")
+	if password == "" {
+		password = "your-salt-api-password"
+	}
+	eauth := os.Getenv("SALT_API_EAUTH")
+	if eauth == "" {
+		eauth = "file"
+	}
+
+	// 创建 HTTP 客户端
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// 1. 认证获取 token
+	authPayload := fmt.Sprintf(`{"username":"%s","password":"%s","eauth":"%s"}`, username, password, eauth)
+	authReq, err := http.NewRequest("POST", saltAPIURL+"/login", strings.NewReader(authPayload))
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("创建认证请求失败: %v", err)
 	}
+	authReq.Header.Set("Content-Type", "application/json")
 
-	// 使用 docker exec 在 SaltStack 容器中执行 salt-key 命令
-	cmd := exec.Command("docker", "exec", saltContainerName, "salt-key", "-L", "--out=json")
-
-	output, err := cmd.CombinedOutput()
+	authResp, err := client.Do(authReq)
 	if err != nil {
-		return false, fmt.Errorf("执行 salt-key 失败: %v, output: %s", err, string(output))
+		log.Printf("[DEBUG] Salt API 认证请求失败: %v", err)
+		return false, fmt.Errorf("Salt API 认证请求失败: %v", err)
+	}
+	defer authResp.Body.Close()
+
+	if authResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(authResp.Body)
+		log.Printf("[DEBUG] Salt API 认证失败 (状态码 %d): %s", authResp.StatusCode, string(body))
+		return false, fmt.Errorf("Salt API 认证失败，状态码: %d", authResp.StatusCode)
 	}
 
-	// 解析 JSON 输出
-	var keyList struct {
-		MinionsAccepted []string `json:"minions"`
-		MinionsPending  []string `json:"minions_pre"`
-		MinionsRejected []string `json:"minions_rejected"`
-		MinionsDenied   []string `json:"minions_denied"`
+	var authResult map[string]interface{}
+	if err := json.NewDecoder(authResp.Body).Decode(&authResult); err != nil {
+		return false, fmt.Errorf("解析认证响应失败: %v", err)
 	}
 
-	if err := json.Unmarshal(output, &keyList); err != nil {
-		return false, fmt.Errorf("解析 salt-key 输出失败: %v", err)
+	// 提取 token
+	var token string
+	if returnData, ok := authResult["return"].([]interface{}); ok && len(returnData) > 0 {
+		if tokenData, ok := returnData[0].(map[string]interface{}); ok {
+			if t, ok := tokenData["token"].(string); ok {
+				token = t
+			}
+		}
 	}
+
+	if token == "" {
+		return false, fmt.Errorf("未能从认证响应中获取 token")
+	}
+
+	// 2. 获取密钥列表
+	keysReq, err := http.NewRequest("GET", saltAPIURL+"/keys", nil)
+	if err != nil {
+		return false, fmt.Errorf("创建密钥列表请求失败: %v", err)
+	}
+	keysReq.Header.Set("X-Auth-Token", token)
+
+	keysResp, err := client.Do(keysReq)
+	if err != nil {
+		log.Printf("[DEBUG] 获取 Salt 密钥列表失败: %v", err)
+		return false, fmt.Errorf("获取 Salt 密钥列表失败: %v", err)
+	}
+	defer keysResp.Body.Close()
+
+	if keysResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(keysResp.Body)
+		log.Printf("[DEBUG] 获取密钥列表失败 (状态码 %d): %s", keysResp.StatusCode, string(body))
+		return false, fmt.Errorf("获取密钥列表失败，状态码: %d", keysResp.StatusCode)
+	}
+
+	var keysResult map[string]interface{}
+	if err := json.NewDecoder(keysResp.Body).Decode(&keysResult); err != nil {
+		return false, fmt.Errorf("解析密钥列表响应失败: %v", err)
+	}
+
+	// 解析密钥数据
+	var minionsAccepted []string
+	var minionsPending []string
+
+	if returnData, ok := keysResult["return"].([]interface{}); ok && len(returnData) > 0 {
+		if data, ok := returnData[0].(map[string]interface{}); ok {
+			if minions, ok := data["minions"].([]interface{}); ok {
+				for _, m := range minions {
+					if minionID, ok := m.(string); ok {
+						minionsAccepted = append(minionsAccepted, minionID)
+					}
+				}
+			}
+			if minions, ok := data["minions_pre"].([]interface{}); ok {
+				for _, m := range minions {
+					if minionID, ok := m.(string); ok {
+						minionsPending = append(minionsPending, minionID)
+					}
+				}
+			}
+		}
+	}
+
+	log.Printf("[DEBUG] 检查 Minion 接受状态:")
+	log.Printf("[DEBUG]   可能的 Minion IDs: %v", possibleMinionIDs)
+	log.Printf("[DEBUG]   已接受的 Minions: %v", minionsAccepted)
+	log.Printf("[DEBUG]   等待中的 Minions: %v", minionsPending)
 
 	// 检查是否有任何可能的 Minion ID 已被接受
 	for _, minionID := range possibleMinionIDs {
-		for _, accepted := range keyList.MinionsAccepted {
+		for _, accepted := range minionsAccepted {
 			if accepted == minionID {
+				log.Printf("[DEBUG] ✓ Minion %s 已被接受", minionID)
 				return true, nil
 			}
 		}
@@ -1074,24 +1179,39 @@ func (s *SSHService) checkMinionAccepted(masterHost string, possibleMinionIDs []
 
 	// 如果在 pending 列表中，尝试自动接受
 	for _, minionID := range possibleMinionIDs {
-		for _, pending := range keyList.MinionsPending {
+		for _, pending := range minionsPending {
 			if pending == minionID {
-				// 获取容器名并自动接受密钥
-				saltContainerName, err := getSaltStackContainerName()
+				log.Printf("[DEBUG] Minion %s 在等待列表中，尝试自动接受...", minionID)
+
+				// 使用 Salt API 接受密钥
+				acceptPayload := fmt.Sprintf(`{"client":"wheel","fun":"key.accept","match":"%s"}`, minionID)
+				acceptReq, err := http.NewRequest("POST", saltAPIURL+"/", strings.NewReader(acceptPayload))
 				if err != nil {
-					return false, fmt.Errorf("无法找到 SaltStack 容器进行密钥接受: %v", err)
+					return false, fmt.Errorf("创建接受密钥请求失败: %v", err)
+				}
+				acceptReq.Header.Set("X-Auth-Token", token)
+				acceptReq.Header.Set("Content-Type", "application/json")
+
+				acceptResp, err := client.Do(acceptReq)
+				if err != nil {
+					log.Printf("[DEBUG] 自动接受密钥请求失败: %v", err)
+					return false, fmt.Errorf("自动接受密钥请求失败: %v", err)
+				}
+				defer acceptResp.Body.Close()
+
+				if acceptResp.StatusCode != http.StatusOK {
+					body, _ := io.ReadAll(acceptResp.Body)
+					log.Printf("[DEBUG] 自动接受密钥失败 (状态码 %d): %s", acceptResp.StatusCode, string(body))
+					return false, fmt.Errorf("自动接受密钥失败，状态码: %d", acceptResp.StatusCode)
 				}
 
-				acceptCmd := exec.Command("docker", "exec", saltContainerName, "salt-key", "-y", "-a", minionID)
-				if output, err := acceptCmd.CombinedOutput(); err != nil {
-					return false, fmt.Errorf("自动接受密钥失败: %v, output: %s", err, string(output))
-				}
-				// 接受后立即返回 true
+				log.Printf("[DEBUG] ✓ 已自动接受 Minion %s", minionID)
 				return true, nil
 			}
 		}
 	}
 
+	log.Printf("[DEBUG] ✗ Minion 未找到在已接受或等待列表中")
 	return false, nil
 }
 

@@ -1,5 +1,6 @@
 third_party/
 log/
+*.log
 .env.dev
 .env.prod
 .env

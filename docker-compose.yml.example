@@ -337,6 +337,7 @@ services:
       SALT_API_USERNAME: "${SALT_API_USERNAME:-saltapi}"
       SALT_API_PASSWORD: "${SALT_API_PASSWORD:-aiinfra-salt}"
       SALT_API_EAUTH: "${SALT_API_EAUTH:-file}"
+      SALT_API_TIMEOUT: "${SALT_API_TIMEOUT:-65s}"
       GITEA_ENABLED: "${GITEA_ENABLED:-true}"
       GITEA_BASE_URL: "${GITEA_BASE_URL:-http://gitea:3000}"
       GITEA_ADMIN_TOKEN: "${GITEA_ADMIN_TOKEN}"
