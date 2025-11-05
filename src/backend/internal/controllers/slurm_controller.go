@@ -484,12 +484,11 @@ func (c *SlurmController) DeleteNodeTemplate(ctx *gin.Context) {
 
 // GET /api/slurm/saltstack/integration
 func (c *SlurmController) GetSaltStackIntegration(ctx *gin.Context) {
-	// 直接调用真实的 Salt API，不使用 saltSvc.GetStatus（它会返回演示数据）
-	status, err := c.getRealSaltStackStatus(ctx)
+	// 使用 saltSvc 服务获取状态（更快，有缓存）
+	status, err := c.saltSvc.GetStatus(ctx)
 	if err != nil {
-		// 如果连接失败，返回错误而不是演示数据
-		ctx.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": fmt.Sprintf("Failed to connect to SaltStack API: %v", err),
+		// 如果连接失败，返回不可用状态
+		ctx.JSON(http.StatusOK, gin.H{
 			"data": map[string]interface{}{
 				"enabled":       false,
 				"master_status": "unavailable",
@@ -503,6 +502,7 @@ func (c *SlurmController) GetSaltStackIntegration(ctx *gin.Context) {
 				"recent_jobs":  0,
 				"services":     map[string]string{"salt-api": "unavailable"},
 				"last_updated": time.Now(),
+				"error":        err.Error(),
 			},
 		})
 		return
@@ -2308,4 +2308,112 @@ func (c *SlurmController) getEnvDuration(key string, defaultValue time.Duration)
 		}
 	}
 	return defaultValue
+}
+
+// ExecuteSlurmCommand 执行SLURM运维命令
+// POST /api/slurm/exec
+func (c *SlurmController) ExecuteSlurmCommand(ctx *gin.Context) {
+	var req struct {
+		Command string `json:"command" binding:"required"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":   "无效的请求参数",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// 验证命令是否为允许的SLURM命令
+	allowedCommands := []string{"sinfo", "squeue", "scontrol", "sacct", "sstat", "srun", "sbatch", "scancel"}
+	commandParts := strings.Fields(req.Command)
+	if len(commandParts) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "命令不能为空",
+		})
+		return
+	}
+
+	baseCommand := commandParts[0]
+	isAllowed := false
+	for _, allowed := range allowedCommands {
+		if baseCommand == allowed {
+			isAllowed = true
+			break
+		}
+	}
+
+	if !isAllowed {
+		ctx.JSON(http.StatusForbidden, gin.H{
+			"error":            fmt.Sprintf("不允许执行命令: %s", baseCommand),
+			"allowed_commands": allowedCommands,
+		})
+		return
+	}
+
+	// 通过SSH执行命令
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, req.Command)
+	if err != nil {
+		logrus.Errorf("执行SLURM命令失败: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "命令执行失败",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"command": req.Command,
+		"output":  output,
+		"stdout":  output, // 兼容性
+	})
+}
+
+// GetSlurmDiagnostics 获取SLURM诊断信息
+// GET /api/slurm/diagnostics
+func (c *SlurmController) GetSlurmDiagnostics(ctx *gin.Context) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	// 执行多个诊断命令
+	diagnostics := make(map[string]interface{})
+
+	// 1. sinfo - 节点信息
+	if output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, "sinfo"); err == nil {
+		diagnostics["sinfo"] = output
+	} else {
+		diagnostics["sinfo_error"] = err.Error()
+	}
+
+	// 2. sinfo -Nel - 详细节点列表
+	if output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, "sinfo -Nel"); err == nil {
+		diagnostics["sinfo_detail"] = output
+	} else {
+		diagnostics["sinfo_detail_error"] = err.Error()
+	}
+
+	// 3. squeue - 作业队列
+	if output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, "squeue"); err == nil {
+		diagnostics["squeue"] = output
+	} else {
+		diagnostics["squeue_error"] = err.Error()
+	}
+
+	// 4. scontrol show config - 配置信息
+	if output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, "scontrol show config"); err == nil {
+		diagnostics["config"] = output
+	} else {
+		diagnostics["config_error"] = err.Error()
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"diagnostics": diagnostics,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	})
 }

@@ -13,9 +13,13 @@ import (
 
 // SaltStackService SaltStack服务
 type SaltStackService struct {
-	masterURL string
-	apiToken  string
-	client    *http.Client
+	masterURL   string
+	apiToken    string
+	username    string
+	password    string
+	eauth       string
+	client      *http.Client
+	tokenExpiry time.Time
 }
 
 // SaltStackStatus SaltStack状态
@@ -64,11 +68,22 @@ func NewSaltStackService() *SaltStackService {
 	}
 
 	apiToken := os.Getenv("SALTSTACK_API_TOKEN")
-	// API Token是可选的，如果没有设置则为空
+	username := os.Getenv("SALT_API_USERNAME")
+	if username == "" {
+		username = "saltapi"
+	}
+	password := os.Getenv("SALT_API_PASSWORD")
+	eauth := os.Getenv("SALT_API_EAUTH")
+	if eauth == "" {
+		eauth = "file"
+	}
 
 	return &SaltStackService{
 		masterURL: masterURL,
 		apiToken:  apiToken,
+		username:  username,
+		password:  password,
+		eauth:     eauth,
 		client: &http.Client{
 			Timeout: 90 * time.Second, // 增加超时时间以支持 SaltStack minions 响应超时（默认60秒）
 		},
@@ -151,6 +166,11 @@ func (s *SaltStackService) getRealSaltStatus(ctx context.Context) (*SaltStackSta
 
 // executeSaltCommand 执行Salt API命令
 func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[string]interface{}) (map[string]interface{}, error) {
+	// 确保有有效的token
+	if err := s.ensureToken(ctx); err != nil {
+		return nil, fmt.Errorf("failed to get auth token: %v", err)
+	}
+
 	// 序列化请求数据
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -166,7 +186,7 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	// 如果有API token，添加认证头
+	// 添加认证头
 	if s.apiToken != "" {
 		req.Header.Set("X-Auth-Token", s.apiToken)
 	}
@@ -195,6 +215,79 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 	}
 
 	return result, nil
+}
+
+// ensureToken 确保有有效的认证token
+func (s *SaltStackService) ensureToken(ctx context.Context) error {
+	// 如果已有token且未过期，直接返回
+	if s.apiToken != "" && time.Now().Before(s.tokenExpiry) {
+		return nil
+	}
+
+	// 如果没有配置用户名或密码，无法登录
+	if s.username == "" || s.password == "" {
+		return fmt.Errorf("no username or password configured for Salt API authentication")
+	}
+
+	// 登录获取token
+	loginPayload := map[string]interface{}{
+		"username": s.username,
+		"password": s.password,
+		"eauth":    s.eauth,
+	}
+
+	jsonData, err := json.Marshal(loginPayload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal login request: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.masterURL+"/login", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create login request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send login request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read login response: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("login failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析登录响应
+	var loginResult map[string]interface{}
+	if err := json.Unmarshal(body, &loginResult); err != nil {
+		return fmt.Errorf("failed to parse login response: %v", err)
+	}
+
+	// 提取token
+	if returnData, ok := loginResult["return"].([]interface{}); ok && len(returnData) > 0 {
+		if tokenData, ok := returnData[0].(map[string]interface{}); ok {
+			if token, ok := tokenData["token"].(string); ok {
+				s.apiToken = token
+				// 设置token过期时间（通常是8小时，这里提前5分钟刷新）
+				if expire, ok := tokenData["expire"].(float64); ok {
+					s.tokenExpiry = time.Unix(int64(expire), 0).Add(-5 * time.Minute)
+				} else {
+					// 如果没有过期时间，默认7小时55分钟后过期
+					s.tokenExpiry = time.Now().Add(7*time.Hour + 55*time.Minute)
+				}
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to extract token from login response")
 }
 
 // ExecuteCommand 执行SaltStack命令

@@ -1139,11 +1139,31 @@ func (s *SSHService) checkMinionAccepted(masterHost string, possibleMinionIDs []
 		return false, fmt.Errorf("解析密钥列表响应失败: %v", err)
 	}
 
+	// 调试：输出原始响应
+	keysJSON, _ := json.Marshal(keysResult)
+	log.Printf("[DEBUG] Salt API keys响应: %s", string(keysJSON))
+
 	// 解析密钥数据
 	var minionsAccepted []string
 	var minionsPending []string
 
-	if returnData, ok := keysResult["return"].([]interface{}); ok && len(returnData) > 0 {
+	// 检查是否直接返回了字典（而不是嵌套在return数组中）
+	if minions, ok := keysResult["minions"].([]interface{}); ok {
+		// 直接格式: {"minions": [...], "minions_pre": [...]}
+		for _, m := range minions {
+			if minionID, ok := m.(string); ok {
+				minionsAccepted = append(minionsAccepted, minionID)
+			}
+		}
+		if minions, ok := keysResult["minions_pre"].([]interface{}); ok {
+			for _, m := range minions {
+				if minionID, ok := m.(string); ok {
+					minionsPending = append(minionsPending, minionID)
+				}
+			}
+		}
+	} else if returnData, ok := keysResult["return"].([]interface{}); ok && len(returnData) > 0 {
+		// 嵌套格式: {"return": [{"minions": [...], "minions_pre": [...]}]}
 		if data, ok := returnData[0].(map[string]interface{}); ok {
 			if minions, ok := data["minions"].([]interface{}); ok {
 				for _, m := range minions {
@@ -1157,6 +1177,22 @@ func (s *SSHService) checkMinionAccepted(masterHost string, possibleMinionIDs []
 					if minionID, ok := m.(string); ok {
 						minionsPending = append(minionsPending, minionID)
 					}
+				}
+			}
+		}
+	} else if returnData, ok := keysResult["return"].(map[string]interface{}); ok {
+		// 另一种格式: {"return": {"minions": [...], "minions_pre": [...]}}
+		if minions, ok := returnData["minions"].([]interface{}); ok {
+			for _, m := range minions {
+				if minionID, ok := m.(string); ok {
+					minionsAccepted = append(minionsAccepted, minionID)
+				}
+			}
+		}
+		if minions, ok := returnData["minions_pre"].([]interface{}); ok {
+			for _, m := range minions {
+				if minionID, ok := m.(string); ok {
+					minionsPending = append(minionsPending, minionID)
 				}
 			}
 		}

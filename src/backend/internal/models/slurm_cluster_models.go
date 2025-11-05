@@ -217,6 +217,29 @@ type NodeConfig struct {
 	Mounts         []MountConfig     `json:"mounts"`
 }
 
+// Scan 实现 database/sql.Scanner 接口
+func (nc *NodeConfig) Scan(value interface{}) error {
+	if value == nil {
+		*nc = NodeConfig{}
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to scan NodeConfig: expected []byte, got %T", value)
+	}
+
+	return json.Unmarshal(bytes, nc)
+}
+
+// Value 实现 database/sql/driver.Valuer 接口
+func (nc NodeConfig) Value() (driver.Value, error) {
+	if nc.Partitions == nil && nc.Features == nil && nc.CustomSettings == nil && nc.Mounts == nil {
+		return nil, nil
+	}
+	return json.Marshal(nc)
+}
+
 type PartitionConfig struct {
 	Name        string   `json:"name"`
 	Nodes       []string `json:"nodes"`

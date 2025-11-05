@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button,
   Typography, Modal, Form, Input, Select, message, Progress, List,
-  Descriptions, Badge, Tabs, Divider, Tooltip, Popconfirm, Checkbox
+  Descriptions, Badge, Tabs, Divider, Tooltip, Popconfirm, Checkbox, Skeleton
 } from 'antd';
 import {
   PlusOutlined, MinusOutlined, ReloadOutlined, ThunderboltOutlined,
@@ -46,6 +46,16 @@ const SlurmScalingPage = () => {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // 分阶段加载状态
+  const [loadingStages, setLoadingStages] = useState({
+    summary: true,
+    nodes: true,
+    jobs: true,
+    scaling: true,
+    templates: true,
+    salt: true
+  });
 
   // 扩缩容相关状态
   const [scalingStatus, setScalingStatus] = useState(null);
@@ -137,79 +147,132 @@ const SlurmScalingPage = () => {
     return 'default';
   };
 
-  // 数据加载函数
-  const loadData = async () => {
+  // 更新加载阶段状态
+  const updateLoadingStage = useCallback((stage, isLoading) => {
+    setLoadingStages(prev => ({
+      ...prev,
+      [stage]: isLoading
+    }));
+  }, []);
+
+  // 分阶段异步加载数据
+  const loadDataAsync = useCallback(async () => {
     setLoading(true);
+    setError(null);
+
     try {
-      const [
-        summaryRes, nodesRes, jobsRes,
-        scalingRes, templatesRes, saltRes, saltJobsRes
-      ] = await Promise.all([
-        slurmAPI.getSummary(),
-        slurmAPI.getNodes(),
-        slurmAPI.getJobs(),
-        extendedSlurmAPI.getScalingStatus(),
-        extendedSlurmAPI.getNodeTemplates(),
-        extendedSlurmAPI.getSaltStackIntegration(),
-        extendedSlurmAPI.getSaltJobs(),
+      // 第一阶段：加载核心数据（优先显示）
+      // 并行加载摘要和节点信息
+      Promise.all([
+        slurmAPI.getSummary()
+          .then(res => {
+            setSummary(res.data?.data);
+            updateLoadingStage('summary', false);
+          })
+          .catch(e => {
+            console.error('加载摘要失败:', e);
+            updateLoadingStage('summary', false);
+          }),
+        
+        slurmAPI.getNodes()
+          .then(res => {
+            setNodes(res.data?.data || []);
+            updateLoadingStage('nodes', false);
+          })
+          .catch(e => {
+            console.error('加载节点失败:', e);
+            updateLoadingStage('nodes', false);
+          })
       ]);
 
-      setSummary(summaryRes.data?.data);
-      setNodes(nodesRes.data?.data || []);
-      setJobs(jobsRes.data?.data || []);
-      setScalingStatus(scalingRes.data?.data);
-      // 安全处理模板响应数据
-      try {
-        const templateData = templatesRes.data?.data || [];
-        setNodeTemplates(Array.isArray(templateData) ? templateData : []);
-      } catch (templateError) {
-        console.warn('处理模板数据失败:', templateError);
-        setNodeTemplates([]);
-      }
-      setSaltIntegration(saltRes.data?.data);
-      setSaltJobs(saltJobsRes.data?.data || []);
-      setError(null);
+      // 第二阶段：加载作业信息（稍后加载）
+      setTimeout(() => {
+        slurmAPI.getJobs()
+          .then(res => {
+            setJobs(res.data?.data || []);
+            updateLoadingStage('jobs', false);
+          })
+          .catch(e => {
+            console.error('加载作业失败:', e);
+            updateLoadingStage('jobs', false);
+          });
+      }, 100);
+
+      // 第三阶段：加载扩展功能数据（延迟加载）
+      setTimeout(() => {
+        Promise.all([
+          extendedSlurmAPI.getScalingStatus()
+            .then(res => {
+              setScalingStatus(res.data?.data);
+              updateLoadingStage('scaling', false);
+            })
+            .catch(e => {
+              console.error('加载扩缩容状态失败:', e);
+              updateLoadingStage('scaling', false);
+            }),
+          
+          extendedSlurmAPI.getNodeTemplates()
+            .then(res => {
+              try {
+                const templateData = res.data?.data || [];
+                setNodeTemplates(Array.isArray(templateData) ? templateData : []);
+              } catch (templateError) {
+                console.warn('处理模板数据失败:', templateError);
+                setNodeTemplates([]);
+              }
+              updateLoadingStage('templates', false);
+            })
+            .catch(e => {
+              console.error('加载节点模板失败:', e);
+              updateLoadingStage('templates', false);
+            }),
+          
+          Promise.all([
+            extendedSlurmAPI.getSaltStackIntegration()
+              .then(res => {
+                setSaltIntegration(res.data?.data);
+              })
+              .catch(e => {
+                console.error('加载SaltStack集成失败:', e);
+                // 设置默认的不可用状态
+                setSaltIntegration({
+                  enabled: false,
+                  master_status: 'unavailable',
+                  api_status: 'unavailable',
+                  minions: { total: 0, online: 0, offline: 0 }
+                });
+              }),
+            
+            extendedSlurmAPI.getSaltJobs()
+              .then(res => {
+                setSaltJobs(res.data?.data || []);
+              })
+              .catch(e => {
+                console.error('加载Salt作业失败:', e);
+                setSaltJobs([]);
+              })
+          ]).finally(() => {
+            updateLoadingStage('salt', false);
+          })
+        ]);
+      }, 300);
+
+      setLoading(false);
     } catch (e) {
       console.error('加载数据失败', e);
       setError(e);
-      
-      // 设置默认数据，避免页面完全无法使用
-      if (nodeTemplates.length === 0) {
-        setNodeTemplates([
-          {
-            id: 'small',
-            name: '小型计算节点',
-            cpus: 2,
-            memory_gb: 4,
-            disk_gb: 50,
-            os: 'ubuntu20.04',
-            description: '2核4GB内存，适合轻量级计算任务'
-          },
-          {
-            id: 'medium', 
-            name: '中型计算节点',
-            cpus: 4,
-            memory_gb: 8,
-            disk_gb: 100,
-            os: 'ubuntu20.04',
-            description: '4核8GB内存，适合中等规模计算任务'
-          },
-          {
-            id: 'large',
-            name: '大型计算节点', 
-            cpus: 8,
-            memory_gb: 16,
-            disk_gb: 200,
-            os: 'ubuntu20.04',
-            description: '8核16GB内存，适合大规模计算任务'
-          }
-        ]);
-      }
-      
-      message.error('部分数据加载失败，已使用默认配置');
-    } finally {
       setLoading(false);
+      
+      // 设置所有阶段为加载完成
+      Object.keys(loadingStages).forEach(stage => {
+        updateLoadingStage(stage, false);
+      });
     }
+  }, [updateLoadingStage]);
+
+  // 数据加载函数（兼容旧版本）
+  const loadData = async () => {
+    await loadDataAsync();
   };
 
   // 扩缩容处理函数
@@ -390,20 +453,19 @@ const SlurmScalingPage = () => {
   };
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30000); // 30秒刷新
+    // 立即加载数据（异步方式）
+    loadDataAsync();
+    
+    // 定时刷新（每30秒）
+    const interval = setInterval(() => {
+      loadDataAsync();
+    }, 30000);
+    
     return () => clearInterval(interval);
-  }, []);
+  }, [loadDataAsync]);
 
-  if (loading && !summary) {
-    return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <Spin size="large" />
-        <div style={{ marginTop: 16 }}>加载 SLURM 集群状态...</div>
-      </div>
-    );
-  }
-
+  // 首次加载时不显示全屏加载，而是直接显示页面框架
+  // 数据通过骨架屏逐步加载
   return (
     <div style={{ padding: 24 }}>
       {/* 任务通知栏 */}
@@ -412,7 +474,7 @@ const SlurmScalingPage = () => {
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={2}>
-            <ClusterOutlined /> SLURM
+            <ClusterOutlined /> SLURM 集群管理
           </Title>
           <Space>
             <Button icon={<ReloadOutlined />} onClick={loadData} loading={loading}>
@@ -439,70 +501,88 @@ const SlurmScalingPage = () => {
             type="error"
             showIcon
             message="数据加载失败"
-            description="请检查后端服务是否正常运行"
+            description="请检查后端服务是否正常运行，或者稍后重试"
           />
         )}
 
-        {/* 集群概览 */}
+        {/* 集群概览 - 支持骨架屏 */}
         <Row gutter={16}>
           <Col span={4}>
             <Card>
-              <Statistic
-                title="总节点数"
-                value={summary?.nodes_total || 0}
-                prefix={<NodeIndexOutlined />}
-                loading={loading}
-              />
+              {loadingStages.summary ? (
+                <Skeleton active paragraph={{ rows: 1 }} />
+              ) : (
+                <Statistic
+                  title="总节点数"
+                  value={summary?.nodes_total || 0}
+                  prefix={<NodeIndexOutlined />}
+                />
+              )}
             </Card>
           </Col>
           <Col span={4}>
             <Card>
-              <Statistic
-                title="空闲节点"
-                value={summary?.nodes_idle || 0}
-                valueStyle={{ color: '#3f8600' }}
-                loading={loading}
-              />
+              {loadingStages.summary ? (
+                <Skeleton active paragraph={{ rows: 1 }} />
+              ) : (
+                <Statistic
+                  title="空闲节点"
+                  value={summary?.nodes_idle || 0}
+                  valueStyle={{ color: '#3f8600' }}
+                />
+              )}
             </Card>
           </Col>
           <Col span={4}>
             <Card>
-              <Statistic
-                title="运行节点"
-                value={summary?.nodes_alloc || 0}
-                valueStyle={{ color: '#1890ff' }}
-                loading={loading}
-              />
+              {loadingStages.summary ? (
+                <Skeleton active paragraph={{ rows: 1 }} />
+              ) : (
+                <Statistic
+                  title="运行节点"
+                  value={summary?.nodes_alloc || 0}
+                  valueStyle={{ color: '#1890ff' }}
+                />
+              )}
             </Card>
           </Col>
           <Col span={4}>
             <Card>
-              <Statistic
-                title="运行作业"
-                value={summary?.jobs_running || 0}
-                prefix={<PlayCircleOutlined />}
-                loading={loading}
-              />
+              {loadingStages.jobs ? (
+                <Skeleton active paragraph={{ rows: 1 }} />
+              ) : (
+                <Statistic
+                  title="运行作业"
+                  value={summary?.jobs_running || 0}
+                  prefix={<PlayCircleOutlined />}
+                />
+              )}
             </Card>
           </Col>
           <Col span={4}>
             <Card>
-              <Statistic
-                title="等待作业"
-                value={summary?.jobs_pending || 0}
-                valueStyle={{ color: '#faad14' }}
-                loading={loading}
-              />
+              {loadingStages.jobs ? (
+                <Skeleton active paragraph={{ rows: 1 }} />
+              ) : (
+                <Statistic
+                  title="等待作业"
+                  value={summary?.jobs_pending || 0}
+                  valueStyle={{ color: '#faad14' }}
+                />
+              )}
             </Card>
           </Col>
           <Col span={4}>
             <Card>
-              <Statistic
-                title="SaltStack Minions"
-                value={saltIntegration?.connected_minions || 0}
-                prefix={<ApiOutlined />}
-                loading={loading}
-              />
+              {loadingStages.salt ? (
+                <Skeleton active paragraph={{ rows: 1 }} />
+              ) : (
+                <Statistic
+                  title="SaltStack Minions"
+                  value={saltIntegration?.connected_minions || 0}
+                  prefix={<ApiOutlined />}
+                />
+              )}
             </Card>
           </Col>
         </Row>
@@ -542,35 +622,41 @@ const SlurmScalingPage = () => {
                 </Button>
               </Space>
             }>
-              <Table
-                rowKey="name"
-                dataSource={nodes}
-                columns={nodeColumns}
-                size="small"
-                pagination={{ pageSize: 10 }}
-                loading={loading}
-              />
+              {loadingStages.nodes ? (
+                <Skeleton active paragraph={{ rows: 5 }} />
+              ) : (
+                <Table
+                  rowKey="name"
+                  dataSource={nodes}
+                  columns={nodeColumns}
+                  size="small"
+                  pagination={{ pageSize: 10 }}
+                />
+              )}
             </Card>
           </TabPane>
 
           <TabPane tab={<span><PlayCircleOutlined />作业队列</span>} key="jobs">
             <Card title="作业状态">
-              <Table
-                rowKey="id"
-                dataSource={jobs}
-                columns={[
-                  { title: '作业ID', dataIndex: 'id', key: 'id' },
-                  { title: '名称', dataIndex: 'name', key: 'name' },
-                  { title: '用户', dataIndex: 'user', key: 'user' },
-                  { title: '状态', dataIndex: 'state', key: 'state',
-                    render: (state) => <Tag color={state === 'RUNNING' ? 'blue' : state === 'PENDING' ? 'orange' : 'default'}>{state}</Tag> },
-                  { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
-                  { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
-                ]}
-                size="small"
-                pagination={{ pageSize: 10 }}
-                loading={loading}
-              />
+              {loadingStages.jobs ? (
+                <Skeleton active paragraph={{ rows: 5 }} />
+              ) : (
+                <Table
+                  rowKey="id"
+                  dataSource={jobs}
+                  columns={[
+                    { title: '作业ID', dataIndex: 'id', key: 'id' },
+                    { title: '名称', dataIndex: 'name', key: 'name' },
+                    { title: '用户', dataIndex: 'user', key: 'user' },
+                    { title: '状态', dataIndex: 'state', key: 'state',
+                      render: (state) => <Tag color={state === 'RUNNING' ? 'blue' : state === 'PENDING' ? 'orange' : 'default'}>{state}</Tag> },
+                    { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
+                    { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
+                  ]}
+                  size="small"
+                  pagination={{ pageSize: 10 }}
+                />
+              )}
             </Card>
           </TabPane>
 

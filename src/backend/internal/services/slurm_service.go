@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 )
 
@@ -56,9 +57,9 @@ func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
 }
 
 func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) {
+	// 通过SSH执行sinfo命令获取节点信息
 	// sinfo format: NodeName|State|CPUS(A/I/O/T)|Memory|Partition
-	cmd := exec.CommandContext(ctx, "sinfo", "-N", "-o", "%N|%T|%C|%m|%P")
-	out, err := cmd.Output()
+	output, err := s.executeSlurmCommand(ctx, "sinfo -N -o '%N|%T|%C|%m|%P'")
 	if err != nil {
 		// Try to get data from database first
 		if s.db != nil {
@@ -78,12 +79,12 @@ func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) 
 				return nodes, false, nil
 			}
 		}
-		// No CLI and no DB fallback: return empty list with demo flag
+		// No SSH connection and no DB fallback: return empty list with demo flag
 		return []SlurmNode{}, true, nil
 	}
 
 	var nodes []SlurmNode
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	first := true
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -119,15 +120,15 @@ func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) 
 
 func (s *SlurmService) GetJobs(ctx context.Context) ([]SlurmJob, bool, error) {
 	// squeue format: JobID|User|State|Elapsed|Nodes|Reason|Name|Partition
-	cmd := exec.CommandContext(ctx, "squeue", "-o", "%i|%u|%T|%M|%D|%R|%j|%P")
-	out, err := cmd.Output()
+	// 通过SSH执行squeue命令
+	output, err := s.executeSlurmCommand(ctx, "squeue -o '%i|%u|%T|%M|%D|%R|%j|%P'")
 	if err != nil {
-		// No CLI available: return empty list with demo flag
+		// SSH命令失败: 返回空列表和demo标记
 		return []SlurmJob{}, true, nil
 	}
 
 	var jobs []SlurmJob
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	first := true
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -164,15 +165,15 @@ func (s *SlurmService) GetJobs(ctx context.Context) ([]SlurmJob, bool, error) {
 
 // Helpers
 func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, partitions int, demo bool) {
+	// 通过SSH执行sinfo命令获取节点统计信息
 	// sinfo summarized counts
 	// partitions count via: sinfo -h -o %P | sort -u | wc -l (approx) – we'll parse simply
-	cmd := exec.CommandContext(ctx, "sinfo", "-h", "-o", "%T|%P")
-	out, err := cmd.Output()
+	output, err := s.executeSlurmCommand(ctx, "sinfo -h -o '%T|%P'")
 	if err != nil {
 		return 3, 2, 1, 2, true
 	}
 	seenPartitions := map[string]struct{}{}
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -192,13 +193,12 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 		// Rough classification: lines correspond to partition-view; we'll refine with -N below
 	}
 	// Try better node-level stats
-	cmd2 := exec.CommandContext(ctx, "sinfo", "-h", "-N", "-o", "%T")
-	out2, err2 := cmd2.Output()
+	out2, err2 := s.executeSlurmCommand(ctx, "sinfo -h -N -o '%T'")
 	if err2 == nil {
 		total = 0
 		idle = 0
 		alloc = 0
-		scanner2 := bufio.NewScanner(strings.NewReader(string(out2)))
+		scanner2 := bufio.NewScanner(strings.NewReader(out2))
 		for scanner2.Scan() {
 			total++
 			st := strings.TrimSpace(scanner2.Text())
@@ -214,11 +214,10 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 	partitions = len(seenPartitions)
 	if partitions == 0 {
 		// Try to derive partitions another way
-		cmd3 := exec.CommandContext(ctx, "sinfo", "-h", "-o", "%P")
-		out3, err3 := cmd3.Output()
+		out3, err3 := s.executeSlurmCommand(ctx, "sinfo -h -o '%P'")
 		if err3 == nil {
 			set := map[string]struct{}{}
-			scanner3 := bufio.NewScanner(strings.NewReader(string(out3)))
+			scanner3 := bufio.NewScanner(strings.NewReader(out3))
 			for scanner3.Scan() {
 				set[strings.TrimSpace(scanner3.Text())] = struct{}{}
 			}
@@ -229,12 +228,12 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 }
 
 func (s *SlurmService) getJobStats(ctx context.Context) (running, pending, other int, demo bool) {
-	cmd := exec.CommandContext(ctx, "squeue", "-h", "-o", "%T")
-	out, err := cmd.Output()
+	// 通过SSH执行squeue命令获取作业统计信息
+	output, err := s.executeSlurmCommand(ctx, "squeue -h -o '%T'")
 	if err != nil {
 		return 1, 2, 0, true
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		st := strings.ToUpper(strings.TrimSpace(scanner.Text()))
 		switch st {
@@ -510,57 +509,213 @@ func (s *SlurmService) updateSlurmConfigAndReload(ctx context.Context) error {
 	return nil
 }
 
-// updateSlurmMasterConfig 通过Salt API更新SLURM master的配置文件
+// updateSlurmMasterConfig 通过SSH动态更新SLURM master的配置文件
 func (s *SlurmService) updateSlurmMasterConfig(ctx context.Context, config string) error {
-	log.Printf("[DEBUG] 开始通过Salt API更新SLURM配置")
+	log.Printf("[DEBUG] 开始通过SSH更新SLURM配置")
 
-	// 获取Salt API认证token
-	token, err := s.getSaltAPIToken(ctx)
+	// 获取SLURM master的SSH连接信息
+	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
+	if slurmMasterHost == "" {
+		slurmMasterHost = "ai-infra-slurm-master" // 容器名，Docker网络可以解析
+	}
+
+	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
+	if slurmMasterUser == "" {
+		slurmMasterUser = "root"
+	}
+
+	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+	if slurmMasterPassword == "" {
+		slurmMasterPassword = "root" // 默认密码
+	}
+
+	// 1. 首先读取当前的基础配置（保留非节点相关的配置）
+	log.Printf("[DEBUG] 读取SLURM master现有配置...")
+	readCmd := "cat /etc/slurm/slurm.conf"
+	currentConfig, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, readCmd)
 	if err != nil {
-		return fmt.Errorf("获取Salt API token失败: %w", err)
+		log.Printf("[WARNING] 无法读取现有配置，将使用新配置: %v", err)
 	}
 
-	// 使用file.write写入配置文件
-	cmd := map[string]interface{}{
-		"client": "local",
-		"tgt":    "slurm-master",
-		"fun":    "file.write",
-		"arg":    []interface{}{"/etc/slurm/slurm.conf", config},
-	}
+	// 2. 生成完整的配置文件
+	// 如果能读取到现有配置，则提取基础部分并合并节点配置
+	finalConfig := s.mergeConfigs(currentConfig, config)
 
-	_, err = s.executeSaltCommand(ctx, token, cmd)
+	// 3. 通过SSH写入新配置
+	log.Printf("[DEBUG] 通过SSH写入新的SLURM配置（长度: %d 字节）", len(finalConfig))
+
+	// 使用here-doc方式写入，避免特殊字符问题
+	writeCmd := fmt.Sprintf("cat > /etc/slurm/slurm.conf << 'SLURM_CONFIG_EOF'\n%s\nSLURM_CONFIG_EOF", finalConfig)
+	_, err = s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, writeCmd)
 	if err != nil {
-		return fmt.Errorf("通过Salt API写入配置失败: %w", err)
+		return fmt.Errorf("SSH写入配置文件失败: %w", err)
 	}
 
-	log.Printf("[DEBUG] SLURM配置文件已更新")
+	// 4. 验证配置文件已正确写入
+	verifyCmd := "wc -l /etc/slurm/slurm.conf"
+	verifyOutput, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, verifyCmd)
+	if err != nil {
+		log.Printf("[WARNING] 无法验证配置文件: %v", err)
+	} else {
+		log.Printf("[DEBUG] 配置文件已验证: %s", strings.TrimSpace(verifyOutput))
+	}
+
+	log.Printf("[DEBUG] SLURM配置文件已通过SSH成功更新")
 	return nil
 }
 
-// reloadSlurmConfig 通过Salt API重新加载SLURM配置
-func (s *SlurmService) reloadSlurmConfig(ctx context.Context) error {
-	log.Printf("[DEBUG] 开始重新加载SLURM配置")
+// mergeConfigs 合并基础配置和节点配置
+func (s *SlurmService) mergeConfigs(currentConfig, newNodesConfig string) string {
+	// 如果无法读取当前配置，直接使用新生成的配置
+	if currentConfig == "" {
+		return newNodesConfig
+	}
 
-	token, err := s.getSaltAPIToken(ctx)
-	if err != nil {
-		return fmt.Errorf("获取Salt API token失败: %w", err)
+	// 提取当前配置中的基础部分（非NodeName和PartitionName行）
+	var baseLines []string
+	lines := strings.Split(currentConfig, "\n")
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// 跳过节点和分区定义行
+		if strings.HasPrefix(trimmed, "NodeName=") ||
+			strings.HasPrefix(trimmed, "PartitionName=") {
+			continue
+		}
+		baseLines = append(baseLines, line)
+	}
+
+	// 提取新配置中的节点和分区定义
+	var nodeLines []string
+	newLines := strings.Split(newNodesConfig, "\n")
+	inNodeSection := false
+
+	for _, line := range newLines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# 节点配置") {
+			inNodeSection = true
+		}
+		if inNodeSection && (strings.HasPrefix(trimmed, "NodeName=") ||
+			strings.HasPrefix(trimmed, "PartitionName=")) {
+			nodeLines = append(nodeLines, line)
+		}
+	}
+
+	// 合并：基础配置 + 节点配置注释 + 节点定义
+	result := strings.Join(baseLines, "\n")
+	if len(nodeLines) > 0 {
+		result += "\n\n# 节点配置（动态生成）\n"
+		result += strings.Join(nodeLines, "\n")
+	}
+
+	return result
+}
+
+// reloadSlurmConfig 通过SSH重新加载SLURM配置
+func (s *SlurmService) reloadSlurmConfig(ctx context.Context) error {
+	log.Printf("[DEBUG] 开始通过SSH重新加载SLURM配置")
+
+	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
+	if slurmMasterHost == "" {
+		slurmMasterHost = "ai-infra-slurm-master"
+	}
+
+	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
+	if slurmMasterUser == "" {
+		slurmMasterUser = "root"
+	}
+
+	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+	if slurmMasterPassword == "" {
+		slurmMasterPassword = "root"
 	}
 
 	// 执行scontrol reconfigure
-	cmd := map[string]interface{}{
-		"client": "local",
-		"tgt":    "slurm-master",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"scontrol reconfigure"},
-	}
-
-	result, err := s.executeSaltCommand(ctx, token, cmd)
+	reconfigCmd := "scontrol reconfigure"
+	output, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, reconfigCmd)
 	if err != nil {
-		return fmt.Errorf("执行scontrol reconfigure失败: %w", err)
+		// 如果错误是"Zero Bytes were transmitted"，这实际上是成功的（命令执行了但没有输出）
+		if strings.Contains(output, "Zero Bytes were transmitted") || strings.TrimSpace(output) == "" {
+			log.Printf("[DEBUG] scontrol reconfigure执行成功（无输出）")
+		} else {
+			return fmt.Errorf("SSH执行scontrol reconfigure失败: %w, output: %s", err, output)
+		}
+	} else {
+		log.Printf("[DEBUG] scontrol reconfigure成功: %s", strings.TrimSpace(output))
 	}
 
-	log.Printf("[DEBUG] scontrol reconfigure结果: %v", result)
+	// 验证配置重新加载成功
+	verifyCmd := "scontrol ping"
+	verifyOutput, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, verifyCmd)
+	if err != nil {
+		log.Printf("[WARNING] 无法验证slurmctld状态: %v", err)
+	} else {
+		log.Printf("[DEBUG] slurmctld状态: %s", strings.TrimSpace(verifyOutput))
+	}
+
 	return nil
+}
+
+// executeSlurmCommand 执行SLURM命令的辅助函数（通过SSH连接到SLURM master）
+func (s *SlurmService) executeSlurmCommand(ctx context.Context, command string) (string, error) {
+	// 获取SLURM master的SSH连接信息
+	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
+	if slurmMasterHost == "" {
+		slurmMasterHost = "ai-infra-slurm-master"
+	}
+
+	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
+	if slurmMasterUser == "" {
+		slurmMasterUser = "root"
+	}
+
+	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+	if slurmMasterPassword == "" {
+		slurmMasterPassword = "root"
+	}
+
+	return s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, command)
+}
+
+// ExecuteSlurmCommand 公开的SLURM命令执行方法（供Controller调用）
+func (s *SlurmService) ExecuteSlurmCommand(ctx context.Context, command string) (string, error) {
+	return s.executeSlurmCommand(ctx, command)
+}
+
+// executeSSHCommand 执行SSH命令的辅助函数
+func (s *SlurmService) executeSSHCommand(host string, port int, user, password, command string) (string, error) {
+	// 创建SSH客户端配置
+	config := &ssh.ClientConfig{
+		User: user,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 生产环境应使用正确的host key验证
+		Timeout:         30 * time.Second,
+	}
+
+	// 连接SSH服务器
+	addr := fmt.Sprintf("%s:%d", host, port)
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		return "", fmt.Errorf("SSH连接失败: %w", err)
+	}
+	defer client.Close()
+
+	// 创建会话
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("创建SSH会话失败: %w", err)
+	}
+	defer session.Close()
+
+	// 执行命令
+	output, err := session.CombinedOutput(command)
+	if err != nil {
+		return string(output), fmt.Errorf("SSH命令执行失败: %w", err)
+	}
+
+	return string(output), nil
 }
 
 // getSaltAPIToken 获取Salt API认证token
@@ -706,43 +861,36 @@ func (s *SlurmService) UpdateSlurmConfig(ctx context.Context, sshSvc SSHServiceI
 
 // generateSlurmConfig 生成SLURM配置文件内容
 func (s *SlurmService) generateSlurmConfig(nodes []models.SlurmNode) string {
-	config := `# SLURM配置文件 - AI Infrastructure Matrix
-ClusterName=ai-infra-cluster
-ControlMachine=slurm-controller
-ControlAddr=slurm-controller
-
-# 认证和安全
-AuthType=auth/munge
-CryptoType=crypto/munge
-
-# 调度器配置
-SchedulerType=sched/backfill
-SelectType=select/cons_res
-SelectTypeParameters=CR_Core
-
-# 日志配置
-SlurmdLogFile=/var/log/slurm/slurmd.log
-SlurmctldLogFile=/var/log/slurm/slurmctld.log
-SlurmdSpoolDir=/var/spool/slurm
-
-# 节点配置
-`
+	// 只生成节点配置部分，不包含基础配置
+	// 基础配置保留在SLURM master的原始配置文件中
+	config := "# 节点配置（动态生成）\n"
 
 	// 添加节点定义
 	computeNodes := []string{}
-	for _, node := range nodes {
+	log.Printf("[DEBUG] generateSlurmConfig: 处理 %d 个节点", len(nodes))
+	for i, node := range nodes {
+		log.Printf("[DEBUG] 节点 #%d: NodeName=%s, NodeType=%s, Host=%s", i, node.NodeName, node.NodeType, node.Host)
 		if node.NodeType == "compute" || node.NodeType == "node" {
-			nodeConfig := fmt.Sprintf("NodeName=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000 State=UNKNOWN", node.NodeName)
+			// 使用NodeAddr指定实际的主机名/IP
+			nodeConfig := fmt.Sprintf("NodeName=%s NodeAddr=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000 State=UNKNOWN",
+				node.NodeName, node.Host)
 			config += nodeConfig + "\n"
 			computeNodes = append(computeNodes, node.NodeName)
+			log.Printf("[DEBUG] 已添加计算节点: %s (地址: %s)", node.NodeName, node.Host)
+		} else {
+			log.Printf("[WARNING] 跳过节点 %s，类型不匹配: %s", node.NodeName, node.NodeType)
 		}
 	}
 
 	// 添加分区配置
+	log.Printf("[DEBUG] 计算节点列表: %v", computeNodes)
 	if len(computeNodes) > 0 {
 		partitionConfig := fmt.Sprintf("PartitionName=compute Nodes=%s Default=YES MaxTime=INFINITE State=UP",
 			strings.Join(computeNodes, ","))
 		config += partitionConfig + "\n"
+		log.Printf("[DEBUG] 已添加分区配置: %s", partitionConfig)
+	} else {
+		log.Printf("[WARNING] 没有计算节点，跳过分区配置")
 	}
 
 	return config

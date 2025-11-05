@@ -1731,3 +1731,269 @@ OCI runtime exec failed: exec failed: unable to start container process: exec: "
 137. golang 函数只做公共步骤的处理，不用硬编码 bash 脚本进去，而是直接调用 bash 脚本的执行结果，这样可以更好，调整下，不要随意修改 golang 的逻辑而是调整安装脚本，所有的安装逻辑可以封装在 bash 脚本中
 
 138. 现在让我们来优化一下 apphub 构建流程太慢这个需求，目前 apphub 每次使用 build.sh build apphub --force 都会从公网下载所有依赖包并构建，这样非常浪费时间，我想要优化一下，既然已经采用了构建 ID，这里可以根据构建 ID 获取最新的镜像，如果镜像中存在期望的 rpm 、deb、二进制包则不需要重复下载了，校验下文件是否有内容即可，后续考虑直接增加 md5sum 校验或者 sha256 校验，避免重复使用网络下载包，这样不优雅，调整下 build.sh 脚本和 dockerfile
+
+139. 通过 go 的ssh 修改配置并重载 slurm 的方式来实现，不要写死节点配置，保留基础的其他配置，这里期望的是一个动态的系统操纵 slurm，请实现这个功能
+140. 现在使用@playwright 测试http://192.168.0.200:8080/slurm问题，test-ssh01	compute*	down*	2	1000	未配置	
+test-ssh02	compute*	down*	2	1000	未配置	
+test-ssh03	compute*	down*	2	1000	未配置，,docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+compute*     up   infinite      3  down* test-ssh[01-03]
+需要修复问题，状态都是 down 了，需要继续测试并修复，这里需要将所有 slurm 相关运维命令集成到 backend，同时 slurm 需要进行 slurm-restapi 需要进行部署并测试 slurm 的 restapi，参考---
+• name: 更新 /etc/hosts 文件中的 Xsky 地址
+
+  hosts: "{{ target_hosts }}"
+  become: yes  # 提权至 root 用户
+  gather_facts: true  # 本例中不需要收集系统信息，可加快执行速度
+  vars:
+    master_node: aihpc-master
+    package_list:
+      ◦ make
+
+      ◦ hwloc
+
+      ◦ libhwloc-dev
+
+      ◦ libmunge-dev
+
+      ◦ libmunge2
+
+      ◦ munge
+
+      ◦ liblua5.3-0
+
+      ◦ libfreeipmi17
+
+      ◦ libjwt0
+
+      ◦ libb64-0d
+
+      ◦ libipmimonitoring6
+
+      ◦ librdkafka1
+
+      ◦ freeipmi-common
+
+      # - mariadb-server
+      ◦ libmysqlclient-dev
+
+  tasks:
+    ◦ name: Ensure munge group exists with GID 1108
+
+      group:
+        name: munge
+        gid: 1108
+        state: present
+    ◦ name: Create munge user with specific properties
+
+      user:
+        name: munge
+        comment: "Munge Uid 'N' Gid Emporium"
+        uid: 1108
+        group: munge
+        home: /var/lib/munge
+        shell: /sbin/nologin
+        create_home: yes  # 对应 -m 选项，创建家目录
+        state: present
+
+    ◦ name: Ensure slurm group exists with GID 1109
+
+      group:
+        name: slurm
+        gid: 1109
+        state: present  # 确保组存在
+
+
+    ◦ name: Create slurm user with specified properties
+
+      user:
+        name: slurm
+        comment: "Slurm manager"
+        uid: 1109
+        group: slurm  # 指定用户的主组
+        home: /var/lib/slurm
+        shell: /bin/bash
+        create_home: yes  # 对应 -m 选项，创建家目录
+        state: present  # 确保用户存在
+    ◦ name: 更新APT软件包缓存（可选，推荐）
+
+      ansible.builtin.apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"  # 确保只在Debian/Ubuntu系统上执行
+      ignore_errors: yes
+    
+    ◦ name: 安装 rng-tools 软件包
+
+      apt:
+        name: rng-tools5
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    ◦ name: yum安装 rng-tools 软件包
+
+      shell: yum -y install rng-tools
+      when: ansible_os_family == "Anolis"
+    
+#   - name: rngd -r /dev/urandom
+
+
+    ◦ name: 检查并修改 rngd.service 文件
+
+      lineinfile:
+        path: /usr/lib/systemd/system/rngd.service
+        regexp: '^ExecStart=/usr/sbin/rngd -f'
+        line: 'ExecStart=/sbin/rngd -f -r /dev/urandom'
+        backup: yes  # 修改前备份原文件
+        state: present
+      notify:  # 如果文件被更改，则通知 handler 重启服务
+        ▪ reload systemd
+
+        ▪ restart rngd
+
+
+          #    - name: 重新加载 systemd 配置
+          #systemd:
+          #daemon_reload: yes
+
+    ◦ name: 启用 rngd 服务
+
+      systemd:
+        name: rngd
+        enabled: yes
+
+        #    - name: 启动 rngd 服务
+        #systemd:
+        #name: rngd
+        #state: started
+
+
+    ◦ name: 安装必备的软件包
+
+      apt:
+        name: "{{ package_list }}"
+        state: present
+        cache_valid_time: 3600      # 如果索引在1小时内已更新，则跳过更新以节省时间
+      when: ansible_os_family == "Debian"
+      #when: ansible_distribution == "Ubuntu"  # 仅在Ubuntu系统上执行
+
+    ◦ name: yum安装必备的软件包
+
+      # shell: yum -y install "{{ package_list | join(' ') }}"
+      shell: yum -y install  munge munge-libs munge-devel hwloc hwloc-devel mariadb-server make
+      when: ansible_os_family == "Anolis"
+      #when: ansible_distribution == "Ubuntu"  # 仅在Ubuntu系统上执行
+
+      # - name: 检查Munge服务是否正常工作
+      #shell: "munge -n | ssh {{ master_node }} unmunge"
+      #register: munge_check  # 将命令执行结果注册到变量munge_check
+      #ignore_errors: yes  # 忽略此任务的错误，使Playbook继续执行
+      #changed_when: false  # 此检查任务不改变系统状态
+      #tags: munkey
+      
+    ◦ name: 部署munge.key到目标节点
+
+      copy:
+        src: templates/munge.key
+        dest: /etc/munge/
+        owner: munge
+        group: munge
+        mode: '0400'  # 设置权限为400，确保安全
+        #when: munge_check.rc != 0
+      tags: munkey
+    ◦ name: restart munge
+
+      systemd:
+        name: munge
+        state: restarted
+
+    ◦ name: 确保 Munge 服务已启动并启用
+
+      systemd:
+        name: munge
+        state: started
+        enabled: yes
+
+
+    ◦ name: 安装主要科学计算软件包（MPI, HDF5, LAM）
+
+      ansible.builtin.apt:
+        name:
+          ▪ lam4-dev
+
+          ▪ libhdf5-dev
+
+          ▪ libhdf5-mpich-dev
+
+          ▪ libhdf5-openmpi-dev
+
+          ▪ mpich
+
+          ▪ openmpi-bin
+
+        state: present  # 确保软件包被安装。若需始终安装最新版，可改为 latest
+        # autoremove: yes  # （可选）安装后自动移除不再需要的依赖包
+        # force: no        # 通常保持默认的no，避免强制覆盖已安装的包
+      when: ansible_os_family == "Debian"
+      register: package_install_result  # 将安装结果注册到一个变量，便于调试或后续任务判断
+      # ignore_errors: yes  # 如果希望某个包安装失败时不中断整个Playbook，可取消注释此句
+
+    ◦ name: 安装主要科学计算软件包（MPI, HDF5, LAM）
+
+      shell: yum -y install  hdf5-devel  hdf5-mpich-devel hdf5-openmpi-devel  mpich mpich-devel   openmpi openmpi-devel
+      when: ansible_os_family == "Anolis"
+      register: package_install_result  # 将安装结果注册到一个变量，便于调试或后续任务判断
+
+    ◦ name: 安装Tcl及其开发包
+
+      ansible.builtin.apt:
+        name:
+          ▪ tcl
+
+          ▪ tcl-dev
+
+        state: present
+      when: ansible_os_family == "Debian"
+      # 可以同样使用 register 来记录此任务的执行状态
+
+    ◦ name: 安装Tcl及其开发包
+
+      shell: yum -y install tcl tcl-devel
+      when: ansible_os_family == "Anolis"
+
+    ◦ name: 确保在[sssd]段落中设置了cache_credentials = False
+
+      ansible.builtin.lineinfile:
+        path: /etc/sssd/sssd.conf
+        regexp: '^\s*cache_credentials\s*='
+        line: 'cache_credentials = False'
+        insertafter: '^\[sssd\]'
+        state: present
+        backup: yes  # 强烈建议在修改前备份原文件
+      notify: restart sssd  # 如果文件发生更改，则触发重启SSSD服务的操作
+
+  handlers:
+    ◦ name: reload systemd
+
+      systemd:
+        daemon_reload: yes
+
+    ◦ name: restart rngd
+
+      systemd:
+        name: rngd
+        state: restarted
+
+    ◦ name: restart munge
+
+      systemd:
+        name: munge
+        state: restarted
+
+    ◦ name: restart sssd
+
+      systemd:
+        name: sssd
+        state: restarted这个进行开发
+141. http://192.168.0.200:8080/slurm现在需要优化一下这个前端，需要异步的加载前端代码，先展示出静态文件和 js 然后等待 slurm 状态同步正常后再进行数据输出，按照我这个需求进行改造。加快页面展示改善体验
+142. 现在修复http://192.168.0.200:8080/slurm中SaltStack 集成问题未能正确的同步 saltstack 的状态，使用@playwright 测试
+
+143. 继续使用@playwright 测试http://192.168.0.200:8080/slurm中的 saltstack 状态同步问题，然后修复默认配置test-ssh02	compute*	down*	2	1000	未配置，不需要这个默认节点

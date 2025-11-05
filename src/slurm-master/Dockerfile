@@ -129,6 +129,7 @@ RUN set -eux; \
         wget \
         telnet \
         openssh-client \
+        openssh-server \
         mtr-tiny \
         netcat-openbsd \
         lsof \
@@ -273,8 +274,18 @@ RUN chmod +x /usr/local/bin/slurm-bootstrap.sh /usr/local/bin/systemd-entrypoint
     ln -sf /etc/systemd/system/slurmdbd.service /etc/systemd/system/multi-user.target.wants/slurmdbd.service && \
     ln -sf /lib/systemd/system/munge.service /etc/systemd/system/multi-user.target.wants/munge.service
 
+# 配置SSH服务
+RUN mkdir -p /var/run/sshd && \
+    # 设置root密码
+    echo 'root:root' | chpasswd && \
+    # 配置SSH允许root登录和密码认证
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    # 启用SSH服务
+    systemctl enable ssh
+
 # 暴露端口
-EXPOSE 6817 6818
+EXPOSE 6817 6818 22
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \

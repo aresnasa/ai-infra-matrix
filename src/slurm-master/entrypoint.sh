@@ -32,7 +32,7 @@ export SLURM_PARTITION_NAME=${SLURM_PARTITION_NAME:-compute}
 export SLURM_DEFAULT_PARTITION=${SLURM_DEFAULT_PARTITION:-compute}
 export SLURM_NODE_PREFIX=${SLURM_NODE_PREFIX:-compute}
 export SLURM_NODE_COUNT=${SLURM_NODE_COUNT:-3}
-export SLURM_TEST_NODES=${SLURM_TEST_NODES:-test-ssh01,test-ssh02,test-ssh03}
+export SLURM_TEST_NODES=${SLURM_TEST_NODES:-}
 export SLURM_TEST_NODE_CPUS=${SLURM_TEST_NODE_CPUS:-4}
 export SLURM_TEST_NODE_MEMORY=${SLURM_TEST_NODE_MEMORY:-8192}
 export SLURM_MAX_JOB_COUNT=${SLURM_MAX_JOB_COUNT:-10000}
@@ -191,6 +191,13 @@ generate_configs() {
     envsubst < /etc/slurm-templates/slurm.conf.template > /etc/slurm/slurm.conf
     envsubst < /etc/slurm-templates/slurmdbd.conf.template > /etc/slurm/slurmdbd.conf
     envsubst < /etc/slurm-templates/cgroup.conf.template > /etc/slurm/cgroup.conf
+
+    # 如果没有配置测试节点，移除空的 NodeName 和 PartitionName 行
+    if [ -z "${SLURM_TEST_NODES}" ]; then
+        log "INFO" "未配置测试节点，移除空的节点配置行"
+        sed -i '/^NodeName= /d' /etc/slurm/slurm.conf
+        sed -i '/^PartitionName=.*Nodes= /d' /etc/slurm/slurm.conf
+    fi
 
     chown slurm:slurm /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/slurmdbd.conf
     chmod 644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf

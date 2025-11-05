@@ -939,6 +939,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.GET("/nodes", slurmController.GetNodes)
 		slurm.GET("/jobs", slurmController.GetJobs)
 
+		// SLURM运维命令
+		slurm.POST("/exec", slurmController.ExecuteSlurmCommand)
+		slurm.GET("/diagnostics", slurmController.GetSlurmDiagnostics)
+
 		// 仓库与节点初始化
 		slurm.POST("/repo/setup", slurmController.SetupRepo)
 		slurm.POST("/init-nodes", slurmController.InitNodes)
