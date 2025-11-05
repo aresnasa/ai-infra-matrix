@@ -72,8 +72,8 @@ test.describe('SLURM SaltStack状态同步测试', () => {
     // 验证Master状态
     expect(['running', 'available']).toContain(integration.master_status);
 
-    // 验证API状态
-    expect(['running', 'available']).toContain(integration.api_status);
+    // 验证API状态 (修复后API状态为"connected")
+    expect(['running', 'available', 'connected']).toContain(integration.api_status);
 
     // 验证Minions数量（应该有7个已接受的minions）
     expect(integration.minions).toBeDefined();

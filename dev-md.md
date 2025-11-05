@@ -1997,3 +1997,22 @@ compute*     up   infinite      3  down* test-ssh[01-03]
 142. 现在修复http://192.168.0.200:8080/slurm中SaltStack 集成问题未能正确的同步 saltstack 的状态，使用@playwright 测试
 
 143. 继续使用@playwright 测试http://192.168.0.200:8080/slurm中的 saltstack 状态同步问题，然后修复默认配置test-ssh02	compute*	down*	2	1000	未配置，不需要这个默认节点
+
+144. 现在 slurm 状态是unknown*	，使用@playwright 进行测试http://192.168.0.200:8080/slurm，期望的是能够正常的同步 slurm 状态，需要使用命令行sinfo 结合前端页面一并测试
+
+145. 缩容任务已提交但是并没有真的删除 slurm 节点，这个要调整代码
+
+146. 调整总节点数
+3
+空闲节点
+2
+运行节点
+1
+运行作业
+1
+等待作业
+2
+SaltStack Minions
+0这些http://192.168.0.200:8080/slurm中的数据，不要写入 mock 数据了写空，等待 backend 更新正确的数据，修复一下这个问题
+
+147. 现在扫描整个项目，寻找规律，将这类数据展示问题做彻底的修复

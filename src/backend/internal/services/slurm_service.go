@@ -170,7 +170,8 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 	// partitions count via: sinfo -h -o %P | sort -u | wc -l (approx) – we'll parse simply
 	output, err := s.executeSlurmCommand(ctx, "sinfo -h -o '%T|%P'")
 	if err != nil {
-		return 3, 2, 1, 2, true
+		// Return zeros instead of mock data when SLURM is unavailable
+		return 0, 0, 0, 0, true
 	}
 	seenPartitions := map[string]struct{}{}
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -231,7 +232,8 @@ func (s *SlurmService) getJobStats(ctx context.Context) (running, pending, other
 	// 通过SSH执行squeue命令获取作业统计信息
 	output, err := s.executeSlurmCommand(ctx, "squeue -h -o '%T'")
 	if err != nil {
-		return 1, 2, 0, true
+		// Return zeros instead of mock data when SLURM is unavailable
+		return 0, 0, 0, true
 	}
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
@@ -909,22 +911,184 @@ type SSHServiceInterface interface {
 
 // ScaleDown 执行缩容操作
 func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*ScalingResult, error) {
-	// 这里应该实现实际的SLURM节点缩容逻辑
-	// 包括从集群中移除节点、更新配置等
-
 	result := &ScalingResult{
 		OperationID: generateOperationID(),
 		Success:     true,
 		Results:     []NodeScalingResult{},
 	}
 
-	// 模拟缩容操作
+	// 获取SLURM Master的连接信息
+	masterHost := os.Getenv("SLURM_MASTER_HOST")
+	if masterHost == "" {
+		masterHost = "slurm-master" // 默认使用docker-compose服务名
+	}
+
+	masterPortStr := os.Getenv("SLURM_MASTER_PORT")
+	masterPort := 22
+	if masterPortStr != "" {
+		if port, err := strconv.Atoi(masterPortStr); err == nil {
+			masterPort = port
+		}
+	}
+
+	masterUser := os.Getenv("SLURM_MASTER_USER")
+	if masterUser == "" {
+		masterUser = "root"
+	}
+
+	masterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+	if masterPassword == "" {
+		return nil, fmt.Errorf("未配置SLURM_MASTER_PASSWORD环境变量，无法连接SLURM Master")
+	}
+
+	// 建立SSH连接
+	sshConfig := &ssh.ClientConfig{
+		User: masterUser,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(masterPassword),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", masterHost, masterPort), sshConfig)
+	if err != nil {
+		return nil, fmt.Errorf("连接SLURM Master失败: %v", err)
+	}
+	defer client.Close()
+
+	// 对每个节点执行缩容操作
 	for _, nodeID := range nodeIDs {
-		result.Results = append(result.Results, NodeScalingResult{
+		nodeResult := NodeScalingResult{
 			NodeID:  nodeID,
-			Success: true,
-			Message: "节点已成功从SLURM集群中移除",
-		})
+			Success: false,
+			Message: "",
+		}
+
+		// 步骤1: 将节点状态设置为DOWN
+		downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason='缩容移除节点_%s'",
+			nodeID, time.Now().Format("20060102_150405"))
+
+		session, err := client.NewSession()
+		if err != nil {
+			nodeResult.Message = fmt.Sprintf("创建SSH会话失败: %v", err)
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		output, err := session.CombinedOutput(downCmd)
+		session.Close()
+
+		if err != nil {
+			nodeResult.Message = fmt.Sprintf("设置节点DOWN状态失败: %v, 输出: %s", err, string(output))
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		// 步骤2: 从slurm.conf中移除节点
+		configPath := "/etc/slurm/slurm.conf"
+
+		// 读取配置文件
+		session, err = client.NewSession()
+		if err != nil {
+			nodeResult.Message = fmt.Sprintf("创建SSH会话失败: %v", err)
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		configData, err := session.CombinedOutput(fmt.Sprintf("cat %s", configPath))
+		session.Close()
+
+		if err != nil {
+			nodeResult.Message = fmt.Sprintf("读取slurm.conf失败: %v", err)
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		// 移除包含该节点的行
+		lines := strings.Split(string(configData), "\n")
+		var newLines []string
+		removed := false
+		for _, line := range lines {
+			// 跳过包含该节点名称的NodeName行
+			if strings.Contains(line, "NodeName="+nodeID) ||
+				(strings.HasPrefix(line, "NodeName=") && strings.Contains(line, nodeID)) {
+				removed = true
+				continue
+			}
+			newLines = append(newLines, line)
+		}
+
+		if removed {
+			// 写回配置文件
+			newConfig := strings.Join(newLines, "\n")
+
+			session, err = client.NewSession()
+			if err != nil {
+				nodeResult.Message = fmt.Sprintf("创建SSH会话失败: %v", err)
+				result.Results = append(result.Results, nodeResult)
+				result.Success = false
+				continue
+			}
+
+			// 使用临时文件并移动的方式更新配置
+			tmpPath := "/tmp/slurm.conf.tmp"
+			writeCmd := fmt.Sprintf("cat > %s << 'EOF'\n%s\nEOF\nmv %s %s", tmpPath, newConfig, tmpPath, configPath)
+			output, err = session.CombinedOutput(writeCmd)
+			session.Close()
+
+			if err != nil {
+				nodeResult.Message = fmt.Sprintf("更新slurm.conf失败: %v, 输出: %s", err, string(output))
+				result.Results = append(result.Results, nodeResult)
+				result.Success = false
+				continue
+			}
+
+			// 步骤3: 重新加载SLURM配置
+			session, err = client.NewSession()
+			if err != nil {
+				nodeResult.Message = fmt.Sprintf("创建SSH会话失败: %v", err)
+				result.Results = append(result.Results, nodeResult)
+				result.Success = false
+				continue
+			}
+
+			output, err = session.CombinedOutput("scontrol reconfigure")
+			session.Close()
+
+			if err != nil {
+				nodeResult.Message = fmt.Sprintf("重新加载SLURM配置失败: %v, 输出: %s", err, string(output))
+				result.Results = append(result.Results, nodeResult)
+				result.Success = false
+				continue
+			}
+		} else {
+			nodeResult.Message = fmt.Sprintf("在slurm.conf中未找到节点 %s", nodeID)
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		// 成功
+		nodeResult.Success = true
+		nodeResult.Message = "节点已成功从SLURM集群中移除"
+		result.Results = append(result.Results, nodeResult)
+	}
+
+	// 如果所有操作都失败，整体标记为失败
+	allFailed := true
+	for _, r := range result.Results {
+		if r.Success {
+			allFailed = false
+			break
+		}
+	}
+	if allFailed {
+		result.Success = false
 	}
 
 	return result, nil

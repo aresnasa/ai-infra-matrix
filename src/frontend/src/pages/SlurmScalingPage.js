@@ -579,7 +579,7 @@ const SlurmScalingPage = () => {
               ) : (
                 <Statistic
                   title="SaltStack Minions"
-                  value={saltIntegration?.connected_minions || 0}
+                  value={saltIntegration?.minions?.total || 0}
                   prefix={<ApiOutlined />}
                 />
               )}
@@ -666,15 +666,25 @@ const SlurmScalingPage = () => {
                 <Card title="SaltStack 状态">
                   <Descriptions column={2} size="small">
                     <Descriptions.Item label="Master状态">
-                      <Badge status={saltIntegration?.master_status === 'up' ? 'success' : 'error'}
-                             text={saltIntegration?.master_status || '未知'} />
+                      <span style={{
+                        color: ['running', 'available'].includes(saltIntegration?.master_status) ? '#52c41a' : '#ff4d4f',
+                        fontSize: '16px',
+                        fontWeight: 500
+                      }}>
+                        {saltIntegration?.master_status || '未知'}
+                      </span>
                     </Descriptions.Item>
                     <Descriptions.Item label="API状态">
-                      <Badge status={saltIntegration?.api_status === 'up' ? 'success' : 'error'}
-                             text={saltIntegration?.api_status || '未知'} />
+                      <span style={{
+                        color: ['running', 'available', 'connected'].includes(saltIntegration?.api_status) ? '#52c41a' : '#ff4d4f',
+                        fontSize: '16px',
+                        fontWeight: 500
+                      }}>
+                        {saltIntegration?.api_status || '未知'}
+                      </span>
                     </Descriptions.Item>
                     <Descriptions.Item label="连接的Minions">
-                      {saltIntegration?.connected_minions || 0}
+                      {saltIntegration?.minions?.total || 0}
                     </Descriptions.Item>
                     <Descriptions.Item label="活跃作业">
                       {saltJobs?.length || 0}

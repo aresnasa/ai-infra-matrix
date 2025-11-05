@@ -327,6 +327,11 @@ services:
       LDAP_SERVER: "${LDAP_HOST:-openldap}"
       LDAP_PORT: "${LDAP_PORT:-389}"
       LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=example,dc=org}"
+      # SLURM Master SSH 配置（用于缩容等操作）
+      SLURM_MASTER_HOST: "${SLURM_MASTER_HOST:-slurm-master}"
+      SLURM_MASTER_PORT: "${SLURM_MASTER_PORT:-22}"
+      SLURM_MASTER_USER: "${SLURM_MASTER_USER:-root}"
+      SLURM_MASTER_PASSWORD: "${SLURM_MASTER_PASSWORD}"
       # SaltStack 配置
       SALTSTACK_ENABLED: "${SALTSTACK_ENABLED:-true}"
       SALTSTACK_MASTER_HOST: "${SALTSTACK_MASTER_HOST:-saltstack}"
