@@ -5121,12 +5121,18 @@ extract_base_images() {
     # 支持: FROM image:tag, FROM image:tag AS stage, FROM --platform=xxx image:tag
     # 修复：确保正确提取镜像名称，不包含 FROM 关键字
     # macOS 兼容：使用 grep -i 而不是 sed //I
+    # 新增：展开环境变量（如 ${GOLANG_ALPINE_VERSION}）
     grep -iE '^\s*FROM\s+' "$dockerfile_path" | \
         sed -E 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]+//' | \
         sed -E 's/--platform=[^[:space:]]+[[:space:]]+//' | \
         awk '{print $1}' | \
         grep -v '^$' | \
         grep -v '^#' | \
+        while IFS= read -r image_line; do
+            # 展开环境变量（使用 eval echo 安全地替换变量）
+            # 使用双引号包裹确保变量正确展开
+            eval echo "\"$image_line\""
+        done | \
         sort -u
 }
 

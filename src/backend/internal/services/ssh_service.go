@@ -616,7 +616,7 @@ func (s *SSHService) getInstallSlurmClientCommand(appHubURL string) string {
 set -e
 APPHUB_URL="%s"
 
-echo "=== 开始安装 SLURM 客户端 ==="
+echo "=== 开始安装 SLURM 客户端（从 AppHub） ==="
 
 # 确保 wget 可用
 if ! command -v wget >/dev/null 2>&1; then
@@ -631,23 +631,45 @@ if ! command -v wget >/dev/null 2>&1; then
 	fi
 fi
 
+# 优先使用 AppHub 提供的统一安装脚本（支持所有架构和发行版）
+echo ">>> 从 AppHub 下载 SLURM 安装脚本..."
+cd /tmp
+
+if wget --timeout=30 --tries=3 -O install-slurm.sh "${APPHUB_URL}/packages/install-slurm.sh" 2>/dev/null; then
+	echo "✓ 安装脚本下载成功"
+	chmod +x install-slurm.sh
+	
+	# 执行安装脚本（会自动检测架构并下载对应的二进制文件）
+	if APPHUB_URL="${APPHUB_URL}" ./install-slurm.sh; then
+		echo "✓ SLURM 客户端安装成功（AppHub 二进制）"
+		rm -f install-slurm.sh
+		exit 0
+	else
+		echo "⚠️  AppHub 安装脚本执行失败，尝试备选方案..."
+		rm -f install-slurm.sh
+	fi
+else
+	echo "⚠️  无法从 AppHub 下载安装脚本，尝试备选方案..."
+fi
+
+# 备选方案1: 尝试通过系统包管理器安装
 if command -v apt-get >/dev/null 2>&1; then
 	export DEBIAN_FRONTEND=noninteractive
 	
-	echo "[DEB] 尝试通过APT安装 SLURM 客户端..."
-	if apt-get install -y slurm-smd-client slurm-smd-slurmd 2>/dev/null; then
+	echo "[备选] 尝试通过APT安装 SLURM 客户端..."
+	if apt-get update && apt-get install -y slurm-smd-client slurm-smd-slurmd 2>/dev/null; then
 		echo "✓ SLURM 客户端安装成功（APT）"
 		exit 0
 	fi
 	
-	echo "[DEB] APT安装失败，尝试从 AppHub 下载安装..."
-	cd /tmp
+	# 备选方案2: 从 AppHub 下载 DEB 包
+	echo "[备选] 尝试从 AppHub 下载 DEB 包..."
 	ARCH=$(dpkg --print-architecture 2>/dev/null || echo amd64)
 	CLIENT_PKG="slurm-smd-client_25.05.3-1_${ARCH}.deb"
 	SLURMD_PKG="slurm-smd-slurmd_25.05.3-1_${ARCH}.deb"
 	
-	if wget -q "${APPHUB_URL}/pkgs/slurm-deb/${CLIENT_PKG}" && \
-	   wget -q "${APPHUB_URL}/pkgs/slurm-deb/${SLURMD_PKG}"; then
+	if wget -q --timeout=30 --tries=3 "${APPHUB_URL}/pkgs/slurm-deb/${CLIENT_PKG}" && \
+	   wget -q --timeout=30 --tries=3 "${APPHUB_URL}/pkgs/slurm-deb/${SLURMD_PKG}"; then
 		dpkg -i "${CLIENT_PKG}" "${SLURMD_PKG}" 2>/dev/null || true
 		apt-get install -f -y 2>/dev/null || true
 		rm -f "${CLIENT_PKG}" "${SLURMD_PKG}" 2>/dev/null || true
@@ -658,25 +680,61 @@ if command -v apt-get >/dev/null 2>&1; then
 		fi
 	fi
 	
-	echo "❌ SLURM 客户端安装失败"
+	echo "❌ SLURM 客户端安装失败（所有 Debian 方案均失败）"
 	exit 1
 	
 elif command -v yum >/dev/null 2>&1; then
-	echo "[RPM] 尝试通过YUM安装 SLURM 客户端..."
+	# 备选方案: 尝试通过YUM安装
+	echo "[备选] 尝试通过YUM安装 SLURM 客户端..."
 	if yum install -y slurm slurm-slurmd 2>/dev/null; then
 		echo "✓ SLURM 客户端安装成功（YUM）"
 		exit 0
 	fi
-	echo "❌ SLURM 客户端安装失败（YUM）"
+	
+	# 备选方案2: 从 AppHub 下载 RPM 包（如果可用）
+	echo "[备选] 尝试从 AppHub 下载 RPM 包..."
+	ARCH=$(uname -m)
+	RPM_ARCH=$(echo $ARCH | sed 's/aarch64/aarch64/;s/x86_64/x86_64/')
+	SLURM_RPM="slurm-25.05.3-1.el9.${RPM_ARCH}.rpm"
+	
+	if wget -q --timeout=30 --tries=3 "${APPHUB_URL}/pkgs/slurm-rpm/${SLURM_RPM}"; then
+		yum install -y "./${SLURM_RPM}" 2>/dev/null || true
+		rm -f "${SLURM_RPM}" 2>/dev/null || true
+		
+		if command -v slurmd >/dev/null 2>&1; then
+			echo "✓ SLURM 客户端安装成功（AppHub RPM）"
+			exit 0
+		fi
+	fi
+	
+	echo "❌ SLURM 客户端安装失败（所有 RHEL/CentOS 方案均失败）"
 	exit 1
 	
 elif command -v dnf >/dev/null 2>&1; then
-	echo "[RPM] 尝试通过DNF安装 SLURM 客户端..."
+	# 备选方案: 尝试通过DNF安装
+	echo "[备选] 尝试通过DNF安装 SLURM 客户端..."
 	if dnf install -y slurm slurm-slurmd 2>/dev/null; then
 		echo "✓ SLURM 客户端安装成功（DNF）"
 		exit 0
 	fi
-	echo "❌ SLURM 客户端安装失败（DNF）"
+	
+	# 备选方案2: 从 AppHub 下载 RPM 包（如果可用）
+	echo "[备选] 尝试从 AppHub 下载 RPM 包..."
+	ARCH=$(uname -m)
+	RPM_ARCH=$(echo $ARCH | sed 's/aarch64/aarch64/;s/x86_64/x86_64/')
+	SLURM_RPM="slurm-25.05.3-1.el9.${RPM_ARCH}.rpm"
+	
+	if wget -q --timeout=30 --tries=3 "${APPHUB_URL}/pkgs/slurm-rpm/${SLURM_RPM}"; then
+		dnf install -y "./${SLURM_RPM}" 2>/dev/null || true
+		rm -f "${SLURM_RPM}" 2>/dev/null || true
+		
+		if command -v slurmd >/dev/null 2>&1; then
+			echo "✓ SLURM 客户端安装成功（AppHub RPM）"
+			exit 0
+		fi
+	fi
+	
+	echo "❌ SLURM 客户端安装失败（所有 Fedora/Rocky 方案均失败）"
 	exit 1
 else
 	echo "❌ 不支持的包管理器"

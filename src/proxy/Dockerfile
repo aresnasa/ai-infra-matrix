@@ -14,6 +14,23 @@ LABEL haproxy.version="${HAPROXY_VERSION}"
 # 切换到root用户以安装软件包
 USER root
 
+# 配置Alpine镜像源（使用阿里云镜像加速）
+RUN set -eux; \
+    # 备份原始源
+    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
+    # 获取Alpine版本
+    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
+    echo "检测到 Alpine 版本: ${ALPINE_VERSION}"; \
+    # 配置阿里云镜像源
+    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+    # 更新索引（带回退机制）
+    if ! apk update 2>/dev/null; then \
+        echo "阿里云镜像源失败，回退到官方源..."; \
+        mv /etc/apk/repositories.bak /etc/apk/repositories || true; \
+        apk update; \
+    fi
+
 # 安装必要工具
 RUN apk add --no-cache \
     bash \

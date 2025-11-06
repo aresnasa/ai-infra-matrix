@@ -1,7 +1,10 @@
-# Rocky Linux 9 SSH测试容器 - 用于SaltStack客户端安装测试
+# Rocky Linux 9 SSH测试容器 - 用于SaltStack和SLURM客户端安装测试
 FROM rockylinux:9
 
+ARG VERSION="dev"
+ENV APP_VERSION=${VERSION}
 ENV container=docker
+ENV TZ=Asia/Shanghai
 
 # 配置阿里云镜像源加速
 RUN set -eux; \
@@ -28,7 +31,12 @@ RUN dnf install -y --allowerasing \
     iproute \
     which \
     vim-minimal \
+    ca-certificates \
+    tzdata \
     && dnf clean all
+
+# 配置时区
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 创建SSH运行目录
 RUN mkdir -p /var/run/sshd /run/sshd
@@ -56,14 +64,21 @@ RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && 
     pip3 config set global.trusted-host mirrors.aliyun.com || true
 
 # 创建工作目录
-RUN mkdir -p /opt/saltstack
-WORKDIR /opt/saltstack
+RUN mkdir -p /opt/saltstack /opt/slurm
+WORKDIR /root
 
 # 暴露SSH端口
 EXPOSE 22
 
 # 启用SSH服务
 RUN systemctl enable sshd
+
+# 添加标签
+LABEL maintainer="AI Infrastructure Team"
+LABEL version="${VERSION}"
+LABEL description="AI Infrastructure Matrix Test Container - Rocky Linux 9"
+LABEL os="rocky"
+LABEL os.version="9"
 
 STOPSIGNAL SIGRTMIN+3
 

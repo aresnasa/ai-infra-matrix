@@ -2274,3 +2274,8 @@ docker exec ai-infra-slurm-master bash -c 'scontrol update NodeName=test-rocky[0
    - 节点属性更新（权重、特性等）
 
 ---
+
+
+162. 调整下 docker-compose.test.yml这里需要结合 src/test-containers 中的 dockerfile 进行统一构建和启动，需要交叉检验和改造，然后修改 src/test-containers/中的所有 dockerfile 进行整合构建
+
+163. 现在检查 slurm 的安装脚本期望的是安装 apphub 中的 slurm 而不是去公共仓库下载，检查并修复这个问题

@@ -1,13 +1,13 @@
-# Test SSH Containers for SaltStack Client Installation Testing
+# Test SSH Containers for SaltStack and SLURM Client Installation Testing
 version: '3.8'
 
 services:
-  # SSH测试容器1
+  # Ubuntu SSH测试容器1
   test-ssh01:
-    image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
     build:
       context: ./src/test-containers
-      dockerfile: Dockerfile.ssh
+      dockerfile: Dockerfile
       args:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh01
@@ -22,8 +22,8 @@ services:
     dns_search:
       - ai-infra-network
     environment:
-      - SSH_PASSWORD=testpass123
-      - ROOT_PASSWORD=rootpass123
+      - SSH_PASSWORD=${TEST_SSH_PASSWORD:-testpass123}
+      - ROOT_PASSWORD=${TEST_ROOT_PASSWORD:-rootpass123}
     ports:
       - "2201:22"
     tmpfs:
@@ -35,9 +35,9 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
-  # SSH测试容器2
+  # Ubuntu SSH测试容器2
   test-ssh02:
-    image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh02
     hostname: test-ssh02
     privileged: true
@@ -50,8 +50,8 @@ services:
     dns_search:
       - ai-infra-network
     environment:
-      - SSH_PASSWORD=testpass123
-      - ROOT_PASSWORD=rootpass123
+      - SSH_PASSWORD=${TEST_SSH_PASSWORD:-testpass123}
+      - ROOT_PASSWORD=${TEST_ROOT_PASSWORD:-rootpass123}
     ports:
       - "2202:22"
     tmpfs:
@@ -63,9 +63,9 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
-  # SSH测试容器3
+  # Ubuntu SSH测试容器3
   test-ssh03:
-    image: ai-infra-test-containers:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh03
     hostname: test-ssh03
     privileged: true
@@ -78,8 +78,8 @@ services:
     dns_search:
       - ai-infra-network
     environment:
-      - SSH_PASSWORD=testpass123
-      - ROOT_PASSWORD=rootpass123
+      - SSH_PASSWORD=${TEST_SSH_PASSWORD:-testpass123}
+      - ROOT_PASSWORD=${TEST_ROOT_PASSWORD:-rootpass123}
     ports:
       - "2203:22"
     tmpfs:
@@ -93,7 +93,7 @@ services:
 
   # Rocky Linux SSH测试容器1
   test-rocky01:
-    image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
     build:
       context: ./src/test-containers
       dockerfile: Dockerfile.rocky
@@ -111,8 +111,8 @@ services:
     dns_search:
       - ai-infra-network
     environment:
-      - SSH_PASSWORD=testpass123
-      - ROOT_PASSWORD=rootpass123
+      - SSH_PASSWORD=${TEST_SSH_PASSWORD:-testpass123}
+      - ROOT_PASSWORD=${TEST_ROOT_PASSWORD:-rootpass123}
     ports:
       - "2211:22"
     tmpfs:
@@ -126,7 +126,7 @@ services:
 
   # Rocky Linux SSH测试容器2
   test-rocky02:
-    image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-rocky02
     hostname: test-rocky02
     privileged: true
@@ -139,8 +139,8 @@ services:
     dns_search:
       - ai-infra-network
     environment:
-      - SSH_PASSWORD=testpass123
-      - ROOT_PASSWORD=rootpass123
+      - SSH_PASSWORD=${TEST_SSH_PASSWORD:-testpass123}
+      - ROOT_PASSWORD=${TEST_ROOT_PASSWORD:-rootpass123}
     ports:
       - "2212:22"
     tmpfs:
@@ -154,7 +154,7 @@ services:
 
   # Rocky Linux SSH测试容器3
   test-rocky03:
-    image: ai-infra-test-containers-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-rocky03
     hostname: test-rocky03
     privileged: true
@@ -167,8 +167,8 @@ services:
     dns_search:
       - ai-infra-network
     environment:
-      - SSH_PASSWORD=testpass123
-      - ROOT_PASSWORD=rootpass123
+      - SSH_PASSWORD=${TEST_SSH_PASSWORD:-testpass123}
+      - ROOT_PASSWORD=${TEST_ROOT_PASSWORD:-rootpass123}
     ports:
       - "2213:22"
     tmpfs:

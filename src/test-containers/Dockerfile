@@ -1,4 +1,4 @@
-# SSH测试容器 - 用于SaltStack客户端安装测试
+# Ubuntu 22.04 SSH测试容器 - 用于SaltStack和SLURM客户端安装测试
 FROM ubuntu:22.04
 
 ARG VERSION="dev"
@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     net-tools \
     lsof \
     tzdata \
+    ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 配置时区
@@ -54,19 +55,21 @@ RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && 
     pip3 config set global.trusted-host mirrors.aliyun.com
 
 # 创建工作目录
-RUN mkdir -p /opt/saltstack
-WORKDIR /opt/saltstack
+RUN mkdir -p /opt/saltstack /opt/slurm
+WORKDIR /root
 
 # 暴露SSH端口
 EXPOSE 22
 
 # 预启用systemd管理的SSH服务
-RUN ln -sf /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service
+RUN systemctl enable ssh
 
 # 添加标签
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
-LABEL description="AI Infrastructure Matrix Test SSH Container"
+LABEL description="AI Infrastructure Matrix Test Container - Ubuntu 22.04"
+LABEL os="ubuntu"
+LABEL os.version="22.04"
 
 STOPSIGNAL SIGRTMIN+3
 
