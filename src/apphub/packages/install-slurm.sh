@@ -28,7 +28,7 @@ case "$ARCH" in
         ARCH_DIR="x86_64"
         ;;
     aarch64|arm64)
-        ARCH_DIR="arm64"
+        ARCH_DIR="aarch64"
         ;;
     *)
         print_error "Unsupported architecture: ${ARCH}"

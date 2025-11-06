@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# 设置root密码（如果提供了SLURM_MASTER_PASSWORD环境变量）
+if [ -n "${SLURM_MASTER_PASSWORD:-}" ]; then
+    echo "正在设置root密码..."
+    echo "root:${SLURM_MASTER_PASSWORD}" | chpasswd
+fi
+
 ENV_FILE="/etc/sysconfig/slurm-env"
 mkdir -p /etc/sysconfig /etc/systemd/system/multi-user.target.wants
 

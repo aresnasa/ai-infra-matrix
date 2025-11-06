@@ -142,6 +142,168 @@ func (c *SlurmController) GetJobs(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": jobs, "demo": demo})
 }
 
+// NodeManagementRequest 节点管理请求
+type NodeManagementRequest struct {
+	NodeNames []string `json:"node_names" binding:"required"` // 节点名称列表
+	Action    string   `json:"action" binding:"required"`     // 操作：resume/drain/down/idle/power_down/power_up
+	Reason    string   `json:"reason"`                        // 操作原因（可选）
+}
+
+// POST /api/slurm/nodes/manage
+// 批量管理节点状态
+func (c *SlurmController) ManageNodes(ctx *gin.Context) {
+	var req NodeManagementRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		return
+	}
+
+	// 验证操作类型
+	validActions := map[string]string{
+		"resume":     "RESUME",
+		"drain":      "DRAIN",
+		"down":       "DOWN",
+		"idle":       "IDLE",
+		"power_down": "POWER_DOWN",
+		"power_up":   "POWER_UP",
+	}
+
+	slurmState, ok := validActions[req.Action]
+	if !ok {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的操作: %s", req.Action)})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	// 构建 scontrol 命令
+	nodeList := strings.Join(req.NodeNames, ",")
+	command := fmt.Sprintf("scontrol update NodeName=%s State=%s", nodeList, slurmState)
+
+	// 如果有原因，添加到命令中
+	if req.Reason != "" {
+		command += fmt.Sprintf(" Reason='%s'", req.Reason)
+	}
+
+	// 执行命令
+	output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, command)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("执行命令失败: %v", err),
+			"output":  output,
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("成功将 %d 个节点设置为 %s 状态", len(req.NodeNames), slurmState),
+		"nodes":   req.NodeNames,
+		"action":  req.Action,
+		"output":  output,
+	})
+}
+
+// JobManagementRequest 作业管理请求
+type JobManagementRequest struct {
+	JobIDs []string `json:"job_ids" binding:"required"` // 作业ID列表
+	Action string   `json:"action" binding:"required"`  // 操作：cancel/hold/release/suspend/resume/requeue
+	Signal string   `json:"signal"`                     // 信号类型（用于cancel）
+}
+
+// POST /api/slurm/jobs/manage
+// 批量管理作业
+func (c *SlurmController) ManageJobs(ctx *gin.Context) {
+	var req JobManagementRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	var command string
+	jobList := strings.Join(req.JobIDs, ",")
+
+	switch req.Action {
+	case "cancel":
+		command = fmt.Sprintf("scancel %s", jobList)
+		if req.Signal != "" {
+			command = fmt.Sprintf("scancel -s %s %s", req.Signal, jobList)
+		}
+	case "hold":
+		command = fmt.Sprintf("scontrol hold %s", jobList)
+	case "release":
+		command = fmt.Sprintf("scontrol release %s", jobList)
+	case "suspend":
+		command = fmt.Sprintf("scontrol suspend %s", jobList)
+	case "resume":
+		command = fmt.Sprintf("scontrol resume %s", jobList)
+	case "requeue":
+		command = fmt.Sprintf("scontrol requeue %s", jobList)
+	default:
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的操作: %s", req.Action)})
+		return
+	}
+
+	output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, command)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("执行命令失败: %v", err),
+			"output":  output,
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("成功对 %d 个作业执行 %s 操作", len(req.JobIDs), req.Action),
+		"jobs":    req.JobIDs,
+		"action":  req.Action,
+		"output":  output,
+	})
+}
+
+// GET /api/slurm/partitions
+// 获取分区列表和详细信息
+func (c *SlurmController) GetPartitions(ctx *gin.Context) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	output, err := c.slurmSvc.ExecuteSlurmCommand(ctxWithTimeout, "sinfo -h -o '%P|%a|%l|%D|%T|%N'")
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取分区信息失败: %v", err)})
+		return
+	}
+
+	partitions := []gin.H{}
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) >= 6 {
+			partitions = append(partitions, gin.H{
+				"name":       strings.TrimSuffix(parts[0], "*"),
+				"avail":      parts[1],
+				"timelimit":  parts[2],
+				"nodes":      parts[3],
+				"state":      parts[4],
+				"nodelist":   parts[5],
+				"is_default": strings.HasSuffix(parts[0], "*"),
+			})
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": partitions})
+}
+
 // ScalingRequest 扩缩容请求
 type ScalingRequest struct {
 	Nodes []services.NodeConfig `json:"nodes" binding:"required"`

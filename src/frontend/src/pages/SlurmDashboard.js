@@ -1,50 +1,39 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography, Divider } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography, Divider, Modal, message, Dropdown, Tabs } from 'antd';
 import { slurmAPI, saltStackAPI } from '../services/api';
-import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons';
+import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined, PlayCircleOutlined, PauseCircleOutlined, StopOutlined, DownOutlined, CloseCircleOutlined, ReloadOutlined, HourglassOutlined } from '@ant-design/icons';
 
 const { Title, Text } = Typography;
-
-const columnsNodes = [
-  { title: '节点', dataIndex: 'name', key: 'name' },
-  { title: '分区', dataIndex: 'partition', key: 'partition' },
-  { title: '状态', dataIndex: 'state', key: 'state', render: (s) => <Tag color={s.toLowerCase().includes('idle') ? 'green' : s.toLowerCase().includes('alloc') ? 'blue' : 'orange'}>{s}</Tag> },
-  { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
-  { title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb' },
-];
-
-const columnsJobs = [
-  { title: '作业ID', dataIndex: 'id', key: 'id' },
-  { title: '名称', dataIndex: 'name', key: 'name' },
-  { title: '用户', dataIndex: 'user', key: 'user' },
-  { title: '分区', dataIndex: 'partition', key: 'partition' },
-  { title: '状态', dataIndex: 'state', key: 'state', render: (s) => <Tag color={s === 'RUNNING' ? 'blue' : s === 'PENDING' ? 'orange' : 'default'}>{s}</Tag> },
-  { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
-  { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
-  { title: '原因', dataIndex: 'reason', key: 'reason' },
-];
+const { TabPane } = Tabs;
 
 const SlurmDashboard = () => {
   const [summary, setSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const [partitions, setPartitions] = useState([]);
   const [saltStackData, setSaltStackData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saltStackLoading, setSaltStackLoading] = useState(false);
   const [demo, setDemo] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [selectedJobKeys, setSelectedJobKeys] = useState([]);
+  const [operationLoading, setOperationLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
 
   const load = async () => {
     setLoading(true);
     try {
-      const [s, n, j] = await Promise.all([
+      const [s, n, j, p] = await Promise.all([
         slurmAPI.getSummary(),
         slurmAPI.getNodes(),
         slurmAPI.getJobs(),
+        slurmAPI.getPartitions(),
       ]);
       setSummary(s.data?.data);
       setNodes(n.data?.data || []);
       setJobs(j.data?.data || []);
+      setPartitions(p.data?.data || []);
       // demo 标记兼容后端在 data 内或顶层返回
       setDemo(Boolean(s.data?.data?.demo || s.data?.demo || n.data?.demo || j.data?.demo));
       setError(null);
@@ -78,6 +67,175 @@ const SlurmDashboard = () => {
     }, 15000);
     return () => clearInterval(t);
   }, []);
+
+  // 节点管理函数
+  const handleNodeOperation = async (action, actionLabel, reason = '') => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要操作的节点');
+      return;
+    }
+
+    Modal.confirm({
+      title: `确认${actionLabel}节点`,
+      content: `您确定要将选中的 ${selectedRowKeys.length} 个节点设置为 ${actionLabel} 状态吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      onOk: async () => {
+        setOperationLoading(true);
+        try {
+          const response = await slurmAPI.manageNodes(selectedRowKeys, action, reason);
+          if (response.data?.success) {
+            message.success(response.data.message || `成功${actionLabel} ${selectedRowKeys.length} 个节点`);
+            setSelectedRowKeys([]);
+            // 重新加载节点列表
+            await load();
+          } else {
+            message.error(response.data?.error || `${actionLabel}节点失败`);
+          }
+        } catch (error) {
+          console.error(`${actionLabel}节点失败:`, error);
+          message.error(error.response?.data?.error || `${actionLabel}节点失败，请稍后重试`);
+        } finally {
+          setOperationLoading(false);
+        }
+      },
+    });
+  };
+
+  // 作业管理函数
+  const handleJobOperation = async (action, actionLabel) => {
+    if (selectedJobKeys.length === 0) {
+      message.warning('请先选择要操作的作业');
+      return;
+    }
+
+    Modal.confirm({
+      title: `确认${actionLabel}作业`,
+      content: `您确定要对选中的 ${selectedJobKeys.length} 个作业执行 ${actionLabel} 操作吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      onOk: async () => {
+        setOperationLoading(true);
+        try {
+          const response = await slurmAPI.manageJobs(selectedJobKeys, action);
+          if (response.data?.success) {
+            message.success(response.data.message || `成功${actionLabel} ${selectedJobKeys.length} 个作业`);
+            setSelectedJobKeys([]);
+            // 重新加载作业列表
+            await load();
+          } else {
+            message.error(response.data?.error || `${actionLabel}作业失败`);
+          }
+        } catch (error) {
+          console.error(`${actionLabel}作业失败:`, error);
+          message.error(error.response?.data?.error || `${actionLabel}作业失败，请稍后重试`);
+        } finally {
+          setOperationLoading(false);
+        }
+      },
+    });
+  };
+
+  // 节点操作菜单
+  const nodeOperationMenuItems = [
+    {
+      key: 'resume',
+      label: '恢复 (RESUME)',
+      icon: <PlayCircleOutlined />,
+      onClick: () => handleNodeOperation('resume', '恢复', '手动恢复节点'),
+    },
+    {
+      key: 'drain',
+      label: '排空 (DRAIN)',
+      icon: <PauseCircleOutlined />,
+      onClick: () => handleNodeOperation('drain', '排空', '节点维护'),
+    },
+    {
+      key: 'down',
+      label: '下线 (DOWN)',
+      icon: <StopOutlined />,
+      onClick: () => handleNodeOperation('down', '下线', '节点故障或维护'),
+    },
+    {
+      key: 'idle',
+      label: '空闲 (IDLE)',
+      icon: <CheckCircleOutlined />,
+      onClick: () => handleNodeOperation('idle', '设为空闲', '手动设置空闲'),
+    },
+  ];
+
+  // 作业操作菜单
+  const jobOperationMenuItems = [
+    {
+      key: 'cancel',
+      label: '取消作业 (Cancel)',
+      icon: <CloseCircleOutlined />,
+      danger: true,
+      onClick: () => handleJobOperation('cancel', '取消'),
+    },
+    {
+      key: 'hold',
+      label: '暂停调度 (Hold)',
+      icon: <PauseCircleOutlined />,
+      onClick: () => handleJobOperation('hold', '暂停调度'),
+    },
+    {
+      key: 'release',
+      label: '释放调度 (Release)',
+      icon: <PlayCircleOutlined />,
+      onClick: () => handleJobOperation('release', '释放调度'),
+    },
+    {
+      key: 'suspend',
+      label: '挂起作业 (Suspend)',
+      icon: <HourglassOutlined />,
+      onClick: () => handleJobOperation('suspend', '挂起'),
+    },
+    {
+      key: 'resume',
+      label: '恢复作业 (Resume)',
+      icon: <PlayCircleOutlined />,
+      onClick: () => handleJobOperation('resume', '恢复'),
+    },
+    {
+      key: 'requeue',
+      label: '重新排队 (Requeue)',
+      icon: <ReloadOutlined />,
+      onClick: () => handleJobOperation('requeue', '重新排队'),
+    },
+  ];
+
+  const columnsNodes = [
+    { title: '节点', dataIndex: 'name', key: 'name' },
+    { title: '分区', dataIndex: 'partition', key: 'partition' },
+    { 
+      title: '状态', 
+      dataIndex: 'state', 
+      key: 'state', 
+      render: (s) => {
+        const state = s.toLowerCase();
+        let color = 'default';
+        if (state.includes('idle')) color = 'green';
+        else if (state.includes('alloc') || state.includes('mixed')) color = 'blue';
+        else if (state.includes('down') || state.includes('drain')) color = 'red';
+        else if (state.includes('unk')) color = 'orange';
+        return <Tag color={color}>{s}</Tag>;
+      }
+    },
+    { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
+    { title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb' },
+  ];
+
+  const columnsJobs = [
+    { title: '作业ID', dataIndex: 'id', key: 'id' },
+    { title: '名称', dataIndex: 'name', key: 'name' },
+    { title: '用户', dataIndex: 'user', key: 'user' },
+    { title: '分区', dataIndex: 'partition', key: 'partition' },
+    { title: '状态', dataIndex: 'state', key: 'state', render: (s) => <Tag color={s === 'RUNNING' ? 'blue' : s === 'PENDING' ? 'orange' : 'default'}>{s}</Tag> },
+    { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
+    { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
+    { title: '原因', dataIndex: 'reason', key: 'reason' },
+  ];
 
   return (
     <div style={{ padding: 24 }}>
@@ -246,12 +404,79 @@ const SlurmDashboard = () => {
           </Card>
         )}
 
-        <Card title="节点列表" extra={!loading ? null : <Spin size="small" />}>
-          <Table rowKey="name" dataSource={nodes} columns={columnsNodes} size="small" pagination={{ pageSize: 8 }} />
+        <Card 
+          title="节点列表" 
+          extra={
+            <Space>
+              {selectedRowKeys.length > 0 && (
+                <>
+                  <Text type="secondary">已选择 {selectedRowKeys.length} 个节点</Text>
+                  <Dropdown 
+                    menu={{ items: nodeOperationMenuItems }}
+                    placement="bottomRight"
+                    disabled={operationLoading}
+                  >
+                    <Button 
+                      type="primary" 
+                      loading={operationLoading}
+                      icon={<DownOutlined />}
+                    >
+                      节点操作
+                    </Button>
+                  </Dropdown>
+                </>
+              )}
+              {loading && <Spin size="small" />}
+            </Space>
+          }
+        >
+          <Table 
+            rowKey="name" 
+            dataSource={nodes} 
+            columns={columnsNodes} 
+            size="small" 
+            pagination={{ pageSize: 8 }}
+            rowSelection={{
+              selectedRowKeys,
+              onChange: setSelectedRowKeys,
+              selections: [
+                Table.SELECTION_ALL,
+                Table.SELECTION_INVERT,
+                Table.SELECTION_NONE,
+              ],
+            }}
+          />
         </Card>
 
-        <Card title="作业队列" extra={!loading ? null : <Spin size="small" />}>
-          <Table rowKey="id" dataSource={jobs} columns={columnsJobs} size="small" pagination={{ pageSize: 8 }} />
+        <Card
+          title="作业队列"
+          extra={
+            <Space>
+              {selectedJobKeys.length > 0 && (
+                <>
+                  <Text type="secondary">已选择 {selectedJobKeys.length} 个作业</Text>
+                  <Dropdown menu={{ items: jobOperationMenuItems }}>
+                    <Button loading={operationLoading}>
+                      作业操作 <DownOutlined />
+                    </Button>
+                  </Dropdown>
+                </>
+              )}
+              {loading && <Spin size="small" />}
+            </Space>
+          }
+        >
+          <Table
+            rowKey="id"
+            dataSource={jobs}
+            columns={columnsJobs}
+            size="small"
+            pagination={{ pageSize: 8 }}
+            rowSelection={{
+              selectedRowKeys: selectedJobKeys,
+              onChange: setSelectedJobKeys,
+            }}
+          />
         </Card>
       </Space>
     </div>

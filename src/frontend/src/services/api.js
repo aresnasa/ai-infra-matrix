@@ -518,6 +518,19 @@ export const slurmAPI = {
   getSummary: () => api.get('/slurm/summary'),
   getNodes: () => api.get('/slurm/nodes'),
   getJobs: () => api.get('/slurm/jobs'),
+  getPartitions: () => api.get('/slurm/partitions'),
+  // 节点管理 API
+  manageNodes: (nodeNames, action, reason) => api.post('/slurm/nodes/manage', { 
+    node_names: nodeNames, 
+    action, 
+    reason 
+  }),
+  // 作业管理 API
+  manageJobs: (jobIds, action, signal) => api.post('/slurm/jobs/manage', {
+    job_ids: jobIds,
+    action,
+    signal
+  }),
   // 扩缩容相关 API
   getScalingStatus: () => api.get('/slurm/scaling/status'),
   scaleUp: (nodes) => api.post('/slurm/scaling/scale-up/async', { nodes }),

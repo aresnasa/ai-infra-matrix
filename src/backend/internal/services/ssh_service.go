@@ -613,31 +613,73 @@ chmod 644 /etc/salt/minion || true
 // getInstallSlurmClientCommand 获取安装SLURM客户端的命令
 func (s *SSHService) getInstallSlurmClientCommand(appHubURL string) string {
 	return fmt.Sprintf(`
+set -e
 APPHUB_URL="%s"
+
+echo "=== 开始安装 SLURM 客户端 ==="
+
+# 确保 wget 可用
+if ! command -v wget >/dev/null 2>&1; then
+	echo "wget 未安装，尝试安装..."
+	if command -v apt-get >/dev/null 2>&1; then
+		apt-get update || true
+		apt-get install -y wget || true
+	elif command -v yum >/dev/null 2>&1; then
+		yum install -y wget || true
+	elif command -v dnf >/dev/null 2>&1; then
+		dnf install -y wget || true
+	fi
+fi
+
 if command -v apt-get >/dev/null 2>&1; then
 	export DEBIAN_FRONTEND=noninteractive
-	apt-get install -y slurm-smd-client slurm-smd-slurmd || {
-		echo "从APT源安装失败，尝试直接下载安装"
-		cd /tmp
-		ARCH=$(dpkg --print-architecture 2>/dev/null || echo amd64)
-		CLIENT_PKG="slurm-smd-client_25.05.3-1_${ARCH}.deb"
-		SLURMD_PKG="slurm-smd-slurmd_25.05.3-1_${ARCH}.deb"
-		if ! wget -q "${APPHUB_URL}/pkgs/slurm-deb/${CLIENT_PKG}"; then
-			echo "下载 ${CLIENT_PKG} 失败" && exit 1
+	
+	echo "[DEB] 尝试通过APT安装 SLURM 客户端..."
+	if apt-get install -y slurm-smd-client slurm-smd-slurmd 2>/dev/null; then
+		echo "✓ SLURM 客户端安装成功（APT）"
+		exit 0
+	fi
+	
+	echo "[DEB] APT安装失败，尝试从 AppHub 下载安装..."
+	cd /tmp
+	ARCH=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+	CLIENT_PKG="slurm-smd-client_25.05.3-1_${ARCH}.deb"
+	SLURMD_PKG="slurm-smd-slurmd_25.05.3-1_${ARCH}.deb"
+	
+	if wget -q "${APPHUB_URL}/pkgs/slurm-deb/${CLIENT_PKG}" && \
+	   wget -q "${APPHUB_URL}/pkgs/slurm-deb/${SLURMD_PKG}"; then
+		dpkg -i "${CLIENT_PKG}" "${SLURMD_PKG}" 2>/dev/null || true
+		apt-get install -f -y 2>/dev/null || true
+		rm -f "${CLIENT_PKG}" "${SLURMD_PKG}" 2>/dev/null || true
+		
+		if command -v slurmd >/dev/null 2>&1; then
+			echo "✓ SLURM 客户端安装成功（AppHub DEB）"
+			exit 0
 		fi
-		if ! wget -q "${APPHUB_URL}/pkgs/slurm-deb/${SLURMD_PKG}"; then
-			echo "下载 ${SLURMD_PKG} 失败" && exit 1
-		fi
-		dpkg -i "${CLIENT_PKG}" "${SLURMD_PKG}" || true
-		apt-get install -f -y
-		rm -f "${CLIENT_PKG}" "${SLURMD_PKG}" >/dev/null 2>&1 || true
-	}
+	fi
+	
+	echo "❌ SLURM 客户端安装失败"
+	exit 1
+	
 elif command -v yum >/dev/null 2>&1; then
-	yum install -y slurm slurm-slurmd
+	echo "[RPM] 尝试通过YUM安装 SLURM 客户端..."
+	if yum install -y slurm slurm-slurmd 2>/dev/null; then
+		echo "✓ SLURM 客户端安装成功（YUM）"
+		exit 0
+	fi
+	echo "❌ SLURM 客户端安装失败（YUM）"
+	exit 1
+	
 elif command -v dnf >/dev/null 2>&1; then
-	dnf install -y slurm slurm-slurmd
+	echo "[RPM] 尝试通过DNF安装 SLURM 客户端..."
+	if dnf install -y slurm slurm-slurmd 2>/dev/null; then
+		echo "✓ SLURM 客户端安装成功（DNF）"
+		exit 0
+	fi
+	echo "❌ SLURM 客户端安装失败（DNF）"
+	exit 1
 else
-	echo "不支持的包管理器，跳过SLURM客户端安装"
+	echo "❌ 不支持的包管理器"
 	exit 1
 fi
 `, appHubURL)

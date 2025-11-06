@@ -2121,3 +2121,156 @@ drwxr-xr-x    1 root     root          4096 Nov  5 19:49 ..
 156. 现在检查所有组件的版本相关 dockerfile，调整 build.sh 读取 env 然后将这些 dockerfile 中的版本通过 build.sh 进行改配置，保证每次组件版本都是通过 env+build.sh 渲染出来的动态配置，请按照这个需求来调整 build.sh 代码
 
 157. 现在读取 build.sh 中所有和版本相关的硬编码函数也要进行修复
+
+158. 这里的架构还需要适配 x86，构建的时候 x86 和 aarch64 都要构建
+
+159. docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+compute*     up   infinite      6   unk* test-rocky[01-03],test-ssh[01-03]，修复下 slurm 状态 unknown 的问题，这里需要测试 slurmrestd 是否正常，请继续
+
+160. 现在调整 slurm-master 的构建 dockerfile 安装所有 slurm-smd 等相关的组件，这里可以使用 curl 先查看 apphub 中 slurm有哪些扩展可以尝试全部安装，然后再测试 slurmrestd 服务，这里可以不用硬编码需要安装的包，而是先查看有哪些包然后动态的安装
+
+161. ✅ 现在需要将docker exec ai-infra-slurm-master bash -c 'scontrol update NodeName=test-rocky[01-03],test-ssh[01-03] State=RESUME'步骤都使用页面中的各类按钮实现，保证便捷运维，读取https://slurm.schedmd.com/pdfs/summary.pdf，将相关功能抽象到可视化页面中
+
+## SLURM 节点管理 UI 功能实现
+
+### 后端实现
+
+**1. 新增 API 端点**
+- 路径: `POST /api/slurm/nodes/manage`
+- 控制器: `SlurmController.ManageNodes()`
+- 文件: `src/backend/internal/controllers/slurm_controller.go`
+
+**2. 请求结构**
+```go
+type NodeManagementRequest struct {
+    NodeNames []string `json:"node_names"` // 节点名称列表，支持批量
+    Action    string   `json:"action"`     // 操作类型
+    Reason    string   `json:"reason"`     // 操作原因（可选）
+}
+```
+
+**3. 支持的操作类型**
+- `resume`: 恢复节点 (State=RESUME)
+- `drain`: 排空节点 (State=DRAIN)
+- `down`: 下线节点 (State=DOWN)
+- `idle`: 设为空闲 (State=IDLE)
+- `power_down`: 节能关机 (State=POWER_DOWN)
+- `power_up`: 节能唤醒 (State=POWER_UP)
+
+**4. 执行流程**
+```
+1. 验证操作类型有效性
+2. 构建 scontrol 命令：scontrol update NodeName=xxx State=XXX Reason='...'
+3. 通过 SSH 连接 slurm-master 执行命令
+4. 返回执行结果（成功/失败）
+```
+
+### 前端实现
+
+**1. 新增 API 方法**
+- 文件: `src/frontend/src/services/api.js`
+- 方法: `slurmAPI.manageNodes(nodeNames, action, reason)`
+
+**2. UI 组件改造 (SlurmDashboard.js)**
+
+**节点表格增强**
+- 添加行选择功能 (`rowSelection`)
+- 支持全选/反选/清空
+- 显示已选节点数量
+
+**批量操作按钮**
+- 位置: 节点列表卡片右上角
+- 类型: 下拉菜单 (Dropdown)
+- 图标: 
+  - 恢复: PlayCircleOutlined
+  - 排空: PauseCircleOutlined
+  - 下线: StopOutlined
+  - 空闲: CheckCircleOutlined
+
+**3. 交互流程**
+```
+1. 用户在节点列表中勾选节点
+2. 显示"已选择 X 个节点"提示
+3. 点击"节点操作"按钮，展开操作菜单
+4. 选择操作类型（恢复/排空/下线/空闲）
+5. 弹出确认对话框
+6. 用户确认后发送 API 请求
+7. 显示操作结果（成功/失败）
+8. 自动重新加载节点列表
+9. 清空选择状态
+```
+
+**4. 用户体验优化**
+- ✅ 操作按钮仅在有选中节点时显示
+- ✅ 操作过程中显示加载状态
+- ✅ 操作前弹出确认对话框
+- ✅ 操作后自动刷新节点列表
+- ✅ 节点状态用不同颜色的 Tag 标识：
+  - 绿色: idle（空闲）
+  - 蓝色: alloc/mixed（分配中/混合）
+  - 红色: down/drain（下线/排空）
+  - 橙色: unknown（未知）
+
+### 技术细节
+
+**1. SSH 命令执行**
+- 使用现有的 `SlurmService.ExecuteSlurmCommand()` 方法
+- 通过 SSH 连接到 slurm-master 容器
+- 支持批量节点操作（使用逗号分隔的节点列表）
+
+**2. 错误处理**
+- 前端验证：检查是否选中节点
+- 后端验证：检查操作类型有效性
+- 执行失败：显示详细错误信息
+- 网络超时：30秒超时保护
+
+**3. 安全性**
+- 需要用户认证（使用现有的 Session 中间件）
+- 操作前二次确认
+- 操作原因记录（可选，用于审计）
+
+### 使用示例
+
+**批量恢复节点**
+```bash
+# 原命令（需要手动执行）
+docker exec ai-infra-slurm-master bash -c 'scontrol update NodeName=test-rocky[01-03],test-ssh[01-03] State=RESUME'
+
+# 现在通过 UI 操作：
+1. 进入 SLURM 仪表板
+2. 勾选需要恢复的节点（支持批量选择）
+3. 点击"节点操作" > "恢复 (RESUME)"
+4. 确认操作
+5. 完成✓
+```
+
+**单个节点维护**
+```
+1. 勾选需要维护的节点
+2. 点击"节点操作" > "排空 (DRAIN)"
+3. 在确认对话框中查看将要排空的节点数量
+4. 确认操作
+5. 节点开始排空，不再接受新任务
+```
+
+### 后续优化建议
+
+1. **操作历史记录**
+   - 记录谁在什么时间对哪些节点执行了什么操作
+   - 提供操作审计日志查询
+
+2. **定时任务**
+   - 支持定时恢复/下线节点
+   - 节能模式下的自动调度
+
+3. **批量模板**
+   - 保存常用的节点分组
+   - 一键应用预定义的操作
+
+4. **更多操作**
+   - 节点重启
+   - 节点配置修改
+   - 节点属性更新（权重、特性等）
+
+---

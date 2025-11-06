@@ -8,7 +8,7 @@
 #   SALT_MINION_ID   - Minion ID (可选，默认使用主机名)
 # ====================================================================
 
-set -e
+set -eo pipefail
 
 SALT_MASTER_HOST="${SALT_MASTER_HOST:-}"
 SALT_MINION_ID="${SALT_MINION_ID:-}"

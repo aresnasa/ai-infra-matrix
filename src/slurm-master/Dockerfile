@@ -148,8 +148,32 @@ RUN set -eux; \
         # slurm prerequisites \
         munge \
         libmunge2 \
+        libmunge-dev \
         postgresql-client \
-        default-mysql-client && \
+        default-mysql-client \
+        # SLURM build and runtime dependencies \
+        make \
+        hwloc \
+        libhwloc-dev \
+        liblua5.3-0 \
+        libfreeipmi17 \
+        libjwt0 \
+        libb64-0d \
+        libipmimonitoring6 \
+        librdkafka1 \
+        freeipmi-common \
+        libmysqlclient-dev && \
+    # Install optional HDF5 and MPI packages (may not be available on all architectures)
+    echo "📦 尝试安装可选的 HDF5 和 MPI 包..."; \
+    apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+        libhdf5-dev \
+        libhdf5-mpich-dev \
+        libhdf5-openmpi-dev \
+        mpich \
+        libmpich-dev \
+        openmpi-bin \
+        libopenmpi-dev 2>/dev/null || \
+    echo "⚠️  部分 HDF5/MPI 包未安装（可能在当前架构不可用）"; \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # 配置时区
@@ -171,7 +195,7 @@ RUN mkdir -p /etc/slurm \
     /var/run/munge \
     /srv/shared
 
-# 尝试从AppHub安装SLURM包（优先级：AppHub > 系统仓库）
+# 尝试从AppHub安装SLURM包（动态发现所有可用包）
 ARG APPHUB_URL=http://apphub:80
 RUN set -eux; \
     echo "🔍 尝试从AppHub安装SLURM ${SLURM_VERSION} 包..."; \
@@ -184,18 +208,75 @@ RUN set -eux; \
     echo "🌐 测试AppHub连接..."; \
     if timeout 10 wget -q --spider ${APPHUB_URL}/pkgs/slurm-deb/Packages; then \
         echo "✅ AppHub连接正常"; \
-        # 更新包列表并安装
-        if timeout 60 apt-get update && \
-           apt-get install -y --no-install-recommends \
-               slurm-smd \
-               slurm-smd-client \
-               slurm-smd-slurmctld \
-               slurm-smd-slurmdbd; then \
-            echo "✅ 成功从AppHub安装SLURM ${SLURM_VERSION} 包"; \
-            SLURM_INSTALLED=true; \
-            SLURM_SOURCE="AppHub"; \
+        \
+        # 动态发现AppHub中所有可用的SLURM包
+        echo "📦 发现AppHub中的SLURM包..."; \
+        AVAILABLE_PACKAGES=$(curl -sL ${APPHUB_URL}/pkgs/slurm-deb/Packages 2>/dev/null | \
+            grep "^Package:" | \
+            awk '{print $2}' | \
+            grep -E "^slurm" | \
+            sort -u | \
+            tr '\n' ' '); \
+        \
+        if [ -n "$AVAILABLE_PACKAGES" ]; then \
+            echo "✓ 发现的SLURM包:"; \
+            echo "$AVAILABLE_PACKAGES" | tr ' ' '\n' | sed 's/^/  - /'; \
+            PACKAGE_COUNT=$(echo "$AVAILABLE_PACKAGES" | wc -w); \
+            echo "✓ 总计: $PACKAGE_COUNT 个包"; \
+            \
+            # 定义核心包和可选包
+            CORE_PACKAGES="slurm-smd slurm-smd-client slurm-smd-slurmctld slurm-smd-slurmdbd slurm-smd-slurmrestd"; \
+            OPTIONAL_PACKAGES=""; \
+            \
+            # 从可用包中筛选出非核心的可选包
+            for pkg in $AVAILABLE_PACKAGES; do \
+                is_core=0; \
+                for core in $CORE_PACKAGES; do \
+                    if [ "$pkg" = "$core" ]; then \
+                        is_core=1; \
+                        break; \
+                    fi; \
+                done; \
+                if [ $is_core -eq 0 ]; then \
+                    OPTIONAL_PACKAGES="$OPTIONAL_PACKAGES $pkg"; \
+                fi; \
+            done; \
+            \
+            # 更新包列表
+            if timeout 120 apt-get update; then \
+                # 安装核心包
+                echo "📦 安装核心SLURM包..."; \
+                if apt-get install -y --no-install-recommends $CORE_PACKAGES; then \
+                    echo "✅ 核心SLURM包安装成功"; \
+                    SLURM_INSTALLED=true; \
+                    SLURM_SOURCE="AppHub-Core"; \
+                    \
+                    # 尝试安装可选包（失败不影响）
+                    if [ -n "$OPTIONAL_PACKAGES" ]; then \
+                        echo "📦 尝试安装可选SLURM包..."; \
+                        apt-get install -y --no-install-recommends $OPTIONAL_PACKAGES 2>/dev/null && \
+                            echo "✅ 可选包安装成功" || \
+                            echo "⚠️  部分可选包安装失败（不影响核心功能）"; \
+                    fi; \
+                else \
+                    echo "❌ 核心包安装失败"; \
+                    SLURM_INSTALLED=false; \
+                    SLURM_SOURCE="AppHub-Failed"; \
+                fi; \
+            else \
+                echo "❌ apt-get update 失败"; \
+                SLURM_INSTALLED=false; \
+                SLURM_SOURCE="AppHub-UpdateFailed"; \
+            fi; \
         else \
-            echo "❌ AppHub包安装失败，尝试系统仓库..."; \
+            echo "❌ 未能从AppHub获取包列表"; \
+            SLURM_INSTALLED=false; \
+            SLURM_SOURCE="AppHub-NoPackages"; \
+        fi; \
+        \
+        # 如果AppHub安装失败，尝试系统仓库
+        if [ "$SLURM_INSTALLED" != "true" ]; then \
+            echo "❌ AppHub安装失败，尝试系统仓库..."; \
             rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
             apt-get update; \
             if apt-get install -y slurm-wlm slurm-wlm-basic-plugins slurmctld slurmdbd slurm-client; then \
@@ -268,20 +349,7 @@ RUN usermod -a -G munge slurm && \
     chmod 755 /var/log/munge /var/run/munge && \
     chmod 640 /etc/munge/munge.key || true
 
-# 复制并执行 SLURM REST API 安装脚本
-COPY install-slurm-restapi.sh /tmp/install-slurm-restapi.sh
-RUN set -eux; \
-    chmod +x /tmp/install-slurm-restapi.sh; \
-    echo "🚀 开始安装 SLURM REST API..."; \
-    if /tmp/install-slurm-restapi.sh; then \
-        echo "✅ SLURM REST API 安装成功"; \
-        touch /opt/slurm-restapi-installed; \
-    else \
-        echo "⚠️  SLURM REST API 安装失败（继续构建）"; \
-        echo "failed" > /opt/slurm-restapi-status; \
-    fi; \
-    rm -f /tmp/install-slurm-restapi.sh; \
-    rm -rf /tmp/*.deb
+# 注意：slurmrestd 现在通过上面的动态包发现自动安装，不再需要单独的安装脚本
 
 # 复制配置与systemd脚本
 COPY config/ /etc/slurm-templates/

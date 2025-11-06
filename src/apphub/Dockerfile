@@ -211,10 +211,16 @@ RUN --mount=type=cache,target=/var/cache/saltstack-deb,sharing=locked \
             export http_proxy="${GITHUB_PROXY}"; \
             export https_proxy="${GITHUB_PROXY}"; \
         fi; \
-        # GitHub releases 基础 URL (修正版本号格式)
+        # GitHub releases 基础 URL (修正版本号格式，确保有 v 前缀)
         VERSION_NUM="${SALTSTACK_VERSION#v}"; \
-        BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
+        # 确保 release tag 有 v 前缀
+        RELEASE_TAG="${SALTSTACK_VERSION}"; \
+        if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
+            RELEASE_TAG="v${RELEASE_TAG}"; \
+        fi; \
+        BASE_URL="https://github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
+        echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
         # 下载两种架构的 deb 包
         total_downloaded=0; \
@@ -371,13 +377,17 @@ RUN set -eux; \
         readline-devel \
         perl-ExtUtils-MakeMaker \
         openssl-devel; \
-    # Verify rpmdevtools installation
+    # Verify rpmdevtools installation (using command -v instead of which)
     echo "✓ Verifying rpmdevtools installation..."; \
-    which rpmdev-setuptree || { \
+    if ! command -v rpmdev-setuptree >/dev/null 2>&1; then \
         echo "❌ rpmdev-setuptree not found, trying to reinstall..."; \
         dnf reinstall -y rpmdevtools || dnf install -y rpmdevtools; \
-    }; \
-    which rpmdev-setuptree && echo "✓ rpmdev-setuptree found: $(which rpmdev-setuptree)"; \
+    fi; \
+    if command -v rpmdev-setuptree >/dev/null 2>&1; then \
+        echo "✓ rpmdev-setuptree found: $(command -v rpmdev-setuptree)"; \
+    else \
+        echo "⚠️  rpmdev-setuptree still not available, will use manual setup"; \
+    fi; \
     dnf clean all; \
     # Try to install optional dependencies (may not be available)
     echo "尝试安装可选依赖包..."; \
@@ -508,10 +518,16 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
             export http_proxy="${GITHUB_PROXY}"; \
             export https_proxy="${GITHUB_PROXY}"; \
         fi; \
-        # GitHub releases 基础 URL (修正版本号格式)
+        # GitHub releases 基础 URL (修正版本号格式，确保有 v 前缀)
         VERSION_NUM="${SALTSTACK_VERSION#v}"; \
-        BASE_URL="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}"; \
+        # 确保 release tag 有 v 前缀
+        RELEASE_TAG="${SALTSTACK_VERSION}"; \
+        if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
+            RELEASE_TAG="v${RELEASE_TAG}"; \
+        fi; \
+        BASE_URL="https://github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
+        echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
         # 下载两种架构的 rpm 包
         total_downloaded=0; \
@@ -678,8 +694,8 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 3: Build SLURM binaries (Ubuntu 22.04 with glibc)
-# Alpine uses musl libc which doesn't support cpu_set_t, so we use Ubuntu
+# Stage 3: Extract SLURM binaries from built packages (Support multi-arch)
+# 从已构建的 DEB 包中提取二进制文件，支持 x86_64 和 aarch64
 # =============================================================================
 FROM ubuntu:${UBUNTU_VERSION} AS binary-builder
 
@@ -691,170 +707,120 @@ ARG BUILD_SLURM=true
 
 # SLURM version configuration
 ARG SLURM_VERSION=25.05.4
-ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
-# 配置 Ubuntu 镜像源（阿里云）并安装所有依赖
+# 配置APT镜像源并安装提取工具
 RUN set -eux; \
-    # 清除可能干扰的代理设置（构建容器内部无法访问宿主机代理）
-    unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy no_proxy NO_PROXY || true; \
-    rm -f /etc/apt/apt.conf.d/*proxy* 2>/dev/null || true; \
-    echo 'Acquire::http::Proxy "false";' > /etc/apt/apt.conf.d/99no-proxy; \
-    echo 'Acquire::https::Proxy "false";' >> /etc/apt/apt.conf.d/99no-proxy; \
-    # 检测架构
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 备份原始源
-    cp /etc/apt/sources.list /etc/apt/sources.list.backup || true; \
-    # 根据架构配置阿里云镜像源
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-        echo "配置ARM64架构的阿里云镜像源..."; \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list; \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
-        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "配置ARM64架构镜像源..."; \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
-        echo "配置AMD64架构的阿里云镜像源..."; \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list; \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
-        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "配置AMD64架构镜像源..."; \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+        echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
-    echo "当前配置的镜像源:"; \
-    cat /etc/apt/sources.list; \
-    # 清理旧缓存
-    rm -rf /var/lib/apt/lists/*; \
-    # 尝试更新包列表（带重试和回退到官方源）
-    if ! apt-get update 2>&1; then \
-        echo "⚠️  阿里云源失败，等待5秒后重试..."; \
-        sleep 5; \
-        if ! apt-get update 2>&1; then \
-            echo "⚠️  仍然失败，切换到官方源..."; \
-            if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-                echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" > /etc/apt/sources.list; \
-                echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
-                echo "deb http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-            else \
-                echo "deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse" > /etc/apt/sources.list; \
-                echo "deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse" >> /etc/apt/sources.list; \
-                echo "deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-            fi; \
-            echo "使用官方源:"; \
-            cat /etc/apt/sources.list; \
-            rm -rf /var/lib/apt/lists/*; \
-            apt-get update || ( echo "❌ 官方源也失败了！" && exit 1 ); \
-        fi; \
+    # 更新包列表（带回退机制）
+    if ! apt-get update; then \
+        echo "阿里云镜像源失败，回退到官方源..."; \
+        mv /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        apt-get update; \
     fi; \
-    echo "✓ apt-get update 成功"; \
-    # 安装所有依赖（分组安装，提高成功率）
-    echo "安装基础工具..."; \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        tzdata \
-        build-essential \
-        wget \
-        tar \
-        bzip2 \
-        python3 \
-        python3-pip && \
-    echo "安装开发库..."; \
-    apt-get install -y --no-install-recommends \
-        libmunge-dev \
-        libmariadb-dev \
-        libpam0g-dev \
-        libhwloc-dev \
-        libjson-c-dev \
-        libyaml-dev \
-        libssl-dev \
-        libreadline-dev || \
-    ( echo "⚠️  libreadline-dev 安装失败，尝试替代包..." && \
-      apt-get install -y --no-install-recommends libreadline8 || \
-      echo "⚠️  继续构建，跳过 readline 库" ); \
-    ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone; \
+    # 安装提取工具
+    apt-get install -y --no-install-recommends dpkg-dev binutils file && \
     rm -rf /var/lib/apt/lists/*
 
-# 创建构建用户
-RUN useradd -m -u 1000 builder
-USER builder
-WORKDIR /home/builder/build
+# 从 deb-builder 复制构建好的 DEB 包（包含 amd64 和 arm64 两种架构）
+COPY --from=deb-builder /out/*.deb /packages/deb/
 
-# 复制 SLURM 源码包
-COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
-
-# 解压并编译 SLURM
+# 提取两种架构的 SLURM 二进制文件
 RUN set -eux; \
     if [ "$BUILD_SLURM" = "true" ]; then \
-        tarball=$(ls slurm-*.tar.bz2 | head -1); \
-        echo "✓ Found SLURM tarball: ${tarball}"; \
-        tar -xaf "${tarball}"; \
-        srcdir=$(basename "${tarball}" .tar.bz2); \
-        cd "${srcdir}"; \
-        echo ">>> Configuring SLURM..."; \
-        ./configure \
-            --prefix=/usr/local/slurm \
-            --sysconfdir=/etc/slurm \
-            --disable-debug \
-            --without-rpath 2>&1 | tee /tmp/configure.log || { \
-            echo "❌ Configure failed! Last 50 lines of output:"; \
-            tail -50 /tmp/configure.log; \
-            exit 1; \
-        }; \
-        echo ">>> Building SLURM (this may take 5-10 minutes)..."; \
-        make -j$(nproc) 2>&1 | tee /tmp/make.log || { \
-            echo "❌ Make failed! Last 100 lines of output:"; \
-            tail -100 /tmp/make.log; \
-            exit 1; \
-        }; \
-        echo "✓ SLURM build completed successfully"; \
-    else \
-        echo "🚫 Skipping SLURM build (BUILD_SLURM=false)"; \
-        mkdir -p /tmp/empty-slurm; \
-        cd /tmp/empty-slurm; \
-        echo "# Empty directory for skipped SLURM build" > README.txt; \
-    fi
-
-# 安装到临时目录并收集二进制文件
-USER root
-RUN set -eux; \
-    if [ "$BUILD_SLURM" = "true" ]; then \
-        cd /home/builder/build/slurm-*; \
-        ARCH=$(uname -m); \
-        echo "Architecture: ${ARCH}"; \
-        mkdir -p /out/packages/${ARCH}; \
-        mkdir -p /out/packages/${ARCH}/bin; \
-        mkdir -p /out/packages/${ARCH}/lib; \
-        echo ">>> Collecting SLURM binaries..."; \
-        for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct sacctmgr; do \
-            if [ -f "src/${cmd}/${cmd}" ]; then \
-                cp -f "src/${cmd}/${cmd}" /out/packages/${ARCH}/bin/; \
-                chmod +x /out/packages/${ARCH}/bin/${cmd}; \
-                echo "  ✓ Collected: ${cmd}"; \
-            elif [ -f "src/${cmd}/.libs/${cmd}" ]; then \
-                cp -f "src/${cmd}/.libs/${cmd}" /out/packages/${ARCH}/bin/; \
-                chmod +x /out/packages/${ARCH}/bin/${cmd}; \
-                echo "  ✓ Collected: ${cmd} (from .libs)"; \
+        mkdir -p /out/packages; \
+        cd /packages/deb; \
+        echo "📦 提取 SLURM 二进制文件从 DEB 包..."; \
+        # 遍历两种架构
+        for ARCH in amd64 arm64; do \
+            # 转换为实际的架构名称
+            if [ "$ARCH" = "amd64" ]; then \
+                ARCH_DIR="x86_64"; \
             else \
-                echo "  ✗ Not found: ${cmd}"; \
+                ARCH_DIR="aarch64"; \
             fi; \
+            echo ""; \
+            echo ">>> 处理 ${ARCH} (${ARCH_DIR}) 架构..."; \
+            mkdir -p /out/packages/${ARCH_DIR}/bin; \
+            mkdir -p /out/packages/${ARCH_DIR}/lib; \
+            mkdir -p /tmp/extract/${ARCH_DIR}; \
+            # 查找该架构的 slurm 包
+            SLURM_PKG=$(ls slurm_*_${ARCH}.deb 2>/dev/null | head -1 || echo ""); \
+            if [ -z "$SLURM_PKG" ]; then \
+                echo "⚠️  未找到 slurm_*_${ARCH}.deb，尝试查找其他 slurm 包..."; \
+                SLURM_PKG=$(ls slurm-*_${ARCH}.deb 2>/dev/null | head -1 || echo ""); \
+            fi; \
+            if [ -n "$SLURM_PKG" ] && [ -f "$SLURM_PKG" ]; then \
+                echo "  ✓ 找到包: $SLURM_PKG"; \
+                # 提取 DEB 包内容
+                dpkg-deb -x "$SLURM_PKG" /tmp/extract/${ARCH_DIR}/ || { \
+                    echo "  ⚠️  无法提取 $SLURM_PKG"; \
+                    continue; \
+                }; \
+                # 复制二进制文件
+                for cmd in sinfo squeue scontrol scancel sbatch srun salloc sacct sacctmgr; do \
+                    # 查找命令（可能在多个位置）
+                    FOUND=0; \
+                    for bindir in /tmp/extract/${ARCH_DIR}/usr/bin \
+                                  /tmp/extract/${ARCH_DIR}/usr/local/bin \
+                                  /tmp/extract/${ARCH_DIR}/usr/sbin \
+                                  /tmp/extract/${ARCH_DIR}/bin; do \
+                        if [ -f "${bindir}/${cmd}" ]; then \
+                            cp "${bindir}/${cmd}" /out/packages/${ARCH_DIR}/bin/; \
+                            chmod +x /out/packages/${ARCH_DIR}/bin/${cmd}; \
+                            echo "    ✓ ${cmd}"; \
+                            FOUND=1; \
+                            break; \
+                        fi; \
+                    done; \
+                    if [ "$FOUND" = "0" ]; then \
+                        echo "    ✗ 未找到: ${cmd}"; \
+                    fi; \
+                done; \
+                # 复制库文件
+                for libdir in /tmp/extract/${ARCH_DIR}/usr/lib \
+                              /tmp/extract/${ARCH_DIR}/usr/lib64 \
+                              /tmp/extract/${ARCH_DIR}/usr/lib/${ARCH}-linux-gnu \
+                              /tmp/extract/${ARCH_DIR}/usr/local/lib; do \
+                    if [ -d "${libdir}" ]; then \
+                        find "${libdir}" -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH_DIR}/lib/ \; 2>/dev/null || true; \
+                    fi; \
+                done; \
+            else \
+                echo "  ❌ 未找到 ${ARCH} 架构的 SLURM DEB 包"; \
+            fi; \
+            # 保存版本信息
+            echo "${SLURM_VERSION}" > /out/packages/${ARCH_DIR}/VERSION; \
+            # 显示结果
+            echo "  📁 二进制文件:"; \
+            ls -lh /out/packages/${ARCH_DIR}/bin/ 2>/dev/null || echo "    (无)"; \
+            echo "  📚 库文件:"; \
+            ls -lh /out/packages/${ARCH_DIR}/lib/ 2>/dev/null || echo "    (无)"; \
         done; \
-        echo ">>> Collecting SLURM libraries..."; \
-        if [ -d "src/api/.libs" ]; then \
-            find src/api/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
-        fi; \
-        if [ -d "src/common/.libs" ]; then \
-            find src/common/.libs -name "libslurm*.so*" -type f -exec cp {} /out/packages/${ARCH}/lib/ \; || true; \
-        fi; \
-        echo "${SLURM_VERSION}" > /out/packages/${ARCH}/VERSION; \
+        # 清理临时文件
+        rm -rf /tmp/extract; \
         echo ""; \
-        echo "📦 SLURM binaries for ${ARCH}:"; \
-        ls -lh /out/packages/${ARCH}/bin/ || true; \
-        echo ""; \
-        echo "📚 SLURM libraries for ${ARCH}:"; \
-        ls -lh /out/packages/${ARCH}/lib/ || true; \
+        echo "✅ SLURM 二进制文件提取完成"; \
     else \
-        echo "🚫 Skipping SLURM binary collection (BUILD_SLURM=false)"; \
+        echo "🚫 跳过 SLURM 二进制文件提取 (BUILD_SLURM=false)"; \
         mkdir -p /out/packages/empty; \
-        echo "No SLURM binaries built" > /out/packages/empty/README.txt; \
+        echo "No SLURM binaries extracted" > /out/packages/empty/README.txt; \
     fi
 
 # =============================================================================
