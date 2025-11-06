@@ -3550,8 +3550,13 @@ sync_component_versions_from_env() {
         # 1.2 更新 AppHub Dockerfile 中的 SALTSTACK_VERSION
         local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
         if [[ -f "$apphub_dockerfile" ]]; then
-            # 需要保留 'v' 前缀
-            local apphub_salt_version="v${saltstack_version}"
+            # 需要保留 'v' 前缀（如果 saltstack_version 已经有 v 前缀则不再添加）
+            local apphub_salt_version
+            if [[ "$saltstack_version" == v* ]]; then
+                apphub_salt_version="$saltstack_version"
+            else
+                apphub_salt_version="v${saltstack_version}"
+            fi
             local current_apphub_version
             current_apphub_version=$(grep "^ARG SALTSTACK_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '\n\r' || echo "")
             
