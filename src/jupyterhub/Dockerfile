@@ -1,5 +1,11 @@
 # JupyterHub Backend集成 - 精炼版（修复构建问题）
-FROM python:3.14-alpine
+ARG PYTHON_ALPINE_VERSION=3.14-alpine
+FROM python:${PYTHON_ALPINE_VERSION}
+
+# Build arguments for versions
+ARG PIP_VERSION=24.2
+ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
@@ -58,14 +64,14 @@ WORKDIR /srv/jupyterhub
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/srv/jupyterhub"
 
-# 使用阿里云 PyPI 镜像（带官方 PyPI 作为备用源）
-ENV PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
-    PIP_EXTRA_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/" \
+# 使用配置的 PyPI 镜像（带官方 PyPI 作为备用源）
+ENV PIP_INDEX_URL="${PYPI_INDEX_URL}" \
+    PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
     PIP_TRUSTED_HOST="mirrors.aliyun.com" \
     PIP_TIMEOUT=60
 
 # 升级pip并安装核心工具
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir --upgrade pip==${PIP_VERSION} setuptools wheel
 
 # 依赖安装（分层优化，优先二进制版本）
 COPY requirements.txt .
@@ -102,16 +108,15 @@ RUN set -eux; \
         python3-dev \
         curl-dev \
         openssl-dev \
-        zlib-dev \
-    ; \
+        zlib-dev; \
     \
     # 步骤3: 配置 npm 镜像源（多重降级）
-    npm config set registry https://registry.npmmirror.com || \
+    npm config set registry ${NPM_REGISTRY} || \
     npm config set registry https://registry.npm.taobao.org || \
     npm config set registry https://registry.npmjs.org; \
     \
     # 步骤4: 配置 pip 镜像源（多重降级）
-    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ || true; \
+    pip config set global.index-url ${PYPI_INDEX_URL} || true; \
     pip config set global.trusted-host mirrors.aliyun.com || true; \
     \
     # 步骤5: 安装 Python 依赖（带重试）

@@ -26,15 +26,39 @@ import (
 // real tools/data and no longer falls back to demo data.
 
 type SlurmService struct {
-	db *gorm.DB
+	db           *gorm.DB
+	restAPIURL   string
+	restAPIToken string
+	httpClient   *http.Client
 }
 
 func NewSlurmService() *SlurmService {
-	return &SlurmService{}
+	restAPIURL := os.Getenv("SLURM_REST_API_URL")
+	if restAPIURL == "" {
+		restAPIURL = "http://slurm-master:6820" // 默认URL
+	}
+
+	return &SlurmService{
+		restAPIURL: restAPIURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
 }
 
 func NewSlurmServiceWithDB(db *gorm.DB) *SlurmService {
-	return &SlurmService{db: db}
+	restAPIURL := os.Getenv("SLURM_REST_API_URL")
+	if restAPIURL == "" {
+		restAPIURL = "http://slurm-master:6820" // 默认URL
+	}
+
+	return &SlurmService{
+		db:         db,
+		restAPIURL: restAPIURL,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
 }
 
 func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
@@ -1250,6 +1274,355 @@ func (s *SlurmService) DeleteNodeTemplate(ctx context.Context, id string) error 
 // generateOperationID 生成操作ID
 func generateOperationID() string {
 	return fmt.Sprintf("op-%d", time.Now().Unix())
+}
+
+// SLURM REST API 相关结构体和方法
+
+// SlurmNodeSpec REST API节点规格
+type SlurmNodeSpec struct {
+	NodeName string `json:"name"`
+	CPUs     int    `json:"cpus"`
+	Memory   int    `json:"real_memory"` // MB
+	Features string `json:"features,omitempty"`
+	Gres     string `json:"gres,omitempty"`
+	State    string `json:"state,omitempty"`
+}
+
+// SlurmAPIResponse REST API响应
+type SlurmAPIResponse struct {
+	Meta   map[string]interface{} `json:"meta,omitempty"`
+	Errors []SlurmAPIError        `json:"errors,omitempty"`
+	Data   interface{}            `json:"data,omitempty"`
+}
+
+// SlurmAPIError REST API错误
+type SlurmAPIError struct {
+	Error       string `json:"error"`
+	ErrorNumber int    `json:"error_number"`
+	Source      string `json:"source,omitempty"`
+}
+
+// SlurmNodeUpdate 节点更新请求
+type SlurmNodeUpdate struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// getJWTToken 获取SLURM JWT token
+func (s *SlurmService) getJWTToken(ctx context.Context) (string, error) {
+	// 尝试从环境变量获取预设的token
+	if token := os.Getenv("SLURM_JWT_TOKEN"); token != "" {
+		return token, nil
+	}
+
+	// 通过SSH连接获取token
+	masterHost := os.Getenv("SLURM_MASTER_HOST")
+	if masterHost == "" {
+		masterHost = "slurm-master"
+	}
+
+	masterPortStr := os.Getenv("SLURM_MASTER_PORT")
+	masterPort := 22
+	if masterPortStr != "" {
+		if port, err := strconv.Atoi(masterPortStr); err == nil {
+			masterPort = port
+		}
+	}
+
+	masterUser := os.Getenv("SLURM_MASTER_USER")
+	if masterUser == "" {
+		masterUser = "root"
+	}
+
+	masterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+	if masterPassword == "" {
+		return "", fmt.Errorf("未配置SLURM_MASTER_PASSWORD环境变量")
+	}
+
+	sshConfig := &ssh.ClientConfig{
+		User: masterUser,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(masterPassword),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", masterHost, masterPort), sshConfig)
+	if err != nil {
+		return "", fmt.Errorf("连接SLURM Master失败: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	defer session.Close()
+
+	// 获取token
+	output, err := session.CombinedOutput("scontrol token lifespan=3600")
+	if err != nil {
+		return "", fmt.Errorf("获取JWT token失败: %v, 输出: %s", err, string(output))
+	}
+
+	// 解析token输出 (格式: SLURM_JWT=xxxxx)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "SLURM_JWT=") {
+			return strings.TrimPrefix(line, "SLURM_JWT="), nil
+		}
+	}
+
+	return "", fmt.Errorf("未找到有效的JWT token")
+}
+
+// callSlurmAPI 调用SLURM REST API
+func (s *SlurmService) callSlurmAPI(ctx context.Context, method, endpoint string, body interface{}) (*SlurmAPIResponse, error) {
+	// 获取JWT token
+	token, err := s.getJWTToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("获取JWT token失败: %v", err)
+	}
+
+	// 构建请求URL
+	url := fmt.Sprintf("%s/slurm/v0.0.41%s", s.restAPIURL, endpoint)
+
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("序列化请求体失败: %v", err)
+		}
+		reqBody = bytes.NewReader(jsonData)
+	}
+
+	// 创建HTTP请求
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("创建HTTP请求失败: %v", err)
+	}
+
+	// 设置请求头
+	req.Header.Set("X-SLURM-USER-TOKEN", token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// 发送请求
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("发送HTTP请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	respData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	// 解析响应
+	var apiResp SlurmAPIResponse
+	if err := json.Unmarshal(respData, &apiResp); err != nil {
+		// 如果不是JSON，返回原始响应
+		log.Printf("[WARN] 解析JSON响应失败: %v, 响应: %s", err, string(respData))
+		return &SlurmAPIResponse{
+			Data: string(respData),
+		}, nil
+	}
+
+	// 检查API错误
+	if len(apiResp.Errors) > 0 {
+		return &apiResp, fmt.Errorf("SLURM API错误: %s", apiResp.Errors[0].Error)
+	}
+
+	return &apiResp, nil
+}
+
+// AddNodeViaAPI 通过REST API添加节点
+func (s *SlurmService) AddNodeViaAPI(ctx context.Context, nodeSpec SlurmNodeSpec) error {
+	log.Printf("[DEBUG] AddNodeViaAPI: 添加节点 %s", nodeSpec.NodeName)
+
+	// 调用API添加节点
+	resp, err := s.callSlurmAPI(ctx, "POST", "/nodes", map[string]interface{}{
+		"nodes": []SlurmNodeSpec{nodeSpec},
+	})
+
+	if err != nil {
+		return fmt.Errorf("添加节点失败: %v", err)
+	}
+
+	log.Printf("[DEBUG] AddNodeViaAPI: 节点 %s 添加成功, 响应: %+v", nodeSpec.NodeName, resp)
+	return nil
+}
+
+// UpdateNodeViaAPI 通过REST API更新节点状态
+func (s *SlurmService) UpdateNodeViaAPI(ctx context.Context, nodeName string, update SlurmNodeUpdate) error {
+	log.Printf("[DEBUG] UpdateNodeViaAPI: 更新节点 %s 状态为 %s", nodeName, update.State)
+
+	// 调用API更新节点
+	resp, err := s.callSlurmAPI(ctx, "POST", fmt.Sprintf("/node/%s", nodeName), update)
+	if err != nil {
+		return fmt.Errorf("更新节点状态失败: %v", err)
+	}
+
+	log.Printf("[DEBUG] UpdateNodeViaAPI: 节点 %s 状态更新成功, 响应: %+v", nodeName, resp)
+	return nil
+}
+
+// DeleteNodeViaAPI 通过REST API删除节点
+func (s *SlurmService) DeleteNodeViaAPI(ctx context.Context, nodeName string) error {
+	log.Printf("[DEBUG] DeleteNodeViaAPI: 删除节点 %s", nodeName)
+
+	// 先将节点设置为DOWN状态
+	err := s.UpdateNodeViaAPI(ctx, nodeName, SlurmNodeUpdate{
+		State:  "DOWN",
+		Reason: fmt.Sprintf("节点删除_%s", time.Now().Format("20060102_150405")),
+	})
+	if err != nil {
+		return fmt.Errorf("设置节点DOWN状态失败: %v", err)
+	}
+
+	// 调用API删除节点
+	resp, err := s.callSlurmAPI(ctx, "DELETE", fmt.Sprintf("/node/%s", nodeName), nil)
+	if err != nil {
+		return fmt.Errorf("删除节点失败: %v", err)
+	}
+
+	log.Printf("[DEBUG] DeleteNodeViaAPI: 节点 %s 删除成功, 响应: %+v", nodeName, resp)
+	return nil
+}
+
+// ScaleUpViaAPI 通过REST API扩容
+func (s *SlurmService) ScaleUpViaAPI(ctx context.Context, nodes []NodeConfig) (*ScalingResult, error) {
+	log.Printf("[DEBUG] ScaleUpViaAPI: 开始基于REST API的扩容操作，节点数量: %d", len(nodes))
+
+	result := &ScalingResult{
+		OperationID: generateOperationID(),
+		Success:     true,
+		Results:     []NodeScalingResult{},
+	}
+
+	for _, node := range nodes {
+		nodeResult := NodeScalingResult{
+			NodeID:  node.Host,
+			Success: false,
+			Message: "",
+		}
+
+		// 创建节点规格 (使用默认值)
+		nodeSpec := SlurmNodeSpec{
+			NodeName: node.Host,
+			CPUs:     4,         // 默认4核
+			Memory:   8192,      // 默认8GB内存 (MB)
+			Features: "compute", // 默认特性
+			State:    "IDLE",
+		}
+
+		// 通过API添加节点
+		if err := s.AddNodeViaAPI(ctx, nodeSpec); err != nil {
+			nodeResult.Message = fmt.Sprintf("API添加节点失败: %v", err)
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		// 更新数据库状态
+		if s.db != nil {
+			var dbNode models.SlurmNode
+			err := s.db.Where("host = ? OR node_name = ?", node.Host, node.MinionID).First(&dbNode).Error
+
+			if err == gorm.ErrRecordNotFound {
+				// 创建新节点记录
+				dbNode = models.SlurmNode{
+					NodeName:     node.Host,
+					Host:         node.Host,
+					CPUs:         4,    // 默认4核
+					Memory:       8192, // 默认8GB内存
+					Status:       "active",
+					SaltMinionID: node.MinionID,
+				}
+				if err := s.db.Create(&dbNode).Error; err != nil {
+					log.Printf("[WARN] 创建节点 %s 数据库记录失败: %v", node.Host, err)
+				}
+			} else if err == nil {
+				// 更新现有记录
+				if err := s.db.Model(&dbNode).Updates(map[string]interface{}{
+					"status":         "active",
+					"salt_minion_id": node.MinionID,
+				}).Error; err != nil {
+					log.Printf("[WARN] 更新节点 %s 数据库记录失败: %v", node.Host, err)
+				}
+			}
+		}
+
+		nodeResult.Success = true
+		nodeResult.Message = "节点成功添加到SLURM集群"
+		result.Results = append(result.Results, nodeResult)
+
+		log.Printf("[DEBUG] 节点 %s 通过REST API扩容成功", node.Host)
+	}
+
+	return result, nil
+}
+
+// ScaleDownViaAPI 通过REST API缩容
+func (s *SlurmService) ScaleDownViaAPI(ctx context.Context, nodeIDs []string) (*ScalingResult, error) {
+	log.Printf("[DEBUG] ScaleDownViaAPI: 开始基于REST API的缩容操作，节点数量: %d", len(nodeIDs))
+
+	result := &ScalingResult{
+		OperationID: generateOperationID(),
+		Success:     true,
+		Results:     []NodeScalingResult{},
+	}
+
+	for _, nodeID := range nodeIDs {
+		nodeResult := NodeScalingResult{
+			NodeID:  nodeID,
+			Success: false,
+			Message: "",
+		}
+
+		// 通过API删除节点
+		if err := s.DeleteNodeViaAPI(ctx, nodeID); err != nil {
+			nodeResult.Message = fmt.Sprintf("API删除节点失败: %v", err)
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
+		}
+
+		// 更新数据库状态
+		if s.db != nil {
+			if err := s.db.Model(&models.SlurmNode{}).Where("node_name = ? OR host = ?", nodeID, nodeID).
+				Updates(map[string]interface{}{
+					"status": "removed",
+				}).Error; err != nil {
+				log.Printf("[WARN] 更新节点 %s 数据库状态失败: %v", nodeID, err)
+			}
+		}
+
+		nodeResult.Success = true
+		nodeResult.Message = "节点成功从SLURM集群移除"
+		result.Results = append(result.Results, nodeResult)
+
+		log.Printf("[DEBUG] 节点 %s 通过REST API缩容成功", nodeID)
+	}
+
+	return result, nil
+}
+
+// ReloadSlurmConfig 重新加载SLURM配置
+func (s *SlurmService) ReloadSlurmConfig(ctx context.Context) error {
+	log.Printf("[DEBUG] ReloadSlurmConfig: 重新加载SLURM配置")
+
+	// 调用API重新加载配置
+	resp, err := s.callSlurmAPI(ctx, "POST", "/reconfigure", nil)
+	if err != nil {
+		return fmt.Errorf("重新加载SLURM配置失败: %v", err)
+	}
+
+	log.Printf("[DEBUG] SLURM配置重新加载成功, 响应: %+v", resp)
+	return nil
 }
 
 // generateTemplateID 生成模板ID

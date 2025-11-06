@@ -2016,3 +2016,108 @@ SaltStack Minions
 0这些http://192.168.0.200:8080/slurm中的数据，不要写入 mock 数据了写空，等待 backend 更新正确的数据，修复一下这个问题
 
 147. 现在扫描整个项目，寻找规律，将这类数据展示问题做彻底的修复
+
+148. 调整 docker-compose.yml 中的配置docker run -p 2881:2881 --name oceanbase-ce -e MODE=mini -d oceanbase/oceanbase-ce然后读取https://github.com/oceanbase/oceanbase中的内容进行改造，https://github.com/oceanbase/oceanbase/releases/tag/v4.4.1_CE
+
+149. 检查这个docker-compose.override.yml的引用情况不需要这么多 docker-compose 文件，将其内容合并到 docker-compose.yml 中，如果用到才可合并，只需要保留docker-compose.test.yml和 docker-compose.yml 两个文件以及配置模板 docker-compose.yml.example即可，请读取整个项目然后调整
+
+150. 显示正确添加了节点，但是 slurm 集群未能查询到正确的节点状态，需要修复，docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL TIMELIMIT NODES STATE NODEL
+
+151. The following packages have unmet dependencies:
+ slurm-smd-slurmctld : Depends: slurm-smd (= 25.05.4-1) but it is not installable
+E: Unable to correct problems, you have held broken packages.
+root@slurm-master:/etc/slurm# wget  http://apphub/pkgs/slurm-deb/slurm-smd_25.05.4-1_arm64.deb          
+--2025-11-05 21:24:58--  http://apphub/pkgs/slurm-deb/slurm-smd_25.05.4-1_arm64.deb
+Resolving apphub (apphub)... 172.18.0.4
+Connecting to apphub (apphub)|172.18.0.4|:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2817966 (2.7M) [application/octet-stream]
+Saving to: 'slurm-smd_25.05.4-1_arm64.deb'
+
+slurm-smd_25.05.4-1_arm64.deb                        100%[=====================================================================================================================>]   2.69M  --.-KB/s    in 0.002s  
+
+2025-11-05 21:24:58 (1.47 GB/s) - 'slurm-smd_25.05.4-1_arm64.deb' saved [2817966/2817966]
+
+root@slurm-master:/etc/slurm# ll
+total 3884
+drwxr-xr-x 1 slurm slurm    4096 Nov  5 21:24 ./
+drwxr-xr-x 1 root  root     4096 Nov  5 20:09 ../
+-rw-r--r-- 1 slurm slurm     259 Nov  5 20:09 cgroup.conf
+-rw-r--r-- 1 slurm slurm      43 Jan 28  2022 plugstack.conf
+drwxr-xr-x 1 slurm slurm    4096 Feb 21  2022 plugstack.conf.d/
+-rw-r--r-- 1 root  root   515940 Nov  5 19:54 slurm-smd-slurmctld_25.05.4-1_arm64.deb
+-rw-r--r-- 1 root  root   515940 Nov  5 19:54 slurm-smd-slurmctld_25.05.4-1_arm64.deb.1
+-rw-r--r-- 1 root  root    92116 Nov  5 19:54 slurm-smd-slurmrestd-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r-- 1 root  root  2817966 Nov  5 19:54 slurm-smd_25.05.4-1_arm64.deb
+-rw-r--r-- 1 slurm slurm    1440 Nov  5 20:09 slurm.conf
+-rw------- 1 slurm slurm     970 Nov  5 20:09 slurmdbd.conf
+root@slurm-master:/etc/slurm# apt install ./slurm-smd_25.05.4-1_arm64.deb  
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+Note, selecting 'slurm-smd' instead of './slurm-smd_25.05.4-1_arm64.deb'
+Some packages could not be installed. This may mean that you have
+requested an impossible situation or if you are using the unstable
+distribution that some required packages have not yet been created
+or been moved out of Incoming.
+The following information may help to resolve the situation:
+
+The following packages have unmet dependencies:
+ slurm-smd : Depends: libdbus-1-3 (>= 1.11.16+really1.11.16) but it is not installable
+             Depends: liblua5.3-0 but it is not installable
+             Depends: libmariadb3 (>= 3.0.0) but it is not installable
+             Depends: librdkafka1 (>= 1.2.1) but it is not installable
+E: Unable to correct problems, you have held broken packages.
+root@slurm-master:/etc/slurm# slurm支持restful 接口，读取https://slurm.schedmd.com/rest_quickstart.html文章并安装 slurm 相关包，已经创建了f87c037eb369:/usr/share/nginx/html/pkgs# ll
+bash: ll: command not found
+f87c037eb369:/usr/share/nginx/html/pkgs# cd slurm-deb/
+f87c037eb369:/usr/share/nginx/html/pkgs/slurm-deb# ll
+bash: ll: command not found
+f87c037eb369:/usr/share/nginx/html/pkgs/slurm-deb# ls -lrta
+total 47048
+drwxr-xr-x    1 root     root          4096 Nov  5 19:49 ..
+-rw-r--r--    1 root     root         27084 Nov  5 19:54 slurm-smd-torque_25.05.4-1_all.deb
+-rw-r--r--    1 root     root        117492 Nov  5 19:54 slurm-smd-sview_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root        307928 Nov  5 19:54 slurm-smd-sview-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root         42472 Nov  5 19:54 slurm-smd-slurmrestd_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root         92116 Nov  5 19:54 slurm-smd-slurmrestd-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root         48262 Nov  5 19:54 slurm-smd-slurmdbd_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root        114306 Nov  5 19:54 slurm-smd-slurmdbd-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root        248976 Nov  5 19:54 slurm-smd-slurmd_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root        825432 Nov  5 19:54 slurm-smd-slurmd-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root        515940 Nov  5 19:54 slurm-smd-slurmctld_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root       1295000 Nov  5 19:54 slurm-smd-slurmctld-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root         13956 Nov  5 19:54 slurm-smd-sackd_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root         31312 Nov  5 19:54 slurm-smd-sackd-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root          7296 Nov  5 19:54 slurm-smd-openlava_25.05.4-1_all.deb
+-rw-r--r--    1 root     root        151350 Nov  5 19:54 slurm-smd-libslurm-perl_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root        422192 Nov  5 19:54 slurm-smd-libslurm-perl-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root         15242 Nov  5 19:54 slurm-smd-libpmi2-0_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root         44846 Nov  5 19:54 slurm-smd-libpmi2-0-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root         11554 Nov  5 19:54 slurm-smd-libpmi0_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root         25922 Nov  5 19:54 slurm-smd-libpmi0-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root         10926 Nov  5 19:54 slurm-smd-libpam-slurm-adopt_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root         23022 Nov  5 19:54 slurm-smd-libpam-slurm-adopt-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root          6832 Nov  5 19:54 slurm-smd-libnss-slurm_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root         15182 Nov  5 19:54 slurm-smd-libnss-slurm-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root        746894 Nov  5 19:54 slurm-smd-client_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root       1470032 Nov  5 19:54 slurm-smd-client-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root       2817966 Nov  5 19:54 slurm-smd_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root      11562738 Nov  5 19:55 slurm-smd-dbgsym_25.05.4-1_arm64.ddeb
+-rw-r--r--    1 root     root      25153540 Nov  5 19:55 slurm-smd-dev_25.05.4-1_arm64.deb
+-rw-r--r--    1 root     root       1908132 Nov  5 19:55 slurm-smd-doc_25.05.4-1_all.deb
+-rw-r--r--    1 root     root         10991 Nov  5 19:55 slurm-smd_25.05.4-1_arm64.changes
+-rw-r--r--    1 root     root         24092 Nov  5 19:55 slurm-smd_25.05.4-1_arm64.buildinfo这些 deb 了，需要在 slurm-master 中正确的安装并启用 jwt 认证的 restful接口，通过 restful 接口提交 slurm 任务以及管理 slurm 集群
+
+152. 现在调整 slurm-master 的构建 dockerfile，将 install-slurm-restapi.sh 串到构建步骤中重新构建，然后测试 slurm的扩展 rest 包是否正确安装了，并测试 slurm 的 rest 接口是否正常
+
+153. 这里期望的是通过backend 接口页面通过 slurm 的 smd-rest 接口添加节点到 slurm集群然后重载 slurm 服务做到节点的自动扩缩容
+
+154. 然后基于 153 的功能将 slurm-master 的 dockerfile 增加安装步骤（安装 net-tools 等基础工具）和测试步骤，添加到 entrypoint.sh 中，然后使用 systemctl 托管 slurmrest，然后构建测试
+
+155. 调整http://192.168.0.200:8080/saltstack中的前端代码，期望的是先渲染静态文件，集群数量等状态异步的加载
+
+156. 现在检查所有组件的版本相关 dockerfile，调整 build.sh 读取 env 然后将这些 dockerfile 中的版本通过 build.sh 进行改配置，保证每次组件版本都是通过 env+build.sh 渲染出来的动态配置，请按照这个需求来调整 build.sh 代码
+
+157. 现在读取 build.sh 中所有和版本相关的硬编码函数也要进行修复

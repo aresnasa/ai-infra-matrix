@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton } from 'antd';
 import { 
   CheckCircleOutlined, 
   ExclamationCircleOutlined, 
@@ -21,13 +21,37 @@ const { TabPane } = Tabs;
 const { TextArea } = Input;
 const { Option } = Select;
 
+// 骨架屏组件
+const StatisticSkeleton = ({ title, icon }) => (
+  <Card>
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      {icon}
+      <div style={{ marginLeft: 8, flex: 1 }}>
+        <div style={{ fontSize: '14px', color: '#999', marginBottom: 4 }}>{title}</div>
+        <Skeleton.Input style={{ width: 60, height: 24 }} active />
+      </div>
+    </div>
+  </Card>
+);
+
 const SaltStackDashboard = () => {
+  // 页面状态管理
+  const [pageLoaded, setPageLoaded] = useState(false);
+  
+  // 数据状态 - 分别管理loading状态
   const [status, setStatus] = useState(null);
   const [minions, setMinions] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  
+  // 加载状态 - 分别管理每个数据块的加载状态
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [minionsLoading, setMinionsLoading] = useState(false);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  
+  // 全局状态
   const [demo, setDemo] = useState(false);
   const [error, setError] = useState(null);
+  
   // 自定义执行弹窗
   const [execVisible, setExecVisible] = useState(false);
   const [execForm] = Form.useForm();
@@ -48,6 +72,7 @@ const SaltStackDashboard = () => {
   ]);
 
   const loadStatus = async () => {
+    setStatusLoading(true);
     try {
       const response = await saltStackAPI.getStatus();
       setStatus(response.data?.data);
@@ -56,41 +81,54 @@ const SaltStackDashboard = () => {
     } catch (e) {
       console.error('加载SaltStack状态失败', e);
       setError(e);
+    } finally {
+      setStatusLoading(false);
     }
   };
 
   const loadMinions = async () => {
+    setMinionsLoading(true);
     try {
       const response = await saltStackAPI.getMinions();
       setMinions(response.data?.data || []);
       setDemo(prev => prev || Boolean(response.data?.demo));
     } catch (e) {
       console.error('加载SaltStack Minions失败', e);
+    } finally {
+      setMinionsLoading(false);
     }
   };
 
   const loadJobs = async () => {
+    setJobsLoading(true);
     try {
       const response = await saltStackAPI.getJobs(10);
       setJobs(response.data?.data || []);
       setDemo(prev => prev || Boolean(response.data?.demo));
     } catch (e) {
       console.error('加载SaltStack Jobs失败', e);
-    }
-  };
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([loadStatus(), loadMinions(), loadJobs()]);
     } finally {
-      setLoading(false);
+      setJobsLoading(false);
     }
   };
 
+  const loadAllData = async () => {
+    // 并行加载所有数据，但不阻塞页面渲染
+    await Promise.all([loadStatus(), loadMinions(), loadJobs()]);
+  };
+
+  // 页面初始化效果 - 立即显示静态内容
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 60000); // 60秒刷新一次，减少对后端的压力
+    // 标记页面已加载，显示静态内容
+    setPageLoaded(true);
+    
+    // 异步加载数据（非阻塞）
+    setTimeout(() => {
+      loadAllData();
+    }, 100); // 延迟100ms让静态内容先渲染
+    
+    // 设置定时刷新（60秒）
+    const interval = setInterval(loadAllData, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -234,11 +272,12 @@ const SaltStackDashboard = () => {
     }
   };
 
-  if (loading && !status) {
+  // 如果页面还未初始化，显示简单加载提示
+  if (!pageLoaded) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
         <Spin size="large" />
-        <div style={{ marginTop: 16 }}>加载SaltStack状态...</div>
+        <div style={{ marginTop: 16 }}>初始化SaltStack界面...</div>
       </div>
     );
   }
@@ -265,7 +304,7 @@ const SaltStackDashboard = () => {
               description={
                 <Space>
                   <span>请确认SaltStack服务正在运行且后端API可达。</span>
-                  <Button size="small" onClick={loadData}>重试</Button>
+                  <Button size="small" onClick={loadAllData}>重试</Button>
                 </Space>
               }
             />
@@ -280,16 +319,36 @@ const SaltStackDashboard = () => {
             />
           )}
 
-          {/* 状态概览 */}
+          {/* 数据加载进度提示 */}
+          {(statusLoading || minionsLoading || jobsLoading) && (
+            <Alert 
+              type="info" 
+              showIcon 
+              message="正在加载数据" 
+              description={
+                <Space>
+                  <span>
+                    状态数据: {statusLoading ? '加载中...' : '✓'} | 
+                    Minions: {minionsLoading ? '加载中...' : '✓'} | 
+                    作业历史: {jobsLoading ? '加载中...' : '✓'}
+                  </span>
+                </Space>
+              }
+            />
+          )}
+
+          {/* 状态概览 - 每个卡片独立加载 */}
           <Row gutter={16}>
             <Col span={6}>
               <Card>
                 <Statistic 
                   title="Master状态" 
-                  value={status?.master_status || '未知'} 
+                  value={status?.master_status || (statusLoading ? '加载中...' : '未知')} 
                   prefix={<SettingOutlined />}
-                  valueStyle={{ color: status?.master_status === 'running' ? '#3f8600' : '#cf1322' }}
-                  loading={loading}
+                  valueStyle={{ 
+                    color: statusLoading ? '#999' : (status?.master_status === 'running' ? '#3f8600' : '#cf1322') 
+                  }}
+                  loading={statusLoading}
                 />
               </Card>
             </Col>
@@ -297,10 +356,10 @@ const SaltStackDashboard = () => {
               <Card>
                 <Statistic 
                   title="在线Minions" 
-                  value={status?.minions_up || 0} 
+                  value={status?.minions_up || (statusLoading ? '...' : 0)} 
                   prefix={<DesktopOutlined />}
-                  valueStyle={{ color: '#3f8600' }}
-                  loading={loading}
+                  valueStyle={{ color: statusLoading ? '#999' : '#3f8600' }}
+                  loading={statusLoading}
                 />
               </Card>
             </Col>
@@ -308,10 +367,10 @@ const SaltStackDashboard = () => {
               <Card>
                 <Statistic 
                   title="离线Minions" 
-                  value={status?.minions_down || 0} 
+                  value={status?.minions_down || (statusLoading ? '...' : 0)} 
                   prefix={<ExclamationCircleOutlined />}
-                  valueStyle={{ color: '#cf1322' }}
-                  loading={loading}
+                  valueStyle={{ color: statusLoading ? '#999' : '#cf1322' }}
+                  loading={statusLoading}
                 />
               </Card>
             </Col>
@@ -319,10 +378,12 @@ const SaltStackDashboard = () => {
               <Card>
                 <Statistic 
                   title="API状态" 
-                  value={status?.api_status || '未知'} 
+                  value={status?.api_status || (statusLoading ? '检测中...' : '未知')} 
                   prefix={<ApiOutlined />}
-                  valueStyle={{ color: status?.api_status === 'running' ? '#3f8600' : '#cf1322' }}
-                  loading={loading}
+                  valueStyle={{ 
+                    color: statusLoading ? '#999' : (status?.api_status === 'running' ? '#3f8600' : '#cf1322') 
+                  }}
+                  loading={statusLoading}
                 />
               </Card>
             </Col>
@@ -334,13 +395,13 @@ const SaltStackDashboard = () => {
               <TabPane tab="系统概览" key="overview" icon={<DatabaseOutlined />}>
                 <Row gutter={16}>
                   <Col span={12}>
-                    <Card title="Master信息" size="small">
+                    <Card title="Master信息" size="small" loading={statusLoading}>
                       <Descriptions size="small" column={1}>
                         <Descriptions.Item label="版本">
-                          {status?.salt_version || '未知'}
+                          {status?.salt_version || (statusLoading ? '加载中...' : '未知')}
                         </Descriptions.Item>
                         <Descriptions.Item label="启动时间">
-                          {status?.uptime || '未知'}
+                          {status?.uptime || (statusLoading ? '获取中...' : '未知')}
                         </Descriptions.Item>
                         <Descriptions.Item label="配置文件">
                           {status?.config_file || '/etc/salt/master'}
@@ -352,146 +413,171 @@ const SaltStackDashboard = () => {
                     </Card>
                   </Col>
                   <Col span={12}>
-                    <Card title="性能指标" size="small">
-                      <Space direction="vertical" style={{ width: '100%' }}>
-                        <div>
-                          <Text>CPU使用率</Text>
-                          <Progress 
-                            percent={status?.cpu_usage || 0} 
-                            size="small" 
-                            status={status?.cpu_usage > 80 ? 'exception' : 'active'}
-                          />
+                    <Card title="性能指标" size="small" loading={statusLoading}>
+                      {statusLoading ? (
+                        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                          <Spin size="small" />
+                          <div style={{ marginTop: 8 }}>正在获取性能数据...</div>
                         </div>
-                        <div>
-                          <Text>内存使用率</Text>
-                          <Progress 
-                            percent={status?.memory_usage || 0} 
-                            size="small" 
-                            status={status?.memory_usage > 85 ? 'exception' : 'active'}
-                          />
-                        </div>
-                        <div>
-                          <Text>活跃连接数</Text>
-                          <Progress 
-                            percent={Math.min((status?.active_connections || 0) / 100 * 100, 100)} 
-                            size="small"
-                            showInfo={false}
-                          />
-                          <Text type="secondary"> {status?.active_connections || 0}/100</Text>
-                        </div>
-                      </Space>
+                      ) : (
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <div>
+                            <Text>CPU使用率</Text>
+                            <Progress 
+                              percent={status?.cpu_usage || 0} 
+                              size="small" 
+                              status={status?.cpu_usage > 80 ? 'exception' : 'active'}
+                            />
+                          </div>
+                          <div>
+                            <Text>内存使用率</Text>
+                            <Progress 
+                              percent={status?.memory_usage || 0} 
+                              size="small" 
+                              status={status?.memory_usage > 85 ? 'exception' : 'active'}
+                            />
+                          </div>
+                          <div>
+                            <Text>活跃连接数</Text>
+                            <Progress 
+                              percent={Math.min((status?.active_connections || 0) / 100 * 100, 100)} 
+                              size="small"
+                              showInfo={false}
+                            />
+                            <Text type="secondary"> {status?.active_connections || 0}/100</Text>
+                          </div>
+                        </Space>
+                      )}
                     </Card>
                   </Col>
                 </Row>
               </TabPane>
 
               <TabPane tab="Minions管理" key="minions" icon={<DesktopOutlined />}>
-                <List
-                  grid={{ gutter: 16, column: 2 }}
-                  dataSource={minions}
-                  renderItem={minion => (
-                    <List.Item>
-                      <Card 
-                        size="small" 
-                        title={
-                          <Space>
-                            <Badge status={getStatusColor(minion.status)} />
-                            {minion.id || minion.name}
-                          </Space>
-                        }
-                        extra={
-                          <Tag color={getStatusColor(minion.status)}>
-                            {minion.status || '未知'}
-                          </Tag>
-                        }
-                      >
-                        <Descriptions size="small" column={1}>
-                          <Descriptions.Item label="操作系统">
-                            {minion.os || '未知'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="架构">
-                            {minion.arch || '未知'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="Salt版本">
-                            {minion.salt_version || '未知'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="最后响应">
-                            {minion.last_seen || '未知'}
-                          </Descriptions.Item>
-                        </Descriptions>
-                      </Card>
-                    </List.Item>
-                  )}
-                />
-                {minions.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <Text type="secondary">暂无Minion数据</Text>
+                {minionsLoading ? (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16 }}>正在加载Minions数据...</div>
                   </div>
+                ) : (
+                  <>
+                    <List
+                      grid={{ gutter: 16, column: 2 }}
+                      dataSource={minions}
+                      renderItem={minion => (
+                        <List.Item>
+                          <Card 
+                            size="small" 
+                            title={
+                              <Space>
+                                <Badge status={getStatusColor(minion.status)} />
+                                {minion.id || minion.name}
+                              </Space>
+                            }
+                            extra={
+                              <Tag color={getStatusColor(minion.status)}>
+                                {minion.status || '未知'}
+                              </Tag>
+                            }
+                          >
+                            <Descriptions size="small" column={1}>
+                              <Descriptions.Item label="操作系统">
+                                {minion.os || '未知'}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="架构">
+                                {minion.arch || '未知'}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="Salt版本">
+                                {minion.salt_version || '未知'}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="最后响应">
+                                {minion.last_seen || '未知'}
+                              </Descriptions.Item>
+                            </Descriptions>
+                          </Card>
+                        </List.Item>
+                      )}
+                    />
+                    {minions.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                        <Text type="secondary">暂无Minion数据</Text>
+                      </div>
+                    )}
+                  </>
                 )}
               </TabPane>
 
               <TabPane tab="作业历史" key="jobs" icon={<PlayCircleOutlined />}>
-                <List
-                  dataSource={jobs}
-                  renderItem={job => (
-                    <List.Item>
-                      <Card 
-                        size="small" 
-                        style={{ width: '100%' }}
-                        title={
-                          <Space>
-                            <Tag color={getJobStatusColor(job.status)}>
-                              {job.status || '未知'}
-                            </Tag>
-                            <Text strong>{job.function || job.command}</Text>
-                          </Space>
-                        }
-                        extra={
-                          <Text type="secondary">
-                            {job.timestamp || job.start_time}
-                          </Text>
-                        }
-                      >
-                        <Descriptions size="small" column={2}>
-                          <Descriptions.Item label="目标">
-                            {job.target || '所有节点'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="用户">
-                            {job.user || 'root'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="持续时间">
-                            {job.duration || '未知'}
-                          </Descriptions.Item>
-                          <Descriptions.Item label="返回码">
-                            <Tag color={job.return_code === 0 ? 'green' : 'red'}>
-                              {job.return_code ?? '未知'}
-                            </Tag>
-                          </Descriptions.Item>
-                        </Descriptions>
-                        {job.result && (
-                          <div style={{ marginTop: 8 }}>
-                            <Text type="secondary">结果:</Text>
-                            <Paragraph 
-                              code 
-                              style={{ 
-                                marginTop: 4, 
-                                marginBottom: 0, 
-                                maxHeight: 100, 
-                                overflow: 'auto' 
-                              }}
-                            >
-                              {typeof job.result === 'string' ? job.result : JSON.stringify(job.result, null, 2)}
-                            </Paragraph>
-                          </div>
-                        )}
-                      </Card>
-                    </List.Item>
-                  )}
-                />
-                {jobs.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <Text type="secondary">暂无作业历史</Text>
+                {jobsLoading ? (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16 }}>正在加载作业历史...</div>
                   </div>
+                ) : (
+                  <>
+                    <List
+                      dataSource={jobs}
+                      renderItem={job => (
+                        <List.Item>
+                          <Card 
+                            size="small" 
+                            style={{ width: '100%' }}
+                            title={
+                              <Space>
+                                <Tag color={getJobStatusColor(job.status)}>
+                                  {job.status || '未知'}
+                                </Tag>
+                                <Text strong>{job.function || job.command}</Text>
+                              </Space>
+                            }
+                            extra={
+                              <Text type="secondary">
+                                {job.timestamp || job.start_time}
+                              </Text>
+                            }
+                          >
+                            <Descriptions size="small" column={2}>
+                              <Descriptions.Item label="目标">
+                                {job.target || '所有节点'}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="用户">
+                                {job.user || 'root'}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="持续时间">
+                                {job.duration || '未知'}
+                              </Descriptions.Item>
+                              <Descriptions.Item label="返回码">
+                                <Tag color={job.return_code === 0 ? 'green' : 'red'}>
+                                  {job.return_code ?? '未知'}
+                                </Tag>
+                              </Descriptions.Item>
+                            </Descriptions>
+                            {job.result && (
+                              <div style={{ marginTop: 8 }}>
+                                <Text type="secondary">结果:</Text>
+                                <Paragraph 
+                                  code 
+                                  style={{ 
+                                    marginTop: 4, 
+                                    marginBottom: 0, 
+                                    maxHeight: 100, 
+                                    overflow: 'auto' 
+                                  }}
+                                >
+                                  {typeof job.result === 'string' ? job.result : JSON.stringify(job.result, null, 2)}
+                                </Paragraph>
+                              </div>
+                            )}
+                          </Card>
+                        </List.Item>
+                      )}
+                    />
+                    {jobs.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                        <Text type="secondary">暂无作业历史</Text>
+                      </div>
+                    )}
+                  </>
                 )}
               </TabPane>
             </Tabs>
@@ -503,8 +589,8 @@ const SaltStackDashboard = () => {
               <Button 
                 type="primary" 
                 icon={<ReloadOutlined />} 
-                onClick={loadData}
-                loading={loading}
+                onClick={loadAllData}
+                loading={statusLoading || minionsLoading || jobsLoading}
               >
                 刷新数据
               </Button>

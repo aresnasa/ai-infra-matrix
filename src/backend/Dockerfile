@@ -1,8 +1,13 @@
 # Build stage
-FROM golang:1.25-alpine AS builder
+ARG GOLANG_ALPINE_VERSION=1.25-alpine
+FROM golang:${GOLANG_ALPINE_VERSION} AS builder
+
+# Build arguments for versions
+ARG GOLANG_VERSION=1.25
+ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
 
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOPROXY=${GO_PROXY}
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
@@ -98,10 +103,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage - Backend Service (Default)
-FROM golang:1.25-alpine AS backend
+ARG GOLANG_ALPINE_VERSION=1.25-alpine
+FROM golang:${GOLANG_ALPINE_VERSION} AS backend
+
+# Build arguments for versions
+ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
 
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOPROXY=${GO_PROXY}
 ENV GOSUMDB=off
 
 # Keep version metadata available in the final image, too
@@ -194,7 +203,8 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.description="AI Infra Matrix - Backend service"
 
 # Backend Init Stage - for database initialization
-FROM golang:1.25-alpine AS backend-init
+ARG GOLANG_ALPINE_VERSION=1.25-alpine
+FROM golang:${GOLANG_ALPINE_VERSION} AS backend-init
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"

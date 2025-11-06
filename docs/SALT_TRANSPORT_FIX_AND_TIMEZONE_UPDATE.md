@@ -154,7 +154,7 @@ NTP_SERVER_BACKUP=cn.pool.ntp.org
 ### 未修改的镜像
 以下镜像基于预构建镜像，不需要修改：
 - **apphub**: 基于 `nginx:stable`（已包含时区支持）
-- **gitea**: 基于 `gitea/gitea:1.24.6`（官方镜像）
+- **gitea**: 基于 `gitea/gitea:1.25.1`（官方镜像）
 - **singleuser**: 基于 `jupyter/base-notebook:latest`（官方镜像）
 - **frontend**: node_modules 中的 Dockerfile（第三方依赖）
 

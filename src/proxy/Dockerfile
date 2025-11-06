@@ -1,10 +1,15 @@
 # 网络代理容器 - 将Docker网络中的服务代理到宿主机网络
 # 使用HAProxy作为代理服务器，支持TCP代理多种数据库和服务
-FROM haproxy:2.9-alpine
+ARG HAPROXY_VERSION=2.9-alpine
+FROM haproxy:${HAPROXY_VERSION}
 
 # 设置维护者信息
+ARG VERSION="dev"
+ARG HAPROXY_VERSION=2.9-alpine
 LABEL maintainer="AI Infra Matrix Team"
 LABEL description="Network proxy for exposing Docker internal services to host network"
+LABEL version="${VERSION}"
+LABEL haproxy.version="${HAPROXY_VERSION}"
 
 # 切换到root用户以安装软件包
 USER root

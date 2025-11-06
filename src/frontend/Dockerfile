@@ -1,5 +1,12 @@
-# 使用Node.js 22作为基础镜像
-FROM node:22-alpine AS build
+# 全局 ARG 声明（用于多个构建阶段）
+ARG NODE_ALPINE_VERSION=22-alpine
+ARG NGINX_VERSION=stable-alpine-perl
+
+# 使用Node.js作为基础镜像
+FROM node:${NODE_ALPINE_VERSION} AS build
+
+# Build arguments for versions
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 # 配置Alpine镜像（多镜像源智能回退配置 - 优化版）
 RUN set -eux; \
@@ -28,8 +35,8 @@ WORKDIR /app
 # 复制package.json和package-lock.json
 COPY package*.json ./
 
-# 配置npm镜像源为中国镜像
-RUN npm config set registry https://registry.npmmirror.com
+# 配置npm镜像源
+RUN npm config set registry ${NPM_REGISTRY}
 
 # 安装依赖
 RUN npm install --verbose
@@ -48,10 +55,12 @@ ENV APP_VERSION=${VERSION}
 # 构建应用
 RUN npm run build
 
-# 使用nginx作为生产环境镜像
-FROM nginx:stable-alpine-perl
+# ========================================
+# Stage 2: Production nginx 镜像
+# ========================================
+FROM nginx:${NGINX_VERSION}
 
-# Version metadata
+# Version metadata (需要在 FROM 之后重新声明ARG，因为跨越了构建阶段)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 

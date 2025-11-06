@@ -8,7 +8,7 @@
 访问 Gitea 页面时出现静态资源加载失败错误：
 
 ```
-Failed to load asset files from http://192.168.0.200:8080/assets/assets/js/index.js?v=1.24.6
+Failed to load asset files from http://192.168.0.200:8080/assets/assets/js/index.js?v=1.25.1
 Please make sure the asset files can be accessed.
 ```
 

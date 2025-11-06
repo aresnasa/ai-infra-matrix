@@ -20,7 +20,7 @@
 |------|------|------|----------|
 | `osixia/openldap:stable` | stable | LDAP认证服务 | docker-compose.yml, Helm Chart |
 | `osixia/phpldapadmin:stable` | stable | LDAP管理界面 | docker-compose.yml, Helm Chart |
-| `gitea/gitea:1.24.6` | 1.24.5 | Git仓库基础镜像 | src/gitea/Dockerfile |
+| `gitea/gitea:1.25.1` | 1.24.5 | Git仓库基础镜像 | src/gitea/Dockerfile |
 
 #### 3. 构建时依赖镜像
 | 镜像 | 版本 | 用途 | Dockerfile位置 |

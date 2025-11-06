@@ -200,7 +200,7 @@ $ ./build.sh tag-localhost
 [INFO] 网络环境: external
 
 处理结果：
-✅ gitea/gitea:1.24.6 → localhost/gitea/gitea:1.24.6
+✅ gitea/gitea:1.25.1 → localhost/gitea/gitea:1.25.1
 ✅ golang:1.25-alpine → localhost/golang:1.25-alpine
 ✅ nginx:stable → localhost/nginx:stable
 ✅ ubuntu:22.04 → localhost/ubuntu:22.04

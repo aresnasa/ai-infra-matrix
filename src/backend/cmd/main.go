@@ -964,6 +964,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.POST("/scaling/scale-up/async", slurmController.ScaleUpAsync)
 		slurm.POST("/scaling/scale-down", slurmController.ScaleDown)
 
+		// 基于REST API的扩缩容路由
+		slurm.POST("/scaling/scale-up-api", slurmController.ScaleUpViaAPI)
+		slurm.POST("/scaling/scale-down-api", slurmController.ScaleDownViaAPI)
+		slurm.POST("/reload-config", slurmController.ReloadSlurmConfig)
+
 		// SaltStack 集成路由
 		slurm.GET("/saltstack/integration", slurmController.GetSaltStackIntegration)
 		slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)

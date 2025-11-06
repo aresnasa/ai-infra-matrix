@@ -1,6 +1,7 @@
 # ai-infra single-user notebook image pinned to JupyterHub 5.3.x
 # Base on jupyter/docker-stacks base-notebook for a full Lab experience
-FROM jupyter/base-notebook:latest
+ARG JUPYTER_BASE_NOTEBOOK_VERSION=latest
+FROM jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION}
 
 # Version metadata
 ARG VERSION="dev"

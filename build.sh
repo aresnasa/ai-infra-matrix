@@ -28,10 +28,11 @@ detect_os() {
 
 # 全局变量
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="   1.0.0"
+VERSION="1.0.0"
 CONFIG_FILE="$SCRIPT_DIR/config.toml"
 OS_TYPE=$(detect_os)
 FORCE_REBUILD=false  # 强制重新构建标志
+ENV_FILE="$SCRIPT_DIR/.env"  # 环境变量文件路径
 
 # 构建缓存相关变量
 BUILD_CACHE_DIR="$SCRIPT_DIR/.build-cache"
@@ -90,6 +91,134 @@ set_or_update_env_var() {
     fi
 
     cleanup_backup_files "$(dirname "$env_file")"
+}
+
+# 从环境文件加载变量到当前shell环境
+# 用法: load_env_file [FILE]
+load_env_file() {
+    local env_file="${1:-$ENV_FILE}"
+    
+    if [[ ! -f "$env_file" ]]; then
+        # 如果 .env 不存在，尝试从 .env.example 复制
+        if [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+            print_info "环境文件不存在，从 .env.example 创建"
+            cp "$SCRIPT_DIR/.env.example" "$env_file"
+        else
+            print_warning "环境文件不存在: $env_file"
+            return 1
+        fi
+    fi
+    
+    # 读取环境变量（跳过注释和空行）
+    while IFS='=' read -r key value; do
+        # 跳过注释行和空行
+        [[ "$key" =~ ^#.*$ ]] && continue
+        [[ -z "$key" ]] && continue
+        
+        # 移除值两端的引号
+        value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        
+        # 导出环境变量（只有当变量未设置时才导出，避免覆盖已有的环境变量）
+        if [[ -z "${!key}" ]]; then
+            export "$key=$value"
+        fi
+    done < <(grep -v '^#' "$env_file" | grep -v '^[[:space:]]*$')
+    
+    return 0
+}
+
+# 获取组件版本相关的构建参数
+# 用法: get_version_build_args <service>
+get_version_build_args() {
+    local service="$1"
+    local build_args=""
+    
+    # 确保环境变量已加载
+    load_env_file
+    
+    # 基础镜像版本参数（所有服务通用）
+    [[ -n "${GOLANG_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_VERSION=${GOLANG_VERSION}"
+    [[ -n "${GOLANG_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_ALPINE_VERSION=${GOLANG_ALPINE_VERSION}"
+    [[ -n "${NODE_VERSION:-}" ]] && build_args+=" --build-arg NODE_VERSION=${NODE_VERSION}"
+    [[ -n "${NODE_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg NODE_ALPINE_VERSION=${NODE_ALPINE_VERSION}"
+    [[ -n "${PYTHON_VERSION:-}" ]] && build_args+=" --build-arg PYTHON_VERSION=${PYTHON_VERSION}"
+    [[ -n "${PYTHON_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg PYTHON_ALPINE_VERSION=${PYTHON_ALPINE_VERSION}"
+    [[ -n "${UBUNTU_VERSION:-}" ]] && build_args+=" --build-arg UBUNTU_VERSION=${UBUNTU_VERSION}"
+    [[ -n "${ROCKYLINUX_VERSION:-}" ]] && build_args+=" --build-arg ROCKYLINUX_VERSION=${ROCKYLINUX_VERSION}"
+    [[ -n "${NGINX_VERSION:-}" ]] && build_args+=" --build-arg NGINX_VERSION=${NGINX_VERSION}"
+    [[ -n "${NGINX_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg NGINX_ALPINE_VERSION=${NGINX_ALPINE_VERSION}"
+    [[ -n "${HAPROXY_VERSION:-}" ]] && build_args+=" --build-arg HAPROXY_VERSION=${HAPROXY_VERSION}"
+    [[ -n "${JUPYTER_BASE_NOTEBOOK_VERSION:-}" ]] && build_args+=" --build-arg JUPYTER_BASE_NOTEBOOK_VERSION=${JUPYTER_BASE_NOTEBOOK_VERSION}"
+    [[ -n "${ALPINE_VERSION:-}" ]] && build_args+=" --build-arg ALPINE_VERSION=${ALPINE_VERSION}"
+    
+    # 应用组件版本参数
+    [[ -n "${GITEA_VERSION:-}" ]] && build_args+=" --build-arg GITEA_VERSION=${GITEA_VERSION}"
+    [[ -n "${SALTSTACK_VERSION:-}" ]] && build_args+=" --build-arg SALTSTACK_VERSION=${SALTSTACK_VERSION}"
+    [[ -n "${SLURM_VERSION:-}" ]] && build_args+=" --build-arg SLURM_VERSION=${SLURM_VERSION}"
+    [[ -n "${CATEGRAF_VERSION:-}" ]] && build_args+=" --build-arg CATEGRAF_VERSION=${CATEGRAF_VERSION}"
+    [[ -n "${SINGULARITY_VERSION:-}" ]] && build_args+=" --build-arg SINGULARITY_VERSION=${SINGULARITY_VERSION}"
+    
+    # 依赖工具版本参数
+    [[ -n "${PIP_VERSION:-}" ]] && build_args+=" --build-arg PIP_VERSION=${PIP_VERSION}"
+    [[ -n "${JUPYTERHUB_VERSION:-}" ]] && build_args+=" --build-arg JUPYTERHUB_VERSION=${JUPYTERHUB_VERSION}"
+    [[ -n "${NPM_VERSION:-}" ]] && build_args+=" --build-arg NPM_VERSION=${NPM_VERSION}"
+    [[ -n "${GO_PROXY:-}" ]] && build_args+=" --build-arg GO_PROXY=${GO_PROXY}"
+    [[ -n "${PYPI_INDEX_URL:-}" ]] && build_args+=" --build-arg PYPI_INDEX_URL=${PYPI_INDEX_URL}"
+    [[ -n "${NPM_REGISTRY:-}" ]] && build_args+=" --build-arg NPM_REGISTRY=${NPM_REGISTRY}"
+    
+    # 服务特定的版本参数
+    case "$service" in
+        gitea)
+            # Gitea 需要完整的镜像标签
+            [[ -n "${GITEA_VERSION:-}" ]] && build_args+=" --build-arg GITEA_IMAGE=gitea/gitea:${GITEA_VERSION}"
+            ;;
+        saltstack)
+            # SaltStack 特定版本
+            [[ -n "${SALTSTACK_VERSION:-}" ]] && build_args+=" --build-arg SALT_VERSION=${SALTSTACK_VERSION}"
+            ;;
+        slurm-master)
+            # SLURM 特定版本
+            [[ -n "${SLURM_VERSION:-}" ]] && build_args+=" --build-arg SLURM_PKG_VERSION=${SLURM_VERSION}"
+            ;;
+        apphub)
+            # AppHub 需要所有组件版本
+            [[ -n "${SLURM_VERSION:-}" ]] && build_args+=" --build-arg SLURM_VERSION=${SLURM_VERSION}"
+            [[ -n "${CATEGRAF_VERSION:-}" ]] && build_args+=" --build-arg CATEGRAF_VERSION=${CATEGRAF_VERSION}"
+            [[ -n "${SINGULARITY_VERSION:-}" ]] && build_args+=" --build-arg SINGULARITY_VERSION=${SINGULARITY_VERSION}"
+            ;;
+    esac
+    
+    echo "$build_args"
+}
+
+# 获取依赖镜像列表（使用环境变量版本）
+# 用法: get_dependency_images_list
+get_dependency_images_list() {
+    # 确保环境变量已加载
+    load_env_file
+    
+    # 使用环境变量生成镜像列表，如果变量未设置则使用默认值
+    local images=""
+    
+    # 基础设施镜像（使用环境变量确保统一版本管理）
+    images+="postgres:${POSTGRES_VERSION:-15-alpine} "
+    images+="redis:${REDIS_VERSION:-7-alpine} "
+    images+="osixia/openldap:${OPENLDAP_VERSION:-stable} "
+    images+="osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable} "
+    images+="tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest} "
+    images+="redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest} "
+    images+="nginx:${NGINX_ALPINE_VERSION:-1.27-alpine} "
+    images+="minio/minio:${MINIO_VERSION:-latest} "
+    
+    # 构建相关镜像（使用环境变量）
+    images+="node:${NODE_ALPINE_VERSION:-22-alpine} "
+    images+="nginx:${NGINX_VERSION:-stable-alpine-perl} "
+    images+="golang:${GOLANG_ALPINE_VERSION:-1.25-alpine} "
+    images+="python:${PYTHON_ALPINE_VERSION:-3.14-alpine} "
+    images+="gitea/gitea:${GITEA_VERSION:-1.25.1} "
+    images+="jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}"
+    
+    echo "$images"
 }
 
 # 设置SaltStack默认配置
@@ -881,7 +1010,7 @@ get_all_services() {
 # 获取所有依赖镜像（包含测试工具和构建依赖）
 get_all_dependencies() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.6 jupyter/base-notebook:latest"
+        get_dependency_images_list
         return
     fi
     
@@ -899,7 +1028,10 @@ get_all_dependencies() {
 # 获取生产环境依赖镜像（移除测试工具和构建依赖）
 get_production_dependencies() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "postgres:15-alpine redis:7-alpine tecnativa/tcp-proxy nginx:1.27-alpine minio/minio:latest"
+        # 加载环境变量
+        load_env_file
+        # 返回生产环境必需的镜像（不包括测试工具）
+        echo "postgres:${POSTGRES_VERSION:-15-alpine} redis:${REDIS_VERSION:-7-alpine} tecnativa/tcp-proxy nginx:${NGINX_ALPINE_VERSION:-1.27-alpine} minio/minio:${MINIO_VERSION:-latest}"
         return
     fi
     
@@ -987,8 +1119,8 @@ collect_dependency_images() {
         return
     fi
     
-    # 使用统一的静态依赖列表，确保与get_all_dependencies一致
-    echo "postgres:15-alpine redis:7-alpine osixia/openldap:stable osixia/phpldapadmin:stable tecnativa/tcp-proxy redislabs/redisinsight:latest nginx:1.27-alpine minio/minio:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.6 jupyter/base-notebook:latest"
+    # 使用统一的动态依赖列表，确保与get_all_dependencies一致
+    get_dependency_images_list
 }
 
 # 批量下载基础镜像
@@ -1095,9 +1227,10 @@ batch_download_base_images() {
 }
 
 # Mock 数据测试相关配置
+load_env_file
 MOCK_DATA_ENABLED="${MOCK_DATA_ENABLED:-false}"
-MOCK_POSTGRES_IMAGE="postgres:15-alpine"
-MOCK_REDIS_IMAGE="redis:7-alpine"
+MOCK_POSTGRES_IMAGE="postgres:${POSTGRES_VERSION:-15-alpine}"
+MOCK_REDIS_IMAGE="redis:${REDIS_VERSION:-7-alpine}"
 
 # 获取服务对应的路径
 get_service_path() {
@@ -3391,18 +3524,23 @@ sync_component_versions_from_env() {
     
     # 1. 同步 SaltStack 版本
     local saltstack_version
-    saltstack_version=$(grep "^SALTSTACK_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    saltstack_version=$(grep "^SALTSTACK_VERSION=" "$env_file" | head -1 | cut -d'=' -f2 | tr -d ' "\n\r' || echo "")
     
     if [[ -n "$saltstack_version" ]]; then
         # 1.1 更新 SaltStack Dockerfile
         local saltstack_dockerfile="$SCRIPT_DIR/src/saltstack/Dockerfile"
         if [[ -f "$saltstack_dockerfile" ]]; then
             local current_version
-            current_version=$(grep 'pip3 install.*salt==' "$saltstack_dockerfile" | sed -E 's/.*salt==([0-9.]+).*/\1/' || echo "")
+            current_version=$(grep 'pip3 install.*salt==' "$saltstack_dockerfile" | sed -E 's/.*salt==([0-9.]+).*/\1/' | tr -d '\n\r' || echo "")
             
             if [[ -n "$current_version" ]] && [[ "$current_version" != "$saltstack_version" ]]; then
                 print_info "  [SaltStack Master] $current_version → $saltstack_version"
-                sed_inplace "s/salt==[0-9.]\\+/salt==$saltstack_version/g" "$saltstack_dockerfile"
+                # 使用 BSD sed 兼容的语法
+                if [[ "$OS_TYPE" == "macOS" ]]; then
+                    sed -i '.bak' -E "s/salt==[0-9.]+/salt==$saltstack_version/g" "$saltstack_dockerfile"
+                else
+                    sed -i "s/salt==[0-9.]\+/salt==$saltstack_version/g" "$saltstack_dockerfile"
+                fi
                 ((updated_count++))
             elif [[ "$current_version" == "$saltstack_version" ]]; then
                 print_success "  ✓ SaltStack Master: $saltstack_version"
@@ -3415,11 +3553,16 @@ sync_component_versions_from_env() {
             # 需要保留 'v' 前缀
             local apphub_salt_version="v${saltstack_version}"
             local current_apphub_version
-            current_apphub_version=$(grep "^ARG SALTSTACK_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            current_apphub_version=$(grep "^ARG SALTSTACK_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '\n\r' || echo "")
             
             if [[ -n "$current_apphub_version" ]] && [[ "$current_apphub_version" != "$apphub_salt_version" ]]; then
                 print_info "  [AppHub SaltStack] $current_apphub_version → $apphub_salt_version"
-                sed_inplace "s|^ARG SALTSTACK_VERSION=.*|ARG SALTSTACK_VERSION=$apphub_salt_version|g" "$apphub_dockerfile"
+                # 使用 BSD sed 兼容的语法
+                if [[ "$OS_TYPE" == "macOS" ]]; then
+                    sed -i '.bak' "s|^ARG SALTSTACK_VERSION=.*|ARG SALTSTACK_VERSION=$apphub_salt_version|g" "$apphub_dockerfile"
+                else
+                    sed -i "s|^ARG SALTSTACK_VERSION=.*|ARG SALTSTACK_VERSION=$apphub_salt_version|g" "$apphub_dockerfile"
+                fi
                 ((updated_count++))
             elif [[ "$current_apphub_version" == "$apphub_salt_version" ]]; then
                 print_success "  ✓ AppHub SaltStack: $apphub_salt_version"
@@ -3429,17 +3572,22 @@ sync_component_versions_from_env() {
     
     # 2. 同步 SLURM 版本
     local slurm_version
-    slurm_version=$(grep "^SLURM_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    slurm_version=$(grep "^SLURM_VERSION=" "$env_file" | head -1 | cut -d'=' -f2 | tr -d ' "\n\r' || echo "")
     
     if [[ -n "$slurm_version" ]]; then
         local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
         if [[ -f "$apphub_dockerfile" ]]; then
             local current_slurm_version
-            current_slurm_version=$(grep "^ARG SLURM_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            current_slurm_version=$(grep "^ARG SLURM_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '\n\r' || echo "")
             
             if [[ -n "$current_slurm_version" ]] && [[ "$current_slurm_version" != "$slurm_version" ]]; then
                 print_info "  [AppHub SLURM] $current_slurm_version → $slurm_version"
-                sed_inplace "s|^ARG SLURM_VERSION=.*|ARG SLURM_VERSION=$slurm_version|g" "$apphub_dockerfile"
+                # 使用 BSD sed 兼容的语法
+                if [[ "$OS_TYPE" == "macOS" ]]; then
+                    sed -i '.bak' "s|^ARG SLURM_VERSION=.*|ARG SLURM_VERSION=$slurm_version|g" "$apphub_dockerfile"
+                else
+                    sed -i "s|^ARG SLURM_VERSION=.*|ARG SLURM_VERSION=$slurm_version|g" "$apphub_dockerfile"
+                fi
                 ((updated_count++))
             elif [[ "$current_slurm_version" == "$slurm_version" ]]; then
                 print_success "  ✓ AppHub SLURM: $slurm_version"
@@ -3449,17 +3597,22 @@ sync_component_versions_from_env() {
     
     # 3. 同步 Categraf 版本
     local categraf_version
-    categraf_version=$(grep "^CATEGRAF_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    categraf_version=$(grep "^CATEGRAF_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "\n\r' || echo "")
     
     if [[ -n "$categraf_version" ]]; then
         local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
         if [[ -f "$apphub_dockerfile" ]]; then
             local current_categraf_version
-            current_categraf_version=$(grep "^ARG CATEGRAF_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            current_categraf_version=$(grep "^ARG CATEGRAF_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '\n\r' || echo "")
             
             if [[ -n "$current_categraf_version" ]] && [[ "$current_categraf_version" != "$categraf_version" ]]; then
                 print_info "  [AppHub Categraf] $current_categraf_version → $categraf_version"
-                sed_inplace "s|^ARG CATEGRAF_VERSION=.*|ARG CATEGRAF_VERSION=$categraf_version|g" "$apphub_dockerfile"
+                # 使用 BSD sed 兼容的语法
+                if [[ "$OS_TYPE" == "macOS" ]]; then
+                    sed -i '.bak' "s|^ARG CATEGRAF_VERSION=.*|ARG CATEGRAF_VERSION=$categraf_version|g" "$apphub_dockerfile"
+                else
+                    sed -i "s|^ARG CATEGRAF_VERSION=.*|ARG CATEGRAF_VERSION=$categraf_version|g" "$apphub_dockerfile"
+                fi
                 ((updated_count++))
             elif [[ "$current_categraf_version" == "$categraf_version" ]]; then
                 print_success "  ✓ AppHub Categraf: $categraf_version"
@@ -3469,17 +3622,22 @@ sync_component_versions_from_env() {
     
     # 4. 同步 Singularity 版本
     local singularity_version
-    singularity_version=$(grep "^SINGULARITY_VERSION=" "$env_file" | cut -d'=' -f2 | tr -d ' "' || echo "")
+    singularity_version=$(grep "^SINGULARITY_VERSION=" "$env_file" | head -1 | cut -d'=' -f2 | tr -d ' "\n\r' || echo "")
     
     if [[ -n "$singularity_version" ]]; then
         local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
         if [[ -f "$apphub_dockerfile" ]]; then
             local current_singularity_version
-            current_singularity_version=$(grep "^ARG SINGULARITY_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 || echo "")
+            current_singularity_version=$(grep "^ARG SINGULARITY_VERSION=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '\n\r' || echo "")
             
             if [[ -n "$current_singularity_version" ]] && [[ "$current_singularity_version" != "$singularity_version" ]]; then
                 print_info "  [AppHub Singularity] $current_singularity_version → $singularity_version"
-                sed_inplace "s|^ARG SINGULARITY_VERSION=.*|ARG SINGULARITY_VERSION=$singularity_version|g" "$apphub_dockerfile"
+                # 使用 BSD sed 兼容的语法
+                if [[ "$OS_TYPE" == "macOS" ]]; then
+                    sed -i '.bak' "s|^ARG SINGULARITY_VERSION=.*|ARG SINGULARITY_VERSION=$singularity_version|g" "$apphub_dockerfile"
+                else
+                    sed -i "s|^ARG SINGULARITY_VERSION=.*|ARG SINGULARITY_VERSION=$singularity_version|g" "$apphub_dockerfile"
+                fi
                 ((updated_count++))
             elif [[ "$current_singularity_version" == "$singularity_version" ]]; then
                 print_success "  ✓ AppHub Singularity: $singularity_version"
@@ -5693,6 +5851,9 @@ build_service() {
     label_args+="--label build.timestamp=$build_timestamp "
     label_args+="--label build.reason=$rebuild_reason "
     
+    # 获取版本相关的构建参数
+    local version_args=$(get_version_build_args "$service")
+    
     # 显示详细的构建信息
     print_info "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     print_info "  📦 Docker 构建配置:"
@@ -5707,6 +5868,9 @@ build_service() {
         print_info "     缓存策略: 使用 Docker 层缓存"
     fi
     print_info "     目标镜像: $target_image"
+    if [[ -n "$version_args" ]]; then
+        print_info "     版本参数: 已应用 (从 .env 读取)"
+    fi
     print_info "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
     print_info "  🔨 开始构建镜像..."
@@ -5714,7 +5878,7 @@ build_service() {
     
     # 使用各自的src子目录作为构建上下文
     # 直接显示 docker build 的完整输出，不做过滤
-    if docker build -f "$dockerfile_path" $target_arg $cache_arg $label_args $apphub_extra_args -t "$target_image" "$build_context"; then
+    if docker build -f "$dockerfile_path" $target_arg $cache_arg $label_args $version_args $apphub_extra_args -t "$target_image" "$build_context"; then
         echo
         print_success "✓ 构建成功: $target_image"
         
@@ -7010,14 +7174,17 @@ push_build_dependencies() {
     print_info "=========================================="
     print_info "目标镜像标签: $tag"
     
-    # 定义构建依赖镜像
+    # 确保环境变量已加载
+    load_env_file
+    
+    # 定义构建依赖镜像（使用环境变量）
     local build_dependencies=(
-        "node:22-alpine"
-        "nginx:stable-alpine-perl"
-        "golang:1.25-alpine"
-        "python:3.13-alpine"
-        "gitea/gitea:1.24.6"
-        "jupyter/base-notebook:latest"
+        "node:${NODE_ALPINE_VERSION:-22-alpine}"
+        "nginx:${NGINX_VERSION:-stable-alpine-perl}"
+        "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}"
+        "python:${PYTHON_ALPINE_VERSION:-3.14-alpine}"
+        "gitea/gitea:${GITEA_VERSION:-1.25.1}"
+        "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}"
     )
     
     local success_count=0
@@ -7134,7 +7301,7 @@ pull_aiharbor_dependencies() {
     # 从配置文件或预定义列表收集依赖镜像
     local dependency_images=$(get_all_dependencies | tr '\n' ' ')
     if [[ -z "$dependency_images" ]]; then
-        dependency_images="postgres:15-alpine redis:7-alpine nginx:1.27-alpine tecnativa/tcp-proxy minio/minio:latest osixia/openldap:stable osixia/phpldapadmin:stable redislabs/redisinsight:latest node:22-alpine nginx:stable-alpine-perl golang:1.25-alpine python:3.13-alpine gitea/gitea:1.24.6 jupyter/base-notebook:latest"
+        dependency_images=$(get_dependency_images_list)
     fi
     
     print_info "依赖镜像列表: $dependency_images"
@@ -7648,17 +7815,18 @@ get_required_images() {
     )
     
     # 依赖镜像（从映射配置获取）
+    load_env_file
     local dependency_images=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "minio/minio:latest"
-        "osixia/openldap:stable"
-        "osixia/phpldapadmin:stable"
-        "redislabs/redisinsight:latest"
-        "confluentinc/cp-kafka:7.5.0"
-        "provectuslabs/kafka-ui:latest"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}"
+        "minio/minio:${MINIO_VERSION:-latest}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
+        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}"
+        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}"
     )
     
     # 合并所有镜像
@@ -7746,17 +7914,18 @@ convert_images_to_unified_tags() {
     echo
     
     # 获取需要转换的依赖镜像（不包括AI-Infra服务镜像）
+    load_env_file
     local dependency_images=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "minio/minio:latest"
-        "osixia/openldap:stable"
-        "osixia/phpldapadmin:stable"
-        "redislabs/redisinsight:latest"
-        "confluentinc/cp-kafka:7.5.0"
-        "provectuslabs/kafka-ui:latest"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}"
+        "minio/minio:${MINIO_VERSION:-latest}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
+        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}"
+        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}"
     )
     
     local converted_count=0
@@ -7949,32 +8118,33 @@ replace_images_in_compose_file() {
     cp "$compose_file" "$temp_compose"
     
     # 替换第三方依赖镜像
+    load_env_file
     local dependency_replacements=(
-        "confluentinc/cp-kafka:7.5.0|${registry}/cp-kafka:${tag}"
+        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|${registry}/cp-kafka:${tag}"
         "confluentinc/cp-kafka:7.4.0|${registry}/cp-kafka:${tag}"
         "confluentinc/cp-kafka:latest|${registry}/cp-kafka:${tag}"
-        "provectuslabs/kafka-ui:latest|${registry}/kafka-ui:${tag}"
-        "postgres:15-alpine|${registry}/postgres:${tag}"
+        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|${registry}/kafka-ui:${tag}"
+        "postgres:${POSTGRES_VERSION:-15-alpine}|${registry}/postgres:${tag}"
         "postgres:latest|${registry}/postgres:${tag}"
-        "redis:7-alpine|${registry}/redis:${tag}"
+        "redis:${REDIS_VERSION:-7-alpine}|${registry}/redis:${tag}"
         "redis:latest|${registry}/redis:${tag}"
-        "nginx:1.27-alpine|${registry}/nginx:${tag}"
-        "nginx:stable-alpine-perl|${registry}/nginx:${tag}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}|${registry}/nginx:${tag}"
+        "nginx:${NGINX_VERSION:-stable-alpine-perl}|${registry}/nginx:${tag}"
         "nginx:latest|${registry}/nginx:${tag}"
-        "tecnativa/tcp-proxy:latest|${registry}/tcp-proxy:${tag}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}|${registry}/tcp-proxy:${tag}"
         "tecnativa/tcp-proxy|${registry}/tcp-proxy:${tag}"
-        "minio/minio:latest|${registry}/minio:${tag}"
-        "osixia/openldap:stable|${registry}/openldap:${tag}"
+        "minio/minio:${MINIO_VERSION:-latest}|${registry}/minio:${tag}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}|${registry}/openldap:${tag}"
         "osixia/openldap:latest|${registry}/openldap:${tag}"
-        "osixia/phpldapadmin:stable|${registry}/phpldapadmin:${tag}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|${registry}/phpldapadmin:${tag}"
         "osixia/phpldapadmin:latest|${registry}/phpldapadmin:${tag}"
-        "redislabs/redisinsight:latest|${registry}/redisinsight:${tag}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}|${registry}/redisinsight:${tag}"
         "quay.io/minio/minio:latest|${registry}/minio:${tag}"
-        "gitea/gitea:1.24.6|${registry}/gitea:${tag}"
-        "jupyter/base-notebook:latest|${registry}/base-notebook:${tag}"
-        "node:22-alpine|${registry}/node:${tag}"
-        "golang:1.25-alpine|${registry}/golang:${tag}"
-        "python:3.13-alpine|${registry}/python:${tag}"
+        "gitea/gitea:${GITEA_VERSION:-1.25.1}|${registry}/gitea:${tag}"
+        "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}|${registry}/base-notebook:${tag}"
+        "node:${NODE_ALPINE_VERSION:-22-alpine}|${registry}/node:${tag}"
+        "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}|${registry}/golang:${tag}"
+        "python:${PYTHON_ALPINE_VERSION:-3.13-alpine}|${registry}/python:${tag}"
     )
     
     local replacement_count=0
@@ -8311,21 +8481,22 @@ tag_local_images_for_registry() {
     )
     
     # 定义依赖镜像
+    load_env_file
     local dependency_images=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "minio/minio:latest"
-        "osixia/openldap:stable"
-        "osixia/phpldapadmin:stable"
-        "redislabs/redisinsight:latest"
-        "node:22-alpine"
-        "nginx:stable-alpine-perl"
-        "golang:1.25-alpine"
-        "python:3.13-alpine"
-        "gitea/gitea:1.24.6"
-        "jupyter/base-notebook:latest"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}"
+        "minio/minio:${MINIO_VERSION:-latest}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
+        "node:${NODE_ALPINE_VERSION:-22-alpine}"
+        "nginx:${NGINX_VERSION:-stable-alpine-perl}"
+        "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}"
+        "python:${PYTHON_ALPINE_VERSION:-3.13-alpine}"
+        "gitea/gitea:${GITEA_VERSION:-1.25.1}"
+        "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}"
     )
     
     local tagged_count=0
@@ -8756,13 +8927,14 @@ verify_private_images() {
     )
     
     # 基础镜像列表（从配置文件获取）
+    load_env_file
     local base_image_patterns=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "redislabs/redisinsight:latest"
-        "quay.io/minio/minio:latest"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
+        "quay.io/minio/minio:${MINIO_VERSION:-latest}"
     )
     
     local total_images=$((${#source_images[@]} + ${#base_image_patterns[@]}))
@@ -8859,9 +9031,10 @@ verify_key_images() {
     )
     
     # 关键基础镜像
+    load_env_file
     local key_base_images=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
     )
     
     local success_count=0
@@ -9402,14 +9575,14 @@ show_help() {
     echo "  --no-slurm                      - 跳过 SLURM 构建"
     echo "  --no-saltstack / --no-salt      - 跳过 SaltStack 构建"
     echo "  --no-categraf                   - 跳过 Categraf 构建"
-    echo "  --slurm-version=<ver>           - 指定 SLURM 版本 (默认: 25.05.4)"
-    echo "  --salt-version=<ver>            - 指定 SaltStack 版本 (默认: v3007.8)"
-    echo "  --categraf-version=<ver>        - 指定 Categraf 版本 (默认: v0.4.22)"
+    echo "  --slurm-version=<ver>           - 指定 SLURM 版本 (默认值见 .env)"
+    echo "  --salt-version=<ver>            - 指定 SaltStack 版本 (默认值见 .env)"
+    echo "  --categraf-version=<ver>        - 指定 Categraf 版本 (默认值见 .env)"
     echo
     echo "AppHub 构建示例:"
     echo "  $0 build apphub --slurm-only                      # 只构建 SLURM"
     echo "  $0 build apphub --no-categraf                     # 跳过 Categraf"
-    echo "  $0 build apphub --slurm-version=25.05.5 --force   # 指定版本并强制重建"
+    echo "  $0 build apphub --slurm-version=<version> --force # 指定版本并强制重建"
     echo "  $0 build apphub --slurm-only --no-cache          # 只构建 SLURM，无缓存构建"
     echo
     echo "智能构建缓存（新增）:"
@@ -9767,25 +9940,26 @@ export_offline_images() {
     local dependencies_failed=()
     
     # 基础依赖镜像
+    load_env_file
     local base_dependencies=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "minio/minio:latest"
-        "osixia/openldap:stable"
-        "osixia/phpldapadmin:stable"
-        "redislabs/redisinsight:latest"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}"
+        "minio/minio:${MINIO_VERSION:-latest}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
     )
     
     # 如果包含Kafka，添加Kafka相关镜像
     if [[ "$include_kafka" == "true" ]]; then
         local kafka_dependencies=(
-            "confluentinc/cp-kafka:7.5.0"
-            "provectuslabs/kafka-ui:latest"
+            "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}"
+            "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}"
         )
         base_dependencies+=("${kafka_dependencies[@]}")
-        print_info "  包含Kafka镜像: confluentinc/cp-kafka:7.5.0, provectuslabs/kafka-ui:latest"
+        print_info "  包含Kafka镜像: confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}, provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}"
     fi
     
     for dep_image in "${base_dependencies[@]}"; do
@@ -10042,22 +10216,23 @@ push_to_internal_registry() {
     
     # 推送依赖镜像
     print_info "🚀 推送依赖镜像..."
+    load_env_file
     local base_dependencies=(
-        "postgres:15-alpine"
-        "redis:7-alpine"
-        "nginx:1.27-alpine"
-        "tecnativa/tcp-proxy:latest"
-        "minio/minio:latest"
-        "osixia/openldap:stable"
-        "osixia/phpldapadmin:stable"
-        "redislabs/redisinsight:latest"
+        "postgres:${POSTGRES_VERSION:-15-alpine}"
+        "redis:${REDIS_VERSION:-7-alpine}"
+        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}"
+        "minio/minio:${MINIO_VERSION:-latest}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
     )
     
     # 如果包含Kafka，添加Kafka相关镜像
     if [[ "$include_kafka" == "true" ]]; then
         local kafka_dependencies=(
-            "confluentinc/cp-kafka:7.5.0"
-            "provectuslabs/kafka-ui:latest"
+            "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}"
+            "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}"
         )
         base_dependencies+=("${kafka_dependencies[@]}")
         print_info "  包含Kafka镜像推送"

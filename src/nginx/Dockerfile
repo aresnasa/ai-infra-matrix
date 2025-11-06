@@ -2,14 +2,14 @@
 # 支持分布式部署和JupyterHub upstream访问
 # 支持开发模式和生产模式
 
-FROM nginx:stable-alpine-perl
-# 先检查源目录是否有内容，然后决定是否复制
-# 复制调试工具
-COPY src/shared/debug/ /tmp/debug/ble-alpine-perl
+ARG NGINX_VERSION=stable-alpine-perl
+FROM nginx:${NGINX_VERSION}
 
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
+ARG NGINX_VERSION=stable-alpine-perl
 ENV APP_VERSION=${VERSION}
+ENV NGINX_VERSION=${NGINX_VERSION}
 ENV TZ=Asia/Shanghai
 
 # 构建参数 - 控制是否启用调试模式

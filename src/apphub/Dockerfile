@@ -1,7 +1,18 @@
 # =============================================================================
+# 全局 ARG 声明（用于多阶段构建的 FROM 语句）
+# Global ARG declarations for multi-stage build FROM statements
+# 这些值将通过 build.sh 的 --build-arg 参数从 .env 文件传入
+# 提供默认值以保持向后兼容性
+# =============================================================================
+ARG UBUNTU_VERSION=22.04
+ARG ROCKYLINUX_VERSION=9
+ARG GOLANG_ALPINE_VERSION=1.25-alpine
+ARG NGINX_ALPINE_VERSION=1.27-alpine
+
+# =============================================================================
 # Stage 1: Build SLURM deb packages (Ubuntu 22.04)
 # =============================================================================
-FROM ubuntu:22.04 AS deb-builder
+FROM ubuntu:${UBUNTU_VERSION} AS deb-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
@@ -47,22 +58,26 @@ RUN set -eux; \
     # 检测架构
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 根据架构直接配置阿里云镜像源
+    # 根据架构配置镜像源（优先尝试阿里云，失败则回退到官方源）
     if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
-        echo "配置ARM64架构的阿里云HTTP镜像源..."; \
+        echo "配置ARM64架构镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
-        echo "配置AMD64架构的阿里云HTTP镜像源..."; \
+        echo "配置AMD64架构镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
         echo "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
-    # 更新包列表并安装基础工具（带重试机制）
-    apt-get update || (sleep 5 && apt-get update) || (sleep 10 && apt-get update); \
+    # 更新包列表并安装基础工具（带重试和回退机制）
+    if ! apt-get update; then \
+        echo "阿里云镜像源失败，回退到官方源..."; \
+        mv /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        apt-get update; \
+    fi; \
     apt-get install -y ca-certificates curl tzdata; \
     ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone
 
@@ -74,7 +89,16 @@ RUN apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install development libraries (单独安装避免依赖冲突)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    # 尝试更新包列表，失败则回退到官方源
+    if ! apt-get update; then \
+        echo "镜像源更新失败，尝试回退到官方源..."; \
+        if [ -f /etc/apt/sources.list.backup ]; then \
+            mv /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        fi; \
+        apt-get update; \
+    fi; \
+    apt-get install -y --no-install-recommends \
        libmunge-dev libmariadb-dev libpam0g-dev libcgroup-dev libhwloc-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -286,7 +310,7 @@ RUN set -eux; \
 # =============================================================================
 # Stage 2: Build SLURM rpm packages (Rocky Linux 9)
 # =============================================================================
-FROM rockylinux:9 AS rpm-builder
+FROM rockylinux:${ROCKYLINUX_VERSION} AS rpm-builder
 
 ENV TZ=Asia/Shanghai
 
@@ -657,7 +681,7 @@ RUN set -eux; \
 # Stage 3: Build SLURM binaries (Ubuntu 22.04 with glibc)
 # Alpine uses musl libc which doesn't support cpu_set_t, so we use Ubuntu
 # =============================================================================
-FROM ubuntu:22.04 AS binary-builder
+FROM ubuntu:${UBUNTU_VERSION} AS binary-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
@@ -837,7 +861,7 @@ RUN set -eux; \
 # Stage 4: Build Categraf (Multi-Architecture Go Binary)
 # 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
 # =============================================================================
-FROM golang:1.25-alpine AS categraf-builder
+FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
 
 # Build control flags
 ARG BUILD_CATEGRAF=true
@@ -847,7 +871,8 @@ ARG CATEGRAF_VERSION=v0.4.22
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
-ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOPROXY=${GO_PROXY}
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
 
@@ -920,14 +945,23 @@ RUN set -eux; \
         echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
     fi
 
-#================================================
-# Stage 5: 最终镜像 - 使用 nginx 提供下载服务
-#================================================
-
 # =============================================================================
 # Stage 5: AppHub - HTTP Server with Package Management & Development Tools
 # =============================================================================
-FROM nginx:alpine
+ARG NGINX_ALPINE_VERSION=1.27-alpine
+FROM nginx:${NGINX_ALPINE_VERSION}
+
+# 版本元数据 ARG（需要在 FROM 后重新声明）
+ARG SLURM_VERSION=25.05.4
+ARG SALTSTACK_VERSION=v3007.8
+ARG CATEGRAF_VERSION=v0.4.22
+ARG APPHUB_BASE_URL=http://localhost:8081
+
+# 将版本保存到环境变量（可在运行时访问）
+ENV SLURM_VERSION=${SLURM_VERSION}
+ENV SALTSTACK_VERSION=${SALTSTACK_VERSION}
+ENV CATEGRAF_VERSION=${CATEGRAF_VERSION}
+ENV APPHUB_BASE_URL=${APPHUB_BASE_URL}
 
 # 配置 Alpine 镜像源并安装基础工具（使用国内镜像源）
 RUN set -eux; \
@@ -1020,9 +1054,11 @@ COPY scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
 RUN chmod +x /app/scripts/generate-install-script.sh
 
 # Generate SLURM installation script from template
+# ARG needs to be redeclared here if used in RUN after COPY
 ARG SLURM_VERSION=25.05.4
+ARG APPHUB_BASE_URL=http://localhost:8081
 ENV SLURM_VERSION=${SLURM_VERSION}
-ENV APPHUB_BASE_URL=http://localhost:8081
+ENV APPHUB_BASE_URL=${APPHUB_BASE_URL}
 RUN /app/scripts/generate-install-script.sh \
     /app/scripts/install-slurm.sh.tmpl \
     /usr/share/nginx/html/packages/install-slurm.sh

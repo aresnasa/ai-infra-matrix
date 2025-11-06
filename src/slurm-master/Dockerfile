@@ -1,11 +1,16 @@
 # AI Infrastructure Matrix - SLURM Master Service
 # 基于Ubuntu构建SLURM控制节点
-FROM ubuntu:22.04
+ARG UBUNTU_VERSION=22.04
+FROM ubuntu:${UBUNTU_VERSION}
 
+# Build arguments for versions
+ARG SLURM_VERSION=25.05.4
 ARG VERSION=v0.3.6-dev
+
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
 LABEL description="AI Infrastructure Matrix SLURM Master Service"
+LABEL slurm.version="${SLURM_VERSION}"
 
 # 避免交互式安装提示
 ENV DEBIAN_FRONTEND=noninteractive
@@ -133,6 +138,7 @@ RUN set -eux; \
         mtr-tiny \
         netcat-openbsd \
         lsof \
+        jq \
         # utilities \
         vim \
         tree \
@@ -165,10 +171,10 @@ RUN mkdir -p /etc/slurm \
     /var/run/munge \
     /srv/shared
 
-# 尝试从AppHub安装SLURM 25.05.3版本包（优先级：AppHub > 系统仓库）
+# 尝试从AppHub安装SLURM包（优先级：AppHub > 系统仓库）
 ARG APPHUB_URL=http://apphub:80
 RUN set -eux; \
-    echo "🔍 尝试从AppHub安装SLURM包..."; \
+    echo "🔍 尝试从AppHub安装SLURM ${SLURM_VERSION} 包..."; \
     # 添加AppHub源
     echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
     echo "📋 AppHub源配置:"; \
@@ -185,7 +191,7 @@ RUN set -eux; \
                slurm-smd-client \
                slurm-smd-slurmctld \
                slurm-smd-slurmdbd; then \
-            echo "✅ 成功从AppHub安装SLURM 25.05.3包"; \
+            echo "✅ 成功从AppHub安装SLURM ${SLURM_VERSION} 包"; \
             SLURM_INSTALLED=true; \
             SLURM_SOURCE="AppHub"; \
         else \
@@ -261,6 +267,21 @@ RUN usermod -a -G munge slurm && \
     chmod 700 /etc/munge /var/lib/munge && \
     chmod 755 /var/log/munge /var/run/munge && \
     chmod 640 /etc/munge/munge.key || true
+
+# 复制并执行 SLURM REST API 安装脚本
+COPY install-slurm-restapi.sh /tmp/install-slurm-restapi.sh
+RUN set -eux; \
+    chmod +x /tmp/install-slurm-restapi.sh; \
+    echo "🚀 开始安装 SLURM REST API..."; \
+    if /tmp/install-slurm-restapi.sh; then \
+        echo "✅ SLURM REST API 安装成功"; \
+        touch /opt/slurm-restapi-installed; \
+    else \
+        echo "⚠️  SLURM REST API 安装失败（继续构建）"; \
+        echo "failed" > /opt/slurm-restapi-status; \
+    fi; \
+    rm -f /tmp/install-slurm-restapi.sh; \
+    rm -rf /tmp/*.deb
 
 # 复制配置与systemd脚本
 COPY config/ /etc/slurm-templates/

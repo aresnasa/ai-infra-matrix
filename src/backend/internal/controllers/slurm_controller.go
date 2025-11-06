@@ -2417,3 +2417,62 @@ func (c *SlurmController) GetSlurmDiagnostics(ctx *gin.Context) {
 		"timestamp":   time.Now().Format(time.RFC3339),
 	})
 }
+
+// POST /api/slurm/scaling/scale-up-api - 基于REST API的扩容
+func (c *SlurmController) ScaleUpViaAPI(ctx *gin.Context) {
+	var req ScalingRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 300*time.Second)
+	defer cancel()
+
+	// 执行基于REST API的扩容操作
+	results, err := c.slurmSvc.ScaleUpViaAPI(ctxWithTimeout, req.Nodes)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": results})
+}
+
+// POST /api/slurm/scaling/scale-down-api - 基于REST API的缩容
+func (c *SlurmController) ScaleDownViaAPI(ctx *gin.Context) {
+	var req ScaleDownRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	results, err := c.slurmSvc.ScaleDownViaAPI(ctxWithTimeout, req.NodeIDs)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": results})
+}
+
+// POST /api/slurm/reload-config - 重新加载SLURM配置
+func (c *SlurmController) ReloadSlurmConfig(ctx *gin.Context) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	err := c.slurmSvc.ReloadSlurmConfig(ctxWithTimeout)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"message":   "SLURM配置已重新加载",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}
