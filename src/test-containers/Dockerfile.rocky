@@ -42,7 +42,6 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 RUN mkdir -p /var/run/sshd /run/sshd
 
 # 配置SSH
-RUN echo 'root:rootpass123' | chpasswd
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || \
     sed -i 's/#PermitRootLogin yes/PermitRootLogin yes/' /etc/ssh/sshd_config
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || \
@@ -53,7 +52,6 @@ RUN ssh-keygen -A
 
 # 创建测试用户
 RUN useradd -m -s /bin/bash testuser
-RUN echo 'testuser:testpass123' | chpasswd
 RUN usermod -aG wheel testuser
 
 # 允许wheel组sudo免密码
@@ -66,6 +64,10 @@ RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && 
 # 创建工作目录
 RUN mkdir -p /opt/saltstack /opt/slurm
 WORKDIR /root
+
+# 复制启动脚本
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # 暴露SSH端口
 EXPOSE 22
@@ -84,5 +86,5 @@ STOPSIGNAL SIGRTMIN+3
 
 VOLUME [ "/sys/fs/cgroup" ]
 
-# 使用systemd作为PID 1
-CMD ["/sbin/init"]
+# 使用entrypoint脚本启动（会设置密码并启动systemd）
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

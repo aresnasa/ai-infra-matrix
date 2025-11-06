@@ -27,13 +27,31 @@ All test containers include:
 
 - **SSH Server**: OpenSSH with password and root login enabled
 - **Systemd**: Full systemd support for service management
-- **Default Credentials**:
-  - Root: `root:rootpass123`
-  - Test User: `testuser:testpass123`
+- **Dynamic Credentials** (configurable via environment variables):
+  - Root: `root:${TEST_ROOT_PASSWORD}` (default: `rootpass123`)
+  - Test User: `testuser:${TEST_SSH_PASSWORD}` (default: `testpass123`)
 - **Sudo**: Test user has passwordless sudo access
 - **Python 3**: Pre-installed with pip configured for Aliyun mirrors
 - **Network Tools**: curl, wget, ping, netstat, etc.
 - **Work Directories**: `/opt/saltstack`, `/opt/slurm`
+
+## 🔑 Password Configuration
+
+Passwords can be customized via environment variables in `.env`:
+
+```bash
+# In .env file
+TEST_SSH_PASSWORD=testpass123      # testuser password
+TEST_ROOT_PASSWORD=rootpass123     # root password
+```
+
+Or override in docker-compose:
+
+```yaml
+environment:
+  - SSH_PASSWORD=your-custom-password
+  - ROOT_PASSWORD=your-root-password
+```
 
 ## 🚀 Quick Start
 

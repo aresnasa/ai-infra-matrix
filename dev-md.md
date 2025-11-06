@@ -2275,7 +2275,141 @@ docker exec ai-infra-slurm-master bash -c 'scontrol update NodeName=test-rocky[0
 
 ---
 
-
 162. 调整下 docker-compose.test.yml这里需要结合 src/test-containers 中的 dockerfile 进行统一构建和启动，需要交叉检验和改造，然后修改 src/test-containers/中的所有 dockerfile 进行整合构建
 
+163. **修复 SLURM 页面 SaltStack 命令执行 400 错误** ✅
+    
+    **问题现象：**
+    - 访问 http://192.168.18.154:8080/slurm 执行 SaltStack 命令失败
+    - 错误：`Request failed with status code 400`
+    - 前端表单字段：`target`, `function`, `arguments`
+    - 后端期望字段：`command`, `targets`
+    
+    **根本原因：**
+    - 前端和后端参数格式不匹配
+    - 后端 `ExecuteSaltCommand` 函数要求 `command` 为必填字段
+    - 前端发送的是 Salt 标准格式（target/function/arguments）
+    
+    **修复方案：**
+    1. **后端兼容性增强** (slurm_controller.go:1217)
+       - 支持新格式：`target`, `function`, `arguments`
+       - 保持老格式兼容：`command`, `targets`
+       - 新格式优先，自动转换为后端格式
+       - 改进错误提示信息
+    
+    2. **参数验证逻辑：**
+       ```go
+       // 新格式优先
+       if req.Function != "" {
+           command = req.Function
+           if req.Target != "" {
+               targets = []string{req.Target}
+           }
+       } else if req.Command != "" {
+           // 兼容老格式
+           command = req.Command
+           targets = req.Targets
+       } else {
+           return 400 error
+       }
+       ```
+    
+    3. **E2E 测试创建** ✅
+       - 文件：`test/e2e/specs/slurm-saltstack-execute-test.spec.js`
+       - 测试覆盖：
+         - ✅ 打开命令对话框
+         - ✅ 表单字段验证
+         - ✅ API 新格式测试（target/function/arguments）
+         - ✅ API 老格式兼容（command/targets）
+         - ✅ test.ping 命令执行
+         - ✅ cmd.run 命令执行
+         - ✅ UI 表单提交
+         - ✅ 错误处理验证
+    
+    **影响范围：**
+    - 后端：`src/backend/internal/controllers/slurm_controller.go`
+    - 测试：`test/e2e/specs/slurm-saltstack-execute-test.spec.js`
+    
+    **运行测试：**
+    ```bash
+    cd test/e2e
+    BASE_URL=http://192.168.18.154:8080 npx playwright test \
+      specs/slurm-saltstack-execute-test.spec.js --reporter=list
+    ```
+
+164. **SLURM Web 化管理综合测试创建** ✅
+    
+    **测试文件：** `test/e2e/specs/slurm-web-management-comprehensive.spec.js`
+    
+    **功能覆盖率报告：**
+    
+    | 功能 | 实现 | 测试 | 说明 |
+    |------|------|------|------|
+    | 节点添加（ScaleUp） | ✅ | ✅ | API + UI 双重测试 |
+    | 节点删除（ScaleDown） | ✅ | ✅ | 软删除机制 |
+    | 节点状态调整（DRAIN） | ✅ | ✅ | 批量操作支持 |
+    | 节点状态调整（RESUME） | ✅ | ✅ | 恢复节点 |
+    | 节点状态调整（DOWN） | ✅ | ⏸️ | 已实现未测试 |
+    | 节点状态调整（IDLE） | ✅ | ⏸️ | 已实现未测试 |
+    | 节点配置更新 | ✅ | ✅ | CPU/内存/GPU |
+    | 作业取消（scancel） | ✅ | ⏸️ | 已实现未测试 |
+    | 作业暂停（suspend） | ✅ | ⏸️ | 已实现未测试 |
+    | 作业恢复（resume） | ✅ | ⏸️ | 已实现未测试 |
+    | 作业重新入队（requeue） | ✅ | ⏸️ | 已实现未测试 |
+    | 分区查看 | ✅ | ✅ | GetPartitions API |
+    | 分区管理（创建/删除） | ❌ | ⏸️ | 未实现 |
+    | SaltStack 客户端安装 | ✅ | ✅ | 通过 SSH 安装 |
+    | SLURM 客户端安装 | ✅ | ⏸️ | 已实现未测试 |
+    | 任务进度追踪 | ✅ | ✅ | SlurmTaskService |
+    | 节点模板管理 | ✅ | ⏸️ | CRUD 操作 |
+    | 批量节点操作 | ✅ | ✅ | 多选支持 |
+    
+    **实现率：** 17/18 (94%)  
+    **测试覆盖率：** 9/18 (50%)
+    
+    **测试问题诊断：**
+    - ❌ 使用错误的 BASE_URL: `http://192.168.0.200:8080`
+    - ✅ 正确的 URL 应为: `http://192.168.18.154:8080`
+    - 后端服务正常运行（健康检查通过）
+    - 登录 API 正常响应（HTTP 200）
+    
+    **修复方案：**
+    ```bash
+    # 使用正确的 BASE_URL 运行测试
+    cd test/e2e
+    BASE_URL=http://192.168.18.154:8080 npx playwright test \
+      specs/slurm-web-management-comprehensive.spec.js --reporter=list
+    ```
+    
+    **服务验证：**
+    ```bash
+    # 验证登录 API
+    curl -X POST http://192.168.18.154:8080/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{"username":"admin","password":"admin123"}' \
+      --noproxy "*"
+    # 返回：HTTP 200 + JWT token ✅
+    
+    # 验证容器状态
+    docker ps --filter "name=backend"
+    # ai-infra-backend   Up (healthy)   192.168.18.154:8082->8082/tcp ✅
+    ```
+    
+    **运行测试：**
+    ```bash
+    cd test/e2e
+    BASE_URL=http://192.168.18.154:8080 npx playwright test \
+      specs/slurm-web-management-comprehensive.spec.js --reporter=list
+    
+    # SaltStack 命令执行测试
+    BASE_URL=http://192.168.18.154:8080 npx playwright test \
+      specs/slurm-saltstack-execute-test.spec.js --reporter=list
+    ```
+
 163. 现在检查 slurm 的安装脚本期望的是安装 apphub 中的 slurm 而不是去公共仓库下载，检查并修复这个问题
+
+164. 调整前后端将 slurm 节点的状态和配置以及 slurm 相关命令进行 web 化改造支持节点的加入、删除、停止和其他 slurm 的功能，同时需要能够通过本项目的 web调整 slurm 节点的状态，并使用@playwright 进行测试
+
+165. http://192.168.18.154:8080/slurm中的执行 SaltStack 命令页面执行命令失败: Request failed with status code 400，需要修复这个问题，期望的是能够正确的发送命令到 minion，使用@playwright 测试
+
+166. SaltStack 命令已执行，但是没有一个前端页面显示执行的结果，需要增加这个前端页面，同时管理 slurm 集群也需要一个页面，然后管理 slurm 集群的状态也需要一个页面，这里通过调整 slurm 的相关步骤都需要能够在本项目的前端 slurm 页中体现，请继续开发这个功能

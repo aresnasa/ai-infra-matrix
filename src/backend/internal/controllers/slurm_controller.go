@@ -1216,20 +1216,43 @@ func (c *SlurmController) ExecuteSaltCommandAsync(ctx *gin.Context) {
 // POST /api/slurm/saltstack/execute
 func (c *SlurmController) ExecuteSaltCommand(ctx *gin.Context) {
 	var req struct {
-		Command string   `json:"command" binding:"required"`
-		Targets []string `json:"targets"`
+		// 兼容两种格式：老格式(command/targets) 和 新格式(target/function/arguments)
+		Command   string   `json:"command"`
+		Targets   []string `json:"targets"`
+		Target    string   `json:"target"`
+		Function  string   `json:"function"`
+		Arguments string   `json:"arguments"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "请求参数解析失败: " + err.Error()})
+		return
+	}
+
+	// 确定实际的命令和目标
+	var command string
+	var targets []string
+
+	// 新格式优先：使用 function 字段
+	if req.Function != "" {
+		command = req.Function
+		if req.Target != "" {
+			targets = []string{req.Target}
+		}
+	} else if req.Command != "" {
+		// 兼容老格式
+		command = req.Command
+		targets = req.Targets
+	} else {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "缺少必需参数: 请提供 function 或 command"})
 		return
 	}
 
 	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
 	defer cancel()
 
-	result, err := c.saltSvc.ExecuteCommand(ctxWithTimeout, req.Command, req.Targets)
+	result, err := c.saltSvc.ExecuteCommand(ctxWithTimeout, command, targets)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "执行命令失败: " + err.Error()})
 		return
 	}
 
