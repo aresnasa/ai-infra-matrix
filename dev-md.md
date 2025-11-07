@@ -3414,3 +3414,5 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
 - ⚠️ **前提条件：** Frontend 已重新构建（v0.3.8）
 
 176. 现在让我们来实现http://192.168.0.200:8080/slurm的作业队列子框体的任务查询和暂停和其他的功能，这里需要能够通过 ssh 和 slurmrestd 都能操作，同时节点管理的后端也要支持 ssh 和 slurmrestd，请继续实现这个功能
+
+177. 调整SaltStack Minions7的图标，链接上应该是绿色的链接状态的图标，异常则是红色的断开的图标，优化一下，如果部分断开则是黄色

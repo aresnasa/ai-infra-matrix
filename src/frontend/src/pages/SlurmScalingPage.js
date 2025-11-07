@@ -9,7 +9,9 @@ import {
   DesktopOutlined, ClusterOutlined, NodeIndexOutlined, ApiOutlined,
   CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined,
   PlayCircleOutlined, StopOutlined, SettingOutlined, EyeOutlined,
-  BarChartOutlined, PauseCircleOutlined, DownOutlined
+  BarChartOutlined, PauseCircleOutlined, DownOutlined, CloseCircleOutlined,
+  HourglassOutlined, SyncOutlined, LinkOutlined, DisconnectOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -882,7 +884,47 @@ const SlurmScalingPage = () => {
                       </span>
                     </Descriptions.Item>
                     <Descriptions.Item label="连接的Minions">
-                      {saltIntegration?.minions?.total || 0}
+                      <Space>
+                        {(() => {
+                          const total = saltIntegration?.minions?.total || 0;
+                          const online = saltIntegration?.minions?.online || 0;
+                          const offline = saltIntegration?.minions?.offline || 0;
+                          
+                          // 全部在线：绿色链接图标
+                          if (total > 0 && offline === 0) {
+                            return (
+                              <>
+                                <LinkOutlined style={{ color: '#52c41a', fontSize: '16px' }} />
+                                <span style={{ fontSize: '16px', fontWeight: 500, color: '#52c41a' }}>
+                                  {total}
+                                </span>
+                              </>
+                            );
+                          }
+                          // 部分在线：黄色警告图标
+                          else if (total > 0 && online > 0 && offline > 0) {
+                            return (
+                              <>
+                                <WarningOutlined style={{ color: '#faad14', fontSize: '16px' }} />
+                                <span style={{ fontSize: '16px', fontWeight: 500, color: '#faad14' }}>
+                                  {online}/{total}
+                                </span>
+                              </>
+                            );
+                          }
+                          // 全部离线或无连接：红色断开图标
+                          else {
+                            return (
+                              <>
+                                <DisconnectOutlined style={{ color: '#ff4d4f', fontSize: '16px' }} />
+                                <span style={{ fontSize: '16px', fontWeight: 500, color: '#ff4d4f' }}>
+                                  {total}
+                                </span>
+                              </>
+                            );
+                          }
+                        })()}
+                      </Space>
                     </Descriptions.Item>
                     <Descriptions.Item label="活跃作业">
                       {saltJobs?.length || 0}
