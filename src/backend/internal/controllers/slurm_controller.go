@@ -123,7 +123,104 @@ func (c *SlurmController) GetNodes(ctx *gin.Context) {
 		ctx.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	ctx.JSON(http.StatusOK, gin.H{"data": nodes, "demo": demo})
+
+	// 增强节点数据：添加 SaltStack minion 状态
+	enrichedNodes := c.enrichNodesWithSaltStackStatus(ctx, nodes)
+
+	ctx.JSON(http.StatusOK, gin.H{"data": enrichedNodes, "demo": demo})
+}
+
+// enrichNodesWithSaltStackStatus 为节点数据添加 SaltStack 状态信息
+func (c *SlurmController) enrichNodesWithSaltStackStatus(ctx *gin.Context, nodes []services.SlurmNode) []map[string]interface{} {
+	// 获取 SaltStack 状态
+	saltStatus, err := c.saltSvc.GetStatus(ctx)
+	if err != nil {
+		// 如果无法获取 Salt 状态，返回转换后的原始节点数据
+		result := make([]map[string]interface{}, len(nodes))
+		for i, node := range nodes {
+			result[i] = map[string]interface{}{
+				"name":         node.Name,
+				"state":        node.State,
+				"cpus":         node.CPUs,
+				"memory_mb":    node.MemoryMB,
+				"partition":    node.Partition,
+				"salt_status":  "unknown",
+				"salt_enabled": false,
+			}
+		}
+		return result
+	}
+
+	// 创建 minion 状态映射：minion_id -> status
+	minionStatusMap := make(map[string]string)
+
+	// 在线的 minions（accepted 且可以 ping 通）
+	for _, minionID := range saltStatus.AcceptedKeys {
+		// 默认为 accepted，实际在线状态需要 ping 验证
+		minionStatusMap[minionID] = "accepted"
+	}
+
+	// 未接受的 minions
+	for _, minionID := range saltStatus.UnacceptedKeys {
+		minionStatusMap[minionID] = "pending"
+	}
+
+	// 被拒绝的 minions
+	for _, minionID := range saltStatus.RejectedKeys {
+		minionStatusMap[minionID] = "rejected"
+	}
+
+	// 为每个节点添加 SaltStack 状态
+	enrichedNodes := make([]map[string]interface{}, len(nodes))
+	for i, node := range nodes {
+		// 转换原始节点数据
+		enrichedNode := map[string]interface{}{
+			"name":      node.Name,
+			"state":     node.State,
+			"cpus":      node.CPUs,
+			"memory_mb": node.MemoryMB,
+			"partition": node.Partition,
+		}
+
+		// 匹配 minion 状态
+		// 尝试多种匹配方式：精确匹配、前缀匹配
+		saltStatusStr := "unknown"
+		saltMinionID := ""
+
+		nodeName := node.Name
+		if nodeName != "" {
+			// 精确匹配
+			if status, ok := minionStatusMap[nodeName]; ok {
+				saltStatusStr = status
+				saltMinionID = nodeName
+			} else {
+				// 尝试模糊匹配（移除域名后缀等）
+				shortName := strings.Split(nodeName, ".")[0]
+				if status, ok := minionStatusMap[shortName]; ok {
+					saltStatusStr = status
+					saltMinionID = shortName
+				} else {
+					// 反向匹配：检查是否有 minion ID 包含节点名
+					for minionID, status := range minionStatusMap {
+						if strings.Contains(minionID, nodeName) || strings.Contains(nodeName, minionID) {
+							saltStatusStr = status
+							saltMinionID = minionID
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// 添加 SaltStack 状态字段
+		enrichedNode["salt_status"] = saltStatusStr
+		enrichedNode["salt_minion_id"] = saltMinionID
+		enrichedNode["salt_enabled"] = saltStatusStr != "unknown"
+
+		enrichedNodes[i] = enrichedNode
+	}
+
+	return enrichedNodes
 }
 
 // GET /api/slurm/jobs

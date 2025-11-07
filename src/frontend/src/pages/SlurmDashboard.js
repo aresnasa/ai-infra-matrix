@@ -211,7 +211,7 @@ const SlurmDashboard = () => {
     { title: '节点', dataIndex: 'name', key: 'name' },
     { title: '分区', dataIndex: 'partition', key: 'partition' },
     { 
-      title: '状态', 
+      title: 'SLURM 状态', 
       dataIndex: 'state', 
       key: 'state', 
       render: (s) => {
@@ -222,6 +222,45 @@ const SlurmDashboard = () => {
         else if (state.includes('down') || state.includes('drain')) color = 'red';
         else if (state.includes('unk')) color = 'orange';
         return <Tag color={color}>{s}</Tag>;
+      }
+    },
+    {
+      title: 'SaltStack状态',
+      dataIndex: 'salt_status',
+      key: 'salt_status',
+      render: (status, record) => {
+        // 处理未配置或未知状态
+        if (!status || status === 'unknown' || status === 'not_configured') {
+          return (
+            <Tag color="default" icon={<CloseCircleOutlined />}>
+              未配置
+            </Tag>
+          );
+        }
+        
+        const statusConfig = {
+          'accepted': { color: 'green', icon: <CheckCircleOutlined />, text: '已连接' },
+          'pending': { color: 'orange', icon: <HourglassOutlined />, text: '待接受' },
+          'rejected': { color: 'red', icon: <CloseCircleOutlined />, text: '已拒绝' },
+          'denied': { color: 'red', icon: <CloseCircleOutlined />, text: '已拒绝' },
+        };
+        
+        const config = statusConfig[status] || { 
+          color: 'default', 
+          icon: <CloseCircleOutlined />,
+          text: '未配置'
+        };
+        
+        return (
+          <Tag color={config.color} icon={config.icon}>
+            {config.text}
+            {record.salt_minion_id && record.salt_minion_id !== 'unknown' && (
+              <Text type="secondary" style={{ marginLeft: 4, fontSize: '12px' }}>
+                ({record.salt_minion_id})
+              </Text>
+            )}
+          </Tag>
+        );
       }
     },
     { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
@@ -308,107 +347,132 @@ const SlurmDashboard = () => {
 
         <Divider />
 
-        {/* SaltStack 集成状态 */}
-        {saltStackData && (
-          <Card 
-            title={
-              <Space>
-                <CloudServerOutlined />
-                <span>SaltStack 集成状态</span>
-                {saltStackData.enabled && (
-                  <Tag color="green" icon={<CheckCircleOutlined />}>已启用</Tag>
-                )}
-                {!saltStackData.enabled && (
-                  <Tag color="default">未启用</Tag>
-                )}
-              </Space>
-            }
-            extra={saltStackLoading ? <Spin size="small" /> : null}
-            style={{ marginBottom: '16px' }}
-          >
-            {/* Master 和 API 状态 */}
-            <Row gutter={16} style={{ marginBottom: '16px' }}>
-              <Col span={8}>
-                <Card size="small">
-                  <Statistic
-                    title="Master 状态"
-                    value={saltStackData.master_status || '未知'}
-                    valueStyle={{ 
-                      color: saltStackData.master_status === 'running' ? '#3f8600' : '#cf1322',
-                      fontSize: '16px'
-                    }}
-                  />
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card size="small">
-                  <Statistic
-                    title="API 状态"
-                    value={saltStackData.api_status || '未知'}
-                    valueStyle={{ 
-                      color: saltStackData.api_status === 'connected' ? '#3f8600' : '#cf1322',
-                      fontSize: '16px'
-                    }}
-                  />
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card size="small">
-                  <Statistic
-                    title="活跃作业"
-                    value={saltStackData.recent_jobs || 0}
-                    prefix={<SyncOutlined />}
-                  />
-                </Card>
-              </Col>
-            </Row>
+        {/* SaltStack 集成状态 - 始终显示，即使数据未加载也显示状态 */}
+        <Card 
+          title={
+            <Space>
+              <CloudServerOutlined />
+              <span>SaltStack 集成状态</span>
+              {saltStackData?.enabled && (
+                <Tag color="green" icon={<CheckCircleOutlined />}>已启用</Tag>
+              )}
+              {saltStackData && !saltStackData.enabled && (
+                <Tag color="default">未启用</Tag>
+              )}
+              {!saltStackData && (
+                <Tag color="orange" icon={<SyncOutlined spin />}>加载中...</Tag>
+              )}
+            </Space>
+          }
+          extra={
+            <Space>
+              {saltStackLoading && <Spin size="small" />}
+              <Button 
+                size="small" 
+                icon={<ReloadOutlined />} 
+                onClick={loadSaltStackIntegration}
+              >
+                刷新
+              </Button>
+            </Space>
+          }
+          style={{ marginBottom: '16px' }}
+        >
+          {!saltStackData && !saltStackLoading && (
+            <Alert
+              message="SaltStack 数据加载失败"
+              description="无法获取 SaltStack 集成状态，请检查后端服务或稍后重试。"
+              type="warning"
+              showIcon
+            />
+          )}
+          
+          {saltStackData && (
+            <>
+              {/* Master 和 API 状态 */}
+              <Row gutter={16} style={{ marginBottom: '16px' }}>
+                <Col span={8}>
+                  <Card size="small">
+                    <Statistic
+                      title="Master 状态"
+                      value={saltStackData.master_status || '未知'}
+                      valueStyle={{ 
+                        color: saltStackData.master_status === 'running' ? '#3f8600' : '#cf1322',
+                        fontSize: '16px'
+                      }}
+                    />
+                  </Card>
+                </Col>
+                <Col span={8}>
+                  <Card size="small">
+                    <Statistic
+                      title="API 状态"
+                      value={saltStackData.api_status || '未知'}
+                      valueStyle={{ 
+                        color: saltStackData.api_status === 'connected' ? '#3f8600' : '#cf1322',
+                        fontSize: '16px'
+                      }}
+                    />
+                  </Card>
+                </Col>
+                <Col span={8}>
+                  <Card size="small">
+                    <Statistic
+                      title="活跃作业"
+                      value={saltStackData.recent_jobs || 0}
+                      prefix={<SyncOutlined />}
+                    />
+                  </Card>
+                </Col>
+              </Row>
 
-            {/* Minion 统计 */}
-            <Row gutter={16}>
-              <Col span={8}>
-                <Statistic
-                  title="连接的 Minions"
-                  value={saltStackData.minions?.online || 0}
-                  valueStyle={{ color: '#3f8600' }}
-                  prefix={<CheckCircleOutlined />}
-                />
-              </Col>
-              <Col span={8}>
-                <Statistic
-                  title="离线 Minions"
-                  value={saltStackData.minions?.offline || 0}
-                  valueStyle={{ color: '#cf1322' }}
-                />
-              </Col>
-              <Col span={8}>
-                <Statistic
-                  title="Minion 总数"
-                  value={saltStackData.minions?.total || 0}
-                  prefix={<HddOutlined />}
-                />
-              </Col>
-            </Row>
+              {/* Minion 统计 */}
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Statistic
+                    title="连接的 Minions"
+                    value={saltStackData.minions?.online || 0}
+                    valueStyle={{ color: '#3f8600' }}
+                    prefix={<CheckCircleOutlined />}
+                  />
+                </Col>
+                <Col span={8}>
+                  <Statistic
+                    title="离线 Minions"
+                    value={saltStackData.minions?.offline || 0}
+                    valueStyle={{ color: '#cf1322' }}
+                  />
+                </Col>
+                <Col span={8}>
+                  <Statistic
+                    title="Minion 总数"
+                    value={saltStackData.minions?.total || 0}
+                    prefix={<HddOutlined />}
+                  />
+                </Col>
+              </Row>
 
-            {saltStackData.minion_list && saltStackData.minion_list.length > 0 && (
-              <div style={{ marginTop: '16px' }}>
-                <Text strong>Minion 节点列表:</Text>
-                <div style={{ marginTop: '8px' }}>
-                  <Space wrap>
-                    {saltStackData.minion_list.map((minion) => (
-                      <Tag
-                        key={minion.id}
-                        color={minion.status === 'online' ? 'green' : minion.status === 'pending' ? 'orange' : 'default'}
-                        icon={minion.status === 'online' ? <CheckCircleOutlined /> : null}
-                      >
-                        {minion.name || minion.id}
-                      </Tag>
-                    ))}
-                  </Space>
+              {saltStackData.minion_list && saltStackData.minion_list.length > 0 && (
+                <div style={{ marginTop: '16px' }}>
+                  <Text strong>Minion 节点列表:</Text>
+                  <div style={{ marginTop: '8px' }}>
+                    <Space wrap>
+                      {saltStackData.minion_list.map((minion) => (
+                        <Tag
+                          key={minion.id}
+                          color={minion.status === 'online' ? 'green' : minion.status === 'pending' ? 'orange' : 'default'}
+                          icon={minion.status === 'online' ? <CheckCircleOutlined /> : null}
+                        >
+                          {minion.name || minion.id}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
                 </div>
-              </div>
-            )}
-          </Card>
-        )}
+              )}
+            </>
+          )}
+        </Card>
 
         <Card 
           title="节点列表" 

@@ -5799,6 +5799,29 @@ build_service() {
     fi
     
     # ========================================
+    # SLURM Master 特殊处理：使用宿主机网络访问 AppHub
+    # ========================================
+    local slurm_master_args=""
+    local network_arg=""
+    if [[ "$service" == "slurm-master" ]]; then
+        print_info "  → SLURM Master 构建配置..."
+        
+        # 从 .env 文件读取 AppHub 配置
+        load_env_file
+        local apphub_port="${APPHUB_PORT:-53434}"
+        local external_host="${EXTERNAL_HOST:-192.168.0.200}"
+        
+        # 使用宿主机网络（BuildKit 支持）
+        # 通过宿主机 IP 访问已映射的 AppHub 端口
+        local apphub_url="http://${external_host}:${apphub_port}"
+        
+        print_info "  → 使用宿主机网络访问 AppHub"
+        print_info "  → AppHub 地址: $apphub_url"
+        network_arg="--network=host"
+        slurm_master_args="--build-arg APPHUB_URL=$apphub_url"
+    fi
+    
+    # ========================================
     # SingleUser 智能构建处理
     # ========================================
     if [[ "$service" == "singleuser" ]]; then
@@ -5889,7 +5912,7 @@ build_service() {
     
     # 使用各自的src子目录作为构建上下文
     # 直接显示 docker build 的完整输出，不做过滤
-    if docker build -f "$dockerfile_path" $target_arg $cache_arg $label_args $version_args $apphub_extra_args -t "$target_image" "$build_context"; then
+    if docker build -f "$dockerfile_path" $network_arg $target_arg $cache_arg $label_args $version_args $apphub_extra_args $slurm_master_args -t "$target_image" "$build_context"; then
         echo
         print_success "✓ 构建成功: $target_image"
         
@@ -6073,13 +6096,110 @@ prefetch_all_base_images() {
     return 0  # 返回成功，继续构建
 }
 
+# ==========================================
+# AppHub 就绪检查函数
+# ==========================================
+
+# 等待 AppHub 容器就绪并可提供服务
+# 返回 0 表示就绪，1 表示超时或失败
+wait_for_apphub_ready() {
+    local timeout="${1:-300}"  # 默认超时 5 分钟
+    local container_name="ai-infra-apphub"
+    local check_interval=5
+    local elapsed=0
+    
+    print_info "=========================================="
+    print_info "等待 AppHub 服务就绪"
+    print_info "=========================================="
+    print_info "容器名称: $container_name"
+    print_info "超时时间: ${timeout}秒"
+    print_info "检查间隔: ${check_interval}秒"
+    echo
+    
+    # 从 .env 文件读取配置
+    load_env_file
+    local apphub_port="${APPHUB_PORT:-53434}"
+    local external_host="${EXTERNAL_HOST:-192.168.0.200}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    print_info "AppHub URL: $apphub_url"
+    echo
+    
+    while [[ $elapsed -lt $timeout ]]; do
+        # 检查 1: 容器是否在运行
+        if ! docker ps --filter "name=$container_name" --filter "status=running" | grep -q "$container_name"; then
+            print_warning "[${elapsed}s] ⏳ 容器未运行，继续等待..."
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+        
+        # 检查 2: 容器健康状态（如果定义了健康检查）
+        local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null || echo "none")
+        if [[ "$health_status" != "none" && "$health_status" != "healthy" ]]; then
+            print_warning "[${elapsed}s] ⏳ 容器健康检查: $health_status，继续等待..."
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+        
+        # 检查 3: 端口是否监听
+        if ! docker exec "$container_name" netstat -tuln 2>/dev/null | grep -q ":80 "; then
+            print_warning "[${elapsed}s] ⏳ Nginx 端口未监听，继续等待..."
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+        
+        # 检查 4: Packages 文件是否可访问
+        if ! curl -sf --connect-timeout 5 --max-time 10 "${apphub_url}/pkgs/slurm-deb/Packages" >/dev/null 2>&1; then
+            print_warning "[${elapsed}s] ⏳ Packages 文件不可访问，继续等待..."
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+        
+        # 检查 5: 验证 slurmrestd 包是否存在
+        local has_slurmrestd=$(curl -sf --connect-timeout 5 --max-time 10 "${apphub_url}/pkgs/slurm-deb/Packages" 2>/dev/null | grep -c "Package: slurm-smd-slurmrestd" || echo "0")
+        if [[ "$has_slurmrestd" -eq 0 ]]; then
+            print_warning "[${elapsed}s] ⏳ slurmrestd 包不存在，继续等待..."
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+            continue
+        fi
+        
+        # 所有检查通过
+        print_success "✅ AppHub 服务就绪！"
+        print_info "  • 容器运行: ✓"
+        print_info "  • 健康检查: ✓"
+        print_info "  • 端口监听: ✓"
+        print_info "  • Packages 可访问: ✓"
+        print_info "  • slurmrestd 包存在: ✓"
+        print_info "  • 耗时: ${elapsed}秒"
+        echo
+        return 0
+    done
+    
+    # 超时
+    print_error "❌ AppHub 服务未在 ${timeout}秒 内就绪"
+    print_info "故障排查建议:"
+    print_info "  1. 检查容器日志: docker logs $container_name"
+    print_info "  2. 检查容器状态: docker ps -a | grep $container_name"
+    print_info "  3. 检查网络连接: curl -v ${apphub_url}/pkgs/slurm-deb/Packages"
+    return 1
+}
+
+# ==========================================
+# 构建所有服务（两阶段构建：基础设施 → 依赖服务）
+# ==========================================
+
 # 构建所有服务镜像
 build_all_services() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
     local registry="${2:-}"
     
     print_info "=========================================="
-    print_info "构建所有 AI-Infra 服务镜像"
+    print_info "构建所有 AI-Infra 服务镜像（两阶段构建）"
     print_info "=========================================="
     print_info "镜像标签: $tag"
     if [[ -n "$registry" ]]; then
@@ -6305,12 +6425,15 @@ build_all_services() {
     echo
     
     # ========================================
-    # ========================================
-    # 步骤 4: 构建服务镜像（智能过滤）
+    # 步骤 4: 两阶段构建服务镜像
     # ========================================
     print_info "=========================================="
-    print_info "步骤 4/6: 构建服务镜像"
+    print_info "步骤 4/6: 两阶段构建服务镜像"
     print_info "=========================================="
+    
+    # 定义服务分组
+    local FOUNDATION_SERVICES="apphub postgres redis saltstack nginx gitea"
+    local DEPENDENT_SERVICES="slurm-master backend frontend jupyterhub singleuser backend-init test-containers"
     
     local success_count=0
     local total_count=0
@@ -6319,24 +6442,109 @@ build_all_services() {
     # 使用智能过滤的服务列表（步骤0中设置的BUILD_SERVICES）
     local all_services="${BUILD_SERVICES:-$SRC_SERVICES}"
     
-    # 计算服务总数
+    # 分离基础服务和依赖服务
+    local foundation_to_build=""
+    local dependent_to_build=""
+    
     for service in $all_services; do
         total_count=$((total_count + 1))
+        
+        # 判断服务属于哪个阶段
+        if echo "$FOUNDATION_SERVICES" | grep -qw "$service"; then
+            foundation_to_build="$foundation_to_build $service"
+        elif echo "$DEPENDENT_SERVICES" | grep -qw "$service"; then
+            dependent_to_build="$dependent_to_build $service"
+        else
+            # 未分类的服务放入基础阶段
+            foundation_to_build="$foundation_to_build $service"
+        fi
     done
     
-    print_info "准备构建 $total_count 个服务"
+    print_info "📋 构建计划:"
+    print_info "  • 第一阶段（基础设施）: ${foundation_to_build:-无}"
+    print_info "  • 第二阶段（依赖服务）: ${dependent_to_build:-无}"
+    print_info "  • 总计服务数: $total_count"
     echo
     
-    # 构建所有服务
-    for service in $all_services; do
-        print_info "构建服务: $service"
-        if build_service "$service" "$tag" "$registry"; then
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("$service")
-        fi
+    # ========================================
+    # 第一阶段: 构建基础设施服务
+    # ========================================
+    if [[ -n "$foundation_to_build" ]]; then
+        print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        print_info "🏗️  第一阶段: 构建基础设施服务"
+        print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo
-    done
+        
+        for service in $foundation_to_build; do
+            print_info "构建服务: $service"
+            if build_service "$service" "$tag" "$registry"; then
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("$service")
+            fi
+            echo
+        done
+        
+        print_success "✓ 第一阶段构建完成"
+        echo
+        
+        # ========================================
+        # 启动并等待 AppHub 就绪
+        # ========================================
+        if echo "$foundation_to_build" | grep -qw "apphub"; then
+            print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            print_info "🚀 启动 AppHub 服务"
+            print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo
+            
+            # 检测 docker-compose 命令
+            local compose_cmd
+            compose_cmd=$(detect_compose_command || echo "docker-compose")
+            
+            # 启动 AppHub 服务
+            print_info "启动 AppHub 容器..."
+            if $compose_cmd up -d apphub 2>&1 | tee /tmp/apphub-start.log; then
+                print_success "✓ AppHub 容器已启动"
+            else
+                print_error "✗ AppHub 容器启动失败"
+                print_info "查看日志: cat /tmp/apphub-start.log"
+            fi
+            echo
+            
+            # 等待 AppHub 就绪
+            if wait_for_apphub_ready 300; then
+                print_success "✅ AppHub 服务已就绪，可以继续构建依赖服务"
+                echo
+            else
+                print_error "❌ AppHub 服务未就绪，无法继续构建依赖服务"
+                print_warning "建议: 检查 AppHub 日志并修复问题后重试"
+                return 1
+            fi
+        fi
+    fi
+    
+    # ========================================
+    # 第二阶段: 构建依赖服务
+    # ========================================
+    if [[ -n "$dependent_to_build" ]]; then
+        print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        print_info "🔧 第二阶段: 构建依赖服务"
+        print_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo
+        
+        for service in $dependent_to_build; do
+            print_info "构建服务: $service"
+            if build_service "$service" "$tag" "$registry"; then
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("$service")
+            fi
+            echo
+        done
+        
+        print_success "✓ 第二阶段构建完成"
+        echo
+    fi
     
     # ========================================
     # 步骤 5: 验证构建结果（需求32）
@@ -6492,16 +6700,16 @@ sync_env_with_example() {
         return 0
     fi
     
-    # 交互式确认（CI 环境或 --force 模式自动应用）
-    if [[ -n "${CI:-}" ]] || [[ "$FORCE_REBUILD" == "true" ]]; then
-        print_info "CI 环境或强制模式，自动应用更改..."
+    # 交互式确认（CI 环境、AUTO_CONFIRM 或 --force 模式自动应用）
+    if [[ -n "${CI:-}" ]] || [[ "$FORCE_REBUILD" == "true" ]] || [[ "${AUTO_CONFIRM:-false}" == "true" ]]; then
+        print_info "自动化模式，应用更改（仅新增和空值配置）..."
         mv "$temp_env" "$env_file"
-        print_success "✓ 环境变量已同步"
+        print_success "✓ 环境变量已同步（保留已有配置值）"
         
         # 处理 changed_vars（在自动模式下提示但不自动更新）
         if [[ ${#changed_vars[@]} -gt 0 ]]; then
-            print_warning "⚠️  注意：有 ${#changed_vars[@]} 个配置项的推荐值已改变"
-            print_info "    如需更新这些值，请手动编辑 .env 或参考 .env.example"
+            print_warning "⚠️  ${#changed_vars[@]} 个配置项值与 .env.example 不同，已保留当前值"
+            print_info "    如需更新，请重新运行并选择 [u] 选项"
         fi
     else
         echo ""
@@ -6667,9 +6875,12 @@ build_all_pipeline() {
     print_info "步骤 2: 同步环境变量（sync-env）"
     print_info "=========================================="
     # 同步 .env 和 .env.example，确保配置完整（添加缺失项、更新空值）
+    # 在自动化构建流程中，设置 AUTO_CONFIRM 环境变量以跳过交互式提示
+    export AUTO_CONFIRM="true"
     if ! sync_env_with_example "$SCRIPT_DIR/.env" "$SCRIPT_DIR/.env.example"; then
         print_warning "⚠ 环境变量同步失败，但继续构建流程"
     fi
+    unset AUTO_CONFIRM
     echo ""
 
     print_info "=========================================="
