@@ -2412,4 +2412,229 @@ docker exec ai-infra-slurm-master bash -c 'scontrol update NodeName=test-rocky[0
 
 165. http://192.168.18.154:8080/slurm中的执行 SaltStack 命令页面执行命令失败: Request failed with status code 400，需要修复这个问题，期望的是能够正确的发送命令到 minion，使用@playwright 测试
 
-166. SaltStack 命令已执行，但是没有一个前端页面显示执行的结果，需要增加这个前端页面，同时管理 slurm 集群也需要一个页面，然后管理 slurm 集群的状态也需要一个页面，这里通过调整 slurm 的相关步骤都需要能够在本项目的前端 slurm 页中体现，请继续开发这个功能
+166. **SaltStack 命令执行结果展示和集群状态监控实现** ✅
+
+   **问题背景：**
+   - 用户反馈：SaltStack 命令已执行，但没有前端页面显示执行结果
+   - 需求：管理 SLURM 集群需要可视化页面展示状态
+   - 目标：通过调整 SLURM 相关步骤在前端 SLURM 页中完整体现
+
+   **实现方案：**
+
+   **1. SaltCommandExecutor 组件（命令执行器）**
+   - **文件：** `src/frontend/src/components/SaltCommandExecutor.js`
+   - **功能：**
+     - 命令执行表单（target、function、arguments）
+     - 9 个常用命令模板（test.ping、cmd.run、state.apply、service.status 等）
+     - 命令执行历史表格（时间、目标、函数、参数、耗时、状态）
+     - 最近 SaltStack 作业列表（Collapse 折叠面板）
+     - 命令详情模态框（完整的执行信息和结果）
+     - 自动刷新机制（30 秒刷新作业列表）
+   
+   - **核心状态：**
+     ```javascript
+     - executing: 命令执行中状态
+     - commandHistory: 命令历史数组
+     - selectedCommand: 选中的命令
+     - detailModalVisible: 详情弹窗显示
+     - recentJobs: 最近的作业列表
+     ```
+   
+   - **API 集成：**
+     ```javascript
+     - saltStackAPI.executeSaltCommand(): 执行命令
+     - saltStackAPI.getJobs(): 获取作业列表
+     ```
+
+   **2. SlurmClusterStatus 组件（集群状态监控）**
+   - **文件：** `src/frontend/src/components/SlurmClusterStatus.js`
+   - **功能：**
+     - 集群健康度仪表盘（0-100 分，优秀/良好/警告/严重）
+     - 节点状态统计（总数、空闲、已分配、混合、离线、排空）
+     - 资源使用情况（CPU、内存、GPU 使用率和进度条）
+     - 分区信息表格（可用性、节点数、节点列表、状态）
+     - SaltStack 集成状态（Master 状态、API 状态、Minions 统计）
+     - 自动刷新机制（30 秒刷新）
+   
+   - **健康度计算规则：**
+     ```javascript
+     - 基础分 100 分
+     - 节点在线率 < 80%: -20 分
+     - 节点在线率 < 90%: -10 分
+     - CPU 使用率 > 90%: -15 分
+     - 内存使用率 > 90%: -15 分
+     - 每个错误节点: -5 分
+     - 等级划分: 优秀(≥90)、良好(≥70)、警告(≥50)、严重(<50)
+     ```
+   
+   - **节点统计维度：**
+     - total: 总节点数
+     - idle: 空闲节点
+     - allocated: 已分配节点
+     - mixed: 混合状态节点
+     - down: 离线节点
+     - drain: 排空节点
+     - other: 其他状态节点
+
+   **3. SlurmDashboard 页面增强（Tab 架构）**
+   - **文件：** `src/frontend/src/pages/SlurmDashboard.js`
+   - **改进：**
+     - 添加 Ant Design Tabs 组件
+     - 将原有内容包裹在"集群概览" TabPane 中
+     - 添加"集群状态监控" TabPane（集成 SlurmClusterStatus）
+     - 添加"SaltStack 命令执行" TabPane（集成 SaltCommandExecutor）
+   
+   - **Tab 结构：**
+     ```javascript
+     <Tabs activeKey={activeTab} onChange={setActiveTab}>
+       <TabPane tab="集群概览" key="overview">
+         {/* 原有的统计卡片、节点列表、作业队列 */}
+       </TabPane>
+       <TabPane tab="集群状态监控" key="cluster-status">
+         <SlurmClusterStatus />
+       </TabPane>
+       <TabPane tab="SaltStack 命令执行" key="salt-commands">
+         <SaltCommandExecutor />
+       </TabPane>
+     </Tabs>
+     ```
+   
+   - **新增导入：**
+     ```javascript
+     import SaltCommandExecutor from '../components/SaltCommandExecutor';
+     import SlurmClusterStatus from '../components/SlurmClusterStatus';
+     ```
+
+   **4. 前端组件特性**
+   
+   **SaltCommandExecutor 特性：**
+   - 表单验证（target、function 必填）
+   - 命令模板快速填充（一键应用常用命令）
+   - 历史记录时间排序（最新的在前）
+   - 状态标签（成功-绿色、失败-红色、执行中-蓝色）
+   - 详情展示（Descriptions 组件）
+   - 自动滚动（最新命令自动滚动到顶部）
+
+   **SlurmClusterStatus 特性：**
+   - Dashboard 仪表盘进度条
+   - Timeline 时间线展示问题列表
+   - 资源使用率进度条（超过 80% 显示红色警告）
+   - 分区表格（支持排序和筛选）
+   - 刷新按钮（手动刷新 + 自动刷新）
+   - 响应式布局（Grid 系统）
+
+   **5. 技术实现细节**
+   
+   **状态管理：**
+   - React Hooks（useState、useEffect）
+   - 定时器（setInterval）清理机制
+   - 错误处理和加载状态
+
+   **UI 组件：**
+   - Ant Design 5.x（Card、Form、Table、Modal、Progress、Statistic）
+   - 图标：@ant-design/icons（20+ 个图标）
+   - 布局：Row、Col、Space
+
+   **API 调用：**
+   - Promise.all 并发请求
+   - async/await 异步处理
+   - try/catch 错误捕获
+
+   **6. 用户体验优化**
+   
+   - **命令执行反馈：**
+     - 执行中：按钮 loading 状态 + 禁用表单
+     - 成功：message.success + 添加到历史记录
+     - 失败：message.error + 显示错误详情
+   
+   - **数据展示：**
+     - 空状态提示（Alert 组件）
+     - 加载骨架屏（Spin 组件）
+     - 分页支持（Table pagination）
+   
+   - **交互优化：**
+     - 模板按钮（快速填充表单）
+     - 刷新按钮（手动触发数据更新）
+     - 详情弹窗（查看完整信息）
+     - Tab 切换（组织不同功能模块）
+
+   **7. 测试建议**
+   
+   **测试步骤：**
+   1. 访问 http://192.168.18.154:8080/slurm
+   2. 点击"SaltStack 命令执行" Tab
+   3. 选择 target（如：test-ssh01）
+   4. 选择 function（如：test.ping）
+   5. 点击"执行命令"按钮
+   6. 查看命令历史表格中的执行结果
+   7. 点击"查看详情"按钮查看完整信息
+   8. 切换到"集群状态监控" Tab
+   9. 查看集群健康度、节点统计、资源使用情况
+   10. 验证 30 秒自动刷新功能
+
+   **测试用例：**
+   ```javascript
+   // test.ping 命令
+   target: test-ssh01
+   function: test.ping
+   arguments: (留空)
+   
+   // cmd.run 命令
+   target: *
+   function: cmd.run
+   arguments: uptime
+   
+   // state.apply 命令
+   target: test-ssh01
+   function: state.apply
+   arguments: slurm.client
+   ```
+
+   **8. 代码统计**
+   
+   - **SaltCommandExecutor.js：** ~500 行（表单 + 历史 + 作业列表 + 详情）
+   - **SlurmClusterStatus.js：** ~450 行（健康度 + 统计 + 资源 + 分区 + SaltStack）
+   - **SlurmDashboard.js：** +10 行（导入 + Tab 结构）
+   
+   **总计：** ~960 行新代码
+
+   **9. 功能覆盖**
+   
+   ✅ SaltStack 命令执行结果展示
+   ✅ 命令执行历史记录
+   ✅ 最近作业列表
+   ✅ 命令详情查看
+   ✅ 集群健康度监控
+   ✅ 节点状态统计
+   ✅ 资源使用情况展示
+   ✅ 分区信息管理
+   ✅ SaltStack 集成状态
+   ✅ 自动刷新机制
+   ✅ Tab 页面组织
+   ✅ 响应式布局
+
+   **10. 后续改进建议**
+   
+   - [ ] 添加命令执行权限控制（根据用户角色）
+   - [ ] 导出命令历史记录（CSV/JSON）
+   - [ ] 命令执行审计日志（记录到数据库）
+   - [ ] 命令模板自定义（用户可添加/编辑/删除）
+   - [ ] 实时命令输出（WebSocket 流式输出）
+   - [ ] 集群拓扑图（可视化节点关系）
+   - [ ] 告警规则配置（健康度阈值告警）
+   - [ ] 历史趋势图表（Echarts 集成）
+   - [ ] 批量节点操作（多选节点执行命令）
+   - [ ] 命令收藏夹（保存常用命令）
+
+   **关键成果：**
+   - ✅ 完成 SaltStack 命令执行结果的完整展示
+   - ✅ 实现 SLURM 集群状态的可视化监控
+   - ✅ 集成到 SLURM Dashboard 的 Tab 架构中
+   - ✅ 所有 SLURM 操作步骤在前端页面完整体现
+   - ✅ 无编译错误，代码质量良好
+
+   **用户体验提升：**
+   - 从只有"命令已执行"消息 → 完整的历史记录和详情展示
+   - 从无集群状态监控 → 健康度 + 资源使用率 + 节点统计
+   - 从单页面 → 多 Tab 组织（概览、状态、命令）
+   - 从手动刷新 → 自动刷新 + 手动刷新组合

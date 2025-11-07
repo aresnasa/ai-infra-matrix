@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography, Divider, Modal, message, Dropdown, Tabs } from 'antd';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined, PlayCircleOutlined, PauseCircleOutlined, StopOutlined, DownOutlined, CloseCircleOutlined, ReloadOutlined, HourglassOutlined } from '@ant-design/icons';
+import SaltCommandExecutor from '../components/SaltCommandExecutor';
+import SlurmClusterStatus from '../components/SlurmClusterStatus';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
@@ -259,6 +261,10 @@ const SlurmDashboard = () => {
           <Alert type="info" showIcon message="使用演示数据：未检测到Slurm命令(sinfo/squeue)，展示示例统计" />
         )}
 
+        <Tabs activeKey={activeTab} onChange={setActiveTab}>
+          {/* 概览页签 */}
+          <TabPane tab="集群概览" key="overview">
+
         <Row gutter={16}>
           <Col span={6}>
             <Card>
@@ -478,6 +484,18 @@ const SlurmDashboard = () => {
             }}
           />
         </Card>
+          </TabPane>
+
+          {/* 集群状态监控页签 */}
+          <TabPane tab="集群状态监控" key="cluster-status">
+            <SlurmClusterStatus />
+          </TabPane>
+
+          {/* SaltStack 命令执行页签 */}
+          <TabPane tab="SaltStack 命令执行" key="salt-commands">
+            <SaltCommandExecutor />
+          </TabPane>
+        </Tabs>
       </Space>
     </div>
   );
