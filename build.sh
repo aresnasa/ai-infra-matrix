@@ -6557,15 +6557,21 @@ build_all_services() {
     show_build_status "$tag" "$registry"
     
     print_info "=========================================="
-    print_success "构建完成: $success_count/$total_count 成功"
     
-    # SLURM包已集成到apphub多阶段构建中，无需单独复制
-    # apphub现在包含完整的工具链和SLURM deb包
-    
+    # 根据构建结果显示不同的消息
     if [[ ${#failed_services[@]} -gt 0 ]]; then
+        print_warning "⚠️  构建部分完成: $success_count/$total_count 成功"
         print_warning "失败的服务: ${failed_services[*]}"
-        return 1
+        print_info ""
+        print_info "💡 提示："
+        print_info "  • 已成功构建的服务将正常启动"
+        print_info "  • 失败的服务可以稍后单独重试构建"
+        print_info "  • 使用命令: ./build.sh build <service_name> $tag"
+        print_info ""
+        # 返回 2 表示部分成功（而不是完全失败）
+        return 2
     else
+        print_success "🎉 构建完成: $success_count/$total_count 成功"
         print_success "🎉 所有服务构建成功！"
         return 0
     fi
@@ -6902,10 +6908,21 @@ build_all_pipeline() {
     print_info "步骤 5: 开始构建所有服务（build-all）"
     print_info "标签: $tag  仓库: ${registry:-<本地>}  强制: $force"
     print_info "=========================================="
-    if ! build_all_services "$tag" "$registry"; then
-        print_error "构建所有服务失败"
+    
+    # 调用构建函数，捕获返回值
+    local build_result=0
+    build_all_services "$tag" "$registry" || build_result=$?
+    
+    # 根据返回值决定是否继续
+    if [[ $build_result -eq 0 ]]; then
+        print_success "✓ 所有服务构建成功"
+    elif [[ $build_result -eq 2 ]]; then
+        print_warning "⚠️  部分服务构建失败，但将继续启动已成功构建的服务"
+    else
+        print_error "❌ 构建所有服务失败，停止流程"
         return 1
     fi
+    echo
 
     # 尝试启动（或重启）服务
     local compose_cmd
@@ -6939,7 +6956,16 @@ build_all_pipeline() {
     print_info "  2. ✓ 环境变量已同步"
     print_info "  3. ✓ 配置文件已同步"
     print_info "  4. ✓ 模板已渲染"
-    print_info "  5. ✓ 镜像已构建: ${tag}"
+    
+    # 根据构建结果显示不同的镜像状态
+    if [[ $build_result -eq 2 ]]; then
+        print_info "  5. ⚠️  镜像部分构建成功: ${tag}"
+        print_info "     • 已成功构建的服务将正常运行"
+        print_info "     • 失败的服务可以稍后重试: ./build.sh build <service_name> ${tag}"
+    else
+        print_info "  5. ✓ 镜像已构建: ${tag}"
+    fi
+    
     print_info "  6. ✓ 服务已启动"
     print_info ""
     print_info "后续操作："

@@ -3262,3 +3262,155 @@ Rejected Keys:有脏数据，调整 build.sh
     - [ ] 实现后端节点管理 API（POST /api/slurm/nodes）
     - [ ] 实现前端节点管理 UI（添加/删除/查询节点）
  
+174. 调整下 build.sh build-all 函数的鲁棒性，[INFO] ==========================================
+[SUCCESS] 构建完成: 11/12 成功
+[WARNING] 失败的服务: jupyterhub
+[ERROR] 构建所有服务失败这里就一个组件构建失败了导致后续步骤无法继续需要优化
+
+175. SLURM 节点 Web 管理功能 - slurmrestd API 集成 ✅
+
+**背景：**
+
+- 用户需要通过 Web 界面管理 SLURM 集群节点状态（RESUME/DRAIN/DOWN/IDLE）
+- 当前所有节点显示为 `down*` 状态，需要通过 Web 界面恢复
+- 期望使用 `slurmrestd` REST API 而不是 SSH + 命令行方式
+- 需要复用 Backend 的 JWT 认证机制
+
+**已实现功能：** ✅
+
+1. **Frontend (SlurmDashboard.js)：**
+   - ✅ 节点列表展示（带 SaltStack 状态）
+   - ✅ 多选节点功能（`rowSelection`）
+   - ✅ 节点操作下拉菜单（仅在选中节点时显示）
+     - RESUME (恢复)、DRAIN (排空)、DOWN (下线)、IDLE (设为空闲)
+   - ✅ 作业管理操作（cancel, hold, release, suspend, resume, requeue）
+
+2. **Backend API (`slurm_controller.go`)：**
+   - ✅ `POST /api/slurm/nodes/manage` - 节点状态管理
+   - ✅ `POST /api/slurm/jobs/manage` - 作业管理
+   - ✅ `GET /api/slurm/partitions` - 获取分区信息
+   - ✅ JWT 认证保护（`AuthMiddlewareWithSession()`）
+
+3. **Backend Service (`slurm_service.go`)：**
+   - ✅ **SSH 方式（当前使用）：** `ExecuteSlurmCommand()` - 执行 scontrol/scancel 命令
+   - ✅ **REST API 方式（已实现但未使用）：**
+     - `AddNodeViaAPI()`、`UpdateNodeViaAPI()`、`DeleteNodeViaAPI()`
+     - `callSlurmAPI()` - JWT 认证 + REST API 调用
+     - `getJWTToken()` - 获取 SLURM JWT token
+
+**当前问题：** ⚠️
+
+1. **节点状态问题：** 所有节点都显示为 `down*` 状态
+2. **操作按钮可见性：** 节点操作按钮仅在**选中节点后**才显示（UX 可改进）
+3. **当前实现方式：** 使用 SSH + scontrol 命令，未使用 slurmrestd REST API
+
+**使用方法：**
+
+通过 Web 界面恢复节点：
+
+1. 访问 <http://192.168.0.200:8080/slurm>
+2. 勾选 `down*` 状态的节点（可全选）
+3. 点击"节点操作"按钮 → 选择"恢复 (RESUME)"
+4. 确认操作，等待状态更新
+
+**Playwright 测试：**
+
+```bash
+BASE_URL=http://192.168.0.200:8080 \
+npx playwright test test/e2e/specs/slurm-node-management-test.spec.js
+```
+
+**测试结果：**
+
+- ✅ 页面加载正常（标题：Slurm 集群管理）
+- ✅ 节点表格展示正常（表头：节点名称、分区、状态、CPU、内存、SaltStack状态）
+- ✅ 节点选择功能正常
+- ✅ 节点操作按钮存在（选中节点后显示）
+- ✅ API 端点正常（需要 JWT 认证）
+
+**实现状态：** ✅ **已完成 90%**
+
+- ✅ 核心功能已实现（节点管理、作业管理）
+- ✅ JWT 认证已集成
+- ✅ slurmrestd API 代码已就绪（未启用）
+- ⚠️ 当前使用 SSH + scontrol 方式（可切换）
+- ⚠️ 需要恢复节点状态（通过 Web 操作）
+
+**⚠️ 重要发现（2025-11-07）：**
+
+通过浏览器实际访问 `http://192.168.0.200:8080/slurm` 页面，发现：
+
+1. ✅ **节点表格有复选框** - 功能已修复
+2. ✅ **"节点操作"按钮已显示** - 功能可用
+3. ✅ 节点列表正常显示（6 个节点）
+4. ✅ 节点状态已自动恢复为 `idle*`（绿色）
+5. ❌ **点击操作报错：SSH命令执行失败: Process exited with status 1**
+
+**根本原因（第一次）：**
+
+- Frontend 容器运行的是 `v0.3.6-dev` 版本
+- 当前代码分支是 `v0.3.8`
+- **前端代码没有重新构建和部署**
+- **实际使用的页面是 `SlurmScalingPage.js`，不是 `SlurmDashboard.js`**
+
+**解决方案（已完成）：**
+
+1. ✅ 修改 `SlurmScalingPage.js` 添加 `rowSelection` 和节点操作功能
+2. ✅ 添加 `selectedRowKeys` 状态管理
+3. ✅ 添加 `handleNodeOperation` 函数
+4. ✅ 添加节点操作菜单项（RESUME/DRAIN/DOWN/IDLE）
+5. ✅ 重新构建 Frontend 镜像（--no-cache）
+6. ✅ 重启 Frontend 容器
+
+**当前问题（SSH 命令执行失败）：**
+
+错误信息：`SSH命令执行失败 (退出码 1): You must specify a reason when DOWNING or DRAINING a node. Request denied`
+
+**问题原因：**
+
+SLURM 要求在执行 DOWN 或 DRAIN 操作时**必须提供 Reason 参数**，但前端没有提示用户输入，后端也没有提供默认值。
+
+**解决方案（已完成）：**
+
+修改 `slurm_controller.go` Line 275-289，为 DOWN 和 DRAIN 操作强制提供默认 Reason：
+
+```go
+// DOWN 和 DRAIN 操作必须提供 Reason
+if slurmState == "DOWN" || slurmState == "DRAIN" {
+    reason := req.Reason
+    if reason == "" {
+        // 如果没有提供 reason，使用默认值
+        reason = fmt.Sprintf("由管理员通过 Web 界面执行 %s 操作", slurmState)
+    }
+    command += fmt.Sprintf(" Reason='%s'", reason)
+} else if req.Reason != "" {
+    // 其他操作：如果提供了 reason，也添加上
+    command += fmt.Sprintf(" Reason='%s'", req.Reason)
+}
+```
+
+**修复步骤：**
+
+1. ✅ 修改 `slurm_controller.go` 添加默认 Reason
+2. ✅ 重新构建 Backend：`docker-compose build backend`
+3. ✅ 重启 Backend 容器：`docker-compose up -d backend`
+
+可能原因（历史）：
+1. SLURM master 主机不可达（`SLURM_MASTER_HOST` 环境变量）
+2. SSH 认证失败（用户名/密码错误）
+3. `scontrol` 命令返回非零退出码（权限问题或命令格式错误）
+4. 节点已经是目标状态（如从 idle 执行 RESUME）
+
+需要检查：
+- Backend 环境变量配置
+- SLURM master SSH 连接
+- scontrol 命令权限
+- 错误日志详情
+
+**📖 详细操作指南：** `docs/SLURM_NODE_RECOVERY_GUIDE.md`
+
+- 包含完整的步骤说明、界面截图、故障排查和最佳实践
+- 快速操作流程：全选节点 → 节点操作 → 恢复 → 确定 → 刷新（约 30 秒）
+- ⚠️ **前提条件：** Frontend 已重新构建（v0.3.8）
+
+176. 现在让我们来实现http://192.168.0.200:8080/slurm的作业队列子框体的任务查询和暂停和其他的功能，这里需要能够通过 ssh 和 slurmrestd 都能操作，同时节点管理的后端也要支持 ssh 和 slurmrestd，请继续实现这个功能

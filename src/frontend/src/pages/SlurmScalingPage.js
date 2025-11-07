@@ -2,14 +2,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button,
   Typography, Modal, Form, Input, Select, message, Progress, List,
-  Descriptions, Badge, Tabs, Divider, Tooltip, Popconfirm, Checkbox, Skeleton
+  Descriptions, Badge, Tabs, Divider, Tooltip, Popconfirm, Checkbox, Skeleton, Dropdown
 } from 'antd';
 import {
   PlusOutlined, MinusOutlined, ReloadOutlined, ThunderboltOutlined,
   DesktopOutlined, ClusterOutlined, NodeIndexOutlined, ApiOutlined,
   CheckCircleOutlined, ExclamationCircleOutlined, ClockCircleOutlined,
   PlayCircleOutlined, StopOutlined, SettingOutlined, EyeOutlined,
-  BarChartOutlined
+  BarChartOutlined, PauseCircleOutlined, DownOutlined
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -68,6 +68,11 @@ const SlurmScalingPage = () => {
   const [scaleDownModal, setScaleDownModal] = useState(false);
   const [templateModal, setTemplateModal] = useState(false);
   const [saltCommandModal, setSaltCommandModal] = useState(false);
+
+  // 节点选择状态
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [selectedJobKeys, setSelectedJobKeys] = useState([]);
+  const [operationLoading, setOperationLoading] = useState(false);
 
   // 表单
   const [scaleUpForm] = Form.useForm();
@@ -408,6 +413,142 @@ const SlurmScalingPage = () => {
     }
   };
 
+  // 节点操作函数
+  const handleNodeOperation = async (action, actionLabel, reason = '') => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要操作的节点');
+      return;
+    }
+
+    Modal.confirm({
+      title: `确认${actionLabel}节点`,
+      content: `您确定要将选中的 ${selectedRowKeys.length} 个节点设置为 ${actionLabel} 状态吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      onOk: async () => {
+        setOperationLoading(true);
+        try {
+          const response = await slurmAPI.manageNodes(selectedRowKeys, action, reason);
+          if (response.data?.success) {
+            message.success(response.data.message || `成功${actionLabel} ${selectedRowKeys.length} 个节点`);
+            setSelectedRowKeys([]);
+            // 重新加载节点列表
+            await loadData();
+          } else {
+            message.error(response.data?.error || `${actionLabel}节点失败`);
+          }
+        } catch (error) {
+          console.error(`${actionLabel}节点失败:`, error);
+          message.error(error.response?.data?.error || `${actionLabel}节点失败，请稍后重试`);
+        } finally {
+          setOperationLoading(false);
+        }
+      },
+    });
+  };
+
+  // 节点操作菜单项
+  const nodeOperationMenuItems = [
+    {
+      key: 'resume',
+      label: '恢复 (RESUME)',
+      icon: <PlayCircleOutlined />,
+      onClick: () => handleNodeOperation('resume', '恢复'),
+    },
+    {
+      key: 'drain',
+      label: '排空 (DRAIN)',
+      icon: <PauseCircleOutlined />,
+      onClick: () => handleNodeOperation('drain', '排空'),
+    },
+    {
+      key: 'down',
+      label: '下线 (DOWN)',
+      icon: <StopOutlined />,
+      onClick: () => handleNodeOperation('down', '下线'),
+    },
+    {
+      key: 'idle',
+      label: '空闲 (IDLE)',
+      icon: <ClockCircleOutlined />,
+      onClick: () => handleNodeOperation('idle', '空闲'),
+    },
+  ];
+
+  // 作业操作函数
+  const handleJobOperation = async (action, actionLabel, signal = '') => {
+    if (selectedJobKeys.length === 0) {
+      message.warning('请先选择要操作的作业');
+      return;
+    }
+
+    Modal.confirm({
+      title: `确认${actionLabel}作业`,
+      content: `您确定要对选中的 ${selectedJobKeys.length} 个作业执行 ${actionLabel} 操作吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      onOk: async () => {
+        setOperationLoading(true);
+        try {
+          const response = await slurmAPI.manageJobs(selectedJobKeys, action, signal);
+          if (response.data?.success) {
+            message.success(response.data.message || `成功${actionLabel} ${selectedJobKeys.length} 个作业`);
+            setSelectedJobKeys([]);
+            // 重新加载作业列表
+            await loadData();
+          } else {
+            message.error(response.data?.error || `${actionLabel}作业失败`);
+          }
+        } catch (error) {
+          console.error(`${actionLabel}作业失败:`, error);
+          message.error(error.response?.data?.error || `${actionLabel}作业失败，请稍后重试`);
+        } finally {
+          setOperationLoading(false);
+        }
+      },
+    });
+  };
+
+  // 作业操作菜单项
+  const jobOperationMenuItems = [
+    {
+      key: 'cancel',
+      label: '取消 (CANCEL)',
+      icon: <CloseCircleOutlined />,
+      onClick: () => handleJobOperation('cancel', '取消'),
+    },
+    {
+      key: 'hold',
+      label: '暂停 (HOLD)',
+      icon: <PauseCircleOutlined />,
+      onClick: () => handleJobOperation('hold', '暂停'),
+    },
+    {
+      key: 'release',
+      label: '恢复 (RELEASE)',
+      icon: <PlayCircleOutlined />,
+      onClick: () => handleJobOperation('release', '恢复'),
+    },
+    {
+      key: 'suspend',
+      label: '挂起 (SUSPEND)',
+      icon: <HourglassOutlined />,
+      onClick: () => handleJobOperation('suspend', '挂起'),
+    },
+    {
+      key: 'resume',
+      label: '继续 (RESUME)',
+      icon: <SyncOutlined />,
+      onClick: () => handleJobOperation('resume', '继续'),
+    },
+    {
+      key: 'requeue',
+      label: '重新排队 (REQUEUE)',
+      icon: <ReloadOutlined />,
+      onClick: () => handleJobOperation('requeue', '重新排队'),
+    },
+  ];
+
   const handleCreateTemplate = async (values) => {
     try {
       await extendedSlurmAPI.createNodeTemplate(values);
@@ -614,6 +755,24 @@ const SlurmScalingPage = () => {
           <TabPane tab={<span><DesktopOutlined />节点管理</span>} key="nodes">
             <Card title="集群节点" extra={
               <Space>
+                {selectedRowKeys.length > 0 && (
+                  <>
+                    <Text type="secondary">已选择 {selectedRowKeys.length} 个节点</Text>
+                    <Dropdown 
+                      menu={{ items: nodeOperationMenuItems }}
+                      placement="bottomRight"
+                      disabled={operationLoading}
+                    >
+                      <Button 
+                        type="primary" 
+                        loading={operationLoading}
+                        icon={<DownOutlined />}
+                      >
+                        节点操作
+                      </Button>
+                    </Dropdown>
+                  </>
+                )}
                 <Button icon={<PlusOutlined />} onClick={() => setScaleUpModal(true)}>
                   添加节点
                 </Button>
@@ -631,13 +790,43 @@ const SlurmScalingPage = () => {
                   columns={nodeColumns}
                   size="small"
                   pagination={{ pageSize: 10 }}
+                  rowSelection={{
+                    selectedRowKeys,
+                    onChange: setSelectedRowKeys,
+                    selections: [
+                      Table.SELECTION_ALL,
+                      Table.SELECTION_INVERT,
+                      Table.SELECTION_NONE,
+                    ],
+                  }}
                 />
               )}
             </Card>
           </TabPane>
 
           <TabPane tab={<span><PlayCircleOutlined />作业队列</span>} key="jobs">
-            <Card title="作业状态">
+            <Card title="作业状态" extra={
+              <Space>
+                {selectedJobKeys.length > 0 && (
+                  <>
+                    <Text type="secondary">已选择 {selectedJobKeys.length} 个作业</Text>
+                    <Dropdown 
+                      menu={{ items: jobOperationMenuItems }}
+                      placement="bottomRight"
+                      disabled={operationLoading}
+                    >
+                      <Button 
+                        type="primary" 
+                        loading={operationLoading}
+                        icon={<DownOutlined />}
+                      >
+                        作业操作
+                      </Button>
+                    </Dropdown>
+                  </>
+                )}
+              </Space>
+            }>
               {loadingStages.jobs ? (
                 <Skeleton active paragraph={{ rows: 5 }} />
               ) : (
@@ -655,6 +844,15 @@ const SlurmScalingPage = () => {
                   ]}
                   size="small"
                   pagination={{ pageSize: 10 }}
+                  rowSelection={{
+                    selectedRowKeys: selectedJobKeys,
+                    onChange: setSelectedJobKeys,
+                    selections: [
+                      Table.SELECTION_ALL,
+                      Table.SELECTION_INVERT,
+                      Table.SELECTION_NONE,
+                    ],
+                  }}
                 />
               )}
             </Card>

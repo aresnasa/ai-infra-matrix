@@ -27,5 +27,66 @@
         "172.30.*",
         "172.31.*",
         "192.168.*"
+    ],
+    "sqltools.connections": [
+        {
+            "server": "10.211.55.7",
+            "port": 9042,
+            "previewLimit": 50,
+            "driver": "Cassandra",
+            "name": "10.211.55.7",
+            "password": ""
+        },
+        {
+            "server": "10.211.55.7",
+            "port": 9042,
+            "previewLimit": 50,
+            "driver": "Scylla",
+            "name": "10.211.55.7",
+            "password": ""
+        },
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "previewLimit": 50,
+            "server": "127.0.0.1",
+            "port": 3306,
+            "driver": "MySQL",
+            "name": "acore",
+            "username": "root",
+            "database": "acore_auth"
+        },
+        {
+            "server": "http://localhost",
+            "port": 8123,
+            "database": "default",
+            "username": "default",
+            "requestTimeout": 30000,
+            "enableTls": false,
+            "previewLimit": 50,
+            "driver": "ClickHouse",
+            "name": "localhost",
+            "group": "localhost",
+            "password": ""
+        },
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 3306,
+            "sshOptions": {
+                "port": 22
+            },
+            "driver": "MySQL",
+            "name": "ai-infra-dev-db",
+            "username": "slurm",
+            "database": "slurm_acct_db"
+        }
     ]
 }

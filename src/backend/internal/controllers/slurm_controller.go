@@ -274,12 +274,58 @@ func (c *SlurmController) ManageNodes(ctx *gin.Context) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
 	defer cancel()
 
+	// 检查是否使用 slurmrestd REST API
+	if c.slurmSvc.GetUseSlurmRestd() {
+		// 使用 REST API 方式
+		var failedNodes []string
+		var successCount int
+
+		for _, nodeName := range req.NodeNames {
+			update := services.SlurmNodeUpdate{
+				State:  slurmState,
+				Reason: req.Reason,
+			}
+			err := c.slurmSvc.UpdateNodeViaAPI(ctxWithTimeout, nodeName, update)
+			if err != nil {
+				failedNodes = append(failedNodes, nodeName)
+			} else {
+				successCount++
+			}
+		}
+
+		if len(failedNodes) > 0 {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success":      false,
+				"message":      fmt.Sprintf("部分节点操作失败: %d 成功, %d 失败", successCount, len(failedNodes)),
+				"failed_nodes": failedNodes,
+				"action":       req.Action,
+			})
+		} else {
+			ctx.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"message": fmt.Sprintf("成功对 %d 个节点执行 %s 操作", len(req.NodeNames), req.Action),
+				"nodes":   req.NodeNames,
+				"action":  req.Action,
+			})
+		}
+		return
+	}
+
+	// 使用 SSH 方式 (原有逻辑)
 	// 构建 scontrol 命令
 	nodeList := strings.Join(req.NodeNames, ",")
 	command := fmt.Sprintf("scontrol update NodeName=%s State=%s", nodeList, slurmState)
 
-	// 如果有原因，添加到命令中
-	if req.Reason != "" {
+	// DOWN 和 DRAIN 操作必须提供 Reason
+	if slurmState == "DOWN" || slurmState == "DRAIN" {
+		reason := req.Reason
+		if reason == "" {
+			// 如果没有提供 reason，使用默认值
+			reason = fmt.Sprintf("由管理员通过 Web 界面执行 %s 操作", slurmState)
+		}
+		command += fmt.Sprintf(" Reason='%s'", reason)
+	} else if req.Reason != "" {
+		// 其他操作：如果提供了 reason，也添加上
 		command += fmt.Sprintf(" Reason='%s'", req.Reason)
 	}
 
@@ -322,6 +368,59 @@ func (c *SlurmController) ManageJobs(ctx *gin.Context) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
 	defer cancel()
 
+	// 检查是否使用 slurmrestd REST API
+	if c.slurmSvc.GetUseSlurmRestd() {
+		// 使用 REST API 方式
+		var failedJobs []string
+		var successCount int
+
+		for _, jobID := range req.JobIDs {
+			var err error
+
+			switch req.Action {
+			case "cancel":
+				err = c.slurmSvc.CancelJobViaAPI(ctxWithTimeout, jobID, req.Signal)
+			case "hold":
+				err = c.slurmSvc.UpdateJobViaAPI(ctxWithTimeout, jobID, "hold")
+			case "release":
+				err = c.slurmSvc.UpdateJobViaAPI(ctxWithTimeout, jobID, "release")
+			case "suspend":
+				err = c.slurmSvc.UpdateJobViaAPI(ctxWithTimeout, jobID, "suspend")
+			case "resume":
+				err = c.slurmSvc.UpdateJobViaAPI(ctxWithTimeout, jobID, "resume")
+			case "requeue":
+				err = c.slurmSvc.UpdateJobViaAPI(ctxWithTimeout, jobID, "requeue")
+			default:
+				ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的操作: %s", req.Action)})
+				return
+			}
+
+			if err != nil {
+				failedJobs = append(failedJobs, jobID)
+			} else {
+				successCount++
+			}
+		}
+
+		if len(failedJobs) > 0 {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success":     false,
+				"message":     fmt.Sprintf("部分作业操作失败: %d 成功, %d 失败", successCount, len(failedJobs)),
+				"failed_jobs": failedJobs,
+				"action":      req.Action,
+			})
+		} else {
+			ctx.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"message": fmt.Sprintf("成功对 %d 个作业执行 %s 操作", len(req.JobIDs), req.Action),
+				"jobs":    req.JobIDs,
+				"action":  req.Action,
+			})
+		}
+		return
+	}
+
+	// 使用 SSH 方式 (原有逻辑)
 	var command string
 	jobList := strings.Join(req.JobIDs, ",")
 

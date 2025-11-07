@@ -1,4 +1,5 @@
 third_party/
+sql/
 log/
 *.log
 .env.dev

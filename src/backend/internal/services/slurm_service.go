@@ -26,10 +26,11 @@ import (
 // real tools/data and no longer falls back to demo data.
 
 type SlurmService struct {
-	db           *gorm.DB
-	restAPIURL   string
-	restAPIToken string
-	httpClient   *http.Client
+	db            *gorm.DB
+	restAPIURL    string
+	restAPIToken  string
+	httpClient    *http.Client
+	useSlurmrestd bool // 是否使用 slurmrestd API (true) 还是 SSH (false)
 }
 
 func NewSlurmService() *SlurmService {
@@ -38,8 +39,12 @@ func NewSlurmService() *SlurmService {
 		restAPIURL = "http://slurm-master:6820" // 默认URL
 	}
 
+	// 从环境变量读取是否使用 slurmrestd
+	useSlurmrestd := os.Getenv("USE_SLURMRESTD") == "true"
+
 	return &SlurmService{
-		restAPIURL: restAPIURL,
+		restAPIURL:    restAPIURL,
+		useSlurmrestd: useSlurmrestd,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -52,13 +57,22 @@ func NewSlurmServiceWithDB(db *gorm.DB) *SlurmService {
 		restAPIURL = "http://slurm-master:6820" // 默认URL
 	}
 
+	// 从环境变量读取是否使用 slurmrestd
+	useSlurmrestd := os.Getenv("USE_SLURMRESTD") == "true"
+
 	return &SlurmService{
-		db:         db,
-		restAPIURL: restAPIURL,
+		db:            db,
+		restAPIURL:    restAPIURL,
+		useSlurmrestd: useSlurmrestd,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// GetUseSlurmRestd 返回是否启用 slurmrestd REST API
+func (s *SlurmService) GetUseSlurmRestd() bool {
+	return s.useSlurmrestd
 }
 
 func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
@@ -737,11 +751,22 @@ func (s *SlurmService) executeSSHCommand(host string, port int, user, password, 
 
 	// 执行命令
 	output, err := session.CombinedOutput(command)
+	outputStr := string(output)
+
 	if err != nil {
-		return string(output), fmt.Errorf("SSH命令执行失败: %w", err)
+		// 检查是否是退出码错误
+		if exitErr, ok := err.(*ssh.ExitError); ok {
+			// 返回更详细的错误信息，包含输出内容
+			if outputStr != "" {
+				return outputStr, fmt.Errorf("SSH命令执行失败 (退出码 %d): %s", exitErr.ExitStatus(), outputStr)
+			}
+			return outputStr, fmt.Errorf("SSH命令执行失败 (退出码 %d)", exitErr.ExitStatus())
+		}
+		// 其他SSH错误
+		return outputStr, fmt.Errorf("SSH命令执行失败: %w (输出: %s)", err, outputStr)
 	}
 
-	return string(output), nil
+	return outputStr, nil
 }
 
 // getSaltAPIToken 获取Salt API认证token
@@ -1467,6 +1492,44 @@ func (s *SlurmService) UpdateNodeViaAPI(ctx context.Context, nodeName string, up
 	}
 
 	log.Printf("[DEBUG] UpdateNodeViaAPI: 节点 %s 状态更新成功, 响应: %+v", nodeName, resp)
+	return nil
+}
+
+// CancelJobViaAPI 通过REST API取消作业
+func (s *SlurmService) CancelJobViaAPI(ctx context.Context, jobID string, signal string) error {
+	log.Printf("[DEBUG] CancelJobViaAPI: 取消作业 %s (信号: %s)", jobID, signal)
+
+	payload := map[string]interface{}{
+		"job_id": jobID,
+	}
+	if signal != "" {
+		payload["signal"] = signal
+	}
+
+	resp, err := s.callSlurmAPI(ctx, "DELETE", fmt.Sprintf("/job/%s", jobID), payload)
+	if err != nil {
+		return fmt.Errorf("取消作业失败: %v", err)
+	}
+
+	log.Printf("[DEBUG] CancelJobViaAPI: 作业 %s 取消成功, 响应: %+v", jobID, resp)
+	return nil
+}
+
+// UpdateJobViaAPI 通过REST API更新作业状态
+func (s *SlurmService) UpdateJobViaAPI(ctx context.Context, jobID string, action string) error {
+	log.Printf("[DEBUG] UpdateJobViaAPI: 对作业 %s 执行 %s 操作", jobID, action)
+
+	payload := map[string]interface{}{
+		"job_id": jobID,
+		"action": action,
+	}
+
+	resp, err := s.callSlurmAPI(ctx, "POST", fmt.Sprintf("/job/%s", jobID), payload)
+	if err != nil {
+		return fmt.Errorf("更新作业状态失败: %v", err)
+	}
+
+	log.Printf("[DEBUG] UpdateJobViaAPI: 作业 %s 操作 %s 成功, 响应: %+v", jobID, action, resp)
 	return nil
 }
 
