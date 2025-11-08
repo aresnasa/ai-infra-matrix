@@ -32,26 +32,30 @@ type SlurmCluster struct {
 
 // SlurmNode SLURM节点模型
 type SlurmNode struct {
-	ID           uint           `json:"id" gorm:"primaryKey"`
-	ClusterID    uint           `json:"cluster_id" gorm:"not null"`
-	NodeName     string         `json:"node_name" gorm:"not null;size:100"`
-	NodeType     string         `json:"node_type" gorm:"not null;size:50"` // master, compute, login
-	Host         string         `json:"host" gorm:"not null;size:255"`
-	Port         int            `json:"port" gorm:"default:22"`
-	Username     string         `json:"username" gorm:"not null;size:100"`
-	AuthType     string         `json:"auth_type" gorm:"default:'password';size:20"` // password, key
-	Password     string         `json:"password,omitempty" gorm:"size:255"`
-	KeyPath      string         `json:"key_path,omitempty" gorm:"size:500"`
-	Status       string         `json:"status" gorm:"default:'pending';size:50"` // pending, connecting, installing, configuring, active, failed, removing
-	SaltMinionID string         `json:"salt_minion_id" gorm:"size:100"`
-	CPUs         int            `json:"cpus" gorm:"default:1"`
-	Memory       int            `json:"memory" gorm:"default:1024"` // MB
-	Storage      int            `json:"storage" gorm:"default:10"`  // GB
-	GPUs         int            `json:"gpus" gorm:"default:0"`
-	NodeConfig   NodeConfig     `json:"node_config" gorm:"type:json"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
+	ID             uint           `json:"id" gorm:"primaryKey"`
+	ClusterID      uint           `json:"cluster_id" gorm:"not null"`
+	NodeName       string         `json:"node_name" gorm:"not null;size:100"`
+	NodeType       string         `json:"node_type" gorm:"not null;size:50"` // master, compute, login
+	Host           string         `json:"host" gorm:"not null;size:255"`
+	Port           int            `json:"port" gorm:"default:22"`
+	Username       string         `json:"username" gorm:"not null;size:100"`
+	AuthType       string         `json:"auth_type" gorm:"default:'password';size:20"` // password, key
+	Password       string         `json:"password,omitempty" gorm:"size:255"`
+	KeyPath        string         `json:"key_path,omitempty" gorm:"size:500"`
+	Status         string         `json:"status" gorm:"default:'pending';size:50"` // pending, connecting, installing, configuring, active, failed, removing
+	SaltMinionID   string         `json:"salt_minion_id" gorm:"size:100"`
+	CPUs           int            `json:"cpus" gorm:"default:1"`
+	Memory         int            `json:"memory" gorm:"default:1024"` // MB
+	Storage        int            `json:"storage" gorm:"default:10"`  // GB
+	GPUs           int            `json:"gpus" gorm:"default:0"`
+	XPUs           int            `json:"xpus" gorm:"default:0"` // 昆仑芯 XPU
+	Sockets        int            `json:"sockets" gorm:"default:1"`
+	CoresPerSocket int            `json:"cores_per_socket" gorm:"default:1"`
+	ThreadsPerCore int            `json:"threads_per_core" gorm:"default:1"`
+	NodeConfig     NodeConfig     `json:"node_config" gorm:"type:json"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// 关联关系
 	Cluster      SlurmCluster      `json:"cluster,omitempty" gorm:"foreignKey:ClusterID"`

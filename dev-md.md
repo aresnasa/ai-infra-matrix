@@ -3416,3 +3416,7 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
 176. 现在让我们来实现http://192.168.0.200:8080/slurm的作业队列子框体的任务查询和暂停和其他的功能，这里需要能够通过 ssh 和 slurmrestd 都能操作，同时节点管理的后端也要支持 ssh 和 slurmrestd，请继续实现这个功能
 
 177. 调整SaltStack Minions7的图标，链接上应该是绿色的链接状态的图标，异常则是红色的断开的图标，优化一下，如果部分断开则是黄色
+
+178. 执行命令失败: SSH命令执行失败 (退出码 1): slurm_update error: Invalid node state specified，检查下 slurm 的安装脚本，使用 web 安装的 slurm 节点，状态是 unknown，需要修复。
+
+179. ("NodeName=%s NodeAddr=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000",这里的配置不能写硬编码，而是动态的通过前端传参来获取的，这里还要支持配置 GPU 数量和 XPU 数量，按照我的需求实现

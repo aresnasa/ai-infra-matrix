@@ -260,7 +260,7 @@ func (c *SlurmController) ManageNodes(ctx *gin.Context) {
 		"resume":     "RESUME",
 		"drain":      "DRAIN",
 		"down":       "DOWN",
-		"idle":       "IDLE",
+		"idle":       "RESUME", // IDLE 状态通过 RESUME 实现
 		"power_down": "POWER_DOWN",
 		"power_up":   "POWER_UP",
 	}

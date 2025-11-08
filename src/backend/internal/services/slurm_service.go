@@ -368,6 +368,7 @@ type ScalingOperation struct {
 }
 
 // NodeConfig 节点配置
+// NodeConfig 节点配置
 type NodeConfig struct {
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
@@ -376,6 +377,17 @@ type NodeConfig struct {
 	PrivateKey string `json:"private_key"` // 新增：内联私钥内容
 	Password   string `json:"password"`
 	MinionID   string `json:"minion_id"`
+
+	// 硬件配置
+	CPUs           int    `json:"cpus"`             // CPU 核心数
+	Memory         int    `json:"memory"`           // 内存大小 (MB)
+	Storage        int    `json:"storage"`          // 存储大小 (GB)
+	GPUs           int    `json:"gpus"`             // GPU 数量
+	XPUs           int    `json:"xpus"`             // XPU (昆仑芯) 数量
+	Sockets        int    `json:"sockets"`          // CPU 插槽数
+	CoresPerSocket int    `json:"cores_per_socket"` // 每个插槽的核心数
+	ThreadsPerCore int    `json:"threads_per_core"` // 每个核心的线程数
+	Features       string `json:"features"`         // 节点特性标签
 }
 
 // NodeTemplate 节点模板
@@ -478,11 +490,39 @@ func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*Scalin
 			continue
 		}
 
-		// 更新节点状态为active
-		if err := s.db.Model(&dbNode).Updates(map[string]interface{}{
+		// 更新节点状态和硬件配置为active
+		updateData := map[string]interface{}{
 			"status":         "active",
 			"salt_minion_id": node.MinionID,
-		}).Error; err != nil {
+		}
+
+		// 如果提供了硬件配置，更新到数据库
+		if node.CPUs > 0 {
+			updateData["cpus"] = node.CPUs
+		}
+		if node.Memory > 0 {
+			updateData["memory"] = node.Memory
+		}
+		if node.Storage > 0 {
+			updateData["storage"] = node.Storage
+		}
+		if node.GPUs > 0 {
+			updateData["gpus"] = node.GPUs
+		}
+		if node.XPUs > 0 {
+			updateData["xpus"] = node.XPUs
+		}
+		if node.Sockets > 0 {
+			updateData["sockets"] = node.Sockets
+		}
+		if node.CoresPerSocket > 0 {
+			updateData["cores_per_socket"] = node.CoresPerSocket
+		}
+		if node.ThreadsPerCore > 0 {
+			updateData["threads_per_core"] = node.ThreadsPerCore
+		}
+
+		if err := s.db.Model(&dbNode).Updates(updateData).Error; err != nil {
 			log.Printf("[ERROR] 更新节点 %s 状态失败: %v", node.Host, err)
 			result.Results = append(result.Results, NodeScalingResult{
 				NodeID:  node.Host,
@@ -544,6 +584,25 @@ func (s *SlurmService) updateSlurmConfigAndReload(ctx context.Context) error {
 	// 重新加载SLURM配置
 	if err := s.reloadSlurmConfig(ctx); err != nil {
 		return fmt.Errorf("重新加载SLURM配置失败: %w", err)
+	}
+
+	// 等待一秒让配置生效
+	time.Sleep(1 * time.Second)
+
+	// 将所有新节点设置为 IDLE 状态（激活节点）
+	log.Printf("[DEBUG] 开始激活新添加的节点...")
+	for _, node := range nodes {
+		if node.NodeType == "compute" || node.NodeType == "node" {
+			// 使用 scontrol update 命令将节点设置为 RESUME 状态
+			resumeCmd := fmt.Sprintf("scontrol update NodeName=%s State=RESUME", node.NodeName)
+			output, err := s.ExecuteSlurmCommand(ctx, resumeCmd)
+			if err != nil {
+				log.Printf("[WARNING] 激活节点 %s 失败: %v, output: %s", node.NodeName, err, output)
+				// 不返回错误，继续处理其他节点
+			} else {
+				log.Printf("[DEBUG] 节点 %s 已激活为 IDLE 状态", node.NodeName)
+			}
+		}
 	}
 
 	return nil
@@ -922,12 +981,58 @@ func (s *SlurmService) generateSlurmConfig(nodes []models.SlurmNode) string {
 	for i, node := range nodes {
 		log.Printf("[DEBUG] 节点 #%d: NodeName=%s, NodeType=%s, Host=%s", i, node.NodeName, node.NodeType, node.Host)
 		if node.NodeType == "compute" || node.NodeType == "node" {
-			// 使用NodeAddr指定实际的主机名/IP
-			nodeConfig := fmt.Sprintf("NodeName=%s NodeAddr=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000 State=UNKNOWN",
-				node.NodeName, node.Host)
+			// 使用节点配置的硬件参数，如果为0则使用默认值
+			cpus := node.CPUs
+			if cpus == 0 {
+				cpus = 2 // 默认2核
+			}
+
+			memory := node.Memory
+			if memory == 0 {
+				memory = 1000 // 默认1000MB
+			}
+
+			sockets := node.Sockets
+			if sockets == 0 {
+				sockets = 1 // 默认1个插槽
+			}
+
+			coresPerSocket := node.CoresPerSocket
+			if coresPerSocket == 0 {
+				coresPerSocket = cpus / sockets // 自动计算
+				if coresPerSocket == 0 {
+					coresPerSocket = 1
+				}
+			}
+
+			threadsPerCore := node.ThreadsPerCore
+			if threadsPerCore == 0 {
+				threadsPerCore = 1 // 默认1个线程
+			}
+
+			// 构建节点配置字符串
+			nodeConfig := fmt.Sprintf("NodeName=%s NodeAddr=%s CPUs=%d Sockets=%d CoresPerSocket=%d ThreadsPerCore=%d RealMemory=%d",
+				node.NodeName, node.Host, cpus, sockets, coresPerSocket, threadsPerCore, memory)
+
+			// 添加 GPU 配置（如果有）
+			if node.GPUs > 0 {
+				nodeConfig += fmt.Sprintf(" Gres=gpu:%d", node.GPUs)
+			}
+
+			// 添加 XPU 配置（如果有）
+			if node.XPUs > 0 {
+				if node.GPUs > 0 {
+					// 如果已经有GPU配置，追加XPU
+					nodeConfig += fmt.Sprintf(",xpu:%d", node.XPUs)
+				} else {
+					nodeConfig += fmt.Sprintf(" Gres=xpu:%d", node.XPUs)
+				}
+			}
+
 			config += nodeConfig + "\n"
 			computeNodes = append(computeNodes, node.NodeName)
-			log.Printf("[DEBUG] 已添加计算节点: %s (地址: %s)", node.NodeName, node.Host)
+			log.Printf("[DEBUG] 已添加计算节点: %s (地址: %s, CPU:%d, 内存:%dMB, GPU:%d, XPU:%d)",
+				node.NodeName, node.Host, cpus, memory, node.GPUs, node.XPUs)
 		} else {
 			log.Printf("[WARNING] 跳过节点 %s，类型不匹配: %s", node.NodeName, node.NodeType)
 		}
@@ -1573,14 +1678,32 @@ func (s *SlurmService) ScaleUpViaAPI(ctx context.Context, nodes []NodeConfig) (*
 			Message: "",
 		}
 
-		// 创建节点规格 (使用默认值)
+		// 创建节点规格 (从配置读取，提供默认值)
+		cpus := node.CPUs
+		if cpus == 0 {
+			cpus = 4 // 默认4核
+		}
+
+		memory := node.Memory
+		if memory == 0 {
+			memory = 8192 // 默认8GB内存 (MB)
+		}
+
+		features := node.Features
+		if features == "" {
+			features = "compute" // 默认特性
+		}
+
 		nodeSpec := SlurmNodeSpec{
 			NodeName: node.Host,
-			CPUs:     4,         // 默认4核
-			Memory:   8192,      // 默认8GB内存 (MB)
-			Features: "compute", // 默认特性
+			CPUs:     cpus,
+			Memory:   memory,
+			Features: features,
 			State:    "IDLE",
 		}
+
+		log.Printf("[DEBUG] ScaleUpViaAPI: 节点 %s 配置: CPUs=%d, Memory=%d MB, Features=%s",
+			node.Host, cpus, memory, features)
 
 		// 通过API添加节点
 		if err := s.AddNodeViaAPI(ctx, nodeSpec); err != nil {

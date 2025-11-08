@@ -469,12 +469,6 @@ const SlurmScalingPage = () => {
       icon: <StopOutlined />,
       onClick: () => handleNodeOperation('down', '下线'),
     },
-    {
-      key: 'idle',
-      label: '空闲 (IDLE)',
-      icon: <ClockCircleOutlined />,
-      onClick: () => handleNodeOperation('idle', '空闲'),
-    },
   ];
 
   // 作业操作函数
@@ -720,11 +714,46 @@ const SlurmScalingPage = () => {
               {loadingStages.salt ? (
                 <Skeleton active paragraph={{ rows: 1 }} />
               ) : (
-                <Statistic
-                  title="SaltStack Minions"
-                  value={saltIntegration?.minions?.total || 0}
-                  prefix={<ApiOutlined />}
-                />
+                (() => {
+                  const minions = saltIntegration?.minions || {};
+                  const total = minions.total || 0;
+                  const online = minions.online || 0;
+                  const offline = minions.offline || 0;
+                  
+                  let icon, valueStyle, suffix, displayValue;
+                  
+                  // 全部在线：绿色链接图标
+                  if (total > 0 && online === total && offline === 0) {
+                    icon = <LinkOutlined style={{ color: '#52c41a' }} />;
+                    valueStyle = { color: '#52c41a' };
+                    suffix = '在线';
+                    displayValue = online;
+                  }
+                  // 部分在线：黄色警告图标
+                  else if (total > 0 && online > 0 && offline > 0) {
+                    icon = <WarningOutlined style={{ color: '#faad14' }} />;
+                    valueStyle = { color: '#faad14' };
+                    suffix = `在线 / ${total} 总数`;
+                    displayValue = online;
+                  }
+                  // 全部离线或无连接：红色断开图标
+                  else {
+                    icon = <DisconnectOutlined style={{ color: '#ff4d4f' }} />;
+                    valueStyle = { color: '#ff4d4f' };
+                    suffix = total > 0 ? '离线' : '';
+                    displayValue = total;
+                  }
+                  
+                  return (
+                    <Statistic
+                      title="SaltStack Minions"
+                      value={displayValue}
+                      prefix={icon}
+                      suffix={suffix}
+                      valueStyle={valueStyle}
+                    />
+                  );
+                })()
               )}
             </Card>
           </Col>
@@ -886,17 +915,20 @@ const SlurmScalingPage = () => {
                     <Descriptions.Item label="连接的Minions">
                       <Space>
                         {(() => {
-                          const total = saltIntegration?.minions?.total || 0;
-                          const online = saltIntegration?.minions?.online || 0;
-                          const offline = saltIntegration?.minions?.offline || 0;
+                          const minions = saltIntegration?.minions || {};
+                          const total = minions.total || 0;
+                          const online = minions.online || 0;
+                          const offline = minions.offline || 0;
+                          
+                          console.log('Minions数据:', { total, online, offline, minions });
                           
                           // 全部在线：绿色链接图标
-                          if (total > 0 && offline === 0) {
+                          if (total > 0 && online === total && offline === 0) {
                             return (
                               <>
                                 <LinkOutlined style={{ color: '#52c41a', fontSize: '16px' }} />
                                 <span style={{ fontSize: '16px', fontWeight: 500, color: '#52c41a' }}>
-                                  {total}
+                                  {online} 在线
                                 </span>
                               </>
                             );
@@ -907,7 +939,7 @@ const SlurmScalingPage = () => {
                               <>
                                 <WarningOutlined style={{ color: '#faad14', fontSize: '16px' }} />
                                 <span style={{ fontSize: '16px', fontWeight: 500, color: '#faad14' }}>
-                                  {online}/{total}
+                                  {online} 在线 / {total} 总数
                                 </span>
                               </>
                             );
@@ -918,7 +950,7 @@ const SlurmScalingPage = () => {
                               <>
                                 <DisconnectOutlined style={{ color: '#ff4d4f', fontSize: '16px' }} />
                                 <span style={{ fontSize: '16px', fontWeight: 500, color: '#ff4d4f' }}>
-                                  {total}
+                                  {total > 0 ? `${total} 离线` : '无连接'}
                                 </span>
                               </>
                             );
