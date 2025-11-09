@@ -3420,3 +3420,9 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
 178. 执行命令失败: SSH命令执行失败 (退出码 1): slurm_update error: Invalid node state specified，检查下 slurm 的安装脚本，使用 web 安装的 slurm 节点，状态是 unknown，需要修复。
 
 179. ("NodeName=%s NodeAddr=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000",这里的配置不能写硬编码，而是动态的通过前端传参来获取的，这里还要支持配置 GPU 数量和 XPU 数量，按照我的需求实现
+
+180. 执行命令失败: SSH命令执行失败 (退出码 1): slurm_update error: Invalid node state specified修复 slurm 节点 unknown 问题
+
+181. 这里检测函数可以保留，在 slurm 异常时候能够及时发现尝试调整节点状态，如果多次尝试无法调整 slurm 状态后则提示异常，调整一下 frontend 和 backend
+
+182. 这里检测函数可以保留，在 slurm 异常时候能够及时发现尝试调整节点状态，如果多次尝试无法调整 slurm 状态后则提示异常，调整一下 frontend 和 backend

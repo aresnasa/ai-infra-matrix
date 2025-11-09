@@ -942,6 +942,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// 节点管理
 		slurm.POST("/nodes/manage", slurmController.ManageNodes)
+		slurm.POST("/nodes/health-check", slurmController.HealthCheckNode) // 节点健康检测
 
 		// 作业管理
 		slurm.POST("/jobs/manage", slurmController.ManageJobs)

@@ -770,8 +770,8 @@ SlurmdLogFile=/var/log/slurm/slurmd.log
 SlurmctldLogFile=/var/log/slurm/slurmctld.log
 SlurmdSpoolDir=/var/spool/slurm
 
-# 节点配置
-NodeName=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000 State=UNKNOWN
+# 节点配置 (不设置State，让SLURM自动管理)
+NodeName=%s CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1000
 PartitionName=compute Nodes=%s Default=YES MaxTime=INFINITE State=UP
 EOF
 
@@ -782,10 +782,15 @@ chmod 644 /etc/slurm/slurm.conf
 # 根据角色启用相应服务
 if [ "%s" = "controller" ]; then
     systemctl enable slurmctld 2>/dev/null || true
+    # 重载配置后激活节点
+    sleep 2
+    scontrol reconfigure 2>/dev/null || true
+    sleep 1
+    scontrol update NodeName=%s State=RESUME 2>/dev/null || echo "节点激活命令已执行"
 else
     systemctl enable slurmd 2>/dev/null || true
 fi
-`, hostname, hostname, role)
+`, hostname, hostname, role, hostname)
 }
 
 // getMinionID 获取Minion ID

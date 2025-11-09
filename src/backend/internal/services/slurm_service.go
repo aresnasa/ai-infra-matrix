@@ -589,23 +589,99 @@ func (s *SlurmService) updateSlurmConfigAndReload(ctx context.Context) error {
 	// 等待一秒让配置生效
 	time.Sleep(1 * time.Second)
 
-	// 将所有新节点设置为 IDLE 状态（激活节点）
-	log.Printf("[DEBUG] 开始激活新添加的节点...")
+	// 将所有新节点设置为 DOWN 状态，并检测节点健康状态
+	log.Printf("[DEBUG] 开始设置新添加节点的初始状态并进行健康检测...")
 	for _, node := range nodes {
 		if node.NodeType == "compute" || node.NodeType == "node" {
-			// 使用 scontrol update 命令将节点设置为 RESUME 状态
-			resumeCmd := fmt.Sprintf("scontrol update NodeName=%s State=RESUME", node.NodeName)
-			output, err := s.ExecuteSlurmCommand(ctx, resumeCmd)
+			// 将节点设置为 DOWN 状态
+			downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason=\"新添加节点，正在检测状态\"", node.NodeName)
+			output, err := s.ExecuteSlurmCommand(ctx, downCmd)
 			if err != nil {
-				log.Printf("[WARNING] 激活节点 %s 失败: %v, output: %s", node.NodeName, err, output)
-				// 不返回错误，继续处理其他节点
-			} else {
-				log.Printf("[DEBUG] 节点 %s 已激活为 IDLE 状态", node.NodeName)
+				log.Printf("[WARNING] 设置节点 %s 为 DOWN 状态失败: %v, output: %s", node.NodeName, err, output)
+				continue
+			}
+			log.Printf("[INFO] 节点 %s 已设置为 DOWN 状态，开始健康检测...", node.NodeName)
+
+			// 尝试检测和修复节点状态（最多3次）
+			if err := s.DetectAndFixNodeState(ctx, node.NodeName, 3); err != nil {
+				log.Printf("[ERROR] 节点 %s 健康检测失败: %v", node.NodeName, err)
 			}
 		}
 	}
 
+	log.Printf("[INFO] 所有新节点已完成初始化和健康检测")
+
 	return nil
+}
+
+// DetectAndFixNodeState 检测节点状态并尝试修复异常（导出方法）
+// maxRetries: 最大重试次数
+// 返回 nil 表示节点正常或已成功修复，返回 error 表示修复失败
+func (s *SlurmService) DetectAndFixNodeState(ctx context.Context, nodeName string, maxRetries int) error {
+	log.Printf("[DEBUG] 开始检测节点 %s 的健康状态（最多重试 %d 次）", nodeName, maxRetries)
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// 等待节点状态稳定
+		if attempt > 1 {
+			waitTime := time.Duration(attempt) * 2 * time.Second
+			log.Printf("[DEBUG] 第 %d 次检测前等待 %v...", attempt, waitTime)
+			time.Sleep(waitTime)
+		} else {
+			time.Sleep(2 * time.Second)
+		}
+
+		// 检查节点状态
+		checkCmd := fmt.Sprintf("scontrol show node %s", nodeName)
+		output, err := s.ExecuteSlurmCommand(ctx, checkCmd)
+		if err != nil {
+			log.Printf("[WARNING] 第 %d/%d 次：无法检查节点 %s 状态: %v", attempt, maxRetries, nodeName, err)
+			continue
+		}
+
+		// 分析节点状态
+		if strings.Contains(output, "State=IDLE") || strings.Contains(output, "State=ALLOCATED") || strings.Contains(output, "State=MIXED") {
+			// 节点状态正常
+			log.Printf("[SUCCESS] 节点 %s 状态正常: IDLE/ALLOCATED/MIXED", nodeName)
+			return nil
+		}
+
+		if strings.Contains(output, "State=DOWN") && !strings.Contains(output, "NOT_RESPONDING") {
+			// 节点处于 DOWN 状态但可以响应，尝试激活
+			log.Printf("[INFO] 第 %d/%d 次：节点 %s 处于 DOWN 状态，尝试激活...", attempt, maxRetries, nodeName)
+			resumeCmd := fmt.Sprintf("scontrol update NodeName=%s State=RESUME", nodeName)
+			if _, err := s.ExecuteSlurmCommand(ctx, resumeCmd); err != nil {
+				log.Printf("[WARNING] 第 %d/%d 次：激活节点 %s 失败: %v", attempt, maxRetries, nodeName, err)
+				continue
+			}
+			log.Printf("[INFO] 第 %d/%d 次：节点 %s 激活命令已执行", attempt, maxRetries, nodeName)
+			continue // 下一次循环检查激活是否成功
+		}
+
+		if strings.Contains(output, "NOT_RESPONDING") || strings.Contains(output, "State=UNKNOWN") {
+			// 节点无响应或状态未知
+			log.Printf("[WARNING] 第 %d/%d 次：节点 %s 未响应或状态未知", attempt, maxRetries, nodeName)
+
+			// 尝试将节点设置为 DOWN 状态（避免 UNKNOWN）
+			downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason=\"节点未响应，第%d次检测失败\"", nodeName, attempt)
+			if _, err := s.ExecuteSlurmCommand(ctx, downCmd); err != nil {
+				log.Printf("[WARNING] 第 %d/%d 次：设置节点 %s 为 DOWN 失败: %v", attempt, maxRetries, nodeName, err)
+			}
+
+			// 如果不是最后一次尝试，继续重试
+			if attempt < maxRetries {
+				continue
+			}
+
+			// 最后一次尝试失败，返回错误
+			return fmt.Errorf("节点未响应或状态未知，可能原因：slurmd未运行、网络不可达或配置错误。请执行：1) 检查节点连接性 2) 确认slurmd服务状态 3) 手动执行: scontrol update NodeName=%s State=RESUME", nodeName)
+		}
+
+		// 其他未预期的状态
+		log.Printf("[INFO] 第 %d/%d 次：节点 %s 状态: %s", attempt, maxRetries, nodeName, output)
+	}
+
+	// 所有重试都失败
+	return fmt.Errorf("节点状态检测失败，已重试 %d 次。请手动检查节点状态并执行: scontrol update NodeName=%s State=RESUME", maxRetries, nodeName)
 }
 
 // updateSlurmMasterConfig 通过SSH动态更新SLURM master的配置文件
@@ -1699,10 +1775,10 @@ func (s *SlurmService) ScaleUpViaAPI(ctx context.Context, nodes []NodeConfig) (*
 			CPUs:     cpus,
 			Memory:   memory,
 			Features: features,
-			State:    "IDLE",
+			State:    "DOWN", // 新节点初始状态设置为 DOWN，等待手动激活
 		}
 
-		log.Printf("[DEBUG] ScaleUpViaAPI: 节点 %s 配置: CPUs=%d, Memory=%d MB, Features=%s",
+		log.Printf("[DEBUG] ScaleUpViaAPI: 节点 %s 配置: CPUs=%d, Memory=%d MB, Features=%s, State=DOWN (需手动激活)",
 			node.Host, cpus, memory, features)
 
 		// 通过API添加节点
@@ -1743,11 +1819,13 @@ func (s *SlurmService) ScaleUpViaAPI(ctx context.Context, nodes []NodeConfig) (*
 		}
 
 		nodeResult.Success = true
-		nodeResult.Message = "节点成功添加到SLURM集群"
+		nodeResult.Message = "节点已添加到SLURM集群(状态: DOWN)，请确认slurmd运行后执行: scontrol update NodeName=" + node.Host + " State=RESUME"
 		result.Results = append(result.Results, nodeResult)
 
 		log.Printf("[DEBUG] 节点 %s 通过REST API扩容成功", node.Host)
 	}
+
+	log.Printf("[INFO] ScaleUpViaAPI 完成，所有节点已添加为 DOWN 状态，需手动激活")
 
 	return result, nil
 }

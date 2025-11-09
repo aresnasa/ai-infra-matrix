@@ -770,6 +770,66 @@ func (c *SlurmController) ScaleDown(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"data": results})
 }
 
+// POST /api/slurm/nodes/health-check
+// @Summary 检测并修复节点状态
+// @Description 检测指定节点的健康状态，如果发现异常会尝试自动修复
+// @Tags SLURM
+// @Accept json
+// @Produce json
+// @Param request body object{node_name=string,max_retries=int} true "节点名称和最大重试次数"
+// @Success 200 {object} object{success=bool,message=string,node_name=string,status=string}
+// @Failure 400 {object} object{error=string}
+// @Failure 500 {object} object{error=string,details=string}
+// @Router /api/slurm/nodes/health-check [post]
+func (c *SlurmController) HealthCheckNode(ctx *gin.Context) {
+	var req struct {
+		NodeName   string `json:"node_name" binding:"required"`
+		MaxRetries int    `json:"max_retries"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	// 默认重试3次
+	if req.MaxRetries <= 0 {
+		req.MaxRetries = 3
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), time.Duration(req.MaxRetries*10)*time.Second)
+	defer cancel()
+
+	// 执行健康检测
+	err := c.slurmSvc.DetectAndFixNodeState(ctxWithTimeout, req.NodeName, req.MaxRetries)
+
+	if err != nil {
+		// 检测失败，返回错误信息和建议
+		ctx.JSON(http.StatusOK, gin.H{
+			"success":   false,
+			"node_name": req.NodeName,
+			"status":    "unhealthy",
+			"message":   "节点健康检测失败",
+			"details":   err.Error(),
+			"suggestions": []string{
+				"1. 检查节点网络连接: ping " + req.NodeName,
+				"2. 确认slurmd服务状态: ssh " + req.NodeName + " systemctl status slurmd",
+				"3. 检查slurm配置: ssh " + req.NodeName + " slurmd -C",
+				"4. 手动激活节点: scontrol update NodeName=" + req.NodeName + " State=RESUME",
+			},
+		})
+		return
+	}
+
+	// 检测成功
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"node_name": req.NodeName,
+		"status":    "healthy",
+		"message":   "节点健康检测通过，状态正常",
+	})
+}
+
 // GET /api/slurm/node-templates
 func (c *SlurmController) GetNodeTemplates(ctx *gin.Context) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 5*time.Second)

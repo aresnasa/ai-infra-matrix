@@ -34,11 +34,18 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Stethoscope,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
+import { useToast } from '@/components/ui/use-toast';
 import api from '@/lib/api';
 
 const ClusterDetailsDialog = ({ open, onOpenChange, cluster, onDeploy }) => {
+  const { toast } = useToast();
   const [clusterDetails, setClusterDetails] = useState(null);
+  const [checkingNodes, setCheckingNodes] = useState(new Set());
+
   const [deployments, setDeployments] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -66,6 +73,53 @@ const ClusterDetailsDialog = ({ open, onOpenChange, cluster, onDeploy }) => {
   const fetchDeployments = async () => {
     // TODO: 实现获取部署历史的API
     setDeployments([]);
+  };
+
+  const handleHealthCheck = async (nodeName) => {
+    setCheckingNodes(prev => new Set(prev).add(nodeName));
+    
+    try {
+      const response = await api.post('/api/slurm/nodes/health-check', {
+        node_name: nodeName,
+        max_retries: 3,
+      });
+
+      if (response.data.success) {
+        toast({
+          title: '健康检测成功',
+          description: `节点 ${nodeName} 状态正常`,
+        });
+        // 刷新集群详情
+        fetchClusterDetails();
+      } else {
+        toast({
+          title: '健康检测失败',
+          description: response.data.details || '节点状态异常',
+          variant: 'destructive',
+          action: response.data.suggestions ? (
+            <div className="mt-2 space-y-1 text-sm">
+              <div className="font-semibold">建议操作：</div>
+              {response.data.suggestions.slice(0, 2).map((suggestion, idx) => (
+                <div key={idx} className="text-xs">{suggestion}</div>
+              ))}
+            </div>
+          ) : null,
+        });
+      }
+    } catch (error) {
+      console.error('健康检测失败:', error);
+      toast({
+        title: '检测错误',
+        description: error.response?.data?.error || '无法连接到服务器',
+        variant: 'destructive',
+      });
+    } finally {
+      setCheckingNodes(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(nodeName);
+        return newSet;
+      });
+    }
   };
 
   const getNodeTypeIcon = (nodeType) => {
@@ -308,6 +362,7 @@ const ClusterDetailsDialog = ({ open, onOpenChange, cluster, onDeploy }) => {
                       <TableHead>状态</TableHead>
                       <TableHead>资源配置</TableHead>
                       <TableHead>Salt Minion ID</TableHead>
+                      <TableHead>操作</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -348,6 +403,27 @@ const ClusterDetailsDialog = ({ open, onOpenChange, cluster, onDeploy }) => {
                         </TableCell>
                         <TableCell>
                           <span className="font-mono text-sm">{node.salt_minion_id}</span>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleHealthCheck(node.node_name)}
+                            disabled={checkingNodes.has(node.node_name)}
+                            className="flex items-center gap-2"
+                          >
+                            {checkingNodes.has(node.node_name) ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                检测中...
+                              </>
+                            ) : (
+                              <>
+                                <Stethoscope className="h-3 w-3" />
+                                健康检测
+                              </>
+                            )}
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
