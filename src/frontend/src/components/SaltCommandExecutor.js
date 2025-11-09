@@ -47,13 +47,56 @@ const SaltCommandExecutor = () => {
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [recentJobs, setRecentJobs] = useState([]);
+  const [lastExecutionResult, setLastExecutionResult] = useState(null);
+
+  // 从 localStorage 加载历史记录
+  useEffect(() => {
+    try {
+      const savedHistory = localStorage.getItem('saltstack_command_history');
+      if (savedHistory) {
+        const history = JSON.parse(savedHistory);
+        // 转换时间戳为 Date 对象
+        const parsedHistory = history.map(item => ({
+          ...item,
+          timestamp: new Date(item.timestamp)
+        }));
+        setCommandHistory(parsedHistory);
+        console.log(`✅ 从 localStorage 加载了 ${parsedHistory.length} 条历史记录`);
+      }
+    } catch (error) {
+      console.error('加载历史记录失败:', error);
+    }
+  }, []);
+
+  // 保存历史记录到 localStorage
+  const saveHistoryToLocalStorage = (history) => {
+    try {
+      // 只保存最近 100 条记录
+      const limitedHistory = history.slice(0, 100);
+      localStorage.setItem('saltstack_command_history', JSON.stringify(limitedHistory));
+      console.log(`✅ 保存了 ${limitedHistory.length} 条历史记录到 localStorage`);
+    } catch (error) {
+      console.error('保存历史记录失败:', error);
+    }
+  };
 
   // 加载最近的 SaltStack 作业
   const loadRecentJobs = async () => {
     setJobsLoading(true);
     try {
       const response = await saltStackAPI.getJobs();
-      const jobs = response.data?.data || response.data || [];
+      let jobs = response.data?.data || response.data || [];
+      
+      // 按时间倒序排列（最新的在上面）
+      if (Array.isArray(jobs) && jobs.length > 0) {
+        jobs = jobs.sort((a, b) => {
+          // 尝试多个可能的时间字段
+          const timeA = new Date(a.start_time || a.StartTime || a.timestamp || a.Timestamp || 0);
+          const timeB = new Date(b.start_time || b.StartTime || b.timestamp || b.Timestamp || 0);
+          return timeB - timeA; // 降序排列，最新的在前
+        });
+      }
+      
       setRecentJobs(jobs);
     } catch (error) {
       console.error('加载 SaltStack 作业失败:', error);
@@ -95,7 +138,10 @@ const SaltCommandExecutor = () => {
         status: 'completed'
       };
 
-      setCommandHistory([result, ...commandHistory]);
+      const newHistory = [result, ...commandHistory];
+      setCommandHistory(newHistory);
+      saveHistoryToLocalStorage(newHistory);
+      setLastExecutionResult(result);
       message.success('命令执行成功');
 
       // 刷新作业列表
@@ -116,7 +162,10 @@ const SaltCommandExecutor = () => {
         status: 'failed'
       };
 
-      setCommandHistory([result, ...commandHistory]);
+      const newHistory = [result, ...commandHistory];
+      setCommandHistory(newHistory);
+      saveHistoryToLocalStorage(newHistory);
+      setLastExecutionResult(result);
       message.error('命令执行失败: ' + (error.response?.data?.error || error.message));
     } finally {
       setExecuting(false);
@@ -295,6 +344,104 @@ const SaltCommandExecutor = () => {
         </Form>
       </Card>
 
+      {/* 最新执行结果 - 立即显示 */}
+      {lastExecutionResult && (
+        <Card
+          title={
+            <Space>
+              {lastExecutionResult.success ? (
+                <CheckCircleOutlined style={{ color: '#52c41a' }} />
+              ) : (
+                <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+              )}
+              <span>最新执行结果</span>
+              <Tag color={lastExecutionResult.success ? 'success' : 'error'}>
+                {lastExecutionResult.success ? '成功' : '失败'}
+              </Tag>
+            </Space>
+          }
+          extra={
+            <Space>
+              <Text type="secondary">
+                耗时: {lastExecutionResult.duration}ms
+              </Text>
+              <Button
+                size="small"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    JSON.stringify(lastExecutionResult.result || lastExecutionResult.error, null, 2)
+                  );
+                  message.success('已复制到剪贴板');
+                }}
+              >
+                复制输出
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setLastExecutionResult(null)}
+              >
+                关闭
+              </Button>
+            </Space>
+          }
+        >
+          <Descriptions bordered size="small" column={2}>
+            <Descriptions.Item label="执行时间" span={2}>
+              {new Date(lastExecutionResult.timestamp).toLocaleString('zh-CN')}
+            </Descriptions.Item>
+            <Descriptions.Item label="目标节点">
+              {lastExecutionResult.target}
+            </Descriptions.Item>
+            <Descriptions.Item label="Salt 函数">
+              <Text code>{lastExecutionResult.function}</Text>
+            </Descriptions.Item>
+            {lastExecutionResult.arguments && (
+              <Descriptions.Item label="参数" span={2}>
+                {lastExecutionResult.arguments}
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+
+          <div style={{ marginTop: '16px' }}>
+            <Text strong>执行输出:</Text>
+            {lastExecutionResult.success ? (
+              <pre style={{
+                background: '#f6ffed',
+                border: '1px solid #b7eb8f',
+                padding: '12px',
+                borderRadius: '4px',
+                maxHeight: '400px',
+                overflow: 'auto',
+                marginTop: '8px',
+                fontFamily: 'monospace',
+                fontSize: '13px'
+              }}>
+                {JSON.stringify(lastExecutionResult.result, null, 2)}
+              </pre>
+            ) : (
+              <Alert
+                type="error"
+                message="执行失败"
+                description={
+                  <pre style={{
+                    background: '#fff2f0',
+                    padding: '8px',
+                    borderRadius: '4px',
+                    margin: '8px 0 0 0',
+                    fontFamily: 'monospace',
+                    fontSize: '13px'
+                  }}>
+                    {lastExecutionResult.error}
+                  </pre>
+                }
+                showIcon
+                style={{ marginTop: '8px' }}
+              />
+            )}
+          </div>
+        </Card>
+      )}
+
       {/* 最近的 SaltStack 作业 */}
       <Card
         title={
@@ -370,7 +517,33 @@ const SaltCommandExecutor = () => {
             <span>命令执行历史</span>
           </Space>
         }
-        extra={<Tag color="green">{commandHistory.length} 条记录</Tag>}
+        extra={
+          <Space>
+            <Tag color="green">{commandHistory.length} 条记录</Tag>
+            {commandHistory.length > 0 && (
+              <Button
+                size="small"
+                danger
+                onClick={() => {
+                  Modal.confirm({
+                    title: '确认清除历史记录',
+                    content: `确定要清除所有 ${commandHistory.length} 条历史记录吗？此操作不可恢复。`,
+                    okText: '确定清除',
+                    cancelText: '取消',
+                    okButtonProps: { danger: true },
+                    onOk: () => {
+                      setCommandHistory([]);
+                      saveHistoryToLocalStorage([]);
+                      message.success('历史记录已清除');
+                    }
+                  });
+                }}
+              >
+                清除历史
+              </Button>
+            )}
+          </Space>
+        }
       >
         {commandHistory.length > 0 ? (
           <Table

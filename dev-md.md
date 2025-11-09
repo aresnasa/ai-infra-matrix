@@ -3426,3 +3426,9 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
 181. 这里检测函数可以保留，在 slurm 异常时候能够及时发现尝试调整节点状态，如果多次尝试无法调整 slurm 状态后则提示异常，调整一下 frontend 和 backend
 
 182. 这里检测函数可以保留，在 slurm 异常时候能够及时发现尝试调整节点状态，如果多次尝试无法调整 slurm 状态后则提示异常，调整一下 frontend 和 backend
+
+183. 内存(MB)	SaltStack状态	操作test-rocky01	compute*	idle*	1	1024	未配置，需要修复，这里期望的是同步 saltstack 的状态，然后修复http://192.168.3.91:8080/slurm中执行 SaltStack 命令模块点击执行后无输出的问题，需要一个单独的执行框显示执行结果，请继续开发
+
+184. 现在使用@playwright 测试http://192.168.3.91:8080/slurm，并修复，节点管理-集群节点-	SaltStack状态-未配置问题，期望的是能够正确的获取 minion 状态
+
+185. 现在使用@playwright测试http://192.168.3.91:8080/slurm，测试 saltstack 的 cmd 和其他函数，期望能够在SaltStack 集成-命令执行历史和最近的 SaltStack 作业中能够正确的显示已经执行过的任务，命令执行历史需要测试其结果，期望是能够正确的获取这些信息，现在调整http://192.168.3.91:8080/slurm的最近的 SaltStack 作业，需要按照时间排序，最新的在上边，命令执行历史期望的是能够显示历史记录，请使用@playwright 测试

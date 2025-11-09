@@ -135,17 +135,24 @@ func (c *SlurmController) enrichNodesWithSaltStackStatus(ctx *gin.Context, nodes
 	// 获取 SaltStack 状态
 	saltStatus, err := c.saltSvc.GetStatus(ctx)
 	if err != nil {
-		// 如果无法获取 Salt 状态，返回转换后的原始节点数据
+		// 记录错误日志
+		logrus.WithFields(logrus.Fields{
+			"error":       err.Error(),
+			"nodes_count": len(nodes),
+		}).Warn("无法获取 SaltStack 状态，所有节点将标记为 unknown")
+
+		// 如果无法获取 Salt 状态，返回转换后的原始节点数据，标记为 API 失败
 		result := make([]map[string]interface{}, len(nodes))
 		for i, node := range nodes {
 			result[i] = map[string]interface{}{
-				"name":         node.Name,
-				"state":        node.State,
-				"cpus":         node.CPUs,
-				"memory_mb":    node.MemoryMB,
-				"partition":    node.Partition,
-				"salt_status":  "unknown",
-				"salt_enabled": false,
+				"name":              node.Name,
+				"state":             node.State,
+				"cpus":              node.CPUs,
+				"memory_mb":         node.MemoryMB,
+				"partition":         node.Partition,
+				"salt_status":       "unknown",
+				"salt_enabled":      false,
+				"salt_status_error": "SaltStack API 连接失败",
 			}
 		}
 		return result
@@ -210,6 +217,14 @@ func (c *SlurmController) enrichNodesWithSaltStackStatus(ctx *gin.Context, nodes
 					}
 				}
 			}
+		}
+
+		// 如果仍然是 unknown，记录调试信息
+		if saltStatusStr == "unknown" && nodeName != "" {
+			logrus.WithFields(logrus.Fields{
+				"node_name":    nodeName,
+				"minion_count": len(minionStatusMap),
+			}).Debug("节点未匹配到 SaltStack Minion ID")
 		}
 
 		// 添加 SaltStack 状态字段

@@ -17,6 +17,7 @@ import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import SSHAuthConfig from '../components/SSHAuthConfig';
 import SlurmTaskBar from '../components/SlurmTaskBar';
+import SaltCommandExecutor from '../components/SaltCommandExecutor';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -89,7 +90,7 @@ const SlurmScalingPage = () => {
       render: (state) => <Tag color={getNodeStateColor(state)}>{state}</Tag> },
     { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
     { title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb' },
-    { title: 'SaltStack状态', dataIndex: 'saltstack_status', key: 'saltstack_status',
+    { title: 'SaltStack状态', dataIndex: 'salt_status', key: 'salt_status',
       render: (status) => <Badge status={getSaltStatus(status)} text={status || '未配置'} /> },
     {
       title: '操作',
@@ -1010,6 +1011,10 @@ const SlurmScalingPage = () => {
                 </Card>
               </Col>
             </Row>
+            
+            {/* SaltStack 命令执行器 */}
+            <Divider />
+            <SaltCommandExecutor />
           </TabPane>
 
           <TabPane tab={<span><SettingOutlined />节点模板</span>} key="templates">

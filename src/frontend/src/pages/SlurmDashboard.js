@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography, Divider, Modal, message, Dropdown, Tabs } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Typography, Divider, Modal, message, Dropdown, Tabs, Tooltip } from 'antd';
 import { slurmAPI, saltStackAPI } from '../services/api';
-import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined, PlayCircleOutlined, PauseCircleOutlined, StopOutlined, DownOutlined, CloseCircleOutlined, ReloadOutlined, HourglassOutlined } from '@ant-design/icons';
+import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined, PlayCircleOutlined, PauseCircleOutlined, StopOutlined, DownOutlined, CloseCircleOutlined, ReloadOutlined, HourglassOutlined, WarningOutlined } from '@ant-design/icons';
 import SaltCommandExecutor from '../components/SaltCommandExecutor';
 import SlurmClusterStatus from '../components/SlurmClusterStatus';
 
@@ -229,12 +229,25 @@ const SlurmDashboard = () => {
       dataIndex: 'salt_status',
       key: 'salt_status',
       render: (status, record) => {
+        // 处理 API 错误的情况
+        if (record.salt_status_error) {
+          return (
+            <Tooltip title={record.salt_status_error}>
+              <Tag color="default" icon={<WarningOutlined />}>
+                API 错误
+              </Tag>
+            </Tooltip>
+          );
+        }
+        
         // 处理未配置或未知状态
         if (!status || status === 'unknown' || status === 'not_configured') {
           return (
-            <Tag color="default" icon={<CloseCircleOutlined />}>
-              未配置
-            </Tag>
+            <Tooltip title="此节点未配置 SaltStack Minion 或 Minion ID 不匹配">
+              <Tag color="default" icon={<CloseCircleOutlined />}>
+                未配置
+              </Tag>
+            </Tooltip>
           );
         }
         
@@ -496,6 +509,14 @@ const SlurmDashboard = () => {
                   </Dropdown>
                 </>
               )}
+              <Button 
+                icon={<ReloadOutlined />} 
+                onClick={load}
+                loading={loading}
+                size="small"
+              >
+                刷新状态
+              </Button>
               {loading && <Spin size="small" />}
             </Space>
           }
