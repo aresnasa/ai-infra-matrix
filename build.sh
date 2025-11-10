@@ -12136,18 +12136,23 @@ main() {
                 
                 # 3. 使用 docker-compose 重建和重启
                 print_info "步骤 3/3: 重启 nginx 服务..."
-                if docker-compose build nginx && docker-compose up -d nginx; then
+                
+                # 检测正确的 compose 命令
+                local compose_cmd
+                compose_cmd=$(detect_compose_command || echo "docker-compose")
+                
+                if $compose_cmd build nginx && $compose_cmd up -d nginx; then
                     print_success "✓ Nginx 服务已重启"
                     print_info "等待服务启动..."
                     sleep 3
                     
                     # 验证服务
-                    if docker-compose ps nginx | grep -q "Up"; then
+                    if $compose_cmd ps nginx | grep -q "Up"; then
                         print_success "🎉 Nginx 部署成功！"
                         print_info "访问 http://localhost:8080 测试"
                     else
                         print_warning "⚠️  Nginx 容器状态异常，请检查日志："
-                        print_info "docker-compose logs nginx"
+                        print_info "$compose_cmd logs nginx"
                     fi
                 else
                     print_error "Nginx 服务重启失败"
