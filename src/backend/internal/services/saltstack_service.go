@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -171,11 +172,18 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 		return nil, fmt.Errorf("failed to get auth token: %v", err)
 	}
 
+	log.Printf("[SaltStack] Executing command with payload: %+v", payload)
+
+	// Salt API 需要数组格式的请求体: [{...}]
+	requestBody := []map[string]interface{}{payload}
+
 	// 序列化请求数据
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %v", err)
 	}
+
+	log.Printf("[SaltStack] Request JSON: %s", string(jsonData))
 
 	// 创建HTTP请求
 	req, err := http.NewRequestWithContext(ctx, "POST", s.masterURL+"/", bytes.NewBuffer(jsonData))
@@ -191,9 +199,12 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 		req.Header.Set("X-Auth-Token", s.apiToken)
 	}
 
+	log.Printf("[SaltStack] Sending request to: %s", s.masterURL+"/")
+
 	// 发送请求
 	resp, err := s.client.Do(req)
 	if err != nil {
+		log.Printf("[SaltStack] Request failed: %v", err)
 		return nil, fmt.Errorf("failed to send request: %v", err)
 	}
 	defer resp.Body.Close()
@@ -204,6 +215,9 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 		return nil, fmt.Errorf("failed to read response: %v", err)
 	}
 
+	log.Printf("[SaltStack] Response status: %d", resp.StatusCode)
+	log.Printf("[SaltStack] Response body: %s", string(body))
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
@@ -213,6 +227,8 @@ func (s *SaltStackService) executeSaltCommand(ctx context.Context, payload map[s
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %v", err)
 	}
+
+	log.Printf("[SaltStack] Parsed result: %+v", result)
 
 	return result, nil
 }
@@ -291,7 +307,7 @@ func (s *SaltStackService) ensureToken(ctx context.Context) error {
 }
 
 // ExecuteCommand 执行SaltStack命令
-func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, targets []string) (map[string]interface{}, error) {
+func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, targets []string, args ...string) (map[string]interface{}, error) {
 	// 构建Salt API请求
 	payload := map[string]interface{}{
 		"fun":    command,
@@ -299,15 +315,30 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 		"client": "local",
 	}
 
-	// 如果指定了目标，使用列表模式
+	// 如果指定了目标，检查是否是通配符或具体的 minion 列表
 	if len(targets) > 0 {
-		payload["tgt"] = targets
-		payload["tgt_type"] = "list"
+		// 如果只有一个目标且是 "*"，使用默认的 glob 模式
+		if len(targets) == 1 && targets[0] == "*" {
+			payload["tgt"] = "*"
+			// 不设置 tgt_type，使用默认的 glob 模式
+		} else {
+			// 否则使用列表模式匹配具体的 minions
+			payload["tgt"] = targets
+			payload["tgt_type"] = "list"
+		}
 	}
+
+	// 如果有参数，添加到 payload (Salt API 使用 "arg" 字段)
+	if len(args) > 0 {
+		payload["arg"] = args
+	}
+
+	log.Printf("[SaltStack] ExecuteCommand - command: %s, targets: %v, args: %v, payload: %+v", command, targets, args, payload)
 
 	// 执行命令
 	result, err := s.executeSaltCommand(ctx, payload)
 	if err != nil {
+		log.Printf("[SaltStack] ExecuteCommand failed: %v", err)
 		// 如果API调用失败，返回模拟结果
 		return map[string]interface{}{
 			"success": false,
@@ -320,9 +351,13 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 		}, nil
 	}
 
+	log.Printf("[SaltStack] ExecuteCommand success, result: %+v", result)
+
+	// Salt API 返回格式: {"return": [{"minion1": result1, "minion2": result2}]}
+	// 直接返回整个响应，保持 Salt API 的原始格式
 	return map[string]interface{}{
 		"success": true,
-		"result":  result,
+		"result":  result, // result 已经包含了 "return" 字段
 	}, nil
 }
 

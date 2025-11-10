@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -988,9 +989,9 @@ func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string
 // ExecuteSaltCommand 执行Salt命令
 func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 	var request struct {
-		Target   string   `json:"target" binding:"required"`
-		Function string   `json:"function" binding:"required"`
-		Args     []string `json:"args"`
+		Target    string `json:"target" binding:"required"`
+		Function  string `json:"function" binding:"required"`
+		Arguments string `json:"arguments"` // 支持字符串参数
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -998,21 +999,200 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 		return
 	}
 
-	// TODO: 实现命令执行逻辑
-	// 这里需要与Salt API交互执行实际命令
-
-	// 返回模拟结果
-	result := SaltJob{
-		JID:       fmt.Sprintf("%d", time.Now().Unix()),
-		Function:  request.Function,
-		Arguments: request.Args,
-		Target:    request.Target,
-		StartTime: time.Now(),
-		Status:    "submitted",
-		User:      "admin", // 从JWT token获取用户信息
+	// 从环境变量获取 Salt API 配置
+	saltMaster := os.Getenv("SALTSTACK_MASTER_HOST")
+	if saltMaster == "" {
+		saltMaster = "saltstack"
+	}
+	saltAPIPort := os.Getenv("SALT_API_PORT")
+	if saltAPIPort == "" {
+		saltAPIPort = "8002"
+	}
+	saltAPIScheme := os.Getenv("SALT_API_SCHEME")
+	if saltAPIScheme == "" {
+		saltAPIScheme = "http"
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": result})
+	saltAPIURL := fmt.Sprintf("%s://%s:%s/", saltAPIScheme, saltMaster, saltAPIPort)
+
+	// 解析参数
+	var args []interface{}
+	if request.Arguments != "" {
+		// 直接作为单个参数传递（适合 cmd.run 等需要完整命令的场景）
+		args = []interface{}{request.Arguments}
+	}
+
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    request.Target,
+		"fun":    request.Function,
+		"arg":    args,
+	}
+
+	// 发送请求到 Salt API
+	payloadBytes, err := json.Marshal([]interface{}{payload})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("序列化请求失败: %v", err),
+		})
+		return
+	}
+
+	req, err := http.NewRequest("POST", saltAPIURL, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("创建请求失败: %v", err),
+		})
+		return
+	}
+
+	// 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// 使用 eauth 认证
+	token := h.getSaltAuthToken(c.Request.Context())
+	if token == "" {
+		// 如果无法获取 token，记录警告
+		log.Printf("[WARN] 无法获取 Salt API token，尝试无认证请求")
+	} else {
+		req.Header.Set("X-Auth-Token", token)
+		log.Printf("[DEBUG] 使用 token: %s", token[:min(len(token), 10)]+"...")
+	}
+
+	// 调试：打印请求信息
+	log.Printf("[DEBUG] Salt API 请求: URL=%s, Payload=%s", saltAPIURL, string(payloadBytes))
+
+	// 发送请求
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[ERROR] Salt API 请求失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("请求 Salt API 失败: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[ERROR] 读取响应失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("读取响应失败: %v", err),
+		})
+		return
+	}
+
+	// 调试：打印响应
+	log.Printf("[DEBUG] Salt API 响应: Status=%d, Body=%s", resp.StatusCode, string(body))
+
+	// 检查 HTTP 状态码
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[ERROR] Salt API 返回错误状态: %d, Body: %s", resp.StatusCode, string(body))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("Salt API 返回错误状态: %d", resp.StatusCode),
+			"raw":     string(body),
+		})
+		return
+	}
+
+	// 解析响应
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("[ERROR] 解析响应失败: %v, Body: %s", err, string(body))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("解析响应失败: %v", err),
+			"raw":     string(body),
+		})
+		return
+	}
+
+	// 返回实际执行结果
+	log.Printf("[DEBUG] 成功返回 Salt 执行结果")
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"result":  result,
+	})
+}
+
+// getSaltAuthToken 获取 Salt API 认证 token
+func (h *SaltStackHandler) getSaltAuthToken(ctx context.Context) string {
+	// 尝试从 Redis 缓存获取
+	cacheKey := "salt:auth:token"
+	if h.cache != nil {
+		if token, err := h.cache.Get(ctx, cacheKey).Result(); err == nil && token != "" {
+			return token
+		}
+	}
+
+	// 从环境变量获取认证信息
+	saltMaster := os.Getenv("SALTSTACK_MASTER_HOST")
+	if saltMaster == "" {
+		saltMaster = "saltstack"
+	}
+	saltAPIPort := os.Getenv("SALT_API_PORT")
+	if saltAPIPort == "" {
+		saltAPIPort = "8002"
+	}
+	saltAPIScheme := os.Getenv("SALT_API_SCHEME")
+	if saltAPIScheme == "" {
+		saltAPIScheme = "http"
+	}
+	username := os.Getenv("SALT_API_USERNAME")
+	if username == "" {
+		username = "saltapi"
+	}
+	password := os.Getenv("SALT_API_PASSWORD")
+	if password == "" {
+		return "" // 没有密码无法登录
+	}
+	eauth := os.Getenv("SALT_API_EAUTH")
+	if eauth == "" {
+		eauth = "pam"
+	}
+
+	// 登录获取新 token
+	loginURL := fmt.Sprintf("%s://%s:%s/login", saltAPIScheme, saltMaster, saltAPIPort)
+	loginPayload := map[string]interface{}{
+		"username": username,
+		"password": password,
+		"eauth":    eauth,
+	}
+
+	payloadBytes, _ := json.Marshal(loginPayload)
+	resp, err := http.Post(loginURL, "application/json", bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var loginResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		return ""
+	}
+
+	// 提取 token
+	if returnData, ok := loginResp["return"].([]interface{}); ok && len(returnData) > 0 {
+		if tokenData, ok := returnData[0].(map[string]interface{}); ok {
+			if token, ok := tokenData["token"].(string); ok && token != "" {
+				// 缓存 token（12小时）
+				if h.cache != nil {
+					h.cache.Set(ctx, cacheKey, token, 12*time.Hour)
+				}
+				return token
+			}
+		}
+	}
+
+	return ""
 }
 
 // ExecuteCustomCommandAsync 异步执行自定义 Bash/Python 命令（通过 Salt cmd.run 下发）

@@ -912,6 +912,78 @@ RUN set -eux; \
     fi
 
 # =============================================================================
+# Stage 4.5: Download Pre-built Singularity (Container Runtime for HPC)
+# =============================================================================
+FROM alpine:3.20 AS singularity-builder
+
+# Build control flags - 暂时禁用（deb 包下载问题）
+ARG BUILD_SINGULARITY=false
+
+# Singularity version configuration
+ARG SINGULARITY_VERSION=v4.2.1
+ARG GITHUB_PROXY
+
+# 配置 Alpine 镜像源并安装依赖
+RUN set -eux; \
+    # 配置镜像源
+    ARCH=$(uname -m); \
+    if [ "${ARCH}" = "aarch64" ]; then \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
+    else \
+        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    fi; \
+    apk update || { \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
+        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
+        apk update; \
+    }; \
+    # 安装工具
+    apk add --no-cache curl tar gzip binutils
+
+# 创建输出目录
+RUN mkdir -p /out /build
+
+# 下载并重新打包预编译的 Singularity
+RUN set -eux; \
+    if [ "${BUILD_SINGULARITY}" = "true" ]; then \
+        echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
+        ARCH=$(uname -m); \
+        RELEASE_URL="https://github.com/sylabs/singularity/releases/download/${SINGULARITY_VERSION}"; \
+        VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
+        CURL_OPTS=""; \
+        if [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+            CURL_OPTS="--proxy ${GITHUB_PROXY}"; \
+        fi; \
+        cd /build; \
+        if [ "${ARCH}" = "x86_64" ]; then \
+            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_amd64.deb"; \
+        elif [ "${ARCH}" = "aarch64" ]; then \
+            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_arm64.deb"; \
+        else \
+            echo "❌ Unsupported architecture: ${ARCH}"; \
+            exit 1; \
+        fi; \
+        echo "Downloading ${DEB_FILE}..."; \
+        curl ${CURL_OPTS} -fsSL -o singularity.deb "${RELEASE_URL}/${DEB_FILE}"; \
+        ar x singularity.deb; \
+        tar xf data.tar.xz; \
+        tar czf /out/singularity-${SINGULARITY_VERSION}-linux-${ARCH}.tar.gz usr/; \
+        echo "Package: singularity" > /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "Version: ${SINGULARITY_VERSION}" >> /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "Architecture: ${ARCH}" >> /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "Build-Date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "Description: Singularity Container Runtime for HPC (Pre-built)" >> /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "Homepage: https://github.com/sylabs/singularity" >> /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "License: BSD-3-Clause" >> /out/singularity-${SINGULARITY_VERSION}.info; \
+        echo "✅ Singularity download and repackage completed"; \
+    else \
+        echo "⏭️  Skipping Singularity (BUILD_SINGULARITY=${BUILD_SINGULARITY})"; \
+    fi
+
+# =============================================================================
 # Stage 5: AppHub - HTTP Server with Package Management & Development Tools
 # =============================================================================
 ARG NGINX_ALPINE_VERSION=1.27-alpine
@@ -1032,6 +1104,9 @@ RUN /app/scripts/generate-install-script.sh \
 # Copy Categraf packages from categraf-builder stage
 COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 
+# Copy Singularity packages from singularity-builder stage
+COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
+
 # Organize packages and generate DEB indexes (RPM metadata already generated in rpm-builder stage)
 RUN set -eux; \
     echo "📦 Organizing packages..."; \
@@ -1049,6 +1124,7 @@ RUN set -eux; \
     salt_deb_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     salt_rpm_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     # Check if RPM metadata was copied from rpm-builder
     slurm_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] && echo "yes" || echo "no"); \
     salt_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ] && echo "yes" || echo "no"); \
@@ -1059,6 +1135,7 @@ RUN set -eux; \
     echo "  - SaltStack deb packages: ${salt_deb_count}"; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count} (metadata: ${salt_rpm_metadata})"; \
     echo "  - Categraf packages: ${categraf_count}"; \
+    echo "  - Singularity packages: ${singularity_count}"; \
     # Generate Debian repository metadata (both Packages and Packages.gz)
     if [ "$slurm_deb_count" -gt 0 ] && command -v dpkg-scanpackages >/dev/null 2>&1; then \
         echo "🔧 Generating SLURM DEB repository metadata..."; \

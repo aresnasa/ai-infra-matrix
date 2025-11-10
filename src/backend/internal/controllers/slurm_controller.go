@@ -1471,7 +1471,7 @@ func (c *SlurmController) ExecuteSaltCommandAsync(ctx *gin.Context) {
 		}()
 
 		pm.Emit(opID, services.ProgressEvent{Type: "step-start", Step: "execute", Message: "执行命令: " + r.Command})
-		result, err := c.saltSvc.ExecuteCommand(context.Background(), r.Command, r.Targets)
+		result, err := c.saltSvc.ExecuteCommand(context.Background(), r.Command, r.Targets) // 异步执行暂不支持 args
 		if err != nil {
 			failed = true
 			pm.Emit(opID, services.ProgressEvent{Type: "error", Step: "execute", Message: err.Error()})
@@ -1502,12 +1502,17 @@ func (c *SlurmController) ExecuteSaltCommand(ctx *gin.Context) {
 	// 确定实际的命令和目标
 	var command string
 	var targets []string
+	var args []string
 
 	// 新格式优先：使用 function 字段
 	if req.Function != "" {
 		command = req.Function
 		if req.Target != "" {
 			targets = []string{req.Target}
+		}
+		// 解析 arguments (可能是单个参数或逗号分隔的多个参数)
+		if req.Arguments != "" {
+			args = []string{req.Arguments}
 		}
 	} else if req.Command != "" {
 		// 兼容老格式
@@ -1521,7 +1526,7 @@ func (c *SlurmController) ExecuteSaltCommand(ctx *gin.Context) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
 	defer cancel()
 
-	result, err := c.saltSvc.ExecuteCommand(ctxWithTimeout, command, targets)
+	result, err := c.saltSvc.ExecuteCommand(ctxWithTimeout, command, targets, args...)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "执行命令失败: " + err.Error()})
 		return

@@ -3432,3 +3432,21 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
 184. 现在使用@playwright 测试http://192.168.3.91:8080/slurm，并修复，节点管理-集群节点-	SaltStack状态-未配置问题，期望的是能够正确的获取 minion 状态
 
 185. 现在使用@playwright测试http://192.168.3.91:8080/slurm，测试 saltstack 的 cmd 和其他函数，期望能够在SaltStack 集成-命令执行历史和最近的 SaltStack 作业中能够正确的显示已经执行过的任务，命令执行历史需要测试其结果，期望是能够正确的获取这些信息，现在调整http://192.168.3.91:8080/slurm的最近的 SaltStack 作业，需要按照时间排序，最新的在上边，命令执行历史期望的是能够显示历史记录，请使用@playwright 测试
+
+186. 接下来需要将https://github.com/sylabs/singularity集成到本项目的 apphub 中，然后在安装 slurm 的时候增加一个按钮安装 singularity，不需要创建太多 sh，直接在 build.sh 上进行扩展
+
+187. 最新执行结果
+    成功
+    耗时: 51ms
+    执行时间	2025/11/10 13:13:50
+    目标节点	*	Salt 函数	cmd.run
+    参数	/bin/bash -c 'sinfo'
+    执行输出:
+    {
+      "result": {
+        "return": [
+          {}
+        ]
+      },
+      "success": true
+    },未能输出，需要修复，同时需要修复复制输出按钮点击复制后未能输出结果问题，使用@playwright 测试。

@@ -1157,6 +1157,10 @@ const SlurmScalingPage = () => {
             <Checkbox>自动部署 SaltStack Minion</Checkbox>
           </Form.Item>
 
+          <Form.Item name="install_singularity" valuePropName="checked">
+            <Checkbox>安装 Singularity 容器运行时</Checkbox>
+          </Form.Item>
+
           <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
             <Space>
               <Button onClick={() => setScaleUpModal(false)}>取消</Button>

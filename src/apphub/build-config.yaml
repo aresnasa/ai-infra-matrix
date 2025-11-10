@@ -43,12 +43,13 @@ components:
     output: "/usr/share/nginx/html/pkgs/categraf"
     
   singularity:
-    enabled: false
-    version: "v4.3.4"
+    enabled: false  # 暂时禁用 - deb 包下载问题待解决
+    version: "v4.2.1"
     source: "git"
     repo: "https://github.com/sylabs/singularity.git"
     build_type: "go"
     output: "/usr/share/nginx/html/pkgs/singularity"
+    description: "Singularity Container Runtime for HPC"
 
 # 构建选项
 build:

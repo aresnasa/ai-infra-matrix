@@ -368,10 +368,14 @@ const SaltCommandExecutor = () => {
               <Button
                 size="small"
                 onClick={() => {
-                  navigator.clipboard.writeText(
-                    JSON.stringify(lastExecutionResult.result || lastExecutionResult.error, null, 2)
-                  );
-                  message.success('已复制到剪贴板');
+                  const output = lastExecutionResult.result || lastExecutionResult.error;
+                  const outputText = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+                  navigator.clipboard.writeText(outputText).then(() => {
+                    message.success('已复制到剪贴板');
+                  }).catch(err => {
+                    console.error('复制失败:', err);
+                    message.error('复制失败，请手动复制');
+                  });
                 }}
               >
                 复制输出
