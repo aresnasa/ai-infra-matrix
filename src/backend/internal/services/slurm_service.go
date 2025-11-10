@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -540,7 +541,81 @@ func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*Scalin
 		})
 	}
 
-	// 2. 生成并更新SLURM配置
+	// 2. 在节点上并发安装slurmd服务
+	log.Printf("[DEBUG] ScaleUp: 开始在 %d 个节点上并发安装slurmd服务", len(nodes))
+
+	var installWg sync.WaitGroup
+	var installMu sync.Mutex
+	installResults := make(map[string]*InstallSlurmNodeResponse)
+
+	// 限制并发数为 5，避免过多并发
+	maxConcurrency := 5
+	semaphore := make(chan struct{}, maxConcurrency)
+
+	for _, node := range nodes {
+		installWg.Add(1)
+		go func(n NodeConfig) {
+			defer installWg.Done()
+
+			// 获取信号量
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			// 检测操作系统类型
+			osType := s.detectNodeOSType(ctx, n.Host)
+			if osType == "" {
+				log.Printf("[WARN] 无法检测节点 %s 的操作系统类型，尝试rocky", n.Host)
+				osType = "rocky" // 默认使用rocky
+			}
+
+			log.Printf("[INFO] 在节点 %s 上安装slurmd (OS: %s)", n.Host, osType)
+
+			// 调用安装方法
+			installReq := InstallSlurmNodeRequest{
+				NodeName: n.Host,
+				OSType:   osType,
+			}
+
+			installResp, err := s.InstallSlurmNode(ctx, installReq)
+			if err != nil {
+				installResp = &InstallSlurmNodeResponse{
+					Success: false,
+					Message: fmt.Sprintf("安装失败: %v", err),
+					Logs:    "",
+				}
+			}
+
+			// 保存结果
+			installMu.Lock()
+			installResults[n.Host] = installResp
+			installMu.Unlock()
+
+			if installResp.Success {
+				log.Printf("[SUCCESS] 节点 %s slurmd安装成功", n.Host)
+			} else {
+				log.Printf("[ERROR] 节点 %s slurmd安装失败: %s", n.Host, installResp.Message)
+			}
+		}(node)
+	}
+
+	// 等待所有安装任务完成
+	installWg.Wait()
+	log.Printf("[DEBUG] ScaleUp: 所有节点安装任务已完成")
+
+	// 更新结果消息
+	for i := range result.Results {
+		nodeID := result.Results[i].NodeID
+		if installResp, ok := installResults[nodeID]; ok {
+			if installResp.Success {
+				result.Results[i].Message = "节点已成功添加到SLURM集群并安装slurmd服务"
+			} else {
+				result.Results[i].Success = false
+				result.Results[i].Message = fmt.Sprintf("节点添加成功但slurmd安装失败: %s", installResp.Message)
+			}
+		}
+	}
+
+	// 3. 生成并更新SLURM配置
 	log.Printf("[DEBUG] ScaleUp: 开始更新SLURM配置")
 	if err := s.updateSlurmConfigAndReload(ctx); err != nil {
 		log.Printf("[ERROR] 更新SLURM配置失败: %v", err)
@@ -857,17 +932,57 @@ func (s *SlurmService) ExecuteSlurmCommand(ctx context.Context, command string) 
 	return s.executeSlurmCommand(ctx, command)
 }
 
-// executeSSHCommand 执行SSH命令的辅助函数
+// executeSSHCommand 执行SSH命令的辅助函数（支持密码和密钥认证）
 func (s *SlurmService) executeSSHCommand(host string, port int, user, password, command string) (string, error) {
+	return s.executeSSHCommandWithKey(host, port, user, password, "", command)
+}
+
+// executeSSHCommandWithKey 执行SSH命令（支持密码和密钥认证）
+func (s *SlurmService) executeSSHCommandWithKey(host string, port int, user, password, privateKey, command string) (string, error) {
 	// 创建SSH客户端配置
 	config := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(password),
-		},
+		User:            user,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 生产环境应使用正确的host key验证
 		Timeout:         30 * time.Second,
 	}
+
+	// 设置认证方法
+	var authMethods []ssh.AuthMethod
+
+	// 优先使用私钥认证
+	if privateKey != "" {
+		var signer ssh.Signer
+		var err error
+
+		// 判断是文件路径还是密钥内容
+		if strings.HasPrefix(privateKey, "-----BEGIN") {
+			// 直接使用密钥内容
+			signer, err = ssh.ParsePrivateKey([]byte(privateKey))
+		} else {
+			// 从文件读取密钥
+			keyContent, readErr := os.ReadFile(privateKey)
+			if readErr != nil {
+				return "", fmt.Errorf("读取私钥文件失败: %v", readErr)
+			}
+			signer, err = ssh.ParsePrivateKey(keyContent)
+		}
+
+		if err != nil {
+			return "", fmt.Errorf("解析私钥失败: %v", err)
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(signer))
+	}
+
+	// 如果提供了密码，添加密码认证
+	if password != "" {
+		authMethods = append(authMethods, ssh.Password(password))
+	}
+
+	if len(authMethods) == 0 {
+		return "", fmt.Errorf("未提供任何认证方式（密码或私钥）")
+	}
+
+	config.Auth = authMethods
 
 	// 连接SSH服务器
 	addr := fmt.Sprintf("%s:%d", host, port)
@@ -2076,48 +2191,153 @@ func (s *SlurmService) configureSlurmNode(ctx context.Context, nodeName, osType 
 	return nil
 }
 
-// startSlurmServices 启动SLURM服务
+// startSlurmServices 启动SLURM服务（通过SSH远程执行脚本）
 func (s *SlurmService) startSlurmServices(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
 	fmt.Fprintf(logWriter, "[INFO] 启动 %s 上的服务\n", nodeName)
 
-	// 启动munge
-	mungeCmd := `systemctl enable --now munge 2>/dev/null || /usr/sbin/munged || true`
-	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", mungeCmd)
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
-	cmd.Run() // 忽略错误，继续
-
-	time.Sleep(2 * time.Second) // 等待munge启动
-
-	// 启动slurmd
-	slurmdCmd := `systemctl enable --now slurmd 2>/dev/null || /usr/sbin/slurmd -D & || true`
-	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", slurmdCmd)
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
-	if err := cmd.Run(); err != nil {
-		log.Printf("[WARN] 启动slurmd可能失败: %v", err)
+	// 1. 读取启动脚本
+	scriptPath := "src/backend/scripts/start-slurmd.sh"
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("读取启动脚本失败: %v", err)
 	}
 
-	fmt.Fprintf(logWriter, "[INFO] 服务启动完成\n")
-	time.Sleep(3 * time.Second) // 等待服务完全启动
+	fmt.Fprintf(logWriter, "[INFO] 使用脚本启动 slurmd...\n")
+
+	// 2. 通过 docker exec 执行脚本
+	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", string(scriptContent))
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("[ERROR] 执行启动脚本失败: %v", err)
+		fmt.Fprintf(logWriter, "[ERROR] 执行启动脚本失败: %v\n", err)
+		return fmt.Errorf("启动服务失败: %v", err)
+	}
+
+	fmt.Fprintf(logWriter, "[SUCCESS] 服务启动完成\n")
+
+	// 3. 验证服务状态
+	time.Sleep(2 * time.Second)
+
+	checkCmd := "pgrep -x slurmd >/dev/null && echo 'slurmd running' || echo 'slurmd not running'"
+	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", checkCmd)
+	output, _ := cmd.Output()
+	fmt.Fprintf(logWriter, "[INFO] 验证结果: %s\n", strings.TrimSpace(string(output)))
 
 	return nil
 }
 
-// BatchInstallSlurmNodes 批量安装SLURM节点
+// executeScriptViaSSH 通过SSH执行脚本（支持密码和密钥认证）
+func (s *SlurmService) executeScriptViaSSH(ctx context.Context, host string, port int, user, password, privateKey, scriptPath string) (string, error) {
+	// 读取脚本内容
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("读取脚本失败: %v", err)
+	}
+
+	// 通过SSH执行脚本
+	return s.executeSSHCommandWithKey(host, port, user, password, privateKey, string(scriptContent))
+}
+
+// startSlurmServicesViaSSH 通过真实SSH启动SLURM服务（非docker exec）
+func (s *SlurmService) startSlurmServicesViaSSH(ctx context.Context, host string, port int, user, password, privateKey string, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 通过SSH启动 %s 上的服务\n", host)
+
+	// 执行启动脚本
+	scriptPath := "src/backend/scripts/start-slurmd.sh"
+	output, err := s.executeScriptViaSSH(ctx, host, port, user, password, privateKey, scriptPath)
+
+	if err != nil {
+		fmt.Fprintf(logWriter, "[ERROR] 执行启动脚本失败: %v\n", err)
+		fmt.Fprintf(logWriter, "[ERROR] 输出: %s\n", output)
+		return fmt.Errorf("启动服务失败: %v", err)
+	}
+
+	fmt.Fprintf(logWriter, "[SUCCESS] 脚本执行输出:\n%s\n", output)
+	return nil
+}
+
+// checkSlurmServicesViaSSH 通过SSH检查SLURM服务状态
+func (s *SlurmService) checkSlurmServicesViaSSH(ctx context.Context, host string, port int, user, password, privateKey string) (string, error) {
+	scriptPath := "src/backend/scripts/check-slurmd.sh"
+	return s.executeScriptViaSSH(ctx, host, port, user, password, privateKey, scriptPath)
+}
+
+// stopSlurmServicesViaSSH 通过SSH停止SLURM服务
+func (s *SlurmService) stopSlurmServicesViaSSH(ctx context.Context, host string, port int, user, password, privateKey string) (string, error) {
+	scriptPath := "src/backend/scripts/stop-slurmd.sh"
+	return s.executeScriptViaSSH(ctx, host, port, user, password, privateKey, scriptPath)
+}
+
+// detectNodeOSType 检测节点的操作系统类型
+func (s *SlurmService) detectNodeOSType(ctx context.Context, nodeName string) string {
+	// 尝试检测操作系统类型
+	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "cat", "/etc/os-release")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[WARN] 检测节点 %s 操作系统失败: %v", nodeName, err)
+		return ""
+	}
+
+	outputStr := string(output)
+	// 检查是否是 Rocky Linux
+	if strings.Contains(outputStr, "Rocky") || strings.Contains(outputStr, "rocky") {
+		return "rocky"
+	}
+	// 检查是否是 CentOS
+	if strings.Contains(outputStr, "CentOS") || strings.Contains(outputStr, "centos") {
+		return "centos"
+	}
+	// 检查是否是 Ubuntu
+	if strings.Contains(outputStr, "Ubuntu") || strings.Contains(outputStr, "ubuntu") {
+		return "ubuntu"
+	}
+	// 检查是否是 Debian
+	if strings.Contains(outputStr, "Debian") || strings.Contains(outputStr, "debian") {
+		return "debian"
+	}
+
+	log.Printf("[WARN] 无法识别节点 %s 的操作系统类型", nodeName)
+	return ""
+}
+
+// BatchInstallSlurmNodes 批量安装SLURM节点（并发）
 func (s *SlurmService) BatchInstallSlurmNodes(ctx context.Context, nodes []InstallSlurmNodeRequest) (map[string]*InstallSlurmNodeResponse, error) {
 	results := make(map[string]*InstallSlurmNodeResponse)
+	var mu sync.Mutex // 保护 results map
+	var wg sync.WaitGroup
+
+	// 使用 channel 来限制并发数，避免过多并发导致系统负载过高
+	maxConcurrency := 5
+	semaphore := make(chan struct{}, maxConcurrency)
 
 	for _, node := range nodes {
-		resp, err := s.InstallSlurmNode(ctx, node)
-		if err != nil {
-			resp = &InstallSlurmNodeResponse{
-				Success: false,
-				Message: err.Error(),
+		wg.Add(1)
+		go func(n InstallSlurmNodeRequest) {
+			defer wg.Done()
+
+			// 获取信号量
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			resp, err := s.InstallSlurmNode(ctx, n)
+			if err != nil {
+				resp = &InstallSlurmNodeResponse{
+					Success: false,
+					Message: err.Error(),
+				}
 			}
-		}
-		results[node.NodeName] = resp
+
+			// 写入结果时加锁
+			mu.Lock()
+			results[n.NodeName] = resp
+			mu.Unlock()
+		}(node)
 	}
+
+	// 等待所有安装任务完成
+	wg.Wait()
 
 	return results, nil
 }

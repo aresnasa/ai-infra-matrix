@@ -3452,3 +3452,13 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
     },未能输出，需要修复，同时需要修复复制输出按钮点击复制后未能输出结果问题，使用@playwright 测试。
 
 188. 现在将这个install-slurm-nodes.sh函数作为标准安装脚本封装到slurm节点添加节点的步骤中，页面添加节点时需要执行这个安装脚本，调整一下安装slurm的逻辑
+
+189. for node in test-ssh01 test-ssh02 test-ssh03 test-rocky01 test-rocky02 test-rocky03; do echo "=== $node ==="; docker exec $node ps aux|grep slurm; done
+=== test-ssh01 ===
+=== test-ssh02 ===
+=== test-ssh03 ===
+=== test-rocky01 ===
+=== test-rocky02 ===
+=== test-rocky03 ===,未能找到slurmd进程，需要将http://192.168.3.91:8080/slurm页面中扩容节点时自动安装slurmd服务并启动，调整下部署节点的go程序，将slurmd服务也安装到计算节点中，请继续，这里期望的是并发的安装slurmd服务，这里不要简单的使用for循环，请调整
+
+190. 这里不要硬编码，而是通过脚本传递给go程序然后go程序通过ssh远程执行，scripts下是本项目的测试脚本，这种slurmd相关的脚本放到src/backend/scripts中，这里还要支持密钥ssh发送脚本。
