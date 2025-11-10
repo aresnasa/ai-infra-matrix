@@ -2937,3 +2937,107 @@ func (c *SlurmController) ReloadSlurmConfig(ctx *gin.Context) {
 		"timestamp": time.Now().Format(time.RFC3339),
 	})
 }
+
+// POST /api/slurm/nodes/install - 在指定节点上安装SLURM
+func (c *SlurmController) InstallSlurmNode(ctx *gin.Context) {
+	var req services.InstallSlurmNodeRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求参数错误: %v", err)})
+		return
+	}
+
+	// 验证必填字段
+	if req.NodeName == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "节点名称不能为空"})
+		return
+	}
+	if req.OSType == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "操作系统类型不能为空"})
+		return
+	}
+
+	// 验证OS类型
+	validOSTypes := map[string]bool{"rocky": true, "centos": true, "ubuntu": true, "debian": true}
+	if !validOSTypes[req.OSType] {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":            "不支持的操作系统类型",
+			"supported_types":  []string{"rocky", "centos", "ubuntu", "debian"},
+			"provided_os_type": req.OSType,
+		})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 600*time.Second) // 10分钟超时
+	defer cancel()
+
+	logrus.Infof("[InstallSlurmNode] 开始安装节点: %s (OS: %s)", req.NodeName, req.OSType)
+
+	resp, err := c.slurmSvc.InstallSlurmNode(ctxWithTimeout, req)
+	if err != nil {
+		logrus.Errorf("[InstallSlurmNode] 安装失败: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   err.Error(),
+			"logs":    resp.Logs,
+		})
+		return
+	}
+
+	logrus.Infof("[InstallSlurmNode] 安装成功: %s", req.NodeName)
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": resp.Success,
+		"message": resp.Message,
+		"logs":    resp.Logs,
+		"node":    req.NodeName,
+	})
+}
+
+// POST /api/slurm/nodes/batch-install - 批量安装SLURM节点
+func (c *SlurmController) BatchInstallSlurmNodes(ctx *gin.Context) {
+	var req struct {
+		Nodes []services.InstallSlurmNodeRequest `json:"nodes"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求参数错误: %v", err)})
+		return
+	}
+
+	if len(req.Nodes) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "节点列表不能为空"})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 1800*time.Second) // 30分钟超时
+	defer cancel()
+
+	logrus.Infof("[BatchInstallSlurmNodes] 批量安装 %d 个节点", len(req.Nodes))
+
+	results, err := c.slurmSvc.BatchInstallSlurmNodes(ctxWithTimeout, req.Nodes)
+	if err != nil {
+		logrus.Errorf("[BatchInstallSlurmNodes] 批量安装失败: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 统计成功和失败数量
+	successCount := 0
+	failureCount := 0
+	for _, result := range results {
+		if result.Success {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	logrus.Infof("[BatchInstallSlurmNodes] 批量安装完成: 成功 %d, 失败 %d", successCount, failureCount)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"total":         len(req.Nodes),
+		"success_count": successCount,
+		"failure_count": failureCount,
+		"results":       results,
+	})
+}

@@ -3450,3 +3450,5 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
       },
       "success": true
     },未能输出，需要修复，同时需要修复复制输出按钮点击复制后未能输出结果问题，使用@playwright 测试。
+
+188. 现在将这个install-slurm-nodes.sh函数作为标准安装脚本封装到slurm节点添加节点的步骤中，页面添加节点时需要执行这个安装脚本，调整一下安装slurm的逻辑

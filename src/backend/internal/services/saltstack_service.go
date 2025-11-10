@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -306,6 +307,40 @@ func (s *SaltStackService) ensureToken(ctx context.Context) error {
 	return fmt.Errorf("failed to extract token from login response")
 }
 
+// containsShellMetaChars 检查字符串是否包含 shell 元字符
+// 这些字符需要通过 shell 来解释执行
+func containsShellMetaChars(s string) bool {
+	// Shell 元字符列表：管道、重定向、逻辑运算符、命令替换、通配符等
+	metaChars := []string{
+		"|",    // 管道
+		"&",    // 后台执行或逻辑与
+		";",    // 命令分隔符
+		">",    // 重定向
+		"<",    // 输入重定向
+		"$",    // 变量替换或命令替换
+		"`",    // 命令替换
+		"(",    // 子 shell
+		")",    // 子 shell
+		"*",    // 通配符
+		"?",    // 通配符
+		"[",    // 通配符
+		"]",    // 通配符
+		"&&",   // 逻辑与
+		"||",   // 逻辑或
+		">>",   // 追加重定向
+		"<<",   // Here document
+		"2>",   // 错误重定向
+		"2>&1", // 错误重定向到标准输出
+	}
+
+	for _, meta := range metaChars {
+		if strings.Contains(s, meta) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExecuteCommand 执行SaltStack命令
 func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, targets []string, args ...string) (map[string]interface{}, error) {
 	// 构建Salt API请求
@@ -330,6 +365,26 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 
 	// 如果有参数，添加到 payload (Salt API 使用 "arg" 字段)
 	if len(args) > 0 {
+		// 检查参数中是否包含 shell 特殊字符（管道、重定向、逻辑运算符等）
+		needsShell := false
+		for _, arg := range args {
+			if containsShellMetaChars(arg) {
+				needsShell = true
+				break
+			}
+		}
+
+		// 如果需要 shell，使用 cmd.shell 或设置 python_shell=True
+		if needsShell {
+			if command == "cmd.run" {
+				// 对于 cmd.run，设置 python_shell=True 来支持 shell 特性
+				payload["kwarg"] = map[string]interface{}{
+					"python_shell": true,
+				}
+				log.Printf("[SaltStack] Detected shell metacharacters, enabling python_shell=True")
+			}
+		}
+
 		payload["arg"] = args
 	}
 

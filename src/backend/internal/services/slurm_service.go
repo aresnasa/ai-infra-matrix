@@ -1893,3 +1893,231 @@ func (s *SlurmService) ReloadSlurmConfig(ctx context.Context) error {
 func generateTemplateID() string {
 	return fmt.Sprintf("tmpl-%d", time.Now().Unix())
 }
+
+// InstallSlurmNodeRequest 安装SLURM节点请求
+type InstallSlurmNodeRequest struct {
+	NodeName string `json:"node_name"` // 节点名称（容器名）
+	OSType   string `json:"os_type"`   // 操作系统类型：rocky 或 ubuntu
+}
+
+// InstallSlurmNodeResponse 安装SLURM节点响应
+type InstallSlurmNodeResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Logs    string `json:"logs"` // 安装日志
+}
+
+// InstallSlurmNode 在指定节点上安装SLURM客户端和slurmd
+func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNodeRequest) (*InstallSlurmNodeResponse, error) {
+	log.Printf("[INFO] 开始在节点 %s 上安装SLURM (OS: %s)", req.NodeName, req.OSType)
+
+	var logBuffer bytes.Buffer
+	logWriter := io.MultiWriter(os.Stdout, &logBuffer)
+
+	// 1. 获取slurm.conf和munge.key
+	log.Printf("[INFO] 从slurm-master获取配置文件...")
+	slurmConf, err := s.getSlurmMasterConfig(ctx)
+	if err != nil {
+		return &InstallSlurmNodeResponse{
+			Success: false,
+			Message: fmt.Sprintf("获取slurm.conf失败: %v", err),
+			Logs:    logBuffer.String(),
+		}, err
+	}
+
+	mungeKey, err := s.getMungeKey(ctx)
+	if err != nil {
+		log.Printf("[WARN] 获取munge.key失败: %v，将继续安装", err)
+		mungeKey = nil
+	}
+
+	// 2. 根据OS类型安装SLURM
+	if err := s.installSlurmPackages(ctx, req.NodeName, req.OSType, logWriter); err != nil {
+		return &InstallSlurmNodeResponse{
+			Success: false,
+			Message: fmt.Sprintf("安装SLURM包失败: %v", err),
+			Logs:    logBuffer.String(),
+		}, err
+	}
+
+	// 3. 配置文件
+	if err := s.configureSlurmNode(ctx, req.NodeName, req.OSType, slurmConf, mungeKey, logWriter); err != nil {
+		return &InstallSlurmNodeResponse{
+			Success: false,
+			Message: fmt.Sprintf("配置节点失败: %v", err),
+			Logs:    logBuffer.String(),
+		}, err
+	}
+
+	// 4. 启动服务
+	if err := s.startSlurmServices(ctx, req.NodeName, req.OSType, logWriter); err != nil {
+		return &InstallSlurmNodeResponse{
+			Success: false,
+			Message: fmt.Sprintf("启动服务失败: %v", err),
+			Logs:    logBuffer.String(),
+		}, err
+	}
+
+	log.Printf("[INFO] 节点 %s SLURM安装完成", req.NodeName)
+	return &InstallSlurmNodeResponse{
+		Success: true,
+		Message: "SLURM安装成功",
+		Logs:    logBuffer.String(),
+	}, nil
+}
+
+// getSlurmMasterConfig 从slurm-master获取slurm.conf
+func (s *SlurmService) getSlurmMasterConfig(ctx context.Context) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "docker", "exec", "ai-infra-slurm-master", "cat", "/etc/slurm/slurm.conf")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("读取slurm.conf失败: %v", err)
+	}
+	return output, nil
+}
+
+// getMungeKey 从slurm-master获取munge.key
+func (s *SlurmService) getMungeKey(ctx context.Context) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "docker", "exec", "ai-infra-slurm-master", "cat", "/etc/munge/munge.key")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+// installSlurmPackages 安装SLURM包
+func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", nodeName, osType)
+
+	var installCmd string
+	if osType == "rocky" || osType == "centos" {
+		// Rocky Linux / CentOS
+		installCmd = `
+dnf install -y epel-release && \
+dnf install -y slurm slurm-slurmd munge && \
+mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge && \
+chmod 755 /var/spool/slurm/slurmd
+`
+	} else if osType == "ubuntu" || osType == "debian" {
+		// Ubuntu / Debian
+		installCmd = `
+export DEBIAN_FRONTEND=noninteractive && \
+apt-get update -qq && \
+apt-get install -y slurm-client slurmd munge && \
+mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge /etc/slurm-llnl && \
+chmod 755 /var/spool/slurm/slurmd
+`
+	} else {
+		return fmt.Errorf("不支持的操作系统类型: %s", osType)
+	}
+
+	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", installCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("安装SLURM包失败: %v", err)
+	}
+
+	fmt.Fprintf(logWriter, "[INFO] SLURM包安装成功\n")
+	return nil
+}
+
+// configureSlurmNode 配置SLURM节点
+func (s *SlurmService) configureSlurmNode(ctx context.Context, nodeName, osType string, slurmConf, mungeKey []byte, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 配置 %s 节点\n", nodeName)
+
+	// 确定配置文件路径
+	slurmConfPath := "/etc/slurm/slurm.conf"
+	if osType == "ubuntu" || osType == "debian" {
+		slurmConfPath = "/etc/slurm-llnl/slurm.conf"
+	}
+
+	// 写入临时文件
+	tmpSlurmConf := "/tmp/slurm.conf." + nodeName
+	if err := os.WriteFile(tmpSlurmConf, slurmConf, 0644); err != nil {
+		return fmt.Errorf("写入临时slurm.conf失败: %v", err)
+	}
+	defer os.Remove(tmpSlurmConf)
+
+	// 复制slurm.conf到容器
+	cmd := exec.CommandContext(ctx, "docker", "cp", tmpSlurmConf, nodeName+":"+slurmConfPath)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("复制slurm.conf失败: %v", err)
+	}
+	fmt.Fprintf(logWriter, "[INFO] slurm.conf复制成功 -> %s\n", slurmConfPath)
+
+	// 如果有munge.key，也复制
+	if mungeKey != nil && len(mungeKey) > 0 {
+		tmpMungeKey := "/tmp/munge.key." + nodeName
+		if err := os.WriteFile(tmpMungeKey, mungeKey, 0400); err != nil {
+			return fmt.Errorf("写入临时munge.key失败: %v", err)
+		}
+		defer os.Remove(tmpMungeKey)
+
+		cmd = exec.CommandContext(ctx, "docker", "cp", tmpMungeKey, nodeName+":/etc/munge/munge.key")
+		cmd.Stdout = logWriter
+		cmd.Stderr = logWriter
+		if err := cmd.Run(); err != nil {
+			log.Printf("[WARN] 复制munge.key失败: %v", err)
+		} else {
+			// 设置权限
+			cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "chown", "munge:munge", "/etc/munge/munge.key")
+			cmd.Run()
+			cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "chmod", "400", "/etc/munge/munge.key")
+			cmd.Run()
+			fmt.Fprintf(logWriter, "[INFO] munge.key配置成功\n")
+		}
+	}
+
+	return nil
+}
+
+// startSlurmServices 启动SLURM服务
+func (s *SlurmService) startSlurmServices(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 启动 %s 上的服务\n", nodeName)
+
+	// 启动munge
+	mungeCmd := `systemctl enable --now munge 2>/dev/null || /usr/sbin/munged || true`
+	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", mungeCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	cmd.Run() // 忽略错误，继续
+
+	time.Sleep(2 * time.Second) // 等待munge启动
+
+	// 启动slurmd
+	slurmdCmd := `systemctl enable --now slurmd 2>/dev/null || /usr/sbin/slurmd -D & || true`
+	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", slurmdCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	if err := cmd.Run(); err != nil {
+		log.Printf("[WARN] 启动slurmd可能失败: %v", err)
+	}
+
+	fmt.Fprintf(logWriter, "[INFO] 服务启动完成\n")
+	time.Sleep(3 * time.Second) // 等待服务完全启动
+
+	return nil
+}
+
+// BatchInstallSlurmNodes 批量安装SLURM节点
+func (s *SlurmService) BatchInstallSlurmNodes(ctx context.Context, nodes []InstallSlurmNodeRequest) (map[string]*InstallSlurmNodeResponse, error) {
+	results := make(map[string]*InstallSlurmNodeResponse)
+
+	for _, node := range nodes {
+		resp, err := s.InstallSlurmNode(ctx, node)
+		if err != nil {
+			resp = &InstallSlurmNodeResponse{
+				Success: false,
+				Message: err.Error(),
+			}
+		}
+		results[node.NodeName] = resp
+	}
+
+	return results, nil
+}
