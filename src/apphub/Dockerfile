@@ -1092,6 +1092,7 @@ RUN mkdir -p \
     /usr/share/nginx/html/pkgs/slurm-deb \
     /usr/share/nginx/html/pkgs/slurm-rpm \
     /usr/share/nginx/html/pkgs/slurm-binaries \
+    /usr/share/nginx/html/pkgs/slurm-plugins \
     /usr/share/nginx/html/pkgs/saltstack-deb \
     /usr/share/nginx/html/pkgs/saltstack-rpm \
     /usr/share/nginx/html/pkgs/categraf
@@ -1101,6 +1102,23 @@ COPY --from=deb-builder /out/ /usr/share/nginx/html/pkgs/slurm-deb/
 
 # Copy SLURM rpm packages with metadata from rpm-builder stage
 COPY --from=rpm-builder /out/slurm-rpm/ /usr/share/nginx/html/pkgs/slurm-rpm/
+
+# Extract cgroup_v2.so plugin from DEB packages for Rocky nodes
+RUN set -eux; \
+    echo "📦 Extracting cgroup_v2.so plugin for Rocky nodes..."; \
+    cd /usr/share/nginx/html/pkgs/slurm-deb; \
+    # Find the slurm-smd-slurmd package (contains plugins)
+    DEB_FILE=$(ls -1 slurm-smd-slurmd_*.deb 2>/dev/null | head -1); \
+    if [ -n "$DEB_FILE" ]; then \
+        dpkg-deb -x "$DEB_FILE" /tmp/slurm-extract; \
+        # Find and copy cgroup_v2.so
+        find /tmp/slurm-extract -name "cgroup_v2.so" -exec cp {} /usr/share/nginx/html/pkgs/slurm-plugins/ \;; \
+        rm -rf /tmp/slurm-extract; \
+        echo "✓ Extracted cgroup_v2.so plugin"; \
+        ls -lh /usr/share/nginx/html/pkgs/slurm-plugins/; \
+    else \
+        echo "⚠️  Warning: slurm-smd-slurmd DEB package not found"; \
+    fi
 
 # Copy SaltStack rpm packages with metadata from rpm-builder stage
 COPY --from=rpm-builder /out/saltstack-rpm/ /usr/share/nginx/html/pkgs/saltstack-rpm/

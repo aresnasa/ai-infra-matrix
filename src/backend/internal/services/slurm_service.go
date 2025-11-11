@@ -2101,84 +2101,71 @@ func (s *SlurmService) getMungeKey(ctx context.Context) ([]byte, error) {
 	return output, nil
 }
 
-// installSlurmPackages 安装SLURM包（从apphub RPM仓库）
+// installSlurmPackages 安装SLURM包（使用 SaltStack 客户端执行）
 func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
-	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", nodeName, osType)
+	fmt.Fprintf(logWriter, "[INFO] 在 %s 上使用 Salt 客户端安装SLURM包 (OS: %s)\n", nodeName, osType)
+
+	// 读取安装脚本（路径根据 Dockerfile 中的 COPY 命令）
+	scriptPath := "/root/scripts/install-slurm-node.sh"
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("读取安装脚本失败 %s: %w", scriptPath, err)
+	}
 
 	// 获取apphub URL
 	apphubURL := os.Getenv("APPHUB_URL")
 	if apphubURL == "" {
-		apphubURL = "http://ai-infra-apphub/pkgs" // 默认URL
+		apphubURL = "http://ai-infra-apphub" // 默认URL（AppHub 使用端口 80）
 	}
 
-	var installCmd string
-	if osType == "rocky" || osType == "centos" {
-		// Rocky Linux / CentOS - 使用apphub RPM仓库
-		installCmd = fmt.Sprintf(`
-# 配置apphub SLURM仓库
-cat > /etc/yum.repos.d/apphub-slurm.repo << 'SLURM_REPO_EOF'
-[apphub-slurm]
-name=AppHub SLURM Repository
-baseurl=%s/slurm-rpm
-enabled=1
-gpgcheck=0
-SLURM_REPO_EOF
-
-# 安装SLURM和munge
-echo "📦 安装SLURM和munge..."
-dnf install -y epel-release
-dnf makecache --disablerepo="*" --enablerepo="apphub-slurm"
-
-# 从源码编译munge（apphub中没有munge RPM）
-echo "🔨 从源码编译munge..."
-dnf install -y gcc make wget openssl-devel zlib-devel bzip2-devel
-cd /tmp
-wget -q https://github.com/dun/munge/releases/download/munge-0.5.16/munge-0.5.16.tar.xz
-tar xf munge-0.5.16.tar.xz
-cd munge-0.5.16
-./configure --prefix=/usr >/dev/null 2>&1
-make -j$(nproc) >/dev/null 2>&1
-make install >/dev/null 2>&1
-cd /tmp
-rm -rf munge-0.5.16 munge-0.5.16.tar.xz
-
-# 安装SLURM slurmd
-echo "📦 安装SLURM slurmd..."
-dnf install -y slurm-slurmd slurm-libpmi --enablerepo="apphub-slurm"
-
-# 创建必要的目录
-mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge /etc/slurm
-chmod 755 /var/spool/slurm/slurmd
-chown -R slurm:slurm /var/spool/slurm /var/log/slurm /var/run/slurm 2>/dev/null || true
-chown -R munge:munge /etc/munge /var/lib/munge /var/log/munge /var/run/munge 2>/dev/null || true
-
-echo "✅ SLURM slurmd 安装完成"
-`, apphubURL)
-	} else if osType == "ubuntu" || osType == "debian" {
-		// Ubuntu / Debian - 使用现有的apt安装方式（因为没有为Ubuntu构建RPM）
-		installCmd = `
-export DEBIAN_FRONTEND=noninteractive && \
-apt-get update -qq && \
-apt-get install -y slurm-client slurmd munge && \
-mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge /etc/slurm-llnl && \
-chmod 755 /var/spool/slurm/slurmd && \
-chown -R slurm:slurm /var/spool/slurm /var/log/slurm /var/run/slurm 2>/dev/null || true && \
-chown -R munge:munge /etc/munge 2>/dev/null || true && \
-echo "✅ SLURM slurmd 安装完成"
-`
-	} else {
-		return fmt.Errorf("不支持的操作系统类型: %s", osType)
+	// Salt master 主机（从环境变量获取，默认为 ai-infra-saltstack）
+	saltMaster := os.Getenv("SALT_MASTER_HOST")
+	if saltMaster == "" {
+		saltMaster = "ai-infra-saltstack" // 实际的 Salt Master 容器名
 	}
 
-	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", installCmd)
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
+	fmt.Fprintf(logWriter, "[INFO] 使用 Salt Master: %s\n", saltMaster)
+	fmt.Fprintf(logWriter, "[INFO] AppHub URL: %s\n", apphubURL)
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("安装SLURM包失败: %v", err)
+	// 1. 将脚本内容写入目标节点的临时文件
+	tmpScriptPath := fmt.Sprintf("/tmp/install-slurm-%s.sh", nodeName)
+	writeScriptCmd := fmt.Sprintf(`cat > %s << 'SCRIPT_EOF'
+%s
+SCRIPT_EOF
+chmod +x %s`, tmpScriptPath, string(scriptContent), tmpScriptPath)
+
+	// 使用 salt 命令将脚本写入节点
+	saltWriteCmd := exec.CommandContext(ctx, "docker", "exec", saltMaster,
+		"salt", nodeName, "cmd.run", writeScriptCmd)
+	saltWriteCmd.Stdout = logWriter
+	saltWriteCmd.Stderr = logWriter
+
+	fmt.Fprintf(logWriter, "[INFO] 上传安装脚本到节点 %s...\n", nodeName)
+	if err := saltWriteCmd.Run(); err != nil {
+		return fmt.Errorf("上传脚本到节点失败: %v", err)
 	}
 
-	fmt.Fprintf(logWriter, "[INFO] SLURM包安装成功\n")
+	// 2. 使用 salt 命令执行安装脚本
+	executeScriptCmd := fmt.Sprintf("%s %s compute", tmpScriptPath, apphubURL)
+
+	saltExecCmd := exec.CommandContext(ctx, "docker", "exec", saltMaster,
+		"salt", nodeName, "cmd.run", executeScriptCmd,
+		"timeout=600") // 10分钟超时
+
+	saltExecCmd.Stdout = logWriter
+	saltExecCmd.Stderr = logWriter
+
+	fmt.Fprintf(logWriter, "[INFO] 通过 Salt 执行安装脚本...\n")
+	if err := saltExecCmd.Run(); err != nil {
+		return fmt.Errorf("通过 Salt 执行安装脚本失败: %v", err)
+	}
+
+	// 3. 清理临时脚本
+	saltCleanCmd := exec.CommandContext(ctx, "docker", "exec", saltMaster,
+		"salt", nodeName, "cmd.run", fmt.Sprintf("rm -f %s", tmpScriptPath))
+	saltCleanCmd.Run() // 忽略清理错误
+
+	fmt.Fprintf(logWriter, "[INFO] ✓ SLURM包安装成功（通过 Salt）\n")
 	return nil
 }
 

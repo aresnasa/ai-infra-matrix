@@ -44,6 +44,7 @@ import CreateClusterDialog from './CreateClusterDialog';
 import DeploymentProgressDialog from './DeploymentProgressDialog';
 import ClusterDetailsDialog from './ClusterDetailsDialog';
 import ScaleClusterDialog from './ScaleClusterDialog';
+import ConnectExternalClusterDialog from './ConnectExternalClusterDialog';
 
 const SlurmClusterManagement = () => {
   const [clusters, setClusters] = useState([]);
@@ -51,6 +52,7 @@ const SlurmClusterManagement = () => {
   const [selectedCluster, setSelectedCluster] = useState(null);
   const [deploymentStatus, setDeploymentStatus] = useState({});
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showProgressDialog, setShowProgressDialog] = useState(false);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [showScaleDialog, setShowScaleDialog] = useState(false);
@@ -251,13 +253,23 @@ const SlurmClusterManagement = () => {
                 管理和监控 SLURM 高性能计算集群
               </p>
             </div>
-            <Button
-              onClick={() => setShowCreateDialog(true)}
-              className="flex items-center gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              创建集群
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowConnectDialog(true)}
+                className="flex items-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                连接已有集群
+              </Button>
+              <Button
+                onClick={() => setShowCreateDialog(true)}
+                className="flex items-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                创建新集群
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -265,7 +277,7 @@ const SlurmClusterManagement = () => {
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                暂无集群，点击"创建集群"开始使用
+                暂无集群，点击"创建新集群"或"连接已有集群"开始使用
               </AlertDescription>
             </Alert>
           ) : (
@@ -273,6 +285,7 @@ const SlurmClusterManagement = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>集群名称</TableHead>
+                  <TableHead>类型</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>Master节点</TableHead>
                   <TableHead>节点数量</TableHead>
@@ -290,6 +303,11 @@ const SlurmClusterManagement = () => {
                           {cluster.description}
                         </div>
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={cluster.cluster_type === 'external' ? 'secondary' : 'default'}>
+                        {cluster.cluster_type === 'external' ? '外部集群' : '托管集群'}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(cluster.status)}
@@ -320,7 +338,8 @@ const SlurmClusterManagement = () => {
                           <Settings className="h-4 w-4" />
                         </Button>
 
-                        {cluster.status === 'pending' && (
+                        {/* 托管集群显示部署和扩容按钮 */}
+                        {cluster.cluster_type !== 'external' && cluster.status === 'pending' && (
                           <Button
                             size="sm"
                             onClick={() => handleDeployCluster(cluster.id)}
@@ -329,7 +348,7 @@ const SlurmClusterManagement = () => {
                           </Button>
                         )}
 
-                        {cluster.status === 'running' && (
+                        {cluster.cluster_type !== 'external' && cluster.status === 'running' && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -361,6 +380,15 @@ const SlurmClusterManagement = () => {
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
         onSubmit={handleCreateCluster}
+      />
+
+      {/* 连接外部集群对话框 */}
+      <ConnectExternalClusterDialog
+        open={showConnectDialog}
+        onOpenChange={setShowConnectDialog}
+        onSuccess={() => {
+          fetchClusters();
+        }}
       />
 
       {/* 部署进度对话框 */}

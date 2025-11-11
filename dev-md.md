@@ -3648,3 +3648,49 @@ error: Failed build dependencies:
 === test-rocky01 ===
 === test-rocky02 ===
 === test-rocky03 ===还是没有slurm进程，需要修复，已经成功构建，在扩容slurm节点时候需要安装slurmd等相关组件，调整下go程序的slurm安装脚本，然后远程执行安装，这里可以使用salt的客户端完成这个安装步骤。
+
+194. 添加一个脚本到src/backend/scripts，然后调整后端backend安装使用读取bash脚本然后使用saltstack客户端远程执行的方式安装slurm工具，这样用到了saltstack的功能，并且结合了saltstack和slurm
+
+195. 已经重新构建并启动容器，还是无法for node in test-ssh01 test-ssh02 test-ssh03 test-rocky01 test-rocky02 test-rocky03; do echo "=== $node ==="; docker exec $node ps aux|grep -E "slurm"; done
+=== test-ssh01 ===
+=== test-ssh02 ===
+=== test-ssh03 ===
+=== test-rocky01 ===
+=== test-rocky02 ===
+=== test-rocky03 ===查到slurm进程，继续修复，直接使用接口安装slurm成功后再写入dockerfile和go程序中构建
+
+196. 改造ubuntu也需要从apphub中安装，否则无法启动slurmd，请修复
+
+197. 现在使用docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+compute*     up   infinite      3  idle* test-rocky[01-03]
+compute*     up   infinite      3   idle test-ssh[01-03]查看到slurm集群状态可以提交任务，但是rocky节点未能正确初始化，需要优化，同时调整go程序和bash脚本，要保证能够使用saltstack正确的安装slurm才行，请继续修复
+
+198. Rocky Linux 节点状态异常
+症状：节点显示 unk* 或 idle*，无法接受任务
+原因：可能是 RPM 包使用 --nodeps 构建导致依赖不完整
+解决方案：
+短期：使用 Ubuntu 节点（已验证工作）
+长期：重新构建 RPM 包，确保完整依赖,需要修复rocky节点的rpm问题，这里需要修复，检查相关构建任务函数，这里考虑apphub中的rpm包直接在rocky01节点安装，然后测试成功后再进行后续的测试
+
+199. 现在使用docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+compute*     up   infinite      3  idle* test-rocky[01-03]
+compute*     up   infinite      3   idle test-ssh[01-03]查看到slurm集群状态可以提交任务，但是rocky节点未能正确初始化，需要优化，同时调整go程序和bash脚本，要保证能够使用saltstack正确的安装slurm才行，请继续修复
+
+200. Rocky Linux 节点状态异常
+症状：节点显示 unk* 或 idle*，无法接受任务
+原因：可能是 RPM 包使用 --nodeps 构建导致依赖不完整
+解决方案：
+短期：使用 Ubuntu 节点（已验证工作）
+长期：重新构建 RPM 包，确保完整依赖,需要修复rocky节点的rpm问题，这里需要修复，检查相关构建任务函数，这里考虑apphub中的rpm包直接在rocky01节点安装，然后测试成功后再进行后续的测试
+
+201. 现在整理所有刚才的操作，配置backend/scripts/中的脚本，需要能够正确的安装slurm和cgroupv2还有其它的组件，保证http://192.168.3.91:8080/slurm中部署节点能够正确的安装所有slurm组件，然后修改一下down的状态改为resume状态，这里已经成功安装了，读取刚才的步骤修复脚本，请继续
+
+202. 现在需要调整http://192.168.3.91:8080/slurm能够支持添加一个已有的集群，请继续调整前后端，这里可以支持增加多个slurm集群
+
+203. 这里slurm使用的是mysql8，这里需要读取init的go程序，将sql通过init注入到mysql，然后调整backend和frontend来适配多集群管理
+
+204. docker logs ai-infra-slurm-master
+正在设置root密码...
+创建 SLURM 运行目录...无法启动slurm，这里的slurm节点安装不能直接写到dockerfile中，而是在页面扩容节点时才触发，同时需要检查是否具备saltstack客户端才能执行slurm节点初始化，同时还要使用@playwright测试slurm集群是否能够正确添加已有slurm集群，这里如果是添加已有集群则需要一个单独管理页面管理，直接复用已有slurm配置和munge密钥和mysql还有其它配置。

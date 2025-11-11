@@ -235,6 +235,62 @@ setup_munge() {
     log "INFO" "✅ Munge 配置完成"
 }
 
+fix_compute_nodes() {
+    log "INFO" "🔧 修复计算节点配置..."
+    
+    # 解析测试节点列表
+    if [ -z "${SLURM_TEST_NODES}" ]; then
+        log "WARN" "未配置测试节点，跳过节点修复"
+        return 0
+    fi
+    
+    # 将逗号分隔的节点列表转换为数组
+    IFS=',' read -ra NODES <<< "${SLURM_TEST_NODES}"
+    
+    local fixed_count=0
+    local failed_count=0
+    
+    for node in "${NODES[@]}"; do
+        node=$(echo "$node" | xargs)  # 去除空格
+        log "INFO" "  检查节点: $node"
+        
+        # 检查节点是否可达
+        if ! ping -c 1 -W 2 "$node" >/dev/null 2>&1; then
+            log "WARN" "  节点 $node 不可达，跳过"
+            ((failed_count++))
+            continue
+        fi
+        
+        # 通过 SSH 修复节点（使用环境变量中的密码）
+        local ssh_password="${SLURM_NODE_SSH_PASSWORD:-aiinfra2024}"
+        
+        # 尝试修复节点
+        if sshpass -p "$ssh_password" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            root@"$node" "
+            mkdir -p /var/run/slurm /var/spool/slurmd /var/log/slurm && \
+            chown -R slurm:slurm /var/run/slurm /var/spool/slurmd /var/log/slurm && \
+            chmod 755 /var/run/slurm /var/spool/slurmd && \
+            systemctl is-active --quiet slurmd || systemctl restart slurmd
+        " >/dev/null 2>&1; then
+            log "INFO" "  ✅ 节点 $node 修复成功"
+            ((fixed_count++))
+        else
+            log "WARN" "  ⚠️  节点 $node 修复失败（SSH连接或命令执行失败）"
+            ((failed_count++))
+        fi
+        
+        sleep 1
+    done
+    
+    log "INFO" "✅ 节点修复完成: 成功 $fixed_count 个, 失败 $failed_count 个"
+    
+    # 如果有节点修复成功，等待它们注册到 slurmctld
+    if [ $fixed_count -gt 0 ]; then
+        log "INFO" "⏳ 等待节点注册到控制器..."
+        sleep 5
+    fi
+}
+
 bootstrap() {
     detect_slurm_mode
     set_plugin_dir
@@ -249,6 +305,16 @@ bootstrap() {
 
     generate_configs
     setup_munge
+    
+    # 不再自动修复节点，改为可选功能
+    # 通过环境变量 AUTO_FIX_NODES=true 启用
+    if [ "${AUTO_FIX_NODES:-false}" = "true" ]; then
+        log "INFO" "⏳ 等待 SLURM 服务启动..."
+        sleep 10
+        fix_compute_nodes
+    else
+        log "INFO" "⏭️  跳过自动节点修复（通过页面扩容时触发）"
+    fi
 
     log "INFO" "✨ SLURM 引导任务完成"
 }

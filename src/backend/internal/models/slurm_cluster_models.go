@@ -14,10 +14,12 @@ type SlurmCluster struct {
 	ID          uint           `json:"id" gorm:"primaryKey"`
 	Name        string         `json:"name" gorm:"not null;size:100"`
 	Description string         `json:"description" gorm:"size:500"`
-	Status      string         `json:"status" gorm:"default:'pending';size:50"` // pending, deploying, running, scaling, failed, stopped
+	Status      string         `json:"status" gorm:"default:'pending';size:50"`       // pending, deploying, running, scaling, failed, stopped
+	ClusterType string         `json:"cluster_type" gorm:"default:'managed';size:50"` // managed（自动部署）, external（已有集群）
 	MasterHost  string         `json:"master_host" gorm:"size:255"`
 	MasterPort  int            `json:"master_port" gorm:"default:22"`
-	SaltMaster  string         `json:"salt_master" gorm:"size:255"` // SaltStack Master地址
+	MasterSSH   *SSHConfig     `json:"master_ssh,omitempty" gorm:"type:json"` // Master节点SSH连接信息（用于external类型）
+	SaltMaster  string         `json:"salt_master" gorm:"size:255"`           // SaltStack Master地址
 	Config      ClusterConfig  `json:"config" gorm:"type:json"`
 	CreatedBy   uint           `json:"created_by"`
 	CreatedAt   time.Time      `json:"created_at"`
@@ -205,6 +207,38 @@ type NodeTemplate struct {
 }
 
 // JSON字段类型定义
+type SSHConfig struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	AuthType string `json:"auth_type"` // password, key
+	Password string `json:"password,omitempty"`
+	KeyPath  string `json:"key_path,omitempty"`
+}
+
+// Scan 实现 database/sql.Scanner 接口
+func (sc *SSHConfig) Scan(value interface{}) error {
+	if value == nil {
+		*sc = SSHConfig{}
+		return nil
+	}
+
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to scan SSHConfig: expected []byte, got %T", value)
+	}
+
+	return json.Unmarshal(bytes, sc)
+}
+
+// Value 实现 database/sql/driver.Valuer 接口
+func (sc SSHConfig) Value() (driver.Value, error) {
+	if sc.Host == "" {
+		return nil, nil
+	}
+	return json.Marshal(sc)
+}
+
 type ClusterConfig struct {
 	SlurmVersion   string            `json:"slurm_version"`
 	SaltVersion    string            `json:"salt_version"`
@@ -327,11 +361,22 @@ func (sa *StringArray) Scan(value interface{}) error {
 type CreateClusterRequest struct {
 	Name        string              `json:"name" binding:"required"`
 	Description string              `json:"description"`
+	ClusterType string              `json:"cluster_type" binding:"required,oneof=managed external"` // managed或external
 	MasterHost  string              `json:"master_host" binding:"required"`
 	MasterPort  int                 `json:"master_port"`
-	SaltMaster  string              `json:"salt_master" binding:"required"`
+	MasterSSH   *SSHConfig          `json:"master_ssh"`  // external类型时必填
+	SaltMaster  string              `json:"salt_master"` // managed类型时必填
 	Config      ClusterConfig       `json:"config"`
-	Nodes       []CreateNodeRequest `json:"nodes" binding:"required,min=1"`
+	Nodes       []CreateNodeRequest `json:"nodes"` // managed类型时必填
+}
+
+type ConnectExternalClusterRequest struct {
+	Name        string        `json:"name" binding:"required"`
+	Description string        `json:"description"`
+	MasterHost  string        `json:"master_host" binding:"required"`
+	MasterPort  int           `json:"master_port"`
+	MasterSSH   SSHConfig     `json:"master_ssh" binding:"required"`
+	Config      ClusterConfig `json:"config"`
 }
 
 type CreateNodeRequest struct {

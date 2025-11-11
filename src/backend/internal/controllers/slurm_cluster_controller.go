@@ -106,6 +106,196 @@ func (c *SlurmClusterController) CreateCluster(ctx *gin.Context) {
 	}).Info("SLURM cluster created")
 }
 
+// ConnectExternalCluster 连接已有的SLURM集群
+// @Summary 连接已有的SLURM集群
+// @Description 连接一个已经部署好的SLURM集群，通过SSH获取集群信息
+// @Tags SLURM Cluster
+// @Accept json
+// @Produce json
+// @Param request body models.ConnectExternalClusterRequest true "外部集群连接请求"
+// @Success 201 {object} models.SlurmCluster
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/slurm/clusters/connect [post]
+func (c *SlurmClusterController) ConnectExternalCluster(ctx *gin.Context) {
+	var req models.ConnectExternalClusterRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logrus.WithError(err).Error("Failed to bind external cluster connection request")
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request format",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 获取当前用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
+	}
+
+	// 验证SSH连接
+	if req.MasterSSH.Host == "" || req.MasterSSH.Username == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid SSH configuration",
+			"message": "SSH host and username are required",
+		})
+		return
+	}
+
+	cluster, err := c.service.ConnectExternalCluster(ctx.Request.Context(), req, userID.(uint))
+	if err != nil {
+		logrus.WithError(err).Error("Failed to connect external SLURM cluster")
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to connect cluster",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"message": "External cluster connected successfully",
+		"data":    cluster,
+	})
+
+	logrus.WithFields(logrus.Fields{
+		"cluster_id":   cluster.ID,
+		"cluster_name": cluster.Name,
+		"user_id":      userID,
+		"cluster_type": "external",
+	}).Info("External SLURM cluster connected")
+}
+
+// GetClusterInfo 获取集群的详细运行信息
+// @Summary 获取集群详细信息
+// @Description 获取SLURM集群的详细运行信息（节点状态、分区信息等）
+// @Tags SLURM Cluster
+// @Accept json
+// @Produce json
+// @Param clusterId path int true "集群ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/slurm/clusters/{clusterId}/info [get]
+func (c *SlurmClusterController) GetClusterInfo(ctx *gin.Context) {
+	clusterID, err := strconv.ParseUint(ctx.Param("clusterId"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid cluster ID",
+		})
+		return
+	}
+
+	// 获取当前用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
+	}
+
+	// 验证集群是否属于当前用户
+	var cluster models.SlurmCluster
+	if err := c.db.Where("id = ? AND created_by = ?", clusterID, userID).First(&cluster).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{
+				"error": "Cluster not found or access denied",
+			})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Database error",
+			})
+		}
+		return
+	}
+
+	// 获取集群详细信息
+	info, err := c.service.GetClusterInfo(ctx.Request.Context(), uint(clusterID))
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get cluster info")
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get cluster info",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    info,
+	})
+}
+
+// DeleteCluster 删除集群
+// @Summary 删除集群
+// @Description 删除一个SLURM集群配置（不会删除实际节点）
+// @Tags SLURM Cluster
+// @Accept json
+// @Produce json
+// @Param clusterId path int true "集群ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/slurm/clusters/{clusterId} [delete]
+func (c *SlurmClusterController) DeleteCluster(ctx *gin.Context) {
+	clusterID, err := strconv.ParseUint(ctx.Param("clusterId"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid cluster ID",
+		})
+		return
+	}
+
+	// 获取当前用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User not authenticated",
+		})
+		return
+	}
+
+	// 验证集群是否属于当前用户
+	var cluster models.SlurmCluster
+	if err := c.db.Where("id = ? AND created_by = ?", clusterID, userID).First(&cluster).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{
+				"error": "Cluster not found or access denied",
+			})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Database error",
+			})
+		}
+		return
+	}
+
+	// 软删除集群
+	if err := c.db.Delete(&cluster).Error; err != nil {
+		logrus.WithError(err).Error("Failed to delete cluster")
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to delete cluster",
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Cluster deleted successfully",
+	})
+
+	logrus.WithFields(logrus.Fields{
+		"cluster_id":   cluster.ID,
+		"cluster_name": cluster.Name,
+		"user_id":      userID,
+	}).Info("SLURM cluster deleted")
+}
+
 // DeployCluster 部署SLURM集群
 // @Summary 部署SLURM集群
 // @Description 异步部署SLURM集群，包括SaltStack安装和SLURM配置
@@ -518,10 +708,13 @@ func (c *SlurmClusterController) RegisterRoutes(api *gin.RouterGroup) {
 	clusters := api.Group("/slurm/clusters")
 	{
 		clusters.POST("", c.CreateCluster)
+		clusters.POST("/connect", c.ConnectExternalCluster) // 新增：连接已有集群
 		clusters.GET("", c.ListClusters)
 		clusters.GET("/:clusterId", c.GetCluster)
+		clusters.GET("/:clusterId/info", c.GetClusterInfo) // 新增：获取集群详细信息
 		clusters.POST("/deploy", c.DeployCluster)
 		clusters.POST("/scale", c.ScaleCluster)
+		clusters.DELETE("/:clusterId", c.DeleteCluster) // 新增：删除集群
 	}
 
 	deployments := api.Group("/slurm/deployments")

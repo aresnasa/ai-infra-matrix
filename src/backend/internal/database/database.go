@@ -295,6 +295,12 @@ func Migrate() error {
 		return err
 	}
 
+	// 执行自定义迁移（添加新字段等）
+	if err := runCustomMigrations(); err != nil {
+		logrus.WithError(err).Error("Failed to run custom migrations")
+		return err
+	}
+
 	// 注册GORM钩子用于自动加密/解密
 	if err := registerEncryptionHooks(); err != nil {
 		logrus.WithError(err).Error("Failed to register encryption hooks")
@@ -684,6 +690,133 @@ func registerEncryptionHooks() error {
 	}
 
 	logrus.Info("Encryption hooks registered successfully")
+	return nil
+}
+
+// runCustomMigrations 执行自定义数据库迁移脚本
+func runCustomMigrations() error {
+	logrus.Info("Running custom database migrations...")
+
+	// 检查数据库类型
+	dialector := DB.Dialector.Name()
+
+	// 迁移1: 为 slurm_clusters 表添加新字段
+	if err := addSlurmClusterFields(dialector); err != nil {
+		return fmt.Errorf("failed to add slurm cluster fields: %w", err)
+	}
+
+	logrus.Info("Custom database migrations completed successfully")
+	return nil
+}
+
+// addSlurmClusterFields 为 slurm_clusters 表添加 cluster_type 和 master_ssh 字段
+func addSlurmClusterFields(dialector string) error {
+	logrus.Info("Adding cluster_type and master_ssh fields to slurm_clusters table...")
+
+	// 检查字段是否已存在
+	var columnExists bool
+
+	if dialector == "postgres" {
+		// PostgreSQL 语法
+		err := DB.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_name = 'slurm_clusters' 
+				AND column_name = 'cluster_type'
+			)
+		`).Scan(&columnExists).Error
+		if err != nil {
+			return fmt.Errorf("failed to check if cluster_type column exists: %w", err)
+		}
+
+		if !columnExists {
+			// 添加 cluster_type 字段
+			if err := DB.Exec(`
+				ALTER TABLE slurm_clusters 
+				ADD COLUMN cluster_type VARCHAR(50) DEFAULT 'managed'
+			`).Error; err != nil {
+				return fmt.Errorf("failed to add cluster_type column: %w", err)
+			}
+			logrus.Info("✓ Added cluster_type column to slurm_clusters")
+		} else {
+			logrus.Info("✓ cluster_type column already exists")
+		}
+
+		// 检查 master_ssh 字段
+		err = DB.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_name = 'slurm_clusters' 
+				AND column_name = 'master_ssh'
+			)
+		`).Scan(&columnExists).Error
+		if err != nil {
+			return fmt.Errorf("failed to check if master_ssh column exists: %w", err)
+		}
+
+		if !columnExists {
+			// 添加 master_ssh 字段 (JSON 类型)
+			if err := DB.Exec(`
+				ALTER TABLE slurm_clusters 
+				ADD COLUMN master_ssh JSONB
+			`).Error; err != nil {
+				return fmt.Errorf("failed to add master_ssh column: %w", err)
+			}
+			logrus.Info("✓ Added master_ssh column to slurm_clusters")
+		} else {
+			logrus.Info("✓ master_ssh column already exists")
+		}
+
+	} else {
+		// MySQL/MariaDB/OceanBase 语法
+		err := DB.Raw(`
+			SELECT COUNT(*) > 0 FROM information_schema.columns 
+			WHERE table_schema = DATABASE() 
+			AND table_name = 'slurm_clusters' 
+			AND column_name = 'cluster_type'
+		`).Scan(&columnExists).Error
+		if err != nil {
+			return fmt.Errorf("failed to check if cluster_type column exists: %w", err)
+		}
+
+		if !columnExists {
+			// 添加 cluster_type 字段
+			if err := DB.Exec(`
+				ALTER TABLE slurm_clusters 
+				ADD COLUMN cluster_type VARCHAR(50) DEFAULT 'managed'
+			`).Error; err != nil {
+				return fmt.Errorf("failed to add cluster_type column: %w", err)
+			}
+			logrus.Info("✓ Added cluster_type column to slurm_clusters")
+		} else {
+			logrus.Info("✓ cluster_type column already exists")
+		}
+
+		// 检查 master_ssh 字段
+		err = DB.Raw(`
+			SELECT COUNT(*) > 0 FROM information_schema.columns 
+			WHERE table_schema = DATABASE() 
+			AND table_name = 'slurm_clusters' 
+			AND column_name = 'master_ssh'
+		`).Scan(&columnExists).Error
+		if err != nil {
+			return fmt.Errorf("failed to check if master_ssh column exists: %w", err)
+		}
+
+		if !columnExists {
+			// 添加 master_ssh 字段 (JSON 类型)
+			if err := DB.Exec(`
+				ALTER TABLE slurm_clusters 
+				ADD COLUMN master_ssh JSON
+			`).Error; err != nil {
+				return fmt.Errorf("failed to add master_ssh column: %w", err)
+			}
+			logrus.Info("✓ Added master_ssh column to slurm_clusters")
+		} else {
+			logrus.Info("✓ master_ssh column already exists")
+		}
+	}
+
 	return nil
 }
 

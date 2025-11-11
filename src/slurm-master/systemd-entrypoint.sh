@@ -7,6 +7,19 @@ if [ -n "${SLURM_MASTER_PASSWORD:-}" ]; then
     echo "root:${SLURM_MASTER_PASSWORD}" | chpasswd
 fi
 
+# 创建 SLURM 必需的目录并设置权限
+echo "创建 SLURM 运行目录..."
+mkdir -p /var/run/slurm
+mkdir -p /var/lib/slurm/slurmctld
+mkdir -p /var/lib/slurm/slurmdbd
+mkdir -p /var/log/slurm
+chown -R slurm:slurm /var/run/slurm
+chown -R slurm:slurm /var/lib/slurm
+chown -R slurm:slurm /var/log/slurm
+chmod 755 /var/run/slurm
+chmod 755 /var/lib/slurm/slurmctld
+chmod 755 /var/lib/slurm/slurmdbd
+
 ENV_FILE="/etc/sysconfig/slurm-env"
 mkdir -p /etc/sysconfig /etc/systemd/system/multi-user.target.wants
 

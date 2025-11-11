@@ -571,3 +571,314 @@ func (s *SlurmClusterService) GetCluster(clusterID, userID uint) (*models.SlurmC
 	}
 	return &cluster, nil
 }
+
+// ConnectExternalCluster 连接已有的SLURM集群
+func (s *SlurmClusterService) ConnectExternalCluster(ctx context.Context, req models.ConnectExternalClusterRequest, userID uint) (*models.SlurmCluster, error) {
+	logrus.WithFields(logrus.Fields{
+		"name":        req.Name,
+		"master_host": req.MasterHost,
+		"user_id":     userID,
+	}).Info("Connecting to external SLURM cluster")
+
+	// 创建SSH客户端配置
+	sshConfig := &ssh.ClientConfig{
+		User:            req.MasterSSH.Username,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	// 配置认证方式
+	if req.MasterSSH.AuthType == "password" && req.MasterSSH.Password != "" {
+		sshConfig.Auth = []ssh.AuthMethod{
+			ssh.Password(req.MasterSSH.Password),
+		}
+	} else if req.MasterSSH.AuthType == "key" && req.MasterSSH.KeyPath != "" {
+		// 这里简化处理，实际应该读取密钥文件
+		logrus.Warn("SSH key authentication not fully implemented yet")
+		return nil, fmt.Errorf("SSH key authentication not supported in this version")
+	} else {
+		return nil, fmt.Errorf("invalid SSH authentication configuration")
+	}
+
+	// 测试SSH连接
+	address := fmt.Sprintf("%s:%d", req.MasterSSH.Host, req.MasterSSH.Port)
+	client, err := ssh.Dial("tcp", address, sshConfig)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to connect to SLURM master via SSH")
+		return nil, fmt.Errorf("failed to connect to SLURM master: %v", err)
+	}
+	defer client.Close()
+
+	// 验证SLURM是否已安装
+	session, err := client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH session: %v", err)
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput("scontrol --version")
+	if err != nil {
+		return nil, fmt.Errorf("SLURM is not installed or not accessible: %v", err)
+	}
+
+	slurmVersion := strings.TrimSpace(string(output))
+	logrus.Infof("Detected SLURM version: %s", slurmVersion)
+
+	// 获取集群信息
+	session2, _ := client.NewSession()
+	clusterInfo, _ := session2.CombinedOutput("scontrol show config | grep ClusterName")
+	session2.Close()
+
+	_ = clusterInfo // 暂时不使用，保留用于日志
+	if len(clusterInfo) > 0 {
+		parts := strings.Split(string(clusterInfo), "=")
+		if len(parts) > 1 {
+			detectedName := strings.TrimSpace(parts[1])
+			if detectedName != "" {
+				logrus.Infof("Detected cluster name: %s", detectedName)
+			}
+		}
+	}
+
+	// 创建集群记录
+	cluster := &models.SlurmCluster{
+		Name:        req.Name,
+		Description: req.Description,
+		Status:      "running", // external集群默认为running状态
+		ClusterType: "external",
+		MasterHost:  req.MasterHost,
+		MasterPort:  req.MasterPort,
+		MasterSSH:   &req.MasterSSH,
+		Config:      req.Config,
+		CreatedBy:   userID,
+	}
+
+	if cluster.Config.SlurmVersion == "" {
+		cluster.Config.SlurmVersion = slurmVersion
+	}
+
+	if err := s.db.Create(cluster).Error; err != nil {
+		return nil, fmt.Errorf("failed to create cluster record: %v", err)
+	}
+
+	// 异步获取节点信息
+	go s.discoverClusterNodes(cluster.ID, req.MasterSSH)
+
+	logrus.WithFields(logrus.Fields{
+		"cluster_id":   cluster.ID,
+		"cluster_name": cluster.Name,
+	}).Info("External cluster connected successfully")
+
+	return cluster, nil
+}
+
+// discoverClusterNodes 发现集群节点
+func (s *SlurmClusterService) discoverClusterNodes(clusterID uint, sshConfig models.SSHConfig) {
+	logrus.Infof("Discovering nodes for cluster %d", clusterID)
+
+	// 创建SSH客户端
+	clientConfig := &ssh.ClientConfig{
+		User:            sshConfig.Username,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	if sshConfig.AuthType == "password" && sshConfig.Password != "" {
+		clientConfig.Auth = []ssh.AuthMethod{
+			ssh.Password(sshConfig.Password),
+		}
+	}
+
+	address := fmt.Sprintf("%s:%d", sshConfig.Host, sshConfig.Port)
+	client, err := ssh.Dial("tcp", address, clientConfig)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to connect for node discovery")
+		return
+	}
+	defer client.Close()
+
+	// 获取节点信息
+	session, err := client.NewSession()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to create session for node discovery")
+		return
+	}
+	defer session.Close()
+
+	// 执行 sinfo 获取节点列表
+	output, err := session.CombinedOutput("sinfo -N -h -o '%N %t %c %m %f'")
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get node info")
+		return
+	}
+
+	// 解析节点信息
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+
+		nodeName := fields[0]
+		nodeState := fields[1]
+		cpus := 1
+		memory := 1024
+
+		// 尝试解析CPU和内存
+		if len(fields) > 2 {
+			fmt.Sscanf(fields[2], "%d", &cpus)
+		}
+		if len(fields) > 3 {
+			fmt.Sscanf(fields[3], "%d", &memory)
+		}
+
+		// 创建节点记录
+		node := &models.SlurmNode{
+			ClusterID:      clusterID,
+			NodeName:       nodeName,
+			NodeType:       "compute", // 默认为compute节点
+			Host:           nodeName,  // 使用节点名作为host
+			Port:           22,
+			Username:       sshConfig.Username,
+			AuthType:       sshConfig.AuthType,
+			Password:       sshConfig.Password,
+			KeyPath:        sshConfig.KeyPath,
+			Status:         s.mapSlurmStateToStatus(nodeState),
+			CPUs:           cpus,
+			Memory:         memory,
+			SaltMinionID:   nodeName,
+			CoresPerSocket: 1,
+			ThreadsPerCore: 1,
+		}
+
+		if err := s.db.Create(node).Error; err != nil {
+			logrus.WithError(err).Errorf("Failed to create node record for %s", nodeName)
+			continue
+		}
+
+		logrus.Infof("Discovered node: %s (CPUs: %d, Memory: %dMB, State: %s)",
+			nodeName, cpus, memory, nodeState)
+	}
+}
+
+// mapSlurmStateToStatus 将SLURM节点状态映射到我们的状态
+func (s *SlurmClusterService) mapSlurmStateToStatus(slurmState string) string {
+	switch strings.ToLower(slurmState) {
+	case "idle", "alloc", "mixed":
+		return "active"
+	case "down", "drain", "drained":
+		return "failed"
+	case "unknown":
+		return "pending"
+	default:
+		return "active"
+	}
+}
+
+// GetClusterInfo 获取集群详细信息
+func (s *SlurmClusterService) GetClusterInfo(ctx context.Context, clusterID uint) (map[string]interface{}, error) {
+	var cluster models.SlurmCluster
+	if err := s.db.Preload("Nodes").First(&cluster, clusterID).Error; err != nil {
+		return nil, fmt.Errorf("cluster not found: %v", err)
+	}
+
+	// 如果是external类型，通过SSH获取实时信息
+	if cluster.ClusterType == "external" && cluster.MasterSSH != nil {
+		return s.getExternalClusterInfo(cluster)
+	}
+
+	// 对于managed类型，返回数据库中的信息
+	info := map[string]interface{}{
+		"cluster":      cluster,
+		"node_count":   len(cluster.Nodes),
+		"cluster_type": cluster.ClusterType,
+		"status":       cluster.Status,
+	}
+
+	// 统计节点状态
+	nodeStatus := make(map[string]int)
+	for _, node := range cluster.Nodes {
+		nodeStatus[node.Status]++
+	}
+	info["node_status"] = nodeStatus
+
+	return info, nil
+}
+
+// getExternalClusterInfo 获取外部集群的实时信息
+func (s *SlurmClusterService) getExternalClusterInfo(cluster models.SlurmCluster) (map[string]interface{}, error) {
+	// 创建SSH客户端
+	clientConfig := &ssh.ClientConfig{
+		User:            cluster.MasterSSH.Username,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	if cluster.MasterSSH.AuthType == "password" && cluster.MasterSSH.Password != "" {
+		clientConfig.Auth = []ssh.AuthMethod{
+			ssh.Password(cluster.MasterSSH.Password),
+		}
+	}
+
+	address := fmt.Sprintf("%s:%d", cluster.MasterSSH.Host, cluster.MasterSSH.Port)
+	client, err := ssh.Dial("tcp", address, clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to cluster: %v", err)
+	}
+	defer client.Close()
+
+	info := map[string]interface{}{
+		"cluster":      cluster,
+		"node_count":   len(cluster.Nodes),
+		"cluster_type": "external",
+		"status":       cluster.Status,
+	}
+
+	// 获取sinfo信息
+	session1, _ := client.NewSession()
+	sinfoOutput, err := session1.CombinedOutput("sinfo -h")
+	session1.Close()
+	if err == nil {
+		info["sinfo"] = string(sinfoOutput)
+	}
+
+	// 获取squeue信息
+	session2, _ := client.NewSession()
+	squeueOutput, err := session2.CombinedOutput("squeue -h")
+	session2.Close()
+	if err == nil {
+		jobLines := strings.Split(strings.TrimSpace(string(squeueOutput)), "\n")
+		if len(jobLines) > 0 && jobLines[0] != "" {
+			info["running_jobs"] = len(jobLines)
+		} else {
+			info["running_jobs"] = 0
+		}
+	}
+
+	// 获取节点统计
+	session3, _ := client.NewSession()
+	nodeStatsOutput, err := session3.CombinedOutput("sinfo -N -h -o '%t' | sort | uniq -c")
+	session3.Close()
+	if err == nil {
+		nodeStats := make(map[string]int)
+		lines := strings.Split(strings.TrimSpace(string(nodeStatsOutput)), "\n")
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				count := 0
+				fmt.Sscanf(fields[0], "%d", &count)
+				state := fields[1]
+				nodeStats[state] = count
+			}
+		}
+		info["node_stats"] = nodeStats
+	}
+
+	return info, nil
+}

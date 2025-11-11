@@ -135,6 +135,7 @@ RUN set -eux; \
         telnet \
         openssh-client \
         openssh-server \
+        sshpass \
         mtr-tiny \
         netcat-openbsd \
         lsof \
