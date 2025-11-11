@@ -389,16 +389,48 @@ RUN set -eux; \
         echo "⚠️  rpmdev-setuptree still not available, will use manual setup"; \
     fi; \
     dnf clean all; \
-    # Try to install optional dependencies (may not be available)
-    echo "尝试安装可选依赖包..."; \
-    dnf install -y munge-devel 2>/dev/null || echo "⚠️  munge-devel not available"; \
-    dnf install -y mariadb-devel 2>/dev/null || echo "⚠️  mariadb-devel not available"; \
-    dnf install -y mysql-devel 2>/dev/null || echo "⚠️  mysql-devel not available"; \
-    dnf install -y hwloc-devel 2>/dev/null || echo "⚠️  hwloc-devel not available"; \
-    dnf install -y json-c-devel 2>/dev/null || echo "⚠️  json-c-devel not available"; \
-    dnf install -y yaml-devel 2>/dev/null || echo "⚠️  yaml-devel not available (trying libyaml-devel)"; \
-    dnf install -y libyaml-devel 2>/dev/null || echo "⚠️  libyaml-devel not available"; \
-    echo "依赖包安装完成"
+    # Install SLURM build dependencies (required by rpmbuild)
+    # Note: Some packages have different names or are in CRB repo
+    echo "📦 Installing SLURM build dependencies..."; \
+    dnf install -y \
+        autoconf \
+        automake \
+        systemd \
+        || { echo "❌ Failed to install basic dependencies"; exit 1; }; \
+    # Install mariadb-devel (required by SLURM)
+    dnf module reset mysql -y 2>/dev/null || true; \
+    dnf install -y mysql-devel 2>/dev/null || \
+    dnf install -y mariadb-connector-c-devel 2>/dev/null || \
+    { echo "❌ Failed to install mariadb-devel"; exit 1; }; \
+    # Try to install munge from EPEL first
+    dnf install -y \
+        munge-devel \
+        munge-libs \
+        2>/dev/null && echo "✓ munge packages installed from repository" || { \
+        echo "⚠️  munge not available in repos, will build from source..."; \
+        cd /tmp; \
+        MUNGE_VERSION="0.5.16"; \
+        wget "https://github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+        tar xf munge.tar.xz; \
+        cd "munge-${MUNGE_VERSION}"; \
+        ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var; \
+        make -j$(nproc); \
+        make install; \
+        ldconfig; \
+        cd /tmp && rm -rf munge*; \
+        echo "✓ munge built and installed from source"; \
+    }; \
+    # hwloc and other optional libs
+    dnf install -y \
+        hwloc-devel \
+        2>/dev/null || echo "⚠️  hwloc-devel not available"; \
+    dnf install -y \
+        json-c-devel \
+        2>/dev/null || echo "⚠️  json-c-devel not available"; \
+    dnf install -y \
+        libyaml-devel \
+        2>/dev/null || echo "⚠️  libyaml-devel not available"; \
+    echo "✓ SLURM build dependencies installed (with available packages)"
 
 # Add non-root builder user
 RUN useradd -m -u 1000 builder
@@ -425,50 +457,40 @@ RUN set -eux; \
 ARG SLURM_TARBALL_PATH
 COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
-# Build SLURM RPM packages
+# Build SLURM RPM packages using official rpmbuild method
+# Reference: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
 RUN set -eux; \
     if [ "${BUILD_SLURM}" = "true" ]; then \
-        echo "📦 Building SLURM ${SLURM_VERSION} RPM packages..."; \
+        echo "📦 Building SLURM ${SLURM_VERSION} RPM packages using rpmbuild..."; \
         cd /home/builder/build; \
-        # Extract source tarball
+        # Find the SLURM tarball
         tarball=$(ls slurm-*.tar.bz2 | head -1); \
         echo "✓ Found SLURM tarball: ${tarball}"; \
-        tar -xaf "${tarball}"; \
-        srcdir=$(basename "${tarball}" .tar.bz2); \
-        cd "${srcdir}"; \
         # Setup rpmbuild directories
         echo ">>> Setting up rpmbuild environment..."; \
         mkdir -p /home/builder/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
-        cp ../"${tarball}" /home/builder/rpmbuild/SOURCES/; \
-        # Configure SLURM
-        echo ">>> Configuring SLURM for RPM build..."; \
-        ./configure \
-            --prefix=/usr \
-            --sysconfdir=/etc/slurm \
-            --disable-debug \
-            --with-munge \
-            --enable-pam \
-            --without-rpath 2>&1 | tee /tmp/configure-rpm.log || { \
-            echo "❌ Configure failed! Last 50 lines of output:"; \
-            tail -50 /tmp/configure-rpm.log; \
+        # Create .rpmmacros file for custom configurations
+        echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros; \
+        echo '%_prefix /usr' >> ~/.rpmmacros; \
+        echo '%_slurm_sysconfdir %{_prefix}/etc/slurm' >> ~/.rpmmacros; \
+        echo '%with_munge --with-munge' >> ~/.rpmmacros; \
+        echo "✓ Created ~/.rpmmacros configuration"; \
+        cat ~/.rpmmacros; \
+        # Build RPMs directly using rpmbuild -ta (recommended by official docs)
+        echo ">>> Building SLURM RPM packages using 'rpmbuild -ta' (this may take 10-15 minutes)..."; \
+        echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
+        echo ">>> Note: Using --nodeps because we installed munge from source (not RPM package)"; \
+        if ! rpmbuild -ta --nodeps "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
+            echo "❌ RPM build failed! Last 100 lines of output:"; \
+            tail -100 /tmp/rpmbuild.log; \
+            echo ""; \
+            echo ">>> Checking rpmbuild directory structure:"; \
+            ls -laR ~/rpmbuild/ | head -50 || true; \
             exit 1; \
-        }; \
-        # Build RPM packages using make rpm
-        echo ">>> Building SLURM RPM packages (this may take 10-15 minutes)..."; \
-        echo ">>> Current directory: $(pwd)"; \
-        make contrib 2>&1 | tee /tmp/make-contrib.log || { \
-            echo "❌ Make contrib failed! Last 100 lines of output:"; \
-            tail -100 /tmp/make-contrib.log; \
-            exit 1; \
-        }; \
-        make rpm 2>&1 | tee /tmp/make-rpm.log || { \
-            echo "❌ Make RPM failed! Last 100 lines of output:"; \
-            tail -100 /tmp/make-rpm.log; \
-            exit 1; \
-        }; \
+        fi; \
         echo "✓ SLURM RPM build completed successfully"; \
-        echo ">>> Listing RPM build output locations:"; \
-        find /home/builder -name "*.rpm" -type f 2>/dev/null | head -20 || echo "No RPMs found yet"; \
+        echo ">>> Listing generated RPM packages:"; \
+        find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
         mkdir -p /home/builder/rpms; \

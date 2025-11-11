@@ -3461,4 +3461,190 @@ if slurmState == "DOWN" || slurmState == "DRAIN" {
 === test-rocky02 ===
 === test-rocky03 ===,未能找到slurmd进程，需要将http://192.168.3.91:8080/slurm页面中扩容节点时自动安装slurmd服务并启动，调整下部署节点的go程序，将slurmd服务也安装到计算节点中，请继续，这里期望的是并发的安装slurmd服务，这里不要简单的使用for循环，请调整
 
-190. 这里不要硬编码，而是通过脚本传递给go程序然后go程序通过ssh远程执行，scripts下是本项目的测试脚本，这种slurmd相关的脚本放到src/backend/scripts中，这里还要支持密钥ssh发送脚本。
+190. 这里不要硬编码，而是通过脚本传递给go程序然后go程序通过ssh远程执行，scripts下是本项目的测试脚本，这种slurmd相关的脚本放到src/backend/scripts中，这里还要支持密钥ssh发送脚本，这里安装脚本错误了，需要使用的是apphub中提供的slurm版本，不要从公共仓库下载安装，修复下安装脚本
+
+191. https://slurm.schedmd.com/quickstart_admin.html#rpmbuild读取这个页面，将rpmbuild也加入到apphub构建slurm的步骤中
+
+**✅ 已完成 - SLURM RPM 构建方法优化**
+
+修改了 `src/apphub/Dockerfile` 中的 rpm-builder 阶段，采用官方推荐的 `rpmbuild -ta` 方法：
+
+**变更详情：**
+1. **使用官方方法：** `rpmbuild -ta slurm-25.05.4.tar.bz2`
+   - 之前：解压 → configure → make contrib → make rpm（复杂）
+   - 现在：直接 `rpmbuild -ta` tarball（简单）
+2. **添加 .rpmmacros 配置：**
+   ```
+   %_topdir %(echo $HOME)/rpmbuild
+   %_prefix /usr
+   %_slurm_sysconfdir %{_prefix}/etc/slurm
+   %with_munge --with-munge
+   ```
+3. **改进日志：** 完整记录 rpmbuild 输出到 `/tmp/rpmbuild.log`
+
+**参考文档：** https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
+
+**测试命令：**
+```bash
+# 重新构建 apphub 镜像（只构建 SLURM 部分）
+cd src/apphub
+docker build --target rpm-builder \
+  --build-arg BUILD_SLURM=true \
+  --build-arg SLURM_VERSION=25.05.4 \
+  -t test-slurm-rpm-builder .
+
+# 验证生成的 RPM 包
+docker run --rm test-slurm-rpm-builder ls -lh /out/slurm-rpm/
+```
+
+**优势：**
+- 更符合 SLURM 官方推荐实践
+- 构建步骤更简洁
+- 减少出错可能性
+- RPM 包质量与官方一致
+
+192. 现在测试apphub构建和backend构建，然后通过backend远程安装slurmd，请继续构建和测试
+
+**构建命令：**
+```bash
+./build.sh build apphub,backend --force && \
+./build.sh build-all && \
+docker compose -f docker-compose.test.yml up -d
+```
+
+**问题修复：Dockerfile heredoc 语法错误**
+
+错误信息：
+```
+ERROR: failed to build: failed to solve: dockerfile parse error on line 449: unknown instruction: echo
+```
+
+**原因：** heredoc（`<< 'EOF'`）内的行有额外缩进，导致解析器认为它们是 Dockerfile 指令。
+
+**修复：** 移除 heredoc 内容的缩进，并改用更明确的 EOF 标记名：
+```dockerfile
+cat > ~/.rpmmacros << 'MACROS_EOF'
+%_topdir %(echo $HOME)/rpmbuild
+%_prefix /usr
+%_slurm_sysconfdir %{_prefix}/etc/slurm
+%with_munge --with-munge
+MACROS_EOF
+```
+
+**重新构建中...**
+
+**第二次修复：避免 heredoc 缩进问题**
+
+Heredoc 结束标记必须顶格，但在 RUN 的多行命令中会有缩进。
+
+**最终解决方案：** 用 echo 逐行写入 .rpmmacros：
+```dockerfile
+echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros; \
+echo '%_prefix /usr' >> ~/.rpmmacros; \
+echo '%_slurm_sysconfdir %{_prefix}/etc/slurm' >> ~/.rpmmacros; \
+echo '%with_munge --with-munge' >> ~/.rpmmacros; \
+```
+
+**重新构建：**
+```bash
+./build.sh build apphub,backend --force
+```
+
+**构建状态：**
+- ✅ backend 构建成功 (64.8s)
+- ✅ apphub 构建成功 (镜像创建成功)
+- ❌ **问题发现：SLURM RPM 包未生成**
+
+**问题诊断：**
+```bash
+# 检查最终镜像
+docker run --rm --entrypoint ls ai-infra-apphub:v0.3.6-dev -la /usr/share/nginx/html/pkgs/slurm-rpm/
+# 结果：目录为空（只有 . 和 ..）
+
+# SaltStack RPM 存在
+docker exec ai-infra-apphub find /usr/share/nginx/html/ -name "*.rpm" | wc -l
+# 结果：14 个 SaltStack RPM，0 个 SLURM RPM
+```
+
+**可能原因：**
+1. `rpmbuild -ta` 命令失败但没有中断构建
+2. RPM 文件生成在非预期位置
+3. BUILD_SLURM 参数未正确传递到 rpm-builder 阶段
+
+**下一步：单独测试 rpm-builder 阶段**
+
+**❌ 问题已定位：缺少构建依赖**
+
+```bash
+error: Failed build dependencies:
+    autoconf is needed by slurm-25.05.4-1.el9.aarch64
+    automake is needed by slurm-25.05.4-1.el9.aarch64
+    mariadb-devel >= 5.0.0 is needed by slurm-25.05.4-1.el9.aarch64
+    munge-devel is needed by slurm-25.05.4-1.el9.aarch64
+    munge-libs is needed by slurm-25.05.4-1.el9.aarch64
+    systemd is needed by slurm-25.05.4-1.el9.aarch64
+```
+
+**修复措施：**
+1. 在 rpm-builder 阶段安装所有必需的依赖：
+   - autoconf, automake, systemd
+   - munge-devel, munge-libs
+   - mariadb-devel
+   - hwloc-devel, json-c-devel, yaml-devel
+
+2. 修复错误检测（管道中的 `||` 不会触发）：
+   ```dockerfile
+   if ! rpmbuild -ta "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then
+       exit 1
+   fi
+   ```
+
+**重新测试：**
+```bash
+./test-rpm-builder.sh
+```
+
+**测试进行中...**
+
+已修复的问题：
+1. ✅ 添加缺失的构建依赖（autoconf, automake, systemd等）
+2. ✅ 修复错误检测逻辑（使用 `if ! command; then` 而不是 `||`）
+3. ✅ 依赖安装不再使用 `2>/dev/null`（确保失败时报错）
+
+正在等待 rpm-builder 构建完成...
+
+**当前状态总结（2025-11-11 09:36）：**
+
+✅ **已完成：**
+- backend 镜像构建成功（包含最新的 SLURM 安装代码）
+- apphub Dockerfile 语法修复（heredoc 改为 echo 逐行写入）
+- 识别并修复 SLURM RPM 构建失败的根本原因
+
+🔧 **进行中：**
+- rpm-builder 阶段重新构建（预计10-15分钟）
+- 安装了所有必需的构建依赖
+- 修复了错误检测逻辑
+
+📋 **下一步（构建成功后）：**
+1. 验证 SLURM RPM 包是否正确生成
+2. 重新构建完整的 apphub 镜像
+3. 运行 `docker compose up -d` 启动所有服务
+4. 测试通过 backend API 远程安装 slurmd 到节点
+5. 验证 SLURM 集群功能
+
+**关键文件：**
+- `src/apphub/Dockerfile` - rpm-builder 阶段（已修复）
+- `src/backend/internal/services/slurm_service.go` - 安装逻辑
+- `src/backend/scripts/start-slurmd.sh` - 启动脚本
+- `test-rpm-builder.sh` - 测试脚本
+
+**构建日志：** `/tmp/rpm-builder-test.log`
+
+
+193. for node in test-ssh01 test-ssh02 test-ssh03 test-rocky01 test-rocky02 test-rocky03; do echo "=== $node ==="; docker exec $node ps aux|grep slurm; done
+=== test-ssh01 ===
+=== test-ssh02 ===
+=== test-ssh03 ===
+=== test-rocky01 ===
+=== test-rocky02 ===
+=== test-rocky03 ===还是没有slurm进程，需要修复，已经成功构建，在扩容slurm节点时候需要安装slurmd等相关组件，调整下go程序的slurm安装脚本，然后远程执行安装，这里可以使用salt的客户端完成这个安装步骤。

@@ -36,7 +36,22 @@ echo "[INFO] 清理旧的 slurmd 进程..."
 pkill -9 slurmd 2>/dev/null || true
 sleep 1
 
-# 4. 启动 slurmd
+# 4. 检测配置文件路径
+if [ -f /etc/slurm-llnl/slurm.conf ]; then
+    SLURM_CONF="/etc/slurm-llnl/slurm.conf"
+elif [ -f /etc/slurm/slurm.conf ]; then
+    SLURM_CONF="/etc/slurm/slurm.conf"
+else
+    echo "[ERROR] slurm.conf 不存在"
+    exit 1
+fi
+echo "[INFO] 使用配置文件: $SLURM_CONF"
+
+# 5. 获取节点名称
+NODE_NAME=${1:-$(hostname -s)}
+echo "[INFO] 节点名称: $NODE_NAME"
+
+# 6. 启动 slurmd
 echo "[INFO] 启动 slurmd 守护进程..."
 
 # 尝试使用 systemctl
@@ -50,12 +65,12 @@ if command -v systemctl >/dev/null 2>&1; then
     fi
 fi
 
-# 如果 systemctl 失败，使用 nohup 后台启动
-echo "[INFO] 使用 nohup 启动 slurmd..."
-nohup /usr/sbin/slurmd -D > /var/log/slurm/slurmd.log 2>&1 </dev/null &
+# 如果 systemctl 失败，使用 nohup 后台启动（明确指定配置文件和节点名称）
+echo "[INFO] 使用 nohup 启动 slurmd (配置: $SLURM_CONF, 节点: $NODE_NAME)..."
+nohup /usr/sbin/slurmd -D -f "$SLURM_CONF" -N "$NODE_NAME" > /var/log/slurm/slurmd.log 2>&1 </dev/null &
 sleep 2
 
-# 5. 验证启动
+# 7. 验证启动
 if pgrep -x slurmd >/dev/null; then
     echo "[SUCCESS] slurmd 启动成功"
     ps aux | grep '[s]lurmd'

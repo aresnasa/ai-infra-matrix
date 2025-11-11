@@ -2101,27 +2101,70 @@ func (s *SlurmService) getMungeKey(ctx context.Context) ([]byte, error) {
 	return output, nil
 }
 
-// installSlurmPackages 安装SLURM包
+// installSlurmPackages 安装SLURM包（从apphub RPM仓库）
 func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
 	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", nodeName, osType)
 
+	// 获取apphub URL
+	apphubURL := os.Getenv("APPHUB_URL")
+	if apphubURL == "" {
+		apphubURL = "http://ai-infra-apphub/pkgs" // 默认URL
+	}
+
 	var installCmd string
 	if osType == "rocky" || osType == "centos" {
-		// Rocky Linux / CentOS
-		installCmd = `
-dnf install -y epel-release && \
-dnf install -y slurm slurm-slurmd munge && \
-mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge && \
+		// Rocky Linux / CentOS - 使用apphub RPM仓库
+		installCmd = fmt.Sprintf(`
+# 配置apphub SLURM仓库
+cat > /etc/yum.repos.d/apphub-slurm.repo << 'SLURM_REPO_EOF'
+[apphub-slurm]
+name=AppHub SLURM Repository
+baseurl=%s/slurm-rpm
+enabled=1
+gpgcheck=0
+SLURM_REPO_EOF
+
+# 安装SLURM和munge
+echo "📦 安装SLURM和munge..."
+dnf install -y epel-release
+dnf makecache --disablerepo="*" --enablerepo="apphub-slurm"
+
+# 从源码编译munge（apphub中没有munge RPM）
+echo "🔨 从源码编译munge..."
+dnf install -y gcc make wget openssl-devel zlib-devel bzip2-devel
+cd /tmp
+wget -q https://github.com/dun/munge/releases/download/munge-0.5.16/munge-0.5.16.tar.xz
+tar xf munge-0.5.16.tar.xz
+cd munge-0.5.16
+./configure --prefix=/usr >/dev/null 2>&1
+make -j$(nproc) >/dev/null 2>&1
+make install >/dev/null 2>&1
+cd /tmp
+rm -rf munge-0.5.16 munge-0.5.16.tar.xz
+
+# 安装SLURM slurmd
+echo "📦 安装SLURM slurmd..."
+dnf install -y slurm-slurmd slurm-libpmi --enablerepo="apphub-slurm"
+
+# 创建必要的目录
+mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge /etc/slurm
 chmod 755 /var/spool/slurm/slurmd
-`
+chown -R slurm:slurm /var/spool/slurm /var/log/slurm /var/run/slurm 2>/dev/null || true
+chown -R munge:munge /etc/munge /var/lib/munge /var/log/munge /var/run/munge 2>/dev/null || true
+
+echo "✅ SLURM slurmd 安装完成"
+`, apphubURL)
 	} else if osType == "ubuntu" || osType == "debian" {
-		// Ubuntu / Debian
+		// Ubuntu / Debian - 使用现有的apt安装方式（因为没有为Ubuntu构建RPM）
 		installCmd = `
 export DEBIAN_FRONTEND=noninteractive && \
 apt-get update -qq && \
 apt-get install -y slurm-client slurmd munge && \
 mkdir -p /var/spool/slurm/slurmd /var/log/slurm /var/run/slurm /etc/munge /etc/slurm-llnl && \
-chmod 755 /var/spool/slurm/slurmd
+chmod 755 /var/spool/slurm/slurmd && \
+chown -R slurm:slurm /var/spool/slurm /var/log/slurm /var/run/slurm 2>/dev/null || true && \
+chown -R munge:munge /etc/munge 2>/dev/null || true && \
+echo "✅ SLURM slurmd 安装完成"
 `
 	} else {
 		return fmt.Errorf("不支持的操作系统类型: %s", osType)
