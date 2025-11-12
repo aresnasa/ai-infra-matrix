@@ -1,520 +1,314 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Server, 
-  Database, 
-  Key, 
-  CheckCircle, 
-  AlertCircle, 
-  Loader,
-  Plus,
-  Trash2,
-  RefreshCw
-} from 'lucide-react';
+import {
+  Card, Table, Button, Space, Tag, Modal, Form, Input, 
+  message, Tooltip, Popconfirm, Badge, Typography, Descriptions, Spin
+} from 'antd';
+import {
+  PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined,
+  PlayCircleOutlined, LinkOutlined, CheckCircleOutlined,
+  ExclamationCircleOutlined, ClusterOutlined
+} from '@ant-design/icons';
 import { api } from '../../services/api';
 
-/**
- * 添加已有 SLURM 集群管理页面
- * 专门用于连接和管理外部已存在的 SLURM 集群
- */
+const { Title, Text } = Typography;
+const { TextArea } = Input;
+
 const ExternalClusterManagement = () => {
   const [clusters, setClusters] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    master_host: '',
-    ssh_username: 'root',
-    ssh_password: '',
-    ssh_port: 22,
-    // 复用已有配置
-    reuse_config: true,
-    reuse_munge: true,
-    reuse_database: true,
-  });
-  const [testResult, setTestResult] = useState(null);
-  const [clusterInfo, setClusterInfo] = useState(null);
+  const [connectModalVisible, setConnectModalVisible] = useState(false);
+  const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [selectedCluster, setSelectedCluster] = useState(null);
+  const [form] = Form.useForm();
+
+  // 加载集群列表
+  const loadClusters = async () => {
+    setLoading(true);
+    try {
+      const response = await api.get('/slurm/clusters');
+      setClusters(response.data.clusters || []);
+    } catch (error) {
+      message.error('加载集群列表失败: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    fetchExternalClusters();
+    loadClusters();
   }, []);
 
-  const fetchExternalClusters = async () => {
+  // 连接外部集群
+  const handleConnect = async (values) => {
     try {
-      setLoading(true);
-      const response = await api.get('/api/slurm/clusters');
-      // 只获取外部集群
-      const externalClusters = response.data.data.filter(
-        (cluster) => cluster.cluster_type === 'external'
-      );
-      setClusters(externalClusters);
+      await api.post('/slurm/clusters/connect', values);
+      message.success('集群连接成功');
+      setConnectModalVisible(false);
+      form.resetFields();
+      loadClusters();
     } catch (error) {
-      console.error('获取外部集群失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleInputChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }));
-  };
-
-  // 测试连接
-  const testConnection = async () => {
-    setTestingConnection(true);
-    setTestResult(null);
-    setClusterInfo(null);
-
-    try {
-      const response = await api.post('/api/slurm/clusters/test-connection', {
-        host: formData.master_host,
-        ssh: {
-          username: formData.ssh_username,
-          password: formData.ssh_password,
-          port: formData.ssh_port,
-        },
-      });
-
-      if (response.data.success) {
-        setTestResult({
-          success: true,
-          message: '连接成功！',
-        });
-        setClusterInfo(response.data.data);
-      } else {
-        setTestResult({
-          success: false,
-          message: response.data.error || '连接失败',
-        });
-      }
-    } catch (error) {
-      setTestResult({
-        success: false,
-        message: error.response?.data?.error || '连接测试失败',
-      });
-    } finally {
-      setTestingConnection(false);
-    }
-  };
-
-  // 添加外部集群
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-      const payload = {
-        name: formData.name,
-        description: formData.description,
-        master_host: formData.master_host,
-        master_ssh: {
-          host: formData.master_host,
-          port: parseInt(formData.ssh_port),
-          username: formData.ssh_username,
-          auth_type: 'password',
-          password: formData.ssh_password,
-        },
-        config: {
-          reuse_existing_config: formData.reuse_config,
-          reuse_existing_munge: formData.reuse_munge,
-          reuse_existing_database: formData.reuse_database,
-        },
-      };
-
-      const response = await api.post('/api/slurm/clusters/connect', payload);
-
-      if (response.data.success) {
-        alert('外部集群添加成功！');
-        setFormData({
-          name: '',
-          description: '',
-          master_host: '',
-          ssh_username: 'root',
-          ssh_password: '',
-          ssh_port: 22,
-          reuse_config: true,
-          reuse_munge: true,
-          reuse_database: true,
-        });
-        setTestResult(null);
-        setClusterInfo(null);
-        fetchExternalClusters();
-      }
-    } catch (error) {
-      alert(error.response?.data?.error || '添加集群失败');
-    } finally {
-      setLoading(false);
+      message.error('连接失败: ' + (error.response?.data?.error || error.message));
     }
   };
 
   // 删除集群
   const handleDelete = async (clusterId) => {
-    if (!confirm('确定要删除此集群吗？')) return;
-
     try {
-      await api.delete(`/api/slurm/clusters/${clusterId}`);
-      alert('集群已删除');
-      fetchExternalClusters();
+      await api.delete(`/slurm/clusters/${clusterId}`);
+      message.success('集群已删除');
+      loadClusters();
     } catch (error) {
-      alert(error.response?.data?.error || '删除失败');
+      message.error('删除失败: ' + (error.response?.data?.error || error.message));
     }
   };
 
-  // 刷新集群信息
-  const handleRefresh = async (clusterId) => {
+  // 查看集群详情
+  const handleViewDetails = async (cluster) => {
+    setLoading(true);
     try {
-      await api.post(`/api/slurm/clusters/${clusterId}/refresh`);
-      alert('刷新成功');
-      fetchExternalClusters();
+      const response = await api.get(`/slurm/clusters/${cluster.id}/info`);
+      setSelectedCluster({ ...cluster, details: response.data });
+      setDetailsModalVisible(true);
     } catch (error) {
-      alert(error.response?.data?.error || '刷新失败');
+      message.error('获取集群详情失败: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(false);
     }
   };
+
+  // 表格列定义
+  const columns = [
+    {
+      title: '集群名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (text) => <Text strong><ClusterOutlined /> {text}</Text>
+    },
+    {
+      title: '主机地址',
+      dataIndex: 'master_host',
+      key: 'master_host'
+    },
+    {
+      title: '连接状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => {
+        const statusMap = {
+          'connected': { color: 'success', icon: <CheckCircleOutlined />, text: '已连接' },
+          'disconnected': { color: 'error', icon: <ExclamationCircleOutlined />, text: '断开连接' },
+          'connecting': { color: 'processing', icon: <LinkOutlined />, text: '连接中' }
+        };
+        const { color, icon, text } = statusMap[status] || statusMap['disconnected'];
+        return <Badge status={color} text={<>{icon} {text}</>} />;
+      }
+    },
+    {
+      title: '节点数',
+      dataIndex: 'node_count',
+      key: 'node_count',
+      render: (count) => <Tag color="blue">{count || 0} 个节点</Tag>
+    },
+    {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true
+    },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record) => (
+        <Space>
+          <Tooltip title="查看详情">
+            <Button
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => handleViewDetails(record)}
+            />
+          </Tooltip>
+          <Tooltip title="刷新状态">
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => loadClusters()}
+            />
+          </Tooltip>
+          <Popconfirm
+            title="确定要删除这个集群吗？"
+            onConfirm={() => handleDelete(record.id)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Tooltip title="删除">
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+              />
+            </Tooltip>
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold">外部 SLURM 集群管理</h1>
-        <p className="text-muted-foreground mt-2">
-          连接和管理已存在的 SLURM 集群，复用现有配置、Munge 密钥和数据库
-        </p>
-      </div>
+    <div style={{ padding: '24px' }}>
+      <Card
+        title={<Title level={4}><ClusterOutlined /> 外部 SLURM 集群管理</Title>}
+        extra={
+          <Space>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={loadClusters}
+              loading={loading}
+            >
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setConnectModalVisible(true)}
+            >
+              连接外部集群
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          columns={columns}
+          dataSource={clusters}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+        />
+      </Card>
 
-      <Tabs defaultValue="add" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="add">
-            <Plus className="h-4 w-4 mr-2" />
-            添加集群
-          </TabsTrigger>
-          <TabsTrigger value="list">
-            <Server className="h-4 w-4 mr-2" />
-            已连接集群 ({clusters.length})
-          </TabsTrigger>
-        </TabsList>
+      {/* 连接集群模态框 */}
+      <Modal
+        title="连接外部 SLURM 集群"
+        open={connectModalVisible}
+        onCancel={() => {
+          setConnectModalVisible(false);
+          form.resetFields();
+        }}
+        footer={null}
+        width={600}
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleConnect}
+        >
+          <Form.Item
+            label="集群名称"
+            name="name"
+            rules={[{ required: true, message: '请输入集群名称' }]}
+          >
+            <Input placeholder="例如: production-cluster" />
+          </Form.Item>
 
-        {/* 添加集群标签页 */}
-        <TabsContent value="add">
-          <Card>
-            <CardHeader>
-              <CardTitle>连接外部 SLURM 集群</CardTitle>
-              <CardDescription>
-                通过 SSH 连接到已运行的 SLURM 集群，自动发现节点和配置
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-6">
-                {/* 基本信息 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center">
-                      <Server className="h-5 w-5 mr-2" />
-                      基本信息
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div>
-                      <Label htmlFor="name">集群名称 *</Label>
-                      <Input
-                        id="name"
-                        name="name"
-                        value={formData.name}
-                        onChange={handleInputChange}
-                        placeholder="例如: 生产集群-01"
-                        required
-                      />
-                    </div>
+          <Form.Item
+            label="主节点地址"
+            name="master_host"
+            rules={[{ required: true, message: '请输入主节点地址' }]}
+          >
+            <Input placeholder="例如: 192.168.1.100" />
+          </Form.Item>
 
-                    <div>
-                      <Label htmlFor="description">描述</Label>
-                      <Textarea
-                        id="description"
-                        name="description"
-                        value={formData.description}
-                        onChange={handleInputChange}
-                        placeholder="集群用途说明..."
-                        rows={3}
-                      />
-                    </div>
+          <Form.Item
+            label="SSH 端口"
+            name="ssh_port"
+            initialValue={22}
+            rules={[{ required: true, message: '请输入 SSH 端口' }]}
+          >
+            <Input type="number" placeholder="22" />
+          </Form.Item>
 
-                    <div>
-                      <Label htmlFor="master_host">Master 节点地址 *</Label>
-                      <Input
-                        id="master_host"
-                        name="master_host"
-                        value={formData.master_host}
-                        onChange={handleInputChange}
-                        placeholder="192.168.1.100 或 slurm-master.example.com"
-                        required
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
+          <Form.Item
+            label="SSH 用户名"
+            name="ssh_user"
+            rules={[{ required: true, message: '请输入 SSH 用户名' }]}
+          >
+            <Input placeholder="例如: root" />
+          </Form.Item>
 
-                {/* SSH 连接配置 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center">
-                      <Key className="h-5 w-5 mr-2" />
-                      SSH 连接配置
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="ssh_username">SSH 用户名 *</Label>
-                        <Input
-                          id="ssh_username"
-                          name="ssh_username"
-                          value={formData.ssh_username}
-                          onChange={handleInputChange}
-                          required
-                        />
-                      </div>
+          <Form.Item
+            label="SSH 密码"
+            name="ssh_password"
+            rules={[{ required: true, message: '请输入 SSH 密码' }]}
+          >
+            <Input.Password placeholder="请输入密码" />
+          </Form.Item>
 
-                      <div>
-                        <Label htmlFor="ssh_port">SSH 端口</Label>
-                        <Input
-                          id="ssh_port"
-                          name="ssh_port"
-                          type="number"
-                          value={formData.ssh_port}
-                          onChange={handleInputChange}
-                        />
-                      </div>
-                    </div>
+          <Form.Item
+            label="描述"
+            name="description"
+          >
+            <TextArea rows={3} placeholder="集群描述信息（可选）" />
+          </Form.Item>
 
-                    <div>
-                      <Label htmlFor="ssh_password">SSH 密码 *</Label>
-                      <Input
-                        id="ssh_password"
-                        name="ssh_password"
-                        type="password"
-                        value={formData.ssh_password}
-                        onChange={handleInputChange}
-                        placeholder="SSH 登录密码"
-                        required
-                      />
-                    </div>
+          <Form.Item>
+            <Space style={{ float: 'right' }}>
+              <Button onClick={() => {
+                setConnectModalVisible(false);
+                form.resetFields();
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit">
+                连接
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
 
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={testConnection}
-                      disabled={!formData.master_host || !formData.ssh_password || testingConnection}
-                    >
-                      {testingConnection ? (
-                        <>
-                          <Loader className="h-4 w-4 mr-2 animate-spin" />
-                          测试中...
-                        </>
-                      ) : (
-                        '测试连接'
-                      )}
-                    </Button>
-
-                    {testResult && (
-                      <Alert variant={testResult.success ? 'default' : 'destructive'}>
-                        {testResult.success ? (
-                          <CheckCircle className="h-4 w-4" />
-                        ) : (
-                          <AlertCircle className="h-4 w-4" />
-                        )}
-                        <AlertDescription>{testResult.message}</AlertDescription>
-                      </Alert>
-                    )}
-
-                    {clusterInfo && (
-                      <Card className="bg-muted">
-                        <CardContent className="pt-4">
-                          <div className="space-y-2 text-sm">
-                            <div><strong>SLURM 版本:</strong> {clusterInfo.slurm_version}</div>
-                            <div><strong>集群名称:</strong> {clusterInfo.cluster_name}</div>
-                            <div><strong>节点数量:</strong> {clusterInfo.node_count}</div>
-                            <div><strong>控制器:</strong> {clusterInfo.controller_host}</div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* 配置复用选项 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg flex items-center">
-                      <Database className="h-5 w-5 mr-2" />
-                      配置复用选项
-                    </CardTitle>
-                    <CardDescription>
-                      复用集群已有的配置和服务，无需重新配置
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="reuse_config"
-                        name="reuse_config"
-                        checked={formData.reuse_config}
-                        onChange={handleInputChange}
-                        className="h-4 w-4"
-                      />
-                      <Label htmlFor="reuse_config" className="font-normal">
-                        复用现有 SLURM 配置文件（slurm.conf）
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="reuse_munge"
-                        name="reuse_munge"
-                        checked={formData.reuse_munge}
-                        onChange={handleInputChange}
-                        className="h-4 w-4"
-                      />
-                      <Label htmlFor="reuse_munge" className="font-normal">
-                        复用现有 Munge 密钥（/etc/munge/munge.key）
-                      </Label>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="reuse_database"
-                        name="reuse_database"
-                        checked={formData.reuse_database}
-                        onChange={handleInputChange}
-                        className="h-4 w-4"
-                      />
-                      <Label htmlFor="reuse_database" className="font-normal">
-                        复用现有数据库配置（slurmdbd.conf）
-                      </Label>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 提交按钮 */}
-                <div className="flex justify-end space-x-4">
-                  <Button type="button" variant="outline" onClick={() => {
-                    setFormData({
-                      name: '',
-                      description: '',
-                      master_host: '',
-                      ssh_username: 'root',
-                      ssh_password: '',
-                      ssh_port: 22,
-                      reuse_config: true,
-                      reuse_munge: true,
-                      reuse_database: true,
-                    });
-                    setTestResult(null);
-                    setClusterInfo(null);
-                  }}>
-                    重置
-                  </Button>
-                  <Button type="submit" disabled={loading || !testResult?.success}>
-                    {loading ? (
-                      <>
-                        <Loader className="h-4 w-4 mr-2 animate-spin" />
-                        添加中...
-                      </>
-                    ) : (
-                      '添加集群'
-                    )}
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* 已连接集群列表标签页 */}
-        <TabsContent value="list">
-          <div className="space-y-4">
-            {loading ? (
-              <div className="text-center py-12">
-                <Loader className="h-8 w-8 animate-spin mx-auto mb-4" />
-                <p className="text-muted-foreground">加载中...</p>
-              </div>
-            ) : clusters.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <Server className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                  <p className="text-muted-foreground">暂无外部集群</p>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    点击"添加集群"标签页开始连接外部 SLURM 集群
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
-              clusters.map((cluster) => (
-                <Card key={cluster.id}>
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <CardTitle className="flex items-center">
-                          {cluster.name}
-                          <Badge variant="secondary" className="ml-2">
-                            外部集群
-                          </Badge>
-                        </CardTitle>
-                        <CardDescription className="mt-2">
-                          {cluster.description}
-                        </CardDescription>
-                      </div>
-                      <div className="flex space-x-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleRefresh(cluster.id)}
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDelete(cluster.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <strong>Master 节点:</strong> {cluster.master_host}
-                      </div>
-                      <div>
-                        <strong>节点数量:</strong> {cluster.nodes?.length || 0}
-                      </div>
-                      <div>
-                        <strong>状态:</strong> <Badge>{cluster.status}</Badge>
-                      </div>
-                      <div>
-                        <strong>创建时间:</strong> {new Date(cluster.created_at).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
+      {/* 集群详情模态框 */}
+      <Modal
+        title={`集群详情: ${selectedCluster?.name || ''}`}
+        open={detailsModalVisible}
+        onCancel={() => {
+          setDetailsModalVisible(false);
+          setSelectedCluster(null);
+        }}
+        footer={[
+          <Button key="close" onClick={() => setDetailsModalVisible(false)}>
+            关闭
+          </Button>
+        ]}
+        width={800}
+      >
+        {selectedCluster && (
+          <Descriptions bordered column={2}>
+            <Descriptions.Item label="集群名称" span={2}>
+              {selectedCluster.name}
+            </Descriptions.Item>
+            <Descriptions.Item label="主节点地址">
+              {selectedCluster.master_host}
+            </Descriptions.Item>
+            <Descriptions.Item label="SSH 端口">
+              {selectedCluster.ssh_port || 22}
+            </Descriptions.Item>
+            <Descriptions.Item label="连接状态" span={2}>
+              <Badge
+                status={selectedCluster.status === 'connected' ? 'success' : 'error'}
+                text={selectedCluster.status === 'connected' ? '已连接' : '断开连接'}
+              />
+            </Descriptions.Item>
+            <Descriptions.Item label="节点数量">
+              {selectedCluster.node_count || 0}
+            </Descriptions.Item>
+            <Descriptions.Item label="SLURM 版本">
+              {selectedCluster.details?.version || 'N/A'}
+            </Descriptions.Item>
+            <Descriptions.Item label="描述" span={2}>
+              {selectedCluster.description || '无'}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+      </Modal>
     </div>
   );
 };

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
@@ -263,6 +264,7 @@ func (c *SlurmNodeScaleController) ScaleNodes(ctx *gin.Context) {
 // RegisterRoutes 注册路由
 func (c *SlurmNodeScaleController) RegisterRoutes(api *gin.RouterGroup) {
 	nodes := api.Group("/slurm/nodes")
+	nodes.Use(middleware.AuthMiddlewareWithSession())
 	{
 		nodes.POST("/check-saltstack", c.CheckSaltStackClients)
 		nodes.POST("/scale", c.ScaleNodes)

@@ -11,12 +11,13 @@ import {
   PlayCircleOutlined, StopOutlined, SettingOutlined, EyeOutlined,
   BarChartOutlined, PauseCircleOutlined, DownOutlined, CloseCircleOutlined,
   HourglassOutlined, SyncOutlined, LinkOutlined, DisconnectOutlined,
-  WarningOutlined
+  WarningOutlined, UnorderedListOutlined
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import SSHAuthConfig from '../components/SSHAuthConfig';
 import SaltCommandExecutor from '../components/SaltCommandExecutor';
+import SlurmTaskBar from '../components/SlurmTaskBar';
 import ExternalClusterManagement from '../components/slurm/ExternalClusterManagement';
 
 const { Title, Text, Paragraph } = Typography;
@@ -606,9 +607,6 @@ const SlurmScalingPage = () => {
   // 数据通过骨架屏逐步加载
   return (
     <div style={{ padding: 24 }}>
-      {/* 任务通知栏 */}
-      <SlurmTaskBar style={{ marginBottom: 16 }} />
-      
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={2}>
@@ -1084,6 +1082,22 @@ const SlurmScalingPage = () => {
 
           <TabPane tab={<span><ClusterOutlined />外部集群管理</span>} key="external-clusters">
             <ExternalClusterManagement />
+          </TabPane>
+
+          <TabPane tab={<span><UnorderedListOutlined />任务监控</span>} key="tasks">
+            <Card 
+              title="SLURM 任务状态" 
+              extra={
+                <Button 
+                  type="link" 
+                  onClick={() => navigate('/slurm-tasks')}
+                >
+                  查看全部 →
+                </Button>
+              }
+            >
+              <SlurmTaskBar maxItems={10} />
+            </Card>
           </TabPane>
         </Tabs>
       </Space>

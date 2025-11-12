@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
@@ -49,7 +50,7 @@ func (c *SlurmClusterController) CreateCluster(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -129,7 +130,7 @@ func (c *SlurmClusterController) ConnectExternalCluster(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -191,7 +192,7 @@ func (c *SlurmClusterController) GetClusterInfo(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -252,7 +253,7 @@ func (c *SlurmClusterController) DeleteCluster(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -319,7 +320,7 @@ func (c *SlurmClusterController) DeployCluster(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -476,7 +477,7 @@ func (c *SlurmClusterController) StreamDeploymentProgress(ctx *gin.Context) {
 // @Router /api/slurm/clusters [get]
 func (c *SlurmClusterController) ListClusters(ctx *gin.Context) {
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -557,7 +558,7 @@ func (c *SlurmClusterController) GetCluster(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -604,7 +605,7 @@ func (c *SlurmClusterController) ScaleCluster(ctx *gin.Context) {
 	}
 
 	// 获取当前用户ID
-	userID, exists := ctx.Get("userID")
+	userID, exists := ctx.Get("user_id")
 	if !exists {
 		ctx.JSON(http.StatusUnauthorized, gin.H{
 			"error": "User not authenticated",
@@ -706,6 +707,7 @@ func (c *SlurmClusterController) GetDeploymentLogs(ctx *gin.Context) {
 // RegisterRoutes 注册路由
 func (c *SlurmClusterController) RegisterRoutes(api *gin.RouterGroup) {
 	clusters := api.Group("/slurm/clusters")
+	clusters.Use(middleware.AuthMiddlewareWithSession())
 	{
 		clusters.POST("", c.CreateCluster)
 		clusters.POST("/connect", c.ConnectExternalCluster) // 新增：连接已有集群
@@ -718,6 +720,7 @@ func (c *SlurmClusterController) RegisterRoutes(api *gin.RouterGroup) {
 	}
 
 	deployments := api.Group("/slurm/deployments")
+	deployments.Use(middleware.AuthMiddlewareWithSession())
 	{
 		deployments.GET("/:deploymentId/status", c.GetDeploymentStatus)
 		deployments.GET("/:deploymentId/stream", c.StreamDeploymentProgress)
