@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -107,28 +109,25 @@ func (c *SlurmClusterController) CreateCluster(ctx *gin.Context) {
 	}).Info("SLURM cluster created")
 }
 
-// ConnectExternalCluster 连接已有的SLURM集群
-// @Summary 连接已有的SLURM集群
-// @Description 连接一个已经部署好的SLURM集群，通过SSH获取集群信息
+// ConnectExternalCluster 连接已有的外部SLURM集群
+// @Summary 连接外部SLURM集群
+// @Description 通过SSH连接已有的外部SLURM集群，支持密码和密钥认证
 // @Tags SLURM Cluster
-// @Accept json
+// @Accept multipart/form-data
 // @Produce json
-// @Param request body models.ConnectExternalClusterRequest true "外部集群连接请求"
+// @Param name formData string true "集群名称"
+// @Param master_host formData string true "主节点地址"
+// @Param ssh_port formData int false "SSH端口"
+// @Param ssh_user formData string true "SSH用户名"
+// @Param auth_type formData string true "认证类型 (password/key)"
+// @Param ssh_password formData string false "SSH密码 (密码认证时必填)"
+// @Param ssh_key formData file false "SSH私钥文件 (密钥认证时必填)"
+// @Param description formData string false "集群描述"
 // @Success 201 {object} models.SlurmCluster
 // @Failure 400 {object} map[string]interface{}
 // @Failure 500 {object} map[string]interface{}
 // @Router /api/slurm/clusters/connect [post]
 func (c *SlurmClusterController) ConnectExternalCluster(ctx *gin.Context) {
-	var req models.ConnectExternalClusterRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logrus.WithError(err).Error("Failed to bind external cluster connection request")
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request format",
-			"message": err.Error(),
-		})
-		return
-	}
-
 	// 获取当前用户ID
 	userID, exists := ctx.Get("user_id")
 	if !exists {
@@ -138,13 +137,91 @@ func (c *SlurmClusterController) ConnectExternalCluster(ctx *gin.Context) {
 		return
 	}
 
-	// 验证SSH连接
-	if req.MasterSSH.Host == "" || req.MasterSSH.Username == "" {
+	// 解析表单数据
+	name := ctx.PostForm("name")
+	masterHost := ctx.PostForm("master_host")
+	sshUser := ctx.PostForm("ssh_user")
+	authType := ctx.PostForm("auth_type")
+	description := ctx.PostForm("description")
+
+	sshPort := 22
+	if portStr := ctx.PostForm("ssh_port"); portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil {
+			sshPort = p
+		}
+	}
+
+	// 验证必填字段
+	if name == "" || masterHost == "" || sshUser == "" {
 		ctx.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid SSH configuration",
-			"message": "SSH host and username are required",
+			"error":   "Missing required fields",
+			"message": "name, master_host, and ssh_user are required",
 		})
 		return
+	}
+
+	// 构建SSH配置
+	sshConfig := models.SSHConfig{
+		Host:     masterHost,
+		Port:     sshPort,
+		Username: sshUser,
+		AuthType: authType,
+	}
+
+	// 处理认证方式
+	if authType == "password" {
+		sshPassword := ctx.PostForm("ssh_password")
+		if sshPassword == "" {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Missing password",
+				"message": "ssh_password is required for password authentication",
+			})
+			return
+		}
+		sshConfig.Password = sshPassword
+	} else if authType == "key" {
+		// 处理密钥文件上传
+		file, err := ctx.FormFile("ssh_key")
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Missing SSH key file",
+				"message": "ssh_key file is required for key authentication",
+			})
+			return
+		}
+
+		// 保存密钥文件
+		keyPath := fmt.Sprintf("/root/.ssh/cluster_%s_%d", name, time.Now().Unix())
+		if err := ctx.SaveUploadedFile(file, keyPath); err != nil {
+			logrus.WithError(err).Error("Failed to save SSH key file")
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Failed to save key file",
+				"message": err.Error(),
+			})
+			return
+		}
+
+		// 设置文件权限为 600
+		if err := os.Chmod(keyPath, 0600); err != nil {
+			logrus.WithError(err).Warn("Failed to set key file permissions")
+		}
+
+		sshConfig.KeyPath = keyPath
+	} else {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid auth_type",
+			"message": "auth_type must be 'password' or 'key'",
+		})
+		return
+	}
+
+	// 构建请求
+	req := models.ConnectExternalClusterRequest{
+		Name:        name,
+		Description: description,
+		MasterHost:  masterHost,
+		MasterPort:  sshPort,
+		MasterSSH:   sshConfig,
 	}
 
 	cluster, err := c.service.ConnectExternalCluster(ctx.Request.Context(), req, userID.(uint))
@@ -168,6 +245,7 @@ func (c *SlurmClusterController) ConnectExternalCluster(ctx *gin.Context) {
 		"cluster_name": cluster.Name,
 		"user_id":      userID,
 		"cluster_type": "external",
+		"auth_type":    authType,
 	}).Info("External SLURM cluster connected")
 }
 

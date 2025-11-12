@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   Card, Table, Button, Space, Tag, Modal, Form, Input, 
-  message, Tooltip, Popconfirm, Badge, Typography, Descriptions, Spin
+  message, Tooltip, Popconfirm, Badge, Typography, Descriptions, Spin, Radio, Upload
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined,
   PlayCircleOutlined, LinkOutlined, CheckCircleOutlined,
-  ExclamationCircleOutlined, ClusterOutlined
+  ExclamationCircleOutlined, ClusterOutlined, UploadOutlined
 } from '@ant-design/icons';
 import { api } from '../../services/api';
 
@@ -19,6 +19,8 @@ const ExternalClusterManagement = () => {
   const [connectModalVisible, setConnectModalVisible] = useState(false);
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState(null);
+  const [authType, setAuthType] = useState('password'); // 'password' 或 'key'
+  const [sshKeyFile, setSshKeyFile] = useState(null);
   const [form] = Form.useForm();
 
   // 加载集群列表
@@ -41,10 +43,36 @@ const ExternalClusterManagement = () => {
   // 连接外部集群
   const handleConnect = async (values) => {
     try {
-      await api.post('/slurm/clusters/connect', values);
+      const formData = new FormData();
+      
+      // 基本信息
+      formData.append('name', values.name);
+      formData.append('master_host', values.master_host);
+      formData.append('ssh_port', values.ssh_port || 22);
+      formData.append('ssh_user', values.ssh_user);
+      if (values.description) {
+        formData.append('description', values.description);
+      }
+      
+      // 认证信息
+      formData.append('auth_type', authType);
+      if (authType === 'password') {
+        formData.append('ssh_password', values.ssh_password);
+      } else if (authType === 'key' && sshKeyFile) {
+        formData.append('ssh_key', sshKeyFile);
+      }
+      
+      await api.post('/slurm/clusters/connect', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
       message.success('集群连接成功');
       setConnectModalVisible(false);
       form.resetFields();
+      setAuthType('password');
+      setSshKeyFile(null);
       loadClusters();
     } catch (error) {
       message.error('连接失败: ' + (error.response?.data?.error || error.message));
@@ -192,6 +220,8 @@ const ExternalClusterManagement = () => {
         onCancel={() => {
           setConnectModalVisible(false);
           form.resetFields();
+          setAuthType('password');
+          setSshKeyFile(null);
         }}
         footer={null}
         width={600}
@@ -234,13 +264,50 @@ const ExternalClusterManagement = () => {
             <Input placeholder="例如: root" />
           </Form.Item>
 
-          <Form.Item
-            label="SSH 密码"
-            name="ssh_password"
-            rules={[{ required: true, message: '请输入 SSH 密码' }]}
-          >
-            <Input.Password placeholder="请输入密码" />
+          <Form.Item label="认证方式">
+            <Radio.Group 
+              value={authType} 
+              onChange={(e) => setAuthType(e.target.value)}
+            >
+              <Radio value="password">密码认证</Radio>
+              <Radio value="key">密钥认证</Radio>
+            </Radio.Group>
           </Form.Item>
+
+          {authType === 'password' ? (
+            <Form.Item
+              label="SSH 密码"
+              name="ssh_password"
+              rules={[{ required: true, message: '请输入 SSH 密码' }]}
+            >
+              <Input.Password placeholder="请输入密码" />
+            </Form.Item>
+          ) : (
+            <Form.Item
+              label="SSH 私钥"
+              rules={[{ required: !sshKeyFile, message: '请上传 SSH 私钥文件' }]}
+            >
+              <Upload
+                beforeUpload={(file) => {
+                  setSshKeyFile(file);
+                  message.success(`已选择文件: ${file.name}`);
+                  return false; // 阻止自动上传
+                }}
+                onRemove={() => {
+                  setSshKeyFile(null);
+                }}
+                maxCount={1}
+                accept=".pem,.key,id_rsa,id_ed25519"
+              >
+                <Button icon={<UploadOutlined />}>
+                  {sshKeyFile ? `已选择: ${sshKeyFile.name}` : '选择私钥文件'}
+                </Button>
+              </Upload>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
+                支持的文件格式: .pem, .key, id_rsa, id_ed25519
+              </div>
+            </Form.Item>
+          )}
 
           <Form.Item
             label="描述"
@@ -254,6 +321,8 @@ const ExternalClusterManagement = () => {
               <Button onClick={() => {
                 setConnectModalVisible(false);
                 form.resetFields();
+                setAuthType('password');
+                setSshKeyFile(null);
               }}>
                 取消
               </Button>

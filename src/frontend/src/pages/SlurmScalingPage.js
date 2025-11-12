@@ -606,7 +606,18 @@ const SlurmScalingPage = () => {
   // 首次加载时不显示全屏加载，而是直接显示页面框架
   // 数据通过骨架屏逐步加载
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: 24, position: 'relative' }}>
+      {/* 固定在左上角的任务框 */}
+      <div style={{
+        position: 'fixed',
+        top: '80px',
+        right: '24px',
+        zIndex: 1000,
+        boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+      }}>
+        <SlurmTaskBar maxItems={5} refreshInterval={15000} />
+      </div>
+
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={2}>
