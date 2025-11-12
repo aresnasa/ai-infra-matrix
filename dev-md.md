@@ -3694,3 +3694,7 @@ compute*     up   infinite      3   idle test-ssh[01-03]查看到slurm集群状�
 204. docker logs ai-infra-slurm-master
 正在设置root密码...
 创建 SLURM 运行目录...无法启动slurm，这里的slurm节点安装不能直接写到dockerfile中，而是在页面扩容节点时才触发，同时需要检查是否具备saltstack客户端才能执行slurm节点初始化，同时还要使用@playwright测试slurm集群是否能够正确添加已有slurm集群，这里如果是添加已有集群则需要一个单独管理页面管理，直接复用已有slurm配置和munge密钥和mysql还有其它配置。
+
+205. 构建启动完成使用@playwright测试http://192.168.3.91:8080/slurm，期望能够管理已有slurm集群
+
+206. 现在检查所有frontend函数和backend函数，保证能一一对应，不能有冗余代码，这里的接口不能冗余，检查并修复

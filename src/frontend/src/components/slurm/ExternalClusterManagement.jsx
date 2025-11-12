@@ -18,7 +18,7 @@ import {
   Trash2,
   RefreshCw
 } from 'lucide-react';
-import api from '@/utils/api';
+import { api } from '../../services/api';
 
 /**
  * 添加已有 SLURM 集群管理页面

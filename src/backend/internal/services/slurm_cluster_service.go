@@ -572,6 +572,16 @@ func (s *SlurmClusterService) GetCluster(clusterID, userID uint) (*models.SlurmC
 	return &cluster, nil
 }
 
+// GetClusterByID 根据ID获取集群信息（不检查用户权限）
+func (s *SlurmClusterService) GetClusterByID(ctx context.Context, clusterID uint) (*models.SlurmCluster, error) {
+	var cluster models.SlurmCluster
+	if err := s.db.Preload("Nodes").Preload("Deployments").
+		First(&cluster, clusterID).Error; err != nil {
+		return nil, err
+	}
+	return &cluster, nil
+}
+
 // ConnectExternalCluster 连接已有的SLURM集群
 func (s *SlurmClusterService) ConnectExternalCluster(ctx context.Context, req models.ConnectExternalClusterRequest, userID uint) (*models.SlurmCluster, error) {
 	logrus.WithFields(logrus.Fields{
@@ -881,4 +891,9 @@ func (s *SlurmClusterService) getExternalClusterInfo(cluster models.SlurmCluster
 	}
 
 	return info, nil
+}
+
+// CreateNode 创建节点记录
+func (s *SlurmClusterService) CreateNode(ctx context.Context, node *models.SlurmNode) error {
+	return s.db.WithContext(ctx).Create(node).Error
 }

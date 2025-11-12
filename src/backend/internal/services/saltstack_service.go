@@ -488,3 +488,155 @@ func (s *SaltStackService) GetMinionStatus(ctx context.Context, minionID string)
 		"grains": result,
 	}, nil
 }
+
+// IsClientAccepted 检查节点是否已在 SaltStack 中注册并被接受
+func (s *SaltStackService) IsClientAccepted(ctx context.Context, minionID string) (bool, error) {
+	status, err := s.GetStatus(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	// 检查是否在已接受的 keys 列表中
+	for _, minion := range status.AcceptedKeys {
+		if minion == minionID {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// Ping 检查节点是否在线
+func (s *SaltStackService) Ping(ctx context.Context, minionID string) (bool, error) {
+	payload := map[string]interface{}{
+		"fun":    "test.ping",
+		"tgt":    minionID,
+		"client": "local",
+	}
+
+	result, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return false, err
+	}
+
+	// 检查返回结果
+	if result == nil {
+		return false, nil
+	}
+
+	// 如果返回 true 表示在线
+	if returnData, ok := result["return"].([]interface{}); ok && len(returnData) > 0 {
+		if nodeResult, ok := returnData[0].(map[string]interface{}); ok {
+			if ping, ok := nodeResult[minionID].(bool); ok {
+				return ping, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// GetMinionVersion 获取 Salt Minion 版本
+func (s *SaltStackService) GetMinionVersion(ctx context.Context, minionID string) (string, error) {
+	payload := map[string]interface{}{
+		"fun":    "test.version",
+		"tgt":    minionID,
+		"client": "local",
+	}
+
+	result, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return "", err
+	}
+
+	// 解析版本号
+	if returnData, ok := result["return"].([]interface{}); ok && len(returnData) > 0 {
+		if nodeResult, ok := returnData[0].(map[string]interface{}); ok {
+			if version, ok := nodeResult[minionID].(string); ok {
+				return version, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("无法获取版本信息")
+}
+
+// CheckPackageInstalled 检查节点上是否已安装指定软件包
+func (s *SaltStackService) CheckPackageInstalled(ctx context.Context, minionID, packageName string) (bool, error) {
+	payload := map[string]interface{}{
+		"fun":    "pkg.version",
+		"tgt":    minionID,
+		"arg":    []string{packageName},
+		"client": "local",
+	}
+
+	result, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return false, err
+	}
+
+	// 检查返回结果
+	if returnData, ok := result["return"].([]interface{}); ok && len(returnData) > 0 {
+		if nodeResult, ok := returnData[0].(map[string]interface{}); ok {
+			if version, ok := nodeResult[minionID].(string); ok {
+				// 如果返回非空字符串，表示已安装
+				return version != "", nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// InstallSlurmNode 在节点上安装 SLURM
+func (s *SaltStackService) InstallSlurmNode(ctx context.Context, minionID string, cluster interface{}) error {
+	// 使用 state.apply 执行 SLURM 安装 state
+	payload := map[string]interface{}{
+		"fun":    "state.apply",
+		"tgt":    minionID,
+		"arg":    []string{"slurm.node"},
+		"client": "local",
+	}
+
+	_, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return fmt.Errorf("安装 SLURM 失败: %v", err)
+	}
+
+	return nil
+}
+
+// ConfigureSlurmNode 配置 SLURM 节点
+func (s *SaltStackService) ConfigureSlurmNode(ctx context.Context, minionID string, cluster interface{}) error {
+	// 配置 slurm.conf 和 munge.key
+	payload := map[string]interface{}{
+		"fun":    "state.apply",
+		"tgt":    minionID,
+		"arg":    []string{"slurm.config"},
+		"client": "local",
+	}
+
+	_, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return fmt.Errorf("配置 SLURM 失败: %v", err)
+	}
+
+	return nil
+}
+
+// StartSlurmService 启动 SLURM 服务
+func (s *SaltStackService) StartSlurmService(ctx context.Context, minionID string) error {
+	payload := map[string]interface{}{
+		"fun":    "service.start",
+		"tgt":    minionID,
+		"arg":    []string{"slurmd"},
+		"client": "local",
+	}
+
+	_, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return fmt.Errorf("启动 slurmd 服务失败: %v", err)
+	}
+
+	return nil
+}

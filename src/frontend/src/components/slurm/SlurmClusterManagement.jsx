@@ -39,7 +39,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import api from '@/lib/api';
+import { api } from '../../services/api';
 import CreateClusterDialog from './CreateClusterDialog';
 import DeploymentProgressDialog from './DeploymentProgressDialog';
 import ClusterDetailsDialog from './ClusterDetailsDialog';

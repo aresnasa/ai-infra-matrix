@@ -1012,6 +1012,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	slurmClusterController := controllers.NewSlurmClusterController(database.DB)
 	slurmClusterController.RegisterRoutes(api)
 
+	// SLURM 节点扩容管理路由（需要认证）
+	slurmClusterService := services.NewSlurmClusterService(database.DB)
+	saltStackService := services.NewSaltStackService()
+	slurmNodeScaleController := controllers.NewSlurmNodeScaleController(slurmClusterService, saltStackService)
+	slurmNodeScaleController.RegisterRoutes(api)
+
 	// 作业管理路由（需要认证）
 	jobController := controllers.NewJobController(jobService)
 	jobs := api.Group("/jobs")

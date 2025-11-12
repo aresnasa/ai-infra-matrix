@@ -16,8 +16,8 @@ import {
 import { slurmAPI, saltStackAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import SSHAuthConfig from '../components/SSHAuthConfig';
-import SlurmTaskBar from '../components/SlurmTaskBar';
 import SaltCommandExecutor from '../components/SaltCommandExecutor';
+import ExternalClusterManagement from '../components/slurm/ExternalClusterManagement';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -1080,6 +1080,10 @@ const SlurmScalingPage = () => {
                 </Space>
               </div>
             </Card>
+          </TabPane>
+
+          <TabPane tab={<span><ClusterOutlined />外部集群管理</span>} key="external-clusters">
+            <ExternalClusterManagement />
           </TabPane>
         </Tabs>
       </Space>
