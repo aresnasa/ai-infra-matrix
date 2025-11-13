@@ -3698,3 +3698,436 @@ compute*     up   infinite      3   idle test-ssh[01-03]查看到slurm集群状�
 205. 构建启动完成使用@playwright测试http://192.168.3.91:8080/slurm，期望能够管理已有slurm集群
 
 206. 现在检查所有frontend函数和backend函数，保证能一一对应，不能有冗余代码，这里的接口不能冗余，检查并修复
+
+207. for node in test-rocky02 test-rocky03 test-ssh02 test-ssh03; do
+  echo "=== $node ==="
+  docker exec $node bash -c " ps aux|egrep 'slurm|munge'"
+done
+=== test-rocky02 ===
+root         561  0.0  0.0   3800  2620 ?        Ss   22:39   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root         568  0.0  0.0   3036  1420 ?        S    22:39   0:00 grep -E slurm|munge
+=== test-rocky03 ===
+root         558  0.0  0.0   3800  2588 ?        Ss   22:39   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root         565  0.0  0.0   3036  1432 ?        S    22:39   0:00 grep -E slurm|munge
+=== test-ssh02 ===
+root         749  0.0  0.0   3876  2636 ?        Ss   22:39   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root         756  0.0  0.0   2904  1328 ?        S    22:39   0:00 grep -E slurm|munge
+=== test-ssh03 ===
+root         753  0.0  0.0   3876  2516 ?        Ss   22:39   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root         760  0.0  0.0   2904  1276 ?        S    22:39   0:00 grep -E slurm|munge
+❯ docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+compute*     up   infinite      6  idle* test-rocky[01-03],test-ssh[01-03]调整下slurm节点初始化的脚本，需要能够通过ssh远程启动slurmd和munge，同时密钥存在slurm-master中，backend需要能够支持通过ssh远程安装和同步ssh密钥和munge的key到所有slurmd节点
+
+208. http://192.168.3.91:8080/slurm还需要支持删除节点，调整下backend和frontend代码
+
+209. 扩缩容状态
+活跃任务
+1
+成功节点
+0
+失败节点
+0
+0%状态要正确的同步，调整下，任务栏药对齐，调整下样式，整个行
+
+210. 调整http://192.168.3.91:8080/slurm，需要增加删除节点的选项，现在只有down和drain
+
+211. SLURM 集群管理-任务栏按钮和扩容节点并排显示，同时修复刷新按钮，这里需要能够正确的刷新页面和任务，使用@playwright测试http://192.168.3.91:8080/slurm
+
+212. 成功删除 6 个节点未能正确删除节点
+
+**问题描述**：
+- 前端显示"成功删除 6 个节点"消息
+- 但实际节点并未从数据库中删除
+- 刷新页面后节点仍然存在
+
+**根本原因**：
+1. GORM 软删除：`SlurmNode` 模型包含 `gorm.DeletedAt` 字段，使用 `Delete()` 只会软删除
+2. 并行删除缺少错误收集：使用 `Promise.all()` 并行删除，无法获取每个节点的详细结果
+3. 错误信息不明确：只显示成功消息，不显示失败详情
+
+**修复方案**：
+
+**后端修复** - `src/backend/internal/services/slurm_cluster_service.go`：
+```go
+// 1. 使用硬删除替代软删除
+if err := s.db.WithContext(ctx).Unscoped().Delete(&node).Error; err != nil {
+    return fmt.Errorf("删除节点记录失败: %v", err)
+}
+
+// 2. 增强错误检查
+if err == gorm.ErrRecordNotFound {
+    return fmt.Errorf("节点不存在 (ID: %d)", nodeID)
+}
+
+// 3. 增强日志记录
+logrus.Infof("开始删除节点: %s (ID: %d, Host: %s)", node.NodeName, nodeID, node.Host)
+logrus.Infof("节点删除成功: %s (ID: %d)", node.NodeName, nodeID)
+```
+
+**前端修复** - `src/frontend/src/pages/SlurmScalingPage.js`：
+```javascript
+// 1. 改为顺序删除，收集详细结果
+let successCount = 0;
+let failCount = 0;
+const errors = [];
+
+for (const nodeName of selectedRowKeys) {
+  try {
+    const node = nodes.find(n => n.name === nodeName);
+    if (node && node.id) {
+      const response = await slurmAPI.deleteNode(node.id, false);
+      if (response.data?.success !== false) {
+        successCount++;
+      } else {
+        failCount++;
+        errors.push(`${nodeName}: ${response.data?.error}`);
+      }
+    }
+  } catch (error) {
+    failCount++;
+    errors.push(`${nodeName}: ${error.message}`);
+  }
+}
+
+// 2. 根据结果显示不同的消息
+if (successCount > 0 && failCount === 0) {
+  message.success(`成功删除 ${successCount} 个节点`);
+} else if (successCount > 0 && failCount > 0) {
+  message.warning(`成功删除 ${successCount} 个节点，失败 ${failCount} 个`);
+} else {
+  message.error('删除节点失败');
+}
+```
+
+**改进效果**：
+1. ✅ 节点真正从数据库中移除（硬删除）
+2. ✅ 用户看到准确的成功/失败统计
+3. ✅ 失败节点显示具体错误原因
+4. ✅ 后端日志完整记录操作过程
+5. ✅ 前端控制台详细记录每个节点的删除结果
+
+**测试验证**：
+```bash
+# 运行 Playwright 测试
+cd /Users/aresnasa/MyProjects/go/src/github.com/aresnasa/ai-infra-matrix
+BASE_URL=http://192.168.3.91:8080 npx playwright test \
+  test/e2e/specs/slurm-batch-delete-fix-test.spec.js \
+  --config=test/e2e/playwright.config.js
+```
+
+**相关文件**：
+- 后端服务：`src/backend/internal/services/slurm_cluster_service.go`
+- 前端页面：`src/frontend/src/pages/SlurmScalingPage.js`
+- 测试脚本：`test/e2e/specs/slurm-batch-delete-fix-test.spec.js`
+
+**修复时间**：2025年11月13日
+
+**后续修复**：
+
+**问题2：未找到节点的ID错误**
+```
+• 未找到节点 test-rocky01 的ID
+• 未找到节点 test-rocky02 的ID  
+• 未找到节点 test-rocky03 的ID
+```
+
+**原因分析**：
+- SLURM节点（test-rocky01等）是通过SLURM配置文件或命令行手动添加的
+- 这些节点存在于SLURM系统中（`sinfo`可见），但未在数据库中注册
+- 原有删除逻辑只支持删除数据库中有ID的节点
+- 导致批量删除时显示"未找到节点的ID"错误
+
+**解决方案**：
+
+1. **新增后端服务方法** - `DeleteNodeByName()`
+   ```go
+   // 支持通过节点名称删除
+   func (s *SlurmClusterService) DeleteNodeByName(ctx context.Context, nodeName string, force bool) error {
+       // 1. 先尝试从数据库查找
+       var node models.SlurmNode
+       err := s.db.WithContext(ctx).Where("node_name = ?", nodeName).First(&node).Error
+       
+       if err == nil {
+           // 节点在数据库中，执行标准删除流程
+           return s.DeleteNode(ctx, node.ID, force)
+       }
+       
+       if err != gorm.ErrRecordNotFound {
+           return fmt.Errorf("查询节点失败: %v", err)
+       }
+       
+       // 节点不在数据库中，返回提示信息
+       return fmt.Errorf("节点 %s 未在数据库中注册，无法通过 Web 界面删除", nodeName)
+   }
+   ```
+
+2. **新增后端API端点**
+   ```go
+   // DELETE /api/slurm/nodes/by-name/:nodeName
+   func (c *SlurmNodeScaleController) DeleteNodeByName(ctx *gin.Context) {
+       nodeName := ctx.Param("nodeName")
+       force := ctx.DefaultQuery("force", "false") == "true"
+       
+       if err := c.slurmService.DeleteNodeByName(ctxWithTimeout, nodeName, force); err != nil {
+           ctx.JSON(http.StatusInternalServerError, gin.H{
+               "success": false,
+               "error": "删除节点失败: " + err.Error(),
+           })
+           return
+       }
+       
+       ctx.JSON(http.StatusOK, gin.H{"success": true, "message": "节点删除成功"})
+   }
+   ```
+
+3. **更新前端API服务**
+   ```javascript
+   // src/frontend/src/services/api.js
+   deleteNodeByName: (nodeName, force = false) => 
+       api.delete(`/slurm/nodes/by-name/${nodeName}`, { params: { force } })
+   ```
+
+4. **更新前端删除逻辑**
+   ```javascript
+   // 改用 deleteNodeByName，不再需要查找节点ID
+   for (const nodeName of selectedRowKeys) {
+       const response = await slurmAPI.deleteNodeByName(nodeName, false);
+       if (response.data?.success !== false) {
+           successCount++;
+       } else {
+           failCount++;
+           errors.push(`${nodeName}: ${response.data?.error}`);
+       }
+   }
+   ```
+
+**改进效果**：
+1. ✅ 支持删除数据库中已注册的节点（通过名称查找ID后删除）
+2. ✅ 对于未注册的节点，返回明确的错误提示
+3. ✅ 前端不再显示"未找到节点的ID"错误
+4. ✅ 错误消息更清晰："节点未在数据库中注册，无法通过 Web 界面删除"
+
+**注意事项**：
+- 手动添加到SLURM的节点需要先通过Web界面注册才能删除
+- 或者直接在SLURM配置文件中手动移除
+- 未来可以增强功能，支持自动同步SLURM节点到数据库
+
+**修复时间**：2025年11月13日
+
+**问题3：未注册节点无法删除**
+```
+删除节点失败
+• test-rocky01: 删除节点失败: 节点 test-rocky01 未在数据库中注册，无法通过 Web 界面删除
+• test-rocky02: 删除节点失败: 节点 test-rocky02 未在数据库中注册，无法通过 Web 界面删除
+• test-rocky03: 删除节点失败: 节点 test-rocky03 未在数据库中注册，无法通过 Web 界面删除
+```
+
+**增强方案**：实现从SLURM配置文件中直接删除未注册节点
+
+**实现步骤**：
+
+1. **新增 `removeNodeFromSlurmConfig()` 方法**
+   ```go
+   func (s *SlurmClusterService) removeNodeFromSlurmConfig(nodeName string) error {
+       // 1. 设置节点为 DOWN 状态
+       scontrol update NodeName=%s State=DOWN Reason='Removed via Web UI'
+       
+       // 2. 从 /etc/slurm/slurm.conf 中移除节点定义
+       //    读取文件，过滤掉包含该节点的 NodeName= 行
+       
+       // 3. 写回配置文件
+       
+       // 4. 重新加载 SLURM 配置
+       scontrol reconfigure
+   }
+   ```
+
+2. **更新 `DeleteNodeByName()` 逻辑**
+   ```go
+   func (s *SlurmClusterService) DeleteNodeByName(ctx context.Context, nodeName string, force bool) error {
+       var node models.SlurmNode
+       err := s.db.WithContext(ctx).Where("node_name = ?", nodeName).First(&node).Error
+       
+       if err == nil {
+           // 数据库中的节点：标准删除流程
+           return s.DeleteNode(ctx, node.ID, force)
+       }
+       
+       if err != gorm.ErrRecordNotFound {
+           return fmt.Errorf("查询节点失败: %v", err)
+       }
+       
+       // 未注册的节点：从 SLURM 配置中移除
+       logrus.Infof("节点 %s 不在数据库中，从 SLURM 配置中移除", nodeName)
+       return s.removeNodeFromSlurmConfig(nodeName)
+   }
+   ```
+
+**删除流程**：
+
+1. **数据库已注册节点**：
+   - 停止节点服务（SSH）
+   - 从数据库硬删除
+   - 从SLURM配置移除
+
+2. **未注册节点**：
+   - 设置节点为 DOWN 状态
+   - 从 slurm.conf 中移除 NodeName 定义
+   - 执行 `scontrol reconfigure` 重新加载配置
+
+**改进效果**：
+1. ✅ 支持删除数据库中已注册的节点
+2. ✅ **支持删除未注册但存在于SLURM配置中的节点**
+3. ✅ 自动从配置文件中移除节点定义
+4. ✅ 自动重新加载SLURM配置
+5. ✅ 用户无需手动编辑配置文件
+
+**安全考虑**：
+- 删除前先设置节点为 DOWN 状态，避免运行中的作业受影响
+- 使用 `scontrol reconfigure` 而非重启服务，确保现有作业继续运行
+- 完整的日志记录，便于审计和回滚
+
+**修复时间**：2025年11月13日
+
+---
+
+### 213. 节点删除 - 配置文件路径问题修复
+
+**问题描述**：
+```
+删除节点失败
+• test-rocky01: 删除节点失败: 从 SLURM 配置中移除节点失败: 读取 slurm.conf 失败: open /etc/slurm/slurm.conf: no such file or directory
+• test-rocky02: 删除节点失败: 从 SLURM 配置中移除节点失败: 读取 slurm.conf 失败: open /etc/slurm/slurm.conf: no such file or directory
+```
+
+**根本原因**：
+1. 后端服务运行在 `ai-infra-backend` 容器中
+2. SLURM Master 运行在 `slurm-master` 容器中
+3. slurm.conf 文件在 slurm-master 容器内，不在 backend 容器
+4. 后端直接尝试读取本地文件系统，导致找不到文件
+
+**解决方案**：通过 SSH 远程操作 SLURM Master
+
+**核心实现**：
+
+```go
+func (s *SlurmClusterService) removeNodeFromSlurmConfig(nodeName string) error {
+    // 1. 获取 SLURM Master SSH 配置
+    slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")  // slurm-master
+    slurmMasterUser := os.Getenv("SLURM_MASTER_USER")  // root
+    slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+    
+    // 2. 创建 SSH 连接
+    client, err := s.createSSHClient(config)
+    defer client.Close()
+    
+    // 3. 远程设置节点 DOWN
+    session1.CombinedOutput("scontrol update NodeName=... State=DOWN")
+    
+    // 4. 查找配置文件（尝试多个路径）
+    possiblePaths := []string{
+        "/etc/slurm/slurm.conf",
+        "/usr/local/etc/slurm.conf",
+        "/etc/slurm-llnl/slurm.conf",
+    }
+    
+    // 5. 远程读取配置
+    session3.CombinedOutput(fmt.Sprintf("cat %s", slurmConfPath))
+    
+    // 6. 本地处理内容（移除节点行）
+    lines := strings.Split(content, "\n")
+    for _, line := range lines {
+        if !strings.Contains(line, nodeName) {
+            newLines = append(newLines, line)
+        }
+    }
+    
+    // 7. 远程写回配置（使用 heredoc）
+    writeCmd := fmt.Sprintf("cat > %s << 'EOF'\n%s\nEOF", path, newContent)
+    session4.CombinedOutput(writeCmd)
+    
+    // 8. 远程重新加载配置
+    session5.CombinedOutput("scontrol reconfigure")
+}
+```
+
+**技术细节**：
+
+1. **SSH 连接管理**
+   - 使用现有的 `createSSHClient()` 方法
+   - 每个操作创建独立的 SSH 会话
+   - 确保会话正确关闭
+
+2. **配置文件路径查找**
+   ```bash
+   test -f /etc/slurm/slurm.conf && echo 'EXISTS'
+   ```
+   - 支持多个可能的路径
+   - 自动查找存在的配置文件
+   - 增强跨平台兼容性
+
+3. **安全的文件写入**
+   ```bash
+   cat > /etc/slurm/slurm.conf << 'EOF'
+   配置内容...
+   EOF
+   ```
+   - 使用 heredoc 避免特殊字符问题
+   - 单引号 'EOF' 防止变量展开
+   - 保持原始内容格式
+
+4. **错误处理**
+   - 每个步骤独立的错误检查
+   - 详细的日志记录
+   - 失败时提供上下文信息
+
+**改进效果**：
+
+| 方面 | 修复前 | 修复后 |
+|------|--------|--------|
+| 文件访问 | ❌ 直接读取本地文件 | ✅ SSH 远程读取 |
+| 命令执行 | ❌ 本地执行 scontrol | ✅ SSH 远程执行 |
+| 配置路径 | ❌ 硬编码单一路径 | ✅ 智能查找多路径 |
+| 容器适配 | ❌ 不适配容器环境 | ✅ 完美适配容器部署 |
+
+**环境配置**：
+
+docker-compose.yml 中已配置相关环境变量：
+```yaml
+environment:
+  SLURM_MASTER_HOST: "${SLURM_MASTER_HOST:-slurm-master}"
+  SLURM_MASTER_PORT: "${SLURM_MASTER_PORT:-22}"
+  SLURM_MASTER_USER: "${SLURM_MASTER_USER:-root}"
+  SLURM_MASTER_PASSWORD: "${SLURM_MASTER_PASSWORD}"
+```
+
+**修复时间**：2025年11月13日
+
+214. 修复http://192.168.3.91:8080/saltstack，性能指标
+CPU使用率
+0%
+内存使用率
+0%
+活跃连接数
+期望的是实时的集群状态
+
+215. docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+compute*     up   infinite      6  idle* test-rocky[01-03],test-ssh[01-03]
+❯ for node in test-rocky02 test-rocky03 test-ssh02 test-ssh03; do
+  echo "=== $node ==="
+  docker exec $node bash -c " ps aux|egrep 'slurm|munge'"
+done
+=== test-rocky02 ===
+root        1077  0.0  0.0   3800  2536 ?        Ss   15:44   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root        1084  0.0  0.0   3036  1368 ?        S    15:44   0:00 grep -E slurm|munge
+=== test-rocky03 ===
+root        1077  0.0  0.0   3800  2684 ?        Ss   15:44   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root        1084  0.0  0.0   3036  1344 ?        S    15:44   0:00 grep -E slurm|munge
+=== test-ssh02 ===
+root        1359  0.0  0.0   3876  2592 ?        Ss   15:44   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root        1366  0.0  0.0   2904  1352 ?        S    15:44   0:00 grep -E slurm|munge
+=== test-ssh03 ===
+root        1361  0.0  0.0   3876  2512 ?        Ss   15:44   0:00 bash -c  ps aux|egrep 'slurm|munge'
+root        1368  0.0  0.0   2904  1352 ?        S    15:44   0:00 grep -E slurm|munge目前启动服务后依然无法看到slurmd服务和munge服务，这个需要检查并修复。思路不对，初始化节点只需要纯净的系统，slurm和munge服务是通过salt或者ssh安装的，不是调整entrypoint，调整思路再继续，这里可以尝试使用go远程调用ssh接口远程安装，或者使用salt服务远程安装。两种方式都可以

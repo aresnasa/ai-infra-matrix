@@ -504,6 +504,9 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 	}
 	minions, pre, rejected := h.parseWheelKeys(keysResp)
 
+	// 获取性能指标
+	cpuUsage, memoryUsage, activeConnections := h.getPerformanceMetrics(client)
+
 	// 构造状态
 	status := SaltStackStatus{
 		Status:           "connected",
@@ -528,12 +531,95 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		SaltVersion:       h.extractAPISaltVersion(apiInfo),
 		ConfigFile:        "/etc/salt/master",
 		LogLevel:          "info",
-		CPUUsage:          0,
-		MemoryUsage:       0,
-		ActiveConnections: 0,
+		CPUUsage:          cpuUsage,
+		MemoryUsage:       memoryUsage,
+		ActiveConnections: activeConnections,
 	}
 	_ = down // 可用于前端显示 down 数量
 	return status, nil
+}
+
+// getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数）
+func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int) {
+	// 默认值
+	cpuUsage := 0
+	memoryUsage := 0
+	activeConnections := 0
+
+	// 尝试获取Salt Master自身的性能信息
+	// 在Salt Master上执行命令获取系统信息（Salt Master通常也是一个minion，minion_id为localhost或主机名）
+
+	// 构造本地执行命令获取CPU使用率 (使用 ps 命令获取salt-master进程CPU)
+	cpuPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    "*",
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"ps aux | grep -E 'salt-master|salt-api' | grep -v grep | awk '{sum+=$3} END {print int(sum)}'"},
+	}
+	cpuResp, err := client.makeRequest("/", "POST", cpuPayload)
+	if err == nil {
+		if ret, ok := cpuResp["return"].([]interface{}); ok && len(ret) > 0 {
+			if retMap, ok := ret[0].(map[string]interface{}); ok {
+				// 遍历返回结果，取第一个非空值
+				for _, v := range retMap {
+					if valStr, ok := v.(string); ok {
+						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil && val > 0 {
+							cpuUsage = val
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 获取内存使用率 (使用 ps 命令获取salt进程内存百分比)
+	memPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    "*",
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"ps aux | grep -E 'salt-master|salt-api' | grep -v grep | awk '{sum+=$4} END {print int(sum)}'"},
+	}
+	memResp, err := client.makeRequest("/", "POST", memPayload)
+	if err == nil {
+		if ret, ok := memResp["return"].([]interface{}); ok && len(ret) > 0 {
+			if retMap, ok := ret[0].(map[string]interface{}); ok {
+				for _, v := range retMap {
+					if valStr, ok := v.(string); ok {
+						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil && val > 0 {
+							memoryUsage = val
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 获取Salt Master活跃连接数 (检查4505和4506端口的连接数)
+	connPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    "*",
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"netstat -an 2>/dev/null | grep -E ':(4505|4506)' | grep ESTABLISHED | wc -l || ss -tan 2>/dev/null | grep -E ':(4505|4506)' | grep ESTAB | wc -l"},
+	}
+	connResp, err := client.makeRequest("/", "POST", connPayload)
+	if err == nil {
+		if ret, ok := connResp["return"].([]interface{}); ok && len(ret) > 0 {
+			if retMap, ok := ret[0].(map[string]interface{}); ok {
+				for _, v := range retMap {
+					if valStr, ok := v.(string); ok {
+						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil {
+							activeConnections = val
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return cpuUsage, memoryUsage, activeConnections
 }
 
 // getDemoSaltStackStatus 获取演示用的SaltStack状态

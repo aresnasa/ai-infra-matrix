@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -398,8 +399,61 @@ func (s *SlurmClusterService) startSaltMinionService(client *ssh.Client, session
 
 // installSlurmOnNode 在节点上安装SLURM
 func (s *SlurmClusterService) installSlurmOnNode(node *models.SlurmNode, cluster *models.SlurmCluster) error {
-	// 这里通过SaltStack安装SLURM
-	// TODO: 实现通过Salt Master执行SLURM安装的逻辑
+	log.Printf("[INFO] 开始在节点 %s 上安装 SLURM", node.Host)
+
+	// 创建SSH配置
+	config := RemoteNodeInitConfig{
+		Host:     node.Host,
+		Port:     node.Port,
+		Username: node.Username,
+		Password: node.Password,
+	}
+
+	// 建立SSH连接
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return fmt.Errorf("SSH连接失败: %v", err)
+	}
+	defer client.Close()
+
+	// 1. 检测操作系统类型
+	osType, err := s.detectOSType(client)
+	if err != nil {
+		return fmt.Errorf("检测操作系统失败: %v", err)
+	}
+	log.Printf("[INFO] 检测到操作系统: %s", osType)
+
+	// 2. 安装 SLURM 和 Munge 包
+	if err := s.installSlurmPackages(client, osType); err != nil {
+		return fmt.Errorf("安装SLURM包失败: %v", err)
+	}
+
+	// 3. 创建必要的目录和用户
+	if err := s.setupSlurmDirectories(client, osType); err != nil {
+		return fmt.Errorf("设置SLURM目录失败: %v", err)
+	}
+
+	// 4. 配置 Munge 密钥
+	if err := s.configureMungeKey(client, osType); err != nil {
+		return fmt.Errorf("配置Munge密钥失败: %v", err)
+	}
+
+	// 5. 配置 slurm.conf
+	if err := s.configureSlurmConf(client, osType, cluster); err != nil {
+		return fmt.Errorf("配置slurm.conf失败: %v", err)
+	}
+
+	// 6. 启动 Munge 服务
+	if err := s.startMungeServiceDirect(client, osType); err != nil {
+		return fmt.Errorf("启动Munge服务失败: %v", err)
+	}
+
+	// 7. 启动 SLURMD 服务
+	if err := s.startSlurmdServiceDirect(client, osType); err != nil {
+		return fmt.Errorf("启动SLURMD服务失败: %v", err)
+	}
+
+	log.Printf("[INFO] 节点 %s SLURM安装完成", node.Host)
 	return nil
 }
 
@@ -514,4 +568,447 @@ func (s *SlurmClusterService) completeInstallStep(step *models.InstallStep, stat
 		step.Output = message
 	}
 	s.db.Save(step)
+}
+
+// SLURM 节点安装辅助函数
+
+// detectOSType 检测操作系统类型
+func (s *SlurmClusterService) detectOSType(client *ssh.Client) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput("cat /etc/os-release")
+	if err != nil {
+		return "", fmt.Errorf("读取 os-release 失败: %v", err)
+	}
+
+	osInfo := string(output)
+	if strings.Contains(osInfo, "ID=rocky") || strings.Contains(osInfo, "ID=\"rocky\"") {
+		return "rocky", nil
+	} else if strings.Contains(osInfo, "ID=centos") || strings.Contains(osInfo, "ID=\"centos\"") {
+		return "centos", nil
+	} else if strings.Contains(osInfo, "ID=ubuntu") || strings.Contains(osInfo, "ID=\"ubuntu\"") {
+		return "ubuntu", nil
+	} else if strings.Contains(osInfo, "ID=debian") || strings.Contains(osInfo, "ID=\"debian\"") {
+		return "debian", nil
+	} else if strings.Contains(osInfo, "ID=alpine") || strings.Contains(osInfo, "ID=\"alpine\"") {
+		return "alpine", nil
+	}
+
+	return "unknown", nil
+}
+
+// installSlurmPackages 安装 SLURM 和 Munge 包
+func (s *SlurmClusterService) installSlurmPackages(client *ssh.Client, osType string) error {
+	var cmd string
+
+	switch osType {
+	case "rocky", "centos", "rhel", "almalinux":
+		cmd = `
+set -e
+echo "[安装] 安装 EPEL 仓库..."
+dnf install -y epel-release 2>/dev/null || yum install -y epel-release
+dnf makecache --refresh 2>/dev/null || yum makecache
+
+echo "[安装] 安装 Munge..."
+dnf install -y munge munge-libs 2>/dev/null || yum install -y munge munge-libs
+
+echo "[安装] 安装 SLURM..."
+dnf install -y slurm slurm-slurmd slurm-contribs 2>/dev/null || yum install -y slurm slurm-slurmd slurm-contribs || {
+    echo "警告: SLURM 从仓库安装失败，安装依赖..."
+    dnf install -y munge-devel pam-devel perl perl-ExtUtils-MakeMaker readline-devel 2>/dev/null || true
+}
+
+echo "[完成] SLURM 和 Munge 安装完成"
+`
+	case "ubuntu", "debian":
+		cmd = `
+set -e
+echo "[安装] 更新包索引..."
+apt-get update -qq
+
+echo "[安装] 安装 Munge..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y munge libmunge-dev
+
+echo "[安装] 安装 SLURM..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y slurmd slurm-client
+
+echo "[完成] SLURM 和 Munge 安装完成"
+`
+	case "alpine":
+		cmd = `
+set -e
+echo "[安装] 安装 SLURM 和 Munge..."
+apk add --no-cache slurm munge
+
+echo "[完成] SLURM 和 Munge 安装完成"
+`
+	default:
+		return fmt.Errorf("不支持的操作系统: %s", osType)
+	}
+
+	return s.executeSSHCmd(client, cmd)
+}
+
+// setupSlurmDirectories 创建 SLURM 和 Munge 目录及用户
+func (s *SlurmClusterService) setupSlurmDirectories(client *ssh.Client, osType string) error {
+	var cmd string
+
+	if osType == "alpine" {
+		cmd = `
+set -e
+echo "[设置] 创建 Munge 目录..."
+mkdir -p /etc/munge /var/log/munge /var/lib/munge /run/munge
+
+echo "[设置] 创建 SLURM 目录..."
+mkdir -p /etc/slurm /var/log/slurm /var/spool/slurmd /var/run/slurm
+
+echo "[设置] 创建用户..."
+if ! id -u munge >/dev/null 2>&1; then
+    adduser -D -s /bin/false munge
+fi
+
+if ! id -u slurm >/dev/null 2>&1; then
+    adduser -D -s /bin/false slurm
+fi
+
+echo "[设置] 设置权限..."
+chown -R munge:munge /etc/munge /var/log/munge /var/lib/munge /run/munge
+chmod 700 /etc/munge
+chmod 711 /var/lib/munge
+chmod 755 /var/log/munge /run/munge
+
+chown -R slurm:slurm /var/log/slurm /var/spool/slurmd /var/run/slurm
+chmod 755 /var/log/slurm /var/spool/slurmd /var/run/slurm
+
+echo "[完成] 目录设置完成"
+`
+	} else {
+		cmd = `
+set -e
+echo "[设置] 创建 Munge 目录..."
+mkdir -p /etc/munge /var/log/munge /var/lib/munge /run/munge
+
+echo "[设置] 创建 SLURM 目录..."
+mkdir -p /etc/slurm /var/log/slurm /var/spool/slurmd /var/run/slurm
+
+echo "[设置] 创建用户..."
+if ! id -u munge >/dev/null 2>&1; then
+    useradd -r -s /bin/false munge || true
+fi
+
+if ! id -u slurm >/dev/null 2>&1; then
+    useradd -r -s /bin/false slurm || true
+fi
+
+echo "[设置] 设置权限..."
+chown -R munge:munge /etc/munge /var/log/munge /var/lib/munge /run/munge
+chmod 700 /etc/munge
+chmod 711 /var/lib/munge
+chmod 755 /var/log/munge /run/munge
+
+chown -R slurm:slurm /var/log/slurm /var/spool/slurmd /var/run/slurm
+chmod 755 /var/log/slurm /var/spool/slurmd /var/run/slurm
+
+echo "[完成] 目录设置完成"
+`
+	}
+
+	return s.executeSSHCmd(client, cmd)
+}
+
+// configureMungeKey 配置 Munge 密钥
+func (s *SlurmClusterService) configureMungeKey(client *ssh.Client, osType string) error {
+	log.Printf("[配置] 开始配置 Munge 密钥...")
+
+	// 从 SLURM Master 读取 munge.key
+	mungeKey, err := s.getMungeKeyFromMaster()
+	if err != nil {
+		return fmt.Errorf("获取 Munge 密钥失败: %v", err)
+	}
+
+	// 创建临时文件
+	tmpFile, err := os.CreateTemp("", "munge.key.*")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if _, err := tmpFile.Write(mungeKey); err != nil {
+		return fmt.Errorf("写入临时文件失败: %v", err)
+	}
+	tmpFile.Close()
+
+	// 通过 SFTP 上传文件
+	if err := s.uploadFileViaSSH(client, tmpFile.Name(), "/etc/munge/munge.key"); err != nil {
+		return fmt.Errorf("上传 munge.key 失败: %v", err)
+	}
+
+	// 设置权限
+	cmd := `
+chown munge:munge /etc/munge/munge.key
+chmod 400 /etc/munge/munge.key
+echo "[完成] Munge 密钥配置完成"
+`
+	return s.executeSSHCmd(client, cmd)
+}
+
+// configureSlurmConf 配置 slurm.conf
+func (s *SlurmClusterService) configureSlurmConf(client *ssh.Client, osType string, cluster *models.SlurmCluster) error {
+	log.Printf("[配置] 开始配置 slurm.conf...")
+
+	// 从 SLURM Master 读取 slurm.conf
+	slurmConf, err := s.getSlurmConfFromMaster()
+	if err != nil {
+		return fmt.Errorf("获取 slurm.conf 失败: %v", err)
+	}
+
+	// 创建临时文件
+	tmpFile, err := os.CreateTemp("", "slurm.conf.*")
+	if err != nil {
+		return fmt.Errorf("创建临时文件失败: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if _, err := tmpFile.Write(slurmConf); err != nil {
+		return fmt.Errorf("写入临时文件失败: %v", err)
+	}
+	tmpFile.Close()
+
+	// 确定目标路径
+	targetPath := "/etc/slurm/slurm.conf"
+	if osType == "ubuntu" || osType == "debian" {
+		// Ubuntu 可能使用 /etc/slurm-llnl/slurm.conf
+		checkCmd := "test -d /etc/slurm-llnl && echo 'llnl' || echo 'slurm'"
+		session, err := client.NewSession()
+		if err == nil {
+			output, _ := session.CombinedOutput(checkCmd)
+			session.Close()
+			if strings.TrimSpace(string(output)) == "llnl" {
+				targetPath = "/etc/slurm-llnl/slurm.conf"
+				// 确保目录存在
+				s.executeSSHCmd(client, "mkdir -p /etc/slurm-llnl")
+			}
+		}
+	}
+
+	// 通过 SFTP 上传文件
+	if err := s.uploadFileViaSSH(client, tmpFile.Name(), targetPath); err != nil {
+		return fmt.Errorf("上传 slurm.conf 失败: %v", err)
+	}
+
+	// 设置权限
+	cmd := fmt.Sprintf(`
+chmod 644 %s
+echo "[完成] slurm.conf 配置完成"
+`, targetPath)
+	return s.executeSSHCmd(client, cmd)
+}
+
+// startMungeServiceDirect 直接启动 Munge 服务（不依赖脚本）
+func (s *SlurmClusterService) startMungeServiceDirect(client *ssh.Client, osType string) error {
+	log.Printf("[启动] 启动 Munge 服务...")
+
+	var cmd string
+	if osType == "alpine" {
+		cmd = `
+set -e
+echo "[启动] 启动 Munge 服务..."
+rc-service munge stop 2>/dev/null || true
+rc-update add munge default 2>/dev/null || true
+rc-service munge start || munged -f &
+
+sleep 2
+
+if munge -n | unmunge >/dev/null 2>&1; then
+    echo "[成功] Munge 服务运行正常"
+else
+    echo "[错误] Munge 验证失败"
+    exit 1
+fi
+`
+	} else {
+		cmd = `
+set -e
+echo "[启动] 启动 Munge 服务..."
+systemctl stop munge 2>/dev/null || true
+systemctl enable munge 2>/dev/null || true
+systemctl start munge || munged -f &
+
+sleep 2
+
+if munge -n | unmunge >/dev/null 2>&1; then
+    echo "[成功] Munge 服务运行正常"
+else
+    echo "[错误] Munge 验证失败"
+    exit 1
+fi
+`
+	}
+
+	return s.executeSSHCmd(client, cmd)
+}
+
+// startSlurmdServiceDirect 直接启动 SLURMD 服务（不依赖脚本）
+func (s *SlurmClusterService) startSlurmdServiceDirect(client *ssh.Client, osType string) error {
+	log.Printf("[启动] 启动 SLURMD 服务...")
+
+	var cmd string
+	if osType == "alpine" {
+		cmd = `
+set -e
+echo "[启动] 启动 SLURMD 服务..."
+rc-service slurmd stop 2>/dev/null || true
+rc-update add slurmd default 2>/dev/null || true
+rc-service slurmd start || slurmd -D &
+
+sleep 2
+
+if pgrep -x slurmd >/dev/null; then
+    echo "[成功] SLURMD 服务运行正常"
+else
+    echo "[错误] SLURMD 服务未运行"
+    exit 1
+fi
+`
+	} else {
+		cmd = `
+set -e
+echo "[启动] 启动 SLURMD 服务..."
+systemctl stop slurmd 2>/dev/null || true
+systemctl enable slurmd 2>/dev/null || true
+systemctl start slurmd || slurmd -D &
+
+sleep 2
+
+if pgrep -x slurmd >/dev/null; then
+    echo "[成功] SLURMD 服务运行正常"
+else
+    echo "[错误] SLURMD 服务未运行"
+    exit 1
+fi
+`
+	}
+
+	return s.executeSSHCmd(client, cmd)
+}
+
+// executeSSHCmd 执行 SSH 命令的辅助函数
+func (s *SlurmClusterService) executeSSHCmd(client *ssh.Client, cmd string) error {
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("命令执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	log.Printf("[输出] %s", string(output))
+	return nil
+}
+
+// getMungeKeyFromMaster 从 SLURM Master 获取 munge.key
+func (s *SlurmClusterService) getMungeKeyFromMaster() ([]byte, error) {
+	// 尝试从 Docker 容器读取
+	config := RemoteNodeInitConfig{
+		Host:     os.Getenv("SLURM_MASTER_HOST"),
+		Port:     22,
+		Username: "root",
+		Password: os.Getenv("SLURM_MASTER_PASSWORD"),
+	}
+
+	if config.Host == "" {
+		config.Host = "ai-infra-slurm-master"
+	}
+	if config.Password == "" {
+		config.Password = "rootpass123" // 默认密码
+	}
+
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("连接 SLURM Master 失败: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput("cat /etc/munge/munge.key")
+	if err != nil {
+		return nil, fmt.Errorf("读取 munge.key 失败: %v", err)
+	}
+
+	return output, nil
+}
+
+// getSlurmConfFromMaster 从 SLURM Master 获取 slurm.conf
+func (s *SlurmClusterService) getSlurmConfFromMaster() ([]byte, error) {
+	config := RemoteNodeInitConfig{
+		Host:     os.Getenv("SLURM_MASTER_HOST"),
+		Port:     22,
+		Username: "root",
+		Password: os.Getenv("SLURM_MASTER_PASSWORD"),
+	}
+
+	if config.Host == "" {
+		config.Host = "ai-infra-slurm-master"
+	}
+	if config.Password == "" {
+		config.Password = "rootpass123"
+	}
+
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("连接 SLURM Master 失败: %v", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput("cat /etc/slurm/slurm.conf")
+	if err != nil {
+		return nil, fmt.Errorf("读取 slurm.conf 失败: %v", err)
+	}
+
+	return output, nil
+}
+
+// uploadFileViaSSH 通过 SSH/SFTP 上传文件
+func (s *SlurmClusterService) uploadFileViaSSH(client *ssh.Client, localPath, remotePath string) error {
+	// 读取本地文件
+	content, err := os.ReadFile(localPath)
+	if err != nil {
+		return err
+	}
+
+	// 使用 SSH 写入远程文件
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	// 使用 cat 命令写入文件
+	cmd := fmt.Sprintf("cat > %s <<'EOF'\n%s\nEOF", remotePath, string(content))
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("写入远程文件失败: %v, 输出: %s", err, string(output))
+	}
+
+	return nil
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useImperativeHandle, forwardRef } from 'react';
 import { Badge, Button, Empty, Popover, Space, Tag, Tooltip, Typography, Progress } from 'antd';
 import { ThunderboltOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -43,7 +43,7 @@ const formatTask = (t) => {
   };
 };
 
-export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, style }) {
+const SlurmTaskBar = forwardRef(({ refreshInterval = 10000, maxItems = 8, style }, ref) => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -88,6 +88,11 @@ export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, st
       setLoading(false);
     }
   };
+
+  // 暴露 refresh 方法给父组件
+  useImperativeHandle(ref, () => ({
+    refresh: load
+  }));
 
   useEffect(() => {
     console.log('SlurmTaskBar: Component mounted, loading tasks...');
@@ -191,4 +196,6 @@ export default function SlurmTaskBar({ refreshInterval = 10000, maxItems = 8, st
       </Space>
     </div>
   );
-}
+});
+
+export default SlurmTaskBar;

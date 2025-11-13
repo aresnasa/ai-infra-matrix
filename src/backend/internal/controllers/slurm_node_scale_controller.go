@@ -268,5 +268,159 @@ func (c *SlurmNodeScaleController) RegisterRoutes(api *gin.RouterGroup) {
 	{
 		nodes.POST("/check-saltstack", c.CheckSaltStackClients)
 		nodes.POST("/scale", c.ScaleNodes)
+		nodes.DELETE("/:nodeId", c.DeleteNode)                 // 删除节点（通过ID）
+		nodes.DELETE("/by-name/:nodeName", c.DeleteNodeByName) // 删除节点（通过名称）
+		nodes.GET("/:nodeId", c.GetNode)                       // 获取节点详情
+		nodes.GET("/cluster/:clusterId", c.ListNodes)          // 列出集群节点
 	}
+}
+
+// DeleteNode 删除节点
+// @Summary 删除SLURM节点
+// @Tags SLURM节点管理
+// @Accept json
+// @Produce json
+// @Param nodeId path int true "节点ID"
+// @Param force query bool false "强制删除（跳过停止服务）"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/nodes/:nodeId [delete]
+func (c *SlurmNodeScaleController) DeleteNode(ctx *gin.Context) {
+	nodeIDStr := ctx.Param("nodeId")
+	nodeID := uint(0)
+	if _, err := fmt.Sscanf(nodeIDStr, "%d", &nodeID); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "无效的节点ID",
+		})
+		return
+	}
+
+	// 获取force参数
+	force := ctx.DefaultQuery("force", "false") == "true"
+
+	// 创建超时上下文
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	// 删除节点
+	if err := c.slurmService.DeleteNode(ctxWithTimeout, nodeID, force); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "删除节点失败: " + err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "节点删除成功",
+	})
+}
+
+// DeleteNodeByName 通过节点名称删除节点
+// @Summary 通过节点名称删除SLURM节点
+// @Tags SLURM节点管理
+// @Accept json
+// @Produce json
+// @Param nodeName path string true "节点名称"
+// @Param force query bool false "强制删除（跳过停止服务）"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/nodes/by-name/:nodeName [delete]
+func (c *SlurmNodeScaleController) DeleteNodeByName(ctx *gin.Context) {
+	nodeName := ctx.Param("nodeName")
+	if nodeName == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "节点名称不能为空",
+		})
+		return
+	}
+
+	// 获取force参数
+	force := ctx.DefaultQuery("force", "false") == "true"
+
+	// 创建超时上下文
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	// 删除节点
+	if err := c.slurmService.DeleteNodeByName(ctxWithTimeout, nodeName, force); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "删除节点失败: " + err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "节点删除成功",
+	})
+}
+
+// GetNode 获取节点详情
+// @Summary 获取节点详情
+// @Tags SLURM节点管理
+// @Produce json
+// @Param nodeId path int true "节点ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/nodes/:nodeId [get]
+func (c *SlurmNodeScaleController) GetNode(ctx *gin.Context) {
+	nodeIDStr := ctx.Param("nodeId")
+	nodeID := uint(0)
+	if _, err := fmt.Sscanf(nodeIDStr, "%d", &nodeID); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "无效的节点ID",
+		})
+		return
+	}
+
+	node, err := c.slurmService.GetNode(ctx.Request.Context(), nodeID)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "节点不存在",
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    node,
+	})
+}
+
+// ListNodes 列出集群的所有节点
+// @Summary 列出集群节点
+// @Tags SLURM节点管理
+// @Produce json
+// @Param clusterId path int true "集群ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/slurm/nodes/cluster/:clusterId [get]
+func (c *SlurmNodeScaleController) ListNodes(ctx *gin.Context) {
+	clusterIDStr := ctx.Param("clusterId")
+	clusterID := uint(0)
+	if _, err := fmt.Sscanf(clusterIDStr, "%d", &clusterID); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "无效的集群ID",
+		})
+		return
+	}
+
+	nodes, err := c.slurmService.ListNodes(ctx.Request.Context(), clusterID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "查询节点失败: " + err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    nodes,
+		"count":   len(nodes),
+	})
 }

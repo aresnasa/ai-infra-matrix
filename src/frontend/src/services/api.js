@@ -539,6 +539,11 @@ export const slurmAPI = {
   createNodeTemplate: (template) => api.post('/slurm/node-templates', template),
   updateNodeTemplate: (id, template) => api.put(`/slurm/node-templates/${id}`, template),
   deleteNodeTemplate: (id) => api.delete(`/slurm/node-templates/${id}`),
+  // 节点管理 API
+  getNode: (nodeId) => api.get(`/slurm/nodes/${nodeId}`),
+  listNodes: (clusterId) => api.get(`/slurm/nodes/cluster/${clusterId}`),
+  deleteNode: (nodeId, force = false) => api.delete(`/slurm/nodes/${nodeId}`, { params: { force } }),
+  deleteNodeByName: (nodeName, force = false) => api.delete(`/slurm/nodes/by-name/${nodeName}`, { params: { force } }),
   // 任务管理 API (基础)
   getTasks: (params) => api.get('/slurm/tasks', { params }),
   getProgress: (opId) => api.get(`/slurm/progress/${opId}`),

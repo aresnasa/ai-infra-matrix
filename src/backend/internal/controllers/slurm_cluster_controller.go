@@ -782,6 +782,195 @@ func (c *SlurmClusterController) GetDeploymentLogs(ctx *gin.Context) {
 	})
 }
 
+// InitNode 初始化远程SLURM节点
+// @Summary 初始化远程节点
+// @Description 通过SSH连接到远程节点，安装和配置SLURM和Munge
+// @Tags SLURM Cluster
+// @Accept json
+// @Produce json
+// @Param clusterId path int true "集群ID"
+// @Param request body object true "节点初始化请求"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/slurm/clusters/{clusterId}/init-node [post]
+func (c *SlurmClusterController) InitNode(ctx *gin.Context) {
+	clusterID, err := strconv.ParseUint(ctx.Param("clusterId"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid cluster ID"})
+		return
+	}
+
+	var req struct {
+		NodeID          uint   `json:"node_id" binding:"required"`
+		InstallPackages bool   `json:"install_packages"`
+		SlurmConfPath   string `json:"slurm_conf_path"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 查询节点信息
+	var node models.SlurmNode
+	if err := c.db.First(&node, req.NodeID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "Node not found"})
+		return
+	}
+
+	// 验证节点属于指定集群
+	if node.ClusterID != uint(clusterID) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Node does not belong to this cluster"})
+		return
+	}
+
+	// 获取Munge密钥
+	mungeKey, err := c.service.GetMungeKeyFromMaster("slurm-master")
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to get munge key: %v", err)})
+		return
+	}
+
+	// 如果没有指定SLURM配置路径，使用默认路径
+	if req.SlurmConfPath == "" {
+		req.SlurmConfPath = "/etc/slurm/slurm.conf"
+	}
+
+	// 初始化配置
+	config := services.RemoteNodeInitConfig{
+		NodeID:          node.ID,
+		NodeName:        node.NodeName,
+		Host:            node.Host,
+		Port:            node.Port,
+		Username:        node.Username,
+		AuthType:        node.AuthType,
+		Password:        node.Password,
+		KeyPath:         node.KeyPath,
+		MungeKeyContent: mungeKey,
+		SlurmConfPath:   req.SlurmConfPath,
+		InstallPackages: req.InstallPackages,
+	}
+
+	// 执行初始化
+	if err := c.service.InitializeRemoteNode(ctx.Request.Context(), config); err != nil {
+		logrus.WithError(err).Errorf("Failed to initialize node %s", node.NodeName)
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Node initialization failed",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 更新节点状态
+	node.Status = "idle"
+	if err := c.db.Save(&node).Error; err != nil {
+		logrus.WithError(err).Warn("Failed to update node status")
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "Node initialized successfully",
+		"node":    node,
+	})
+}
+
+// SyncSSHKeys 同步SSH密钥到所有节点
+// @Summary 同步SSH密钥
+// @Description 将SLURM Master的SSH公钥同步到所有计算节点
+// @Tags SLURM Cluster
+// @Accept json
+// @Produce json
+// @Param clusterId path int true "集群ID"
+// @Param request body object true "SSH密钥同步请求"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/slurm/clusters/{clusterId}/sync-ssh-keys [post]
+func (c *SlurmClusterController) SyncSSHKeys(ctx *gin.Context) {
+	clusterID, err := strconv.ParseUint(ctx.Param("clusterId"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid cluster ID"})
+		return
+	}
+
+	var req struct {
+		PublicKeyPath string `json:"public_key_path"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 如果没有指定公钥路径，使用默认路径
+	if req.PublicKeyPath == "" {
+		req.PublicKeyPath = "/root/.ssh/id_rsa.pub"
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(req.PublicKeyPath); os.IsNotExist(err) {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Public key file not found",
+			"message": fmt.Sprintf("File %s does not exist", req.PublicKeyPath),
+		})
+		return
+	}
+
+	// 执行同步
+	if err := c.service.SyncSSHKeysToNodes(ctx.Request.Context(), uint(clusterID), req.PublicKeyPath); err != nil {
+		logrus.WithError(err).Error("Failed to sync SSH keys")
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "SSH key synchronization failed",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "SSH keys synchronized successfully",
+	})
+}
+
+// GetMungeKey 获取Munge密钥
+// @Summary 获取Munge密钥
+// @Description 从SLURM Master获取Munge密钥（base64编码）
+// @Tags SLURM Cluster
+// @Produce json
+// @Param clusterId path int true "集群ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/slurm/clusters/{clusterId}/munge-key [get]
+func (c *SlurmClusterController) GetMungeKey(ctx *gin.Context) {
+	clusterID, err := strconv.ParseUint(ctx.Param("clusterId"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid cluster ID"})
+		return
+	}
+
+	// 查询集群
+	var cluster models.SlurmCluster
+	if err := c.db.First(&cluster, clusterID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "Cluster not found"})
+		return
+	}
+
+	// 获取Munge密钥
+	mungeKey, err := c.service.GetMungeKeyFromMaster(cluster.MasterHost)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get munge key",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"munge_key": mungeKey,
+		"encoding":  "base64",
+	})
+}
+
 // RegisterRoutes 注册路由
 func (c *SlurmClusterController) RegisterRoutes(api *gin.RouterGroup) {
 	clusters := api.Group("/slurm/clusters")
@@ -794,7 +983,10 @@ func (c *SlurmClusterController) RegisterRoutes(api *gin.RouterGroup) {
 		clusters.GET("/:clusterId/info", c.GetClusterInfo) // 新增：获取集群详细信息
 		clusters.POST("/deploy", c.DeployCluster)
 		clusters.POST("/scale", c.ScaleCluster)
-		clusters.DELETE("/:clusterId", c.DeleteCluster) // 新增：删除集群
+		clusters.DELETE("/:clusterId", c.DeleteCluster)           // 新增：删除集群
+		clusters.POST("/:clusterId/init-node", c.InitNode)        // 新增：初始化远程节点
+		clusters.POST("/:clusterId/sync-ssh-keys", c.SyncSSHKeys) // 新增：同步SSH密钥
+		clusters.GET("/:clusterId/munge-key", c.GetMungeKey)      // 新增：获取Munge密钥
 	}
 
 	deployments := api.Group("/slurm/deployments")

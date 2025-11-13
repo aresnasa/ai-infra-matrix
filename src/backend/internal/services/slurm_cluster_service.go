@@ -3,8 +3,10 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -896,4 +898,714 @@ func (s *SlurmClusterService) getExternalClusterInfo(cluster models.SlurmCluster
 // CreateNode 创建节点记录
 func (s *SlurmClusterService) CreateNode(ctx context.Context, node *models.SlurmNode) error {
 	return s.db.WithContext(ctx).Create(node).Error
+}
+
+// DeleteNode 删除节点
+// 该方法会停止节点上的服务，从集群配置中移除节点，并删除数据库记录
+func (s *SlurmClusterService) DeleteNode(ctx context.Context, nodeID uint, force bool) error {
+	// 查询节点信息
+	var node models.SlurmNode
+	if err := s.db.WithContext(ctx).First(&node, nodeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("节点不存在 (ID: %d)", nodeID)
+		}
+		return fmt.Errorf("查询节点失败: %v", err)
+	}
+
+	logrus.Infof("开始删除节点: %s (ID: %d, Host: %s)", node.NodeName, nodeID, node.Host)
+
+	// 如果节点有SSH配置，尝试远程停止服务
+	if node.Host != "" && !force {
+		config := RemoteNodeInitConfig{
+			NodeID:   node.ID,
+			NodeName: node.NodeName,
+			Host:     node.Host,
+			Port:     node.Port,
+			Username: node.Username,
+			AuthType: node.AuthType,
+			Password: node.Password,
+			KeyPath:  node.KeyPath,
+		}
+
+		// 尝试停止服务（忽略错误）
+		logrus.Infof("尝试停止节点 %s (%s) 的服务...", node.NodeName, node.Host)
+		if err := s.stopNodeServices(config); err != nil {
+			logrus.Warnf("停止节点服务失败（继续删除）: %v", err)
+		} else {
+			logrus.Infof("节点 %s 服务已停止", node.NodeName)
+		}
+	} else if node.Host == "" {
+		logrus.Infof("节点 %s 没有配置SSH信息，跳过停止服务步骤", node.NodeName)
+	} else {
+		logrus.Infof("强制删除模式，跳过停止服务步骤")
+	}
+
+	// 从数据库彻底删除节点记录（使用Unscoped进行硬删除）
+	if err := s.db.WithContext(ctx).Unscoped().Delete(&node).Error; err != nil {
+		logrus.Errorf("删除节点记录失败: %v", err)
+		return fmt.Errorf("删除节点记录失败: %v", err)
+	}
+
+	logrus.Infof("节点删除成功: %s (ID: %d)", node.NodeName, nodeID)
+	return nil
+}
+
+// DeleteNodeByName 通过节点名称删除节点
+func (s *SlurmClusterService) DeleteNodeByName(ctx context.Context, nodeName string, force bool) error {
+	// 先尝试从数据库中查找节点
+	var node models.SlurmNode
+	err := s.db.WithContext(ctx).Where("node_name = ?", nodeName).First(&node).Error
+
+	if err == nil {
+		// 节点在数据库中，使用标准删除流程
+		logrus.Infof("找到数据库中的节点 %s (ID: %d)，执行标准删除流程", nodeName, node.ID)
+		return s.DeleteNode(ctx, node.ID, force)
+	}
+
+	if err != gorm.ErrRecordNotFound {
+		// 查询出错
+		return fmt.Errorf("查询节点失败: %v", err)
+	}
+
+	// 节点不在数据库中，从 SLURM 配置中移除
+	logrus.Infof("节点 %s 不在数据库中，尝试从 SLURM 配置中移除", nodeName)
+
+	// 从 SLURM 中移除节点
+	if err := s.removeNodeFromSlurmConfig(nodeName); err != nil {
+		logrus.Errorf("从 SLURM 配置中移除节点 %s 失败: %v", nodeName, err)
+		return fmt.Errorf("从 SLURM 配置中移除节点失败: %v", err)
+	}
+
+	logrus.Infof("成功从 SLURM 配置中移除节点 %s", nodeName)
+	return nil
+}
+
+// removeNodeFromSlurmConfig 从 SLURM 配置中移除节点并重新加载配置
+func (s *SlurmClusterService) removeNodeFromSlurmConfig(nodeName string) error {
+	// 获取 SLURM Master SSH 配置
+	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
+	if slurmMasterHost == "" {
+		slurmMasterHost = "slurm-master"
+	}
+
+	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
+	if slurmMasterUser == "" {
+		slurmMasterUser = "root"
+	}
+
+	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
+
+	// 创建 SSH 客户端配置
+	config := RemoteNodeInitConfig{
+		Host:     slurmMasterHost,
+		Port:     22,
+		Username: slurmMasterUser,
+		Password: slurmMasterPassword,
+		AuthType: "password",
+	}
+
+	// 创建 SSH 连接
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return fmt.Errorf("创建SSH连接到SLURM Master失败: %v", err)
+	}
+	defer client.Close()
+
+	logrus.Infof("已连接到 SLURM Master (%s)，开始移除节点 %s", slurmMasterHost, nodeName)
+
+	// 1. 设置节点为 DOWN 状态
+	logrus.Infof("设置节点 %s 为 DOWN 状态", nodeName)
+	session1, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason='Removed via Web UI'", nodeName)
+	output1, _ := session1.CombinedOutput(downCmd)
+	session1.Close()
+	logrus.Infof("设置节点 DOWN 状态输出: %s", string(output1))
+
+	// 2. 从 slurm.conf 中移除节点定义
+	logrus.Infof("从 slurm.conf 中移除节点 %s 的定义", nodeName)
+
+	// 尝试多个可能的 slurm.conf 路径
+	possiblePaths := []string{
+		"/etc/slurm/slurm.conf",
+		"/usr/local/etc/slurm.conf",
+		"/etc/slurm-llnl/slurm.conf",
+	}
+
+	var slurmConfPath string
+	var confContent string
+
+	// 查找存在的配置文件
+	for _, path := range possiblePaths {
+		session2, err := client.NewSession()
+		if err != nil {
+			continue
+		}
+		checkCmd := fmt.Sprintf("test -f %s && echo 'EXISTS'", path)
+		output2, _ := session2.CombinedOutput(checkCmd)
+		session2.Close()
+
+		if strings.Contains(string(output2), "EXISTS") {
+			slurmConfPath = path
+			logrus.Infof("找到 SLURM 配置文件: %s", path)
+			break
+		}
+	}
+
+	if slurmConfPath == "" {
+		return fmt.Errorf("未找到 SLURM 配置文件，尝试的路径: %v", possiblePaths)
+	}
+
+	// 读取配置文件
+	session3, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	readCmd := fmt.Sprintf("cat %s", slurmConfPath)
+	output3, err := session3.CombinedOutput(readCmd)
+	session3.Close()
+	if err != nil {
+		return fmt.Errorf("读取配置文件失败: %v", err)
+	}
+	confContent = string(output3)
+
+	// 处理配置内容，移除包含该节点的行
+	lines := strings.Split(confContent, "\n")
+	var newLines []string
+	removed := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// 跳过包含该节点名称的 NodeName 定义行
+		if strings.HasPrefix(trimmed, "NodeName=") && strings.Contains(trimmed, nodeName) {
+			logrus.Infof("移除配置行: %s", line)
+			removed = true
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+
+	if !removed {
+		logrus.Warnf("在 slurm.conf 中未找到节点 %s 的定义", nodeName)
+	}
+
+	// 3. 写回配置文件
+	newContent := strings.Join(newLines, "\n")
+
+	session4, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	writeCmd := fmt.Sprintf("cat > %s << 'SLURM_CONF_EOF'\n%s\nSLURM_CONF_EOF", slurmConfPath, newContent)
+	output4, err := session4.CombinedOutput(writeCmd)
+	session4.Close()
+	if err != nil {
+		return fmt.Errorf("写入配置文件失败: %v, 输出: %s", err, string(output4))
+	}
+
+	logrus.Infof("已更新 slurm.conf 文件")
+
+	// 4. 重新加载 SLURM 配置
+	logrus.Infof("重新加载 SLURM 配置")
+	session5, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	reconfigCmd := "scontrol reconfigure"
+	output5, err := session5.CombinedOutput(reconfigCmd)
+	session5.Close()
+	if err != nil {
+		logrus.Errorf("重新加载 SLURM 配置失败: %v, 输出: %s", err, string(output5))
+		return fmt.Errorf("重新加载 SLURM 配置失败: %v", err)
+	}
+
+	logrus.Infof("SLURM 配置已重新加载，节点 %s 已移除", nodeName)
+	return nil
+}
+
+// stopNodeServices 停止节点上的SLURM和Munge服务
+func (s *SlurmClusterService) stopNodeServices(config RemoteNodeInitConfig) error {
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return fmt.Errorf("创建SSH连接失败: %v", err)
+	}
+	defer client.Close()
+
+	logrus.Infof("停止节点 %s 的服务", config.NodeName)
+
+	// 停止SLURMD
+	session1, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session1.Close()
+
+	stopSlurmdCmd := `
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl stop slurmd 2>/dev/null || true
+		elif command -v rc-service >/dev/null 2>&1; then
+			rc-service slurmd stop 2>/dev/null || true
+		else
+			pkill -9 slurmd 2>/dev/null || true
+		fi
+	`
+	session1.CombinedOutput(stopSlurmdCmd)
+
+	// 停止Munge
+	session2, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session2.Close()
+
+	stopMungeCmd := `
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl stop munge 2>/dev/null || true
+		elif command -v rc-service >/dev/null 2>&1; then
+			rc-service munge stop 2>/dev/null || true
+		else
+			pkill -9 munged 2>/dev/null || true
+		fi
+	`
+	session2.CombinedOutput(stopMungeCmd)
+
+	logrus.Infof("节点 %s 服务已停止", config.NodeName)
+	return nil
+}
+
+// GetNode 获取节点信息
+func (s *SlurmClusterService) GetNode(ctx context.Context, nodeID uint) (*models.SlurmNode, error) {
+	var node models.SlurmNode
+	if err := s.db.WithContext(ctx).First(&node, nodeID).Error; err != nil {
+		return nil, err
+	}
+	return &node, nil
+}
+
+// ListNodes 列出集群的所有节点
+func (s *SlurmClusterService) ListNodes(ctx context.Context, clusterID uint) ([]models.SlurmNode, error) {
+	var nodes []models.SlurmNode
+	if err := s.db.WithContext(ctx).Where("cluster_id = ?", clusterID).Find(&nodes).Error; err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+// RemoteNodeInitConfig 远程节点初始化配置
+type RemoteNodeInitConfig struct {
+	NodeID          uint   // 节点ID
+	NodeName        string // 节点名称
+	Host            string // 节点主机地址
+	Port            int    // SSH端口
+	Username        string // SSH用户名
+	AuthType        string // 认证类型: password, key
+	Password        string // SSH密码
+	KeyPath         string // SSH私钥路径
+	MungeKeyContent string // Munge密钥内容(base64)
+	SlurmConfPath   string // SLURM配置文件路径(在master上)
+	InstallPackages bool   // 是否安装软件包
+}
+
+// InitializeRemoteNode 初始化远程SLURM节点
+// 该方法会通过SSH连接到远程节点，安装配置SLURM和Munge
+func (s *SlurmClusterService) InitializeRemoteNode(ctx context.Context, config RemoteNodeInitConfig) error {
+	logrus.Infof("开始初始化远程节点: %s (%s:%d)", config.NodeName, config.Host, config.Port)
+
+	// 创建SSH客户端
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return fmt.Errorf("创建SSH连接失败: %v", err)
+	}
+	defer client.Close()
+
+	// 步骤1: 上传初始化脚本
+	if err := s.uploadInitScript(client); err != nil {
+		return fmt.Errorf("上传初始化脚本失败: %v", err)
+	}
+
+	// 步骤2: 安装软件包（可选）
+	if config.InstallPackages {
+		if err := s.installNodePackages(client); err != nil {
+			return fmt.Errorf("安装软件包失败: %v", err)
+		}
+	}
+
+	// 步骤3: 设置目录和权限
+	if err := s.setupNodeDirectories(client); err != nil {
+		return fmt.Errorf("设置目录失败: %v", err)
+	}
+
+	// 步骤4: 同步Munge密钥
+	if config.MungeKeyContent != "" {
+		if err := s.syncMungeKey(client, config.MungeKeyContent); err != nil {
+			return fmt.Errorf("同步Munge密钥失败: %v", err)
+		}
+	}
+
+	// 步骤5: 同步SLURM配置文件
+	if config.SlurmConfPath != "" {
+		if err := s.syncSlurmConfig(client, config.SlurmConfPath); err != nil {
+			return fmt.Errorf("同步SLURM配置失败: %v", err)
+		}
+	}
+
+	// 步骤6: 启动Munge服务
+	if err := s.startMungeService(client); err != nil {
+		return fmt.Errorf("启动Munge服务失败: %v", err)
+	}
+
+	// 步骤7: 启动SLURMD服务
+	if err := s.startSlurmdService(client); err != nil {
+		return fmt.Errorf("启动SLURMD服务失败: %v", err)
+	}
+
+	// 步骤8: 验证节点状态
+	if err := s.verifyNodeStatus(client, config.NodeName); err != nil {
+		return fmt.Errorf("节点验证失败: %v", err)
+	}
+
+	logrus.Infof("远程节点初始化完成: %s", config.NodeName)
+	return nil
+}
+
+// createSSHClient 创建SSH客户端连接
+func (s *SlurmClusterService) createSSHClient(config RemoteNodeInitConfig) (*ssh.Client, error) {
+	clientConfig := &ssh.ClientConfig{
+		User:            config.Username,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	// 根据认证类型配置
+	if config.AuthType == "password" {
+		clientConfig.Auth = []ssh.AuthMethod{
+			ssh.Password(config.Password),
+		}
+	} else if config.AuthType == "key" && config.KeyPath != "" {
+		// 读取私钥
+		key, err := os.ReadFile(config.KeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("读取私钥文件失败: %v", err)
+		}
+
+		signer, err := ssh.ParsePrivateKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("解析私钥失败: %v", err)
+		}
+
+		clientConfig.Auth = []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		}
+	} else {
+		return nil, fmt.Errorf("无效的认证配置")
+	}
+
+	address := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	client, err := ssh.Dial("tcp", address, clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("SSH连接失败 (%s): %v", address, err)
+	}
+
+	return client, nil
+}
+
+// uploadInitScript 上传初始化脚本到远程节点
+func (s *SlurmClusterService) uploadInitScript(client *ssh.Client) error {
+	logrus.Info("上传初始化脚本...")
+
+	// 读取脚本内容
+	scriptPath := "/app/scripts/init-slurm-node.sh"
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("读取脚本文件失败: %v", err)
+	}
+
+	// 在远程创建脚本文件
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := fmt.Sprintf("cat > /tmp/init-slurm-node.sh && chmod +x /tmp/init-slurm-node.sh")
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := session.Start(cmd); err != nil {
+		return err
+	}
+
+	if _, err := stdin.Write(scriptContent); err != nil {
+		return err
+	}
+	stdin.Close()
+
+	if err := session.Wait(); err != nil {
+		return err
+	}
+
+	logrus.Info("初始化脚本上传成功")
+	return nil
+}
+
+// installNodePackages 在远程节点安装SLURM和Munge包
+func (s *SlurmClusterService) installNodePackages(client *ssh.Client) error {
+	logrus.Info("安装SLURM和Munge软件包...")
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := "/tmp/init-slurm-node.sh --install-packages"
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("软件包安装完成: %s", string(output))
+	return nil
+}
+
+// setupNodeDirectories 设置远程节点的目录和权限
+func (s *SlurmClusterService) setupNodeDirectories(client *ssh.Client) error {
+	logrus.Info("设置目录和权限...")
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := "/tmp/init-slurm-node.sh --setup-dirs"
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("目录设置完成: %s", string(output))
+	return nil
+}
+
+// syncMungeKey 同步Munge密钥到远程节点
+func (s *SlurmClusterService) syncMungeKey(client *ssh.Client, keyContent string) error {
+	logrus.Info("同步Munge密钥...")
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	// keyContent已经是base64编码的
+	cmd := fmt.Sprintf("/tmp/init-slurm-node.sh --munge-key '%s'", keyContent)
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("Munge密钥同步完成: %s", string(output))
+	return nil
+}
+
+// syncSlurmConfig 同步SLURM配置文件到远程节点
+func (s *SlurmClusterService) syncSlurmConfig(client *ssh.Client, configPath string) error {
+	logrus.Info("同步SLURM配置文件...")
+
+	// 从master节点读取配置文件
+	configContent, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("读取配置文件失败: %v", err)
+	}
+
+	// 将配置内容传输到远程节点
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := fmt.Sprintf("/tmp/init-slurm-node.sh --slurm-conf '%s'", string(configContent))
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("SLURM配置同步完成: %s", string(output))
+	return nil
+}
+
+// startMungeService 启动远程节点的Munge服务
+func (s *SlurmClusterService) startMungeService(client *ssh.Client) error {
+	logrus.Info("启动Munge服务...")
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := "/tmp/init-slurm-node.sh --start-munge"
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("Munge服务启动成功: %s", string(output))
+	return nil
+}
+
+// startSlurmdService 启动远程节点的SLURMD服务
+func (s *SlurmClusterService) startSlurmdService(client *ssh.Client) error {
+	logrus.Info("启动SLURMD服务...")
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := "/tmp/init-slurm-node.sh --start-slurmd"
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("SLURMD服务启动成功: %s", string(output))
+	return nil
+}
+
+// verifyNodeStatus 验证远程节点状态
+func (s *SlurmClusterService) verifyNodeStatus(client *ssh.Client, nodeName string) error {
+	logrus.Info("验证节点状态...")
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := fmt.Sprintf("/tmp/init-slurm-node.sh --verify %s", nodeName)
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("验证失败: %v, 输出: %s", err, string(output))
+	}
+
+	logrus.Infof("节点验证成功: %s", string(output))
+	return nil
+}
+
+// SyncSSHKeysToNodes 同步SSH密钥到所有节点
+// 从slurm-master的/root/.ssh/目录同步公钥到各个节点的authorized_keys
+func (s *SlurmClusterService) SyncSSHKeysToNodes(ctx context.Context, clusterID uint, publicKeyPath string) error {
+	// 查询集群及其节点
+	var cluster models.SlurmCluster
+	if err := s.db.Preload("Nodes").First(&cluster, clusterID).Error; err != nil {
+		return fmt.Errorf("查询集群失败: %v", err)
+	}
+
+	// 读取公钥内容
+	publicKeyContent, err := os.ReadFile(publicKeyPath)
+	if err != nil {
+		return fmt.Errorf("读取公钥文件失败: %v", err)
+	}
+
+	logrus.Infof("开始同步SSH公钥到 %d 个节点", len(cluster.Nodes))
+
+	// 并发同步到所有节点
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(cluster.Nodes))
+
+	for _, node := range cluster.Nodes {
+		wg.Add(1)
+		go func(n models.SlurmNode) {
+			defer wg.Done()
+
+			config := RemoteNodeInitConfig{
+				NodeID:   n.ID,
+				NodeName: n.NodeName,
+				Host:     n.Host,
+				Port:     n.Port,
+				Username: n.Username,
+				AuthType: n.AuthType,
+				Password: n.Password,
+				KeyPath:  n.KeyPath,
+			}
+
+			if err := s.syncPublicKeyToNode(config, string(publicKeyContent)); err != nil {
+				errChan <- fmt.Errorf("同步公钥到节点 %s 失败: %v", n.NodeName, err)
+			} else {
+				logrus.Infof("同步公钥到节点 %s 成功", n.NodeName)
+			}
+		}(node)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// 收集错误
+	var errors []string
+	for err := range errChan {
+		errors = append(errors, err.Error())
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("部分节点同步失败: %s", strings.Join(errors, "; "))
+	}
+
+	logrus.Info("所有节点SSH公钥同步完成")
+	return nil
+}
+
+// syncPublicKeyToNode 同步公钥到单个节点
+func (s *SlurmClusterService) syncPublicKeyToNode(config RemoteNodeInitConfig, publicKey string) error {
+	client, err := s.createSSHClient(config)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	// 添加公钥到authorized_keys
+	cmd := fmt.Sprintf(`
+		mkdir -p ~/.ssh
+		chmod 700 ~/.ssh
+		echo '%s' >> ~/.ssh/authorized_keys
+		chmod 600 ~/.ssh/authorized_keys
+		# 去重
+		sort -u ~/.ssh/authorized_keys > ~/.ssh/authorized_keys.tmp
+		mv ~/.ssh/authorized_keys.tmp ~/.ssh/authorized_keys
+	`, publicKey)
+
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		return fmt.Errorf("执行失败: %v, 输出: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// GetMungeKeyFromMaster 从SLURM Master获取Munge密钥
+func (s *SlurmClusterService) GetMungeKeyFromMaster(masterHost string) (string, error) {
+	// 这里假设从本地容器的/etc/munge/munge.key读取
+	// 实际部署时可能需要根据实际情况调整
+	mungeKeyPath := "/etc/munge/munge.key"
+
+	keyBytes, err := os.ReadFile(mungeKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("读取Munge密钥失败: %v", err)
+	}
+
+	// 返回base64编码的密钥
+	return base64.StdEncoding.EncodeToString(keyBytes), nil
 }
