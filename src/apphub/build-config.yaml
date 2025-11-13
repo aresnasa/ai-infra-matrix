@@ -36,7 +36,7 @@ components:
     
   categraf:
     enabled: true
-    version: "v0.4.22"
+    version: "v0.4.23"
     source: "git"
     repo: "https://github.com/flashcatcloud/categraf.git"
     build_type: "go"
