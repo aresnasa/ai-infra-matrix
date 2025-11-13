@@ -37,7 +37,7 @@ ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SALTSTACK_VERSION=v3007.8
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.23
+ARG CATEGRAF_VERSION=v0.4.22
 
 # Singularity version configuration
 ARG SINGULARITY_VERSION=v4.3.4
@@ -855,7 +855,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.23
+ARG CATEGRAF_VERSION=v0.4.22
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
@@ -1014,7 +1014,7 @@ FROM nginx:${NGINX_ALPINE_VERSION}
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION=25.05.4
 ARG SALTSTACK_VERSION=v3007.8
-ARG CATEGRAF_VERSION=v0.4.23
+ARG CATEGRAF_VERSION=v0.4.22
 ARG APPHUB_BASE_URL=http://localhost:8081
 
 # 将版本保存到环境变量（可在运行时访问）
@@ -1065,7 +1065,7 @@ RUN set -eux; \
     apk add --no-cache createrepo_c || { \
         echo "⚠️  createrepo_c not available, will skip RPM indexing"; \
     }; \
-    # Install core development and network tools
+    # Install core development and network tools (including SSH server)
     apk add --no-cache \
         build-base \
         git \
@@ -1076,11 +1076,32 @@ RUN set -eux; \
         ca-certificates \
         gzip \
         perl \
+        openssh-server \
         || echo "⚠️  Some packages failed to install"; \
     # Try to install optional network tools (may not be available)
     apk add --no-cache net-tools 2>/dev/null || echo "⚠️  net-tools not available"; \
     apk add --no-cache iputils 2>/dev/null || echo "⚠️  iputils not available"; \
     apk add --no-cache procps 2>/dev/null || echo "⚠️  procps not available"
+
+# Configure SSH server for backend access (仅配置公钥认证，无密码登录)
+RUN set -eux; \
+    # 创建SSH目录
+    mkdir -p /root/.ssh /var/run/sshd; \
+    chmod 700 /root/.ssh; \
+    # 配置SSH服务器（安全配置）
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config; \
+    sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config; \
+    sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config; \
+    # 生成SSH host keys
+    ssh-keygen -A; \
+    echo "✓ SSH server configured (public key authentication only)"
+
+# Copy shared public key from project root (统一密钥管理)
+# AppHub只需要公钥，用于接受backend的SSH连接
+# Note: SSH密钥会在构建前由build.sh从项目根目录同步到此处
+COPY ssh-key/id_rsa.pub /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys && \
+    echo "✓ SSH public key installed for backend access"
 
 # Copy nginx config
 COPY nginx.conf /etc/nginx/nginx.conf

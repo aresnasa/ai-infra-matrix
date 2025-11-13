@@ -45,5 +45,10 @@ fi
 # Normal startup - regenerate indexes first
 regenerate_index
 
+# Start SSH server (for backend to copy scripts)
+echo "Starting SSH server..."
+/usr/sbin/sshd
+echo "✓ SSH server started on port 22"
+
 # Start nginx
 nginx -g 'daemon off;'

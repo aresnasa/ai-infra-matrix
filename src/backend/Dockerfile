@@ -163,18 +163,32 @@ RUN find /root/scripts -type f -name "*.sh" -exec chmod +x {} \;
 # Create necessary directories including SSH
 RUN mkdir -p outputs uploads ~/.ssh
 
-# Generate SSH key pair for SLURM node management
-RUN ssh-keygen -t rsa -b 2048 -f ~/.ssh/id_rsa -N "" -C "ai-infra-backend@container"
+# Copy shared SSH key pair from build context (统一密钥管理)
+# 私钥仅存在于backend，用于远程SSH连接
+# Note: SSH密钥会在构建前由build.sh从项目根目录同步到此处
+COPY ssh-key/id_rsa /root/.ssh/id_rsa
+COPY ssh-key/id_rsa.pub /root/.ssh/id_rsa.pub
 
 # Set proper permissions for SSH directory and keys
-RUN chmod 700 ~/.ssh && chmod 600 ~/.ssh/id_rsa && chmod 644 ~/.ssh/id_rsa.pub
+RUN ls -la ~/.ssh/ && \
+    chmod 700 ~/.ssh && \
+    chmod 600 ~/.ssh/id_rsa && \
+    chmod 644 ~/.ssh/id_rsa.pub
 
-# Copy private key to a location that can be accessed after build
-RUN cp ~/.ssh/id_rsa /tmp/backend_id_rsa && cp ~/.ssh/id_rsa.pub /tmp/backend_id_rsa.pub
+# Disable strict host key checking for container environments
+RUN echo 'Host *' > ~/.ssh/config && \
+    echo '  StrictHostKeyChecking no' >> ~/.ssh/config && \
+    echo '  UserKnownHostsFile=/dev/null' >> ~/.ssh/config && \
+    chmod 600 ~/.ssh/config
 
-# 创建等待数据库的脚本
+# 创建等待数据库的脚本（集成脚本同步到AppHub）
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \
     echo 'set -e' >> /wait-for-db.sh && \
+    echo '# Sync installation scripts to AppHub' >> /wait-for-db.sh && \
+    echo 'if [ -f /root/scripts/sync-scripts-to-apphub.sh ]; then' >> /wait-for-db.sh && \
+    echo '  echo ">>> Syncing scripts to AppHub..."' >> /wait-for-db.sh && \
+    echo '  /root/scripts/sync-scripts-to-apphub.sh || echo "⚠️  Script sync skipped"' >> /wait-for-db.sh && \
+    echo 'fi' >> /wait-for-db.sh && \
     echo '# Install SLURM client if not already installed' >> /wait-for-db.sh && \
     echo 'if [ -f /install-slurm-runtime.sh ] && ! command -v sinfo >/dev/null 2>&1; then' >> /wait-for-db.sh && \
     echo '  echo ">>> Installing SLURM client tools..."' >> /wait-for-db.sh && \

@@ -5748,6 +5748,43 @@ build_service() {
     # ========================================
     # AppHub 特殊处理：自动更新应用版本和组件化构建
     # ========================================
+    # SSH密钥统一管理 - 构建前同步
+    # ========================================
+    if [[ "$service" == "backend" ]] || [[ "$service" == "apphub" ]] || [[ "$service" == "slurm-master" ]]; then
+        print_info "  → 同步统一SSH密钥到 $service 构建目录..."
+        
+        local ssh_key_src="$SCRIPT_DIR/ssh-key"
+        local ssh_key_dest="$SCRIPT_DIR/$service_path/ssh-key"
+        
+        # 确保源密钥存在
+        if [[ ! -f "$ssh_key_src/id_rsa.pub" ]]; then
+            print_warning "  ⚠ 统一SSH公钥不存在，正在生成..."
+            mkdir -p "$ssh_key_src"
+            ssh-keygen -t rsa -b 4096 -f "$ssh_key_src/id_rsa" -N "" -C "ai-infra-system@shared"
+            print_success "  ✓ 已生成统一SSH密钥对"
+        fi
+        
+        # 创建目标目录并复制密钥
+        mkdir -p "$ssh_key_dest"
+        
+        if [[ "$service" == "backend" ]]; then
+            # backend需要私钥和公钥
+            cp "$ssh_key_src/id_rsa" "$ssh_key_dest/id_rsa"
+            cp "$ssh_key_src/id_rsa.pub" "$ssh_key_dest/id_rsa.pub"
+            chmod 600 "$ssh_key_dest/id_rsa"
+            chmod 644 "$ssh_key_dest/id_rsa.pub"
+            print_success "  ✓ 已同步SSH私钥和公钥到 backend"
+        else
+            # apphub和slurm-master只需要公钥
+            cp "$ssh_key_src/id_rsa.pub" "$ssh_key_dest/id_rsa.pub"
+            chmod 644 "$ssh_key_dest/id_rsa.pub"
+            print_success "  ✓ 已同步SSH公钥到 $service"
+        fi
+        
+        echo
+    fi
+    
+    # ========================================
     local apphub_extra_args=""
     if [[ "$service" == "apphub" ]]; then
         # 启用 Docker BuildKit（必需，用于缓存挂载）

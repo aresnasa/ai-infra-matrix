@@ -1,4 +1,5 @@
 third_party/
+ssh-key/
 sql/
 log/
 *.log
@@ -38,3 +39,10 @@ test/e2e/*.png
 .playwright-mcp/test-results/*.png
 *.png
 src/src/*
+
+# SSH密钥安全: 忽略构建时同步到各组件的密钥副本
+# 唯一密钥源存储在: ssh-key/
+src/*/ssh-key/
+src/backend/ssh-key/
+src/apphub/ssh-key/
+src/slurm-master/ssh-key/

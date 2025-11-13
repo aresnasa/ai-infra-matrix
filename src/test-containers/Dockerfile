@@ -34,7 +34,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # 创建SSH运行目录
 RUN mkdir -p /var/run/sshd /run/sshd
 
-# 配置SSH
+# 配置SSH（使用密码认证，便于测试）
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
 

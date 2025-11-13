@@ -364,15 +364,21 @@ RUN chmod +x /usr/local/bin/slurm-bootstrap.sh /usr/local/bin/systemd-entrypoint
     ln -sf /etc/systemd/system/slurmdbd.service /etc/systemd/system/multi-user.target.wants/slurmdbd.service && \
     ln -sf /lib/systemd/system/munge.service /etc/systemd/system/multi-user.target.wants/munge.service
 
-# 配置SSH服务
-RUN mkdir -p /var/run/sshd && \
-    # 设置root密码
-    echo 'root:root' | chpasswd && \
-    # 配置SSH允许root登录和密码认证
-    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+# 配置SSH服务（使用统一密钥管理）
+RUN mkdir -p /var/run/sshd /root/.ssh && \
+    chmod 700 /root/.ssh && \
+    # 配置SSH服务器（仅允许公钥认证，安全配置）
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
     # 启用SSH服务
     systemctl enable ssh
+
+# 复制统一的SSH公钥（允许backend访问）
+# Note: SSH密钥会在构建前由build.sh从项目根目录同步到此处
+COPY ssh-key/id_rsa.pub /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys && \
+    echo "✓ SSH public key installed for backend access"
 
 # 暴露端口
 EXPOSE 6817 6818 22

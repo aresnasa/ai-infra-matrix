@@ -4137,3 +4137,41 @@ root        1368  0.0  0.0   2904  1352 ?        S    15:44   0:00 grep -E slurm
 0%，未能正确同步需要修复
 
 216. 调整下初始化的函数，不要增加6个节点到slurm集群中，这里是手动出发节点添加的。
+
+217. http://192.168.3.91:8080/slurm,扩缩容状态
+空闲
+活跃任务
+0
+成功节点
+0
+失败节点
+0
+进度
+未能正确同步状态，修复一下
+
+218. 检查slurm节点的安装逻辑，❯ for node in test-rocky02 test-rocky03 test-ssh02 test-ssh03; do
+  echo "=== $node ==="
+  docker exec $node bash -c " ps aux|egrep 'slurm|munge|minion'"
+done
+=== test-rocky02 ===
+root         257  0.0  0.1  54180 41540 ?        Ss   21:55   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion
+root         266  0.5  0.1 478460 63084 ?        Sl   21:55   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion MultiMinionProcessManager MinionProcessManager
+root         490  0.0  0.0   3800  2580 ?        Ss   21:58   0:00 bash -c  ps aux|egrep 'slurm|munge|minion'
+root         497  0.0  0.0   3036  1360 ?        S    21:58   0:00 grep -E slurm|munge|minion
+=== test-rocky03 ===
+root         256  0.1  0.1  55204 41588 ?        Ss   21:55   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion
+root         265  0.5  0.1 478596 63280 ?        Sl   21:55   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion MultiMinionProcessManager MinionProcessManager
+root         489  0.0  0.0   3800  2556 ?        Ss   21:58   0:00 bash -c  ps aux|egrep 'slurm|munge|minion'
+root         496  0.0  0.0   3036  1452 ?        S    21:58   0:00 grep -E slurm|munge|minion
+=== test-ssh02 ===
+root         494  0.0  0.1  51680 34112 ?        Ss   21:56   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion
+root         503  0.5  0.1 473024 55924 ?        Sl   21:56   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion MultiMinionProcessManager MinionProcessManager
+root         704  0.0  0.0   3876  2528 ?        Ss   21:58   0:00 bash -c  ps aux|egrep 'slurm|munge|minion'
+root         711  0.0  0.0   2904  1352 ?        S    21:58   0:00 grep -E slurm|munge|minion
+=== test-ssh03 ===
+root         488  0.0  0.1  51680 39132 ?        Ss   21:56   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion
+root         497  0.5  0.1 473024 61064 ?        Sl   21:56   0:00 /opt/saltstack/salt/bin/python3.10 /usr/bin/salt-minion MultiMinionProcessManager MinionProcessManager
+root         698  0.0  0.0   3876  2512 ?        Ss   21:58   0:00 bash -c  ps aux|egrep 'slurm|munge|minion'
+root         705  0.0  0.0   2904  1352 ?        S    21:58   0:00 grep -E slurm|munge|minion未能正确安装slurm和munge
+
+219. apphub需要配置root公钥，这里的整个后端系统都需要一个公共的ssh密钥，backend才存放私钥，其余容器都只存放公钥，调整下项目的dockerfile，构建时候需要将公钥拷贝到容器中，测试容器忽略只需要密码后续再调整密钥，主要是后端管理即可，还需要调整build.sh程序，将生成的ssh密钥拷贝到组件的相关路径中，覆盖原有密钥，这里只能有一个唯一的密钥

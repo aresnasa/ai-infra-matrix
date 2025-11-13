@@ -427,6 +427,21 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 	// 查询最近24小时内的任务
 	recentTime := time.Now().Add(-24 * time.Hour)
 
+	// 检查数据库连接是否可用
+	if s.db == nil {
+		log.Printf("[WARN] GetScalingStatus: 数据库连接不可用，返回空状态")
+		return &ScalingStatus{
+			ActiveOperations: []ScalingOperation{},
+			RecentOperations: []ScalingOperation{},
+			NodeTemplates:    []NodeTemplate{},
+			Active:           false,
+			ActiveTasks:      0,
+			SuccessNodes:     0,
+			FailedNodes:      0,
+			Progress:         0,
+		}, nil
+	}
+
 	s.db.Model(&models.NodeInstallTask{}).
 		Where("created_at > ?", recentTime).
 		Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
@@ -2157,9 +2172,9 @@ func (s *SlurmService) getMungeKey(ctx context.Context) ([]byte, error) {
 	return output, nil
 }
 
-// installSlurmPackages 安装SLURM包（使用 SaltStack 客户端执行）
+// installSlurmPackages 安装SLURM包（直接通过docker exec执行，更可靠）
 func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
-	fmt.Fprintf(logWriter, "[INFO] 在 %s 上使用 Salt 客户端安装SLURM包 (OS: %s)\n", nodeName, osType)
+	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", nodeName, osType)
 
 	// 读取安装脚本（路径根据 Dockerfile 中的 COPY 命令）
 	scriptPath := "/root/scripts/install-slurm-node.sh"
@@ -2174,54 +2189,40 @@ func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osTyp
 		apphubURL = "http://ai-infra-apphub" // 默认URL（AppHub 使用端口 80）
 	}
 
-	// Salt master 主机（从环境变量获取，默认为 ai-infra-saltstack）
-	saltMaster := os.Getenv("SALT_MASTER_HOST")
-	if saltMaster == "" {
-		saltMaster = "ai-infra-saltstack" // 实际的 Salt Master 容器名
-	}
-
-	fmt.Fprintf(logWriter, "[INFO] 使用 Salt Master: %s\n", saltMaster)
 	fmt.Fprintf(logWriter, "[INFO] AppHub URL: %s\n", apphubURL)
 
-	// 1. 将脚本内容写入目标节点的临时文件
+	// 步骤1: 将脚本内容写入节点的临时文件
 	tmpScriptPath := fmt.Sprintf("/tmp/install-slurm-%s.sh", nodeName)
-	writeScriptCmd := fmt.Sprintf(`cat > %s << 'SCRIPT_EOF'
-%s
-SCRIPT_EOF
-chmod +x %s`, tmpScriptPath, string(scriptContent), tmpScriptPath)
-
-	// 使用 salt 命令将脚本写入节点
-	saltWriteCmd := exec.CommandContext(ctx, "docker", "exec", saltMaster,
-		"salt", nodeName, "cmd.run", writeScriptCmd)
-	saltWriteCmd.Stdout = logWriter
-	saltWriteCmd.Stderr = logWriter
+	writeScriptCmd := fmt.Sprintf("cat > %s << 'SCRIPT_EOF'\n%s\nSCRIPT_EOF\nchmod +x %s",
+		tmpScriptPath, string(scriptContent), tmpScriptPath)
 
 	fmt.Fprintf(logWriter, "[INFO] 上传安装脚本到节点 %s...\n", nodeName)
-	if err := saltWriteCmd.Run(); err != nil {
+	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", writeScriptCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("上传脚本到节点失败: %v", err)
 	}
 
-	// 2. 使用 salt 命令执行安装脚本
+	// 步骤2: 执行安装脚本
 	executeScriptCmd := fmt.Sprintf("%s %s compute", tmpScriptPath, apphubURL)
 
-	saltExecCmd := exec.CommandContext(ctx, "docker", "exec", saltMaster,
-		"salt", nodeName, "cmd.run", executeScriptCmd,
-		"timeout=600") // 10分钟超时
+	fmt.Fprintf(logWriter, "[INFO] 开始执行安装脚本...\n")
+	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", executeScriptCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
 
-	saltExecCmd.Stdout = logWriter
-	saltExecCmd.Stderr = logWriter
-
-	fmt.Fprintf(logWriter, "[INFO] 通过 Salt 执行安装脚本...\n")
-	if err := saltExecCmd.Run(); err != nil {
-		return fmt.Errorf("通过 Salt 执行安装脚本失败: %v", err)
+	if err := cmd.Run(); err != nil {
+		log.Printf("[ERROR] 安装SLURM包失败: %v", err)
+		return fmt.Errorf("安装SLURM包失败: %v", err)
 	}
 
-	// 3. 清理临时脚本
-	saltCleanCmd := exec.CommandContext(ctx, "docker", "exec", saltMaster,
-		"salt", nodeName, "cmd.run", fmt.Sprintf("rm -f %s", tmpScriptPath))
-	saltCleanCmd.Run() // 忽略清理错误
+	// 步骤3: 清理临时脚本
+	cleanCmd := fmt.Sprintf("rm -f %s", tmpScriptPath)
+	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", cleanCmd)
+	cmd.Run() // 忽略清理错误
 
-	fmt.Fprintf(logWriter, "[INFO] ✓ SLURM包安装成功（通过 Salt）\n")
+	fmt.Fprintf(logWriter, "[INFO] ✓ SLURM包安装成功\n")
 	return nil
 }
 
@@ -2250,6 +2251,22 @@ func (s *SlurmService) configureSlurmNode(ctx context.Context, nodeName, osType 
 		return fmt.Errorf("复制slurm.conf失败: %v", err)
 	}
 	fmt.Fprintf(logWriter, "[INFO] slurm.conf复制成功 -> %s\n", slurmConfPath)
+
+	// 修复PluginDir路径兼容性问题（通过脚本）
+	fixPluginDirScript := "src/backend/scripts/fix-slurm-plugindir.sh"
+	scriptContent, err := os.ReadFile(fixPluginDirScript)
+	if err != nil {
+		log.Printf("[WARN] 读取PluginDir修复脚本失败: %v", err)
+	} else {
+		cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", string(scriptContent))
+		cmd.Stdout = logWriter
+		cmd.Stderr = logWriter
+		if err := cmd.Run(); err != nil {
+			log.Printf("[WARN] 修复PluginDir路径失败: %v", err)
+		} else {
+			fmt.Fprintf(logWriter, "[INFO] PluginDir路径兼容性已修复\n")
+		}
+	}
 
 	// 如果有munge.key，也复制
 	if mungeKey != nil && len(mungeKey) > 0 {
