@@ -423,36 +423,92 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 	var completedTasks int64
 	var failedTasks int64
 
-	// 查询不同状态的任务数量
-	s.db.Model(&models.SlurmTask{}).Where("status IN ?", []string{"running", "in_progress", "processing"}).Count(&runningTasks)
-	s.db.Model(&models.SlurmTask{}).Where("status IN ?", []string{"completed", "success"}).Count(&completedTasks)
-	s.db.Model(&models.SlurmTask{}).Where("status IN ?", []string{"failed", "error"}).Count(&failedTasks)
+	// 查询 NodeInstallTask 表中的扩缩容相关任务数量
+	// 查询最近24小时内的任务
+	recentTime := time.Now().Add(-24 * time.Hour)
 
-	// 计算进度
+	s.db.Model(&models.NodeInstallTask{}).
+		Where("created_at > ?", recentTime).
+		Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
+		Count(&runningTasks)
+
+	s.db.Model(&models.NodeInstallTask{}).
+		Where("created_at > ?", recentTime).
+		Where("status IN ?", []string{"completed", "success"}).
+		Count(&completedTasks)
+
+	s.db.Model(&models.NodeInstallTask{}).
+		Where("created_at > ?", recentTime).
+		Where("status IN ?", []string{"failed", "error"}).
+		Count(&failedTasks)
+
+	// 计算总体进度
 	totalTasks := runningTasks + completedTasks + failedTasks
 	progress := 0
 	if totalTasks > 0 {
 		progress = int((completedTasks * 100) / totalTasks)
 	}
 
+	// 获取最近的安装任务及其详细进度
+	var recentTasks []models.NodeInstallTask
+	s.db.Where("created_at > ?", recentTime).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&recentTasks)
+
+	// 如果有正在运行的任务，计算加权平均进度
+	if runningTasks > 0 {
+		var totalProgress int64
+		var taskCount int64
+		for _, task := range recentTasks {
+			if task.Status == "running" || task.Status == "in_progress" || task.Status == "processing" {
+				totalProgress += int64(task.Progress)
+				taskCount++
+			}
+		}
+		// 使用任务的实际进度来计算更准确的总体进度
+		if taskCount > 0 {
+			runningAvgProgress := totalProgress / taskCount
+			// 综合考虑完成任务和正在运行任务的进度
+			if totalTasks > 0 {
+				progress = int((completedTasks*100 + runningTasks*runningAvgProgress) / totalTasks)
+			}
+		}
+	}
+
+	// 构建最近操作列表
+	recentOperations := []ScalingOperation{}
+	for _, task := range recentTasks {
+		if task.Status == "completed" || task.Status == "failed" {
+			op := ScalingOperation{
+				ID:        task.TaskID,
+				Type:      task.TaskType,
+				Status:    task.Status,
+				Nodes:     []string{fmt.Sprintf("node-%d", task.NodeID)},
+				StartedAt: task.CreatedAt,
+			}
+			if task.CompletedAt != nil {
+				op.CompletedAt = task.CompletedAt
+			}
+			if task.ErrorMessage != "" {
+				op.Error = task.ErrorMessage
+			}
+			recentOperations = append(recentOperations, op)
+			if len(recentOperations) >= 5 {
+				break
+			}
+		}
+	}
+
 	return &ScalingStatus{
 		ActiveOperations: []ScalingOperation{},
-		RecentOperations: []ScalingOperation{
-			{
-				ID:          "op-001",
-				Type:        "scale-up",
-				Status:      "completed",
-				Nodes:       []string{"node001", "node002"},
-				StartedAt:   time.Now().Add(-1 * time.Hour),
-				CompletedAt: &[]time.Time{time.Now().Add(-30 * time.Minute)}[0],
-			},
-		},
-		NodeTemplates: []NodeTemplate{},
-		Active:        runningTasks > 0,
-		ActiveTasks:   int(runningTasks),
-		SuccessNodes:  int(completedTasks),
-		FailedNodes:   int(failedTasks),
-		Progress:      progress,
+		RecentOperations: recentOperations,
+		NodeTemplates:    []NodeTemplate{},
+		Active:           runningTasks > 0,
+		ActiveTasks:      int(runningTasks),
+		SuccessNodes:     int(completedTasks),
+		FailedNodes:      int(failedTasks),
+		Progress:         progress,
 	}, nil
 }
 
