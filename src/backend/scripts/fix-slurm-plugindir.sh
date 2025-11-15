@@ -30,53 +30,42 @@ else
     exit 0
 fi
 
-# 如果实际目录不是Ubuntu路径，创建软链接
+# 为多架构创建兼容软链接，避免slurm.conf中的PluginDir指向不存在的路径
+create_compat_symlink() {
+    local target_dir="$1"
+    local parent_dir
+
+    if [ -z "$target_dir" ]; then
+        return
+    fi
+
+    if [ -L "$target_dir" ]; then
+        echo "[INFO] 软链接已存在: $target_dir -> $(readlink -f "$target_dir")"
+        return
+    fi
+
+    if [ -d "$target_dir" ]; then
+        echo "[INFO] 目录 $target_dir 已存在，跳过创建"
+        return
+    fi
+
+    parent_dir=$(dirname "$target_dir")
+    mkdir -p "$parent_dir"
+    ln -sf "$REAL_DIR" "$target_dir"
+    echo "[INFO] ✓ 创建兼容软链接: $target_dir -> $REAL_DIR"
+}
+
 UBUNTU_ARM64_DIR="/usr/lib/aarch64-linux-gnu/slurm"
 UBUNTU_X86_64_DIR="/usr/lib/x86_64-linux-gnu/slurm"
 
-# 根据架构创建对应的软链接
-ARCH=$(uname -m)
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    TARGET_DIR="$UBUNTU_ARM64_DIR"
-    PARENT_DIR="/usr/lib/aarch64-linux-gnu"
-elif [ "$ARCH" = "x86_64" ]; then
-    TARGET_DIR="$UBUNTU_X86_64_DIR"
-    PARENT_DIR="/usr/lib/x86_64-linux-gnu"
-else
-    echo "[WARN] 未知架构: $ARCH，跳过修复"
+# 如果实际目录已经是Ubuntu路径，无需额外处理
+if [ "$REAL_DIR" = "$UBUNTU_ARM64_DIR" ] || [ "$REAL_DIR" = "$UBUNTU_X86_64_DIR" ]; then
+    echo "[INFO] PluginDir路径已是Ubuntu格式: $REAL_DIR"
     exit 0
 fi
 
-# 如果实际目录已经是目标目录，无需修复
-if [ "$REAL_DIR" = "$TARGET_DIR" ]; then
-    echo "[INFO] PluginDir路径已正确，无需修复"
-    exit 0
-fi
+echo "[INFO] 创建跨架构PluginDir兼容软链接..."
+create_compat_symlink "$UBUNTU_ARM64_DIR"
+create_compat_symlink "$UBUNTU_X86_64_DIR"
 
-# 创建软链接
-echo "[INFO] 创建PluginDir软链接..."
-mkdir -p "$PARENT_DIR"
-
-# 如果目标已存在，先删除
-if [ -L "$TARGET_DIR" ]; then
-    echo "[INFO] 删除旧的软链接: $TARGET_DIR"
-    rm -f "$TARGET_DIR"
-elif [ -d "$TARGET_DIR" ]; then
-    echo "[WARN] $TARGET_DIR 已存在且是目录，跳过"
-    exit 0
-fi
-
-# 创建软链接
-ln -sf "$REAL_DIR" "$TARGET_DIR"
-echo "[INFO] ✓ 已创建软链接: $TARGET_DIR -> $REAL_DIR"
-
-# 验证软链接
-if [ -L "$TARGET_DIR" ]; then
-    echo "[INFO] ✓ 软链接验证成功"
-    ls -la "$TARGET_DIR"
-else
-    echo "[ERROR] 软链接创建失败"
-    exit 1
-fi
-
-echo "[INFO] ✓ PluginDir路径修复完成"
+echo "[INFO] ✓ PluginDir路径兼容性修复完成"

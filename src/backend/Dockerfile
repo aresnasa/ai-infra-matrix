@@ -134,9 +134,9 @@ RUN set -eux; \
     # 最后恢复官方源
     (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update))
 
-# 更新apk索引并设置时区为上海，添加必要工具（包括docker CLI）
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-keygen lsof wget docker-cli || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-keygen lsof wget docker-cli
+# 更新apk索引并设置时区为上海，添加必要工具（包括SSH客户端和sshpass）
+RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-client openssh-keygen sshpass lsof wget docker-cli || \
+    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-client openssh-keygen sshpass lsof wget docker-cli
 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone

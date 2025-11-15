@@ -277,6 +277,23 @@ func (s *SlurmTaskService) UpdateTaskProgress(ctx context.Context, taskID string
 	return task.UpdateProgress(s.db, progress, currentStep)
 }
 
+// UpdateTaskNodes 更新任务的节点统计
+func (s *SlurmTaskService) UpdateTaskNodes(ctx context.Context, taskID string, total, success, failed int) error {
+	err := s.db.Model(&models.SlurmTask{}).
+		Where("task_id = ?", taskID).
+		Updates(map[string]interface{}{
+			"nodes_total":   total,
+			"nodes_success": success,
+			"nodes_failed":  failed,
+		}).Error
+
+	if err != nil {
+		return fmt.Errorf("更新任务节点统计失败: %w", err)
+	}
+
+	return nil
+}
+
 // AddTaskEvent 添加任务事件
 func (s *SlurmTaskService) AddTaskEvent(ctx context.Context, taskID string, eventType, step, message, host string, progress float64, data interface{}) error {
 	var task models.SlurmTask

@@ -6,6 +6,27 @@ set -e
 
 echo "[INFO] 正在启动 slurmd 服务..."
 
+prepare_directories() {
+    echo "[INFO] 创建必要的目录..."
+    mkdir -p /etc/munge /var/log/munge /var/run/munge /run/munge
+    mkdir -p /var/log/slurm /var/run/slurm /var/spool/slurm/slurmd
+
+    # munge要求：配置目录和日志归root，运行时socket目录归munge
+    chown root:root /etc/munge
+    chmod 700 /etc/munge
+    if [ -f /etc/munge/munge.key ]; then
+        chown root:root /etc/munge/munge.key
+        chmod 400 /etc/munge/munge.key
+    fi
+    chown -R root:root /var/log/munge
+    chown -R munge:munge /var/run/munge /run/munge
+    chmod 755 /var/log/munge /var/run/munge /run/munge
+    chown -R slurm:slurm /var/run/slurm /var/spool/slurm
+    chmod 755 /var/log/slurm /var/run/slurm /var/spool/slurm
+}
+
+prepare_directories
+
 # 1. 启动 munge 服务（认证）
 echo "[INFO] 启动 munge 服务..."
 if command -v systemctl >/dev/null 2>&1; then
@@ -15,6 +36,8 @@ fi
 
 # 确保 munge 运行
 if ! pgrep -x munged >/dev/null; then
+    # /run 可能在服务启动过程中被清理，再次确保目录存在
+    prepare_directories
     /usr/sbin/munged -f 2>/dev/null || /usr/sbin/munged || true
 fi
 
@@ -26,10 +49,6 @@ if pgrep -x munged >/dev/null; then
 else
     echo "[WARN] munge 服务可能未启动"
 fi
-
-# 2. 创建必要的目录
-mkdir -p /var/log/slurm /var/run/slurm /var/spool/slurm/slurmd
-chmod 755 /var/spool/slurm/slurmd
 
 # 3. 杀死可能存在的旧进程
 echo "[INFO] 清理旧的 slurmd 进程..."

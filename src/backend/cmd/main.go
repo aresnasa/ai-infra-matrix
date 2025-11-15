@@ -191,6 +191,7 @@ func main() {
 
 	// 初始化作业管理服务
 	slurmService := services.NewSlurmServiceWithDB(database.DB)
+	slurmService.StartAutoRegisterLoop()
 	sshService := services.NewSSHService()
 	cacheService := services.NewCacheService()
 	jobService := services.NewJobService(database.DB, slurmService, sshService, cacheService)

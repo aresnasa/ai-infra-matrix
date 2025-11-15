@@ -34,6 +34,13 @@ type SlurmService struct {
 	useSlurmrestd bool // 是否使用 slurmrestd API (true) 还是 SSH (false)
 }
 
+const (
+	defaultSlurmClusterID          = 1
+	autoRegisterMaxAttempts        = 3
+	defaultAutoRegisterDelaySecond = 20
+	autoRegisterRetrySecond        = 10
+)
+
 func NewSlurmService() *SlurmService {
 	restAPIURL := os.Getenv("SLURM_REST_API_URL")
 	if restAPIURL == "" {
@@ -80,6 +87,9 @@ func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
 	// Gather from sinfo/squeue; if tools are unavailable, return empty summary
 	nodesTotal, nodesIdle, nodesAlloc, partitions, demo1 := s.getNodeStats(ctx)
 	jobsRun, jobsPend, jobsOther, demo2 := s.getJobStats(ctx)
+
+	log.Printf("[DEBUG] GetSummary: nodesTotal=%d, nodesIdle=%d, nodesAlloc=%d, demo=%v",
+		nodesTotal, nodesIdle, nodesAlloc, demo1)
 
 	// Return empty summary instead of error when tools are unavailable
 	return &SlurmSummary{
@@ -442,20 +452,47 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 		}, nil
 	}
 
+	// 查询 NodeInstallTask 表（InstallSlurmNode接口创建的任务）
+	var nodeInstallRunning, nodeInstallCompleted, nodeInstallFailed int64
 	s.db.Model(&models.NodeInstallTask{}).
 		Where("created_at > ?", recentTime).
 		Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
-		Count(&runningTasks)
+		Count(&nodeInstallRunning)
 
 	s.db.Model(&models.NodeInstallTask{}).
 		Where("created_at > ?", recentTime).
 		Where("status IN ?", []string{"completed", "success"}).
-		Count(&completedTasks)
+		Count(&nodeInstallCompleted)
 
 	s.db.Model(&models.NodeInstallTask{}).
 		Where("created_at > ?", recentTime).
 		Where("status IN ?", []string{"failed", "error"}).
-		Count(&failedTasks)
+		Count(&nodeInstallFailed)
+
+	// 查询 SlurmTask 表（ScaleUpAsync接口创建的任务）
+	var slurmTaskRunning, slurmTaskCompleted, slurmTaskFailed int64
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at > ?", recentTime).
+		Where("type IN ?", []string{"scale_up", "scale_down"}).
+		Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
+		Count(&slurmTaskRunning)
+
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at > ?", recentTime).
+		Where("type IN ?", []string{"scale_up", "scale_down"}).
+		Where("status IN ?", []string{"completed", "success"}).
+		Count(&slurmTaskCompleted)
+
+	s.db.Model(&models.SlurmTask{}).
+		Where("created_at > ?", recentTime).
+		Where("type IN ?", []string{"scale_up", "scale_down"}).
+		Where("status IN ?", []string{"failed", "error"}).
+		Count(&slurmTaskFailed)
+
+	// 合并两个表的统计结果
+	runningTasks = nodeInstallRunning + slurmTaskRunning
+	completedTasks = nodeInstallCompleted + slurmTaskCompleted
+	failedTasks = nodeInstallFailed + slurmTaskFailed
 
 	// 计算总体进度
 	totalTasks := runningTasks + completedTasks + failedTasks
@@ -491,8 +528,59 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 		}
 	}
 
-	// 构建最近操作列表
+	// 从 SlurmTask 表读取节点统计信息
+	var slurmTasks []models.SlurmTask
+	s.db.Where("created_at > ?", recentTime).
+		Where("type IN ?", []string{"scale_up", "scale_down"}).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&slurmTasks)
+
+	// 计算总的成功/失败节点数
+	var totalSuccessNodes, totalFailedNodes int
+	log.Printf("[DEBUG] GetScalingStatus: 找到 %d 个 SlurmTask 记录", len(slurmTasks))
+	for _, task := range slurmTasks {
+		log.Printf("[DEBUG] SlurmTask: TaskID=%s, Status=%s, NodesSuccess=%d, NodesFailed=%d",
+			task.TaskID, task.Status, task.NodesSuccess, task.NodesFailed)
+		// 只统计已完成的任务
+		if task.Status == "completed" || task.Status == "failed" {
+			totalSuccessNodes += task.NodesSuccess
+			totalFailedNodes += task.NodesFailed
+		}
+	}
+	log.Printf("[DEBUG] GetScalingStatus: totalSuccessNodes=%d, totalFailedNodes=%d", totalSuccessNodes, totalFailedNodes)
+
+	// 使用实际节点状态覆盖统计结果，避免历史任务影响当前视图
+	var nodeStatusCounts []struct {
+		Status string
+		Count  int64
+	}
+	if err := s.db.Model(&models.SlurmNode{}).
+		Select("status, COUNT(*) as count").
+		Group("status").
+		Find(&nodeStatusCounts).Error; err == nil {
+		var activeCount, failedCount int64
+		for _, item := range nodeStatusCounts {
+			switch strings.ToLower(item.Status) {
+			case "active":
+				activeCount += item.Count
+			case "failed", "error":
+				failedCount += item.Count
+			}
+		}
+		if activeCount > 0 || failedCount > 0 {
+			log.Printf("[DEBUG] 覆盖节点统计: active=%d failed=%d", activeCount, failedCount)
+			totalSuccessNodes = int(activeCount)
+			totalFailedNodes = int(failedCount)
+		}
+	} else {
+		log.Printf("[WARN] 获取节点状态统计失败: %v", err)
+	}
+
+	// 构建最近操作列表（合并 NodeInstallTask 和 SlurmTask）
 	recentOperations := []ScalingOperation{}
+
+	// 添加 NodeInstallTask 任务
 	for _, task := range recentTasks {
 		if task.Status == "completed" || task.Status == "failed" {
 			op := ScalingOperation{
@@ -515,14 +603,39 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 		}
 	}
 
+	// 添加 SlurmTask 任务（如果还有空间）
+	if len(recentOperations) < 5 {
+		for _, task := range slurmTasks {
+			if task.Status == "completed" || task.Status == "failed" {
+				op := ScalingOperation{
+					ID:        task.TaskID,
+					Type:      task.Type,
+					Status:    task.Status,
+					Nodes:     task.TargetNodes,
+					StartedAt: task.CreatedAt,
+				}
+				if task.CompletedAt != nil {
+					op.CompletedAt = task.CompletedAt
+				}
+				if task.ErrorMessage != "" {
+					op.Error = task.ErrorMessage
+				}
+				recentOperations = append(recentOperations, op)
+				if len(recentOperations) >= 5 {
+					break
+				}
+			}
+		}
+	}
+
 	return &ScalingStatus{
 		ActiveOperations: []ScalingOperation{},
 		RecentOperations: recentOperations,
 		NodeTemplates:    []NodeTemplate{},
 		Active:           runningTasks > 0,
 		ActiveTasks:      int(runningTasks),
-		SuccessNodes:     int(completedTasks),
-		FailedNodes:      int(failedTasks),
+		SuccessNodes:     totalSuccessNodes, // 从 slurm_tasks 表读取
+		FailedNodes:      totalFailedNodes,  // 从 slurm_tasks 表读取
 		Progress:         progress,
 	}, nil
 }
@@ -641,10 +754,26 @@ func (s *SlurmService) ScaleUp(ctx context.Context, nodes []NodeConfig) (*Scalin
 
 			log.Printf("[INFO] 在节点 %s 上安装slurmd (OS: %s)", n.Host, osType)
 
-			// 调用安装方法
+			// 准备SSH连接参数（设置默认值）
+			sshPort := n.Port
+			if sshPort == 0 {
+				sshPort = 22
+			}
+			sshUser := n.User
+			if sshUser == "" {
+				sshUser = "root"
+			}
+
+			// 调用安装方法，传递SSH连接参数（包括密钥）
 			installReq := InstallSlurmNodeRequest{
-				NodeName: n.Host,
-				OSType:   osType,
+				NodeName:   n.Host,
+				OSType:     osType,
+				SSHHost:    n.Host,
+				SSHPort:    sshPort,
+				SSHUser:    sshUser,
+				Password:   n.Password,
+				KeyPath:    n.KeyPath,
+				PrivateKey: n.PrivateKey,
 			}
 
 			installResp, err := s.InstallSlurmNode(ctx, installReq)
@@ -830,30 +959,45 @@ func (s *SlurmService) DetectAndFixNodeState(ctx context.Context, nodeName strin
 	return fmt.Errorf("节点状态检测失败，已重试 %d 次。请手动检查节点状态并执行: scontrol update NodeName=%s State=RESUME", maxRetries, nodeName)
 }
 
+// getSlurmMasterSSHConfig 获取SLURM master的SSH连接配置
+func (s *SlurmService) getSlurmMasterSSHConfig() (host string, port int, user, password, keyPath string) {
+	host = os.Getenv("SLURM_MASTER_HOST")
+	if host == "" {
+		host = "ai-infra-slurm-master"
+	}
+
+	user = os.Getenv("SLURM_MASTER_USER")
+	if user == "" {
+		user = "root"
+	}
+
+	password = os.Getenv("SLURM_MASTER_PASSWORD")
+
+	portStr := os.Getenv("SLURM_MASTER_PORT")
+	if portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil {
+			port = p
+		}
+	}
+	if port == 0 {
+		port = 22
+	}
+
+	keyPath = os.Getenv("HOME") + "/.ssh/id_rsa"
+	return
+}
+
 // updateSlurmMasterConfig 通过SSH动态更新SLURM master的配置文件
 func (s *SlurmService) updateSlurmMasterConfig(ctx context.Context, config string) error {
 	log.Printf("[DEBUG] 开始通过SSH更新SLURM配置")
 
 	// 获取SLURM master的SSH连接信息
-	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
-	if slurmMasterHost == "" {
-		slurmMasterHost = "ai-infra-slurm-master" // 容器名，Docker网络可以解析
-	}
-
-	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
-	if slurmMasterUser == "" {
-		slurmMasterUser = "root"
-	}
-
-	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
-	if slurmMasterPassword == "" {
-		slurmMasterPassword = "root" // 默认密码
-	}
+	slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath := s.getSlurmMasterSSHConfig()
 
 	// 1. 首先读取当前的基础配置（保留非节点相关的配置）
 	log.Printf("[DEBUG] 读取SLURM master现有配置...")
 	readCmd := "cat /etc/slurm/slurm.conf"
-	currentConfig, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, readCmd)
+	currentConfig, err := s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, readCmd)
 	if err != nil {
 		log.Printf("[WARNING] 无法读取现有配置，将使用新配置: %v", err)
 	}
@@ -867,14 +1011,14 @@ func (s *SlurmService) updateSlurmMasterConfig(ctx context.Context, config strin
 
 	// 使用here-doc方式写入，避免特殊字符问题
 	writeCmd := fmt.Sprintf("cat > /etc/slurm/slurm.conf << 'SLURM_CONFIG_EOF'\n%s\nSLURM_CONFIG_EOF", finalConfig)
-	_, err = s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, writeCmd)
+	_, err = s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, writeCmd)
 	if err != nil {
 		return fmt.Errorf("SSH写入配置文件失败: %w", err)
 	}
 
 	// 4. 验证配置文件已正确写入
 	verifyCmd := "wc -l /etc/slurm/slurm.conf"
-	verifyOutput, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, verifyCmd)
+	verifyOutput, err := s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, verifyCmd)
 	if err != nil {
 		log.Printf("[WARNING] 无法验证配置文件: %v", err)
 	} else {
@@ -936,24 +1080,12 @@ func (s *SlurmService) mergeConfigs(currentConfig, newNodesConfig string) string
 func (s *SlurmService) reloadSlurmConfig(ctx context.Context) error {
 	log.Printf("[DEBUG] 开始通过SSH重新加载SLURM配置")
 
-	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
-	if slurmMasterHost == "" {
-		slurmMasterHost = "ai-infra-slurm-master"
-	}
-
-	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
-	if slurmMasterUser == "" {
-		slurmMasterUser = "root"
-	}
-
-	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
-	if slurmMasterPassword == "" {
-		slurmMasterPassword = "root"
-	}
+	// 获取SLURM master的SSH连接信息
+	slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath := s.getSlurmMasterSSHConfig()
 
 	// 执行scontrol reconfigure
 	reconfigCmd := "scontrol reconfigure"
-	output, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, reconfigCmd)
+	output, err := s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, reconfigCmd)
 	if err != nil {
 		// 如果错误是"Zero Bytes were transmitted"，这实际上是成功的（命令执行了但没有输出）
 		if strings.Contains(output, "Zero Bytes were transmitted") || strings.TrimSpace(output) == "" {
@@ -967,7 +1099,7 @@ func (s *SlurmService) reloadSlurmConfig(ctx context.Context) error {
 
 	// 验证配置重新加载成功
 	verifyCmd := "scontrol ping"
-	verifyOutput, err := s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, verifyCmd)
+	verifyOutput, err := s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, verifyCmd)
 	if err != nil {
 		log.Printf("[WARNING] 无法验证slurmctld状态: %v", err)
 	} else {
@@ -980,22 +1112,10 @@ func (s *SlurmService) reloadSlurmConfig(ctx context.Context) error {
 // executeSlurmCommand 执行SLURM命令的辅助函数（通过SSH连接到SLURM master）
 func (s *SlurmService) executeSlurmCommand(ctx context.Context, command string) (string, error) {
 	// 获取SLURM master的SSH连接信息
-	slurmMasterHost := os.Getenv("SLURM_MASTER_HOST")
-	if slurmMasterHost == "" {
-		slurmMasterHost = "ai-infra-slurm-master"
-	}
+	slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath := s.getSlurmMasterSSHConfig()
 
-	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
-	if slurmMasterUser == "" {
-		slurmMasterUser = "root"
-	}
-
-	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
-	if slurmMasterPassword == "" {
-		slurmMasterPassword = "root"
-	}
-
-	return s.executeSSHCommand(slurmMasterHost, 22, slurmMasterUser, slurmMasterPassword, command)
+	// 使用密钥认证连接slurm-master
+	return s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, command)
 }
 
 // ExecuteSlurmCommand 公开的SLURM命令执行方法（供Controller调用）
@@ -1231,11 +1351,94 @@ func (s *SlurmService) UpdateSlurmConfig(ctx context.Context, sshSvc SSHServiceI
 	return nil
 }
 
-// generateSlurmConfig 生成SLURM配置文件内容
+// generateSlurmConfig 生成SLURM配置文件内容（保留全局配置，只更新节点和分区部分）
 func (s *SlurmService) generateSlurmConfig(nodes []models.SlurmNode) string {
-	// 只生成节点配置部分，不包含基础配置
-	// 基础配置保留在SLURM master的原始配置文件中
-	config := "# 节点配置（动态生成）\n"
+	// 读取SLURM master的当前配置文件，保留全局配置部分
+	currentConfig, err := s.fetchRemoteSlurmConfig()
+	if err != nil {
+		log.Printf("[WARN] 无法读取远程slurm.conf，使用默认模板: %v", err)
+	}
+
+	var globalConfig string
+	if currentConfig != "" {
+		// 提取全局配置部分（在第一个NodeName或PartitionName之前的所有行）
+		lines := strings.Split(currentConfig, "\n")
+		globalLines := []string{}
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			// 如果遇到NodeName或PartitionName，停止收集全局配置
+			if strings.HasPrefix(trimmed, "NodeName=") || strings.HasPrefix(trimmed, "PartitionName=") {
+				break
+			}
+			// 如果遇到动态生成的标记，停止收集
+			if strings.Contains(trimmed, "节点配置（动态生成）") || strings.Contains(trimmed, "计算节点配置") {
+				break
+			}
+			globalLines = append(globalLines, line)
+		}
+		globalConfig = strings.Join(globalLines, "\n")
+	}
+
+	// 如果没有获取到全局配置（文件不存在或读取失败），使用默认模板
+	if globalConfig == "" {
+		globalConfig = `#
+# AI Infrastructure Matrix SLURM Configuration
+# 此文件由环境变量自动生成
+#
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-master
+ControlAddr=slurm-master
+
+# 认证配置
+AuthType=auth/munge
+
+# 数据库配置
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=slurm-master
+AccountingStoragePort=6818
+AccountingStorageUser=root
+AccountingStorageEnforce=associations,limits,qos
+AccountingStoreFlags=job_comment,job_script,job_env
+
+# 作业调度配置
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+# 通信配置
+SlurmctldPort=6817
+SlurmdSpoolDir=/var/spool/slurm/slurmd
+StateSaveLocation=/var/lib/slurm/slurmctld
+
+# 日志配置
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldDebug=info
+SlurmdDebug=info
+
+# 服务配置
+SlurmUser=slurm
+SlurmdUser=root
+SlurmctldPidFile=/var/run/slurm/slurmctld.pid
+SlurmdPidFile=/var/run/slurm/slurmd.pid
+
+# 网络配置
+MessageTimeout=60
+KillWait=30
+MinJobAge=300
+Waittime=0
+
+# 插件目录（根据架构自动检测）
+PluginDir=/usr/lib/aarch64-linux-gnu/slurm
+
+# 资源限制配置
+MaxJobCount=10000
+MaxArraySize=10000
+`
+	}
+
+	// 开始构建节点配置部分
+	config := globalConfig + "\n\n# 计算节点配置（动态生成）\n"
 
 	// 添加节点定义
 	computeNodes := []string{}
@@ -1314,11 +1517,188 @@ func (s *SlurmService) generateSlurmConfig(nodes []models.SlurmNode) string {
 	return config
 }
 
+func (s *SlurmService) fetchRemoteSlurmConfig() (string, error) {
+	slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath := s.getSlurmMasterSSHConfig()
+	return s.executeSSHCommandWithKey(slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath, "cat /etc/slurm/slurm.conf")
+}
+
+// StartAutoRegisterLoop 自动同步已有SLURM节点到数据库并刷新配置
+func (s *SlurmService) StartAutoRegisterLoop() {
+	if !slurmAutoRegisterEnabled() {
+		log.Printf("[INFO] SLURM自动注册已禁用")
+		return
+	}
+	if s.db == nil {
+		log.Printf("[INFO] 数据库未就绪，跳过SLURM自动注册")
+		return
+	}
+	delay := autoRegisterInitialDelay()
+	log.Printf("[INFO] SLURM自动注册将在 %s 后执行", delay)
+	go func() {
+		time.Sleep(delay)
+		for attempt := 1; attempt <= autoRegisterMaxAttempts; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			err := s.autoDiscoverAndRegisterNodes(ctx)
+			cancel()
+			if err == nil {
+				log.Printf("[INFO] SLURM自动注册完成")
+				return
+			}
+			log.Printf("[WARN] SLURM自动注册第 %d 次失败: %v", attempt, err)
+			time.Sleep(time.Duration(autoRegisterRetrySecond) * time.Second)
+		}
+		log.Printf("[ERROR] SLURM自动注册多次失败，已放弃")
+	}()
+}
+
+func (s *SlurmService) autoDiscoverAndRegisterNodes(ctx context.Context) error {
+	nodes, demo, err := s.GetNodes(ctx)
+	if err != nil {
+		return fmt.Errorf("获取SLURM节点失败: %w", err)
+	}
+	if demo {
+		return fmt.Errorf("SLURM命令不可用，无法自动注册节点")
+	}
+	if len(nodes) == 0 {
+		return fmt.Errorf("未从SLURM读取到任何节点")
+	}
+	seen := make(map[string]struct{}, len(nodes))
+	for _, node := range nodes {
+		name := strings.TrimSpace(node.Name)
+		if name == "" {
+			continue
+		}
+		if err := s.upsertNodeFromSlurm(ctx, node); err != nil {
+			log.Printf("[WARN] 写入节点 %s 失败: %v", name, err)
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return fmt.Errorf("没有节点写入数据库")
+	}
+	if err := s.markMissingNodesInactive(ctx, seen); err != nil {
+		log.Printf("[WARN] 标记缺失节点失败: %v", err)
+	}
+	if err := s.UpdateSlurmConfig(ctx, NewSSHService()); err != nil {
+		return fmt.Errorf("刷新SLURM配置失败: %w", err)
+	}
+	return nil
+}
+
+func (s *SlurmService) upsertNodeFromSlurm(ctx context.Context, node SlurmNode) error {
+	if s.db == nil {
+		return fmt.Errorf("数据库未初始化")
+	}
+	name := strings.TrimSpace(node.Name)
+	status := mapSlurmStateToStatus(node.State)
+	cpus := parseNumericField(node.CPUs)
+	memory := parseNumericField(node.MemoryMB)
+	data := map[string]interface{}{
+		"status":     status,
+		"host":       name,
+		"cpus":       cpus,
+		"memory":     memory,
+		"updated_at": time.Now(),
+	}
+	var existing models.SlurmNode
+	result := s.db.WithContext(ctx).Where("node_name = ?", name).First(&existing)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			newNode := models.SlurmNode{
+				ClusterID: defaultSlurmClusterID,
+				NodeName:  name,
+				NodeType:  "compute",
+				Host:      name,
+				Port:      22,
+				Username:  "root",
+				Status:    status,
+				CPUs:      cpus,
+				Memory:    memory,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			return s.db.WithContext(ctx).Create(&newNode).Error
+		}
+		return result.Error
+	}
+	return s.db.WithContext(ctx).Model(&existing).Updates(data).Error
+}
+
+func (s *SlurmService) markMissingNodesInactive(ctx context.Context, seen map[string]struct{}) error {
+	if s.db == nil || len(seen) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	return s.db.WithContext(ctx).
+		Model(&models.SlurmNode{}).
+		Where("cluster_id = ?", defaultSlurmClusterID).
+		Where("node_name NOT IN ?", names).
+		Updates(map[string]interface{}{
+			"status":     "inactive",
+			"updated_at": time.Now(),
+		}).
+		Error
+}
+
+func mapSlurmStateToStatus(state string) string {
+	upper := strings.ToUpper(strings.TrimSpace(state))
+	switch {
+	case strings.Contains(upper, "IDLE"), strings.Contains(upper, "ALLOC"), strings.Contains(upper, "MIXED"), strings.Contains(upper, "COMPLETING"):
+		return "active"
+	case strings.Contains(upper, "DOWN"), strings.Contains(upper, "DRAIN"), strings.Contains(upper, "FAIL"), strings.Contains(upper, "POWER"):
+		return "inactive"
+	default:
+		return "pending"
+	}
+}
+
+func parseNumericField(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	var builder strings.Builder
+	for _, r := range raw {
+		if r >= '0' && r <= '9' {
+			builder.WriteRune(r)
+		} else if builder.Len() > 0 {
+			break
+		}
+	}
+	if builder.Len() == 0 {
+		return 0
+	}
+	value, err := strconv.Atoi(builder.String())
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func slurmAutoRegisterEnabled() bool {
+	val := strings.TrimSpace(strings.ToLower(os.Getenv("SLURM_AUTO_REGISTER")))
+	return val == "" || val == "true" || val == "1" || val == "yes"
+}
+
+func autoRegisterInitialDelay() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("SLURM_AUTO_REGISTER_DELAY_SECONDS"))
+	if raw != "" {
+		if secs, err := strconv.Atoi(raw); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return time.Duration(defaultAutoRegisterDelaySecond) * time.Second
+}
+
 // getSlurmControllerInfo 获取SLURM控制器连接信息
 func (s *SlurmService) getSlurmControllerInfo() (string, int, error) {
-	// 从环境变量或配置中获取SLURM控制器地址
-	// 这里假设使用Docker Compose中的服务名
-	return "slurm-master", 22, nil
+	// 从SLURM master SSH配置中获取
+	host, port, _, _, _ := s.getSlurmMasterSSHConfig()
+	return host, port, nil
 } // SSHServiceInterface 定义SSH服务接口以便测试
 type SSHServiceInterface interface {
 	UploadFile(host string, port int, user, password string, content []byte, remotePath string) error
@@ -1334,25 +1714,8 @@ func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*Scalin
 	}
 
 	// 获取SLURM Master的连接信息
-	masterHost := os.Getenv("SLURM_MASTER_HOST")
-	if masterHost == "" {
-		masterHost = "slurm-master" // 默认使用docker-compose服务名
-	}
+	masterHost, masterPort, masterUser, masterPassword, _ := s.getSlurmMasterSSHConfig()
 
-	masterPortStr := os.Getenv("SLURM_MASTER_PORT")
-	masterPort := 22
-	if masterPortStr != "" {
-		if port, err := strconv.Atoi(masterPortStr); err == nil {
-			masterPort = port
-		}
-	}
-
-	masterUser := os.Getenv("SLURM_MASTER_USER")
-	if masterUser == "" {
-		masterUser = "root"
-	}
-
-	masterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
 	if masterPassword == "" {
 		return nil, fmt.Errorf("未配置SLURM_MASTER_PASSWORD环境变量，无法连接SLURM Master")
 	}
@@ -1726,16 +2089,43 @@ func (s *SlurmService) getJWTToken(ctx context.Context) (string, error) {
 		masterUser = "root"
 	}
 
-	masterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
-	if masterPassword == "" {
-		return "", fmt.Errorf("未配置SLURM_MASTER_PASSWORD环境变量")
+	var authMethods []ssh.AuthMethod
+
+	// 优先使用私钥（与容器默认配置一致）
+	keyPath := os.Getenv("SLURM_MASTER_PRIVATE_KEY")
+	if keyPath == "" {
+		keyPath = "/root/.ssh/id_rsa"
+	}
+	if keyData, err := os.ReadFile(keyPath); err == nil {
+		if passphrase := os.Getenv("SLURM_MASTER_PRIVATE_KEY_PASSPHRASE"); passphrase != "" {
+			if signer, err := ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(passphrase)); err == nil {
+				authMethods = append(authMethods, ssh.PublicKeys(signer))
+			} else {
+				log.Printf("[WARN] 无法解析带口令的SLURM私钥 %s: %v", keyPath, err)
+			}
+		} else {
+			if signer, err := ssh.ParsePrivateKey(keyData); err == nil {
+				authMethods = append(authMethods, ssh.PublicKeys(signer))
+			} else {
+				log.Printf("[WARN] 无法解析SLURM私钥 %s: %v", keyPath, err)
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Printf("[WARN] 读取SLURM私钥失败 (%s): %v", keyPath, err)
+	}
+
+	// 兼容旧配置：支持密码认证
+	if masterPassword := os.Getenv("SLURM_MASTER_PASSWORD"); masterPassword != "" {
+		authMethods = append(authMethods, ssh.Password(masterPassword))
+	}
+
+	if len(authMethods) == 0 {
+		return "", fmt.Errorf("未配置可用的SLURM Master认证方式 (私钥或密码)")
 	}
 
 	sshConfig := &ssh.ClientConfig{
-		User: masterUser,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(masterPassword),
-		},
+		User:            masterUser,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}
@@ -2082,8 +2472,14 @@ func generateTemplateID() string {
 
 // InstallSlurmNodeRequest 安装SLURM节点请求
 type InstallSlurmNodeRequest struct {
-	NodeName string `json:"node_name"` // 节点名称（容器名）
-	OSType   string `json:"os_type"`   // 操作系统类型：rocky 或 ubuntu
+	NodeName   string `json:"node_name"`   // 节点名称（容器名）
+	OSType     string `json:"os_type"`     // 操作系统类型：rocky 或 ubuntu
+	SSHHost    string `json:"ssh_host"`    // SSH连接地址（IP或主机名）
+	SSHPort    int    `json:"ssh_port"`    // SSH端口，默认22
+	SSHUser    string `json:"ssh_user"`    // SSH用户，默认root
+	Password   string `json:"password"`    // 初始密码（用于首次连接和部署SSH密钥）
+	KeyPath    string `json:"key_path"`    // SSH私钥文件路径
+	PrivateKey string `json:"private_key"` // SSH私钥内容（内联）
 }
 
 // InstallSlurmNodeResponse 安装SLURM节点响应
@@ -2095,15 +2491,98 @@ type InstallSlurmNodeResponse struct {
 
 // InstallSlurmNode 在指定节点上安装SLURM客户端和slurmd
 func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNodeRequest) (*InstallSlurmNodeResponse, error) {
-	log.Printf("[INFO] 开始在节点 %s 上安装SLURM (OS: %s)", req.NodeName, req.OSType)
+	log.Printf("[INFO] 开始在节点 %s 上安装SLURM (OS: %s, Host: %s)", req.NodeName, req.OSType, req.SSHHost)
 
 	var logBuffer bytes.Buffer
 	logWriter := io.MultiWriter(os.Stdout, &logBuffer)
 
-	// 1. 获取slurm.conf和munge.key
+	// 设置默认值
+	if req.SSHPort == 0 {
+		req.SSHPort = 22
+	}
+	if req.SSHUser == "" {
+		req.SSHUser = "root"
+	}
+	if req.SSHHost == "" {
+		req.SSHHost = req.NodeName // 默认使用节点名作为主机名
+	}
+
+	// 创建任务记录到数据库（如果数据库可用）
+	var taskID string
+	var dbTask *models.NodeInstallTask
+	if s.db != nil {
+		taskID = fmt.Sprintf("install-%s-%d", req.NodeName, time.Now().Unix())
+
+		// 查找或创建节点记录以获取NodeID
+		var nodeRecord models.SlurmNode
+		result := s.db.Where("node_name = ? OR host = ?", req.NodeName, req.SSHHost).First(&nodeRecord)
+		if result.Error != nil {
+			// 如果节点不存在，创建一个新节点记录
+			nodeRecord = models.SlurmNode{
+				ClusterID: 1, // 默认集群ID
+				NodeName:  req.NodeName,
+				NodeType:  "compute",
+				Host:      req.SSHHost,
+				Port:      req.SSHPort,
+				Username:  req.SSHUser,
+				AuthType:  "key",
+				Status:    "installing",
+				CPUs:      0, // 安装后会更新
+				Memory:    0,
+				Storage:   0,
+			}
+			if err := s.db.Create(&nodeRecord).Error; err != nil {
+				log.Printf("[WARN] 创建节点记录失败: %v", err)
+			}
+		}
+
+		dbTask = &models.NodeInstallTask{
+			TaskID:       taskID,
+			NodeID:       nodeRecord.ID,
+			TaskType:     "scale-up",
+			Status:       "running",
+			Progress:     0,
+			ErrorMessage: "",
+		}
+
+		// 设置开始时间
+		now := time.Now()
+		dbTask.StartedAt = &now
+
+		if err := s.db.Create(dbTask).Error; err != nil {
+			log.Printf("[WARN] 创建任务记录失败: %v", err)
+			// 继续安装，不因为任务记录创建失败而中断
+		} else {
+			fmt.Fprintf(logWriter, "[INFO] 任务ID: %s\n", taskID)
+		}
+	}
+
+	// 定义更新任务进度的辅助函数
+	updateTaskProgress := func(progress int, status string, errorMsg string) {
+		if s.db != nil && dbTask != nil {
+			updates := map[string]interface{}{
+				"progress": progress,
+				"status":   status,
+			}
+			if errorMsg != "" {
+				updates["error_message"] = errorMsg
+			}
+			if status == "completed" || status == "failed" {
+				now := time.Now()
+				updates["completed_at"] = &now
+			}
+			s.db.Model(dbTask).Updates(updates)
+		}
+	}
+
+	// 1. 获取slurm.conf和munge.key (进度: 0-10%)
 	log.Printf("[INFO] 从slurm-master获取配置文件...")
+	fmt.Fprintf(logWriter, "[INFO] [10%%] 获取配置文件...\n")
+	updateTaskProgress(10, "running", "")
+
 	slurmConf, err := s.getSlurmMasterConfig(ctx)
 	if err != nil {
+		updateTaskProgress(10, "failed", fmt.Sprintf("获取slurm.conf失败: %v", err))
 		return &InstallSlurmNodeResponse{
 			Success: false,
 			Message: fmt.Sprintf("获取slurm.conf失败: %v", err),
@@ -2117,8 +2596,25 @@ func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNod
 		mungeKey = nil
 	}
 
-	// 2. 根据OS类型安装SLURM
-	if err := s.installSlurmPackages(ctx, req.NodeName, req.OSType, logWriter); err != nil {
+	// 2. 部署SSH密钥到新节点（进度: 10-25%）
+	fmt.Fprintf(logWriter, "[INFO] [25%%] 部署SSH密钥...\n")
+	updateTaskProgress(25, "running", "")
+
+	if err := s.deploySSHKeyToNode(ctx, req, logWriter); err != nil {
+		updateTaskProgress(25, "failed", fmt.Sprintf("部署SSH密钥失败: %v", err))
+		return &InstallSlurmNodeResponse{
+			Success: false,
+			Message: fmt.Sprintf("部署SSH密钥失败: %v", err),
+			Logs:    logBuffer.String(),
+		}, err
+	}
+
+	// 3. 根据OS类型安装SLURM（进度: 25-65%）
+	fmt.Fprintf(logWriter, "[INFO] [50%%] 安装SLURM包...\n")
+	updateTaskProgress(50, "running", "")
+
+	if err := s.installSlurmPackages(ctx, req, logWriter); err != nil {
+		updateTaskProgress(50, "failed", fmt.Sprintf("安装SLURM包失败: %v", err))
 		return &InstallSlurmNodeResponse{
 			Success: false,
 			Message: fmt.Sprintf("安装SLURM包失败: %v", err),
@@ -2126,8 +2622,12 @@ func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNod
 		}, err
 	}
 
-	// 3. 配置文件
-	if err := s.configureSlurmNode(ctx, req.NodeName, req.OSType, slurmConf, mungeKey, logWriter); err != nil {
+	// 4. 配置文件（进度: 65-80%）
+	fmt.Fprintf(logWriter, "[INFO] [75%%] 配置节点...\n")
+	updateTaskProgress(75, "running", "")
+
+	if err := s.configureSlurmNode(ctx, req, slurmConf, mungeKey, logWriter); err != nil {
+		updateTaskProgress(75, "failed", fmt.Sprintf("配置节点失败: %v", err))
 		return &InstallSlurmNodeResponse{
 			Success: false,
 			Message: fmt.Sprintf("配置节点失败: %v", err),
@@ -2135,13 +2635,26 @@ func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNod
 		}, err
 	}
 
-	// 4. 启动服务
-	if err := s.startSlurmServices(ctx, req.NodeName, req.OSType, logWriter); err != nil {
+	// 5. 启动服务（进度: 80-95%）
+	fmt.Fprintf(logWriter, "[INFO] [90%%] 启动服务...\n")
+	updateTaskProgress(90, "running", "")
+
+	if err := s.startSlurmServices(ctx, req, logWriter); err != nil {
+		updateTaskProgress(90, "failed", fmt.Sprintf("启动服务失败: %v", err))
 		return &InstallSlurmNodeResponse{
 			Success: false,
 			Message: fmt.Sprintf("启动服务失败: %v", err),
 			Logs:    logBuffer.String(),
 		}, err
+	}
+
+	// 6. 安装完成（进度: 100%）
+	fmt.Fprintf(logWriter, "[INFO] [100%%] 安装完成!\n")
+	updateTaskProgress(100, "completed", "")
+
+	// 更新节点状态为active
+	if s.db != nil && dbTask != nil {
+		s.db.Model(&models.SlurmNode{}).Where("id = ?", dbTask.NodeID).Update("status", "active")
 	}
 
 	log.Printf("[INFO] 节点 %s SLURM安装完成", req.NodeName)
@@ -2154,29 +2667,108 @@ func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNod
 
 // getSlurmMasterConfig 从slurm-master获取slurm.conf
 func (s *SlurmService) getSlurmMasterConfig(ctx context.Context) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "docker", "exec", "ai-infra-slurm-master", "cat", "/etc/slurm/slurm.conf")
-	output, err := cmd.Output()
+	// 使用SSH连接到slurm-master读取配置文件
+	masterHost, masterPort, _, _, keyPath := s.getSlurmMasterSSHConfig()
+
+	output, err := s.executeSSHCommandWithKey(masterHost, masterPort, "root", "", keyPath, "cat /etc/slurm/slurm.conf")
 	if err != nil {
 		return nil, fmt.Errorf("读取slurm.conf失败: %v", err)
 	}
-	return output, nil
+	return []byte(output), nil
 }
 
 // getMungeKey 从slurm-master获取munge.key
 func (s *SlurmService) getMungeKey(ctx context.Context) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "docker", "exec", "ai-infra-slurm-master", "cat", "/etc/munge/munge.key")
-	output, err := cmd.Output()
+	// 使用SSH连接到slurm-master读取munge密钥
+	masterHost, masterPort, _, _, keyPath := s.getSlurmMasterSSHConfig()
+
+	output, err := s.executeSSHCommandWithKey(masterHost, masterPort, "root", "", keyPath, "cat /etc/munge/munge.key")
 	if err != nil {
 		return nil, err
 	}
-	return output, nil
+	return []byte(output), nil
 }
 
-// installSlurmPackages 安装SLURM包（直接通过docker exec执行，更可靠）
-func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
-	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", nodeName, osType)
+// deploySSHKeyToNode 部署统一SSH公钥到新节点（支持密码或已有密钥认证）
+func (s *SlurmService) deploySSHKeyToNode(ctx context.Context, req InstallSlurmNodeRequest, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 部署SSH公钥到节点 %s@%s:%d...\n", req.SSHUser, req.SSHHost, req.SSHPort)
 
-	// 读取安装脚本（路径根据 Dockerfile 中的 COPY 命令）
+	// 读取backend的SSH公钥（统一密钥）
+	pubKeyPath := os.Getenv("HOME") + "/.ssh/id_rsa.pub"
+	pubKeyContent, err := os.ReadFile(pubKeyPath)
+	if err != nil {
+		return fmt.Errorf("读取SSH公钥失败: %w", err)
+	}
+
+	// 准备部署命令
+	setupCmd := fmt.Sprintf(`
+		mkdir -p /root/.ssh && \
+		chmod 700 /root/.ssh && \
+		echo '%s' >> /root/.ssh/authorized_keys && \
+		chmod 600 /root/.ssh/authorized_keys && \
+		sort -u /root/.ssh/authorized_keys -o /root/.ssh/authorized_keys && \
+		echo "SSH公钥已部署"
+	`, strings.TrimSpace(string(pubKeyContent)))
+
+	sshTarget := fmt.Sprintf("%s@%s", req.SSHUser, req.SSHHost)
+	sshPort := fmt.Sprintf("%d", req.SSHPort)
+
+	var cmd *exec.Cmd
+	var authMethod string
+
+	// 尝试方式1: 使用密码认证（如果提供了密码）
+	if req.Password != "" {
+		authMethod = "password"
+		fmt.Fprintf(logWriter, "[INFO] 使用密码认证部署SSH密钥...\n")
+		cmd = exec.CommandContext(ctx, "sshpass", "-p", req.Password,
+			"ssh", "-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-p", sshPort,
+			sshTarget,
+			setupCmd)
+	} else {
+		// 方式2: 使用现有的SSH密钥认证
+		authMethod = "existing-key"
+		fmt.Fprintf(logWriter, "[INFO] 使用现有SSH密钥认证部署公钥...\n")
+		cmd = exec.CommandContext(ctx, "ssh",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-p", sshPort,
+			sshTarget,
+			setupCmd)
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("部署SSH公钥失败 (认证方式: %s): %v, output: %s", authMethod, err, string(output))
+	}
+
+	fmt.Fprintf(logWriter, "[INFO] ✓ SSH公钥部署成功 (认证方式: %s)\n", authMethod)
+	fmt.Fprintf(logWriter, "[DEBUG] %s\n", strings.TrimSpace(string(output)))
+
+	// 测试密钥认证是否可用
+	testCmd := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "PasswordAuthentication=no",
+		"-p", sshPort,
+		sshTarget,
+		"echo 'SSH密钥认证OK'")
+
+	if testOutput, testErr := testCmd.CombinedOutput(); testErr == nil {
+		fmt.Fprintf(logWriter, "[INFO] ✓ SSH密钥认证测试成功: %s\n", strings.TrimSpace(string(testOutput)))
+	} else {
+		fmt.Fprintf(logWriter, "[WARN] SSH密钥认证测试失败: %v, 但继续进行\n", testErr)
+	}
+
+	return nil
+}
+
+// installSlurmPackages 安装SLURM包（通过SSH执行）
+func (s *SlurmService) installSlurmPackages(ctx context.Context, req InstallSlurmNodeRequest, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", req.SSHHost, req.OSType)
+
+	// 读取安装脚本
 	scriptPath := "/root/scripts/install-slurm-node.sh"
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
@@ -2186,106 +2778,146 @@ func (s *SlurmService) installSlurmPackages(ctx context.Context, nodeName, osTyp
 	// 获取apphub URL
 	apphubURL := os.Getenv("APPHUB_URL")
 	if apphubURL == "" {
-		apphubURL = "http://ai-infra-apphub" // 默认URL（AppHub 使用端口 80）
+		apphubURL = "http://ai-infra-apphub"
 	}
 
 	fmt.Fprintf(logWriter, "[INFO] AppHub URL: %s\n", apphubURL)
 
-	// 步骤1: 将脚本内容写入节点的临时文件
-	tmpScriptPath := fmt.Sprintf("/tmp/install-slurm-%s.sh", nodeName)
-	writeScriptCmd := fmt.Sprintf("cat > %s << 'SCRIPT_EOF'\n%s\nSCRIPT_EOF\nchmod +x %s",
-		tmpScriptPath, string(scriptContent), tmpScriptPath)
+	// SSH目标
+	sshTarget := fmt.Sprintf("%s@%s", req.SSHUser, req.SSHHost)
+	sshPort := fmt.Sprintf("%d", req.SSHPort)
 
-	fmt.Fprintf(logWriter, "[INFO] 上传安装脚本到节点 %s...\n", nodeName)
-	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", writeScriptCmd)
+	// 步骤1: 上传脚本到节点
+	tmpScriptPath := fmt.Sprintf("/tmp/install-slurm-%s.sh", req.NodeName)
+	uploadCmd := fmt.Sprintf("cat > %s && chmod +x %s", tmpScriptPath, tmpScriptPath)
+
+	fmt.Fprintf(logWriter, "[INFO] 上传安装脚本到节点...\n")
+	cmd := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		uploadCmd)
+	cmd.Stdin = bytes.NewReader(scriptContent)
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("上传脚本到节点失败: %v", err)
+		return fmt.Errorf("上传脚本失败: %v", err)
 	}
 
 	// 步骤2: 执行安装脚本
-	executeScriptCmd := fmt.Sprintf("%s %s compute", tmpScriptPath, apphubURL)
+	executeCmd := fmt.Sprintf("%s %s compute", tmpScriptPath, apphubURL)
 
 	fmt.Fprintf(logWriter, "[INFO] 开始执行安装脚本...\n")
-	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", executeScriptCmd)
+	cmd = exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		executeCmd)
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
 
 	if err := cmd.Run(); err != nil {
-		log.Printf("[ERROR] 安装SLURM包失败: %v", err)
 		return fmt.Errorf("安装SLURM包失败: %v", err)
 	}
 
 	// 步骤3: 清理临时脚本
 	cleanCmd := fmt.Sprintf("rm -f %s", tmpScriptPath)
-	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", cleanCmd)
+	cmd = exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		cleanCmd)
 	cmd.Run() // 忽略清理错误
 
 	fmt.Fprintf(logWriter, "[INFO] ✓ SLURM包安装成功\n")
 	return nil
 }
 
-// configureSlurmNode 配置SLURM节点
-func (s *SlurmService) configureSlurmNode(ctx context.Context, nodeName, osType string, slurmConf, mungeKey []byte, logWriter io.Writer) error {
-	fmt.Fprintf(logWriter, "[INFO] 配置 %s 节点\n", nodeName)
+// configureSlurmNode 配置SLURM节点（通过SCP和SSH）
+func (s *SlurmService) configureSlurmNode(ctx context.Context, req InstallSlurmNodeRequest, slurmConf, mungeKey []byte, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 配置 %s 节点\n", req.NodeName)
+
+	// SSH目标
+	sshTarget := fmt.Sprintf("%s@%s", req.SSHUser, req.SSHHost)
+	sshPort := fmt.Sprintf("%d", req.SSHPort)
 
 	// 确定配置文件路径
 	slurmConfPath := "/etc/slurm/slurm.conf"
-	if osType == "ubuntu" || osType == "debian" {
+	if req.OSType == "ubuntu" || req.OSType == "debian" {
 		slurmConfPath = "/etc/slurm-llnl/slurm.conf"
 	}
 
-	// 写入临时文件
-	tmpSlurmConf := "/tmp/slurm.conf." + nodeName
+	// 写入本地临时文件
+	tmpSlurmConf := fmt.Sprintf("/tmp/slurm.conf.%s", req.NodeName)
 	if err := os.WriteFile(tmpSlurmConf, slurmConf, 0644); err != nil {
 		return fmt.Errorf("写入临时slurm.conf失败: %v", err)
 	}
 	defer os.Remove(tmpSlurmConf)
 
-	// 复制slurm.conf到容器
-	cmd := exec.CommandContext(ctx, "docker", "cp", tmpSlurmConf, nodeName+":"+slurmConfPath)
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
-	if err := cmd.Run(); err != nil {
+	// 使用SCP复制slurm.conf到节点
+	fmt.Fprintf(logWriter, "[INFO] 复制slurm.conf到节点...\n")
+	scpCmd := exec.CommandContext(ctx, "scp",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-P", sshPort,
+		tmpSlurmConf,
+		fmt.Sprintf("%s:%s", sshTarget, slurmConfPath))
+	scpCmd.Stdout = logWriter
+	scpCmd.Stderr = logWriter
+	if err := scpCmd.Run(); err != nil {
 		return fmt.Errorf("复制slurm.conf失败: %v", err)
 	}
 	fmt.Fprintf(logWriter, "[INFO] slurm.conf复制成功 -> %s\n", slurmConfPath)
 
-	// 修复PluginDir路径兼容性问题（通过脚本）
+	// 修复PluginDir路径
 	fixPluginDirScript := "src/backend/scripts/fix-slurm-plugindir.sh"
 	scriptContent, err := os.ReadFile(fixPluginDirScript)
-	if err != nil {
-		log.Printf("[WARN] 读取PluginDir修复脚本失败: %v", err)
-	} else {
-		cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", string(scriptContent))
+	if err == nil {
+		fmt.Fprintf(logWriter, "[INFO] 修复PluginDir路径...\n")
+		cmd := exec.CommandContext(ctx, "ssh",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-p", sshPort,
+			sshTarget,
+			"bash -s")
+		cmd.Stdin = bytes.NewReader(scriptContent)
 		cmd.Stdout = logWriter
 		cmd.Stderr = logWriter
-		if err := cmd.Run(); err != nil {
-			log.Printf("[WARN] 修复PluginDir路径失败: %v", err)
-		} else {
+		if err := cmd.Run(); err == nil {
 			fmt.Fprintf(logWriter, "[INFO] PluginDir路径兼容性已修复\n")
 		}
 	}
 
-	// 如果有munge.key，也复制
+	// 配置munge.key
 	if mungeKey != nil && len(mungeKey) > 0 {
-		tmpMungeKey := "/tmp/munge.key." + nodeName
+		tmpMungeKey := fmt.Sprintf("/tmp/munge.key.%s", req.NodeName)
 		if err := os.WriteFile(tmpMungeKey, mungeKey, 0400); err != nil {
 			return fmt.Errorf("写入临时munge.key失败: %v", err)
 		}
 		defer os.Remove(tmpMungeKey)
 
-		cmd = exec.CommandContext(ctx, "docker", "cp", tmpMungeKey, nodeName+":/etc/munge/munge.key")
-		cmd.Stdout = logWriter
-		cmd.Stderr = logWriter
-		if err := cmd.Run(); err != nil {
-			log.Printf("[WARN] 复制munge.key失败: %v", err)
-		} else {
-			// 设置权限
-			cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "chown", "munge:munge", "/etc/munge/munge.key")
-			cmd.Run()
-			cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "chmod", "400", "/etc/munge/munge.key")
+		fmt.Fprintf(logWriter, "[INFO] 复制munge.key到节点...\n")
+		scpCmd = exec.CommandContext(ctx, "scp",
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-P", sshPort,
+			tmpMungeKey,
+			fmt.Sprintf("%s:/etc/munge/munge.key", sshTarget))
+		scpCmd.Stdout = logWriter
+		scpCmd.Stderr = logWriter
+		if err := scpCmd.Run(); err == nil {
+			// 设置权限：munge.key必须属于root且权限为400
+			chownCmd := "chown root:root /etc/munge/munge.key && chmod 400 /etc/munge/munge.key"
+			cmd := exec.CommandContext(ctx, "ssh",
+				"-o", "StrictHostKeyChecking=no",
+				"-o", "UserKnownHostsFile=/dev/null",
+				"-p", sshPort,
+				sshTarget,
+				chownCmd)
 			cmd.Run()
 			fmt.Fprintf(logWriter, "[INFO] munge.key配置成功\n")
 		}
@@ -2294,12 +2926,16 @@ func (s *SlurmService) configureSlurmNode(ctx context.Context, nodeName, osType 
 	return nil
 }
 
-// startSlurmServices 启动SLURM服务（通过SSH远程执行脚本）
-func (s *SlurmService) startSlurmServices(ctx context.Context, nodeName, osType string, logWriter io.Writer) error {
-	fmt.Fprintf(logWriter, "[INFO] 启动 %s 上的服务\n", nodeName)
+// startSlurmServices 启动SLURM服务（通过SSH）
+func (s *SlurmService) startSlurmServices(ctx context.Context, req InstallSlurmNodeRequest, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 启动 %s 上的服务\n", req.NodeName)
 
-	// 1. 读取启动脚本
-	scriptPath := "src/backend/scripts/start-slurmd.sh"
+	// SSH目标
+	sshTarget := fmt.Sprintf("%s@%s", req.SSHUser, req.SSHHost)
+	sshPort := fmt.Sprintf("%d", req.SSHPort)
+
+	// 读取启动脚本
+	scriptPath := "/root/scripts/start-slurmd.sh"
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return fmt.Errorf("读取启动脚本失败: %v", err)
@@ -2307,24 +2943,33 @@ func (s *SlurmService) startSlurmServices(ctx context.Context, nodeName, osType 
 
 	fmt.Fprintf(logWriter, "[INFO] 使用脚本启动 slurmd...\n")
 
-	// 2. 通过 docker exec 执行脚本
-	cmd := exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", string(scriptContent))
+	// 通过SSH执行脚本
+	cmd := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		"bash -s")
+	cmd.Stdin = bytes.NewReader(scriptContent)
 	cmd.Stdout = logWriter
 	cmd.Stderr = logWriter
 
 	if err := cmd.Run(); err != nil {
-		log.Printf("[ERROR] 执行启动脚本失败: %v", err)
-		fmt.Fprintf(logWriter, "[ERROR] 执行启动脚本失败: %v\n", err)
 		return fmt.Errorf("启动服务失败: %v", err)
 	}
 
 	fmt.Fprintf(logWriter, "[SUCCESS] 服务启动完成\n")
 
-	// 3. 验证服务状态
+	// 验证服务状态
 	time.Sleep(2 * time.Second)
 
 	checkCmd := "pgrep -x slurmd >/dev/null && echo 'slurmd running' || echo 'slurmd not running'"
-	cmd = exec.CommandContext(ctx, "docker", "exec", nodeName, "bash", "-c", checkCmd)
+	cmd = exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		checkCmd)
 	output, _ := cmd.Output()
 	fmt.Fprintf(logWriter, "[INFO] 验证结果: %s\n", strings.TrimSpace(string(output)))
 
@@ -2348,7 +2993,7 @@ func (s *SlurmService) startSlurmServicesViaSSH(ctx context.Context, host string
 	fmt.Fprintf(logWriter, "[INFO] 通过SSH启动 %s 上的服务\n", host)
 
 	// 执行启动脚本
-	scriptPath := "src/backend/scripts/start-slurmd.sh"
+	scriptPath := "/root/scripts/start-slurmd.sh"
 	output, err := s.executeScriptViaSSH(ctx, host, port, user, password, privateKey, scriptPath)
 
 	if err != nil {
@@ -2363,13 +3008,13 @@ func (s *SlurmService) startSlurmServicesViaSSH(ctx context.Context, host string
 
 // checkSlurmServicesViaSSH 通过SSH检查SLURM服务状态
 func (s *SlurmService) checkSlurmServicesViaSSH(ctx context.Context, host string, port int, user, password, privateKey string) (string, error) {
-	scriptPath := "src/backend/scripts/check-slurmd.sh"
+	scriptPath := "/root/scripts/check-slurmd.sh"
 	return s.executeScriptViaSSH(ctx, host, port, user, password, privateKey, scriptPath)
 }
 
 // stopSlurmServicesViaSSH 通过SSH停止SLURM服务
 func (s *SlurmService) stopSlurmServicesViaSSH(ctx context.Context, host string, port int, user, password, privateKey string) (string, error) {
-	scriptPath := "src/backend/scripts/stop-slurmd.sh"
+	scriptPath := "/root/scripts/stop-slurmd.sh"
 	return s.executeScriptViaSSH(ctx, host, port, user, password, privateKey, scriptPath)
 }
 

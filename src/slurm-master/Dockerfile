@@ -378,7 +378,12 @@ RUN mkdir -p /var/run/sshd /root/.ssh && \
 # Note: SSH密钥会在构建前由build.sh从项目根目录同步到此处
 COPY ssh-key/id_rsa.pub /root/.ssh/authorized_keys
 RUN chmod 600 /root/.ssh/authorized_keys && \
+    cp /root/.ssh/authorized_keys /root/.ssh/authorized_keys.bootstrap && \
     echo "✓ SSH public key installed for backend access"
+
+# 复制并启用运行时公钥刷新脚本（支持从共享目录热更新）
+COPY scripts/bootstrap-authorized-keys.sh /usr/local/bin/bootstrap-authorized-keys.sh
+RUN chmod +x /usr/local/bin/bootstrap-authorized-keys.sh
 
 # 暴露端口
 EXPOSE 6817 6818 22

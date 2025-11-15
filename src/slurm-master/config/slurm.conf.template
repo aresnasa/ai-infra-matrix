@@ -8,6 +8,8 @@ ControlAddr=${SLURM_CONTROLLER_HOST}
 
 # 认证配置
 AuthType=${SLURM_AUTH_TYPE}
+AuthAltTypes=${SLURM_AUTH_ALT_TYPES}
+AuthAltParameters=${SLURM_AUTH_ALT_PARAMETERS}
 
 # 数据库配置
 AccountingStorageType=accounting_storage/slurmdbd

@@ -37,7 +37,7 @@ ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SALTSTACK_VERSION=v3007.8
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_VERSION=v0.4.24
 
 # Singularity version configuration
 ARG SINGULARITY_VERSION=v4.3.4
@@ -855,7 +855,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_VERSION=v0.4.24
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
@@ -1014,7 +1014,7 @@ FROM nginx:${NGINX_ALPINE_VERSION}
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION=25.05.4
 ARG SALTSTACK_VERSION=v3007.8
-ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_VERSION=v0.4.24
 ARG APPHUB_BASE_URL=http://localhost:8081
 
 # 将版本保存到环境变量（可在运行时访问）
@@ -1128,8 +1128,11 @@ COPY --from=rpm-builder /out/slurm-rpm/ /usr/share/nginx/html/pkgs/slurm-rpm/
 RUN set -eux; \
     echo "📦 Extracting cgroup_v2.so plugin for Rocky nodes..."; \
     cd /usr/share/nginx/html/pkgs/slurm-deb; \
-    # Find the slurm-smd-slurmd package (contains plugins)
+    # Prefer slurm-smd-slurmd package; fall back to base slurm-smd when needed
     DEB_FILE=$(ls -1 slurm-smd-slurmd_*.deb 2>/dev/null | head -1); \
+    if [ -z "$DEB_FILE" ]; then \
+        DEB_FILE=$(ls -1 slurm-smd_*.deb 2>/dev/null | head -1); \
+    fi; \
     if [ -n "$DEB_FILE" ]; then \
         dpkg-deb -x "$DEB_FILE" /tmp/slurm-extract; \
         # Find and copy cgroup_v2.so

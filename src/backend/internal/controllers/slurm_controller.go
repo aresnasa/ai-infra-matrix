@@ -703,6 +703,21 @@ func (c *SlurmController) ScaleUpAsync(ctx *gin.Context) {
 			return
 		}
 
+		// 统计成功和失败的节点数
+		var successNodes, failedNodes int
+		for _, result := range scaleResults.Results {
+			if result.Success {
+				successNodes++
+			} else {
+				failedNodes++
+			}
+		}
+
+		// 更新任务的节点统计
+		if err := c.taskSvc.UpdateTaskNodes(bgCtx, dbTaskID, len(r.Nodes), successNodes, failedNodes); err != nil {
+			fmt.Printf("更新任务节点统计失败: %v\n", err)
+		}
+
 		pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "scale-up-slurm", Message: "Slurm扩容完成", Data: scaleResults})
 		c.taskSvc.UpdateTaskProgress(bgCtx, dbTaskID, 100, "扩容完成")
 		c.taskSvc.AddTaskEvent(bgCtx, dbTaskID, "success", "scale-up", "SLURM扩容成功", "", 100, scaleResults)

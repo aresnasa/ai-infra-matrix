@@ -4174,4 +4174,30 @@ root         497  0.5  0.1 473024 61064 ?        Sl   21:56   0:00 /opt/saltstac
 root         698  0.0  0.0   3876  2512 ?        Ss   21:58   0:00 bash -c  ps aux|egrep 'slurm|munge|minion'
 root         705  0.0  0.0   2904  1352 ?        S    21:58   0:00 grep -E slurm|munge|minion未能正确安装slurm和munge
 
-219. apphub需要配置root公钥，这里的整个后端系统都需要一个公共的ssh密钥，backend才存放私钥，其余容器都只存放公钥，调整下项目的dockerfile，构建时候需要将公钥拷贝到容器中，测试容器忽略只需要密码后续再调整密钥，主要是后端管理即可，还需要调整build.sh程序，将生成的ssh密钥拷贝到组件的相关路径中，覆盖原有密钥，这里只能有一个唯一的密钥
+219. apphub需要配置root公钥，这里的整个后端系统都需要一个公共的ssh密钥，backend才存放私钥，其余容器都只存放公钥，调整下项目的dockerfile，构建时候需要将公钥拷贝到容器中，测试容器忽略只需要密码后续再调整密钥，主要是后端管理即可，还需要调整build.sh程序，将生成的ssh密钥拷贝到组件的相关路径中，覆盖原有密钥，这里只能有一个唯一的密钥，不要使用docker exec，而是使用原生的ssh或者salt进行安装部署slurm
+
+220. 扩缩容状态
+空闲
+活跃任务
+0
+成功节点
+0
+失败节点
+0
+进度
+未能正确同步任务栏中的任务状态，修复这个问题，
+扩容完成
+1%显示不符合预期需要修复
+
+221. 执行命令失败: SSH连接失败: ssh: handshake failed: ssh: unable to authenticate, attempted methods [none], no supported methods remain
+
+222. 这里应该是backend未能正确的同步ssh密钥到测试节点，这里需要使用go的ssh同步配置到节点，然后运行slurm安装脚本
+
+223. 继续测试slurm集群的状态，然后修复相关的dockerfile和go程序实现slurm集群的自动注册
+
+224. SLURM集群扩容
+completed
+an hour ago
+扩容完成
+1%
+这里的1%展示不符合预期，应该是100%，需要检查下frontend中相关函数的计算逻辑

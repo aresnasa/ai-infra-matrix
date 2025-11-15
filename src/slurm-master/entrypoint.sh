@@ -9,6 +9,13 @@ log() {
 
 log "INFO" "🚀 启动 AI Infrastructure Matrix SLURM Master 引导任务..."
 
+# 确保SSH公钥与共享目录保持同步，便于后端密钥热更新
+if command -v bootstrap-authorized-keys.sh >/dev/null 2>&1; then
+    if ! /usr/local/bin/bootstrap-authorized-keys.sh; then
+        log "WARN" "SSH公钥引导脚本执行失败，继续使用内置公钥"
+    fi
+fi
+
 # 默认环境变量
 export SLURM_CLUSTER_NAME=${SLURM_CLUSTER_NAME:-ai-infra-cluster}
 export SLURM_CONTROLLER_HOST=${SLURM_CONTROLLER_HOST:-slurm-master}
@@ -27,6 +34,9 @@ export MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-}
 
 # 认证与节点配置
 export SLURM_AUTH_TYPE=${SLURM_AUTH_TYPE:-auth/munge}
+export SLURM_JWT_KEY_PATH=${SLURM_JWT_KEY_PATH:-/etc/slurm/jwt_hs256.key}
+export SLURM_AUTH_ALT_TYPES=${SLURM_AUTH_ALT_TYPES:-auth/jwt}
+export SLURM_AUTH_ALT_PARAMETERS=${SLURM_AUTH_ALT_PARAMETERS:-jwt_key=${SLURM_JWT_KEY_PATH}}
 export SLURM_MUNGE_KEY=${SLURM_MUNGE_KEY:-ai-infra-slurm-munge-key-dev}
 export SLURM_PARTITION_NAME=${SLURM_PARTITION_NAME:-compute}
 export SLURM_DEFAULT_PARTITION=${SLURM_DEFAULT_PARTITION:-compute}
@@ -235,6 +245,40 @@ setup_munge() {
     log "INFO" "✅ Munge 配置完成"
 }
 
+setup_jwt_auth() {
+    if [ -z "${SLURM_AUTH_ALT_TYPES}" ]; then
+        log "INFO" "JWT 认证已禁用，跳过密钥配置"
+        return 0
+    fi
+
+    local key_path="${SLURM_JWT_KEY_PATH}"
+    local key_dir
+    key_dir=$(dirname "${key_path}")
+    mkdir -p "${key_dir}"
+
+    if [ ! -s "${key_path}" ]; then
+        log "INFO" "生成 SLURM JWT 密钥: ${key_path}"
+        dd if=/dev/urandom of="${key_path}" bs=32 count=1 status=none
+    else
+        log "INFO" "使用现有 SLURM JWT 密钥: ${key_path}"
+    fi
+
+    chown slurm:slurm "${key_path}" || true
+    chmod 600 "${key_path}" || true
+    log "INFO" "✅ JWT 密钥配置完成"
+}
+
+ensure_slurmrestd_user() {
+    if id slurmrestd >/dev/null 2>&1; then
+        log "INFO" "slurmrestd 用户已存在"
+        return 0
+    fi
+
+    log "INFO" "创建 slurmrestd 用户..."
+    useradd -M -r -s /usr/sbin/nologin -U slurmrestd >/dev/null 2>&1 || true
+    log "INFO" "✅ slurmrestd 用户已准备"
+}
+
 fix_compute_nodes() {
     log "INFO" "🔧 修复计算节点配置..."
     
@@ -295,6 +339,7 @@ bootstrap() {
     detect_slurm_mode
     set_plugin_dir
     print_configuration
+    ensure_slurmrestd_user
 
     if [ "${SLURM_MODE}" = "full" ]; then
         wait_for_database
@@ -305,6 +350,7 @@ bootstrap() {
 
     generate_configs
     setup_munge
+    setup_jwt_auth
     
     # 不再自动修复节点，改为可选功能
     # 通过环境变量 AUTO_FIX_NODES=true 启用
