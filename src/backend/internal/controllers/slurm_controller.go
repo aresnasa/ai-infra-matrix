@@ -38,14 +38,23 @@ func NewSlurmController() *SlurmController {
 		cfg = &config.Config{} // 使用默认配置
 	}
 
+	slurmDB := database.GetSlurmDB()
+	primaryDB := database.DB
+	if slurmDB == nil {
+		slurmDB = primaryDB
+	}
+	if primaryDB == nil {
+		primaryDB = slurmDB
+	}
+
 	return &SlurmController{
-		slurmSvc:   services.NewSlurmServiceWithDB(database.DB),
+		slurmSvc:   services.NewSlurmServiceWithStores(slurmDB, primaryDB),
 		saltSvc:    services.NewSaltStackService(),
 		sshSvc:     services.NewSSHService(),
-		clusterSvc: services.NewSlurmClusterService(database.DB),
-		taskSvc:    services.NewSlurmTaskService(database.DB),
+		clusterSvc: services.NewSlurmClusterService(slurmDB),
+		taskSvc:    services.NewSlurmTaskService(primaryDB),
 		config:     cfg,
-		db:         database.DB,
+		db:         primaryDB,
 	}
 }
 

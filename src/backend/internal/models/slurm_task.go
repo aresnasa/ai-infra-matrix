@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"gorm.io/gorm"
@@ -23,7 +24,7 @@ type SlurmTask struct {
 	StartedAt   *time.Time `json:"started_at"`                // 开始时间
 	CompletedAt *time.Time `json:"completed_at"`              // 完成时间
 	Duration    int64      `json:"duration"`                  // 执行时长（秒）
-	Progress    float64    `json:"progress" gorm:"default:0"` // 进度 0-1
+	Progress    float64    `json:"progress" gorm:"default:0"` // 进度 0-100
 
 	// 任务参数和结果
 	Parameters   JSON   `json:"parameters" gorm:"type:jsonb"`   // 任务参数
@@ -68,7 +69,7 @@ type SlurmTaskEvent struct {
 	Step      string    `json:"step" gorm:"size:100"`               // 步骤名称
 	Message   string    `json:"message" gorm:"type:text"`           // 事件消息
 	Host      string    `json:"host" gorm:"size:255"`               // 相关主机
-	Progress  float64   `json:"progress" gorm:"default:0"`          // 当前进度
+	Progress  float64   `json:"progress" gorm:"default:0"`          // 当前进度（百分比）
 	Data      JSON      `json:"data" gorm:"type:jsonb"`             // 附加数据
 	Timestamp time.Time `json:"timestamp" gorm:"not null"`          // 事件时间戳
 	CreatedAt time.Time `json:"created_at"`
@@ -158,6 +159,22 @@ func (st *SlurmTask) GetSuccessRate() float64 {
 }
 
 // AddEvent 添加任务事件
+func normalizeStoredProgress(progress float64) float64 {
+	if math.IsNaN(progress) || math.IsInf(progress, 0) {
+		return 0
+	}
+	if progress < 0 {
+		return 0
+	}
+	if progress <= 1 {
+		return progress * 100
+	}
+	if progress > 100 {
+		return 100
+	}
+	return progress
+}
+
 func (st *SlurmTask) AddEvent(db *gorm.DB, eventType, step, message, host string, progress float64, data interface{}) error {
 	var dataJSON JSON
 	if data != nil {
@@ -168,13 +185,15 @@ func (st *SlurmTask) AddEvent(db *gorm.DB, eventType, step, message, host string
 		dataJSON = JSON(dataBytes)
 	}
 
+	storedProgress := normalizeStoredProgress(progress)
+
 	event := SlurmTaskEvent{
 		TaskID:    st.ID,
 		EventType: eventType,
 		Step:      step,
 		Message:   message,
 		Host:      host,
-		Progress:  progress,
+		Progress:  storedProgress,
 		Data:      dataJSON,
 		Timestamp: time.Now(),
 	}
@@ -184,10 +203,11 @@ func (st *SlurmTask) AddEvent(db *gorm.DB, eventType, step, message, host string
 
 // UpdateProgress 更新任务进度
 func (st *SlurmTask) UpdateProgress(db *gorm.DB, progress float64, currentStep string) error {
-	st.Progress = progress
+	storedProgress := normalizeStoredProgress(progress)
+	st.Progress = storedProgress
 	st.StepsCurrent = currentStep
 	return db.Model(st).Updates(map[string]interface{}{
-		"progress":      progress,
+		"progress":      storedProgress,
 		"steps_current": currentStep,
 	}).Error
 }
@@ -197,12 +217,12 @@ func (st *SlurmTask) Complete(db *gorm.DB, status string, errorMsg ...string) er
 	now := time.Now()
 	st.CompletedAt = &now
 	st.Status = status
-	st.Progress = 1.0
+	st.Progress = 100
 
 	updates := map[string]interface{}{
 		"completed_at": now,
 		"status":       status,
-		"progress":     1.0,
+		"progress":     100,
 	}
 
 	if len(errorMsg) > 0 && errorMsg[0] != "" {

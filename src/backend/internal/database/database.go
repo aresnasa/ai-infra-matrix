@@ -14,23 +14,24 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-var DB *gorm.DB
+var (
+	DB      *gorm.DB
+	SlurmDB *gorm.DB
+)
 
 // GetDB 返回数据库连接实例
 func GetDB() *gorm.DB {
 	return DB
 }
 
+// GetSlurmDB 返回SLURM专用数据库连接（MySQL/OceanBase）
+func GetSlurmDB() *gorm.DB {
+	return SlurmDB
+}
+
 func Connect(cfg *config.Config) error {
 	// 初始化加密服务
 	InitCrypto(cfg)
-
-	logrus.WithFields(logrus.Fields{
-		"host":     cfg.Database.Host,
-		"port":     cfg.Database.Port,
-		"database": cfg.Database.DBName,
-		"user":     cfg.Database.User,
-	}).Info("Connecting to database")
 
 	// 根据应用日志级别设置GORM日志级别（OceanBase 和 Postgres 复用）
 	var gormLogLevel logger.LogLevel
@@ -47,54 +48,25 @@ func Connect(cfg *config.Config) error {
 		logrus.Debug("GORM logging set to Error level (errors only)")
 	}
 
-	// OceanBase 优先（如果启用）
-	if cfg.OceanBase.Enabled {
-		obDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
-			cfg.OceanBase.User,
-			cfg.OceanBase.Password,
-			cfg.OceanBase.Host,
-			cfg.OceanBase.Port,
-			cfg.OceanBase.DBName,
-			cfg.OceanBase.Params,
-		)
-		logrus.WithFields(logrus.Fields{
-			"host":     cfg.OceanBase.Host,
-			"port":     cfg.OceanBase.Port,
-			"database": cfg.OceanBase.DBName,
-			"user":     cfg.OceanBase.User,
-		}).Info("Connecting to OceanBase (MySQL protocol)")
-
-		var err error
-		DB, err = gorm.Open(mysql.Open(obDSN), &gorm.Config{
-			Logger:  logger.Default.LogMode(gormLogLevel),
-			NowFunc: func() time.Time { return time.Now().Local() },
-		})
-		if err != nil {
-			logrus.WithError(err).Error("Failed to connect to OceanBase")
-			return fmt.Errorf("failed to connect to OceanBase: %w", err)
-		}
-
-		// 配置连接池
-		sqlDB, err := DB.DB()
-		if err != nil {
-			logrus.WithError(err).Error("Failed to get OceanBase database instance")
-			return fmt.Errorf("failed to get OceanBase database instance: %w", err)
-		}
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetMaxOpenConns(100)
-		sqlDB.SetConnMaxLifetime(time.Hour)
-
-		logrus.WithFields(logrus.Fields{
-			"max_idle_conns":    10,
-			"max_open_conns":    100,
-			"conn_max_lifetime": "1h",
-		}).Debug("OceanBase connection pool configured")
-
-		logrus.Info("OceanBase connected successfully")
-		return nil
+	if err := connectTaskStore(cfg, gormLogLevel); err != nil {
+		return err
 	}
 
-	// 默认使用 Postgres
+	if err := connectSlurmStore(cfg, gormLogLevel); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func connectTaskStore(cfg *config.Config, gormLogLevel logger.LogLevel) error {
+	logrus.WithFields(logrus.Fields{
+		"host":     cfg.Database.Host,
+		"port":     cfg.Database.Port,
+		"database": cfg.Database.DBName,
+		"user":     cfg.Database.User,
+	}).Info("Connecting to PostgreSQL task store")
+
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
 		cfg.Database.Host,
 		cfg.Database.User,
@@ -115,15 +87,14 @@ func Connect(cfg *config.Config) error {
 	})
 
 	if err != nil {
-		logrus.WithError(err).Error("Failed to connect to database")
-		return fmt.Errorf("failed to connect to database: %w", err)
+		logrus.WithError(err).Error("Failed to connect to PostgreSQL task store")
+		return fmt.Errorf("failed to connect to PostgreSQL task store: %w", err)
 	}
 
-	// 配置连接池
 	sqlDB, err := DB.DB()
 	if err != nil {
-		logrus.WithError(err).Error("Failed to get database instance")
-		return fmt.Errorf("failed to get database instance: %w", err)
+		logrus.WithError(err).Error("Failed to get PostgreSQL database instance")
+		return fmt.Errorf("failed to get PostgreSQL database instance: %w", err)
 	}
 
 	sqlDB.SetMaxIdleConns(10)
@@ -134,18 +105,80 @@ func Connect(cfg *config.Config) error {
 		"max_idle_conns":    10,
 		"max_open_conns":    100,
 		"conn_max_lifetime": "1h",
-	}).Debug("Database connection pool configured")
+	}).Debug("PostgreSQL connection pool configured")
 
-	logrus.Info("PostgreSQL connected successfully")
+	logrus.Info("PostgreSQL task store connected successfully")
+	return nil
+}
+
+func connectSlurmStore(cfg *config.Config, gormLogLevel logger.LogLevel) error {
+	if !cfg.OceanBase.Enabled {
+		// 未单独配置时，让 SLURM 复用主库，至少保证功能可用
+		SlurmDB = DB
+		logrus.Warn("OceanBase/MySQL for SLURM not configured; falling back to primary PostgreSQL store")
+		return nil
+	}
+
+	obDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
+		cfg.OceanBase.User,
+		cfg.OceanBase.Password,
+		cfg.OceanBase.Host,
+		cfg.OceanBase.Port,
+		cfg.OceanBase.DBName,
+		cfg.OceanBase.Params,
+	)
+	logrus.WithFields(logrus.Fields{
+		"host":     cfg.OceanBase.Host,
+		"port":     cfg.OceanBase.Port,
+		"database": cfg.OceanBase.DBName,
+		"user":     cfg.OceanBase.User,
+	}).Info("Connecting to SLURM OceanBase/MySQL store")
+
+	var err error
+	SlurmDB, err = gorm.Open(mysql.Open(obDSN), &gorm.Config{
+		Logger:  logger.Default.LogMode(gormLogLevel),
+		NowFunc: func() time.Time { return time.Now().Local() },
+	})
+	if err != nil {
+		logrus.WithError(err).Error("Failed to connect to OceanBase for SLURM")
+		return fmt.Errorf("failed to connect to OceanBase for SLURM: %w", err)
+	}
+
+	sqlDB, err := SlurmDB.DB()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get OceanBase database instance")
+		return fmt.Errorf("failed to get OceanBase database instance: %w", err)
+	}
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	logrus.WithFields(logrus.Fields{
+		"max_idle_conns":    10,
+		"max_open_conns":    100,
+		"conn_max_lifetime": "1h",
+	}).Debug("OceanBase connection pool configured for SLURM")
+
+	logrus.Info("SLURM OceanBase/MySQL store connected successfully")
 	return nil
 }
 
 // fixSlurmTasksTableSchema 修复 slurm_tasks 表的 task_id 字段类型
 // 确保 task_id 是 VARCHAR(36) 而不是 bigint
 func fixSlurmTasksTableSchema() error {
+	if SlurmDB == nil {
+		logrus.Debug("Skipping slurm_tasks schema fix: SLURM database not initialized")
+		return nil
+	}
+
+	if SlurmDB.Dialector == nil || SlurmDB.Dialector.Name() != "postgres" {
+		logrus.Debug("Skipping slurm_tasks schema fix: only required for PostgreSQL")
+		return nil
+	}
+
 	// 检查表是否存在
 	var exists bool
-	err := DB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'slurm_tasks')").Scan(&exists).Error
+	err := SlurmDB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'slurm_tasks')").Scan(&exists).Error
 	if err != nil {
 		return fmt.Errorf("check table existence: %w", err)
 	}
@@ -157,7 +190,7 @@ func fixSlurmTasksTableSchema() error {
 
 	// 检查 task_id 字段的当前类型
 	var dataType string
-	err = DB.Raw(`
+	err = SlurmDB.Raw(`
 		SELECT data_type 
 		FROM information_schema.columns 
 		WHERE table_schema = CURRENT_SCHEMA() 
@@ -176,25 +209,25 @@ func fixSlurmTasksTableSchema() error {
 		logrus.Info("Fixing task_id column type from bigint to varchar(36)...")
 
 		// 清空表数据（因为类型不兼容）
-		if err := DB.Exec("TRUNCATE TABLE slurm_task_events CASCADE").Error; err != nil {
+		if err := SlurmDB.Exec("TRUNCATE TABLE slurm_task_events CASCADE").Error; err != nil {
 			return fmt.Errorf("truncate slurm_task_events: %w", err)
 		}
-		if err := DB.Exec("TRUNCATE TABLE slurm_tasks CASCADE").Error; err != nil {
+		if err := SlurmDB.Exec("TRUNCATE TABLE slurm_tasks CASCADE").Error; err != nil {
 			return fmt.Errorf("truncate slurm_tasks: %w", err)
 		}
 
 		// 删除旧索引
-		if err := DB.Exec("DROP INDEX IF EXISTS idx_slurm_tasks_task_id").Error; err != nil {
+		if err := SlurmDB.Exec("DROP INDEX IF EXISTS idx_slurm_tasks_task_id").Error; err != nil {
 			return fmt.Errorf("drop old index: %w", err)
 		}
 
 		// 修改字段类型
-		if err := DB.Exec("ALTER TABLE slurm_tasks ALTER COLUMN task_id TYPE VARCHAR(36)").Error; err != nil {
+		if err := SlurmDB.Exec("ALTER TABLE slurm_tasks ALTER COLUMN task_id TYPE VARCHAR(36)").Error; err != nil {
 			return fmt.Errorf("alter column type: %w", err)
 		}
 
 		// 重建索引
-		if err := DB.Exec("CREATE UNIQUE INDEX idx_slurm_tasks_task_id ON slurm_tasks(task_id)").Error; err != nil {
+		if err := SlurmDB.Exec("CREATE UNIQUE INDEX idx_slurm_tasks_task_id ON slurm_tasks(task_id)").Error; err != nil {
 			return fmt.Errorf("create unique index: %w", err)
 		}
 
@@ -209,95 +242,17 @@ func fixSlurmTasksTableSchema() error {
 func Migrate() error {
 	logrus.Info("Starting database migration...")
 
-	// 修复 slurm_tasks 表的 task_id 字段类型（如果需要）
-	if err := fixSlurmTasksTableSchema(); err != nil {
-		logrus.WithError(err).Warn("Failed to fix slurm_tasks table schema, continuing with migration...")
-	}
-
-	// 一次性迁移所有表，让GORM自动处理表创建顺序
-	logrus.Info("Migrating all tables...")
-	if err := DB.AutoMigrate(
-		// 基础表
-		&models.User{},
-		&models.Project{},
-		&models.Host{},
-		&models.Variable{},
-		&models.Task{},
-		&models.PlaybookGeneration{},
-		// RBAC 相关表
-		&models.UserGroup{},
-		&models.Permission{},
-		&models.Role{},
-		&models.RoleBinding{},
-		&models.UserGroupMembership{},
-		&models.UserRole{},
-		&models.UserGroupRole{},
-		&models.RolePermission{},
-		// 用户导航配置表
-		&models.UserNavigationConfig{},
-		// LDAP 配置表
-		&models.LDAPConfig{},
-		// Kubernetes 和 Ansible 相关表
-		&models.KubernetesCluster{},
-		&models.AnsibleExecution{},
-		// AI 助手相关表
-		&models.AIAssistantConfig{},
-		&models.AIConversation{},
-		&models.AIMessage{},
-		&models.AIUsageStats{},
-		// JupyterHub 相关表
-		&models.JupyterHubConfig{},
-		&models.JupyterTask{},
-		// JupyterLab 模板相关表
-		&models.JupyterLabTemplate{},
-		&models.JupyterLabResourceQuota{},
-		&models.JupyterLabInstance{},
-		// SLURM集群相关模型 - 先创建主表
-		&models.SlurmCluster{},
-		&models.SlurmNode{},
-		&models.ClusterDeployment{},
-		&models.NodeInstallTask{},
-		&models.DeploymentStep{},
-		&models.InstallStep{},
-		&models.SSHExecutionLog{},
-		&models.NodeTemplate{},
-		// 安装任务相关表
-		&models.InstallationTask{},
-		&models.InstallationHostResult{},
-		// 作业管理相关表
-		&models.Cluster{},
-		&models.Job{},
-		&models.JobTemplate{},
-		// SLURM任务管理相关表
-		&models.SlurmTask{},
-		&models.SlurmTaskEvent{},
-		&models.SlurmTaskStatistics{},
-		// 对象存储相关表
-		&models.ObjectStorageConfig{},
-		&models.ObjectStorageLog{},
-	); err != nil {
-		logrus.WithError(err).Error("Database migration failed")
-		return fmt.Errorf("database migration failed: %w", err)
-	}
-
-	// AutoMigrate 完成后，再次修复 slurm_tasks 表的 task_id 字段类型
-	// 这是为了确保即使 GORM 错误地创建了 bigint 类型，我们也能修复它
-	logrus.Info("Post-migration: fixing slurm_tasks table schema...")
-	if err := fixSlurmTasksTableSchema(); err != nil {
-		logrus.WithError(err).Error("Failed to fix slurm_tasks table schema after migration")
-		return fmt.Errorf("failed to fix slurm_tasks table schema: %w", err)
-	}
-
-	// 所有表创建完成后，按顺序补充外键约束（PostgreSQL）
-	// 这样可以避免 AutoMigrate 在创建子表时引用父表尚未存在导致的 42P01 错误
-	if err := addForeignKeys(); err != nil {
-		logrus.WithError(err).Error("Failed to add foreign key constraints after migration")
+	if err := migrateTaskSchema(); err != nil {
 		return err
 	}
 
-	// 执行自定义迁移（添加新字段等）
-	if err := runCustomMigrations(); err != nil {
-		logrus.WithError(err).Error("Failed to run custom migrations")
+	if err := migrateSlurmSchema(); err != nil {
+		return err
+	}
+
+	// 所有表创建完成后，按顺序补充外键约束（仅当运行在同一个PostgreSQL库时）
+	if err := addForeignKeys(); err != nil {
+		logrus.WithError(err).Error("Failed to add foreign key constraints after migration")
 		return err
 	}
 
@@ -311,11 +266,101 @@ func Migrate() error {
 	return nil
 }
 
+func migrateTaskSchema() error {
+	if DB == nil {
+		return fmt.Errorf("primary database connection is not initialized")
+	}
+
+	logrus.Info("Migrating PostgreSQL task store tables...")
+	if err := DB.AutoMigrate(
+		&models.User{},
+		&models.Project{},
+		&models.Host{},
+		&models.Variable{},
+		&models.Task{},
+		&models.PlaybookGeneration{},
+		&models.UserGroup{},
+		&models.Permission{},
+		&models.Role{},
+		&models.RoleBinding{},
+		&models.UserGroupMembership{},
+		&models.UserRole{},
+		&models.UserGroupRole{},
+		&models.RolePermission{},
+		&models.UserNavigationConfig{},
+		&models.LDAPConfig{},
+		&models.KubernetesCluster{},
+		&models.AnsibleExecution{},
+		&models.AIAssistantConfig{},
+		&models.AIConversation{},
+		&models.AIMessage{},
+		&models.AIUsageStats{},
+		&models.JupyterHubConfig{},
+		&models.JupyterTask{},
+		&models.JupyterLabTemplate{},
+		&models.JupyterLabResourceQuota{},
+		&models.JupyterLabInstance{},
+		&models.InstallationTask{},
+		&models.InstallationHostResult{},
+		&models.Cluster{},
+		&models.Job{},
+		&models.JobTemplate{},
+		&models.ObjectStorageConfig{},
+		&models.ObjectStorageLog{},
+		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
+		&models.SlurmTask{},
+		&models.SlurmTaskEvent{},
+		&models.SlurmTaskStatistics{},
+	); err != nil {
+		logrus.WithError(err).Error("Task store migration failed")
+		return fmt.Errorf("task store migration failed: %w", err)
+	}
+	return nil
+}
+
+func migrateSlurmSchema() error {
+	if SlurmDB == nil {
+		logrus.Warn("SLURM database connection is not initialized; skipping SLURM migrations")
+		return nil
+	}
+
+	logrus.Info("Migrating SLURM MySQL tables...")
+	if err := SlurmDB.AutoMigrate(
+		&models.SlurmCluster{},
+		&models.SlurmNode{},
+		&models.ClusterDeployment{},
+		&models.NodeInstallTask{},
+		&models.DeploymentStep{},
+		&models.InstallStep{},
+		&models.SSHExecutionLog{},
+		&models.NodeTemplate{},
+	); err != nil {
+		logrus.WithError(err).Error("SLURM store migration failed")
+		return fmt.Errorf("slurm store migration failed: %w", err)
+	}
+
+	logrus.Info("Ensuring slurm_tasks schema correctness...")
+	if err := fixSlurmTasksTableSchema(); err != nil {
+		return err
+	}
+
+	if err := runSlurmCustomMigrations(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // addForeignKeys 在表全部创建后补充必要的外键约束（幂等）
 func addForeignKeys() error {
 	// 仅在 PostgreSQL 下执行外键补充，其他方言（如 OceanBase/MySQL）跳过
 	if DB == nil || DB.Dialector == nil || DB.Dialector.Name() != "postgres" {
 		logrus.Debug("Skipping addForeignKeys: not a PostgreSQL dialect")
+		return nil
+	}
+
+	if SlurmDB == nil || SlurmDB != DB {
+		logrus.Debug("Skipping addForeignKeys: SLURM tables stored separately")
 		return nil
 	}
 
@@ -693,24 +738,29 @@ func registerEncryptionHooks() error {
 	return nil
 }
 
-// runCustomMigrations 执行自定义数据库迁移脚本
-func runCustomMigrations() error {
-	logrus.Info("Running custom database migrations...")
+// runSlurmCustomMigrations 执行 SLURM 相关的定制迁移
+func runSlurmCustomMigrations() error {
+	if SlurmDB == nil {
+		logrus.Debug("Skipping SLURM custom migrations: database not initialized")
+		return nil
+	}
+
+	logrus.Info("Running custom SLURM database migrations...")
 
 	// 检查数据库类型
-	dialector := DB.Dialector.Name()
+	dialector := SlurmDB.Dialector.Name()
 
 	// 迁移1: 为 slurm_clusters 表添加新字段
-	if err := addSlurmClusterFields(dialector); err != nil {
+	if err := addSlurmClusterFields(SlurmDB, dialector); err != nil {
 		return fmt.Errorf("failed to add slurm cluster fields: %w", err)
 	}
 
-	logrus.Info("Custom database migrations completed successfully")
+	logrus.Info("Custom SLURM database migrations completed successfully")
 	return nil
 }
 
 // addSlurmClusterFields 为 slurm_clusters 表添加 cluster_type 和 master_ssh 字段
-func addSlurmClusterFields(dialector string) error {
+func addSlurmClusterFields(db *gorm.DB, dialector string) error {
 	logrus.Info("Adding cluster_type and master_ssh fields to slurm_clusters table...")
 
 	// 检查字段是否已存在
@@ -718,7 +768,7 @@ func addSlurmClusterFields(dialector string) error {
 
 	if dialector == "postgres" {
 		// PostgreSQL 语法
-		err := DB.Raw(`
+		err := db.Raw(`
 			SELECT EXISTS (
 				SELECT 1 FROM information_schema.columns 
 				WHERE table_name = 'slurm_clusters' 
@@ -731,7 +781,7 @@ func addSlurmClusterFields(dialector string) error {
 
 		if !columnExists {
 			// 添加 cluster_type 字段
-			if err := DB.Exec(`
+			if err := db.Exec(`
 				ALTER TABLE slurm_clusters 
 				ADD COLUMN cluster_type VARCHAR(50) DEFAULT 'managed'
 			`).Error; err != nil {
@@ -743,7 +793,7 @@ func addSlurmClusterFields(dialector string) error {
 		}
 
 		// 检查 master_ssh 字段
-		err = DB.Raw(`
+		err = db.Raw(`
 			SELECT EXISTS (
 				SELECT 1 FROM information_schema.columns 
 				WHERE table_name = 'slurm_clusters' 
@@ -756,7 +806,7 @@ func addSlurmClusterFields(dialector string) error {
 
 		if !columnExists {
 			// 添加 master_ssh 字段 (JSON 类型)
-			if err := DB.Exec(`
+			if err := db.Exec(`
 				ALTER TABLE slurm_clusters 
 				ADD COLUMN master_ssh JSONB
 			`).Error; err != nil {
@@ -769,7 +819,7 @@ func addSlurmClusterFields(dialector string) error {
 
 	} else {
 		// MySQL/MariaDB/OceanBase 语法
-		err := DB.Raw(`
+		err := db.Raw(`
 			SELECT COUNT(*) > 0 FROM information_schema.columns 
 			WHERE table_schema = DATABASE() 
 			AND table_name = 'slurm_clusters' 
@@ -781,7 +831,7 @@ func addSlurmClusterFields(dialector string) error {
 
 		if !columnExists {
 			// 添加 cluster_type 字段
-			if err := DB.Exec(`
+			if err := db.Exec(`
 				ALTER TABLE slurm_clusters 
 				ADD COLUMN cluster_type VARCHAR(50) DEFAULT 'managed'
 			`).Error; err != nil {
@@ -793,7 +843,7 @@ func addSlurmClusterFields(dialector string) error {
 		}
 
 		// 检查 master_ssh 字段
-		err = DB.Raw(`
+		err = db.Raw(`
 			SELECT COUNT(*) > 0 FROM information_schema.columns 
 			WHERE table_schema = DATABASE() 
 			AND table_name = 'slurm_clusters' 
@@ -805,7 +855,7 @@ func addSlurmClusterFields(dialector string) error {
 
 		if !columnExists {
 			// 添加 master_ssh 字段 (JSON 类型)
-			if err := DB.Exec(`
+			if err := db.Exec(`
 				ALTER TABLE slurm_clusters 
 				ADD COLUMN master_ssh JSON
 			`).Error; err != nil {
@@ -821,9 +871,25 @@ func addSlurmClusterFields(dialector string) error {
 }
 
 func Close() error {
-	sqlDB, err := DB.DB()
-	if err != nil {
-		return err
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return err
+		}
+		if err := sqlDB.Close(); err != nil {
+			return err
+		}
 	}
-	return sqlDB.Close()
+
+	if SlurmDB != nil && SlurmDB != DB {
+		sqlDB, err := SlurmDB.DB()
+		if err != nil {
+			return err
+		}
+		if err := sqlDB.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

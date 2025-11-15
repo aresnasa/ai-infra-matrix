@@ -190,7 +190,16 @@ func main() {
 	}
 
 	// 初始化作业管理服务
-	slurmService := services.NewSlurmServiceWithDB(database.DB)
+	slurmDB := database.GetSlurmDB()
+	primaryDB := database.DB
+	if slurmDB == nil {
+		slurmDB = primaryDB
+	}
+	if primaryDB == nil {
+		primaryDB = slurmDB
+	}
+
+	slurmService := services.NewSlurmServiceWithStores(slurmDB, primaryDB)
 	slurmService.StartAutoRegisterLoop()
 	sshService := services.NewSSHService()
 	cacheService := services.NewCacheService()
@@ -1010,11 +1019,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	saltStackClientController.RegisterRoutes(api)
 
 	// SLURM 集群管理路由（需要认证）
-	slurmClusterController := controllers.NewSlurmClusterController(database.DB)
+	slurmClusterController := controllers.NewSlurmClusterController(database.GetSlurmDB())
 	slurmClusterController.RegisterRoutes(api)
 
 	// SLURM 节点扩容管理路由（需要认证）
-	slurmClusterService := services.NewSlurmClusterService(database.DB)
+	slurmClusterService := services.NewSlurmClusterService(database.GetSlurmDB())
 	saltStackService := services.NewSaltStackService()
 	slurmNodeScaleController := controllers.NewSlurmNodeScaleController(slurmClusterService, saltStackService)
 	slurmNodeScaleController.RegisterRoutes(api)

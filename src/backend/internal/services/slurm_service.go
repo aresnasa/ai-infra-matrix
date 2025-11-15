@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +30,7 @@ import (
 
 type SlurmService struct {
 	db            *gorm.DB
+	taskDB        *gorm.DB
 	restAPIURL    string
 	restAPIToken  string
 	httpClient    *http.Client
@@ -60,6 +63,10 @@ func NewSlurmService() *SlurmService {
 }
 
 func NewSlurmServiceWithDB(db *gorm.DB) *SlurmService {
+	return NewSlurmServiceWithStores(db, db)
+}
+
+func NewSlurmServiceWithStores(clusterDB, taskDB *gorm.DB) *SlurmService {
 	restAPIURL := os.Getenv("SLURM_REST_API_URL")
 	if restAPIURL == "" {
 		restAPIURL = "http://slurm-master:6820" // 默认URL
@@ -69,13 +76,21 @@ func NewSlurmServiceWithDB(db *gorm.DB) *SlurmService {
 	useSlurmrestd := os.Getenv("USE_SLURMRESTD") == "true"
 
 	return &SlurmService{
-		db:            db,
+		db:            clusterDB,
+		taskDB:        taskDB,
 		restAPIURL:    restAPIURL,
 		useSlurmrestd: useSlurmrestd,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+func (s *SlurmService) taskStore() *gorm.DB {
+	if s.taskDB != nil {
+		return s.taskDB
+	}
+	return s.db
 }
 
 // GetUseSlurmRestd 返回是否启用 slurmrestd REST API
@@ -106,33 +121,26 @@ func (s *SlurmService) GetSummary(ctx context.Context) (*SlurmSummary, error) {
 }
 
 func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) {
+
+	var dbNodes []models.SlurmNode
+	if s.db != nil {
+		if err := s.db.Find(&dbNodes).Error; err != nil {
+			log.Printf("[WARN] 无法从数据库加载SLURM节点信息: %v", err)
+		}
+	}
+
 	// 通过SSH执行sinfo命令获取节点信息
 	// sinfo format: NodeName|State|CPUS(A/I/O/T)|Memory|Partition
 	output, err := s.executeSlurmCommand(ctx, "sinfo -N -o '%N|%T|%C|%m|%P'")
 	if err != nil {
-		// Try to get data from database first
-		if s.db != nil {
-			var dbNodes []models.SlurmNode
-			if err := s.db.Find(&dbNodes).Error; err == nil && len(dbNodes) > 0 {
-				// Convert database nodes to service nodes
-				var nodes []SlurmNode
-				for _, dbNode := range dbNodes {
-					nodes = append(nodes, SlurmNode{
-						Name:      dbNode.NodeName,
-						State:     dbNode.Status,
-						CPUs:      fmt.Sprintf("%d", dbNode.CPUs),
-						MemoryMB:  fmt.Sprintf("%d", dbNode.Memory),
-						Partition: "compute", // 默认分区
-					})
-				}
-				return nodes, false, nil
-			}
+		if len(dbNodes) > 0 {
+			return mergeNodesWithDB(nil, dbNodes), false, nil
 		}
 		// No SSH connection and no DB fallback: return empty list with demo flag
 		return []SlurmNode{}, true, nil
 	}
 
-	var nodes []SlurmNode
+	var cliNodes []SlurmNode
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	first := true
 	for scanner.Scan() {
@@ -153,7 +161,7 @@ func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) 
 				parts = append(parts, "")
 			}
 		}
-		nodes = append(nodes, SlurmNode{
+		cliNodes = append(cliNodes, SlurmNode{
 			Name:      parts[0],
 			State:     parts[1],
 			CPUs:      parseCPUs(parts[2]),
@@ -164,7 +172,197 @@ func (s *SlurmService) GetNodes(ctx context.Context) ([]SlurmNode, bool, error) 
 	if err := scanner.Err(); err != nil {
 		return nil, false, err
 	}
-	return nodes, false, nil
+
+	if len(dbNodes) == 0 {
+		return cliNodes, false, nil
+	}
+
+	return mergeNodesWithDB(cliNodes, dbNodes), false, nil
+}
+
+func mergeNodesWithDB(cliNodes []SlurmNode, dbNodes []models.SlurmNode) []SlurmNode {
+	if len(dbNodes) == 0 {
+		return append([]SlurmNode{}, cliNodes...)
+	}
+
+	if len(cliNodes) == 0 {
+		merged := make([]SlurmNode, 0, len(dbNodes))
+		for _, dbNode := range dbNodes {
+			merged = append(merged, buildNodeFromDB(dbNode))
+		}
+		return merged
+	}
+
+	merged := make([]SlurmNode, 0, len(cliNodes)+len(dbNodes))
+	dbByID := make(map[uint]models.SlurmNode, len(dbNodes))
+	nameIndex := make(map[string]uint, len(dbNodes)*2)
+	for _, dbNode := range dbNodes {
+		dbByID[dbNode.ID] = dbNode
+		normalizedName := normalizeNodeNameValue(dbNode.NodeName, dbNode.Host, dbNode.ID)
+		for _, key := range []string{dbNode.NodeName, dbNode.Host, dbNode.SaltMinionID, normalizedName} {
+			if key == "" {
+				continue
+			}
+			lower := strings.ToLower(key)
+			if _, exists := nameIndex[lower]; !exists {
+				nameIndex[lower] = dbNode.ID
+			}
+		}
+	}
+
+	used := make(map[uint]bool, len(dbNodes))
+	for _, cliNode := range cliNodes {
+		mergedNode := cliNode
+		if id, ok := nameIndex[strings.ToLower(cliNode.Name)]; ok {
+			used[id] = true
+			dbNode := dbByID[id]
+			if mergedNode.State == "" {
+				mergedNode.State = dbNode.Status
+			}
+			if mergedNode.CPUs == "" {
+				mergedNode.CPUs = safeIntString(dbNode.CPUs)
+			}
+			if mergedNode.MemoryMB == "" {
+				mergedNode.MemoryMB = safeIntString(dbNode.Memory)
+			}
+			if mergedNode.Partition == "" {
+				mergedNode.Partition = derivePartition(dbNode)
+			}
+		}
+		merged = append(merged, mergedNode)
+	}
+
+	for _, dbNode := range dbNodes {
+		if used[dbNode.ID] {
+			continue
+		}
+		merged = append(merged, buildNodeFromDB(dbNode))
+	}
+
+	return merged
+}
+
+func buildNodeFromDB(dbNode models.SlurmNode) SlurmNode {
+	name := normalizeNodeNameValue(dbNode.NodeName, dbNode.Host, dbNode.ID)
+	return SlurmNode{
+		Name:      name,
+		State:     safeState(dbNode.Status),
+		CPUs:      safeIntString(dbNode.CPUs),
+		MemoryMB:  safeIntString(dbNode.Memory),
+		Partition: derivePartition(dbNode),
+	}
+}
+
+func derivePartition(dbNode models.SlurmNode) string {
+	if len(dbNode.NodeConfig.Partitions) > 0 && dbNode.NodeConfig.Partitions[0] != "" {
+		return dbNode.NodeConfig.Partitions[0]
+	}
+	if dbNode.NodeType != "" {
+		return dbNode.NodeType
+	}
+	return "compute"
+}
+
+func safeIntString(v int) string {
+	if v <= 0 {
+		return "-"
+	}
+	return strconv.Itoa(v)
+}
+
+func safeState(state string) string {
+	if strings.TrimSpace(state) == "" {
+		return "unknown"
+	}
+	return state
+}
+
+func (s *SlurmService) ensureNodeHasValidName(node *models.SlurmNode) string {
+	if node == nil {
+		return ""
+	}
+	normalized := normalizeNodeNameValue(node.NodeName, node.Host, node.ID)
+	if normalized == "" {
+		return ""
+	}
+	if node.NodeName != normalized {
+		if s.db != nil {
+			if err := s.db.Model(node).Update("node_name", normalized).Error; err != nil {
+				log.Printf("[WARN] 更新节点 %d 名称失败: %v", node.ID, err)
+			} else {
+				log.Printf("[DEBUG] 节点 %d 名称已规范化: %s -> %s", node.ID, node.NodeName, normalized)
+			}
+		}
+		node.NodeName = normalized
+	}
+	return node.NodeName
+}
+
+func normalizeNodeNameValue(rawName, host string, fallbackID uint) string {
+	name := strings.TrimSpace(rawName)
+	if name == "" {
+		name = strings.TrimSpace(host)
+	}
+	if name == "" && fallbackID > 0 {
+		name = fmt.Sprintf("node-%d", fallbackID)
+	}
+	name = strings.ToLower(name)
+	if name == "" {
+		name = "node"
+	}
+	var builder strings.Builder
+	prevHyphen := false
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			prevHyphen = false
+			continue
+		}
+		if r == '-' || r == '_' {
+			if !prevHyphen {
+				builder.WriteRune('-')
+				prevHyphen = true
+			}
+			continue
+		}
+		if !prevHyphen {
+			builder.WriteRune('-')
+			prevHyphen = true
+		}
+	}
+	normalized := strings.Trim(builder.String(), "-")
+	if normalized == "" {
+		if host != "" {
+			cleanedHost := strings.Map(func(r rune) rune {
+				switch {
+				case r >= 'a' && r <= 'z':
+					return r
+				case r >= '0' && r <= '9':
+					return r
+				case r == '-':
+					return r
+				case r == '.' || r == '_':
+					return '-'
+				case r >= 'A' && r <= 'Z':
+					return r + 32
+				default:
+					return -1
+				}
+			}, host)
+			normalized = strings.Trim(cleanedHost, "-")
+		}
+	}
+	if normalized == "" {
+		if fallbackID > 0 {
+			normalized = fmt.Sprintf("node-%d", fallbackID)
+		} else {
+			normalized = fmt.Sprintf("node-%d", time.Now().Unix()%100000)
+		}
+	}
+	if len(normalized) > 63 {
+		normalized = normalized[:63]
+	}
+	return normalized
 }
 
 func (s *SlurmService) GetJobs(ctx context.Context) ([]SlurmJob, bool, error) {
@@ -219,8 +417,7 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 	// partitions count via: sinfo -h -o %P | sort -u | wc -l (approx) – we'll parse simply
 	output, err := s.executeSlurmCommand(ctx, "sinfo -h -o '%T|%P'")
 	if err != nil {
-		// Return zeros instead of mock data when SLURM is unavailable
-		return 0, 0, 0, 0, true
+		return s.getNodeStatsFromDB()
 	}
 	seenPartitions := map[string]struct{}{}
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -260,6 +457,8 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 				alloc++
 			}
 		}
+	} else {
+		return s.getNodeStatsFromDB()
 	}
 	partitions = len(seenPartitions)
 	if partitions == 0 {
@@ -274,6 +473,40 @@ func (s *SlurmService) getNodeStats(ctx context.Context) (total, idle, alloc, pa
 			partitions = len(set)
 		}
 	}
+	// 如果最终统计仍为 0，则使用数据库信息兜底，保证前端能够展示节点状态
+	if total == 0 {
+		return s.getNodeStatsFromDB()
+	}
+
+	return total, idle, alloc, partitions, false
+}
+
+// getNodeStatsFromDB 当直接执行 SLURM 命令失败时，从数据库兜底返回节点统计信息
+func (s *SlurmService) getNodeStatsFromDB() (total, idle, alloc, partitions int, demo bool) {
+	if s.db == nil {
+		return 0, 0, 0, 0, true
+	}
+
+	var nodes []models.SlurmNode
+	if err := s.db.Find(&nodes).Error; err != nil || len(nodes) == 0 {
+		return 0, 0, 0, 0, true
+	}
+
+	for _, node := range nodes {
+		total++
+		status := strings.ToLower(node.Status)
+		switch {
+		case strings.Contains(status, "idle"), strings.Contains(status, "active"), strings.Contains(status, "ready"):
+			idle++
+		case strings.Contains(status, "alloc"), strings.Contains(status, "run"), strings.Contains(status, "busy"), strings.Contains(status, "mixed"):
+			alloc++
+		}
+	}
+
+	if partitions == 0 {
+		partitions = 1
+	}
+
 	return total, idle, alloc, partitions, false
 }
 
@@ -360,22 +593,28 @@ type ScalingStatus struct {
 	RecentOperations []ScalingOperation `json:"recent_operations"`
 	NodeTemplates    []NodeTemplate     `json:"node_templates"`
 	// 前端期望的字段
-	Active       bool `json:"active"`        // 是否有活跃任务
-	ActiveTasks  int  `json:"active_tasks"`  // 活跃任务数
-	SuccessNodes int  `json:"success_nodes"` // 成功节点数
-	FailedNodes  int  `json:"failed_nodes"`  // 失败节点数
-	Progress     int  `json:"progress"`      // 进度百分比
+	Active       bool     `json:"active"`             // 是否有活跃任务
+	ActiveTasks  int      `json:"active_tasks"`       // 活跃任务数
+	SuccessNodes int      `json:"success_nodes"`      // 成功节点数
+	FailedNodes  int      `json:"failed_nodes"`       // 失败节点数
+	Progress     int      `json:"progress"`           // 进度百分比
+	Warnings     []string `json:"warnings,omitempty"` // 数据源异常或校验提示
 }
 
 // ScalingOperation 扩缩容操作
 type ScalingOperation struct {
-	ID          string     `json:"id"`
-	Type        string     `json:"type"` // "scale-up" or "scale-down"
-	Status      string     `json:"status"`
-	Nodes       []string   `json:"nodes"`
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	Error       string     `json:"error,omitempty"`
+	ID           string     `json:"id"`
+	Type         string     `json:"type"` // "scale-up" or "scale-down"
+	Status       string     `json:"status"`
+	Nodes        []string   `json:"nodes"`
+	StartedAt    time.Time  `json:"started_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	Progress     int        `json:"progress"`
+	SuccessNodes int        `json:"success_nodes"`
+	FailedNodes  int        `json:"failed_nodes"`
+	TotalNodes   int        `json:"total_nodes"`
+	Source       string     `json:"source"`
 }
 
 // NodeConfig 节点配置
@@ -428,6 +667,10 @@ type NodeScalingResult struct {
 
 // GetScalingStatus 获取扩缩容状态
 func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, error) {
+	clusterDB := s.db
+	taskDB := s.taskStore()
+	warnings := make([]string, 0, 2)
+
 	// 从数据库获取实际的任务状态
 	var runningTasks int64
 	var completedTasks int64
@@ -437,9 +680,8 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 	// 查询最近24小时内的任务
 	recentTime := time.Now().Add(-24 * time.Hour)
 
-	// 检查数据库连接是否可用
-	if s.db == nil {
-		log.Printf("[WARN] GetScalingStatus: 数据库连接不可用，返回空状态")
+	if clusterDB == nil && taskDB == nil {
+		log.Printf("[WARN] GetScalingStatus: 集群数据库与任务数据库均不可用，返回空状态")
 		return &ScalingStatus{
 			ActiveOperations: []ScalingOperation{},
 			RecentOperations: []ScalingOperation{},
@@ -449,45 +691,58 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 			SuccessNodes:     0,
 			FailedNodes:      0,
 			Progress:         0,
+			Warnings:         []string{"数据库连接不可用，扩缩容进度无法统计"},
 		}, nil
+	}
+
+	if s.taskDB == nil && clusterDB != nil {
+		warnings = append(warnings, "任务存储未配置独立数据库，已回退到SLURM集群库，历史进度可能不完整")
 	}
 
 	// 查询 NodeInstallTask 表（InstallSlurmNode接口创建的任务）
 	var nodeInstallRunning, nodeInstallCompleted, nodeInstallFailed int64
-	s.db.Model(&models.NodeInstallTask{}).
-		Where("created_at > ?", recentTime).
-		Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
-		Count(&nodeInstallRunning)
+	if clusterDB != nil {
+		clusterDB.Model(&models.NodeInstallTask{}).
+			Where("created_at > ?", recentTime).
+			Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
+			Count(&nodeInstallRunning)
 
-	s.db.Model(&models.NodeInstallTask{}).
-		Where("created_at > ?", recentTime).
-		Where("status IN ?", []string{"completed", "success"}).
-		Count(&nodeInstallCompleted)
+		clusterDB.Model(&models.NodeInstallTask{}).
+			Where("created_at > ?", recentTime).
+			Where("status IN ?", []string{"completed", "success"}).
+			Count(&nodeInstallCompleted)
 
-	s.db.Model(&models.NodeInstallTask{}).
-		Where("created_at > ?", recentTime).
-		Where("status IN ?", []string{"failed", "error"}).
-		Count(&nodeInstallFailed)
+		clusterDB.Model(&models.NodeInstallTask{}).
+			Where("created_at > ?", recentTime).
+			Where("status IN ?", []string{"failed", "error"}).
+			Count(&nodeInstallFailed)
+	} else {
+		warnings = append(warnings, "无法访问SLURM节点数据库，节点安装任务统计为空")
+	}
 
 	// 查询 SlurmTask 表（ScaleUpAsync接口创建的任务）
 	var slurmTaskRunning, slurmTaskCompleted, slurmTaskFailed int64
-	s.db.Model(&models.SlurmTask{}).
-		Where("created_at > ?", recentTime).
-		Where("type IN ?", []string{"scale_up", "scale_down"}).
-		Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
-		Count(&slurmTaskRunning)
+	if taskDB != nil {
+		taskDB.Model(&models.SlurmTask{}).
+			Where("created_at > ?", recentTime).
+			Where("type IN ?", []string{"scale_up", "scale_down"}).
+			Where("status IN ?", []string{"running", "in_progress", "processing", "pending"}).
+			Count(&slurmTaskRunning)
 
-	s.db.Model(&models.SlurmTask{}).
-		Where("created_at > ?", recentTime).
-		Where("type IN ?", []string{"scale_up", "scale_down"}).
-		Where("status IN ?", []string{"completed", "success"}).
-		Count(&slurmTaskCompleted)
+		taskDB.Model(&models.SlurmTask{}).
+			Where("created_at > ?", recentTime).
+			Where("type IN ?", []string{"scale_up", "scale_down"}).
+			Where("status IN ?", []string{"completed", "success"}).
+			Count(&slurmTaskCompleted)
 
-	s.db.Model(&models.SlurmTask{}).
-		Where("created_at > ?", recentTime).
-		Where("type IN ?", []string{"scale_up", "scale_down"}).
-		Where("status IN ?", []string{"failed", "error"}).
-		Count(&slurmTaskFailed)
+		taskDB.Model(&models.SlurmTask{}).
+			Where("created_at > ?", recentTime).
+			Where("type IN ?", []string{"scale_up", "scale_down"}).
+			Where("status IN ?", []string{"failed", "error"}).
+			Count(&slurmTaskFailed)
+	} else {
+		warnings = append(warnings, "未获取到任务数据库，扩缩容进度统计不可用")
+	}
 
 	// 合并两个表的统计结果
 	runningTasks = nodeInstallRunning + slurmTaskRunning
@@ -503,10 +758,12 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 
 	// 获取最近的安装任务及其详细进度
 	var recentTasks []models.NodeInstallTask
-	s.db.Where("created_at > ?", recentTime).
-		Order("created_at DESC").
-		Limit(10).
-		Find(&recentTasks)
+	if clusterDB != nil {
+		clusterDB.Where("created_at > ?", recentTime).
+			Order("created_at DESC").
+			Limit(10).
+			Find(&recentTasks)
+	}
 
 	// 如果有正在运行的任务，计算加权平均进度
 	if runningTasks > 0 {
@@ -530,11 +787,13 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 
 	// 从 SlurmTask 表读取节点统计信息
 	var slurmTasks []models.SlurmTask
-	s.db.Where("created_at > ?", recentTime).
-		Where("type IN ?", []string{"scale_up", "scale_down"}).
-		Order("created_at DESC").
-		Limit(10).
-		Find(&slurmTasks)
+	if taskDB != nil {
+		taskDB.Where("created_at > ?", recentTime).
+			Where("type IN ?", []string{"scale_up", "scale_down"}).
+			Order("created_at DESC").
+			Limit(10).
+			Find(&slurmTasks)
+	}
 
 	// 计算总的成功/失败节点数
 	var totalSuccessNodes, totalFailedNodes int
@@ -555,88 +814,230 @@ func (s *SlurmService) GetScalingStatus(ctx context.Context) (*ScalingStatus, er
 		Status string
 		Count  int64
 	}
-	if err := s.db.Model(&models.SlurmNode{}).
-		Select("status, COUNT(*) as count").
-		Group("status").
-		Find(&nodeStatusCounts).Error; err == nil {
-		var activeCount, failedCount int64
-		for _, item := range nodeStatusCounts {
-			switch strings.ToLower(item.Status) {
-			case "active":
-				activeCount += item.Count
-			case "failed", "error":
-				failedCount += item.Count
+	if clusterDB != nil {
+		if err := clusterDB.Model(&models.SlurmNode{}).
+			Select("status, COUNT(*) as count").
+			Group("status").
+			Find(&nodeStatusCounts).Error; err == nil {
+			var activeCount, failedCount int64
+			for _, item := range nodeStatusCounts {
+				switch strings.ToLower(item.Status) {
+				case "active":
+					activeCount += item.Count
+				case "failed", "error":
+					failedCount += item.Count
+				}
 			}
+			if activeCount > 0 || failedCount > 0 {
+				log.Printf("[DEBUG] 覆盖节点统计: active=%d failed=%d", activeCount, failedCount)
+				totalSuccessNodes = int(activeCount)
+				totalFailedNodes = int(failedCount)
+			}
+		} else {
+			log.Printf("[WARN] 获取节点状态统计失败: %v", err)
 		}
-		if activeCount > 0 || failedCount > 0 {
-			log.Printf("[DEBUG] 覆盖节点统计: active=%d failed=%d", activeCount, failedCount)
-			totalSuccessNodes = int(activeCount)
-			totalFailedNodes = int(failedCount)
+
+		var trackedNodes []models.SlurmNode
+		if err := clusterDB.Where("status IN ?", []string{"active", "running", "in_progress", "processing"}).Find(&trackedNodes).Error; err == nil {
+			if missing, missErr := s.detectUnregisteredNodes(ctx, trackedNodes); missErr == nil {
+				if len(missing) > 0 {
+					sample := missing
+					if len(sample) > 5 {
+						sample = sample[:5]
+					}
+					warnings = append(warnings, fmt.Sprintf("检测到 %d 个节点未在Slurm注册 (示例: %s)", len(missing), strings.Join(sample, ", ")))
+				}
+			} else {
+				log.Printf("[WARN] 对比sinfo失败，无法检测未注册节点: %v", missErr)
+			}
+		} else {
+			log.Printf("[WARN] 查询节点明细失败，无法交叉校验注册情况: %v", err)
 		}
 	} else {
-		log.Printf("[WARN] 获取节点状态统计失败: %v", err)
+		warnings = append(warnings, "无法连接SLURM节点数据库，节点成功/失败统计不可用")
 	}
 
-	// 构建最近操作列表（合并 NodeInstallTask 和 SlurmTask）
+	clampPercent := func(p int) int {
+		switch {
+		case p < 0:
+			return 0
+		case p > 100:
+			return 100
+		default:
+			return p
+		}
+	}
+
+	isActiveStatus := func(status string) bool {
+		st := strings.ToLower(status)
+		switch st {
+		case "running", "in_progress", "processing", "pending":
+			return true
+		default:
+			return false
+		}
+	}
+
+	isTerminalStatus := func(status string) bool {
+		st := strings.ToLower(status)
+		switch st {
+		case "completed", "success", "failed", "error", "cancelled":
+			return true
+		default:
+			return false
+		}
+	}
+
+	nodeNameCache := map[uint]string{}
+	getNodeName := func(id uint) string {
+		if id == 0 {
+			return ""
+		}
+		if name, ok := nodeNameCache[id]; ok {
+			return name
+		}
+		if clusterDB != nil {
+			var node models.SlurmNode
+			if err := clusterDB.First(&node, id).Error; err == nil {
+				name := normalizeNodeNameValue(node.NodeName, node.Host, node.ID)
+				nodeNameCache[id] = name
+				return name
+			}
+		}
+		fallback := fmt.Sprintf("node-%d", id)
+		nodeNameCache[id] = fallback
+		return fallback
+	}
+
+	buildNodeInstallOperation := func(task models.NodeInstallTask) ScalingOperation {
+		successNodes := 0
+		failedNodes := 0
+		status := strings.ToLower(task.Status)
+		if status == "completed" || status == "success" {
+			successNodes = 1
+		} else if status == "failed" || status == "error" {
+			failedNodes = 1
+		}
+		op := ScalingOperation{
+			ID:           task.TaskID,
+			Type:         task.TaskType,
+			Status:       task.Status,
+			Nodes:        []string{getNodeName(task.NodeID)},
+			StartedAt:    task.CreatedAt,
+			Error:        task.ErrorMessage,
+			Progress:     clampPercent(task.Progress),
+			SuccessNodes: successNodes,
+			FailedNodes:  failedNodes,
+			TotalNodes:   1,
+			Source:       "node_install",
+		}
+		if task.CompletedAt != nil {
+			op.CompletedAt = task.CompletedAt
+		}
+		return op
+	}
+
+	normalizeTaskProgress := func(raw float64) int {
+		switch {
+		case raw <= 0:
+			return 0
+		case raw <= 1.0:
+			return clampPercent(int(math.Round(raw * 100)))
+		default:
+			return clampPercent(int(math.Round(raw)))
+		}
+	}
+
+	buildSlurmTaskOperation := func(task models.SlurmTask) ScalingOperation {
+		totalNodes := task.NodesTotal
+		targetNodes := make([]string, len(task.TargetNodes))
+		copy(targetNodes, task.TargetNodes)
+		if totalNodes == 0 && len(targetNodes) > 0 {
+			totalNodes = len(targetNodes)
+		}
+		progressValue := normalizeTaskProgress(task.Progress)
+		op := ScalingOperation{
+			ID:           task.TaskID,
+			Type:         task.Type,
+			Status:       task.Status,
+			Nodes:        targetNodes,
+			StartedAt:    task.CreatedAt,
+			Error:        task.ErrorMessage,
+			Progress:     clampPercent(progressValue),
+			SuccessNodes: task.NodesSuccess,
+			FailedNodes:  task.NodesFailed,
+			TotalNodes:   totalNodes,
+			Source:       "slurm_task",
+		}
+		if task.CompletedAt != nil {
+			op.CompletedAt = task.CompletedAt
+		}
+		return op
+	}
+
+	activeOperations := []ScalingOperation{}
 	recentOperations := []ScalingOperation{}
+	maxRecent := 5
 
-	// 添加 NodeInstallTask 任务
 	for _, task := range recentTasks {
-		if task.Status == "completed" || task.Status == "failed" {
-			op := ScalingOperation{
-				ID:        task.TaskID,
-				Type:      task.TaskType,
-				Status:    task.Status,
-				Nodes:     []string{fmt.Sprintf("node-%d", task.NodeID)},
-				StartedAt: task.CreatedAt,
-			}
-			if task.CompletedAt != nil {
-				op.CompletedAt = task.CompletedAt
-			}
-			if task.ErrorMessage != "" {
-				op.Error = task.ErrorMessage
-			}
+		op := buildNodeInstallOperation(task)
+		if isActiveStatus(task.Status) {
+			activeOperations = append(activeOperations, op)
+			continue
+		}
+		if isTerminalStatus(task.Status) && len(recentOperations) < maxRecent {
 			recentOperations = append(recentOperations, op)
-			if len(recentOperations) >= 5 {
-				break
+		}
+	}
+
+	for _, task := range slurmTasks {
+		op := buildSlurmTaskOperation(task)
+		if isActiveStatus(task.Status) {
+			activeOperations = append(activeOperations, op)
+			continue
+		}
+		if isTerminalStatus(task.Status) && len(recentOperations) < maxRecent {
+			recentOperations = append(recentOperations, op)
+		}
+	}
+
+	if len(activeOperations) > 0 {
+		sumProgress := 0
+		for _, op := range activeOperations {
+			sumProgress += clampPercent(op.Progress)
+		}
+		progress = sumProgress / len(activeOperations)
+	}
+
+	// 如果没有活跃任务，根据节点结果进行兜底进度计算，避免长期停留在 0% 或 1%
+	if len(activeOperations) == 0 && runningTasks == 0 {
+		totalNodeOps := totalSuccessNodes + totalFailedNodes
+		if totalNodeOps > 0 {
+			if totalFailedNodes == 0 {
+				progress = 100
+			} else {
+				progress = int((totalSuccessNodes * 100) / totalNodeOps)
 			}
 		}
 	}
 
-	// 添加 SlurmTask 任务（如果还有空间）
-	if len(recentOperations) < 5 {
-		for _, task := range slurmTasks {
-			if task.Status == "completed" || task.Status == "failed" {
-				op := ScalingOperation{
-					ID:        task.TaskID,
-					Type:      task.Type,
-					Status:    task.Status,
-					Nodes:     task.TargetNodes,
-					StartedAt: task.CreatedAt,
-				}
-				if task.CompletedAt != nil {
-					op.CompletedAt = task.CompletedAt
-				}
-				if task.ErrorMessage != "" {
-					op.Error = task.ErrorMessage
-				}
-				recentOperations = append(recentOperations, op)
-				if len(recentOperations) >= 5 {
-					break
-				}
-			}
-		}
+	activeTaskCount := len(activeOperations)
+	activeFlag := activeTaskCount > 0
+	if !activeFlag && runningTasks > 0 {
+		activeFlag = true
+		activeTaskCount = int(runningTasks)
 	}
 
 	return &ScalingStatus{
-		ActiveOperations: []ScalingOperation{},
+		ActiveOperations: activeOperations,
 		RecentOperations: recentOperations,
 		NodeTemplates:    []NodeTemplate{},
-		Active:           runningTasks > 0,
-		ActiveTasks:      int(runningTasks),
+		Active:           activeFlag,
+		ActiveTasks:      activeTaskCount,
 		SuccessNodes:     totalSuccessNodes, // 从 slurm_tasks 表读取
 		FailedNodes:      totalFailedNodes,  // 从 slurm_tasks 表读取
 		Progress:         progress,
+		Warnings:         warnings,
 	}, nil
 }
 
@@ -866,20 +1267,30 @@ func (s *SlurmService) updateSlurmConfigAndReload(ctx context.Context) error {
 
 	// 将所有新节点设置为 DOWN 状态，并检测节点健康状态
 	log.Printf("[DEBUG] 开始设置新添加节点的初始状态并进行健康检测...")
-	for _, node := range nodes {
+	for i := range nodes {
+		node := &nodes[i]
+		nodeName := s.ensureNodeHasValidName(node)
+		if nodeName == "" {
+			log.Printf("[WARN] 节点ID=%d 缺少合法的 NodeName，跳过 scontrol 初始化", node.ID)
+			continue
+		}
 		if node.NodeType == "compute" || node.NodeType == "node" {
-			// 将节点设置为 DOWN 状态
-			downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason=\"新添加节点，正在检测状态\"", node.NodeName)
-			output, err := s.ExecuteSlurmCommand(ctx, downCmd)
-			if err != nil {
-				log.Printf("[WARNING] 设置节点 %s 为 DOWN 状态失败: %v, output: %s", node.NodeName, err, output)
+			if err := s.ensureNodeRegistered(ctx, nodeName); err != nil {
+				log.Printf("[ERROR] 节点 %s 未能在SLURM控制器注册: %v", nodeName, err)
 				continue
 			}
-			log.Printf("[INFO] 节点 %s 已设置为 DOWN 状态，开始健康检测...", node.NodeName)
+			// 将节点设置为 DOWN 状态
+			downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason=\"新添加节点，正在检测状态\"", nodeName)
+			output, err := s.ExecuteSlurmCommand(ctx, downCmd)
+			if err != nil {
+				log.Printf("[WARNING] 设置节点 %s 为 DOWN 状态失败: %v, output: %s", nodeName, err, output)
+				continue
+			}
+			log.Printf("[INFO] 节点 %s 已设置为 DOWN 状态，开始健康检测...", nodeName)
 
 			// 尝试检测和修复节点状态（最多3次）
-			if err := s.DetectAndFixNodeState(ctx, node.NodeName, 3); err != nil {
-				log.Printf("[ERROR] 节点 %s 健康检测失败: %v", node.NodeName, err)
+			if err := s.DetectAndFixNodeState(ctx, nodeName, 3); err != nil {
+				log.Printf("[ERROR] 节点 %s 健康检测失败: %v", nodeName, err)
 			}
 		}
 	}
@@ -959,6 +1370,61 @@ func (s *SlurmService) DetectAndFixNodeState(ctx context.Context, nodeName strin
 	return fmt.Errorf("节点状态检测失败，已重试 %d 次。请手动检查节点状态并执行: scontrol update NodeName=%s State=RESUME", maxRetries, nodeName)
 }
 
+func (s *SlurmService) ensureNodeRegistered(ctx context.Context, nodeName string) error {
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		checkCmd := fmt.Sprintf("scontrol show node %s", nodeName)
+		output, err := s.ExecuteSlurmCommand(ctx, checkCmd)
+		if err == nil && strings.Contains(output, fmt.Sprintf("NodeName=%s", nodeName)) {
+			return nil
+		}
+		if err != nil && strings.Contains(strings.ToLower(err.Error()), "invalid node name") {
+			log.Printf("[WARN] 节点 %s 未在SLURM注册 (第 %d/%d 次)，尝试重新加载配置", nodeName, attempt, maxAttempts)
+			if reloadErr := s.reloadSlurmConfig(ctx); reloadErr != nil {
+				log.Printf("[ERROR] 重新加载SLURM配置失败: %v", reloadErr)
+			}
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		// 没有错误但输出不包含节点信息，短暂等待后重试
+		time.Sleep(time.Duration(attempt) * time.Second)
+	}
+	return fmt.Errorf("节点 %s 仍未在SLURM控制器中注册", nodeName)
+}
+
+func (s *SlurmService) detectUnregisteredNodes(ctx context.Context, nodes []models.SlurmNode) ([]string, error) {
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	output, err := s.executeSlurmCommand(ctx, "sinfo -h -N -o '%N'")
+	if err != nil {
+		return nil, err
+	}
+	active := make(map[string]struct{})
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		name := strings.TrimSpace(scanner.Text())
+		if name == "" {
+			continue
+		}
+		active[strings.ToLower(name)] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, node := range nodes {
+		name := normalizeNodeNameValue(node.NodeName, node.Host, node.ID)
+		if name == "" {
+			continue
+		}
+		if _, ok := active[strings.ToLower(name)]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing, nil
+}
+
 // getSlurmMasterSSHConfig 获取SLURM master的SSH连接配置
 func (s *SlurmService) getSlurmMasterSSHConfig() (host string, port int, user, password, keyPath string) {
 	host = os.Getenv("SLURM_MASTER_HOST")
@@ -983,7 +1449,16 @@ func (s *SlurmService) getSlurmMasterSSHConfig() (host string, port int, user, p
 		port = 22
 	}
 
-	keyPath = os.Getenv("HOME") + "/.ssh/id_rsa"
+	keyPath = strings.TrimSpace(os.Getenv("SLURM_MASTER_KEY_PATH"))
+	if keyPath == "" {
+		home := os.Getenv("HOME")
+		if home != "" {
+			defaultKey := filepath.Join(home, ".ssh", "id_rsa")
+			if _, err := os.Stat(defaultKey); err == nil {
+				keyPath = defaultKey
+			}
+		}
+	}
 	return
 }
 
@@ -1141,27 +1616,30 @@ func (s *SlurmService) executeSSHCommandWithKey(host string, port int, user, pas
 	var authMethods []ssh.AuthMethod
 
 	// 优先使用私钥认证
-	if privateKey != "" {
+	trimmedKey := strings.TrimSpace(privateKey)
+	if trimmedKey != "" {
 		var signer ssh.Signer
 		var err error
-
-		// 判断是文件路径还是密钥内容
-		if strings.HasPrefix(privateKey, "-----BEGIN") {
-			// 直接使用密钥内容
-			signer, err = ssh.ParsePrivateKey([]byte(privateKey))
+		if strings.HasPrefix(trimmedKey, "-----BEGIN") {
+			signer, err = ssh.ParsePrivateKey([]byte(trimmedKey))
 		} else {
-			// 从文件读取密钥
-			keyContent, readErr := os.ReadFile(privateKey)
+			keyContent, readErr := os.ReadFile(trimmedKey)
 			if readErr != nil {
-				return "", fmt.Errorf("读取私钥文件失败: %v", readErr)
+				if errors.Is(readErr, os.ErrNotExist) {
+					log.Printf("[DEBUG] SSH私钥文件不存在(%s)，跳过密钥认证", trimmedKey)
+				} else {
+					return "", fmt.Errorf("读取私钥文件失败: %v", readErr)
+				}
+			} else {
+				signer, err = ssh.ParsePrivateKey(keyContent)
 			}
-			signer, err = ssh.ParsePrivateKey(keyContent)
 		}
-
 		if err != nil {
 			return "", fmt.Errorf("解析私钥失败: %v", err)
 		}
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
+		if signer != nil {
+			authMethods = append(authMethods, ssh.PublicKeys(signer))
+		}
 	}
 
 	// 如果提供了密码，添加密码认证
@@ -1443,8 +1921,14 @@ MaxArraySize=10000
 	// 添加节点定义
 	computeNodes := []string{}
 	log.Printf("[DEBUG] generateSlurmConfig: 处理 %d 个节点", len(nodes))
-	for i, node := range nodes {
-		log.Printf("[DEBUG] 节点 #%d: NodeName=%s, NodeType=%s, Host=%s", i, node.NodeName, node.NodeType, node.Host)
+	for i := range nodes {
+		node := &nodes[i]
+		nodeName := s.ensureNodeHasValidName(node)
+		log.Printf("[DEBUG] 节点 #%d: NodeName=%s, NodeType=%s, Host=%s", i, nodeName, node.NodeType, node.Host)
+		if nodeName == "" {
+			log.Printf("[WARN] 跳过节点 #%d，缺少合法 NodeName (Host=%s)", i, node.Host)
+			continue
+		}
 		if node.NodeType == "compute" || node.NodeType == "node" {
 			// 使用节点配置的硬件参数，如果为0则使用默认值
 			cpus := node.CPUs
@@ -1477,7 +1961,7 @@ MaxArraySize=10000
 
 			// 构建节点配置字符串
 			nodeConfig := fmt.Sprintf("NodeName=%s NodeAddr=%s CPUs=%d Sockets=%d CoresPerSocket=%d ThreadsPerCore=%d RealMemory=%d",
-				node.NodeName, node.Host, cpus, sockets, coresPerSocket, threadsPerCore, memory)
+				nodeName, node.Host, cpus, sockets, coresPerSocket, threadsPerCore, memory)
 
 			// 添加 GPU 配置（如果有）
 			if node.GPUs > 0 {
@@ -1495,11 +1979,11 @@ MaxArraySize=10000
 			}
 
 			config += nodeConfig + "\n"
-			computeNodes = append(computeNodes, node.NodeName)
+			computeNodes = append(computeNodes, nodeName)
 			log.Printf("[DEBUG] 已添加计算节点: %s (地址: %s, CPU:%d, 内存:%dMB, GPU:%d, XPU:%d)",
-				node.NodeName, node.Host, cpus, memory, node.GPUs, node.XPUs)
+				nodeName, node.Host, cpus, memory, node.GPUs, node.XPUs)
 		} else {
-			log.Printf("[WARNING] 跳过节点 %s，类型不匹配: %s", node.NodeName, node.NodeType)
+			log.Printf("[WARNING] 跳过节点 %s，类型不匹配: %s", nodeName, node.NodeType)
 		}
 	}
 
@@ -1738,15 +2222,22 @@ func (s *SlurmService) ScaleDown(ctx context.Context, nodeIDs []string) (*Scalin
 
 	// 对每个节点执行缩容操作
 	for _, nodeID := range nodeIDs {
+		cleanNodeID := normalizeNodeNameValue(nodeID, "", 0)
 		nodeResult := NodeScalingResult{
-			NodeID:  nodeID,
+			NodeID:  cleanNodeID,
 			Success: false,
 			Message: "",
+		}
+		if cleanNodeID == "" {
+			nodeResult.Message = "节点名称无效，无法执行缩容"
+			result.Results = append(result.Results, nodeResult)
+			result.Success = false
+			continue
 		}
 
 		// 步骤1: 将节点状态设置为DOWN
 		downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason='缩容移除节点_%s'",
-			nodeID, time.Now().Format("20060102_150405"))
+			cleanNodeID, time.Now().Format("20060102_150405"))
 
 		session, err := client.NewSession()
 		if err != nil {

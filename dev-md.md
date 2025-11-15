@@ -4200,4 +4200,26 @@ completed
 an hour ago
 扩容完成
 1%
-这里的1%展示不符合预期，应该是100%，需要检查下frontend中相关函数的计算逻辑
+这里的1%展示不符合预期，应该是100%，需要检查下frontend中相关函数的计算逻辑，同时修复slurm节点扩容完成后集群节点状态为空未能正确的显示slurm集群状态,❯ docker exec ai-infra-slurm-master sinfo -Nel
+Sat Nov 15 11:34:12 2025
+NODELIST   NODES PARTITION       STATE CPUS    S:C:T MEMORY TMP_DISK WEIGHT AVAIL_FE REASON   ,扩缩容状态
+空闲
+活跃任务
+0
+成功节点
+6
+分析并修复这2个问题
+
+225. 这里的slurm使用的是mysql，而任务存储则使用的pgsql需要区分这两个不同的数据库作用，请按照这个架构进行代码调整
+
+226. http://192.168.3.91:8080/slurm，进度0%，需要修复，这里需要同步task的进度，这里可以采用多个task不同的进度显示情况
+
+227. 扩缩容状态
+空闲
+活跃任务
+0
+成功节点
+6显示成功了，但是集群节点还是无法查询到节点状态，需要修复
+
+228. 执行命令失败: SSH命令执行失败 (退出码 1): slurm_update error: Invalid node name specified,未能查看docker exec ai-infra-slurm-master sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST到节点状态，需要检查并修复，http://192.168.3.91:8080/slurm显示添加成功，但是sinfo未能获取正确的节点信息，这里未能注册成功需要修复这个问题，需要交叉检查mysql数据库和pgsql数据库中任务状态、slurm状态保证节点能够正确注册
