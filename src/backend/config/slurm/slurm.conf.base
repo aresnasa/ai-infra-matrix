@@ -1,0 +1,74 @@
+#
+# AI Infrastructure Matrix - Base SLURM Configuration
+#
+# This file holds global/controller level parameters. Node definitions and
+# partitions are generated dynamically by the backend service.
+#
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-master
+ControlAddr=slurm-master
+
+# Authentication
+AuthType=auth/munge
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_key=/etc/slurm/jwt_hs256.key
+
+# Accounting / Database
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=slurm-master
+AccountingStoragePort=6818
+AccountingStorageUser=root
+AccountingStorageEnforce=associations,limits,qos
+AccountingStoreFlags=job_comment,job_script,job_env
+
+# Scheduling
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+# Networking / State
+SlurmctldPort=6817
+SlurmdPort=6818
+SlurmdSpoolDir=/var/spool/slurm/slurmd
+StateSaveLocation=/var/lib/slurm/slurmctld
+SlurmctldParameters=enable_configless
+
+# Logging
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldDebug=info
+SlurmdDebug=info
+
+# Service users
+SlurmUser=slurm
+SlurmdUser=root
+SlurmctldPidFile=/var/run/slurm/slurmctld.pid
+SlurmdPidFile=/var/run/slurm/slurmd.pid
+
+# Timeouts
+MessageTimeout=60
+KillWait=30
+MinJobAge=300
+Waittime=0
+ReturnToService=2
+
+# Plugin discovery
+PluginDir=/usr/lib/slurm
+
+# Task / MPI configuration
+TaskPlugin=task/affinity,task/cgroup
+ProctrackType=proctrack/cgroup
+MpiDefault=pmix
+JobContainerType=job_container/tmpfs
+PrologFlags=Contain
+
+# Job completion logging
+JobCompType=jobcomp/filetxt
+JobCompLoc=/var/log/slurm/jobcomp.log
+
+# Resource limits
+MaxJobCount=10000
+MaxArraySize=10000
+
+# Placeholder for dynamically generated node and partition blocks
+# (Do not edit below; managed by backend service)

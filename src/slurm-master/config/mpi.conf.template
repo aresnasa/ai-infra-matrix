@@ -1,0 +1,7 @@
+#
+# AI Infrastructure Matrix - PMIx Configuration
+# Extracted from dev-conf.md to keep cluster MPI behavior consistent.
+#
+PMIxDebug=1
+PMIxDirectConnUCX=true
+PMIxEnv=/data/hpc/software/pmix/2.2.5;/data/hpc/software/pmix/3.2.4;/data/hpc/software/pmix/4.2.4

@@ -138,6 +138,8 @@ RUN set -eux; \
         sshpass \
         mtr-tiny \
         netcat-openbsd \
+        mysql-client \
+        default-mysql-client \
         lsof \
         jq \
         # utilities \
@@ -161,8 +163,11 @@ RUN set -eux; \
         libjwt0 \
         libb64-0d \
         libipmimonitoring6 \
+        libpmix2 \
+        libpmix-dev \
         librdkafka1 \
         freeipmi-common \
+        pmix \
         libmysqlclient-dev && \
     # Install optional HDF5 and MPI packages (may not be available on all architectures)
     echo "📦 尝试安装可选的 HDF5 和 MPI 包..."; \
@@ -367,12 +372,20 @@ RUN chmod +x /usr/local/bin/slurm-bootstrap.sh /usr/local/bin/systemd-entrypoint
 # 配置SSH服务（使用统一密钥管理）
 RUN mkdir -p /var/run/sshd /root/.ssh && \
     chmod 700 /root/.ssh && \
+    # 确保已经安装并生成 sshd 配置
+    if [ ! -f /etc/ssh/sshd_config ]; then \
+        apt-get update && apt-get install -y --no-install-recommends openssh-server; \
+    fi && \
     # 配置SSH服务器（仅允许公钥认证，安全配置）
     sed -i 's/#PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
-    # 启用SSH服务
-    systemctl enable ssh
+    # 启用SSH服务（构建阶段可能没有systemctl，手动创建WantedBy链接）
+    if command -v systemctl >/dev/null 2>&1; then \
+        systemctl enable ssh; \
+    elif [ -d /etc/systemd/system/multi-user.target.wants ]; then \
+        ln -sf /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service; \
+    fi
 
 # 复制统一的SSH公钥（允许backend访问）
 # Note: SSH密钥会在构建前由build.sh从项目根目录同步到此处

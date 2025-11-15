@@ -200,27 +200,38 @@ cd ai-infra-matrix
 ./scripts/build.sh prod --multi-arch --registry docker.io/username --push --version v0.3.6-dev
 ```
 
+## ⚙️ SLURM 配置与 MPI
+
+- 全局 `slurm.conf` 模板现在存放在 `src/backend/config/slurm/slurm.conf.base`，后端服务会在每次下发配置前动态读取该文件并追加节点/分区信息。
+- 如需放置在其他位置，可通过环境变量 `SLURM_BASE_CONFIG_PATH` 显式指定模板路径；该文件会被同步到 `slurm-master` 与所有计算节点容器中。
+- 模板内启用了 `MpiDefault=pmix`，所以需要在自定义镜像或物理节点中提供 `pmix`/`libpmix` 运行时（项目提供的 `slurm-master` 镜像与自动化节点安装脚本已默认安装这些依赖）。
+- 修改模板后可以直接调用“刷新 SLURM 配置”按钮或 `UpdateSlurmConfig` 接口立即同步，无需重新编译后端程序。
+
 ## 🎯 主要功能
 
 ### 🔐 统一身份认证系统
+
 - JWT令牌管理
 - 跨服务单点登录
 - 角色权限控制
 - 会话管理
 
 ### 📊 机器学习平台
+
 - JupyterHub多用户环境
 - GPU资源支持
 - 自定义镜像管理
 - 分布式计算支持
 
 ### 🔧 开发协作
+
 - Git代码仓库管理
 - 项目协作工作流
 - 代码审查流程
 - 持续集成支持
 
 ### 🚀 容器化平台
+
 - Docker Compose编排
 - 多环境配置管理
 - 健康检查监控
@@ -316,7 +327,7 @@ docker compose logs -f [服务名]
 
 ## 🙋 支持与反馈
 
-- 📧 邮箱：aresnasa@example.com
+- 📧 邮箱：[aresnasa@example.com](mailto:aresnasa@example.com)
 - 🐛 问题反馈：[GitHub Issues](https://github.com/aresnasa/ai-infra-matrix/issues)
 - 💬 讨论交流：[GitHub Discussions](https://github.com/aresnasa/ai-infra-matrix/discussions)
 
@@ -333,13 +344,11 @@ docker compose logs -f [服务名]
 
 ---
 
-<div align="center">
-
 **AI Infrastructure Matrix** - 让AI开发更简单
 
 [官网](https://ai-infra-matrix.example.com) • [文档](docs/) • [演示](https://demo.ai-infra-matrix.example.com)
 
-</div>
+---
 
 ## 附录：对象存储（MinIO）环境变量速览
 

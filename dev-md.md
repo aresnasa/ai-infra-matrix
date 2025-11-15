@@ -4223,3 +4223,35 @@ NODELIST   NODES PARTITION       STATE CPUS    S:C:T MEMORY TMP_DISK WEIGHT AVAI
 
 228. 执行命令失败: SSH命令执行失败 (退出码 1): slurm_update error: Invalid node name specified,未能查看docker exec ai-infra-slurm-master sinfo
 PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST到节点状态，需要检查并修复，http://192.168.3.91:8080/slurm显示添加成功，但是sinfo未能获取正确的节点信息，这里未能注册成功需要修复这个问题，需要交叉检查mysql数据库和pgsql数据库中任务状态、slurm状态保证节点能够正确注册
+
+229. docker exec ai-infra-slurm-master sinfo -Nel
+Sat Nov 15 13:02:53 2025
+NODELIST NODES PARTITION STATE CPUS S:C:T MEMORY TMP_DISK WEIGHT AVAIL_FE REASON
+test-rocky01 1 compute* unknown* 1 1:1:1 1024 0 1 (null) none
+test-rocky02 1 compute* unknown* 1 1:1:1 1024 0 1 (null) none
+test-rocky03 1 compute* unknown* 1 1:1:1 1024 0 1 (null) none
+test-ssh01 1 compute* unknown* 1 1:1:1 1024 0 1 (null) none
+test-ssh02 1 compute* unknown* 1 1:1:1 1024 0 1 (null) none
+test-ssh03 1 compute* unknown* 1 1:1:1 1024 0 1 (null) none
+❯ docker exec ai-infra-slurm-master sinfo -Nel
+Sat Nov 15 13:03:00 2025
+NODELIST NODES PARTITION STATE CPUS S:C:T MEMORY TMP_DISK WEIGHT AVAIL_FE REASON 检查日志，扩容过程中状态是有成功的，但是最后无法正确获取节点状态，检查日志并修复这个问题。
+
+230. 需要开启mpi，修复这个报错，调整dockerfile，同时不要写死配置在slurm_service.go程序中，而是单独创建配置文件然后同步到容器中
+
+231. 现在读取dev-conf.md中内容，将相关配置写到slurm-master/config的配置模板中。
+
+232. 扩缩容状态
+空闲
+活跃任务
+0
+成功节点
+6但是❯ docker exec ai-infra-slurm-master sinfo -Nel
+sinfo: error: PluginDir: /usr/lib/slurm-wlm: No such file or directory
+sinfo: error: Bad value "/usr/lib/slurm-wlm:/usr/lib/slurm:/usr/lib64/slurm:/usr/lib/x86_64-linux-gnu/slurm:/usr/lib/aarch64-linux-gnu/slurm" for PluginDir
+sinfo: fatal: Unable to process configuration file报错，需要在扩容时一并修复，检查部署slurm的脚本和go程序以及ssh等，综合分析问题然后修复
+
+233. ❯ docker exec ai-infra-slurm-master sinfo -Nel
+sinfo: error: PluginDir: /usr/lib/slurm: No such file or directory
+sinfo: error: Bad value "/usr/lib/slurm" for PluginDir
+sinfo: fatal: Unable to process configuration file

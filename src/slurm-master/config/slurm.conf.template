@@ -5,6 +5,7 @@
 ClusterName=${SLURM_CLUSTER_NAME}
 ControlMachine=${SLURM_CONTROLLER_HOST}
 ControlAddr=${SLURM_CONTROLLER_HOST}
+SlurmctldParameters=enable_configless
 
 # 认证配置
 AuthType=${SLURM_AUTH_TYPE}
@@ -46,9 +47,17 @@ MessageTimeout=60
 KillWait=30
 MinJobAge=300
 Waittime=0
+ReturnToService=2
 
 # 插件目录（动态检测）
 PluginDir=${SLURM_PLUGIN_DIR}
+
+# 任务与MPI配置
+TaskPlugin=task/affinity,task/cgroup
+ProctrackType=proctrack/cgroup
+MpiDefault=pmix
+JobContainerType=job_container/tmpfs
+PrologFlags=Contain
 
 # 资源限制配置
 MaxJobCount=${SLURM_MAX_JOB_COUNT}

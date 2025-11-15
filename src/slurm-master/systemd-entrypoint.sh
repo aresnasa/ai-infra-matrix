@@ -86,4 +86,51 @@ ln -sf /etc/systemd/system/slurmctld.service /etc/systemd/system/multi-user.targ
 ln -sf /etc/systemd/system/slurmdbd.service /etc/systemd/system/multi-user.target.wants/slurmdbd.service
 ln -sf /lib/systemd/system/munge.service /etc/systemd/system/multi-user.target.wants/munge.service
 
-exec /sbin/init "$@"
+# 动态查找 systemd 可执行文件，如缺失则在容器启动时补装
+ensure_systemd() {
+	local candidate="/sbin/init"
+
+	if [ -x "$candidate" ]; then
+		SYSTEMD_BIN="$candidate"
+		return 0
+	fi
+
+	if command -v systemd >/dev/null 2>&1; then
+		SYSTEMD_BIN="$(command -v systemd)"
+		return 0
+	fi
+
+	if [ -x /lib/systemd/systemd ]; then
+		SYSTEMD_BIN="/lib/systemd/systemd"
+		return 0
+	fi
+
+	echo "systemd 未找到，尝试在启动阶段安装 (systemd systemd-sysv)..."
+	export DEBIAN_FRONTEND=noninteractive
+	if apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv; then
+		if command -v systemd >/dev/null 2>&1; then
+			SYSTEMD_BIN="$(command -v systemd)"
+			return 0
+		elif [ -x /lib/systemd/systemd ]; then
+			SYSTEMD_BIN="/lib/systemd/systemd"
+			return 0
+		elif [ -x /sbin/init ]; then
+			SYSTEMD_BIN="/sbin/init"
+			return 0
+		fi
+	else
+		echo "在容器启动时安装 systemd 失败" >&2
+	fi
+
+	echo "无法找到 systemd 可执行文件" >&2
+	return 1
+}
+
+ensure_systemd || exit 1
+
+# 如果仍然使用默认的 /sbin/init，则替换为实际存在的 systemd
+if [ "$#" -eq 0 ] || [ "$1" = "/sbin/init" ]; then
+	set -- "$SYSTEMD_BIN"
+fi
+
+exec "$@"

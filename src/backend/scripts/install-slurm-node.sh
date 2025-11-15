@@ -191,6 +191,13 @@ install_slurm_packages() {
         # RPM-based systems (Rocky/CentOS/RHEL)
         PACKAGES="slurm slurm-slurmd"
         
+        log_info "Installing PMIx runtime..."
+        if $PKG_MANAGER install -y pmix pmix-devel >/dev/null 2>&1; then
+            log_info "✓ PMIx runtime installed"
+        else
+            log_warn "PMIx packages unavailable in repository"
+        fi
+
         # 根据节点类型添加额外包
         case "$NODE_TYPE" in
             compute)
@@ -252,6 +259,13 @@ install_slurm_packages() {
         log_info "Installing SLURM from AppHub (DEB packages)"
         export DEBIAN_FRONTEND=noninteractive
         
+        log_info "Installing PMIx runtime..."
+        if apt-get install -y pmix libpmix2 libpmix-dev >/dev/null 2>&1; then
+            log_info "✓ PMIx runtime installed"
+        else
+            log_warn "PMIx packages unavailable in APT repository"
+        fi
+
         # 使用 slurm-smd 包（从 AppHub 构建的包）
         PACKAGES="slurm-smd-client slurm-smd-slurmd"
         
@@ -284,6 +298,51 @@ install_slurm_packages() {
     else
         log_error "slurmd command not found after installation"
         exit 1
+    fi
+}
+
+ensure_plugin_dir() {
+    log_info "Ensuring canonical SLURM plugin directory..."
+    local canonical="/usr/lib/slurm"
+    local arch
+    arch=$(uname -m)
+    local candidates=(
+        "/usr/lib/slurm-wlm"
+        "/usr/lib/${arch}/slurm-wlm"
+        "/usr/lib/${arch}/slurm"
+        "/usr/lib64/slurm-wlm"
+        "/usr/lib64/slurm"
+        "$canonical"
+    )
+
+    local resolved=""
+    for dir in "${candidates[@]}"; do
+        if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
+            resolved="$dir"
+            break
+        fi
+    done
+
+    if [ -z "$resolved" ]; then
+        log_warn "无法检测到 SLURM 插件目录，保留默认值"
+        return 0
+    fi
+
+    if [ "$resolved" = "$canonical" ]; then
+        log_info "Canonical plugin directory already populated: $canonical"
+        return 0
+    fi
+
+    if [ -z "$(ls -A "$canonical" 2>/dev/null)" ]; then
+        rm -rf "$canonical"
+        mkdir -p "$canonical"
+        if cp -a "$resolved/." "$canonical/"; then
+            log_info "📁 Copied plugins to $canonical from $resolved"
+        else
+            log_warn "⚠️ 无法复制插件到 $canonical，继续使用真实路径 $resolved"
+        fi
+    else
+        log_info "Canonical plugin directory already populated"
     fi
 }
 
@@ -422,6 +481,7 @@ main() {
     install_munge
     create_slurm_user
     install_slurm_packages
+    ensure_plugin_dir
     create_directories
     configure_systemd
     

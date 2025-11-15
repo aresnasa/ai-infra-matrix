@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -988,30 +989,69 @@ func (s *SlurmClusterService) removeNodeFromSlurmConfig(nodeName string) error {
 		slurmMasterHost = "slurm-master"
 	}
 
+	slurmMasterPort := 22
+	if portStr := os.Getenv("SLURM_MASTER_PORT"); portStr != "" {
+		if parsed, err := strconv.Atoi(portStr); err == nil {
+			slurmMasterPort = parsed
+		} else {
+			logrus.Warnf("SLURM_MASTER_PORT 无法解析 (%s): %v", portStr, err)
+		}
+	}
+
 	slurmMasterUser := os.Getenv("SLURM_MASTER_USER")
 	if slurmMasterUser == "" {
 		slurmMasterUser = "root"
 	}
 
-	slurmMasterPassword := os.Getenv("SLURM_MASTER_PASSWORD")
-
-	// 创建 SSH 客户端配置
-	config := RemoteNodeInitConfig{
-		Host:     slurmMasterHost,
-		Port:     22,
-		Username: slurmMasterUser,
-		Password: slurmMasterPassword,
-		AuthType: "password",
+	var authMethods []ssh.AuthMethod
+	keyPathEnv := os.Getenv("SLURM_MASTER_PRIVATE_KEY")
+	keyPath := keyPathEnv
+	if keyPath == "" {
+		keyPath = "/root/.ssh/id_rsa"
 	}
 
-	// 创建 SSH 连接
-	client, err := s.createSSHClient(config)
+	if keyPath != "" {
+		if keyData, err := os.ReadFile(keyPath); err == nil {
+			if passphrase := os.Getenv("SLURM_MASTER_PRIVATE_KEY_PASSPHRASE"); passphrase != "" {
+				signer, parseErr := ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(passphrase))
+				if parseErr != nil {
+					logrus.Warnf("无法解析带口令的SLURM主节点私钥 %s: %v", keyPath, parseErr)
+				} else {
+					authMethods = append(authMethods, ssh.PublicKeys(signer))
+				}
+			} else if signer, parseErr := ssh.ParsePrivateKey(keyData); parseErr == nil {
+				authMethods = append(authMethods, ssh.PublicKeys(signer))
+			} else {
+				logrus.Warnf("无法解析SLURM主节点私钥 %s: %v", keyPath, parseErr)
+			}
+		} else if keyPathEnv != "" || !os.IsNotExist(err) {
+			logrus.Warnf("读取SLURM主节点私钥失败 (%s): %v", keyPath, err)
+		}
+	}
+
+	if password := os.Getenv("SLURM_MASTER_PASSWORD"); password != "" {
+		authMethods = append(authMethods, ssh.Password(password))
+	}
+
+	if len(authMethods) == 0 {
+		return fmt.Errorf("未配置SLURM Master认证方式，请设置 SLURM_MASTER_PASSWORD 或 SLURM_MASTER_PRIVATE_KEY")
+	}
+
+	sshConfig := &ssh.ClientConfig{
+		User:            slurmMasterUser,
+		Auth:            authMethods,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	address := fmt.Sprintf("%s:%d", slurmMasterHost, slurmMasterPort)
+	client, err := ssh.Dial("tcp", address, sshConfig)
 	if err != nil {
 		return fmt.Errorf("创建SSH连接到SLURM Master失败: %v", err)
 	}
 	defer client.Close()
 
-	logrus.Infof("已连接到 SLURM Master (%s)，开始移除节点 %s", slurmMasterHost, nodeName)
+	logrus.Infof("已连接到 SLURM Master (%s)，开始移除节点 %s", address, nodeName)
 
 	// 1. 设置节点为 DOWN 状态
 	logrus.Infof("设置节点 %s 为 DOWN 状态", nodeName)

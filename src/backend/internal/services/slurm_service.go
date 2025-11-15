@@ -1324,6 +1324,9 @@ func (s *SlurmService) DetectAndFixNodeState(ctx context.Context, nodeName strin
 			continue
 		}
 
+		reason := parseSlurmNodeReason(output)
+		reasonLower := strings.ToLower(reason)
+
 		// 分析节点状态
 		if strings.Contains(output, "State=IDLE") || strings.Contains(output, "State=ALLOCATED") || strings.Contains(output, "State=MIXED") {
 			// 节点状态正常
@@ -1331,35 +1334,39 @@ func (s *SlurmService) DetectAndFixNodeState(ctx context.Context, nodeName strin
 			return nil
 		}
 
-		if strings.Contains(output, "State=DOWN") && !strings.Contains(output, "NOT_RESPONDING") {
+		needsRestart := strings.Contains(output, "NOT_RESPONDING") || strings.Contains(output, "State=UNKNOWN") ||
+			strings.Contains(reasonLower, "未响应") || strings.Contains(reasonLower, "not responding")
+
+		if needsRestart {
+			log.Printf("[WARNING] 第 %d/%d 次：节点 %s 未响应 (Reason=%s)，尝试重新拉起 slurmd", attempt, maxRetries, nodeName, reason)
+			downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason=\"节点未响应，第%d次检测失败\"", nodeName, attempt)
+			if _, err := s.ExecuteSlurmCommand(ctx, downCmd); err != nil {
+				log.Printf("[WARNING] 第 %d/%d 次：设置节点 %s 为 DOWN 失败: %v", attempt, maxRetries, nodeName, err)
+			}
+			if err := s.restartSlurmdForNode(ctx, nodeName); err != nil {
+				log.Printf("[WARNING] 自动重启节点 %s slurmd 失败: %v", nodeName, err)
+			} else {
+				if err := s.resumeNode(ctx, nodeName); err != nil {
+					log.Printf("[WARNING] 重置节点 %s 状态失败: %v", nodeName, err)
+				}
+				log.Printf("[INFO] 节点 %s slurmd 重启命令已执行，等待状态同步", nodeName)
+				continue
+			}
+			if attempt < maxRetries {
+				continue
+			}
+			return fmt.Errorf("节点未响应或状态未知，可能原因：slurmd未运行、网络不可达或配置错误。请手动检查节点状态并执行: scontrol update NodeName=%s State=RESUME", nodeName)
+		}
+
+		if strings.Contains(output, "State=DOWN") {
 			// 节点处于 DOWN 状态但可以响应，尝试激活
 			log.Printf("[INFO] 第 %d/%d 次：节点 %s 处于 DOWN 状态，尝试激活...", attempt, maxRetries, nodeName)
-			resumeCmd := fmt.Sprintf("scontrol update NodeName=%s State=RESUME", nodeName)
-			if _, err := s.ExecuteSlurmCommand(ctx, resumeCmd); err != nil {
+			if err := s.resumeNode(ctx, nodeName); err != nil {
 				log.Printf("[WARNING] 第 %d/%d 次：激活节点 %s 失败: %v", attempt, maxRetries, nodeName, err)
 				continue
 			}
 			log.Printf("[INFO] 第 %d/%d 次：节点 %s 激活命令已执行", attempt, maxRetries, nodeName)
 			continue // 下一次循环检查激活是否成功
-		}
-
-		if strings.Contains(output, "NOT_RESPONDING") || strings.Contains(output, "State=UNKNOWN") {
-			// 节点无响应或状态未知
-			log.Printf("[WARNING] 第 %d/%d 次：节点 %s 未响应或状态未知", attempt, maxRetries, nodeName)
-
-			// 尝试将节点设置为 DOWN 状态（避免 UNKNOWN）
-			downCmd := fmt.Sprintf("scontrol update NodeName=%s State=DOWN Reason=\"节点未响应，第%d次检测失败\"", nodeName, attempt)
-			if _, err := s.ExecuteSlurmCommand(ctx, downCmd); err != nil {
-				log.Printf("[WARNING] 第 %d/%d 次：设置节点 %s 为 DOWN 失败: %v", attempt, maxRetries, nodeName, err)
-			}
-
-			// 如果不是最后一次尝试，继续重试
-			if attempt < maxRetries {
-				continue
-			}
-
-			// 最后一次尝试失败，返回错误
-			return fmt.Errorf("节点未响应或状态未知，可能原因：slurmd未运行、网络不可达或配置错误。请执行：1) 检查节点连接性 2) 确认slurmd服务状态 3) 手动执行: scontrol update NodeName=%s State=RESUME", nodeName)
 		}
 
 		// 其他未预期的状态
@@ -1368,6 +1375,99 @@ func (s *SlurmService) DetectAndFixNodeState(ctx context.Context, nodeName strin
 
 	// 所有重试都失败
 	return fmt.Errorf("节点状态检测失败，已重试 %d 次。请手动检查节点状态并执行: scontrol update NodeName=%s State=RESUME", maxRetries, nodeName)
+}
+
+func (s *SlurmService) restartSlurmdForNode(ctx context.Context, nodeName string) error {
+	if s.db == nil {
+		return fmt.Errorf("数据库未就绪，无法定位节点 %s", nodeName)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	node, err := s.lookupNodeByName(ctx, nodeName)
+	if err != nil {
+		return err
+	}
+	user := strings.TrimSpace(node.Username)
+	if user == "" {
+		user = "root"
+	}
+	port := node.Port
+	if port == 0 {
+		port = 22
+	}
+	host := strings.TrimSpace(node.Host)
+	if host == "" {
+		host = nodeName
+	}
+	password := strings.TrimSpace(node.Password)
+	privateKey := strings.TrimSpace(node.KeyPath)
+	if privateKey == "" {
+		privateKey = backendDefaultSSHKeyPath()
+	}
+	if privateKey != "" {
+		if _, statErr := os.Stat(privateKey); statErr != nil {
+			log.Printf("[DEBUG] SSH私钥 %s 不可用: %v，回退为空", privateKey, statErr)
+			privateKey = ""
+		}
+	}
+	var buf bytes.Buffer
+	if err := s.startSlurmServicesViaSSH(ctx, host, port, user, password, privateKey, &buf); err != nil {
+		return fmt.Errorf("远程重启 slurmd 失败: %w (输出: %s)", err, strings.TrimSpace(buf.String()))
+	}
+	log.Printf("[INFO] 节点 %s slurmd 已重新启动: %s", nodeName, strings.TrimSpace(buf.String()))
+	return nil
+}
+
+func (s *SlurmService) lookupNodeByName(ctx context.Context, nodeName string) (*models.SlurmNode, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("数据库未配置")
+	}
+	normalized := strings.ToLower(strings.TrimSpace(nodeName))
+	if normalized == "" {
+		return nil, fmt.Errorf("节点名称为空")
+	}
+	var node models.SlurmNode
+	query := s.db.WithContext(ctx).
+		Where("LOWER(node_name) = ? OR LOWER(host) = ?", normalized, normalized)
+	if err := query.First(&node).Error; err != nil {
+		return nil, fmt.Errorf("无法根据名称 %s 定位节点: %w", nodeName, err)
+	}
+	return &node, nil
+}
+
+func backendDefaultSSHKeyPath() string {
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		return ""
+	}
+	keyPath := filepath.Join(home, ".ssh", "id_rsa")
+	if _, err := os.Stat(keyPath); err == nil {
+		return keyPath
+	}
+	return ""
+}
+
+func (s *SlurmService) resumeNode(ctx context.Context, nodeName string) error {
+	resumeCmd := fmt.Sprintf("scontrol update NodeName=%s State=RESUME", nodeName)
+	if _, err := s.ExecuteSlurmCommand(ctx, resumeCmd); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseSlurmNodeReason(output string) string {
+	idx := strings.Index(output, "Reason=")
+	if idx == -1 {
+		return ""
+	}
+	reason := output[idx+len("Reason="):]
+	newline := strings.IndexByte(reason, '\n')
+	if newline >= 0 {
+		reason = reason[:newline]
+	}
+	reason = strings.TrimSpace(reason)
+	reason = strings.Trim(reason, "\"")
+	return reason
 }
 
 func (s *SlurmService) ensureNodeRegistered(ctx context.Context, nodeName string) error {
@@ -1525,18 +1625,12 @@ func (s *SlurmService) mergeConfigs(currentConfig, newNodesConfig string) string
 		baseLines = append(baseLines, line)
 	}
 
-	// 提取新配置中的节点和分区定义
+	// 提取新配置中的节点和分区定义（允许注释文案不同）
 	var nodeLines []string
 	newLines := strings.Split(newNodesConfig, "\n")
-	inNodeSection := false
-
 	for _, line := range newLines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "# 节点配置") {
-			inNodeSection = true
-		}
-		if inNodeSection && (strings.HasPrefix(trimmed, "NodeName=") ||
-			strings.HasPrefix(trimmed, "PartitionName=")) {
+		if strings.HasPrefix(trimmed, "NodeName=") || strings.HasPrefix(trimmed, "PartitionName=") {
 			nodeLines = append(nodeLines, line)
 		}
 	}
@@ -1831,92 +1925,22 @@ func (s *SlurmService) UpdateSlurmConfig(ctx context.Context, sshSvc SSHServiceI
 
 // generateSlurmConfig 生成SLURM配置文件内容（保留全局配置，只更新节点和分区部分）
 func (s *SlurmService) generateSlurmConfig(nodes []models.SlurmNode) string {
-	// 读取SLURM master的当前配置文件，保留全局配置部分
-	currentConfig, err := s.fetchRemoteSlurmConfig()
-	if err != nil {
-		log.Printf("[WARN] 无法读取远程slurm.conf，使用默认模板: %v", err)
-	}
-
-	var globalConfig string
-	if currentConfig != "" {
-		// 提取全局配置部分（在第一个NodeName或PartitionName之前的所有行）
-		lines := strings.Split(currentConfig, "\n")
-		globalLines := []string{}
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			// 如果遇到NodeName或PartitionName，停止收集全局配置
-			if strings.HasPrefix(trimmed, "NodeName=") || strings.HasPrefix(trimmed, "PartitionName=") {
-				break
-			}
-			// 如果遇到动态生成的标记，停止收集
-			if strings.Contains(trimmed, "节点配置（动态生成）") || strings.Contains(trimmed, "计算节点配置") {
-				break
-			}
-			globalLines = append(globalLines, line)
-		}
-		globalConfig = strings.Join(globalLines, "\n")
-	}
-
-	// 如果没有获取到全局配置（文件不存在或读取失败），使用默认模板
+	globalConfig := strings.TrimSpace(s.extractGlobalSlurmConfig(s.loadBaseSlurmConfig()))
 	if globalConfig == "" {
-		globalConfig = `#
-# AI Infrastructure Matrix SLURM Configuration
-# 此文件由环境变量自动生成
-#
-ClusterName=ai-infra-cluster
-ControlMachine=slurm-master
-ControlAddr=slurm-master
-
-# 认证配置
-AuthType=auth/munge
-
-# 数据库配置
-AccountingStorageType=accounting_storage/slurmdbd
-AccountingStorageHost=slurm-master
-AccountingStoragePort=6818
-AccountingStorageUser=root
-AccountingStorageEnforce=associations,limits,qos
-AccountingStoreFlags=job_comment,job_script,job_env
-
-# 作业调度配置
-SchedulerType=sched/backfill
-SelectType=select/cons_tres
-SelectTypeParameters=CR_Core_Memory
-
-# 通信配置
-SlurmctldPort=6817
-SlurmdSpoolDir=/var/spool/slurm/slurmd
-StateSaveLocation=/var/lib/slurm/slurmctld
-
-# 日志配置
-SlurmctldLogFile=/var/log/slurm/slurmctld.log
-SlurmdLogFile=/var/log/slurm/slurmd.log
-SlurmctldDebug=info
-SlurmdDebug=info
-
-# 服务配置
-SlurmUser=slurm
-SlurmdUser=root
-SlurmctldPidFile=/var/run/slurm/slurmctld.pid
-SlurmdPidFile=/var/run/slurm/slurmd.pid
-
-# 网络配置
-MessageTimeout=60
-KillWait=30
-MinJobAge=300
-Waittime=0
-
-# 插件目录（根据架构自动检测）
-PluginDir=/usr/lib/aarch64-linux-gnu/slurm
-
-# 资源限制配置
-MaxJobCount=10000
-MaxArraySize=10000
-`
+		if currentConfig, err := s.fetchRemoteSlurmConfig(); err == nil {
+			globalConfig = strings.TrimSpace(s.extractGlobalSlurmConfig(currentConfig))
+		} else {
+			log.Printf("[WARN] 无法读取远程slurm.conf: %v", err)
+		}
+	}
+	if globalConfig == "" {
+		log.Printf("[WARN] 使用内置SLURM配置模板作为兜底")
+		globalConfig = defaultSlurmGlobalConfig
 	}
 
-	// 开始构建节点配置部分
-	config := globalConfig + "\n\n# 计算节点配置（动态生成）\n"
+	var builder strings.Builder
+	builder.WriteString(globalConfig)
+	builder.WriteString("\n\n# 计算节点配置（动态生成）\n")
 
 	// 添加节点定义
 	computeNodes := []string{}
@@ -1978,7 +2002,8 @@ MaxArraySize=10000
 				}
 			}
 
-			config += nodeConfig + "\n"
+			builder.WriteString(nodeConfig)
+			builder.WriteString("\n")
 			computeNodes = append(computeNodes, nodeName)
 			log.Printf("[DEBUG] 已添加计算节点: %s (地址: %s, CPU:%d, 内存:%dMB, GPU:%d, XPU:%d)",
 				nodeName, node.Host, cpus, memory, node.GPUs, node.XPUs)
@@ -1992,14 +2017,173 @@ MaxArraySize=10000
 	if len(computeNodes) > 0 {
 		partitionConfig := fmt.Sprintf("PartitionName=compute Nodes=%s Default=YES MaxTime=INFINITE State=UP",
 			strings.Join(computeNodes, ","))
-		config += partitionConfig + "\n"
+		builder.WriteString(partitionConfig)
+		builder.WriteString("\n")
 		log.Printf("[DEBUG] 已添加分区配置: %s", partitionConfig)
 	} else {
 		log.Printf("[WARNING] 没有计算节点，跳过分区配置")
 	}
 
-	return config
+	return builder.String()
 }
+
+func (s *SlurmService) loadBaseSlurmConfig() string {
+	candidates := s.resolveSlurmConfigTemplatePaths()
+	userProvided := strings.TrimSpace(os.Getenv("SLURM_BASE_CONFIG_PATH"))
+	for idx, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			if idx == 0 && userProvided != "" {
+				log.Printf("[WARN] 无法读取自定义的SLURM模板 %s: %v", candidate, err)
+			}
+			continue
+		}
+		return string(data)
+	}
+	return ""
+}
+
+func (s *SlurmService) resolveSlurmConfigTemplatePaths() []string {
+	userProvided := strings.TrimSpace(os.Getenv("SLURM_BASE_CONFIG_PATH"))
+	candidates := make([]string, 0, 10)
+	if userProvided != "" {
+		candidates = append(candidates, userProvided)
+	}
+	defaultRelPaths := []string{
+		"config/slurm/slurm.conf.base",
+		"src/backend/config/slurm/slurm.conf.base",
+		"../config/slurm/slurm.conf.base",
+		"../../config/slurm/slurm.conf.base",
+	}
+	candidates = append(candidates, defaultRelPaths...)
+	candidates = append(candidates,
+		"/app/config/slurm/slurm.conf.base",
+		"/opt/ai-infra/config/slurm/slurm.conf.base",
+	)
+
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "config", "slurm", "slurm.conf.base"))
+	}
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "config", "slurm", "slurm.conf.base"),
+			filepath.Join(filepath.Dir(exeDir), "config", "slurm", "slurm.conf.base"),
+		)
+	}
+
+	return uniquePaths(candidates)
+}
+
+func uniquePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		clean := filepath.Clean(p)
+		if clean == "." || clean == ".." {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		result = append(result, clean)
+	}
+	return result
+}
+
+func (s *SlurmService) extractGlobalSlurmConfig(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	globalLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "NodeName=") || strings.HasPrefix(trimmed, "PartitionName=") {
+			break
+		}
+		if strings.Contains(trimmed, "节点配置（动态生成）") || strings.Contains(trimmed, "计算节点配置") || strings.Contains(trimmed, "Placeholder for dynamically generated node and partition blocks") {
+			break
+		}
+		globalLines = append(globalLines, line)
+	}
+	return strings.TrimSpace(strings.Join(globalLines, "\n"))
+}
+
+var defaultSlurmGlobalConfig = strings.TrimSpace(`
+#
+# AI Infrastructure Matrix SLURM Configuration
+# (fallback template)
+#
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-master
+ControlAddr=slurm-master
+
+# Authentication
+AuthType=auth/munge
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_key=/etc/slurm/jwt_hs256.key
+
+# Accounting
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=slurm-master
+AccountingStoragePort=6818
+AccountingStorageUser=root
+AccountingStorageEnforce=associations,limits,qos
+AccountingStoreFlags=job_comment,job_script,job_env
+
+# Scheduling
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+# Networking / state
+SlurmctldPort=6817
+SlurmdPort=6818
+SlurmdSpoolDir=/var/spool/slurm/slurmd
+StateSaveLocation=/var/lib/slurm/slurmctld
+SlurmctldParameters=enable_configless
+
+# Logging
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldDebug=info
+SlurmdDebug=info
+
+# Service config
+SlurmUser=slurm
+SlurmdUser=root
+SlurmctldPidFile=/var/run/slurm/slurmctld.pid
+SlurmdPidFile=/var/run/slurm/slurmd.pid
+
+# Timeouts
+MessageTimeout=60
+KillWait=30
+MinJobAge=300
+Waittime=0
+ReturnToService=1
+
+# Plugin lookup
+PluginDir=/usr/lib/slurm-wlm:/usr/lib/slurm:/usr/lib64/slurm:/usr/lib/x86_64-linux-gnu/slurm:/usr/lib/aarch64-linux-gnu/slurm
+
+# Task / MPI
+TaskPlugin=task/affinity
+ProctrackType=proctrack/linuxproc
+MpiDefault=pmix
+
+# Job completion
+JobCompType=jobcomp/filetxt
+JobCompLoc=/var/log/slurm/jobcomp.log
+
+# Limits
+MaxJobCount=10000
+MaxArraySize=10000
+`)
 
 func (s *SlurmService) fetchRemoteSlurmConfig() (string, error) {
 	slurmMasterHost, slurmMasterPort, slurmMasterUser, slurmMasterPassword, keyPath := s.getSlurmMasterSSHConfig()

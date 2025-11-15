@@ -4,11 +4,12 @@
 #
 
 CgroupAutomount=yes
+CgroupPlugin=cgroup/v2
 ConstrainCores=yes
 ConstrainRAMSpace=yes
-ConstrainSwapSpace=no
-ConstrainDevices=no
+ConstrainSwapSpace=yes
+ConstrainDevices=yes
 
 # 允许的资源使用率
 AllowedRAMSpace=100.0
-AllowedSwapSpace=0.0
+AllowedSwapSpace=0

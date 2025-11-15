@@ -77,6 +77,7 @@ detect_slurm_mode() {
 set_plugin_dir() {
     local arch_dpkg arch_gnu
     arch_dpkg=$(dpkg --print-architecture)
+    local canonical_dir="/usr/lib/slurm"
 
     case "$arch_dpkg" in
         amd64) arch_gnu="x86_64-linux-gnu" ;;
@@ -96,16 +97,37 @@ set_plugin_dir() {
         "/usr/lib/slurm"
     )
 
+    local resolved=""
+
     for dir in "${candidates[@]}"; do
         if [ -d "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
-            export SLURM_PLUGIN_DIR="$dir"
-            log "INFO" "✅ 使用SLURM插件目录: $dir"
-            return
+            resolved="$dir"
+            break
         fi
     done
 
-    export SLURM_PLUGIN_DIR="/usr/lib/${arch_dpkg}/slurm"
-    log "WARN" "⚠️ 未找到特定插件目录，回退至 ${SLURM_PLUGIN_DIR}"
+    if [ -z "$resolved" ]; then
+        resolved="/usr/lib/${arch_dpkg}/slurm"
+        log "WARN" "⚠️ 未找到特定插件目录，回退至 ${resolved}"
+        mkdir -p "$resolved"
+    fi
+
+    if [ "$resolved" != "$canonical_dir" ]; then
+        mkdir -p "$canonical_dir"
+        if [ -z "$(ls -A "$canonical_dir" 2>/dev/null)" ]; then
+            rm -rf "$canonical_dir"
+            mkdir -p "$canonical_dir"
+            if cp -a "$resolved/." "$canonical_dir/" 2>/dev/null; then
+                log "INFO" "📁 已复制 SLURM 插件到统一目录: $canonical_dir"
+            else
+                log "WARN" "⚠️ 无法复制插件到 $canonical_dir，回退到真实路径 $resolved"
+                canonical_dir="$resolved"
+            fi
+        fi
+    fi
+
+    export SLURM_PLUGIN_DIR="$canonical_dir"
+    log "INFO" "✅ 使用SLURM插件目录: ${SLURM_PLUGIN_DIR}"
 }
 
 print_configuration() {
@@ -201,6 +223,7 @@ generate_configs() {
     envsubst < /etc/slurm-templates/slurm.conf.template > /etc/slurm/slurm.conf
     envsubst < /etc/slurm-templates/slurmdbd.conf.template > /etc/slurm/slurmdbd.conf
     envsubst < /etc/slurm-templates/cgroup.conf.template > /etc/slurm/cgroup.conf
+    envsubst < /etc/slurm-templates/mpi.conf.template > /etc/slurm/mpi.conf
 
     # 如果没有配置测试节点，移除空的 NodeName 和 PartitionName 行
     if [ -z "${SLURM_TEST_NODES}" ]; then
@@ -209,8 +232,8 @@ generate_configs() {
         sed -i '/^PartitionName=.*Nodes= /d' /etc/slurm/slurm.conf
     fi
 
-    chown slurm:slurm /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/slurmdbd.conf
-    chmod 644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
+    chown slurm:slurm /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/mpi.conf /etc/slurm/slurmdbd.conf
+    chmod 644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/mpi.conf
     chmod 600 /etc/slurm/slurmdbd.conf
 
     # Fix SLURM log directory permissions
