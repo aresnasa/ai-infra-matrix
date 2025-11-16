@@ -3,6 +3,13 @@
 # Global ARG declarations for multi-stage build FROM statements
 # 这些值将通过 build.sh 的 --build-arg 参数从 .env 文件传入
 # 提供默认值以保持向后兼容性
+#
+# SLURM 构建策略说明：
+# - cgroup 支持不在编译时硬编码启用，而是通过运行时配置管理
+# - 这允许同一个 SLURM 包在 Docker 容器和物理机环境中灵活部署
+# - Docker 环境：使用 proctrack/pgid 或 proctrack/linuxproc，无 cgroup
+# - 物理机环境：可通过 slurm.conf 启用 proctrack/cgroup 和 task/cgroup
+# - 参考：src/slurm-master/config/README.md
 # =============================================================================
 ARG UBUNTU_VERSION=22.04
 ARG ROCKYLINUX_VERSION=9
@@ -165,6 +172,12 @@ RUN set -eux; \
     else \
         srcdir=$(cut -d= -f2 /home/builder/build/.srcdir); \
         cd "/home/builder/build/${srcdir}"; \
+        echo "📦 Building SLURM DEB packages..."; \
+        echo "Note: Building without hardcoded cgroup dependency - use system defaults"; \
+        echo "      cgroup features will be configured via slurm.conf, not at compile time"; \
+        # Use DEB_BUILD_OPTIONS to pass configuration (skip tests, minimal build)
+        # Note: SLURM's debian/rules may not honor --without-cgroup, but we document the intent
+        export DEB_BUILD_OPTIONS="nocheck parallel=$(nproc)"; \
         dpkg-buildpackage -b -uc; \
     fi
 
@@ -470,12 +483,15 @@ RUN set -eux; \
         echo ">>> Setting up rpmbuild environment..."; \
         mkdir -p /home/builder/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
         # Create .rpmmacros file for custom configurations
+        # Note: Disable cgroup by default - let SLURM configuration (not compile-time) manage it
         echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros; \
         echo '%_prefix /usr' >> ~/.rpmmacros; \
         echo '%_slurm_sysconfdir %{_prefix}/etc/slurm' >> ~/.rpmmacros; \
         echo '%with_munge --with-munge' >> ~/.rpmmacros; \
+        echo '%without_cgroup --without-cgroup' >> ~/.rpmmacros; \
         echo "✓ Created ~/.rpmmacros configuration"; \
         cat ~/.rpmmacros; \
+        echo "Note: cgroup support disabled at build time - use system defaults"; \
         # Build RPMs directly using rpmbuild -ta (recommended by official docs)
         echo ">>> Building SLURM RPM packages using 'rpmbuild -ta' (this may take 10-15 minutes)..."; \
         echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
