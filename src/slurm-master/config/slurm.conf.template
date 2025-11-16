@@ -53,17 +53,18 @@ ReturnToService=2
 PluginDir=${SLURM_PLUGIN_DIR}
 
 # 任务与MPI配置
-# Docker 环境: 使用 task/none 和 proctrack/pgid (无 cgroup)
-# 物理机/VM: 使用 task/affinity,task/cgroup 和 proctrack/cgroup
-# 当前配置: ${SLURM_TASK_PLUGIN:-task/affinity,task/cgroup}
-TaskPlugin=${SLURM_TASK_PLUGIN:-task/affinity,task/cgroup}
-ProctrackType=${SLURM_PROCTRACK_TYPE:-proctrack/cgroup}
+# Docker 环境默认: task/affinity + proctrack/linuxproc (无 cgroup)
+# 物理机/VM: 通过环境变量设置 task/affinity,task/cgroup + proctrack/cgroup
+# 配置说明: 参见 src/slurm-master/config/README.md
+TaskPlugin=${SLURM_TASK_PLUGIN}
+ProctrackType=${SLURM_PROCTRACK_TYPE}
 # MPI配置: 使用pmi2（Ubuntu SLURM 21.08不包含pmix插件）
 # 可用的MPI类型: none, pmi2, cray_shasta
 MpiDefault=pmi2
-# Docker 环境建议禁用 JobContainerType
-JobContainerType=${SLURM_JOB_CONTAINER_TYPE:-job_container/tmpfs}
-PrologFlags=${SLURM_PROLOG_FLAGS:-Contain}
+# Docker 环境: 留空以禁用 JobContainerType（环境变量为空时此行会被删除）
+JobContainerType=${SLURM_JOB_CONTAINER_TYPE}
+# Docker 环境: 留空以禁用 PrologFlags（环境变量为空时此行会被删除）
+PrologFlags=${SLURM_PROLOG_FLAGS}
 
 # 资源限制配置
 MaxJobCount=${SLURM_MAX_JOB_COUNT}

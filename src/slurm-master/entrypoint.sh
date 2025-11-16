@@ -50,6 +50,13 @@ export SLURM_MAX_ARRAY_SIZE=${SLURM_MAX_ARRAY_SIZE:-1000}
 export SLURM_DEFAULT_TIME_LIMIT=${SLURM_DEFAULT_TIME_LIMIT:-01:00:00}
 export SLURM_MAX_TIME_LIMIT=${SLURM_MAX_TIME_LIMIT:-24:00:00}
 
+# Docker 环境 SLURM 配置默认值（无 cgroup 支持）
+# 这些值适用于容器环境，物理机环境应通过环境变量覆盖
+export SLURM_TASK_PLUGIN=${SLURM_TASK_PLUGIN:-task/affinity}
+export SLURM_PROCTRACK_TYPE=${SLURM_PROCTRACK_TYPE:-proctrack/linuxproc}
+export SLURM_JOB_CONTAINER_TYPE=${SLURM_JOB_CONTAINER_TYPE:-}
+export SLURM_PROLOG_FLAGS=${SLURM_PROLOG_FLAGS:-}
+
 detect_slurm_mode() {
     if [ -f /opt/slurm-installed ]; then
         SLURM_MODE="full"
@@ -232,15 +239,20 @@ generate_configs() {
         sed -i '/^PartitionName=.*Nodes= /d' /etc/slurm/slurm.conf
     fi
 
+    # 清理配置文件中的空值（避免无效配置）
+    log "INFO" "🔧 清理配置文件空值..."
+    sed -i '/^JobContainerType=$/d' /etc/slurm/slurm.conf
+    sed -i '/^PrologFlags=$/d' /etc/slurm/slurm.conf
+
     chown slurm:slurm /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/mpi.conf /etc/slurm/slurmdbd.conf
     chmod 644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/mpi.conf
     chmod 600 /etc/slurm/slurmdbd.conf
 
-    # Fix SLURM log directory permissions
-    log "INFO" "🔧 修复 SLURM 日志目录权限..."
-    mkdir -p /var/log/slurm
-    chown -R slurm:slurm /var/log/slurm
-    chmod 755 /var/log/slurm
+    # 创建必需的 SLURM 运行时目录
+    log "INFO" "🔧 创建 SLURM 运行时目录..."
+    mkdir -p /var/run/slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmdbd
+    chown -R slurm:slurm /var/run/slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmdbd
+    chmod 755 /var/run/slurm /var/log/slurm /var/spool/slurmctld /var/spool/slurmdbd
     # Remove any existing log files created by root and let slurm recreate them
     rm -f /var/log/slurm/*.log
 
