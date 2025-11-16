@@ -514,14 +514,14 @@ create_default_cgroup_conf() {
     
     # 为 Docker 环境创建空的 cgroup.conf (完全禁用 cgroup)
     if [ "$in_docker" = "yes" ]; then
-        cat > "${conf_dir}/cgroup.conf" <<'EOF'
-###
-# Slurm cgroup configuration (Docker container mode - disabled)
-# In Docker containers, resource management is handled by Docker itself
-# Cgroup plugins are not used to avoid initialization failures
-###
-EOF
-        log_info "✓ Created minimal cgroup.conf for Docker environment (cgroup disabled)"
+        # Docker 环境: 完全不创建 cgroup.conf 文件
+        # 即使是空文件也会触发 SLURM 尝试加载 cgroup 插件
+        log_info "✓ Skipping cgroup.conf creation for Docker environment (cgroup fully disabled)"
+        # 如果文件已存在，删除或重命名它
+        if [ -f "${conf_dir}/cgroup.conf" ]; then
+            mv "${conf_dir}/cgroup.conf" "${conf_dir}/cgroup.conf.disabled"
+            log_info "  Disabled existing cgroup.conf"
+        fi
     else
         # 完整的 cgroup 配置（物理机/VM）
         cat > "${conf_dir}/cgroup.conf" <<'EOF'
@@ -548,10 +548,11 @@ AllowedSwapSpace=0
 
 # Note: CgroupAutomount and TaskAffinity are deprecated in SLURM 25.x
 EOF
+        chmod 644 "${conf_dir}/cgroup.conf"
+        log_info "✓ Created cgroup.conf for physical machine/VM environment"
     fi
-
-    chmod 644 "${conf_dir}/cgroup.conf"
-    log_info "✓ Created cgroup.conf at ${conf_dir}/cgroup.conf"
+    
+    log_info "✓ cgroup configuration completed"
     
     # 创建 job_container.conf（如果使用 job_container/tmpfs）
     cat > "${conf_dir}/job_container.conf" <<'EOF'
