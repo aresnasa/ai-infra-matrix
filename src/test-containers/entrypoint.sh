@@ -23,7 +23,32 @@ else
 fi
 
 # 确保SSH目录存在
-mkdir -p /var/run/sshd /run/sshd
+mkdir -p /var/run/sshd /run/sshd /root/.ssh
+
+# 设置 SSH 密钥（用于访问 slurm-master）
+if [ -f /srv/shared/ssh-key/id_rsa ]; then
+    cp /srv/shared/ssh-key/id_rsa /root/.ssh/id_rsa
+    chmod 600 /root/.ssh/id_rsa
+    echo "✓ SSH私钥已配置"
+fi
+
+if [ -f /srv/shared/ssh-key/id_rsa.pub ]; then
+    cp /srv/shared/ssh-key/id_rsa.pub /root/.ssh/id_rsa.pub
+    chmod 644 /root/.ssh/id_rsa.pub
+    
+    # 添加到 authorized_keys 以允许从 slurm-master 访问
+    cat /srv/shared/ssh-key/id_rsa.pub >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    echo "✓ SSH公钥已配置"
+fi
+
+# 配置SSH客户端（禁用严格主机密钥检查，便于测试）
+cat > /root/.ssh/config <<EOF
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile=/dev/null
+EOF
+chmod 600 /root/.ssh/config
 
 # 显示容器信息
 echo "=========================================="

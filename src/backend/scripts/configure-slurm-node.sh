@@ -204,6 +204,42 @@ start_slurmd() {
     fi
 }
 
+# 恢复节点状态到 IDLE
+resume_node_state() {
+    log_info "Resuming node state on SLURM master..."
+    
+    # 获取本机主机名
+    local hostname=$(hostname)
+    log_info "  Node hostname: $hostname"
+    
+    # 等待节点注册到 slurmctld
+    log_info "  Waiting for node registration..."
+    sleep 5
+    
+    # 尝试通过 SSH 在 master 上执行 scontrol 命令
+    # 使用环境变量中的密码（如果提供）
+    local master_password="${SLURM_MASTER_SSH_PASSWORD:-}"
+    
+    if [ -n "$master_password" ]; then
+        # 使用 sshpass 连接到 master
+        if command -v sshpass >/dev/null 2>&1; then
+            log_info "  Attempting to resume node state via SSH..."
+            if sshpass -p "$master_password" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+                root@"$MASTER_HOST" "scontrol update NodeName=$hostname State=RESUME" 2>/dev/null; then
+                log_info "✓ Node state resumed to IDLE on master"
+            else
+                log_warn "Failed to resume node state via SSH (master may handle this automatically)"
+            fi
+        else
+            log_warn "sshpass not available, skipping automatic state resume"
+            log_info "  Please manually run on master: scontrol update NodeName=$hostname State=RESUME"
+        fi
+    else
+        log_warn "SLURM_MASTER_SSH_PASSWORD not set, skipping automatic state resume"
+        log_info "  Please manually run on master: scontrol update NodeName=$hostname State=RESUME"
+    fi
+}
+
 # 主函数
 main() {
     log_info "=========================================="
@@ -224,6 +260,9 @@ main() {
     start_munge
     start_slurmd
     
+    # 恢复节点状态
+    resume_node_state
+    
     log_info ""
     log_info "=========================================="
     log_info "✓ SLURM node configuration completed successfully"
@@ -232,9 +271,9 @@ main() {
     log_info "Node is now ready to accept jobs from: $MASTER_HOST"
     log_info ""
     log_info "Next steps:"
-    log_info "  1. Wait a few seconds for node registration"
-    log_info "  2. On SLURM master, run: scontrol update NodeName=<hostname> State=RESUME"
-    log_info "  3. Verify with: sinfo"
+    log_info "  1. Verify node status: sinfo (on master)"
+    log_info "  2. If node is still DOWN, manually resume: scontrol update NodeName=$(hostname) State=RESUME"
+    log_info "  3. Test job submission: srun -N1 -w $(hostname) hostname"
     log_info ""
 }
 

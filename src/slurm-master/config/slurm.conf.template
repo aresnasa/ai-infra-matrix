@@ -55,7 +55,9 @@ PluginDir=${SLURM_PLUGIN_DIR}
 # 任务与MPI配置
 TaskPlugin=task/affinity,task/cgroup
 ProctrackType=proctrack/cgroup
-MpiDefault=pmix
+# MPI配置: 使用pmi2（Ubuntu SLURM 21.08不包含pmix插件）
+# 可用的MPI类型: none, pmi2, cray_shasta
+MpiDefault=pmi2
 JobContainerType=job_container/tmpfs
 PrologFlags=Contain
 

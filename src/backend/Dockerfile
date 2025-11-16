@@ -153,8 +153,8 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test-k8s .
 
 # Copy installation scripts for remote execution
-COPY scripts/ /root/scripts/
-RUN find /root/scripts -type f -name "*.sh" -exec chmod +x {} \;
+COPY scripts/ /app/scripts/
+RUN find /app/scripts -type f -name "*.sh" -exec chmod +x {} \;
 
 # Copy SLURM configuration templates for runtime use
 COPY config/slurm /app/config/slurm
@@ -188,9 +188,9 @@ RUN echo 'Host *' > ~/.ssh/config && \
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \
     echo 'set -e' >> /wait-for-db.sh && \
     echo '# Sync installation scripts to AppHub' >> /wait-for-db.sh && \
-    echo 'if [ -f /root/scripts/sync-scripts-to-apphub.sh ]; then' >> /wait-for-db.sh && \
+    echo 'if [ -f /app/scripts/sync-scripts-to-apphub.sh ]; then' >> /wait-for-db.sh && \
     echo '  echo ">>> Syncing scripts to AppHub..."' >> /wait-for-db.sh && \
-    echo '  /root/scripts/sync-scripts-to-apphub.sh || echo "⚠️  Script sync skipped"' >> /wait-for-db.sh && \
+    echo '  /app/scripts/sync-scripts-to-apphub.sh || echo "⚠️  Script sync skipped"' >> /wait-for-db.sh && \
     echo 'fi' >> /wait-for-db.sh && \
     echo '# Install SLURM client if not already installed' >> /wait-for-db.sh && \
     echo 'if [ -f /install-slurm-runtime.sh ] && ! command -v sinfo >/dev/null 2>&1; then' >> /wait-for-db.sh && \

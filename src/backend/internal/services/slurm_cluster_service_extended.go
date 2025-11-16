@@ -269,7 +269,7 @@ func (s *SlurmClusterService) installSaltMinionPackage(client *ssh.Client, osInf
 	appHubURL := getAppHubBaseURL()
 
 	// 使用统一的安装脚本（支持所有操作系统）
-	scriptPath := "/root/scripts/salt-minion/01-install-salt-minion.sh"
+	scriptPath := "/app/scripts/salt-minion/01-install-salt-minion.sh"
 
 	// 复制脚本到远程主机
 	if err := s.copyScriptToRemote(client, scriptPath, "/tmp/install-salt-minion.sh"); err != nil {

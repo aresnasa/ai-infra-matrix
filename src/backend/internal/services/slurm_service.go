@@ -3284,7 +3284,17 @@ func (s *SlurmService) InstallSlurmNode(ctx context.Context, req InstallSlurmNod
 		}, err
 	}
 
-	// 3. 根据OS类型安装SLURM（进度: 25-65%）
+	// 2.5. 安装 Salt-Minion（进度: 25-40%）
+	fmt.Fprintf(logWriter, "[INFO] [35%%] 安装 Salt-Minion...\n")
+	updateTaskProgress(35, "running", "")
+
+	if err := s.installSaltMinionOnNode(ctx, req, logWriter); err != nil {
+		// Salt-Minion 安装失败不阻塞 SLURM 安装，只记录警告
+		log.Printf("[WARN] 安装 Salt-Minion 失败: %v，继续 SLURM 安装", err)
+		fmt.Fprintf(logWriter, "[WARN] Salt-Minion 安装失败: %v，继续 SLURM 安装...\n", err)
+	}
+
+	// 3. 根据OS类型安装SLURM（进度: 40-65%）
 	fmt.Fprintf(logWriter, "[INFO] [50%%] 安装SLURM包...\n")
 	updateTaskProgress(50, "running", "")
 
@@ -3439,12 +3449,91 @@ func (s *SlurmService) deploySSHKeyToNode(ctx context.Context, req InstallSlurmN
 	return nil
 }
 
+// installSaltMinionOnNode 在节点上安装 Salt-Minion（通过 SSH 执行脚本）
+func (s *SlurmService) installSaltMinionOnNode(ctx context.Context, req InstallSlurmNodeRequest, logWriter io.Writer) error {
+	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装 Salt-Minion (OS: %s)\n", req.SSHHost, req.OSType)
+
+	// 获取 Salt Master 配置
+	saltMasterHost := os.Getenv("SALT_MASTER_HOST")
+	if saltMasterHost == "" {
+		saltMasterHost = "saltstack"
+	}
+
+	// 确定使用哪个安装脚本
+	var scriptPath string
+	if req.OSType == "ubuntu" || req.OSType == "debian" {
+		scriptPath = "/app/scripts/install-salt-minion-deb.sh"
+	} else if req.OSType == "rocky" || req.OSType == "centos" || req.OSType == "rhel" {
+		scriptPath = "/app/scripts/install-salt-minion-rpm.sh"
+	} else {
+		return fmt.Errorf("不支持的操作系统类型: %s", req.OSType)
+	}
+
+	// 读取安装脚本
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("读取 Salt-Minion 安装脚本失败: %v", err)
+	}
+
+	// 准备远程执行脚本
+	sshTarget := fmt.Sprintf("%s@%s", req.SSHUser, req.SSHHost)
+	sshPort := fmt.Sprintf("%d", req.SSHPort)
+	tmpScriptPath := "/tmp/install-salt-minion.sh"
+
+	// 步骤1: 上传脚本到节点
+	fmt.Fprintf(logWriter, "[INFO] 上传 Salt-Minion 安装脚本...\n")
+	uploadCmd := fmt.Sprintf("cat > %s << 'EOF_SCRIPT'\n%s\nEOF_SCRIPT\nchmod +x %s",
+		tmpScriptPath, string(scriptContent), tmpScriptPath)
+
+	cmd := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		uploadCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("上传 Salt-Minion 脚本失败: %v", err)
+	}
+
+	// 步骤2: 执行安装脚本
+	fmt.Fprintf(logWriter, "[INFO] 执行 Salt-Minion 安装脚本...\n")
+	executeCmd := fmt.Sprintf("SALT_MASTER_HOST=%s %s", saltMasterHost, tmpScriptPath)
+	cmd = exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		executeCmd)
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("执行 Salt-Minion 安装脚本失败: %v", err)
+	}
+
+	// 步骤3: 清理临时脚本
+	cleanCmd := fmt.Sprintf("rm -f %s", tmpScriptPath)
+	cmd = exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-p", sshPort,
+		sshTarget,
+		cleanCmd)
+	cmd.Run() // 忽略清理错误
+
+	fmt.Fprintf(logWriter, "[INFO] ✓ Salt-Minion 安装成功\n")
+	return nil
+}
+
 // installSlurmPackages 安装SLURM包（通过SSH执行）
 func (s *SlurmService) installSlurmPackages(ctx context.Context, req InstallSlurmNodeRequest, logWriter io.Writer) error {
 	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装SLURM包 (OS: %s)\n", req.SSHHost, req.OSType)
 
 	// 读取安装脚本
-	scriptPath := "/root/scripts/install-slurm-node.sh"
+	scriptPath := "/app/scripts/install-slurm-node.sh"
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return fmt.Errorf("读取安装脚本失败 %s: %w", scriptPath, err)
@@ -3585,8 +3674,8 @@ func (s *SlurmService) configureSlurmNode(ctx context.Context, req InstallSlurmN
 		scpCmd.Stdout = logWriter
 		scpCmd.Stderr = logWriter
 		if err := scpCmd.Run(); err == nil {
-			// 设置权限：munge.key必须属于root且权限为400
-			chownCmd := "chown root:root /etc/munge/munge.key && chmod 400 /etc/munge/munge.key"
+			// 设置权限：munge.key必须属于munge用户且权限为400
+			chownCmd := "chown munge:munge /etc/munge/munge.key && chmod 400 /etc/munge/munge.key"
 			cmd := exec.CommandContext(ctx, "ssh",
 				"-o", "StrictHostKeyChecking=no",
 				"-o", "UserKnownHostsFile=/dev/null",

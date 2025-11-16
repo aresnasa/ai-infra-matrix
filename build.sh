@@ -5890,6 +5890,11 @@ build_service() {
         print_info "  → jupyterhub构建前渲染配置模板..."
         render_jupyterhub_templates
         build_context="$SCRIPT_DIR/$service_path"
+    elif [[ "$service" == "test-containers" ]]; then
+        # test-containers 使用项目根目录作为构建上下文
+        # 原因：需要访问 ssh-key/ 和 src/test-containers/ 两个目录
+        print_info "  → test-containers 使用项目根目录作为构建上下文..."
+        build_context="$SCRIPT_DIR"
     else
         build_context="$SCRIPT_DIR/$service_path"
     fi

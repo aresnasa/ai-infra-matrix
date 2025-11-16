@@ -4255,3 +4255,32 @@ sinfo: fatal: Unable to process configuration file报错，需要在扩容时一
 sinfo: error: PluginDir: /usr/lib/slurm: No such file or directory
 sinfo: error: Bad value "/usr/lib/slurm" for PluginDir
 sinfo: fatal: Unable to process configuration file
+
+234. 调整slurm-master的dockerfile安装slurm和其它plugin都从apphub安装，必须解决apphub和slurm-master互通问题，检查所有项目dockerfile
+
+235. 现在调整slurm-master和slurm安装部署、启动脚本，创建的slurm用户和munge用户需要统一用一个相通的id和group，检查src下的相关配置
+
+236. 现在读取slurm-master和backend中的初始化脚本，交叉校验是否完全修复了刚才slurm的初始化问题，保证在添加节点到slurm集群时能够正确的对外服务，包括cgroupv2相关的so文件还有其它的slurm的操作均符合预期（添加节点后自动安装slurm、其它插件、cgroupv2.so，以及其它用户、组创建，文件夹创建，然后修改slurm的节点状态为idle）
+
+237. 不要使用docker，可以直接使用ssh密钥复制配置，这里已经创建了互信，调整扩容 SLURM 节点，节点配置的slurm的安装函数，需要正确的在test-rocky02
+test-ssh02
+test-rocky03
+test-ssh03
+test-rocky01
+test-ssh01容器内要正确的安装slurm和munge正确安装和配置，调整下install-slurm-node.sh和golang的代码，这里添加成功节点后未能正确的安装和启动slurmd和munge
+
+238. 这里不要用shared_data，而是在dockerfile中增加COPY ssh密钥的步骤，然后重新构建测试rocky和ubuntu镜像
+
+239. Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory
+2025-11-16 11:26:52
+Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory
+2025-11-16 11:26:52
+Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory
+2025-11-16 11:26:52
+Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory
+2025-11-16 11:26:52
+Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory
+2025-11-16 11:26:52
+Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory，这里需要修复，默认的rocky和ubuntu不会安装minion的服务的，需要在添加扩容slurm节点前安装，这里检查一下安装逻辑
+
+240. 调整build.sh build-all函数中涉及到test-containers的配置./src/test-containers/Dockerfile这里存在路径不一致的差异需要修复，同时需要检查build-all函数中第一次部署会添加初始数据的问题（期望是不需要初始化的slurm节点数据）

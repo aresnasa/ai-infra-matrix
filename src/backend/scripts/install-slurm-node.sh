@@ -18,7 +18,7 @@
 set -euo pipefail
 
 # 配置变量
-APPHUB_URL="${1:-http://ai-infra-apphub:8080}"
+APPHUB_URL="${1:-http://ai-infra-apphub:80}"
 NODE_TYPE="${2:-compute}"
 SLURM_VERSION="${SLURM_VERSION:-}"
 
@@ -59,6 +59,36 @@ detect_os() {
     else
         log_error "Cannot detect OS type"
         exit 1
+    fi
+}
+
+# 安装基础工具
+install_basic_tools() {
+    log_info "Installing basic tools..."
+    
+    if [ "$OS_TYPE" = "rpm" ]; then
+        # RPM系统：安装 sshpass 等工具
+        if ! command -v sshpass &>/dev/null; then
+            # EPEL 仓库可能需要先启用
+            if command -v dnf &>/dev/null; then
+                dnf install -y sshpass 2>/dev/null || log_warn "Failed to install sshpass"
+            elif command -v yum &>/dev/null; then
+                yum install -y sshpass 2>/dev/null || log_warn "Failed to install sshpass"
+            fi
+        fi
+    elif [ "$OS_TYPE" = "deb" ]; then
+        # DEB系统：安装 sshpass
+        export DEBIAN_FRONTEND=noninteractive
+        if ! command -v sshpass &>/dev/null; then
+            apt-get update -qq
+            apt-get install -y sshpass 2>/dev/null || log_warn "Failed to install sshpass"
+        fi
+    fi
+    
+    if command -v sshpass &>/dev/null; then
+        log_info "✓ sshpass installed"
+    else
+        log_warn "sshpass not available (auto node resume may not work)"
     fi
 }
 
@@ -137,6 +167,10 @@ EOF
 install_munge() {
     log_info "Installing munge authentication service..."
     
+    # 统一使用固定的 munge UID/GID
+    MUNGE_UID=998
+    MUNGE_GID=998
+    
     if [ "$OS_TYPE" = "rpm" ]; then
         # RPM-based systems
         if $PKG_MANAGER install -y munge munge-libs 2>/dev/null; then
@@ -160,25 +194,46 @@ install_munge() {
         fi
     fi
     
-    # 确保 munge 用户和组存在
+    # 确保 munge 用户和组存在，使用固定的 UID/GID
     if ! getent group munge &>/dev/null; then
-        groupadd -r munge || log_warn "Failed to create munge group"
+        groupadd -g $MUNGE_GID munge || log_warn "Failed to create munge group"
+        log_info "✓ Created munge group (GID: $MUNGE_GID)"
+    else
+        EXISTING_MUNGE_GID=$(getent group munge | cut -d: -f3)
+        if [ "$EXISTING_MUNGE_GID" != "$MUNGE_GID" ]; then
+            log_warn "munge group exists with different GID: $EXISTING_MUNGE_GID, changing to $MUNGE_GID"
+            groupmod -g $MUNGE_GID munge
+        else
+            log_info "munge group already exists (GID: $MUNGE_GID)"
+        fi
     fi
     
     if ! getent passwd munge &>/dev/null; then
-        useradd -r -g munge -d /var/lib/munge -s /sbin/nologin munge || log_warn "Failed to create munge user"
+        useradd -u $MUNGE_UID -g munge -d /var/lib/munge -s /sbin/nologin munge || log_warn "Failed to create munge user"
+        log_info "✓ Created munge user (UID: $MUNGE_UID)"
+    else
+        EXISTING_MUNGE_UID=$(id -u munge)
+        if [ "$EXISTING_MUNGE_UID" != "$MUNGE_UID" ]; then
+            log_warn "munge user exists with different UID: $EXISTING_MUNGE_UID, changing to $MUNGE_UID"
+            usermod -u $MUNGE_UID munge
+            # 更新文件所有权
+            find /etc/munge /var/lib/munge /var/log/munge /run/munge -user $EXISTING_MUNGE_UID -exec chown munge:munge {} \; 2>/dev/null || true
+        else
+            log_info "munge user already exists (UID: $MUNGE_UID)"
+        fi
     fi
     
     # 创建必要的目录并设置正确的权限
     mkdir -p /etc/munge /var/lib/munge /var/log/munge /run/munge
     
     # 关键：正确的权限配置
-    # /var/log/munge 和 /var/lib/munge 需要 root 所有（munged 以 root 启动然后降权）
-    # /etc/munge 和 /run/munge 需要 munge 所有
-    chown -R root:root /var/log/munge /var/lib/munge
-    chown -R munge:munge /etc/munge /run/munge
-    chmod 700 /etc/munge /var/lib/munge /var/log/munge
-    chmod 755 /run/munge
+    # munge 需要对 /var/log/munge 有写权限才能创建日志文件
+    # /var/lib/munge 需要 munge 所有（存储 socket 文件）
+    # /etc/munge 需要 munge 所有（读取 munge.key）
+    # /run/munge 需要 munge 所有（运行时文件）
+    chown -R munge:munge /etc/munge /var/lib/munge /var/log/munge /run/munge
+    chmod 700 /etc/munge /var/lib/munge
+    chmod 755 /var/log/munge /run/munge
     
     log_info "✓ Munge directories and permissions configured"
 }
@@ -323,8 +378,11 @@ ensure_plugin_dir() {
         fi
     done
 
+    # 确保 canonical 目录存在
+    mkdir -p "$canonical"
+
     if [ -z "$resolved" ]; then
-        log_warn "无法检测到 SLURM 插件目录，保留默认值"
+        log_warn "无法检测到 SLURM 插件目录，但已创建 $canonical 目录"
         return 0
     fi
 
@@ -334,12 +392,16 @@ ensure_plugin_dir() {
     fi
 
     if [ -z "$(ls -A "$canonical" 2>/dev/null)" ]; then
-        rm -rf "$canonical"
-        mkdir -p "$canonical"
         if cp -a "$resolved/." "$canonical/"; then
             log_info "📁 Copied plugins to $canonical from $resolved"
         else
-            log_warn "⚠️ 无法复制插件到 $canonical，继续使用真实路径 $resolved"
+            log_warn "⚠️ 无法复制插件到 $canonical，但目录已创建"
+            # 如果无法复制，至少创建一个符号链接
+            if [ -n "$resolved" ] && [ "$resolved" != "$canonical" ]; then
+                rm -rf "$canonical"
+                ln -sf "$resolved" "$canonical"
+                log_info "Created symlink: $canonical -> $resolved"
+            fi
         fi
     else
         log_info "Canonical plugin directory already populated"
@@ -350,9 +412,9 @@ ensure_plugin_dir() {
 create_slurm_user() {
     log_info "Creating SLURM user and group..."
     
-    # 统一使用 UID/GID 1999（避免与其他节点冲突）
-    SLURM_UID=1999
-    SLURM_GID=1999
+    # 统一使用 UID/GID 999（与 slurm-master 保持一致）
+    SLURM_UID=999
+    SLURM_GID=999
     
     if ! getent group slurm &>/dev/null; then
         groupadd -g $SLURM_GID slurm
@@ -395,9 +457,11 @@ create_directories() {
         log_info "Created /usr/etc/slurm (Rocky RPM location)"
     fi
     
-    # 创建标准目录
+    # 创建标准目录（包括 PluginDir 和 slurmd socket 目录）
     mkdir -p /etc/slurm \
+             /usr/lib/slurm \
              /var/spool/slurm/d \
+             /var/spool/slurm/slurmd \
              /var/spool/slurm/ctld \
              /var/log/slurm \
              /run/slurm
@@ -405,8 +469,11 @@ create_directories() {
     # 设置权限
     chown -R slurm:slurm /var/spool/slurm /var/log/slurm /run/slurm
     chmod 755 /etc/slurm
+    chmod 755 /usr/lib/slurm
     chmod 755 /var/spool/slurm
+    chmod 755 /var/spool/slurm/slurmd
     chmod 755 /var/log/slurm
+    chmod 755 /run/slurm
     
     # Rocky: 如果 /usr/etc/slurm 存在且 /etc/slurm 不是符号链接，创建链接
     if [ "$OS_TYPE" = "rpm" ] && [ -d /usr/etc/slurm ] && [ ! -L /etc/slurm ]; then
@@ -426,18 +493,77 @@ create_directories() {
     log_info "✓ Directory structure created"
 }
 
+# 创建默认的 cgroup.conf
+create_default_cgroup_conf() {
+    log_info "Creating default cgroup.conf for cgroup v2..."
+    
+    # 确定配置文件位置
+    local conf_dir="/etc/slurm"
+    if [ "$OS_TYPE" = "rpm" ] && [ -L /etc/slurm ]; then
+        # Rocky: 使用实际目录
+        conf_dir="/usr/etc/slurm"
+    fi
+    
+    # 创建 cgroup.conf
+    cat > "${conf_dir}/cgroup.conf" <<'EOF'
+###
+# Slurm cgroup configuration for cgroup v2
+# Compatible with SLURM 25.05.4
+###
+
+# Cgroup plugin (must be first)
+CgroupPlugin=cgroup/v2
+
+# Mount point for cgroup v2
+CgroupMountpoint=/sys/fs/cgroup
+
+# Resource constraints
+ConstrainCores=yes
+ConstrainRAMSpace=yes
+ConstrainSwapSpace=yes
+ConstrainDevices=yes
+
+# Memory settings (percentage)
+AllowedRAMSpace=100
+AllowedSwapSpace=0
+
+# Note: CgroupAutomount and TaskAffinity are deprecated in SLURM 25.x
+EOF
+
+    chmod 644 "${conf_dir}/cgroup.conf"
+    log_info "✓ Created cgroup.conf at ${conf_dir}/cgroup.conf"
+    
+    # 创建 job_container.conf（如果使用 job_container/tmpfs）
+    cat > "${conf_dir}/job_container.conf" <<'EOF'
+###
+# Slurm job_container configuration for tmpfs plugin
+###
+
+AutoBasePath=true
+BasePath=/tmp/slurm/job_container
+EOF
+
+    chmod 644 "${conf_dir}/job_container.conf"
+    log_info "✓ Created job_container.conf at ${conf_dir}/job_container.conf"
+}
+
 # 配置 systemd 服务
 configure_systemd() {
-    log_info "Configuring systemd service for slurmd..."
+    log_info "Configuring systemd services..."
     
     # 重新加载 systemd
     systemctl daemon-reload
     
-    # 启用但不启动服务（需要配置文件）
+    # 启用 munge 服务
+    systemctl enable munge 2>/dev/null || log_warn "Failed to enable munge service"
+    
+    # 启用但不启动 slurmd 服务（需要配置文件）
     systemctl enable slurmd || log_warn "Failed to enable slurmd service"
     
-    log_info "✓ systemd configured (service enabled but not started)"
-    log_info "Note: Start service after deploying slurm.conf with: systemctl start slurmd"
+    log_info "✓ systemd configured (services enabled but not started)"
+    log_info "Note: Start services after deploying configs:"
+    log_info "      - systemctl start munge"
+    log_info "      - systemctl start slurmd"
 }
 
 # 直接启动 slurmd（不使用 systemd，避免超时问题）
@@ -474,6 +600,9 @@ main() {
     # 检测操作系统
     detect_os
     
+    # 安装基础工具
+    install_basic_tools
+    
     # 配置仓库
     configure_slurm_repo
     
@@ -483,6 +612,7 @@ main() {
     install_slurm_packages
     ensure_plugin_dir
     create_directories
+    create_default_cgroup_conf
     configure_systemd
     
     log_info ""

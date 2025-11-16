@@ -588,55 +588,180 @@ func (s *SaltStackService) CheckPackageInstalled(ctx context.Context, minionID, 
 	return false, nil
 }
 
-// InstallSlurmNode 在节点上安装 SLURM
+// InstallSlurmNode 在节点上安装 SLURM（通过直接执行脚本）
 func (s *SaltStackService) InstallSlurmNode(ctx context.Context, minionID string, cluster interface{}) error {
-	// 使用 state.apply 执行 SLURM 安装 state
+	log.Printf("[DEBUG] InstallSlurmNode: 开始在节点 %s 上安装 SLURM", minionID)
+
+	// 获取 AppHub URL（从环境变量或使用默认值）
+	apphubURL := os.Getenv("APPHUB_URL")
+	if apphubURL == "" {
+		apphubURL = "http://ai-infra-apphub:8080"
+	}
+
+	// 读取安装脚本内容
+	scriptPath := "/app/scripts/install-slurm-node.sh"
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("读取安装脚本失败: %v", err)
+	}
+
+	// 通过 cmd.run 执行脚本（使用 stdin 传递脚本内容）
+	script := fmt.Sprintf("cat > /tmp/install-slurm-node.sh << 'EOFSCRIPT'\n%s\nEOFSCRIPT\nchmod +x /tmp/install-slurm-node.sh && /tmp/install-slurm-node.sh %s compute",
+		string(scriptContent), apphubURL)
+
 	payload := map[string]interface{}{
-		"fun":    "state.apply",
-		"tgt":    minionID,
-		"arg":    []string{"slurm.node"},
+		"fun": "cmd.run",
+		"tgt": minionID,
+		"arg": []string{script},
+		"kwarg": map[string]interface{}{
+			"shell":        "/bin/bash",
+			"python_shell": true,
+			"timeout":      300, // 5分钟超时
+		},
 		"client": "local",
 	}
 
-	_, err := s.executeSaltCommand(ctx, payload)
+	result, err := s.executeSaltCommand(ctx, payload)
 	if err != nil {
-		return fmt.Errorf("安装 SLURM 失败: %v", err)
+		return fmt.Errorf("执行安装脚本失败: %v", err)
 	}
 
+	log.Printf("[DEBUG] InstallSlurmNode: 安装脚本执行完成，结果: %+v", result)
 	return nil
 }
 
-// ConfigureSlurmNode 配置 SLURM 节点
+// ConfigureSlurmNode 配置 SLURM 节点（部署配置文件并启动服务）
 func (s *SaltStackService) ConfigureSlurmNode(ctx context.Context, minionID string, cluster interface{}) error {
-	// 配置 slurm.conf 和 munge.key
-	payload := map[string]interface{}{
-		"fun":    "state.apply",
+	log.Printf("[DEBUG] ConfigureSlurmNode: 开始配置节点 %s", minionID)
+
+	// 读取配置脚本
+	scriptPath := "/app/scripts/configure-slurm-node.sh"
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("读取配置脚本失败: %v", err)
+	}
+
+	// 从 slurm-master 通过 SSH 获取 munge.key
+	masterHost := os.Getenv("SLURM_CONTROLLER_HOST")
+	if masterHost == "" {
+		masterHost = "ai-infra-slurm-master"
+	}
+
+	// 使用 SSH 读取 munge.key（使用 SSH 密钥认证）
+	getMungeCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -i /root/.ssh/id_rsa root@%s 'cat /etc/munge/munge.key | base64'", masterHost)
+	mungeKeyPayload := map[string]interface{}{
+		"fun":    "cmd.run",
 		"tgt":    minionID,
-		"arg":    []string{"slurm.config"},
+		"arg":    []string{getMungeCmd},
+		"kwarg":  map[string]interface{}{"shell": "/bin/bash"},
+		"client": "local",
+	}
+	mungeResult, err := s.executeSaltCommand(ctx, mungeKeyPayload)
+	if err != nil {
+		return fmt.Errorf("从 master 获取 munge.key 失败: %v", err)
+	}
+	mungeKeyB64 := s.extractCommandResult(mungeResult, minionID)
+	if mungeKeyB64 == "" {
+		return fmt.Errorf("无法提取 munge.key 内容")
+	}
+
+	// 使用 SSH 读取 slurm.conf
+	getSlurmConfCmd := fmt.Sprintf("ssh -o StrictHostKeyChecking=no -i /root/.ssh/id_rsa root@%s 'cat /etc/slurm/slurm.conf | base64'", masterHost)
+	slurmConfPayload := map[string]interface{}{
+		"fun":    "cmd.run",
+		"tgt":    minionID,
+		"arg":    []string{getSlurmConfCmd},
+		"kwarg":  map[string]interface{}{"shell": "/bin/bash"},
+		"client": "local",
+	}
+	slurmConfResult, err := s.executeSaltCommand(ctx, slurmConfPayload)
+	if err != nil {
+		return fmt.Errorf("从 master 获取 slurm.conf 失败: %v", err)
+	}
+	slurmConfB64 := s.extractCommandResult(slurmConfResult, minionID)
+	if slurmConfB64 == "" {
+		return fmt.Errorf("无法提取 slurm.conf 内容")
+	}
+
+	// 执行配置脚本
+	script := fmt.Sprintf("cat > /tmp/configure-slurm-node.sh << 'EOFSCRIPT'\n%s\nEOFSCRIPT\nchmod +x /tmp/configure-slurm-node.sh && /tmp/configure-slurm-node.sh %s '%s' '%s'",
+		string(scriptContent), masterHost, mungeKeyB64, slurmConfB64)
+
+	payload := map[string]interface{}{
+		"fun": "cmd.run",
+		"tgt": minionID,
+		"arg": []string{script},
+		"kwarg": map[string]interface{}{
+			"shell":        "/bin/bash",
+			"python_shell": true,
+			"timeout":      120,
+		},
 		"client": "local",
 	}
 
-	_, err := s.executeSaltCommand(ctx, payload)
+	result, err := s.executeSaltCommand(ctx, payload)
 	if err != nil {
-		return fmt.Errorf("配置 SLURM 失败: %v", err)
+		return fmt.Errorf("执行配置脚本失败: %v", err)
 	}
 
+	log.Printf("[DEBUG] ConfigureSlurmNode: 配置脚本执行完成，结果: %+v", result)
 	return nil
 }
 
-// StartSlurmService 启动 SLURM 服务
+// extractCommandResult 从 Salt 命令结果中提取输出
+func (s *SaltStackService) extractCommandResult(result interface{}, minionID string) string {
+	if result == nil {
+		return ""
+	}
+
+	// Salt API 返回格式: {"return": [{"minion-id": "output"}]}
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	returnData, ok := resultMap["return"]
+	if !ok {
+		return ""
+	}
+
+	returnArray, ok := returnData.([]interface{})
+	if !ok || len(returnArray) == 0 {
+		return ""
+	}
+
+	firstReturn, ok := returnArray[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	output, ok := firstReturn[minionID].(string)
+	if !ok {
+		return ""
+	}
+
+	// 移除前后空白字符
+	return strings.TrimSpace(output)
+}
+
+// StartSlurmService 启动 SLURM 服务（已集成到 ConfigureSlurmNode 中）
 func (s *SaltStackService) StartSlurmService(ctx context.Context, minionID string) error {
+	log.Printf("[DEBUG] StartSlurmService: 服务已在 ConfigureSlurmNode 中启动，节点: %s", minionID)
+	// 服务已经在 configure-slurm-node.sh 中启动
+	// 这里只是验证服务状态
+
 	payload := map[string]interface{}{
-		"fun":    "service.start",
+		"fun":    "cmd.run",
 		"tgt":    minionID,
-		"arg":    []string{"slurmd"},
+		"arg":    []string{"pgrep -x slurmd && echo 'running' || echo 'stopped'"},
 		"client": "local",
 	}
 
-	_, err := s.executeSaltCommand(ctx, payload)
+	result, err := s.executeSaltCommand(ctx, payload)
 	if err != nil {
-		return fmt.Errorf("启动 slurmd 服务失败: %v", err)
+		return fmt.Errorf("检查 slurmd 状态失败: %v", err)
 	}
 
+	log.Printf("[DEBUG] StartSlurmService: slurmd 状态检查结果: %+v", result)
 	return nil
 }

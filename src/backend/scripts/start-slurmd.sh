@@ -8,46 +8,80 @@ echo "[INFO] 正在启动 slurmd 服务..."
 
 prepare_directories() {
     echo "[INFO] 创建必要的目录..."
-    mkdir -p /etc/munge /var/log/munge /var/run/munge /run/munge
+    mkdir -p /etc/munge /var/lib/munge /var/log/munge /run/munge
     mkdir -p /var/log/slurm /var/run/slurm /var/spool/slurm/slurmd
 
-    # munge要求：配置目录和日志归root，运行时socket目录归munge
-    chown root:root /etc/munge
-    chmod 700 /etc/munge
+    # munge 权限配置：munge 用户需要对所有目录有写权限
+    # /etc/munge - munge.key 所在目录
+    # /var/lib/munge - munge socket 文件
+    # /var/log/munge - munge 日志文件
+    # /run/munge - munge 运行时文件
+    chown -R munge:munge /etc/munge /var/lib/munge /var/log/munge /run/munge
+    chmod 700 /etc/munge /var/lib/munge
+    chmod 755 /var/log/munge /run/munge
+    
+    # munge.key 需要严格权限
     if [ -f /etc/munge/munge.key ]; then
-        chown root:root /etc/munge/munge.key
+        chown munge:munge /etc/munge/munge.key
         chmod 400 /etc/munge/munge.key
     fi
-    chown -R root:root /var/log/munge
-    chown -R munge:munge /var/run/munge /run/munge
-    chmod 755 /var/log/munge /var/run/munge /run/munge
-    chown -R slurm:slurm /var/run/slurm /var/spool/slurm
-    chmod 755 /var/log/slurm /var/run/slurm /var/spool/slurm
+    
+    # slurm 目录权限
+    chown -R slurm:slurm /var/run/slurm /var/spool/slurm /var/log/slurm
+    chmod 755 /var/run/slurm /var/spool/slurm /var/spool/slurm/slurmd /var/log/slurm
 }
 
 prepare_directories
 
 # 1. 启动 munge 服务（认证）
 echo "[INFO] 启动 munge 服务..."
+
+# 确保 munge.key 存在
+if [ ! -f /etc/munge/munge.key ]; then
+    echo "[ERROR] munge.key 不存在，无法启动 munge"
+    exit 1
+fi
+
+# 先停止已有的 munge 进程
+pkill -9 munged 2>/dev/null || true
+sleep 1
+
+# 尝试使用 systemctl 启动
 if command -v systemctl >/dev/null 2>&1; then
     systemctl enable munge 2>/dev/null || true
-    systemctl start munge 2>/dev/null || true
+    systemctl start munge 2>/dev/null
+    sleep 2
+    
+    if systemctl is-active munge >/dev/null 2>&1; then
+        echo "[SUCCESS] munge 通过 systemctl 启动成功"
+    else
+        echo "[WARN] systemctl 启动 munge 失败，尝试直接启动..."
+        # 直接启动 munged
+        /usr/sbin/munged || true
+        sleep 2
+    fi
+else
+    # 没有 systemctl，直接启动
+    /usr/sbin/munged || true
+    sleep 2
 fi
-
-# 确保 munge 运行
-if ! pgrep -x munged >/dev/null; then
-    # /run 可能在服务启动过程中被清理，再次确保目录存在
-    prepare_directories
-    /usr/sbin/munged -f 2>/dev/null || /usr/sbin/munged || true
-fi
-
-sleep 2
 
 # 验证 munge
 if pgrep -x munged >/dev/null; then
     echo "[SUCCESS] munge 服务已启动"
+    # 测试 munge 认证
+    if command -v munge >/dev/null 2>&1; then
+        if echo "test" | munge | unmunge >/dev/null 2>&1; then
+            echo "[SUCCESS] munge 认证测试成功"
+        else
+            echo "[WARN] munge 认证测试失败"
+        fi
+    fi
 else
-    echo "[WARN] munge 服务可能未启动"
+    echo "[ERROR] munge 服务启动失败"
+    echo "[ERROR] 查看日志:"
+    tail -20 /var/log/munge/munged.log 2>/dev/null || echo "无日志文件"
+    exit 1
 fi
 
 # 3. 杀死可能存在的旧进程

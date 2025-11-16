@@ -184,9 +184,13 @@ RUN set -eux; \
 
 # 配置时区
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-            
-# 安装SLURM包前先创建用户，这样安装过程会自动配置权限
-RUN groupadd -r slurm && useradd -r -g slurm -d /var/lib/slurm -s /bin/bash slurm
+
+# 在安装任何包之前先创建用户，使用固定的 UID/GID 以确保跨节点一致性
+# 这样可以避免不同节点上自动分配的 UID/GID 不一致的问题
+# slurm: UID=999, GID=999
+# munge: UID=998, GID=998
+RUN groupadd -g 998 munge && useradd -u 998 -g munge -d /var/lib/munge -s /sbin/nologin munge && \
+    groupadd -g 999 slurm && useradd -u 999 -g slurm -d /var/lib/slurm -s /bin/bash slurm
 
 # 创建必要的目录
 RUN mkdir -p /etc/slurm \
@@ -212,7 +216,7 @@ RUN set -eux; \
     \
     # 测试AppHub连接
     echo "🌐 测试AppHub连接..."; \
-    if timeout 10 wget -q --spider ${APPHUB_URL}/pkgs/slurm-deb/Packages; then \
+    if curl -sf --max-time 10 ${APPHUB_URL}/pkgs/slurm-deb/Packages > /dev/null; then \
         echo "✅ AppHub连接正常"; \
         \
         # 动态发现AppHub中所有可用的SLURM包
@@ -280,71 +284,82 @@ RUN set -eux; \
             SLURM_SOURCE="AppHub-NoPackages"; \
         fi; \
         \
-        # 如果AppHub安装失败，尝试系统仓库
+        # 如果AppHub安装失败，报错并退出（不使用系统仓库）
         if [ "$SLURM_INSTALLED" != "true" ]; then \
-            echo "❌ AppHub安装失败，尝试系统仓库..."; \
-            rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
-            apt-get update; \
-            if apt-get install -y slurm-wlm slurm-wlm-basic-plugins slurmctld slurmdbd slurm-client; then \
-                echo "✅ 成功从系统仓库安装SLURM"; \
-                SLURM_INSTALLED=true; \
-                SLURM_SOURCE="SystemRepo"; \
-            else \
-                echo "❌ 系统仓库安装也失败"; \
-                SLURM_INSTALLED=false; \
-                SLURM_SOURCE="None"; \
-            fi; \
+            echo "❌ AppHub安装失败，构建终止"; \
+            echo "💡 提示: 确保docker-compose构建时AppHub服务可用"; \
+            echo "💡 解决方案: 先启动AppHub服务，然后再构建slurm-master"; \
+            exit 1; \
         fi; \
     else \
-        echo "❌ AppHub连接失败，直接使用系统仓库"; \
-        rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
-        apt-get update; \
-        if apt-get install -y slurm-wlm slurm-wlm-basic-plugins slurmctld slurmdbd slurm-client; then \
-            echo "✅ 成功从系统仓库安装SLURM"; \
-            SLURM_INSTALLED=true; \
-            SLURM_SOURCE="SystemRepo"; \
-        else \
-            echo "❌ SLURM安装完全失败"; \
-            SLURM_INSTALLED=false; \
-            SLURM_SOURCE="None"; \
-        fi; \
+        echo "❌ AppHub连接失败，构建终止"; \
+        echo "💡 提示: SLURM master必须从AppHub安装以确保版本一致性"; \
+        echo "💡 AppHub URL: ${APPHUB_URL}"; \
+        echo ""; \
+        echo "📋 故障排查:"; \
+        echo "   1. 确保AppHub服务正在运行:"; \
+        echo "      docker ps | grep apphub"; \
+        echo ""; \
+        echo "   2. 检查AppHub端口映射:"; \
+        echo "      docker port ai-infra-apphub"; \
+        echo ""; \
+        echo "   3. 测试AppHub连接:"; \
+        echo "      curl http://\${EXTERNAL_HOST}:\${APPHUB_PORT}/pkgs/slurm-deb/Packages"; \
+        echo ""; \
+        echo "   4. 使用构建脚本（推荐）:"; \
+        echo "      ./scripts/build-slurm-master.sh"; \
+        echo ""; \
+        exit 1; \
     fi; \
+    \
+    # 确保关键工具包已安装（bootstrap脚本依赖）
+    echo "📦 确保关键工具包已安装..."; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        netcat-openbsd \
+        mysql-client \
+        default-mysql-client \
+        wget \
+        telnet \
+        gettext-base 2>/dev/null || \
+    echo "⚠️  部分工具包安装失败"; \
     \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
     \
+    # 验证SLURM已成功安装
+    if [ "$SLURM_INSTALLED" != "true" ]; then \
+        echo "❌ SLURM未安装，构建失败"; \
+        exit 1; \
+    fi; \
+    \
     # 创建标记文件和路径检查
-    if [ "$SLURM_INSTALLED" = "true" ]; then \
-        touch /opt/slurm-installed; \
-        echo "$SLURM_SOURCE" > /opt/slurm-source; \
-        # 动态检查实际的二进制文件位置
-        echo "🔍 检查SLURM二进制文件位置..."; \
-        SLURMCTLD_PATH=$(which slurmctld 2>/dev/null || find /usr -name "slurmctld" -type f -executable 2>/dev/null | head -1 || echo ""); \
-        SLURMDBD_PATH=$(which slurmdbd 2>/dev/null || find /usr -name "slurmdbd" -type f -executable 2>/dev/null | head -1 || echo ""); \
-        \
-        if [ -n "$SLURMCTLD_PATH" ] && [ -x "$SLURMCTLD_PATH" ]; then \
-            echo "$SLURMCTLD_PATH" > /opt/slurmctld-path; \
-            echo "✅ slurmctld: $SLURMCTLD_PATH"; \
-        else \
-            echo "/usr/sbin/slurmctld" > /opt/slurmctld-path; \
-            echo "⚠️  slurmctld路径未找到，使用默认路径"; \
-        fi; \
-        \
-        if [ -n "$SLURMDBD_PATH" ] && [ -x "$SLURMDBD_PATH" ]; then \
-            echo "$SLURMDBD_PATH" > /opt/slurmdbd-path; \
-            echo "✅ slurmdbd: $SLURMDBD_PATH"; \
-        else \
-            echo "/usr/sbin/slurmdbd" > /opt/slurmdbd-path; \
-            echo "⚠️  slurmdbd路径未找到，使用默认路径"; \
-        fi; \
-        \
-        echo "📦 SLURM安装摘要:"; \
-        echo "  来源: $SLURM_SOURCE"; \
-        echo "  slurmctld: $(cat /opt/slurmctld-path)"; \
-        echo "  slurmdbd: $(cat /opt/slurmdbd-path)"; \
+    touch /opt/slurm-installed; \
+    echo "$SLURM_SOURCE" > /opt/slurm-source; \
+    # 动态检查实际的二进制文件位置
+    echo "🔍 检查SLURM二进制文件位置..."; \
+    SLURMCTLD_PATH=$(which slurmctld 2>/dev/null || find /usr -name "slurmctld" -type f -executable 2>/dev/null | head -1 || echo ""); \
+    SLURMDBD_PATH=$(which slurmdbd 2>/dev/null || find /usr -name "slurmdbd" -type f -executable 2>/dev/null | head -1 || echo ""); \
+    \
+    if [ -n "$SLURMCTLD_PATH" ] && [ -x "$SLURMCTLD_PATH" ]; then \
+        echo "$SLURMCTLD_PATH" > /opt/slurmctld-path; \
+        echo "✅ slurmctld: $SLURMCTLD_PATH"; \
     else \
-        echo "SLURM未安装，将运行演示模式" > /opt/slurm-demo-mode; \
-        echo "❌ 容器将以演示模式运行"; \
-    fi
+        echo "❌ slurmctld二进制文件未找到"; \
+        exit 1; \
+    fi; \
+    \
+    if [ -n "$SLURMDBD_PATH" ] && [ -x "$SLURMDBD_PATH" ]; then \
+        echo "$SLURMDBD_PATH" > /opt/slurmdbd-path; \
+        echo "✅ slurmdbd: $SLURMDBD_PATH"; \
+    else \
+        echo "❌ slurmdbd二进制文件未找到"; \
+        exit 1; \
+    fi; \
+    \
+    echo "📦 SLURM安装摘要:"; \
+    echo "  来源: $SLURM_SOURCE"; \
+    echo "  版本: $(slurmctld -V)"; \
+    echo "  slurmctld: $(cat /opt/slurmctld-path)"; \
+    echo "  slurmdbd: $(cat /opt/slurmdbd-path)"
 
 # 配置用户组和权限（在SLURM安装后）
 RUN usermod -a -G munge slurm && \

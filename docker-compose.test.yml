@@ -6,8 +6,8 @@ services:
   test-ssh01:
     image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
     build:
-      context: ./src/test-containers
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./src/test-containers/Dockerfile
       args:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-ssh01
@@ -95,8 +95,8 @@ services:
   test-rocky01:
     image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
     build:
-      context: ./src/test-containers
-      dockerfile: Dockerfile.rocky
+      context: .
+      dockerfile: ./src/test-containers/Dockerfile.rocky
       args:
         VERSION: ${IMAGE_TAG:-v0.3.6-dev}
     container_name: test-rocky01

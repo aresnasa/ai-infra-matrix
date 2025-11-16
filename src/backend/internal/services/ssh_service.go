@@ -979,7 +979,7 @@ func (s *SSHService) executeDeploymentSteps(client *ssh.Client, config SaltStack
 	var output strings.Builder
 
 	// 读取脚本目录中的所有脚本
-	scriptsDir := "scripts/salt-minion"
+	scriptsDir := "/app/scripts/salt-minion"
 	scripts, err := s.loadDeploymentScripts(scriptsDir)
 	if err != nil {
 		return output.String(), fmt.Errorf("加载部署脚本失败: %v", err)
@@ -2180,7 +2180,7 @@ func (s *SSHService) uploadSaltMinionScript(conn SSHConnection, config PackageIn
 	startTime := time.Now()
 
 	// 读取本地的salt-minion安装脚本
-	scriptPath := "/root/scripts/salt-minion/01-install-salt-minion.sh"
+	scriptPath := "/app/scripts/salt-minion/01-install-salt-minion.sh"
 	scriptContent, err := os.ReadFile(scriptPath)
 	if err != nil {
 		return StepResult{

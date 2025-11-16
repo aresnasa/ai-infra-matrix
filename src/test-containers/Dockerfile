@@ -41,6 +41,13 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
 # 生成SSH主机密钥
 RUN ssh-keygen -A
 
+# 预先创建 SLURM 相关用户（使用固定 UID/GID 确保一致性）
+# 这样在后续安装 SLURM 时不会自动分配不同的 UID/GID
+# munge: UID=998, GID=998 (SLURM 认证服务)
+# slurm: UID=999, GID=999 (SLURM 主用户)
+RUN groupadd -g 998 munge && useradd -u 998 -g munge -d /var/lib/munge -s /sbin/nologin munge && \
+    groupadd -g 999 slurm && useradd -u 999 -g slurm -d /var/spool/slurm -s /sbin/nologin slurm
+
 # 创建测试用户
 RUN useradd -m -s /bin/bash testuser
 RUN usermod -aG sudo testuser
@@ -56,8 +63,14 @@ RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && 
 RUN mkdir -p /opt/saltstack /opt/slurm
 WORKDIR /root
 
+# 复制SSH密钥（用于连接slurm-master）
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+COPY ssh-key/id_rsa /root/.ssh/id_rsa
+RUN chmod 600 /root/.ssh/id_rsa && \
+    ssh-keyscan slurm-master > /root/.ssh/known_hosts 2>/dev/null || true
+
 # 复制启动脚本
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY src/test-containers/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # 暴露SSH端口
