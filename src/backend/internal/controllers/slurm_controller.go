@@ -2046,37 +2046,74 @@ func (sc *SlurmController) addNodeToCluster(host string, port int, user, role st
 
 	var nodeUpdated bool
 
+	// 检测节点硬件信息
+	ctx := context.Background()
+	hardwareInfo, err := sc.sshSvc.DetectNodeHardware(ctx, host, port, user, "")
+	if err != nil {
+		fmt.Printf("Warning: 硬件检测失败，使用默认值: %v\n", err)
+		// 使用默认值，不返回错误
+		hardwareInfo = &services.NodeHardwareInfo{
+			CPUs:           2,
+			Sockets:        1,
+			CoresPerSocket: 2,
+			ThreadsPerCore: 1,
+			MemoryMB:       1024,
+			StorageGB:      10,
+		}
+	}
+
 	// 检查是否已存在该节点
 	var existingNode models.SlurmNode
-	err := db.Where("host = ?", host).First(&existingNode).Error
+	err = db.Where("host = ?", host).First(&existingNode).Error
 	if err == nil {
-		// 节点已存在，更新状态
+		// 节点已存在，更新状态和硬件信息
 		err = db.Model(&existingNode).Updates(models.SlurmNode{
-			Status:    "active",
-			Port:      port,
-			Username:  user,
-			NodeType:  role,
-			UpdatedAt: time.Now(),
+			Status:         "active",
+			Port:           port,
+			Username:       user,
+			NodeType:       role,
+			CPUs:           hardwareInfo.CPUs,
+			Memory:         hardwareInfo.MemoryMB,
+			Storage:        hardwareInfo.StorageGB,
+			Sockets:        hardwareInfo.Sockets,
+			CoresPerSocket: hardwareInfo.CoresPerSocket,
+			ThreadsPerCore: hardwareInfo.ThreadsPerCore,
+			GPUs:           hardwareInfo.GPUs,
+			XPUs:           hardwareInfo.XPUs,
+			UpdatedAt:      time.Now(),
 		}).Error
 		nodeUpdated = true
+		fmt.Printf("✓ 更新节点 %s 硬件信息: CPU=%d(%dx%dx%d), Mem=%dMB, Storage=%dGB, GPU=%d, XPU=%d\n",
+			host, hardwareInfo.CPUs, hardwareInfo.Sockets, hardwareInfo.CoresPerSocket, hardwareInfo.ThreadsPerCore,
+			hardwareInfo.MemoryMB, hardwareInfo.StorageGB, hardwareInfo.GPUs, hardwareInfo.XPUs)
 	} else {
-		// 创建新节点记录 - 需要有一个默认的ClusterID
-		// 这里使用ClusterID为1，在实际应用中应该根据业务逻辑确定
+		// 创建新节点记录 - 使用检测到的硬件信息
 		node := models.SlurmNode{
-			ClusterID: 1, // 默认集群ID
-			NodeName:  host,
-			NodeType:  role,
-			Host:      host,
-			Port:      port,
-			Username:  user,
-			Status:    "active",
-			AuthType:  "password", // 默认认证方式
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			ClusterID:      1, // 默认集群ID
+			NodeName:       host,
+			NodeType:       role,
+			Host:           host,
+			Port:           port,
+			Username:       user,
+			Status:         "active",
+			AuthType:       "password", // 默认认证方式
+			CPUs:           hardwareInfo.CPUs,
+			Memory:         hardwareInfo.MemoryMB,
+			Storage:        hardwareInfo.StorageGB,
+			Sockets:        hardwareInfo.Sockets,
+			CoresPerSocket: hardwareInfo.CoresPerSocket,
+			ThreadsPerCore: hardwareInfo.ThreadsPerCore,
+			GPUs:           hardwareInfo.GPUs,
+			XPUs:           hardwareInfo.XPUs,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
 
 		err = db.Create(&node).Error
 		nodeUpdated = true
+		fmt.Printf("✓ 创建节点 %s 硬件信息: CPU=%d(%dx%dx%d), Mem=%dMB, Storage=%dGB, GPU=%d, XPU=%d\n",
+			host, hardwareInfo.CPUs, hardwareInfo.Sockets, hardwareInfo.CoresPerSocket, hardwareInfo.ThreadsPerCore,
+			hardwareInfo.MemoryMB, hardwareInfo.StorageGB, hardwareInfo.GPUs, hardwareInfo.XPUs)
 	}
 
 	if err != nil {
@@ -2085,10 +2122,11 @@ func (sc *SlurmController) addNodeToCluster(host string, port int, user, role st
 
 	// 如果节点被添加或更新，重新生成SLURM配置
 	if nodeUpdated {
-		ctx := context.Background()
 		if err := sc.slurmSvc.UpdateSlurmConfig(ctx, sc.sshSvc); err != nil {
 			// 记录警告但不返回错误，因为节点已成功添加到数据库
 			fmt.Printf("Warning: failed to update SLURM config after adding node %s: %v\n", host, err)
+		} else {
+			fmt.Printf("✓ 已更新 SLURM 配置文件\n")
 		}
 	}
 
@@ -3063,5 +3101,97 @@ func (c *SlurmController) BatchInstallSlurmNodes(ctx *gin.Context) {
 		"success_count": successCount,
 		"failure_count": failureCount,
 		"results":       results,
+	})
+}
+
+// POST /api/slurm/nodes/:nodeName/validate-config - 验证节点配置一致性
+func (c *SlurmController) ValidateNodeConfig(ctx *gin.Context) {
+	nodeName := ctx.Param("nodeName")
+	if nodeName == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "节点名称不能为空"})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	logrus.Infof("[ValidateNodeConfig] 验证节点 %s 配置", nodeName)
+
+	comparison, err := c.slurmSvc.ValidateNodeConfig(ctxWithTimeout, nodeName, c.sshSvc)
+	if err != nil {
+		logrus.Errorf("[ValidateNodeConfig] 验证失败: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"node_name":   nodeName,
+		"consistent":  comparison.IsConsistent,
+		"database":    comparison.DatabaseConfig,
+		"hardware":    comparison.HardwareInfo,
+		"differences": comparison.Differences,
+	})
+}
+
+// POST /api/slurm/nodes/:nodeName/sync-config - 从硬件同步节点配置
+func (c *SlurmController) SyncNodeConfig(ctx *gin.Context) {
+	nodeName := ctx.Param("nodeName")
+	if nodeName == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "节点名称不能为空"})
+		return
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 120*time.Second)
+	defer cancel()
+
+	logrus.Infof("[SyncNodeConfig] 同步节点 %s 配置", nodeName)
+
+	err := c.slurmSvc.SyncNodeConfigFromHardware(ctxWithTimeout, nodeName, c.sshSvc)
+	if err != nil {
+		logrus.Errorf("[SyncNodeConfig] 同步失败: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("节点 %s 配置已同步", nodeName),
+	})
+}
+
+// POST /api/slurm/nodes/sync-all-configs - 同步所有节点配置
+func (c *SlurmController) SyncAllNodesConfig(ctx *gin.Context) {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 600*time.Second) // 10分钟超时
+	defer cancel()
+
+	logrus.Infof("[SyncAllNodesConfig] 开始同步所有节点配置")
+
+	results, err := c.slurmSvc.SyncAllNodesConfig(ctxWithTimeout, c.sshSvc)
+	if err != nil {
+		logrus.Errorf("[SyncAllNodesConfig] 同步失败: %v", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 统计结果
+	successCount := 0
+	failedNodes := []string{}
+	for nodeName, err := range results {
+		if err == nil {
+			successCount++
+		} else {
+			failedNodes = append(failedNodes, nodeName)
+		}
+	}
+
+	logrus.Infof("[SyncAllNodesConfig] 同步完成: 成功 %d, 失败 %d", successCount, len(failedNodes))
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"total":         len(results),
+		"success_count": successCount,
+		"failure_count": len(failedNodes),
+		"failed_nodes":  failedNodes,
 	})
 }

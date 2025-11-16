@@ -898,6 +898,51 @@ func (s *SlurmClusterService) getExternalClusterInfo(cluster models.SlurmCluster
 
 // CreateNode 创建节点记录
 func (s *SlurmClusterService) CreateNode(ctx context.Context, node *models.SlurmNode) error {
+	// 如果节点配置了SSH信息但硬件信息为空，尝试检测硬件
+	if node.Host != "" && node.Username != "" && node.CPUs == 0 {
+		logrus.Infof("检测节点 %s 的硬件信息...", node.Host)
+
+		hardwareInfo, err := s.sshService.DetectNodeHardware(ctx, node.Host, node.Port, node.Username, node.Password)
+		if err != nil {
+			logrus.Warnf("硬件检测失败，使用默认值: %v", err)
+		} else {
+			// 更新节点硬件信息
+			node.CPUs = hardwareInfo.CPUs
+			node.Memory = hardwareInfo.MemoryMB
+			node.Storage = hardwareInfo.StorageGB
+			node.Sockets = hardwareInfo.Sockets
+			node.CoresPerSocket = hardwareInfo.CoresPerSocket
+			node.ThreadsPerCore = hardwareInfo.ThreadsPerCore
+			node.GPUs = hardwareInfo.GPUs
+			node.XPUs = hardwareInfo.XPUs
+
+			logrus.Infof("✓ 节点 %s 硬件信息: CPU=%d(%dx%dx%d), Mem=%dMB, Storage=%dGB, GPU=%d, XPU=%d",
+				node.Host, hardwareInfo.CPUs, hardwareInfo.Sockets, hardwareInfo.CoresPerSocket,
+				hardwareInfo.ThreadsPerCore, hardwareInfo.MemoryMB, hardwareInfo.StorageGB,
+				hardwareInfo.GPUs, hardwareInfo.XPUs)
+		}
+	}
+
+	// 确保基本字段有默认值
+	if node.CPUs == 0 {
+		node.CPUs = 2
+	}
+	if node.Memory == 0 {
+		node.Memory = 1024
+	}
+	if node.Storage == 0 {
+		node.Storage = 10
+	}
+	if node.Sockets == 0 {
+		node.Sockets = 1
+	}
+	if node.CoresPerSocket == 0 {
+		node.CoresPerSocket = node.CPUs / node.Sockets
+	}
+	if node.ThreadsPerCore == 0 {
+		node.ThreadsPerCore = 1
+	}
+
 	return s.db.WithContext(ctx).Create(node).Error
 }
 

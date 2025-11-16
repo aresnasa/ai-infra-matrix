@@ -4284,3 +4284,9 @@ Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录�
 Minion部署失败: 部署失败: 加载部署脚本失败: 读取脚本目录失败: open scripts/salt-minion: no such file or directory，这里需要修复，默认的rocky和ubuntu不会安装minion的服务的，需要在添加扩容slurm节点前安装，这里检查一下安装逻辑
 
 240. 调整build.sh build-all函数中涉及到test-containers的配置./src/test-containers/Dockerfile这里存在路径不一致的差异需要修复，同时需要检查build-all函数中第一次部署会添加初始数据的问题（期望是不需要初始化的slurm节点数据）
+
+241. 这里需要检查slurm的添加函数，节点规格
+CPU核心数
+内存(GB)
+磁盘(GB)
+这些核心配置需要ai-infra-slurm-master grep -E "^NodeName=test-" /etc/slurm/slurm.conf，这里要保证一致，调整下go函数的逻辑和传参，保证一致，这里需要检查mysql数据库中的相关配置，保证正常获取cpu/内存/磁盘/gpu/npu等加速硬件，都需要正确获取后回填回slurm.conf配置并更新数据库，这里cgroupv2会做相应的限制，但是为了保证配置一致需要所有节点和配置都做检查。

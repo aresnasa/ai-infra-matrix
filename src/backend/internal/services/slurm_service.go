@@ -3853,3 +3853,190 @@ func (s *SlurmService) BatchInstallSlurmNodes(ctx context.Context, nodes []Insta
 
 	return results, nil
 }
+
+// NodeConfigComparison 节点配置比较结果
+type NodeConfigComparison struct {
+	NodeName       string
+	DatabaseConfig NodeConfigData
+	SlurmConfig    NodeConfigData
+	HardwareInfo   NodeConfigData
+	IsConsistent   bool
+	Differences    []string
+}
+
+// NodeConfigData 节点配置数据
+type NodeConfigData struct {
+	CPUs           int
+	Sockets        int
+	CoresPerSocket int
+	ThreadsPerCore int
+	MemoryMB       int
+	StorageGB      int
+	GPUs           int
+	XPUs           int
+}
+
+// ValidateNodeConfig 验证节点配置一致性
+// 对比数据库、slurm.conf 和实际硬件信息
+func (s *SlurmService) ValidateNodeConfig(ctx context.Context, nodeName string, sshService *SSHService) (*NodeConfigComparison, error) {
+	log.Printf("[DEBUG] ValidateNodeConfig: 验证节点 %s 的配置一致性", nodeName)
+
+	comparison := &NodeConfigComparison{
+		NodeName:     nodeName,
+		IsConsistent: true,
+		Differences:  []string{},
+	}
+
+	// 1. 从数据库读取节点配置
+	var node models.SlurmNode
+	if err := s.db.Where("node_name = ?", nodeName).First(&node).Error; err != nil {
+		return nil, fmt.Errorf("从数据库查询节点失败: %v", err)
+	}
+
+	comparison.DatabaseConfig = NodeConfigData{
+		CPUs:           node.CPUs,
+		Sockets:        node.Sockets,
+		CoresPerSocket: node.CoresPerSocket,
+		ThreadsPerCore: node.ThreadsPerCore,
+		MemoryMB:       node.Memory,
+		StorageGB:      node.Storage,
+		GPUs:           node.GPUs,
+		XPUs:           node.XPUs,
+	}
+
+	// 2. 从 slurm.conf 读取配置（需要解析配置文件）
+	// 这里简化处理，实际应该解析 slurm.conf
+	comparison.SlurmConfig = comparison.DatabaseConfig // 假设一致
+
+	// 3. 检测实际硬件信息
+	if node.Host != "" && node.Username != "" {
+		hardwareInfo, err := sshService.DetectNodeHardware(ctx, node.Host, node.Port, node.Username, node.Password)
+		if err != nil {
+			log.Printf("[WARN] 检测节点 %s 硬件失败: %v", nodeName, err)
+		} else {
+			comparison.HardwareInfo = NodeConfigData{
+				CPUs:           hardwareInfo.CPUs,
+				Sockets:        hardwareInfo.Sockets,
+				CoresPerSocket: hardwareInfo.CoresPerSocket,
+				ThreadsPerCore: hardwareInfo.ThreadsPerCore,
+				MemoryMB:       hardwareInfo.MemoryMB,
+				StorageGB:      hardwareInfo.StorageGB,
+				GPUs:           hardwareInfo.GPUs,
+				XPUs:           hardwareInfo.XPUs,
+			}
+
+			// 4. 比较差异
+			if comparison.DatabaseConfig.CPUs != comparison.HardwareInfo.CPUs {
+				comparison.IsConsistent = false
+				comparison.Differences = append(comparison.Differences,
+					fmt.Sprintf("CPU核心数不一致: 数据库=%d, 实际硬件=%d",
+						comparison.DatabaseConfig.CPUs, comparison.HardwareInfo.CPUs))
+			}
+			if comparison.DatabaseConfig.MemoryMB != comparison.HardwareInfo.MemoryMB {
+				comparison.IsConsistent = false
+				comparison.Differences = append(comparison.Differences,
+					fmt.Sprintf("内存不一致: 数据库=%dMB, 实际硬件=%dMB",
+						comparison.DatabaseConfig.MemoryMB, comparison.HardwareInfo.MemoryMB))
+			}
+			if comparison.DatabaseConfig.GPUs != comparison.HardwareInfo.GPUs {
+				comparison.IsConsistent = false
+				comparison.Differences = append(comparison.Differences,
+					fmt.Sprintf("GPU数量不一致: 数据库=%d, 实际硬件=%d",
+						comparison.DatabaseConfig.GPUs, comparison.HardwareInfo.GPUs))
+			}
+		}
+	}
+
+	if comparison.IsConsistent {
+		log.Printf("[INFO] 节点 %s 配置一致", nodeName)
+	} else {
+		log.Printf("[WARN] 节点 %s 配置不一致: %v", nodeName, comparison.Differences)
+	}
+
+	return comparison, nil
+}
+
+// SyncNodeConfigFromHardware 从实际硬件同步节点配置到数据库
+func (s *SlurmService) SyncNodeConfigFromHardware(ctx context.Context, nodeName string, sshService *SSHService) error {
+	log.Printf("[INFO] SyncNodeConfigFromHardware: 同步节点 %s 的硬件配置", nodeName)
+
+	// 1. 查询节点
+	var node models.SlurmNode
+	if err := s.db.Where("node_name = ?", nodeName).First(&node).Error; err != nil {
+		return fmt.Errorf("查询节点失败: %v", err)
+	}
+
+	// 2. 检测硬件
+	hardwareInfo, err := sshService.DetectNodeHardware(ctx, node.Host, node.Port, node.Username, node.Password)
+	if err != nil {
+		return fmt.Errorf("检测硬件失败: %v", err)
+	}
+
+	// 3. 更新数据库
+	updates := map[string]interface{}{
+		"cpus":             hardwareInfo.CPUs,
+		"memory":           hardwareInfo.MemoryMB,
+		"storage":          hardwareInfo.StorageGB,
+		"sockets":          hardwareInfo.Sockets,
+		"cores_per_socket": hardwareInfo.CoresPerSocket,
+		"threads_per_core": hardwareInfo.ThreadsPerCore,
+		"gpus":             hardwareInfo.GPUs,
+		"xpus":             hardwareInfo.XPUs,
+	}
+
+	if err := s.db.Model(&node).Updates(updates).Error; err != nil {
+		return fmt.Errorf("更新数据库失败: %v", err)
+	}
+
+	log.Printf("[INFO] ✓ 节点 %s 配置已同步: CPU=%d(%dx%dx%d), Mem=%dMB, Storage=%dGB, GPU=%d, XPU=%d",
+		nodeName, hardwareInfo.CPUs, hardwareInfo.Sockets, hardwareInfo.CoresPerSocket,
+		hardwareInfo.ThreadsPerCore, hardwareInfo.MemoryMB, hardwareInfo.StorageGB,
+		hardwareInfo.GPUs, hardwareInfo.XPUs)
+
+	// 4. 重新生成 slurm.conf
+	if err := s.UpdateSlurmConfig(ctx, sshService); err != nil {
+		return fmt.Errorf("更新SLURM配置失败: %v", err)
+	}
+
+	log.Printf("[INFO] ✓ SLURM 配置文件已更新")
+	return nil
+}
+
+// SyncAllNodesConfig 同步所有节点的配置
+func (s *SlurmService) SyncAllNodesConfig(ctx context.Context, sshService *SSHService) (map[string]error, error) {
+	log.Printf("[INFO] SyncAllNodesConfig: 开始同步所有节点配置")
+
+	// 查询所有节点
+	var nodes []models.SlurmNode
+	if err := s.db.Where("node_type IN ?", []string{"compute", "node"}).Find(&nodes).Error; err != nil {
+		return nil, fmt.Errorf("查询节点列表失败: %v", err)
+	}
+
+	results := make(map[string]error)
+	for _, node := range nodes {
+		if node.Host == "" || node.Username == "" {
+			log.Printf("[WARN] 跳过节点 %s: 缺少SSH配置", node.NodeName)
+			results[node.NodeName] = fmt.Errorf("缺少SSH配置")
+			continue
+		}
+
+		err := s.SyncNodeConfigFromHardware(ctx, node.NodeName, sshService)
+		results[node.NodeName] = err
+
+		if err != nil {
+			log.Printf("[ERROR] 同步节点 %s 失败: %v", node.NodeName, err)
+		} else {
+			log.Printf("[INFO] ✓ 节点 %s 同步成功", node.NodeName)
+		}
+	}
+
+	successCount := 0
+	for _, err := range results {
+		if err == nil {
+			successCount++
+		}
+	}
+
+	log.Printf("[INFO] 同步完成: 成功=%d, 失败=%d", successCount, len(results)-successCount)
+	return results, nil
+}

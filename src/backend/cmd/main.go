@@ -991,6 +991,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		slurm.POST("/nodes/install", slurmController.InstallSlurmNode)
 		slurm.POST("/nodes/batch-install", slurmController.BatchInstallSlurmNodes)
 
+		// 节点配置管理路由
+		slurm.POST("/nodes/:nodeName/validate-config", slurmController.ValidateNodeConfig)
+		slurm.POST("/nodes/:nodeName/sync-config", slurmController.SyncNodeConfig)
+		slurm.POST("/nodes/sync-all-configs", slurmController.SyncAllNodesConfig)
+
 		// SaltStack 集成路由
 		slurm.GET("/saltstack/integration", slurmController.GetSaltStackIntegration)
 		slurm.POST("/saltstack/deploy-minion", slurmController.DeploySaltMinion)

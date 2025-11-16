@@ -2393,3 +2393,181 @@ func (s *SSHService) generateSlurmInstallationSteps(config PackageInstallationCo
 
 	return steps
 }
+
+// NodeHardwareInfo 节点硬件信息
+type NodeHardwareInfo struct {
+	CPUs           int    // CPU核心数
+	Sockets        int    // CPU插槽数
+	CoresPerSocket int    // 每个插槽的核心数
+	ThreadsPerCore int    // 每个核心的线程数
+	MemoryMB       int    // 内存大小(MB)
+	StorageGB      int    // 磁盘大小(GB)
+	GPUs           int    // GPU数量
+	XPUs           int    // XPU数量（昆仑芯）
+	Architecture   string // CPU架构 (x86_64, aarch64)
+	OSType         string // 操作系统类型 (ubuntu, rocky, centos)
+	OSVersion      string // 操作系统版本
+}
+
+// DetectNodeHardware 通过SSH检测节点硬件信息
+func (s *SSHService) DetectNodeHardware(ctx context.Context, host string, port int, username, password string) (*NodeHardwareInfo, error) {
+	log.Printf("[DEBUG] DetectNodeHardware: 开始检测节点 %s 的硬件信息", host)
+
+	// 创建SSH连接
+	conn := SSHConnection{
+		Host:     host,
+		Port:     port,
+		User:     username,
+		Password: password,
+	}
+
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		return nil, fmt.Errorf("SSH连接失败: %v", err)
+	}
+	defer client.Close()
+
+	info := &NodeHardwareInfo{}
+
+	// 1. 检测CPU信息
+	cpuInfo, err := s.executeCommand(client, "lscpu | grep -E '^CPU\\(s\\)|^Socket|^Core|^Thread|^Architecture'")
+	if err != nil {
+		log.Printf("[WARN] 获取CPU信息失败: %v", err)
+	} else {
+		info.parseCPUInfo(cpuInfo)
+	}
+
+	// 2. 检测内存信息（MB）
+	memInfo, err := s.executeCommand(client, "free -m | grep '^Mem:' | awk '{print $2}'")
+	if err != nil {
+		log.Printf("[WARN] 获取内存信息失败: %v", err)
+	} else {
+		if mem, err := strconv.Atoi(strings.TrimSpace(memInfo)); err == nil {
+			info.MemoryMB = mem
+		}
+	}
+
+	// 3. 检测磁盘信息（GB）
+	diskInfo, err := s.executeCommand(client, "df -BG / | tail -1 | awk '{print $2}' | sed 's/G//'")
+	if err != nil {
+		log.Printf("[WARN] 获取磁盘信息失败: %v", err)
+	} else {
+		if disk, err := strconv.Atoi(strings.TrimSpace(diskInfo)); err == nil {
+			info.StorageGB = disk
+		}
+	}
+
+	// 4. 检测GPU信息（NVIDIA）
+	gpuInfo, err := s.executeCommand(client, "nvidia-smi -L 2>/dev/null | wc -l")
+	if err == nil {
+		if gpus, err := strconv.Atoi(strings.TrimSpace(gpuInfo)); err == nil && gpus > 0 {
+			info.GPUs = gpus
+		}
+	}
+
+	// 5. 检测XPU信息（昆仑芯）
+	xpuInfo, err := s.executeCommand(client, "xpu-smi 2>/dev/null | grep -c 'Device'")
+	if err == nil {
+		if xpus, err := strconv.Atoi(strings.TrimSpace(xpuInfo)); err == nil && xpus > 0 {
+			info.XPUs = xpus
+		}
+	}
+
+	// 6. 检测操作系统信息
+	osInfo, err := s.executeCommand(client, "cat /etc/os-release | grep -E '^ID=|^VERSION_ID='")
+	if err == nil {
+		info.parseOSInfo(osInfo)
+	}
+
+	// 验证必要字段
+	if info.CPUs == 0 {
+		info.CPUs = 1 // 最小1核
+	}
+	if info.Sockets == 0 {
+		info.Sockets = 1
+	}
+	if info.CoresPerSocket == 0 {
+		info.CoresPerSocket = info.CPUs / info.Sockets
+		if info.CoresPerSocket == 0 {
+			info.CoresPerSocket = 1
+		}
+	}
+	if info.ThreadsPerCore == 0 {
+		info.ThreadsPerCore = 1
+	}
+	if info.MemoryMB == 0 {
+		info.MemoryMB = 1024 // 默认1GB
+	}
+	if info.StorageGB == 0 {
+		info.StorageGB = 10 // 默认10GB
+	}
+
+	log.Printf("[INFO] 节点 %s 硬件信息: CPU=%d cores(%dx%dx%d), Memory=%dMB, Storage=%dGB, GPU=%d, XPU=%d",
+		host, info.CPUs, info.Sockets, info.CoresPerSocket, info.ThreadsPerCore,
+		info.MemoryMB, info.StorageGB, info.GPUs, info.XPUs)
+
+	return info, nil
+}
+
+// parseCPUInfo 解析lscpu输出
+func (info *NodeHardwareInfo) parseCPUInfo(output string) {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "CPU(s):") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				if cpus, err := strconv.Atoi(parts[1]); err == nil {
+					info.CPUs = cpus
+				}
+			}
+		} else if strings.HasPrefix(line, "Socket(s):") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				if sockets, err := strconv.Atoi(parts[1]); err == nil {
+					info.Sockets = sockets
+				}
+			}
+		} else if strings.HasPrefix(line, "Core(s) per socket:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				if cores, err := strconv.Atoi(parts[3]); err == nil {
+					info.CoresPerSocket = cores
+				}
+			}
+		} else if strings.HasPrefix(line, "Thread(s) per core:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				if threads, err := strconv.Atoi(parts[3]); err == nil {
+					info.ThreadsPerCore = threads
+				}
+			}
+		} else if strings.HasPrefix(line, "Architecture:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				info.Architecture = parts[1]
+			}
+		}
+	}
+
+	// 如果没有Socket信息（如ARM架构），尝试从其他字段推断
+	if info.Sockets == 0 && info.CPUs > 0 {
+		info.Sockets = 1
+		if info.CoresPerSocket == 0 {
+			info.CoresPerSocket = info.CPUs
+		}
+	}
+}
+
+// parseOSInfo 解析操作系统信息
+func (info *NodeHardwareInfo) parseOSInfo(output string) {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ID=") {
+			info.OSType = strings.Trim(strings.TrimPrefix(line, "ID="), "\"")
+		} else if strings.HasPrefix(line, "VERSION_ID=") {
+			info.OSVersion = strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), "\"")
+		}
+	}
+}
