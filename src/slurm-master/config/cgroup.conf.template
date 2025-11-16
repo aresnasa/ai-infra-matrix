@@ -2,6 +2,9 @@
 # AI Infrastructure Matrix SLURM Cgroup Configuration
 # 控制作业资源使用
 #
+# Note: 此配置适用于物理机或虚拟机环境
+# 对于 Docker 容器环境,请使用 cgroup-docker.conf.template
+#
 
 CgroupAutomount=yes
 CgroupPlugin=cgroup/v2

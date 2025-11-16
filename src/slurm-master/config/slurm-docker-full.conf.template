@@ -1,8 +1,6 @@
 #
-# AI Infrastructure Matrix - Base SLURM Configuration
-#
-# This file holds global/controller level parameters. Node definitions and
-# partitions are generated dynamically by the backend service.
+# AI Infrastructure Matrix - SLURM Configuration for Docker Environment
+# Based on slurm-master config but adapted for Docker nodes
 #
 ClusterName=ai-infra-cluster
 ControlMachine=slurm-master
@@ -11,7 +9,7 @@ ControlAddr=slurm-master
 # Authentication
 AuthType=auth/munge
 AuthAltTypes=auth/jwt
-AuthAltParameters=jwt_key=/etc/slurm/jwt_hs256.key
+AuthAltParameters=jwt_hs256=/etc/slurm/jwt_hs256.key
 
 # Accounting / Database
 AccountingStorageType=accounting_storage/slurmdbd
@@ -29,7 +27,7 @@ SelectTypeParameters=CR_Core_Memory
 # Networking / State
 SlurmctldPort=6817
 SlurmdPort=6818
-SlurmdSpoolDir=/var/spool/slurm/slurmd
+SlurmdSpoolDir=/var/spool/slurmd
 StateSaveLocation=/var/lib/slurm/slurmctld
 SlurmctldParameters=enable_configless
 
@@ -55,18 +53,12 @@ ReturnToService=2
 # Plugin discovery
 PluginDir=/usr/lib/slurm
 
-# Task / MPI configuration
-# NOTE: For Docker/container environments, cgroup support may not work properly.
-#       In such cases, use: ProctrackType=proctrack/pgid and TaskPlugin=task/none
-# Physical server configuration (with cgroup support):
-# TaskPlugin=task/affinity,task/cgroup
-# ProctrackType=proctrack/cgroup
-# Docker/container configuration (without cgroup):
+# Task / MPI configuration (Docker: NO cgroup)
 TaskPlugin=task/affinity
 ProctrackType=proctrack/linuxproc
 MpiDefault=pmix
-# JobContainerType=job_container/tmpfs  # Requires cgroup support
-# PrologFlags=Contain                    # Requires cgroup support
+# JobContainerType disabled for Docker (would require cgroup)
+# PrologFlags=Contain
 
 # Job completion logging
 JobCompType=jobcomp/filetxt
@@ -76,5 +68,11 @@ JobCompLoc=/var/log/slurm/jobcomp.log
 MaxJobCount=10000
 MaxArraySize=10000
 
-# Placeholder for dynamically generated node and partition blocks
-# (Do not edit below; managed by backend service)
+# 节点配置
+NodeName=test-ssh01 NodeAddr=test-ssh01 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
+NodeName=test-ssh02 NodeAddr=test-ssh02 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
+NodeName=test-ssh03 NodeAddr=test-ssh03 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
+NodeName=test-rocky01 NodeAddr=test-rocky01 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
+NodeName=test-rocky02 NodeAddr=test-rocky02 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
+NodeName=test-rocky03 NodeAddr=test-rocky03 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
+PartitionName=compute Nodes=test-ssh01,test-ssh02,test-ssh03,test-rocky01,test-rocky02,test-rocky03 Default=YES MaxTime=INFINITE State=UP

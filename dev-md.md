@@ -4290,3 +4290,5 @@ CPU核心数
 内存(GB)
 磁盘(GB)
 这些核心配置需要ai-infra-slurm-master grep -E "^NodeName=test-" /etc/slurm/slurm.conf，这里要保证一致，调整下go函数的逻辑和传参，保证一致，这里需要检查mysql数据库中的相关配置，保证正常获取cpu/内存/磁盘/gpu/npu等加速硬件，都需要正确获取后回填回slurm.conf配置并更新数据库，这里cgroupv2会做相应的限制，但是为了保证配置一致需要所有节点和配置都做检查。
+
+242. 回溯之前的修复过程，是可以正确启动slurm的，这里要适配两种系统，都使用cgroupv2和systemd管理，同时需要能够正确的提交slurm任务和同步slurm的任务状态，这里都需要修复，目前是开发环境没有物理服务器作为测试，先使用docker进行测试后续再采用物理机进行测试

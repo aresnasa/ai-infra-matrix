@@ -1,0 +1,56 @@
+#
+# AI Infrastructure Matrix - SLURM Configuration for Docker Environment
+# Optimized for containerized compute nodes without cgroup support
+#
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-master
+ControlAddr=slurm-master
+SlurmctldPort=6817
+SlurmdPort=6818
+
+# Authentication
+AuthType=auth/munge
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_key=/etc/slurm/jwt_hs256.key
+
+# Scheduling
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+# Process tracking - NO cgroup (Docker handles resource management)
+# Using pgid for process tracking and task/none to avoid cgroup dependencies
+ProctrackType=proctrack/pgid
+TaskPlugin=task/none
+MpiDefault=none
+
+# Users
+SlurmUser=slurm
+SlurmdUser=root
+
+# Paths
+SlurmdSpoolDir=/var/spool/slurmd
+StateSaveLocation=/var/lib/slurm/slurmctld
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldPidFile=/var/run/slurm/slurmctld.pid
+SlurmdPidFile=/var/run/slurm/slurmd.pid
+
+# Timeouts
+MessageTimeout=60
+KillWait=30
+MinJobAge=300
+Waittime=0
+ReturnToService=2
+
+# Resource limits
+MaxJobCount=10000
+
+# Nodes
+NodeName=test-ssh01 NodeAddr=test-ssh01 CPUs=2 RealMemory=1024
+NodeName=test-ssh02 NodeAddr=test-ssh02 CPUs=2 RealMemory=1024
+NodeName=test-ssh03 NodeAddr=test-ssh03 CPUs=2 RealMemory=1024
+NodeName=test-rocky01 NodeAddr=test-rocky01 CPUs=2 RealMemory=1024
+NodeName=test-rocky02 NodeAddr=test-rocky02 CPUs=2 RealMemory=1024
+NodeName=test-rocky03 NodeAddr=test-rocky03 CPUs=2 RealMemory=1024
+PartitionName=compute Nodes=ALL Default=YES MaxTime=INFINITE State=UP

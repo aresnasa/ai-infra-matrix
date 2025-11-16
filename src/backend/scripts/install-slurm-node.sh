@@ -505,7 +505,26 @@ create_default_cgroup_conf() {
     fi
     
     # 创建 cgroup.conf
-    cat > "${conf_dir}/cgroup.conf" <<'EOF'
+    # 检测是否在 Docker 容器中运行
+    local in_docker="no"
+    if [ -f /.dockerenv ] || grep -q docker /proc/1/cgroup 2>/dev/null; then
+        in_docker="yes"
+        log_info "Detected Docker container environment"
+    fi
+    
+    # 为 Docker 环境创建空的 cgroup.conf (完全禁用 cgroup)
+    if [ "$in_docker" = "yes" ]; then
+        cat > "${conf_dir}/cgroup.conf" <<'EOF'
+###
+# Slurm cgroup configuration (Docker container mode - disabled)
+# In Docker containers, resource management is handled by Docker itself
+# Cgroup plugins are not used to avoid initialization failures
+###
+EOF
+        log_info "✓ Created minimal cgroup.conf for Docker environment (cgroup disabled)"
+    else
+        # 完整的 cgroup 配置（物理机/VM）
+        cat > "${conf_dir}/cgroup.conf" <<'EOF'
 ###
 # Slurm cgroup configuration for cgroup v2
 # Compatible with SLURM 25.05.4
@@ -529,6 +548,7 @@ AllowedSwapSpace=0
 
 # Note: CgroupAutomount and TaskAffinity are deprecated in SLURM 25.x
 EOF
+    fi
 
     chmod 644 "${conf_dir}/cgroup.conf"
     log_info "✓ Created cgroup.conf at ${conf_dir}/cgroup.conf"
@@ -551,6 +571,18 @@ EOF
 configure_systemd() {
     log_info "Configuring systemd services..."
     
+    # 检测是否在 Docker 容器中
+    local IN_DOCKER=false
+    if [ -f /.dockerenv ] || grep -q docker /proc/1/cgroup 2>/dev/null; then
+        IN_DOCKER=true
+        log_info "✓ Detected Docker container environment"
+    fi
+    
+    # 创建必要的目录 (特别是 Docker 环境需要)
+    log_info "Creating required directories..."
+    mkdir -p /var/run/slurm /var/log/slurm /var/spool/slurmd
+    chmod 755 /var/run/slurm /var/log/slurm /var/spool/slurmd
+    
     # 重新加载 systemd
     systemctl daemon-reload
     
@@ -561,6 +593,14 @@ configure_systemd() {
     systemctl enable slurmd || log_warn "Failed to enable slurmd service"
     
     log_info "✓ systemd configured (services enabled but not started)"
+    
+    if [ "$IN_DOCKER" = true ]; then
+        log_info "Docker Environment Notes:"
+        log_info "  - Use slurm-docker-minimal.conf.template for basic setup"
+        log_info "  - Use slurm-docker-full.conf.template for more features"
+        log_info "  - cgroup features are managed by Docker itself"
+    fi
+    
     log_info "Note: Start services after deploying configs:"
     log_info "      - systemctl start munge"
     log_info "      - systemctl start slurmd"
