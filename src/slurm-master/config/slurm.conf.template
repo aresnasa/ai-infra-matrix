@@ -70,9 +70,7 @@ PrologFlags=${SLURM_PROLOG_FLAGS}
 MaxJobCount=${SLURM_MAX_JOB_COUNT}
 MaxArraySize=${SLURM_MAX_ARRAY_SIZE}
 
-# 计算节点配置
-# 测试节点定义
-NodeName=${SLURM_TEST_NODES} CPUs=${SLURM_TEST_NODE_CPUS} RealMemory=${SLURM_TEST_NODE_MEMORY} Sockets=1 CoresPerSocket=${SLURM_TEST_NODE_CPUS} ThreadsPerCore=1 State=UNKNOWN
-
-# 分区定义
-PartitionName=${SLURM_PARTITION_NAME} Nodes=${SLURM_TEST_NODES} Default=YES MaxTime=INFINITE State=UP
+# 计算节点配置（由 Web UI 动态添加，此处不预定义任何节点）
+# 节点和分区将在通过 /api/slurm/scale-up 接口添加节点后自动生成
+# Placeholder for dynamically generated node and partition blocks
+# (Do not edit below; managed by backend service)

@@ -46,11 +46,7 @@ ReturnToService=2
 # Resource limits
 MaxJobCount=10000
 
-# Nodes
-NodeName=test-ssh01 NodeAddr=test-ssh01 CPUs=2 RealMemory=1024
-NodeName=test-ssh02 NodeAddr=test-ssh02 CPUs=2 RealMemory=1024
-NodeName=test-ssh03 NodeAddr=test-ssh03 CPUs=2 RealMemory=1024
-NodeName=test-rocky01 NodeAddr=test-rocky01 CPUs=2 RealMemory=1024
-NodeName=test-rocky02 NodeAddr=test-rocky02 CPUs=2 RealMemory=1024
-NodeName=test-rocky03 NodeAddr=test-rocky03 CPUs=2 RealMemory=1024
-PartitionName=compute Nodes=ALL Default=YES MaxTime=INFINITE State=UP
+# 节点配置（由 Web UI 动态添加，此处不预定义任何节点）
+# 节点和分区将在通过 /api/slurm/scale-up 接口添加节点后自动生成
+# Placeholder for dynamically generated node and partition blocks
+# (Do not edit below; managed by backend service)

@@ -232,12 +232,14 @@ generate_configs() {
     envsubst < /etc/slurm-templates/cgroup.conf.template > /etc/slurm/cgroup.conf
     envsubst < /etc/slurm-templates/mpi.conf.template > /etc/slurm/mpi.conf
 
-    # 如果没有配置测试节点，移除空的 NodeName 和 PartitionName 行
-    if [ -z "${SLURM_TEST_NODES}" ]; then
-        log "INFO" "未配置测试节点，移除空的节点配置行"
-        sed -i '/^NodeName= /d' /etc/slurm/slurm.conf
-        sed -i '/^PartitionName=.*Nodes= /d' /etc/slurm/slurm.conf
-    fi
+    # 清理配置文件中的占位符和空行（节点由后端 API 动态管理）
+    log "INFO" "清理配置文件中的节点占位符（节点由 Web UI 动态添加）"
+    sed -i '/Placeholder for dynamically generated node and partition blocks/d' /etc/slurm/slurm.conf
+    sed -i '/Do not edit below; managed by backend service/d' /etc/slurm/slurm.conf
+    sed -i '/由 Web UI 动态添加/d' /etc/slurm/slurm.conf
+    sed -i '/^NodeName= /d' /etc/slurm/slurm.conf
+    sed -i '/^PartitionName=.*Nodes= /d' /etc/slurm/slurm.conf
+    sed -i '/^PartitionName=.*Nodes=\s*$/d' /etc/slurm/slurm.conf
 
     # 清理配置文件中的空值（避免无效配置）
     log "INFO" "🔧 清理配置文件空值..."

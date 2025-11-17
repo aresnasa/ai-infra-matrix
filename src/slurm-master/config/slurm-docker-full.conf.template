@@ -68,11 +68,7 @@ JobCompLoc=/var/log/slurm/jobcomp.log
 MaxJobCount=10000
 MaxArraySize=10000
 
-# 节点配置
-NodeName=test-ssh01 NodeAddr=test-ssh01 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
-NodeName=test-ssh02 NodeAddr=test-ssh02 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
-NodeName=test-ssh03 NodeAddr=test-ssh03 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
-NodeName=test-rocky01 NodeAddr=test-rocky01 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
-NodeName=test-rocky02 NodeAddr=test-rocky02 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
-NodeName=test-rocky03 NodeAddr=test-rocky03 CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=1024
-PartitionName=compute Nodes=test-ssh01,test-ssh02,test-ssh03,test-rocky01,test-rocky02,test-rocky03 Default=YES MaxTime=INFINITE State=UP
+# 节点配置（由 Web UI 动态添加，此处不预定义任何节点）
+# 节点和分区将在通过 /api/slurm/scale-up 接口添加节点后自动生成
+# Placeholder for dynamically generated node and partition blocks
+# (Do not edit below; managed by backend service)
