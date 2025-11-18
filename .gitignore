@@ -46,3 +46,7 @@ src/*/ssh-key/
 src/backend/ssh-key/
 src/apphub/ssh-key/
 src/slurm-master/ssh-key/
+
+# 开发文档 - 仅保留在开发分支
+dev-md.md
+dev-conf.md
