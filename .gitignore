@@ -65,7 +65,6 @@ playwright-report/
 notebooks/
 package-lock.json
 package.json
-config/
 docs-all/
 package.json
 package-lock.json
