@@ -56,11 +56,14 @@ dev-conf.md
 logs/
 log/
 shared/
-docs/
 ssh-key/
-config/
+config/ai_assistant_config.yaml
+config/example-hosts.txt
+config/postgres-init/
 scripts/
 playwright-report/
 notebooks/
 package-lock.json
 package.json
+config/
+docs-all/
