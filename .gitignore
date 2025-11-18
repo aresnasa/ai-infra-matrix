@@ -52,8 +52,13 @@ cleanup-branches.sh
 dev-md.md
 dev-conf.md
 .vscode/
+.playwright-mcp/
 logs/
 log/
+shared/
 docs/
 ssh-key/
 config/
+scripts/
+playwright-report/
+notebooks/
