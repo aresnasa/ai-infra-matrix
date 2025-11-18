@@ -67,3 +67,7 @@ package-lock.json
 package.json
 config/
 docs-all/
+package.json
+package-lock.json
+manual-install-slurm-node.sh
+ldap-init-data.ldif
