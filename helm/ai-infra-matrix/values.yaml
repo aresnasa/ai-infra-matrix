@@ -8,7 +8,7 @@ global:
 env:
   # This section will be populated from .env file
   COMPOSE_PROJECT_NAME: "ai-infra-matrix"
-  IMAGE_TAG: "v0.3.6-dev"
+  IMAGE_TAG: "v0.3.8"
   BUILD_ENV: "development"
   DEBUG_MODE: "true"
   LOG_LEVEL: "debug"
@@ -67,7 +67,7 @@ env:
   CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-dev"
   JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
   JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
-  JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.6-dev"
+  JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.8"
   JUPYTERHUB_NETWORK: "ai-infra-network"
   JUPYTERHUB_MEM_LIMIT: "2G"
   JUPYTERHUB_CPU_LIMIT: "1.0"
@@ -145,7 +145,7 @@ jupyterhub:
   enabled: true
   image:
     repository: "ai-infra-jupyterhub"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -179,7 +179,7 @@ jupyterhub:
       
   env:
     JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
-    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.6-dev"
+    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.8"
     JUPYTERHUB_NETWORK: "pod"  # Kubernetes模式下使用pod网络
     JUPYTERHUB_MEM_LIMIT: "2G"
     JUPYTERHUB_CPU_LIMIT: "1.0"
@@ -214,7 +214,7 @@ jupyterhub:
   singleuser:
     image:
       repository: "ai-infra-singleuser"
-      tag: "v0.3.6-dev"
+      tag: "v0.3.8"
       pullPolicy: "IfNotPresent"
     resources:
       limit:
@@ -434,7 +434,7 @@ nginx:
   enabled: true  # 启用nginx服务
   image:
     repository: "ai-infra-nginx"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -446,7 +446,7 @@ gitea:
   enabled: true
   image:
     repository: "ai-infra-gitea"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -495,7 +495,7 @@ saltstack:
   enabled: true
   image:
     repository: "ai-infra-saltstack"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -526,7 +526,7 @@ frontend:
   enabled: true
   image:
     repository: "ai-infra-frontend"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -538,7 +538,7 @@ backend:
   enabled: true
   image:
     repository: "ai-infra-backend"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"
   service:
     type: "ClusterIP"
@@ -558,5 +558,5 @@ backendInit:
   enabled: true
   image:
     repository: "ai-infra-backend"
-    tag: "v0.3.6-dev"
+    tag: "v0.3.8"
     pullPolicy: "IfNotPresent"

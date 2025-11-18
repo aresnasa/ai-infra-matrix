@@ -209,6 +209,60 @@ update_component_tags_from_branch() {
     return 0
 }
 
+# 更新所有 Docker 相关文件中的旧版本标签
+# 用法: update_legacy_image_tags [old_tag] [new_tag]
+# 功能: 将所有 Docker 相关文件中的旧标签替换为新标签
+update_legacy_image_tags() {
+    local old_tag="${1:-v0.3.8}"
+    local new_tag="${2:-$(get_current_git_branch)}"
+    
+    print_info "更新 Docker 相关文件中的版本标签: $old_tag → $new_tag"
+    
+    # 定义需要更新的文件列表
+    local files_to_update=(
+        "$SCRIPT_DIR/docker-compose.yml"
+        "$SCRIPT_DIR/docker-compose.yml.example"
+        "$SCRIPT_DIR/docker-compose.test.yml"
+        "$SCRIPT_DIR/.env"
+        "$SCRIPT_DIR/.env.example"
+    )
+    
+    local updated_count=0
+    
+    # 遍历每个文件
+    for file in "${files_to_update[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            continue
+        fi
+        
+        # 检查文件是否包含旧标签
+        if grep -q "$old_tag" "$file" 2>/dev/null; then
+            print_info "  更新文件: $(basename "$file")"
+            
+            # 使用 sed 替换（macOS 和 Linux 兼容）
+            # 匹配各种格式：:tag, =tag, "tag", 'tag', :-tag}
+            sed_inplace "s|:${old_tag}|:${new_tag}|g" "$file"
+            sed_inplace "s|=${old_tag}|=${new_tag}|g" "$file"
+            sed_inplace "s|\"${old_tag}\"|\"${new_tag}\"|g" "$file"
+            sed_inplace "s|'${old_tag}'|'${new_tag}'|g" "$file"
+            sed_inplace "s|:-${old_tag}|:-${new_tag}|g" "$file"
+            
+            ((updated_count++))
+        fi
+    done
+    
+    # 清理备份文件
+    cleanup_backup_files "$SCRIPT_DIR"
+    
+    if [[ $updated_count -gt 0 ]]; then
+        print_success "✓ 已更新 $updated_count 个文件的版本标签"
+    else
+        print_info "所有文件已是最新版本标签"
+    fi
+    
+    return 0
+}
+
 # 获取组件版本相关的构建参数
 # 用法: get_version_build_args <service>
 get_version_build_args() {
@@ -1133,7 +1187,7 @@ get_production_dependencies() {
 
 # 初始化配置
 DEFAULT_IMAGE_TAG=$(read_config "project" "version" 2>/dev/null || echo "")
-[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.6-dev"
+[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.8"
 
 # 动态更新版本标签函数
 update_version_if_provided() {
@@ -1151,7 +1205,7 @@ update_version_if_provided() {
             break
         fi
         
-        # 检查常见的版本标签格式 (如 test-v0.3.6-dev)
+        # 检查常见的版本标签格式 (如 test-v0.3.8)
         if [[ "$arg" =~ ^[a-zA-Z0-9-]*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
             print_info "检测到版本参数: $new_version，更新默认版本标签"
@@ -2440,8 +2494,8 @@ generate_or_update_env_file() {
 
 # 生成离线友好的 Dockerfile 内容
 generate_offline_singleuser_dockerfile() {
-    # 获取当前版本标签，默认使用v0.3.6-dev
-    local version_tag="${TARGET_TAG:-v0.3.6-dev}"
+    # 获取当前版本标签，默认使用v0.3.8
+    local version_tag="${TARGET_TAG:-v0.3.8}"
     local harbor.example.com_registry="${INTERNAL_REGISTRY:-harbor.example.com}"
     
     cat << OFFLINE_EOF
@@ -2649,7 +2703,7 @@ prepare_singleuser_dockerfile() {
     # 生成对应的 Dockerfile
     if [[ "$use_offline" == "true" ]]; then
         # 验证 harbor.example.com 镜像是否可用
-        local version_tag="${TARGET_TAG:-v0.3.6-dev}"
+        local version_tag="${TARGET_TAG:-v0.3.8}"
         local harbor.example.com_registry="${INTERNAL_REGISTRY:-harbor.example.com}"
         local harbor_image="${harbor.example.com_registry}/aihpc/ai-infra-singleuser:${version_tag}"
         
@@ -4892,7 +4946,7 @@ get_private_image_name() {
 get_mapped_private_image() {
     local original_image="$1"
     local registry="$2"
-    local target_tag="${3:-v0.3.6-dev}"  # 默认目标git版本
+    local target_tag="${3:-v0.3.8}"  # 默认目标git版本
     local mapping_file="$SCRIPT_DIR/config/image-mapping.conf"
     
     if [[ -z "$registry" ]]; then
@@ -6997,6 +7051,9 @@ build_all_pipeline() {
         print_info "使用手动指定的标签: $tag"
     fi
     
+    # 更新所有 Docker 相关文件中的旧版本标签
+    update_legacy_image_tags "v0.3.8" "$tag"
+    
     # 从 deps.yaml 同步依赖版本到 .env
     sync_deps_from_yaml "$SCRIPT_DIR/.env"
     echo ""
@@ -7409,7 +7466,7 @@ build_and_push_all() {
         echo
         echo "示例:"
         echo "  $0 build-push harbor.company.com/ai-infra v1.0.0"
-        echo "  $0 build-push registry.internal.com/project v0.3.6-dev"
+        echo "  $0 build-push registry.internal.com/project v0.3.8"
         return 0
     fi
     
@@ -7673,7 +7730,7 @@ push_production_dependencies() {
     print_info "=========================================="
     print_info "推送生产环境依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.6-dev)"
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.8)"
     
     # 使用生产环境依赖镜像列表
     local dependency_images
@@ -8729,7 +8786,7 @@ replace_images_in_compose_file() {
     if [[ -n "$registry" ]]; then
         local ai_infra_services=("backend" "backend-init" "frontend" "jupyterhub" "gitea" "nginx" "saltstack" "singleuser")
         for service in "${ai_infra_services[@]}"; do
-            local source_pattern="ai-infra-${service}:\${IMAGE_TAG:-v0.3.6-dev}"
+            local source_pattern="ai-infra-${service}:\${IMAGE_TAG:-v0.3.8}"
             local target_replacement="${registry}/ai-infra-${service}:${tag}"
             
             if grep -q "ai-infra-${service}:" "$temp_compose"; then
@@ -9450,11 +9507,11 @@ verify_image() {
 # 验证私有仓库中的所有AI-Infra镜像
 verify_private_images() {
     local registry="$1"
-    local tag="${2:-v0.3.6-dev}"
+    local tag="${2:-v0.3.8}"
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify <registry_base> [tag]"
-        print_info "示例: verify harbor.example.com/ai-infra v0.3.6-dev"
+        print_info "示例: verify harbor.example.com/ai-infra v0.3.8"
         return 1
     fi
     
@@ -9571,7 +9628,7 @@ verify_private_images() {
 # 快速验证关键镜像
 verify_key_images() {
     local registry="$1"
-    local tag="${2:-v0.3.6-dev}"
+    local tag="${2:-v0.3.8}"
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify-key <registry_base> [tag]"
@@ -10250,6 +10307,7 @@ show_help() {
     echo "动态配置管理:"
     echo "  update-host [host|auto]         - 更新外部主机配置（auto=自动检测）"
     echo "  update-port <port>              - 更新外部端口配置（自动计算相关端口）"
+    echo "  update-tags [old_tag] [new_tag] - 更新 Docker 文件中的版本标签"
     echo "  quick-deploy [port] [host]      - 一键更新配置并重新部署（默认8080 auto）"
     echo
     echo "===================================================================================="
@@ -10343,8 +10401,8 @@ show_help() {
     echo "  docker compose -f docker-compose.yml.example up -d        # 启动服务"
     echo
     echo "  # 本地开发测试"
-    echo "  $0 build-all test-v0.3.6-dev                          # 构建测试版本"
-    echo "  $0 build frontend v0.3.6-dev                          # 构建前端（Docker容器内）"
+    echo "  $0 build-all test-v0.3.8                          # 构建测试版本"
+    echo "  $0 build frontend v0.3.8                          # 构建前端（Docker容器内）"
     echo "  docker compose -f docker-compose.yml.example up -d backend frontend  # 启动核心服务"
     echo
     echo "  # 单服务调试"
@@ -10355,6 +10413,11 @@ show_help() {
     echo "===================================================================================="
     echo "🔧 动态配置管理实例:"
     echo "===================================================================================="
+    echo "  # 更新版本标签（弃用旧版本，使用当前分支）"
+    echo "  $0 update-tags                                        # v0.3.8 → 当前分支"
+    echo "  $0 update-tags v0.3.8 v0.3.8                     # 指定新版本"
+    echo "  $0 build-all                                          # 重新构建所有镜像"
+    echo
     echo "  # 自动检测外部IP并更新配置"
     echo "  $0 update-host auto                                   # 自动检测外部主机IP"
     echo "  $0 build nginx --force && docker compose restart nginx  # 应用新配置"
@@ -10459,7 +10522,7 @@ export_offline_images() {
         echo
         echo "示例:"
         echo "  $0 export-offline ./my-images v1.0.0 true"
-        echo "  $0 export-offline ./images v0.3.6-dev false"
+        echo "  $0 export-offline ./images v0.3.8 false"
         return 0
     fi
     
@@ -10715,7 +10778,7 @@ push_to_internal_registry() {
         echo
         echo "示例:"
         echo "  $0 push-to-internal harbor.company.com/ai-infra v1.0.0 true"
-        echo "  $0 push-to-internal registry.internal.com/project v0.3.6-dev false"
+        echo "  $0 push-to-internal registry.internal.com/project v0.3.8 false"
         return 0
     fi
     
@@ -10891,7 +10954,7 @@ prepare_offline_deployment() {
         echo
         echo "示例:"
         echo "  $0 prepare-offline harbor.company.com/ai-infra v1.0.0 ./offline true"
-        echo "  $0 prepare-offline registry.internal.com/project v0.3.6-dev ./deploy false"
+        echo "  $0 prepare-offline registry.internal.com/project v0.3.8 ./deploy false"
         return 0
     fi
     
@@ -12701,7 +12764,7 @@ main() {
         "build-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 build-env harbor.example.com/ai-infra v0.3.6-dev"
+                print_info "示例: $0 build-env harbor.example.com/ai-infra v0.3.8"
                 exit 1
             fi
             build_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -12710,7 +12773,7 @@ main() {
         "intranet-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 intranet-env harbor.example.com/ai-infra v0.3.6-dev"
+                print_info "示例: $0 intranet-env harbor.example.com/ai-infra v0.3.8"
                 exit 1
             fi
             intranet_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -12821,7 +12884,7 @@ main() {
                 echo
                 echo "示例:"
                 echo "  $0 build-singleuser auto                      # 自动检测环境"
-                echo "  $0 build-singleuser offline v0.3.6-dev       # 使用内部预构建镜像"
+                echo "  $0 build-singleuser offline v0.3.8       # 使用内部预构建镜像"
                 echo "  $0 build-singleuser online v1.0.0 harbor.com/ai # 在线模式推送"
                 return 0
             fi
@@ -12881,6 +12944,39 @@ main() {
             update_external_port_config "$port"
             ;;
             
+        # 更新 Docker 相关文件中的版本标签
+        "update-tags")
+            local old_tag="${2:-v0.3.8}"
+            local new_tag="${3:-$(get_current_git_branch)}"
+            
+            if [[ "$old_tag" == "--help" || "$old_tag" == "-h" ]]; then
+                echo "update-tags - 更新所有 Docker 相关文件中的版本标签"
+                echo
+                echo "用法: $0 update-tags [old_tag] [new_tag]"
+                echo
+                echo "参数:"
+                echo "  old_tag    要替换的旧标签 (默认: v0.3.8)"
+                echo "  new_tag    新的标签 (默认: 当前 Git 分支名)"
+                echo
+                echo "功能:"
+                echo "  • 自动更新 docker-compose.yml 中的镜像标签"
+                echo "  • 自动更新 .env 文件中的版本变量"
+                echo "  • 支持批量替换多个文件"
+                echo
+                echo "示例:"
+                echo "  $0 update-tags                           # v0.3.8 → 当前分支"
+                echo "  $0 update-tags v0.3.8 v0.3.8        # v0.3.8 → v0.3.8"
+                echo "  $0 update-tags old-version new-version  # 自定义替换"
+                exit 0
+            fi
+            
+            update_legacy_image_tags "$old_tag" "$new_tag"
+            
+            print_info ""
+            print_info "提示: 如需重新构建镜像，请运行:"
+            print_info "  $0 build-all $new_tag"
+            ;;
+            
         # 一键更新端口并重新部署
         "quick-deploy")
             local port="${2:-8080}"
@@ -12922,7 +13018,7 @@ main() {
                 print_info "用法: $0 deps-pull <registry> [tag]"
                 exit 1
             fi
-            pull_and_tag_dependencies "$2" "${3:-v0.3.6-dev}"
+            pull_and_tag_dependencies "$2" "${3:-v0.3.8}"
             ;;
             
         "deps-push")
@@ -12931,7 +13027,7 @@ main() {
                 print_info "用法: $0 deps-push <registry> [tag]"
                 exit 1
             fi
-            push_dependencies "$2" "${3:-v0.3.6-dev}"
+            push_dependencies "$2" "${3:-v0.3.8}"
             ;;
             
         "deps-all")
@@ -12939,7 +13035,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-v0.3.6-dev}"
+            local deps_tag="${3:-v0.3.8}"
             print_info "执行完整的依赖镜像操作..."
             if pull_and_tag_dependencies "$2" "$deps_tag"; then
                 push_dependencies "$2" "$deps_tag"
@@ -12973,7 +13069,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-v0.3.6-dev}"
+            local deps_tag="${3:-v0.3.8}"
             print_info "执行生产环境依赖镜像操作（排除测试工具）..."
             if pull_and_tag_production_dependencies "$2" "$deps_tag"; then
                 push_production_dependencies "$2" "$deps_tag"
@@ -13056,7 +13152,7 @@ main() {
                 print_info "用法: $0 verify <registry> [tag]"
                 exit 1
             fi
-            verify_private_images "$2" "${3:-v0.3.6-dev}"
+            verify_private_images "$2" "${3:-v0.3.8}"
             ;;
             
         "verify-key")
@@ -13065,7 +13161,7 @@ main() {
                 print_info "用法: $0 verify-key <registry> [tag]"
                 exit 1
             fi
-            verify_key_images "$2" "${3:-v0.3.6-dev}"
+            verify_key_images "$2" "${3:-v0.3.8}"
             ;;
             
         "clean")

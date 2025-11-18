@@ -15,9 +15,9 @@ test_cases=(
     "    "harbor.example.com/ai-infra|postgres:15-alpine|harbor.example.com/ai-infra/postgres:15-alpine|Harbor风格基础镜像""
     "    "harbor.example.com/ai-infra|redis:7-alpine|harbor.example.com/ai-infra/redis:7-alpine|Harbor风格Redis镜像""
     "    "harbor.example.com/ai-infra|osixia/openldap:stable|harbor.example.com/ai-infra/osixia/openldap:stable|Harbor风格组织镜像""
-    "    "harbor.example.com/ai-infra|ai-infra-backend:v0.3.6-dev|harbor.example.com/ai-infra/ai-infra-backend:v0.3.6-dev|Harbor风格AI-Infra镜像""
+    "    "harbor.example.com/ai-infra|ai-infra-backend:v0.3.8|harbor.example.com/ai-infra/ai-infra-backend:v0.3.8|Harbor风格AI-Infra镜像""
     "registry.local:5000|postgres:15-alpine|registry.local:5000/postgres:15-alpine|传统风格基础镜像"
-    "registry.local:5000|ai-infra-backend:v0.3.6-dev|registry.local:5000/ai-infra/ai-infra-backend:v0.3.6-dev|传统风格AI-Infra镜像"
+    "registry.local:5000|ai-infra-backend:v0.3.8|registry.local:5000/ai-infra/ai-infra-backend:v0.3.8|传统风格AI-Infra镜像"
     "    "harbor.example.com/ai-infra|harbor.example.com/ai-infra/postgres:15-alpine|harbor.example.com/ai-infra/postgres:15-alpine|已包含完整路径的镜像""
 )
 

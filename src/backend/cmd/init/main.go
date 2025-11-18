@@ -30,6 +30,15 @@ func quoteIdentifier(name string) string {
 	return fmt.Sprintf("\"%s\"", escaped)
 }
 
+// quoteLiteral safely quotes PostgreSQL string literals to prevent SQL injection
+// This follows PostgreSQL's string literal quoting rules
+func quoteLiteral(value string) string {
+	// Replace single quotes with escaped single quotes
+	escaped := strings.ReplaceAll(value, "'", "''")
+	// Wrap in single quotes
+	return fmt.Sprintf("'%s'", escaped)
+}
+
 func main() {
 	// 加载配置
 	cfg, err := config.Load()
@@ -998,17 +1007,25 @@ func createGiteaDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Create role if missing - Use DO block with proper parameter escaping
-	// Note: Role names cannot be parameterized in PostgreSQL, so we use identifier quoting
-	createRoleSQL := `DO $$ 
-	BEGIN 
-		IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $1) THEN 
-			EXECUTE format('CREATE USER %I WITH LOGIN PASSWORD %L', $1, $2);
-		END IF; 
-	END $$;`
+	// Create role if missing - simplified approach without DO block
+	// First check if role exists
+	var roleExists bool
+	checkRoleSQL := "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = ?)"
+	if err := systemDB.Raw(checkRoleSQL, gUser).Scan(&roleExists).Error; err != nil {
+		return fmt.Errorf("failed to check Gitea role existence: %w", err)
+	}
 
-	if err := systemDB.Exec(createRoleSQL, gUser, gPass).Error; err != nil {
-		return fmt.Errorf("failed to ensure Gitea role: %w", err)
+	if !roleExists {
+		// Create role - use quoteLiteral for password
+		// Note: CREATE USER doesn't support parameterized passwords
+		createUserSQL := fmt.Sprintf("CREATE USER %s WITH LOGIN PASSWORD %s",
+			quoteIdentifier(gUser), quoteLiteral(gPass))
+		if err := systemDB.Exec(createUserSQL).Error; err != nil {
+			return fmt.Errorf("failed to create Gitea role: %w", err)
+		}
+		log.Printf("✓ Gitea user '%s' created successfully", gUser)
+	} else {
+		log.Printf("✓ Gitea user '%s' already exists", gUser)
 	}
 
 	// Create DB if missing and grant
@@ -1136,19 +1153,26 @@ func createSLURMDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Create SLURM role if missing - Use secure parameterized query
+	// Create SLURM role if missing - simplified approach
 	log.Printf("Creating SLURM user: %s", slurmUser)
-	createRoleSQL := `DO $$ 
-	BEGIN 
-		IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $1) THEN 
-			EXECUTE format('CREATE USER %I WITH LOGIN PASSWORD %L', $1, $2);
-		END IF; 
-	END $$;`
-
-	if err := systemDB.Exec(createRoleSQL, slurmUser, slurmPass).Error; err != nil {
-		return fmt.Errorf("failed to ensure SLURM role: %w", err)
+	var roleExists bool
+	checkRoleSQL := "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = ?)"
+	if err := systemDB.Raw(checkRoleSQL, slurmUser).Scan(&roleExists).Error; err != nil {
+		return fmt.Errorf("failed to check SLURM role existence: %w", err)
 	}
-	log.Printf("✓ SLURM user '%s' created or already exists", slurmUser)
+
+	if !roleExists {
+		// Create role - use quoteLiteral for password
+		// Note: CREATE USER doesn't support parameterized passwords
+		createUserSQL := fmt.Sprintf("CREATE USER %s WITH LOGIN PASSWORD %s",
+			quoteIdentifier(slurmUser), quoteLiteral(slurmPass))
+		if err := systemDB.Exec(createUserSQL).Error; err != nil {
+			return fmt.Errorf("failed to create SLURM role: %w", err)
+		}
+		log.Printf("✓ SLURM user '%s' created successfully", slurmUser)
+	} else {
+		log.Printf("✓ SLURM user '%s' already exists", slurmUser)
+	}
 
 	// Create SLURM DB if missing
 	var exists bool

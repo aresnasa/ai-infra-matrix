@@ -41,7 +41,7 @@ fi
 
 # 测试2: 无注册表的拉取命令应该报错
 print_info "测试2: 检查无注册表时是否正确报错"
-if scripts/build.sh prod --pull --version v0.3.6-dev 2>&1 | grep -q "拉取镜像需要指定 --registry 参数"; then
+if scripts/build.sh prod --pull --version v0.3.8 2>&1 | grep -q "拉取镜像需要指定 --registry 参数"; then
     print_success "无注册表时正确报错"
 else
     print_error "无注册表时错误处理不正确"
@@ -50,7 +50,7 @@ fi
 
 # 测试3: 拉取模式检测
 print_info "测试3: 检查拉取模式是否正确识别"
-output=$(scripts/build.sh prod --registry test.com --pull --version v0.3.6-dev 2>&1 || true)
+output=$(scripts/build.sh prod --registry test.com --pull --version v0.3.8 2>&1 || true)
 if echo "$output" | grep -q "镜像拉取模式"; then
     print_success "拉取模式正确识别"
 else
@@ -85,4 +85,4 @@ print_info "现在您可以安全地使用镜像拉取功能:"
 echo "  scripts/build.sh prod --registry YOUR_REGISTRY --pull --version VERSION"
 echo ""
 print_info "示例命令:"
-echo "  scripts/build.sh prod --registry crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix --pull --version v0.3.6-dev"
+echo "  scripts/build.sh prod --registry crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix --pull --version v0.3.8"

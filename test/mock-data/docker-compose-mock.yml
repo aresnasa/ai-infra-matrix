@@ -37,7 +37,7 @@ services:
 
   # 如果backend镜像存在，则启动测试实例
   mock-backend:
-    image: ai-infra-backend:v0.3.6-dev
+    image: ai-infra-backend:v0.3.8
     container_name: ai-infra-mock-backend
     environment:
       POSTGRES_HOST: mock-postgres

@@ -5,7 +5,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
 ARG SLURM_VERSION=25.05.4
-ARG VERSION=v0.3.6-dev
+ARG VERSION=v0.3.8
 
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
