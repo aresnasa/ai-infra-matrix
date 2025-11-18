@@ -382,7 +382,7 @@ docker exec ai-infra-minio mc mirror /data /backup
 
 ## 🙋 支持与反馈
 
-- 📧 邮箱：[aresnasa@example.com](mailto:aresnasa@example.com)
+- 📧 邮箱：[ai_infra_matrix](mailto:ai_infra_matrix@126.com)
 - 🐛 问题反馈：[GitHub Issues](https://github.com/aresnasa/ai-infra-matrix/issues)
 - 💬 讨论交流：[GitHub Discussions](https://github.com/aresnasa/ai-infra-matrix/discussions)
 
