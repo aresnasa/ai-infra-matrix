@@ -54,3 +54,6 @@ dev-conf.md
 .vscode/
 logs/
 log/
+docs/
+ssh-key/
+config/
