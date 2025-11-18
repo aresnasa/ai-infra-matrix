@@ -184,10 +184,10 @@ sync_deps_from_yaml() {
         local env_var_name=$(echo "${key}_VERSION" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
         
         # 更新到 .env 文件
-        set_or_update_env_var "$env_var_name" "$value" "$env_file"
+        set_or_update_env_var "$env_var_name" "$value" "$env_file" || true
         
         print_info "  ✓ $env_var_name=$value"
-    done < <(grep -E '^\s*[a-zA-Z0-9_-]+:' "$deps_file")
+    done < <(grep -E '^\s*[a-zA-Z0-9_-]+:' "$deps_file" || true)
     
     print_info "依赖版本同步完成"
     return 0
@@ -246,13 +246,13 @@ update_legacy_image_tags() {
             
             # 使用 sed 替换（macOS 和 Linux 兼容）
             # 匹配各种格式：:tag, =tag, "tag", 'tag', :-tag}
-            sed_inplace "s|:${old_tag}|:${new_tag}|g" "$file"
-            sed_inplace "s|=${old_tag}|=${new_tag}|g" "$file"
-            sed_inplace "s|\"${old_tag}\"|\"${new_tag}\"|g" "$file"
-            sed_inplace "s|'${old_tag}'|'${new_tag}'|g" "$file"
-            sed_inplace "s|:-${old_tag}|:-${new_tag}|g" "$file"
+            sed_inplace "s|:${old_tag}|:${new_tag}|g" "$file" || true
+            sed_inplace "s|=${old_tag}|=${new_tag}|g" "$file" || true
+            sed_inplace "s|\"${old_tag}\"|\"${new_tag}\"|g" "$file" || true
+            sed_inplace "s|'${old_tag}'|'${new_tag}'|g" "$file" || true
+            sed_inplace "s|:-${old_tag}|:-${new_tag}|g" "$file" || true
             
-            ((updated_count++))
+            ((updated_count++)) || true
         fi
     done
     
