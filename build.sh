@@ -127,6 +127,88 @@ load_env_file() {
     return 0
 }
 
+# 获取当前 Git 分支名称
+# 用法: get_current_git_branch
+# 返回: 当前分支名，或 DEFAULT_IMAGE_TAG 作为后备
+get_current_git_branch() {
+    local branch=""
+    
+    # 检查是否在 Git 仓库中
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        # 尝试获取当前分支名
+        branch=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    fi
+    
+    # 返回分支名，如果获取失败则返回默认标签
+    if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
+        echo "$branch"
+    else
+        echo "${DEFAULT_IMAGE_TAG:-latest}"
+    fi
+}
+
+# 从 deps.yaml 同步依赖版本到 .env 文件
+# 用法: sync_deps_from_yaml
+# deps.yaml 格式: key: "value"
+sync_deps_from_yaml() {
+    local deps_file="$SCRIPT_DIR/deps.yaml"
+    local env_file="${1:-$ENV_FILE}"
+    
+    if [[ ! -f "$deps_file" ]]; then
+        print_warning "依赖文件不存在: $deps_file，跳过同步"
+        return 0
+    fi
+    
+    print_info "从 deps.yaml 同步依赖版本到 $env_file"
+    
+    # 读取 deps.yaml 并更新 .env
+    while IFS=: read -r key value; do
+        # 跳过注释和空行
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$key" ]] && continue
+        
+        # 清理 key（移除空格）
+        key=$(echo "$key" | xargs)
+        # 清理 value（移除引号、空格和尾部注释）
+        value=$(echo "$value" | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//' -e "s/^[[:space:]]*'//" -e "s/'[[:space:]]*$//" -e 's/[[:space:]]*#.*//' | xargs)
+        
+        [[ -z "$key" || -z "$value" ]] && continue
+        
+        # 转换为环境变量格式（大写，替换 - 为 _）
+        # 例如: postgres -> POSTGRES_VERSION, golang -> GOLANG_VERSION
+        local env_var_name=$(echo "${key}_VERSION" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+        
+        # 更新到 .env 文件
+        set_or_update_env_var "$env_var_name" "$value" "$env_file"
+        
+        print_info "  ✓ $env_var_name=$value"
+    done < <(grep -E '^\s*[a-zA-Z0-9_-]+:' "$deps_file")
+    
+    print_info "依赖版本同步完成"
+    return 0
+}
+
+# 根据 Git 分支更新组件标签
+# 用法: update_component_tags_from_branch
+# 功能: 自动设置 IMAGE_TAG 和 DEFAULT_IMAGE_TAG 为当前分支名
+update_component_tags_from_branch() {
+    local branch=$(get_current_git_branch)
+    local env_file="${1:-$ENV_FILE}"
+    
+    print_info "检测到 Git 分支: $branch"
+    
+    # 导出到当前环境
+    export IMAGE_TAG="$branch"
+    export DEFAULT_IMAGE_TAG="$branch"
+    
+    # 更新到 .env 文件
+    set_or_update_env_var "IMAGE_TAG" "$branch" "$env_file"
+    set_or_update_env_var "DEFAULT_IMAGE_TAG" "$branch" "$env_file"
+    
+    print_info "已设置组件标签: $branch"
+    return 0
+}
+
 # 获取组件版本相关的构建参数
 # 用法: get_version_build_args <service>
 get_version_build_args() {
@@ -2360,12 +2442,12 @@ generate_or_update_env_file() {
 generate_offline_singleuser_dockerfile() {
     # 获取当前版本标签，默认使用v0.3.6-dev
     local version_tag="${TARGET_TAG:-v0.3.6-dev}"
-    local aiharbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local}"
+    local harbor.example.com_registry="${INTERNAL_REGISTRY:-harbor.example.com}"
     
     cat << OFFLINE_EOF
 # ai-infra single-user notebook image - 离线部署版本
-# 直接使用 aiharbor 内部已构建完成的镜像，无需重新构建
-FROM ${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}
+# 直接使用 harbor.example.com 内部已构建完成的镜像，无需重新构建
+FROM ${harbor.example.com_registry}/aihpc/ai-infra-singleuser:${version_tag}
 
 # Version metadata - 继承内部镜像版本
 ARG VERSION="${version_tag}"
@@ -2374,7 +2456,7 @@ ENV APP_VERSION=\${VERSION}
 # ========================================
 # 离线部署优化配置
 # ========================================
-# 该镜像已在 aiharbor 内部完成所有构建和配置：
+# 该镜像已在 harbor.example.com 内部完成所有构建和配置：
 # - JupyterHub 5.3.x 兼容
 # - JupyterLab 完整环境
 # - 预装开发工具和科学计算包
@@ -2388,7 +2470,7 @@ ENV JUPYTER_ENABLE_LAB=yes
 ENV JUPYTERLAB_SETTINGS_DIR=/home/jovyan/.jupyter/lab/user-settings
 
 # 验证内部镜像完整性
-RUN echo "✓ 使用 aiharbor 内部预构建镜像: ${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}" && \
+RUN echo "✓ 使用 harbor.example.com 内部预构建镜像: ${harbor.example.com_registry}/aihpc/ai-infra-singleuser:${version_tag}" && \
     python -c "import sys; print(f'✓ Python {sys.version}'); import jupyterhub, jupyterlab, ipykernel; print('✓ 核心组件已就绪')" && \
     jupyter --version
 
@@ -2396,12 +2478,12 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.title="ai-infra-singleuser-offline" \
     org.opencontainers.image.version="\${APP_VERSION}" \
     org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook (Offline Ready - Harbor Internal)" \
-    org.opencontainers.image.source="${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}"
+    org.opencontainers.image.source="${harbor.example.com_registry}/aihpc/ai-infra-singleuser:${version_tag}"
 
 OFFLINE_EOF
 }
 
-# 离线构建模式的 Dockerfile 生成（当 aiharbor 镜像不可用时的回退方案）
+# 离线构建模式的 Dockerfile 生成（当 harbor.example.com 镜像不可用时的回退方案）
 generate_offline_build_dockerfile() {
     cat << 'OFFLINE_BUILD_EOF'
 # ai-infra single-user notebook image pinned to JupyterHub 5.3.x
@@ -2566,18 +2648,18 @@ prepare_singleuser_dockerfile() {
     
     # 生成对应的 Dockerfile
     if [[ "$use_offline" == "true" ]]; then
-        # 验证 aiharbor 镜像是否可用
+        # 验证 harbor.example.com 镜像是否可用
         local version_tag="${TARGET_TAG:-v0.3.6-dev}"
-        local aiharbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local}"
-        local harbor_image="${aiharbor_registry}/aihpc/ai-infra-singleuser:${version_tag}"
+        local harbor.example.com_registry="${INTERNAL_REGISTRY:-harbor.example.com}"
+        local harbor_image="${harbor.example.com_registry}/aihpc/ai-infra-singleuser:${version_tag}"
         
-        print_info "检查 aiharbor 内部镜像可用性..."
+        print_info "检查 harbor.example.com 内部镜像可用性..."
         if docker manifest inspect "$harbor_image" &>/dev/null; then
-            print_success "✓ aiharbor 内部镜像可用: $harbor_image"
+            print_success "✓ harbor.example.com 内部镜像可用: $harbor_image"
             generate_offline_singleuser_dockerfile > "$dockerfile_path"
-            print_success "✓ 已生成离线模式 Dockerfile (使用 aiharbor 预构建镜像)"
+            print_success "✓ 已生成离线模式 Dockerfile (使用 harbor.example.com 预构建镜像)"
         else
-            print_warning "⚠ aiharbor 内部镜像不可用: $harbor_image"
+            print_warning "⚠ harbor.example.com 内部镜像不可用: $harbor_image"
             print_info "回退到离线构建模式 (预装依赖)..."
             generate_offline_build_dockerfile > "$dockerfile_path"
             print_success "✓ 已生成离线构建模式 Dockerfile (预装依赖)"
@@ -3290,7 +3372,7 @@ render_docker_compose_templates() {
         echo
         echo "示例:"
         echo "  $0 render-templates docker-compose                                         # 基础渲染"
-        echo "  $0 render-templates docker-compose aiharbor.msxf.local/aihpc v1.0.0       # 替换为内部镜像"
+        echo "  $0 render-templates docker-compose harbor.example.com/ai-infra v1.0.0       # 替换为内部镜像"
         echo "  $0 render-templates docker-compose --oceanbase-init-dir ./data/ob/init.d  # 指定OceanBase初始化目录"
         echo "  $0 render-templates docker-compose --openscow-db-dir ./data/openscow/mysql # 指定OpenSCOW MySQL数据目录"
         return 0
@@ -5150,7 +5232,7 @@ extract_base_images() {
 tag_image_smart() {
     local image="$1"
     local network_env="${2:-auto}"
-    local harbor_registry="${3:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
+    local harbor_registry="${3:-${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}}"
     local auto_pull="${4:-true}"  # 是否自动拉取不存在的镜像（默认启用）
     
     if [[ -z "$image" ]]; then
@@ -5172,7 +5254,7 @@ tag_image_smart() {
     
     # 智能移除 Harbor 仓库前缀（包含域名的私有仓库）
     # 规则：如果前缀包含点号（.），则认为是私有仓库域名
-    # 例如：aiharbor.msxf.local/aihpc/redis:7-alpine → redis:7-alpine
+    # 例如：harbor.example.com/ai-infra/redis:7-alpine → redis:7-alpine
     # 但保留：osixia/openldap:stable → osixia/openldap:stable
     if [[ "$base_image" =~ ^[^/]+\.[^/]+/ ]]; then
         # 包含域名的私有仓库，移除仓库前缀
@@ -5321,7 +5403,7 @@ tag_image_smart() {
             
             # 4. Harbor 完整路径（如果用户明确指定了 harbor_registry）
             # 这样可以方便后续 docker push 到 Harbor
-            if [[ -n "$harbor_registry" ]] && [[ "$harbor_registry" != "${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}" ]]; then
+            if [[ -n "$harbor_registry" ]] && [[ "$harbor_registry" != "${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}" ]]; then
                 # 用户明确指定了非默认的 Harbor 地址
                 if ! $has_harbor; then
                     if docker tag "$source_image" "$harbor_image" 2>/dev/null; then
@@ -5406,7 +5488,7 @@ tag_image_bidirectional() {
 #   非0: 部分或全部失败（返回失败的数量）
 batch_tag_images_smart() {
     local network_env="${1:-auto}"
-    local harbor_registry="${2:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
+    local harbor_registry="${2:-${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}}"
     shift 2
     local images=("$@")
     
@@ -5468,21 +5550,21 @@ batch_tag_images_smart() {
 #   0: 全部成功
 #   非0: 部分或全部失败（返回失败的数量）
 batch_tag_images_bidirectional() {
-    batch_tag_images_smart "auto" "${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}" "$@"
+    batch_tag_images_smart "auto" "${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}" "$@"
 }
 
 # 拉取单个镜像（带重试机制 + 网络环境感知）
 # 参数：
 #   $1: 镜像名称
 #   $2: 最大重试次数（默认3）
-#   $3: Harbor 仓库地址（可选，默认 aiharbor.msxf.local/aihpc）
+#   $3: Harbor 仓库地址（可选，默认 harbor.example.com/ai-infra）
 # 返回：
 #   0: 拉取成功或镜像已存在
 #   1: 拉取失败
 pull_image_with_retry() {
     local image="$1"
     local max_retries="${2:-3}"
-    local harbor_registry="${3:-${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}}"
+    local harbor_registry="${3:-${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}}"
     local retry_count=0
     
     # 检查镜像是否已存在
@@ -6312,7 +6394,7 @@ build_all_services() {
     print_info "🌐 检测到网络环境: $network_env"
     
     # 获取 Harbor 仓库地址
-    local harbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}"
+    local harbor_registry="${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}"
     if [[ "$network_env" == "internal" ]]; then
         print_info "📦 内网 Harbor 仓库: $harbor_registry"
     fi
@@ -6898,6 +6980,26 @@ build_all_pipeline() {
     if [[ "$FORCE_REBUILD" == "true" ]]; then
         force="true"
     fi
+
+    print_info "=========================================="
+    print_info "步骤 0: 自动版本检测与同步"
+    print_info "=========================================="
+    
+    # 根据 Git 分支自动更新组件标签（如果未手动指定）
+    if [[ "$tag" == "$DEFAULT_IMAGE_TAG" ]]; then
+        print_info "未手动指定标签，自动从 Git 分支检测..."
+        update_component_tags_from_branch "$SCRIPT_DIR/.env"
+        # 重新加载环境变量以获取更新后的标签
+        load_env_file "$SCRIPT_DIR/.env"
+        tag="${IMAGE_TAG:-$DEFAULT_IMAGE_TAG}"
+        print_info "已自动设置标签为: $tag"
+    else
+        print_info "使用手动指定的标签: $tag"
+    fi
+    
+    # 从 deps.yaml 同步依赖版本到 .env
+    sync_deps_from_yaml "$SCRIPT_DIR/.env"
+    echo ""
 
     print_info "=========================================="
     print_info "步骤 1: 创建环境配置（create-env dev）"
@@ -7684,8 +7786,8 @@ push_build_dependencies() {
 # ==========================================
 
 # 从 AI Harbor 拉取所有服务镜像
-pull_aiharbor_services() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+pull_harbor.example.com_services() {
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
     print_info "=========================================="
@@ -7746,8 +7848,8 @@ pull_aiharbor_services() {
 }
 
 # 从 AI Harbor 拉取依赖镜像  
-pull_aiharbor_dependencies() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+pull_harbor.example.com_dependencies() {
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
     print_info "=========================================="
@@ -7824,8 +7926,8 @@ pull_aiharbor_dependencies() {
 }
 
 # 从 AI Harbor 拉取所有镜像（服务+依赖）
-pull_aiharbor_all() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+pull_harbor.example.com_all() {
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
     print_info "=========================================="
@@ -7839,14 +7941,14 @@ pull_aiharbor_all() {
     
     # 先拉取依赖镜像
     print_info "步骤 1/2: 拉取依赖镜像..."
-    if ! pull_aiharbor_dependencies "$registry" "$tag"; then
+    if ! pull_harbor.example.com_dependencies "$registry" "$tag"; then
         print_warning "部分依赖镜像拉取失败，但继续拉取服务镜像..."
         overall_success=false
     fi
     
     echo
     print_info "步骤 2/2: 拉取服务镜像..."
-    if ! pull_aiharbor_services "$registry" "$tag"; then
+    if ! pull_harbor.example.com_services "$registry" "$tag"; then
         print_error "服务镜像拉取失败"
         overall_success=false
     fi
@@ -7877,7 +7979,7 @@ pull_aiharbor_all() {
 # 创建生产环境配置文件 (.env.prod)
 create_production_env() {
     local mode="${1:-production}"  # production 或 intranet
-    local registry="${2:-aiharbor.msxf.local/aihpc}"
+    local registry="${2:-harbor.example.com/ai-infra}"
     local tag="${3:-$DEFAULT_IMAGE_TAG}"
     
     local env_file=".env.prod"
@@ -7941,7 +8043,7 @@ create_production_env() {
 
 # 构建环境模式 - 构建并推送所有镜像
 build_environment_deploy() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
     print_info "=========================================="
@@ -8007,7 +8109,7 @@ build_environment_deploy() {
 
 # 内网环境模式 - 拉取镜像并启动服务
 intranet_environment_deploy() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     
     print_info "=========================================="
@@ -8355,7 +8457,7 @@ check_images_completeness() {
     fi
 }
 
-# 统一标记转换函数 - 将公共镜像tag为aiharbor内部版本
+# 统一标记转换函数 - 将公共镜像tag为harbor.example.com内部版本
 convert_images_to_unified_tags() {
     local registry="$1"
     local tag="$2"
@@ -8693,7 +8795,7 @@ start_production() {
         echo "示例:"
         echo "  $0 prod-up                                    # 使用本地镜像启动"
         echo "  $0 prod-up harbor.company.com/ai-infra v1.0.0 # 使用私有仓库镜像"
-        echo "  $0 prod-up aiharbor.msxf.local/aihpc v1.0.0  # 使用内部仓库镜像"
+        echo "  $0 prod-up harbor.example.com/ai-infra v1.0.0  # 使用内部仓库镜像"
         echo "  $0 prod-up registry.local v1.0.0 --force     # 强制使用本地镜像"
         return 0
     fi
@@ -9352,7 +9454,7 @@ verify_private_images() {
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify <registry_base> [tag]"
-        print_info "示例: verify aiharbor.msxf.local/aihpc v0.3.6-dev"
+        print_info "示例: verify harbor.example.com/ai-infra v0.3.6-dev"
         return 1
     fi
     
@@ -10026,7 +10128,14 @@ show_help() {
     echo "  build-all [tag] [registry]      - 构建所有服务（智能过滤）"
     echo "  build-push <registry> [tag]     - 构建并推送所有服务"
     echo "  push-all <registry> [tag]       - 推送所有服务和依赖镜像"
-    echo "  push-dep <registry>             - 只推送依赖镜像（PostgreSQL, Redis等）"
+    echo "  push-dep <registry> [tag]       - 只推送依赖镜像（PostgreSQL, Redis等）"
+    echo
+    echo "自动版本管理（新增）:"
+    echo "  • build-all、push-all、push-dep 支持自动标签检测"
+    echo "  • 未指定标签时，自动使用当前 Git 分支名作为镜像标签"
+    echo "  • deps.yaml 定义所有依赖镜像版本，自动同步到 .env"
+    echo "  • 示例: 在 v0.3.8 分支执行 ./build.sh build-all"
+    echo "    → 自动构建标签为 v0.3.8 的所有镜像"
     echo
     echo "AppHub 组件化构建选项 (用于 build apphub):"
     echo "  --slurm-only                    - 只构建 SLURM 组件"
@@ -10111,7 +10220,7 @@ show_help() {
     echo "  all-in-one <registry> <tag> <host> <port> <scheme> [compose]     - 一键构建、推送、部署 (别名)"
     echo
     echo "  参数说明:"
-    echo "    registry: 镜像仓库地址 (默认: aiharbor.msxf.local/aihpc)"
+    echo "    registry: 镜像仓库地址 (默认: harbor.example.com/ai-infra)"
     echo "    tag:      镜像标签 (默认: $DEFAULT_IMAGE_TAG)" 
     echo "    host:     外部访问主机 (默认: 172.20.10.11)"
     echo "    port:     外部访问端口 (默认: 80)"
@@ -10151,8 +10260,8 @@ show_help() {
     echo "  $0 ci-build harbor.company.com/ai-infra v1.0.0 192.168.1.100   # 指定外部访问地址"
     echo
     echo "  # 生产环境 (无外网访问): 从内部仓库启动服务"
-    echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0"
-    echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0 192.168.1.100 8080   # 指定访问地址和端口"
+    echo "  $0 prod-start harbor.example.com/ai-infra v1.0.0"
+    echo "  $0 prod-start harbor.example.com/ai-infra v1.0.0 192.168.1.100 8080   # 指定访问地址和端口"
     echo "  $0 prod-start \"\" v1.0.0                          # 使用本地镜像启动"
     echo
     echo "===================================================================================="
@@ -10174,15 +10283,15 @@ show_help() {
     echo "🔧 统一构建和部署实例 (高级用户使用):"
     echo "===================================================================================="
     echo "  # 一键构建、推送、部署到生产环境 (所有服务一条命令搞定)"
-    echo "  $0 unified-all aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http"
+    echo "  $0 unified-all harbor.example.com/ai-infra v1.2.0 172.20.10.11 80 http"
     echo
     echo "  # 分步骤统一操作"
-    echo "  $0 unified-build-push aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http   # 构建并推送"
-    echo "  $0 unified-deploy aiharbor.msxf.local/aihpc v1.2.0 172.20.10.11 80 http       # 部署启动"
+    echo "  $0 unified-build-push harbor.example.com/ai-infra v1.2.0 172.20.10.11 80 http   # 构建并推送"
+    echo "  $0 unified-deploy harbor.example.com/ai-infra v1.2.0 172.20.10.11 80 http       # 部署启动"
     echo
     echo "  # 本地开发环境快速启动 (使用默认参数)"
     echo "  $0 unified-all                                      # 使用所有默认值"
-    echo "  # 等价于: $0 unified-all aiharbor.msxf.local/aihpc $DEFAULT_IMAGE_TAG 172.20.10.11 80 http"
+    echo "  # 等价于: $0 unified-all harbor.example.com/ai-infra $DEFAULT_IMAGE_TAG 172.20.10.11 80 http"
     echo
     echo "  # 自定义域名和端口"
     echo "  $0 unified-all harbor.company.com/ai v2.0.0 ai.company.com 8080 https"
@@ -10205,7 +10314,7 @@ show_help() {
     echo "🚀 生产节点运行实例 (启动服务):"
     echo "===================================================================================="
     echo "  # 从AI Harbor拉取镜像完整部署流程"
-    echo "  $0 harbor-pull-all aiharbor.msxf.local/aihpc v1.2.0    # 步骤1: 拉取所有镜像"
+    echo "  $0 harbor-pull-all harbor.example.com/ai-infra v1.2.0    # 步骤1: 拉取所有镜像"
     echo "  $0 generate-passwords .env.prod --force                # 步骤2: 生成强密码"
     echo "  docker compose -f docker-compose.yml.example up -d     # 步骤3: 启动所有服务"
     echo
@@ -10229,8 +10338,8 @@ show_help() {
     echo "💡 常用开发实例:"
     echo "===================================================================================="
     echo "  # 从AI Harbor快速获取镜像进行本地开发"
-    echo "  $0 harbor-pull-services aiharbor.msxf.local/aihpc v1.2.0  # 拉取AI-Infra服务"
-    echo "  $0 harbor-pull-deps aiharbor.msxf.local/aihpc             # 拉取依赖镜像"
+    echo "  $0 harbor-pull-services harbor.example.com/ai-infra v1.2.0  # 拉取AI-Infra服务"
+    echo "  $0 harbor-pull-deps harbor.example.com/ai-infra             # 拉取依赖镜像"
     echo "  docker compose -f docker-compose.yml.example up -d        # 启动服务"
     echo
     echo "  # 本地开发测试"
@@ -11732,14 +11841,14 @@ prod_start_complete() {
         print_info "步骤2: 从内部仓库拉取镜像..."
         
         # 拉取服务镜像
-        if ! pull_aiharbor_services "$registry" "$tag"; then
+        if ! pull_harbor.example.com_services "$registry" "$tag"; then
             print_warning "从内部仓库拉取服务镜像失败，尝试使用本地镜像"
         else
             print_success "服务镜像拉取完成"
         fi
         
         # 拉取依赖镜像
-        if ! pull_aiharbor_dependencies "$registry" "$tag"; then
+        if ! pull_harbor.example.com_dependencies "$registry" "$tag"; then
             print_warning "从内部仓库拉取依赖镜像失败，尝试使用本地镜像"
         else
             print_success "依赖镜像拉取完成"
@@ -11854,7 +11963,7 @@ prod_start_complete() {
 # 统一构建所有镜像
 # 用法: build_all_unified <registry> <tag> <external_host> <external_port> <external_scheme>
 build_all_unified() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local external_host="${3:-172.20.10.11}"
     local external_port="${4:-80}"
@@ -11890,7 +11999,7 @@ build_all_unified() {
 # 统一构建并推送所有镜像
 # 用法: build_and_push_unified <registry> <tag> <external_host> <external_port> <external_scheme>
 build_and_push_unified() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local external_host="${3:-172.20.10.11}"
     local external_port="${4:-80}"
@@ -11926,7 +12035,7 @@ build_and_push_unified() {
 # 统一部署服务
 # 用法: deploy_unified <registry> <tag> <external_host> <external_port> <external_scheme> [compose_file]
 deploy_unified() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local external_host="${3:-172.20.10.11}"
     local external_port="${4:-80}"
@@ -11982,7 +12091,7 @@ deploy_unified() {
 # 一键构建和部署
 # 用法: build_deploy_all <registry> <tag> <external_host> <external_port> <external_scheme> [compose_file]
 build_deploy_all() {
-    local registry="${1:-aiharbor.msxf.local/aihpc}"
+    local registry="${1:-harbor.example.com/ai-infra}"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
     local external_host="${3:-172.20.10.11}"
     local external_port="${4:-80}"
@@ -12462,7 +12571,7 @@ main() {
                 echo "    - 内网环境：Harbor镜像 → 原始镜像 + localhost/ 别名"
                 echo
                 echo "环境变量:"
-                echo "  INTERNAL_REGISTRY            - 内网 Harbor 仓库地址 (默认: aiharbor.msxf.local/aihpc)"
+                echo "  INTERNAL_REGISTRY            - 内网 Harbor 仓库地址 (默认: harbor.example.com/ai-infra)"
                 echo "  AI_INFRA_NETWORK_ENV         - 强制指定网络环境 (external/internal)"
                 echo
                 echo "示例:"
@@ -12535,15 +12644,25 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
+            
+            # 自动检测标签：如果未指定或使用默认标签，则从 Git 分支检测
+            local push_tag="${3:-$DEFAULT_IMAGE_TAG}"
+            if [[ -z "$3" || "$3" == "$DEFAULT_IMAGE_TAG" ]]; then
+                print_info "未手动指定标签，从 Git 分支自动检测..."
+                local detected_branch=$(get_current_git_branch)
+                push_tag="$detected_branch"
+                print_info "已自动设置标签为: $push_tag"
+            fi
+            
             # 推送所有服务镜像
-            if ! push_all_services "${3:-$DEFAULT_IMAGE_TAG}" "$2"; then
+            if ! push_all_services "$push_tag" "$2"; then
                 print_error "服务镜像推送失败"
                 exit 1
             fi
             # 推送所有依赖镜像
             echo
             print_info "继续推送依赖镜像..."
-            if ! push_all_dependencies "$2" "${3:-$DEFAULT_IMAGE_TAG}"; then
+            if ! push_all_dependencies "$2" "$push_tag"; then
                 print_warning "部分依赖镜像推送失败，但服务镜像已推送成功"
                 exit 1
             fi
@@ -12553,11 +12672,21 @@ main() {
         "push-dep"|"push-dependencies")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "用法: $0 push-dep <registry>"
+                print_info "用法: $0 push-dep <registry> [tag]"
                 print_info "示例: $0 push-dep crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/"
                 exit 1
             fi
-            push_all_dependencies "$2" "${3:-$DEFAULT_IMAGE_TAG}"
+            
+            # 自动检测标签：如果未指定或使用默认标签，则从 Git 分支检测
+            local push_tag="${3:-$DEFAULT_IMAGE_TAG}"
+            if [[ -z "$3" || "$3" == "$DEFAULT_IMAGE_TAG" ]]; then
+                print_info "未手动指定标签，从 Git 分支自动检测..."
+                local detected_branch=$(get_current_git_branch)
+                push_tag="$detected_branch"
+                print_info "已自动设置标签为: $push_tag"
+            fi
+            
+            push_all_dependencies "$2" "$push_tag"
             ;;
             
         "build-push")
@@ -12572,7 +12701,7 @@ main() {
         "build-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 build-env aiharbor.msxf.local/aihpc v0.3.6-dev"
+                print_info "示例: $0 build-env harbor.example.com/ai-infra v0.3.6-dev"
                 exit 1
             fi
             build_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -12581,7 +12710,7 @@ main() {
         "intranet-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 intranet-env aiharbor.msxf.local/aihpc v0.3.6-dev"
+                print_info "示例: $0 intranet-env harbor.example.com/ai-infra v0.3.6-dev"
                 exit 1
             fi
             intranet_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -12589,7 +12718,7 @@ main() {
             
         "create-env-prod")
             local mode="${2:-production}"
-            local registry="${3:-aiharbor.msxf.local/aihpc}"
+            local registry="${3:-harbor.example.com/ai-infra}"
             local tag="${4:-$DEFAULT_IMAGE_TAG}"
             create_production_env "$mode" "$registry" "$tag"
             ;;
@@ -12680,12 +12809,12 @@ main() {
                 echo
                 echo "构建模式:"
                 echo "  auto        - 自动检测网络环境，选择合适的构建策略"
-                echo "  offline     - 离线模式，直接使用 aiharbor 内部预构建镜像"
+                echo "  offline     - 离线模式，直接使用 harbor.example.com 内部预构建镜像"
                 echo "  online      - 标准模式，保持原始的构建策略"
                 echo
                 echo "说明:"
                 echo "  智能构建 SingleUser Jupyter 镜像，根据网络环境选择最佳策略："
-                echo "  • 离线模式：直接使用 aiharbor.msxf.local/aihpc/ai-infra-singleuser 预构建镜像"
+                echo "  • 离线模式：直接使用 harbor.example.com/ai-infra/ai-infra-singleuser 预构建镜像"
                 echo "  • 在线模式：使用标准构建流程，从源码重新构建"
                 echo "  • 自动模式：检测网络环境，自动选择离线或在线模式"
                 echo "  • 构建完成后自动恢复 Dockerfile 原始状态"
@@ -12822,21 +12951,21 @@ main() {
             
         # AI Harbor 镜像拉取命令
         "harbor-pull-services")
-            local harbor_registry="${2:-aiharbor.msxf.local/aihpc}"
+            local harbor_registry="${2:-harbor.example.com/ai-infra}"
             local harbor_tag="${3:-$DEFAULT_IMAGE_TAG}"
-            pull_aiharbor_services "$harbor_registry" "$harbor_tag"
+            pull_harbor.example.com_services "$harbor_registry" "$harbor_tag"
             ;;
             
         "harbor-pull-deps")
-            local harbor_registry="${2:-aiharbor.msxf.local/aihpc}"
+            local harbor_registry="${2:-harbor.example.com/ai-infra}"
             local harbor_tag="${3:-$DEFAULT_IMAGE_TAG}"
-            pull_aiharbor_dependencies "$harbor_registry" "$harbor_tag"
+            pull_harbor.example.com_dependencies "$harbor_registry" "$harbor_tag"
             ;;
             
         "harbor-pull-all")
-            local harbor_registry="${2:-aiharbor.msxf.local/aihpc}"
+            local harbor_registry="${2:-harbor.example.com/ai-infra}"
             local harbor_tag="${3:-$DEFAULT_IMAGE_TAG}"
-            pull_aiharbor_all "$harbor_registry" "$harbor_tag"
+            pull_harbor.example.com_all "$harbor_registry" "$harbor_tag"
             ;;
             
         "deps-prod")
@@ -13006,7 +13135,7 @@ main() {
                 echo "    • 优先使用原始镜像名称（如 redis:7-alpine）"
                 echo "    • 自动创建 localhost/ 前缀别名（兼容性）"
                 echo "  内网环境："
-                echo "    • 从 Harbor 仓库获取镜像（如 aiharbor.msxf.local/aihpc/redis:7-alpine）"
+                echo "    • 从 Harbor 仓库获取镜像（如 harbor.example.com/ai-infra/redis:7-alpine）"
                 echo "    • 创建原始名称别名（如 redis:7-alpine）"
                 echo "    • 创建 localhost/ 别名（如 localhost/redis:7-alpine）"
                 echo
@@ -13026,7 +13155,7 @@ main() {
             
             # 解析参数
             local network_env="auto"
-            local harbor_registry="${INTERNAL_REGISTRY:-aiharbor.msxf.local/aihpc}"
+            local harbor_registry="${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}"
             local images_to_process=()
             
             while [[ $# -gt 1 ]]; do
@@ -13231,7 +13360,7 @@ main() {
             
         # 统一构建和部署命令
         "unified-build")
-            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local registry="${2:-harbor.example.com/ai-infra}"
             local tag="${3:-$DEFAULT_IMAGE_TAG}"
             local external_host="${4:-172.20.10.11}"
             local external_port="${5:-80}"
@@ -13240,7 +13369,7 @@ main() {
             ;;
             
         "unified-build-push")
-            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local registry="${2:-harbor.example.com/ai-infra}"
             local tag="${3:-$DEFAULT_IMAGE_TAG}"
             local external_host="${4:-172.20.10.11}"
             local external_port="${5:-80}"
@@ -13249,7 +13378,7 @@ main() {
             ;;
             
         "unified-deploy")
-            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local registry="${2:-harbor.example.com/ai-infra}"
             local tag="${3:-$DEFAULT_IMAGE_TAG}"
             local external_host="${4:-172.20.10.11}"
             local external_port="${5:-80}"
@@ -13259,7 +13388,7 @@ main() {
             ;;
             
         "unified-all"|"all-in-one")
-            local registry="${2:-aiharbor.msxf.local/aihpc}"
+            local registry="${2:-harbor.example.com/ai-infra}"
             local tag="${3:-$DEFAULT_IMAGE_TAG}"
             local external_host="${4:-172.20.10.11}"
             local external_port="${5:-80}"
@@ -13340,8 +13469,8 @@ main() {
                 echo
                 echo "示例:"
                 echo "  $0 prod-start                                      # 使用本地镜像"
-                echo "  $0 prod-start aiharbor.msxf.local/aihpc          # 从内部仓库拉取"
-                echo "  $0 prod-start aiharbor.msxf.local/aihpc v1.0.0   # 指定版本"
+                echo "  $0 prod-start harbor.example.com/ai-infra          # 从内部仓库拉取"
+                echo "  $0 prod-start harbor.example.com/ai-infra v1.0.0   # 指定版本"
                 echo "  $0 prod-start \"\" v1.0.0 192.168.1.100 80         # 本地镜像+自定义地址"
                 return 0
             fi

@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
@@ -13,13 +14,21 @@ import (
 
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
+
+// quoteIdentifier safely quotes PostgreSQL identifiers to prevent SQL injection
+// This follows PostgreSQL's identifier quoting rules
+func quoteIdentifier(name string) string {
+	// Replace double quotes with escaped double quotes
+	escaped := strings.ReplaceAll(name, "\"", "\"\"")
+	// Wrap in double quotes
+	return fmt.Sprintf("\"%s\"", escaped)
+}
 
 func main() {
 	// 加载配置
@@ -111,9 +120,10 @@ func handleDatabaseReset(cfg *config.Config) error {
 		// 创建备份数据库名称
 		backupDBName := fmt.Sprintf("%s_backup_%s", cfg.Database.DBName, time.Now().Format("20060102_150405"))
 
-		// 备份现有数据库
+		// 备份现有数据库 - Use quoted identifiers to prevent SQL injection
 		log.Printf("Creating backup database: %s", backupDBName)
-		backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s", backupDBName, cfg.Database.DBName)
+		backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s",
+			quoteIdentifier(backupDBName), quoteIdentifier(cfg.Database.DBName))
 		if err := systemDB.Exec(backupQuery).Error; err != nil {
 			log.Printf("Warning: Failed to create backup database: %v", err)
 		} else {
@@ -131,9 +141,9 @@ func handleDatabaseReset(cfg *config.Config) error {
 			log.Printf("Warning: Failed to terminate connections: %v", err)
 		}
 
-		// 删除现有数据库
+		// 删除现有数据库 - Use quoted identifier
 		log.Printf("Dropping existing database: %s", cfg.Database.DBName)
-		dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", cfg.Database.DBName)
+		dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(cfg.Database.DBName))
 		if err := systemDB.Exec(dropQuery).Error; err != nil {
 			return fmt.Errorf("failed to drop existing database: %w", err)
 		}
@@ -141,9 +151,9 @@ func handleDatabaseReset(cfg *config.Config) error {
 		log.Printf("Database '%s' dropped successfully", cfg.Database.DBName)
 	}
 
-	// 创建新数据库
+	// 创建新数据库 - Use quoted identifier to prevent SQL injection
 	log.Printf("Creating new database: %s", cfg.Database.DBName)
-	createQuery := fmt.Sprintf("CREATE DATABASE %s", cfg.Database.DBName)
+	createQuery := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(cfg.Database.DBName))
 	if err := systemDB.Exec(createQuery).Error; err != nil {
 		return fmt.Errorf("failed to create database: %w", err)
 	}
@@ -947,9 +957,9 @@ func createJupyterHubDatabase(cfg *config.Config) error {
 	}
 
 	if !exists {
-		// 创建JupyterHub数据库
+		// 创建JupyterHub数据库 - Use quoted identifier to prevent SQL injection
 		log.Printf("Creating JupyterHub database: %s", jupyterhubDBName)
-		createQuery := fmt.Sprintf("CREATE DATABASE %s", jupyterhubDBName)
+		createQuery := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(jupyterhubDBName))
 		if err := systemDB.Exec(createQuery).Error; err != nil {
 			return fmt.Errorf("failed to create JupyterHub database: %w", err)
 		}
@@ -988,9 +998,16 @@ func createGiteaDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Create role if missing
-	createRole := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE USER %s WITH LOGIN PASSWORD '%s'; END IF; END $$;", gUser, gUser, gPass)
-	if err := systemDB.Exec(createRole).Error; err != nil {
+	// Create role if missing - Use DO block with proper parameter escaping
+	// Note: Role names cannot be parameterized in PostgreSQL, so we use identifier quoting
+	createRoleSQL := `DO $$ 
+	BEGIN 
+		IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $1) THEN 
+			EXECUTE format('CREATE USER %I WITH LOGIN PASSWORD %L', $1, $2);
+		END IF; 
+	END $$;`
+
+	if err := systemDB.Exec(createRoleSQL, gUser, gPass).Error; err != nil {
 		return fmt.Errorf("failed to ensure Gitea role: %w", err)
 	}
 
@@ -1000,11 +1017,17 @@ func createGiteaDatabase(cfg *config.Config) error {
 		return fmt.Errorf("failed to check Gitea DB existence: %w", err)
 	}
 	if !exists {
-		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", gDB, gUser)).Error; err != nil {
+		// Use format with %I for identifier quoting to prevent SQL injection
+		createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s OWNER %s",
+			quoteIdentifier(gDB), quoteIdentifier(gUser))
+		if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
 			return fmt.Errorf("failed to create Gitea database: %w", err)
 		}
 	}
-	if err := systemDB.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", gDB, gUser)).Error; err != nil {
+	// Use quoted identifiers for grant statement
+	grantSQL := fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s",
+		quoteIdentifier(gDB), quoteIdentifier(gUser))
+	if err := systemDB.Exec(grantSQL).Error; err != nil {
 		log.Printf("Warning: failed to grant privileges on %s to %s: %v", gDB, gUser, err)
 	}
 
@@ -1113,10 +1136,16 @@ func createSLURMDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Create SLURM role if missing
+	// Create SLURM role if missing - Use secure parameterized query
 	log.Printf("Creating SLURM user: %s", slurmUser)
-	createRole := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE USER %s WITH LOGIN PASSWORD '%s'; END IF; END $$;", slurmUser, slurmUser, slurmPass)
-	if err := systemDB.Exec(createRole).Error; err != nil {
+	createRoleSQL := `DO $$ 
+	BEGIN 
+		IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = $1) THEN 
+			EXECUTE format('CREATE USER %I WITH LOGIN PASSWORD %L', $1, $2);
+		END IF; 
+	END $$;`
+
+	if err := systemDB.Exec(createRoleSQL, slurmUser, slurmPass).Error; err != nil {
 		return fmt.Errorf("failed to ensure SLURM role: %w", err)
 	}
 	log.Printf("✓ SLURM user '%s' created or already exists", slurmUser)
@@ -1129,7 +1158,10 @@ func createSLURMDatabase(cfg *config.Config) error {
 
 	if !exists {
 		log.Printf("Creating SLURM database: %s", slurmDB)
-		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", slurmDB, slurmUser)).Error; err != nil {
+		// Use quoted identifiers to prevent SQL injection
+		createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s OWNER %s",
+			quoteIdentifier(slurmDB), quoteIdentifier(slurmUser))
+		if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
 			return fmt.Errorf("failed to create SLURM database: %w", err)
 		}
 		log.Printf("✓ SLURM database '%s' created successfully", slurmDB)
@@ -1137,8 +1169,10 @@ func createSLURMDatabase(cfg *config.Config) error {
 		log.Printf("✓ SLURM database '%s' already exists", slurmDB)
 	}
 
-	// Grant all privileges to SLURM user
-	if err := systemDB.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", slurmDB, slurmUser)).Error; err != nil {
+	// Grant all privileges to SLURM user - use quoted identifiers
+	grantSQL := fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s",
+		quoteIdentifier(slurmDB), quoteIdentifier(slurmUser))
+	if err := systemDB.Exec(grantSQL).Error; err != nil {
 		log.Printf("Warning: failed to grant privileges on %s to %s: %v", slurmDB, slurmUser, err)
 	} else {
 		log.Printf("✓ Granted all privileges on '%s' to '%s'", slurmDB, slurmUser)
@@ -1183,7 +1217,9 @@ func createNightingaleDatabase(cfg *config.Config) error {
 
 	if !exists {
 		log.Printf("Creating Nightingale database: %s", nightingaleDB)
-		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s", nightingaleDB)).Error; err != nil {
+		// Use quoted identifier to prevent SQL injection
+		createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(nightingaleDB))
+		if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
 			return fmt.Errorf("failed to create Nightingale database: %w", err)
 		}
 		log.Printf("✓ Nightingale database '%s' created successfully", nightingaleDB)
