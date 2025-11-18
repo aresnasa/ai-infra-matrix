@@ -4296,3 +4296,77 @@ CPU核心数
 243. 检查apphub/dockerfile中rpm的构建，如果开启了cgroup需要去掉，这里使用系统默认的方式，不要默认启动cgroup而是通过配置进行管理slurm的启动
 
 244. 这里思路不对，之前已经能够正确的启动slurm任务，并且修改了cgroupv2.so，相关的依赖都已经准备，这里调整策略，检查cgroupv2的路径是否符合slurmd启动的预期，cgroupv2是个必须的组件
+
+245.  ./build.sh list
+[INFO] 检测到Docker Compose v2: 2.40.3-desktop.1
+[SUCCESS] ✓ Docker Compose版本兼容 (v2.40.3 >= v2.39.2)
+docker compose
+[INFO] ==========================================
+[INFO] AI-Infra 服务清单
+[INFO] ==========================================
+[INFO] 镜像标签: v0.3.6-dev
+[INFO] 目标仓库: 本地构建
+
+[INFO] 📦 源码服务 (12 个):
+  ✅ apphub
+       Dockerfile: src/apphub/Dockerfile
+       镜像名称: ai-infra-apphub:v0.3.6-dev
+
+  ✅ backend
+       Dockerfile: src/backend/Dockerfile
+       镜像名称: ai-infra-backend:v0.3.6-dev
+
+  ✅ frontend
+       Dockerfile: src/frontend/Dockerfile
+       镜像名称: ai-infra-frontend:v0.3.6-dev
+
+  ✅ gitea
+       Dockerfile: src/gitea/Dockerfile
+       镜像名称: ai-infra-gitea:v0.3.6-dev
+
+  ✅ jupyterhub
+       Dockerfile: src/jupyterhub/Dockerfile
+       镜像名称: ai-infra-jupyterhub:v0.3.6-dev
+
+  ✅ nginx
+       Dockerfile: src/nginx/Dockerfile
+       镜像名称: ai-infra-nginx:v0.3.6-dev
+
+  ✅ nightingale
+       Dockerfile: src/nightingale/Dockerfile
+       镜像名称: ai-infra-nightingale:v0.3.6-dev
+
+  ✅ proxy
+       Dockerfile: src/proxy/Dockerfile
+       镜像名称: ai-infra-proxy:v0.3.6-dev
+
+  ✅ saltstack
+       Dockerfile: src/saltstack/Dockerfile
+       镜像名称: ai-infra-saltstack:v0.3.6-dev
+
+  ✅ singleuser
+       Dockerfile: src/singleuser/Dockerfile
+       镜像名称: ai-infra-singleuser:v0.3.6-dev
+
+  ✅ slurm-master
+       Dockerfile: src/slurm-master/Dockerfile
+       镜像名称: ai-infra-slurm-master:v0.3.6-dev
+
+  ✅ test-containers
+       Dockerfile: src/test-containers/Dockerfile
+       镜像名称: ai-infra-test-containers:v0.3.6-dev
+
+[INFO] ==========================================这里只把相关的容器拉取，现在需要改造 push-all 函数进行改造，改造为连带所有基础镜像，比如 postgresql 和其他的 redis 等都能够正常的推送到 harbor 中，crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/这是 harbor 地址，请按照我这个需求进行调整
+local dependencies=(
+    "postgres:15-alpine"
+    "mysql:8.0"
+    "redis:7-alpine"
+    "oceanbase/oceanbase-ce:4.3.5-lts"
+    "confluentinc/cp-kafka:7.5.0"
+    "provectuslabs/kafka-ui:latest"
+    "osixia/openldap:stable"
+    "osixia/phpldapadmin:stable"
+    "tecnativa/tcp-proxy:latest"
+    "redislabs/redisinsight:latest"
+    "minio/minio:latest"
+)不要写死而是读取 src/*/dockerfile 中的 tag 动态的获取这些 dependencies

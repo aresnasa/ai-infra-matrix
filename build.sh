@@ -7115,6 +7115,175 @@ push_all_services() {
     fi
 }
 
+# 推送所有依赖镜像（PostgreSQL, Redis, MySQL, Kafka等）到私有仓库
+push_all_dependencies() {
+    local registry="$1"
+    local tag="${2:-$DEFAULT_IMAGE_TAG}"
+    
+    if [[ -z "$registry" ]]; then
+        print_error "推送依赖镜像需要指定 registry"
+        print_info "用法: $0 push-dep <registry> [tag]"
+        return 1
+    fi
+    
+    # 确保 registry 以斜杠结尾
+    [[ "$registry" != */ ]] && registry="${registry}/"
+    
+    print_info "=========================================="
+    print_info "推送所有依赖镜像到私有仓库"
+    print_info "=========================================="
+    print_info "目标仓库: $registry"
+    echo
+    
+    # 从 docker-compose.yml 动态提取依赖镜像
+    print_info "从 docker-compose.yml 提取依赖镜像列表..."
+    local compose_file="docker-compose.yml"
+    if [[ ! -f "$compose_file" ]]; then
+        compose_file="docker-compose.yml.example"
+    fi
+    
+    if [[ ! -f "$compose_file" ]]; then
+        print_error "未找到 docker-compose.yml 或 docker-compose.yml.example"
+        return 1
+    fi
+    
+    # 提取非 ai-infra- 开头的镜像（排除我们自己构建的服务镜像）
+    local dependencies=()
+    while IFS= read -r line; do
+        # 提取 image: 后面的镜像名称
+        if [[ "$line" =~ ^[[:space:]]*image:[[:space:]]*(.+)$ ]]; then
+            local image="${BASH_REMATCH[1]}"
+            # 移除可能的注释
+            image="${image%%#*}"
+            # 移除首尾空格
+            image=$(echo "$image" | xargs)
+            # 跳过变量引用（包含 $ 的）和 ai-infra- 开头的镜像
+            if [[ ! "$image" =~ \$ ]] && [[ ! "$image" =~ ai-infra- ]] && [[ -n "$image" ]]; then
+                dependencies+=("$image")
+            fi
+        fi
+    done < "$compose_file"
+    
+    # 去重
+    local unique_dependencies=($(printf '%s\n' "${dependencies[@]}" | sort -u))
+    dependencies=("${unique_dependencies[@]}")
+    
+    if [[ ${#dependencies[@]} -eq 0 ]]; then
+        print_warning "未找到任何依赖镜像"
+        return 0
+    fi
+    
+    print_info "发现 ${#dependencies[@]} 个依赖镜像:"
+    for img in "${dependencies[@]}"; do
+        print_info "  • $img"
+    done
+    echo
+    
+    local success_count=0
+    local total_count=${#dependencies[@]}
+    local failed_images=()
+    
+    for image in "${dependencies[@]}"; do
+        # 处理没有显式标签的镜像（如 tecnativa/tcp-proxy）
+        local image_with_tag="$image"
+        if [[ ! "$image" =~ : ]]; then
+            image_with_tag="${image}:latest"
+        fi
+        
+        local image_name="${image_with_tag%%:*}"
+        local image_tag="${image_with_tag##*:}"
+        local short_name="${image_name##*/}"
+        local target_image="${registry}${short_name}:${image_tag}"
+        
+        print_info "处理镜像: $image_with_tag"
+        print_info "  → 目标: $target_image"
+        
+        # 1. 检查镜像是否已存在，如果存在则跳过拉取
+        print_info "  [1/3] 检查并拉取镜像..."
+        if docker image inspect "$image_with_tag" >/dev/null 2>&1; then
+            print_info "  ℹ️  镜像已存在本地，跳过拉取: $image_with_tag"
+        else
+            # 镜像不存在，执行拉取
+            local pull_output=""
+            local pull_exit_code=0
+            pull_output=$(docker pull "$image_with_tag" 2>&1) || pull_exit_code=$?
+            
+            if [[ $pull_exit_code -ne 0 ]]; then
+                # 检查是否是 "Target.Size" 错误但镜像实际已存在
+                if echo "$pull_output" | grep -q "InvalidArgument: Target.Size must be greater than zero"; then
+                    if docker image inspect "$image_with_tag" >/dev/null 2>&1; then
+                        print_warning "  ⚠️ Docker 报告 Target.Size 错误，但镜像已存在本地，继续处理"
+                    else
+                        print_error "  ✗ 拉取失败: $image_with_tag (exit code: $pull_exit_code)"
+                        echo "  错误详情:"
+                        echo "$pull_output" | head -10 | sed 's/^/    /'
+                        failed_images+=("$image_with_tag")
+                        echo
+                        continue
+                    fi
+                else
+                    print_error "  ✗ 拉取失败: $image_with_tag (exit code: $pull_exit_code)"
+                    echo "  错误详情:"
+                    echo "$pull_output" | head -10 | sed 's/^/    /'
+                    failed_images+=("$image_with_tag")
+                    echo
+                    continue
+                fi
+            fi
+            
+            # 拉取成功，过滤噪音日志
+            if [[ -n "$pull_output" ]]; then
+                local filtered_pull_output=""
+                filtered_pull_output=$(echo "$pull_output" | grep -vE '^(Using cache|Pulling|Digest:|Status:|Downloading|Verifying|Waiting|Extracting|Download complete)' || true)
+                if [[ -n "$filtered_pull_output" ]]; then
+                    echo "$filtered_pull_output"
+                fi
+            fi
+        fi
+        print_success "  ✓ 镜像就绪"
+        
+        # 2. 重新标记镜像
+        print_info "  [2/3] 标记镜像..."
+        if ! docker tag "$image_with_tag" "$target_image"; then
+            print_error "  ✗ 标记失败: $image_with_tag → $target_image"
+            failed_images+=("$image_with_tag")
+            echo
+            continue
+        fi
+        print_success "  ✓ 标记成功"
+        
+        # 3. 推送到私有仓库
+        print_info "  [3/3] 推送镜像..."
+        if ! docker push "$target_image" 2>&1 | grep -v "Pushing\|Pushed\|Waiting"; then
+            print_error "  ✗ 推送失败: $target_image"
+            failed_images+=("$image_with_tag")
+            echo
+            continue
+        fi
+        print_success "  ✓ 推送成功"
+        
+        success_count=$((success_count + 1))
+        echo
+    done
+    
+    print_info "=========================================="
+    print_success "依赖镜像推送完成: $success_count/$total_count 成功"
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        print_warning "失败的镜像: ${failed_images[*]}"
+        return 1
+    else
+        print_success "🚀 所有依赖镜像推送成功！"
+        print_info ""
+        print_info "已推送的镜像可在私有仓库中使用："
+        for image in "${dependencies[@]}"; do
+            local short_name="${image##*/}"
+            print_info "  • ${registry}${short_name}"
+        done
+        return 0
+    fi
+}
+
 # 一键构建并推送
 build_and_push_all() {
     # 处理帮助参数
@@ -7804,7 +7973,7 @@ build_environment_deploy() {
     
     # 4. 推送依赖镜像
     print_info "推送依赖镜像..."
-    if ! push_all_dependencies "$tag" "$registry"; then
+    if ! push_all_dependencies "$registry" "$tag"; then
         print_error "依赖镜像推送失败"
         return 1
     fi
@@ -9856,7 +10025,8 @@ show_help() {
     echo "  build <service> [tag] [registry] - 构建单个服务"
     echo "  build-all [tag] [registry]      - 构建所有服务（智能过滤）"
     echo "  build-push <registry> [tag]     - 构建并推送所有服务"
-    echo "  push-all <registry> [tag]       - 推送所有服务"
+    echo "  push-all <registry> [tag]       - 推送所有服务和依赖镜像"
+    echo "  push-dep <registry>             - 只推送依赖镜像（PostgreSQL, Redis等）"
     echo
     echo "AppHub 组件化构建选项 (用于 build apphub):"
     echo "  --slurm-only                    - 只构建 SLURM 组件"
@@ -10019,18 +10189,17 @@ show_help() {
     echo "  # 访问地址: https://ai.company.com:8080"
     echo
     echo "===================================================================================="
-    echo "�📦 CI/CD服务器运行实例 (构建和推送镜像):"
+    echo "📦 CI/CD服务器运行实例 (构建和推送镜像):"
     echo "===================================================================================="
-    echo "  # 构建所有服务并推送到私有仓库"
-    echo "  $0 build-push harbor.example.com/ai-infra v1.2.0"
+    echo "  # 构建所有服务并推送到私有仓库（包含依赖镜像）"
+    echo "  $0 push-all crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ v1.2.0"
     echo
-    echo "  # 推送依赖镜像到私有仓库"
-    echo "  $0 deps-all harbor.example.com/ai-infra v1.2.0"
+    echo "  # 只推送依赖镜像（PostgreSQL, Redis, MySQL, Kafka等）"
+    echo "  $0 push-dep crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/"
     echo
     echo "  # 分步骤操作（推荐用于CI/CD Pipeline）"
     echo "  $0 build-all v1.2.0                                    # 步骤1: 构建所有服务"
-    echo "  $0 push-all harbor.example.com/ai-infra v1.2.0         # 步骤2: 推送项目镜像"
-    echo "  $0 deps-push harbor.example.com/ai-infra v1.2.0        # 步骤3: 推送依赖镜像"
+    echo "  $0 push-all crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ v1.2.0  # 步骤2: 推送所有镜像"
     echo
     echo "===================================================================================="
     echo "🚀 生产节点运行实例 (启动服务):"
@@ -12366,7 +12535,29 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            push_all_services "${3:-$DEFAULT_IMAGE_TAG}" "$2"
+            # 推送所有服务镜像
+            if ! push_all_services "${3:-$DEFAULT_IMAGE_TAG}" "$2"; then
+                print_error "服务镜像推送失败"
+                exit 1
+            fi
+            # 推送所有依赖镜像
+            echo
+            print_info "继续推送依赖镜像..."
+            if ! push_all_dependencies "$2" "${3:-$DEFAULT_IMAGE_TAG}"; then
+                print_warning "部分依赖镜像推送失败，但服务镜像已推送成功"
+                exit 1
+            fi
+            print_success "✅ 所有镜像（服务+依赖）推送完成！"
+            ;;
+        
+        "push-dep"|"push-dependencies")
+            if [[ -z "$2" ]]; then
+                print_error "请指定目标 registry"
+                print_info "用法: $0 push-dep <registry>"
+                print_info "示例: $0 push-dep crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/"
+                exit 1
+            fi
+            push_all_dependencies "$2" "${3:-$DEFAULT_IMAGE_TAG}"
             ;;
             
         "build-push")
