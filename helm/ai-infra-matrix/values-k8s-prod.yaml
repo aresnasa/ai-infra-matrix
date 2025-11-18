@@ -1,0 +1,256 @@
+# AI-Infra Matrix Kubernetes生产环境配置
+# 支持多节点分布式部署的Values配置
+
+# 全局配置
+global:
+  domain: "192.168.0.199"
+  imagePullSecrets: []
+
+# 安全配置
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 100
+  fsGroup: 100
+
+# RBAC配置
+rbac:
+  create: true
+
+# 服务账户配置
+serviceAccount:
+  create: true
+  name: ""
+
+# JupyterHub配置 - 启用KubeSpawner
+jupyterhub:
+  enabled: true
+  image:
+    repository: "ai-infra-jupyterhub"
+    tag: "v0.3.6-dev"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 8000
+    targetPort: 8000
+    hubPort: 8081
+  config:
+    publicHost: "192.168.0.199:8080"  # 多节点访问地址
+    corsOrigin: "http://192.168.0.199:8080"
+    debug: false
+    logLevel: "INFO"
+    accessLog: true
+  
+  # Spawner配置 - 使用Kubernetes
+  spawner:
+    type: "kubernetes"
+    kubernetes:
+      namespace: "ai-infra-users"
+      serviceAccount: "ai-infra-matrix-jupyterhub"
+      storageClass: "local-path"
+      sharedStorageClass: "nfs-client"
+      sharedStorageEnabled: true
+      deleteGracePeriod: 30
+      fsGid: 100
+      
+  env:
+    JUPYTERHUB_ADMIN_USERS: "admin,jupyter-admin"
+    JUPYTERHUB_IMAGE: "ai-infra-singleuser:v0.3.6-dev"
+    JUPYTERHUB_NETWORK: "pod"
+    JUPYTERHUB_MEM_LIMIT: "2G"
+    JUPYTERHUB_CPU_LIMIT: "1.0"
+    JUPYTERHUB_MEM_GUARANTEE: "1G"
+    JUPYTERHUB_CPU_GUARANTEE: "0.5"
+    JUPYTERHUB_IDLE_CULLER_ENABLED: "true"
+    JUPYTERHUB_IDLE_TIMEOUT: "3600"
+    JUPYTERHUB_CULL_TIMEOUT: "7200"
+    JUPYTERHUB_AUTO_LOGIN: "true"
+    JUPYTERHUB_DEV_MODE: "false"  # 生产环境关闭开发模式
+    JUPYTERHUB_START_TIMEOUT: "300"
+    JUPYTERHUB_HTTP_TIMEOUT: "120"
+    USE_CUSTOM_AUTH: "true"
+    AI_INFRA_BACKEND_URL: "http://backend:8082"
+    AI_INFRA_API_TOKEN: "ai-infra-hub-token"
+    JUPYTERHUB_USE_PROXY: "true"
+    JUPYTERHUB_PUBLIC_HOST: "192.168.0.199:8080"
+    JUPYTERHUB_CORS_ORIGIN: "http://192.168.0.199:8080"
+    JUPYTERHUB_DEBUG: "false"
+    JUPYTERHUB_LOG_LEVEL: "INFO"
+    JUPYTERHUB_ACCESS_LOG: "true"
+    JUPYTERHUB_SPAWNER: "kubernetes"
+    KUBERNETES_NAMESPACE: "ai-infra-users"
+    KUBERNETES_SERVICE_ACCOUNT: "ai-infra-matrix-jupyterhub"
+    JUPYTERHUB_STORAGE_CLASS: "local-path"
+    SHARED_STORAGE_CLASS: "nfs-client"
+    SHARED_STORAGE_ENABLED: "true"
+    CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-prod"
+    JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+    SESSION_TIMEOUT: "86400"
+    
+  singleuser:
+    image:
+      repository: "ai-infra-singleuser"
+      tag: "v0.3.6-dev"
+      pullPolicy: "IfNotPresent"
+    resources:
+      limit:
+        memory: "2G"
+        cpu: "1.0"
+      guarantee:
+        memory: "1G"
+        cpu: "0.5"
+    storage:
+      capacity: "10Gi"
+      dynamic: true  # Kubernetes环境启用动态PVC
+      accessModes: ["ReadWriteOnce"]
+  persistence:
+    enabled: true  # Kubernetes环境启用持久化
+    
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+      
+  livenessProbe:
+    httpGet:
+      path: /hub/health
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    
+  readinessProbe:
+    httpGet:
+      path: /hub/health  
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+# PostgreSQL配置
+postgresql:
+  enabled: true
+  auth:
+    database: "ai_infra_db"
+    username: "postgres"
+    password: "ansible-postgres-password"
+  primary:
+    persistence:
+      enabled: true
+      size: "10Gi"
+      storageClass: "local-path"
+
+# Redis配置
+redis:
+  enabled: true
+  auth:
+    password: "ansible-redis-password"
+  master:
+    persistence:
+      enabled: true
+      size: "5Gi"
+      storageClass: "local-path"
+
+# OpenLDAP配置
+openldap:
+  enabled: true
+  auth:
+    adminPassword: "admin"
+    configPassword: "config"
+  persistence:
+    enabled: true
+    size: "5Gi"
+    storageClass: "local-path"
+
+# MinIO配置
+minio:
+  enabled: true
+  auth:
+    rootUser: "minio"
+    rootPassword: "minio123"
+  persistence:
+    enabled: true
+    size: "20Gi"
+    storageClass: "local-path"
+
+# 后端配置
+backend:
+  enabled: true
+  image:
+    repository: "ai-infra-backend"
+    tag: "v0.3.6-dev"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 8082
+  env:
+    JWT_SECRET: "ai-infra-secret-key-change-in-production"
+    SESSION_SECRET: "ai-infra-session-secret-key"
+    CONFIGPROXY_AUTH_TOKEN: "ai-infra-proxy-token-prod"
+    JUPYTERHUB_CRYPT_KEY: "790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1"
+
+# 前端配置
+frontend:
+  enabled: true
+  image:
+    repository: "ai-infra-frontend"
+    tag: "v0.3.6-dev"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 80
+
+# Nginx配置
+nginx:
+  enabled: true
+  image:
+    repository: "ai-infra-nginx"
+    tag: "v0.3.6-dev"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "NodePort"  # 使用NodePort对外暴露
+    port: 80
+    nodePort: 30080  # 固定NodePort端口
+
+# Gitea配置
+gitea:
+  enabled: true
+  image:
+    repository: "ai-infra-gitea"
+    tag: "v0.3.6-dev"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 3000
+  persistence:
+    enabled: true
+    size: "10Gi"
+    storageClass: "local-path"
+
+# 共享存储配置
+sharedStorage:
+  enabled: true
+  notebooks:
+    storageClass: "nfs-client"  # 共享存储类
+    size: "50Gi"
+    accessModes: ["ReadWriteMany"]
+
+# Ingress配置（可选）
+ingress:
+  enabled: false
+
+# 监控配置（可选）
+monitoring:
+  enabled: false
+
+# 节点选择器（可选）
+nodeSelector: {}
+
+# 容忍度（可选）
+tolerations: []
+
+# 亲和性（可选）
+affinity: {}

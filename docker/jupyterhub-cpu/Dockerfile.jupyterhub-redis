@@ -1,7 +1,0 @@
-
-# 添加到现有Dockerfile
-COPY requirements-jupyterhub.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements-jupyterhub.txt
-
-# 确保Redis连接
-RUN pip install --no-cache-dir redis==5.0.1 PyJWT==2.8.0 aiohttp==3.9.1

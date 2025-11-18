@@ -14,6 +14,19 @@ const (
 	ProviderLocal    AIProvider = "local"
 	ProviderMCP      AIProvider = "mcp"
 	ProviderCustom   AIProvider = "custom"
+	ProviderDeepSeek AIProvider = "deepseek"
+	ProviderGLM      AIProvider = "glm"
+	ProviderQwen     AIProvider = "qwen"
+)
+
+// AIModelType AI模型类型
+type AIModelType string
+
+const (
+	ModelTypeChat       AIModelType = "chat"
+	ModelTypeCompletion AIModelType = "completion"
+	ModelTypeEmbedding  AIModelType = "embedding"
+	ModelTypeImage      AIModelType = "image"
 )
 
 // AIAssistantConfig AI助手配置
@@ -21,16 +34,30 @@ type AIAssistantConfig struct {
 	ID                uint           `json:"id" gorm:"primaryKey"`
 	Name              string         `json:"name" gorm:"not null;size:100"`
 	Provider          AIProvider     `json:"provider" gorm:"not null"`
+	ModelType         AIModelType    `json:"model_type" gorm:"default:'chat'"`
 	APIKey            string         `json:"api_key,omitempty" gorm:"type:text"` // 加密存储
+	APISecret         string         `json:"api_secret,omitempty" gorm:"type:text"` // 额外的密钥
 	APIEndpoint       string         `json:"api_endpoint" gorm:"size:500"`
 	Model             string         `json:"model" gorm:"size:100"`
 	MaxTokens         int            `json:"max_tokens" gorm:"default:4096"`
 	Temperature       float32        `json:"temperature" gorm:"default:0.7"`
+	TopP              float32        `json:"top_p" gorm:"default:1.0"`
+	FrequencyPenalty  float32        `json:"frequency_penalty" gorm:"default:0.0"`
+	PresencePenalty   float32        `json:"presence_penalty" gorm:"default:0.0"`
 	SystemPrompt      string         `json:"system_prompt" gorm:"type:text"`
 	IsEnabled         bool           `json:"is_enabled" gorm:"default:true"`
 	IsDefault         bool           `json:"is_default" gorm:"default:false"`
 	MCPConfig         *MCPConfig     `json:"mcp_config,omitempty" gorm:"type:text"` // JSON存储MCP配置
 	RateLimitPerHour  int            `json:"rate_limit_per_hour" gorm:"default:100"`
+	RateLimitPerDay   int            `json:"rate_limit_per_day" gorm:"default:1000"`
+	TimeoutSeconds    int            `json:"timeout_seconds" gorm:"default:60"`
+	RetryAttempts     int            `json:"retry_attempts" gorm:"default:3"`
+	Headers           string         `json:"headers" gorm:"type:text"` // JSON格式的额外请求头
+	Parameters        string         `json:"parameters" gorm:"type:text"` // JSON格式的额外参数
+	Description       string         `json:"description" gorm:"size:500"`
+	IconURL           string         `json:"icon_url" gorm:"size:500"`
+	Category          string         `json:"category" gorm:"size:50"` // 模型分类，如：通用对话、代码生成、专业领域等
+	Tags              string         `json:"tags" gorm:"type:text"` // JSON格式的标签数组
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 	DeletedAt         gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
@@ -55,11 +82,11 @@ type MCPTool struct {
 type AIConversation struct {
 	ID           uint                `json:"id" gorm:"primaryKey"`
 	UserID       uint                `json:"user_id" gorm:"not null;index"`
-	User         *User               `json:"user,omitempty"`
+	User         *User               `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	Title        string              `json:"title" gorm:"size:200"`
 	ConfigID     uint                `json:"config_id" gorm:"not null;index"`
-	Config       *AIAssistantConfig  `json:"config,omitempty"`
-	Messages     []AIMessage         `json:"messages,omitempty" gorm:"-"`
+	Config       *AIAssistantConfig  `json:"config,omitempty" gorm:"foreignKey:ConfigID"`
+	Messages     []AIMessage         `json:"messages,omitempty" gorm:"foreignKey:ConversationID;constraint:OnDelete:CASCADE"`
 	Context      string              `json:"context" gorm:"type:text"` // 项目上下文等
 	IsActive     bool                `json:"is_active" gorm:"default:true"`
 	TokensUsed   int                 `json:"tokens_used" gorm:"default:0"`
@@ -70,16 +97,17 @@ type AIConversation struct {
 
 // AIMessage AI对话消息
 type AIMessage struct {
-	ID             uint           `json:"id" gorm:"primaryKey"`
-	ConversationID uint           `json:"conversation_id" gorm:"not null;index"`
-	Role           string         `json:"role" gorm:"not null"` // user, assistant, system
-	Content        string         `json:"content" gorm:"type:text;not null"`
-	Metadata       string         `json:"metadata" gorm:"type:text"` // JSON格式的元数据
-	TokensUsed     int            `json:"tokens_used" gorm:"default:0"`
-	ResponseTime   int            `json:"response_time"` // 响应时间（毫秒）
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	ID             uint               `json:"id" gorm:"primaryKey"`
+	ConversationID uint               `json:"conversation_id" gorm:"not null;index"`
+	Conversation   *AIConversation    `json:"conversation,omitempty" gorm:"foreignKey:ConversationID"`
+	Role           string             `json:"role" gorm:"not null"` // user, assistant, system
+	Content        string             `json:"content" gorm:"type:text;not null"`
+	Metadata       string             `json:"metadata" gorm:"type:text"` // JSON格式的元数据
+	TokensUsed     int                `json:"tokens_used" gorm:"default:0"`
+	ResponseTime   int                `json:"response_time"` // 响应时间（毫秒）
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt     `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 // AIUsageStats AI使用统计

@@ -57,17 +57,17 @@ func (s *AnsibleService) ExecutePlaybook(ctx context.Context, execution *models.
 
 	// 构建ansible-playbook命令
 	args := []string{"ansible-playbook"}
-	
+
 	// 添加inventory参数
 	if inventoryContent != "" {
 		args = append(args, "-i", inventoryPath)
 	}
-	
+
 	// 处理dry-run模式
 	if execution.ExecutionType == "dry-run" {
 		args = append(args, "--check", "--diff")
 	}
-	
+
 	// 添加额外变量
 	if execution.ExtraVars != "" {
 		// 验证JSON格式
@@ -77,15 +77,15 @@ func (s *AnsibleService) ExecutePlaybook(ctx context.Context, execution *models.
 		}
 		args = append(args, "--extra-vars", execution.ExtraVars)
 	}
-	
+
 	// 添加环境变量
 	if execution.Environment != "" {
 		args = append(args, "--extra-vars", fmt.Sprintf(`{"environment":"%s"}`, execution.Environment))
 	}
-	
+
 	// 添加其他有用的参数
-	args = append(args, 
-		"-v", // verbose输出
+	args = append(args,
+		"-v",            // verbose输出
 		"--force-color", // 强制彩色输出
 		playbookPath,
 	)
@@ -104,7 +104,7 @@ func (s *AnsibleService) ExecutePlaybook(ctx context.Context, execution *models.
 func (s *AnsibleService) runAnsibleCommand(ctx context.Context, execution *models.AnsibleExecution, args []string) error {
 	// 创建命令
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	
+
 	// 设置环境变量
 	cmd.Env = append(os.Environ(),
 		"ANSIBLE_HOST_KEY_CHECKING=False", // 禁用主机密钥检查
@@ -112,42 +112,42 @@ func (s *AnsibleService) runAnsibleCommand(ctx context.Context, execution *model
 		"ANSIBLE_LOAD_CALLBACK_PLUGINS=True",
 		"PYTHONUNBUFFERED=1", // 禁用Python输出缓冲
 	)
-	
+
 	// 创建输出缓冲区
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	// 记录开始时间和PID
 	execution.StartTime = &time.Time{}
 	*execution.StartTime = time.Now()
 	execution.Status = "running"
-	
+
 	// 启动命令
 	if err := cmd.Start(); err != nil {
 		execution.Status = "failed"
 		execution.ErrorOutput = fmt.Sprintf("启动命令失败: %v", err)
 		return err
 	}
-	
+
 	// 记录进程ID
 	execution.PID = cmd.Process.Pid
-	
+
 	s.logger.WithFields(logrus.Fields{
 		"execution_id": execution.ID,
 		"pid":          execution.PID,
 	}).Info("Ansible进程已启动")
-	
+
 	// 等待命令完成
 	err := cmd.Wait()
-	
+
 	// 记录结束时间和输出
 	endTime := time.Now()
 	execution.EndTime = &endTime
 	execution.Duration = int(endTime.Sub(*execution.StartTime).Seconds())
 	execution.Output = stdout.String()
 	execution.ErrorOutput = stderr.String()
-	
+
 	// 处理退出状态
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -169,7 +169,7 @@ func (s *AnsibleService) runAnsibleCommand(ctx context.Context, execution *model
 			"duration":     execution.Duration,
 		}).Info("Ansible执行成功")
 	}
-	
+
 	return nil
 }
 
@@ -178,13 +178,13 @@ func (s *AnsibleService) CancelExecution(execution *models.AnsibleExecution) err
 	if execution.PID <= 0 {
 		return fmt.Errorf("无效的进程ID")
 	}
-	
+
 	// 查找进程
 	process, err := os.FindProcess(execution.PID)
 	if err != nil {
 		return fmt.Errorf("找不到进程 %d: %v", execution.PID, err)
 	}
-	
+
 	// 尝试优雅地终止进程
 	if err := process.Signal(syscall.SIGTERM); err != nil {
 		// 如果优雅终止失败，强制杀死进程
@@ -192,19 +192,19 @@ func (s *AnsibleService) CancelExecution(execution *models.AnsibleExecution) err
 			return fmt.Errorf("终止进程失败: %v", killErr)
 		}
 	}
-	
+
 	execution.Status = "cancelled"
 	endTime := time.Now()
 	execution.EndTime = &endTime
 	if execution.StartTime != nil {
 		execution.Duration = int(endTime.Sub(*execution.StartTime).Seconds())
 	}
-	
+
 	s.logger.WithFields(logrus.Fields{
 		"execution_id": execution.ID,
 		"pid":          execution.PID,
 	}).Info("Ansible执行已取消")
-	
+
 	return nil
 }
 
@@ -216,47 +216,47 @@ func (s *AnsibleService) ValidatePlaybook(playbookContent string) error {
 		return fmt.Errorf("创建临时文件失败: %v", err)
 	}
 	defer os.Remove(tempFile.Name())
-	
+
 	// 写入playbook内容
 	if _, err := tempFile.WriteString(playbookContent); err != nil {
 		tempFile.Close()
 		return fmt.Errorf("写入临时文件失败: %v", err)
 	}
 	tempFile.Close()
-	
+
 	// 使用ansible-playbook --syntax-check验证语法
 	cmd := exec.Command("ansible-playbook", "--syntax-check", tempFile.Name())
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		return fmt.Errorf("playbook语法错误: %s", string(output))
 	}
-	
+
 	return nil
 }
 
 // GenerateInventoryFromProject 从项目生成inventory文件内容
 func (s *AnsibleService) GenerateInventoryFromProject(project models.Project) string {
 	var inventory strings.Builder
-	
+
 	// 添加默认组
 	inventory.WriteString("[" + project.Name + "]\n")
-	
+
 	// 添加主机
 	for _, host := range project.Hosts {
 		line := fmt.Sprintf("%s ansible_host=%s", host.Name, host.IP)
-		
+
 		if host.Port != 22 {
 			line += fmt.Sprintf(" ansible_port=%d", host.Port)
 		}
-		
+
 		if host.User != "" {
 			line += fmt.Sprintf(" ansible_user=%s", host.User)
 		}
-		
+
 		inventory.WriteString(line + "\n")
 	}
-	
+
 	// 添加变量组
 	if len(project.Variables) > 0 {
 		inventory.WriteString(fmt.Sprintf("\n[%s:vars]\n", project.Name))
@@ -264,7 +264,7 @@ func (s *AnsibleService) GenerateInventoryFromProject(project models.Project) st
 			inventory.WriteString(fmt.Sprintf("%s=%s\n", variable.Name, variable.Value))
 		}
 	}
-	
+
 	return inventory.String()
 }
 
@@ -281,7 +281,7 @@ func (s *AnsibleService) GetExecutionStatus(execution *models.AnsibleExecution) 
 			}
 		}
 	}
-	
+
 	return execution.Status
 }
 
@@ -295,7 +295,7 @@ func (s *AnsibleService) FormatExecutionLogs(execution *models.AnsibleExecution)
 		"duration":     execution.Duration,
 		"exit_code":    execution.ExitCode,
 	}
-	
+
 	// 解析JSON输出（如果可能）
 	if execution.Output != "" {
 		var jsonOutput interface{}
@@ -305,10 +305,10 @@ func (s *AnsibleService) FormatExecutionLogs(execution *models.AnsibleExecution)
 			logs["raw_output"] = execution.Output
 		}
 	}
-	
+
 	if execution.ErrorOutput != "" {
 		logs["error_output"] = execution.ErrorOutput
 	}
-	
+
 	return logs
 }

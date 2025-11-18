@@ -361,22 +361,22 @@ func (ctl *AnsibleController) CancelExecution(c *gin.Context) {
 func (ctl *AnsibleController) generatePlaybookFromProject(project models.Project) (string, error) {
 	// 这里使用简单的模板生成playbook
 	// 在实际应用中，可能需要更复杂的模板引擎
-	
+
 	playbook := "---\n"
 	playbook += "- name: " + project.Name + " Playbook\n"
 	playbook += "  hosts: " + project.Name + "\n"
 	playbook += "  become: true\n"
 	playbook += "  gather_facts: true\n"
-	
+
 	if len(project.Variables) > 0 {
 		playbook += "  vars:\n"
 		for _, variable := range project.Variables {
 			playbook += "    " + variable.Name + ": " + variable.Value + "\n"
 		}
 	}
-	
+
 	playbook += "  tasks:\n"
-	
+
 	if len(project.Tasks) == 0 {
 		// 默认任务
 		playbook += "    - name: Ping all hosts\n"
@@ -385,7 +385,7 @@ func (ctl *AnsibleController) generatePlaybookFromProject(project models.Project
 		for _, task := range project.Tasks {
 			playbook += "    - name: " + task.Name + "\n"
 			playbook += "      " + task.Module + ":\n"
-			
+
 			// 解析任务参数
 			if task.Args != "" {
 				// 这里应该解析JSON格式的参数
@@ -394,6 +394,6 @@ func (ctl *AnsibleController) generatePlaybookFromProject(project models.Project
 			}
 		}
 	}
-	
+
 	return playbook, nil
 }

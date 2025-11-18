@@ -10,9 +10,9 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-	
-	"gopkg.in/yaml.v3"
+
 	"github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 )
 
 type PlaybookService struct{}
@@ -22,11 +22,11 @@ func NewPlaybookService() *PlaybookService {
 }
 
 type PlaybookContent struct {
-	Name    string                 `yaml:"name"`
-	Hosts   string                 `yaml:"hosts"`
-	Become  bool                   `yaml:"become"`
-	Vars    map[string]interface{} `yaml:"vars,omitempty"`
-	Tasks   []TaskContent          `yaml:"tasks"`
+	Name   string                 `yaml:"name"`
+	Hosts  string                 `yaml:"hosts"`
+	Become bool                   `yaml:"become"`
+	Vars   map[string]interface{} `yaml:"vars,omitempty"`
+	Tasks  []TaskContent          `yaml:"tasks"`
 }
 
 type TaskContent struct {
@@ -51,10 +51,10 @@ func (s *PlaybookService) GeneratePlaybook(projectID uint, userID uint) (*models
 
 	// 生成文件名和路径
 	timestamp := time.Now().Unix()
-	fileName := fmt.Sprintf("playbook-%s-%d.yml", 
-		strings.ReplaceAll(project.Name, " ", "-"), 
+	fileName := fmt.Sprintf("playbook-%s-%d.yml",
+		strings.ReplaceAll(project.Name, " ", "-"),
 		timestamp)
-	
+
 	// 使用绝对路径避免工作目录问题
 	currentDir, err := os.Getwd()
 	if err != nil {
@@ -64,7 +64,7 @@ func (s *PlaybookService) GeneratePlaybook(projectID uint, userID uint) (*models
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create output directory: %w", err)
 	}
-	
+
 	filePath := filepath.Join(outputDir, fileName)
 
 	// 写入文件
@@ -73,10 +73,10 @@ func (s *PlaybookService) GeneratePlaybook(projectID uint, userID uint) (*models
 	}
 
 	// 生成inventory文件
-	inventoryPath := filepath.Join(outputDir, fmt.Sprintf("inventory-%s-%d.ini", 
-		strings.ReplaceAll(project.Name, " ", "-"), 
+	inventoryPath := filepath.Join(outputDir, fmt.Sprintf("inventory-%s-%d.ini",
+		strings.ReplaceAll(project.Name, " ", "-"),
 		timestamp))
-	
+
 	if err := s.writeInventoryFile(inventoryPath, project.Hosts); err != nil {
 		logrus.WithError(err).Warn("Failed to write inventory file")
 	}
@@ -188,7 +188,7 @@ func (s *PlaybookService) parseTaskArgs(args string) interface{} {
 	if strings.Contains(args, "=") {
 		result := make(map[string]interface{})
 		pairs := strings.Split(args, " ")
-		
+
 		for _, pair := range pairs {
 			if strings.Contains(pair, "=") {
 				parts := strings.SplitN(pair, "=", 2)
@@ -199,7 +199,7 @@ func (s *PlaybookService) parseTaskArgs(args string) interface{} {
 				}
 			}
 		}
-		
+
 		if len(result) > 0 {
 			return result
 		}
@@ -231,7 +231,7 @@ func (s *PlaybookService) writePlaybookFile(filePath string, content []PlaybookC
 	// 写入YAML内容
 	encoder := yaml.NewEncoder(file)
 	defer encoder.Close()
-	
+
 	encoder.SetIndent(2)
 	return encoder.Encode(content)
 }
@@ -281,7 +281,7 @@ func (s *PlaybookService) GetPlaybookFile(generationID uint) (string, string, er
 	if err := database.DB.First(&generation, generationID).Error; err != nil {
 		logrus.WithFields(logrus.Fields{
 			"generation_id": generationID,
-			"error": err,
+			"error":         err,
 		}).Error("Generation record not found in database")
 		return "", "", fmt.Errorf("generation record not found: %w", err)
 	}
@@ -303,15 +303,15 @@ func (s *PlaybookService) GetPlaybookFile(generationID uint) (string, string, er
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		logrus.WithFields(logrus.Fields{
 			"generation_id": generationID,
-			"file_path": filePath,
+			"file_path":     filePath,
 		}).Error("Playbook file not found on filesystem")
 		return "", "", fmt.Errorf("playbook file not found: %s", filePath)
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"generation_id": generationID,
-		"file_path": filePath,
-		"file_name": generation.FileName,
+		"file_path":     filePath,
+		"file_name":     generation.FileName,
 	}).Info("Playbook file found successfully")
 
 	return filePath, generation.FileName, nil

@@ -1,0 +1,74 @@
+#
+# AI Infrastructure Matrix - SLURM Configuration for Docker Environment
+# Based on slurm-master config but adapted for Docker nodes
+#
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-master
+ControlAddr=slurm-master
+
+# Authentication
+AuthType=auth/munge
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_hs256=/etc/slurm/jwt_hs256.key
+
+# Accounting / Database
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=slurm-master
+AccountingStoragePort=6818
+AccountingStorageUser=root
+AccountingStorageEnforce=associations,limits,qos
+AccountingStoreFlags=job_comment,job_script,job_env
+
+# Scheduling
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+# Networking / State
+SlurmctldPort=6817
+SlurmdPort=6818
+SlurmdSpoolDir=/var/spool/slurmd
+StateSaveLocation=/var/lib/slurm/slurmctld
+SlurmctldParameters=enable_configless
+
+# Logging
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldDebug=info
+SlurmdDebug=info
+
+# Service users
+SlurmUser=slurm
+SlurmdUser=root
+SlurmctldPidFile=/var/run/slurm/slurmctld.pid
+SlurmdPidFile=/var/run/slurm/slurmd.pid
+
+# Timeouts
+MessageTimeout=60
+KillWait=30
+MinJobAge=300
+Waittime=0
+ReturnToService=2
+
+# Plugin discovery
+PluginDir=/usr/lib/slurm
+
+# Task / MPI configuration (Docker: NO cgroup)
+TaskPlugin=task/affinity
+ProctrackType=proctrack/linuxproc
+MpiDefault=pmix
+# JobContainerType disabled for Docker (would require cgroup)
+# PrologFlags=Contain
+
+# Job completion logging
+JobCompType=jobcomp/filetxt
+JobCompLoc=/var/log/slurm/jobcomp.log
+
+# Resource limits
+MaxJobCount=10000
+MaxArraySize=10000
+
+# 节点配置（由 Web UI 动态添加，此处不预定义任何节点）
+# 节点和分区将在通过 /api/slurm/scale-up 接口添加节点后自动生成
+# Placeholder for dynamically generated node and partition blocks
+# (Do not edit below; managed by backend service)

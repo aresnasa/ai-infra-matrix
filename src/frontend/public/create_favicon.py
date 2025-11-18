@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI-Infra-Matrix Favicon Generator
+ai-infra-matrix Favicon Generator
 生成各种尺寸和格式的favicon图标，支持动态子页面图标
 """
 
@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 
 def create_ai_matrix_favicon():
-    """创建AI-Infra-Matrix主图标"""
+    """创建ai-infra-matrix主图标"""
     # 创建256x256的基础图标
     size = 256
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
@@ -213,7 +213,7 @@ def save_favicon_files():
     # 获取当前脚本目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
     
-    print("🚀 开始生成AI-Infra-Matrix图标...")
+    print("🚀 开始生成ai-infra-matrix图标...")
     
     # 创建主图标
     main_icon = create_ai_matrix_favicon()

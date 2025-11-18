@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>对象存储调试页面</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .section { margin-bottom: 20px; border: 1px solid #ccc; padding: 15px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { margin: 5px; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>对象存储功能调试页面</h1>
+    
+    <div class="section">
+        <h2>1. 基本信息检查</h2>
+        <div id="basic-info"></div>
+    </div>
+
+    <div class="section">
+        <h2>2. 认证状态检查</h2>
+        <div id="auth-info"></div>
+        <button onclick="checkAuth()">检查认证</button>
+    </div>
+
+    <div class="section">
+        <h2>3. API 测试</h2>
+        <div id="api-test"></div>
+        <button onclick="testObjectStorageAPI()">测试对象存储API</button>
+        <button onclick="testMinIOHealth()">测试MinIO健康检查</button>
+    </div>
+
+    <div class="section">
+        <h2>4. iframe 测试</h2>
+        <div id="iframe-test"></div>
+        <button onclick="testMinIOConsole()">测试MinIO控制台iframe</button>
+        <div id="iframe-container" style="margin-top: 10px;"></div>
+    </div>
+
+    <script>
+        // 显示基本信息
+        function showBasicInfo() {
+            const info = document.getElementById('basic-info');
+            info.innerHTML = `
+                <div class="info">当前URL: ${window.location.href}</div>
+                <div class="info">用户代理: ${navigator.userAgent}</div>
+                <div class="info">时间: ${new Date().toLocaleString()}</div>
+            `;
+        }
+
+        // 检查认证状态
+        function checkAuth() {
+            const info = document.getElementById('auth-info');
+            const token = localStorage.getItem('token');
+            const user = localStorage.getItem('user');
+            
+            let html = '';
+            if (token) {
+                html += `<div class="success">✓ Token存在: ${token.substring(0, 20)}...</div>`;
+            } else {
+                html += `<div class="error">✗ 未找到Token</div>`;
+            }
+            
+            if (user) {
+                try {
+                    const userData = JSON.parse(user);
+                    html += `<div class="success">✓ 用户信息存在: ${userData.username || userData.name || 'Unknown'}</div>`;
+                    html += `<div class="info">用户角色: ${userData.role || 'Unknown'}</div>`;
+                    if (userData.roles && userData.roles.length > 0) {
+                        html += `<div class="info">用户团队: ${userData.roles.map(r => r.name).join(', ')}</div>`;
+                    }
+                } catch (e) {
+                    html += `<div class="error">✗ 用户信息解析失败</div>`;
+                }
+            } else {
+                html += `<div class="error">✗ 未找到用户信息</div>`;
+            }
+            
+            info.innerHTML = html;
+        }
+
+        // 测试对象存储API
+        async function testObjectStorageAPI() {
+            const info = document.getElementById('api-test');
+            const token = localStorage.getItem('token');
+            
+            info.innerHTML = '<div class="info">正在测试API...</div>';
+            
+            try {
+                const response = await fetch('/api/object-storage/configs', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.text();
+                
+                if (response.ok) {
+                    info.innerHTML = `<div class="success">✓ API调用成功 (${response.status})</div><pre>${data}</pre>`;
+                } else {
+                    info.innerHTML = `<div class="error">✗ API调用失败 (${response.status})</div><pre>${data}</pre>`;
+                }
+            } catch (error) {
+                info.innerHTML = `<div class="error">✗ 网络错误: ${error.message}</div>`;
+            }
+        }
+
+        // 测试MinIO健康检查
+        async function testMinIOHealth() {
+            const info = document.getElementById('api-test');
+            
+            info.innerHTML += '<div class="info">正在测试MinIO健康检查...</div>';
+            
+            try {
+                const response = await fetch('/minio/health');
+                const data = await response.text();
+                
+                if (response.ok) {
+                    info.innerHTML += `<div class="success">✓ MinIO健康检查成功 (${response.status})</div><pre>${data.substring(0, 200)}...</pre>`;
+                } else {
+                    info.innerHTML += `<div class="error">✗ MinIO健康检查失败 (${response.status})</div><pre>${data}</pre>`;
+                }
+            } catch (error) {
+                info.innerHTML += `<div class="error">✗ MinIO健康检查网络错误: ${error.message}</div>`;
+            }
+        }
+
+        // 测试MinIO控制台iframe
+        function testMinIOConsole() {
+            const info = document.getElementById('iframe-test');
+            const container = document.getElementById('iframe-container');
+            
+            info.innerHTML = '<div class="info">正在创建MinIO控制台iframe...</div>';
+            
+            try {
+                const iframe = document.createElement('iframe');
+                iframe.src = '/minio-console/';
+                iframe.width = '100%';
+                iframe.height = '400px';
+                iframe.style.border = '1px solid #ccc';
+                
+                iframe.onload = () => {
+                    info.innerHTML += '<div class="success">✓ iframe加载成功</div>';
+                };
+                
+                iframe.onerror = () => {
+                    info.innerHTML += '<div class="error">✗ iframe加载失败</div>';
+                };
+                
+                container.innerHTML = '';
+                container.appendChild(iframe);
+                
+            } catch (error) {
+                info.innerHTML += `<div class="error">✗ 创建iframe失败: ${error.message}</div>`;
+            }
+        }
+
+        // 页面加载时执行
+        document.addEventListener('DOMContentLoaded', function() {
+            showBasicInfo();
+            checkAuth();
+        });
+    </script>
+</body>
+</html>

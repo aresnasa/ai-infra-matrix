@@ -1,13 +1,14 @@
 package services
 
 import (
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
-	"crypto/rand"
-	"encoding/hex"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 
@@ -51,17 +52,17 @@ func NewLDAPSyncService(db *gorm.DB, ldapService *LDAPService, userService *User
 
 // SyncResult 同步结果
 type SyncResult struct {
-	UsersCreated   int               `json:"users_created"`
-	UsersUpdated   int               `json:"users_updated"`
-	GroupsCreated  int               `json:"groups_created"`
-	GroupsUpdated  int               `json:"groups_updated"`
-	RolesAssigned  int               `json:"roles_assigned"`
-	Errors         []string          `json:"errors"`
-	StartTime      time.Time         `json:"start_time"`
-	EndTime        time.Time         `json:"end_time"`
-	Duration       time.Duration     `json:"duration"`
-	TotalUsers     int               `json:"total_users"`
-	TotalGroups    int               `json:"total_groups"`
+	UsersCreated  int           `json:"users_created"`
+	UsersUpdated  int           `json:"users_updated"`
+	GroupsCreated int           `json:"groups_created"`
+	GroupsUpdated int           `json:"groups_updated"`
+	RolesAssigned int           `json:"roles_assigned"`
+	Errors        []string      `json:"errors"`
+	StartTime     time.Time     `json:"start_time"`
+	EndTime       time.Time     `json:"end_time"`
+	Duration      time.Duration `json:"duration"`
+	TotalUsers    int           `json:"total_users"`
+	TotalGroups   int           `json:"total_groups"`
 }
 
 // SyncLDAPUsersAndGroups 同步LDAP用户和组到PostgreSQL数据库
@@ -72,7 +73,7 @@ func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
 	}
 
 	// 检查LDAP是否启用
-	config, err := s.ldapService.GetLDAPConfig()
+	config, err := s.ldapService.GetConfig()
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("获取LDAP配置失败: %v", err))
 		return result, err
@@ -85,8 +86,8 @@ func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
 
 	log.Printf("开始LDAP同步，服务器: %s:%d", config.Server, config.Port)
 
-	// 创建LDAP连接
-	conn, err := s.ldapService.createLDAPConnection(config.Server, config.Port, config.UseSSL, config.SkipVerify)
+	// 创建LDAP连接 - 使用本地函数而不是调用ldapService的私有方法
+	conn, err := s.createLDAPConnection(config.Server, config.Port, config.UseSSL, config.SkipVerify)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("连接LDAP服务器失败: %v", err))
 		return result, err
@@ -116,7 +117,7 @@ func (s *LDAPSyncService) SyncLDAPUsersAndGroups() (*SyncResult, error) {
 	result.Duration = result.EndTime.Sub(result.StartTime)
 
 	log.Printf("LDAP同步完成: 用户创建=%d, 用户更新=%d, 组创建=%d, 组更新=%d, 角色分配=%d, 错误数=%d, 耗时=%v",
-		result.UsersCreated, result.UsersUpdated, result.GroupsCreated, result.GroupsUpdated, 
+		result.UsersCreated, result.UsersUpdated, result.GroupsCreated, result.GroupsUpdated,
 		result.RolesAssigned, len(result.Errors), result.Duration)
 
 	return result, nil
@@ -198,7 +199,7 @@ func (s *LDAPSyncService) syncUsers(conn *ldap.Conn, config *models.LDAPConfig, 
 func (s *LDAPSyncService) syncSingleUser(username, displayName, email, userDN string, userGroups []string, config *models.LDAPConfig, result *SyncResult) error {
 	// 检查用户是否已存在
 	existingUser, err := s.userService.GetUserByUsername(username)
-	
+
 	if err == gorm.ErrRecordNotFound {
 		// 创建新用户
 		newUser := &models.User{
@@ -207,50 +208,50 @@ func (s *LDAPSyncService) syncSingleUser(username, displayName, email, userDN st
 			Password:   "", // LDAP用户不设置本地密码
 			IsActive:   true,
 			AuthSource: "ldap", // 设置认证源为LDAP
-			LDAPDn:     userDN,  // 设置LDAP DN
+			LDAPDn:     userDN, // 设置LDAP DN
 		}
-		
+
 		if err := s.userService.CreateUserDirectly(newUser); err != nil {
 			return fmt.Errorf("创建用户失败: %v", err)
 		}
-		
+
 		result.UsersCreated++
 		log.Printf("创建用户: %s (%s)", username, email)
-		
+
 		// 分配用户组
 		if err := s.assignUserToGroups(newUser.ID, userGroups, result); err != nil {
 			log.Printf("分配用户 %s 到组失败: %v", username, err)
 		}
-		
+
 		// 检查并分配管理员角色（简化版本）
 		if s.isUserAdmin(userGroups, "") {
 			if err := s.assignAdminRole(newUser.ID, result); err != nil {
 				log.Printf("分配管理员角色给用户 %s 失败: %v", username, err)
 			}
 		}
-		
+
 	} else if err == nil {
 		// 更新现有用户
 		updates := map[string]interface{}{
 			"email":       email,
 			"is_active":   true,
-			"auth_source": "ldap",  // 确保认证源设置为LDAP
-			"ldap_dn":     userDN,  // 更新LDAP DN
+			"auth_source": "ldap", // 确保认证源设置为LDAP
+			"ldap_dn":     userDN, // 更新LDAP DN
 			"updated_at":  time.Now(),
 		}
-		
+
 		if err := s.userService.UpdateUser(existingUser.ID, updates); err != nil {
 			return fmt.Errorf("更新用户失败: %v", err)
 		}
-		
+
 		result.UsersUpdated++
 		log.Printf("更新用户: %s (%s)", username, email)
-		
+
 		// 重新分配用户组
 		if err := s.assignUserToGroups(existingUser.ID, userGroups, result); err != nil {
 			log.Printf("重新分配用户 %s 到组失败: %v", username, err)
 		}
-		
+
 		// 检查并分配/移除管理员角色
 		// 暂时跳过管理员角色分配，因为 LDAPConfig 中没有 AdminGroups 字段
 		// 可以通过其他方式（如特定的 LDAP 组或用户属性）来判断管理员权限
@@ -259,11 +260,11 @@ func (s *LDAPSyncService) syncSingleUser(username, displayName, email, userDN st
 		// 		log.Printf("分配管理员角色给用户 %s 失败: %v", username, err)
 		// 	}
 		// }
-		
+
 	} else {
 		return fmt.Errorf("查询用户失败: %v", err)
 	}
-	
+
 	return nil
 }
 
@@ -329,14 +330,17 @@ func (s *LDAPSyncService) isUserAdmin(userGroups []string, adminGroupsConfig str
 
 // assignAdminRole 分配管理员角色
 func (s *LDAPSyncService) assignAdminRole(userID uint, result *SyncResult) error {
-	// 查找管理员角色
+	// 首先尝试查找super-admin角色，如果找不到则使用admin角色
 	var adminRole models.Role
-	if err := s.db.Where("name = ?", models.RoleAdmin).First(&adminRole).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			log.Printf("管理员角色不存在，跳过角色分配")
-			return nil
+	if err := s.db.Where("name = ?", models.RoleSuperAdmin).First(&adminRole).Error; err != nil {
+		// 如果找不到super-admin，尝试查找admin角色
+		if err := s.db.Where("name = ?", models.RoleAdmin).First(&adminRole).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				log.Printf("管理员角色不存在，跳过角色分配")
+				return nil
+			}
+			return fmt.Errorf("查询管理员角色失败: %v", err)
 		}
-		return fmt.Errorf("查询管理员角色失败: %v", err)
 	}
 
 	// 检查用户是否已有管理员角色
@@ -365,7 +369,7 @@ func (s *LDAPSyncService) assignAdminRole(userID uint, result *SyncResult) error
 // TriggerSync 触发LDAP同步（异步）
 func (s *LDAPSyncService) TriggerSync() string {
 	syncID := s.generateSyncID()
-	
+
 	// 创建同步状态
 	status := &SyncStatus{
 		ID:        syncID,
@@ -374,15 +378,15 @@ func (s *LDAPSyncService) TriggerSync() string {
 		Message:   "正在启动LDAP同步...",
 		StartTime: time.Now(),
 	}
-	
+
 	s.mutex.Lock()
 	s.syncStatuses[syncID] = status
 	s.mutex.Unlock()
-	
+
 	go func() {
 		s.performSync(syncID)
 	}()
-	
+
 	return syncID
 }
 
@@ -398,7 +402,7 @@ func (s *LDAPSyncService) performSync(syncID string) {
 	s.mutex.Lock()
 	status := s.syncStatuses[syncID]
 	s.mutex.Unlock()
-	
+
 	defer func() {
 		endTime := time.Now()
 		s.mutex.Lock()
@@ -414,9 +418,9 @@ func (s *LDAPSyncService) performSync(syncID string) {
 		}
 		s.mutex.Unlock()
 	}()
-	
+
 	result, err := s.SyncLDAPUsersAndGroups()
-	
+
 	s.mutex.Lock()
 	if err != nil {
 		status.Status = "failed"
@@ -437,18 +441,18 @@ func (s *LDAPSyncService) performSync(syncID string) {
 func (s *LDAPSyncService) GetSyncStatus(syncID string) *SyncStatus {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	
+
 	if status, exists := s.syncStatuses[syncID]; exists {
 		return status
 	}
-	
+
 	// 检查历史记录
 	for _, status := range s.syncHistory {
 		if status.ID == syncID {
 			return status
 		}
 	}
-	
+
 	return nil
 }
 
@@ -456,12 +460,33 @@ func (s *LDAPSyncService) GetSyncStatus(syncID string) *SyncStatus {
 func (s *LDAPSyncService) GetSyncHistory(limit int) []*SyncStatus {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	
+
 	if limit <= 0 || limit > len(s.syncHistory) {
 		limit = len(s.syncHistory)
 	}
-	
+
 	history := make([]*SyncStatus, limit)
 	copy(history, s.syncHistory[:limit])
 	return history
+}
+
+// createLDAPConnection 创建LDAP连接
+func (s *LDAPSyncService) createLDAPConnection(server string, port int, useSSL, skipVerify bool) (*ldap.Conn, error) {
+	var conn *ldap.Conn
+	var err error
+
+	if useSSL {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: skipVerify,
+		}
+		conn, err = ldap.DialTLS("tcp", fmt.Sprintf("%s:%d", server, port), tlsConfig)
+	} else {
+		conn, err = ldap.Dial("tcp", fmt.Sprintf("%s:%d", server, port))
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("连接LDAP服务器失败: %v", err)
+	}
+
+	return conn, nil
 }

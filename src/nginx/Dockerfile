@@ -2,32 +2,55 @@
 # 支持分布式部署和JupyterHub upstream访问
 # 支持开发模式和生产模式
 
-FROM nginx:alpine
+ARG NGINX_VERSION=stable-alpine-perl
+FROM nginx:${NGINX_VERSION}
 
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
+ARG NGINX_VERSION=stable-alpine-perl
 ENV APP_VERSION=${VERSION}
+ENV NGINX_VERSION=${NGINX_VERSION}
+ENV TZ=Asia/Shanghai
 
 # 构建参数 - 控制是否启用调试模式
 ARG DEBUG_MODE=false
 ARG BUILD_ENV=production
 
-# 配置Alpine镜像（多镜像自动回退）
+# 配置Alpine镜像（多镜像源智能回退配置）
 RUN set -eux; \
-	for MIR in mirrors.tuna.tsinghua.edu.cn mirrors.aliyun.com mirrors.ustc.edu.cn dl-cdn.alpinelinux.org; do \
-		sed -i "s#://[^/]\+/alpine#://$MIR/alpine#g" /etc/apk/repositories || true; \
-		apk update && break || true; \
-	done
+    # 备份原始repositories文件
+    cp /etc/apk/repositories /etc/apk/repositories.bak; \
+    # 获取Alpine版本
+    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
+    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
+    # 尝试阿里云镜像
+    echo "尝试阿里云镜像源..."; \
+    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+    (apk update --no-cache 2>/dev/null || \
+    # 失败则尝试清华镜像
+    (echo "阿里云镜像失败，尝试清华镜像..." && \
+     echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+     echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+     apk update --no-cache 2>/dev/null) || \
+    # 再失败则尝试中科大镜像
+    (echo "清华镜像失败，尝试中科大镜像..." && \
+     echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+     echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+     apk update --no-cache 2>/dev/null) || \
+    # 最后恢复官方源
+    (echo "国内镜像均失败，恢复官方源..." && \
+     cp /etc/apk/repositories.bak /etc/apk/repositories && apk update --no-cache))
 
 # 安装必要的工具
 RUN apk add --no-cache \
     curl \
     bash \
-    tzdata
+    tzdata \
+    lsof
 
 # 设置时区
-RUN cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
-    echo "Asia/Shanghai" > /etc/timezone
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 创建必要的目录结构
 RUN mkdir -p /usr/share/nginx/html/sso \
@@ -53,13 +76,24 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
         echo "<h1>Debug tools are disabled in production mode</h1>" > /usr/share/nginx/html/debug/index.html; \
     fi
 
-# 条件复制：仅在调试模式下复制完整调试文件夹
-COPY --chown=nginx:nginx src/shared/debug/ /tmp/debug/
+# 条件复制：仅在调试模式下且debug目录存在时复制调试文件夹
+# 先检查源目录是否有内容，然后决定是否复制
+    # 复制调试工具
+COPY src/shared/debug/ /tmp/debug/
 RUN if [ "$DEBUG_MODE" = "true" ]; then \
-        echo "� 复制调试文件到目标目录..."; \
-        cp -r /tmp/debug/* /usr/share/nginx/html/debug/ || echo "⚠️  调试文件复制失败，但继续构建"; \
-        echo "✅ 调试文件已复制到 /usr/share/nginx/html/debug/"; \
-        ls -la /usr/share/nginx/html/debug/ | head -10; \
+        echo "🔧 调试模式启用，检查调试文件..."; \
+        if [ "$(ls -A /tmp/debug 2>/dev/null)" ]; then \
+            echo "📂 复制调试文件到目标目录..."; \
+            cp -r /tmp/debug/* /usr/share/nginx/html/debug/ 2>/dev/null || echo "⚠️  调试文件复制失败，但继续构建"; \
+            echo "✅ 调试文件已复制到 /usr/share/nginx/html/debug/"; \
+            ls -la /usr/share/nginx/html/debug/ | head -10; \
+        else \
+            echo "📝 调试目录为空，创建默认调试页面"; \
+            echo "<h1>Debug Mode Enabled</h1><p>Debug tools directory is empty. Please add debug tools to src/shared/debug/</p>" > /usr/share/nginx/html/debug/index.html; \
+        fi; \
+    else \
+        echo "🚀 生产模式，创建生产调试页面"; \
+        echo "<h1>Debug tools are disabled in production mode</h1>" > /usr/share/nginx/html/debug/index.html; \
     fi && \
     rm -rf /tmp/debug
 
@@ -88,7 +122,7 @@ ENV BUILD_ENV=${BUILD_ENV}
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD curl -f http://localhost/health || exit 1
+    CMD curl -f http://127.0.0.1/health || exit 1
 
 # 暴露端口
 EXPOSE 80 443

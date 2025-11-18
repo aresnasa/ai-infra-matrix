@@ -1,0 +1,70 @@
+services:
+  mock-postgres:
+    image: postgres:15-alpine
+    container_name: ai-infra-mock-postgres
+    environment:
+      POSTGRES_DB: test_db
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      TZ: Asia/Shanghai
+    ports:
+      - "15432:5432"
+    volumes:
+      - mock_postgres_data:/var/lib/postgresql/data
+    networks:
+      - mock-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  mock-redis:
+    image: redis:7-alpine
+    container_name: ai-infra-mock-redis
+    command: redis-server --requirepass test_redis_pass
+    ports:
+      - "16379:6379"
+    volumes:
+      - mock_redis_data:/data
+    networks:
+      - mock-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a test_redis_pass ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # 如果backend镜像存在，则启动测试实例
+  mock-backend:
+    image: ai-infra-backend:v0.3.6-dev
+    container_name: ai-infra-mock-backend
+    environment:
+      POSTGRES_HOST: mock-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: test_db
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      REDIS_HOST: mock-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: test_redis_pass
+      MOCK_MODE: "true"
+    ports:
+      - "18080:8080"
+    depends_on:
+      mock-postgres:
+        condition: service_healthy
+      mock-redis:
+        condition: service_healthy
+    networks:
+      - mock-network
+    profiles:
+      - backend-test
+
+volumes:
+  mock_postgres_data:
+  mock_redis_data:
+
+networks:
+  mock-network:
+    driver: bridge

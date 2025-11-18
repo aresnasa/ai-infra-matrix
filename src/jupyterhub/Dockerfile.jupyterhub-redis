@@ -1,0 +1,11 @@
+
+# 注意：需要先配置pip阿里云镜像源（在主Dockerfile中已配置）
+# pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+# pip config set global.trusted-host mirrors.aliyun.com
+
+# 添加到现有Dockerfile
+COPY requirements-jupyterhub.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements-jupyterhub.txt
+
+# 确保Redis连接
+RUN pip install --no-cache-dir redis==5.0.1 PyJWT==2.8.0 aiohttp==3.9.1

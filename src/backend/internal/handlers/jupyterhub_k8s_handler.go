@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/gin-gonic/gin"
 )
 
 // JupyterHubK8sHandler JupyterHub K8s集成处理器
@@ -34,17 +34,17 @@ func NewJupyterHubHandler() *JupyterHubK8sHandler {
 
 // SubmitPythonScriptRequest 提交Python脚本请求结构
 type SubmitPythonScriptRequest struct {
-	Name           string            `json:"name" binding:"required"`
-	Script         string            `json:"script" binding:"required"`
-	Requirements   []string          `json:"requirements"`
-	GPURequired    bool              `json:"gpu_required"`
-	GPUCount       int               `json:"gpu_count"`
-	GPUType        string            `json:"gpu_type"`
-	MemoryMB       int               `json:"memory_mb"`
-	CPUCores       int               `json:"cpu_cores"`
-	Environment    map[string]string `json:"environment"`
-	WorkingDir     string            `json:"working_dir"`
-	OutputPath     string            `json:"output_path"`
+	Name         string            `json:"name" binding:"required"`
+	Script       string            `json:"script" binding:"required"`
+	Requirements []string          `json:"requirements"`
+	GPURequired  bool              `json:"gpu_required"`
+	GPUCount     int               `json:"gpu_count"`
+	GPUType      string            `json:"gpu_type"`
+	MemoryMB     int               `json:"memory_mb"`
+	CPUCores     int               `json:"cpu_cores"`
+	Environment  map[string]string `json:"environment"`
+	WorkingDir   string            `json:"working_dir"`
+	OutputPath   string            `json:"output_path"`
 }
 
 // SubmitPythonScriptResponse 提交Python脚本响应结构
@@ -58,23 +58,23 @@ type SubmitPythonScriptResponse struct {
 
 // GPUResourceStatusResponse GPU资源状态响应
 type GPUResourceStatusResponse struct {
-	TotalGPUs     int                      `json:"total_gpus"`
-	AvailableGPUs int                      `json:"available_gpus"`
-	UsedGPUs      int                      `json:"used_gpus"`
-	GPUNodes      []services.GPUNodeInfo   `json:"gpu_nodes"`
-	LastUpdated   time.Time                `json:"last_updated"`
+	TotalGPUs     int                    `json:"total_gpus"`
+	AvailableGPUs int                    `json:"available_gpus"`
+	UsedGPUs      int                    `json:"used_gpus"`
+	GPUNodes      []services.GPUNodeInfo `json:"gpu_nodes"`
+	LastUpdated   time.Time              `json:"last_updated"`
 }
 
 // JobStatusResponse Job状态响应
 type JobStatusResponse struct {
-	JobID         string    `json:"job_id"`
-	JobName       string    `json:"job_name"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	ErrorMessage  string    `json:"error_message,omitempty"`
-	Logs          string    `json:"logs,omitempty"`
+	JobID        string     `json:"job_id"`
+	JobName      string     `json:"job_name"`
+	Status       string     `json:"status"`
+	CreatedAt    time.Time  `json:"created_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ErrorMessage string     `json:"error_message,omitempty"`
+	Logs         string     `json:"logs,omitempty"`
 }
 
 // RegisterRoutes 注册路由
@@ -84,17 +84,17 @@ func (h *JupyterHubK8sHandler) RegisterRoutes(router *gin.Engine) {
 		// GPU资源管理
 		api.GET("/gpu/status", h.GetGPUResourceStatus)
 		api.GET("/gpu/nodes", h.FindSuitableGPUNodes)
-		
+
 		// Python脚本Job管理
 		api.POST("/jobs/submit", h.SubmitPythonScript)
 		api.GET("/jobs/:jobName/status", h.GetJobStatus)
 		api.GET("/jobs/:jobName/logs", h.GetJobLogs)
 		api.DELETE("/jobs/:jobName", h.DeleteJob)
-		
+
 		// Job批量操作
 		api.GET("/jobs", h.ListJobs)
 		api.POST("/jobs/cleanup", h.CleanupJobs)
-		
+
 		// 健康检查
 		api.GET("/health", h.HealthCheck)
 	}
@@ -112,17 +112,17 @@ func (h *JupyterHubK8sHandler) RegisterRoutes(router *gin.Engine) {
 func (h *JupyterHubK8sHandler) GetGPUResourceStatus(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	status, err := h.service.GetGPUResourceStatus(ctx)
 	if err != nil {
 		log.Printf("获取GPU资源状态失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取GPU资源状态失败",
+			"error":   "获取GPU资源状态失败",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	response := GPUResourceStatusResponse{
 		TotalGPUs:     status.TotalGPUs,
 		AvailableGPUs: status.AvailableGPUs,
@@ -130,7 +130,7 @@ func (h *JupyterHubK8sHandler) GetGPUResourceStatus(c *gin.Context) {
 		GPUNodes:      status.GPUNodes,
 		LastUpdated:   status.LastUpdated,
 	}
-	
+
 	c.JSON(http.StatusOK, response)
 }
 
@@ -149,7 +149,7 @@ func (h *JupyterHubK8sHandler) GetGPUResourceStatus(c *gin.Context) {
 func (h *JupyterHubK8sHandler) FindSuitableGPUNodes(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	// 解析查询参数
 	gpuCountStr := c.DefaultQuery("gpu_count", "1")
 	gpuCount, err := strconv.Atoi(gpuCountStr)
@@ -159,22 +159,22 @@ func (h *JupyterHubK8sHandler) FindSuitableGPUNodes(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	gpuType := c.Query("gpu_type")
-	
+
 	nodes, err := h.service.FindSuitableGPUNodes(ctx, gpuCount, gpuType)
 	if err != nil {
 		log.Printf("查找适合的GPU节点失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "查找适合的GPU节点失败",
+			"error":   "查找适合的GPU节点失败",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"suitable_nodes": nodes,
-		"count": len(nodes),
+		"count":          len(nodes),
 	})
 }
 
@@ -193,15 +193,15 @@ func (h *JupyterHubK8sHandler) SubmitPythonScript(c *gin.Context) {
 	var req SubmitPythonScriptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数无效",
+			"error":   "请求参数无效",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	// 生成唯一Job ID
 	jobID := fmt.Sprintf("job-%d", time.Now().Unix())
-	
+
 	// 设置默认值
 	if req.MemoryMB == 0 {
 		req.MemoryMB = 1024 // 默认1GB内存
@@ -212,7 +212,7 @@ func (h *JupyterHubK8sHandler) SubmitPythonScript(c *gin.Context) {
 	if req.GPURequired && req.GPUCount == 0 {
 		req.GPUCount = 1 // 默认1个GPU
 	}
-	
+
 	// 构建Job对象
 	job := &services.PythonScriptJob{
 		ID:           jobID,
@@ -230,21 +230,21 @@ func (h *JupyterHubK8sHandler) SubmitPythonScript(c *gin.Context) {
 		Status:       "pending",
 		CreatedAt:    time.Now(),
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	
+
 	// 提交Job
 	k8sJob, err := h.service.SubmitPythonScriptJob(ctx, job)
 	if err != nil {
 		log.Printf("提交Python脚本Job失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "提交Python脚本Job失败",
+			"error":   "提交Python脚本Job失败",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	response := SubmitPythonScriptResponse{
 		JobID:     jobID,
 		JobName:   k8sJob.Name,
@@ -252,7 +252,7 @@ func (h *JupyterHubK8sHandler) SubmitPythonScript(c *gin.Context) {
 		Message:   "Python脚本Job已成功提交",
 		CreatedAt: job.CreatedAt,
 	}
-	
+
 	c.JSON(http.StatusOK, response)
 }
 
@@ -275,22 +275,22 @@ func (h *JupyterHubK8sHandler) GetJobStatus(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	job, err := h.service.MonitorJob(ctx, jobName)
 	if err != nil {
 		log.Printf("获取Job状态失败: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "获取Job状态失败",
+			"error":   "获取Job状态失败",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	response := JobStatusResponse{
-		JobID:        job.ID,
+		JobID:        fmt.Sprintf("%d", job.ID),
 		JobName:      job.Name,
 		Status:       job.Status,
 		CreatedAt:    job.CreatedAt,
@@ -298,7 +298,7 @@ func (h *JupyterHubK8sHandler) GetJobStatus(c *gin.Context) {
 		CompletedAt:  job.CompletedAt,
 		ErrorMessage: job.ErrorMessage,
 	}
-	
+
 	c.JSON(http.StatusOK, response)
 }
 
@@ -321,13 +321,13 @@ func (h *JupyterHubK8sHandler) GetJobLogs(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 这里需要实现获取日志的逻辑
 	// 可以通过service获取Pod日志
 	c.JSON(http.StatusOK, gin.H{
 		"job_name": jobName,
-		"logs": "暂未实现日志获取功能",
-		"message": "请使用kubectl命令查看日志",
+		"logs":     "暂未实现日志获取功能",
+		"message":  "请使用kubectl命令查看日志",
 	})
 }
 
@@ -350,10 +350,10 @@ func (h *JupyterHubK8sHandler) DeleteJob(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 这里需要实现删除Job的逻辑
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Job %s 已删除", jobName),
+		"message":  fmt.Sprintf("Job %s 已删除", jobName),
 		"job_name": jobName,
 	})
 }
@@ -371,8 +371,8 @@ func (h *JupyterHubK8sHandler) DeleteJob(c *gin.Context) {
 func (h *JupyterHubK8sHandler) ListJobs(c *gin.Context) {
 	// 这里需要实现列出Job的逻辑
 	c.JSON(http.StatusOK, gin.H{
-		"jobs": []string{},
-		"count": 0,
+		"jobs":    []string{},
+		"count":   0,
 		"message": "暂未实现Job列表功能",
 	})
 }
@@ -389,17 +389,17 @@ func (h *JupyterHubK8sHandler) ListJobs(c *gin.Context) {
 func (h *JupyterHubK8sHandler) CleanupJobs(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	
+
 	err := h.service.CleanupCompletedJobs(ctx)
 	if err != nil {
 		log.Printf("清理Job失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "清理Job失败",
+			"error":   "清理Job失败",
 			"details": err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Job清理完成",
 	})
@@ -416,20 +416,20 @@ func (h *JupyterHubK8sHandler) CleanupJobs(c *gin.Context) {
 func (h *JupyterHubK8sHandler) HealthCheck(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	// 检查GPU资源状态作为健康检查
 	_, err := h.service.GetGPUResourceStatus(ctx)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status": "unhealthy",
-			"error": err.Error(),
+			"error":  err.Error(),
 		})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"status": "healthy",
+		"status":    "healthy",
 		"timestamp": time.Now(),
-		"service": "jupyterhub-k8s",
+		"service":   "jupyterhub-k8s",
 	})
 }

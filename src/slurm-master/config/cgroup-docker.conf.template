@@ -1,0 +1,9 @@
+#
+# AI Infrastructure Matrix SLURM Cgroup Configuration for Docker
+# Docker 环境下禁用 cgroup 约束,由 Docker 管理资源
+#
+# Note: 在 Docker 容器内运行 SLURM 时,cgroup v2 约束可能无法正常工作
+# 因为容器本身已经被 Docker 的 cgroup 管理。此配置文件为空或仅包含注释,
+# 以避免 slurmd 尝试初始化 cgroup 上下文而失败。
+#
+# 对于物理机或 VM 环境,请使用 cgroup.conf.template

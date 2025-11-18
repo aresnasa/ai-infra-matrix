@@ -500,7 +500,7 @@ const JupyterHubIntegration = () => {
         {/* Notebook 启动面板 */}
         <TabPane tab={<span><CodeOutlined />预配置 Notebook</span>} key="notebooks">
           <Row gutter={[16, 16]}>
-            {predefinedNotebooks.map((notebook, index) => (
+            {(predefinedNotebooks || []).map((notebook, index) => (
               <Col span={12} key={index}>
                 <Card
                   hoverable
@@ -598,7 +598,7 @@ const JupyterHubIntegration = () => {
           <Row gutter={[16, 16]}>
             <Col span={24}>
               <Card title="GPU 节点状态" extra={<Button icon={<ReloadOutlined />} onClick={fetchGPUStatus} />}>
-                {gpuStatus.nodes && gpuStatus.nodes.length > 0 ? (
+                {gpuStatus.nodes && Array.isArray(gpuStatus.nodes) && gpuStatus.nodes.length > 0 ? (
                   <Row gutter={[16, 16]}>
                     {gpuStatus.nodes.map((node, index) => (
                       <Col span={8} key={index}>

@@ -12,15 +12,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/jwt"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -42,6 +43,54 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 	}
 }
 
+// ValidateLDAP LDAP验证
+// @Summary LDAP账户验证
+// @Description 验证用户在LDAP中的账户信息
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Param request body models.LoginRequest true "LDAP验证信息"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/validate-ldap [post]
+func (h *UserHandler) ValidateLDAP(c *gin.Context) {
+	// E2E test bypass: allow fake LDAP validation when explicitly enabled
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "E2E LDAP validation bypass enabled",
+			"valid":   true,
+			"ldap_user": gin.H{
+				"username": "e2e-bypass",
+			},
+		})
+		return
+	}
+
+	var req models.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "valid": false})
+		return
+	}
+
+	// LDAP验证
+	ldapUser, err := h.ldapService.AuthenticateUser(req.Username, req.Password)
+	if err != nil {
+		logrus.WithError(err).Error("LDAP validation failed")
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "LDAP验证失败: 用户不存在或密码错误",
+			"valid": false,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "LDAP验证成功",
+		"valid":     true,
+		"ldap_user": ldapUser,
+	})
+}
+
 // Register 用户注册
 // @Summary 用户注册
 // @Description 创建新用户账户
@@ -57,6 +106,40 @@ func (h *UserHandler) Register(c *gin.Context) {
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// E2E test bypass: when enabled, skip LDAP and approval and create an active local user directly
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+		// Ensure username/email uniqueness via service call path
+		user := &models.User{
+			Username:      req.Username,
+			Email:         req.Email,
+			Password:      "", // no local password needed for LDAP-mode users; login uses hybrid/LDAP, but we will also allow local below
+			IsActive:      true,
+			AuthSource:    "ldap",
+			DashboardRole: req.Role,
+			RoleTemplate:  req.RoleTemplate,
+		}
+		// Attempt to set a bcrypt password matching provided value to allow local login in hybrid mode
+		if strings.TrimSpace(req.Password) != "" {
+			if hpw, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost); err == nil {
+				user.Password = string(hpw)
+				user.AuthSource = "local" // mark as local-capable for tests
+			}
+		}
+		if err := h.userService.CreateUserDirectly(user); err != nil {
+			logrus.WithError(err).Error("E2E bypass user creation failed")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user (e2e)"})
+			return
+		}
+		// Assign role template if provided
+		if req.RoleTemplate != "" {
+			if err := h.rbacService.AssignRoleTemplateToUser(user.ID, req.RoleTemplate); err != nil {
+				logrus.WithError(err).Warn("E2E bypass: assign role template failed")
+			}
+		}
+		c.JSON(http.StatusCreated, user)
 		return
 	}
 
@@ -95,7 +178,9 @@ func (h *UserHandler) Register(c *gin.Context) {
 			}
 			// Namespace strategy: use department if provided, else "users"
 			ns := strings.ToLower(strings.TrimSpace(req.Department))
-			if ns == "" { ns = "users" }
+			if ns == "" {
+				ns = "users"
+			}
 			if err := ks.EnsureNamespace(clientset, ns); err != nil {
 				logrus.WithError(err).Warn("Ensure namespace failed")
 			}
@@ -106,8 +191,12 @@ func (h *UserHandler) Register(c *gin.Context) {
 			// Map role to ClusterRole
 			role := strings.ToLower(strings.TrimSpace(req.Role))
 			clusterRole := "view"
-			if role == "user" { clusterRole = "edit" }
-			if role == "admin" { clusterRole = "admin" }
+			if role == "user" {
+				clusterRole = "edit"
+			}
+			if role == "admin" {
+				clusterRole = "admin"
+			}
 			rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
 			if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
 				logrus.WithError(err).Warn("Ensure RoleBinding failed")
@@ -131,6 +220,9 @@ func (h *UserHandler) Register(c *gin.Context) {
 // @Failure 401 {object} map[string]interface{}
 // @Router /auth/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+		logrus.Debug("E2E bypass enabled: hybrid authentication will allow local accounts first")
+	}
 	// 添加调试日志
 	logrus.WithFields(logrus.Fields{
 		"user_agent": c.GetHeader("User-Agent"),
@@ -229,30 +321,30 @@ func (h *UserHandler) Login(c *gin.Context) {
 // handleLDAPUser 处理LDAP认证用户，创建或更新本地用户账户
 func (h *UserHandler) handleLDAPUser(ldapUser *models.LDAPUser) (*models.User, error) {
 	// 添加调试日志
-	logrus.Debugf("handleLDAPUser called with Username: %s, DisplayName: %s, Email: %s", 
+	logrus.Debugf("handleLDAPUser called with Username: %s, DisplayName: %s, Email: %s",
 		ldapUser.Username, ldapUser.DisplayName, ldapUser.Email)
-	
+
 	// 首先尝试通过用户名查找现有用户
 	existingUser, err := h.userService.GetUserByUsername(ldapUser.Username)
 	if err == nil {
 		// 用户已存在，更新用户信息
 		updates := map[string]interface{}{
-			"email":       ldapUser.Email,
-			"last_login":  gorm.Expr("NOW()"),
-			"is_active":   true,
+			"email":      ldapUser.Email,
+			"last_login": gorm.Expr("NOW()"),
+			"is_active":  true,
 		}
-		
+
 		if err := h.userService.UpdateUser(existingUser.ID, updates); err != nil {
 			return nil, err
 		}
-		
+
 		// 检查并分配LDAP管理员角色
 		if h.ldapService.IsUserAdmin(ldapUser) {
 			if err := h.assignAdminRoleIfNeeded(existingUser.ID); err != nil {
 				logrus.Error("Failed to assign admin role to LDAP user:", err)
 			}
 		}
-		
+
 		return existingUser, nil
 	} else {
 		// 用户不存在，创建新用户
@@ -261,21 +353,21 @@ func (h *UserHandler) handleLDAPUser(ldapUser *models.LDAPUser) (*models.User, e
 			Email:      ldapUser.Email,
 			Password:   "", // LDAP用户不设置本地密码
 			IsActive:   true,
-			AuthSource: "ldap", // 设置认证源为LDAP
+			AuthSource: "ldap",      // 设置认证源为LDAP
 			LDAPDn:     ldapUser.DN, // 设置LDAP DN
 		}
-		
+
 		if err := h.userService.CreateUserDirectly(newUser); err != nil {
 			return nil, err
 		}
-		
+
 		// 检查并分配LDAP管理员角色
 		if h.ldapService.IsUserAdmin(ldapUser) {
 			if err := h.assignAdminRoleIfNeeded(newUser.ID); err != nil {
 				logrus.Error("Failed to assign admin role to new LDAP user:", err)
 			}
 		}
-		
+
 		return newUser, nil
 	}
 }
@@ -287,27 +379,30 @@ func (h *UserHandler) assignAdminRoleIfNeeded(userID uint) error {
 	if err != nil {
 		return err
 	}
-	
+
 	hasAdminRole := false
 	for _, role := range roles {
-		if role.Name == "admin" {
+		if role.Name == "admin" || role.Name == "super-admin" {
 			hasAdminRole = true
 			break
 		}
 	}
-	
+
 	if !hasAdminRole {
-		// 查找管理员角色ID
+		// 首先尝试查找super-admin角色
 		var adminRole models.Role
-		if err := h.db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
-			logrus.WithError(err).Error("Failed to find admin role")
-			return err
+		if err := h.db.Where("name = ?", "super-admin").First(&adminRole).Error; err != nil {
+			// 如果找不到super-admin，尝试查找admin角色
+			if err := h.db.Where("name = ?", "admin").First(&adminRole).Error; err != nil {
+				logrus.WithError(err).Error("Failed to find admin or super-admin role")
+				return err
+			}
 		}
-		
+
 		// 分配管理员角色
 		return h.rbacService.AssignRoleToUser(userID, adminRole.ID)
 	}
-	
+
 	return nil
 }
 
@@ -343,9 +438,9 @@ func (h *UserHandler) GetUsers(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"users": users,
-		"total": total,
-		"page":  page,
+		"users":     users,
+		"total":     total,
+		"page":      page,
 		"page_size": pageSize,
 	})
 }
@@ -386,6 +481,69 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
 }
 
+// ToggleUserStatus 切换用户启用/禁用状态（管理员功能）
+// @Summary 切换用户状态
+// @Description 启用或禁用指定用户（仅管理员），不会影响LDAP数据
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Param status body bool true "用户状态"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Router /users/{id}/status [put]
+func (h *UserHandler) ToggleUserStatus(c *gin.Context) {
+	userID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var req struct {
+		IsActive bool `json:"is_active"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// 防止禁用自己
+	currentUserID, _ := middleware.GetCurrentUserID(c)
+	if uint(userID) == currentUserID && !req.IsActive {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot disable yourself"})
+		return
+	}
+
+	// 更新用户状态
+	updates := map[string]interface{}{
+		"is_active":  req.IsActive,
+		"updated_at": time.Now(),
+	}
+
+	if err := h.userService.UpdateUser(uint(userID), updates); err != nil {
+		logrus.Error("Toggle user status error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to toggle user status"})
+		return
+	}
+
+	status := "enabled"
+	if !req.IsActive {
+		status = "disabled"
+	}
+
+	logrus.Infof("Admin user %d %s user %d", currentUserID, status, userID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   fmt.Sprintf("User %s successfully", status),
+		"user_id":   userID,
+		"is_active": req.IsActive,
+	})
+}
+
 // Logout 用户退出登录
 // @Summary 用户退出登录
 // @Description 清除用户会话和token
@@ -412,7 +570,7 @@ func (h *UserHandler) Logout(c *gin.Context) {
 	}
 
 	token := tokenParts[1]
-	
+
 	// 删除Redis会话
 	if err := h.sessionService.DeleteSession(token); err != nil {
 		logrus.Error("Delete session error:", err)
@@ -515,6 +673,11 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
+	// Add headers for ProxyAuth integration (used by nginx auth_request)
+	c.Header("X-User-Name", user.Username)
+	c.Header("X-User-Email", user.Email)
+	c.Header("X-User-ID", fmt.Sprintf("%d", user.ID))
+
 	c.JSON(http.StatusOK, user)
 }
 
@@ -566,6 +729,77 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "密码重置成功"})
+}
+
+// AdminUpdateRoleTemplate 管理员更新用户的角色模板
+// @Summary 管理员更新用户的角色模板
+// @Description 管理员为指定用户设置角色模板，并自动分配对应的RBAC角色
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Param request body map[string]string true "角色模板信息，如 {\"role_template\": \"data-developer\"}"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Router /users/{id}/role-template [put]
+func (h *UserHandler) AdminUpdateRoleTemplate(c *gin.Context) {
+	// 检查管理员权限
+	currentUserID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	if !h.rbacService.CheckPermission(currentUserID, "users", "update", "*", "") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	// 获取用户ID
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID"})
+		return
+	}
+
+	var req struct {
+		RoleTemplate string `json:"role_template"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if strings.TrimSpace(req.RoleTemplate) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "role_template 不能为空"})
+		return
+	}
+
+	// 更新用户role_template字段
+	updates := map[string]interface{}{
+		"role_template": req.RoleTemplate,
+		"updated_at":    time.Now(),
+	}
+	if err := h.userService.UpdateUser(uint(userID), updates); err != nil {
+		logrus.WithError(err).Error("Update user role_template failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新角色模板失败"})
+		return
+	}
+
+	// 分配角色模板对应的RBAC角色（幂等）
+	if err := h.rbacService.AssignRoleTemplateToUser(uint(userID), req.RoleTemplate); err != nil {
+		logrus.WithError(err).Warn("Assign role template to user failed")
+		// 不中断，尽量返回成功并提示
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "角色模板更新成功",
+		"user_id":       userID,
+		"role_template": req.RoleTemplate,
+	})
 }
 
 // AdminUpdateUserGroups 管理员更新用户的用户组
@@ -622,14 +856,14 @@ func (h *UserHandler) AdminUpdateUserGroups(c *gin.Context) {
 func (h *UserHandler) performHybridAuthentication(req *models.LoginRequest) (*models.User, error) {
 	// 首先检查LDAP配置是否启用
 	ldapConfig, ldapErr := h.ldapService.GetLDAPConfig()
-	
+
 	// 检查是否为本地admin用户 - 如果是，优先尝试本地认证
 	localUser, localErr := h.userService.GetUserByUsername(req.Username)
 	isLocalAdmin := localErr == nil && h.isAdminUser(localUser)
-	
+
 	if ldapErr == nil && ldapConfig.IsEnabled {
 		logrus.Debug("LDAP is enabled, attempting hybrid authentication")
-		
+
 		// 如果是本地admin用户，优先本地认证，除非被明确禁用
 		if isLocalAdmin && localUser.IsActive {
 			logrus.Debug("Attempting local authentication for admin user:", req.Username)
@@ -639,7 +873,7 @@ func (h *UserHandler) performHybridAuthentication(req *models.LoginRequest) (*mo
 			}
 			logrus.Debug("Local authentication failed for admin user, trying LDAP")
 		}
-		
+
 		// 尝试LDAP认证
 		ldapUser, ldapAuthErr := h.ldapService.AuthenticateUser(req.Username, req.Password)
 		if ldapAuthErr == nil {
@@ -652,9 +886,9 @@ func (h *UserHandler) performHybridAuthentication(req *models.LoginRequest) (*mo
 			}
 			return user, nil
 		}
-		
+
 		logrus.Debug("LDAP authentication failed:", ldapAuthErr)
-		
+
 		// LDAP认证失败，尝试本地认证（除非是已经尝试过的本地admin用户）
 		if !isLocalAdmin {
 			logrus.Debug("Falling back to local authentication for user:", req.Username)
@@ -665,7 +899,7 @@ func (h *UserHandler) performHybridAuthentication(req *models.LoginRequest) (*mo
 			logrus.Info("Local authentication successful for user:", req.Username)
 			return user, nil
 		}
-		
+
 		return nil, errors.New("authentication failed")
 	} else {
 		// LDAP未配置或未启用，使用本地认证
@@ -685,7 +919,7 @@ func (h *UserHandler) isAdminUser(user *models.User) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	for _, role := range roles {
 		if role.Name == "admin" {
 			return true
@@ -737,10 +971,10 @@ func (h *UserHandler) GenerateJupyterHubToken(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":     true,
-		"token":       hubToken,
-		"username":    currentUser.Username,
-		"expires_at":  time.Now().Add(24 * time.Hour).Unix(), // 24小时有效期
+		"success":      true,
+		"token":        hubToken,
+		"username":     currentUser.Username,
+		"expires_at":   time.Now().Add(24 * time.Hour).Unix(), // 24小时有效期
 		"redirect_url": fmt.Sprintf("/hub/login?token=%s", hubToken),
 	})
 }
@@ -752,26 +986,26 @@ func (h *UserHandler) generateJupyterHubAPIToken(user *models.User) (string, err
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", fmt.Errorf("failed to generate random token: %w", err)
 	}
-	
+
 	// 使用JWT生成令牌（复用现有的JWT基础设施）
 	roles, _ := h.rbacService.GetUserRoles(user.ID)
 	roleNames := make([]string, len(roles))
 	for i, role := range roles {
 		roleNames[i] = role.Name
 	}
-	
+
 	permissions, _ := h.rbacService.GetUserPermissions(user.ID)
 	permissionKeys := make([]string, len(permissions))
 	for i, permission := range permissions {
 		permissionKeys[i] = permission.GetPermissionKey()
 	}
-	
+
 	// 生成专用于JupyterHub的JWT令牌
 	token, _, err := jwt.GenerateToken(user.ID, user.Username, roleNames, permissionKeys)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate JWT token: %w", err)
 	}
-	
+
 	// 在实际生产环境中，这里应该调用JupyterHub API创建令牌
 	// 现在返回我们生成的JWT令牌
 	return token, nil
@@ -779,35 +1013,35 @@ func (h *UserHandler) generateJupyterHubAPIToken(user *models.User) (string, err
 
 // ensureJupyterHubUser 确保JupyterHub中存在该用户
 func (h *UserHandler) ensureJupyterHubUser(user *models.User, token string) error {
-	// 获取JupyterHub配置 - 修正端口配置
+	// 获取JupyterHub配置 - 使用环境变量配置
 	jupyterHubURL := os.Getenv("JUPYTERHUB_URL")
 	if jupyterHubURL == "" {
-		jupyterHubURL = "http://localhost:8088" // 修正为实际端口8088
+		jupyterHubURL = "http://ai-infra-matrix-jupyterhub:8000" // K8s服务名
 	}
-	
+
 	// 准备用户数据
 	userData := map[string]interface{}{
 		"username": user.Username,
 		"admin":    h.isAdminUser(user),
 	}
-	
+
 	jsonData, err := json.Marshal(userData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal user data: %w", err)
 	}
-	
+
 	// 创建HTTP请求到JupyterHub API
-	req, err := http.NewRequest("POST", 
-		fmt.Sprintf("%s/hub/api/users/%s", jupyterHubURL, user.Username), 
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("%s/hub/api/users/%s", jupyterHubURL, user.Username),
 		bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
-	
+
 	// 发送请求
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -815,12 +1049,12 @@ func (h *UserHandler) ensureJupyterHubUser(user *models.User, token string) erro
 		return fmt.Errorf("failed to send request to JupyterHub: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// 检查响应状态
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("JupyterHub API returned status: %d", resp.StatusCode)
 	}
-	
+
 	logrus.Infof("Successfully ensured JupyterHub user: %s", user.Username)
 	return nil
 }
@@ -875,8 +1109,8 @@ func (h *UserHandler) VerifyJWT(c *gin.Context) {
 	// 检查用户是否活跃
 	if !user.IsActive {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"valid":  false,
-			"error":  "User account is inactive",
+			"valid": false,
+			"error": "User account is inactive",
 		})
 		return
 	}
@@ -1020,7 +1254,7 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 	}
 
 	tokenString := tokenParts[1]
-	
+
 	// 解析现有token
 	claims, err := jwt.ParseToken(tokenString)
 	if err != nil {
@@ -1091,4 +1325,153 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// GetPendingApprovals 获取待审批的注册申请
+// @Summary 获取待审批的注册申请
+// @Description 获取所有待审批的注册申请列表
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {array} models.RegistrationApproval
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/approvals/pending [get]
+func (h *UserHandler) GetPendingApprovals(c *gin.Context) {
+	approvals, err := h.userService.GetPendingApprovals()
+	if err != nil {
+		logrus.Error("Get pending approvals error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取待审批申请失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, approvals)
+}
+
+// ApproveRegistration 批准注册申请
+// @Summary 批准注册申请
+// @Description 批准指定的注册申请
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "审批ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/approvals/{id}/approve [post]
+func (h *UserHandler) ApproveRegistration(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的审批ID"})
+		return
+	}
+
+	// 获取当前管理员用户ID
+	adminID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	err = h.userService.ApproveRegistration(uint(id), adminID.(uint))
+	if err != nil {
+		logrus.Error("Approve registration error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "注册申请已批准"})
+}
+
+// RejectRegistration 拒绝注册申请
+// @Summary 拒绝注册申请
+// @Description 拒绝指定的注册申请
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "审批ID"
+// @Param request body map[string]string true "拒绝原因"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/approvals/{id}/reject [post]
+func (h *UserHandler) RejectRegistration(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的审批ID"})
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取当前管理员用户ID
+	adminID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	err = h.userService.RejectRegistration(uint(id), adminID.(uint), req.Reason)
+	if err != nil {
+		logrus.Error("Reject registration error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "注册申请已拒绝"})
+}
+
+// GetAllUsers 获取所有用户（管理员功能）
+// @Summary 获取所有用户
+// @Description 分页获取所有用户列表（管理员功能）
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "页码" default(1)
+// @Param page_size query int false "每页数量" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/users [get]
+func (h *UserHandler) GetAllUsers(c *gin.Context) {
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("page_size", "10")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	pageSize, err := strconv.Atoi(pageSizeStr)
+	if err != nil || pageSize < 1 || pageSize > 100 {
+		pageSize = 10
+	}
+
+	users, total, err := h.userService.GetUsers(page, pageSize)
+	if err != nil {
+		logrus.Error("Get all users error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户列表失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"users":     users,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }

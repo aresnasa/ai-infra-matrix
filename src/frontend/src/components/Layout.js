@@ -1,7 +1,10 @@
 import React from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
-import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined } from '@ant-design/icons';
+import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined, DatabaseOutlined, DashboardOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
+import CustomizableNavigation from './CustomizableNavigation';
+import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
+import { getAvailableMenuItems, isAdmin, getUserRoleDisplayName } from '../utils/permissions';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -10,32 +13,51 @@ const Layout = ({ children, user, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // 检查用户是否为管理员（支持 admin 和 super-admin 角色）
-  const isAdmin = user?.role === 'admin' || user?.role === 'super-admin' || 
-    (user?.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'));
+  // 获取用户权限信息
+  const userIsAdmin = isAdmin(user);
+  const availableMenuItems = getAvailableMenuItems(user);
+  const userRoleDisplayName = getUserRoleDisplayName(user);
 
   console.log('=== Layout权限检查 ===');
   console.log('用户信息:', user);
   console.log('用户角色:', user?.role);
   console.log('用户权限组:', user?.roles);
-  console.log('是否管理员:', isAdmin);
+  console.log('角色模板:', user?.role_template || user?.roleTemplate);
+  console.log('是否管理员:', userIsAdmin);
+  console.log('可用菜单项:', availableMenuItems);
   console.log('当前路径:', location.pathname);
   console.log('========================');
 
-  const menuItems = [
+  // 完整的菜单项配置
+  const allMenuItems = [
+    {
+      key: '/dashboard',
+      icon: <CustomMenuIcons.Dashboard />,
+      label: '我的工作台',
+    },
+    {
+      key: '/enhanced-dashboard',
+      icon: <ExperimentOutlined />,
+      label: '增强仪表板',
+    },
+    {
+      key: '/monitoring',
+      icon: <DashboardOutlined />,
+      label: '监控仪表板',
+    },
     {
       key: '/projects',
-      icon: <ProjectOutlined />,
+      icon: <CustomMenuIcons.Projects />,
       label: '项目管理',
     },
     {
       key: '/gitea',
-      icon: <CodeOutlined />,
+      icon: <CustomMenuIcons.Gitea />,
       label: 'Gitea',
     },
     {
       key: '/kubernetes',
-      icon: <CloudServerOutlined />,
+      icon: <CustomMenuIcons.Kubernetes />,
       label: 'Kubernetes',
     },
     {
@@ -45,15 +67,56 @@ const Layout = ({ children, user, onLogout }) => {
     },
     {
       key: '/jupyterhub',
-      icon: <ExperimentTwoTone />,
+      icon: <CustomMenuIcons.Jupyter />,
       label: 'JupyterHub',
     },
     {
-  key: '/slurm',
+      key: '/slurm',
       icon: <ClusterOutlined />,
-      label: 'Slurm',
+      label: 'SLURM',
+    },
+    {
+      key: '/jobs',
+      icon: <FileTextOutlined />,
+      label: '作业管理',
+    },
+    {
+      key: '/job-templates',
+      icon: <CodeOutlined />,
+      label: '作业模板',
+    },
+    {
+      key: '/ssh-test',
+      icon: <KeyOutlined />,
+      label: 'SSH测试',
+    },
+    {
+      key: '/files',
+      icon: <FileTextOutlined />,
+      label: '文件管理',
+    },
+    {
+      key: '/object-storage',
+      icon: <DatabaseOutlined />,
+      label: '对象存储',
+    },
+    {
+      key: '/saltstack',
+      icon: <CustomMenuIcons.Menu size={16} />,
+      label: 'SaltStack',
+    },
+    {
+      key: '/kafka-ui',
+      icon: <CloudServerOutlined />,
+      label: 'Kafka UI',
     },
   ];
+
+  // 根据用户权限过滤菜单项
+  const menuItems = allMenuItems.filter(item => {
+    const menuKey = item.key.replace('/', '');
+    return availableMenuItems.includes(menuKey) || availableMenuItems.includes(item.key);
+  });
 
   // 管理中心下拉菜单项
   const adminMenuItems = [
@@ -70,15 +133,9 @@ const Layout = ({ children, user, onLogout }) => {
       onClick: () => navigate('/admin/projects'),
     },
     {
-      key: '/admin/auth',
-      icon: <SafetyOutlined />,
-      label: 'LDAP认证设置',
-      onClick: () => navigate('/admin/auth'),
-    },
-    {
       key: '/admin/ldap',
       icon: <TeamOutlined />,
-      label: 'LDAP管理',
+      label: 'LDAP管理中心',
       onClick: () => navigate('/admin/ldap'),
     },
     {
@@ -95,7 +152,7 @@ const Layout = ({ children, user, onLogout }) => {
     },
     {
       key: '/admin/ai-assistant',
-      icon: <RobotOutlined />,
+      icon: <CustomMenuIcons.AIAssistant />,
       label: 'AI助手管理',
       onClick: () => navigate('/admin/ai-assistant'),
     },
@@ -111,7 +168,13 @@ const Layout = ({ children, user, onLogout }) => {
     // 特殊处理JupyterHub访问
     if (key === '/jupyterhub') {
       // Navigate to embedded Jupyter page for consistent UX
-  navigate('/jupyter');
+      navigate('/jupyter');
+      return;
+    }
+    
+    // 监控仪表板直接导航
+    if (key === '/monitoring') {
+      navigate('/monitoring');
       return;
     }
     
@@ -122,8 +185,35 @@ const Layout = ({ children, user, onLogout }) => {
   // 获取当前选中的菜单key和打开的子菜单
   const getCurrentMenuKeys = () => {
     const pathname = location.pathname;
-    const selectedKeys = [pathname];
+    let selectedKeys = [pathname];
     const openKeys = [];
+    
+    // 特殊路径映射
+    if (pathname === '/jupyter' || pathname.startsWith('/jupyter')) {
+      selectedKeys = ['/jupyterhub'];
+    } else if (pathname === '/monitoring' || pathname.startsWith('/monitoring')) {
+      selectedKeys = ['/monitoring'];
+    } else if (pathname === '/gitea' || pathname.startsWith('/gitea')) {
+      selectedKeys = ['/gitea'];
+    } else if (pathname === '/projects' || pathname.startsWith('/projects')) {
+      selectedKeys = ['/projects'];
+    } else if (pathname === '/kubernetes' || pathname.startsWith('/kubernetes')) {
+      selectedKeys = ['/kubernetes'];
+    } else if (pathname === '/ansible' || pathname.startsWith('/ansible')) {
+      selectedKeys = ['/ansible'];
+    } else if (pathname === '/slurm' || pathname.startsWith('/slurm')) {
+      selectedKeys = ['/slurm'];
+    } else if (pathname === '/jobs' || pathname.startsWith('/jobs')) {
+      selectedKeys = ['/jobs'];
+    } else if (pathname === '/job-templates' || pathname.startsWith('/job-templates')) {
+      selectedKeys = ['/job-templates'];
+    } else if (pathname === '/files' || pathname.startsWith('/files')) {
+      selectedKeys = ['/files'];
+    } else if (pathname === '/object-storage' || pathname.startsWith('/object-storage')) {
+      selectedKeys = ['/object-storage'];
+    } else if (pathname === '/saltstack' || pathname.startsWith('/saltstack')) {
+      selectedKeys = ['/saltstack'];
+    }
     
     // 如果是管理员页面，确保管理中心子菜单展开
     if (pathname.startsWith('/admin') && pathname !== '/admin') {
@@ -159,14 +249,18 @@ const Layout = ({ children, user, onLogout }) => {
         display: 'flex', 
         alignItems: 'center', 
         background: '#001529',
-        padding: '0 24px'
+        padding: '0 24px',
+        minWidth: '1200px', // 设置最小宽度防止挤压
+        overflow: 'hidden' // 防止内容溢出
       }}>
+        {/* 左侧标题区域 - 固定宽度不会被挤压 */}
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
-          marginRight: 'auto'
+          minWidth: '200px', // 固定最小宽度
+          flexShrink: 0 // 不允许收缩
         }}>
-          <CodeOutlined style={{ 
+          <MainLogoSVG style={{ 
             fontSize: '24px', 
             color: '#1890ff', 
             marginRight: '12px' 
@@ -176,63 +270,64 @@ const Layout = ({ children, user, onLogout }) => {
             style={{ 
               color: '#fff', 
               margin: 0,
-              fontWeight: 600
+              fontWeight: 600,
+              whiteSpace: 'nowrap' // 防止标题换行
             }}
           >
             AI-Infra-Matrix
           </Title>
         </div>
         
-        <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-          <Menu
-            theme="dark"
-            mode="horizontal"
+        {/* 中间导航区域 - 可伸缩 */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          flex: 1,
+          minWidth: 0, // 允许收缩
+          overflow: 'hidden' // 防止溢出
+        }}>
+          <CustomizableNavigation
+            user={user}
             selectedKeys={selectedKeys}
-            items={menuItems}
-            onClick={handleMenuClick}
-            style={{ 
-              minWidth: 200,
-              borderBottom: 'none',
-              flex: 1
-            }}
+            onMenuClick={handleMenuClick}
           />
-          
-          {isAdmin && (
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <Dropdown
-                menu={{ items: adminMenuItems }}
-                placement="bottomRight"
-                trigger={['hover']}
-              >
-                <Button 
-                  type="text" 
-                  style={{ 
-                    color: '#fff',
-                    height: '64px',
-                    padding: '0 16px',
-                    marginLeft: '8px',
-                    backgroundColor: location.pathname.startsWith('/admin') ? '#1890ff' : 'transparent',
-                    borderRadius: '0'
-                  }}
-                  icon={<SettingOutlined />}
-                  onClick={() => navigate('/admin')}
-                >
-                  管理中心 <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
-                </Button>
-              </Dropdown>
-            </div>
-          )}
         </div>
+          
+        {/* 右侧管理员菜单 */}
+        {userIsAdmin && (
+          <Dropdown
+            menu={{ items: adminMenuItems }}
+            placement="bottomRight"
+            trigger={['hover']}
+          >
+            <Button 
+              type="text" 
+              style={{ 
+                color: '#fff',
+                height: '64px',
+                padding: '0 16px',
+                marginLeft: '8px',
+                backgroundColor: location.pathname.startsWith('/admin') ? '#1890ff' : 'transparent',
+                borderRadius: '0'
+              }}
+              icon={<CustomMenuIcons.Menu size={16} />}
+              onClick={() => navigate('/admin')}
+            >
+              管理中心 <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
+            </Button>
+          </Dropdown>
+        )}
 
+        {/* 右侧用户菜单 */}
         <Dropdown
           menu={{ items: userMenuItems }}
           placement="bottomRight"
           trigger={['click']}
         >
-          <Space style={{ cursor: 'pointer', color: '#fff' }}>
+          <Space style={{ cursor: 'pointer', color: '#fff', marginLeft: '16px' }}>
             <Avatar icon={<UserOutlined />} />
             <span>{user?.username}</span>
-            {isAdmin && (
+            {userIsAdmin && (
               <span style={{ 
                 background: '#52c41a', 
                 padding: '2px 6px', 
@@ -240,6 +335,16 @@ const Layout = ({ children, user, onLogout }) => {
                 fontSize: '12px' 
               }}>
                 管理员
+              </span>
+            )}
+            {!userIsAdmin && userRoleDisplayName !== '未知用户' && (
+              <span style={{ 
+                background: '#1890ff', 
+                padding: '2px 6px', 
+                borderRadius: '4px',
+                fontSize: '12px' 
+              }}>
+                {userRoleDisplayName}
               </span>
             )}
           </Space>

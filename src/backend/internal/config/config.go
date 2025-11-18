@@ -10,32 +10,35 @@ import (
 
 type Config struct {
 	Port string
-	
+
 	// 数据库配置
 	Database DatabaseConfig
-	
+
+	// OceanBase 可选配置（MySQL 协议）
+	OceanBase OceanBaseConfig
+
 	// Redis配置
 	Redis RedisConfig
-	
+
 	// JWT配置
 	JWTSecret string
-	
+
 	// 加密配置
 	EncryptionKey string
-	
+
 	// LDAP配置
 	LDAP LDAPConfig
-	
+
 	// LDAP初始化配置
 	LDAPInit LDAPInitConfig
 	// LDAP后台同步（可选）
 	LDAPSync LDAPSyncRuntime
-    
+
 	// Gitea 集成
 	Gitea GiteaConfig
 	// Gitea 后台同步
 	GiteaSync GiteaSyncRuntime
-	
+
 	// 日志级别 (trace, debug, info, warn, error, fatal, panic)
 	LogLevel string
 }
@@ -47,6 +50,18 @@ type DatabaseConfig struct {
 	Password string
 	DBName   string
 	SSLMode  string
+}
+
+// OceanBaseConfig 兼容 MySQL 协议
+type OceanBaseConfig struct {
+	Enabled  bool
+	Host     string
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	// 额外参数，例如 charset、parseTime
+	Params string
 }
 
 type RedisConfig struct {
@@ -75,20 +90,20 @@ type LDAPConfig struct {
 
 type LDAPInitConfig struct {
 	// 初始化控制
-	InitLDAP     bool `json:"init_ldap"`
-	RetryCount   int  `json:"retry_count"`
-	RetryInterval int `json:"retry_interval"`
-	
+	InitLDAP      bool `json:"init_ldap"`
+	RetryCount    int  `json:"retry_count"`
+	RetryInterval int  `json:"retry_interval"`
+
 	// 组织单位配置
 	PeopleOU string `json:"people_ou"`
 	GroupsOU string `json:"groups_ou"`
-	
+
 	// 管理员用户配置
 	AdminUser AdminUserConfig `json:"admin_user"`
-	
+
 	// 普通用户配置
 	RegularUser RegularUserConfig `json:"regular_user"`
-	
+
 	// 组配置
 	AdminGroupCN string `json:"admin_group_cn"`
 	UserGroupCN  string `json:"user_group_cn"`
@@ -96,7 +111,7 @@ type LDAPInitConfig struct {
 
 // LDAPSyncRuntime 运行时同步配置
 type LDAPSyncRuntime struct {
-	Enabled bool   `json:"enabled"`
+	Enabled bool `json:"enabled"`
 	// 同步间隔，单位秒（默认900秒=15分钟）
 	IntervalSeconds int `json:"interval_seconds"`
 }
@@ -153,6 +168,7 @@ func Load() (*Config, error) {
 
 	dbPort, _ := strconv.Atoi(getEnv("DB_PORT", "5432"))
 	redisPort, _ := strconv.Atoi(getEnv("REDIS_PORT", "6379"))
+	obPort, _ := strconv.Atoi(getEnv("OB_PORT", "2881"))
 	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
 
 	config := &Config{
@@ -162,7 +178,7 @@ func Load() (*Config, error) {
 			Port:     dbPort,
 			User:     getEnv("DB_USER", "postgres"),
 			Password: getEnv("DB_PASSWORD", "postgres"),
-			DBName:   getEnv("DB_NAME", "ansible_playbook_generator"),
+			DBName:   getEnv("DB_NAME", "ai_infra_matrix"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{
@@ -171,9 +187,18 @@ func Load() (*Config, error) {
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       redisDB,
 		},
-		JWTSecret: getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+		OceanBase: OceanBaseConfig{
+			Enabled:  getEnv("OB_ENABLED", "false") == "true",
+			Host:     getEnv("OB_HOST", "oceanbase"),
+			Port:     obPort,
+			User:     getEnv("OB_USER", "root@sys"),
+			Password: getEnv("OB_PASSWORD", ""),
+			DBName:   getEnv("OB_DB", "aimatrix"),
+			Params:   getEnv("OB_PARAMS", "charset=utf8mb4&parseTime=True&loc=Local"),
+		},
+		JWTSecret:     getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
 		EncryptionKey: getEnv("ENCRYPTION_KEY", "your-encryption-key-change-in-production-32-bytes"),
-		LogLevel:  getEnv("LOG_LEVEL", "info"),
+		LogLevel:      getEnv("LOG_LEVEL", "info"),
 		LDAP: LDAPConfig{
 			Enabled:      getEnv("LDAP_ENABLED", "false") == "true",
 			Server:       getEnv("LDAP_SERVER", "localhost"),
@@ -226,7 +251,7 @@ func Load() (*Config, error) {
 			IntervalSeconds: getEnvAsInt("LDAP_SYNC_INTERVAL_SECONDS", 900),
 		},
 		Gitea: GiteaConfig{
-			Enabled:    getEnv("GITEA_ENABLED", "false") == "true",
+			Enabled: getEnv("GITEA_ENABLED", "false") == "true",
 			// IMPORTANT: Use the internal service base URL WITHOUT the web SUBURL (/gitea)
 			// Admin API is always rooted at /api/v1 on the service, regardless of SUBURL.
 			BaseURL:    getEnv("GITEA_BASE_URL", "http://gitea:3000"),

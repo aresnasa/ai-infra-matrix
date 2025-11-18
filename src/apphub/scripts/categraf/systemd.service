@@ -1,0 +1,15 @@
+[Unit]
+Description=Categraf Monitoring Agent
+Documentation=https://github.com/flashcatcloud/categraf
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/categraf/bin/categraf
+WorkingDirectory=/usr/local/categraf
+Restart=on-failure
+RestartSec=10s
+User=root
+
+[Install]
+WantedBy=multi-user.target

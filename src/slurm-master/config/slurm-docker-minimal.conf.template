@@ -1,0 +1,52 @@
+#
+# AI Infrastructure Matrix - SLURM Configuration for Docker Environment
+# Optimized for containerized compute nodes without cgroup support
+#
+ClusterName=ai-infra-cluster
+ControlMachine=slurm-master
+ControlAddr=slurm-master
+SlurmctldPort=6817
+SlurmdPort=6818
+
+# Authentication
+AuthType=auth/munge
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_key=/etc/slurm/jwt_hs256.key
+
+# Scheduling
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+# Process tracking - NO cgroup (Docker handles resource management)
+# Using pgid for process tracking and task/none to avoid cgroup dependencies
+ProctrackType=proctrack/pgid
+TaskPlugin=task/none
+MpiDefault=none
+
+# Users
+SlurmUser=slurm
+SlurmdUser=root
+
+# Paths
+SlurmdSpoolDir=/var/spool/slurmd
+StateSaveLocation=/var/lib/slurm/slurmctld
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldPidFile=/var/run/slurm/slurmctld.pid
+SlurmdPidFile=/var/run/slurm/slurmd.pid
+
+# Timeouts
+MessageTimeout=60
+KillWait=30
+MinJobAge=300
+Waittime=0
+ReturnToService=2
+
+# Resource limits
+MaxJobCount=10000
+
+# 节点配置（由 Web UI 动态添加，此处不预定义任何节点）
+# 节点和分区将在通过 /api/slurm/scale-up 接口添加节点后自动生成
+# Placeholder for dynamically generated node and partition blocks
+# (Do not edit below; managed by backend service)

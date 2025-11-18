@@ -1,0 +1,22 @@
+{
+  "name": "ai-infra-matrix-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "E2E tests for AI Infrastructure Matrix",
+  "scripts": {
+    "test": "playwright test",
+    "test:quick": "NO_PROXY='*' no_proxy='*' BASE_URL=http://192.168.0.200:8080 playwright test specs/quick-validation-test.spec.js --config=playwright.config.js",
+    "test:full": "NO_PROXY='*' no_proxy='*' BASE_URL=http://192.168.0.200:8080 playwright test specs/complete-e2e-test.spec.js --config=playwright.config.js",
+    "test:headed": "NO_PROXY='*' no_proxy='*' BASE_URL=http://192.168.0.200:8080 playwright test --headed --config=playwright.config.js",
+    "test:debug": "NO_PROXY='*' no_proxy='*' BASE_URL=http://192.168.0.200:8080 playwright test --debug --config=playwright.config.js",
+    "test:ui": "NO_PROXY='*' no_proxy='*' playwright test --ui",
+    "report": "playwright show-report",
+    "install:browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.2"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

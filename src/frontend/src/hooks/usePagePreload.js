@@ -1,10 +1,120 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
-// 页面预加载钩子
+// 优化的页面预加载钩子
+export const useSmartPreload = (user) => {
+  const preloadedRef = useRef(new Set());
+  const preloadTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    if (!user) {
+      // 用户未登录，清理预加载状态
+      preloadedRef.current.clear();
+      if (preloadTimeoutRef.current) {
+        clearTimeout(preloadTimeoutRef.current);
+        preloadTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    // 延迟预加载，避免影响首次渲染
+    preloadTimeoutRef.current = setTimeout(() => {
+      preloadUserPages(user);
+    }, 3000); // 3秒后开始预加载
+
+    return () => {
+      if (preloadTimeoutRef.current) {
+        clearTimeout(preloadTimeoutRef.current);
+        preloadTimeoutRef.current = null;
+      }
+    };
+  }, [user]);
+
+  const preloadUserPages = async (user) => {
+    const pagesToPreload = [];
+
+    // 根据用户角色确定需要预加载的页面
+    if (user.role === 'admin' || user.role === 'super-admin' || 
+        (user.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'))) {
+      pagesToPreload.push(
+        'admin-users',
+        'admin-projects', 
+        'admin-auth'
+      );
+    }
+
+    // 所有用户都可能访问的页面
+    pagesToPreload.push('user-profile', 'project-detail');
+
+    // 批量预加载，使用requestIdleCallback优化性能
+    const preloadBatch = async (pages) => {
+      for (const page of pages) {
+        if (preloadedRef.current.has(page)) {
+          continue; // 已预加载，跳过
+        }
+
+        try {
+          await preloadPage(page);
+          preloadedRef.current.add(page);
+          
+          // 添加小延迟，避免阻塞主线程
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.debug(`Failed to preload ${page}:`, error);
+        }
+      }
+    };
+
+    if (window.requestIdleCallback) {
+      window.requestIdleCallback(() => {
+        preloadBatch(pagesToPreload);
+      }, { timeout: 10000 });
+    } else {
+      // 降级处理
+      setTimeout(() => {
+        preloadBatch(pagesToPreload);
+      }, 5000);
+    }
+  };
+
+  const preloadPage = async (page) => {
+    switch (page) {
+      case 'admin-users':
+        return import('../pages/AdminUsers');
+      case 'admin-projects':
+        return import('../pages/AdminProjects');
+      case 'admin-auth':
+        return import('../pages/AdminAuthSettings');
+      case 'admin-ldap':
+        return import('../pages/AdminLDAPCenter');
+      case 'admin-test':
+        return import('../pages/AdminTest');
+      case 'admin-trash':
+        return import('../pages/AdminTrash');
+      case 'project-detail':
+        return import('../pages/ProjectDetail');
+      case 'user-profile':
+        return import('../pages/UserProfile');
+      case 'jupyter-management':
+        return import('../pages/JupyterHubManagement');
+      case 'ai-assistant':
+        return import('../pages/AIAssistantManagement');
+      default:
+        console.warn(`Unknown page for preload: ${page}`);
+        return Promise.resolve();
+    }
+  };
+};
+
+// 页面预加载钩子（兼容性）
 export const usePagePreload = (preloadPages = []) => {
   useEffect(() => {
+    if (!preloadPages.length) return;
+
     const preloadPromises = preloadPages.map(async (page) => {
       try {
+        // 延迟预加载
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         // 根据页面类型预加载对应的组件
         switch (page) {
           case 'admin-users':
@@ -17,7 +127,7 @@ export const usePagePreload = (preloadPages = []) => {
             await import('../pages/AdminAuthSettings');
             break;
           case 'admin-ldap':
-            await import('../pages/AdminLDAP');
+            await import('../pages/AdminLDAPCenter');
             break;
           case 'admin-test':
             await import('../pages/AdminTest');
@@ -44,32 +154,12 @@ export const usePagePreload = (preloadPages = []) => {
     if (window.requestIdleCallback) {
       window.requestIdleCallback(() => {
         Promise.all(preloadPromises);
-      });
+      }, { timeout: 10000 });
     } else {
       // 降级处理：延迟执行
       setTimeout(() => {
         Promise.all(preloadPromises);
-      }, 1000);
+      }, 3000);
     }
   }, [preloadPages]);
 };
-
-// 根据用户角色智能预加载
-export const useSmartPreload = (user) => {
-  const isAdmin = user?.role === 'admin' || user?.role === 'super-admin' || 
-    (user?.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'));
-
-  const preloadPages = [
-    'user-profile', // 所有用户都可能访问
-    'project-detail', // 项目详情页面
-    ...(isAdmin ? [
-      'admin-users', // 管理员最常用的功能
-      'admin-auth', // LDAP设置
-      'admin-test' // 系统测试
-    ] : [])
-  ];
-
-  usePagePreload(preloadPages);
-};
-
-export default usePagePreload;

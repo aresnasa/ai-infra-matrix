@@ -1,9 +1,0 @@
-# 该文件为Docker Desktop Kubernetes的CA证书（base64解码后）
-# 请将此内容保存为 docker-desktop-ca.crt 并用于容器信任
-# 示例内容如下（请用实际kubeconfig中的certificate-authority-data内容替换）：
------BEGIN CERTIFICATE-----
-MIIDBTCCAe2gAwIBAgIJD7xQAlAVaKcwDQYJKoZIhvcNAQELBQAwFTEUMBIGA1UE
-AwwLk8VmlXJuZXJlc3QwHhcNMjMwNTE2MDYwMDAwWhcNMzMwNTEzMDYwMDAwWjAV
-MRQwEgYDVQQDDAtkb2NrZXItZGVza3RvcDCCASIwDQYJKoZIhvcNAQEBBQADggEP
-ADCCAQoCggEBANHrnizVNFraGoJbWGpg2/hXA...（省略）...==
------END CERTIFICATE-----

@@ -23,7 +23,7 @@ func (s *VariableService) CreateVariable(variable *models.Variable) error {
 	// 清除相关缓存
 	cache.Delete(cache.VariablesKey(variable.ProjectID))
 	cache.Delete(cache.ProjectKey(variable.ProjectID))
-	
+
 	return nil
 }
 
@@ -31,7 +31,7 @@ func (s *VariableService) GetVariables(projectID uint) ([]models.Variable, error
 	// 先从缓存获取
 	var variables []models.Variable
 	cacheKey := cache.VariablesKey(projectID)
-	
+
 	if err := cache.Get(cacheKey, &variables); err == nil {
 		return variables, nil
 	}
@@ -43,7 +43,7 @@ func (s *VariableService) GetVariables(projectID uint) ([]models.Variable, error
 
 	// 存入缓存
 	cache.Set(cacheKey, variables, 30*time.Minute)
-	
+
 	return variables, nil
 }
 
@@ -56,7 +56,7 @@ func (s *VariableService) UpdateVariable(id uint, variable *models.Variable) err
 	// 清除相关缓存
 	cache.Delete(cache.VariablesKey(variable.ProjectID))
 	cache.Delete(cache.ProjectKey(variable.ProjectID))
-	
+
 	return nil
 }
 
@@ -73,7 +73,7 @@ func (s *VariableService) DeleteVariable(id uint) error {
 	// 清除相关缓存
 	cache.Delete(cache.VariablesKey(variable.ProjectID))
 	cache.Delete(cache.ProjectKey(variable.ProjectID))
-	
+
 	return nil
 }
 
@@ -91,7 +91,7 @@ func (s *TaskService) CreateTask(task *models.Task) error {
 	// 清除相关缓存
 	cache.Delete(cache.TasksKey(task.ProjectID))
 	cache.Delete(cache.ProjectKey(task.ProjectID))
-	
+
 	return nil
 }
 
@@ -99,7 +99,7 @@ func (s *TaskService) GetTasks(projectID uint) ([]models.Task, error) {
 	// 先从缓存获取
 	var tasks []models.Task
 	cacheKey := cache.TasksKey(projectID)
-	
+
 	if err := cache.Get(cacheKey, &tasks); err == nil {
 		return tasks, nil
 	}
@@ -111,7 +111,7 @@ func (s *TaskService) GetTasks(projectID uint) ([]models.Task, error) {
 
 	// 存入缓存
 	cache.Set(cacheKey, tasks, 30*time.Minute)
-	
+
 	return tasks, nil
 }
 
@@ -124,7 +124,7 @@ func (s *TaskService) UpdateTask(id uint, task *models.Task) error {
 	// 清除相关缓存
 	cache.Delete(cache.TasksKey(task.ProjectID))
 	cache.Delete(cache.ProjectKey(task.ProjectID))
-	
+
 	return nil
 }
 
@@ -141,6 +141,6 @@ func (s *TaskService) DeleteTask(id uint) error {
 	// 清除相关缓存
 	cache.Delete(cache.TasksKey(task.ProjectID))
 	cache.Delete(cache.ProjectKey(task.ProjectID))
-	
+
 	return nil
 }

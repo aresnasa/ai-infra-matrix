@@ -4,15 +4,15 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 )
 
 // RBACMiddleware RBAC权限检查中间件
 func RBACMiddleware(db *gorm.DB, resource, verb string) gin.HandlerFunc {
 	rbacService := services.NewRBACService(db)
-	
+
 	return func(c *gin.Context) {
 		// 获取用户ID
 		userID, exists := c.Get("user_id")
@@ -31,7 +31,7 @@ func RBACMiddleware(db *gorm.DB, resource, verb string) gin.HandlerFunc {
 
 		// 构建作用域
 		scope := "*"
-		
+
 		// 如果是项目相关的操作，检查项目所有权
 		if resource == "projects" {
 			projectIDParam := c.Param("id")
@@ -39,11 +39,11 @@ func RBACMiddleware(db *gorm.DB, resource, verb string) gin.HandlerFunc {
 				projectID, err := strconv.ParseUint(projectIDParam, 10, 32)
 				if err == nil {
 					scope = "project:" + strconv.FormatUint(projectID, 10)
-					
+
 					// 检查项目所有权
 					if verb != "create" && verb != "list" {
 						if !rbacService.HasRoleInProject(uid, uint(projectID), "owner") &&
-						   !rbacService.CheckPermission(uid, resource, verb, "*", "") {
+							!rbacService.CheckPermission(uid, resource, verb, "*", "") {
 							c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
 							c.Abort()
 							return
@@ -67,7 +67,7 @@ func RBACMiddleware(db *gorm.DB, resource, verb string) gin.HandlerFunc {
 // AdminOnlyMiddleware 仅管理员访问中间件
 func AdminOnlyMiddleware(db *gorm.DB) gin.HandlerFunc {
 	rbacService := services.NewRBACService(db)
-	
+
 	return func(c *gin.Context) {
 		userID, exists := c.Get("user_id")
 		if !exists {
@@ -97,7 +97,7 @@ func AdminOnlyMiddleware(db *gorm.DB) gin.HandlerFunc {
 // ProjectOwnerMiddleware 项目所有者中间件
 func ProjectOwnerMiddleware(db *gorm.DB) gin.HandlerFunc {
 	rbacService := services.NewRBACService(db)
-	
+
 	return func(c *gin.Context) {
 		userID, exists := c.Get("user_id")
 		if !exists {
@@ -130,7 +130,7 @@ func ProjectOwnerMiddleware(db *gorm.DB) gin.HandlerFunc {
 
 		// 检查是否是项目所有者或管理员
 		if !rbacService.HasRoleInProject(uid, uint(projectID), "owner") &&
-		   !rbacService.IsAdmin(uid) {
+			!rbacService.IsAdmin(uid) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "只有项目所有者或管理员可以访问"})
 			c.Abort()
 			return
@@ -143,7 +143,7 @@ func ProjectOwnerMiddleware(db *gorm.DB) gin.HandlerFunc {
 // RequirePermission 需要特定权限的中间件工厂函数
 func RequirePermission(db *gorm.DB, resource, verb, scope string) gin.HandlerFunc {
 	rbacService := services.NewRBACService(db)
-	
+
 	return func(c *gin.Context) {
 		userID, exists := c.Get("user_id")
 		if !exists {

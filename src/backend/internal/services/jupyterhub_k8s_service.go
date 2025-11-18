@@ -20,11 +20,11 @@ import (
 
 // JupyterHubK8sService JupyterHub与K8s集成服务
 type JupyterHubK8sService struct {
-	k8sClient   kubernetes.Interface
-	namespace   string
-	nfsServer   string
-	nfsPath     string
-	config      *JupyterHubK8sConfig
+	k8sClient kubernetes.Interface
+	namespace string
+	nfsServer string
+	nfsPath   string
+	config    *JupyterHubK8sConfig
 }
 
 // JupyterHubK8sConfig 配置结构
@@ -42,23 +42,23 @@ type JupyterHubK8sConfig struct {
 
 // PythonScriptJob Python脚本作业结构
 type PythonScriptJob struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Script         string            `json:"script"`
-	Requirements   []string          `json:"requirements"`
-	GPURequired    bool              `json:"gpu_required"`
-	GPUCount       int               `json:"gpu_count"`
-	GPUType        string            `json:"gpu_type"`
-	MemoryMB       int               `json:"memory_mb"`
-	CPUCores       int               `json:"cpu_cores"`
-	Environment    map[string]string `json:"environment"`
-	WorkingDir     string            `json:"working_dir"`
-	OutputPath     string            `json:"output_path"`
-	Status         string            `json:"status"`
-	CreatedAt      time.Time         `json:"created_at"`
-	StartedAt      *time.Time        `json:"started_at,omitempty"`
-	CompletedAt    *time.Time        `json:"completed_at,omitempty"`
-	ErrorMessage   string            `json:"error_message,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Script       string            `json:"script"`
+	Requirements []string          `json:"requirements"`
+	GPURequired  bool              `json:"gpu_required"`
+	GPUCount     int               `json:"gpu_count"`
+	GPUType      string            `json:"gpu_type"`
+	MemoryMB     int               `json:"memory_mb"`
+	CPUCores     int               `json:"cpu_cores"`
+	Environment  map[string]string `json:"environment"`
+	WorkingDir   string            `json:"working_dir"`
+	OutputPath   string            `json:"output_path"`
+	Status       string            `json:"status"`
+	CreatedAt    time.Time         `json:"created_at"`
+	StartedAt    *time.Time        `json:"started_at,omitempty"`
+	CompletedAt  *time.Time        `json:"completed_at,omitempty"`
+	ErrorMessage string            `json:"error_message,omitempty"`
 }
 
 // GPUNodeInfo GPU节点信息
@@ -115,10 +115,10 @@ func (s *JupyterHubK8sService) initializeK8sClient() error {
 		if s.config.KubeConfigPath != "" {
 			config, err = clientcmd.BuildConfigFromFlags("", s.config.KubeConfigPath)
 		} else {
-			config, err = clientcmd.BuildConfigFromFlags("", 
+			config, err = clientcmd.BuildConfigFromFlags("",
 				filepath.Join(clientcmd.RecommendedHomeDir, ".kube", "config"))
 		}
-		
+
 		if err != nil {
 			return fmt.Errorf("无法加载Kubernetes配置: %w", err)
 		}
@@ -143,29 +143,29 @@ func (s *JupyterHubK8sService) initializeK8sClient() error {
 func (s *JupyterHubK8sService) ensureNamespace() error {
 	_, err := s.k8sClient.CoreV1().Namespaces().Get(
 		context.TODO(), s.namespace, metav1.GetOptions{})
-	
+
 	if err != nil {
 		// 创建命名空间
 		namespace := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: s.namespace,
 				Labels: map[string]string{
-					"purpose": "jupyterhub-gpu-jobs",
+					"purpose":    "jupyterhub-gpu-jobs",
 					"created-by": "ai-infra-matrix",
 				},
 			},
 		}
-		
+
 		_, err = s.k8sClient.CoreV1().Namespaces().Create(
 			context.TODO(), namespace, metav1.CreateOptions{})
-		
+
 		if err != nil {
 			return fmt.Errorf("创建命名空间失败: %w", err)
 		}
-		
+
 		log.Printf("创建命名空间: %s", s.namespace)
 	}
-	
+
 	return nil
 }
 
@@ -200,10 +200,10 @@ func (s *JupyterHubK8sService) GetGPUResourceStatus(ctx context.Context) (*GPURe
 	}
 
 	status.UsedGPUs = status.TotalGPUs - status.AvailableGPUs
-	
-	log.Printf("GPU资源状态: 总计%d, 可用%d, 已用%d", 
+
+	log.Printf("GPU资源状态: 总计%d, 可用%d, 已用%d",
 		status.TotalGPUs, status.AvailableGPUs, status.UsedGPUs)
-	
+
 	return status, nil
 }
 
@@ -211,11 +211,11 @@ func (s *JupyterHubK8sService) GetGPUResourceStatus(ctx context.Context) (*GPURe
 func (s *JupyterHubK8sService) analyzeGPUNode(node *corev1.Node) *GPUNodeInfo {
 	capacity := node.Status.Capacity
 	labels := node.Labels
-	
+
 	// 检查NVIDIA GPU
 	var gpuCount int
 	var gpuType string
-	
+
 	if nvidiaGPU, exists := capacity["nvidia.com/gpu"]; exists {
 		gpuCount = int(nvidiaGPU.Value())
 		gpuType = s.extractGPUType(labels, "nvidia")
@@ -223,11 +223,11 @@ func (s *JupyterHubK8sService) analyzeGPUNode(node *corev1.Node) *GPUNodeInfo {
 		gpuCount = int(amdGPU.Value())
 		gpuType = s.extractGPUType(labels, "amd")
 	}
-	
+
 	if gpuCount == 0 {
 		return nil
 	}
-	
+
 	return &GPUNodeInfo{
 		NodeName:    node.Name,
 		GPUCount:    gpuCount,
@@ -247,39 +247,39 @@ func (s *JupyterHubK8sService) extractGPUType(labels map[string]string, vendor s
 		"gpu-type",
 		"node.kubernetes.io/instance-type",
 	}
-	
+
 	for _, key := range gpuTypeKeys {
 		if value, exists := labels[key]; exists {
 			return value
 		}
 	}
-	
+
 	// 查找包含GPU型号的标签
 	for key, value := range labels {
 		if strings.Contains(strings.ToLower(key), "gpu") &&
-		   (strings.Contains(strings.ToLower(value), "rtx") ||
-			strings.Contains(strings.ToLower(value), "tesla") ||
-			strings.Contains(strings.ToLower(value), "a100") ||
-			strings.Contains(strings.ToLower(value), "v100")) {
+			(strings.Contains(strings.ToLower(value), "rtx") ||
+				strings.Contains(strings.ToLower(value), "tesla") ||
+				strings.Contains(strings.ToLower(value), "a100") ||
+				strings.Contains(strings.ToLower(value), "v100")) {
 			return value
 		}
 	}
-	
+
 	return vendor + "-gpu"
 }
 
 // calculateAvailableGPUs 计算节点可用GPU数量
 func (s *JupyterHubK8sService) calculateAvailableGPUs(ctx context.Context, nodeName string, totalGPUs int) (int, error) {
 	fieldSelector := fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
-	
+
 	pods, err := s.k8sClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
 		FieldSelector: fieldSelector,
 	})
-	
+
 	if err != nil {
 		return 0, err
 	}
-	
+
 	usedGPUs := 0
 	for _, pod := range pods.Items {
 		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
@@ -292,12 +292,12 @@ func (s *JupyterHubK8sService) calculateAvailableGPUs(ctx context.Context, nodeN
 			}
 		}
 	}
-	
+
 	availableGPUs := totalGPUs - usedGPUs
 	if availableGPUs < 0 {
 		availableGPUs = 0
 	}
-	
+
 	return availableGPUs, nil
 }
 
@@ -307,19 +307,19 @@ func (s *JupyterHubK8sService) FindSuitableGPUNodes(ctx context.Context, require
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var suitableNodes []GPUNodeInfo
-	
+
 	for _, node := range status.GPUNodes {
 		if node.Schedulable && node.AvailableGPUs >= requiredGPUs {
 			// 检查GPU类型偏好
-			if gpuTypePreference == "" || 
-			   strings.Contains(strings.ToLower(node.GPUType), strings.ToLower(gpuTypePreference)) {
+			if gpuTypePreference == "" ||
+				strings.Contains(strings.ToLower(node.GPUType), strings.ToLower(gpuTypePreference)) {
 				suitableNodes = append(suitableNodes, node)
 			}
 		}
 	}
-	
+
 	log.Printf("找到 %d 个适合的GPU节点 (需要 %d GPU)", len(suitableNodes), requiredGPUs)
 	return suitableNodes, nil
 }
@@ -332,33 +332,33 @@ func (s *JupyterHubK8sService) SubmitPythonScriptJob(ctx context.Context, job *P
 		if err != nil {
 			return nil, fmt.Errorf("查找GPU节点失败: %w", err)
 		}
-		
+
 		if len(suitableNodes) == 0 {
 			return nil, fmt.Errorf("没有找到满足要求的GPU节点 (需要 %d GPU)", job.GPUCount)
 		}
-		
-		log.Printf("选择GPU节点: %s (可用GPU: %d)", 
+
+		log.Printf("选择GPU节点: %s (可用GPU: %d)",
 			suitableNodes[0].NodeName, suitableNodes[0].AvailableGPUs)
 	}
-	
+
 	// 生成K8s Job
 	k8sJob, err := s.generateK8sJob(job)
 	if err != nil {
 		return nil, fmt.Errorf("生成K8s Job失败: %w", err)
 	}
-	
+
 	// 提交Job
 	createdJob, err := s.k8sClient.BatchV1().Jobs(s.namespace).Create(
 		ctx, k8sJob, metav1.CreateOptions{})
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("提交K8s Job失败: %w", err)
 	}
-	
+
 	job.Status = "submitted"
 	now := time.Now()
 	job.StartedAt = &now
-	
+
 	log.Printf("成功提交Python脚本Job: %s", createdJob.Name)
 	return createdJob, nil
 }
@@ -367,10 +367,10 @@ func (s *JupyterHubK8sService) SubmitPythonScriptJob(ctx context.Context, job *P
 func (s *JupyterHubK8sService) generateK8sJob(job *PythonScriptJob) (*batchv1.Job, error) {
 	// 构建容器规格
 	container := corev1.Container{
-		Name:  "python-script",
-		Image: s.config.BaseImage,
+		Name:    "python-script",
+		Image:   s.config.BaseImage,
 		Command: []string{"/bin/bash", "-c"},
-		Args: []string{s.buildScriptCommand(job)},
+		Args:    []string{s.buildScriptCommand(job)},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      "nfs-storage",
@@ -389,13 +389,13 @@ func (s *JupyterHubK8sService) generateK8sJob(job *PythonScriptJob) (*batchv1.Jo
 			},
 		},
 	}
-	
+
 	// 如果需要GPU，添加GPU资源
 	if job.GPURequired {
 		container.Resources.Requests["nvidia.com/gpu"] = resource.MustParse(fmt.Sprintf("%d", job.GPUCount))
 		container.Resources.Limits["nvidia.com/gpu"] = resource.MustParse(fmt.Sprintf("%d", job.GPUCount))
 	}
-	
+
 	// 构建Pod规格
 	podSpec := corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,
@@ -412,7 +412,7 @@ func (s *JupyterHubK8sService) generateK8sJob(job *PythonScriptJob) (*batchv1.Jo
 			},
 		},
 	}
-	
+
 	// 如果需要GPU，添加节点选择器
 	if job.GPURequired {
 		podSpec.NodeSelector = map[string]string{
@@ -427,7 +427,7 @@ func (s *JupyterHubK8sService) generateK8sJob(job *PythonScriptJob) (*batchv1.Jo
 			},
 		}
 	}
-	
+
 	// 构建Job规格
 	k8sJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -440,7 +440,7 @@ func (s *JupyterHubK8sService) generateK8sJob(job *PythonScriptJob) (*batchv1.Jo
 			},
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            int32Ptr(int32(s.config.JobTimeoutSeconds/60)),
+			BackoffLimit:            int32Ptr(int32(s.config.JobTimeoutSeconds / 60)),
 			ActiveDeadlineSeconds:   int64Ptr(int64(s.config.JobTimeoutSeconds)),
 			TTLSecondsAfterFinished: int32Ptr(3600), // 1小时后清理
 			Template: corev1.PodTemplateSpec{
@@ -448,16 +448,16 @@ func (s *JupyterHubK8sService) generateK8sJob(job *PythonScriptJob) (*batchv1.Jo
 			},
 		},
 	}
-	
+
 	return k8sJob, nil
 }
 
 // buildScriptCommand 构建脚本执行命令
 func (s *JupyterHubK8sService) buildScriptCommand(job *PythonScriptJob) string {
 	commands := []string{
-		"set -e",  // 遇到错误时退出
+		"set -e", // 遇到错误时退出
 	}
-	
+
 	// 安装依赖
 	if len(job.Requirements) > 0 {
 		commands = append(commands, "echo '安装Python依赖...'")
@@ -465,30 +465,30 @@ func (s *JupyterHubK8sService) buildScriptCommand(job *PythonScriptJob) string {
 			commands = append(commands, fmt.Sprintf("pip install %s", req))
 		}
 	}
-	
+
 	// 设置工作目录
 	if job.WorkingDir != "" {
 		commands = append(commands, fmt.Sprintf("mkdir -p %s && cd %s", job.WorkingDir, job.WorkingDir))
 	}
-	
+
 	// 写入并执行Python脚本
-	commands = append(commands, 
+	commands = append(commands,
 		"echo '开始执行Python脚本...'",
 		"cat << 'EOF' > script.py",
 		job.Script,
 		"EOF",
 		"python script.py",
 	)
-	
+
 	// 保存输出
 	if job.OutputPath != "" {
-		commands = append(commands, 
+		commands = append(commands,
 			fmt.Sprintf("echo '保存输出到 %s'", job.OutputPath),
 			fmt.Sprintf("mkdir -p %s", filepath.Dir(job.OutputPath)),
 			"echo '脚本执行完成' > execution_status.txt",
 		)
 	}
-	
+
 	return strings.Join(commands, "\n")
 }
 
@@ -499,7 +499,7 @@ func (s *JupyterHubK8sService) buildEnvironmentVars(job *PythonScriptJob) []core
 		{Name: "JOB_NAME", Value: job.Name},
 		{Name: "PYTHONUNBUFFERED", Value: "1"},
 	}
-	
+
 	// 添加自定义环境变量
 	for key, value := range job.Environment {
 		envVars = append(envVars, corev1.EnvVar{
@@ -507,7 +507,7 @@ func (s *JupyterHubK8sService) buildEnvironmentVars(job *PythonScriptJob) []core
 			Value: value,
 		})
 	}
-	
+
 	// 如果使用GPU，添加CUDA相关环境变量
 	if job.GPURequired {
 		envVars = append(envVars, []corev1.EnvVar{
@@ -515,7 +515,7 @@ func (s *JupyterHubK8sService) buildEnvironmentVars(job *PythonScriptJob) []core
 			{Name: "CUDA_VISIBLE_DEVICES", Value: "all"},
 		}...)
 	}
-	
+
 	return envVars
 }
 
@@ -525,12 +525,12 @@ func (s *JupyterHubK8sService) MonitorJob(ctx context.Context, jobName string) (
 	if err != nil {
 		return nil, fmt.Errorf("获取Job状态失败: %w", err)
 	}
-	
+
 	job := &PythonScriptJob{
 		ID:   k8sJob.Labels["job-id"],
 		Name: k8sJob.Name,
 	}
-	
+
 	// 分析Job状态
 	if k8sJob.Status.CompletionTime != nil {
 		job.Status = "completed"
@@ -544,7 +544,7 @@ func (s *JupyterHubK8sService) MonitorJob(ctx context.Context, jobName string) (
 	} else {
 		job.Status = "pending"
 	}
-	
+
 	// 获取Job日志 (可选)
 	if job.Status == "failed" || job.Status == "completed" {
 		logs, err := s.getJobLogs(ctx, jobName)
@@ -552,7 +552,7 @@ func (s *JupyterHubK8sService) MonitorJob(ctx context.Context, jobName string) (
 			job.ErrorMessage = logs
 		}
 	}
-	
+
 	return job, nil
 }
 
@@ -563,22 +563,22 @@ func (s *JupyterHubK8sService) getJobLogs(ctx context.Context, jobName string) (
 	pods, err := s.k8sClient.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
-	
+
 	if err != nil || len(pods.Items) == 0 {
 		return "", fmt.Errorf("未找到Job对应的Pod")
 	}
-	
+
 	// 获取第一个Pod的日志
 	pod := pods.Items[0]
 	req := s.k8sClient.CoreV1().Pods(s.namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 		TailLines: int64Ptr(100), // 只获取最后100行
 	})
-	
+
 	logs, err := req.DoRaw(ctx)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return string(logs), nil
 }
 
@@ -587,22 +587,22 @@ func (s *JupyterHubK8sService) CleanupCompletedJobs(ctx context.Context) error {
 	jobs, err := s.k8sClient.BatchV1().Jobs(s.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=jupyterhub-python-job",
 	})
-	
+
 	if err != nil {
 		return err
 	}
-	
+
 	cleaned := 0
 	for _, job := range jobs.Items {
 		// 清理超过1小时的已完成Job
-		if job.Status.CompletionTime != nil && 
-		   time.Since(job.Status.CompletionTime.Time) > time.Hour {
-			
+		if job.Status.CompletionTime != nil &&
+			time.Since(job.Status.CompletionTime.Time) > time.Hour {
+
 			err := s.k8sClient.BatchV1().Jobs(s.namespace).Delete(
 				ctx, job.Name, metav1.DeleteOptions{
 					PropagationPolicy: &[]metav1.DeletionPropagation{metav1.DeletePropagationBackground}[0],
 				})
-			
+
 			if err != nil {
 				log.Printf("清理Job %s 失败: %v", job.Name, err)
 			} else {
@@ -610,7 +610,7 @@ func (s *JupyterHubK8sService) CleanupCompletedJobs(ctx context.Context) error {
 			}
 		}
 	}
-	
+
 	log.Printf("清理了 %d 个已完成的Job", cleaned)
 	return nil
 }

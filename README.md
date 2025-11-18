@@ -2,13 +2,27 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docker](https://img.shields.io/badge/Docker-20.10+-blue.svg)](https://www.docker.com/)
-[![Version](https://img.shields.io/badge/Version-v0.0.3.3-green.svg)](https://github.com/aresnasa/ai-infra-matrix)
+[![Version](https://img.shields.io/badge/Version-v0.3.6-dev-green.svg)](https://github.com/aresnasa/ai-infra-matrix)
 
 > 企业级AI基础设施平台 - 集成机器学习、开发协作与统一认证
 
 ## 🌟 项目简介
 
 AI Infrastructure Matrix 是一个全栈AI基础设施平台，提供统一的机器学习开发环境、代码协作平台和企业级认证系统。通过容器化架构，实现了开箱即用的AI开发和部署解决方案。
+
+## help 101
+```
+# 查看所有镜像清单
+./build.sh list-images registry.internal.com/ai-infra
+
+# 导出所有镜像到内部仓库
+./build.sh export-all registry.internal.com/ai-infra v0.3.6-dev
+
+# 模拟模式（测试不实际执行docker操作）
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v1.0.0
+
+```
+
 
 ### 核心特性
 
@@ -123,57 +137,101 @@ cd ai-infra-matrix
 
 ## 🛠️ 构建与部署
 
+### ⚠️ 重要说明
+
+**版本参数现在是必需的！** 为了避免错误的默认版本影响构建环境，必须明确指定版本号。
+
 ### 基本构建
 
 ```bash
 # 开发模式构建
-./scripts/build.sh dev
+./build.sh dev --version v0.3.6-dev
 
 # 生产模式构建
-./scripts/build.sh prod --version v0.0.3.3
+./build.sh prod --version v0.3.6-dev
+
+# 也可以使用完整路径
+./scripts/all-ops.sh prod --version v0.3.6-dev
 ```
 
 ### 镜像推送
 
 ```bash
 # 推送到Docker Hub
-./scripts/build.sh prod --registry docker.io/username --push --version v0.0.3.3
+./build.sh prod --version v0.3.6-dev --registry docker.io/username --push
 
 # 推送到阿里云ACR
-./scripts/build.sh prod --registry xxx.aliyuncs.com/ai-infra-matrix --push --version v0.0.3.3
+./build.sh prod --version v0.3.6-dev --registry xxx.aliyuncs.com/ai-infra-matrix --push
 
 # 推送依赖镜像
-./scripts/build.sh prod --push-deps --deps-namespace username
+./build.sh prod --version v0.3.6-dev --push-deps --deps-namespace username
 ```
+
+### 使用内部镜像仓库启动
+
+如果您已经将镜像推送到内部镜像仓库，可以直接使用内部镜像启动服务：
+
+```bash
+# 使用内部仓库启动（推荐）
+./build.sh start-internal registry.company.com/ai-infra/ v0.3.6-dev
+
+# 使用默认标签启动
+./build.sh start-internal registry.company.com/ai-infra/
+
+# 停止服务
+./build.sh stop
+
+# 使用示例脚本（需要先修改配置）
+./start-internal-example.sh
+```
+
+**优势：**
+- 🚀 **快速启动** - 无需本地构建，直接拉取镜像
+- 🔒 **企业安全** - 使用内部镜像仓库，符合企业安全要求
+- 🎯 **版本控制** - 精确控制使用的镜像版本
+- 📦 **离线部署** - 支持离线环境部署
+
+详细说明请参考：[内部镜像仓库启动指南](docs/INTERNAL_REGISTRY_GUIDE.md)
 
 ### 多架构构建
 
 ```bash
 # 多架构构建并推送
-./scripts/build.sh prod --multi-arch --registry docker.io/username --push --version v0.0.3.3
+./scripts/build.sh prod --multi-arch --registry docker.io/username --push --version v0.3.6-dev
 ```
+
+## ⚙️ SLURM 配置与 MPI
+
+- 全局 `slurm.conf` 模板现在存放在 `src/backend/config/slurm/slurm.conf.base`，后端服务会在每次下发配置前动态读取该文件并追加节点/分区信息。
+- 如需放置在其他位置，可通过环境变量 `SLURM_BASE_CONFIG_PATH` 显式指定模板路径；该文件会被同步到 `slurm-master` 与所有计算节点容器中。
+- 模板内启用了 `MpiDefault=pmix`，所以需要在自定义镜像或物理节点中提供 `pmix`/`libpmix` 运行时（项目提供的 `slurm-master` 镜像与自动化节点安装脚本已默认安装这些依赖）。
+- 修改模板后可以直接调用“刷新 SLURM 配置”按钮或 `UpdateSlurmConfig` 接口立即同步，无需重新编译后端程序。
 
 ## 🎯 主要功能
 
 ### 🔐 统一身份认证系统
+
 - JWT令牌管理
 - 跨服务单点登录
 - 角色权限控制
 - 会话管理
 
 ### 📊 机器学习平台
+
 - JupyterHub多用户环境
 - GPU资源支持
 - 自定义镜像管理
 - 分布式计算支持
 
 ### 🔧 开发协作
+
 - Git代码仓库管理
 - 项目协作工作流
 - 代码审查流程
 - 持续集成支持
 
 ### 🚀 容器化平台
+
 - Docker Compose编排
 - 多环境配置管理
 - 健康检查监控
@@ -269,7 +327,7 @@ docker compose logs -f [服务名]
 
 ## 🙋 支持与反馈
 
-- 📧 邮箱：aresnasa@example.com
+- 📧 邮箱：[aresnasa@example.com](mailto:aresnasa@example.com)
 - 🐛 问题反馈：[GitHub Issues](https://github.com/aresnasa/ai-infra-matrix/issues)
 - 💬 讨论交流：[GitHub Discussions](https://github.com/aresnasa/ai-infra-matrix/discussions)
 
@@ -286,10 +344,20 @@ docker compose logs -f [服务名]
 
 ---
 
-<div align="center">
-
 **AI Infrastructure Matrix** - 让AI开发更简单
 
 [官网](https://ai-infra-matrix.example.com) • [文档](docs/) • [演示](https://demo.ai-infra-matrix.example.com)
 
-</div>
+---
+
+## 附录：对象存储（MinIO）环境变量速览
+
+- 代理路由：/minio/ (S3 API), /minio-console/ (Web 控制台，可被前端以 iframe 内嵌)
+- 关键环境变量（.env/.env.example）：
+    - MINIO_HOST, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+    - MINIO_REGION（默认 us-east-1）
+    - MINIO_USE_SSL（默认 false）
+    - MINIO_CONSOLE_URL（默认渲染为 ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/minio-console/）
+    - MINIO_BUCKET_GITEA（Gitea 使用的桶名，默认 gitea）
+
+修改上述变量后，重新渲染/构建并重启服务以生效。

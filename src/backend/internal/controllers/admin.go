@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 type AdminController struct {
@@ -22,7 +22,7 @@ func NewAdminController(db *gorm.DB) *AdminController {
 	ldapService := services.NewLDAPService(db)
 	userService := services.NewUserService()
 	rbacService := services.NewRBACService(db)
-	
+
 	return &AdminController{
 		db:              db,
 		rbacService:     rbacService,
@@ -48,9 +48,20 @@ func (c *AdminController) GetAllUsers(ctx *gin.Context) {
 		return
 	}
 
-	// 分页参数
+	// 分页参数，支持两种参数名称
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
+
+	// 支持 limit 和 page_size 两种参数名称
+	limitStr := ctx.Query("limit")
+	if limitStr == "" {
+		limitStr = ctx.DefaultQuery("page_size", "10")
+	}
+	limit, _ := strconv.Atoi(limitStr)
+
+	if limit <= 0 || limit > 100 {
+		limit = 10
+	}
+
 	offset := (page - 1) * limit
 
 	var users []models.User
@@ -58,22 +69,32 @@ func (c *AdminController) GetAllUsers(ctx *gin.Context) {
 
 	// 获取总数
 	if err := c.db.Model(&models.User{}).Count(&total).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		logrus.Error("Count users error:", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户总数失败"})
 		return
 	}
 
 	// 获取用户列表，预加载角色和用户组
 	if err := c.db.Preload("Roles").Preload("UserGroups").
 		Offset(offset).Limit(limit).Find(&users).Error; err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		logrus.Error("Get users error:", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户列表失败"})
 		return
 	}
 
+	// 确保返回的users字段始终是数组，即使为空
+	if users == nil {
+		users = []models.User{}
+	}
+
+	logrus.Infof("GetAllUsers: found %d users, total: %d", len(users), total)
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"users": users,
-		"total": total,
-		"page":  page,
-		"limit": limit,
+		"users":     users,
+		"total":     total,
+		"page":      page,
+		"page_size": limit, // 同时返回两种字段名
+		"limit":     limit,
 	})
 }
 
@@ -149,7 +170,7 @@ func (c *AdminController) GetUserWithAuthSource(ctx *gin.Context) {
 	// 判断用户认证来源
 	authSource := "local"
 	isAdmin := false
-	
+
 	// 检查是否为管理员
 	for _, role := range user.Roles {
 		if role.Name == "admin" {
@@ -157,7 +178,7 @@ func (c *AdminController) GetUserWithAuthSource(ctx *gin.Context) {
 			break
 		}
 	}
-	
+
 	// 检查是否为LDAP用户（没有本地密码或密码为空）
 	if user.Password == "" {
 		authSource = "ldap"
@@ -277,7 +298,7 @@ func (c *AdminController) UpdateUserStatusEnhanced(ctx *gin.Context) {
 	// 保护本地管理员账户不被禁用
 	if isLocalAdmin && !req.IsActive {
 		ctx.JSON(http.StatusForbidden, gin.H{
-			"error": "不能禁用本地管理员账户，这是为了防止失去系统访问权限的安全措施",
+			"error":      "不能禁用本地管理员账户，这是为了防止失去系统访问权限的安全措施",
 			"suggestion": "如需禁用此管理员，请先确保有其他活跃的管理员账户",
 		})
 		return
@@ -285,11 +306,11 @@ func (c *AdminController) UpdateUserStatusEnhanced(ctx *gin.Context) {
 
 	// 记录操作日志
 	logrus.WithFields(logrus.Fields{
-		"operator_id":   userID,
-		"target_user":   user.Username,
-		"action":        "update_status",
-		"new_status":    req.IsActive,
-		"reason":        req.Reason,
+		"operator_id":    userID,
+		"target_user":    user.Username,
+		"action":         "update_status",
+		"new_status":     req.IsActive,
+		"reason":         req.Reason,
 		"is_local_admin": isLocalAdmin,
 	}).Info("User status update")
 
@@ -573,7 +594,7 @@ func (c *AdminController) GetSystemStats(ctx *gin.Context) {
 			"role_count":    roleCount,
 			"group_count":   groupCount,
 		},
-		"active_users":     activeUsers,
+		"active_users":    activeUsers,
 		"recent_projects": recentProjects,
 	})
 }
@@ -722,7 +743,7 @@ func (c *AdminController) SyncLDAPUsers(ctx *gin.Context) {
 
 	// 触发同步
 	syncID := c.ldapSyncService.TriggerSync()
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"message": "LDAP同步已启动",
 		"sync_id": syncID,
@@ -782,10 +803,45 @@ func (c *AdminController) GetLDAPSyncHistory(ctx *gin.Context) {
 	}
 
 	history := c.ldapSyncService.GetSyncHistory(limit)
-	
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"history": history,
 		"count":   len(history),
+	})
+}
+
+// GetLDAPUsers 获取LDAP用户列表（管理员专用）
+// @Summary 获取LDAP用户列表
+// @Description 管理员获取LDAP服务器中的用户列表（只读）
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param query query string false "搜索查询"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/ldap/users [get]
+func (c *AdminController) GetLDAPUsers(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "users", "read", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	query := ctx.Query("query")
+	if query == "" {
+		query = "*" // 默认查询所有用户
+	}
+
+	users, err := c.ldapService.SearchUsers(query)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取LDAP用户失败: " + err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"users": users,
+		"count": len(users),
 	})
 }
 
@@ -955,7 +1011,7 @@ func (c *AdminController) ClearTrash(ctx *gin.Context) {
 
 	if deletedCount == 0 {
 		ctx.JSON(http.StatusOK, gin.H{
-			"message": "回收站已空",
+			"message":       "回收站已空",
 			"deleted_count": 0,
 		})
 		return
@@ -1002,7 +1058,128 @@ func (c *AdminController) ClearTrash(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"message": "回收站清空成功",
+		"message":       "回收站清空成功",
 		"deleted_count": deletedCount,
 	})
+}
+
+// GetUserStatistics 获取用户统计信息（管理员专用）
+// @Summary 获取用户统计信息
+// @Description 管理员获取用户相关的统计数据
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/user-stats [get]
+func (c *AdminController) GetUserStatistics(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "users", "read", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	var totalUsers int64
+	var activeUsers int64
+	var ldapUsers int64
+	var localUsers int64
+
+	// 统计总用户数
+	if err := c.db.Model(&models.User{}).Count(&totalUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户统计失败"})
+		return
+	}
+
+	// 统计活跃用户数
+	if err := c.db.Model(&models.User{}).Where("is_active = ?", true).Count(&activeUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取活跃用户统计失败"})
+		return
+	}
+
+	// 统计LDAP用户数
+	if err := c.db.Model(&models.User{}).Where("auth_source = ?", "ldap").Count(&ldapUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取LDAP用户统计失败"})
+		return
+	}
+
+	// 统计本地用户数
+	if err := c.db.Model(&models.User{}).Where("auth_source = ? OR auth_source IS NULL", "local").Count(&localUsers).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取本地用户统计失败"})
+		return
+	}
+
+	// 统计各角色用户数
+	var roleStats []struct {
+		RoleName  string `json:"role_name"`
+		UserCount int64  `json:"user_count"`
+	}
+
+	if err := c.db.Table("users").
+		Select("roles.name as role_name, COUNT(DISTINCT users.id) as user_count").
+		Joins("LEFT JOIN user_roles ON users.id = user_roles.user_id").
+		Joins("LEFT JOIN roles ON user_roles.role_id = roles.id").
+		Group("roles.name").
+		Scan(&roleStats).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取角色统计失败"})
+		return
+	}
+
+	// 统计最近登录用户
+	var recentLogins []struct {
+		Username  string `json:"username"`
+		LastLogin string `json:"last_login"`
+	}
+
+	if err := c.db.Table("users").
+		Select("username, last_login").
+		Where("last_login IS NOT NULL").
+		Order("last_login DESC").
+		Limit(10).
+		Scan(&recentLogins).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取最近登录统计失败"})
+		return
+	}
+
+	// 统计用户组信息
+	var userGroupCount int64
+	if err := c.db.Model(&models.UserGroup{}).Count(&userGroupCount).Error; err != nil {
+		userGroupCount = 0
+	}
+
+	// 计算用户增长趋势（最近7天）
+	var dailyNewUsers []struct {
+		Date     string `json:"date"`
+		NewUsers int64  `json:"new_users"`
+	}
+
+	if err := c.db.Raw(`
+		SELECT DATE(created_at) as date, COUNT(*) as new_users 
+		FROM users 
+		WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+		GROUP BY DATE(created_at)
+		ORDER BY date DESC
+	`).Scan(&dailyNewUsers).Error; err != nil {
+		// 如果查询失败，使用空数组
+		dailyNewUsers = []struct {
+			Date     string `json:"date"`
+			NewUsers int64  `json:"new_users"`
+		}{}
+	}
+
+	statistics := gin.H{
+		"total_users":       totalUsers,
+		"active_users":      activeUsers,
+		"ldap_users":        ldapUsers,
+		"local_users":       localUsers,
+		"inactive_users":    totalUsers - activeUsers,
+		"user_groups":       userGroupCount,
+		"role_distribution": roleStats,
+		"recent_logins":     recentLogins,
+		"growth_trend":      dailyNewUsers,
+		"auth_source_distribution": gin.H{
+			"ldap":  ldapUsers,
+			"local": localUsers,
+		},
+	}
+
+	ctx.JSON(http.StatusOK, statistics)
 }

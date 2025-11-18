@@ -8,6 +8,16 @@
 			"problemMatcher": [
 				"$gcc"
 			]
+		},
+		{
+			"label": "Run Playwright E2E (external)",
+			"type": "shell",
+			"command": "BASE_URL=http://localhost:8080 npx --yes playwright test test/e2e/specs --config=test/e2e/playwright.config.js",
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint-stylish"
+			],
+			"group": "test"
 		}
 	]
 }

@@ -12,9 +12,9 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
-	
-	"gopkg.in/yaml.v3"
+
 	"github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 )
 
 // PreviewContent 预览内容
@@ -111,9 +111,9 @@ func (s *PlaybookPreviewService) GenerateDownloadPackage(projectID uint, userID 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
-	tempDir := filepath.Join(currentDir, "outputs", "packages", fmt.Sprintf("package-%s-%d", 
+	tempDir := filepath.Join(currentDir, "outputs", "packages", fmt.Sprintf("package-%s-%d",
 		strings.ReplaceAll(project.Name, " ", "-"), timestamp))
-	
+
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -126,7 +126,7 @@ func (s *PlaybookPreviewService) GenerateDownloadPackage(projectID uint, userID 
 
 	// 创建文件
 	files := []string{}
-	
+
 	// 1. 创建playbook文件
 	playbookFile := filepath.Join(tempDir, "playbook.yml")
 	if err := s.writeFile(playbookFile, preview.PlaybookYAML); err != nil {
@@ -184,10 +184,10 @@ func (s *PlaybookPreviewService) GenerateDownloadPackage(projectID uint, userID 
 	}
 
 	// 创建ZIP包
-	zipFileName := fmt.Sprintf("ansible-playbook-%s-%d.zip", 
+	zipFileName := fmt.Sprintf("ansible-playbook-%s-%d.zip",
 		strings.ReplaceAll(project.Name, " ", "-"), timestamp)
 	zipPath := filepath.Join(currentDir, "outputs", "packages", zipFileName)
-	
+
 	if err := s.createZipArchive(tempDir, zipPath, files); err != nil {
 		return nil, fmt.Errorf("failed to create ZIP archive: %w", err)
 	}
@@ -568,7 +568,7 @@ echo "=== 执行完成 ==="
 // generateGroupVars 生成group_vars文件内容
 func (s *PlaybookPreviewService) generateGroupVars(variables []models.Variable) string {
 	var buf bytes.Buffer
-	
+
 	buf.WriteString("---\n")
 	buf.WriteString("# 全局变量配置\n")
 	buf.WriteString(fmt.Sprintf("# 生成时间: %s\n", time.Now().Format("2006-01-02 15:04:05")))
@@ -576,7 +576,7 @@ func (s *PlaybookPreviewService) generateGroupVars(variables []models.Variable) 
 
 	for _, variable := range variables {
 		buf.WriteString(fmt.Sprintf("# %s (%s)\n", variable.Name, variable.Type))
-		
+
 		// 根据类型格式化变量值
 		switch variable.Type {
 		case "number":
@@ -624,7 +624,7 @@ func (s *PlaybookPreviewService) createZipArchive(sourceDir, zipPath string, fil
 	// 添加文件到ZIP
 	for _, file := range files {
 		sourceFile := filepath.Join(sourceDir, file)
-		
+
 		// 读取文件内容
 		fileContent, err := os.ReadFile(sourceFile)
 		if err != nil {

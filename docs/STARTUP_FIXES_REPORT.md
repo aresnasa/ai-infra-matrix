@@ -16,7 +16,7 @@
 **文件**: `docker-compose.yml`
 ```yaml
 # 修复前
-test: ["CMD-SHELL", "pg_isready -U postgres -d ansible_playbook_generator"]
+test: ["CMD-SHELL", "pg_isready -U postgres -d ai-infra-matrix"]
 
 # 修复后  
 test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]

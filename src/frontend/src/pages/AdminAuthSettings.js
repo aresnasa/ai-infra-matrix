@@ -466,7 +466,7 @@ const AdminAuthSettings = () => {
             </Button>
           }
         >
-          {syncHistory.length > 0 ? (
+          {Array.isArray(syncHistory) && syncHistory.length > 0 ? (
             <div>
               {syncHistory.map((sync, index) => (
                 <div key={sync.id || index} style={{ 
@@ -647,7 +647,7 @@ const AdminAuthSettings = () => {
                             <li>总用户数: {syncResult.result.total_users}</li>
                             <li>总用户组数: {syncResult.result.total_groups}</li>
                           </ul>
-                          {syncResult.result.errors && syncResult.result.errors.length > 0 && (
+                          {syncResult.result.errors && Array.isArray(syncResult.result.errors) && syncResult.result.errors.length > 0 && (
                             <div style={{ marginTop: '12px' }}>
                               <Text type="danger">错误信息:</Text>
                               <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>

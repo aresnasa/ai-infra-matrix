@@ -10,7 +10,8 @@ import {
   Col,
   Typography,
   Spin,
-  Empty
+  Empty,
+  Alert
 } from 'antd';
 import { 
   PlusOutlined, 
@@ -19,39 +20,44 @@ import {
   DesktopOutlined,
   SettingOutlined,
   PlayCircleOutlined,
-  EyeOutlined
+  EyeOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { projectAPI } from '../services/api';
+import { usePageAPIStatus } from '../hooks/usePageAPIStatus';
+import EnhancedLoading from '../components/EnhancedLoading';
 
 const { Title, Paragraph } = Typography;
 const { TextArea } = Input;
 
-const ProjectList = () => {
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(false);
+const ProjectList = ({ onError, retryCount }) => {
+  const [localLoading, setLocalLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
-  // 获取项目列表
-  const fetchProjects = async () => {
-    setLoading(true);
-    try {
-      const response = await projectAPI.getProjects();
-      setProjects(response.data || []);
-    } catch (error) {
-      message.error('获取项目列表失败');
-      console.error('Error fetching projects:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // 使用API状态监控
+  const {
+    loading,
+    error,
+    data: projectsData,
+    retry,
+    refresh,
+    lastUpdate
+  } = usePageAPIStatus([
+    () => projectAPI.getProjects()
+  ], [retryCount]);
 
+  const projects = projectsData?.[0]?.data || [];
+
+  // 处理错误
   useEffect(() => {
-    fetchProjects();
-  }, []);
+    if (error && onError) {
+      onError(error);
+    }
+  }, [error, onError]);
 
   // 打开创建/编辑模态框
   const openModal = (project = null) => {
@@ -66,6 +72,7 @@ const ProjectList = () => {
 
   // 保存项目
   const handleSave = async (values) => {
+    setLocalLoading(true);
     try {
       if (editingProject) {
         await projectAPI.updateProject(editingProject.id, values);
@@ -75,10 +82,14 @@ const ProjectList = () => {
         message.success('项目创建成功');
       }
       setModalVisible(false);
-      fetchProjects();
+      form.resetFields();
+      setEditingProject(null);
+      refresh(); // 使用新的refresh方法
     } catch (error) {
       message.error(editingProject ? '项目更新失败' : '项目创建失败');
       console.error('Error saving project:', error);
+    } finally {
+      setLocalLoading(false);
     }
   };
 
@@ -91,13 +102,16 @@ const ProjectList = () => {
       okType: 'danger',
       cancelText: '取消',
       onOk: async () => {
+        setLocalLoading(true);
         try {
           await projectAPI.deleteProject(id);
           message.success('项目删除成功');
-          fetchProjects();
+          refresh(); // 使用新的refresh方法
         } catch (error) {
           message.error('项目删除失败');
           console.error('Error deleting project:', error);
+        } finally {
+          setLocalLoading(false);
         }
       },
     });
@@ -128,60 +142,98 @@ const ProjectList = () => {
           icon={<PlusOutlined />}
           onClick={() => openModal()}
           size="large"
+          disabled={loading || localLoading}
         >
           创建新项目
         </Button>
+        {error && (
+          <Button 
+            type="default" 
+            icon={<ReloadOutlined />}
+            onClick={retry}
+            size="large"
+          >
+            重试
+          </Button>
+        )}
       </div>
 
-      <Spin spinning={loading}>
-        {projects.length === 0 ? (
-          <Empty
-            description="暂无项目"
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-          >
-            <Button type="primary" onClick={() => openModal()}>
-              创建第一个项目
+      {/* 显示API状态 */}
+      {loading && (
+        <EnhancedLoading 
+          text="加载项目列表中..."
+          showAPIStatus={true}
+        />
+      )}
+
+      {/* 显示错误信息 */}
+      {error && !loading && (
+        <Alert
+          message="加载失败"
+          description={error.message}
+          type="error"
+          showIcon
+          action={
+            <Button size="small" onClick={retry}>
+              重试
             </Button>
-          </Empty>
-        ) : (
-          <Row gutter={[16, 16]}>
-            {projects.map(project => (
-              <Col xs={24} sm={12} lg={8} xl={6} key={project.id}>
-                <Card
-                  className="project-card"
-                  hoverable
-                  actions={[
-                    <EyeOutlined 
-                      key="view" 
-                      onClick={() => viewProject(project.id)}
-                    />,
-                    <EditOutlined 
-                      key="edit" 
-                      onClick={() => openModal(project)}
-                    />,
-                    <DeleteOutlined 
-                      key="delete" 
-                      onClick={() => handleDelete(project.id)}
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {/* 内容区域 */}
+      {!loading && !error && (
+        <Spin spinning={localLoading}>
+          {projects.length === 0 ? (
+            <Empty
+              description="暂无项目"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            >
+              <Button type="primary" onClick={() => openModal()}>
+                创建第一个项目
+              </Button>
+            </Empty>
+          ) : (
+            <Row gutter={[16, 16]}>
+              {(projects || []).map(project => (
+                <Col xs={24} sm={12} lg={8} xl={6} key={project.id}>
+                  <Card
+                    className="project-card"
+                    hoverable
+                    actions={[
+                      <EyeOutlined 
+                        key="view" 
+                        onClick={() => viewProject(project.id)}
+                      />,
+                      <EditOutlined 
+                        key="edit" 
+                        onClick={() => openModal(project)}
+                      />,
+                      <DeleteOutlined 
+                        key="delete" 
+                        onClick={() => handleDelete(project.id)}
+                      />
+                    ]}
+                  >
+                    <Card.Meta
+                      avatar={<DesktopOutlined style={{ fontSize: '24px', color: '#1890ff' }} />}
+                      title={project.name}
+                      description={project.description || '暂无描述'}
                     />
-                  ]}
-                >
-                  <Card.Meta
-                    avatar={<DesktopOutlined style={{ fontSize: '24px', color: '#1890ff' }} />}
-                    title={project.name}
-                    description={project.description || '暂无描述'}
-                  />
-                  <div className="project-stats">
-                    <div className="stat-item">
-                      <SettingOutlined />
-                      创建时间: {formatDate(project.created_at)}
+                    <div className="project-stats">
+                      <div className="stat-item">
+                        <SettingOutlined />
+                        创建时间: {formatDate(project.created_at)}
+                      </div>
                     </div>
-                  </div>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        )}
-      </Spin>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          )}
+        </Spin>
+      )}
 
       <Modal
         title={editingProject ? '编辑项目' : '创建项目'}

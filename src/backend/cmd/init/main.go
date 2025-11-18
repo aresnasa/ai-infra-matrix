@@ -10,14 +10,15 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
-	
+
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"net/http"
-	"strings"
-	"os"
 )
 
 func main() {
@@ -50,6 +51,16 @@ func main() {
 	// 创建Gitea数据库与用户（按照当前 .env 配置）
 	if err := createGiteaDatabase(cfg); err != nil {
 		log.Fatal("Failed to create Gitea database:", err)
+	}
+
+	// 创建SLURM数据库与用户
+	if err := createSLURMDatabase(cfg); err != nil {
+		log.Fatal("Failed to create SLURM database:", err)
+	}
+
+	// 创建Nightingale数据库与用户
+	if err := createNightingaleDatabase(cfg); err != nil {
+		log.Fatal("Failed to create Nightingale database:", err)
 	}
 
 	// 初始化RBAC系统
@@ -96,10 +107,10 @@ func handleDatabaseReset(cfg *config.Config) error {
 
 	if exists {
 		log.Printf("Database '%s' already exists", cfg.Database.DBName)
-		
+
 		// 创建备份数据库名称
 		backupDBName := fmt.Sprintf("%s_backup_%s", cfg.Database.DBName, time.Now().Format("20060102_150405"))
-		
+
 		// 备份现有数据库
 		log.Printf("Creating backup database: %s", backupDBName)
 		backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s", backupDBName, cfg.Database.DBName)
@@ -126,7 +137,7 @@ func handleDatabaseReset(cfg *config.Config) error {
 		if err := systemDB.Exec(dropQuery).Error; err != nil {
 			return fmt.Errorf("failed to drop existing database: %w", err)
 		}
-		
+
 		log.Printf("Database '%s' dropped successfully", cfg.Database.DBName)
 	}
 
@@ -148,12 +159,12 @@ func handleDatabaseReset(cfg *config.Config) error {
 
 func initializeRBAC() error {
 	log.Println("Initializing RBAC system...")
-	
+
 	rbacService := services.NewRBACService(database.DB)
 	if err := rbacService.InitializeDefaultRBAC(); err != nil {
 		return fmt.Errorf("failed to initialize RBAC: %w", err)
 	}
-	
+
 	log.Println("RBAC system initialized successfully!")
 	return nil
 }
@@ -161,7 +172,7 @@ func initializeRBAC() error {
 func createDefaultAdmin() {
 	db := database.DB
 	rbacService := services.NewRBACService(db)
-	
+
 	log.Println("Creating default admin user...")
 
 	// 创建默认管理员用户
@@ -203,19 +214,19 @@ func createDefaultAdmin() {
 // initializeLDAPUsers 初始化LDAP用户账户
 func initializeLDAPUsers(cfg *config.Config) {
 	log.Println("Initializing LDAP users...")
-	
+
 	// 检查是否应该初始化LDAP（通过配置控制）
 	if !shouldInitializeLDAP(cfg) {
 		log.Println("LDAP initialization skipped (INIT_LDAP not set to true)")
 		return
 	}
-	
+
 	// 等待LDAP服务启动
 	if !waitForLDAP(cfg) {
 		log.Println("LDAP server not available, skipping LDAP user initialization")
 		return
 	}
-	
+
 	// 连接到LDAP服务器
 	conn, err := connectToLDAP(cfg)
 	if err != nil {
@@ -223,18 +234,18 @@ func initializeLDAPUsers(cfg *config.Config) {
 		return
 	}
 	defer conn.Close()
-	
+
 	// 创建LDAP用户
 	if err := createLDAPUsers(conn, cfg); err != nil {
 		log.Printf("Failed to create LDAP users: %v", err)
 		return
 	}
-	
+
 	log.Println("LDAP users initialized successfully!")
 	log.Printf("Created users:")
 	log.Printf("  - %s (password: %s)", cfg.LDAPInit.AdminUser.UID, cfg.LDAPInit.AdminUser.Password)
 	log.Printf("  - %s (password: %s)", cfg.LDAPInit.RegularUser.UID, cfg.LDAPInit.RegularUser.Password)
-	
+
 	// 输出LDAP配置信息
 	printLDAPConfigInfo(cfg)
 }
@@ -248,13 +259,13 @@ func shouldInitializeLDAP(cfg *config.Config) bool {
 func waitForLDAP(cfg *config.Config) bool {
 	maxRetries := cfg.LDAPInit.RetryCount
 	retryInterval := time.Duration(cfg.LDAPInit.RetryInterval) * time.Second
-	
+
 	for i := 0; i < maxRetries; i++ {
 		if i > 0 {
 			log.Printf("Waiting for LDAP server (attempt %d/%d)...", i+1, maxRetries)
 			time.Sleep(retryInterval)
 		}
-		
+
 		// 尝试连接LDAP服务器
 		conn, err := ldap.Dial("tcp", fmt.Sprintf("%s:%d", cfg.LDAP.Server, cfg.LDAP.Port))
 		if err == nil {
@@ -262,10 +273,10 @@ func waitForLDAP(cfg *config.Config) bool {
 			log.Println("LDAP server is ready")
 			return true
 		}
-		
+
 		log.Printf("LDAP server not ready: %v", err)
 	}
-	
+
 	log.Printf("LDAP server not available after %d attempts", maxRetries)
 	return false
 }
@@ -274,13 +285,13 @@ func waitForLDAP(cfg *config.Config) bool {
 func connectToLDAP(cfg *config.Config) (*ldap.Conn, error) {
 	// 连接到LDAP服务器 - 不要包含协议前缀
 	address := fmt.Sprintf("%s:%d", cfg.LDAP.Server, cfg.LDAP.Port)
-	
+
 	log.Printf("Attempting to connect to LDAP server at %s", address)
 	log.Printf("Base DN: %s", cfg.LDAP.BaseDN)
-	
+
 	var conn *ldap.Conn
 	var err error
-	
+
 	// 检查是否使用SSL
 	if cfg.LDAP.UseSSL {
 		log.Printf("Using SSL/TLS connection")
@@ -289,20 +300,20 @@ func connectToLDAP(cfg *config.Config) (*ldap.Conn, error) {
 		log.Printf("Using plain connection")
 		conn, err = ldap.Dial("tcp", address)
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to LDAP server %s: %w", address, err)
 	}
-	
+
 	// 使用管理员账户绑定
 	log.Printf("Attempting to bind as: %s", cfg.LDAP.BindDN)
-	
+
 	err = conn.Bind(cfg.LDAP.BindDN, cfg.LDAP.BindPassword)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to bind to LDAP as admin (%s): %w", cfg.LDAP.BindDN, err)
 	}
-	
+
 	log.Printf("Successfully connected and bound to LDAP server at %s", address)
 	return conn, nil
 }
@@ -312,21 +323,21 @@ func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
 	baseDN := cfg.LDAP.BaseDN
 	peopleDN := fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.PeopleOU, baseDN)
 	groupsDN := fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.GroupsOU, baseDN)
-	
+
 	log.Printf("Creating LDAP users with base DN: %s", baseDN)
 	log.Printf("People DN: %s", peopleDN)
 	log.Printf("Groups DN: %s", groupsDN)
-	
+
 	// 确保组织单位存在
 	if err := ensureOrgUnitsExist(conn, cfg); err != nil {
 		return fmt.Errorf("failed to create organizational units: %w", err)
 	}
-	
+
 	// 创建用户组
 	if err := ensureGroupsExist(conn, cfg, groupsDN, peopleDN); err != nil {
 		return fmt.Errorf("failed to create groups: %w", err)
 	}
-	
+
 	// 创建用户
 	users := []LDAPUser{
 		{
@@ -352,7 +363,7 @@ func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
 			HomeDirectory: cfg.LDAPInit.RegularUser.HomeDirectory,
 		},
 	}
-	
+
 	for _, user := range users {
 		if err := createLDAPUser(conn, user, peopleDN); err != nil {
 			log.Printf("Warning: Failed to create user %s: %v", user.UID, err)
@@ -360,7 +371,7 @@ func createLDAPUsers(conn *ldap.Conn, cfg *config.Config) error {
 			log.Printf("Created LDAP user: %s", user.UID)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -387,13 +398,13 @@ func ensureOrgUnitsExist(conn *ldap.Conn, cfg *config.Config) error {
 		{fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.PeopleOU, baseDN), cfg.LDAPInit.PeopleOU},
 		{fmt.Sprintf("ou=%s,%s", cfg.LDAPInit.GroupsOU, baseDN), cfg.LDAPInit.GroupsOU},
 	}
-	
+
 	for _, unit := range orgUnits {
 		log.Printf("Creating organizational unit: %s", unit.DN)
 		addReq := ldap.NewAddRequest(unit.DN, nil)
 		addReq.Attribute("objectClass", []string{"organizationalUnit"})
 		addReq.Attribute("ou", []string{unit.OU})
-		
+
 		err := conn.Add(addReq)
 		if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
 			return fmt.Errorf("failed to create OU %s: %w", unit.OU, err)
@@ -404,7 +415,7 @@ func ensureOrgUnitsExist(conn *ldap.Conn, cfg *config.Config) error {
 			log.Printf("OU already exists: %s", unit.OU)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -426,32 +437,32 @@ func ensureGroupsExist(conn *ldap.Conn, cfg *config.Config, groupsDN, peopleDN s
 			Members: []string{fmt.Sprintf("uid=%s,%s", cfg.LDAPInit.RegularUser.UID, peopleDN)},
 		},
 	}
-	
+
 	for _, group := range groups {
 		addReq := ldap.NewAddRequest(group.DN, nil)
 		addReq.Attribute("objectClass", []string{"groupOfNames"})
 		addReq.Attribute("cn", []string{group.CN})
 		addReq.Attribute("member", group.Members)
-		
+
 		err := conn.Add(addReq)
 		if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
 			return fmt.Errorf("failed to create group %s: %w", group.CN, err)
 		}
 	}
-	
+
 	return nil
 }
 
 // createLDAPUser 创建LDAP用户
 func createLDAPUser(conn *ldap.Conn, user LDAPUser, peopleDN string) error {
 	userDN := fmt.Sprintf("uid=%s,%s", user.UID, peopleDN)
-	
+
 	// 生成密码哈希 (SSHA)
 	passwordHash, err := generateSSHAPassword(user.Password)
 	if err != nil {
 		return fmt.Errorf("failed to generate password hash: %w", err)
 	}
-	
+
 	addReq := ldap.NewAddRequest(userDN, nil)
 	addReq.Attribute("objectClass", []string{"inetOrgPerson", "posixAccount"})
 	addReq.Attribute("uid", []string{user.UID})
@@ -463,12 +474,12 @@ func createLDAPUser(conn *ldap.Conn, user LDAPUser, peopleDN string) error {
 	addReq.Attribute("uidNumber", []string{fmt.Sprintf("%d", user.UIDNumber)})
 	addReq.Attribute("gidNumber", []string{fmt.Sprintf("%d", user.GIDNumber)})
 	addReq.Attribute("homeDirectory", []string{user.HomeDirectory})
-	
+
 	err = conn.Add(addReq)
 	if err != nil && !isLDAPError(err, ldap.LDAPResultEntryAlreadyExists) {
 		return fmt.Errorf("failed to add user: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -568,17 +579,17 @@ func printLDAPConfigInfo(cfg *config.Config) {
     },
     "admin_group": "cn=%s,ou=%s,%s"
   }
-}`, cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.UseSSL, cfg.LDAP.BaseDN, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, 
-		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN, 
+}`, cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.UseSSL, cfg.LDAP.BaseDN, cfg.LDAP.BindDN, cfg.LDAP.BindPassword,
+		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN,
 		cfg.LDAPInit.AdminGroupCN, cfg.LDAPInit.GroupsOU, cfg.LDAP.BaseDN)
 	log.Println("")
 	log.Println("=== Test Commands ===")
 	log.Println("You can test LDAP connectivity using these commands:")
-	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b '%s' '(objectClass=*)'", 
+	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b '%s' '(objectClass=*)'",
 		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, cfg.LDAP.BaseDN)
 	log.Println("")
-	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b 'ou=%s,%s' '(uid=%s)'", 
-		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword, 
+	log.Printf("ldapsearch -x -H ldap://%s:%d -D '%s' -w '%s' -b 'ou=%s,%s' '(uid=%s)'",
+		cfg.LDAP.Server, cfg.LDAP.Port, cfg.LDAP.BindDN, cfg.LDAP.BindPassword,
 		cfg.LDAPInit.PeopleOU, cfg.LDAP.BaseDN, cfg.LDAPInit.AdminUser.UID)
 	log.Println("")
 	log.Println("=== LDAP Configuration Complete ===")
@@ -588,79 +599,321 @@ func printLDAPConfigInfo(cfg *config.Config) {
 func initializeDefaultAIConfigs() {
 	log.Println("=== Initializing Default AI Configurations ===")
 
+	// 检查是否强制重新初始化
+	forceReinit := getEnvCompat("FORCE_AI_REINIT", "false") == "true"
+
 	// 检查是否已存在AI配置
 	var count int64
 	database.DB.Model(&models.AIAssistantConfig{}).Count(&count)
-	
-	if count > 0 {
-		log.Printf("AI configurations already exist (%d configs found), skipping initialization", count)
+
+	if count > 0 && !forceReinit {
+		log.Printf("AI configurations already exist (%d configs found), use FORCE_AI_REINIT=true to reinitialize", count)
 		return
 	}
 
-	// 创建默认OpenAI配置（需要用户后续配置API密钥）
-	openaiConfig := &models.AIAssistantConfig{
-		Name:         "默认OpenAI配置",
-		Provider:     "openai",
-		Model:        "gpt-3.5-turbo",
-		APIKey:       "", // 空密钥，需要管理员后续配置
-		APIEndpoint:  "https://api.openai.com/v1",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		SystemPrompt: "你是一个专业的AI助手，能够帮助用户解决各种问题。请提供准确、有用且友好的回答。",
-		IsEnabled:    false, // 默认禁用，直到配置了API密钥
-		IsDefault:    true,
+	if forceReinit && count > 0 {
+		log.Printf("Force reinitializing AI configs, clearing existing %d configurations...", count)
+		// 清理现有配置
+		database.DB.Exec("DELETE FROM ai_assistant_configs")
+		database.DB.Exec("DELETE FROM ai_conversations")
+		database.DB.Exec("DELETE FROM ai_messages")
+		database.DB.Exec("DELETE FROM ai_usage_stats")
+		log.Println("✓ Existing AI configurations cleared")
 	}
 
-	if err := database.DB.Create(openaiConfig).Error; err != nil {
-		log.Printf("Warning: Failed to create default OpenAI config: %v", err)
+	createdConfigs := 0
+
+	// 从环境变量读取配置
+	systemPrompt := getEnvCompat("AI_ASSISTANT_DEFAULT_SYSTEM_PROMPT", "你是一个智能的AI助手，请提供准确、有用的回答。")
+
+	// 创建OpenAI配置
+	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
+	if openaiAPIKey != "" && openaiAPIKey != "sk-test-demo-key-replace-with-real-api-key" {
+		openaiConfig := &models.AIAssistantConfig{
+			Name:         "默认 OpenAI GPT-4",
+			Provider:     models.ProviderOpenAI,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       openaiAPIKey,
+			APIEndpoint:  getEnvCompat("OPENAI_BASE_URL", "https://api.openai.com/v1/chat/completions"),
+			Model:        getEnvCompat("OPENAI_DEFAULT_MODEL", "gpt-4"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: systemPrompt,
+			IsEnabled:    true,
+			IsDefault:    true,
+			Description:  "默认的OpenAI GPT-4模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(openaiConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create OpenAI config: %v", err)
+		} else {
+			log.Println("✓ Created OpenAI configuration with API key")
+			createdConfigs++
+		}
 	} else {
-		log.Println("✓ Created default OpenAI configuration")
+		log.Println("⚠ OPENAI_API_KEY not provided or is demo key, skipping OpenAI config")
 	}
 
-	// 创建默认Claude配置（需要用户后续配置API密钥）
-	claudeConfig := &models.AIAssistantConfig{
-		Name:         "默认Claude配置",
-		Provider:     "claude",
-		Model:        "claude-3-haiku-20240307",
-		APIKey:       "", // 空密钥，需要管理员后续配置
-		APIEndpoint:  "https://api.anthropic.com",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。你诚实、有用、无害，并且能够帮助用户解决各种问题。",
-		IsEnabled:    false, // 默认禁用，直到配置了API密钥
-		IsDefault:    false,
-	}
+	// 创建Claude配置
+	claudeAPIKey := os.Getenv("CLAUDE_API_KEY")
+	if claudeAPIKey != "" {
+		claudeConfig := &models.AIAssistantConfig{
+			Name:         "默认 Claude 3.5 Sonnet",
+			Provider:     models.ProviderClaude,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       claudeAPIKey,
+			APIEndpoint:  getEnvCompat("CLAUDE_BASE_URL", "https://api.anthropic.com"),
+			Model:        getEnvCompat("CLAUDE_DEFAULT_MODEL", "claude-3-5-sonnet-20241022"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是Claude，一个由Anthropic开发的AI助手。请提供有帮助、准确和诚实的回答。",
+			IsEnabled:    true,
+			IsDefault:    (createdConfigs == 0), // 如果没有OpenAI配置，则Claude设为默认
+			Description:  "默认的Claude 3.5 Sonnet模型配置",
+			Category:     "通用对话",
+		}
 
-	if err := database.DB.Create(claudeConfig).Error; err != nil {
-		log.Printf("Warning: Failed to create default Claude config: %v", err)
+		if err := database.DB.Create(claudeConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create Claude config: %v", err)
+		} else {
+			log.Println("✓ Created Claude configuration with API key")
+			createdConfigs++
+		}
 	} else {
-		log.Println("✓ Created default Claude configuration")
+		log.Println("⚠ CLAUDE_API_KEY not provided, skipping Claude config")
 	}
 
-	// 创建MCP协议配置（预留接口）
-	mcpConfig := &models.AIAssistantConfig{
-		Name:         "MCP协议配置",
-		Provider:     "mcp",
-		Model:        "mcp-default",
-		APIKey:       "",
-		APIEndpoint:  "",
-		MaxTokens:    4096,
-		Temperature:  0.7,
-		SystemPrompt: "你是通过Model Context Protocol连接的AI助手。",
-		IsEnabled:    false, // 默认禁用，MCP功能仍在开发中
-		IsDefault:    false,
-	}
+	// 创建其他提供商配置
+	createOtherProviderConfigs(&createdConfigs, systemPrompt)
 
-	if err := database.DB.Create(mcpConfig).Error; err != nil {
-		log.Printf("Warning: Failed to create default MCP config: %v", err)
+	// 初始化Backend服务相关配置
+	initializeBackendConfigs()
+
+	// 初始化SLURM服务相关配置
+	initializeSlurmConfigs()
+
+	// 初始化SaltStack服务相关配置
+	initializeSaltStackConfigs()
+
+	if createdConfigs > 0 {
+		log.Printf("=== AI Configurations Initialized Successfully ===")
+		log.Printf("✓ Created %d AI provider configurations", createdConfigs)
+		log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
 	} else {
-		log.Println("✓ Created default MCP configuration")
+		log.Println("⚠ No AI configurations created. Please set API keys in environment variables:")
+		log.Println("  - OPENAI_API_KEY for OpenAI")
+		log.Println("  - CLAUDE_API_KEY for Claude")
+		log.Println("  - DEEPSEEK_API_KEY for DeepSeek")
+		log.Println("  - GLM_API_KEY for GLM")
+		log.Println("  - QWEN_API_KEY for Qwen")
+	}
+}
+
+// createOtherProviderConfigs 创建其他AI提供商的配置
+func createOtherProviderConfigs(createdConfigs *int, systemPrompt string) {
+	// 创建DeepSeek配置
+	// 检查是否配置了 DEEPSEEK_API_KEY 环境变量
+	deepseekAPIKey := os.Getenv("DEEPSEEK_API_KEY")
+
+	// 只有配置了 DEEPSEEK_API_KEY 才创建 DeepSeek 配置
+	if deepseekAPIKey != "" && deepseekAPIKey != "sk-test-demo-key-replace-with-real-api-key" {
+
+		baseURL := getEnvCompat("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+		// 创建 DeepSeek Chat 配置（非思考模式）
+		chatModel := getEnvCompat("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
+		deepseekChatConfig := &models.AIAssistantConfig{
+			Name:         "DeepSeek-V3.2-Exp (Chat)",
+			Provider:     models.ProviderDeepSeek,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       deepseekAPIKey,
+			APIEndpoint:  baseURL,
+			Model:        chatModel,
+			MaxTokens:    8192,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是DeepSeek助手，基于DeepSeek-V3.2-Exp模型。请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "DeepSeek-V3.2-Exp 非思考模式，适合快速对话和一般任务",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(deepseekChatConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create DeepSeek Chat config: %v", err)
+		} else {
+			log.Println("✓ Created DeepSeek Chat (V3.2-Exp) configuration")
+			*createdConfigs++
+		}
+
+		// 创建 DeepSeek Reasoner 配置（思考模式）
+		reasonerModel := getEnvCompat("DEEPSEEK_REASONER_MODEL", "deepseek-reasoner")
+		deepseekReasonerConfig := &models.AIAssistantConfig{
+			Name:         "DeepSeek-V3.2-Exp (Reasoner)",
+			Provider:     models.ProviderDeepSeek,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       deepseekAPIKey,
+			APIEndpoint:  baseURL,
+			Model:        reasonerModel,
+			MaxTokens:    8192,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是DeepSeek推理助手，基于DeepSeek-V3.2-Exp模型的思考模式。你会深入分析问题并提供详细的推理过程。",
+			IsEnabled:    true,
+			IsDefault:    false,
+			Description:  "DeepSeek-V3.2-Exp 思考模式，适合复杂推理、数学问题和深度分析",
+			Category:     "深度推理",
+		}
+
+		if err := database.DB.Create(deepseekReasonerConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create DeepSeek Reasoner config: %v", err)
+		} else {
+			log.Println("✓ Created DeepSeek Reasoner (V3.2-Exp) configuration")
+			*createdConfigs++
+		}
+	} else {
+		log.Println("⚠ DEEPSEEK_API_KEY not provided or is demo key, skipping DeepSeek config")
 	}
 
-	log.Println("=== Default AI Configurations Initialized ===")
-	log.Println("📝 Note: AI configurations have been created with empty API keys.")
-	log.Println("🔑 Please configure API keys in the admin panel to enable AI functionality.")
-	log.Println("🌐 Access the AI Assistant Management at: /admin/ai-assistant")
+	// 创建GLM配置
+	if glmAPIKey := os.Getenv("GLM_API_KEY"); glmAPIKey != "" {
+		glmConfig := &models.AIAssistantConfig{
+			Name:         "默认 GLM-4",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       glmAPIKey,
+			APIEndpoint:  getEnvCompat("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
+			Model:        getEnvCompat("GLM_DEFAULT_MODEL", "glm-4"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是智谱AI的GLM助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的智谱AI GLM-4模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(glmConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create GLM config: %v", err)
+		} else {
+			log.Println("✓ Created GLM configuration")
+			*createdConfigs++
+		}
+	}
+
+	// 创建通义千问配置
+	if qwenAPIKey := os.Getenv("QWEN_API_KEY"); qwenAPIKey != "" {
+		qwenConfig := &models.AIAssistantConfig{
+			Name:         "默认 通义千问",
+			Provider:     models.ProviderCustom,
+			ModelType:    models.ModelTypeChat,
+			APIKey:       qwenAPIKey,
+			APIEndpoint:  getEnvCompat("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/api/v1"),
+			Model:        getEnvCompat("QWEN_DEFAULT_MODEL", "qwen-turbo"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是通义千问助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "默认的阿里云通义千问模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(qwenConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create Qwen config: %v", err)
+		} else {
+			log.Println("✓ Created Qwen configuration")
+			*createdConfigs++
+		}
+	}
+
+	// 创建本地AI配置
+	if localAIEnabled := getEnvCompat("LOCAL_AI_ENABLED", "false"); localAIEnabled == "true" {
+		localConfig := &models.AIAssistantConfig{
+			Name:         "本地 AI 模型",
+			Provider:     models.ProviderLocal,
+			ModelType:    models.ModelTypeChat,
+			APIEndpoint:  getEnvCompat("LOCAL_AI_BASE_URL", "http://localhost:8080/v1"),
+			Model:        getEnvCompat("LOCAL_AI_DEFAULT_MODEL", "llama2"),
+			MaxTokens:    4096,
+			Temperature:  0.7,
+			TopP:         1.0,
+			SystemPrompt: "你是一个本地部署的AI助手，请提供准确、有用的回答。",
+			IsEnabled:    true,
+			IsDefault:    (*createdConfigs == 0),
+			Description:  "本地部署的AI模型配置",
+			Category:     "通用对话",
+		}
+
+		if err := database.DB.Create(localConfig).Error; err != nil {
+			log.Printf("Warning: Failed to create Local AI config: %v", err)
+		} else {
+			log.Println("✓ Created Local AI configuration")
+			*createdConfigs++
+		}
+	}
+}
+
+// initializeBackendConfigs 初始化Backend服务配置
+func initializeBackendConfigs() {
+	log.Println("=== Initializing Backend Service Configurations ===")
+
+	// 这里可以添加Backend服务特定的初始化逻辑
+	// 例如：初始化缓存配置、消息队列配置等
+
+	log.Println("✓ Backend service configurations initialized")
+}
+
+// initializeSlurmConfigs 初始化SLURM服务配置
+func initializeSlurmConfigs() {
+	log.Println("=== Initializing SLURM Service Configurations ===")
+
+	// 这里可以添加SLURM服务特定的初始化逻辑
+	// 例如：初始化SLURM集群配置、节点配置等
+
+	slurmEnabled := getEnvCompat("SLURM_ENABLED", "true")
+	if slurmEnabled == "true" {
+		slurmCluster := getEnvCompat("SLURM_CLUSTER_NAME", "ai-infra-cluster")
+		slurmController := getEnvCompat("SLURM_CONTROLLER_HOST", "slurm-master")
+
+		log.Printf("✓ SLURM cluster: %s", slurmCluster)
+		log.Printf("✓ SLURM controller: %s", slurmController)
+		log.Println("✓ SLURM service configurations initialized")
+	} else {
+		log.Println("⚠ SLURM service disabled")
+	}
+}
+
+// initializeSaltStackConfigs 初始化SaltStack服务配置
+func initializeSaltStackConfigs() {
+	log.Println("=== Initializing SaltStack Service Configurations ===")
+
+	// 这里可以添加SaltStack服务特定的初始化逻辑
+	// 例如：初始化Salt Master配置、Minion配置等
+
+	saltEnabled := getEnvCompat("SALTSTACK_ENABLED", "true")
+	if saltEnabled == "true" {
+		saltMaster := getEnvCompat("SALTSTACK_MASTER_HOST", "saltstack")
+		// 优先使用完整URL，其次按协议/主机/端口拼装，避免写死默认URL
+		saltAPI := strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL"))
+		if saltAPI == "" {
+			scheme := getEnvCompat("SALT_API_SCHEME", "http")
+			host := getEnvCompat("SALT_MASTER_HOST", saltMaster)
+			port := getEnvCompat("SALT_API_PORT", "8002")
+			saltAPI = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+		}
+
+		log.Printf("✓ SaltStack master: %s", saltMaster)
+		log.Printf("✓ SaltStack API: %s", saltAPI)
+		log.Println("✓ SaltStack service configurations initialized")
+	} else {
+		log.Println("⚠ SaltStack service disabled")
+	}
 }
 
 // createJupyterHubDatabase 创建JupyterHub专用数据库
@@ -761,7 +1014,9 @@ func createGiteaDatabase(cfg *config.Config) error {
 
 // getEnvCompat reads from process env; used by init which runs inside container
 func getEnvCompat(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" { return v }
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
 	return def
 }
 
@@ -800,8 +1055,9 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 	base := cfg.Gitea.BaseURL
 	// 去掉末尾斜杠，拼接 API 路径
 	url := fmt.Sprintf("%s/api/v1/version", strings.TrimRight(base, "/"))
-	client := &http.Client{ Timeout: 3 * time.Second }
+	client := &http.Client{Timeout: 3 * time.Second}
 
+	var lastErr error
 	for i := 0; i < maxRetries; i++ {
 		if i > 0 {
 			time.Sleep(interval)
@@ -809,7 +1065,11 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 		req, _ := http.NewRequest("GET", url, nil)
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("Waiting for Gitea... (%d/%d): %v", i+1, maxRetries, err)
+			lastErr = err
+			// 只在前3次和每5次打印日志，避免日志刷屏
+			if i < 3 || (i+1)%5 == 0 {
+				log.Printf("Waiting for Gitea... (%d/%d): %v", i+1, maxRetries, err)
+			}
 			continue
 		}
 		resp.Body.Close()
@@ -817,7 +1077,387 @@ func waitForGitea(cfg *config.Config, maxRetries int, interval time.Duration) bo
 			log.Println("Gitea is ready")
 			return true
 		}
+		lastErr = fmt.Errorf("status=%d", resp.StatusCode)
 		log.Printf("Gitea not ready, status=%d (%d/%d)", resp.StatusCode, i+1, maxRetries)
 	}
+	log.Printf("Gitea unavailable after %d retries, last error: %v", maxRetries, lastErr)
 	return false
+}
+
+// createSLURMDatabase creates SLURM database and user for accounting
+func createSLURMDatabase(cfg *config.Config) error {
+	log.Println("Creating SLURM database and role...")
+
+	// Read SLURM DB settings from env
+	slurmUser := getEnvCompat("SLURM_DB_USER", "slurm")
+	slurmPass := getEnvCompat("SLURM_DB_PASSWORD", "slurm123")
+	slurmDB := getEnvCompat("SLURM_DB_NAME", "slurm_acct_db")
+
+	log.Printf("SLURM DB settings - User: %s, DB: %s", slurmUser, slurmDB)
+
+	// Connect to system DB
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Create SLURM role if missing
+	log.Printf("Creating SLURM user: %s", slurmUser)
+	createRole := fmt.Sprintf("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN CREATE USER %s WITH LOGIN PASSWORD '%s'; END IF; END $$;", slurmUser, slurmUser, slurmPass)
+	if err := systemDB.Exec(createRole).Error; err != nil {
+		return fmt.Errorf("failed to ensure SLURM role: %w", err)
+	}
+	log.Printf("✓ SLURM user '%s' created or already exists", slurmUser)
+
+	// Create SLURM DB if missing
+	var exists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", slurmDB).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check SLURM DB existence: %w", err)
+	}
+
+	if !exists {
+		log.Printf("Creating SLURM database: %s", slurmDB)
+		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s OWNER %s", slurmDB, slurmUser)).Error; err != nil {
+			return fmt.Errorf("failed to create SLURM database: %w", err)
+		}
+		log.Printf("✓ SLURM database '%s' created successfully", slurmDB)
+	} else {
+		log.Printf("✓ SLURM database '%s' already exists", slurmDB)
+	}
+
+	// Grant all privileges to SLURM user
+	if err := systemDB.Exec(fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", slurmDB, slurmUser)).Error; err != nil {
+		log.Printf("Warning: failed to grant privileges on %s to %s: %v", slurmDB, slurmUser, err)
+	} else {
+		log.Printf("✓ Granted all privileges on '%s' to '%s'", slurmDB, slurmUser)
+	}
+
+	log.Println("✓ SLURM database initialization completed!")
+	return nil
+}
+
+// createNightingaleDatabase creates Nightingale database and initializes admin account using GORM
+func createNightingaleDatabase(cfg *config.Config) error {
+	log.Println("=== Creating Nightingale Database ===")
+
+	// Read Nightingale DB settings from env
+	nightingaleDB := getEnvCompat("NIGHTINGALE_DB_NAME", "nightingale")
+
+	log.Printf("Nightingale DB settings - DB: %s", nightingaleDB)
+
+	// Connect to system DB
+	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	systemDB, err := gorm.Open(postgres.Open(systemDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to system database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// Create Nightingale DB if missing
+	var exists bool
+	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", nightingaleDB).Scan(&exists).Error; err != nil {
+		return fmt.Errorf("failed to check Nightingale DB existence: %w", err)
+	}
+
+	if !exists {
+		log.Printf("Creating Nightingale database: %s", nightingaleDB)
+		if err := systemDB.Exec(fmt.Sprintf("CREATE DATABASE %s", nightingaleDB)).Error; err != nil {
+			return fmt.Errorf("failed to create Nightingale database: %w", err)
+		}
+		log.Printf("✓ Nightingale database '%s' created successfully", nightingaleDB)
+	} else {
+		log.Printf("✓ Nightingale database '%s' already exists", nightingaleDB)
+	}
+
+	// Connect to Nightingale database
+	nightingaleDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		cfg.Database.Host,
+		cfg.Database.User,
+		cfg.Database.Password,
+		nightingaleDB,
+		cfg.Database.Port,
+		cfg.Database.SSLMode,
+	)
+
+	nightingaleDB_conn, err := gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to Nightingale database: %w", err)
+	}
+	defer func() {
+		sqlDB, _ := nightingaleDB_conn.DB()
+		sqlDB.Close()
+	}()
+
+	// Auto migrate Nightingale models using GORM
+	log.Println("Running GORM AutoMigrate for Nightingale tables...")
+	nightingaleModels := models.InitNightingaleModels()
+	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
+		return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
+	}
+	log.Println("✓ Nightingale tables created/updated successfully")
+
+	// Initialize default roles
+	if err := initializeNightingaleRoles(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale roles: %v", err)
+	}
+
+	// Initialize admin account synced from main system
+	if err := initializeNightingaleAdmin(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale admin account: %v", err)
+	}
+
+	// Create default business group
+	if err := initializeNightingaleBusiGroup(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale business group: %v", err)
+	}
+
+	log.Println("✓ Nightingale database initialization completed!")
+	return nil
+}
+
+// initializeNightingaleRoles initializes default roles in Nightingale using GORM
+func initializeNightingaleRoles(db *gorm.DB) error {
+	log.Println("Initializing Nightingale roles...")
+
+	// Check if Admin role exists
+	var count int64
+	if err := db.Model(&models.NightingaleRole{}).Where("name = ?", "Admin").Count(&count).Error; err != nil {
+		return fmt.Errorf("failed to check role existence: %w", err)
+	}
+
+	if count == 0 {
+		adminRole := &models.NightingaleRole{
+			Name: "Admin",
+			Note: "Administrator role with full permissions",
+		}
+		if err := db.Create(adminRole).Error; err != nil {
+			return fmt.Errorf("failed to create Admin role: %w", err)
+		}
+		log.Println("✓ Admin role created")
+	} else {
+		log.Println("✓ Admin role already exists")
+	}
+
+	// Create Standard role
+	if err := db.Model(&models.NightingaleRole{}).Where("name = ?", "Standard").Count(&count).Error; err == nil && count == 0 {
+		standardRole := &models.NightingaleRole{
+			Name: "Standard",
+			Note: "Standard user role",
+		}
+		db.Create(standardRole)
+		log.Println("✓ Standard role created")
+	}
+
+	// Create Guest role
+	if err := db.Model(&models.NightingaleRole{}).Where("name = ?", "Guest").Count(&count).Error; err == nil && count == 0 {
+		guestRole := &models.NightingaleRole{
+			Name: "Guest",
+			Note: "Guest user role with read-only permissions",
+		}
+		db.Create(guestRole)
+		log.Println("✓ Guest role created")
+	}
+
+	return nil
+}
+
+// initializeNightingaleAdmin syncs admin account from main system to Nightingale using GORM
+func initializeNightingaleAdmin(db *gorm.DB) error {
+	log.Println("Syncing admin account from main system to Nightingale...")
+
+	// Get admin user from main system
+	var mainAdmin models.User
+	if err := database.DB.Where("username = ?", "admin").First(&mainAdmin).Error; err != nil {
+		log.Printf("Warning: Could not find admin user in main system: %v", err)
+		log.Println("Nightingale admin will need to be created manually")
+		return nil
+	}
+
+	// Check if admin already exists in Nightingale
+	var nightingaleAdmin models.NightingaleUser
+	result := db.Where("username = ?", mainAdmin.Username).First(&nightingaleAdmin)
+
+	currentTime := time.Now().Unix()
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create new admin user
+		newAdmin := &models.NightingaleUser{
+			Username:   mainAdmin.Username,
+			Nickname:   mainAdmin.Name,
+			Password:   mainAdmin.Password, // Use bcrypt hash from main system
+			Email:      mainAdmin.Email,
+			Roles:      "Admin",
+			Contacts:   "{}",
+			Maintainer: 1,
+			CreateAt:   currentTime,
+			CreateBy:   "system",
+			UpdateAt:   currentTime,
+			UpdateBy:   "system",
+		}
+
+		if err := db.Create(newAdmin).Error; err != nil {
+			return fmt.Errorf("failed to create admin user: %w", err)
+		}
+
+		log.Printf("✓ Admin user '%s' created in Nightingale", mainAdmin.Username)
+		log.Printf("  Email: %s", mainAdmin.Email)
+		log.Println("  Password synced with main system")
+
+		// Create default user group for admin
+		if err := createNightingaleAdminGroup(db, newAdmin.ID, mainAdmin.Username); err != nil {
+			log.Printf("Warning: Failed to create admin group: %v", err)
+		}
+
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query admin user: %w", result.Error)
+	} else {
+		// Update existing admin user
+		nightingaleAdmin.Password = mainAdmin.Password
+		nightingaleAdmin.Email = mainAdmin.Email
+		nightingaleAdmin.Nickname = mainAdmin.Name
+		nightingaleAdmin.UpdateAt = currentTime
+		nightingaleAdmin.UpdateBy = "system"
+
+		if err := db.Save(&nightingaleAdmin).Error; err != nil {
+			return fmt.Errorf("failed to update admin user: %w", err)
+		}
+
+		log.Printf("✓ Admin user '%s' updated in Nightingale", mainAdmin.Username)
+		log.Println("  Password synced with main system")
+	}
+
+	return nil
+}
+
+// createNightingaleAdminGroup creates a default user group for admin
+func createNightingaleAdminGroup(db *gorm.DB, adminUserID uint, adminUsername string) error {
+	currentTime := time.Now().Unix()
+
+	// Check if admin group already exists
+	var existingGroup models.NightingaleUserGroup
+	result := db.Where("name = ?", "admin-group").First(&existingGroup)
+
+	var groupID uint
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create admin group
+		adminGroup := &models.NightingaleUserGroup{
+			Name:     "admin-group",
+			Note:     "Administrator group",
+			CreateAt: currentTime,
+			CreateBy: adminUsername,
+			UpdateAt: currentTime,
+			UpdateBy: adminUsername,
+		}
+
+		if err := db.Create(adminGroup).Error; err != nil {
+			return fmt.Errorf("failed to create admin group: %w", err)
+		}
+		groupID = adminGroup.ID
+		log.Println("✓ Admin group created")
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query admin group: %w", result.Error)
+	} else {
+		groupID = existingGroup.ID
+		log.Println("✓ Admin group already exists")
+	}
+
+	// Check if admin is already a member
+	var memberCount int64
+	db.Model(&models.NightingaleUserGroupMember{}).Where("group_id = ? AND user_id = ?", groupID, adminUserID).Count(&memberCount)
+
+	if memberCount == 0 {
+		// Add admin to group
+		member := &models.NightingaleUserGroupMember{
+			GroupID: int64(groupID),
+			UserID:  int64(adminUserID),
+		}
+
+		if err := db.Create(member).Error; err != nil {
+			return fmt.Errorf("failed to add admin to group: %w", err)
+		}
+		log.Println("✓ Admin added to admin group")
+	}
+
+	return nil
+}
+
+// initializeNightingaleBusiGroup creates default business group
+func initializeNightingaleBusiGroup(db *gorm.DB) error {
+	log.Println("Initializing default business group...")
+
+	currentTime := time.Now().Unix()
+
+	// Check if default business group exists
+	var existingGroup models.NightingaleBusiGroup
+	result := db.Where("name = ?", "Default Group").First(&existingGroup)
+
+	var groupID uint
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create default business group
+		defaultGroup := &models.NightingaleBusiGroup{
+			Name:        "Default Group",
+			LabelEnable: 0,
+			LabelValue:  "",
+			CreateAt:    currentTime,
+			CreateBy:    "system",
+			UpdateAt:    currentTime,
+			UpdateBy:    "system",
+		}
+
+		if err := db.Create(defaultGroup).Error; err != nil {
+			return fmt.Errorf("failed to create default business group: %w", err)
+		}
+		groupID = defaultGroup.ID
+		log.Println("✓ Default business group created")
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query default business group: %w", result.Error)
+	} else {
+		groupID = existingGroup.ID
+		log.Println("✓ Default business group already exists")
+	}
+
+	// Link admin group to business group with rw permission
+	var adminUserGroup models.NightingaleUserGroup
+	if err := db.Where("name = ?", "admin-group").First(&adminUserGroup).Error; err == nil {
+		var memberCount int64
+		db.Model(&models.NightingaleBusiGroupMember{}).Where("busi_group_id = ? AND user_group_id = ?", groupID, adminUserGroup.ID).Count(&memberCount)
+
+		if memberCount == 0 {
+			member := &models.NightingaleBusiGroupMember{
+				BusiGroupID: int64(groupID),
+				UserGroupID: int64(adminUserGroup.ID),
+				PermFlag:    "rw", // read-write permission
+			}
+
+			if err := db.Create(member).Error; err != nil {
+				log.Printf("Warning: Failed to link admin group to business group: %v", err)
+			} else {
+				log.Println("✓ Admin group linked to default business group with rw permission")
+			}
+		}
+	}
+
+	return nil
 }

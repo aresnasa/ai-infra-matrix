@@ -34,9 +34,11 @@ spec:
         - name: http
           containerPort: {{ .Values.jupyterhub.service.port }}
           protocol: TCP
+        {{- if .Values.jupyterhub.service.hubPort }}
         - name: hub
           containerPort: {{ .Values.jupyterhub.service.hubPort }}
           protocol: TCP
+        {{- end }}
         env:
         - name: POSTGRES_HOST
           valueFrom:
@@ -170,6 +172,14 @@ spec:
             configMapKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-config
               key: SHARED_STORAGE_CLASS
+        - name: SHARED_STORAGE_ENABLED
+          value: {{ .Values.jupyterhub.env.SHARED_STORAGE_ENABLED | quote }}
+        - name: JUPYTERHUB_MEM_GUARANTEE
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_MEM_GUARANTEE | quote }}
+        - name: JUPYTERHUB_CPU_GUARANTEE  
+          value: {{ .Values.jupyterhub.env.JUPYTERHUB_CPU_GUARANTEE | quote }}
+        - name: SESSION_TIMEOUT
+          value: {{ .Values.jupyterhub.env.SESSION_TIMEOUT | quote }}
         volumeMounts:
         - name: jupyterhub-data
           mountPath: /srv/data/jupyterhub
@@ -220,10 +230,12 @@ spec:
     targetPort: http
     protocol: TCP
     name: http
+  {{- if .Values.jupyterhub.service.hubPort }}
   - port: {{ .Values.jupyterhub.service.hubPort }}
     targetPort: hub
     protocol: TCP
     name: hub
+  {{- end }}
   selector:
     {{- include "ai-infra-matrix.selectorLabels" . | nindent 4 }}
     {{- include "ai-infra-matrix.componentLabels" "jupyterhub" | nindent 4 }}

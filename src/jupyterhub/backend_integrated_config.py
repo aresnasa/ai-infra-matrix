@@ -22,6 +22,15 @@ from jupyterhub.utils import url_path_join
 from urllib.parse import quote
 from typing import cast
 
+# 尝试导入KubeSpawner支持
+try:
+    from kubespawner import KubeSpawner
+    KUBESPAWNER_AVAILABLE = True
+    print("✅ KubeSpawner 可用")
+except ImportError:
+    KUBESPAWNER_AVAILABLE = False
+    print("⚠️  KubeSpawner 不可用，仅支持DockerSpawner")
+
 # 兼容编辑器/静态检查与运行时：优先使用 JupyterHub 提供的 get_config，否则退化为本地 Config
 try:  # pragma: no cover - 编辑器环境
     c = get_config()  # type: ignore[name-defined]
@@ -118,7 +127,7 @@ class BackendIntegratedAuthenticator(Authenticator):
             return auth_header[7:]
         
         # 2. 从多种Cookie名称尝试获取 (支持不同的cookie名称)
-        cookie_names = ['ai_infra_token', 'jwt_token', 'auth_token']
+        cookie_names = ['ai_infra_token', 'jwt_token', 'auth_token', 'jupyterhub_auth_token']
         for cookie_name in cookie_names:
             token = handler.get_cookie(cookie_name)
             if token:
@@ -254,9 +263,36 @@ else:
     # 直接访问模式
     c.JupyterHub.base_url = '/'
 
-# 公共URL配置
+# 公共URL配置 - 支持动态检测客户端访问地址
 public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
+
+# 设置动态公共URL检测
+def get_public_url(request=None):
+    """动态检测公共URL"""
+    if request and hasattr(request, 'headers'):
+        # 优先使用代理传递的原始Host头
+        host = request.headers.get('X-Forwarded-Host') or request.headers.get('Host')
+        if host:
+            proto = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else 'http'
+            if use_proxy:
+                return f'{proto}://{host}/jupyter/'
+            else:
+                return f'{proto}://{host}/'
+    
+    # 降级到配置的静态地址
+    if use_proxy:
+        if not public_host.startswith('http'):
+            static_host = f'http://{public_host}'
+        else:
+            static_host = public_host
+        return f'{static_host}/jupyter/'
+    else:
+        if not public_host.startswith('http'):
+            return f'http://{public_host}/'
+        else:
+            return f'{public_host}/'
+
 if use_proxy:
     if not public_host.startswith('http'):
         public_host = f'http://{public_host}'
@@ -287,14 +323,21 @@ _auto_login_env = os.environ.get('JUPYTERHUB_AUTO_LOGIN', 'true').lower() == 'tr
 c.BackendIntegratedAuthenticator.auto_login = _auto_login_env
 
 class AutoLoginHandler(BaseHandler):
-    """自动登录处理器：验证JWT并登录用户"""
+    """自动登录处理器：验证JWT并登录用户，修复SSO重复登录问题"""
 
     async def get(self):
         next_url = self.get_argument('next', url_path_join(self.base_url, 'hub/'))
         try:
             auth: BackendIntegratedAuthenticator = self.authenticator  # type: ignore
 
-            # 提取token（与认证器一致的策略）
+            # 1. 首先检查当前用户是否已经登录
+            current_user = self.current_user
+            if current_user:
+                logger.info(f"AutoLogin: 用户 {current_user.name} 已登录，直接跳转")
+                self.redirect(next_url)
+                return
+
+            # 2. 提取token（与认证器一致的策略）
             token = (
                 self.get_cookie('ai_infra_token')
                 or self.get_cookie('jwt_token')
@@ -314,6 +357,7 @@ class AutoLoginHandler(BaseHandler):
                 self.redirect(bridge)
                 return
 
+            # 3. 验证token有效性
             username = await auth._verify_jwt_token(token)
             if not username:
                 logger.warning("AutoLogin: token无效，跳转到前端桥接页")
@@ -321,6 +365,7 @@ class AutoLoginHandler(BaseHandler):
                 self.redirect(bridge)
                 return
 
+            # 4. 获取用户信息并登录
             user_info = await auth._get_user_info(username, token)
 
             # 标准化login_user参数
@@ -329,9 +374,28 @@ class AutoLoginHandler(BaseHandler):
             else:
                 login_data = user_info
 
-            # 登录并设置Hub会话
+            # 5. 设置持久化认证状态
+            if isinstance(login_data, dict) and 'auth_state' in login_data:
+                # 确保auth_state包含token信息，用于后续认证
+                auth_state = login_data['auth_state']
+                auth_state['token'] = token
+                auth_state['auth_time'] = datetime.now(timezone.utc).isoformat()
+                login_data['auth_state'] = auth_state
+
+            # 6. 登录并设置Hub会话
             await self.login_user(login_data)
             logger.info(f"AutoLogin: 登录成功: {login_data.get('name', username)}")
+            
+            # 7. 设置额外的认证cookie，确保状态持久化
+            self.set_cookie(
+                'jupyterhub_auth_token', 
+                token, 
+                expires_days=7,  # 7天有效期
+                httponly=True,
+                secure=False,  # 在HTTP环境下设为False
+                path=self.base_url
+            )
+            
             self.redirect(next_url)
         except Exception as e:
             logger.error(f"AutoLogin: 处理失败: {e}")
@@ -344,51 +408,117 @@ c.JupyterHub.extra_handlers = [
     (r'/auto-login', AutoLoginHandler),
 ]
 
-# Spawner配置
-c.JupyterHub.spawner_class = ContainerSpawner
-
-# Docker Spawner配置
-# 配置Docker Spawner网络
-c.ContainerSpawner.image = os.environ.get('JUPYTERHUB_IMAGE', 'jupyter/base-notebook:latest')
-c.ContainerSpawner.network_name = os.environ.get('JUPYTERHUB_NETWORK', 'ai-infra-network')
-c.ContainerSpawner.remove = True  # 删除停止的容器
-c.ContainerSpawner.debug = True
-
-# DockerSpawner 在同一 docker 网络内访问，使用容器内网IP可避免端口映射问题
-c.DockerSpawner.use_internal_ip = True
-
-# 启动/就绪超时调大，避免首次拉取镜像或慢启动导致超时
-c.Spawner.start_timeout = int(os.environ.get('JUPYTERHUB_START_TIMEOUT', '180'))
-c.Spawner.http_timeout = int(os.environ.get('JUPYTERHUB_HTTP_TIMEOUT', '120'))
-
-# 资源限制
-c.ContainerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
-c.ContainerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
-
-# 容器配置
-c.ContainerSpawner.notebook_dir = '/home/jovyan/work'
-c.ContainerSpawner.cmd = ['start-singleuser.sh']  # 使用标准单用户启动脚本
-
-# 环境变量设置
-c.ContainerSpawner.environment = {
-    'JUPYTER_ENABLE_LAB': 'yes',  # 启用JupyterLab
+# 配置 Tornado 设置以支持 iframe 嵌入
+c.JupyterHub.tornado_settings = {
+    'headers': {
+        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://172.20.10.11:8080;",
+    },
 }
 
-# 挂载配置（可选）
-c.ContainerSpawner.volumes = {
-    # 可以添加持久化存储
-}
+# =========================
+# 动态Spawner配置
+# =========================
+
+# Spawner类型选择：支持docker/kubernetes两种模式
+SPAWNER_TYPE = os.environ.get('JUPYTERHUB_SPAWNER', 'docker').lower()
+
+print(f"🔧 Spawner配置模式: {SPAWNER_TYPE}")
+
+if SPAWNER_TYPE == 'kubernetes' and KUBESPAWNER_AVAILABLE:
+    print("🚀 使用KubeSpawner进行Kubernetes部署")
+    
+    # 加载KubeSpawner配置
+    try:
+        exec(open('/srv/jupyterhub/kubernetes_spawner_config.py').read())
+        # 配置KubeSpawner
+        configure_kubespawner(c)
+        print("✅ KubeSpawner配置加载完成")
+    except Exception as e:
+        print(f"❌ KubeSpawner配置加载失败: {e}")
+        print("🔄 回退到DockerSpawner模式")
+        SPAWNER_TYPE = 'docker'
+
+if SPAWNER_TYPE == 'docker':
+    print("🐳 使用DockerSpawner进行容器部署")
+    
+    # Spawner配置
+    c.JupyterHub.spawner_class = ContainerSpawner
+    
+    # Docker Spawner配置
+    # 配置Docker Spawner网络
+    c.ContainerSpawner.image = os.environ.get('JUPYTERHUB_IMAGE', 'jupyter/base-notebook:latest')
+    c.ContainerSpawner.network_name = os.environ.get('JUPYTERHUB_NETWORK', 'ai-infra-network')
+    c.ContainerSpawner.remove = True  # 删除停止的容器
+    c.ContainerSpawner.debug = True
+    
+    # DockerSpawner 在同一 docker 网络内访问，使用容器内网IP可避免端口映射问题
+    c.DockerSpawner.use_internal_ip = True
+    
+    # 启动/就绪超时调大，避免首次拉取镜像或慢启动导致超时
+    c.Spawner.start_timeout = int(os.environ.get('JUPYTERHUB_START_TIMEOUT', '180'))
+    c.Spawner.http_timeout = int(os.environ.get('JUPYTERHUB_HTTP_TIMEOUT', '120'))
+    
+    # 资源限制
+    c.ContainerSpawner.mem_limit = os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G')
+    c.ContainerSpawner.cpu_limit = float(os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'))
+    
+    # 容器配置
+    c.ContainerSpawner.notebook_dir = '/home/jovyan/work'
+    c.ContainerSpawner.cmd = ['start-singleuser.sh']  # 使用标准单用户启动脚本
+    
+    # 环境变量设置
+    c.ContainerSpawner.environment = {
+        'JUPYTER_ENABLE_LAB': 'yes',  # 启用JupyterLab
+    }
+    
+    # 挂载配置（可选）
+    c.ContainerSpawner.volumes = {
+        # 可以添加持久化存储
+    }
+    
+    print("✅ DockerSpawner配置完成")
+
+# =========================
+# 通用Spawner配置
+# =========================
 
 # 安全配置（将cookie密钥保存在数据卷中，避免每次重启失效）
 c.JupyterHub.cookie_secret_file = '/srv/data/jupyterhub/jupyterhub_cookie_secret'
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'default-token-change-me')
 
-# 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 1 天
-_session_timeout = int(os.environ.get('SESSION_TIMEOUT', '86400'))
+# 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 7 天
+_session_timeout = int(os.environ.get('SESSION_TIMEOUT', '604800'))  # 7天
 c.JupyterHub.cookie_max_age_days = max(1, _session_timeout // 86400)
-# 刷新认证，降低重复登录概率；在spawn前强制刷新
-c.Authenticator.auth_refresh_age = _session_timeout
-c.Authenticator.refresh_pre_spawn = True
+
+# 修复SSO认证状态持久化问题
+# 检查是否禁用认证刷新
+_disable_auth_refresh = os.environ.get('JUPYTERHUB_DISABLE_AUTH_REFRESH', 'true').lower() == 'true'
+
+if _disable_auth_refresh:
+    # 1. 禁用认证刷新，避免重复要求登录
+    c.Authenticator.auth_refresh_age = 0  # 禁用认证刷新
+    c.Authenticator.refresh_pre_spawn = False  # 禁用spawn前强制刷新
+    logger.info("🔧 SSO优化：已禁用认证刷新，避免重复登录")
+else:
+    # 2. 使用默认的认证刷新设置
+    c.Authenticator.auth_refresh_age = _session_timeout
+    c.Authenticator.refresh_pre_spawn = True
+    logger.info("🔧 使用默认认证刷新设置")
+
+# 3. 延长会话有效期，避免频繁重新登录
+c.JupyterHub.cookie_max_age_days = max(7, _session_timeout // 86400)  # 至少7天
+
+# 4. 启用认证状态持久化，确保SSO状态保存
+c.Authenticator.enable_auth_state = True
+
+# 5. 设置正确的cookie域名和路径（支持反向代理）
+if use_proxy:
+    # 反向代理模式下的cookie配置
+    c.JupyterHub.base_url = '/jupyter/'
+    c.JupyterHub.hub_prefix = '/jupyter/hub/'
+else:
+    # 直接访问模式下的cookie配置
+    c.JupyterHub.base_url = '/'
 
 # 加密密钥配置（用于auth_state）
 crypt_key = os.environ.get('JUPYTERHUB_CRYPT_KEY', '790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1')

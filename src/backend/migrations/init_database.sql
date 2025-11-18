@@ -1,5 +1,5 @@
 -- 
--- AI-Infra-Matrix Database Initialization Script
+-- ai-infra-matrix Database Initialization Script
 -- 包含表结构和基础RBAC数据
 -- 
 

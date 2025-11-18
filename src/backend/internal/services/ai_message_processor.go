@@ -14,6 +14,8 @@ type AIMessageProcessor struct {
 	aiService           AIService
 	messageQueueService MessageQueueService
 	cacheService        CacheService
+	messagePersistence  *MessagePersistenceService
+	kafkaService        *KafkaMessageService
 }
 
 // NewAIMessageProcessor 创建AI消息处理器
@@ -25,13 +27,29 @@ func NewAIMessageProcessor(aiService AIService, messageQueueService MessageQueue
 	}
 }
 
+// NewAIMessageProcessorWithDependencies 创建带有完整依赖的AI消息处理器
+func NewAIMessageProcessorWithDependencies(
+	aiService AIService,
+	messageQueueService MessageQueueService,
+	messagePersistence *MessagePersistenceService,
+	kafkaService *KafkaMessageService,
+) *AIMessageProcessor {
+	return &AIMessageProcessor{
+		aiService:           aiService,
+		messageQueueService: messageQueueService,
+		cacheService:        NewCacheService(),
+		messagePersistence:  messagePersistence,
+		kafkaService:        kafkaService,
+	}
+}
+
 // Start 启动消息处理器
 func (p *AIMessageProcessor) Start() error {
 	// 启动聊天请求处理器
 	err := p.messageQueueService.StartConsumer(
-		"ai:chat:requests", 
-		"chat-processors", 
-		"chat-worker-1", 
+		"ai:chat:requests",
+		"chat-processors",
+		"chat-worker-1",
 		p.handleChatRequest,
 	)
 	if err != nil {
@@ -40,9 +58,9 @@ func (p *AIMessageProcessor) Start() error {
 
 	// 启动集群操作处理器
 	err = p.messageQueueService.StartConsumer(
-		"ai:cluster:operations", 
-		"cluster-ops", 
-		"cluster-worker-1", 
+		"ai:cluster:operations",
+		"cluster-ops",
+		"cluster-worker-1",
 		p.handleClusterOperation,
 	)
 	if err != nil {
@@ -57,6 +75,12 @@ func (p *AIMessageProcessor) Start() error {
 func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 	logrus.Infof("Processing chat request: %s", message.ID)
 
+	// 检查消息是否已被停止
+	if p.isMessageStopped(message.ID) {
+		logrus.Infof("消息 %s 已被停止，跳过处理", message.ID)
+		return p.markMessageStopped(message.ID)
+	}
+
 	// 更新处理状态
 	status := &MessageStatus{
 		ID:     message.ID,
@@ -69,6 +93,11 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 
 	// 如果没有对话ID，创建新对话
 	if message.ConversationID == nil {
+		// 在创建对话前再次检查是否被停止
+		if p.isMessageStopped(message.ID) {
+			return p.markMessageStopped(message.ID)
+		}
+
 		conversation, createErr := p.createConversationFromContext(message)
 		if createErr != nil {
 			return fmt.Errorf("failed to create conversation: %v", createErr)
@@ -81,7 +110,7 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 	// 检查缓存中是否有最近的对话
 	cacheKey := fmt.Sprintf("conversation:%d", conversationID)
 	cachedConversation := p.cacheService.GetConversation(cacheKey)
-	
+
 	var conversation *models.AIConversation
 	if cachedConversation != nil {
 		conversation = cachedConversation
@@ -95,15 +124,63 @@ func (p *AIMessageProcessor) handleChatRequest(message *Message) error {
 		p.cacheService.SetConversation(cacheKey, conversation, 30*time.Minute)
 	}
 
+	// 保存用户消息到数据库
+	userMessage := &models.AIMessage{
+		ConversationID: conversationID,
+		Role:           "user",
+		Content:        message.Content,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	if p.messagePersistence != nil {
+		if err := p.messagePersistence.SaveMessage(userMessage); err != nil {
+			logrus.Errorf("Failed to save user message: %v", err)
+			// 继续处理，不影响主流程
+		}
+	}
+
+	// 在发送到AI前最后检查一次是否被停止
+	if p.isMessageStopped(message.ID) {
+		return p.markMessageStopped(message.ID)
+	}
+
 	// 发送消息并获取AI回复
 	aiMessage, err := p.aiService.SendMessage(conversationID, message.Content)
 	if err != nil {
 		return fmt.Errorf("failed to send message to AI: %v", err)
 	}
 
-	// 缓存最新消息
+	// 处理完成后检查是否被停止（虽然AI已经处理了，但可以标记状态）
+	if p.isMessageStopped(message.ID) {
+		logrus.Infof("消息 %s 在AI处理完成后被标记为停止", message.ID)
+		return p.markMessageStopped(message.ID)
+	}
+
+	// ===== 缓存管理优化 =====
+	// 删除所有查询参数缓存，确保下次查询从数据库获取最新数据
+	// 注意：message_retrieval_service 已禁用缓存读取，这里的删除是为了清理旧缓存
+	p.cacheService.DeleteKeysWithPattern(fmt.Sprintf("messages:%d:*", conversationID))
+
+	// 更新基础消息缓存（保留用于兼容性）
 	messagesKey := fmt.Sprintf("messages:%d", conversationID)
 	p.cacheService.AppendMessage(messagesKey, aiMessage)
+
+	// 发送到Kafka进行流处理	// 发送到Kafka进行流处理
+	if p.kafkaService != nil {
+		if err := p.kafkaService.CacheMessage(conversationID, aiMessage); err != nil {
+			logrus.Warnf("Failed to send message to Kafka: %v", err)
+		}
+
+		// 发送消息事件
+		if err := p.kafkaService.SendMessageEvent("message_processed", message.ID, message.UserID, map[string]interface{}{
+			"conversation_id": conversationID,
+			"ai_message_id":   aiMessage.ID,
+			"tokens_used":     aiMessage.TokensUsed,
+		}); err != nil {
+			logrus.Warnf("Failed to send message event to Kafka: %v", err)
+		}
+	}
 
 	// 更新成功状态
 	status.Status = "completed"
@@ -162,12 +239,12 @@ func (p *AIMessageProcessor) createConversationFromContext(message *Message) (*m
 
 	// 创建对话
 	conversation, err := p.aiService.CreateConversation(
-		message.UserID, 
-		config.ID, 
-		title, 
+		message.UserID,
+		config.ID,
+		title,
 		p.contextToString(message.Context),
 	)
-	
+
 	return conversation, err
 }
 
@@ -185,12 +262,12 @@ func (p *AIMessageProcessor) contextToString(context map[string]interface{}) str
 	if context == nil {
 		return ""
 	}
-	
+
 	data, err := json.Marshal(context)
 	if err != nil {
 		return ""
 	}
-	
+
 	return string(data)
 }
 
@@ -198,10 +275,10 @@ func (p *AIMessageProcessor) contextToString(context map[string]interface{}) str
 func (p *AIMessageProcessor) parseClusterOperation(content string, context map[string]interface{}) (*ClusterOperation, error) {
 	// 使用AI或规则引擎解析操作内容
 	operation := &ClusterOperation{
-		Type:        p.detectOperationType(content),
-		Content:     content,
-		Parameters:  context,
-		CreatedAt:   time.Now(),
+		Type:       p.detectOperationType(content),
+		Content:    content,
+		Parameters: context,
+		CreatedAt:  time.Now(),
 	}
 
 	return operation, nil
@@ -211,14 +288,14 @@ func (p *AIMessageProcessor) parseClusterOperation(content string, context map[s
 func (p *AIMessageProcessor) detectOperationType(content string) string {
 	// 简单的关键词匹配，可以扩展为更复杂的NLP分析
 	keywords := map[string]string{
-		"部署":   "deployment",
+		"部署":     "deployment",
 		"deploy": "deployment",
-		"扩容":   "scaling",
+		"扩容":     "scaling",
 		"scale":  "scaling",
-		"监控":   "monitoring",
-		"查看状态": "status",
-		"删除":   "deletion",
-		"更新":   "update",
+		"监控":     "monitoring",
+		"查看状态":   "status",
+		"删除":     "deletion",
+		"更新":     "update",
 	}
 
 	for keyword, opType := range keywords {
@@ -233,12 +310,12 @@ func (p *AIMessageProcessor) detectOperationType(content string) string {
 // contains 检查字符串是否包含子串（不区分大小写）
 func contains(s, substr string) bool {
 	// 简化版本，实际可以使用更复杂的字符串匹配
-	return len(s) >= len(substr) && 
-		   (s == substr || 
-		    (len(s) > len(substr) && 
-		     (s[:len(substr)] == substr || 
-		      s[len(s)-len(substr):] == substr ||
-		      findInString(s, substr))))
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			(len(s) > len(substr) &&
+				(s[:len(substr)] == substr ||
+					s[len(s)-len(substr):] == substr ||
+					findInString(s, substr))))
 }
 
 func findInString(s, substr string) bool {
@@ -268,30 +345,30 @@ func (p *AIMessageProcessor) executeClusterOperation(operation *ClusterOperation
 func (p *AIMessageProcessor) executeDeployment(operation *ClusterOperation) (string, error) {
 	// 这里集成Ansible或K8s客户端
 	logrus.Infof("Executing deployment operation: %s", operation.Content)
-	
+
 	// 模拟执行结果
-	result := fmt.Sprintf("部署操作已提交执行，操作ID: %s", 
+	result := fmt.Sprintf("部署操作已提交执行，操作ID: %s",
 		fmt.Sprintf("deploy_%d", time.Now().Unix()))
-	
+
 	return result, nil
 }
 
 // executeScaling 执行扩容操作
 func (p *AIMessageProcessor) executeScaling(operation *ClusterOperation) (string, error) {
 	logrus.Infof("Executing scaling operation: %s", operation.Content)
-	
-	result := fmt.Sprintf("扩容操作已提交执行，操作ID: %s", 
+
+	result := fmt.Sprintf("扩容操作已提交执行，操作ID: %s",
 		fmt.Sprintf("scale_%d", time.Now().Unix()))
-	
+
 	return result, nil
 }
 
 // executeMonitoring 执行监控操作
 func (p *AIMessageProcessor) executeMonitoring(operation *ClusterOperation) (string, error) {
 	logrus.Infof("Executing monitoring operation: %s", operation.Content)
-	
+
 	result := fmt.Sprintf("监控查询已完成，数据已更新到仪表板")
-	
+
 	return result, nil
 }
 
@@ -349,4 +426,34 @@ type ClusterOperation struct {
 	Content    string                 `json:"content"`
 	Parameters map[string]interface{} `json:"parameters"`
 	CreatedAt  time.Time              `json:"created_at"`
+}
+
+// isMessageStopped 检查消息是否被停止
+func (p *AIMessageProcessor) isMessageStopped(messageID string) bool {
+	// 检查消息队列服务中的停止标志
+	if mqsImpl, ok := p.messageQueueService.(*messageQueueServiceImpl); ok {
+		return mqsImpl.IsMessageStopped(messageID)
+	}
+
+	// 如果无法访问实现细节，返回false
+	return false
+}
+
+// markMessageStopped 标记消息为已停止状态
+func (p *AIMessageProcessor) markMessageStopped(messageID string) error {
+	status := &MessageStatus{
+		ID:          messageID,
+		Status:      "stopped",
+		Error:       "消息处理已被用户停止",
+		ProcessedAt: time.Now(),
+	}
+
+	err := p.messageQueueService.SetMessageStatus(messageID, status)
+	if err != nil {
+		logrus.Errorf("更新消息停止状态失败: %v", err)
+		return fmt.Errorf("更新消息停止状态失败: %v", err)
+	}
+
+	logrus.Infof("消息 %s 已标记为停止状态", messageID)
+	return nil
 }

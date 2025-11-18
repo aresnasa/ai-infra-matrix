@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
-	
+
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
@@ -19,7 +19,7 @@ func Connect(cfg *config.Config) error {
 	logrus.WithFields(logrus.Fields{
 		"host": cfg.Redis.Host,
 		"port": cfg.Redis.Port,
-		"db": cfg.Redis.DB,
+		"db":   cfg.Redis.DB,
 	}).Info("Connecting to Redis")
 
 	RDB = redis.NewClient(&redis.Options{
@@ -32,7 +32,7 @@ func Connect(cfg *config.Config) error {
 	start := time.Now()
 	pong, err := RDB.Ping(ctx).Result()
 	latency := time.Since(start)
-	
+
 	if err != nil {
 		logrus.WithError(err).Error("Failed to connect to Redis")
 		return fmt.Errorf("failed to connect to Redis: %w", err)
@@ -40,15 +40,15 @@ func Connect(cfg *config.Config) error {
 
 	logrus.WithFields(logrus.Fields{
 		"response": pong,
-		"latency": latency,
+		"latency":  latency,
 	}).Info("Redis connected successfully")
-	
+
 	return nil
 }
 
 func Set(key string, value interface{}, expiration time.Duration) error {
 	logrus.WithFields(logrus.Fields{
-		"key": key,
+		"key":        key,
 		"expiration": expiration,
 	}).Debug("Setting cache key")
 
