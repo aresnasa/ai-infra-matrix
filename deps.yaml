@@ -1,0 +1,61 @@
+# AI Infrastructure Matrix - 依赖镜像版本管理
+# 此文件用于统一管理所有第三方依赖镜像的版本
+# 格式: image_name: version
+# 更新此文件后，运行 build.sh sync-deps 来同步到 .env 文件
+
+# 数据库镜像
+postgres: "15-alpine"
+mysql: "8.0"
+redis: "7-alpine"
+oceanbase: "4.3.5-lts"
+
+# LDAP 镜像
+openldap: "stable"
+phpldapadmin: "stable"
+
+# 存储镜像
+minio: "latest"
+
+# 消息队列
+kafka: "7.5.0"
+kafka-ui: "latest"
+
+# 监控镜像
+prometheus: "latest"
+grafana: "latest"
+alertmanager: "latest"
+
+# 代理工具
+tcp-proxy: "latest"
+redisinsight: "latest"
+haproxy: "2.9-alpine"
+
+# Web 服务器
+nginx: "stable-alpine-perl"
+nginx-alpine: "1.27-alpine"
+
+# 编程语言基础镜像
+golang: "1.25"
+golang-alpine: "1.25-alpine"
+node: "22"
+node-alpine: "22-alpine"
+python: "3.14"
+python-alpine: "3.14-alpine"
+
+# 应用镜像
+gitea: "1.25.1"
+jupyter-base-notebook: "latest"
+
+# 操作系统镜像
+ubuntu: "22.04"
+rockylinux: "9"
+alpine: "3.22"
+
+# 版本说明:
+# - latest: 使用最新版本（生产环境建议使用固定版本）
+# - alpine: Alpine Linux 轻量级镜像
+# - stable: 稳定版本
+# - 数字版本: 具体版本号
+
+# 更新记录:
+# 2025-11-18: 初始版本，统一管理所有依赖镜像版本
