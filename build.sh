@@ -305,7 +305,16 @@ get_version_build_args() {
     [[ -n "${NPM_VERSION:-}" ]] && build_args+=" --build-arg NPM_VERSION=${NPM_VERSION}"
     [[ -n "${GO_PROXY:-}" ]] && build_args+=" --build-arg GO_PROXY=${GO_PROXY}"
     [[ -n "${PYPI_INDEX_URL:-}" ]] && build_args+=" --build-arg PYPI_INDEX_URL=${PYPI_INDEX_URL}"
+    # 如果 PIP_INDEX_URL 未设置但 PYPI_INDEX_URL 已设置，则使用 PYPI_INDEX_URL
+    if [[ -z "${PIP_INDEX_URL:-}" ]] && [[ -n "${PYPI_INDEX_URL:-}" ]]; then
+        build_args+=" --build-arg PIP_INDEX_URL=${PYPI_INDEX_URL}"
+    elif [[ -n "${PIP_INDEX_URL:-}" ]]; then
+        build_args+=" --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}"
+    fi
     [[ -n "${NPM_REGISTRY:-}" ]] && build_args+=" --build-arg NPM_REGISTRY=${NPM_REGISTRY}"
+    [[ -n "${APT_MIRROR:-}" ]] && build_args+=" --build-arg APT_MIRROR=${APT_MIRROR}"
+    [[ -n "${YUM_MIRROR:-}" ]] && build_args+=" --build-arg YUM_MIRROR=${YUM_MIRROR}"
+    [[ -n "${ALPINE_MIRROR:-}" ]] && build_args+=" --build-arg ALPINE_MIRROR=${ALPINE_MIRROR}"
     
     # 服务特定的版本参数
     case "$service" in
@@ -2362,6 +2371,54 @@ update_env_variable() {
     fi
 }
 
+# 确保镜像相关配置在 .env 文件顶部
+ensure_env_top_variables() {
+    local env_file=".env"
+    local temp_file=".env.tmp"
+    
+    # 默认值
+    local default_registry="harbor.example.com"
+    local default_file_server="http://files.example.com"
+    local default_use_mirror="false"
+    
+    # 如果检测到是内网环境，默认开启镜像使用
+    if [[ "$(detect_network_environment)" == "internal" ]]; then
+        default_use_mirror="true"
+    fi
+    
+    # 读取现有值（如果存在）
+    if [[ -f "$env_file" ]]; then
+        local exist_registry=$(grep "^INTERNAL_REGISTRY=" "$env_file" | cut -d'=' -f2)
+        local exist_file_server=$(grep "^INTERNAL_FILE_SERVER=" "$env_file" | cut -d'=' -f2)
+        local exist_use_mirror=$(grep "^USE_INTERNAL_MIRROR=" "$env_file" | cut -d'=' -f2)
+        
+        [[ -n "$exist_registry" ]] && default_registry="$exist_registry"
+        [[ -n "$exist_file_server" ]] && default_file_server="$exist_file_server"
+        [[ -n "$exist_use_mirror" ]] && default_use_mirror="$exist_use_mirror"
+    fi
+    
+    # 创建临时文件并写入头部配置
+    echo "# ========================================" > "$temp_file"
+    echo "# 镜像和内部源配置 (Image & Mirror Config)" >> "$temp_file"
+    echo "# ========================================" >> "$temp_file"
+    echo "INTERNAL_REGISTRY=$default_registry" >> "$temp_file"
+    echo "INTERNAL_FILE_SERVER=$default_file_server" >> "$temp_file"
+    echo "USE_INTERNAL_MIRROR=$default_use_mirror" >> "$temp_file"
+    echo "" >> "$temp_file"
+    
+    # 追加原有内容（排除我们刚刚写入的变量）
+    if [[ -f "$env_file" ]]; then
+        grep -v "^INTERNAL_REGISTRY=" "$env_file" | \
+        grep -v "^INTERNAL_FILE_SERVER=" | \
+        grep -v "^USE_INTERNAL_MIRROR=" | \
+        grep -v "^# 镜像和内部源配置" | \
+        grep -v "^# ========================================" >> "$temp_file"
+    fi
+    
+    mv "$temp_file" "$env_file"
+    print_info "✓ 已调整 .env 配置顺序（镜像配置置顶）"
+}
+
 # 自动生成或更新 .env 文件
 # 基于网络环境检测和系统配置
 # 支持域名和 K8s 集群部署
@@ -2369,6 +2426,9 @@ generate_or_update_env_file() {
     print_info "=========================================="
     print_info "自动检测和配置环境变量"
     print_info "=========================================="
+    
+    # 0. 确保镜像配置在顶部
+    ensure_env_top_variables
     
     # 1. 检测运行环境
     local is_k8s=$(detect_k8s_environment)
@@ -6175,6 +6235,15 @@ build_service() {
             print_warning "  ⚠ AppHub 版本检查失败，继续使用当前版本"
         fi
         echo
+
+        # 下载第三方依赖
+        print_info "  → 下载第三方依赖..."
+        download_third_party_dependencies
+        
+        # 复制 third_party 到构建上下文
+        print_info "  → 准备构建上下文 (third_party)..."
+        rm -rf "$SCRIPT_DIR/$service_path/third_party"
+        cp -r "$SCRIPT_DIR/third_party" "$SCRIPT_DIR/$service_path/third_party"
         
         # ========================================
         # AppHub 包缓存优化
@@ -6429,6 +6498,14 @@ build_service() {
             print_info "  → 恢复 SingleUser Dockerfile 到原始状态..."
             restore_singleuser_dockerfile "$service_path"
         fi
+
+        # ========================================
+        # AppHub 构建后清理
+        # ========================================
+        if [[ "$service" == "apphub" ]]; then
+            print_info "  → 清理 AppHub 构建上下文 (third_party)..."
+            rm -rf "$SCRIPT_DIR/$service_path/third_party"
+        fi
         
         return 0
     else
@@ -6443,6 +6520,14 @@ build_service() {
         if [[ "$service" == "singleuser" ]]; then
             print_info "  → 构建失败，恢复 SingleUser Dockerfile 到原始状态..."
             restore_singleuser_dockerfile "$service_path"
+        fi
+
+        # ========================================
+        # AppHub 构建失败时也需要清理
+        # ========================================
+        if [[ "$service" == "apphub" ]]; then
+            print_info "  → 构建失败，清理 AppHub 构建上下文 (third_party)..."
+            rm -rf "$SCRIPT_DIR/$service_path/third_party"
         fi
         
         return 1
@@ -6683,6 +6768,182 @@ wait_for_apphub_ready() {
 # 构建所有服务（两阶段构建：基础设施 → 依赖服务）
 # ==========================================
 
+# 下载第三方依赖（动态检查）
+download_third_party_dependencies() {
+    print_info "=========================================="
+    print_info "检查并下载第三方依赖"
+    print_info "=========================================="
+
+    local third_party_dir="$SCRIPT_DIR/third_party"
+    local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+    
+    if [[ ! -f "$apphub_dockerfile" ]]; then
+        print_warning "src/apphub/Dockerfile 不存在，跳过第三方依赖下载"
+        return 0
+    fi
+
+    mkdir -p "$third_party_dir"
+
+    # 读取配置
+    local use_mirror="${USE_INTERNAL_MIRROR:-false}"
+    local file_server="${INTERNAL_FILE_SERVER:-http://files.example.com}"
+    
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        local env_use_mirror=$(grep "^USE_INTERNAL_MIRROR=" "$SCRIPT_DIR/.env" | cut -d'=' -f2)
+        local env_file_server=$(grep "^INTERNAL_FILE_SERVER=" "$SCRIPT_DIR/.env" | cut -d'=' -f2)
+        [[ -n "$env_use_mirror" ]] && use_mirror="$env_use_mirror"
+        [[ -n "$env_file_server" ]] && file_server="$env_file_server"
+    fi
+
+    if [[ "$use_mirror" == "true" ]]; then
+        print_info "🔄 使用内部镜像源: $file_server"
+    fi
+
+    # 提取版本号辅助函数
+    get_dockerfile_var() {
+        local name=$1
+        # 尝试提取 ARG
+        local val=$(grep "ARG $name=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        # 如果为空，尝试提取 ENV 或 RUN 中的定义
+        if [[ -z "$val" ]]; then
+             val=$(grep "$name=" "$apphub_dockerfile" | head -1 | sed -E "s/.*$name=\"?([^ \";\\\\]+)\"?.*/\1/")
+        fi
+        echo "$val"
+    }
+
+    local saltstack_version=$(get_dockerfile_var SALTSTACK_VERSION)
+    local categraf_version=$(get_dockerfile_var CATEGRAF_VERSION)
+    local singularity_version=$(get_dockerfile_var SINGULARITY_VERSION)
+    local munge_version=$(get_dockerfile_var MUNGE_VERSION)
+    [[ -z "$munge_version" ]] && munge_version="0.5.16"
+
+    print_info "检测到的版本:"
+    print_info "  SaltStack: $saltstack_version"
+    print_info "  Categraf: $categraf_version"
+    print_info "  Singularity: $singularity_version"
+    print_info "  Munge: $munge_version"
+
+    # 下载工具函数
+    download_file() {
+        local url="$1"
+        local dest="$2"
+        local desc="$3"
+        
+        if [[ -f "$dest" ]]; then
+            print_info "  ✓ $desc 已存在"
+            return 0
+        fi
+        
+        print_info "  ⬇ 下载 $desc..."
+        if command -v wget >/dev/null 2>&1; then
+            wget -nv "$url" -O "$dest"
+        elif command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$url" -o "$dest"
+        else
+            print_error "未找到 wget 或 curl，无法下载"
+            return 1
+        fi
+        
+        if [[ $? -eq 0 ]]; then
+            print_success "  ✓ 下载成功"
+        else
+            print_error "  ✗ 下载失败: $url"
+            return 1
+        fi
+    }
+
+    # 1. Categraf (Tarball) - 如果 src/apphub 存在
+    if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
+        print_info "处理 Categraf (依赖: apphub)..."
+        local categraf_dir="$third_party_dir/categraf"
+        mkdir -p "$categraf_dir"
+        
+        [[ ! "$categraf_version" =~ ^v ]] && categraf_version="v${categraf_version}"
+        
+        for arch in amd64 arm64; do
+            local tar_file="categraf-${categraf_version}-linux-${arch}.tar.gz"
+            local url=""
+            if [[ "$use_mirror" == "true" ]]; then
+                url="${file_server}/categraf/${categraf_version}/${tar_file}"
+            else
+                url="https://github.com/flashcatcloud/categraf/releases/download/${categraf_version}/${tar_file}"
+            fi
+            download_file "$url" "$categraf_dir/$tar_file" "Categraf ($arch)"
+        done
+    fi
+
+    # 2. Munge (Tarball) - 如果 src/slurm-master 存在
+    if [[ -d "$SCRIPT_DIR/src/slurm-master" ]]; then
+        print_info "处理 Munge (依赖: slurm-master)..."
+        local munge_dir="$third_party_dir/munge"
+        mkdir -p "$munge_dir"
+        local munge_file="munge-${munge_version}.tar.xz"
+        local url=""
+        if [[ "$use_mirror" == "true" ]]; then
+            url="${file_server}/munge/${munge_version}/${munge_file}"
+        else
+            url="https://github.com/dun/munge/releases/download/munge-${munge_version}/${munge_file}"
+        fi
+        download_file "$url" "$munge_dir/$munge_file" "Munge Source"
+    fi
+
+    # 3. Singularity (DEB) - 如果 src/apphub 存在
+    if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
+        print_info "处理 Singularity (依赖: apphub)..."
+        local singularity_dir="$third_party_dir/singularity"
+        mkdir -p "$singularity_dir"
+        local singularity_ver_num="${singularity_version#v}"
+        
+        for arch in amd64 arm64; do
+            local deb_file="singularity-ce_${singularity_ver_num}-1~ubuntu22.04_${arch}.deb"
+            local url=""
+            if [[ "$use_mirror" == "true" ]]; then
+                url="${file_server}/singularity/${singularity_version}/${deb_file}"
+            else
+                url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
+            fi
+            download_file "$url" "$singularity_dir/$deb_file" "Singularity ($arch)"
+        done
+    fi
+
+    # 4. SaltStack (DEB & RPM) - 如果 src/saltstack 存在
+    if [[ -d "$SCRIPT_DIR/src/saltstack" ]]; then
+        print_info "处理 SaltStack (依赖: saltstack)..."
+        local salt_dir="$third_party_dir/saltstack"
+        mkdir -p "$salt_dir"
+        
+        local salt_ver_num="${saltstack_version#v}"
+        local release_tag="${saltstack_version}"
+        [[ ! "$release_tag" =~ ^v ]] && release_tag="v${release_tag}"
+        local base_url=""
+        
+        if [[ "$use_mirror" == "true" ]]; then
+            base_url="${file_server}/saltstack/${release_tag}"
+        else
+            base_url="https://github.com/saltstack/salt/releases/download/${release_tag}"
+        fi
+        
+        # DEB
+        for arch in amd64 arm64; do
+            for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do
+                local pkg_file="${pkg}_${salt_ver_num}_${arch}.deb"
+                download_file "${base_url}/${pkg_file}" "$salt_dir/$pkg_file" "SaltStack DEB $pkg ($arch)"
+            done
+        done
+        
+        # RPM
+        for arch in x86_64 aarch64; do
+            for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do
+                local pkg_file="${pkg}-${salt_ver_num}-0.${arch}.rpm"
+                download_file "${base_url}/${pkg_file}" "$salt_dir/$pkg_file" "SaltStack RPM $pkg ($arch)"
+            done
+        done
+    fi
+    
+    print_success "第三方依赖检查与下载完成"
+    echo
+}
+
 # 构建所有服务镜像
 build_all_services() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
@@ -6748,6 +7009,11 @@ build_all_services() {
     fi
     echo
     
+    # ========================================
+    # 步骤 0.5: 准备第三方依赖
+    # ========================================
+    download_third_party_dependencies
+
     # ========================================
     # 步骤 1: 智能镜像管理（拉取 + Tag）
     # ========================================

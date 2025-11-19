@@ -6,6 +6,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 # Build arguments for versions
 ARG SLURM_VERSION=25.05.4
 ARG VERSION=v0.3.8
+ARG APT_MIRROR
 
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
@@ -25,7 +26,24 @@ RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     echo "🔍 检测到系统架构: ${ARCH}"; \
     # 根据架构配置镜像源（多镜像源智能回退）
-    if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "⚙️  使用自定义镜像源: ${APT_MIRROR}"; \
+        if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
+            { \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy-security main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy-updates main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy-backports main restricted universe multiverse"; \
+            } > /etc/apt/sources.list; \
+        else \
+            { \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy-security main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy-updates main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy-backports main restricted universe multiverse"; \
+            } > /etc/apt/sources.list; \
+        fi; \
+    elif [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "⚙️  配置 ARM64 镜像源（带智能回退）..."; \
         # 尝试阿里云源（静默失败检测）
         { \

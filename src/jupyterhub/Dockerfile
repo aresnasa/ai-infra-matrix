@@ -6,6 +6,7 @@ FROM python:${PYTHON_ALPINE_VERSION}
 ARG PIP_VERSION=24.2
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG ALPINE_MIRROR
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
@@ -19,31 +20,40 @@ RUN set -eux; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 尝试阿里云镜像源
-    { \
-        echo "尝试阿里云镜像源..."; \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+    # 尝试自定义镜像源
+    if [ -n "${ALPINE_MIRROR}" ]; then \
+        echo "尝试自定义镜像源: ${ALPINE_MIRROR}..."; \
+        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
         apk update --no-cache && \
-        echo "成功使用阿里云镜像源"; \
-    } || { \
-        echo "阿里云镜像源失败，尝试清华源..."; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
-        echo "成功使用清华源"; \
-    } || { \
-        echo "清华源失败，尝试中科大源..."; \
-        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
-        echo "成功使用中科大源"; \
-    } || { \
-        echo "所有国内源都失败，使用官方源..."; \
-        cp /etc/apk/repositories.bak /etc/apk/repositories && \
-        apk update && \
-        echo "使用官方源"; \
-    }; \
+        echo "成功使用自定义镜像源"; \
+    else \
+        # 尝试阿里云镜像源
+        { \
+            echo "尝试阿里云镜像源..."; \
+            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+            apk update --no-cache && \
+            echo "成功使用阿里云镜像源"; \
+        } || { \
+            echo "阿里云镜像源失败，尝试清华源..."; \
+            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+            apk update --no-cache && \
+            echo "成功使用清华源"; \
+        } || { \
+            echo "清华源失败，尝试中科大源..."; \
+            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
+            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
+            apk update --no-cache && \
+            echo "成功使用中科大源"; \
+        } || { \
+            echo "所有国内源都失败，使用官方源..."; \
+            cp /etc/apk/repositories.bak /etc/apk/repositories && \
+            apk update && \
+            echo "使用官方源"; \
+        }; \
+    fi; \
     # 安装必需的运行时依赖
     apk add --no-cache \
         ca-certificates \
@@ -80,9 +90,14 @@ RUN set -eux; \
     # 步骤1: 配置 Alpine 镜像源（多重降级）
     cp /etc/apk/repositories /etc/apk/repositories.bak; \
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d. -f1,2); \
-    # 尝试阿里云镜像
-    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-    echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+    if [ -n "${ALPINE_MIRROR}" ]; then \
+        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+    else \
+        # 尝试阿里云镜像
+        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+    fi; \
     if ! apk update 2>/dev/null; then \
         echo "❌ 阿里云镜像失败，尝试清华镜像..."; \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \

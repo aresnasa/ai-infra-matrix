@@ -7,6 +7,7 @@ FROM node:${NODE_ALPINE_VERSION} AS build
 
 # Build arguments for versions
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG ALPINE_MIRROR
 
 # 配置Alpine镜像（多镜像源智能回退配置 - 优化版）
 RUN set -eux; \
@@ -15,19 +16,24 @@ RUN set -eux; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 尝试阿里云镜像源（静默失败检测）
-    (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
-     apk update 2>/dev/null) || \
-    # 清华源回退
-    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
-     apk update 2>/dev/null) || \
-    # 中科大源回退
-    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
-     apk update 2>/dev/null) || \
-    # 官方源回退（最终方案）
-    (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update)
+    if [ -n "${ALPINE_MIRROR}" ]; then \
+        sed -i "s#https\?://[^/]\+/alpine#https://${ALPINE_MIRROR}/alpine#g" /etc/apk/repositories && \
+        apk update 2>/dev/null; \
+    else \
+        # 尝试阿里云镜像源（静默失败检测）
+        (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
+         apk update 2>/dev/null) || \
+        # 清华源回退
+        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
+         apk update 2>/dev/null) || \
+        # 中科大源回退
+        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
+         apk update 2>/dev/null) || \
+        # 官方源回退（最终方案）
+        (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update); \
+    fi
 
 # 设置工作目录
 WORKDIR /app
@@ -62,26 +68,32 @@ FROM nginx:${NGINX_VERSION}
 
 # Version metadata (需要在 FROM 之后重新声明ARG，因为跨越了构建阶段)
 ARG VERSION="dev"
+ARG ALPINE_MIRROR
 ENV APP_VERSION=${VERSION}
 
 # 配置Alpine镜像（多镜像源智能回退 - 与build阶段一致）
 RUN set -eux; \
     cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 尝试阿里云镜像源（静默失败检测）
-    (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
-     apk update 2>/dev/null && apk add --no-cache tzdata) || \
-    # 清华源回退
-    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
-     apk update 2>/dev/null && apk add --no-cache tzdata) || \
-    # 中科大源回退
-    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-     sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
-     apk update 2>/dev/null && apk add --no-cache tzdata) || \
-    # 官方源回退（最终方案）
-    (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-     apk update && apk add --no-cache tzdata) || \
-    echo "tzdata install skipped"
+    if [ -n "${ALPINE_MIRROR}" ]; then \
+        sed -i "s#https\?://[^/]\+/alpine#https://${ALPINE_MIRROR}/alpine#g" /etc/apk/repositories && \
+        apk update 2>/dev/null && apk add --no-cache tzdata; \
+    else \
+        # 尝试阿里云镜像源（静默失败检测）
+        (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
+         apk update 2>/dev/null && apk add --no-cache tzdata) || \
+        # 清华源回退
+        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
+         apk update 2>/dev/null && apk add --no-cache tzdata) || \
+        # 中科大源回退
+        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
+         apk update 2>/dev/null && apk add --no-cache tzdata) || \
+        # 官方源回退（最终方案）
+        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
+         apk update && apk add --no-cache tzdata) || \
+        echo "tzdata install skipped"; \
+    fi
 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone

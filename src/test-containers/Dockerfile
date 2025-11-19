@@ -2,13 +2,19 @@
 FROM ubuntu:22.04
 
 ARG VERSION="dev"
+ARG APT_MIRROR
+ARG PIP_INDEX_URL
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 ENV TZ=Asia/Shanghai
 
 # 使用阿里云源加速下载
-RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g; s|security.ubuntu.com|${APT_MIRROR}|g; s|ports.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
+    else \
+        sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    fi
 
 # 安装SSH服务器和基本工具
 RUN apt-get update && apt-get install -y \
@@ -56,8 +62,13 @@ RUN usermod -aG sudo testuser
 RUN echo 'testuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # 配置pip使用阿里云源
-RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip3 config set global.trusted-host mirrors.aliyun.com
+RUN if [ -n "${PIP_INDEX_URL}" ]; then \
+        pip3 config set global.index-url ${PIP_INDEX_URL} && \
+        pip3 config set global.trusted-host $(echo ${PIP_INDEX_URL} | awk -F/ '{print $3}'); \
+    else \
+        pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+        pip3 config set global.trusted-host mirrors.aliyun.com; \
+    fi
 
 # 创建工作目录
 RUN mkdir -p /opt/saltstack /opt/slurm

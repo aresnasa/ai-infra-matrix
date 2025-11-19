@@ -14,8 +14,15 @@ BUILD_DIR=${BUILD_DIR:-"/build"}
 OUTPUT_DIR=${OUTPUT_DIR:-"/out"}
 SCRIPT_DIR=${SCRIPT_DIR:-"/scripts/categraf"}
 
-echo "📥 Cloning Categraf ${CATEGRAF_VERSION}..."
-git clone --depth 1 --branch "${CATEGRAF_VERSION}" "${CATEGRAF_REPO}" ${BUILD_DIR}/categraf
+if [ -d "/third_party/categraf" ] && [ "$(ls -A /third_party/categraf)" ]; then
+    echo "📦 Using local Categraf source from /third_party/categraf..."
+    # Copy recursively, including hidden files
+    cp -R /third_party/categraf ${BUILD_DIR}/
+else
+    echo "📥 Cloning Categraf ${CATEGRAF_VERSION}..."
+    git clone --depth 1 --branch "${CATEGRAF_VERSION}" "${CATEGRAF_REPO}" ${BUILD_DIR}/categraf
+fi
+
 cd ${BUILD_DIR}/categraf
 
 # 获取版本信息

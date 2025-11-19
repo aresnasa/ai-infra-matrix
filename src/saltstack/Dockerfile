@@ -4,7 +4,8 @@ FROM ubuntu:${UBUNTU_VERSION}
 # Build arguments for versions
 ARG SALTSTACK_VERSION=3007.8
 ARG PIP_VERSION=24.2
-ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_INDEX_URL
+ARG APT_MIRROR
 
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
@@ -13,7 +14,14 @@ ENV container=docker
 
 # 配置APT镜像源（阿里云）
 RUN set -eux; \
-    sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+    else \
+        sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    fi; \
     apt-get update
 
 # 安装系统依赖、Python环境和编译工具
@@ -61,8 +69,8 @@ ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
 
 # 配置PyPI镜像源与Python警告控制（屏蔽冗余的上游弃用告警）
-ENV PIP_INDEX_URL="${PYPI_INDEX_URL}" \
-    PIP_EXTRA_INDEX_URL="${PYPI_INDEX_URL}" \
+ENV PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" \
+    PIP_EXTRA_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" \
     PIP_TRUSTED_HOST="mirrors.aliyun.com" \
     PIP_TIMEOUT=60 \
     PYTHONWARNINGS="ignore::DeprecationWarning"
