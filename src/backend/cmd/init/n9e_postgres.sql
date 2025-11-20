@@ -27,7 +27,7 @@ COMMENT ON COLUMN users.roles IS 'Admin | Standard | Guest, split by space';
 COMMENT ON COLUMN users.contacts IS 'json e.g. {wecom:xx, dingtalk_robot_token:yy}';
 COMMENT ON COLUMN users.belong IS 'belong';
 
-insert into users(id, username, nickname, password, roles, create_at, create_by, update_at, update_by) values(1, 'root', '超管', 'root.2020', 'Admin', date_part('epoch',current_timestamp)::int, 'system', date_part('epoch',current_timestamp)::int, 'system');
+insert into users(id, username, nickname, password, roles, create_at, create_by, update_at, update_by) values(1, 'root', '超管', 'root.2020', 'Admin', date_part('epoch',current_timestamp)::int, 'system', date_part('epoch',current_timestamp)::int, 'system') ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE user_group (
     id bigserial,
@@ -42,7 +42,7 @@ CREATE TABLE user_group (
 CREATE INDEX user_group_create_by_idx ON user_group (create_by);
 CREATE INDEX user_group_update_at_idx ON user_group (update_at);
 
-insert into user_group(id, name, create_at, create_by, update_at, update_by) values(1, 'demo-root-group', date_part('epoch',current_timestamp)::int, 'root', date_part('epoch',current_timestamp)::int, 'root');
+insert into user_group(id, name, create_at, create_by, update_at, update_by) values(1, 'demo-root-group', date_part('epoch',current_timestamp)::int, 'root', date_part('epoch',current_timestamp)::int, 'root') ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE user_group_member (
     id bigserial,
@@ -53,7 +53,7 @@ CREATE TABLE user_group_member (
 CREATE INDEX user_group_member_group_id_idx ON user_group_member (group_id);
 CREATE INDEX user_group_member_user_id_idx ON user_group_member (user_id);
 
-insert into user_group_member(group_id, user_id) values(1, 1);
+insert into user_group_member(group_id, user_id) select 1, 1 where not exists (select 1 from user_group_member where group_id=1 and user_id=1);
 
 CREATE TABLE configs (
     id bigserial,
@@ -78,9 +78,9 @@ CREATE TABLE role (
     UNIQUE (name)
 ) ;
 
-insert into role(name, note) values('Admin', 'Administrator role');
-insert into role(name, note) values('Standard', 'Ordinary user role');
-insert into role(name, note) values('Guest', 'Readonly user role');
+insert into role(name, note) values('Admin', 'Administrator role') ON CONFLICT (name) DO NOTHING;
+insert into role(name, note) values('Standard', 'Ordinary user role') ON CONFLICT (name) DO NOTHING;
+insert into role(name, note) values('Guest', 'Readonly user role') ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE role_operation(
     id bigserial,
@@ -176,7 +176,7 @@ CREATE TABLE busi_group (
 ) ;
 COMMENT ON COLUMN busi_group.label_value IS 'if label_enable: label_value can not be blank';
 
-insert into busi_group(id, name, create_at, create_by, update_at, update_by) values(1, 'Default Busi Group', date_part('epoch',current_timestamp)::int, 'root', date_part('epoch',current_timestamp)::int, 'root');
+insert into busi_group(id, name, create_at, create_by, update_at, update_by) values(1, 'Default Busi Group', date_part('epoch',current_timestamp)::int, 'root', date_part('epoch',current_timestamp)::int, 'root') ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE busi_group_member (
     id bigserial,
@@ -969,6 +969,10 @@ CREATE TABLE notify_rule (
     update_by varchar(64) NOT NULL DEFAULT ''
 );
 
+ALTER TABLE notify_rule ALTER COLUMN enable DROP DEFAULT;
+ALTER TABLE notify_rule ALTER COLUMN enable TYPE boolean USING (enable::int::boolean);
+ALTER TABLE notify_rule ALTER COLUMN enable SET DEFAULT false;
+
 CREATE TABLE notify_channel (
     id bigserial PRIMARY KEY,
     name varchar(255) NOT NULL,
@@ -984,6 +988,10 @@ CREATE TABLE notify_channel (
     update_at bigint NOT NULL DEFAULT 0,
     update_by varchar(64) NOT NULL DEFAULT ''
 );
+
+ALTER TABLE notify_channel ALTER COLUMN enable DROP DEFAULT;
+ALTER TABLE notify_channel ALTER COLUMN enable TYPE boolean USING (enable::int::boolean);
+ALTER TABLE notify_channel ALTER COLUMN enable SET DEFAULT false;
 
 CREATE TABLE message_template (
     id bigserial PRIMARY KEY,
