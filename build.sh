@@ -6914,13 +6914,14 @@ download_third_party_dependencies() {
         download_file "$url" "$munge_dir/$munge_file" "Munge Source"
     fi
 
-    # 3. Singularity (DEB) - 如果 src/apphub 存在
+    # 3. Singularity (DEB & RPM) - 如果 src/apphub 存在
     if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
         print_info "处理 Singularity (依赖: apphub)..."
         local singularity_dir="$third_party_dir/singularity"
         mkdir -p "$singularity_dir"
         local singularity_ver_num="${singularity_version#v}"
         
+        # DEB (Ubuntu 22.04)
         for arch in amd64 arm64; do
             local deb_file="singularity-ce_${singularity_ver_num}-1~ubuntu22.04_${arch}.deb"
             local url=""
@@ -6929,7 +6930,19 @@ download_third_party_dependencies() {
             else
                 url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
             fi
-            download_file "$url" "$singularity_dir/$deb_file" "Singularity ($arch)"
+            download_file "$url" "$singularity_dir/$deb_file" "Singularity DEB ($arch)"
+        done
+
+        # RPM (Rocky Linux 9)
+        for arch in x86_64 aarch64; do
+            local rpm_file="singularity-ce-${singularity_ver_num}-1.el9.${arch}.rpm"
+            local url=""
+            if [[ "$use_mirror" == "true" ]]; then
+                url="${file_server}/singularity/${singularity_version}/${rpm_file}"
+            else
+                url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${rpm_file}"
+            fi
+            download_file "$url" "$singularity_dir/$rpm_file" "Singularity RPM ($arch)"
         done
     fi
 

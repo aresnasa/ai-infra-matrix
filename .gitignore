@@ -1,6 +1,7 @@
 third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
+private-docs/
 ssh-key/
 sql/
 log/
