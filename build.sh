@@ -1481,7 +1481,7 @@ calculate_hash() {
             ! -path "*/vendor/*" \
             ! -path "*/__pycache__/*" \
             ! -path "*/.git/*" \
-            -exec shasum -a 256 {} \; 2>/dev/null | sort | shasum -a 256 | awk '{print $1}'
+            -print0 | xargs -0 shasum -a 256 2>/dev/null | sort | shasum -a 256 | awk '{print $1}'
     else
         # 文件：直接计算哈希
         shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
@@ -3880,8 +3880,8 @@ sync_all_configs() {
     # 1.2 同步组件版本（从.env读取并更新到Dockerfile）
     sync_component_versions_from_env
     
-    # 1.3 更新 Nightingale DSN 配置
-    update_nightingale_dsn
+    # 1.3 更新 Nightingale 配置
+    render_nightingale_config
     
     # 2. 验证 docker-compose.yml 和 docker-compose.yml.example 是否同步
     local compose_file="$SCRIPT_DIR/docker-compose.yml"
@@ -7467,8 +7467,8 @@ build_all_services() {
 # 环境变量同步函数
 # ==========================================
 
-# 更新 Nightingale 配置文件中的 DSN
-update_nightingale_dsn() {
+# 渲染 Nightingale 配置文件
+render_nightingale_config() {
     local config_file="$SCRIPT_DIR/src/nightingale/etc/config.toml"
     
     if [[ ! -f "$config_file" ]]; then
@@ -7476,18 +7476,19 @@ update_nightingale_dsn() {
         return 1
     fi
     
-    print_info "更新 Nightingale DSN 配置..."
+    print_info "渲染 Nightingale 配置..."
     
     # 确保环境变量已加载
     load_env_file
     
-    # 获取数据库配置，如果未设置则使用默认值
-    local db_host="${POSTGRES_HOST:-postgres}"
-    local db_port="${POSTGRES_PORT:-5432}"
-    local db_user="${POSTGRES_USER:-postgres}"
-    local db_name="${POSTGRES_DB:-nightingale}"
-    local db_pass="${POSTGRES_PASSWORD:-your-postgres-password}"
-    local ssl_mode="${POSTGRES_SSLMODE:-disable}"
+    # 获取数据库配置
+    # 优先使用 NIGHTINGALE_DB_* 变量，其次使用 POSTGRES_* 变量
+    local db_host="${NIGHTINGALE_DB_HOST:-${POSTGRES_HOST:-postgres}}"
+    local db_port="${NIGHTINGALE_DB_PORT:-${POSTGRES_PORT:-5432}}"
+    local db_user="${NIGHTINGALE_DB_USER:-${POSTGRES_USER:-postgres}}"
+    local db_pass="${NIGHTINGALE_DB_PASSWORD:-${POSTGRES_PASSWORD:-your-postgres-password}}"
+    local db_name="${NIGHTINGALE_DB_NAME:-nightingale}"
+    local ssl_mode="${NIGHTINGALE_DB_SSLMODE:-${POSTGRES_SSLMODE:-disable}}"
     
     # 构建新的 DSN 字符串
     local new_dsn="DSN=\"host=${db_host} port=${db_port} user=${db_user} dbname=${db_name} password=${db_pass} sslmode=${ssl_mode}\""
@@ -7496,9 +7497,26 @@ update_nightingale_dsn() {
     # 匹配 DSN="host=..." 格式的行
     if grep -q "^DSN=" "$config_file"; then
         sed_inplace "s|^DSN=.*|$new_dsn|g" "$config_file"
-        print_success "✓ Nightingale DSN 已更新"
+        print_success "✓ Nightingale DSN 已更新: host=${db_host} dbname=${db_name}"
     else
         print_warning "未在 $config_file 中找到 DSN 配置行"
+    fi
+    
+    # 更新 Redis 配置
+    local redis_addr="${REDIS_HOST:-ai-infra-redis}:${REDIS_PORT:-6379}"
+    local redis_pass="${REDIS_PASSWORD:-}"
+    
+    # 更新 Redis Address
+    if grep -q "^Address =" "$config_file"; then
+        sed_inplace "s|^Address =.*|Address = \"${redis_addr}\"|g" "$config_file"
+        print_success "✓ Nightingale Redis Address 已更新: ${redis_addr}"
+    fi
+    
+    # 更新 Redis Password
+    if grep -q "^Password =" "$config_file"; then
+        # 注意：如果密码包含特殊字符，sed 可能会失败，这里简单处理
+        sed_inplace "s|^Password =.*|Password = \"${redis_pass}\"|g" "$config_file"
+        print_success "✓ Nightingale Redis Password 已更新"
     fi
 }
 
@@ -14207,6 +14225,9 @@ main() {
                 "jupyterhub")
                     render_jupyterhub_templates
                     ;;
+                "nightingale")
+                    render_nightingale_config
+                    ;;
                 "docker-compose"|"compose")
                     # 支持 registry/tag 以及附加可选参数（例如 --oceanbase-init-dir）
                     # 将从第3个参数开始的所有参数透传给渲染函数
@@ -14220,6 +14241,7 @@ main() {
                 "all")
                     render_nginx_templates
                     render_jupyterhub_templates
+                    render_nightingale_config
                     # 对于all模式，透传后续参数给 docker-compose 渲染
                     shift 2
                     render_docker_compose_templates "$@"

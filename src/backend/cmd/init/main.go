@@ -14,6 +14,7 @@ import (
 
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
@@ -1321,7 +1322,7 @@ func createNightingaleDatabase(cfg *config.Config) error {
 
 	if shouldInitSchema {
 		log.Println("Initializing Nightingale schema from SQL file...")
-		if err := executeSQLFile(nightingaleDB_conn, "n9e_postgres.sql"); err != nil {
+		if err := executeSQLFile(cfg, nightingaleDB, "n9e_postgres.sql"); err != nil {
 			log.Printf("Warning: Failed to execute SQL file: %v. Falling back to AutoMigrate.", err)
 			// Fallback to AutoMigrate if SQL fails
 			nightingaleModels := models.InitNightingaleModels()
@@ -1575,16 +1576,33 @@ func initializeNightingaleBusiGroup(db *gorm.DB) error {
 	return nil
 }
 
-// executeSQLFile executes a SQL file
-func executeSQLFile(db *gorm.DB, filepath string) error {
-	content, err := os.ReadFile(filepath)
-	if err != nil {
-		return err
+// executeSQLFile executes a SQL file using psql command line tool
+func executeSQLFile(cfg *config.Config, dbName string, filepath string) error {
+	// Check if file exists
+	if _, err := os.Stat(filepath); err != nil {
+		return fmt.Errorf("SQL file not found: %w", err)
 	}
 
-	// Execute the SQL
-	if err := db.Exec(string(content)).Error; err != nil {
-		return err
+	log.Printf("Executing SQL file %s using psql...", filepath)
+
+	// Use psql to execute the file
+	// PGPASSWORD=... psql -h host -p port -U user -d dbname -f filepath
+	cmd := exec.Command("psql",
+		"-h", cfg.Database.Host,
+		"-p", fmt.Sprintf("%d", cfg.Database.Port),
+		"-U", cfg.Database.User,
+		"-d", dbName,
+		"-f", filepath,
+	)
+
+	// Set password in environment variable
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PGPASSWORD=%s", cfg.Database.Password))
+
+	// Capture output for debugging
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to execute SQL file: %w, output: %s", err, string(output))
 	}
+
 	return nil
 }
