@@ -85,6 +85,9 @@ RUN pip install --no-cache-dir --upgrade pip==${PIP_VERSION} setuptools wheel
 
 # 依赖安装（分层优化，优先二进制版本）
 COPY requirements.txt .
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
+
 # Install Node.js and temporary build deps to compile psutil on Alpine, then remove them
 RUN set -eux; \
     # 步骤1: 配置 Alpine 镜像源（多重降级）
@@ -151,15 +154,20 @@ RUN set -eux; \
     \
     # 步骤6: 安装 pycurl（编译安装，带多重降级）
     echo "🔨 开始编译安装 pycurl..."; \
-    PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl || \
-        (echo "❌ 阿里云源安装失败，尝试清华源..."; \
-         pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
-         pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
-         PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl) || \
-        (echo "❌ 清华源安装失败，尝试官方 PyPI..."; \
-         pip config set global.index-url https://pypi.org/simple/ && \
-         pip config unset global.trusted-host && \
-         PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl); \
+    if [ -f "/third_party/python/pycurl-7.45.3.tar.gz" ]; then \
+        echo "📦 使用本地 PyCurl 源码..."; \
+        PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: /third_party/python/pycurl-7.45.3.tar.gz; \
+    else \
+        PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl || \
+            (echo "❌ 阿里云源安装失败，尝试清华源..."; \
+             pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+             pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
+             PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl) || \
+            (echo "❌ 清华源安装失败，尝试官方 PyPI..."; \
+             pip config set global.index-url https://pypi.org/simple/ && \
+             pip config unset global.trusted-host && \
+             PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl); \
+    fi; \
     \
     # 步骤7: 安装 configurable-http-proxy
     npm install -g configurable-http-proxy; \

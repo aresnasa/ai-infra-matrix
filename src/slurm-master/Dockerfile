@@ -26,7 +26,7 @@ RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     echo "🔍 检测到系统架构: ${ARCH}"; \
     # 根据架构配置镜像源（多镜像源智能回退）
-    if [ -n "${APT_MIRROR}" ]; then \
+    if [ -n "${APT_MIRROR:-}" ]; then \
         echo "⚙️  使用自定义镜像源: ${APT_MIRROR}"; \
         if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
             { \

@@ -14,7 +14,7 @@ ENV container=docker
 
 # 配置APT镜像源（阿里云）
 RUN set -eux; \
-    if [ -n "${APT_MIRROR}" ]; then \
+    if [ -n "${APT_MIRROR:-}" ]; then \
         echo "Using custom APT mirror: ${APT_MIRROR}"; \
         sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
         sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \

@@ -6242,8 +6242,29 @@ build_service() {
         
         # 复制 third_party 到构建上下文
         print_info "  → 准备构建上下文 (third_party)..."
-        rm -rf "$SCRIPT_DIR/$service_path/third_party"
-        cp -r "$SCRIPT_DIR/third_party" "$SCRIPT_DIR/$service_path/third_party"
+        local dest_third_party="$SCRIPT_DIR/$service_path/third_party"
+        rm -rf "$dest_third_party"
+        mkdir -p "$dest_third_party" || { print_error "无法创建目录: $dest_third_party"; return 1; }
+        
+        # 使用更兼容的复制方式
+        if [[ -d "$SCRIPT_DIR/third_party" ]]; then
+            # macOS/Linux 兼容复制：复制内容到目标目录 (使用 . 包含隐藏文件)
+            # 移除错误屏蔽以便调试
+            if cp -R "$SCRIPT_DIR/third_party/." "$dest_third_party/"; then
+                local count=$(ls -A "$dest_third_party" | wc -l)
+                print_info "  ✓ 已复制 third_party 到构建上下文 ($count items)"
+            else
+                print_warning "  ⚠ 复制 third_party 失败 (cp command failed)"
+            fi
+            
+            # 检查是否复制成功
+            if [[ -z "$(ls -A "$dest_third_party")" ]]; then
+                print_warning "  ⚠ third_party 目录为空"
+                ls -la "$SCRIPT_DIR/third_party"
+            fi
+        else
+            print_warning "  ⚠ 源 third_party 目录不存在: $SCRIPT_DIR/third_party"
+        fi
         
         # ========================================
         # AppHub 包缓存优化
@@ -6695,9 +6716,13 @@ wait_for_apphub_ready() {
     load_env_file
     local apphub_port="${APPHUB_PORT:-53434}"
     local external_host="${EXTERNAL_HOST:-192.168.0.200}"
-    local apphub_url="http://${external_host}:${apphub_port}"
     
-    print_info "AppHub URL: $apphub_url"
+    # 优先使用 localhost 进行健康检查，避免因 EXTERNAL_HOST 不可达导致检查失败
+    # 在公网或复杂网络环境下，EXTERNAL_HOST 可能无法从本机直接访问
+    local check_host="127.0.0.1"
+    local apphub_url="http://${check_host}:${apphub_port}"
+    
+    print_info "AppHub URL (Check): $apphub_url"
     echo
     
     while [[ $elapsed -lt $timeout ]]; do
@@ -6816,12 +6841,14 @@ download_third_party_dependencies() {
     local singularity_version=$(get_dockerfile_var SINGULARITY_VERSION)
     local munge_version=$(get_dockerfile_var MUNGE_VERSION)
     [[ -z "$munge_version" ]] && munge_version="0.5.16"
+    local slurm_version=$(get_dockerfile_var SLURM_VERSION)
 
     print_info "检测到的版本:"
     print_info "  SaltStack: $saltstack_version"
     print_info "  Categraf: $categraf_version"
     print_info "  Singularity: $singularity_version"
     print_info "  Munge: $munge_version"
+    print_info "  SLURM: $slurm_version"
 
     # 下载工具函数
     download_file() {
@@ -6938,6 +6965,37 @@ download_third_party_dependencies() {
                 download_file "${base_url}/${pkg_file}" "$salt_dir/$pkg_file" "SaltStack RPM $pkg ($arch)"
             done
         done
+    fi
+
+    # 5. SLURM Source (Tarball) - 如果 src/apphub 存在
+    if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
+        print_info "处理 SLURM 源码 (依赖: apphub)..."
+        local slurm_tarball="slurm-${slurm_version}.tar.bz2"
+        local url=""
+        if [[ "$use_mirror" == "true" ]]; then
+            url="${file_server}/slurm/${slurm_version}/${slurm_tarball}"
+        else
+            url="https://download.schedmd.com/slurm/${slurm_tarball}"
+        fi
+        download_file "$url" "$third_party_dir/$slurm_tarball" "SLURM Source"
+    fi
+
+    # 6. PyCurl Source (Tarball) - 如果 src/jupyterhub 存在
+    if [[ -d "$SCRIPT_DIR/src/jupyterhub" ]]; then
+        print_info "处理 PyCurl 源码 (依赖: jupyterhub)..."
+        local pycurl_dir="$third_party_dir/python"
+        mkdir -p "$pycurl_dir"
+        
+        # 固定 PyCurl 版本以确保稳定性
+        local pycurl_version="7.45.3"
+        local pycurl_tarball="pycurl-${pycurl_version}.tar.gz"
+        local url=""
+        if [[ "$use_mirror" == "true" ]]; then
+            url="${file_server}/python/${pycurl_tarball}"
+        else
+            url="https://pypi.io/packages/source/p/pycurl/${pycurl_tarball}"
+        fi
+        download_file "$url" "$pycurl_dir/$pycurl_tarball" "PyCurl Source"
     fi
     
     print_success "第三方依赖检查与下载完成"
@@ -13111,7 +13169,7 @@ main() {
             get_image_build_labels "$image"
             ;;
             
-        "build")
+        "build"|"build-service")
             if [[ -z "$2" ]]; then
                 print_error "请指定要构建的服务"
                 print_info "可用服务: $SRC_SERVICES"

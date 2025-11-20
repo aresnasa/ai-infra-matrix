@@ -24,9 +24,9 @@ RUN set -eux; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
+    if [ -n "${ALPINE_MIRROR:-}" ]; then \
         echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
         apk update --no-cache 2>/dev/null; \
     else \
         # 尝试阿里云镜像

@@ -49,7 +49,7 @@ ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SALTSTACK_VERSION=v3007.8
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_VERSION=v0.4.27
 
 # Singularity version configuration
 ARG SINGULARITY_VERSION=v4.3.4
@@ -71,11 +71,11 @@ RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
     # 根据架构配置镜像源（优先尝试阿里云，失败则回退到官方源）
-    if [ -n "${APT_MIRROR}" ]; then \
+    if [ -n "${APT_MIRROR:-}" ]; then \
         echo "Using custom APT mirror: ${APT_MIRROR}"; \
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     elif [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "配置ARM64架构镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
@@ -373,10 +373,11 @@ RUN set -eux; \
     echo "尝试配置 Rocky Linux 镜像源..."; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
-    if [ -n "${YUM_MIRROR}" ]; then \
+    if [ -n "${YUM_MIRROR:-}" ]; then \
         echo "Using custom YUM mirror: ${YUM_MIRROR}"; \
         sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e "s|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=${YUM_MIRROR}|g" \
+            -e "s|dl.rockylinux.org/\$contentdir|${YUM_MIRROR}/rockylinux|g" \
+            -e "s|^#baseurl=|baseurl=|g" \
             -i.bak \
             /etc/yum.repos.d/rocky*.repo; \
         dnf clean all; \
@@ -799,11 +800,11 @@ RUN set -eux; \
     # 检测架构并配置镜像源
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    if [ -n "${APT_MIRROR}" ]; then \
+    if [ -n "${APT_MIRROR:-}" ]; then \
         echo "Using custom APT mirror: ${APT_MIRROR}"; \
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     elif [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "配置ARM64架构镜像源..."; \
         echo "deb http://mirrors.aliyun.com/ubuntu-ports/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
@@ -922,7 +923,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_VERSION=v0.4.27
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
@@ -939,9 +940,9 @@ RUN set -eux; \
     ARCH=$(uname -m); \
     echo "Detected architecture: ${ARCH}"; \
     # 根据架构配置镜像源
-    if [ -n "${ALPINE_MIRROR}" ]; then \
+    if [ -n "${ALPINE_MIRROR:-}" ]; then \
         echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     elif [ "${ARCH}" = "aarch64" ]; then \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
@@ -980,29 +981,44 @@ ARG BUILD_CATEGRAF
 ARG GITHUB_PROXY
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
-        # 配置代理（如果提供）
-        if [ -n "${GITHUB_PROXY:-}" ]; then \
-            echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
-            export ALL_PROXY="${GITHUB_PROXY}"; \
-            export HTTP_PROXY="${GITHUB_PROXY}"; \
-            export HTTPS_PROXY="${GITHUB_PROXY}"; \
-            export http_proxy="${GITHUB_PROXY}"; \
-            export https_proxy="${GITHUB_PROXY}"; \
-            # 配置 git 使用代理和 SSL
-            git config --global http.proxy "${GITHUB_PROXY}"; \
-            git config --global https.proxy "${GITHUB_PROXY}"; \
-            git config --global http.sslVerify false; \
-            git config --global http.version HTTP/1.1; \
-            echo "✓ Git proxy configured"; \
+        # 检查是否有预下载的二进制包
+        ARCH=$(uname -m); \
+        if [ "${ARCH}" = "x86_64" ]; then \
+            ARCH_SUFFIX="amd64"; \
+        elif [ "${ARCH}" = "aarch64" ]; then \
+            ARCH_SUFFIX="arm64"; \
         else \
-            echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
+            ARCH_SUFFIX="${ARCH}"; \
         fi; \
-        echo "Starting Categraf build..."; \
-        CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-        CATEGRAF_REPO=${CATEGRAF_REPO} \
-        BUILD_DIR=/build \
-        OUTPUT_DIR=/out \
-        /scripts/build-app.sh categraf; \
+        TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
+        if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
+            echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
+            cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
+        else \
+            # 配置代理（如果提供）
+            if [ -n "${GITHUB_PROXY:-}" ]; then \
+                echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
+                export ALL_PROXY="${GITHUB_PROXY}"; \
+                export HTTP_PROXY="${GITHUB_PROXY}"; \
+                export HTTPS_PROXY="${GITHUB_PROXY}"; \
+                export http_proxy="${GITHUB_PROXY}"; \
+                export https_proxy="${GITHUB_PROXY}"; \
+                # 配置 git 使用代理和 SSL
+                git config --global http.proxy "${GITHUB_PROXY}"; \
+                git config --global https.proxy "${GITHUB_PROXY}"; \
+                git config --global http.sslVerify false; \
+                git config --global http.version HTTP/1.1; \
+                echo "✓ Git proxy configured"; \
+            else \
+                echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
+            fi; \
+            echo "Starting Categraf build from source..."; \
+            CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+            CATEGRAF_REPO=${CATEGRAF_REPO} \
+            BUILD_DIR=/build \
+            OUTPUT_DIR=/out \
+            /scripts/build-app.sh categraf; \
+        fi; \
     else \
         echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
     fi
@@ -1024,9 +1040,9 @@ ARG ALPINE_MIRROR
 RUN set -eux; \
     # 配置镜像源
     ARCH=$(uname -m); \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
+    if [ -n "${ALPINE_MIRROR:-}" ]; then \
         echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     elif [ "${ARCH}" = "aarch64" ]; then \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
@@ -1100,7 +1116,7 @@ FROM nginx:${NGINX_ALPINE_VERSION}
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION=25.05.4
 ARG SALTSTACK_VERSION=v3007.8
-ARG CATEGRAF_VERSION=v0.4.22
+ARG CATEGRAF_VERSION=v0.4.27
 ARG APPHUB_BASE_URL=http://localhost:8081
 ARG ALPINE_MIRROR
 
@@ -1118,9 +1134,9 @@ RUN set -eux; \
     ARCH=$(uname -m); \
     echo "Detected architecture: ${ARCH}"; \
     # 根据架构配置镜像源
-    if [ -n "${ALPINE_MIRROR}" ]; then \
+    if [ -n "${ALPINE_MIRROR:-}" ]; then \
         echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
     elif [ "${ARCH}" = "aarch64" ]; then \
         echo "配置ARM64架构的清华Alpine镜像源..."; \
         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
@@ -1221,7 +1237,7 @@ RUN set -eux; \
     # Prefer slurm-smd-slurmd package; fall back to base slurm-smd when needed
     DEB_FILE=$(ls -1 slurm-smd-slurmd_*.deb 2>/dev/null | head -1); \
     if [ -z "$DEB_FILE" ]; then \
-        DEB_FILE=$(ls -1 slurm-smd_*.deb 2>/dev/null | head -1); \
+        DEB_FILE=$(ls -1 slurm-*_${ARCH}.deb 2>/dev/null | head -1); \
     fi; \
     if [ -n "$DEB_FILE" ]; then \
         dpkg-deb -x "$DEB_FILE" /tmp/slurm-extract; \
@@ -1246,6 +1262,7 @@ COPY scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
 RUN chmod +x /app/scripts/generate-install-script.sh
 
 # Generate SLURM installation script from template
+
 # ARG needs to be redeclared here if used in RUN after COPY
 ARG SLURM_VERSION=25.05.4
 ARG APPHUB_BASE_URL=http://localhost:8081
@@ -1290,6 +1307,11 @@ RUN set -eux; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count} (metadata: ${salt_rpm_metadata})"; \
     echo "  - Categraf packages: ${categraf_count}"; \
     echo "  - Singularity packages: ${singularity_count}"; \
+    # Check if any packages are missing
+    if [ "$slurm_deb_count" -eq 0 ] && [ "$salt_deb_count" -eq 0 ] && [ "$slurm_rpm_count" -eq 0 ] && [ "$salt_rpm_count" -eq 0 ]; then \
+        echo "❌ Error: No packages found for SLURM or SaltStack"; \
+        exit 1; \
+    fi; \
     # Generate Debian repository metadata (both Packages and Packages.gz)
     if [ "$slurm_deb_count" -gt 0 ] && command -v dpkg-scanpackages >/dev/null 2>&1; then \
         echo "🔧 Generating SLURM DEB repository metadata..."; \
