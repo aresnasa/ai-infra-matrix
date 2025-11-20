@@ -1,7 +1,6 @@
 third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
-!third_party/slurm-25.05.4.tar.bz2
 ssh-key/
 sql/
 log/
@@ -9,8 +8,6 @@ log/
 .env.dev
 .env.prod
 .env
-*.tgz
-*.tar.*
 test-exports/
 docker-compose.prod.yml
 docker-compose.yml
