@@ -1,6 +1,6 @@
-!third_party/m3fs
-!third_party/openscow
-!third_party/slurm-operator
+third_party/m3fs
+third_party/slurm-operator
+third_party/openscow/
 ssh-key/
 sql/
 log/
