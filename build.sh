@@ -3880,6 +3880,9 @@ sync_all_configs() {
     # 1.2 同步组件版本（从.env读取并更新到Dockerfile）
     sync_component_versions_from_env
     
+    # 1.3 更新 Nightingale DSN 配置
+    update_nightingale_dsn
+    
     # 2. 验证 docker-compose.yml 和 docker-compose.yml.example 是否同步
     local compose_file="$SCRIPT_DIR/docker-compose.yml"
     local compose_example_file="$SCRIPT_DIR/docker-compose.yml.example"
@@ -7463,6 +7466,41 @@ build_all_services() {
 # ==========================================
 # 环境变量同步函数
 # ==========================================
+
+# 更新 Nightingale 配置文件中的 DSN
+update_nightingale_dsn() {
+    local config_file="$SCRIPT_DIR/src/nightingale/etc/config.toml"
+    
+    if [[ ! -f "$config_file" ]]; then
+        print_warning "Nightingale 配置文件不存在: $config_file"
+        return 1
+    fi
+    
+    print_info "更新 Nightingale DSN 配置..."
+    
+    # 确保环境变量已加载
+    load_env_file
+    
+    # 获取数据库配置，如果未设置则使用默认值
+    local db_host="${POSTGRES_HOST:-postgres}"
+    local db_port="${POSTGRES_PORT:-5432}"
+    local db_user="${POSTGRES_USER:-postgres}"
+    local db_name="${POSTGRES_DB:-nightingale}"
+    local db_pass="${POSTGRES_PASSWORD:-your-postgres-password}"
+    local ssl_mode="${POSTGRES_SSLMODE:-disable}"
+    
+    # 构建新的 DSN 字符串
+    local new_dsn="DSN=\"host=${db_host} port=${db_port} user=${db_user} dbname=${db_name} password=${db_pass} sslmode=${ssl_mode}\""
+    
+    # 使用 sed 替换 DSN 配置行
+    # 匹配 DSN="host=..." 格式的行
+    if grep -q "^DSN=" "$config_file"; then
+        sed_inplace "s|^DSN=.*|$new_dsn|g" "$config_file"
+        print_success "✓ Nightingale DSN 已更新"
+    else
+        print_warning "未在 $config_file 中找到 DSN 配置行"
+    fi
+}
 
 # 对比并同步 .env 和 .env.example
 # 确保 .env 包含 .env.example 中的所有配置项
