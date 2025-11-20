@@ -32,7 +32,7 @@ var xssPatterns = []*regexp.Regexp{
 // 路径遍历检测
 var pathTraversalPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\.\./`),
-	regexp.MustCompile(`\.\.\`),
+	regexp.MustCompile(`\.\.\\`),
 	regexp.MustCompile(`%2e%2e/`),
 	regexp.MustCompile(`%2e%2e%5c`),
 }

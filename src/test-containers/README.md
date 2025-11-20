@@ -79,14 +79,14 @@ docker-compose -f docker-compose.test.yml down
 ```bash
 # Build Ubuntu test container
 docker build -f src/test-containers/Dockerfile \
-  -t test-ubuntu:v0.3.6-dev \
-  --build-arg VERSION=v0.3.6-dev \
+  -t test-ubuntu:v0.3.8 \
+  --build-arg VERSION=v0.3.8 \
   src/test-containers
 
 # Build Rocky Linux test container
 docker build -f src/test-containers/Dockerfile.rocky \
-  -t test-rocky:v0.3.6-dev \
-  --build-arg VERSION=v0.3.6-dev \
+  -t test-rocky:v0.3.8 \
+  --build-arg VERSION=v0.3.8 \
   src/test-containers
 ```
 
@@ -158,7 +158,7 @@ Customize via `.env` or docker-compose environment:
 
 ```bash
 # Image version tag
-IMAGE_TAG=v0.3.6-dev
+IMAGE_TAG=v0.3.8
 
 # SSH credentials (can override defaults)
 TEST_SSH_PASSWORD=testpass123
@@ -180,7 +180,7 @@ TEST_ROOT_PASSWORD=rootpass123
 docker-compose -f docker-compose.test.yml down
 
 # Remove images
-docker rmi test-ubuntu:v0.3.6-dev test-rocky:v0.3.6-dev
+docker rmi test-ubuntu:v0.3.8 test-rocky:v0.3.8
 ```
 
 ## 🛠️ Troubleshooting

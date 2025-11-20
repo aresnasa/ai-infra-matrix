@@ -1,6 +1,6 @@
 # AI Infrastructure 通用配置
 ai_infra:
-  version: "v0.3.6-dev"
+  version: "v0.3.8"
   environment: "production"
   
   # 服务配置

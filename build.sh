@@ -40,6 +40,11 @@ BUILD_ID_FILE="$BUILD_CACHE_DIR/build-id.txt"
 BUILD_HISTORY_FILE="$BUILD_CACHE_DIR/build-history.log"
 SKIP_CACHE_CHECK=false  # 跳过缓存检查标志
 
+# 多架构构建配置
+MULTI_ARCH_BUILD="${MULTI_ARCH_BUILD:-false}"  # 是否启用多架构构建
+TARGET_PLATFORMS="${TARGET_PLATFORMS:-linux/amd64,linux/arm64}"  # 目标平台
+USE_BUILDX="${USE_BUILDX:-auto}"  # 使用 docker buildx (auto/true/false)
+
 # 基本输出函数（早期定义，供其他函数使用）
 print_error() {
     echo -e "\033[31m[ERROR]\033[0m $1"
@@ -179,10 +184,10 @@ sync_deps_from_yaml() {
         local env_var_name=$(echo "${key}_VERSION" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
         
         # 更新到 .env 文件
-        set_or_update_env_var "$env_var_name" "$value" "$env_file"
+        set_or_update_env_var "$env_var_name" "$value" "$env_file" || true
         
         print_info "  ✓ $env_var_name=$value"
-    done < <(grep -E '^\s*[a-zA-Z0-9_-]+:' "$deps_file")
+    done < <(grep -E '^\s*[a-zA-Z0-9_-]+:' "$deps_file" || true)
     
     print_info "依赖版本同步完成"
     return 0
@@ -206,6 +211,60 @@ update_component_tags_from_branch() {
     set_or_update_env_var "DEFAULT_IMAGE_TAG" "$branch" "$env_file"
     
     print_info "已设置组件标签: $branch"
+    return 0
+}
+
+# 更新所有 Docker 相关文件中的旧版本标签
+# 用法: update_legacy_image_tags [old_tag] [new_tag]
+# 功能: 将所有 Docker 相关文件中的旧标签替换为新标签
+update_legacy_image_tags() {
+    local old_tag="${1:-v0.3.8}"
+    local new_tag="${2:-$(get_current_git_branch)}"
+    
+    print_info "更新 Docker 相关文件中的版本标签: $old_tag → $new_tag"
+    
+    # 定义需要更新的文件列表
+    local files_to_update=(
+        "$SCRIPT_DIR/docker-compose.yml"
+        "$SCRIPT_DIR/docker-compose.yml.example"
+        "$SCRIPT_DIR/docker-compose.test.yml"
+        "$SCRIPT_DIR/.env"
+        "$SCRIPT_DIR/.env.example"
+    )
+    
+    local updated_count=0
+    
+    # 遍历每个文件
+    for file in "${files_to_update[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            continue
+        fi
+        
+        # 检查文件是否包含旧标签
+        if grep -q "$old_tag" "$file" 2>/dev/null; then
+            print_info "  更新文件: $(basename "$file")"
+            
+            # 使用 sed 替换（macOS 和 Linux 兼容）
+            # 匹配各种格式：:tag, =tag, "tag", 'tag', :-tag}
+            sed_inplace "s|:${old_tag}|:${new_tag}|g" "$file" || true
+            sed_inplace "s|=${old_tag}|=${new_tag}|g" "$file" || true
+            sed_inplace "s|\"${old_tag}\"|\"${new_tag}\"|g" "$file" || true
+            sed_inplace "s|'${old_tag}'|'${new_tag}'|g" "$file" || true
+            sed_inplace "s|:-${old_tag}|:-${new_tag}|g" "$file" || true
+            
+            ((updated_count++)) || true
+        fi
+    done
+    
+    # 清理备份文件
+    cleanup_backup_files "$SCRIPT_DIR"
+    
+    if [[ $updated_count -gt 0 ]]; then
+        print_success "✓ 已更新 $updated_count 个文件的版本标签"
+    else
+        print_info "所有文件已是最新版本标签"
+    fi
+    
     return 0
 }
 
@@ -246,7 +305,16 @@ get_version_build_args() {
     [[ -n "${NPM_VERSION:-}" ]] && build_args+=" --build-arg NPM_VERSION=${NPM_VERSION}"
     [[ -n "${GO_PROXY:-}" ]] && build_args+=" --build-arg GO_PROXY=${GO_PROXY}"
     [[ -n "${PYPI_INDEX_URL:-}" ]] && build_args+=" --build-arg PYPI_INDEX_URL=${PYPI_INDEX_URL}"
+    # 如果 PIP_INDEX_URL 未设置但 PYPI_INDEX_URL 已设置，则使用 PYPI_INDEX_URL
+    if [[ -z "${PIP_INDEX_URL:-}" ]] && [[ -n "${PYPI_INDEX_URL:-}" ]]; then
+        build_args+=" --build-arg PIP_INDEX_URL=${PYPI_INDEX_URL}"
+    elif [[ -n "${PIP_INDEX_URL:-}" ]]; then
+        build_args+=" --build-arg PIP_INDEX_URL=${PIP_INDEX_URL}"
+    fi
     [[ -n "${NPM_REGISTRY:-}" ]] && build_args+=" --build-arg NPM_REGISTRY=${NPM_REGISTRY}"
+    [[ -n "${APT_MIRROR:-}" ]] && build_args+=" --build-arg APT_MIRROR=${APT_MIRROR}"
+    [[ -n "${YUM_MIRROR:-}" ]] && build_args+=" --build-arg YUM_MIRROR=${YUM_MIRROR}"
+    [[ -n "${ALPINE_MIRROR:-}" ]] && build_args+=" --build-arg ALPINE_MIRROR=${ALPINE_MIRROR}"
     
     # 服务特定的版本参数
     case "$service" in
@@ -1133,7 +1201,7 @@ get_production_dependencies() {
 
 # 初始化配置
 DEFAULT_IMAGE_TAG=$(read_config "project" "version" 2>/dev/null || echo "")
-[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.6-dev"
+[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.8"
 
 # 动态更新版本标签函数
 update_version_if_provided() {
@@ -1151,7 +1219,7 @@ update_version_if_provided() {
             break
         fi
         
-        # 检查常见的版本标签格式 (如 test-v0.3.6-dev)
+        # 检查常见的版本标签格式 (如 test-v0.3.8)
         if [[ "$arg" =~ ^[a-zA-Z0-9-]*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
             print_info "检测到版本参数: $new_version，更新默认版本标签"
@@ -2303,6 +2371,54 @@ update_env_variable() {
     fi
 }
 
+# 确保镜像相关配置在 .env 文件顶部
+ensure_env_top_variables() {
+    local env_file=".env"
+    local temp_file=".env.tmp"
+    
+    # 默认值
+    local default_registry="harbor.example.com"
+    local default_file_server="http://files.example.com"
+    local default_use_mirror="false"
+    
+    # 如果检测到是内网环境，默认开启镜像使用
+    if [[ "$(detect_network_environment)" == "internal" ]]; then
+        default_use_mirror="true"
+    fi
+    
+    # 读取现有值（如果存在）
+    if [[ -f "$env_file" ]]; then
+        local exist_registry=$(grep "^INTERNAL_REGISTRY=" "$env_file" | cut -d'=' -f2)
+        local exist_file_server=$(grep "^INTERNAL_FILE_SERVER=" "$env_file" | cut -d'=' -f2)
+        local exist_use_mirror=$(grep "^USE_INTERNAL_MIRROR=" "$env_file" | cut -d'=' -f2)
+        
+        [[ -n "$exist_registry" ]] && default_registry="$exist_registry"
+        [[ -n "$exist_file_server" ]] && default_file_server="$exist_file_server"
+        [[ -n "$exist_use_mirror" ]] && default_use_mirror="$exist_use_mirror"
+    fi
+    
+    # 创建临时文件并写入头部配置
+    echo "# ========================================" > "$temp_file"
+    echo "# 镜像和内部源配置 (Image & Mirror Config)" >> "$temp_file"
+    echo "# ========================================" >> "$temp_file"
+    echo "INTERNAL_REGISTRY=$default_registry" >> "$temp_file"
+    echo "INTERNAL_FILE_SERVER=$default_file_server" >> "$temp_file"
+    echo "USE_INTERNAL_MIRROR=$default_use_mirror" >> "$temp_file"
+    echo "" >> "$temp_file"
+    
+    # 追加原有内容（排除我们刚刚写入的变量）
+    if [[ -f "$env_file" ]]; then
+        grep -v "^INTERNAL_REGISTRY=" "$env_file" | \
+        grep -v "^INTERNAL_FILE_SERVER=" | \
+        grep -v "^USE_INTERNAL_MIRROR=" | \
+        grep -v "^# 镜像和内部源配置" | \
+        grep -v "^# ========================================" >> "$temp_file"
+    fi
+    
+    mv "$temp_file" "$env_file"
+    print_info "✓ 已调整 .env 配置顺序（镜像配置置顶）"
+}
+
 # 自动生成或更新 .env 文件
 # 基于网络环境检测和系统配置
 # 支持域名和 K8s 集群部署
@@ -2310,6 +2426,9 @@ generate_or_update_env_file() {
     print_info "=========================================="
     print_info "自动检测和配置环境变量"
     print_info "=========================================="
+    
+    # 0. 确保镜像配置在顶部
+    ensure_env_top_variables
     
     # 1. 检测运行环境
     local is_k8s=$(detect_k8s_environment)
@@ -2440,8 +2559,8 @@ generate_or_update_env_file() {
 
 # 生成离线友好的 Dockerfile 内容
 generate_offline_singleuser_dockerfile() {
-    # 获取当前版本标签，默认使用v0.3.6-dev
-    local version_tag="${TARGET_TAG:-v0.3.6-dev}"
+    # 获取当前版本标签，默认使用v0.3.8
+    local version_tag="${TARGET_TAG:-v0.3.8}"
     local harbor.example.com_registry="${INTERNAL_REGISTRY:-harbor.example.com}"
     
     cat << OFFLINE_EOF
@@ -2649,7 +2768,7 @@ prepare_singleuser_dockerfile() {
     # 生成对应的 Dockerfile
     if [[ "$use_offline" == "true" ]]; then
         # 验证 harbor.example.com 镜像是否可用
-        local version_tag="${TARGET_TAG:-v0.3.6-dev}"
+        local version_tag="${TARGET_TAG:-v0.3.8}"
         local harbor.example.com_registry="${INTERNAL_REGISTRY:-harbor.example.com}"
         local harbor_image="${harbor.example.com_registry}/aihpc/ai-infra-singleuser:${version_tag}"
         
@@ -4892,7 +5011,7 @@ get_private_image_name() {
 get_mapped_private_image() {
     local original_image="$1"
     local registry="$2"
-    local target_tag="${3:-v0.3.6-dev}"  # 默认目标git版本
+    local target_tag="${3:-v0.3.8}"  # 默认目标git版本
     local mapping_file="$SCRIPT_DIR/config/image-mapping.conf"
     
     if [[ -z "$registry" ]]; then
@@ -4986,6 +5105,243 @@ check_dockerfile() {
         return 1
     fi
     return 0
+}
+
+# ========================================
+# 多架构构建支持功能
+# ========================================
+
+# 检查 Docker Buildx 是否可用
+# 返回：0=可用，1=不可用
+check_buildx_available() {
+    if docker buildx version >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 初始化 Docker Buildx builder
+# 返回：0=成功，1=失败
+init_buildx_builder() {
+    local builder_name="ai-infra-multiarch"
+    
+    # 检查 builder 是否已存在
+    if docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        print_info "✓ Buildx builder '$builder_name' 已存在"
+        docker buildx use "$builder_name"
+        return 0
+    fi
+    
+    print_info "创建 Buildx builder: $builder_name"
+    if docker buildx create --name "$builder_name" --driver docker-container --use; then
+        print_success "✓ Buildx builder 创建成功"
+        
+        # 启动 builder 实例
+        print_info "启动 Buildx builder..."
+        if docker buildx inspect --bootstrap; then
+            print_success "✓ Buildx builder 启动成功"
+            return 0
+        else
+            print_error "✗ Buildx builder 启动失败"
+            return 1
+        fi
+    else
+        print_error "✗ Buildx builder 创建失败"
+        return 1
+    fi
+}
+
+# 检测是否需要使用 Buildx
+# 返回：0=使用 Buildx，1=使用普通 docker build
+should_use_buildx() {
+    # 如果未启用多架构构建，不使用 Buildx
+    if [[ "$MULTI_ARCH_BUILD" != "true" ]]; then
+        return 1
+    fi
+    
+    # 检查 USE_BUILDX 配置
+    case "$USE_BUILDX" in
+        true)
+            return 0
+            ;;
+        false)
+            return 1
+            ;;
+        auto)
+            # 自动检测：如果 Buildx 可用且需要多架构，则使用
+            if check_buildx_available; then
+                return 0
+            else
+                print_warning "⚠ Docker Buildx 不可用，将使用普通 docker build（仅支持当前平台）"
+                return 1
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# 获取多架构构建的平台参数
+# 返回：--platform 参数字符串，或空字符串（如果不使用多架构）
+get_platform_args() {
+    if [[ "$MULTI_ARCH_BUILD" == "true" ]] && should_use_buildx; then
+        echo "--platform $TARGET_PLATFORMS"
+    else
+        echo ""
+    fi
+}
+
+# 构建多架构镜像（使用 docker buildx）
+# 参数：
+#   $1: 构建上下文路径
+#   $2: Dockerfile 路径
+#   $3: 目标镜像名（含标签）
+#   $@: 其他 docker build 参数
+# 返回：0=成功，1=失败
+build_multiarch_image() {
+    local build_context="$1"
+    local dockerfile="$2"
+    local image_name="$3"
+    shift 3
+    local extra_args=("$@")
+    
+    # 确保 Buildx builder 已初始化
+    if ! init_buildx_builder; then
+        print_error "✗ 无法初始化 Buildx builder"
+        return 1
+    fi
+    
+    print_info "🏗️  使用 Buildx 构建多架构镜像"
+    print_info "   目标平台: $TARGET_PLATFORMS"
+    print_info "   目标镜像: $image_name"
+    
+    # 使用 docker buildx build
+    # 注意：--load 只能用于单平台，多平台需要使用 --push 或输出到本地
+    if docker buildx build \
+        --platform "$TARGET_PLATFORMS" \
+        -f "$dockerfile" \
+        -t "$image_name" \
+        "${extra_args[@]}" \
+        --load \
+        "$build_context"; then
+        print_success "✓ 多架构镜像构建成功"
+        return 0
+    else
+        print_error "✗ 多架构镜像构建失败"
+        return 1
+    fi
+}
+
+# 为多个平台分别构建镜像（不使用 Buildx）
+# 参数：
+#   $1: 构建上下文路径
+#   $2: Dockerfile 路径
+#   $3: 目标镜像名（含标签，不含平台后缀）
+#   $@: 其他 docker build 参数
+# 返回：0=成功，1=失败
+build_multiarch_separate() {
+    local build_context="$1"
+    local dockerfile="$2"
+    local base_image="$3"
+    shift 3
+    local extra_args=("$@")
+    
+    print_info "🏗️  分别构建多架构镜像（不使用 Buildx）"
+    
+    # 解析目标平台
+    IFS=',' read -ra platforms <<< "$TARGET_PLATFORMS"
+    
+    local success=true
+    for platform in "${platforms[@]}"; do
+        # 提取架构名（linux/amd64 -> amd64）
+        local arch="${platform##*/}"
+        local platform_image="${base_image}-${arch}"
+        
+        print_info "→ 构建平台: $platform"
+        print_info "  目标镜像: $platform_image"
+        
+        if docker build \
+            --platform "$platform" \
+            -f "$dockerfile" \
+            -t "$platform_image" \
+            "${extra_args[@]}" \
+            "$build_context"; then
+            print_success "  ✓ 平台 $arch 构建成功"
+            
+            # 如果是当前平台，也标记为基础镜像名
+            local current_arch=$(uname -m)
+            if [[ "$current_arch" == "x86_64" && "$arch" == "amd64" ]] || \
+               [[ "$current_arch" == "aarch64" && "$arch" == "arm64" ]] || \
+               [[ "$current_arch" == "arm64" && "$arch" == "arm64" ]]; then
+                docker tag "$platform_image" "$base_image"
+                print_info "  ✓ 标记当前平台镜像: $base_image"
+            fi
+        else
+            print_error "  ✗ 平台 $arch 构建失败"
+            success=false
+        fi
+        echo
+    done
+    
+    if [[ "$success" == "true" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 创建并推送多架构 manifest
+# 参数：
+#   $1: 基础镜像名（含标签，不含平台后缀）
+#   $2: 目标仓库地址（可选）
+# 返回：0=成功，1=失败
+create_and_push_manifest() {
+    local base_image="$1"
+    local registry="$2"
+    
+    # 如果指定了 registry，更新镜像名
+    if [[ -n "$registry" ]]; then
+        base_image=$(get_private_image_name "$base_image" "$registry")
+    fi
+    
+    print_info "📦 创建多架构 manifest: $base_image"
+    
+    # 解析目标平台并构建镜像列表
+    IFS=',' read -ra platforms <<< "$TARGET_PLATFORMS"
+    local manifest_images=()
+    
+    for platform in "${platforms[@]}"; do
+        local arch="${platform##*/}"
+        manifest_images+=("${base_image}-${arch}")
+    done
+    
+    print_info "   包含镜像:"
+    for img in "${manifest_images[@]}"; do
+        print_info "   - $img"
+    done
+    
+    # 创建 manifest
+    if docker manifest create "$base_image" "${manifest_images[@]}"; then
+        print_success "✓ Manifest 创建成功"
+        
+        # 如果指定了 registry，推送 manifest
+        if [[ -n "$registry" ]]; then
+            print_info "推送 manifest 到仓库..."
+            if docker manifest push "$base_image"; then
+                print_success "✓ Manifest 推送成功"
+                return 0
+            else
+                print_error "✗ Manifest 推送失败"
+                return 1
+            fi
+        fi
+        return 0
+    else
+        print_error "✗ Manifest 创建失败"
+        return 1
+    fi
 }
 
 # ========================================
@@ -5879,6 +6235,36 @@ build_service() {
             print_warning "  ⚠ AppHub 版本检查失败，继续使用当前版本"
         fi
         echo
+
+        # 下载第三方依赖
+        print_info "  → 下载第三方依赖..."
+        download_third_party_dependencies
+        
+        # 复制 third_party 到构建上下文
+        print_info "  → 准备构建上下文 (third_party)..."
+        local dest_third_party="$SCRIPT_DIR/$service_path/third_party"
+        rm -rf "$dest_third_party"
+        mkdir -p "$dest_third_party" || { print_error "无法创建目录: $dest_third_party"; return 1; }
+        
+        # 使用更兼容的复制方式
+        if [[ -d "$SCRIPT_DIR/third_party" ]]; then
+            # macOS/Linux 兼容复制：复制内容到目标目录 (使用 . 包含隐藏文件)
+            # 移除错误屏蔽以便调试
+            if cp -R "$SCRIPT_DIR/third_party/." "$dest_third_party/"; then
+                local count=$(ls -A "$dest_third_party" | wc -l)
+                print_info "  ✓ 已复制 third_party 到构建上下文 ($count items)"
+            else
+                print_warning "  ⚠ 复制 third_party 失败 (cp command failed)"
+            fi
+            
+            # 检查是否复制成功
+            if [[ -z "$(ls -A "$dest_third_party")" ]]; then
+                print_warning "  ⚠ third_party 目录为空"
+                ls -la "$SCRIPT_DIR/third_party"
+            fi
+        else
+            print_warning "  ⚠ 源 third_party 目录不存在: $SCRIPT_DIR/third_party"
+        fi
         
         # ========================================
         # AppHub 包缓存优化
@@ -6025,6 +6411,10 @@ build_service() {
     else
         print_info "     缓存策略: 使用 Docker 层缓存"
     fi
+    if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+        print_info "     多架构构建: 已启用"
+        print_info "     目标平台: $TARGET_PLATFORMS"
+    fi
     print_info "     目标镜像: $target_image"
     if [[ -n "$version_args" ]]; then
         print_info "     版本参数: 已应用 (从 .env 读取)"
@@ -6034,9 +6424,75 @@ build_service() {
     print_info "  🔨 开始构建镜像..."
     echo
     
-    # 使用各自的src子目录作为构建上下文
-    # 直接显示 docker build 的完整输出，不做过滤
-    if docker build -f "$dockerfile_path" $network_arg $target_arg $cache_arg $label_args $version_args $apphub_extra_args $slurm_master_args -t "$target_image" "$build_context"; then
+    # 构建镜像 - 支持多架构
+    local build_success=false
+    
+    if [[ "$MULTI_ARCH_BUILD" == "true" ]] && should_use_buildx; then
+        # 使用 Docker Buildx 构建多架构镜像
+        print_info "  → 使用 Docker Buildx 进行多架构构建"
+        
+        # 确保 Buildx builder 已初始化
+        if ! init_buildx_builder; then
+            print_error "  ✗ 无法初始化 Buildx builder"
+            build_success=false
+        else
+            # 准备 buildx 参数
+            local buildx_args=()
+            [[ -n "$network_arg" ]] && buildx_args+=($network_arg)
+            [[ -n "$target_arg" ]] && buildx_args+=($target_arg)
+            [[ -n "$cache_arg" ]] && buildx_args+=($cache_arg)
+            [[ -n "$label_args" ]] && buildx_args+=($label_args)
+            [[ -n "$version_args" ]] && buildx_args+=($version_args)
+            [[ -n "$apphub_extra_args" ]] && buildx_args+=($apphub_extra_args)
+            [[ -n "$slurm_master_args" ]] && buildx_args+=($slurm_master_args)
+            
+            # 使用 docker buildx build
+            if docker buildx build \
+                --platform "$TARGET_PLATFORMS" \
+                -f "$dockerfile_path" \
+                -t "$target_image" \
+                "${buildx_args[@]}" \
+                --load \
+                "$build_context"; then
+                build_success=true
+            else
+                print_warning "  ⚠ Buildx 多架构构建失败，尝试分别构建各平台..."
+                
+                # 回退到分别构建各平台
+                if build_multiarch_separate "$build_context" "$dockerfile_path" "$target_image" \
+                    $network_arg $target_arg $cache_arg $label_args $version_args \
+                    $apphub_extra_args $slurm_master_args; then
+                    build_success=true
+                else
+                    build_success=false
+                fi
+            fi
+        fi
+    else
+        # 使用标准 docker build（单架构或多架构分别构建）
+        if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+            print_info "  → 分别构建多个架构的镜像"
+            
+            if build_multiarch_separate "$build_context" "$dockerfile_path" "$target_image" \
+                $network_arg $target_arg $cache_arg $label_args $version_args \
+                $apphub_extra_args $slurm_master_args; then
+                build_success=true
+            else
+                build_success=false
+            fi
+        else
+            # 标准单架构构建
+            if docker build -f "$dockerfile_path" $network_arg $target_arg $cache_arg $label_args \
+                $version_args $apphub_extra_args $slurm_master_args -t "$target_image" "$build_context"; then
+                build_success=true
+            else
+                build_success=false
+            fi
+        fi
+    fi
+    
+    # 处理构建结果
+    if [[ "$build_success" == "true" ]]; then
         echo
         print_success "✓ 构建成功: $target_image"
         
@@ -6063,6 +6519,14 @@ build_service() {
             print_info "  → 恢复 SingleUser Dockerfile 到原始状态..."
             restore_singleuser_dockerfile "$service_path"
         fi
+
+        # ========================================
+        # AppHub 构建后清理
+        # ========================================
+        if [[ "$service" == "apphub" ]]; then
+            print_info "  → 清理 AppHub 构建上下文 (third_party)..."
+            rm -rf "$SCRIPT_DIR/$service_path/third_party"
+        fi
         
         return 0
     else
@@ -6077,6 +6541,14 @@ build_service() {
         if [[ "$service" == "singleuser" ]]; then
             print_info "  → 构建失败，恢复 SingleUser Dockerfile 到原始状态..."
             restore_singleuser_dockerfile "$service_path"
+        fi
+
+        # ========================================
+        # AppHub 构建失败时也需要清理
+        # ========================================
+        if [[ "$service" == "apphub" ]]; then
+            print_info "  → 构建失败，清理 AppHub 构建上下文 (third_party)..."
+            rm -rf "$SCRIPT_DIR/$service_path/third_party"
         fi
         
         return 1
@@ -6244,9 +6716,13 @@ wait_for_apphub_ready() {
     load_env_file
     local apphub_port="${APPHUB_PORT:-53434}"
     local external_host="${EXTERNAL_HOST:-192.168.0.200}"
-    local apphub_url="http://${external_host}:${apphub_port}"
     
-    print_info "AppHub URL: $apphub_url"
+    # 优先使用 localhost 进行健康检查，避免因 EXTERNAL_HOST 不可达导致检查失败
+    # 在公网或复杂网络环境下，EXTERNAL_HOST 可能无法从本机直接访问
+    local check_host="127.0.0.1"
+    local apphub_url="http://${check_host}:${apphub_port}"
+    
+    print_info "AppHub URL (Check): $apphub_url"
     echo
     
     while [[ $elapsed -lt $timeout ]]; do
@@ -6317,6 +6793,215 @@ wait_for_apphub_ready() {
 # 构建所有服务（两阶段构建：基础设施 → 依赖服务）
 # ==========================================
 
+# 下载第三方依赖（动态检查）
+download_third_party_dependencies() {
+    print_info "=========================================="
+    print_info "检查并下载第三方依赖"
+    print_info "=========================================="
+
+    local third_party_dir="$SCRIPT_DIR/third_party"
+    local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+    
+    if [[ ! -f "$apphub_dockerfile" ]]; then
+        print_warning "src/apphub/Dockerfile 不存在，跳过第三方依赖下载"
+        return 0
+    fi
+
+    mkdir -p "$third_party_dir"
+
+    # 读取配置
+    local use_mirror="${USE_INTERNAL_MIRROR:-false}"
+    local file_server="${INTERNAL_FILE_SERVER:-http://files.example.com}"
+    
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        local env_use_mirror=$(grep "^USE_INTERNAL_MIRROR=" "$SCRIPT_DIR/.env" | cut -d'=' -f2)
+        local env_file_server=$(grep "^INTERNAL_FILE_SERVER=" "$SCRIPT_DIR/.env" | cut -d'=' -f2)
+        [[ -n "$env_use_mirror" ]] && use_mirror="$env_use_mirror"
+        [[ -n "$env_file_server" ]] && file_server="$env_file_server"
+    fi
+
+    if [[ "$use_mirror" == "true" ]]; then
+        print_info "🔄 使用内部镜像源: $file_server"
+    fi
+
+    # 提取版本号辅助函数
+    get_dockerfile_var() {
+        local name=$1
+        # 尝试提取 ARG
+        local val=$(grep "ARG $name=" "$apphub_dockerfile" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        # 如果为空，尝试提取 ENV 或 RUN 中的定义
+        if [[ -z "$val" ]]; then
+             val=$(grep "$name=" "$apphub_dockerfile" | head -1 | sed -E "s/.*$name=\"?([^ \";\\\\]+)\"?.*/\1/")
+        fi
+        echo "$val"
+    }
+
+    local saltstack_version=$(get_dockerfile_var SALTSTACK_VERSION)
+    local categraf_version=$(get_dockerfile_var CATEGRAF_VERSION)
+    local singularity_version=$(get_dockerfile_var SINGULARITY_VERSION)
+    local munge_version=$(get_dockerfile_var MUNGE_VERSION)
+    [[ -z "$munge_version" ]] && munge_version="0.5.16"
+    local slurm_version=$(get_dockerfile_var SLURM_VERSION)
+
+    print_info "检测到的版本:"
+    print_info "  SaltStack: $saltstack_version"
+    print_info "  Categraf: $categraf_version"
+    print_info "  Singularity: $singularity_version"
+    print_info "  Munge: $munge_version"
+    print_info "  SLURM: $slurm_version"
+
+    # 下载工具函数
+    download_file() {
+        local url="$1"
+        local dest="$2"
+        local desc="$3"
+        
+        if [[ -f "$dest" ]]; then
+            print_info "  ✓ $desc 已存在"
+            return 0
+        fi
+        
+        print_info "  ⬇ 下载 $desc..."
+        if command -v wget >/dev/null 2>&1; then
+            wget -nv "$url" -O "$dest"
+        elif command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$url" -o "$dest"
+        else
+            print_error "未找到 wget 或 curl，无法下载"
+            return 1
+        fi
+        
+        if [[ $? -eq 0 ]]; then
+            print_success "  ✓ 下载成功"
+        else
+            print_error "  ✗ 下载失败: $url"
+            return 1
+        fi
+    }
+
+    # 1. Categraf (Tarball) - 如果 src/apphub 存在
+    if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
+        print_info "处理 Categraf (依赖: apphub)..."
+        local categraf_dir="$third_party_dir/categraf"
+        mkdir -p "$categraf_dir"
+        
+        [[ ! "$categraf_version" =~ ^v ]] && categraf_version="v${categraf_version}"
+        
+        for arch in amd64 arm64; do
+            local tar_file="categraf-${categraf_version}-linux-${arch}.tar.gz"
+            local url=""
+            if [[ "$use_mirror" == "true" ]]; then
+                url="${file_server}/categraf/${categraf_version}/${tar_file}"
+            else
+                url="https://github.com/flashcatcloud/categraf/releases/download/${categraf_version}/${tar_file}"
+            fi
+            download_file "$url" "$categraf_dir/$tar_file" "Categraf ($arch)"
+        done
+    fi
+
+    # 2. Munge (Tarball) - 如果 src/slurm-master 存在
+    if [[ -d "$SCRIPT_DIR/src/slurm-master" ]]; then
+        print_info "处理 Munge (依赖: slurm-master)..."
+        local munge_dir="$third_party_dir/munge"
+        mkdir -p "$munge_dir"
+        local munge_file="munge-${munge_version}.tar.xz"
+        local url=""
+        if [[ "$use_mirror" == "true" ]]; then
+            url="${file_server}/munge/${munge_version}/${munge_file}"
+        else
+            url="https://github.com/dun/munge/releases/download/munge-${munge_version}/${munge_file}"
+        fi
+        download_file "$url" "$munge_dir/$munge_file" "Munge Source"
+    fi
+
+    # 3. Singularity (DEB) - 如果 src/apphub 存在
+    if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
+        print_info "处理 Singularity (依赖: apphub)..."
+        local singularity_dir="$third_party_dir/singularity"
+        mkdir -p "$singularity_dir"
+        local singularity_ver_num="${singularity_version#v}"
+        
+        for arch in amd64 arm64; do
+            local deb_file="singularity-ce_${singularity_ver_num}-1~ubuntu22.04_${arch}.deb"
+            local url=""
+            if [[ "$use_mirror" == "true" ]]; then
+                url="${file_server}/singularity/${singularity_version}/${deb_file}"
+            else
+                url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
+            fi
+            download_file "$url" "$singularity_dir/$deb_file" "Singularity ($arch)"
+        done
+    fi
+
+    # 4. SaltStack (DEB & RPM) - 如果 src/saltstack 存在
+    if [[ -d "$SCRIPT_DIR/src/saltstack" ]]; then
+        print_info "处理 SaltStack (依赖: saltstack)..."
+        local salt_dir="$third_party_dir/saltstack"
+        mkdir -p "$salt_dir"
+        
+        local salt_ver_num="${saltstack_version#v}"
+        local release_tag="${saltstack_version}"
+        [[ ! "$release_tag" =~ ^v ]] && release_tag="v${release_tag}"
+        local base_url=""
+        
+        if [[ "$use_mirror" == "true" ]]; then
+            base_url="${file_server}/saltstack/${release_tag}"
+        else
+            base_url="https://github.com/saltstack/salt/releases/download/${release_tag}"
+        fi
+        
+        # DEB
+        for arch in amd64 arm64; do
+            for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do
+                local pkg_file="${pkg}_${salt_ver_num}_${arch}.deb"
+                download_file "${base_url}/${pkg_file}" "$salt_dir/$pkg_file" "SaltStack DEB $pkg ($arch)"
+            done
+        done
+        
+        # RPM
+        for arch in x86_64 aarch64; do
+            for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do
+                local pkg_file="${pkg}-${salt_ver_num}-0.${arch}.rpm"
+                download_file "${base_url}/${pkg_file}" "$salt_dir/$pkg_file" "SaltStack RPM $pkg ($arch)"
+            done
+        done
+    fi
+
+    # 5. SLURM Source (Tarball) - 如果 src/apphub 存在
+    if [[ -d "$SCRIPT_DIR/src/apphub" ]]; then
+        print_info "处理 SLURM 源码 (依赖: apphub)..."
+        local slurm_tarball="slurm-${slurm_version}.tar.bz2"
+        local url=""
+        if [[ "$use_mirror" == "true" ]]; then
+            url="${file_server}/slurm/${slurm_version}/${slurm_tarball}"
+        else
+            url="https://download.schedmd.com/slurm/${slurm_tarball}"
+        fi
+        download_file "$url" "$third_party_dir/$slurm_tarball" "SLURM Source"
+    fi
+
+    # 6. PyCurl Source (Tarball) - 如果 src/jupyterhub 存在
+    if [[ -d "$SCRIPT_DIR/src/jupyterhub" ]]; then
+        print_info "处理 PyCurl 源码 (依赖: jupyterhub)..."
+        local pycurl_dir="$third_party_dir/python"
+        mkdir -p "$pycurl_dir"
+        
+        # 固定 PyCurl 版本以确保稳定性
+        local pycurl_version="7.45.3"
+        local pycurl_tarball="pycurl-${pycurl_version}.tar.gz"
+        local url=""
+        if [[ "$use_mirror" == "true" ]]; then
+            url="${file_server}/python/${pycurl_tarball}"
+        else
+            url="https://pypi.io/packages/source/p/pycurl/${pycurl_tarball}"
+        fi
+        download_file "$url" "$pycurl_dir/$pycurl_tarball" "PyCurl Source"
+    fi
+    
+    print_success "第三方依赖检查与下载完成"
+    echo
+}
+
 # 构建所有服务镜像
 build_all_services() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
@@ -6382,6 +7067,11 @@ build_all_services() {
     fi
     echo
     
+    # ========================================
+    # 步骤 0.5: 准备第三方依赖
+    # ========================================
+    download_third_party_dependencies
+
     # ========================================
     # 步骤 1: 智能镜像管理（拉取 + Tag）
     # ========================================
@@ -6997,6 +7687,9 @@ build_all_pipeline() {
         print_info "使用手动指定的标签: $tag"
     fi
     
+    # 更新所有 Docker 相关文件中的旧版本标签
+    update_legacy_image_tags "v0.3.8" "$tag"
+    
     # 从 deps.yaml 同步依赖版本到 .env
     sync_deps_from_yaml "$SCRIPT_DIR/.env"
     echo ""
@@ -7136,6 +7829,10 @@ push_service() {
     print_info "  原始镜像: $base_image"
     print_info "  目标镜像: $target_image"
     print_info "  Registry: $registry"
+    if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+        print_info "  多架构支持: 已启用"
+        print_info "  目标平台: $TARGET_PLATFORMS"
+    fi
     
     # 检查镜像是否存在
     if ! docker image inspect "$base_image" >/dev/null 2>&1; then
@@ -7149,23 +7846,71 @@ push_service() {
         print_success "✓ 本地镜像存在: $base_image"
     fi
     
-    # 如果需要标记为目标镜像
-    if [[ "$base_image" != "$target_image" ]]; then
-        print_info "标记镜像: $base_image -> $target_image"
-        if ! docker tag "$base_image" "$target_image"; then
-            print_error "镜像标记失败"
+    # 如果启用多架构构建
+    if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+        IFS=',' read -ra platforms <<< "$TARGET_PLATFORMS"
+        
+        # 推送各个平台的镜像
+        for platform in "${platforms[@]}"; do
+            local arch="${platform##*/}"
+            local platform_base_image="${base_image}-${arch}"
+            local platform_target_image="${target_image}-${arch}"
+            
+            print_info "→ 推送平台: $platform"
+            
+            # 检查平台特定镜像是否存在
+            if ! docker image inspect "$platform_base_image" >/dev/null 2>&1; then
+                print_error "  ✗ 平台镜像不存在: $platform_base_image"
+                continue
+            fi
+            
+            # 标记为目标镜像
+            if [[ "$platform_base_image" != "$platform_target_image" ]]; then
+                print_info "  标记镜像: $platform_base_image -> $platform_target_image"
+                if ! docker tag "$platform_base_image" "$platform_target_image"; then
+                    print_error "  ✗ 镜像标记失败"
+                    continue
+                fi
+            fi
+            
+            # 推送平台特定镜像
+            print_info "  推送镜像: $platform_target_image"
+            if docker push "$platform_target_image"; then
+                print_success "  ✓ 平台 $arch 推送成功"
+            else
+                print_error "  ✗ 平台 $arch 推送失败"
+            fi
+        done
+        
+        # 创建并推送多架构 manifest
+        print_info "→ 创建多架构 manifest"
+        if create_and_push_manifest "$base_image" "$registry"; then
+            print_success "✓ 多架构 manifest 推送成功"
+            return 0
+        else
+            print_error "✗ 多架构 manifest 推送失败"
             return 1
         fi
-    fi
-    
-    # 推送镜像
-    print_info "推送镜像: $target_image"
-    if docker push "$target_image"; then
-        print_success "✓ 推送成功: $target_image"
-        return 0
     else
-        print_error "✗ 推送失败: $target_image"
-        return 1
+        # 单架构推送（原有逻辑）
+        # 如果需要标记为目标镜像
+        if [[ "$base_image" != "$target_image" ]]; then
+            print_info "标记镜像: $base_image -> $target_image"
+            if ! docker tag "$base_image" "$target_image"; then
+                print_error "镜像标记失败"
+                return 1
+            fi
+        fi
+        
+        # 推送镜像
+        print_info "推送镜像: $target_image"
+        if docker push "$target_image"; then
+            print_success "✓ 推送成功: $target_image"
+            return 0
+        else
+            print_error "✗ 推送失败: $target_image"
+            return 1
+        fi
     fi
 }
 
@@ -7409,7 +8154,7 @@ build_and_push_all() {
         echo
         echo "示例:"
         echo "  $0 build-push harbor.company.com/ai-infra v1.0.0"
-        echo "  $0 build-push registry.internal.com/project v0.3.6-dev"
+        echo "  $0 build-push registry.internal.com/project v0.3.8"
         return 0
     fi
     
@@ -7673,7 +8418,7 @@ push_production_dependencies() {
     print_info "=========================================="
     print_info "推送生产环境依赖镜像到 $registry"
     print_info "=========================================="
-    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.6-dev)"
+    print_info "源镜像标签: $tag (如果为latest则会映射到v0.3.8)"
     
     # 使用生产环境依赖镜像列表
     local dependency_images
@@ -7857,6 +8602,10 @@ pull_harbor.example.com_dependencies() {
     print_info "=========================================="
     print_info "Harbor地址: $registry"
     print_info "镜像标签: $tag"
+    if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+        print_info "多架构支持: 已启用"
+        print_info "目标平台: $TARGET_PLATFORMS"
+    fi
     echo
     
     # 从配置文件或预定义列表收集依赖镜像
@@ -7887,27 +8636,69 @@ pull_harbor.example.com_dependencies() {
         print_info "  Harbor镜像: $harbor_image"
         print_info "  原始镜像: $dep_image"
         
-        # 尝试拉取Harbor镜像
-        if docker pull "$harbor_image"; then
-            print_success "  ✓ 拉取成功: $harbor_image"
+        # 如果启用多架构，为每个平台拉取镜像
+        if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+            IFS=',' read -ra platforms <<< "$TARGET_PLATFORMS"
+            local platform_success=true
             
-            # 标记为原始镜像名
-            if docker tag "$harbor_image" "$dep_image"; then
+            for platform in "${platforms[@]}"; do
+                local arch="${platform##*/}"
+                local platform_harbor_image="${harbor_image}-${arch}"
+                
+                print_info "  → 拉取平台: $platform"
+                
+                # 尝试拉取Harbor镜像
+                if docker pull --platform "$platform" "$harbor_image" 2>/dev/null; then
+                    print_success "    ✓ Harbor拉取成功: $harbor_image ($arch)"
+                    
+                    # 标记为平台特定镜像
+                    if docker tag "$harbor_image" "$platform_harbor_image"; then
+                        print_success "    ✓ 标记为: $platform_harbor_image"
+                    fi
+                else
+                    print_warning "    ! Harbor拉取失败，尝试官方源: $dep_image"
+                    # 回退到官方镜像拉取
+                    if docker pull --platform "$platform" "$dep_image" 2>/dev/null; then
+                        print_success "    ✓ 从官方源拉取成功: $dep_image ($arch)"
+                    else
+                        print_error "    ✗ 平台 $arch 拉取失败"
+                        platform_success=false
+                    fi
+                fi
+            done
+            
+            if [[ "$platform_success" == "true" ]]; then
+                # 标记为原始镜像名（不带平台后缀）
+                docker tag "$harbor_image" "$dep_image" 2>/dev/null || true
                 print_success "  ✓ 标记为原始镜像: $dep_image"
                 success_count=$((success_count + 1))
             else
-                print_error "  ✗ 标记失败: $dep_image"
                 failed_deps+=("$dep_image")
             fi
         else
-            print_warning "  ! Harbor拉取失败，尝试官方源: $dep_image"
-            # 回退到官方镜像拉取
-            if docker pull "$dep_image"; then
-                print_success "  ✓ 从官方源拉取成功: $dep_image"
-                success_count=$((success_count + 1))
+            # 单架构拉取（原有逻辑）
+            # 尝试拉取Harbor镜像
+            if docker pull "$harbor_image"; then
+                print_success "  ✓ 拉取成功: $harbor_image"
+                
+                # 标记为原始镜像名
+                if docker tag "$harbor_image" "$dep_image"; then
+                    print_success "  ✓ 标记为原始镜像: $dep_image"
+                    success_count=$((success_count + 1))
+                else
+                    print_error "  ✗ 标记失败: $dep_image"
+                    failed_deps+=("$dep_image")
+                fi
             else
-                print_error "  ✗ 所有源都拉取失败: $dep_image"
-                failed_deps+=("$dep_image")
+                print_warning "  ! Harbor拉取失败，尝试官方源: $dep_image"
+                # 回退到官方镜像拉取
+                if docker pull "$dep_image"; then
+                    print_success "  ✓ 从官方源拉取成功: $dep_image"
+                    success_count=$((success_count + 1))
+                else
+                    print_error "  ✗ 所有源都拉取失败: $dep_image"
+                    failed_deps+=("$dep_image")
+                fi
             fi
         fi
         echo
@@ -8729,7 +9520,7 @@ replace_images_in_compose_file() {
     if [[ -n "$registry" ]]; then
         local ai_infra_services=("backend" "backend-init" "frontend" "jupyterhub" "gitea" "nginx" "saltstack" "singleuser")
         for service in "${ai_infra_services[@]}"; do
-            local source_pattern="ai-infra-${service}:\${IMAGE_TAG:-v0.3.6-dev}"
+            local source_pattern="ai-infra-${service}:\${IMAGE_TAG:-v0.3.8}"
             local target_replacement="${registry}/ai-infra-${service}:${tag}"
             
             if grep -q "ai-infra-${service}:" "$temp_compose"; then
@@ -9450,11 +10241,11 @@ verify_image() {
 # 验证私有仓库中的所有AI-Infra镜像
 verify_private_images() {
     local registry="$1"
-    local tag="${2:-v0.3.6-dev}"
+    local tag="${2:-v0.3.8}"
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify <registry_base> [tag]"
-        print_info "示例: verify harbor.example.com/ai-infra v0.3.6-dev"
+        print_info "示例: verify harbor.example.com/ai-infra v0.3.8"
         return 1
     fi
     
@@ -9571,7 +10362,7 @@ verify_private_images() {
 # 快速验证关键镜像
 verify_key_images() {
     local registry="$1"
-    local tag="${2:-v0.3.6-dev}"
+    local tag="${2:-v0.3.8}"
     
     if [[ -z "$registry" ]]; then
         print_error "使用方法: verify-key <registry_base> [tag]"
@@ -10121,6 +10912,16 @@ show_help() {
     echo "  --china-mirror       - 使用中国镜像加速前端构建"
     echo "  --no-source-maps     - 禁用源码映射生成（优化构建性能）"
     echo
+    echo "多架构构建选项:"
+    echo "  MULTI_ARCH_BUILD=true   - 启用多架构构建（默认: false）"
+    echo "  TARGET_PLATFORMS=...    - 指定目标平台（默认: linux/amd64,linux/arm64）"
+    echo "  USE_BUILDX=auto         - 使用 Docker Buildx（auto/true/false，默认: auto）"
+    echo
+    echo "  多架构构建示例:"
+    echo "    MULTI_ARCH_BUILD=true ./build.sh build-all"
+    echo "    MULTI_ARCH_BUILD=true TARGET_PLATFORMS=linux/amd64,linux/arm64 ./build.sh build backend"
+    echo "    MULTI_ARCH_BUILD=true ./build.sh push-all registry.example.com/ai-infra"
+    echo
     echo "主要命令:"
     echo "  list [tag] [registry]           - 列出所有服务和镜像"
     echo "  check-status [tag] [registry]   - 检查镜像构建状态（需求32）"
@@ -10250,6 +11051,7 @@ show_help() {
     echo "动态配置管理:"
     echo "  update-host [host|auto]         - 更新外部主机配置（auto=自动检测）"
     echo "  update-port <port>              - 更新外部端口配置（自动计算相关端口）"
+    echo "  update-tags [old_tag] [new_tag] - 更新 Docker 文件中的版本标签"
     echo "  quick-deploy [port] [host]      - 一键更新配置并重新部署（默认8080 auto）"
     echo
     echo "===================================================================================="
@@ -10343,8 +11145,8 @@ show_help() {
     echo "  docker compose -f docker-compose.yml.example up -d        # 启动服务"
     echo
     echo "  # 本地开发测试"
-    echo "  $0 build-all test-v0.3.6-dev                          # 构建测试版本"
-    echo "  $0 build frontend v0.3.6-dev                          # 构建前端（Docker容器内）"
+    echo "  $0 build-all test-v0.3.8                          # 构建测试版本"
+    echo "  $0 build frontend v0.3.8                          # 构建前端（Docker容器内）"
     echo "  docker compose -f docker-compose.yml.example up -d backend frontend  # 启动核心服务"
     echo
     echo "  # 单服务调试"
@@ -10355,6 +11157,11 @@ show_help() {
     echo "===================================================================================="
     echo "🔧 动态配置管理实例:"
     echo "===================================================================================="
+    echo "  # 更新版本标签（弃用旧版本，使用当前分支）"
+    echo "  $0 update-tags                                        # v0.3.8 → 当前分支"
+    echo "  $0 update-tags v0.3.8 v0.3.8                     # 指定新版本"
+    echo "  $0 build-all                                          # 重新构建所有镜像"
+    echo
     echo "  # 自动检测外部IP并更新配置"
     echo "  $0 update-host auto                                   # 自动检测外部主机IP"
     echo "  $0 build nginx --force && docker compose restart nginx  # 应用新配置"
@@ -10459,7 +11266,7 @@ export_offline_images() {
         echo
         echo "示例:"
         echo "  $0 export-offline ./my-images v1.0.0 true"
-        echo "  $0 export-offline ./images v0.3.6-dev false"
+        echo "  $0 export-offline ./images v0.3.8 false"
         return 0
     fi
     
@@ -10715,7 +11522,7 @@ push_to_internal_registry() {
         echo
         echo "示例:"
         echo "  $0 push-to-internal harbor.company.com/ai-infra v1.0.0 true"
-        echo "  $0 push-to-internal registry.internal.com/project v0.3.6-dev false"
+        echo "  $0 push-to-internal registry.internal.com/project v0.3.8 false"
         return 0
     fi
     
@@ -10891,7 +11698,7 @@ prepare_offline_deployment() {
         echo
         echo "示例:"
         echo "  $0 prepare-offline harbor.company.com/ai-infra v1.0.0 ./offline true"
-        echo "  $0 prepare-offline registry.internal.com/project v0.3.6-dev ./deploy false"
+        echo "  $0 prepare-offline registry.internal.com/project v0.3.8 ./deploy false"
         return 0
     fi
     
@@ -12362,7 +13169,7 @@ main() {
             get_image_build_labels "$image"
             ;;
             
-        "build")
+        "build"|"build-service")
             if [[ -z "$2" ]]; then
                 print_error "请指定要构建的服务"
                 print_info "可用服务: $SRC_SERVICES"
@@ -12701,7 +13508,7 @@ main() {
         "build-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 build-env harbor.example.com/ai-infra v0.3.6-dev"
+                print_info "示例: $0 build-env harbor.example.com/ai-infra v0.3.8"
                 exit 1
             fi
             build_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -12710,7 +13517,7 @@ main() {
         "intranet-env")
             if [[ -z "$2" ]]; then
                 print_error "请指定目标 registry"
-                print_info "示例: $0 intranet-env harbor.example.com/ai-infra v0.3.6-dev"
+                print_info "示例: $0 intranet-env harbor.example.com/ai-infra v0.3.8"
                 exit 1
             fi
             intranet_environment_deploy "$2" "${3:-$DEFAULT_IMAGE_TAG}"
@@ -12821,7 +13628,7 @@ main() {
                 echo
                 echo "示例:"
                 echo "  $0 build-singleuser auto                      # 自动检测环境"
-                echo "  $0 build-singleuser offline v0.3.6-dev       # 使用内部预构建镜像"
+                echo "  $0 build-singleuser offline v0.3.8       # 使用内部预构建镜像"
                 echo "  $0 build-singleuser online v1.0.0 harbor.com/ai # 在线模式推送"
                 return 0
             fi
@@ -12881,6 +13688,39 @@ main() {
             update_external_port_config "$port"
             ;;
             
+        # 更新 Docker 相关文件中的版本标签
+        "update-tags")
+            local old_tag="${2:-v0.3.8}"
+            local new_tag="${3:-$(get_current_git_branch)}"
+            
+            if [[ "$old_tag" == "--help" || "$old_tag" == "-h" ]]; then
+                echo "update-tags - 更新所有 Docker 相关文件中的版本标签"
+                echo
+                echo "用法: $0 update-tags [old_tag] [new_tag]"
+                echo
+                echo "参数:"
+                echo "  old_tag    要替换的旧标签 (默认: v0.3.8)"
+                echo "  new_tag    新的标签 (默认: 当前 Git 分支名)"
+                echo
+                echo "功能:"
+                echo "  • 自动更新 docker-compose.yml 中的镜像标签"
+                echo "  • 自动更新 .env 文件中的版本变量"
+                echo "  • 支持批量替换多个文件"
+                echo
+                echo "示例:"
+                echo "  $0 update-tags                           # v0.3.8 → 当前分支"
+                echo "  $0 update-tags v0.3.8 v0.3.8        # v0.3.8 → v0.3.8"
+                echo "  $0 update-tags old-version new-version  # 自定义替换"
+                exit 0
+            fi
+            
+            update_legacy_image_tags "$old_tag" "$new_tag"
+            
+            print_info ""
+            print_info "提示: 如需重新构建镜像，请运行:"
+            print_info "  $0 build-all $new_tag"
+            ;;
+            
         # 一键更新端口并重新部署
         "quick-deploy")
             local port="${2:-8080}"
@@ -12922,7 +13762,7 @@ main() {
                 print_info "用法: $0 deps-pull <registry> [tag]"
                 exit 1
             fi
-            pull_and_tag_dependencies "$2" "${3:-v0.3.6-dev}"
+            pull_and_tag_dependencies "$2" "${3:-v0.3.8}"
             ;;
             
         "deps-push")
@@ -12931,7 +13771,7 @@ main() {
                 print_info "用法: $0 deps-push <registry> [tag]"
                 exit 1
             fi
-            push_dependencies "$2" "${3:-v0.3.6-dev}"
+            push_dependencies "$2" "${3:-v0.3.8}"
             ;;
             
         "deps-all")
@@ -12939,7 +13779,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-v0.3.6-dev}"
+            local deps_tag="${3:-v0.3.8}"
             print_info "执行完整的依赖镜像操作..."
             if pull_and_tag_dependencies "$2" "$deps_tag"; then
                 push_dependencies "$2" "$deps_tag"
@@ -12973,7 +13813,7 @@ main() {
                 print_error "请指定目标 registry"
                 exit 1
             fi
-            local deps_tag="${3:-v0.3.6-dev}"
+            local deps_tag="${3:-v0.3.8}"
             print_info "执行生产环境依赖镜像操作（排除测试工具）..."
             if pull_and_tag_production_dependencies "$2" "$deps_tag"; then
                 push_production_dependencies "$2" "$deps_tag"
@@ -13056,7 +13896,7 @@ main() {
                 print_info "用法: $0 verify <registry> [tag]"
                 exit 1
             fi
-            verify_private_images "$2" "${3:-v0.3.6-dev}"
+            verify_private_images "$2" "${3:-v0.3.8}"
             ;;
             
         "verify-key")
@@ -13065,7 +13905,7 @@ main() {
                 print_info "用法: $0 verify-key <registry> [tag]"
                 exit 1
             fi
-            verify_key_images "$2" "${3:-v0.3.6-dev}"
+            verify_key_images "$2" "${3:-v0.3.8}"
             ;;
             
         "clean")

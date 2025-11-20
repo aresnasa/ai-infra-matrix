@@ -2,16 +2,25 @@
 FROM rockylinux:9
 
 ARG VERSION="dev"
+ARG YUM_MIRROR
+ARG PIP_INDEX_URL
 ENV APP_VERSION=${VERSION}
 ENV container=docker
 ENV TZ=Asia/Shanghai
 
 # 配置阿里云镜像源加速
 RUN set -eux; \
-    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-        -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://mirrors.aliyun.com/rockylinux|g' \
-        -i.bak \
-        /etc/yum.repos.d/rocky*.repo && \
+    if [ -n "${YUM_MIRROR}" ]; then \
+        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+            -e "s|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://${YUM_MIRROR}/rockylinux|g" \
+            -i.bak \
+            /etc/yum.repos.d/rocky*.repo; \
+    else \
+        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+            -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://mirrors.aliyun.com/rockylinux|g' \
+            -i.bak \
+            /etc/yum.repos.d/rocky*.repo; \
+    fi && \
     dnf clean all && \
     dnf makecache
 
@@ -70,8 +79,13 @@ RUN usermod -aG wheel testuser
 RUN echo '%wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # 配置pip使用阿里云源
-RUN pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip3 config set global.trusted-host mirrors.aliyun.com || true
+RUN if [ -n "${PIP_INDEX_URL}" ]; then \
+        pip3 config set global.index-url ${PIP_INDEX_URL} && \
+        pip3 config set global.trusted-host $(echo ${PIP_INDEX_URL} | awk -F/ '{print $3}'); \
+    else \
+        pip3 config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+        pip3 config set global.trusted-host mirrors.aliyun.com; \
+    fi || true
 
 # 创建工作目录
 RUN mkdir -p /opt/saltstack /opt/slurm

@@ -1,4 +1,6 @@
-third_party/
+third_party/m3fs
+third_party/slurm-operator
+third_party/openscow/
 ssh-key/
 sql/
 log/
@@ -6,8 +8,6 @@ log/
 .env.dev
 .env.prod
 .env
-*.tgz
-*.tar.*
 test-exports/
 docker-compose.prod.yml
 docker-compose.yml
@@ -21,7 +21,6 @@ docker-compose.yml
 src/jupyterhub/jupyterhub_config_*
 src/frontend/node_modules/
 patches/
-third_party/
 src/openscow/
 backup/
 scripts/node_modules
@@ -61,11 +60,11 @@ config/ai_assistant_config.yaml
 config/example-hosts.txt
 config/postgres-init/
 scripts/
+!scripts/download_third_party.sh
 playwright-report/
 notebooks/
 package-lock.json
 package.json
-config/
 docs-all/
 package.json
 package-lock.json

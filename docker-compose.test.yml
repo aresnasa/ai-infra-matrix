@@ -4,12 +4,12 @@ version: '3.8'
 services:
   # Ubuntu SSH测试容器1
   test-ssh01:
-    image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-ubuntu:${IMAGE_TAG:-v0.3.8}
     build:
       context: .
       dockerfile: ./src/test-containers/Dockerfile
       args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.8}
     container_name: test-ssh01
     hostname: test-ssh01
     privileged: true
@@ -37,7 +37,7 @@ services:
 
   # Ubuntu SSH测试容器2
   test-ssh02:
-    image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-ubuntu:${IMAGE_TAG:-v0.3.8}
     container_name: test-ssh02
     hostname: test-ssh02
     privileged: true
@@ -65,7 +65,7 @@ services:
 
   # Ubuntu SSH测试容器3
   test-ssh03:
-    image: test-ubuntu:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-ubuntu:${IMAGE_TAG:-v0.3.8}
     container_name: test-ssh03
     hostname: test-ssh03
     privileged: true
@@ -93,12 +93,12 @@ services:
 
   # Rocky Linux SSH测试容器1
   test-rocky01:
-    image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-rocky:${IMAGE_TAG:-v0.3.8}
     build:
       context: .
       dockerfile: ./src/test-containers/Dockerfile.rocky
       args:
-        VERSION: ${IMAGE_TAG:-v0.3.6-dev}
+        VERSION: ${IMAGE_TAG:-v0.3.8}
     container_name: test-rocky01
     hostname: test-rocky01
     privileged: true
@@ -126,7 +126,7 @@ services:
 
   # Rocky Linux SSH测试容器2
   test-rocky02:
-    image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-rocky:${IMAGE_TAG:-v0.3.8}
     container_name: test-rocky02
     hostname: test-rocky02
     privileged: true
@@ -154,7 +154,7 @@ services:
 
   # Rocky Linux SSH测试容器3
   test-rocky03:
-    image: test-rocky:${IMAGE_TAG:-v0.3.6-dev}
+    image: test-rocky:${IMAGE_TAG:-v0.3.8}
     container_name: test-rocky03
     hostname: test-rocky03
     privileged: true

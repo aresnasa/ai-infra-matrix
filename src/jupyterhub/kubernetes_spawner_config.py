@@ -95,7 +95,7 @@ def configure_kubespawner(c):
     c.KubeSpawner.namespace = user_namespace
     
     # 镜像配置
-    singleuser_image = os.environ.get('JUPYTERHUB_IMAGE', 'ai-infra-singleuser:v0.3.6-dev')
+    singleuser_image = os.environ.get('JUPYTERHUB_IMAGE', 'ai-infra-singleuser:v0.3.8')
     c.KubeSpawner.image = singleuser_image
     c.KubeSpawner.image_pull_policy = 'IfNotPresent'
     
@@ -181,7 +181,7 @@ def configure_kubespawner(c):
     # 自定义Pod注解
     c.AIInfraKubeSpawner.custom_pod_annotations = {
         'ai-infra.spawned-by': 'jupyterhub',
-        'ai-infra.version': 'v0.3.6-dev'
+        'ai-infra.version': 'v0.3.8'
     }
     
     # Pod模板配置 - 更精细的控制
@@ -221,7 +221,7 @@ def get_spawner_config():
     config_info = {
         'spawner_type': spawner_type,
         'namespace': os.environ.get('KUBERNETES_NAMESPACE', 'ai-infra-users'),
-        'image': os.environ.get('JUPYTERHUB_IMAGE', 'ai-infra-singleuser:v0.3.6-dev'),
+        'image': os.environ.get('JUPYTERHUB_IMAGE', 'ai-infra-singleuser:v0.3.8'),
         'storage_class': os.environ.get('JUPYTERHUB_STORAGE_CLASS', 'local-path'),
         'mem_limit': os.environ.get('JUPYTERHUB_MEM_LIMIT', '2G'),
         'cpu_limit': os.environ.get('JUPYTERHUB_CPU_LIMIT', '1.0'),

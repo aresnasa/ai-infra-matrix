@@ -17,7 +17,7 @@ fi
 
 # 探测可用的 AppHub URL
 APPHUB_URL=""
-for URL in http://apphub http://ai-infra-apphub http://localhost:8081 http://192.168.0.200:8081; do
+for URL in http://apphub http://ai-infra-apphub ; do
     echo ">>> Probing AppHub: $URL"
     if wget -q --spider --timeout=5 --tries=1 "$URL/packages/" 2>/dev/null; then
         APPHUB_URL="$URL"
