@@ -43,6 +43,7 @@ RUN set -eux; \
                 echo "deb http://${APT_MIRROR}/ubuntu/ jammy-backports main restricted universe multiverse"; \
             } > /etc/apt/sources.list; \
         fi; \
+        apt-get update; \
     elif [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "⚙️  配置 ARM64 镜像源（带智能回退）..."; \
         # 尝试阿里云源（静默失败检测）
@@ -222,6 +223,9 @@ RUN mkdir -p /etc/slurm \
     /var/log/munge \
     /var/run/munge \
     /srv/shared
+
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
 
 # 尝试从AppHub安装SLURM包（动态发现所有可用包）
 ARG APPHUB_URL=http://apphub:80

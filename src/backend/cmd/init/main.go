@@ -1233,11 +1233,13 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Create Nightingale DB if missing
+	// Check if Nightingale DB exists
 	var exists bool
 	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", nightingaleDB).Scan(&exists).Error; err != nil {
 		return fmt.Errorf("failed to check Nightingale DB existence: %w", err)
 	}
+
+	var shouldInitSchema bool
 
 	if !exists {
 		log.Printf("Creating Nightingale database: %s", nightingaleDB)
@@ -1247,8 +1249,55 @@ func createNightingaleDatabase(cfg *config.Config) error {
 			return fmt.Errorf("failed to create Nightingale database: %w", err)
 		}
 		log.Printf("✓ Nightingale database '%s' created successfully", nightingaleDB)
+		shouldInitSchema = true
 	} else {
 		log.Printf("✓ Nightingale database '%s' already exists", nightingaleDB)
+
+		// Check if it is in partial state (e.g. missing builtin_payloads table)
+		nightingaleDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+			cfg.Database.Host,
+			cfg.Database.User,
+			cfg.Database.Password,
+			nightingaleDB,
+			cfg.Database.Port,
+			cfg.Database.SSLMode,
+		)
+		tempDB, err := gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
+		if err == nil {
+			var tableExists bool
+			// Check for builtin_payloads which is not created by GORM
+			tempDB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'builtin_payloads')").Scan(&tableExists)
+
+			sqlDB, _ := tempDB.DB()
+			sqlDB.Close()
+
+			if !tableExists {
+				log.Println("⚠ Database exists but 'builtin_payloads' table is missing. Database might be in partial state.")
+				log.Println("Recreating database to ensure clean state...")
+
+				// Terminate connections
+				terminateQuery := `
+					SELECT pg_terminate_backend(pid)
+					FROM pg_stat_activity
+					WHERE datname = ? AND pid <> pg_backend_pid()
+				`
+				systemDB.Exec(terminateQuery, nightingaleDB)
+
+				// Drop and Recreate
+				dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(nightingaleDB))
+				if err := systemDB.Exec(dropQuery).Error; err != nil {
+					return fmt.Errorf("failed to drop partial database: %w", err)
+				}
+
+				createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(nightingaleDB))
+				if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
+					return fmt.Errorf("failed to recreate Nightingale database: %w", err)
+				}
+				shouldInitSchema = true
+			} else {
+				log.Println("✓ Database schema appears complete")
+			}
+		}
 	}
 
 	// Connect to Nightingale database
@@ -1270,13 +1319,19 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Auto migrate Nightingale models using GORM
-	log.Println("Running GORM AutoMigrate for Nightingale tables...")
-	nightingaleModels := models.InitNightingaleModels()
-	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
-		return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
+	if shouldInitSchema {
+		log.Println("Initializing Nightingale schema from SQL file...")
+		if err := executeSQLFile(nightingaleDB_conn, "n9e_postgres.sql"); err != nil {
+			log.Printf("Warning: Failed to execute SQL file: %v. Falling back to AutoMigrate.", err)
+			// Fallback to AutoMigrate if SQL fails
+			nightingaleModels := models.InitNightingaleModels()
+			if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
+				return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
+			}
+		} else {
+			log.Println("✓ Nightingale schema initialized from SQL")
+		}
 	}
-	log.Println("✓ Nightingale tables created/updated successfully")
 
 	// Initialize default roles
 	if err := initializeNightingaleRoles(nightingaleDB_conn); err != nil {
@@ -1295,9 +1350,7 @@ func createNightingaleDatabase(cfg *config.Config) error {
 
 	log.Println("✓ Nightingale database initialization completed!")
 	return nil
-}
-
-// initializeNightingaleRoles initializes default roles in Nightingale using GORM
+} // initializeNightingaleRoles initializes default roles in Nightingale using GORM
 func initializeNightingaleRoles(db *gorm.DB) error {
 	log.Println("Initializing Nightingale roles...")
 
@@ -1519,5 +1572,19 @@ func initializeNightingaleBusiGroup(db *gorm.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// executeSQLFile executes a SQL file
+func executeSQLFile(db *gorm.DB, filepath string) error {
+	content, err := os.ReadFile(filepath)
+	if err != nil {
+		return err
+	}
+
+	// Execute the SQL
+	if err := db.Exec(string(content)).Error; err != nil {
+		return err
+	}
 	return nil
 }

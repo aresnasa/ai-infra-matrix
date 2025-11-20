@@ -21,41 +21,28 @@ RUN set -eux; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update --no-cache && \
-        apk add --no-cache git ca-certificates; \
-    else \
-        # 尝试阿里云镜像源
-        { \
-            echo "尝试阿里云镜像源..."; \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用阿里云镜像源"; \
-        } || { \
-            echo "阿里云镜像源失败，尝试清华源..."; \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用清华源"; \
-        } || { \
-            echo "清华源失败，尝试中科大源..."; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用中科大源"; \
-        } || { \
-            echo "所有国内源都失败，使用官方源..."; \
-            cp /etc/apk/repositories.bak /etc/apk/repositories && \
-            apk update && \
-            apk add --no-cache git ca-certificates && \
-            echo "使用官方源"; \
-        }; \
+    # 定义要尝试的镜像源列表
+    mirrors="${ALPINE_MIRROR} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
+    installed=false; \
+    for mirror in $mirrors; do \
+        [ -z "$mirror" ] && continue; \
+        echo "Trying mirror: $mirror"; \
+        if [ "$mirror" = "dl-cdn.alpinelinux.org" ]; then \
+            cp /etc/apk/repositories.bak /etc/apk/repositories; \
+        else \
+            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+        fi; \
+        if apk update --no-cache && apk add --no-cache git ca-certificates; then \
+            echo "Successfully installed packages using $mirror"; \
+            installed=true; \
+            break; \
+        fi; \
+        echo "Failed to use $mirror"; \
+    done; \
+    if [ "$installed" = "false" ]; then \
+        echo "All mirrors failed"; \
+        exit 1; \
     fi
 
 ENV GO111MODULE=on
@@ -67,6 +54,9 @@ WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
 # Copy go.mod and go.sum files first for better caching
 COPY go.mod go.sum ./
+
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
 
 # Download dependencies with retry and fallback
 RUN set -eux; \
@@ -129,24 +119,31 @@ ENV APP_VERSION=${VERSION}
 # 配置Alpine镜像（多镜像源智能回退配置）
 RUN set -eux; \
     cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update 2>/dev/null; \
-    else \
-        # 尝试阿里云镜像
-        sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories && \
-        (apk update 2>/dev/null || \
-        # 失败则尝试清华镜像
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i 's#://[^/]\+/alpine#://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 再失败则尝试中科大镜像
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i 's#://[^/]\+/alpine#://mirrors.ustc.edu.cn/alpine#g' /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 最后恢复官方源
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update)); \
+    # 获取Alpine版本
+    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
+    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
+    # 定义要尝试的镜像源列表
+    mirrors="${ALPINE_MIRROR} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
+    updated=false; \
+    for mirror in $mirrors; do \
+        [ -z "$mirror" ] && continue; \
+        echo "Trying mirror: $mirror"; \
+        if [ "$mirror" = "dl-cdn.alpinelinux.org" ]; then \
+            cp /etc/apk/repositories.bak /etc/apk/repositories; \
+        else \
+            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+        fi; \
+        if apk update 2>/dev/null; then \
+            echo "Successfully updated repositories using $mirror"; \
+            updated=true; \
+            break; \
+        fi; \
+        echo "Failed to use $mirror"; \
+    done; \
+    if [ "$updated" = "false" ]; then \
+        echo "All mirrors failed"; \
+        exit 1; \
     fi
 
 # 更新apk索引并设置时区为上海，添加必要工具（包括SSH客户端和sshpass）
@@ -250,41 +247,28 @@ RUN set -eux; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update --no-cache && \
-        apk add --no-cache git ca-certificates; \
-    else \
-        # 尝试阿里云镜像源
-        { \
-            echo "尝试阿里云镜像源..."; \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用阿里云镜像源"; \
-        } || { \
-            echo "阿里云镜像源失败，尝试清华源..."; \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用清华源"; \
-        } || { \
-            echo "清华源失败，尝试中科大源..."; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用中科大源"; \
-        } || { \
-            echo "所有国内源都失败，使用官方源..."; \
-            cp /etc/apk/repositories.bak /etc/apk/repositories && \
-            apk update && \
-            apk add --no-cache git ca-certificates && \
-            echo "使用官方源"; \
-        }; \
+    # 定义要尝试的镜像源列表
+    mirrors="${ALPINE_MIRROR} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
+    installed=false; \
+    for mirror in $mirrors; do \
+        [ -z "$mirror" ] && continue; \
+        echo "Trying mirror: $mirror"; \
+        if [ "$mirror" = "dl-cdn.alpinelinux.org" ]; then \
+            cp /etc/apk/repositories.bak /etc/apk/repositories; \
+        else \
+            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
+            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
+        fi; \
+        if apk update --no-cache && apk add --no-cache git ca-certificates; then \
+            echo "Successfully installed packages using $mirror"; \
+            installed=true; \
+            break; \
+        fi; \
+        echo "Failed to use $mirror"; \
+    done; \
+    if [ "$installed" = "false" ]; then \
+        echo "All mirrors failed"; \
+        exit 1; \
     fi
 
 # 更新apk索引并设置时区为上海，添加必要工具
@@ -297,6 +281,7 @@ WORKDIR /root/
 
 # Copy the init binary from builder stage
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init .
+COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/cmd/init/n9e_postgres.sql .
 
 # 注意：不再从 src/backend/.env 读取配置
 # 所有环境变量统一从项目根目录 .env 文件读取，通过 docker-compose.yml 的 env_file 传递

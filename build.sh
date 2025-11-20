@@ -6224,6 +6224,48 @@ build_service() {
     
     # ========================================
     local apphub_extra_args=""
+    
+    # ========================================
+    # 准备 third_party 依赖 (AppHub/JupyterHub/Backend/SaltStack/SlurmMaster/Nginx)
+    # ========================================
+    # 定义需要 third_party 依赖的服务列表
+    local third_party_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master" "nginx")
+    
+    # 检查当前服务是否在列表中
+    if [[ " ${third_party_services[*]} " =~ " ${service} " ]]; then
+        # 下载第三方依赖
+        print_info "  → 检查/下载第三方依赖..."
+        download_third_party_dependencies
+        
+        # 复制 third_party 到构建上下文 (Nginx 除外，因为它使用根目录作为上下文)
+        if [[ "$service" != "nginx" ]]; then
+            print_info "  → 准备构建上下文 (third_party)..."
+            local dest_third_party="$SCRIPT_DIR/$service_path/third_party"
+            rm -rf "$dest_third_party"
+            mkdir -p "$dest_third_party" || { print_error "无法创建目录: $dest_third_party"; return 1; }
+            
+            # 使用更兼容的复制方式
+            if [[ -d "$SCRIPT_DIR/third_party" ]]; then
+                # macOS/Linux 兼容复制：复制内容到目标目录 (使用 . 包含隐藏文件)
+                # 移除错误屏蔽以便调试
+                if cp -R "$SCRIPT_DIR/third_party/." "$dest_third_party/"; then
+                    local count=$(ls -A "$dest_third_party" | wc -l)
+                    print_info "  ✓ 已复制 third_party 到构建上下文 ($count items)"
+                else
+                    print_warning "  ⚠ 复制 third_party 失败 (cp command failed)"
+                fi
+                
+                # 检查是否复制成功
+                if [[ -z "$(ls -A "$dest_third_party")" ]]; then
+                    print_warning "  ⚠ third_party 目录为空"
+                    ls -la "$SCRIPT_DIR/third_party"
+                fi
+            else
+                print_warning "  ⚠ 源 third_party 目录不存在: $SCRIPT_DIR/third_party"
+            fi
+        fi
+    fi
+
     if [[ "$service" == "apphub" ]]; then
         # 启用 Docker BuildKit（必需，用于缓存挂载）
         export DOCKER_BUILDKIT=1
@@ -6235,36 +6277,6 @@ build_service() {
             print_warning "  ⚠ AppHub 版本检查失败，继续使用当前版本"
         fi
         echo
-
-        # 下载第三方依赖
-        print_info "  → 下载第三方依赖..."
-        download_third_party_dependencies
-        
-        # 复制 third_party 到构建上下文
-        print_info "  → 准备构建上下文 (third_party)..."
-        local dest_third_party="$SCRIPT_DIR/$service_path/third_party"
-        rm -rf "$dest_third_party"
-        mkdir -p "$dest_third_party" || { print_error "无法创建目录: $dest_third_party"; return 1; }
-        
-        # 使用更兼容的复制方式
-        if [[ -d "$SCRIPT_DIR/third_party" ]]; then
-            # macOS/Linux 兼容复制：复制内容到目标目录 (使用 . 包含隐藏文件)
-            # 移除错误屏蔽以便调试
-            if cp -R "$SCRIPT_DIR/third_party/." "$dest_third_party/"; then
-                local count=$(ls -A "$dest_third_party" | wc -l)
-                print_info "  ✓ 已复制 third_party 到构建上下文 ($count items)"
-            else
-                print_warning "  ⚠ 复制 third_party 失败 (cp command failed)"
-            fi
-            
-            # 检查是否复制成功
-            if [[ -z "$(ls -A "$dest_third_party")" ]]; then
-                print_warning "  ⚠ third_party 目录为空"
-                ls -la "$SCRIPT_DIR/third_party"
-            fi
-        else
-            print_warning "  ⚠ 源 third_party 目录不存在: $SCRIPT_DIR/third_party"
-        fi
         
         # ========================================
         # AppHub 包缓存优化
@@ -6521,10 +6533,13 @@ build_service() {
         fi
 
         # ========================================
-        # AppHub 构建后清理
+        # AppHub/JupyterHub/Backend/SaltStack/SlurmMaster 构建后清理
         # ========================================
-        if [[ "$service" == "apphub" ]]; then
-            print_info "  → 清理 AppHub 构建上下文 (third_party)..."
+        # 定义需要清理 third_party 的服务列表
+        local cleanup_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master")
+        
+        if [[ " ${cleanup_services[*]} " =~ " ${service} " ]]; then
+            print_info "  → 清理构建上下文 (third_party)..."
             rm -rf "$SCRIPT_DIR/$service_path/third_party"
         fi
         
@@ -6544,11 +6559,15 @@ build_service() {
         fi
 
         # ========================================
-        # AppHub 构建失败时也需要清理
+        # AppHub/JupyterHub/Backend/SaltStack/SlurmMaster 构建失败时也需要清理
         # ========================================
-        if [[ "$service" == "apphub" ]]; then
-            print_info "  → 构建失败，清理 AppHub 构建上下文 (third_party)..."
-            rm -rf "$SCRIPT_DIR/$service_path/third_party"
+        # 定义需要清理 third_party 的服务列表
+        local cleanup_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master")
+        
+        if [[ " ${cleanup_services[*]} " =~ " ${service} " ]]; then
+            # 如果构建失败，保留 third_party 目录以便 docker-compose 可以使用
+            print_warning "  ⚠ 构建失败，保留构建上下文 (third_party) 以便 docker-compose 使用..."
+            # rm -rf "$SCRIPT_DIR/$service_path/third_party"
         fi
         
         return 1

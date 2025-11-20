@@ -27,7 +27,8 @@ RUN set -eux; \
     if [ -n "${ALPINE_MIRROR:-}" ]; then \
         echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
         sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update --no-cache 2>/dev/null; \
+        # Retry apk update to handle transient network issues
+        for i in 1 2 3; do apk update --no-cache && break || (echo "apk update failed, retrying..." && sleep 2); done; \
     else \
         # 尝试阿里云镜像
         echo "尝试阿里云镜像源..."; \
@@ -69,6 +70,8 @@ RUN mkdir -p /usr/share/nginx/html/sso \
 # 复制项目静态文件
 COPY src/shared/sso/ /usr/share/nginx/html/sso/
 COPY src/shared/jupyterhub/ /usr/share/nginx/html/jupyterhub/
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
 # Copy any additional nginx static html (like debug_auth.html)
 COPY src/nginx/html/ /usr/share/nginx/html/
 # browser_debug.html was archived; serve debug index from existing debug bundle when DEBUG_MODE=true

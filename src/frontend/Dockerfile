@@ -16,7 +16,7 @@ RUN set -eux; \
     # 获取Alpine版本
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
+    if [ -n "${ALPINE_MIRROR:-}" ]; then \
         sed -i "s#https\?://[^/]\+/alpine#https://${ALPINE_MIRROR}/alpine#g" /etc/apk/repositories && \
         apk update 2>/dev/null; \
     else \
@@ -74,7 +74,7 @@ ENV APP_VERSION=${VERSION}
 # 配置Alpine镜像（多镜像源智能回退 - 与build阶段一致）
 RUN set -eux; \
     cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
+    if [ -n "${ALPINE_MIRROR:-}" ]; then \
         sed -i "s#https\?://[^/]\+/alpine#https://${ALPINE_MIRROR}/alpine#g" /etc/apk/repositories && \
         apk update 2>/dev/null && apk add --no-cache tzdata; \
     else \

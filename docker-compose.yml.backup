@@ -888,6 +888,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/api/v1/health"]
       interval: 30s

@@ -49,7 +49,7 @@ ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SALTSTACK_VERSION=v3007.8
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.27
+ARG CATEGRAF_VERSION=v0.4.25
 
 # Singularity version configuration
 ARG SINGULARITY_VERSION=v4.3.4
@@ -923,7 +923,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.27
+ARG CATEGRAF_VERSION=v0.4.25
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
@@ -1026,7 +1026,7 @@ RUN set -eux; \
 # =============================================================================
 # Stage 4.5: Download Pre-built Singularity (Container Runtime for HPC)
 # =============================================================================
-FROM alpine:3.20 AS singularity-builder
+FROM alpine:3.22 AS singularity-builder
 
 # Build control flags - 暂时禁用（deb 包下载问题）
 ARG BUILD_SINGULARITY=false
@@ -1116,7 +1116,7 @@ FROM nginx:${NGINX_ALPINE_VERSION}
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION=25.05.4
 ARG SALTSTACK_VERSION=v3007.8
-ARG CATEGRAF_VERSION=v0.4.27
+ARG CATEGRAF_VERSION=v0.4.25
 ARG APPHUB_BASE_URL=http://localhost:8081
 ARG ALPINE_MIRROR
 

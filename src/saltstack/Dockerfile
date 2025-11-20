@@ -16,9 +16,9 @@ ENV container=docker
 RUN set -eux; \
     if [ -n "${APT_MIRROR:-}" ]; then \
         echo "Using custom APT mirror: ${APT_MIRROR}"; \
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        sed -i "s|http://archive.ubuntu.com/ubuntu/|http://${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|http://security.ubuntu.com/ubuntu/|http://${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|http://${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     else \
         sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
     fi; \
@@ -67,6 +67,9 @@ RUN python3 -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}"
 RUN locale-gen zh_CN.UTF-8 en_US.UTF-8
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
+
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
 
 # 配置PyPI镜像源与Python警告控制（屏蔽冗余的上游弃用告警）
 ENV PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" \
