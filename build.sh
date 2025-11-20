@@ -6921,6 +6921,43 @@ download_third_party_dependencies() {
         mkdir -p "$singularity_dir"
         local singularity_ver_num="${singularity_version#v}"
         
+        # 检查网络环境
+        local can_access_github=false
+        if curl -s --connect-timeout 5 https://github.com >/dev/null 2>&1; then
+            can_access_github=true
+        fi
+        
+        # 如果能访问 GitHub，检查版本是否匹配
+        if [[ "$can_access_github" == "true" ]] && [[ "$use_mirror" != "true" ]]; then
+            print_info "  🔍 检查 GitHub Release: $singularity_version"
+            if ! curl -s --head --fail "https://github.com/sylabs/singularity/releases/tag/${singularity_version}" >/dev/null; then
+                print_warning "  ⚠ GitHub Release ${singularity_version} 不存在或无法访问"
+            fi
+        fi
+
+        # 下载函数包装器：内网环境下如果文件存在则跳过
+        download_singularity_pkg() {
+            local url="$1"
+            local dest="$2"
+            local desc="$3"
+            
+            if [[ -f "$dest" ]]; then
+                if [[ "$can_access_github" == "false" ]] && [[ "$use_mirror" != "true" ]]; then
+                    print_info "  ✓ [内网模式] $desc 已存在，跳过更新"
+                    return 0
+                fi
+                # 外网模式下，download_file 会检查文件是否存在，这里直接调用
+            fi
+            
+            # 如果是内网且文件不存在，且没有配置镜像源，则报错
+            if [[ "$can_access_github" == "false" ]] && [[ "$use_mirror" != "true" ]] && [[ ! -f "$dest" ]]; then
+                print_error "  ✗ [内网模式] $desc 不存在且无法访问 GitHub"
+                return 1
+            fi
+            
+            download_file "$url" "$dest" "$desc"
+        }
+        
         # DEB (Ubuntu 22.04)
         for arch in amd64 arm64; do
             local deb_file="singularity-ce_${singularity_ver_num}-1~ubuntu22.04_${arch}.deb"
@@ -6930,7 +6967,7 @@ download_third_party_dependencies() {
             else
                 url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
             fi
-            download_file "$url" "$singularity_dir/$deb_file" "Singularity DEB ($arch)"
+            download_singularity_pkg "$url" "$singularity_dir/$deb_file" "Singularity DEB ($arch)"
         done
 
         # RPM (Rocky Linux 9)
@@ -6942,7 +6979,7 @@ download_third_party_dependencies() {
             else
                 url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${rpm_file}"
             fi
-            download_file "$url" "$singularity_dir/$rpm_file" "Singularity RPM ($arch)"
+            download_singularity_pkg "$url" "$singularity_dir/$rpm_file" "Singularity RPM ($arch)"
         done
     fi
 
