@@ -192,7 +192,7 @@ COMMENT ON COLUMN busi_group_member.user_group_id IS 'user group id';
 COMMENT ON COLUMN busi_group_member.perm_flag IS 'ro | rw';
 
 
-insert into busi_group_member(busi_group_id, user_group_id, perm_flag) values(1, 1, 'rw');
+insert into busi_group_member(busi_group_id, user_group_id, perm_flag) select 1, 1, 'rw' where not exists (select 1 from busi_group_member where busi_group_id=1 and user_group_id=1);
 
 -- for dashboard new version
 CREATE TABLE board (
