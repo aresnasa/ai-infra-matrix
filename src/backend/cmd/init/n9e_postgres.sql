@@ -28,6 +28,7 @@ COMMENT ON COLUMN users.contacts IS 'json e.g. {wecom:xx, dingtalk_robot_token:y
 COMMENT ON COLUMN users.belong IS 'belong';
 
 insert into users(id, username, nickname, password, roles, create_at, create_by, update_at, update_by) values(1, 'root', '超管', 'root.2020', 'Admin', date_part('epoch',current_timestamp)::int, 'system', date_part('epoch',current_timestamp)::int, 'system') ON CONFLICT (id) DO NOTHING;
+SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));
 
 CREATE TABLE user_group (
     id bigserial,
@@ -43,6 +44,7 @@ CREATE INDEX user_group_create_by_idx ON user_group (create_by);
 CREATE INDEX user_group_update_at_idx ON user_group (update_at);
 
 insert into user_group(id, name, create_at, create_by, update_at, update_by) values(1, 'demo-root-group', date_part('epoch',current_timestamp)::int, 'root', date_part('epoch',current_timestamp)::int, 'root') ON CONFLICT (id) DO NOTHING;
+SELECT setval('user_group_id_seq', (SELECT MAX(id) FROM user_group));
 
 CREATE TABLE user_group_member (
     id bigserial,
@@ -177,6 +179,7 @@ CREATE TABLE busi_group (
 COMMENT ON COLUMN busi_group.label_value IS 'if label_enable: label_value can not be blank';
 
 insert into busi_group(id, name, create_at, create_by, update_at, update_by) values(1, 'Default Busi Group', date_part('epoch',current_timestamp)::int, 'root', date_part('epoch',current_timestamp)::int, 'root') ON CONFLICT (id) DO NOTHING;
+SELECT setval('busi_group_id_seq', (SELECT MAX(id) FROM busi_group));
 
 CREATE TABLE busi_group_member (
     id bigserial,
