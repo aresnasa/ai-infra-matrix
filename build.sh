@@ -104,10 +104,13 @@ load_env_file() {
     local env_file="${1:-$ENV_FILE}"
     
     if [[ ! -f "$env_file" ]]; then
-        # 如果 .env 不存在，尝试从 .env.example 复制
+        # 如果 .env 不存在，尝试从 .env.example 或 env.example 复制
         if [[ -f "$SCRIPT_DIR/.env.example" ]]; then
             print_info "环境文件不存在，从 .env.example 创建"
             cp "$SCRIPT_DIR/.env.example" "$env_file"
+        elif [[ -f "$SCRIPT_DIR/env.example" ]]; then
+            print_info "环境文件不存在，从 env.example 创建"
+            cp "$SCRIPT_DIR/env.example" "$env_file"
         else
             print_warning "环境文件不存在: $env_file"
             return 1
@@ -276,7 +279,11 @@ get_version_build_args() {
     
     # 确保环境变量已加载
     load_env_file
-    
+
+    # 代理和镜像配置
+    [[ -n "${GITHUB_PROXY:-}" ]] && build_args+=" --build-arg GITHUB_PROXY=${GITHUB_PROXY}"
+    [[ -n "${GITHUB_MIRROR:-}" ]] && build_args+=" --build-arg GITHUB_MIRROR=${GITHUB_MIRROR}"
+
     # 基础镜像版本参数（所有服务通用）
     [[ -n "${GOLANG_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_VERSION=${GOLANG_VERSION}"
     [[ -n "${GOLANG_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_ALPINE_VERSION=${GOLANG_ALPINE_VERSION}"
@@ -2412,7 +2419,8 @@ ensure_env_top_variables() {
         grep -v "^INTERNAL_FILE_SERVER=" | \
         grep -v "^USE_INTERNAL_MIRROR=" | \
         grep -v "^# 镜像和内部源配置" | \
-        grep -v "^# ========================================" >> "$temp_file"
+        grep -v "^# ========================================" | \
+        sed '/./,$!d' >> "$temp_file"
     fi
     
     mv "$temp_file" "$env_file"
@@ -6885,9 +6893,9 @@ download_third_party_dependencies() {
         
         print_info "  ⬇ 下载 $desc..."
         if command -v wget >/dev/null 2>&1; then
-            wget -nv "$url" -O "$dest"
+            wget -nv --timeout=15 --tries=2 "$url" -O "$dest"
         elif command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$url" -o "$dest"
+            curl -fsSL --connect-timeout 5 --max-time 60 "$url" -o "$dest"
         else
             print_error "未找到 wget 或 curl，无法下载"
             return 1
@@ -6915,7 +6923,7 @@ download_third_party_dependencies() {
             if [[ "$use_mirror" == "true" ]]; then
                 url="${file_server}/categraf/${categraf_version}/${tar_file}"
             else
-                url="https://github.com/flashcatcloud/categraf/releases/download/${categraf_version}/${tar_file}"
+                url="${GITHUB_MIRROR}https://github.com/flashcatcloud/categraf/releases/download/${categraf_version}/${tar_file}"
             fi
             download_file "$url" "$categraf_dir/$tar_file" "Categraf ($arch)"
         done
@@ -6931,7 +6939,7 @@ download_third_party_dependencies() {
         if [[ "$use_mirror" == "true" ]]; then
             url="${file_server}/munge/${munge_version}/${munge_file}"
         else
-            url="https://github.com/dun/munge/releases/download/munge-${munge_version}/${munge_file}"
+            url="${GITHUB_MIRROR}https://github.com/dun/munge/releases/download/munge-${munge_version}/${munge_file}"
         fi
         download_file "$url" "$munge_dir/$munge_file" "Munge Source"
     fi
@@ -6945,14 +6953,27 @@ download_third_party_dependencies() {
         
         # 检查网络环境
         local can_access_github=false
-        if curl -s --connect-timeout 5 https://github.com >/dev/null 2>&1; then
-            can_access_github=true
+        # 只有在不使用镜像源时才检查 GitHub 连接，且增加超时限制防止卡死
+        if [[ "$use_mirror" != "true" ]]; then
+            print_info "  🔍 正在检查 GitHub 连接..."
+            local check_url="https://github.com"
+            [[ -n "$GITHUB_MIRROR" ]] && check_url="${GITHUB_MIRROR}https://github.com"
+            
+            if curl -s --connect-timeout 3 --max-time 5 "$check_url" >/dev/null 2>&1; then
+                can_access_github=true
+                print_info "  ✓ GitHub 连接正常"
+            else
+                print_warning "  ⚠ 无法连接 GitHub (超时或网络不可达)，将尝试使用本地缓存"
+            fi
         fi
         
         # 如果能访问 GitHub，检查版本是否匹配
         if [[ "$can_access_github" == "true" ]] && [[ "$use_mirror" != "true" ]]; then
             print_info "  🔍 检查 GitHub Release: $singularity_version"
-            if ! curl -s --head --fail "https://github.com/sylabs/singularity/releases/tag/${singularity_version}" >/dev/null; then
+            local release_url="https://github.com/sylabs/singularity/releases/tag/${singularity_version}"
+            [[ -n "$GITHUB_MIRROR" ]] && release_url="${GITHUB_MIRROR}${release_url}"
+            
+            if ! curl -s --head --fail "$release_url" >/dev/null; then
                 print_warning "  ⚠ GitHub Release ${singularity_version} 不存在或无法访问"
             fi
         fi
@@ -6987,7 +7008,7 @@ download_third_party_dependencies() {
             if [[ "$use_mirror" == "true" ]]; then
                 url="${file_server}/singularity/${singularity_version}/${deb_file}"
             else
-                url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
+                url="${GITHUB_MIRROR}https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
             fi
             download_singularity_pkg "$url" "$singularity_dir/$deb_file" "Singularity DEB ($arch)"
         done
@@ -6999,7 +7020,7 @@ download_third_party_dependencies() {
             if [[ "$use_mirror" == "true" ]]; then
                 url="${file_server}/singularity/${singularity_version}/${rpm_file}"
             else
-                url="https://github.com/sylabs/singularity/releases/download/${singularity_version}/${rpm_file}"
+                url="${GITHUB_MIRROR}https://github.com/sylabs/singularity/releases/download/${singularity_version}/${rpm_file}"
             fi
             download_singularity_pkg "$url" "$singularity_dir/$rpm_file" "Singularity RPM ($arch)"
         done
@@ -7019,7 +7040,7 @@ download_third_party_dependencies() {
         if [[ "$use_mirror" == "true" ]]; then
             base_url="${file_server}/saltstack/${release_tag}"
         else
-            base_url="https://github.com/saltstack/salt/releases/download/${release_tag}"
+            base_url="${GITHUB_MIRROR}https://github.com/saltstack/salt/releases/download/${release_tag}"
         fi
         
         # DEB
