@@ -6912,7 +6912,7 @@ download_third_party_dependencies() {
         local desc="$3"
         
         if [[ -f "$dest" ]]; then
-            print_info "  ✓ $desc 已存在"
+            print_info "  ✓ $desc 已存在 (跳过更新)"
             return 0
         fi
         
@@ -6977,50 +6977,49 @@ download_third_party_dependencies() {
         local singularity_ver_num="${singularity_version#v}"
         
         # 检查网络环境
-        local can_access_github=false
+        local can_access_github=true
         # 只有在不使用镜像源时才检查 GitHub 连接，且增加超时限制防止卡死
         if [[ "$use_mirror" != "true" ]]; then
             print_info "  🔍 正在检查 GitHub 连接..."
             local check_url="https://github.com"
             [[ -n "$GITHUB_MIRROR" ]] && check_url=$(get_github_url "https://github.com")
             
-            if curl -s --connect-timeout 3 --max-time 5 "$check_url" >/dev/null 2>&1; then
+            if curl -s --connect-timeout 2 --max-time 3 "$check_url" >/dev/null 2>&1; then
                 can_access_github=true
                 print_info "  ✓ GitHub 连接正常"
             else
+                can_access_github=false
                 print_warning "  ⚠ 无法连接 GitHub (超时或网络不可达)，将尝试使用本地缓存"
             fi
         fi
         
-        # 如果能访问 GitHub，检查版本是否匹配
+        # 如果能访问 GitHub，检查版本是否匹配（非强制）
         if [[ "$can_access_github" == "true" ]] && [[ "$use_mirror" != "true" ]]; then
             print_info "  🔍 检查 GitHub Release: $singularity_version"
             local release_url="https://github.com/sylabs/singularity/releases/tag/${singularity_version}"
             [[ -n "$GITHUB_MIRROR" ]] && release_url=$(get_github_url "${release_url}")
             
             if ! curl -s --head --fail "$release_url" >/dev/null; then
-                print_warning "  ⚠ GitHub Release ${singularity_version} 不存在或无法访问"
+                print_warning "  ⚠ GitHub Release ${singularity_version} 不存在或无法访问 (非致命错误)"
             fi
         fi
 
-        # 下载函数包装器：内网环境下如果文件存在则跳过
+        # 下载函数包装器：优先使用本地文件
         download_singularity_pkg() {
             local url="$1"
             local dest="$2"
             local desc="$3"
             
+            # 1. 优先使用本地文件，不进行更新检查
             if [[ -f "$dest" ]]; then
-                if [[ "$can_access_github" == "false" ]] && [[ "$use_mirror" != "true" ]]; then
-                    print_info "  ✓ [内网模式] $desc 已存在，跳过更新"
-                    return 0
-                fi
-                # 外网模式下，download_file 会检查文件是否存在，这里直接调用
+                print_info "  ✓ $desc 已存在 (跳过更新)"
+                return 0
             fi
             
-            # 如果是内网且文件不存在，且没有配置镜像源，则报错
-            if [[ "$can_access_github" == "false" ]] && [[ "$use_mirror" != "true" ]] && [[ ! -f "$dest" ]]; then
-                print_error "  ✗ [内网模式] $desc 不存在且无法访问 GitHub"
-                return 1
+            # 2. 如果是内网且无法访问 GitHub，且没有配置镜像源，则跳过下载但不报错
+            if [[ "$can_access_github" == "false" ]] && [[ "$use_mirror" != "true" ]]; then
+                print_warning "  ⚠ [内网模式] $desc 不存在且无法访问 GitHub，跳过下载 (继续构建)"
+                return 0
             fi
             
             download_file "$url" "$dest" "$desc"
