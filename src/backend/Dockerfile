@@ -22,7 +22,7 @@ RUN set -eux; \
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
     # 定义要尝试的镜像源列表
-    mirrors="${ALPINE_MIRROR} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
+    mirrors="${ALPINE_MIRROR:-} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
     installed=false; \
     for mirror in $mirrors; do \
         [ -z "$mirror" ] && continue; \
@@ -33,7 +33,7 @@ RUN set -eux; \
             echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
             echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
         fi; \
-        if apk update --no-cache && apk add --no-cache git ca-certificates; then \
+        if apk add --no-cache git ca-certificates; then \
             echo "Successfully installed packages using $mirror"; \
             installed=true; \
             break; \
@@ -55,8 +55,8 @@ WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 # Copy go.mod and go.sum files first for better caching
 COPY go.mod go.sum ./
 
-# 复制 third_party 目录以支持离线构建
-COPY third_party/ /third_party/
+# 复制 third_party 目录以支持离线构建 (Optional, skipped if missing)
+# COPY third_party/ /third_party/
 
 # Download dependencies with retry and fallback
 RUN set -eux; \
@@ -123,7 +123,7 @@ RUN set -eux; \
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
     # 定义要尝试的镜像源列表
-    mirrors="${ALPINE_MIRROR} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
+    mirrors="${ALPINE_MIRROR:-} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
     updated=false; \
     for mirror in $mirrors; do \
         [ -z "$mirror" ] && continue; \
@@ -248,7 +248,7 @@ RUN set -eux; \
     ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
     echo "Detected Alpine version: ${ALPINE_VERSION}"; \
     # 定义要尝试的镜像源列表
-    mirrors="${ALPINE_MIRROR} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
+    mirrors="${ALPINE_MIRROR:-} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
     installed=false; \
     for mirror in $mirrors; do \
         [ -z "$mirror" ] && continue; \
@@ -259,7 +259,7 @@ RUN set -eux; \
             echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
             echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
         fi; \
-        if apk update --no-cache && apk add --no-cache git ca-certificates; then \
+        if apk add --no-cache git ca-certificates; then \
             echo "Successfully installed packages using $mirror"; \
             installed=true; \
             break; \

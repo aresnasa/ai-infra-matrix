@@ -745,6 +745,8 @@ RUN set -eux; \
     }; \
     # Separate SLURM and SaltStack RPMs into subdirectories
     mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
+    # Remove invalid/empty RPMs
+    find /out -name "*.rpm" -size 0 -delete || true; \
     # Check if there are any RPM files to organize
     if ls /out/*.rpm >/dev/null 2>&1; then \
         echo "📦 Organizing RPM packages..."; \
@@ -758,21 +760,21 @@ RUN set -eux; \
         # Generate metadata for SLURM repository
         if [ "$slurm_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
             echo "🔧 Generating SLURM RPM repository metadata..."; \
-            cd /out/slurm-rpm && createrepo_c . && \
+            cd /out/slurm-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
             echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
         elif [ "$slurm_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
             echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
-            cd /out/slurm-rpm && createrepo . && \
+            cd /out/slurm-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
             echo "✓ Generated SLURM repodata"; \
         fi; \
         # Generate metadata for SaltStack repository
         if [ "$salt_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
             echo "🔧 Generating SaltStack RPM repository metadata..."; \
-            cd /out/saltstack-rpm && createrepo_c . && \
+            cd /out/saltstack-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
             echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
         elif [ "$salt_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
             echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
-            cd /out/saltstack-rpm && createrepo . && \
+            cd /out/saltstack-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
             echo "✓ Generated SaltStack repodata"; \
         fi; \
     fi

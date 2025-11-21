@@ -6739,9 +6739,9 @@ wait_for_apphub_ready() {
     local apphub_port="${APPHUB_PORT:-53434}"
     local external_host="${EXTERNAL_HOST:-192.168.0.200}"
     
-    # 优先使用 localhost 进行健康检查，避免因 EXTERNAL_HOST 不可达导致检查失败
-    # 在公网或复杂网络环境下，EXTERNAL_HOST 可能无法从本机直接访问
-    local check_host="127.0.0.1"
+    # 使用 EXTERNAL_HOST 进行健康检查，因为容器端口可能绑定到了特定 IP (如 192.168.x.x)
+    # 如果绑定了特定 IP，访问 127.0.0.1 可能会失败
+    local check_host="${external_host}"
     local apphub_url="http://${check_host}:${apphub_port}"
     
     print_info "AppHub URL (Check): $apphub_url"

@@ -28,26 +28,26 @@ RUN set -eux; \
         echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
         sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
         # Retry apk update to handle transient network issues
-        for i in 1 2 3; do apk update --no-cache && break || (echo "apk update failed, retrying..." && sleep 2); done; \
+        for i in 1 2 3; do apk update && break || (echo "apk update failed, retrying..." && sleep 2); done; \
     else \
         # 尝试阿里云镜像
         echo "尝试阿里云镜像源..."; \
         echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        (apk update --no-cache 2>/dev/null || \
+        (apk update 2>/dev/null || \
         # 失败则尝试清华镜像
         (echo "阿里云镜像失败，尝试清华镜像..." && \
          echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
          echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-         apk update --no-cache 2>/dev/null) || \
+         apk update 2>/dev/null) || \
         # 再失败则尝试中科大镜像
         (echo "清华镜像失败，尝试中科大镜像..." && \
          echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
          echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-         apk update --no-cache 2>/dev/null) || \
+         apk update 2>/dev/null) || \
         # 最后恢复官方源
         (echo "国内镜像均失败，恢复官方源..." && \
-         cp /etc/apk/repositories.bak /etc/apk/repositories && apk update --no-cache)); \
+         cp /etc/apk/repositories.bak /etc/apk/repositories && apk update)); \
     fi
 
 # 安装必要的工具

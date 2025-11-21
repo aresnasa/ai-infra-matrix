@@ -25,7 +25,7 @@ RUN set -eux; \
         echo "尝试自定义镜像源: ${ALPINE_MIRROR}..."; \
         echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
         echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
+        apk update && \
         echo "成功使用自定义镜像源"; \
     else \
         # 尝试阿里云镜像源
@@ -33,19 +33,19 @@ RUN set -eux; \
             echo "尝试阿里云镜像源..."; \
             echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
             echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
+            apk update && \
             echo "成功使用阿里云镜像源"; \
         } || { \
             echo "阿里云镜像源失败，尝试清华源..."; \
             echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
             echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
+            apk update && \
             echo "成功使用清华源"; \
         } || { \
             echo "清华源失败，尝试中科大源..."; \
             echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
             echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
+            apk update && \
             echo "成功使用中科大源"; \
         } || { \
             echo "所有国内源都失败，使用官方源..."; \
