@@ -3077,6 +3077,60 @@ render_template() {
     fi
 }
 
+# 渲染所有 Dockerfile 模板
+render_dockerfile_templates() {
+    print_info "===========================================" 
+    print_info "渲染 Dockerfile 模板"
+    print_info "==========================================="
+    
+    # 加载环境变量
+    load_environment_variables
+    
+    local services_dir="$SCRIPT_DIR/src"
+    local count=0
+    
+    # 查找所有 Dockerfile.tpl 文件
+    while IFS= read -r tpl_file; do
+        local dir_name=$(dirname "$tpl_file")
+        local service_name=$(basename "$dir_name")
+        local output_file="$dir_name/Dockerfile"
+        
+        print_info "正在渲染 $service_name 的 Dockerfile..."
+        
+        # 读取模板内容
+        local content=$(<"$tpl_file")
+        
+        # 查找所有 {{VAR}} 格式的变量
+        local vars=$(echo "$content" | grep -o '{{[A-Z0-9_]*}}' | sort -u)
+        
+        # 复制模板到目标文件
+        cp "$tpl_file" "$output_file"
+        
+        # 逐个替换
+        for var_tag in $vars; do
+            local var_name=${var_tag//\{/} # 去掉 {{
+            var_name=${var_name//\}/}      # 去掉 }}
+            
+            local var_value="${!var_name}"
+            
+            if [[ -n "$var_value" ]]; then
+                # 转义特殊字符 (slash and ampersand)
+                local escaped_value=$(echo "$var_value" | sed -e 's/[\/&]/\\&/g')
+                
+                # 使用临时文件进行替换
+                sed "s/{{$var_name}}/$escaped_value/g" "$output_file" > "$output_file.tmp" && mv "$output_file.tmp" "$output_file"
+            else
+                print_warning "变量 $var_name 未定义，保持原样"
+            fi
+        done
+        
+        count=$((count + 1))
+    done < <(find "$services_dir" -name "Dockerfile.tpl")
+    
+    print_success "✓ 完成 $count 个 Dockerfile 的渲染"
+    echo
+}
+
 # 渲染所有nginx模板
 render_nginx_templates() {
     print_info "===========================================" 
@@ -7166,6 +7220,9 @@ build_all_services() {
     
     # 自动检测网络环境并生成/更新 .env 文件
     generate_or_update_env_file
+    
+    # 渲染 Dockerfile 模板
+    render_dockerfile_templates
     
     # ========================================
     # 步骤 0: 检查当前构建状态（需求32）
@@ -13367,6 +13424,9 @@ main() {
                 print_info "可用服务: $SRC_SERVICES"
                 exit 1
             fi
+            
+            # 渲染 Dockerfile 模板
+            render_dockerfile_templates
             
             # 支持逗号分隔的服务列表: ./build.sh build backend,backend-init --force
             local services="$2"
