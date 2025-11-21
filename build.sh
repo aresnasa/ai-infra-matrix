@@ -3225,7 +3225,14 @@ get_latest_git_tag() {
     # 支持两段式（v3007.8）和三段式（v0.4.23）版本号
     local latest_tag
     local git_url=$(get_github_url "$repo_url")
-    latest_tag=$(git ls-remote --tags "$git_url" 2>/dev/null | \
+    
+    # 尝试获取标签，增加超时控制
+    local git_cmd="git ls-remote --tags \"$git_url\""
+    if command -v timeout >/dev/null 2>&1; then
+        git_cmd="timeout 10 $git_cmd"
+    fi
+    
+    latest_tag=$(eval "$git_cmd" 2>/dev/null | \
                  grep -v '\^{}' | \
                  awk '{print $2}' | \
                  sed 's|refs/tags/||' | \
@@ -3234,7 +3241,7 @@ get_latest_git_tag() {
                  tail -1)
     
     if [[ -z "$latest_tag" ]]; then
-        print_error "无法获取仓库 $repo_url 的最新标签"
+        print_warning "无法获取仓库 $repo_url 的最新标签 (可能无法访问 GitHub，跳过)"
         return 1
     fi
     
@@ -3281,7 +3288,7 @@ get_apphub_app_versions() {
             local var_name=$(echo "${app_name}_VERSION" | tr '[:lower:]' '[:upper:]')
             echo "${var_name}=${latest_version}"
         else
-            print_error "  ✗ 获取 $app_name 版本失败"
+            print_warning "  ⚠ 获取 $app_name 版本失败 (跳过)"
         fi
         echo
         
@@ -3346,7 +3353,7 @@ update_apphub_versions() {
                 print_warning "  未在 Dockerfile 中找到 ARG ${var_name}"
             fi
         else
-            print_error "  ✗ 获取 $app_name 版本失败"
+            print_warning "  ⚠ 获取 $app_name 版本失败 (跳过更新)"
         fi
         
     done < "$config_file"
@@ -6917,20 +6924,28 @@ download_third_party_dependencies() {
         fi
         
         print_info "  ⬇ 下载 $desc..."
+        local download_success=false
+        
         if command -v wget >/dev/null 2>&1; then
-            wget -nv --timeout=15 --tries=2 "$url" -O "$dest"
+            if wget -nv --timeout=15 --tries=2 "$url" -O "$dest"; then
+                download_success=true
+            fi
         elif command -v curl >/dev/null 2>&1; then
-            curl -fsSL --connect-timeout 5 --max-time 60 "$url" -o "$dest"
+            if curl -fsSL --connect-timeout 5 --max-time 60 "$url" -o "$dest"; then
+                download_success=true
+            fi
         else
-            print_error "未找到 wget 或 curl，无法下载"
-            return 1
+            print_warning "未找到 wget 或 curl，无法下载 (跳过)"
+            return 0
         fi
         
-        if [[ $? -eq 0 ]]; then
+        if [[ "$download_success" == "true" ]]; then
             print_success "  ✓ 下载成功"
         else
-            print_error "  ✗ 下载失败: $url"
-            return 1
+            print_warning "  ⚠ 下载失败: $url (跳过，继续构建)"
+            # 删除可能生成的空文件
+            rm -f "$dest" 2>/dev/null || true
+            return 0
         fi
     }
 
