@@ -7082,13 +7082,20 @@ download_third_party_dependencies() {
         # 固定 PyCurl 版本以确保稳定性
         local pycurl_version="7.45.3"
         local pycurl_tarball="pycurl-${pycurl_version}.tar.gz"
-        local url=""
-        if [[ "$use_mirror" == "true" ]]; then
-            url="${file_server}/python/${pycurl_tarball}"
+        local dest_file="$pycurl_dir/$pycurl_tarball"
+        
+        # 显式检查文件是否存在，避免重复下载尝试
+        if [[ -f "$dest_file" ]]; then
+            print_info "  ✓ PyCurl 源码已存在: $dest_file"
         else
-            url="https://pypi.io/packages/source/p/pycurl/${pycurl_tarball}"
+            local url=""
+            if [[ "$use_mirror" == "true" ]]; then
+                url="${file_server}/python/${pycurl_tarball}"
+            else
+                url="https://pypi.io/packages/source/p/pycurl/${pycurl_tarball}"
+            fi
+            download_file "$url" "$dest_file" "PyCurl Source"
         fi
-        download_file "$url" "$pycurl_dir/$pycurl_tarball" "PyCurl Source"
     fi
     
     print_success "第三方依赖检查与下载完成"
