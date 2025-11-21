@@ -25,6 +25,8 @@ export BACKEND_HOST="${BACKEND_HOST:-backend}"
 export BACKEND_PORT="${BACKEND_PORT:-8082}"
 export JUPYTERHUB_HOST="${JUPYTERHUB_HOST:-jupyterhub}"
 export JUPYTERHUB_PORT="${JUPYTERHUB_PORT:-8000}"
+export NIGHTINGALE_HOST="${NIGHTINGALE_HOST:-nightingale}"
+export NIGHTINGALE_PORT="${NIGHTINGALE_PORT:-17000}"
 export EXTERNAL_SCHEME="${EXTERNAL_SCHEME:-http}"
 export EXTERNAL_HOST_ONLY="${EXTERNAL_HOST:-localhost}"
 export EXTERNAL_PORT="${EXTERNAL_PORT:-80}"
@@ -43,6 +45,7 @@ echo "   GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL}"
 echo "   FRONTEND: ${FRONTEND_HOST}:${FRONTEND_PORT}"
 echo "   BACKEND: ${BACKEND_HOST}:${BACKEND_PORT}"
 echo "   JUPYTERHUB: ${JUPYTERHUB_HOST}:${JUPYTERHUB_PORT}"
+echo "   NIGHTINGALE: ${NIGHTINGALE_HOST}:${NIGHTINGALE_PORT}"
 echo "   EXTERNAL: ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}"
 
 # 替换配置文件中的环境变量
@@ -57,6 +60,8 @@ find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{BACKEND_HOST}}/
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{BACKEND_PORT}}/${BACKEND_PORT}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{JUPYTERHUB_HOST}}/${JUPYTERHUB_HOST}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{JUPYTERHUB_PORT}}/${JUPYTERHUB_PORT}/g" {} \;
+find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{NIGHTINGALE_HOST}}/${NIGHTINGALE_HOST}/g" {} \;
+find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{NIGHTINGALE_PORT}}/${NIGHTINGALE_PORT}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{EXTERNAL_SCHEME}}/${EXTERNAL_SCHEME}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{EXTERNAL_HOST}}/${EXTERNAL_HOST}/g" {} \;
 

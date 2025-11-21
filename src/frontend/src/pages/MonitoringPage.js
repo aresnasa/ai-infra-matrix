@@ -32,9 +32,17 @@ const MonitoringPage = () => {
     // const currentPort = window.location.port ? `:${window.location.port}` : '';
     // return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
 
-    // FIX: Force use of direct port 17000 to avoid 404 on subpath
-    // This bypasses Nginx ProxyAuth but ensures the UI loads correctly.
-    return `${window.location.protocol}//${window.location.hostname}:17000`;
+    // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
+    // 使用独立的 17001 端口代理，解决 Nightingale 客户端路由在子路径下的 404 问题
+    // 同时保留 Nginx 的 AuthRequest 功能
+    // const currentPort = window.location.port ? `:${window.location.port}` : '';
+    // 假设 17001 端口与当前页面在同一主机上
+    // return `${window.location.protocol}//${window.location.hostname}:17001/`;
+
+    // 回退到使用 /nightingale/ 路径，避免端口被防火墙拦截
+    // 注意：这可能会导致 404 问题，但比连接被拒绝要好
+    const currentPort = window.location.port ? `:${window.location.port}` : '';
+    return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
   };
   
   const nightingaleUrl = getNightingaleUrl();
