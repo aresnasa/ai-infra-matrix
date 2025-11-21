@@ -10,7 +10,7 @@ ENV TZ=Asia/Shanghai
 
 # 配置阿里云镜像源加速
 RUN set -eux; \
-    if [ -n "${YUM_MIRROR}" ]; then \
+    if [ -n "${YUM_MIRROR:-}" ]; then \
         sed -e 's|^mirrorlist=|#mirrorlist=|g' \
             -e "s|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://${YUM_MIRROR}/rockylinux|g" \
             -i.bak \
@@ -79,7 +79,7 @@ RUN usermod -aG wheel testuser
 RUN echo '%wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # 配置pip使用阿里云源
-RUN if [ -n "${PIP_INDEX_URL}" ]; then \
+RUN if [ -n "${PIP_INDEX_URL:-}" ]; then \
         pip3 config set global.index-url ${PIP_INDEX_URL} && \
         pip3 config set global.trusted-host $(echo ${PIP_INDEX_URL} | awk -F/ '{print $3}'); \
     else \

@@ -1,70 +1,49 @@
 const { test, expect } = require('@playwright/test');
 
-test.describe('Analyze Nightingale 404 page structure', () => {
-  test('Get full HTML structure around 404 element', async ({ page }) => {
-    // Login first
-    await page.goto('http://192.168.0.200:8080/login', { 
-      waitUntil: 'load',
-      timeout: 30000 
-    });
+test('Analyze Monitoring Page 404', async ({ page }) => {
+  // 0. Login as admin
+  console.log('Logging in as admin...');
+  await page.goto('http://192.168.0.199:8080/login');
+  await page.fill('input[name="username"]', 'admin');
+  await page.fill('input[name="password"]', 'admin123'); // Assuming default password
+  await page.click('button[type="submit"]');
+  await page.waitForURL('**/projects'); // Wait for redirect to projects
+  console.log('Login successful');
 
-    await page.waitForSelector('input[type="text"], input[name="username"]', { timeout: 10000 });
-    await page.locator('input[type="text"], input[name="username"]').first().fill('admin');
-    await page.locator('input[type="password"], input[name="password"]').first().fill('admin123');
-    await page.locator('button[type="submit"]').click();
+  // 1. Check the main monitoring page
+  console.log('Navigating to /monitoring...');
+  const response = await page.goto('http://192.168.0.199:8080/monitoring');
+  console.log(`Main page status: ${response.status()}`);
+  
+  // Take a screenshot of the main page
+  await page.waitForTimeout(5000); // Wait for iframe to load
+  await page.screenshot({ path: 'test-screenshots/monitoring-page-view.png' });
+
+  // 2. Check if the iframe exists
+  const iframeElement = page.locator('iframe');
+  const iframeCount = await iframeElement.count();
+  console.log(`Iframe count: ${iframeCount}`);
+
+  if (iframeCount > 0) {
+    const src = await iframeElement.getAttribute('src');
+    console.log(`Iframe src: ${src}`);
+
+    // 3. Check the iframe content directly
+    console.log(`Navigating to iframe src: ${src}...`);
+    const iframeResponse = await page.goto(src);
+    console.log(`Iframe response status: ${iframeResponse.status()}`);
     
-    await page.waitForURL(/\/(projects|monitoring)/, { timeout: 10000 });
-
-    console.log('\n=== 分析 404 元素的 HTML 结构 ===\n');
-
-    // Navigate to Nightingale root
-    await page.goto('http://192.168.0.200:8080/nightingale/', { 
-      waitUntil: 'networkidle',
-      timeout: 30000 
-    });
-
-    await page.waitForTimeout(3000);
-
-    // Find the 404 element and its parent structure
-    const element404 = page.locator('.ant-result-title:has-text("404")').first();
+    await page.waitForTimeout(2000);
+    await page.screenshot({ path: 'test-screenshots/nightingale-iframe-view.png' });
     
-    if (await element404.count() > 0) {
-      // Get parent structure
-      const parentHTML = await element404.evaluate(el => {
-        let parent = el.parentElement;
-        for (let i = 0; i < 3 && parent; i++) {
-          parent = parent.parentElement;
-        }
-        return parent ? parent.outerHTML.substring(0, 2000) : 'No parent';
-      });
-
-      console.log('404 元素的父级HTML结构:');
-      console.log(parentHTML);
-      console.log('\n');
-
-      // Check if the 404 is visible
-      const isVisible = await element404.isVisible();
-      const boundingBox = await element404.boundingBox().catch(() => null);
-      
-      console.log(`404 元素是否可见: ${isVisible}`);
-      console.log(`404 元素位置: ${boundingBox ? `x=${boundingBox.x}, y=${boundingBox.y}, w=${boundingBox.width}, h=${boundingBox.height}` : '无'}`);
-
-      // Check viewport size
-      const viewportSize = page.viewportSize();
-      console.log(`视口大小: ${viewportSize.width}x${viewportSize.height}`);
-
-      // Check if there's content below/above
-      const bodyHeight = await page.evaluate(() => document.body.scrollHeight);
-      console.log(`页面总高度: ${bodyHeight}px`);
-      
-      // Take a full page screenshot
-      await page.screenshot({ 
-        path: 'test-screenshots/nightingale-404-analysis.png',
-        fullPage: true 
-      });
-      console.log('\n完整页面截图: test-screenshots/nightingale-404-analysis.png');
+    // Check for specific 404 text in the iframe content
+    const content = await page.content();
+    if (content.includes('404') || content.includes('Not Found')) {
+      console.log('Found "404" or "Not Found" in iframe content');
     } else {
-      console.log('未找到 404 元素');
+      console.log('Did not find explicit 404 text in iframe content');
     }
-  });
+  } else {
+    console.log('No iframe found on the page');
+  }
 });

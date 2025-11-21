@@ -10,7 +10,7 @@ ENV container=docker
 ENV TZ=Asia/Shanghai
 
 # 使用阿里云源加速下载
-RUN if [ -n "${APT_MIRROR}" ]; then \
+RUN if [ -n "${APT_MIRROR:-}" ]; then \
         sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g; s|security.ubuntu.com|${APT_MIRROR}|g; s|ports.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
     else \
         sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
@@ -62,7 +62,7 @@ RUN usermod -aG sudo testuser
 RUN echo 'testuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
 # 配置pip使用阿里云源
-RUN if [ -n "${PIP_INDEX_URL}" ]; then \
+RUN if [ -n "${PIP_INDEX_URL:-}" ]; then \
         pip3 config set global.index-url ${PIP_INDEX_URL} && \
         pip3 config set global.trusted-host $(echo ${PIP_INDEX_URL} | awk -F/ '{print $3}'); \
     else \
