@@ -45,6 +45,30 @@ MULTI_ARCH_BUILD="${MULTI_ARCH_BUILD:-false}"  # 是否启用多架构构建
 TARGET_PLATFORMS="${TARGET_PLATFORMS:-linux/amd64,linux/arm64}"  # 目标平台
 USE_BUILDX="${USE_BUILDX:-auto}"  # 使用 docker buildx (auto/true/false)
 
+# 获取 GitHub URL（支持镜像）
+# 用法: get_github_url "https://github.com/..."
+get_github_url() {
+    local url="$1"
+    if [[ -n "${GITHUB_MIRROR:-}" ]]; then
+        # 如果配置了镜像，移除原 URL 中的 https:// 前缀（如果镜像 URL 已包含协议）
+        # 例如: GITHUB_MIRROR="https://ghfast.top/"
+        # 输入: https://github.com/user/repo
+        # 输出: https://ghfast.top/github.com/user/repo
+        
+        # 检查镜像 URL 是否以 / 结尾
+        local mirror="${GITHUB_MIRROR}"
+        [[ "${mirror}" != */ ]] && mirror="${mirror}/"
+        
+        # 移除 https:// 或 http:// 前缀
+        local clean_url="${url#https://}"
+        clean_url="${clean_url#http://}"
+        
+        echo "${mirror}${clean_url}"
+    else
+        echo "$url"
+    fi
+}
+
 # 基本输出函数（早期定义，供其他函数使用）
 print_error() {
     echo -e "\033[31m[ERROR]\033[0m $1"
@@ -3200,7 +3224,8 @@ get_latest_git_tag() {
     # 使用 git ls-remote 获取所有标签，过滤掉 ^{} 后缀（annotated tags），取最新的版本
     # 支持两段式（v3007.8）和三段式（v0.4.23）版本号
     local latest_tag
-    latest_tag=$(git ls-remote --tags "$repo_url" 2>/dev/null | \
+    local git_url=$(get_github_url "$repo_url")
+    latest_tag=$(git ls-remote --tags "$git_url" 2>/dev/null | \
                  grep -v '\^{}' | \
                  awk '{print $2}' | \
                  sed 's|refs/tags/||' | \
@@ -6923,7 +6948,7 @@ download_third_party_dependencies() {
             if [[ "$use_mirror" == "true" ]]; then
                 url="${file_server}/categraf/${categraf_version}/${tar_file}"
             else
-                url="${GITHUB_MIRROR}https://github.com/flashcatcloud/categraf/releases/download/${categraf_version}/${tar_file}"
+                url=$(get_github_url "https://github.com/flashcatcloud/categraf/releases/download/${categraf_version}/${tar_file}")
             fi
             download_file "$url" "$categraf_dir/$tar_file" "Categraf ($arch)"
         done
@@ -6939,7 +6964,7 @@ download_third_party_dependencies() {
         if [[ "$use_mirror" == "true" ]]; then
             url="${file_server}/munge/${munge_version}/${munge_file}"
         else
-            url="${GITHUB_MIRROR}https://github.com/dun/munge/releases/download/munge-${munge_version}/${munge_file}"
+            url=$(get_github_url "https://github.com/dun/munge/releases/download/munge-${munge_version}/${munge_file}")
         fi
         download_file "$url" "$munge_dir/$munge_file" "Munge Source"
     fi
@@ -6957,7 +6982,7 @@ download_third_party_dependencies() {
         if [[ "$use_mirror" != "true" ]]; then
             print_info "  🔍 正在检查 GitHub 连接..."
             local check_url="https://github.com"
-            [[ -n "$GITHUB_MIRROR" ]] && check_url="${GITHUB_MIRROR}https://github.com"
+            [[ -n "$GITHUB_MIRROR" ]] && check_url=$(get_github_url "https://github.com")
             
             if curl -s --connect-timeout 3 --max-time 5 "$check_url" >/dev/null 2>&1; then
                 can_access_github=true
@@ -6971,7 +6996,7 @@ download_third_party_dependencies() {
         if [[ "$can_access_github" == "true" ]] && [[ "$use_mirror" != "true" ]]; then
             print_info "  🔍 检查 GitHub Release: $singularity_version"
             local release_url="https://github.com/sylabs/singularity/releases/tag/${singularity_version}"
-            [[ -n "$GITHUB_MIRROR" ]] && release_url="${GITHUB_MIRROR}${release_url}"
+            [[ -n "$GITHUB_MIRROR" ]] && release_url=$(get_github_url "${release_url}")
             
             if ! curl -s --head --fail "$release_url" >/dev/null; then
                 print_warning "  ⚠ GitHub Release ${singularity_version} 不存在或无法访问"
@@ -7008,7 +7033,7 @@ download_third_party_dependencies() {
             if [[ "$use_mirror" == "true" ]]; then
                 url="${file_server}/singularity/${singularity_version}/${deb_file}"
             else
-                url="${GITHUB_MIRROR}https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}"
+                url=$(get_github_url "https://github.com/sylabs/singularity/releases/download/${singularity_version}/${deb_file}")
             fi
             download_singularity_pkg "$url" "$singularity_dir/$deb_file" "Singularity DEB ($arch)"
         done
@@ -7020,7 +7045,7 @@ download_third_party_dependencies() {
             if [[ "$use_mirror" == "true" ]]; then
                 url="${file_server}/singularity/${singularity_version}/${rpm_file}"
             else
-                url="${GITHUB_MIRROR}https://github.com/sylabs/singularity/releases/download/${singularity_version}/${rpm_file}"
+                url=$(get_github_url "https://github.com/sylabs/singularity/releases/download/${singularity_version}/${rpm_file}")
             fi
             download_singularity_pkg "$url" "$singularity_dir/$rpm_file" "Singularity RPM ($arch)"
         done
@@ -7040,7 +7065,7 @@ download_third_party_dependencies() {
         if [[ "$use_mirror" == "true" ]]; then
             base_url="${file_server}/saltstack/${release_tag}"
         else
-            base_url="${GITHUB_MIRROR}https://github.com/saltstack/salt/releases/download/${release_tag}"
+            base_url=$(get_github_url "https://github.com/saltstack/salt/releases/download/${release_tag}")
         fi
         
         # DEB
