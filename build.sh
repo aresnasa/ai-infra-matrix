@@ -13331,6 +13331,143 @@ render_compose_template() {
     fi
 }
 
+# ====================================================
+# 资源下载函数
+# ====================================================
+
+# 通用下载函数
+download_file_safe() {
+    local url="$1"
+    local dest="$2"
+    local desc="$3"
+    
+    if [[ -f "$dest" ]]; then
+        print_info "  ✓ $desc 已存在 (跳过)"
+        return 0
+    fi
+    
+    print_info "  ⬇ 下载 $desc..."
+    local download_success=false
+    
+    if command -v wget >/dev/null 2>&1; then
+        if wget -nv --timeout=30 --tries=3 "$url" -O "$dest"; then
+            download_success=true
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        if curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$dest"; then
+            download_success=true
+        fi
+    fi
+    
+    if [[ "$download_success" == "true" ]]; then
+        print_success "  ✓ 下载成功"
+    else
+        print_warning "  ⚠ 下载失败: $url"
+        rm -f "$dest" 2>/dev/null || true
+        return 1
+    fi
+}
+
+# 扫描并下载 Dockerfile 依赖，并尝试优化 Dockerfile
+scan_and_download_dockerfile_deps() {
+    print_info "步骤 2.5/4: 扫描 Dockerfile 依赖..."
+    local third_party_root="$SCRIPT_DIR/third_party"
+    
+    # 遍历所有服务
+    for service_dir in "$SCRIPT_DIR/src"/*; do
+        if [[ -d "$service_dir" && -f "$service_dir/Dockerfile" ]]; then
+            local service_name=$(basename "$service_dir")
+            local dockerfile="$service_dir/Dockerfile"
+            
+            # 提取 URL (tar.gz, zip, deb, rpm, xz)
+            # 排除以 $ 开头的变量 URL
+            local urls=$(grep -oE 'https?://[^ "]+' "$dockerfile" | grep -E '\.(tar\.gz|tgz|zip|deb|rpm|xz)$' | grep -v '\$' | sort -u)
+            
+            if [[ -n "$urls" ]]; then
+                print_info "  分析 $service_name: 发现潜在依赖"
+                local service_deps_dir="$third_party_root/$service_name"
+                mkdir -p "$service_deps_dir"
+                
+                echo "$urls" | while read -r url; do
+                    local filename=$(basename "$url")
+                    download_file_safe "$url" "$service_deps_dir/$filename" "$filename"
+                    
+                    # 检查 Dockerfile 是否已经包含优先使用本地文件的逻辑
+                    if ! grep -q "COPY third_party" "$dockerfile"; then
+                        print_info "    提示: 建议修改 $service_name/Dockerfile 以优先使用本地文件"
+                        print_info "    建议添加: COPY third_party/$service_name/$filename /tmp/$filename"
+                    fi
+                done
+            fi
+        fi
+    done
+}
+
+# 下载所有资源（依赖包和镜像）
+download_all_resources() {
+    print_info "开始下载所有依赖资源..."
+    
+    # 1. 确保环境配置存在
+    print_info "步骤 1/4: 检查环境配置..."
+    if [[ ! -f ".env" ]]; then
+        print_warning ".env 文件不存在，正在生成默认开发环境配置..."
+        create_env_from_template "dev" "false"
+    fi
+    
+    # 2. 下载第三方依赖包
+    print_info "步骤 2/4: 下载第三方依赖包..."
+    download_third_party_dependencies
+    
+    # 2.5 扫描其他 Dockerfile 依赖
+    scan_and_download_dockerfile_deps
+    
+    # 3. 预拉取 Dockerfile 中的基础镜像
+    print_info "步骤 3/4: 预拉取基础镜像..."
+    prefetch_all_base_images
+    
+    # 4. 拉取 docker-compose.yml 中的服务镜像
+    print_info "步骤 4/4: 拉取服务依赖镜像..."
+    if [[ -f "docker-compose.yml" ]]; then
+        print_info "分析 docker-compose.yml 中的镜像..."
+        # 提取 image: 字段，排除 ai-infra- 开头的本项目镜像
+        local compose_images=$(grep "image:" docker-compose.yml | awk '{print $2}' | grep -v "ai-infra-" | sort -u)
+        
+        if [[ -n "$compose_images" ]]; then
+            local total_images=$(echo "$compose_images" | wc -l | xargs)
+            local current_image=0
+            
+            echo "$compose_images" | while read -r image; do
+                current_image=$((current_image + 1))
+                # 处理变量替换，例如 ${IMAGE_TAG}
+                # 简单处理：如果有变量，尝试用环境变量替换，或者忽略
+                if [[ "$image" == *"\$"* ]]; then
+                    # 尝试使用 envsubst 替换，如果失败则跳过
+                    if command -v envsubst >/dev/null 2>&1; then
+                        image=$(echo "$image" | envsubst)
+                    else
+                        print_warning "跳过包含变量的镜像: $image (需要 envsubst)"
+                        continue
+                    fi
+                fi
+                
+                print_info "[$current_image/$total_images] 拉取镜像: $image"
+                if docker pull "$image"; then
+                    print_success "✓ $image 拉取成功"
+                else
+                    print_error "✗ $image 拉取失败"
+                fi
+            done
+        else
+            print_info "未在 docker-compose.yml 中发现外部依赖镜像"
+        fi
+    else
+        print_warning "docker-compose.yml 不存在，跳过服务镜像拉取"
+    fi
+    
+    print_success "🎉 所有资源下载完成！"
+    print_info "您现在可以将项目文件夹打包传输到离线环境。"
+}
+
 # 主函数
 main() {
     # 预处理命令行参数，检查各种标志
@@ -14789,6 +14926,10 @@ main() {
             fi
             
             update_apphub_versions
+            ;;
+            
+        "download-all")
+            download_all_resources
             ;;
             
         "help"|"-h"|"--help")
