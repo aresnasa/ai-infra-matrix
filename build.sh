@@ -3116,6 +3116,19 @@ render_dockerfile_templates() {
             
             local var_value="${!var_name}"
             
+            # 针对镜像配置，如果未定义则尝试从 .env.example 读取默认值
+            if [[ -z "$var_value" ]] && [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+                case "$var_name" in
+                    "GITHUB_MIRROR"|"GO_PROXY"|"PYPI_INDEX_URL"|"NPM_REGISTRY"|"APT_MIRROR"|"YUM_MIRROR"|"ALPINE_MIRROR"|"INTERNAL_FILE_SERVER"|"USE_INTERNAL_MIRROR")
+                        # 从 .env.example 提取值 (处理可能的引号)
+                        var_value=$(grep "^$var_name=" "$SCRIPT_DIR/.env.example" | head -n 1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+                        if [[ -n "$var_value" ]]; then
+                            print_info "  使用默认值: $var_name=$var_value (来自 .env.example)"
+                        fi
+                        ;;
+                esac
+            fi
+            
             if [[ -n "$var_value" ]]; then
                 # 转义特殊字符 (slash and ampersand)
                 local escaped_value=$(echo "$var_value" | sed -e 's/[\/&]/\\&/g')
