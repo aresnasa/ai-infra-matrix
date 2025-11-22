@@ -2138,6 +2138,12 @@ detect_network_environment() {
         echo "external"
         return 0
     fi
+
+    # 检测方法3：检查 GitHub 连通性（关键依赖）
+    if timeout $timeout curl -s --connect-timeout $timeout https://github.com >/dev/null 2>&1; then
+        echo "external"
+        return 0
+    fi
     
     # 优先级3：.env 文件配置（向后兼容，但不推荐）
     # 仅在网络检测失败且明确配置时使用
@@ -6054,7 +6060,22 @@ pull_image_with_retry() {
     # 根据网络环境决定拉取策略
     case "$network_env" in
         "internal")
-            # 内网环境：只从 Harbor 拉取
+            # 内网环境：
+            # 1. 如果镜像自带私有仓库地址（域名格式），尝试直接拉取
+            if [[ "$image" =~ ^[^/]+\.[^/]+/ ]]; then
+                print_info "  🔄 尝试直接拉取私有镜像: $image"
+                local direct_retry=0
+                while [[ $direct_retry -lt 2 ]]; do # 尝试2次
+                    ((direct_retry++))
+                    if docker pull "$image" 2>&1 | grep -v "Pulling from"; then
+                        return 0
+                    fi
+                    sleep 1
+                done
+                print_warning "  ⚠️  无法直接拉取私有镜像，尝试通过 Harbor 代理..."
+            fi
+
+            # 2. 尝试从 Harbor 拉取（标准流程）
             local harbor_image="${harbor_registry}/${base_image}"
             
             while [[ $retry_count -lt $max_retries ]]; do
@@ -6849,6 +6870,41 @@ prefetch_all_base_images() {
     return 0  # 返回成功，继续构建
 }
 
+# 检查 AppHub 基础镜像是否存在（内网构建的关键依赖）
+check_apphub_base_images_exist() {
+    local apphub_dockerfile="$SCRIPT_DIR/src/apphub/Dockerfile"
+    if [[ ! -f "$apphub_dockerfile" ]]; then
+        return 0
+    fi
+    
+    local missing_images=()
+    local images=$(extract_base_images "$apphub_dockerfile")
+    
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        [[ "$image" =~ ^[a-z_-]+$ ]] && continue # Skip aliases
+        [[ "$image" =~ ^# ]] && continue
+        
+        # 检查镜像是否存在
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+            missing_images+=("$image")
+        fi
+    done <<< "$images"
+    
+    if [[ ${#missing_images[@]} -gt 0 ]]; then
+        print_error "❌ [严重错误] 内网模式下缺少 AppHub 基础镜像:"
+        for img in "${missing_images[@]}"; do
+            print_error "   - $img"
+        done
+        print_error "AppHub 是核心服务，必须保证其基础镜像存在才能离线构建。"
+        print_error "请先在有网环境拉取这些镜像，或手动导入。"
+        return 1
+    fi
+    
+    print_success "✓ AppHub 基础镜像完整性检查通过"
+    return 0
+}
+
 # ==========================================
 # AppHub 就绪检查函数
 # ==========================================
@@ -7324,6 +7380,12 @@ build_all_services() {
     local harbor_registry="${INTERNAL_REGISTRY:-harbor.example.com/ai-infra}"
     if [[ "$network_env" == "internal" ]]; then
         print_info "📦 内网 Harbor 仓库: $harbor_registry"
+        
+        # 关键检查：AppHub 基础镜像必须存在
+        if ! check_apphub_base_images_exist; then
+            print_error "无法继续构建：缺少核心依赖"
+            return 1
+        fi
     fi
     echo
     
