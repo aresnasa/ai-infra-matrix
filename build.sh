@@ -41,9 +41,10 @@ BUILD_HISTORY_FILE="$BUILD_CACHE_DIR/build-history.log"
 SKIP_CACHE_CHECK=false  # 跳过缓存检查标志
 
 # 多架构构建配置
-MULTI_ARCH_BUILD="${MULTI_ARCH_BUILD:-false}"  # 是否启用多架构构建
+MULTI_ARCH_BUILD="${MULTI_ARCH_BUILD:-true}"  # 是否启用多架构构建
 TARGET_PLATFORMS="${TARGET_PLATFORMS:-linux/amd64,linux/arm64}"  # 目标平台
 USE_BUILDX="${USE_BUILDX:-auto}"  # 使用 docker buildx (auto/true/false)
+DEFAULT_REGISTRY="${DEFAULT_REGISTRY:-crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix}" # 默认镜像仓库
 
 # 获取 GitHub URL（支持镜像）
 # 用法: get_github_url "https://github.com/..."
@@ -6212,7 +6213,7 @@ build_service() {
     
     local service="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
-    local registry="${3:-}"
+    local registry="${3:-$DEFAULT_REGISTRY}"
     
     local service_path=$(get_service_path "$service")
     if [[ -z "$service_path" ]]; then
@@ -6351,10 +6352,10 @@ build_service() {
     fi
     
     # ========================================
-    # 准备 third_party 依赖 (AppHub/JupyterHub/Backend/SaltStack/SlurmMaster/Nginx)
+    # 准备 third_party 依赖 (AppHub/JupyterHub/Backend/SaltStack/SlurmMaster/Nginx/Nightingale)
     # ========================================
     # 定义需要 third_party 依赖的服务列表
-    local third_party_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master" "nginx")
+    local third_party_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master" "nginx" "nightingale")
     
     # 检查当前服务是否在列表中
     if [[ " ${third_party_services[*]} " =~ " ${service} " ]]; then
@@ -6583,13 +6584,20 @@ build_service() {
             [[ -n "$apphub_extra_args" ]] && buildx_args+=($apphub_extra_args)
             [[ -n "$slurm_master_args" ]] && buildx_args+=($slurm_master_args)
             
+            # 确定输出模式
+            local output_args="--load"
+            if [[ -n "$registry" ]]; then
+                # 如果指定了仓库，使用 push 模式（多架构必须）
+                output_args="--push"
+            fi
+
             # 使用 docker buildx build
             if docker buildx build \
                 --platform "$TARGET_PLATFORMS" \
                 -f "$dockerfile_path" \
                 -t "$target_image" \
                 "${buildx_args[@]}" \
-                --load \
+                $output_args \
                 "$build_context"; then
                 build_success=true
             else
@@ -6643,9 +6651,14 @@ build_service() {
         log_build_history "$build_id" "$service" "$tag" "SUCCESS" "$rebuild_reason"
         
         # 如果指定了registry，同时创建本地别名
+        # 注意：如果是多架构 push 模式，本地可能没有镜像，tag 会失败，这里做个检查
         if [[ -n "$registry" ]] && [[ "$target_image" != "$base_image" ]]; then
-            if docker tag "$target_image" "$base_image"; then
-                print_info "  ✓ 本地别名: $base_image"
+            if docker image inspect "$target_image" >/dev/null 2>&1; then
+                if docker tag "$target_image" "$base_image"; then
+                    print_info "  ✓ 本地别名: $base_image"
+                fi
+            else
+                print_warning "  ⚠ 本地未找到镜像 $target_image (可能是多架构直接推送)，跳过本地别名创建"
             fi
         fi
         
@@ -6658,10 +6671,10 @@ build_service() {
         fi
 
         # ========================================
-        # AppHub/JupyterHub/Backend/SaltStack/SlurmMaster 构建后清理
+        # AppHub/JupyterHub/Backend/SaltStack/SlurmMaster/Nightingale 构建后清理
         # ========================================
         # 定义需要清理 third_party 的服务列表
-        local cleanup_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master")
+        local cleanup_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master" "nightingale")
         
         if [[ " ${cleanup_services[*]} " =~ " ${service} " ]]; then
             print_info "  → 清理构建上下文 (third_party)..."
@@ -6684,10 +6697,10 @@ build_service() {
         fi
 
         # ========================================
-        # AppHub/JupyterHub/Backend/SaltStack/SlurmMaster 构建失败时也需要清理
+        # AppHub/JupyterHub/Backend/SaltStack/SlurmMaster/Nightingale 构建失败时也需要清理
         # ========================================
         # 定义需要清理 third_party 的服务列表
-        local cleanup_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master")
+        local cleanup_services=("apphub" "jupyterhub" "backend" "saltstack" "slurm-master" "nightingale")
         
         if [[ " ${cleanup_services[*]} " =~ " ${service} " ]]; then
             # 如果构建失败，保留 third_party 目录以便 docker-compose 可以使用
@@ -7226,7 +7239,7 @@ download_third_party_dependencies() {
 # 构建所有服务镜像
 build_all_services() {
     local tag="${1:-$DEFAULT_IMAGE_TAG}"
-    local registry="${2:-}"
+    local registry="${2:-$DEFAULT_REGISTRY}"
     
     print_info "=========================================="
     print_info "构建所有 AI-Infra 服务镜像（两阶段构建）"
@@ -8148,7 +8161,7 @@ build_all_pipeline() {
 push_service() {
     local service="$1"
     local tag="${2:-$DEFAULT_IMAGE_TAG}"
-    local registry="$3"
+    local registry="${3:-$DEFAULT_REGISTRY}"
     
     if [[ -z "$registry" ]]; then
         print_error "推送操作需要指定 registry"
@@ -8181,6 +8194,10 @@ push_service() {
     
     # 如果启用多架构构建
     if [[ "$MULTI_ARCH_BUILD" == "true" ]]; then
+        # 如果是 buildx 构建并直接推送的，这里其实不需要做什么
+        print_info "  ℹ 多架构构建模式：假设镜像已在构建阶段推送 (buildx --push)"
+        return 0
+        
         IFS=',' read -ra platforms <<< "$TARGET_PLATFORMS"
         
         # 推送各个平台的镜像
@@ -9804,32 +9821,34 @@ replace_images_in_compose_file() {
     
     # 替换第三方依赖镜像
     load_env_file
+    # 用户要求：只有在推送镜像时才使用私有仓库，开发/运行环境应使用公共镜像
+    # 因此注释掉第三方依赖的替换逻辑，保持 docker-compose.yml 使用公共镜像
     local dependency_replacements=(
-        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|${registry}/cp-kafka:${tag}"
-        "confluentinc/cp-kafka:7.4.0|${registry}/cp-kafka:${tag}"
-        "confluentinc/cp-kafka:latest|${registry}/cp-kafka:${tag}"
-        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|${registry}/kafka-ui:${tag}"
-        "postgres:${POSTGRES_VERSION:-15-alpine}|${registry}/postgres:${tag}"
-        "postgres:latest|${registry}/postgres:${tag}"
-        "redis:${REDIS_VERSION:-7-alpine}|${registry}/redis:${tag}"
-        "redis:latest|${registry}/redis:${tag}"
-        "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}|${registry}/nginx:${tag}"
-        "nginx:${NGINX_VERSION:-stable-alpine-perl}|${registry}/nginx:${tag}"
-        "nginx:latest|${registry}/nginx:${tag}"
-        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}|${registry}/tcp-proxy:${tag}"
-        "tecnativa/tcp-proxy|${registry}/tcp-proxy:${tag}"
-        "minio/minio:${MINIO_VERSION:-latest}|${registry}/minio:${tag}"
-        "osixia/openldap:${OPENLDAP_VERSION:-stable}|${registry}/openldap:${tag}"
-        "osixia/openldap:latest|${registry}/openldap:${tag}"
-        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|${registry}/phpldapadmin:${tag}"
-        "osixia/phpldapadmin:latest|${registry}/phpldapadmin:${tag}"
-        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}|${registry}/redisinsight:${tag}"
-        "quay.io/minio/minio:latest|${registry}/minio:${tag}"
-        "gitea/gitea:${GITEA_VERSION:-1.25.1}|${registry}/gitea:${tag}"
-        "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}|${registry}/base-notebook:${tag}"
-        "node:${NODE_ALPINE_VERSION:-22-alpine}|${registry}/node:${tag}"
-        "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}|${registry}/golang:${tag}"
-        "python:${PYTHON_ALPINE_VERSION:-3.13-alpine}|${registry}/python:${tag}"
+        # "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|${registry}/cp-kafka:${tag}"
+        # "confluentinc/cp-kafka:7.4.0|${registry}/cp-kafka:${tag}"
+        # "confluentinc/cp-kafka:latest|${registry}/cp-kafka:${tag}"
+        # "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|${registry}/kafka-ui:${tag}"
+        # "postgres:${POSTGRES_VERSION:-15-alpine}|${registry}/postgres:${tag}"
+        # "postgres:latest|${registry}/postgres:${tag}"
+        # "redis:${REDIS_VERSION:-7-alpine}|${registry}/redis:${tag}"
+        # "redis:latest|${registry}/redis:${tag}"
+        # "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}|${registry}/nginx:${tag}"
+        # "nginx:${NGINX_VERSION:-stable-alpine-perl}|${registry}/nginx:${tag}"
+        # "nginx:latest|${registry}/nginx:${tag}"
+        # "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}|${registry}/tcp-proxy:${tag}"
+        # "tecnativa/tcp-proxy|${registry}/tcp-proxy:${tag}"
+        # "minio/minio:${MINIO_VERSION:-latest}|${registry}/minio:${tag}"
+        # "osixia/openldap:${OPENLDAP_VERSION:-stable}|${registry}/openldap:${tag}"
+        # "osixia/openldap:latest|${registry}/openldap:${tag}"
+        # "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|${registry}/phpldapadmin:${tag}"
+        # "osixia/phpldapadmin:latest|${registry}/phpldapadmin:${tag}"
+        # "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}|${registry}/redisinsight:${tag}"
+        # "quay.io/minio/minio:latest|${registry}/minio:${tag}"
+        # "gitea/gitea:${GITEA_VERSION:-1.25.1}|${registry}/gitea:${tag}"
+        # "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}|${registry}/base-notebook:${tag}"
+        # "node:${NODE_ALPINE_VERSION:-22-alpine}|${registry}/node:${tag}"
+        # "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}|${registry}/golang:${tag}"
+        # "python:${PYTHON_ALPINE_VERSION:-3.13-alpine}|${registry}/python:${tag}"
     )
     
     local replacement_count=0
