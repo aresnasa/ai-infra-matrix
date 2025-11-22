@@ -15,9 +15,9 @@ ARG UBUNTU_VERSION=22.04
 ARG ROCKYLINUX_VERSION=9
 ARG GOLANG_ALPINE_VERSION=1.25-alpine
 ARG NGINX_ALPINE_VERSION=1.27-alpine
-ARG APT_MIRROR
-ARG YUM_MIRROR
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG YUM_MIRROR=mirrors.aliyun.com
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION=0.5.16
 
 # =============================================================================
@@ -34,7 +34,7 @@ ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
 ARG BUILD_CATEGRAF=true
 ARG BUILD_SINGULARITY=false
-ARG APT_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
 
 # Copy third_party directory for offline builds
@@ -194,7 +194,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION
+ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -353,7 +353,7 @@ ENV TZ=Asia/Shanghai
 # Build control flags
 ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
-ARG YUM_MIRROR
+ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
 
 # Copy third_party directory for offline builds
@@ -555,7 +555,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION
+ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -790,8 +790,7 @@ ENV TZ=Asia/Shanghai
 
 # Build control flags
 ARG BUILD_SLURM=true
-ARG APT_MIRROR
-
+ARG APT_MIRROR=mirrors.aliyun.com
 # SLURM version configuration
 ARG SLURM_VERSION=25.05.4
 
@@ -933,8 +932,7 @@ ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
 ENV GOPROXY=${GO_PROXY}
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 # 配置 Alpine 镜像源并安装依赖（合并到一个RUN减少层数）
 RUN set -eux; \
     # 备份并配置镜像源
@@ -1030,14 +1028,13 @@ RUN set -eux; \
 # =============================================================================
 FROM alpine:3.22 AS singularity-builder
 
-# Build control flags - 暂时禁用（deb 包下载问题）
-ARG BUILD_SINGULARITY=false
+# Build control flags
+ARG BUILD_SINGULARITY=true
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4.2.1
+ARG SINGULARITY_VERSION=v4.3.4
 ARG GITHUB_PROXY
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 # 配置 Alpine 镜像源并安装依赖
 RUN set -eux; \
     # 配置镜像源
@@ -1070,43 +1067,45 @@ RUN mkdir -p /out /build
 RUN set -eux; \
     if [ "${BUILD_SINGULARITY}" = "true" ]; then \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
-        ARCH=$(uname -m); \
-        RELEASE_URL="https://github.com/sylabs/singularity/releases/download/${SINGULARITY_VERSION}"; \
+        mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
+        RELEASE_URL="https://github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
         CURL_OPTS=""; \
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
             CURL_OPTS="--proxy ${GITHUB_PROXY}"; \
         fi; \
-        cd /build; \
-        if [ "${ARCH}" = "x86_64" ]; then \
-            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_amd64.deb"; \
-        elif [ "${ARCH}" = "aarch64" ]; then \
-            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_arm64.deb"; \
-        else \
-            echo "❌ Unsupported architecture: ${ARCH}"; \
-            exit 1; \
-        fi; \
-        echo "Downloading ${DEB_FILE}..."; \
-        if [ -f "/third_party/singularity/${DEB_FILE}" ]; then \
-            echo "📦 Using local file: ${DEB_FILE}"; \
-            cp "/third_party/singularity/${DEB_FILE}" singularity.deb; \
-        else \
-            curl ${CURL_OPTS} -fsSL -o singularity.deb "${RELEASE_URL}/${DEB_FILE}"; \
-        fi; \
-        ar x singularity.deb; \
-        tar xf data.tar.xz; \
-        tar czf /out/singularity-${SINGULARITY_VERSION}-linux-${ARCH}.tar.gz usr/; \
-        echo "Package: singularity" > /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Version: ${SINGULARITY_VERSION}" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Architecture: ${ARCH}" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Build-Date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Description: Singularity Container Runtime for HPC (Pre-built)" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Homepage: https://github.com/sylabs/singularity" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "License: BSD-3-Clause" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "✅ Singularity download and repackage completed"; \
+        # Download Ubuntu 22.04 DEB packages (amd64 & arm64)
+        for ARCH in amd64 arm64; do \
+            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_${ARCH}.deb"; \
+            echo "Processing ${DEB_FILE}..."; \
+            if curl ${CURL_OPTS} -fsSL -o "/out/${DEB_FILE}" "${RELEASE_URL}/${DEB_FILE}"; then \
+                echo "✓ Downloaded ${DEB_FILE} from GitHub"; \
+            elif [ -f "/third_party/singularity/${DEB_FILE}" ]; then \
+                echo "⚠️ GitHub download failed, using local file: ${DEB_FILE}"; \
+                cp "/third_party/singularity/${DEB_FILE}" "/out/${DEB_FILE}"; \
+            else \
+                echo "❌ Failed to download ${DEB_FILE} and not found in third_party"; \
+            fi; \
+        done; \
+        # Download EL9 RPM packages (x86_64 & aarch64)
+        for ARCH in x86_64 aarch64; do \
+            RPM_FILE="singularity-ce-${VERSION_NUM}-1.el9.${ARCH}.rpm"; \
+            echo "Processing ${RPM_FILE}..."; \
+            if curl ${CURL_OPTS} -fsSL -o "/out/${RPM_FILE}" "${RELEASE_URL}/${RPM_FILE}"; then \
+                echo "✓ Downloaded ${RPM_FILE} from GitHub"; \
+            elif [ -f "/third_party/singularity/${RPM_FILE}" ]; then \
+                echo "⚠️ GitHub download failed, using local file: ${RPM_FILE}"; \
+                cp "/third_party/singularity/${RPM_FILE}" "/out/${RPM_FILE}"; \
+            else \
+                echo "❌ Failed to download ${RPM_FILE} and not found in third_party"; \
+            fi; \
+        done; \
+        echo "✅ Singularity packages downloaded"; \
+        ls -lh /out/; \
     else \
         echo "⏭️  Skipping Singularity (BUILD_SINGULARITY=${BUILD_SINGULARITY})"; \
+        mkdir -p /out; \
     fi
 
 # =============================================================================
@@ -1120,8 +1119,7 @@ ARG SLURM_VERSION=25.05.4
 ARG SALTSTACK_VERSION=v3007.8
 ARG CATEGRAF_VERSION=v0.4.25
 ARG APPHUB_BASE_URL=http://localhost:8081
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 # 将版本保存到环境变量（可在运行时访问）
 ENV SLURM_VERSION=${SLURM_VERSION}
 ENV SALTSTACK_VERSION=${SALTSTACK_VERSION}
@@ -1297,7 +1295,7 @@ RUN set -eux; \
     salt_deb_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     salt_rpm_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
-    singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/ | grep -E '\.(deb|rpm)$' | wc -l || echo 0); \
     # Check if RPM metadata was copied from rpm-builder
     slurm_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] && echo "yes" || echo "no"); \
     salt_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ] && echo "yes" || echo "no"); \

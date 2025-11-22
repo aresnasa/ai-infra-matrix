@@ -6,8 +6,7 @@ FROM python:${PYTHON_ALPINE_VERSION}
 ARG PIP_VERSION=24.2
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}

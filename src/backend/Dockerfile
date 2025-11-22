@@ -5,8 +5,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS builder
 # Build arguments for versions
 ARG GOLANG_VERSION=1.25
 ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 
@@ -106,8 +105,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS backend
 
 # Build arguments for versions
 ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 ENV GOSUMDB=off
@@ -238,8 +236,7 @@ FROM golang:${GOLANG_ALPINE_VERSION} AS backend-init
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 # 配置Alpine镜像（多镜像源智能回退配置）
 RUN set -eux; \
     # 备份原始repositories文件

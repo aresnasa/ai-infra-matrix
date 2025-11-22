@@ -8,7 +8,7 @@ FROM nginx:${NGINX_VERSION}
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
 ARG NGINX_VERSION=stable-alpine-perl
-ARG ALPINE_MIRROR
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 ENV APP_VERSION=${VERSION}
 ENV NGINX_VERSION=${NGINX_VERSION}
 ENV TZ=Asia/Shanghai

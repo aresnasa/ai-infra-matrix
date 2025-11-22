@@ -7,8 +7,7 @@ FROM node:${NODE_ALPINE_VERSION} AS build
 
 # Build arguments for versions
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG ALPINE_MIRROR
-
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 # 配置Alpine镜像（简化版 - 优先使用默认源，失败则切换阿里云）
 RUN set -eux; \
     apk add --no-cache tzdata || \
@@ -48,7 +47,7 @@ FROM nginx:${NGINX_VERSION}
 
 # Version metadata (需要在 FROM 之后重新声明ARG，因为跨越了构建阶段)
 ARG VERSION="dev"
-ARG ALPINE_MIRROR
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 ENV APP_VERSION=${VERSION}
 
 # 配置Alpine镜像（简化版 - 优先使用默认源，失败则切换阿里云）

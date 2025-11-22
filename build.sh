@@ -2651,8 +2651,11 @@ USER root
 # 构建阶段：预安装所有必要的Python包
 # ========================================
 # 配置pip镜像源（构建时使用，运行时不依赖网络）
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip config set global.trusted-host mirrors.aliyun.com
+ARG PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
+ARG PIP_TRUSTED_HOST="mirrors.aliyun.com"
+
+RUN pip config set global.index-url ${PIP_INDEX_URL} && \
+    pip config set global.trusted-host ${PIP_TRUSTED_HOST}
 
 # 安装所有必要的Python包（构建阶段完成，运行时无需网络）
 RUN pip install --no-cache-dir \
@@ -6322,6 +6325,18 @@ build_service() {
     # ========================================
     local apphub_extra_args=""
     
+    # 如果配置了内部 PyPI 镜像，传递给构建参数
+    if [[ -n "${INTERNAL_PYPI_MIRROR:-}" ]]; then
+        print_info "  → 使用自定义 PyPI 镜像: $INTERNAL_PYPI_MIRROR"
+        apphub_extra_args="$apphub_extra_args --build-arg PIP_INDEX_URL=$INTERNAL_PYPI_MIRROR"
+        
+        # 提取 trusted-host
+        local trusted_host=$(echo "$INTERNAL_PYPI_MIRROR" | awk -F/ '{print $3}')
+        if [[ -n "$trusted_host" ]]; then
+            apphub_extra_args="$apphub_extra_args --build-arg PIP_TRUSTED_HOST=$trusted_host"
+        fi
+    fi
+    
     # ========================================
     # 准备 third_party 依赖 (AppHub/JupyterHub/Backend/SaltStack/SlurmMaster/Nginx)
     # ========================================
@@ -7953,6 +7968,61 @@ build_all_pipeline() {
     export AI_INFRA_NETWORK_ENV="$NETWORK_ENV_DETECTED"
     print_info "网络环境检测: $AI_INFRA_NETWORK_ENV"
     
+    # 自动配置镜像源策略
+    if [[ "$AI_INFRA_NETWORK_ENV" == "internal" ]]; then
+        print_info "→ 内网环境：自动启用内部镜像源策略"
+        export USE_INTERNAL_MIRROR="true"
+        
+        # 读取内部文件服务器地址
+        local internal_file_server="${INTERNAL_FILE_SERVER:-http://files.example.com}"
+        if [[ -f "$SCRIPT_DIR/.env" ]]; then
+             internal_file_server=$(grep "^INTERNAL_FILE_SERVER=" "$SCRIPT_DIR/.env" | cut -d'=' -f2 || echo "http://files.example.com")
+        fi
+        
+        # 提取域名用于 Alpine/APT/YUM 源
+        local file_server_domain=$(echo "$internal_file_server" | awk -F/ '{print $3}')
+        
+        # 自动切换镜像源 (更新 .env 和 export)
+        print_info "  - 正在配置内部镜像源..."
+        
+        # PyPI
+        local internal_pypi="${internal_file_server}/pypi/simple/"
+        set_or_update_env_var "PYPI_INDEX_URL" "$internal_pypi" "$SCRIPT_DIR/.env"
+        export PYPI_INDEX_URL="$internal_pypi"
+        print_info "    PyPI: $internal_pypi"
+        
+        # NPM
+        local internal_npm="${internal_file_server}/npm/"
+        set_or_update_env_var "NPM_REGISTRY" "$internal_npm" "$SCRIPT_DIR/.env"
+        export NPM_REGISTRY="$internal_npm"
+        print_info "    NPM: $internal_npm"
+        
+        # Alpine
+        set_or_update_env_var "ALPINE_MIRROR" "$file_server_domain" "$SCRIPT_DIR/.env"
+        export ALPINE_MIRROR="$file_server_domain"
+        print_info "    Alpine: $file_server_domain"
+        
+        # APT (Ubuntu)
+        set_or_update_env_var "APT_MIRROR" "$file_server_domain" "$SCRIPT_DIR/.env"
+        export APT_MIRROR="$file_server_domain"
+        print_info "    APT: $file_server_domain"
+        
+        # YUM (Rocky)
+        set_or_update_env_var "YUM_MIRROR" "$file_server_domain" "$SCRIPT_DIR/.env"
+        export YUM_MIRROR="$file_server_domain"
+        print_info "    YUM: $file_server_domain"
+        
+        # Go Proxy (提示用户)
+        if [[ "${GO_PROXY}" == *"goproxy"* ]] || [[ "${GO_PROXY}" == *"proxy.golang.org"* ]]; then
+            print_warning "  ! 注意: Go Proxy 仍配置为公网地址 ($GO_PROXY)"
+            print_warning "    如果在纯内网环境构建 Go 项目，请确保配置了内部 Go Proxy 或使用了 vendor 模式"
+        fi
+        
+    else
+        print_info "→ 外网环境：确保下载所有依赖以备离线使用"
+        export USE_INTERNAL_MIRROR="false"
+    fi
+    
     # 先创建/渲染 .env 文件（从 .env.example 模板生成）
     if ! create_env_from_template "dev" "$force"; then
         print_error "创建/渲染 .env 失败，停止构建"
@@ -7961,6 +8031,7 @@ build_all_pipeline() {
     
     # 在.env中记录网络环境，便于模板/服务识别
     set_or_update_env_var "AI_INFRA_NETWORK_ENV" "$AI_INFRA_NETWORK_ENV" "$SCRIPT_DIR/.env" || true
+    set_or_update_env_var "USE_INTERNAL_MIRROR" "$USE_INTERNAL_MIRROR" "$SCRIPT_DIR/.env" || true
     echo ""
     
     print_info "=========================================="

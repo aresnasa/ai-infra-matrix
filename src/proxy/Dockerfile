@@ -6,7 +6,7 @@ FROM haproxy:${HAPROXY_VERSION}
 # 设置维护者信息
 ARG VERSION="dev"
 ARG HAPROXY_VERSION=2.9-alpine
-ARG ALPINE_MIRROR
+ARG ALPINE_MIRROR=mirrors.aliyun.com
 LABEL maintainer="AI Infra Matrix Team"
 LABEL description="Network proxy for exposing Docker internal services to host network"
 LABEL version="${VERSION}"

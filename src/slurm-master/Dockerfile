@@ -6,8 +6,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 # Build arguments for versions
 ARG SLURM_VERSION=25.05.4
 ARG VERSION=v0.3.8
-ARG APT_MIRROR
-
+ARG APT_MIRROR=mirrors.aliyun.com
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
 LABEL description="AI Infrastructure Matrix SLURM Master Service"
