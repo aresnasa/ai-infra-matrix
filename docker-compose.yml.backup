@@ -248,7 +248,7 @@ services:
 
   # 后端初始化服务 - 创建admin用户和基础数据
   backend-init:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-backend-init:v0.3.8
+    image: ai-infra-backend-init:${IMAGE_TAG:-v0.3.8}
     build:
       context: ./src/backend
       dockerfile: Dockerfile
@@ -296,7 +296,7 @@ services:
 
   # 后端 API 服务
   backend:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-backend:v0.3.8
+    image: ai-infra-backend:${IMAGE_TAG:-v0.3.8}
     build:
       context: ./src/backend
       dockerfile: Dockerfile
@@ -390,7 +390,7 @@ services:
 
   # 前端应用服务
   frontend:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-frontend:v0.3.8
+    image: ai-infra-frontend:${IMAGE_TAG:-v0.3.8}
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
@@ -418,7 +418,7 @@ services:
 
   # JupyterHub 统一认证服务
   jupyterhub:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-jupyterhub:v0.3.8
+    image: ai-infra-jupyterhub:${IMAGE_TAG:-v0.3.8}
     env_file:
       - .env
     build:
@@ -498,7 +498,7 @@ services:
 
   # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
   singleuser-builder:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-singleuser:v0.3.8
+    image: ai-infra-singleuser:${IMAGE_TAG:-v0.3.8}
     build:
       context: ./src/singleuser
       dockerfile: Dockerfile
@@ -511,7 +511,7 @@ services:
 
 # SaltStack 配置管理服务
   saltstack:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-saltstack:v0.3.8
+    image: ai-infra-saltstack:${IMAGE_TAG:-v0.3.8}
     build:
       context: ./src/saltstack
       dockerfile: Dockerfile
@@ -644,7 +644,7 @@ services:
 
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-nginx:v0.3.8
+    image: ai-infra-nginx:${IMAGE_TAG:-v0.3.8}
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
@@ -739,7 +739,7 @@ services:
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-gitea:v0.3.8
+    image: ai-infra-gitea:${IMAGE_TAG:-v0.3.8}
     build:
       context: ./src/gitea
       dockerfile: Dockerfile
