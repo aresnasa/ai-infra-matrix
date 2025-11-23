@@ -886,31 +886,27 @@ update_github_proxy_in_env() {
     local new_proxy="http://$current_ip:$proxy_port"
     print_info "🔄 检测到本地 IP 变化:"
     print_info "   旧地址: $proxy_ip → 新地址: $current_ip"
-    print_info "   更新 GITHUB_PROXY: $new_proxy"
     
-    # 使用 set_or_update_env_var 函数更新配置
-    set_or_update_env_var "GITHUB_PROXY" "$new_proxy"
-    
-    # 验证更新后的代理可访问性
+    # 验证新代理可访问性
     if command -v curl >/dev/null 2>&1; then
-        print_info "🔍 测试新代理连接..."
+        print_info "🔍 测试新代理连接 ($new_proxy)..."
         if curl -x "$new_proxy" -s --connect-timeout 5 --max-time 10 \
             https://api.github.com >/dev/null 2>&1; then
             print_success "✅ GitHub 代理连接测试成功"
-            print_success "✅ GITHUB_PROXY 已更新并验证: $new_proxy"
+            print_info "   更新 GITHUB_PROXY: $new_proxy"
+            set_or_update_env_var "GITHUB_PROXY" "$new_proxy"
             return 0
         else
-            print_warning "⚠️  GitHub 代理连接测试失败"
-            print_info "   已更新配置为: $new_proxy"
-            print_info "   但代理服务可能未运行，请检查:"
-            print_info "   1. 代理服务是否在 $current_ip:$proxy_port 上运行"
-            print_info "   2. 防火墙是否允许连接"
-            print_info "   3. 代理配置是否正确"
+            print_warning "⚠️  GitHub 代理连接测试失败 ($new_proxy)"
+            print_info "   ❌ 跳过更新 GITHUB_PROXY，因为新地址无法连接"
+            print_info "   提示: 请确保代理服务在 $current_ip:$proxy_port 上运行"
             return 1
         fi
     else
+        # No curl, just update
+        print_info "   更新 GITHUB_PROXY: $new_proxy"
+        set_or_update_env_var "GITHUB_PROXY" "$new_proxy"
         print_warning "⚠️  未安装 curl，无法验证代理连接"
-        print_success "✅ GITHUB_PROXY 已更新: $new_proxy (未验证)"
         return 0
     fi
 }
@@ -2520,11 +2516,20 @@ generate_or_update_env_file() {
     print_info ""
     print_info "🔍 检测本地出口 IP 并更新 GITHUB_PROXY..."
     
+    local proxy_verified=false
     # 调用已有的 update_github_proxy_in_env 函数来处理 GITHUB_PROXY
     if update_github_proxy_in_env; then
         print_success "✅ GITHUB_PROXY 配置已验证和更新"
+        proxy_verified=true
     else
         print_warning "⚠️  GITHUB_PROXY 配置验证失败（如不使用代理可忽略）"
+        proxy_verified=false
+        
+        # 如果验证失败，在 .env 中注释掉 GITHUB_PROXY
+        if [[ -f ".env" ]]; then
+            sed_inplace "s|^GITHUB_PROXY=|#GITHUB_PROXY=|g" ".env"
+            print_info "   已在 .env 中注释掉 GITHUB_PROXY 以避免构建失败"
+        fi
     fi
     
     # 7. 更新 .env 文件中的所有相关配置
@@ -2591,6 +2596,14 @@ generate_or_update_env_file() {
         set +a
         print_info ""
         print_info "✅ 已重新加载 .env 文件"
+        
+        # 如果代理验证失败，在当前环境中禁用 GITHUB_PROXY
+        if [[ "$proxy_verified" == "false" ]]; then
+            if [[ -n "${GITHUB_PROXY:-}" ]]; then
+                print_warning "⚠️  GITHUB_PROXY 验证失败，已在本次构建中禁用代理: $GITHUB_PROXY"
+                unset GITHUB_PROXY
+            fi
+        fi
     fi
     
     echo
@@ -6441,16 +6454,18 @@ build_service() {
         
         # 检查并更新 GITHUB_PROXY 配置
         print_info "  → 检查 GITHUB_PROXY 配置..."
+        local use_proxy=false
         if update_github_proxy_in_env; then
             print_success "  ✓ GITHUB_PROXY 配置验证通过"
+            use_proxy=true
         else
-            print_warning "  ⚠ GITHUB_PROXY 配置验证失败，构建可能无法访问 GitHub 资源"
-            print_info "  提示: 如果不需要访问 GitHub，可以忽略此警告"
+            print_warning "  ⚠ GITHUB_PROXY 配置验证失败，本次构建将不使用代理"
+            use_proxy=false
         fi
         echo
         
-        # 从 .env 文件读取 GITHUB_PROXY 配置（如果存在）
-        if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        # 从 .env 文件读取 GITHUB_PROXY 配置（如果存在且验证通过）
+        if [[ "$use_proxy" == "true" ]] && [[ -f "$SCRIPT_DIR/.env" ]]; then
             local github_proxy=$(grep "^GITHUB_PROXY=" "$SCRIPT_DIR/.env" | cut -d'=' -f2- | tr -d '"' | tr -d "'")
             if [[ -n "$github_proxy" ]]; then
                 print_info "  → 使用 GitHub 代理: $github_proxy"
@@ -8051,10 +8066,22 @@ build_all_pipeline() {
     print_info "=========================================="
     
     # 自动检测网络环境（内网/外网），导出并写入.env，供后续步骤使用
+    detect_network_environment
+    
+    # 从 .env 读取检测结果
     local NETWORK_ENV_DETECTED
-    NETWORK_ENV_DETECTED=$(detect_network_environment)
+    if [[ -f "$SCRIPT_DIR/.env" ]]; then
+        NETWORK_ENV_DETECTED=$(grep "^AI_INFRA_NETWORK_ENV=" "$SCRIPT_DIR/.env" | cut -d'=' -f2)
+    else
+        NETWORK_ENV_DETECTED="external"
+    fi
     export AI_INFRA_NETWORK_ENV="$NETWORK_ENV_DETECTED"
     print_info "网络环境检测: $AI_INFRA_NETWORK_ENV"
+    
+    # 重新加载环境变量，确保 GITHUB_PROXY 等配置最新
+    # 如果 detect_network_environment 禁用了 GITHUB_PROXY，我们需要先 unset
+    unset GITHUB_PROXY
+    load_env_file "$SCRIPT_DIR/.env"
     
     # 自动配置镜像源策略
     if [[ "$AI_INFRA_NETWORK_ENV" == "internal" ]]; then
