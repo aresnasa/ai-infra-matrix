@@ -13,11 +13,8 @@
 # =============================================================================
 ARG UBUNTU_VERSION={{UBUNTU_VERSION}}
 ARG ROCKYLINUX_VERSION={{ROCKYLINUX_VERSION}}
-ARG GOLANG_ALPINE_VERSION={{GOLANG_ALPINE_VERSION}}
-ARG NGINX_ALPINE_VERSION={{NGINX_ALPINE_VERSION}}
 ARG APT_MIRROR={{APT_MIRROR}}
 ARG YUM_MIRROR={{YUM_MIRROR}}
-ARG ALPINE_MIRROR={{ALPINE_MIRROR}}
 ARG MUNGE_VERSION=0.5.16
 
 # =============================================================================
@@ -918,7 +915,7 @@ RUN set -eux; \
 # Stage 4: Build Categraf (Multi-Architecture Go Binary)
 # 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
 # =============================================================================
-FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
+FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 
 # Build control flags
 ARG BUILD_CATEGRAF=true
@@ -932,38 +929,26 @@ ARG GO_PROXY={{GO_PROXY}}
 ENV GOPROXY=${GO_PROXY}
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
-ARG ALPINE_MIRROR={{ALPINE_MIRROR}}
-# 配置 Alpine 镜像源并安装依赖（合并到一个RUN减少层数）
+ARG APT_MIRROR={{APT_MIRROR}}
+
+# 配置 APT 镜像源并安装依赖
 RUN set -eux; \
-    # 备份并配置镜像源
-    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
-    ARCH=$(uname -m); \
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
+    ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 根据架构配置镜像源
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-    elif [ "${ARCH}" = "aarch64" ]; then \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
-    else \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    # 更新包索引（带重试和备用源）
-    apk update || { \
-        echo "主镜像源失败，切换到官方源..."; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    } || { \
-        echo "尝试使用HTTP协议..."; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    }; \
-    # 安装构建依赖
-    apk add --no-cache git make bash tar gzip sed coreutils
+    # 更新包列表
+    apt-get update; \
+    # 安装构建依赖 (安装 golang)
+    apt-get install -y --no-install-recommends git make bash tar gzip sed coreutils golang ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
@@ -1026,7 +1011,7 @@ RUN set -eux; \
 # =============================================================================
 # Stage 4.5: Download Pre-built Singularity (Container Runtime for HPC)
 # =============================================================================
-FROM alpine:{{ALPINE_VERSION}} AS singularity-builder
+FROM ubuntu:${UBUNTU_VERSION} AS singularity-builder
 
 # Build control flags
 ARG BUILD_SINGULARITY=true
@@ -1034,28 +1019,26 @@ ARG BUILD_SINGULARITY=true
 # Singularity version configuration
 ARG SINGULARITY_VERSION={{SINGULARITY_VERSION}}
 ARG GITHUB_PROXY
-ARG ALPINE_MIRROR={{ALPINE_MIRROR}}
-# 配置 Alpine 镜像源并安装依赖
+ARG APT_MIRROR={{APT_MIRROR}}
+
+# 配置 APT 镜像源并安装依赖
 RUN set -eux; \
-    # 配置镜像源
-    ARCH=$(uname -m); \
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-    elif [ "${ARCH}" = "aarch64" ]; then \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
-    else \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    apk update || { \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    }; \
+    # 更新包列表
+    apt-get update; \
     # 安装工具
-    apk add --no-cache curl tar gzip binutils
+    apt-get install -y --no-install-recommends curl tar gzip binutils ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
@@ -1111,69 +1094,43 @@ RUN set -eux; \
 # =============================================================================
 # Stage 5: AppHub - HTTP Server with Package Management & Development Tools
 # =============================================================================
-ARG NGINX_ALPINE_VERSION={{NGINX_ALPINE_VERSION}}
-FROM nginx:${NGINX_ALPINE_VERSION}
+FROM ubuntu:${UBUNTU_VERSION}
 
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION={{SLURM_VERSION}}
 ARG SALTSTACK_VERSION={{SALTSTACK_VERSION}}
 ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
 ARG APPHUB_BASE_URL=http://localhost:8081
-ARG ALPINE_MIRROR={{ALPINE_MIRROR}}
+ARG APT_MIRROR={{APT_MIRROR}}
 # 将版本保存到环境变量（可在运行时访问）
 ENV SLURM_VERSION=${SLURM_VERSION}
 ENV SALTSTACK_VERSION=${SALTSTACK_VERSION}
 ENV CATEGRAF_VERSION=${CATEGRAF_VERSION}
 ENV APPHUB_BASE_URL=${APPHUB_BASE_URL}
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置 Alpine 镜像源并安装基础工具（使用国内镜像源）
+# 配置 APT 镜像源并安装基础工具
 RUN set -eux; \
-    # 备份原始配置
-    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
-    # 检测架构
-    ARCH=$(uname -m); \
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
+    ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 根据架构配置镜像源
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-    elif [ "${ARCH}" = "aarch64" ]; then \
-        echo "配置ARM64架构的清华Alpine镜像源..."; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
-    else \
-        echo "配置AMD64架构的阿里云Alpine镜像源..."; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    # 更新包索引（带重试和备用源）
-    apk update || { \
-        echo "主镜像源失败，切换到官方镜像源..."; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    } || { \
-        echo "尝试使用HTTP协议..."; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    }
-
-# Install tools for repo management and general development
-# Note: Some packages may not be available in Alpine, install what we can
-RUN set -eux; \
-    # Install dpkg tools first (critical for deb package indexing)
-    # Also install zstd for decompressing modern deb packages (Ubuntu 22.04+ uses zstd compression)
-    apk add --no-cache dpkg dpkg-dev zstd || { \
-        echo "⚠️  dpkg packages not available, will skip deb indexing"; \
-    }; \
-    # Install createrepo_c for RPM repository metadata generation
-    apk add --no-cache createrepo_c || { \
-        echo "⚠️  createrepo_c not available, will skip RPM indexing"; \
-    }; \
-    # Install core development and network tools (including SSH server)
-    apk add --no-cache \
-        build-base \
+    # 更新包列表
+    apt-get update; \
+    # 安装工具
+    apt-get install -y --no-install-recommends \
+        nginx \
+        dpkg-dev \
+        zstd \
+        createrepo-c \
+        build-essential \
         git \
         vim \
         wget \
@@ -1183,11 +1140,10 @@ RUN set -eux; \
         gzip \
         perl \
         openssh-server \
-        || echo "⚠️  Some packages failed to install"; \
-    # Try to install optional network tools (may not be available)
-    apk add --no-cache net-tools 2>/dev/null || echo "⚠️  net-tools not available"; \
-    apk add --no-cache iputils 2>/dev/null || echo "⚠️  iputils not available"; \
-    apk add --no-cache procps 2>/dev/null || echo "⚠️  procps not available"
+        net-tools \
+        iputils-ping \
+        procps && \
+    rm -rf /var/lib/apt/lists/*
 
 # Configure SSH server for backend access (仅配置公钥认证，无密码登录)
 RUN set -eux; \
@@ -1399,7 +1355,7 @@ RUN set -eux; \
     fi; \
     # Note about RPM metadata
     if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \
-        echo "⚠️  Note: YUM/DNF metadata not generated (createrepo not available in Alpine)"; \
+        echo "⚠️  Note: YUM/DNF metadata generation skipped (can be enabled if createrepo is installed)"; \
         echo "⚠️  Packages can be downloaded directly via HTTP"; \
     fi
 

@@ -25,13 +25,25 @@ regenerate_index() {
         fi
     fi
 
-    # List rpm packages if they exist (no metadata generation in Alpine)
+    # List rpm packages if they exist
     if [ -d /usr/share/nginx/html/rpm ]; then
         cd /usr/share/nginx/html/rpm
         if ls *.rpm >/dev/null 2>&1; then
-            echo "Found rpm packages (direct download available):"
+            echo "Found rpm packages:"
             ls -lh *.rpm
-            echo "Note: RPM metadata not generated (createrepo not available in Alpine)"
+            
+            # Try to generate RPM metadata if createrepo is available
+            if command -v createrepo >/dev/null 2>&1; then
+                echo "Regenerating RPM metadata..."
+                createrepo .
+                echo "RPM metadata regenerated"
+            elif command -v createrepo_c >/dev/null 2>&1; then
+                echo "Regenerating RPM metadata (using createrepo_c)..."
+                createrepo_c .
+                echo "RPM metadata regenerated"
+            else
+                echo "Note: RPM metadata not generated (createrepo not installed)"
+            fi
         fi
     fi
 }

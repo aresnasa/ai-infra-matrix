@@ -22,6 +22,7 @@ docker-compose.yml
 .env
 .env.backup.*
 .env.example.backup-*
+docker-compose.yml.backup.*
 .env.local
 .env.test
 src/jupyterhub/jupyterhub_config_*
