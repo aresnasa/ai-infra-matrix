@@ -42,7 +42,20 @@ SKIP_CACHE_CHECK=false  # 跳过缓存检查标志
 
 # 多架构构建配置
 MULTI_ARCH_BUILD="${MULTI_ARCH_BUILD:-true}"  # 是否启用多架构构建
-TARGET_PLATFORMS="${TARGET_PLATFORMS:-linux/amd64,linux/arm64}"  # 目标平台
+
+# 智能设置目标平台
+if [[ -z "${TARGET_PLATFORMS:-}" ]]; then
+    if [[ "$OS_TYPE" == "macOS" ]]; then
+        # macOS 开发环境默认构建双架构以确保兼容性
+        TARGET_PLATFORMS="linux/amd64,linux/arm64"
+    elif [[ "$OS_TYPE" == "Linux" ]] && [[ "$(uname -m)" == "x86_64" ]]; then
+        # Linux x86_64 环境默认只构建当前架构以加速构建
+        TARGET_PLATFORMS="linux/amd64"
+    else
+        # 其他情况默认双架构
+        TARGET_PLATFORMS="linux/amd64,linux/arm64"
+    fi
+fi
 USE_BUILDX="${USE_BUILDX:-auto}"  # 使用 docker buildx (auto/true/false)
 DEFAULT_REGISTRY="${DEFAULT_REGISTRY:-crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix}" # 默认镜像仓库
 

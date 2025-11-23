@@ -43,10 +43,10 @@ ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 
 # SaltStack version configuration
-ARG SALTSTACK_VERSION=v3007.8
+ ARG SALTSTACK_VERSION=v3007.9
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.25
+ARG CATEGRAF_VERSION=v0.4.28
 
 # Singularity version configuration
 ARG SINGULARITY_VERSION=v4.3.4
@@ -191,7 +191,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION=v3007.8
+ARG SALTSTACK_VERSION=v3007.9
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -362,7 +362,7 @@ ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
 
 # SaltStack version configuration (same as deb builder)
-ARG SALTSTACK_VERSION=v3007.8
+ARG SALTSTACK_VERSION=v3007.9
 
 # 配置 Rocky Linux 镜像源（可选，如果网络不好则跳过）
 # 注意：也可以通过 docker build --build-arg HTTP_PROXY=... 使用代理
@@ -552,7 +552,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION=v3007.8
+ARG SALTSTACK_VERSION=v3007.9
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -921,7 +921,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.25
+ARG CATEGRAF_VERSION=v0.4.28
 ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
@@ -1098,8 +1098,8 @@ FROM ubuntu:${UBUNTU_VERSION}
 
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION=25.05.4
-ARG SALTSTACK_VERSION=v3007.8
-ARG CATEGRAF_VERSION=v0.4.25
+ARG SALTSTACK_VERSION=v3007.9
+ARG CATEGRAF_VERSION=v0.4.28
 ARG APPHUB_BASE_URL=http://localhost:8081
 ARG APT_MIRROR=mirrors.aliyun.com
 # 将版本保存到环境变量（可在运行时访问）
