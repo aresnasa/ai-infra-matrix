@@ -6503,6 +6503,26 @@ build_service() {
         local apphub_port="${APPHUB_PORT:-53434}"
         local external_host="${EXTERNAL_HOST:-192.168.0.200}"
         
+        # 尝试自动检测运行中的 AppHub 端口
+        if command -v docker >/dev/null 2>&1; then
+            # 获取映射信息，例如: 0.0.0.0:53434
+            local port_mapping=$(docker port ai-infra-apphub 80 2>/dev/null | head -n 1)
+            if [[ -n "$port_mapping" ]]; then
+                local detected_port=$(echo "$port_mapping" | awk -F: '{print $NF}')
+                if [[ -n "$detected_port" ]]; then
+                    print_info "  → 检测到运行中的 AppHub 端口: $detected_port (覆盖配置值 $apphub_port)"
+                    apphub_port="$detected_port"
+                fi
+                
+                # 尝试检测绑定的 IP (如果是具体 IP 而不是 0.0.0.0)
+                local detected_ip=$(echo "$port_mapping" | sed 's/:[0-9]*$//')
+                if [[ -n "$detected_ip" ]] && [[ "$detected_ip" != "0.0.0.0" ]] && [[ "$detected_ip" != "::" ]]; then
+                     print_info "  → 检测到 AppHub 绑定 IP: $detected_ip (覆盖配置值 $external_host)"
+                     external_host="$detected_ip"
+                fi
+            fi
+        fi
+        
         # 使用宿主机网络（BuildKit 支持）
         # 通过宿主机 IP 访问已映射的 AppHub 端口
         local apphub_url="http://${external_host}:${apphub_port}"
