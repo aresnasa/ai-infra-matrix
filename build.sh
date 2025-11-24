@@ -57,7 +57,7 @@ if [[ -z "${TARGET_PLATFORMS:-}" ]]; then
     fi
 fi
 USE_BUILDX="${USE_BUILDX:-auto}"  # 使用 docker buildx (auto/true/false)
-DEFAULT_REGISTRY="${DEFAULT_REGISTRY:-crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix}" # 默认镜像仓库
+DEFAULT_REGISTRY="${DEFAULT_REGISTRY:-}" # 默认镜像仓库 (从 .env 读取)
 
 # 获取 GitHub URL（支持镜像）
 # 用法: get_github_url "https://github.com/..."
@@ -1246,7 +1246,7 @@ get_production_dependencies() {
 
 # 初始化配置
 DEFAULT_IMAGE_TAG=$(read_config "project" "version" 2>/dev/null || echo "")
-[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="v0.3.8"
+[[ -z "$DEFAULT_IMAGE_TAG" ]] && DEFAULT_IMAGE_TAG="latest"
 
 # 动态更新版本标签函数
 update_version_if_provided() {
@@ -2585,17 +2585,26 @@ generate_or_update_env_file() {
     update_env_variable "STATIC_URL_PREFIX" "/gitea"
     
     # 6. 检测并更新 GITHUB_PROXY 配置
-    print_info ""
-    print_info "🔍 检测本地出口 IP 并更新 GITHUB_PROXY..."
-    local proxy_verified=false
-    if update_github_proxy_in_env; then
-        print_success "✅ GITHUB_PROXY 配置已验证和更新"
-        proxy_verified=true
-    else
-        print_warning "⚠️  GITHUB_PROXY 配置验证失败（如不使用代理可忽略）"
-        if [[ -f ".env" ]]; then
-            sed_inplace "s|^GITHUB_PROXY=|#GITHUB_PROXY=|g" ".env"
+    local current_proxy_val=""
+    if [[ -f ".env" ]]; then
+        current_proxy_val=$(grep "^GITHUB_PROXY=" ".env" | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    fi
+
+    if [[ -n "$current_proxy_val" ]]; then
+        print_info ""
+        print_info "🔍 检测本地出口 IP 并更新 GITHUB_PROXY..."
+        local proxy_verified=false
+        if update_github_proxy_in_env; then
+            print_success "✅ GITHUB_PROXY 配置已验证和更新"
+            proxy_verified=true
+        else
+            print_warning "⚠️  GITHUB_PROXY 配置验证失败（如不使用代理可忽略）"
+            if [[ -f ".env" ]]; then
+                sed_inplace "s|^GITHUB_PROXY=|#GITHUB_PROXY=|g" ".env"
+            fi
         fi
+    else
+        print_info "ℹ️  GITHUB_PROXY 未配置，跳过自动检测"
     fi
 
     # 7. 确保镜像配置在顶部
@@ -6479,14 +6488,21 @@ build_service() {
         fi
         
         # 检查并更新 GITHUB_PROXY 配置
-        print_info "  → 检查 GITHUB_PROXY 配置..."
         local use_proxy=false
-        if update_github_proxy_in_env; then
-            print_success "  ✓ GITHUB_PROXY 配置验证通过"
-            use_proxy=true
-        else
-            print_warning "  ⚠ GITHUB_PROXY 配置验证失败，本次构建将不使用代理"
-            use_proxy=false
+        local current_proxy_val=""
+        if [[ -f "$SCRIPT_DIR/.env" ]]; then
+             current_proxy_val=$(grep "^GITHUB_PROXY=" "$SCRIPT_DIR/.env" | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        fi
+
+        if [[ -n "$current_proxy_val" ]]; then
+            print_info "  → 检查 GITHUB_PROXY 配置..."
+            if update_github_proxy_in_env; then
+                print_success "  ✓ GITHUB_PROXY 配置验证通过"
+                use_proxy=true
+            else
+                print_warning "  ⚠ GITHUB_PROXY 配置验证失败，本次构建将不使用代理"
+                use_proxy=false
+            fi
         fi
         echo
         
@@ -13602,6 +13618,17 @@ download_all_resources() {
 
 # 主函数
 main() {
+    # 加载环境变量配置
+    load_env_file
+    
+    # 从环境变量更新默认配置
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        DEFAULT_REGISTRY="$PRIVATE_REGISTRY"
+    fi
+    if [[ -n "$IMAGE_TAG" ]]; then
+        DEFAULT_IMAGE_TAG="$IMAGE_TAG"
+    fi
+
     # 预处理命令行参数，检查各种标志
     local args=()
     for arg in "$@"; do
