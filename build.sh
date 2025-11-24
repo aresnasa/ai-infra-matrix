@@ -2175,34 +2175,38 @@ detect_external_host() {
     local detected_ip=""
     
     # 智能检测：排除虚拟网络接口，优先选择真实的以太网/Wi-Fi接口
-    # macOS 和 Linux 通用方法
+    # 优先使用 ip 命令 (Linux)，因为它能更准确地识别接口类型
     
-    # 方法1：使用 ifconfig（macOS 和 BSD）
-    if command -v ifconfig &> /dev/null; then
-        # 获取所有 inet 地址，排除：
-        # - 127.0.0.1 (loopback)
-        # - 10.211.* (Parallels 虚拟网络)
-        # - 10.37.* (VMware 虚拟网络)
-        # - 10.96.* (Kubernetes Service 网络)
-        # - 192.168.64.* (Docker/虚拟机桥接)
-        # - 192.168.65.* (Kubernetes Docker Desktop)
-        # - 172.16-31.* (Docker 默认网络)
-        detected_ip=$(ifconfig | grep "inet " | grep -v "127.0.0.1" | \
-            grep -v "10.211." | grep -v "10.37." | grep -v "10.96." | \
-            grep -v "192.168.64." | grep -v "192.168.65." | \
-            grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
-            awk '{print $2}' | head -n1)
-    fi
-    
-    # 方法2：使用 ip（Linux）
-    if [[ -z "$detected_ip" ]] && command -v ip &> /dev/null; then
+    # 方法1：使用 ip（Linux）
+    if command -v ip &> /dev/null; then
         # 排除虚拟网络接口
         detected_ip=$(ip addr show | grep "inet " | grep -v "127.0.0.1" | \
             grep -v "10.211." | grep -v "10.37." | grep -v "10.96." | \
             grep -v "192.168.64." | grep -v "192.168.65." | \
             grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
-            grep -v "docker" | grep -v "veth" | grep -v "bridge" | \
+            grep -v "docker" | grep -v "veth" | grep -v "bridge" | grep -v "flannel" | grep -v "cni" | \
             awk '{print $2}' | cut -d'/' -f1 | head -n1)
+    fi
+    
+    # 方法2：使用 ifconfig（macOS 和 BSD，或 Linux 降级）
+    if [[ -z "$detected_ip" ]] && command -v ifconfig &> /dev/null; then
+        # 使用 awk 解析接口名称和 IP，以便过滤 docker/vmnet 等接口
+        # 兼容 Linux (eth0:) 和 macOS (en0:) 的输出格式
+        detected_ip=$(ifconfig | awk '
+            /^[a-z0-9]+:/ {
+                iface=$1; 
+                sub(/:/, "", iface)
+            } 
+            /inet / {
+                # 排除回环、Docker、虚拟网桥、VMware/VirtualBox 等接口
+                if (iface !~ /^(lo|docker|veth|br|vmnet|vboxnet|tun|tap|virbr)/) 
+                    print $2
+            }' | \
+            grep -v "127.0.0.1" | \
+            grep -v "10.211." | grep -v "10.37." | grep -v "10.96." | \
+            grep -v "192.168.64." | grep -v "192.168.65." | \
+            grep -v "172.1[6-9]." | grep -v "172.2[0-9]." | grep -v "172.3[0-1]." | \
+            head -n1)
     fi
     
     # 方法3：使用 hostname（通用降级方案）
@@ -2217,6 +2221,10 @@ detect_external_host() {
     # 方法4：从 .env 文件读取已配置的值（降级方案）
     if [[ -z "$detected_ip" ]] && [[ -f ".env" ]]; then
         detected_ip=$(grep "^EXTERNAL_HOST=" .env 2>/dev/null | cut -d'=' -f2)
+        # 忽略变量占位符
+        if [[ "$detected_ip" =~ \$\{ ]]; then
+            detected_ip=""
+        fi
     fi
     
     # 如果检测到 IP，返回；否则返回默认值
@@ -2242,8 +2250,8 @@ detect_external_domain() {
     # 优先级2: 从 .env 文件读取已配置的域名
     if [[ -f ".env" ]]; then
         domain=$(grep "^DOMAIN=" .env 2>/dev/null | cut -d'=' -f2)
-        # 检查是否是域名（包含字母）而非纯 IP
-        if [[ -n "$domain" ]] && [[ "$domain" =~ [a-zA-Z] ]]; then
+        # 检查是否是域名（包含字母）而非纯 IP，且不是变量占位符
+        if [[ -n "$domain" ]] && [[ "$domain" =~ [a-zA-Z] ]] && [[ ! "$domain" =~ \$\{ ]]; then
             echo "$domain"
             return 0
         fi
@@ -2395,7 +2403,10 @@ update_env_variable() {
     
     # 如果 .env 文件不存在，从示例文件创建
     if [[ ! -f "$env_file" ]]; then
-        if [[ -f "docker-compose.yml.example" ]]; then
+        if [[ -f ".env.example" ]]; then
+            print_info "创建 .env 文件（基于 .env.example）"
+            cp ".env.example" "$env_file"
+        elif [[ -f "docker-compose.yml.example" ]]; then
             print_info "创建 .env 文件（基于 docker-compose.yml.example）"
             # 提取示例文件中的环境变量
             grep "^[A-Z]" docker-compose.yml.example > "$env_file" 2>/dev/null || touch "$env_file"
@@ -2474,90 +2485,93 @@ ensure_env_top_variables() {
 # 自动生成或更新 .env 文件
 # 基于网络环境检测和系统配置
 # 支持域名和 K8s 集群部署
+# 用法: generate_or_update_env_file [external_host] [external_port] [external_scheme]
 generate_or_update_env_file() {
+    local manual_host="$1"
+    local manual_port="$2"
+    local manual_scheme="$3"
+
     print_info "=========================================="
     print_info "自动检测和配置环境变量"
     print_info "=========================================="
     
-    # 0. 确保镜像配置在顶部
-    ensure_env_top_variables
-    
-    # 1. 检测运行环境
-    local is_k8s=$(detect_k8s_environment)
-    if [[ "$is_k8s" == "true" ]]; then
-        print_info "🎯 检测到 Kubernetes 环境"
-    else
-        print_info "🐳 检测到 Docker Compose 环境"
+    # 0. 确保 .env.example 存在
+    if [[ ! -f ".env.example" ]]; then
+        print_error "环境模板文件 .env.example 不存在"
+        return 1
     fi
-    
-    # 2. 检测网络环境
-    local detected_env=$(detect_network_environment)
-    print_info "🌐 检测到网络环境: $detected_env"
-    
-    # 3. 智能检测外部访问地址（支持域名和 IP）
+
+    # 1. 确定外部地址、端口和协议
     local detected_address=""
-    
-    if [[ "$is_k8s" == "true" ]]; then
-        # K8s 环境: 尝试获取 LoadBalancer/Ingress 地址
-        detected_address=$(get_k8s_external_address "nginx" "${K8S_NAMESPACE:-ai-infra}")
-        if [[ -z "$detected_address" ]]; then
-            print_warning "⚠️  无法获取 K8s 外部地址，降级到本地检测"
-            detected_address=$(get_external_address)
-        else
-            print_info "☸️  K8s 外部地址: $detected_address"
-        fi
+    local current_port="${manual_port:-8080}"
+    local current_scheme="${manual_scheme:-http}"
+    local detected_env="unknown"
+    local is_k8s="false"
+
+    if [[ -n "$manual_host" ]]; then
+        detected_address="$manual_host"
+        print_info "👉 使用指定外部地址: $detected_address"
+        detected_env="manual"
     else
-        # Docker Compose 环境: 使用本地检测
-        detected_address=$(get_external_address)
+        # 自动检测逻辑
+        # 1.1 检测运行环境
+        is_k8s=$(detect_k8s_environment)
+        if [[ "$is_k8s" == "true" ]]; then
+            print_info "🎯 检测到 Kubernetes 环境"
+            detected_address=$(get_k8s_external_address "nginx" "${K8S_NAMESPACE:-ai-infra}")
+            if [[ -z "$detected_address" ]]; then
+                print_warning "⚠️  无法获取 K8s 外部地址，降级到本地检测"
+                detected_address=$(get_external_address)
+            else
+                print_info "☸️  K8s 外部地址: $detected_address"
+            fi
+        else
+            print_info "🐳 检测到 Docker Compose 环境"
+            detected_address=$(get_external_address)
+        fi
+        
+        # 1.2 检测网络环境
+        detected_env=$(detect_network_environment)
+        print_info "🌐 检测到网络环境: $detected_env"
+
+        # 1.3 读取当前端口配置（如果未指定且存在 .env）
+        if [[ -z "$manual_port" && -f ".env" ]]; then
+            current_port=$(grep "^EXTERNAL_PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "8080")
+        fi
     fi
-    
+
     # 判断是域名还是 IP
     local address_type="IP"
     if is_domain "$detected_address"; then
         address_type="域名"
     fi
-    print_info "🖥️  检测到外部地址: $detected_address ($address_type)"
+    print_info "🖥️  外部地址: $detected_address ($address_type)"
+    print_info "🔌 外部端口: $current_port"
     
-    # 4. 读取当前端口配置（如果存在）
-    local current_port="${EXTERNAL_PORT:-8080}"
-    if [[ -f ".env" ]]; then
-        current_port=$(grep "^EXTERNAL_PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "8080")
-    fi
-    print_info "🔌 使用外部端口: $current_port"
-    
-    # 5. 构建完整的基础 URL
-    local base_url="http://${detected_address}:${current_port}"
+    # 2. 构建完整的基础 URL
+    local base_url="${current_scheme}://${detected_address}:${current_port}"
     print_info "🌍 基础访问地址: $base_url"
+
+    # 3. 导出环境变量供 envsubst 使用
+    export EXTERNAL_HOST="$detected_address"
+    export EXTERNAL_PORT="$current_port"
+    export EXTERNAL_SCHEME="$current_scheme"
+    export AI_INFRA_NETWORK_ENV="$detected_env"
     
-    # 6. 检测并更新 GITHUB_PROXY 配置
-    print_info ""
-    print_info "🔍 检测本地出口 IP 并更新 GITHUB_PROXY..."
-    
-    local proxy_verified=false
-    # 调用已有的 update_github_proxy_in_env 函数来处理 GITHUB_PROXY
-    if update_github_proxy_in_env; then
-        print_success "✅ GITHUB_PROXY 配置已验证和更新"
-        proxy_verified=true
+    # 4. 使用 envsubst 渲染模板生成 .env
+    print_info "📝 渲染 .env 文件..."
+    if command -v envsubst >/dev/null 2>&1; then
+        # 只替换 .env.example 中明确引用的变量
+        envsubst < .env.example > .env.tmp && mv .env.tmp .env
     else
-        print_warning "⚠️  GITHUB_PROXY 配置验证失败（如不使用代理可忽略）"
-        proxy_verified=false
-        
-        # 如果验证失败，在 .env 中注释掉 GITHUB_PROXY
-        if [[ -f ".env" ]]; then
-            sed_inplace "s|^GITHUB_PROXY=|#GITHUB_PROXY=|g" ".env"
-            print_info "   已在 .env 中注释掉 GITHUB_PROXY 以避免构建失败"
-        fi
+        # 回退到 sed
+        sed -e "s/\${EXTERNAL_HOST}/$detected_address/g" \
+            -e "s/\${EXTERNAL_PORT}/$current_port/g" \
+            -e "s/\${EXTERNAL_SCHEME}/$current_scheme/g" \
+            .env.example > .env.tmp && mv .env.tmp .env
     fi
-    
-    # 7. 更新 .env 文件中的所有相关配置
-    print_info ""
-    print_info "📝 更新 .env 文件中的相关配置..."
-    
-    # 基础配置
-    update_env_variable "AI_INFRA_NETWORK_ENV" "$detected_env"
-    update_env_variable "EXTERNAL_HOST" "$detected_address"
-    update_env_variable "DOMAIN" "$detected_address"
-    
+
+    # 5. 后续微调 (update_env_variable)
     # MinIO 配置
     update_env_variable "MINIO_CONSOLE_URL" "${base_url}/minio-console/"
     
@@ -2570,59 +2584,35 @@ generate_or_update_env_file() {
     update_env_variable "ROOT_URL" "${base_url}/gitea/"
     update_env_variable "STATIC_URL_PREFIX" "/gitea"
     
-    # 8. 显示更新摘要
+    # 6. 检测并更新 GITHUB_PROXY 配置
     print_info ""
-    print_info "✅ 环境配置完成："
-    print_info "   - 运行环境: $([ "$is_k8s" == "true" ] && echo "Kubernetes" || echo "Docker Compose")"
-    print_info "   - 网络环境: $detected_env"
-    print_info "   - 外部地址: $detected_address ($address_type)"
-    print_info "   - 外部端口: $current_port"
-    print_info "   - 基础URL: $base_url"
-    
-    # 读取当前 GITHUB_PROXY 配置用于显示
-    local current_github_proxy=""
-    if [[ -f ".env" ]]; then
-        current_github_proxy=$(grep "^GITHUB_PROXY=" .env 2>/dev/null | cut -d'=' -f2 || echo "")
+    print_info "🔍 检测本地出口 IP 并更新 GITHUB_PROXY..."
+    local proxy_verified=false
+    if update_github_proxy_in_env; then
+        print_success "✅ GITHUB_PROXY 配置已验证和更新"
+        proxy_verified=true
+    else
+        print_warning "⚠️  GITHUB_PROXY 配置验证失败（如不使用代理可忽略）"
+        if [[ -f ".env" ]]; then
+            sed_inplace "s|^GITHUB_PROXY=|#GITHUB_PROXY=|g" ".env"
+        fi
     fi
-    
-    print_info ""
-    print_info "📋 已更新的配置项："
-    print_info "   - DOMAIN → $detected_address"
-    print_info "   - MINIO_CONSOLE_URL → ${base_url}/minio-console/"
-    print_info "   - JUPYTERHUB_PUBLIC_HOST → ${detected_address}:${current_port}"
-    print_info "   - JUPYTERHUB_BASE_URL → ${base_url}/jupyter/"
-    print_info "   - JUPYTERHUB_CORS_ORIGIN → $base_url"
-    print_info "   - ROOT_URL → ${base_url}/gitea/"
-    print_info "   - STATIC_URL_PREFIX → /gitea"
-    if [[ -n "$current_github_proxy" ]]; then
-        print_info "   - GITHUB_PROXY → $current_github_proxy"
-    fi
-    
-    # 9. K8s 环境特殊提示
-    if [[ "$is_k8s" == "true" ]]; then
-        print_info ""
-        print_info "💡 K8s 集群部署提示："
-        print_info "   - 如需使用固定域名，请设置环境变量: export EXTERNAL_DOMAIN=your-domain.com"
-        print_info "   - 如需更新服务地址，请重新运行: ./build.sh build-all"
-    fi
-    
-    # 10. 重新加载环境变量
+
+    # 7. 确保镜像配置在顶部
+    ensure_env_top_variables
+
+    # 8. 重新加载环境变量
     if [[ -f ".env" ]]; then
         set -a
         source .env
         set +a
-        print_info ""
-        print_info "✅ 已重新加载 .env 文件"
         
-        # 如果代理验证失败，在当前环境中禁用 GITHUB_PROXY
-        if [[ "$proxy_verified" == "false" ]]; then
-            if [[ -n "${GITHUB_PROXY:-}" ]]; then
-                print_warning "⚠️  GITHUB_PROXY 验证失败，已在本次构建中禁用代理: $GITHUB_PROXY"
-                unset GITHUB_PROXY
-            fi
+        if [[ "$proxy_verified" == "false" && -n "${GITHUB_PROXY:-}" ]]; then
+             unset GITHUB_PROXY
         fi
     fi
     
+    print_success "✅ 环境配置完成"
     echo
 }
 
@@ -13423,48 +13413,13 @@ build_deploy_all() {
     return 0
 }
 
-# 环境模板渲染函数
+# 环境模板渲染函数 (已废弃，保留兼容性)
 render_env_template() {
     local external_host="$1"
     local external_port="$2"
     local external_scheme="$3"
     
-    if [[ ! -f ".env.example" ]]; then
-        print_error "环境模板文件 .env.example 不存在"
-        return 1
-    fi
-    
-    # 导出环境变量供envsubst使用
-    export EXTERNAL_HOST="$external_host"
-    export EXTERNAL_PORT="$external_port"
-    export EXTERNAL_SCHEME="$external_scheme"
-    
-    # 使用envsubst渲染模板
-    if command -v envsubst >/dev/null 2>&1; then
-        print_info "使用 envsubst 渲染环境模板..."
-        if envsubst < .env.example > .env.tmp && mv .env.tmp .env; then
-            print_success "环境模板渲染成功"
-            return 0
-        else
-            print_error "envsubst 渲染失败"
-            rm -f .env.tmp
-            return 1
-        fi
-    else
-        # 回退到简单的sed替换
-        print_info "使用 sed 渲染环境模板..."
-        if sed -e "s/\${EXTERNAL_HOST}/$external_host/g" \
-               -e "s/\${EXTERNAL_PORT}/$external_port/g" \
-               -e "s/\${EXTERNAL_SCHEME}/$external_scheme/g" \
-               .env.example > .env.tmp && mv .env.tmp .env; then
-            print_success "环境模板渲染成功"
-            return 0
-        else
-            print_error "sed 渲染失败"
-            rm -f .env.tmp
-            return 1
-        fi
-    fi
+    generate_or_update_env_file "$external_host" "$external_port" "$external_scheme"
 }
 
 # Docker Compose模板渲染函数
@@ -14442,7 +14397,9 @@ main() {
         "prod-generate")
             # Alias for render-templates docker-compose
             # Usage: ./build.sh prod-generate [registry] [tag]
+            # 现在也生成 .env 文件
             shift
+            generate_or_update_env_file
             render_docker_compose_templates "$@"
             ;;
             
