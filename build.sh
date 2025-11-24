@@ -3177,6 +3177,25 @@ render_dockerfile_templates() {
             fi
         done
         
+        # 处理 GitHub 镜像替换 (全局替换)
+        # 如果配置了 GITHUB_MIRROR，则替换所有 https://github.com/ 为 ${GITHUB_MIRROR}/github.com/
+        local github_mirror="${GITHUB_MIRROR:-}"
+        if [[ -z "$github_mirror" ]] && [[ -f "$SCRIPT_DIR/.env.example" ]]; then
+            github_mirror=$(grep "^GITHUB_MIRROR=" "$SCRIPT_DIR/.env.example" | head -n 1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+        fi
+        
+        if [[ -n "$github_mirror" ]]; then
+            # 移除末尾的斜杠
+            local mirror_url="${github_mirror%/}"
+            
+            # 检查文件中是否包含 github.com
+            if grep -q "https://github.com/" "$output_file"; then
+                print_info "  应用 GitHub 镜像: $mirror_url"
+                # 使用 sed_inplace 进行替换
+                sed_inplace "s|https://github.com/|${mirror_url}/github.com/|g" "$output_file"
+            fi
+        fi
+        
         count=$((count + 1))
     done < <(find "$services_dir" -name "Dockerfile.tpl")
     
@@ -7115,6 +7134,18 @@ download_third_party_dependencies() {
     print_info "  Munge: $munge_version"
     print_info "  SLURM: $slurm_version"
 
+    # 检查 GitHub 连接状态 (仅在不使用内部镜像源且未配置代理镜像时)
+    local can_access_github=true
+    if [[ "$use_mirror" != "true" ]] && [[ -z "$GITHUB_MIRROR" ]]; then
+        print_info "正在检查 GitHub 连接..."
+        if curl -s --connect-timeout 3 --max-time 5 "https://github.com" >/dev/null 2>&1; then
+            print_info "  ✓ GitHub 连接正常"
+        else
+            can_access_github=false
+            print_warning "  ⚠ 无法连接 GitHub (超时或网络不可达)，将跳过 GitHub 相关下载"
+        fi
+    fi
+
     # 下载工具函数
     download_file() {
         local url="$1"
@@ -7124,6 +7155,14 @@ download_third_party_dependencies() {
         if [[ -f "$dest" ]]; then
             print_info "  ✓ $desc 已存在 (跳过更新)"
             return 0
+        fi
+        
+        # 检查是否需要跳过 GitHub 下载
+        if [[ "$use_mirror" != "true" ]] && [[ "$can_access_github" == "false" ]]; then
+            if [[ "$url" == *"github.com"* ]]; then
+                print_warning "  ⚠ [跳过] 无法连接 GitHub，跳过下载 $desc"
+                return 0
+            fi
         fi
         
         print_info "  ⬇ 下载 $desc..."
@@ -7194,22 +7233,7 @@ download_third_party_dependencies() {
         mkdir -p "$singularity_dir"
         local singularity_ver_num="${singularity_version#v}"
         
-        # 检查网络环境
-        local can_access_github=true
-        # 只有在不使用镜像源时才检查 GitHub 连接，且增加超时限制防止卡死
-        if [[ "$use_mirror" != "true" ]]; then
-            print_info "  🔍 正在检查 GitHub 连接..."
-            local check_url="https://github.com"
-            [[ -n "$GITHUB_MIRROR" ]] && check_url=$(get_github_url "https://github.com")
-            
-            if curl -s --connect-timeout 2 --max-time 3 "$check_url" >/dev/null 2>&1; then
-                can_access_github=true
-                print_info "  ✓ GitHub 连接正常"
-            else
-                can_access_github=false
-                print_warning "  ⚠ 无法连接 GitHub (超时或网络不可达)，将尝试使用本地缓存"
-            fi
-        fi
+        # (已在上方全局检查 GitHub 连接状态)
         
         # 如果能访问 GitHub，检查版本是否匹配（非强制）
         if [[ "$can_access_github" == "true" ]] && [[ "$use_mirror" != "true" ]]; then
@@ -8438,6 +8462,26 @@ push_all_services() {
     fi
 }
 
+# 获取标准依赖镜像映射列表
+# 返回格式: "source_image|short_name"
+get_dependency_mappings() {
+    load_env_file
+    local mappings=(
+        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|cp-kafka"
+        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|kafka-ui"
+        "postgres:${POSTGRES_VERSION:-15-alpine}|postgres"
+        "redis:${REDIS_VERSION:-7-alpine}|redis"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}|tcp-proxy"
+        "minio/minio:${MINIO_VERSION:-latest}|minio"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}|openldap"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|phpldapadmin"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}|redisinsight"
+        "oceanbase/oceanbase-ce:4.3.5-lts|oceanbase-ce"
+        "mysql:8.0|mysql"
+    )
+    echo "${mappings[@]}"
+}
+
 # 推送所有依赖镜像（PostgreSQL, Redis, MySQL, Kafka等）到私有仓库
 push_all_dependencies() {
     local registry="$1"
@@ -8458,38 +8502,9 @@ push_all_dependencies() {
     print_info "目标仓库: $registry"
     echo
     
-    # 从 docker-compose.yml 动态提取依赖镜像
-    print_info "从 docker-compose.yml 提取依赖镜像列表..."
-    local compose_file="docker-compose.yml"
-    if [[ ! -f "$compose_file" ]]; then
-        compose_file="docker-compose.yml.example"
-    fi
-    
-    if [[ ! -f "$compose_file" ]]; then
-        print_error "未找到 docker-compose.yml 或 docker-compose.yml.example"
-        return 1
-    fi
-    
-    # 提取非 ai-infra- 开头的镜像（排除我们自己构建的服务镜像）
-    local dependencies=()
-    while IFS= read -r line; do
-        # 提取 image: 后面的镜像名称
-        if [[ "$line" =~ ^[[:space:]]*image:[[:space:]]*(.+)$ ]]; then
-            local image="${BASH_REMATCH[1]}"
-            # 移除可能的注释
-            image="${image%%#*}"
-            # 移除首尾空格
-            image=$(echo "$image" | xargs)
-            # 跳过变量引用（包含 $ 的）和 ai-infra- 开头的镜像
-            if [[ ! "$image" =~ \$ ]] && [[ ! "$image" =~ ai-infra- ]] && [[ -n "$image" ]]; then
-                dependencies+=("$image")
-            fi
-        fi
-    done < "$compose_file"
-    
-    # 去重
-    local unique_dependencies=($(printf '%s\n' "${dependencies[@]}" | sort -u))
-    dependencies=("${unique_dependencies[@]}")
+    # 获取标准依赖镜像列表
+    print_info "加载标准依赖镜像列表..."
+    local dependencies=($(get_dependency_mappings))
     
     if [[ ${#dependencies[@]} -eq 0 ]]; then
         print_warning "未找到任何依赖镜像"
@@ -8497,8 +8512,9 @@ push_all_dependencies() {
     fi
     
     print_info "发现 ${#dependencies[@]} 个依赖镜像:"
-    for img in "${dependencies[@]}"; do
-        print_info "  • $img"
+    for mapping in "${dependencies[@]}"; do
+        local source_image="${mapping%%|*}"
+        print_info "  • $source_image"
     done
     echo
     
@@ -8506,49 +8522,42 @@ push_all_dependencies() {
     local total_count=${#dependencies[@]}
     local failed_images=()
     
-    for image in "${dependencies[@]}"; do
-        # 处理没有显式标签的镜像（如 tecnativa/tcp-proxy）
-        local image_with_tag="$image"
-        if [[ ! "$image" =~ : ]]; then
-            image_with_tag="${image}:latest"
-        fi
+    for mapping in "${dependencies[@]}"; do
+        local source_image="${mapping%%|*}"
+        local short_name="${mapping##*|}"
+        local target_image="${registry}${short_name}:${tag}"
         
-        local image_name="${image_with_tag%%:*}"
-        local image_tag="${image_with_tag##*:}"
-        local short_name="${image_name##*/}"
-        local target_image="${registry}${short_name}:${image_tag}"
-        
-        print_info "处理镜像: $image_with_tag"
+        print_info "处理镜像: $source_image"
         print_info "  → 目标: $target_image"
         
         # 1. 检查镜像是否已存在，如果存在则跳过拉取
         print_info "  [1/3] 检查并拉取镜像..."
-        if docker image inspect "$image_with_tag" >/dev/null 2>&1; then
-            print_info "  ℹ️  镜像已存在本地，跳过拉取: $image_with_tag"
+        if docker image inspect "$source_image" >/dev/null 2>&1; then
+            print_info "  ℹ️  镜像已存在本地，跳过拉取: $source_image"
         else
             # 镜像不存在，执行拉取
             local pull_output=""
             local pull_exit_code=0
-            pull_output=$(docker pull "$image_with_tag" 2>&1) || pull_exit_code=$?
+            pull_output=$(docker pull "$source_image" 2>&1) || pull_exit_code=$?
             
             if [[ $pull_exit_code -ne 0 ]]; then
                 # 检查是否是 "Target.Size" 错误但镜像实际已存在
                 if echo "$pull_output" | grep -q "InvalidArgument: Target.Size must be greater than zero"; then
-                    if docker image inspect "$image_with_tag" >/dev/null 2>&1; then
+                    if docker image inspect "$source_image" >/dev/null 2>&1; then
                         print_warning "  ⚠️ Docker 报告 Target.Size 错误，但镜像已存在本地，继续处理"
                     else
-                        print_error "  ✗ 拉取失败: $image_with_tag (exit code: $pull_exit_code)"
+                        print_error "  ✗ 拉取失败: $source_image (exit code: $pull_exit_code)"
                         echo "  错误详情:"
                         echo "$pull_output" | head -10 | sed 's/^/    /'
-                        failed_images+=("$image_with_tag")
+                        failed_images+=("$source_image")
                         echo
                         continue
                     fi
                 else
-                    print_error "  ✗ 拉取失败: $image_with_tag (exit code: $pull_exit_code)"
+                    print_error "  ✗ 拉取失败: $source_image (exit code: $pull_exit_code)"
                     echo "  错误详情:"
                     echo "$pull_output" | head -10 | sed 's/^/    /'
-                    failed_images+=("$image_with_tag")
+                    failed_images+=("$source_image")
                     echo
                     continue
                 fi
@@ -8567,9 +8576,9 @@ push_all_dependencies() {
         
         # 2. 重新标记镜像
         print_info "  [2/3] 标记镜像..."
-        if ! docker tag "$image_with_tag" "$target_image"; then
-            print_error "  ✗ 标记失败: $image_with_tag → $target_image"
-            failed_images+=("$image_with_tag")
+        if ! docker tag "$source_image" "$target_image"; then
+            print_error "  ✗ 标记失败: $source_image → $target_image"
+            failed_images+=("$source_image")
             echo
             continue
         fi
@@ -8579,7 +8588,7 @@ push_all_dependencies() {
         print_info "  [3/3] 推送镜像..."
         if ! docker push "$target_image" 2>&1 | grep -v "Pushing\|Pushed\|Waiting"; then
             print_error "  ✗ 推送失败: $target_image"
-            failed_images+=("$image_with_tag")
+            failed_images+=("$source_image")
             echo
             continue
         fi
@@ -8599,8 +8608,8 @@ push_all_dependencies() {
         print_success "🚀 所有依赖镜像推送成功！"
         print_info ""
         print_info "已推送的镜像可在私有仓库中使用："
-        for image in "${dependencies[@]}"; do
-            local short_name="${image##*/}"
+        for mapping in "${dependencies[@]}"; do
+            local short_name="${mapping##*|}"
             print_info "  • ${registry}${short_name}"
         done
         return 0
