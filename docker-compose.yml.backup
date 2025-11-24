@@ -1,7 +1,7 @@
 services:
   # PostgreSQL 数据库服务（主要用于门户与Gitea等组件）
   postgres:
-    image: postgres:15-alpine
+    image: aiharbor.msxf.local/aihpc//postgres:v0.3.8
     container_name: ai-infra-postgres
     env_file:
       - .env
@@ -27,7 +27,7 @@ services:
   # OceanBase 社区版（单机）
   # 参考: https://www.oceanbase.com/docs/community-observer-cn-10000000001878977
   oceanbase:
-    image: oceanbase/oceanbase-ce:4.3.5-lts
+    image: aiharbor.msxf.local/aihpc//oceanbase-ce:v0.3.8
     container_name: ai-infra-oceanbase
     environment:
       TZ: Asia/Shanghai
@@ -72,7 +72,7 @@ services:
 
   # MySQL 数据库服务 (用于SLURM)
   mysql:
-    image: mysql:8.0
+    image: aiharbor.msxf.local/aihpc//mysql:v0.3.8
     container_name: ai-infra-mysql
     environment:
       TZ: Asia/Shanghai
@@ -98,7 +98,7 @@ services:
 
 # Redis 缓存服务
   redis:
-    image: redis:7-alpine
+    image: aiharbor.msxf.local/aihpc//redis:v0.3.8
     container_name: ai-infra-redis
     env_file:
       - .env
@@ -122,7 +122,7 @@ services:
 
 # Kafka 消息队列服务 (KRaft模式，无需Zookeeper)
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: aiharbor.msxf.local/aihpc//cp-kafka:v0.3.8
     container_name: ai-infra-kafka
     environment:
       # KRaft 模式配置
@@ -182,7 +182,7 @@ services:
 
 # Kafka UI 管理界面
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: aiharbor.msxf.local/aihpc//kafka-ui:v0.3.8
     container_name: ai-infra-kafka-ui
     depends_on:
       kafka:
@@ -202,7 +202,7 @@ services:
 
   # OpenLDAP 目录服务
   openldap:
-    image: osixia/openldap:stable
+    image: aiharbor.msxf.local/aihpc//openldap:v0.3.8
     container_name: ai-infra-openldap
     env_file:
       - .env
@@ -231,7 +231,7 @@ services:
 
   # phpLDAPadmin Web界面
   phpldapadmin:
-    image: osixia/phpldapadmin:stable
+    image: aiharbor.msxf.local/aihpc//phpldapadmin:v0.3.8
     container_name: ai-infra-phpldapadmin
     environment:
       PHPLDAPADMIN_LDAP_HOSTS: "${LDAP_HOST:-openldap}"
@@ -248,7 +248,7 @@ services:
 
   # 后端初始化服务 - 创建admin用户和基础数据
   backend-init:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-backend-init:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-backend-init:v0.3.8
     build:
       context: ./src/backend
       dockerfile: Dockerfile
@@ -296,7 +296,7 @@ services:
 
   # 后端 API 服务
   backend:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-backend:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-backend:v0.3.8
     build:
       context: ./src/backend
       dockerfile: Dockerfile
@@ -390,7 +390,7 @@ services:
 
   # 前端应用服务
   frontend:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-frontend:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-frontend:v0.3.8
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
@@ -418,7 +418,7 @@ services:
 
   # JupyterHub 统一认证服务
   jupyterhub:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-jupyterhub:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-jupyterhub:v0.3.8
     env_file:
       - .env
     build:
@@ -498,7 +498,7 @@ services:
 
   # 单用户镜像构建器（不运行，仅用于构建镜像供Spawner使用）
   singleuser-builder:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-singleuser:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-singleuser:v0.3.8
     build:
       context: ./src/singleuser
       dockerfile: Dockerfile
@@ -511,7 +511,7 @@ services:
 
 # SaltStack 配置管理服务
   saltstack:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-saltstack:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-saltstack:v0.3.8
     build:
       context: ./src/saltstack
       dockerfile: Dockerfile
@@ -644,7 +644,7 @@ services:
 
   # Nginx 反向代理服务 - 自定义镜像版本
   nginx:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-nginx:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-nginx:v0.3.8
     build:
       context: .
       dockerfile: src/nginx/Dockerfile
@@ -704,7 +704,7 @@ services:
 
   # Kubernetes 代理服务 (可选)
   k8s-proxy:
-    image: tecnativa/tcp-proxy
+    image: aiharbor.msxf.local/aihpc//tcp-proxy:v0.3.8
     platform: linux/amd64  # ARM Mac 兼容性配置
     container_name: ai-infra-k8s-proxy
     environment:
@@ -724,7 +724,7 @@ services:
 
   # Redis 监控界面 (可选)
   redis-insight:
-    image: redislabs/redisinsight:latest
+    image: aiharbor.msxf.local/aihpc//redisinsight:v0.3.8
     container_name: ai-infra-redis-insight
     environment:
       TZ: Asia/Shanghai
@@ -739,7 +739,7 @@ services:
 
   # Gitea 代码托管服务（可选，供门户内嵌）
   gitea:
-    image: crpi-jl2i63tqhvx30nje.cn-chengdu.personal.cr.aliyuncs.com/ai-infra-matrix/ai-infra-gitea:v0.3.8
+    image: aiharbor.msxf.local/aihpc//ai-infra-gitea:v0.3.8
     build:
       context: ./src/gitea
       dockerfile: Dockerfile
@@ -815,7 +815,7 @@ services:
 
   # MinIO (S3-compatible)
   minio:
-    image: minio/minio:latest
+    image: aiharbor.msxf.local/aihpc//minio:v0.3.8
     container_name: ai-infra-minio
     command: server /data --console-address ":9001"
     env_file:

@@ -201,7 +201,7 @@ sync_deps_from_yaml() {
     local env_file="${1:-$ENV_FILE}"
     
     if [[ ! -f "$deps_file" ]]; then
-        print_warning "依赖文件不存在: $deps_file，跳过同步"
+        print_warning "依赖文件不存在: ${deps_file} - 跳过同步"
         return 0
     fi
     
@@ -404,6 +404,10 @@ get_dependency_images_list() {
     images+="redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest} "
     images+="nginx:${NGINX_ALPINE_VERSION:-1.27-alpine} "
     images+="minio/minio:${MINIO_VERSION:-latest} "
+    images+="confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0} "
+    images+="provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest} "
+    images+="oceanbase/oceanbase-ce:4.3.5-lts "
+    images+="mysql:8.0 "
     
     # 构建相关镜像（使用环境变量）
     images+="node:${NODE_ALPINE_VERSION:-22-alpine} "
@@ -1256,14 +1260,14 @@ update_version_if_provided() {
         # 检查是否是版本格式的参数 (v*.*.* 格式)
         if [[ "$arg" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
-            print_info "检测到版本参数: $new_version，更新默认版本标签"
+            print_info "检测到版本参数: ${new_version} - 更新默认版本标签"
             break
         fi
         
         # 检查常见的版本标签格式 (如 test-v0.3.8)
         if [[ "$arg" =~ ^[a-zA-Z0-9-]*v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
             new_version="$arg"
-            print_info "检测到版本参数: $new_version，更新默认版本标签"
+            print_info "检测到版本参数: ${new_version} - 更新默认版本标签"
             break
         fi
     done
@@ -6998,7 +7002,7 @@ wait_for_apphub_ready() {
         # 检查 2: 容器健康状态（如果定义了健康检查）
         local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null || echo "none")
         if [[ "$health_status" != "none" && "$health_status" != "healthy" ]]; then
-            print_warning "[${elapsed}s] ⏳ 容器健康检查: $health_status，继续等待..."
+            print_warning "[${elapsed}s] ⏳ 容器健康检查: ${health_status} - 继续等待..."
             sleep $check_interval
             elapsed=$((elapsed + check_interval))
             continue
@@ -9014,7 +9018,7 @@ pull_harbor.example.com_services() {
     print_info "镜像标签: $tag"
     echo
     
-    local services=("backend" "frontend" "jupyterhub" "nginx" "saltstack" "singleuser" "gitea" "backend-init")
+    local services=("backend" "frontend" "jupyterhub" "nginx" "saltstack" "singleuser" "gitea" "backend-init" "slurm-master" "apphub" "nightingale")
     local success_count=0
     local total_count=${#services[@]}
     local failed_services=()
@@ -9928,6 +9932,8 @@ prepare_images_intelligently() {
 replace_images_in_compose_file() {
     local compose_file="$1"
     local registry="$2"
+    # 移除 registry 末尾的斜杠，避免生成双斜杠路径
+    registry="${registry%/}"
     local tag="$3"
     local backup_file="${compose_file}.backup.$(date +%s)"
     
@@ -9943,34 +9949,20 @@ replace_images_in_compose_file() {
     
     # 替换第三方依赖镜像
     load_env_file
-    # 用户要求：只有在推送镜像时才使用私有仓库，开发/运行环境应使用公共镜像
-    # 因此注释掉第三方依赖的替换逻辑，保持 docker-compose.yml 使用公共镜像
+    # 启用第三方依赖镜像替换，以支持完全离线环境（与 v0.3.6 保持一致）
     local dependency_replacements=(
-        # "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|${registry}/cp-kafka:${tag}"
-        # "confluentinc/cp-kafka:7.4.0|${registry}/cp-kafka:${tag}"
-        # "confluentinc/cp-kafka:latest|${registry}/cp-kafka:${tag}"
-        # "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|${registry}/kafka-ui:${tag}"
-        # "postgres:${POSTGRES_VERSION:-15-alpine}|${registry}/postgres:${tag}"
-        # "postgres:latest|${registry}/postgres:${tag}"
-        # "redis:${REDIS_VERSION:-7-alpine}|${registry}/redis:${tag}"
-        # "redis:latest|${registry}/redis:${tag}"
-        # "nginx:${NGINX_ALPINE_VERSION:-1.27-alpine}|${registry}/nginx:${tag}"
-        # "nginx:${NGINX_VERSION:-stable-alpine-perl}|${registry}/nginx:${tag}"
-        # "nginx:latest|${registry}/nginx:${tag}"
-        # "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}|${registry}/tcp-proxy:${tag}"
-        # "tecnativa/tcp-proxy|${registry}/tcp-proxy:${tag}"
-        # "minio/minio:${MINIO_VERSION:-latest}|${registry}/minio:${tag}"
-        # "osixia/openldap:${OPENLDAP_VERSION:-stable}|${registry}/openldap:${tag}"
-        # "osixia/openldap:latest|${registry}/openldap:${tag}"
-        # "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|${registry}/phpldapadmin:${tag}"
-        # "osixia/phpldapadmin:latest|${registry}/phpldapadmin:${tag}"
-        # "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}|${registry}/redisinsight:${tag}"
-        # "quay.io/minio/minio:latest|${registry}/minio:${tag}"
-        # "gitea/gitea:${GITEA_VERSION:-1.25.1}|${registry}/gitea:${tag}"
-        # "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}|${registry}/base-notebook:${tag}"
-        # "node:${NODE_ALPINE_VERSION:-22-alpine}|${registry}/node:${tag}"
-        # "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}|${registry}/golang:${tag}"
-        # "python:${PYTHON_ALPINE_VERSION:-3.13-alpine}|${registry}/python:${tag}"
+        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|${registry}/cp-kafka:${tag}"
+        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|${registry}/kafka-ui:${tag}"
+        "postgres:${POSTGRES_VERSION:-15-alpine}|${registry}/postgres:${tag}"
+        "redis:${REDIS_VERSION:-7-alpine}|${registry}/redis:${tag}"
+        "tecnativa/tcp-proxy:${TCP_PROXY_VERSION:-latest}|${registry}/tcp-proxy:${tag}"
+        "tecnativa/tcp-proxy|${registry}/tcp-proxy:${tag}"
+        "minio/minio:${MINIO_VERSION:-latest}|${registry}/minio:${tag}"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}|${registry}/openldap:${tag}"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|${registry}/phpldapadmin:${tag}"
+        "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}|${registry}/redisinsight:${tag}"
+        "oceanbase/oceanbase-ce:4.3.5-lts|${registry}/oceanbase-ce:${tag}"
+        "mysql:8.0|${registry}/mysql:${tag}"
     )
     
     local replacement_count=0
@@ -9992,16 +9984,17 @@ replace_images_in_compose_file() {
     
     # 替换AI-Infra服务镜像（如果指定了registry）
     if [[ -n "$registry" ]]; then
-        local ai_infra_services=("backend" "backend-init" "frontend" "jupyterhub" "gitea" "nginx" "saltstack" "singleuser")
+        local ai_infra_services=("backend" "backend-init" "frontend" "jupyterhub" "gitea" "nginx" "saltstack" "singleuser" "slurm-master" "apphub" "nightingale")
         for service in "${ai_infra_services[@]}"; do
             local source_pattern="ai-infra-${service}:\${IMAGE_TAG:-v0.3.8}"
             local target_replacement="${registry}/ai-infra-${service}:${tag}"
             
             if grep -q "ai-infra-${service}:" "$temp_compose"; then
                 print_info "  替换服务镜像: ai-infra-${service} → $target_replacement"
-                sed_inplace "s|image: ai-infra-${service}:\${IMAGE_TAG:-[^}]*}|image: $target_replacement|g" "$temp_compose"
-                sed_inplace "s|image: ai-infra-${service}:\${IMAGE_TAG}|image: $target_replacement|g" "$temp_compose"
-                sed_inplace "s|image: ai-infra-${service}:${tag}|image: $target_replacement|g" "$temp_compose"
+                # Handle optional ${PRIVATE_REGISTRY} prefix
+                sed_inplace "s|image: \(\${PRIVATE_REGISTRY}\)*ai-infra-${service}:\${IMAGE_TAG:-[^}]*}|image: $target_replacement|g" "$temp_compose"
+                sed_inplace "s|image: \(\${PRIVATE_REGISTRY}\)*ai-infra-${service}:\${IMAGE_TAG}|image: $target_replacement|g" "$temp_compose"
+                sed_inplace "s|image: \(\${PRIVATE_REGISTRY}\)*ai-infra-${service}:${tag}|image: $target_replacement|g" "$temp_compose"
                 ((replacement_count++))
             fi
         done
@@ -10408,14 +10401,14 @@ check_and_build_missing_images() {
         local expected_image="${registry}/ai-infra-${service}:${tag}"
         
         # 检查镜像是否存在
-        if ! docker image inspect "$expected_image" >/dev/null 2>&1; then
-            print_info "缺失镜像: $expected_image"
-            if build_service_if_missing "$service" "$compose_file" "$env_file"; then
+        if ! docker image inspect "${expected_image}" >/dev/null 2>&1; then
+            print_info "缺失镜像: ${expected_image}"
+            if build_service_if_missing "${service}" "${compose_file}" "${env_file}"; then
                 # 构建成功后标记镜像
                 local local_image="ai-infra-${service}:${tag}"
-                if docker image inspect "$local_image" >/dev/null 2>&1; then
-                    docker tag "$local_image" "$expected_image"
-                    print_success "✓ 已标记: $local_image -> $expected_image"
+                if docker image inspect "${local_image}" >/dev/null 2>&1; then
+                    docker tag "${local_image}" "${expected_image}"
+                    print_success "✓ 已标记: ${local_image} -> ${expected_image}"
                 fi
             else
                 missing_count=$((missing_count + 1))
@@ -14435,6 +14428,13 @@ main() {
                 print_error "生产环境依赖镜像拉取失败，停止推送操作"
                 exit 1
             fi
+            ;;
+            
+        "prod-generate")
+            # Alias for render-templates docker-compose
+            # Usage: ./build.sh prod-generate [registry] [tag]
+            shift
+            render_docker_compose_templates "$@"
             ;;
             
         "prod-deploy")

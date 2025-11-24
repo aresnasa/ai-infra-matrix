@@ -78,3 +78,6 @@ package.json
 package-lock.json
 manual-install-slurm-node.sh
 ldap-init-data.ldif
+kafka_current.yaml
+kafka_old.yml
+docker-compose.yml.v0.3.6
