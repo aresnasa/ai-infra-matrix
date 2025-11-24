@@ -14,7 +14,6 @@ import (
 
 	"net/http"
 	"os"
-	"os/exec"
 
 	"github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
@@ -1365,17 +1364,12 @@ func createNightingaleDatabase(cfg *config.Config) error {
 	}()
 
 	if shouldInitSchema {
-		log.Println("Initializing Nightingale schema from SQL file...")
-		if err := executeSQLFile(cfg, nightingaleDB, "n9e_postgres.sql"); err != nil {
-			log.Printf("Warning: Failed to execute SQL file: %v. Falling back to AutoMigrate.", err)
-			// Fallback to AutoMigrate if SQL fails
-			nightingaleModels := models.InitNightingaleModels()
-			if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
-				return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
-			}
-		} else {
-			log.Println("✓ Nightingale schema initialized from SQL")
+		log.Println("Initializing Nightingale schema using GORM AutoMigrate...")
+		nightingaleModels := models.InitNightingaleModels()
+		if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
+			return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
 		}
+		log.Println("✓ Nightingale schema initialized")
 	}
 
 	// Initialize default roles
@@ -1391,6 +1385,30 @@ func createNightingaleDatabase(cfg *config.Config) error {
 	// Create default business group
 	if err := initializeNightingaleBusiGroup(nightingaleDB_conn); err != nil {
 		log.Printf("Warning: Failed to initialize Nightingale business group: %v", err)
+	}
+
+	// 初始化默认角色操作权限
+	initializeNightingaleRoleOperations(nightingaleDB_conn)
+
+	// 初始化默认指标视图
+	initializeNightingaleMetricViews(nightingaleDB_conn)
+
+	// 初始化默认告警聚合视图
+	initializeNightingaleAlertAggrViews(nightingaleDB_conn)
+
+	// Initialize role operations
+	if err := initializeNightingaleRoleOperations(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale role operations: %v", err)
+	}
+
+	// Initialize metric views
+	if err := initializeNightingaleMetricViews(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale metric views: %v", err)
+	}
+
+	// Initialize alert aggregation views
+	if err := initializeNightingaleAlertAggrViews(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale alert aggregation views: %v", err)
 	}
 
 	log.Println("✓ Nightingale database initialization completed!")
@@ -1620,33 +1638,138 @@ func initializeNightingaleBusiGroup(db *gorm.DB) error {
 	return nil
 }
 
-// executeSQLFile executes a SQL file using psql command line tool
-func executeSQLFile(cfg *config.Config, dbName string, filepath string) error {
-	// Check if file exists
-	if _, err := os.Stat(filepath); err != nil {
-		return fmt.Errorf("SQL file not found: %w", err)
+// initializeNightingaleRoleOperations initializes default role operations
+func initializeNightingaleRoleOperations(db *gorm.DB) error {
+	log.Println("Initializing Nightingale role operations...")
+
+	operations := []struct {
+		Role      string
+		Operation string
+	}{
+		// Guest
+		{"Guest", "/metric/explorer"},
+		{"Guest", "/object/explorer"},
+		{"Guest", "/log/explorer"},
+		{"Guest", "/trace/explorer"},
+		{"Guest", "/help/version"},
+		{"Guest", "/help/contact"},
+
+		// Standard
+		{"Standard", "/metric/explorer"},
+		{"Standard", "/object/explorer"},
+		{"Standard", "/log/explorer"},
+		{"Standard", "/trace/explorer"},
+		{"Standard", "/help/version"},
+		{"Standard", "/help/contact"},
+		{"Standard", "/help/servers"},
+		{"Standard", "/help/migrate"},
+		{"Standard", "/alert-rules-built-in"},
+		{"Standard", "/dashboards-built-in"},
+		{"Standard", "/trace/dependencies"},
+		{"Standard", "/users"},
+		{"Standard", "/user-groups"},
+		{"Standard", "/user-groups/add"},
+		{"Standard", "/user-groups/put"},
+		{"Standard", "/user-groups/del"},
+		{"Standard", "/busi-groups"},
+		{"Standard", "/busi-groups/add"},
+		{"Standard", "/busi-groups/put"},
+		{"Standard", "/busi-groups/del"},
+		{"Standard", "/targets"},
+		{"Standard", "/targets/add"},
+		{"Standard", "/targets/put"},
+		{"Standard", "/targets/del"},
+		{"Standard", "/dashboards"},
+		{"Standard", "/dashboards/add"},
+		{"Standard", "/dashboards/put"},
+		{"Standard", "/dashboards/del"},
+		{"Standard", "/alert-rules"},
+		{"Standard", "/alert-rules/add"},
+		{"Standard", "/alert-rules/put"},
+		{"Standard", "/alert-rules/del"},
+		{"Standard", "/alert-mutes"},
+		{"Standard", "/alert-mutes/add"},
+		{"Standard", "/alert-mutes/del"},
+		{"Standard", "/alert-subscribes"},
+		{"Standard", "/alert-subscribes/add"},
+		{"Standard", "/alert-subscribes/put"},
+		{"Standard", "/alert-subscribes/del"},
+		{"Standard", "/alert-cur-events"},
+		{"Standard", "/alert-cur-events/del"},
+		{"Standard", "/alert-his-events"},
+		{"Standard", "/job-tpls"},
+		{"Standard", "/job-tpls/add"},
+		{"Standard", "/job-tpls/put"},
+		{"Standard", "/job-tpls/del"},
+		{"Standard", "/job-tasks"},
+		{"Standard", "/job-tasks/add"},
+		{"Standard", "/job-tasks/put"},
+		{"Standard", "/recording-rules"},
+		{"Standard", "/recording-rules/add"},
+		{"Standard", "/recording-rules/put"},
+		{"Standard", "/recording-rules/del"},
+
+		// Admin
+		{"Admin", "/help/source"},
+		{"Admin", "/help/sso"},
+		{"Admin", "/help/notification-tpls"},
+		{"Admin", "/help/notification-settings"},
 	}
 
-	log.Printf("Executing SQL file %s using psql...", filepath)
+	for _, op := range operations {
+		var count int64
+		db.Model(&models.NightingaleRoleOperation{}).Where("role_name = ? AND operation = ?", op.Role, op.Operation).Count(&count)
+		if count == 0 {
+			db.Create(&models.NightingaleRoleOperation{
+				RoleName:  op.Role,
+				Operation: op.Operation,
+			})
+		}
+	}
+	log.Println("✓ Role operations initialized")
+	return nil
+}
 
-	// Use psql to execute the file
-	// PGPASSWORD=... psql -h host -p port -U user -d dbname -f filepath
-	cmd := exec.Command("psql",
-		"-h", cfg.Database.Host,
-		"-p", fmt.Sprintf("%d", cfg.Database.Port),
-		"-U", cfg.Database.User,
-		"-d", dbName,
-		"-f", filepath,
-	)
+// initializeNightingaleMetricViews initializes default metric views
+func initializeNightingaleMetricViews(db *gorm.DB) error {
+	log.Println("Initializing Nightingale metric views...")
 
-	// Set password in environment variable
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PGPASSWORD=%s", cfg.Database.Password))
-
-	// Capture output for debugging
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to execute SQL file: %w, output: %s", err, string(output))
+	views := []models.NightingaleMetricView{
+		{
+			Name:    "Host View",
+			Cate:    0,
+			Configs: `{"filters":[{"oper":"=","label":"__name__","value":"cpu_usage_idle"}],"dynamicLabels":[],"dimensionLabels":[{"label":"ident","value":""}]}`,
+		},
 	}
 
+	for _, view := range views {
+		var count int64
+		db.Model(&models.NightingaleMetricView{}).Where("name = ?", view.Name).Count(&count)
+		if count == 0 {
+			db.Create(&view)
+		}
+	}
+
+	log.Println("✓ Metric views initialized")
+	return nil
+}
+
+// initializeNightingaleAlertAggrViews initializes default alert aggregation views
+func initializeNightingaleAlertAggrViews(db *gorm.DB) error {
+	log.Println("Initializing Nightingale alert aggregation views...")
+
+	views := []models.NightingaleAlertAggrView{
+		{Name: "By BusiGroup, Severity", Rule: "field:group_name::field:severity", Cate: 0},
+		{Name: "By RuleName", Rule: "field:rule_name", Cate: 0},
+	}
+
+	for _, view := range views {
+		var count int64
+		db.Model(&models.NightingaleAlertAggrView{}).Where("name = ?", view.Name).Count(&count)
+		if count == 0 {
+			db.Create(&view)
+		}
+	}
+	log.Println("✓ Alert aggregation views initialized")
 	return nil
 }

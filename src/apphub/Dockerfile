@@ -124,7 +124,7 @@ WORKDIR /home/builder/build
 # Copy SLURM source tarball (use wildcard to make it optional-ish)
 # Docker will fail if no matching file, but we handle it gracefully in build script
 ARG SLURM_TARBALL_PATH
-COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
+COPY --chown=builder:builder src/apphub/${SLURM_TARBALL_PATH} /home/builder/build/
 
 # Extract SLURM source
 # 解压 tarball 并记录源码目录名称
@@ -504,7 +504,7 @@ RUN set -eux; \
 
 # Copy SLURM source tarball
 ARG SLURM_TARBALL_PATH
-COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
+COPY --chown=builder:builder src/apphub/${SLURM_TARBALL_PATH} /home/builder/build/
 
 # Build SLURM RPM packages using official rpmbuild method
 # Reference: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
@@ -953,8 +953,8 @@ RUN set -eux; \
 COPY third_party/ /third_party/
 
 # 复制通用构建脚本和应用特定脚本
-COPY scripts/build-app.sh /scripts/build-app.sh
-COPY scripts/categraf/ /scripts/categraf/
+COPY src/apphub/scripts/build-app.sh /scripts/build-app.sh
+COPY src/apphub/scripts/categraf/ /scripts/categraf/
 RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 
 # 创建输出目录
@@ -1165,7 +1165,7 @@ RUN chmod 600 /root/.ssh/authorized_keys && \
     echo "✓ SSH public key installed for backend access"
 
 # Copy nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY src/apphub/nginx.conf /etc/nginx/nginx.conf
 
 # Create directories for packages
 RUN mkdir -p \
@@ -1212,8 +1212,8 @@ COPY --from=rpm-builder /out/saltstack-rpm/ /usr/share/nginx/html/pkgs/saltstack
 COPY --from=binary-builder /out/packages/ /usr/share/nginx/html/pkgs/slurm-binaries/
 
 # Copy scripts for installation
-COPY scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
-COPY scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
+COPY src/apphub/scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
+COPY src/apphub/scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
 RUN chmod +x /app/scripts/generate-install-script.sh
 
 # Generate SLURM installation script from template
@@ -1362,7 +1362,7 @@ RUN set -eux; \
 EXPOSE 80
 
 # Entrypoint to regenerate indexes if needed
-COPY entrypoint.sh /entrypoint.sh
+COPY src/apphub/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

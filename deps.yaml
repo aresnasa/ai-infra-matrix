@@ -26,7 +26,6 @@ grafana: "latest"
 alertmanager: "latest"
 
 # 代理工具
-tcp-proxy: "latest"
 redisinsight: "latest"
 haproxy: "2.9-alpine"
 

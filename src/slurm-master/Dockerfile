@@ -226,111 +226,126 @@ RUN mkdir -p /etc/slurm \
 # 复制 third_party 目录以支持离线构建
 COPY third_party/ /third_party/
 
-# 尝试从AppHub安装SLURM包（动态发现所有可用包）
+# Copy cached packages from build context (if available)
+COPY .build-cache /tmp/build-cache
+
+# 尝试从AppHub安装SLURM包（优先使用本地缓存，否则动态发现所有可用包）
 ARG APPHUB_URL=http://apphub:80
 RUN set -eux; \
-    echo "🔍 尝试从AppHub安装SLURM ${SLURM_VERSION} 包..."; \
-    # 添加AppHub源
-    echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
-    echo "📋 AppHub源配置:"; \
-    cat /etc/apt/sources.list.d/ai-infra-slurm.list; \
+    echo "🔍 尝试安装SLURM ${SLURM_VERSION} 包..."; \
+    SLURM_INSTALLED=false; \
     \
-    # 测试AppHub连接
-    echo "🌐 测试AppHub连接..."; \
-    if curl -sf --max-time 10 ${APPHUB_URL}/pkgs/slurm-deb/Packages > /dev/null; then \
-        echo "✅ AppHub连接正常"; \
-        \
-        # 动态发现AppHub中所有可用的SLURM包
-        echo "📦 发现AppHub中的SLURM包..."; \
-        AVAILABLE_PACKAGES=$(curl -sL ${APPHUB_URL}/pkgs/slurm-deb/Packages 2>/dev/null | \
-            grep "^Package:" | \
-            awk '{print $2}' | \
-            grep -E "^slurm" | \
-            sort -u | \
-            tr '\n' ' '); \
-        \
-        if [ -n "$AVAILABLE_PACKAGES" ]; then \
-            echo "✓ 发现的SLURM包:"; \
-            echo "$AVAILABLE_PACKAGES" | tr ' ' '\n' | sed 's/^/  - /'; \
-            PACKAGE_COUNT=$(echo "$AVAILABLE_PACKAGES" | wc -w); \
-            echo "✓ 总计: $PACKAGE_COUNT 个包"; \
-            \
-            # 定义核心包和可选包
-            CORE_PACKAGES="slurm-smd slurm-smd-client slurm-smd-slurmctld slurm-smd-slurmdbd slurm-smd-slurmrestd"; \
-            OPTIONAL_PACKAGES=""; \
-            \
-            # 从可用包中筛选出非核心的可选包
-            for pkg in $AVAILABLE_PACKAGES; do \
-                is_core=0; \
-                for core in $CORE_PACKAGES; do \
-                    if [ "$pkg" = "$core" ]; then \
-                        is_core=1; \
-                        break; \
-                    fi; \
-                done; \
-                if [ $is_core -eq 0 ]; then \
-                    OPTIONAL_PACKAGES="$OPTIONAL_PACKAGES $pkg"; \
-                fi; \
-            done; \
-            \
-            # 更新包列表
-            if timeout 120 apt-get update; then \
-                # 安装核心包
-                echo "📦 安装核心SLURM包..."; \
-                if apt-get install -y --no-install-recommends $CORE_PACKAGES; then \
-                    echo "✅ 核心SLURM包安装成功"; \
-                    SLURM_INSTALLED=true; \
-                    SLURM_SOURCE="AppHub-Core"; \
-                    \
-                    # 尝试安装可选包（失败不影响）
-                    if [ -n "$OPTIONAL_PACKAGES" ]; then \
-                        echo "📦 尝试安装可选SLURM包..."; \
-                        apt-get install -y --no-install-recommends $OPTIONAL_PACKAGES 2>/dev/null && \
-                            echo "✅ 可选包安装成功" || \
-                            echo "⚠️  部分可选包安装失败（不影响核心功能）"; \
-                    fi; \
-                else \
-                    echo "❌ 核心包安装失败"; \
-                    SLURM_INSTALLED=false; \
-                    SLURM_SOURCE="AppHub-Failed"; \
-                fi; \
+    # 1. 尝试从本地缓存安装
+    if [ -d "/tmp/build-cache/apphub-packages/slurm-deb" ] && [ "$(ls -A /tmp/build-cache/apphub-packages/slurm-deb/*.deb 2>/dev/null)" ]; then \
+        echo "📦 发现本地缓存的SLURM包，尝试离线安装..."; \
+        cd /tmp/build-cache/apphub-packages/slurm-deb; \
+        if apt-get update; then \
+            CORE_PATTERNS="slurm-smd_*.deb slurm-smd-client_*.deb slurm-smd-slurmctld_*.deb slurm-smd-slurmdbd_*.deb slurm-smd-slurmrestd_*.deb"; \
+            echo "📦 安装核心SLURM包 (Local)..."; \
+            if apt-get install -y --no-install-recommends $CORE_PATTERNS; then \
+                echo "✅ 核心SLURM包安装成功 (Local)"; \
+                SLURM_INSTALLED=true; \
+                SLURM_SOURCE="Local-Cache"; \
+                echo "📦 尝试安装其他SLURM包 (Local)..."; \
+                apt-get install -y --no-install-recommends ./*.deb 2>/dev/null || echo "⚠️  部分可选包安装失败"; \
             else \
-                echo "❌ apt-get update 失败"; \
+                echo "❌ 核心包本地安装失败"; \
                 SLURM_INSTALLED=false; \
-                SLURM_SOURCE="AppHub-UpdateFailed"; \
             fi; \
         else \
-            echo "❌ 未能从AppHub获取包列表"; \
-            SLURM_INSTALLED=false; \
-            SLURM_SOURCE="AppHub-NoPackages"; \
+             echo "❌ apt-get update 失败"; \
         fi; \
-        \
-        # 如果AppHub安装失败，报错并退出（不使用系统仓库）
-        if [ "$SLURM_INSTALLED" != "true" ]; then \
-            echo "❌ AppHub安装失败，构建终止"; \
-            echo "💡 提示: 确保docker-compose构建时AppHub服务可用"; \
-            echo "💡 解决方案: 先启动AppHub服务，然后再构建slurm-master"; \
+        cd -; \
+    fi; \
+    \
+    # 2. 如果本地安装未成功，尝试从AppHub安装
+    if [ "$SLURM_INSTALLED" != "true" ]; then \
+        echo "🔍 本地安装未执行或失败，尝试从AppHub安装..."; \
+        echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
+        echo "📋 AppHub源配置:"; \
+        cat /etc/apt/sources.list.d/ai-infra-slurm.list; \
+        echo "🌐 测试AppHub连接..."; \
+        if curl -sf --max-time 10 ${APPHUB_URL}/pkgs/slurm-deb/Packages > /dev/null; then \
+            echo "✅ AppHub连接正常"; \
+            echo "📦 发现AppHub中的SLURM包..."; \
+            AVAILABLE_PACKAGES=$(curl -sL ${APPHUB_URL}/pkgs/slurm-deb/Packages 2>/dev/null | \
+                grep "^Package:" | \
+                awk '{print $2}' | \
+                grep -E "^slurm" | \
+                sort -u | \
+                tr '\n' ' '); \
+            if [ -n "$AVAILABLE_PACKAGES" ]; then \
+                echo "✓ 发现的SLURM包:"; \
+                echo "$AVAILABLE_PACKAGES" | tr ' ' '\n' | sed 's/^/  - /'; \
+                PACKAGE_COUNT=$(echo "$AVAILABLE_PACKAGES" | wc -w); \
+                echo "✓ 总计: $PACKAGE_COUNT 个包"; \
+                CORE_PACKAGES="slurm-smd slurm-smd-client slurm-smd-slurmctld slurm-smd-slurmdbd slurm-smd-slurmrestd"; \
+                OPTIONAL_PACKAGES=""; \
+                for pkg in $AVAILABLE_PACKAGES; do \
+                    is_core=0; \
+                    for core in $CORE_PACKAGES; do \
+                        if [ "$pkg" = "$core" ]; then \
+                            is_core=1; \
+                            break; \
+                        fi; \
+                    done; \
+                    if [ $is_core -eq 0 ]; then \
+                        OPTIONAL_PACKAGES="$OPTIONAL_PACKAGES $pkg"; \
+                    fi; \
+                done; \
+                if timeout 120 apt-get update; then \
+                    echo "📦 安装核心SLURM包..."; \
+                    if apt-get install -y --no-install-recommends $CORE_PACKAGES; then \
+                        echo "✅ 核心SLURM包安装成功"; \
+                        SLURM_INSTALLED=true; \
+                        SLURM_SOURCE="AppHub-Core"; \
+                        if [ -n "$OPTIONAL_PACKAGES" ]; then \
+                            echo "📦 尝试安装可选SLURM包..."; \
+                            apt-get install -y --no-install-recommends $OPTIONAL_PACKAGES 2>/dev/null && \
+                                echo "✅ 可选包安装成功" || \
+                                echo "⚠️  部分可选包安装失败（不影响核心功能）"; \
+                        fi; \
+                    else \
+                        echo "❌ 核心包安装失败"; \
+                        SLURM_INSTALLED=false; \
+                        SLURM_SOURCE="AppHub-Failed"; \
+                    fi; \
+                else \
+                    echo "❌ apt-get update 失败"; \
+                    SLURM_INSTALLED=false; \
+                    SLURM_SOURCE="AppHub-UpdateFailed"; \
+                fi; \
+            else \
+                echo "❌ 未能从AppHub获取包列表"; \
+                SLURM_INSTALLED=false; \
+                SLURM_SOURCE="AppHub-NoPackages"; \
+            fi; \
+            if [ "$SLURM_INSTALLED" != "true" ]; then \
+                echo "❌ AppHub安装失败，构建终止"; \
+                echo "💡 提示: 确保docker-compose构建时AppHub服务可用"; \
+                echo "💡 解决方案: 先启动AppHub服务，然后再构建slurm-master"; \
+                exit 1; \
+            fi; \
+        else \
+            echo "❌ AppHub连接失败，构建终止"; \
+            echo "💡 提示: SLURM master必须从AppHub安装以确保版本一致性"; \
+            echo "💡 AppHub URL: ${APPHUB_URL}"; \
+            echo ""; \
+            echo "📋 故障排查:"; \
+            echo "   1. 确保AppHub服务正在运行:"; \
+            echo "      docker ps | grep apphub"; \
+            echo ""; \
+            echo "   2. 检查AppHub端口映射:"; \
+            echo "      docker port ai-infra-apphub"; \
+            echo ""; \
+            echo "   3. 测试AppHub连接:"; \
+            echo "      curl http://\${EXTERNAL_HOST}:\${APPHUB_PORT}/pkgs/slurm-deb/Packages"; \
+            echo ""; \
+            echo "   4. 使用构建脚本（推荐）:"; \
+            echo "      ./scripts/build-slurm-master.sh"; \
+            echo ""; \
             exit 1; \
         fi; \
-    else \
-        echo "❌ AppHub连接失败，构建终止"; \
-        echo "💡 提示: SLURM master必须从AppHub安装以确保版本一致性"; \
-        echo "💡 AppHub URL: ${APPHUB_URL}"; \
-        echo ""; \
-        echo "📋 故障排查:"; \
-        echo "   1. 确保AppHub服务正在运行:"; \
-        echo "      docker ps | grep apphub"; \
-        echo ""; \
-        echo "   2. 检查AppHub端口映射:"; \
-        echo "      docker port ai-infra-apphub"; \
-        echo ""; \
-        echo "   3. 测试AppHub连接:"; \
-        echo "      curl http://\${EXTERNAL_HOST}:\${APPHUB_PORT}/pkgs/slurm-deb/Packages"; \
-        echo ""; \
-        echo "   4. 使用构建脚本（推荐）:"; \
-        echo "      ./scripts/build-slurm-master.sh"; \
-        echo ""; \
-        exit 1; \
     fi; \
     \
     # 确保关键工具包已安装（bootstrap脚本依赖）

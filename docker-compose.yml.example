@@ -702,26 +702,6 @@ services:
       start_period: 90s
     restart: unless-stopped
 
-  # Kubernetes 代理服务 (可选)
-  k8s-proxy:
-    image: tecnativa/tcp-proxy
-    platform: linux/amd64  # ARM Mac 兼容性配置
-    container_name: ai-infra-k8s-proxy
-    environment:
-      LISTEN: "${K8S_PROXY_LISTEN:-0.0.0.0:6443}"
-      TALK: "${K8S_PROXY_TALK:-host.docker.internal:6443}"
-      PRE_RESOLVE: "${K8S_PROXY_PRE_RESOLVE:-0}"
-      VERBOSE: "${K8S_PROXY_VERBOSE:-1}"
-      TZ: "${TZ:-Asia/Shanghai}"
-    expose:
-      - "6443"
-    extra_hosts:
-      - "kubernetes.docker.internal:host-gateway"
-      - "host.docker.internal:host-gateway"
-    networks:
-      - ai-infra-network
-    restart: unless-stopped
-
   # Redis 监控界面 (可选)
   redis-insight:
     image: redislabs/redisinsight:latest

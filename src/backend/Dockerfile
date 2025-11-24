@@ -36,7 +36,7 @@ ENV CGO_ENABLED=0
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
 # Copy go.mod and go.sum files first for better caching
-COPY go.mod go.sum ./
+COPY src/backend/go.mod src/backend/go.sum ./
 
 # 复制 third_party 目录以支持离线构建 (Optional, skipped if missing)
 # COPY third_party/ /third_party/
@@ -73,7 +73,7 @@ RUN set -eux; \
     fi
 
 # Copy source code
-COPY . .
+COPY src/backend/ .
 
 # Update go.mod and go.sum
 RUN go mod tidy
@@ -119,7 +119,7 @@ ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 复制 SLURM 运行时安装脚本（在容器启动时执行）
-COPY install-slurm-runtime.sh /install-slurm-runtime.sh
+COPY src/backend/install-slurm-runtime.sh /install-slurm-runtime.sh
 RUN chmod +x /install-slurm-runtime.sh
 
 WORKDIR /root/
@@ -130,11 +130,11 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test-k8s .
 
 # Copy installation scripts for remote execution
-COPY scripts/ /app/scripts/
+COPY src/backend/scripts/ /app/scripts/
 RUN find /app/scripts -type f -name "*.sh" -exec chmod +x {} \;
 
 # Copy SLURM configuration templates for runtime use
-COPY config/slurm /app/config/slurm
+COPY src/backend/config/slurm /app/config/slurm
 
 # 注意：不再从 src/backend/.env 读取配置
 # 所有环境变量统一从项目根目录 .env 文件读取，通过 docker-compose.yml 的 env_file 传递
