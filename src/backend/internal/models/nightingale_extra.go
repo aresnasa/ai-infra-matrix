@@ -128,7 +128,7 @@ type NightingaleAlertMute struct {
 	Cate          string `gorm:"not null;size:128"`
 	Cluster       string `gorm:"not null;size:128"`
 	DatasourceIDs string `gorm:"not null;default:'';size:255"`
-	Tags          string `gorm:"not null;type:jsonb"` // Postgres specific
+	Tags          string `gorm:"not null;type:jsonb;default:'[]'"` // Postgres specific
 	Cause         string `gorm:"not null;default:'';size:255"`
 	Btime         int64  `gorm:"not null;default:0"`
 	Etime         int64  `gorm:"not null;default:0"`

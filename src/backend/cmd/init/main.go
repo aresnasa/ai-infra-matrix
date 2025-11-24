@@ -1315,45 +1315,66 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		return fmt.Errorf("failed to connect to Nightingale database: %w", err)
 	}
 
-	// Check for schema mismatch (specifically notify_rule.enable should be boolean)
+	// Check for schema mismatch
 	if !shouldInitSchema {
-		var dataType string
-		checkSchemaSQL := "SELECT data_type FROM information_schema.columns WHERE table_name = 'notify_rule' AND column_name = 'enable'"
-		if err := nightingaleDB_conn.Raw(checkSchemaSQL).Scan(&dataType).Error; err == nil && dataType != "" {
-			if dataType != "boolean" {
-				log.Printf("⚠ Detected schema mismatch: notify_rule.enable is '%s', expected 'boolean'. Recreating database...", dataType)
+		var recreate bool
+		var mismatchReason string
 
-				// Close current connection to allow drop
-				sqlDB, _ := nightingaleDB_conn.DB()
-				sqlDB.Close()
+		// Check notify_rule.enable
+		var notifyRuleEnableType string
+		checkNotifyRuleSQL := "SELECT data_type FROM information_schema.columns WHERE table_name = 'notify_rule' AND column_name = 'enable'"
+		if err := nightingaleDB_conn.Raw(checkNotifyRuleSQL).Scan(&notifyRuleEnableType).Error; err == nil && notifyRuleEnableType != "" {
+			if notifyRuleEnableType != "boolean" {
+				mismatchReason = fmt.Sprintf("notify_rule.enable is '%s', expected 'boolean'", notifyRuleEnableType)
+				recreate = true
+			}
+		}
 
-				// Terminate other connections
-				terminateQuery := `
+		// Check alert_mute.tags if not already decided to recreate
+		if !recreate {
+			var alertMuteTagsType string
+			checkAlertMuteSQL := "SELECT data_type FROM information_schema.columns WHERE table_name = 'alert_mute' AND column_name = 'tags'"
+			if err := nightingaleDB_conn.Raw(checkAlertMuteSQL).Scan(&alertMuteTagsType).Error; err == nil && alertMuteTagsType != "" {
+				if alertMuteTagsType != "jsonb" {
+					mismatchReason = fmt.Sprintf("alert_mute.tags is '%s', expected 'jsonb'", alertMuteTagsType)
+					recreate = true
+				}
+			}
+		}
+
+		if recreate {
+			log.Printf("⚠ Detected schema mismatch: %s. Recreating database...", mismatchReason)
+
+			// Close current connection to allow drop
+			sqlDB, _ := nightingaleDB_conn.DB()
+			sqlDB.Close()
+
+			// Terminate other connections
+			terminateQuery := `
 					SELECT pg_terminate_backend(pid)
 					FROM pg_stat_activity
 					WHERE datname = ? AND pid <> pg_backend_pid()
 				`
-				systemDB.Exec(terminateQuery, nightingaleDB)
+			systemDB.Exec(terminateQuery, nightingaleDB)
 
-				// Drop
-				dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(nightingaleDB))
-				if err := systemDB.Exec(dropQuery).Error; err != nil {
-					return fmt.Errorf("failed to drop mismatched database: %w", err)
-				}
+			// Drop
+			dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(nightingaleDB))
+			if err := systemDB.Exec(dropQuery).Error; err != nil {
+				return fmt.Errorf("failed to drop mismatched database: %w", err)
+			}
 
-				// Create
-				createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(nightingaleDB))
-				if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
-					return fmt.Errorf("failed to recreate Nightingale database: %w", err)
-				}
+			// Create
+			createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(nightingaleDB))
+			if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
+				return fmt.Errorf("failed to recreate Nightingale database: %w", err)
+			}
 
-				shouldInitSchema = true
+			shouldInitSchema = true
 
-				// Reconnect
-				nightingaleDB_conn, err = gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
-				if err != nil {
-					return fmt.Errorf("failed to reconnect to Nightingale database: %w", err)
-				}
+			// Reconnect
+			nightingaleDB_conn, err = gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
+			if err != nil {
+				return fmt.Errorf("failed to reconnect to Nightingale database: %w", err)
 			}
 		}
 	}
