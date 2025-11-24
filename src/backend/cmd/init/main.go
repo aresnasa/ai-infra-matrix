@@ -1363,14 +1363,12 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	if shouldInitSchema {
-		log.Println("Initializing Nightingale schema using GORM AutoMigrate...")
-		nightingaleModels := models.InitNightingaleModels()
-		if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
-			return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
-		}
-		log.Println("✓ Nightingale schema initialized")
+	log.Println("Ensuring Nightingale schema is up to date using GORM AutoMigrate...")
+	nightingaleModels := models.InitNightingaleModels()
+	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
+		return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
 	}
+	log.Println("✓ Nightingale schema synced")
 
 	// Initialize default roles
 	if err := initializeNightingaleRoles(nightingaleDB_conn); err != nil {
