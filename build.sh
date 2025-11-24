@@ -324,7 +324,7 @@ get_version_build_args() {
 
     # 基础镜像版本参数（所有服务通用）
     [[ -n "${GOLANG_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_VERSION=${GOLANG_VERSION}"
-    [[ -n "${GOLANG_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_ALPINE_VERSION=${GOLANG_ALPINE_VERSION}"
+    [[ -n "${GOLANG_IMAGE_VERSION:-}" ]] && build_args+=" --build-arg GOLANG_IMAGE_VERSION=${GOLANG_IMAGE_VERSION}"
     [[ -n "${NODE_VERSION:-}" ]] && build_args+=" --build-arg NODE_VERSION=${NODE_VERSION}"
     [[ -n "${NODE_ALPINE_VERSION:-}" ]] && build_args+=" --build-arg NODE_ALPINE_VERSION=${NODE_ALPINE_VERSION}"
     [[ -n "${PYTHON_VERSION:-}" ]] && build_args+=" --build-arg PYTHON_VERSION=${PYTHON_VERSION}"
@@ -412,7 +412,7 @@ get_dependency_images_list() {
     # 构建相关镜像（使用环境变量）
     images+="node:${NODE_ALPINE_VERSION:-22-alpine} "
     images+="nginx:${NGINX_VERSION:-stable-alpine-perl} "
-    images+="golang:${GOLANG_ALPINE_VERSION:-1.25-alpine} "
+    images+="golang:${GOLANG_IMAGE_VERSION:-1.25-bookworm} "
     images+="python:${PYTHON_ALPINE_VERSION:-3.14-alpine} "
     images+="gitea/gitea:${GITEA_VERSION:-1.25.1} "
     images+="jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}"
@@ -5718,7 +5718,7 @@ extract_base_images() {
     # 支持: FROM image:tag, FROM image:tag AS stage, FROM --platform=xxx image:tag
     # 修复：确保正确提取镜像名称，不包含 FROM 关键字
     # macOS 兼容：使用 grep -i 而不是 sed //I
-    # 新增：展开环境变量（如 ${GOLANG_ALPINE_VERSION}）
+    # 新增：展开环境变量（如 ${GOLANG_IMAGE_VERSION}）
     grep -iE '^\s*FROM\s+' "$dockerfile_path" | \
         sed -E 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]+//' | \
         sed -E 's/--platform=[^[:space:]]+[[:space:]]+//' | \
@@ -6577,7 +6577,9 @@ build_service() {
         # jupyterhub构建前先渲染配置模板
         print_info "  → jupyterhub构建前渲染配置模板..."
         render_jupyterhub_templates
-        build_context="$SCRIPT_DIR/$service_path"
+        build_context="$SCRIPT_DIR"  # 使用项目根目录作为构建上下文
+    elif [[ "$service" == "slurm-master" ]] || [[ "$service" == "saltstack" ]]; then
+        build_context="$SCRIPT_DIR"  # 使用项目根目录作为构建上下文
     elif [[ "$service" == "test-containers" ]]; then
         # test-containers 使用项目根目录作为构建上下文
         # 原因：需要访问 ssh-key/ 和 src/test-containers/ 两个目录
@@ -7593,7 +7595,18 @@ build_all_services() {
     # 渲染 Docker Compose 配置模板（如果需要）
     if [[ -f "$SCRIPT_DIR/docker-compose.yml.example" ]]; then
         print_info "渲染 Docker Compose 配置模板..."
-        if render_docker_compose_templates "$registry" "$tag"; then
+        
+        # 决定是否使用 registry 进行替换
+        local compose_registry="$registry"
+        
+        # 如果是外网环境，且 registry 是默认的私有仓库，则不替换 docker-compose.yml 中的镜像
+        # 这样可以直接使用 docker.io 的公共镜像
+        if [[ "$network_env" == "external" && "$registry" == "$DEFAULT_REGISTRY" ]]; then
+             compose_registry=""
+             print_info "外网环境检测: 跳过 Docker Compose 镜像替换 (使用公共镜像)"
+        fi
+
+        if render_docker_compose_templates "$compose_registry" "$tag"; then
             print_success "✓ Docker Compose 模板渲染完成"
         else
             print_warning "Docker Compose 模板渲染失败，但构建流程将继续"
@@ -8962,7 +8975,7 @@ push_build_dependencies() {
     local build_dependencies=(
         "node:${NODE_ALPINE_VERSION:-22-alpine}"
         "nginx:${NGINX_VERSION:-stable-alpine-perl}"
-        "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}"
+        "golang:${GOLANG_IMAGE_VERSION:-1.25-bookworm}"
         "python:${PYTHON_ALPINE_VERSION:-3.14-alpine}"
         "gitea/gitea:${GITEA_VERSION:-1.25.1}"
         "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}"
@@ -10154,8 +10167,16 @@ start_production() {
     # 针对内部仓库的特殊处理：替换compose文件中的镜像名称
     local backup_file=""
     if [[ -n "$registry" ]]; then
-        print_info "针对内部仓库进行镜像名称替换..."
-        backup_file=$(replace_images_in_compose_file "$compose_file" "$registry" "$tag")
+        # 检查网络环境
+        local network_env=$(detect_network_environment)
+        
+        # 如果是外网环境，且 registry 是默认的私有仓库，则不替换 docker-compose.yml 中的镜像
+        if [[ "$network_env" == "external" && "$registry" == "$DEFAULT_REGISTRY" ]]; then
+             print_info "外网环境检测: 跳过 Docker Compose 镜像替换 (使用公共镜像)"
+        else
+             print_info "针对内部仓库进行镜像名称替换..."
+             backup_file=$(replace_images_in_compose_file "$compose_file" "$registry" "$tag")
+        fi
     fi
     
     print_info "启动生产环境..."
@@ -10311,7 +10332,7 @@ tag_local_images_for_registry() {
         "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
         "node:${NODE_ALPINE_VERSION:-22-alpine}"
         "nginx:${NGINX_VERSION:-stable-alpine-perl}"
-        "golang:${GOLANG_ALPINE_VERSION:-1.25-alpine}"
+        "golang:${GOLANG_IMAGE_VERSION:-1.25-bookworm}"
         "python:${PYTHON_ALPINE_VERSION:-3.13-alpine}"
         "gitea/gitea:${GITEA_VERSION:-1.25.1}"
         "jupyter/base-notebook:${JUPYTER_BASE_NOTEBOOK_VERSION:-latest}"

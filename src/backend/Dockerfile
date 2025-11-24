@@ -1,51 +1,35 @@
 # Build stage
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-FROM golang:${GOLANG_ALPINE_VERSION} AS builder
+ARG GOLANG_IMAGE_VERSION=1.25-bookworm
+FROM golang:${GOLANG_IMAGE_VERSION} AS builder
 
 # Build arguments for versions
 ARG GOLANG_VERSION=1.25
-ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
-ARG ALPINE_MIRROR=mirrors.aliyun.com
+ARG GO_PROXY=https://goproxy.cn,direct
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置Alpine镜像（多镜像源智能回退配置）
-RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 定义要尝试的镜像源列表
-    mirrors="${ALPINE_MIRROR:-} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
-    installed=false; \
-    for mirror in $mirrors; do \
-        [ -z "$mirror" ] && continue; \
-        echo "Trying mirror: $mirror"; \
-        if [ "$mirror" = "dl-cdn.alpinelinux.org" ]; then \
-            cp /etc/apk/repositories.bak /etc/apk/repositories; \
-        else \
-            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-        fi; \
-        if apk add --no-cache git ca-certificates; then \
-            echo "Successfully installed packages using $mirror"; \
-            installed=true; \
-            break; \
-        fi; \
-        echo "Failed to use $mirror"; \
-    done; \
-    if [ "$installed" = "false" ]; then \
-        echo "All mirrors failed"; \
-        exit 1; \
+# Configure APT mirror
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi \
     fi
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=off
 ENV CGO_ENABLED=0
 
@@ -66,7 +50,7 @@ RUN set -eux; \
     else \
         echo "First attempt failed, trying with different proxy..."; \
         # 第二次尝试：只使用官方代理
-        export GOPROXY=https://proxy.golang.org,direct && \
+        export GOPROXY=https://goproxy.cn,direct && \
         if go mod download; then \
             echo "Go modules downloaded with official proxy"; \
         else \
@@ -78,11 +62,11 @@ RUN set -eux; \
             else \
                 echo "All download attempts failed, trying with increased timeout..."; \
                 # 第四次尝试：增加超时时间
-                export GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct && \
+                export GOPROXY=https://goproxy.cn,direct && \
                 export GOSUMDB=off && \
                 timeout 300 go mod download || \
                 (echo "Final attempt with all proxies..." && \
-                 export GOPROXY=https://goproxy.cn,https://proxy.golang.org,https://goproxy.io,direct && \
+                 export GOPROXY=https://goproxy.cn,direct && \
                  go mod download); \
             fi; \
         fi; \
@@ -100,12 +84,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage - Backend Service (Default)
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-FROM golang:${GOLANG_ALPINE_VERSION} AS backend
+ARG GOLANG_IMAGE_VERSION=1.25-bookworm
+FROM golang:${GOLANG_IMAGE_VERSION} AS backend
 
 # Build arguments for versions
-ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
-ARG ALPINE_MIRROR=mirrors.aliyun.com
+ARG GO_PROXY=https://goproxy.cn,direct
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 ENV GOSUMDB=off
@@ -113,40 +97,23 @@ ENV GOSUMDB=off
 # Keep version metadata available in the final image, too
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置Alpine镜像（多镜像源智能回退配置）
-RUN set -eux; \
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 定义要尝试的镜像源列表
-    mirrors="${ALPINE_MIRROR:-} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
-    updated=false; \
-    for mirror in $mirrors; do \
-        [ -z "$mirror" ] && continue; \
-        echo "Trying mirror: $mirror"; \
-        if [ "$mirror" = "dl-cdn.alpinelinux.org" ]; then \
-            cp /etc/apk/repositories.bak /etc/apk/repositories; \
-        else \
-            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-        fi; \
-        if apk update 2>/dev/null; then \
-            echo "Successfully updated repositories using $mirror"; \
-            updated=true; \
-            break; \
-        fi; \
-        echo "Failed to use $mirror"; \
-    done; \
-    if [ "$updated" = "false" ]; then \
-        echo "All mirrors failed"; \
-        exit 1; \
+# Configure APT mirror
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi \
     fi
 
-# 更新apk索引并设置时区为上海，添加必要工具（包括SSH客户端和sshpass）
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-client openssh-keygen sshpass lsof wget docker-cli || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-client openssh-keygen sshpass lsof wget docker-cli
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata netcat-openbsd bash curl openssh-client openssh-server sshpass lsof wget docker.io \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -230,47 +197,31 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.description="AI Infra Matrix - Backend service"
 
 # Backend Init Stage - for database initialization
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-FROM golang:${GOLANG_ALPINE_VERSION} AS backend-init
+ARG GOLANG_IMAGE_VERSION=1.25-bookworm
+FROM golang:${GOLANG_IMAGE_VERSION} AS backend-init
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
-ARG ALPINE_MIRROR=mirrors.aliyun.com
-# 配置Alpine镜像（多镜像源智能回退配置）
-RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 定义要尝试的镜像源列表
-    mirrors="${ALPINE_MIRROR:-} mirrors.aliyun.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn dl-cdn.alpinelinux.org"; \
-    installed=false; \
-    for mirror in $mirrors; do \
-        [ -z "$mirror" ] && continue; \
-        echo "Trying mirror: $mirror"; \
-        if [ "$mirror" = "dl-cdn.alpinelinux.org" ]; then \
-            cp /etc/apk/repositories.bak /etc/apk/repositories; \
-        else \
-            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-            echo "https://${mirror}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-        fi; \
-        if apk add --no-cache git ca-certificates; then \
-            echo "Successfully installed packages using $mirror"; \
-            installed=true; \
-            break; \
-        fi; \
-        echo "Failed to use $mirror"; \
-    done; \
-    if [ "$installed" = "false" ]; then \
-        echo "All mirrors failed"; \
-        exit 1; \
+ARG APT_MIRROR=mirrors.aliyun.com
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Configure APT mirror
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi \
     fi
 
-# 更新apk索引并设置时区为上海，添加必要工具
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl postgresql-client || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl postgresql-client
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata netcat-openbsd bash curl postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 

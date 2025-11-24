@@ -394,11 +394,11 @@ RUN usermod -a -G munge slurm && \
 # 注意：slurmrestd 现在通过上面的动态包发现自动安装，不再需要单独的安装脚本
 
 # 复制配置与systemd脚本
-COPY config/ /etc/slurm-templates/
-COPY entrypoint.sh /usr/local/bin/slurm-bootstrap.sh
-COPY systemd-entrypoint.sh /usr/local/bin/systemd-entrypoint.sh
-COPY healthcheck.sh /usr/local/bin/healthcheck.sh
-COPY systemd/ /etc/systemd/system/
+COPY src/slurm-master/config/ /etc/slurm-templates/
+COPY src/slurm-master/entrypoint.sh /usr/local/bin/slurm-bootstrap.sh
+COPY src/slurm-master/systemd-entrypoint.sh /usr/local/bin/systemd-entrypoint.sh
+COPY src/slurm-master/healthcheck.sh /usr/local/bin/healthcheck.sh
+COPY src/slurm-master/systemd/ /etc/systemd/system/
 RUN chmod +x /usr/local/bin/slurm-bootstrap.sh /usr/local/bin/systemd-entrypoint.sh /usr/local/bin/healthcheck.sh && \
     ln -sf /etc/systemd/system/slurm-bootstrap.service /etc/systemd/system/multi-user.target.wants/slurm-bootstrap.service && \
     ln -sf /etc/systemd/system/slurmctld.service /etc/systemd/system/multi-user.target.wants/slurmctld.service && \
@@ -431,7 +431,7 @@ RUN chmod 600 /root/.ssh/authorized_keys && \
     echo "✓ SSH public key installed for backend access"
 
 # 复制并启用运行时公钥刷新脚本（支持从共享目录热更新）
-COPY scripts/bootstrap-authorized-keys.sh /usr/local/bin/bootstrap-authorized-keys.sh
+COPY src/slurm-master/scripts/bootstrap-authorized-keys.sh /usr/local/bin/bootstrap-authorized-keys.sh
 RUN chmod +x /usr/local/bin/bootstrap-authorized-keys.sh
 
 # 暴露端口

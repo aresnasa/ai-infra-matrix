@@ -83,7 +83,7 @@ ENV PIP_INDEX_URL="${PYPI_INDEX_URL}" \
 RUN pip install --no-cache-dir --upgrade pip==${PIP_VERSION} setuptools wheel
 
 # 依赖安装（分层优化，优先二进制版本）
-COPY requirements.txt .
+COPY src/jupyterhub/requirements.txt .
 # 复制 third_party 目录以支持离线构建
 COPY third_party/ /third_party/
 
@@ -183,7 +183,7 @@ RUN adduser -D -s /bin/bash admin && \
 RUN echo "Build: $(date '+%Y-%m-%d %H:%M:%S')" > /srv/jupyterhub/build_info.txt
 
 # 配置文件（最后复制，优化缓存）
-COPY jupyterhub_config.py backend_integrated_config.py simple_config.py kubernetes_spawner_config.py ./
+COPY src/jupyterhub/jupyterhub_config.py src/jupyterhub/backend_integrated_config.py src/jupyterhub/simple_config.py src/jupyterhub/kubernetes_spawner_config.py ./
 
 # 创建数据库等待脚本（简化版，只检查连接性）
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \

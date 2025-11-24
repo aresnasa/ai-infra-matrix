@@ -120,13 +120,13 @@ RUN mkdir -p /etc/salt/master.d \
 RUN useradd -m -s /bin/bash saltapi
 
 # 复制配置文件和脚本
-COPY salt-master.conf /etc/salt/master.d/master.conf
-COPY salt-api.conf /etc/salt/master.d/api.conf
-COPY salt-minion.conf /etc/salt/minion.d/minion.conf
-COPY salt-users.conf /etc/salt/master.d/users.conf
-COPY salt-states/ /srv/salt/
-COPY salt-pillar/ /srv/pillar/
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY src/saltstack/salt-master.conf /etc/salt/master.d/master.conf
+COPY src/saltstack/salt-api.conf /etc/salt/master.d/api.conf
+COPY src/saltstack/salt-minion.conf /etc/salt/minion.d/minion.conf
+COPY src/saltstack/salt-users.conf /etc/salt/master.d/users.conf
+COPY src/saltstack/salt-states/ /srv/salt/
+COPY src/saltstack/salt-pillar/ /srv/pillar/
+COPY src/saltstack/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 4505 4506 8002

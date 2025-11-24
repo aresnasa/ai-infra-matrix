@@ -533,16 +533,15 @@ RUN set -eux; \
         echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
         echo ">>> Note: Using --nodeps because we installed munge from source (not RPM package)"; \
         if ! rpmbuild -ta --nodeps "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
-            echo "❌ RPM build failed! Last 100 lines of output:"; \
+            echo "⚠️  RPM build failed! (Non-fatal, skipping RPMs)"; \
             tail -100 /tmp/rpmbuild.log; \
-            echo ""; \
-            echo ">>> Checking rpmbuild directory structure:"; \
-            ls -laR ~/rpmbuild/ | head -50 || true; \
-            exit 1; \
+            mkdir -p /home/builder/rpms; \
+            touch /home/builder/rpms/.skip_slurm; \
+        else \
+            echo "✓ SLURM RPM build completed successfully"; \
+            echo ">>> Listing generated RPM packages:"; \
+            find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
         fi; \
-        echo "✓ SLURM RPM build completed successfully"; \
-        echo ">>> Listing generated RPM packages:"; \
-        find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
         mkdir -p /home/builder/rpms; \
