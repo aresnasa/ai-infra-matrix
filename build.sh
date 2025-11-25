@@ -823,7 +823,7 @@ build_component() {
         
         log_info "Processing dependency $component: $upstream_image -> $target_image"
         
-        if docker pull "$upstream_image"; then
+        if pull_image_with_retry "$upstream_image" 3 5; then
             if docker tag "$upstream_image" "$target_image"; then
                 log_info "✓ Dependency ready: $target_image"
                 return 0
@@ -832,7 +832,7 @@ build_component() {
                 return 1
             fi
         else
-            log_error "✗ Failed to pull $upstream_image"
+            log_error "✗ Failed to pull $upstream_image after retries"
             return 1
         fi
     fi
@@ -938,6 +938,11 @@ build_all() {
         log_error "Template rendering failed. Aborting build."
         exit 1
     fi
+    echo
+    
+    # 0.5. Prefetch base images with retry
+    log_info "=== Phase 0.5: Prefetching Base Images (with retry) ==="
+    prefetch_base_images "" 3  # 3 retries
     echo
     
     # Discover services dynamically

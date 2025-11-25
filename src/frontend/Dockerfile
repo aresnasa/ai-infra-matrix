@@ -1,18 +1,24 @@
 # 全局 ARG 声明（用于多个构建阶段）
-ARG NODE_ALPINE_VERSION=22-alpine
-ARG NGINX_VERSION=stable-alpine-perl
+ARG NODE_VERSION=22
+ARG UBUNTU_VERSION=22.04
 
-# 使用Node.js作为基础镜像
-FROM node:${NODE_ALPINE_VERSION} AS build
+# Stage 1: 构建阶段 - 使用 Node.js Ubuntu 镜像
+FROM node:${NODE_VERSION}-bookworm-slim AS build
 
 # Build arguments for versions
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG ALPINE_MIRROR=mirrors.aliyun.com
-# 配置Alpine镜像（简化版 - 优先使用默认源，失败则切换阿里云）
+ARG APT_MIRROR=mirrors.aliyun.com
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 配置 APT 镜像源
 RUN set -eux; \
-    apk add --no-cache tzdata || \
-    (sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-     apk add --no-cache tzdata)
+    apt-get update || \
+    (sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+     apt-get update)
+
+# 安装时区工具
+RUN apt-get install -y --no-install-recommends tzdata && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
@@ -41,29 +47,57 @@ ENV APP_VERSION=${VERSION}
 RUN npm run build
 
 # ========================================
-# Stage 2: Production nginx 镜像
+# Stage 2: Production nginx 镜像 (Ubuntu)
 # ========================================
-FROM nginx:${NGINX_VERSION}
+FROM ubuntu:${UBUNTU_VERSION}
 
-# Version metadata (需要在 FROM 之后重新声明ARG，因为跨越了构建阶段)
+# Version metadata
 ARG VERSION="dev"
-ARG ALPINE_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV APP_VERSION=${VERSION}
-
-# 配置Alpine镜像（简化版 - 优先使用默认源，失败则切换阿里云）
-RUN set -eux; \
-    apk add --no-cache tzdata || \
-    (sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && \
-     apk add --no-cache tzdata)
-
 ENV TZ=Asia/Shanghai
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 配置 APT 镜像源并安装 nginx
+RUN set -eux; \
+    # 备份原始 sources.list
+    cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true; \
+    # 获取 Ubuntu 版本代号
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    # 尝试配置镜像源
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        if ! apt-get update 2>/dev/null; then \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        fi; \
+    else \
+        { \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update; \
+        } || { \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        }; \
+    fi; \
+    # 安装 nginx 和必要工具
+    apt-get install -y --no-install-recommends \
+        nginx \
+        tzdata \
+        curl \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # 复制构建的应用到nginx目录
 COPY --from=build /app/build /usr/share/nginx/html
 
 # 复制nginx配置文件
-COPY src/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY src/frontend/nginx.conf /etc/nginx/sites-available/default
 
 # 设置工作目录
 WORKDIR /usr/share/nginx/html

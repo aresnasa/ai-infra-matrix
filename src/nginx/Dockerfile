@@ -1,61 +1,73 @@
-# AI基础设施矩阵 - 自定义Nginx镜像
+# AI基础设施矩阵 - 自定义Nginx镜像 (Ubuntu版)
 # 支持分布式部署和JupyterHub upstream访问
 # 支持开发模式和生产模式
 
-ARG NGINX_VERSION=stable-alpine-perl
-FROM nginx:${NGINX_VERSION}
+ARG UBUNTU_VERSION=22.04
+FROM ubuntu:${UBUNTU_VERSION}
 
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
-ARG NGINX_VERSION=stable-alpine-perl
-ARG ALPINE_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV APP_VERSION=${VERSION}
-ENV NGINX_VERSION=${NGINX_VERSION}
 ENV TZ=Asia/Shanghai
+ENV DEBIAN_FRONTEND=noninteractive
 
 # 构建参数 - 控制是否启用调试模式
 ARG DEBUG_MODE=false
 ARG BUILD_ENV=production
 
-# 配置Alpine镜像（多镜像源智能回退配置）
+# 配置 APT 镜像源并安装 nginx
 RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        # Retry apk update to handle transient network issues
-        for i in 1 2 3; do apk update && break || (echo "apk update failed, retrying..." && sleep 2); done; \
+    # 备份原始 sources.list
+    cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true; \
+    # 获取 Ubuntu 版本代号
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    echo "Detected Ubuntu codename: ${CODENAME}"; \
+    # 尝试配置镜像源
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        if ! apt-get update 2>/dev/null; then \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        fi; \
     else \
-        # 尝试阿里云镜像
-        echo "尝试阿里云镜像源..."; \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        (apk update 2>/dev/null || \
-        # 失败则尝试清华镜像
-        (echo "阿里云镜像失败，尝试清华镜像..." && \
-         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-         echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 再失败则尝试中科大镜像
-        (echo "清华镜像失败，尝试中科大镜像..." && \
-         echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-         echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 最后恢复官方源
-        (echo "国内镜像均失败，恢复官方源..." && \
-         cp /etc/apk/repositories.bak /etc/apk/repositories && apk update)); \
+        { \
+            echo "尝试阿里云镜像源..."; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update; \
+        } || { \
+            echo "阿里云镜像失败，尝试清华镜像..."; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update; \
+        } || { \
+            echo "清华镜像失败，尝试中科大镜像..."; \
+            echo "deb https://mirrors.ustc.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update; \
+        } || { \
+            echo "国内镜像均失败，恢复官方源..."; \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        }; \
     fi
 
 # 安装必要的工具
-RUN apk add --no-cache \
+RUN apt-get install -y --no-install-recommends \
+    nginx \
     curl \
     bash \
     tzdata \
-    lsof
+    lsof \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # 设置时区
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
@@ -114,10 +126,10 @@ COPY src/nginx/conf.d/ /etc/nginx/conf.d/
 # 创建JupyterHub wrapper页面的符号链接，支持多种访问方式
 RUN ln -sf /usr/share/nginx/html/jupyterhub/jupyterhub_wrapper_upstream.html /usr/share/nginx/html/jupyterhub_wrapper.html
 
-# 设置权限
-RUN chown -R nginx:nginx /usr/share/nginx/html \
+# 设置权限 (Ubuntu nginx 使用 www-data 用户)
+RUN chown -R www-data:www-data /usr/share/nginx/html \
     && chmod -R 755 /usr/share/nginx/html \
-    && chown -R nginx:nginx /var/log/nginx \
+    && chown -R www-data:www-data /var/log/nginx \
     && chmod -R 755 /var/log/nginx
 
 # 复制启动脚本
