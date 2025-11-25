@@ -112,6 +112,511 @@ wait_for_apphub_ready() {
 }
 
 # ==============================================================================
+# Pull Functions - 镜像拉取功能
+# ==============================================================================
+
+# Default retry settings
+DEFAULT_MAX_RETRIES=3
+DEFAULT_RETRY_DELAY=5
+
+# Log file for tracking failures
+FAILURE_LOG="${SCRIPT_DIR}/.build-failures.log"
+
+# Log failure to file
+log_failure() {
+    local operation="$1"
+    local target="$2"
+    local error_msg="$3"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $operation FAILED: $target - $error_msg" >> "$FAILURE_LOG"
+    log_error "[$timestamp] $operation FAILED: $target - $error_msg"
+}
+
+# Pull single image with retry mechanism
+# Args: $1 = image name, $2 = max retries (default 3), $3 = retry delay (default 5)
+pull_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+    local retry_count=0
+    local last_error=""
+    
+    # Check if image already exists locally
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        log_info "  ✓ Image exists: $image"
+        return 0
+    fi
+    
+    while [[ $retry_count -lt $max_retries ]]; do
+        retry_count=$((retry_count + 1))
+        
+        if [[ $retry_count -gt 1 ]]; then
+            log_warn "  🔄 Retry $retry_count/$max_retries: $image (waiting ${retry_delay}s...)"
+            sleep $retry_delay
+        else
+            log_info "  ⬇ Pulling: $image"
+        fi
+        
+        # Capture both stdout and stderr
+        local output
+        if output=$(docker pull "$image" 2>&1); then
+            log_info "  ✓ Pulled: $image"
+            return 0
+        else
+            last_error="$output"
+            log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+        fi
+    done
+    
+    # All retries exhausted - log failure
+    log_failure "PULL" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
+    return 1
+}
+
+# Extract base images from Dockerfile
+# Args: $1 = Dockerfile path
+extract_base_images() {
+    local dockerfile="$1"
+    
+    if [[ ! -f "$dockerfile" ]]; then
+        return 1
+    fi
+    
+    # Extract FROM statements
+    # Pattern: FROM image:tag [AS alias]
+    # Skip: ARG variables (${...}), local build stages, empty images
+    grep -E "^FROM\s+" "$dockerfile" 2>/dev/null | \
+        awk '{
+            img=$2
+            # Skip ARG variables (contains ${...})
+            if (img ~ /\$\{/) next
+            # Skip platform flags
+            if (img ~ /^--/) next
+            # Skip if no colon and no slash (likely a build stage alias like "builder")
+            if (img !~ /[:\/]/) next
+            print img
+        }' | \
+        sort -u
+}
+
+# Prefetch base images from Dockerfiles
+# Args: $1 = service name (optional, if empty prefetch all)
+prefetch_base_images() {
+    local service_name="$1"
+    local max_retries="${2:-3}"
+    
+    log_info "📦 Prefetching base images..."
+    
+    local dockerfiles=()
+    
+    if [[ -n "$service_name" ]]; then
+        local dockerfile="$SRC_DIR/$service_name/Dockerfile"
+        if [[ -f "$dockerfile" ]]; then
+            dockerfiles+=("$dockerfile")
+        fi
+    else
+        # Find all Dockerfiles
+        while IFS= read -r df; do
+            dockerfiles+=("$df")
+        done < <(find "$SRC_DIR" -name "Dockerfile" -type f 2>/dev/null)
+    fi
+    
+    local all_images=()
+    local pull_count=0
+    local skip_count=0
+    local fail_count=0
+    
+    # Extract all base images
+    for dockerfile in "${dockerfiles[@]}"; do
+        local images
+        images=$(extract_base_images "$dockerfile")
+        while IFS= read -r img; do
+            [[ -z "$img" ]] && continue
+            [[ "$img" =~ ^[a-z_-]+$ ]] && continue  # Skip internal build stages
+            all_images+=("$img")
+        done <<< "$images"
+    done
+    
+    # Remove duplicates
+    local unique_images=($(printf '%s\n' "${all_images[@]}" | sort -u))
+    
+    log_info "Found ${#unique_images[@]} unique base images to check"
+    
+    for image in "${unique_images[@]}"; do
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "  ✓ Exists: $image"
+            ((skip_count++))
+        else
+            log_info "  ⬇ Pulling: $image"
+            if pull_image_with_retry "$image" "$max_retries"; then
+                ((pull_count++))
+            else
+                ((fail_count++))
+            fi
+        fi
+    done
+    
+    log_info "📊 Prefetch summary: pulled=$pull_count, skipped=$skip_count, failed=$fail_count"
+    return 0
+}
+
+# Pull all project images from registry
+# Args: $1 = registry, $2 = tag
+pull_all_services() {
+    local registry="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    
+    if [[ -z "$registry" ]]; then
+        log_error "Registry is required for pull-all"
+        log_info "Usage: $0 pull-all <registry> [tag]"
+        return 1
+    fi
+    
+    log_info "=========================================="
+    log_info "Pulling all services from registry"
+    log_info "=========================================="
+    log_info "Registry: $registry"
+    log_info "Tag: $tag"
+    log_info "Max retries: $max_retries"
+    echo
+    
+    discover_services
+    
+    local success_count=0
+    local total_count=0
+    local failed_services=()
+    
+    # Pull all services
+    for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+        total_count=$((total_count + 1))
+        local image_name="ai-infra-${service}:${tag}"
+        local remote_image="$registry/$image_name"
+        
+        log_info "Pulling: $remote_image"
+        
+        if pull_image_with_retry "$remote_image" "$max_retries"; then
+            # Tag as local image
+            if docker tag "$remote_image" "$image_name"; then
+                log_info "  ✓ Tagged: $image_name"
+                success_count=$((success_count + 1))
+            else
+                log_failure "TAG" "$image_name" "Failed to tag from $remote_image"
+                failed_services+=("$service")
+            fi
+        else
+            failed_services+=("$service")
+        fi
+    done
+    
+    echo
+    log_info "=========================================="
+    log_info "Pull completed: $success_count/$total_count successful"
+    
+    if [[ ${#failed_services[@]} -gt 0 ]]; then
+        log_warn "Failed services: ${failed_services[*]}"
+        log_info "Check failure log: $FAILURE_LOG"
+        return 1
+    fi
+    
+    log_info "🎉 All services pulled successfully!"
+    return 0
+}
+
+# ==============================================================================
+# Push Functions - 镜像推送功能
+# ==============================================================================
+
+# Push single image with retry mechanism
+# Args: $1 = image, $2 = max retries (default 3), $3 = retry delay (default 5)
+push_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+    local retry_count=0
+    local last_error=""
+    
+    while [[ $retry_count -lt $max_retries ]]; do
+        retry_count=$((retry_count + 1))
+        
+        if [[ $retry_count -gt 1 ]]; then
+            log_warn "  🔄 Retry $retry_count/$max_retries: $image (waiting ${retry_delay}s...)"
+            sleep $retry_delay
+        fi
+        
+        # Capture both stdout and stderr
+        local output
+        if output=$(docker push "$image" 2>&1); then
+            log_info "  ✓ Pushed: $image"
+            return 0
+        else
+            last_error="$output"
+            log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+        fi
+    done
+    
+    # All retries exhausted - log failure
+    log_failure "PUSH" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
+    return 1
+}
+
+# Push single service image
+# Args: $1 = service, $2 = tag, $3 = registry
+push_service() {
+    local service="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local registry="$3"
+    local max_retries="${4:-$DEFAULT_MAX_RETRIES}"
+    
+    if [[ -z "$registry" ]]; then
+        log_error "Registry is required for push"
+        return 1
+    fi
+    
+    local base_image="ai-infra-${service}:${tag}"
+    local target_image="$registry/ai-infra-${service}:${tag}"
+    
+    log_info "Pushing service: $service"
+    log_info "  Source: $base_image"
+    log_info "  Target: $target_image"
+    
+    # Check if source image exists
+    if ! docker image inspect "$base_image" >/dev/null 2>&1; then
+        log_warn "Local image not found: $base_image"
+        log_info "Building image first..."
+        if ! build_component "$service"; then
+            log_failure "BUILD" "$base_image" "Build failed before push"
+            return 1
+        fi
+    fi
+    
+    # Tag for registry with retry
+    if [[ "$base_image" != "$target_image" ]]; then
+        log_info "  Tagging: $base_image -> $target_image"
+        if ! docker tag "$base_image" "$target_image"; then
+            log_failure "TAG" "$target_image" "Failed to tag image"
+            return 1
+        fi
+    fi
+    
+    # Push to registry with retry
+    log_info "  Pushing: $target_image"
+    if push_image_with_retry "$target_image" "$max_retries"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Push all service images
+# Args: $1 = registry, $2 = tag
+push_all_services() {
+    local registry="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    
+    if [[ -z "$registry" ]]; then
+        log_error "Registry is required for push-all"
+        log_info "Usage: $0 push-all <registry> [tag]"
+        return 1
+    fi
+    
+    log_info "=========================================="
+    log_info "Pushing all AI-Infra services"
+    log_info "=========================================="
+    log_info "Registry: $registry"
+    log_info "Tag: $tag"
+    echo
+    
+    discover_services
+    
+    local success_count=0
+    local total_count=0
+    local failed_services=()
+    
+    # Push all services
+    for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+        total_count=$((total_count + 1))
+        
+        if push_service "$service" "$tag" "$registry"; then
+            success_count=$((success_count + 1))
+        else
+            failed_services+=("$service")
+        fi
+        echo
+    done
+    
+    log_info "=========================================="
+    log_info "Push completed: $success_count/$total_count successful"
+    
+    if [[ ${#failed_services[@]} -gt 0 ]]; then
+        log_warn "Failed services: ${failed_services[*]}"
+        return 1
+    fi
+    
+    log_info "🚀 All services pushed successfully!"
+    return 0
+}
+
+# Get dependency image mappings
+get_dependency_mappings() {
+    local mappings=(
+        "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}|cp-kafka"
+        "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|kafka-ui"
+        "postgres:${POSTGRES_VERSION:-15-alpine}|postgres"
+        "redis:${REDIS_VERSION:-7-alpine}|redis"
+        "minio/minio:${MINIO_VERSION:-latest}|minio"
+        "osixia/openldap:${OPENLDAP_VERSION:-stable}|openldap"
+        "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|phpldapadmin"
+        "mysql:${MYSQL_VERSION:-8.0}|mysql"
+    )
+    echo "${mappings[@]}"
+}
+
+# Push all dependency images
+# Args: $1 = registry, $2 = tag
+push_all_dependencies() {
+    local registry="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    
+    if [[ -z "$registry" ]]; then
+        log_error "Registry is required for push-dep"
+        log_info "Usage: $0 push-dep <registry> [tag]"
+        return 1
+    fi
+    
+    # Ensure registry ends without trailing slash for consistent handling
+    registry="${registry%/}"
+    
+    log_info "=========================================="
+    log_info "Pushing all dependency images"
+    log_info "=========================================="
+    log_info "Registry: $registry"
+    log_info "Tag: $tag"
+    log_info "Max retries: $max_retries"
+    echo
+    
+    local dependencies=($(get_dependency_mappings))
+    local success_count=0
+    local total_count=${#dependencies[@]}
+    local failed_images=()
+    
+    for mapping in "${dependencies[@]}"; do
+        local source_image="${mapping%%|*}"
+        local short_name="${mapping##*|}"
+        local target_image="${registry}/${short_name}:${tag}"
+        
+        log_info "Processing: $source_image"
+        log_info "  → Target: $target_image"
+        
+        # 1. Pull or check source image (with retry)
+        log_info "  [1/3] Checking source image..."
+        if docker image inspect "$source_image" >/dev/null 2>&1; then
+            log_info "  ✓ Image exists locally"
+        else
+            if ! pull_image_with_retry "$source_image" "$max_retries"; then
+                failed_images+=("$source_image")
+                echo
+                continue
+            fi
+        fi
+        
+        # 2. Tag for registry
+        log_info "  [2/3] Tagging image..."
+        if ! docker tag "$source_image" "$target_image"; then
+            log_failure "TAG" "$target_image" "Failed to tag from $source_image"
+            failed_images+=("$source_image")
+            echo
+            continue
+        fi
+        log_info "  ✓ Tagged"
+        
+        # 3. Push to registry (with retry)
+        log_info "  [3/3] Pushing image..."
+        if push_image_with_retry "$target_image" "$max_retries"; then
+            success_count=$((success_count + 1))
+        else
+            failed_images+=("$source_image")
+        fi
+        echo
+    done
+    
+    log_info "=========================================="
+    log_info "Dependency push completed: $success_count/$total_count successful"
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        log_warn "Failed images: ${failed_images[*]}"
+        log_info "Check failure log: $FAILURE_LOG"
+        return 1
+    fi
+    
+    log_info "🚀 All dependency images pushed successfully!"
+    return 0
+}
+
+# Pull and tag dependencies from registry
+# Args: $1 = registry, $2 = tag
+pull_and_tag_dependencies() {
+    local registry="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    
+    if [[ -z "$registry" ]]; then
+        log_error "Registry is required"
+        log_info "Usage: $0 deps-pull <registry> [tag]"
+        return 1
+    fi
+    
+    registry="${registry%/}"
+    
+    log_info "=========================================="
+    log_info "Pulling dependencies from: $registry"
+    log_info "=========================================="
+    log_info "Tag: $tag"
+    log_info "Max retries: $max_retries"
+    echo
+    
+    local dependencies=($(get_dependency_mappings))
+    local success_count=0
+    local total_count=${#dependencies[@]}
+    local failed_deps=()
+    
+    for mapping in "${dependencies[@]}"; do
+        local source_image="${mapping%%|*}"
+        local short_name="${mapping##*|}"
+        local remote_image="${registry}/${short_name}:${tag}"
+        
+        log_info "Pulling: $remote_image"
+        
+        if pull_image_with_retry "$remote_image" "$max_retries"; then
+            # Tag as original image name
+            if docker tag "$remote_image" "$source_image"; then
+                log_info "  ✓ Tagged: $source_image"
+                success_count=$((success_count + 1))
+            else
+                log_failure "TAG" "$source_image" "Failed to tag from $remote_image"
+                failed_deps+=("$short_name")
+            fi
+        else
+            failed_deps+=("$short_name")
+        fi
+    done
+    
+    echo
+    log_info "=========================================="
+    log_info "Dependencies pull completed: $success_count/$total_count"
+    
+    if [[ ${#failed_deps[@]} -gt 0 ]]; then
+        log_warn "Failed: ${failed_deps[*]}"
+        log_info "Check failure log: $FAILURE_LOG"
+        return 1
+    fi
+    
+    log_info "🎉 All dependencies pulled successfully!"
+    return 0
+}
+
+# ==============================================================================
 # 3. Build Logic
 # ==============================================================================
 
@@ -326,17 +831,33 @@ start_all() {
 }
 
 print_help() {
-    echo "Usage: $0 [command] [component]"
+    echo "Usage: $0 [command] [options]"
     echo ""
-    echo "Commands:"
+    echo "Build Commands:"
     echo "  build-all, all      Build all components in the correct order (AppHub first)"
-    echo "  start-all           Start all services using docker-compose"
     echo "  [component]         Build a specific component (e.g., backend, frontend)"
+    echo ""
+    echo "Service Commands:"
+    echo "  start-all           Start all services using docker-compose"
+    echo ""
+    echo "Pull Commands:"
+    echo "  prefetch            Prefetch all base images from Dockerfiles"
+    echo "  pull-all <registry> [tag]   Pull all service images from registry"
+    echo "  deps-pull <registry> [tag]  Pull dependency images from registry"
+    echo ""
+    echo "Push Commands:"
+    echo "  push <service> <registry> [tag]  Push single service to registry"
+    echo "  push-all <registry> [tag]        Push all services to registry"
+    echo "  push-dep <registry> [tag]        Push dependency images to registry"
     echo ""
     echo "Examples:"
     echo "  $0 build-all"
     echo "  $0 start-all"
     echo "  $0 backend"
+    echo "  $0 prefetch"
+    echo "  $0 push-all harbor.example.com/ai-infra v0.3.8"
+    echo "  $0 push-dep harbor.example.com/ai-infra v0.3.8"
+    echo "  $0 pull-all harbor.example.com/ai-infra v0.3.8"
 }
 
 # ==============================================================================
@@ -354,6 +875,54 @@ case "$1" in
         ;;
     start-all)
         start_all
+        ;;
+    prefetch)
+        prefetch_base_images "$2"
+        ;;
+    pull-all)
+        if [[ -z "$2" ]]; then
+            log_error "Registry is required"
+            log_info "Usage: $0 pull-all <registry> [tag]"
+            exit 1
+        fi
+        pull_all_services "$2" "${3:-${IMAGE_TAG:-latest}}"
+        ;;
+    deps-pull)
+        if [[ -z "$2" ]]; then
+            log_error "Registry is required"
+            log_info "Usage: $0 deps-pull <registry> [tag]"
+            exit 1
+        fi
+        pull_and_tag_dependencies "$2" "${3:-${IMAGE_TAG:-latest}}"
+        ;;
+    push)
+        if [[ -z "$2" ]]; then
+            log_error "Service name is required"
+            log_info "Usage: $0 push <service> <registry> [tag]"
+            exit 1
+        fi
+        if [[ -z "$3" ]]; then
+            log_error "Registry is required"
+            log_info "Usage: $0 push <service> <registry> [tag]"
+            exit 1
+        fi
+        push_service "$2" "${4:-${IMAGE_TAG:-latest}}" "$3"
+        ;;
+    push-all)
+        if [[ -z "$2" ]]; then
+            log_error "Registry is required"
+            log_info "Usage: $0 push-all <registry> [tag]"
+            exit 1
+        fi
+        push_all_services "$2" "${3:-${IMAGE_TAG:-latest}}"
+        ;;
+    push-dep|push-dependencies)
+        if [[ -z "$2" ]]; then
+            log_error "Registry is required"
+            log_info "Usage: $0 push-dep <registry> [tag]"
+            exit 1
+        fi
+        push_all_dependencies "$2" "${3:-${IMAGE_TAG:-latest}}"
         ;;
     help|--help|-h)
         print_help
