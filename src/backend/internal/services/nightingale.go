@@ -128,119 +128,37 @@ func (s *NightingaleService) SyncHostToMonitoring(hostname, ip string, tags []st
 	return s.RegisterMonitoringTarget(hostname, ip, tags)
 }
 
-// GetMonitoringAgentInstallScript generates the installation script for monitoring agent
+// GetMonitoringAgentInstallScript returns the installation command for monitoring agent.
+// The actual script is served from the Nightingale container at port 17002 (script server).
+// Environment variables are passed to configure the installation.
 func (s *NightingaleService) GetMonitoringAgentInstallScript(hostname, ip string) string {
-	// Categraf is the monitoring agent used by Nightingale
+	// Script server runs on port 17002 inside Nightingale container
+	scriptServerPort := "17002"
+
+	// Return a simple curl command that fetches and executes the script from Nightingale container
+	// The script supports environment variables for configuration
 	script := fmt.Sprintf(`#!/bin/bash
 # Install Nightingale Monitoring Agent (Categraf)
+# This script downloads and runs the installation script from Nightingale server
 
 set -e
 
-echo "=== Installing Nightingale Monitoring Agent ==="
+# Configuration
+export HOSTNAME="%s"
+export HOST_IP="%s"
+export N9E_HOST="%s"
+export N9E_PORT="%s"
 
-# Download and install Categraf
-CATEGRAF_VERSION="v0.3.80"
-CATEGRAF_URL="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/categraf-${CATEGRAF_VERSION}-linux-amd64.tar.gz"
+# Optional: Set mirror configuration via environment variables before running
+# export GITHUB_MIRROR="https://ghfast.top"
+# export APPHUB_URL="http://apphub:80"
 
-# Create installation directory
-sudo mkdir -p /opt/categraf
-cd /opt/categraf
+# Download and execute the installation script from script server (port %s)
+echo "Downloading installation script from Nightingale..."
+curl -fsSL "http://${N9E_HOST}:%s/install-categraf.sh" | bash
 
-# Download Categraf
-echo "Downloading Categraf ${CATEGRAF_VERSION}..."
-sudo wget -q ${CATEGRAF_URL} -O categraf.tar.gz
-
-# Extract
-echo "Extracting Categraf..."
-sudo tar -xzf categraf.tar.gz --strip-components=1
-sudo rm -f categraf.tar.gz
-
-# Configure Categraf
-echo "Configuring Categraf..."
-sudo cat > /opt/categraf/conf/config.toml <<EOF
-[global]
-hostname = "%s"
-labels = { ip="%s" }
-
-[heartbeat]
-enable = true
-url = "http://%s:%s/v1/n9e/heartbeat"
-interval = 10
-
-[writer_opt]
-batch = 2000
-chan_size = 10000
-
-[[writers]]
-url = "http://%s:%s/prometheus/v1/write"
-EOF
-
-# Enable system collectors
-sudo mkdir -p /opt/categraf/conf/input.cpu
-sudo cat > /opt/categraf/conf/input.cpu/cpu.toml <<EOF
-[[instances]]
-collect_per_cpu = true
-report_active = true
-EOF
-
-sudo mkdir -p /opt/categraf/conf/input.mem
-sudo cat > /opt/categraf/conf/input.mem/mem.toml <<EOF
-[[instances]]
-# collect memory stats
-EOF
-
-sudo mkdir -p /opt/categraf/conf/input.disk
-sudo cat > /opt/categraf/conf/input.disk/disk.toml <<EOF
-[[instances]]
-mount_points = ["/"]
-ignore_fs = ["tmpfs", "devtmpfs", "devfs", "iso9660", "overlay", "aufs", "squashfs"]
-EOF
-
-sudo mkdir -p /opt/categraf/conf/input.net
-sudo cat > /opt/categraf/conf/input.net/net.toml <<EOF
-[[instances]]
-interfaces = ["eth*", "en*"]
-EOF
-
-sudo mkdir -p /opt/categraf/conf/input.netstat
-sudo cat > /opt/categraf/conf/input.netstat/netstat.toml <<EOF
-[[instances]]
-# collect netstat
-EOF
-
-# Create systemd service
-echo "Creating systemd service..."
-sudo cat > /etc/systemd/system/categraf.service <<'SVCEOF'
-[Unit]
-Description=Categraf Monitoring Agent
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/opt/categraf/categraf --configs /opt/categraf/conf
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-# Start service
-echo "Starting Categraf service..."
-sudo systemctl daemon-reload
-sudo systemctl enable categraf
-sudo systemctl start categraf
-
-# Check status
-echo "Checking service status..."
-sudo systemctl status categraf --no-pager
-
-echo "✓ Nightingale Monitoring Agent installed successfully!"
-echo "  Hostname: %s"
-echo "  IP: %s"
-echo "  Reporting to: http://%s:%s"
-`, hostname, ip, s.nightingaleHost, s.nightingalePort, s.nightingaleHost, s.nightingalePort, hostname, ip, s.nightingaleHost, s.nightingalePort)
+echo "Done!"
+`, hostname, ip, s.nightingaleHost, s.nightingalePort, scriptServerPort, scriptServerPort)
 
 	return script
 }

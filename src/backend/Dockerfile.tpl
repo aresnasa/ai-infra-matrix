@@ -14,15 +14,19 @@ ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Configure APT mirror
-RUN if [ -n "${APT_MIRROR}" ]; then \
+# Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
         if [ -f /etc/apt/sources.list ]; then \
             sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
             sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
         elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
             sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
             sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
-        fi \
+        fi; \
     fi
 
 # Install build dependencies
@@ -99,15 +103,19 @@ ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Configure APT mirror
-RUN if [ -n "${APT_MIRROR}" ]; then \
+# Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
         if [ -f /etc/apt/sources.list ]; then \
             sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
             sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
         elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
             sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
             sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
-        fi \
+        fi; \
     fi
 
 # Install runtime dependencies
@@ -206,15 +214,19 @@ ENV APP_VERSION=${VERSION}
 ARG APT_MIRROR={{APT_MIRROR}}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Configure APT mirror
-RUN if [ -n "${APT_MIRROR}" ]; then \
+# Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
         if [ -f /etc/apt/sources.list ]; then \
             sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
             sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
         elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
             sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
             sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
-        fi \
+        fi; \
     fi
 
 # Install runtime dependencies

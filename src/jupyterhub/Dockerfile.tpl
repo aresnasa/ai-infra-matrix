@@ -13,19 +13,28 @@ ENV APP_VERSION=${VERSION}
 ENV TZ=Asia/Shanghai
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 基础环境配置（APT 镜像源智能回退）
+# 基础环境配置（APT 镜像源智能回退，支持 x86 和 ARM64 双架构）
 RUN set -eux; \
     # 备份原始 sources.list
     cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true; \
     # 获取 Ubuntu 版本代号
     . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
     echo "Detected Ubuntu codename: ${CODENAME}"; \
+    # 检测架构: x86_64 使用 ubuntu, arm64/aarch64 使用 ubuntu-ports
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
+    else \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    echo "Using mirror path: ${UBUNTU_PATH}"; \
     # 尝试配置镜像源
     if [ -n "${APT_MIRROR}" ]; then \
-        echo "尝试自定义镜像源: ${APT_MIRROR}..."; \
-        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "尝试自定义镜像源: ${APT_MIRROR}/${UBUNTU_PATH}..."; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
         if apt-get update 2>/dev/null; then \
             echo "✓ 成功使用自定义镜像源"; \
         else \
@@ -37,21 +46,21 @@ RUN set -eux; \
         # 尝试阿里云镜像源
         { \
             echo "尝试阿里云镜像源..."; \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
             apt-get update && echo "✓ 成功使用阿里云镜像源"; \
         } || { \
             echo "❌ 阿里云镜像源失败，尝试清华源..."; \
-            echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-            echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-            echo "deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
             apt-get update && echo "✓ 成功使用清华源"; \
         } || { \
             echo "❌ 清华源失败，尝试中科大源..."; \
-            echo "deb https://mirrors.ustc.edu.cn/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-            echo "deb https://mirrors.ustc.edu.cn/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-            echo "deb https://mirrors.ustc.edu.cn/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
             apt-get update && echo "✓ 成功使用中科大源"; \
         } || { \
             echo "❌ 所有国内源都失败，使用官方源..."; \
@@ -96,7 +105,19 @@ ENV PIP_INDEX_URL="${PYPI_INDEX_URL}" \
     PIP_TIMEOUT=60
 
 # 升级pip并安装核心工具
-RUN pip3 install --no-cache-dir --upgrade pip==${PIP_VERSION} setuptools wheel --break-system-packages
+# 注意: Ubuntu 22.04 系统 pip 版本较老，不支持 --break-system-packages
+# 需要先升级 pip，然后新版 pip 才支持该选项
+RUN set -eux; \
+    # 配置 pip 镜像源
+    mkdir -p ~/.pip && \
+    echo "[global]" > ~/.pip/pip.conf && \
+    echo "index-url = ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" >> ~/.pip/pip.conf && \
+    echo "trusted-host = mirrors.aliyun.com" >> ~/.pip/pip.conf; \
+    # 先用系统 pip 升级 pip 本身（不带 --break-system-packages）
+    python3 -m pip install --no-cache-dir --upgrade pip==${PIP_VERSION} 2>/dev/null || \
+    pip3 install --no-cache-dir --upgrade pip==${PIP_VERSION}; \
+    # 新版 pip 支持 --break-system-packages，安装其他工具
+    pip3 install --no-cache-dir setuptools wheel --break-system-packages
 
 # 依赖安装
 COPY src/jupyterhub/requirements.txt .
@@ -113,10 +134,7 @@ RUN set -eux; \
     npm config set registry "https://registry.npmjs.org"; \
     npm config get registry; \
     \
-    # 步骤2: 配置 pip 镜像源
-    pip3 config set global.index-url ${PYPI_INDEX_URL} --break-system-packages || true; \
-    pip3 config set global.trusted-host mirrors.aliyun.com --break-system-packages || true; \
-    \
+    # 步骤2: pip 配置已在之前的 RUN 中通过 ~/.pip/pip.conf 设置
     # 步骤3: 安装 Python 依赖（带重试）
     pip3 install --no-cache-dir --prefer-binary psutil>=5.9.0 --break-system-packages || \
         (pip3 config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \

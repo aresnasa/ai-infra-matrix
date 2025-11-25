@@ -64,26 +64,35 @@ ENV APP_VERSION=${VERSION}
 ENV TZ=Asia/Shanghai
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置 APT 镜像源并安装 nginx
+# 配置 APT 镜像源并安装 nginx（支持 x86 和 ARM64 双架构）
 RUN set -eux; \
     # 备份原始 sources.list
     cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true; \
     # 获取 Ubuntu 版本代号
     . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    # 检测架构: x86_64 使用 ubuntu, arm64/aarch64 使用 ubuntu-ports
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
+    else \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    echo "Using mirror path: ${UBUNTU_PATH}"; \
     # 尝试配置镜像源
     if [ -n "${APT_MIRROR}" ]; then \
-        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-        echo "deb http://${APT_MIRROR}/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
         if ! apt-get update 2>/dev/null; then \
             cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
             apt-get update; \
         fi; \
     else \
         { \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-            echo "deb http://mirrors.aliyun.com/ubuntu/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
             apt-get update; \
         } || { \
             cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \

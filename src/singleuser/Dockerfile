@@ -4,6 +4,7 @@ FROM jupyter/base-notebook:latest
 
 # Version metadata
 ARG VERSION="dev"
+ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ENV APP_VERSION=${VERSION}
 
 USER root
@@ -12,7 +13,7 @@ USER root
 # 构建阶段：预安装所有必要的Python包
 # ========================================
 # 配置pip镜像源（构建时使用，运行时不依赖网络）
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+RUN pip config set global.index-url ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/} && \
     pip config set global.trusted-host mirrors.aliyun.com
 
 # 安装所有必要的Python包（构建阶段完成，运行时无需网络）

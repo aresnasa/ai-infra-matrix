@@ -3,17 +3,30 @@ FROM ubuntu:{{UBUNTU_VERSION}}
 
 ARG VERSION="dev"
 ARG APT_MIRROR={{APT_MIRROR}}
-ARG PIP_INDEX_URL
+ARG PIP_INDEX_URL={{PYPI_INDEX_URL}}
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 ENV TZ=Asia/Shanghai
 
-# 使用阿里云源加速下载
-RUN if [ -n "${APT_MIRROR:-}" ]; then \
-        sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g; s|security.ubuntu.com|${APT_MIRROR}|g; s|ports.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
+# 使用镜像源加速下载（支持 x86 和 ARM64 双架构）
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
     else \
-        sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+    else \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi
 
 # 安装SSH服务器和基本工具

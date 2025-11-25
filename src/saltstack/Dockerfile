@@ -4,22 +4,32 @@ FROM ubuntu:${UBUNTU_VERSION}
 # Build arguments for versions
 ARG SALTSTACK_VERSION=v3007.8
 ARG PIP_VERSION=24.2
-ARG PIP_INDEX_URL
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG APT_MIRROR=mirrors.aliyun.com
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 
-# 配置APT镜像源（阿里云）
+# 配置APT镜像源（支持 x86 和 ARM64 双架构）
 RUN set -eux; \
-    if [ -n "${APT_MIRROR:-}" ]; then \
-        echo "Using custom APT mirror: ${APT_MIRROR}"; \
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|http://${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|http://${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
-        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|http://${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
     else \
-        sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}/${UBUNTU_PATH}"; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+    else \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
     apt-get update
 
@@ -59,8 +69,13 @@ RUN set -eux; \
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 升级pip，解决旧版解析器的依赖冲突问题
-RUN python3 -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}"
+# 配置 PyPI 镜像源并升级pip
+RUN set -eux; \
+    mkdir -p ~/.pip && \
+    echo "[global]" > ~/.pip/pip.conf && \
+    echo "index-url = ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" >> ~/.pip/pip.conf && \
+    echo "trusted-host = mirrors.aliyun.com" >> ~/.pip/pip.conf; \
+    python3 -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}"
 
 # 配置本地化
 RUN locale-gen zh_CN.UTF-8 en_US.UTF-8
