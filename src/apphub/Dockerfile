@@ -911,23 +911,17 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 4: Build Categraf (Multi-Architecture Go Binary)
-# 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
+# Stage 4: Download Pre-built Categraf (Multi-Architecture Binary)
+# 直接下载预编译的 Categraf 二进制包，不再从源码编译
 # =============================================================================
 FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 
 # Build control flags
 ARG BUILD_CATEGRAF=true
 
-# Categraf version configuration
-ARG CATEGRAF_VERSION=v0.4.25
-ARG CATEGRAF_REPO=https://ghfast.top/github.com/flashcatcloud/categraf.git
-
-# 配置 Go 代理（中国镜像加速）
-ARG GO_PROXY=https://goproxy.cn,direct
-ENV GOPROXY=${GO_PROXY}
-ENV GO111MODULE=on
-ENV CGO_ENABLED=0
+# Categraf version configuration (使用预编译版本)
+ARG CATEGRAF_VERSION=v0.4.28
+ARG GITHUB_PROXY
 ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
@@ -945,66 +939,57 @@ RUN set -eux; \
     fi; \
     # 更新包列表
     apt-get update; \
-    # 安装构建依赖 (安装 golang)
-    apt-get install -y --no-install-recommends git make bash tar gzip sed coreutils golang ca-certificates && \
+    # 安装下载工具
+    apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
 
-# 复制通用构建脚本和应用特定脚本
-COPY src/apphub/scripts/build-app.sh /scripts/build-app.sh
+# 复制安装脚本 (用于打包)
 COPY src/apphub/scripts/categraf/ /scripts/categraf/
-RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 
 # 创建输出目录
 RUN mkdir -p /out
 
-# 执行构建（使用通用构建脚本）
-ARG BUILD_CATEGRAF
-ARG GITHUB_PROXY
+# 下载预编译的 Categraf 二进制包 (支持 amd64 和 arm64)
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
-        # 检查是否有预下载的二进制包
-        ARCH=$(uname -m); \
-        if [ "${ARCH}" = "x86_64" ]; then \
-            ARCH_SUFFIX="amd64"; \
-        elif [ "${ARCH}" = "aarch64" ]; then \
-            ARCH_SUFFIX="arm64"; \
-        else \
-            ARCH_SUFFIX="${ARCH}"; \
+        echo "📦 Downloading pre-built Categraf ${CATEGRAF_VERSION}..."; \
+        # 下载 URL 基础路径
+        RELEASE_URL="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}"; \
+        # 设置 curl 选项
+        CURL_OPTS="-fsSL --retry 3 --retry-delay 5"; \
+        if [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+            CURL_OPTS="${CURL_OPTS} --proxy ${GITHUB_PROXY}"; \
         fi; \
-        TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
-        if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
-            echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
-            cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
+        # 下载 amd64 版本
+        echo "📥 Downloading Categraf for linux/amd64..."; \
+        AMD64_FILE="categraf-${CATEGRAF_VERSION}-linux-amd64.tar.gz"; \
+        if [ -f "/third_party/categraf/${AMD64_FILE}" ]; then \
+            echo "✓ 使用本地缓存: ${AMD64_FILE}"; \
+            cp "/third_party/categraf/${AMD64_FILE}" /out/; \
         else \
-            # 配置代理（如果提供）
-            if [ -n "${GITHUB_PROXY:-}" ]; then \
-                echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
-                export ALL_PROXY="${GITHUB_PROXY}"; \
-                export HTTP_PROXY="${GITHUB_PROXY}"; \
-                export HTTPS_PROXY="${GITHUB_PROXY}"; \
-                export http_proxy="${GITHUB_PROXY}"; \
-                export https_proxy="${GITHUB_PROXY}"; \
-                # 配置 git 使用代理和 SSL
-                git config --global http.proxy "${GITHUB_PROXY}"; \
-                git config --global https.proxy "${GITHUB_PROXY}"; \
-                git config --global http.sslVerify false; \
-                git config --global http.version HTTP/1.1; \
-                echo "✓ Git proxy configured"; \
-            else \
-                echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
-            fi; \
-            echo "Starting Categraf build from source..."; \
-            CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-            CATEGRAF_REPO=${CATEGRAF_REPO} \
-            BUILD_DIR=/build \
-            OUTPUT_DIR=/out \
-            /scripts/build-app.sh categraf; \
+            curl ${CURL_OPTS} -o "/out/${AMD64_FILE}" "${RELEASE_URL}/${AMD64_FILE}" && \
+            echo "✓ Downloaded ${AMD64_FILE}"; \
         fi; \
+        # 下载 arm64 版本
+        echo "📥 Downloading Categraf for linux/arm64..."; \
+        ARM64_FILE="categraf-${CATEGRAF_VERSION}-linux-arm64.tar.gz"; \
+        if [ -f "/third_party/categraf/${ARM64_FILE}" ]; then \
+            echo "✓ 使用本地缓存: ${ARM64_FILE}"; \
+            cp "/third_party/categraf/${ARM64_FILE}" /out/; \
+        else \
+            curl ${CURL_OPTS} -o "/out/${ARM64_FILE}" "${RELEASE_URL}/${ARM64_FILE}" && \
+            echo "✓ Downloaded ${ARM64_FILE}"; \
+        fi; \
+        # 验证下载
+        echo ""; \
+        echo "📦 Downloaded Categraf packages:"; \
+        ls -lh /out/*.tar.gz 2>/dev/null || echo "⚠️  No packages found"; \
     else \
-        echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
+        echo "⏭️  Skipping Categraf download (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
     fi
 
 # =============================================================================

@@ -830,6 +830,244 @@ start_all() {
     log_info "All services started."
 }
 
+# ==============================================================================
+# Clean Functions - 清理功能
+# ==============================================================================
+
+# Clean project images
+# Args: $1 = tag (optional), $2 = force (optional)
+clean_images() {
+    local tag="${1:-}"
+    local force="${2:-false}"
+    
+    log_info "=========================================="
+    log_info "Cleaning AI-Infra Docker images"
+    log_info "=========================================="
+    
+    local images_to_remove=()
+    
+    # Find all ai-infra images
+    if [[ -n "$tag" ]]; then
+        log_info "Finding images with tag: $tag"
+        while IFS= read -r img; do
+            [[ -n "$img" ]] && images_to_remove+=("$img")
+        done < <(docker images --format '{{.Repository}}:{{.Tag}}' | grep "ai-infra" | grep ":${tag}$")
+    else
+        log_info "Finding all ai-infra images"
+        while IFS= read -r img; do
+            [[ -n "$img" ]] && images_to_remove+=("$img")
+        done < <(docker images --format '{{.Repository}}:{{.Tag}}' | grep "ai-infra")
+    fi
+    
+    if [[ ${#images_to_remove[@]} -eq 0 ]]; then
+        log_info "No ai-infra images found to clean"
+        return 0
+    fi
+    
+    log_info "Found ${#images_to_remove[@]} images to remove:"
+    for img in "${images_to_remove[@]}"; do
+        echo "  • $img"
+    done
+    
+    if [[ "$force" != "true" ]]; then
+        echo
+        read -p "Are you sure you want to remove these images? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cancelled"
+            return 0
+        fi
+    fi
+    
+    local removed=0
+    local failed=0
+    
+    for img in "${images_to_remove[@]}"; do
+        if docker rmi "$img" 2>/dev/null; then
+            log_info "  ✓ Removed: $img"
+            ((removed++))
+        else
+            log_warn "  ✗ Failed to remove: $img (may be in use)"
+            ((failed++))
+        fi
+    done
+    
+    log_info "=========================================="
+    log_info "Removed: $removed, Failed: $failed"
+    return 0
+}
+
+# Clean project volumes
+# Args: $1 = force (optional)
+clean_volumes() {
+    local force="${1:-false}"
+    
+    log_info "=========================================="
+    log_info "Cleaning AI-Infra Docker volumes"
+    log_info "=========================================="
+    
+    local volumes_to_remove=()
+    
+    # Find all ai-infra related volumes
+    while IFS= read -r vol; do
+        [[ -n "$vol" ]] && volumes_to_remove+=("$vol")
+    done < <(docker volume ls --format '{{.Name}}' | grep -E "ai-infra|ai_infra")
+    
+    # Also check for compose project volumes
+    local compose_project="ai-infra-matrix"
+    while IFS= read -r vol; do
+        [[ -n "$vol" ]] && volumes_to_remove+=("$vol")
+    done < <(docker volume ls --format '{{.Name}}' | grep -E "^${compose_project}_")
+    
+    # Remove duplicates
+    volumes_to_remove=($(printf '%s\n' "${volumes_to_remove[@]}" | sort -u))
+    
+    if [[ ${#volumes_to_remove[@]} -eq 0 ]]; then
+        log_info "No ai-infra volumes found to clean"
+        return 0
+    fi
+    
+    log_info "Found ${#volumes_to_remove[@]} volumes to remove:"
+    for vol in "${volumes_to_remove[@]}"; do
+        echo "  • $vol"
+    done
+    
+    if [[ "$force" != "true" ]]; then
+        echo
+        read -p "Are you sure you want to remove these volumes? This will DELETE ALL DATA! [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cancelled"
+            return 0
+        fi
+    fi
+    
+    local removed=0
+    local failed=0
+    
+    for vol in "${volumes_to_remove[@]}"; do
+        if docker volume rm "$vol" 2>/dev/null; then
+            log_info "  ✓ Removed: $vol"
+            ((removed++))
+        else
+            log_warn "  ✗ Failed to remove: $vol (may be in use)"
+            ((failed++))
+        fi
+    done
+    
+    log_info "=========================================="
+    log_info "Removed: $removed, Failed: $failed"
+    return 0
+}
+
+# Stop all project containers
+stop_all() {
+    log_info "Stopping all AI-Infra services..."
+    local compose_cmd=$(detect_compose_command)
+    if [ -z "$compose_cmd" ]; then
+        log_error "docker-compose not found!"
+        return 1
+    fi
+    
+    $compose_cmd down
+    log_info "All services stopped."
+}
+
+# Clean all: stop containers, remove images and volumes
+# Args: $1 = force (optional, "--force" or "true")
+clean_all() {
+    local force="false"
+    
+    if [[ "$1" == "--force" || "$1" == "-f" || "$1" == "true" ]]; then
+        force="true"
+    fi
+    
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+        echo "clean-all - Clean all project Docker resources"
+        echo ""
+        echo "Usage: $0 clean-all [--force]"
+        echo ""
+        echo "Options:"
+        echo "  --force, -f    Skip confirmation prompts"
+        echo ""
+        echo "This command will:"
+        echo "  1. Stop all running containers"
+        echo "  2. Remove all ai-infra Docker images"
+        echo "  3. Remove all ai-infra Docker volumes"
+        echo "  4. Clean dangling images and build cache"
+        echo ""
+        echo "⚠️  WARNING: This will DELETE ALL DATA in volumes!"
+        return 0
+    fi
+    
+    log_info "=========================================="
+    log_info "🧹 Complete cleanup of AI-Infra resources"
+    log_info "=========================================="
+    
+    if [[ "$force" != "true" ]]; then
+        echo
+        log_warn "⚠️  This will stop all containers, remove all images and DELETE ALL DATA!"
+        read -p "Are you sure you want to continue? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cancelled"
+            return 0
+        fi
+        # Set force=true for subsequent operations to avoid repeated prompts
+        force="true"
+    fi
+    
+    echo
+    log_info "Step 1/4: Stopping all containers..."
+    stop_all 2>/dev/null || log_warn "No containers to stop or compose not available"
+    
+    echo
+    log_info "Step 2/4: Removing project images..."
+    clean_images "" "$force"
+    
+    echo
+    log_info "Step 3/4: Removing project volumes..."
+    clean_volumes "$force"
+    
+    echo
+    log_info "Step 4/4: Cleaning dangling resources..."
+    # Remove dangling images
+    local dangling_count=$(docker images -f "dangling=true" -q | wc -l | tr -d ' ')
+    if [[ "$dangling_count" -gt 0 ]]; then
+        log_info "Removing $dangling_count dangling images..."
+        docker image prune -f 2>/dev/null || true
+    fi
+    
+    # Clean build cache (optional, only if --force)
+    if [[ "$force" == "true" ]]; then
+        log_info "Cleaning build cache..."
+        docker builder prune -f 2>/dev/null || true
+    fi
+    
+    echo
+    log_info "=========================================="
+    log_info "🎉 Cleanup completed!"
+    log_info "=========================================="
+    
+    # Show remaining resources - use tr to remove newlines and ensure clean numeric output
+    local remaining_images
+    local remaining_volumes
+    remaining_images=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep "ai-infra" 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+    remaining_volumes=$(docker volume ls --format '{{.Name}}' 2>/dev/null | grep -E "ai-infra|ai_infra" 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+    
+    # Ensure numeric values (default to 0 if empty)
+    [[ -z "$remaining_images" ]] && remaining_images=0
+    [[ -z "$remaining_volumes" ]] && remaining_volumes=0
+    
+    if [[ "$remaining_images" != "0" ]] || [[ "$remaining_volumes" != "0" ]]; then
+        log_warn "Some resources could not be removed (may be in use):"
+        [[ "$remaining_images" != "0" ]] && log_warn "  Images: $remaining_images"
+        [[ "$remaining_volumes" != "0" ]] && log_warn "  Volumes: $remaining_volumes"
+    fi
+    
+    return 0
+}
+
 print_help() {
     echo "Usage: $0 [command] [options]"
     echo ""
@@ -839,6 +1077,7 @@ print_help() {
     echo ""
     echo "Service Commands:"
     echo "  start-all           Start all services using docker-compose"
+    echo "  stop-all            Stop all services"
     echo ""
     echo "Pull Commands:"
     echo "  prefetch            Prefetch all base images from Dockerfiles"
@@ -850,6 +1089,11 @@ print_help() {
     echo "  push-all <registry> [tag]        Push all services to registry"
     echo "  push-dep <registry> [tag]        Push dependency images to registry"
     echo ""
+    echo "Clean Commands:"
+    echo "  clean-images [tag]  Remove ai-infra Docker images (optional: specific tag)"
+    echo "  clean-volumes       Remove ai-infra Docker volumes"
+    echo "  clean-all [--force] Remove all images, volumes and stop containers"
+    echo ""
     echo "Examples:"
     echo "  $0 build-all"
     echo "  $0 start-all"
@@ -858,6 +1102,7 @@ print_help() {
     echo "  $0 push-all harbor.example.com/ai-infra v0.3.8"
     echo "  $0 push-dep harbor.example.com/ai-infra v0.3.8"
     echo "  $0 pull-all harbor.example.com/ai-infra v0.3.8"
+    echo "  $0 clean-all --force"
 }
 
 # ==============================================================================
@@ -875,6 +1120,18 @@ case "$1" in
         ;;
     start-all)
         start_all
+        ;;
+    stop-all)
+        stop_all
+        ;;
+    clean-images)
+        clean_images "$2" "${3:-false}"
+        ;;
+    clean-volumes)
+        clean_volumes "${2:-false}"
+        ;;
+    clean-all)
+        clean_all "$2"
         ;;
     prefetch)
         prefetch_base_images "$2"
