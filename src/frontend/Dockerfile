@@ -1,16 +1,16 @@
 # 全局 ARG 声明（用于多个构建阶段）
-ARG NODE_VERSION=22
+ARG NODE_IMAGE_VERSION=22.21-bookworm
 ARG UBUNTU_VERSION=22.04
 
-# Stage 1: 构建阶段 - 使用 Node.js Ubuntu 镜像
-FROM node:${NODE_VERSION}-bookworm-slim AS build
+# Stage 1: 构建阶段 - 使用 Node.js Debian 镜像
+FROM node:${NODE_IMAGE_VERSION} AS build
 
 # Build arguments for versions
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG APT_MIRROR=mirrors.aliyun.com
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置 APT 镜像源
+# 配置 APT 镜像源（Debian bookworm）
 RUN set -eux; \
     apt-get update || \
     (sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
@@ -26,8 +26,14 @@ WORKDIR /app
 # 复制package.json和package-lock.json
 COPY src/frontend/package*.json ./
 
-# 配置npm镜像源
-RUN npm config set registry ${NPM_REGISTRY}
+# 配置npm镜像源（支持多种格式）
+RUN set -eux; \
+    echo "配置 npm 镜像源: ${NPM_REGISTRY}"; \
+    npm config set registry "${NPM_REGISTRY}" || \
+    npm config set registry "https://registry.npmmirror.com" || \
+    npm config set registry "https://registry.npm.taobao.org" || \
+    npm config set registry "https://registry.npmjs.org"; \
+    npm config get registry
 
 # 安装依赖
 RUN npm install --verbose

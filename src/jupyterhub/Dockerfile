@@ -106,9 +106,12 @@ COPY third_party/ /third_party/
 # 安装 Python 依赖和 configurable-http-proxy
 RUN set -eux; \
     # 步骤1: 配置 npm 镜像源（多重降级）
-    npm config set registry ${NPM_REGISTRY} || \
-    npm config set registry https://registry.npm.taobao.org || \
-    npm config set registry https://registry.npmjs.org; \
+    echo "配置 npm 镜像源: ${NPM_REGISTRY}"; \
+    npm config set registry "${NPM_REGISTRY}" || \
+    npm config set registry "https://registry.npmmirror.com" || \
+    npm config set registry "https://registry.npm.taobao.org" || \
+    npm config set registry "https://registry.npmjs.org"; \
+    npm config get registry; \
     \
     # 步骤2: 配置 pip 镜像源
     pip3 config set global.index-url ${PYPI_INDEX_URL} --break-system-packages || true; \
