@@ -112,6 +112,159 @@ wait_for_apphub_ready() {
 }
 
 # ==============================================================================
+# Template Rendering Functions - 模板渲染功能
+# ==============================================================================
+
+# Define variables that need to be rendered in templates
+# These are read from .env and used to replace {{VARIABLE}} placeholders
+TEMPLATE_VARIABLES=(
+    # Mirror configurations
+    "GITHUB_MIRROR"
+    "APT_MIRROR"
+    "YUM_MIRROR"
+    "ALPINE_MIRROR"
+    "GO_PROXY"
+    "PYPI_INDEX_URL"
+    "NPM_REGISTRY"
+    # Base image versions
+    "UBUNTU_VERSION"
+    "ROCKYLINUX_VERSION"
+    "ALPINE_VERSION"
+    "NGINX_VERSION"
+    "NGINX_ALPINE_VERSION"
+    "PYTHON_VERSION"
+    "PYTHON_ALPINE_VERSION"
+    "NODE_VERSION"
+    "NODE_ALPINE_VERSION"
+    "GOLANG_VERSION"
+    "GOLANG_IMAGE_VERSION"
+    "JUPYTER_BASE_NOTEBOOK_VERSION"
+    # Component versions
+    "SLURM_VERSION"
+    "SALTSTACK_VERSION"
+    "CATEGRAF_VERSION"
+    "SINGULARITY_VERSION"
+    "GITEA_VERSION"
+    "JUPYTERHUB_VERSION"
+    "PIP_VERSION"
+    # Project settings
+    "IMAGE_TAG"
+    "TZ"
+)
+
+# Render a single template file
+# Args: $1 = template file (.tpl), $2 = output file (optional, defaults to removing .tpl extension)
+render_template() {
+    local template_file="$1"
+    local output_file="${2:-${template_file%.tpl}}"
+    
+    if [[ ! -f "$template_file" ]]; then
+        log_error "Template file not found: $template_file"
+        return 1
+    fi
+    
+    log_info "Rendering: $template_file -> $output_file"
+    
+    # Start with the template content
+    local content
+    content=$(cat "$template_file")
+    
+    # Replace each {{VARIABLE}} with its value from environment
+    for var in "${TEMPLATE_VARIABLES[@]}"; do
+        local value="${!var}"
+        if [[ -n "$value" ]]; then
+            # Escape special characters for sed
+            local escaped_value
+            escaped_value=$(printf '%s\n' "$value" | sed -e 's/[&/\]/\\&/g')
+            content=$(echo "$content" | sed "s|{{${var}}}|${escaped_value}|g")
+        else
+            # If variable is empty, replace with empty string
+            content=$(echo "$content" | sed "s|{{${var}}}||g")
+        fi
+    done
+    
+    # Write to output file
+    echo "$content" > "$output_file"
+    
+    # Check for any remaining unreplaced placeholders
+    local remaining
+    remaining=$(grep -o '{{[A-Z_]*}}' "$output_file" 2>/dev/null | sort -u | head -5)
+    if [[ -n "$remaining" ]]; then
+        log_warn "  ⚠️  Unreplaced placeholders found: $remaining"
+    fi
+    
+    log_info "  ✓ Rendered successfully"
+    return 0
+}
+
+# Render all Dockerfile.tpl files in src/*/
+render_all_templates() {
+    local force="${1:-false}"
+    
+    log_info "=========================================="
+    log_info "🔧 Rendering Dockerfile templates"
+    log_info "=========================================="
+    log_info "Source: .env / .env.example"
+    log_info "Pattern: src/*/Dockerfile.tpl"
+    echo
+    
+    # Show key variables being used
+    log_info "Template variables:"
+    log_info "  GITHUB_MIRROR=${GITHUB_MIRROR:-<empty>}"
+    log_info "  APT_MIRROR=${APT_MIRROR:-<empty>}"
+    log_info "  YUM_MIRROR=${YUM_MIRROR:-<empty>}"
+    log_info "  ALPINE_MIRROR=${ALPINE_MIRROR:-<empty>}"
+    log_info "  UBUNTU_VERSION=${UBUNTU_VERSION:-<empty>}"
+    log_info "  SLURM_VERSION=${SLURM_VERSION:-<empty>}"
+    log_info "  SALTSTACK_VERSION=${SALTSTACK_VERSION:-<empty>}"
+    log_info "  CATEGRAF_VERSION=${CATEGRAF_VERSION:-<empty>}"
+    echo
+    
+    local success_count=0
+    local fail_count=0
+    local skip_count=0
+    
+    # Find all Dockerfile.tpl files
+    while IFS= read -r -d '' template_file; do
+        local output_file="${template_file%.tpl}"
+        local component_name=$(basename "$(dirname "$template_file")")
+        
+        # Check if output file exists and is newer than template
+        if [[ "$force" != "true" ]] && [[ -f "$output_file" ]]; then
+            if [[ "$output_file" -nt "$template_file" ]] && [[ "$output_file" -nt "$ENV_FILE" ]]; then
+                log_info "Skipping $component_name (up to date)"
+                skip_count=$((skip_count + 1))
+                continue
+            fi
+        fi
+        
+        if render_template "$template_file" "$output_file"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    done < <(find "$SRC_DIR" -name "Dockerfile.tpl" -print0 2>/dev/null)
+    
+    echo
+    log_info "=========================================="
+    log_info "Template rendering complete:"
+    log_info "  ✓ Success: $success_count"
+    [[ $skip_count -gt 0 ]] && log_info "  ⏭️  Skipped: $skip_count"
+    [[ $fail_count -gt 0 ]] && log_warn "  ✗ Failed: $fail_count"
+    log_info "=========================================="
+    
+    if [[ $fail_count -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Sync templates - alias for render_all_templates with force
+sync_templates() {
+    render_all_templates "true"
+}
+
+# ==============================================================================
 # Pull Functions - 镜像拉取功能
 # ==============================================================================
 
@@ -644,6 +797,16 @@ build_component() {
         return 1
     fi
 
+    # Check if template exists and render it
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [ -f "$template_file" ]; then
+        log_info "Rendering template for $component..."
+        if ! render_template "$template_file"; then
+            log_error "Failed to render template for $component"
+            return 1
+        fi
+    fi
+
     # Check for dependency configuration (External Image)
     local dep_conf="$component_dir/dependency.conf"
     if [ -f "$dep_conf" ]; then
@@ -769,23 +932,31 @@ discover_services() {
 build_all() {
     log_info "Starting coordinated build process..."
     
+    # 0. Render all templates first
+    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    if ! render_all_templates; then
+        log_error "Template rendering failed. Aborting build."
+        exit 1
+    fi
+    echo
+    
     # Discover services dynamically
     discover_services
     
     # 1. Pull & Tag Dependency Services
-    log_info "=== Phase 0: Processing Dependency Services ==="
+    log_info "=== Phase 1: Processing Dependency Services ==="
     for service in "${DEPENDENCY_SERVICES[@]}"; do
         build_component "$service"
     done
     
     # 2. Build Foundation Services
-    log_info "=== Phase 1: Building Foundation Services ==="
+    log_info "=== Phase 2: Building Foundation Services ==="
     for service in "${FOUNDATION_SERVICES[@]}"; do
         build_component "$service"
     done
     
-    # 2. Start AppHub Service
-    log_info "=== Phase 2: Starting AppHub Service ==="
+    # 3. Start AppHub Service
+    log_info "=== Phase 3: Starting AppHub Service ==="
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found! Cannot start AppHub."
@@ -800,8 +971,8 @@ build_all() {
         exit 1
     fi
     
-    # 3. Build Dependent Services
-    log_info "=== Phase 3: Building Dependent Services ==="
+    # 4. Build Dependent Services
+    log_info "=== Phase 4: Building Dependent Services ==="
     
     # Determine AppHub URL for build args
     local apphub_port="${APPHUB_PORT:-53434}"
@@ -1075,6 +1246,10 @@ print_help() {
     echo "  build-all, all      Build all components in the correct order (AppHub first)"
     echo "  [component]         Build a specific component (e.g., backend, frontend)"
     echo ""
+    echo "Template Commands:"
+    echo "  render, sync        Render all Dockerfile.tpl templates from .env config"
+    echo "  render --force      Force re-render all templates (ignore cache)"
+    echo ""
     echo "Service Commands:"
     echo "  start-all           Start all services using docker-compose"
     echo "  stop-all            Stop all services"
@@ -1094,7 +1269,19 @@ print_help() {
     echo "  clean-volumes       Remove ai-infra Docker volumes"
     echo "  clean-all [--force] Remove all images, volumes and stop containers"
     echo ""
+    echo "Template Variables (from .env):"
+    echo "  GITHUB_MIRROR       GitHub mirror URL prefix (e.g., https://ghfast.top/)"
+    echo "  APT_MIRROR          APT mirror for Ubuntu/Debian (e.g., mirrors.aliyun.com)"
+    echo "  YUM_MIRROR          YUM mirror for Rocky/CentOS"
+    echo "  ALPINE_MIRROR       Alpine mirror"
+    echo "  UBUNTU_VERSION      Ubuntu base image version"
+    echo "  SLURM_VERSION       SLURM version to build"
+    echo "  SALTSTACK_VERSION   SaltStack version"
+    echo "  CATEGRAF_VERSION    Categraf version"
+    echo ""
     echo "Examples:"
+    echo "  $0 render                          # Render templates from .env"
+    echo "  $0 render --force                  # Force re-render all templates"
     echo "  $0 build-all"
     echo "  $0 start-all"
     echo "  $0 backend"
@@ -1117,6 +1304,13 @@ fi
 case "$1" in
     build-all|all)
         build_all
+        ;;
+    render|sync|sync-templates)
+        if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+            render_all_templates "true"
+        else
+            render_all_templates
+        fi
         ;;
     start-all)
         start_all

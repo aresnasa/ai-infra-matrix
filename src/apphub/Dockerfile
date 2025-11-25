@@ -52,8 +52,8 @@ ARG CATEGRAF_VERSION=v0.4.25
 ARG SINGULARITY_VERSION=v4.3.4
 
 # Accept optional tarball path relative to build context root
-# 默认在当前目录查找 tarball
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+# 默认在 src/apphub/ 目录查找 tarball（因为构建上下文是项目根目录）
+ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # 配置APT镜像源和安装构建依赖（分步骤避免网络问题）
 RUN set -eux; \
@@ -124,7 +124,7 @@ WORKDIR /home/builder/build
 # Copy SLURM source tarball (use wildcard to make it optional-ish)
 # Docker will fail if no matching file, but we handle it gracefully in build script
 ARG SLURM_TARBALL_PATH
-COPY --chown=builder:builder src/apphub/${SLURM_TARBALL_PATH} /home/builder/build/
+COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
 # Extract SLURM source
 # 解压 tarball 并记录源码目录名称
@@ -359,7 +359,7 @@ COPY third_party/ /third_party/
 # SLURM version configuration (same as deb builder)
 ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # SaltStack version configuration (same as deb builder)
 ARG SALTSTACK_VERSION=v3007.8
@@ -504,7 +504,7 @@ RUN set -eux; \
 
 # Copy SLURM source tarball
 ARG SLURM_TARBALL_PATH
-COPY --chown=builder:builder src/apphub/${SLURM_TARBALL_PATH} /home/builder/build/
+COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 
 # Build SLURM RPM packages using official rpmbuild method
 # Reference: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
@@ -911,17 +911,23 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 4: Download Pre-built Categraf (Multi-Architecture Binary)
-# 直接下载预编译的 Categraf 二进制包，不再从源码编译
+# Stage 4: Build Categraf (Multi-Architecture Go Binary)
+# 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
 # =============================================================================
 FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 
 # Build control flags
 ARG BUILD_CATEGRAF=true
 
-# Categraf version configuration (使用预编译版本)
-ARG CATEGRAF_VERSION=v0.4.28
-ARG GITHUB_PROXY
+# Categraf version configuration
+ARG CATEGRAF_VERSION=v0.4.25
+ARG CATEGRAF_REPO=https://ghfast.top/github.com/flashcatcloud/categraf.git
+
+# 配置 Go 代理（中国镜像加速）
+ARG GO_PROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GO_PROXY}
+ENV GO111MODULE=on
+ENV CGO_ENABLED=0
 ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
@@ -939,57 +945,66 @@ RUN set -eux; \
     fi; \
     # 更新包列表
     apt-get update; \
-    # 安装下载工具
-    apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
+    # 安装构建依赖 (安装 golang)
+    apt-get install -y --no-install-recommends git make bash tar gzip sed coreutils golang ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
 
-# 复制安装脚本 (用于打包)
+# 复制通用构建脚本和应用特定脚本
+COPY src/apphub/scripts/build-app.sh /scripts/build-app.sh
 COPY src/apphub/scripts/categraf/ /scripts/categraf/
+RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 
 # 创建输出目录
 RUN mkdir -p /out
 
-# 下载预编译的 Categraf 二进制包 (支持 amd64 和 arm64)
+# 执行构建（使用通用构建脚本）
+ARG BUILD_CATEGRAF
+ARG GITHUB_PROXY
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
-        echo "📦 Downloading pre-built Categraf ${CATEGRAF_VERSION}..."; \
-        # 下载 URL 基础路径
-        RELEASE_URL="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}"; \
-        # 设置 curl 选项
-        CURL_OPTS="-fsSL --retry 3 --retry-delay 5"; \
-        if [ -n "${GITHUB_PROXY:-}" ]; then \
-            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
-            CURL_OPTS="${CURL_OPTS} --proxy ${GITHUB_PROXY}"; \
-        fi; \
-        # 下载 amd64 版本
-        echo "📥 Downloading Categraf for linux/amd64..."; \
-        AMD64_FILE="categraf-${CATEGRAF_VERSION}-linux-amd64.tar.gz"; \
-        if [ -f "/third_party/categraf/${AMD64_FILE}" ]; then \
-            echo "✓ 使用本地缓存: ${AMD64_FILE}"; \
-            cp "/third_party/categraf/${AMD64_FILE}" /out/; \
+        # 检查是否有预下载的二进制包
+        ARCH=$(uname -m); \
+        if [ "${ARCH}" = "x86_64" ]; then \
+            ARCH_SUFFIX="amd64"; \
+        elif [ "${ARCH}" = "aarch64" ]; then \
+            ARCH_SUFFIX="arm64"; \
         else \
-            curl ${CURL_OPTS} -o "/out/${AMD64_FILE}" "${RELEASE_URL}/${AMD64_FILE}" && \
-            echo "✓ Downloaded ${AMD64_FILE}"; \
+            ARCH_SUFFIX="${ARCH}"; \
         fi; \
-        # 下载 arm64 版本
-        echo "📥 Downloading Categraf for linux/arm64..."; \
-        ARM64_FILE="categraf-${CATEGRAF_VERSION}-linux-arm64.tar.gz"; \
-        if [ -f "/third_party/categraf/${ARM64_FILE}" ]; then \
-            echo "✓ 使用本地缓存: ${ARM64_FILE}"; \
-            cp "/third_party/categraf/${ARM64_FILE}" /out/; \
+        TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
+        if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
+            echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
+            cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
         else \
-            curl ${CURL_OPTS} -o "/out/${ARM64_FILE}" "${RELEASE_URL}/${ARM64_FILE}" && \
-            echo "✓ Downloaded ${ARM64_FILE}"; \
+            # 配置代理（如果提供）
+            if [ -n "${GITHUB_PROXY:-}" ]; then \
+                echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
+                export ALL_PROXY="${GITHUB_PROXY}"; \
+                export HTTP_PROXY="${GITHUB_PROXY}"; \
+                export HTTPS_PROXY="${GITHUB_PROXY}"; \
+                export http_proxy="${GITHUB_PROXY}"; \
+                export https_proxy="${GITHUB_PROXY}"; \
+                # 配置 git 使用代理和 SSL
+                git config --global http.proxy "${GITHUB_PROXY}"; \
+                git config --global https.proxy "${GITHUB_PROXY}"; \
+                git config --global http.sslVerify false; \
+                git config --global http.version HTTP/1.1; \
+                echo "✓ Git proxy configured"; \
+            else \
+                echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
+            fi; \
+            echo "Starting Categraf build from source..."; \
+            CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+            CATEGRAF_REPO=${CATEGRAF_REPO} \
+            BUILD_DIR=/build \
+            OUTPUT_DIR=/out \
+            /scripts/build-app.sh categraf; \
         fi; \
-        # 验证下载
-        echo ""; \
-        echo "📦 Downloaded Categraf packages:"; \
-        ls -lh /out/*.tar.gz 2>/dev/null || echo "⚠️  No packages found"; \
     else \
-        echo "⏭️  Skipping Categraf download (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
+        echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
     fi
 
 # =============================================================================

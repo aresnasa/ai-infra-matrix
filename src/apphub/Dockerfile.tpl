@@ -52,8 +52,8 @@ ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
 ARG SINGULARITY_VERSION={{SINGULARITY_VERSION}}
 
 # Accept optional tarball path relative to build context root
-# 默认在当前目录查找 tarball
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+# 默认在 src/apphub/ 目录查找 tarball（因为构建上下文是项目根目录）
+ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # 配置APT镜像源和安装构建依赖（分步骤避免网络问题）
 RUN set -eux; \
@@ -238,7 +238,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-deb,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="{{GITHUB_MIRROR}}github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -359,7 +359,7 @@ COPY third_party/ /third_party/
 # SLURM version configuration (same as deb builder)
 ARG SLURM_VERSION={{SLURM_VERSION}}
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # SaltStack version configuration (same as deb builder)
 ARG SALTSTACK_VERSION={{SALTSTACK_VERSION}}
@@ -458,7 +458,7 @@ RUN set -eux; \
             cp "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" munge.tar.xz; \
         else \
             echo "Downloading Munge..."; \
-            wget "https://github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+            wget "{{GITHUB_MIRROR}}github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
         fi; \
         tar xf munge.tar.xz; \
         cd "munge-${MUNGE_VERSION}"; \
@@ -598,7 +598,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="{{GITHUB_MIRROR}}github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -921,7 +921,7 @@ ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
 ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
-ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
+ARG CATEGRAF_REPO={{GITHUB_MIRROR}}github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）
 ARG GO_PROXY={{GO_PROXY}}
@@ -953,8 +953,8 @@ RUN set -eux; \
 COPY third_party/ /third_party/
 
 # 复制通用构建脚本和应用特定脚本
-COPY scripts/build-app.sh /scripts/build-app.sh
-COPY scripts/categraf/ /scripts/categraf/
+COPY src/apphub/scripts/build-app.sh /scripts/build-app.sh
+COPY src/apphub/scripts/categraf/ /scripts/categraf/
 RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 
 # 创建输出目录
@@ -1051,7 +1051,7 @@ RUN set -eux; \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
         mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
-        RELEASE_URL="https://github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
+        RELEASE_URL="{{GITHUB_MIRROR}}github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
         CURL_OPTS=""; \
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
@@ -1165,7 +1165,7 @@ RUN chmod 600 /root/.ssh/authorized_keys && \
     echo "✓ SSH public key installed for backend access"
 
 # Copy nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY src/apphub/nginx.conf /etc/nginx/nginx.conf
 
 # Create directories for packages
 RUN mkdir -p \
@@ -1212,8 +1212,8 @@ COPY --from=rpm-builder /out/saltstack-rpm/ /usr/share/nginx/html/pkgs/saltstack
 COPY --from=binary-builder /out/packages/ /usr/share/nginx/html/pkgs/slurm-binaries/
 
 # Copy scripts for installation
-COPY scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
-COPY scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
+COPY src/apphub/scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
+COPY src/apphub/scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
 RUN chmod +x /app/scripts/generate-install-script.sh
 
 # Generate SLURM installation script from template
@@ -1362,7 +1362,7 @@ RUN set -eux; \
 EXPOSE 80
 
 # Entrypoint to regenerate indexes if needed
-COPY entrypoint.sh /entrypoint.sh
+COPY src/apphub/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
