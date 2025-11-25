@@ -1,0 +1,11 @@
+# Docker build context ignore file for Nightingale
+# Only copy Dockerfile and etc/ directory
+
+# Ignore docker reference configs (not needed in build)
+docker/
+
+# Ignore any temporary or backup files
+*.bak
+*.tmp
+*.log
+.DS_Store
