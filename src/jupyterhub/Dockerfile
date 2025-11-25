@@ -68,10 +68,11 @@ RUN set -eux; \
             apt-get update; \
         }; \
     fi; \
-    # 安装必需的运行时依赖
+    # 安装必需的运行时依赖（不包括 nodejs/npm，使用预编译二进制）
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        xz-utils \
         openssl \
         tzdata \
         bash \
@@ -86,11 +87,30 @@ RUN set -eux; \
         build-essential \
         libcurl4-openssl-dev \
         libssl-dev \
-        nodejs \
-        npm \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# 安装 Node.js 22.x LTS (configurable-http-proxy 需要 Node.js 16+)
+# 使用预下载的二进制包，避免网络依赖
+# Ubuntu 22.04 默认的 nodejs 12.x 太旧，会导致 ESM 加载器错误
+# NODE_JS_VERSION 通过模板渲染注入
+COPY third_party/nodejs/node-v22.11.0-linux-x64.tar.xz /tmp/
+COPY third_party/nodejs/node-v22.11.0-linux-arm64.tar.xz /tmp/
+
+ARG NODE_JS_VERSION=22.11.0
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Installing Node.js ${NODE_JS_VERSION} for ${ARCH}..."; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        NODE_ARCH="x64"; \
+    else \
+        NODE_ARCH="arm64"; \
+    fi; \
+    tar -xJf /tmp/node-v${NODE_JS_VERSION}-linux-${NODE_ARCH}.tar.xz -C /usr/local --strip-components=1; \
+    rm -f /tmp/node-v*.tar.xz; \
+    node --version; \
+    npm --version
 
 WORKDIR /srv/jupyterhub
 
