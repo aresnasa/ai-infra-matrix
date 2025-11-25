@@ -18,7 +18,7 @@ RUN set -eux; \
 WORKDIR /app
 
 # 复制package.json和package-lock.json
-COPY package*.json ./
+COPY src/frontend/package*.json ./
 
 # 配置npm镜像源
 RUN npm config set registry ${NPM_REGISTRY}
@@ -27,7 +27,7 @@ RUN npm config set registry ${NPM_REGISTRY}
 RUN npm install --verbose
 
 # 复制源代码
-COPY . .
+COPY src/frontend/ .
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
@@ -63,7 +63,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY --from=build /app/build /usr/share/nginx/html
 
 # 复制nginx配置文件
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY src/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 # 设置工作目录
 WORKDIR /usr/share/nginx/html
