@@ -801,6 +801,9 @@ pull_and_tag_dependencies() {
 # 3. Build Logic
 # ==============================================================================
 
+# Global flag for force rebuild (--no-cache)
+FORCE_BUILD=false
+
 # Prepare base build args
 BASE_BUILD_ARGS=()
 if [ -f "$ENV_EXAMPLE" ]; then
@@ -898,7 +901,14 @@ build_component() {
         
         log_info "Building $component [$target] -> $full_image_name"
         
-        local cmd=("docker" "build" "${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
+        local cmd=("docker" "build")
+        
+        # Add --no-cache if force build is enabled
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            cmd+=("--no-cache")
+        fi
+        
+        cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
         
         if [ "$target" != "default" ]; then
             cmd+=("--target" "$target")
@@ -958,11 +968,18 @@ discover_services() {
 }
 
 build_all() {
-    log_info "Starting coordinated build process..."
+    local force="${1:-false}"
+    
+    if [[ "$force" == "true" ]]; then
+        log_info "Starting coordinated build process (FORCE MODE - no cache)..."
+        FORCE_BUILD=true
+    else
+        log_info "Starting coordinated build process..."
+    fi
     
     # 0. Render all templates first
     log_info "=== Phase 0: Rendering Dockerfile Templates ==="
-    if ! render_all_templates; then
+    if ! render_all_templates "$force"; then
         log_error "Template rendering failed. Aborting build."
         exit 1
     fi
@@ -1277,6 +1294,7 @@ print_help() {
     echo ""
     echo "Build Commands:"
     echo "  build-all, all      Build all components in the correct order (AppHub first)"
+    echo "  build-all --force   Force rebuild all (re-render templates, no Docker cache)"
     echo "  [component]         Build a specific component (e.g., backend, frontend)"
     echo ""
     echo "Template Commands:"
@@ -1336,7 +1354,11 @@ fi
 
 case "$1" in
     build-all|all)
-        build_all
+        if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+            build_all "true"
+        else
+            build_all
+        fi
         ;;
     render|sync|sync-templates)
         if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
