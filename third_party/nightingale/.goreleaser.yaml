@@ -1,0 +1,122 @@
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod tidy
+    - go install github.com/rakyll/statik
+
+snapshot:
+  name_template: '{{ .Tag }}'
+checksum:
+  name_template: 'checksums.txt'
+changelog:
+  skip: true
+
+builds:
+  - id: build
+    hooks:
+      pre:
+      - cmd: sh -x ./fe.sh
+        output: true
+    main: ./cmd/center/
+    binary: n9e
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ccfos/nightingale/v6/pkg/version.Version={{ .Tag }}-{{.Commit}}
+  - id: build-cli
+    main: ./cmd/cli/
+    binary: n9e-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ccfos/nightingale/v6/pkg/version.Version={{ .Tag }}-{{.Commit}}
+  - id: build-edge
+    main: ./cmd/edge/
+    binary: n9e-edge
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ccfos/nightingale/v6/pkg/version.Version={{ .Tag }}-{{.Commit}}
+
+archives:
+  - id: n9e
+    builds:
+      - build
+      - build-cli
+      - build-edge
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "n9e-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    wrap_in_directory: false
+    files:
+      - docker/*
+      - etc/*
+      - integrations/*
+      - cli/*
+      - n9e.sql
+
+release:
+  github:
+    owner: ccfos
+    name: nightingale
+  name_template: "v{{ .Version }}"
+
+dockers:
+  - image_templates:
+      - flashcatcloud/nightingale:{{ .Version }}-amd64
+    goos: linux
+    goarch: amd64
+    ids:
+      - build
+    dockerfile: docker/Dockerfile.goreleaser
+    extra_files:
+      - etc
+      - integrations
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+  - image_templates:
+      - flashcatcloud/nightingale:{{ .Version }}-arm64v8
+    goos: linux
+    goarch: arm64
+    ids:
+      - build
+    dockerfile: docker/Dockerfile.goreleaser.arm64
+    extra_files:
+      - etc
+      - integrations
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64/v8"
+
+docker_manifests:
+
+  - name_template: flashcatcloud/nightingale:{{ .Version }}
+    image_templates:
+      - flashcatcloud/nightingale:{{ .Version }}-amd64
+      - flashcatcloud/nightingale:{{ .Version }}-arm64v8
+
+  - name_template: flashcatcloud/nightingale:latest
+    image_templates:
+      - flashcatcloud/nightingale:{{ .Version }}-amd64
+      - flashcatcloud/nightingale:{{ .Version }}-arm64v8
