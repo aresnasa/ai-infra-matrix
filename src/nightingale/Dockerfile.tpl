@@ -43,10 +43,10 @@ RUN set -eux; \
     # Install statik tool
     go install github.com/rakyll/statik@latest; \
     # Get latest fe release tag from GitHub API (with mirror support)
-    TAG=$(curl -sX GET ${GITHUB_MIRROR}https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+    TAG=$(curl -sX GET ${GITHUB_MIRROR}api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
     echo "Downloading n9e-fe version: ${TAG}"; \
     # Download front-end release
-    curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}https://github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
+    curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
     # Extract to pub directory
     tar zxf n9e-fe-${TAG}.tar.gz; \
     # Embed front-end files into Go binary using statik
