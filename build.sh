@@ -677,11 +677,12 @@ push_service() {
     fi
 }
 
-# Push all service images
+# Push all service images (including common/dependency images)
 # Args: $1 = registry, $2 = tag
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
+    local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push-all"
@@ -689,8 +690,11 @@ push_all_services() {
         return 1
     fi
     
+    # Ensure registry ends without trailing slash
+    registry="${registry%/}"
+    
     log_info "=========================================="
-    log_info "Pushing all AI-Infra services"
+    log_info "Pushing ALL images to registry"
     log_info "=========================================="
     log_info "Registry: $registry"
     log_info "Tag: $tag"
@@ -702,7 +706,49 @@ push_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Push all services
+    # Phase 1: Push common/third-party images
+    log_info "=== Phase 1: Pushing common/third-party images ==="
+    for image in "${COMMON_IMAGES[@]}"; do
+        total_count=$((total_count + 1))
+        
+        # Extract image name without tag for target naming
+        local image_name="${image%%:*}"
+        local image_tag="${image##*:}"
+        # Remove registry prefix if any (e.g., confluentinc/cp-kafka -> cp-kafka)
+        local short_name="${image_name##*/}"
+        local target_image="${registry}/${short_name}:${image_tag}"
+        
+        log_info "Processing: $image -> $target_image"
+        
+        # Check if source image exists locally
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "  Pulling source image..."
+            if ! pull_image_with_retry "$image" "$max_retries"; then
+                log_warn "  ✗ Failed to pull: $image"
+                failed_services+=("common:$image")
+                continue
+            fi
+        fi
+        
+        # Tag for registry
+        if ! docker tag "$image" "$target_image"; then
+            log_warn "  ✗ Failed to tag: $target_image"
+            failed_services+=("common:$image")
+            continue
+        fi
+        
+        # Push to registry
+        if push_image_with_retry "$target_image" "$max_retries"; then
+            log_info "  ✓ Pushed: $target_image"
+            success_count=$((success_count + 1))
+        else
+            failed_services+=("common:$image")
+        fi
+    done
+    echo
+    
+    # Phase 2: Push project services
+    log_info "=== Phase 2: Pushing project services ==="
     for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
         total_count=$((total_count + 1))
         
@@ -718,11 +764,11 @@ push_all_services() {
     log_info "Push completed: $success_count/$total_count successful"
     
     if [[ ${#failed_services[@]} -gt 0 ]]; then
-        log_warn "Failed services: ${failed_services[*]}"
+        log_warn "Failed: ${failed_services[*]}"
         return 1
     fi
     
-    log_info "🚀 All services pushed successfully!"
+    log_info "🚀 All images pushed successfully!"
     return 0
 }
 
@@ -1401,7 +1447,7 @@ print_help() {
     echo ""
     echo "Push Commands:"
     echo "  push <service> <registry> [tag]  Push single service to registry"
-    echo "  push-all <registry> [tag]        Push all services to registry"
+    echo "  push-all <registry> [tag]        Push all images (common + project services)"
     echo "  push-dep <registry> [tag]        Push dependency images to registry"
     echo ""
     echo "Clean Commands:"
