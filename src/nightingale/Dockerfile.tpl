@@ -7,6 +7,7 @@ FROM golang:${GOLANG_IMAGE_VERSION} AS builder
 
 ARG APT_MIRROR={{APT_MIRROR}}
 ARG GO_PROXY=https://goproxy.cn,direct
+ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -34,10 +35,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends git make bash c
 COPY third_party/nightingale/ .
 
 # Build
-# We assume vendor or go.mod is sufficient.
 ENV GOPROXY=${GO_PROXY}
+
+# Step 1: Download front-end release and embed using statik
+# This creates the front/statik package required by the build
+RUN set -eux; \
+    # Install statik tool
+    go install github.com/rakyll/statik@latest; \
+    # Get latest fe release tag from GitHub API (with mirror support)
+    TAG=$(curl -sX GET ${GITHUB_MIRROR}https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+    echo "Downloading n9e-fe version: ${TAG}"; \
+    # Download front-end release
+    curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}https://github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
+    # Extract to pub directory
+    tar zxf n9e-fe-${TAG}.tar.gz; \
+    # Embed front-end files into Go binary using statik
+    $(go env GOPATH)/bin/statik -src=./pub -dest=./front; \
+    # Cleanup
+    rm -rf n9e-fe-${TAG}.tar.gz
+
+# Step 2: Download Go dependencies
 RUN go mod download
-RUN go build -o n9e ./cmd/center/main.go
+
+# Step 3: Build the binary
+RUN go build -ldflags "-w -s" -o n9e ./cmd/center/main.go
 
 # Stage 2: Runtime
 FROM ubuntu:22.04
