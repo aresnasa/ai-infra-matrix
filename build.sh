@@ -468,7 +468,31 @@ pull_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Pull all services
+    # Pull common images first (using global COMMON_IMAGES array defined below)
+    log_info "=== Phase 1: Pulling common/third-party images ==="
+    for image in "${COMMON_IMAGES[@]}"; do
+        total_count=$((total_count + 1))
+        log_info "Pulling common image: $image"
+        
+        # Check if image already exists locally
+        if docker image inspect "$image" &>/dev/null; then
+            log_info "  ✓ Already exists: $image"
+            success_count=$((success_count + 1))
+            continue
+        fi
+        
+        if pull_image_with_retry "$image" "$max_retries"; then
+            log_info "  ✓ Pulled: $image"
+            success_count=$((success_count + 1))
+        else
+            log_warn "  ✗ Failed to pull: $image (may need manual pull)"
+            failed_services+=("common:$image")
+        fi
+    done
+    echo
+    
+    # Pull project services
+    log_info "=== Phase 2: Pulling project services ==="
     for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
         total_count=$((total_count + 1))
         local image_name="ai-infra-${service}:${tag}"
@@ -501,6 +525,70 @@ pull_all_services() {
     fi
     
     log_info "🎉 All services pulled successfully!"
+    return 0
+}
+
+# Common/third-party images used in docker-compose
+# These are public images from Docker Hub
+COMMON_IMAGES=(
+    "postgres:15-alpine"
+    "mysql:8.0"
+    "redis:7-alpine"
+    "confluentinc/cp-kafka:7.5.0"
+    "provectuslabs/kafka-ui:latest"
+    "osixia/openldap:stable"
+    "osixia/phpldapadmin:stable"
+    "redislabs/redisinsight:latest"
+    "minio/minio:latest"
+    "oceanbase/oceanbase-ce:4.3.5-lts"
+)
+
+# Pull only common/third-party images (no registry required)
+# Useful for preparing environment before starting services
+pull_common_images() {
+    local max_retries="${1:-$DEFAULT_MAX_RETRIES}"
+    
+    log_info "=========================================="
+    log_info "Pulling common/third-party images"
+    log_info "=========================================="
+    log_info "Images to pull: ${#COMMON_IMAGES[@]}"
+    log_info "Max retries: $max_retries"
+    echo
+    
+    local success_count=0
+    local total_count=0
+    local failed_images=()
+    
+    for image in "${COMMON_IMAGES[@]}"; do
+        total_count=$((total_count + 1))
+        log_info "[$total_count/${#COMMON_IMAGES[@]}] Pulling: $image"
+        
+        # Check if image already exists locally
+        if docker image inspect "$image" &>/dev/null; then
+            log_info "  ✓ Already exists: $image"
+            success_count=$((success_count + 1))
+            continue
+        fi
+        
+        if pull_image_with_retry "$image" "$max_retries"; then
+            log_info "  ✓ Pulled: $image"
+            success_count=$((success_count + 1))
+        else
+            log_warn "  ✗ Failed: $image"
+            failed_images+=("$image")
+        fi
+    done
+    
+    echo
+    log_info "=========================================="
+    log_info "Pull completed: $success_count/$total_count successful"
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        log_warn "Failed images: ${failed_images[*]}"
+        return 1
+    fi
+    
+    log_info "🎉 All common images pulled successfully!"
     return 0
 }
 
@@ -1307,7 +1395,8 @@ print_help() {
     echo ""
     echo "Pull Commands:"
     echo "  prefetch            Prefetch all base images from Dockerfiles"
-    echo "  pull-all <registry> [tag]   Pull all service images from registry"
+    echo "  pull-common         Pull common/third-party images (mysql, kafka, redis, etc.)"
+    echo "  pull-all <registry> [tag]   Pull all images (common + project services)"
     echo "  deps-pull <registry> [tag]  Pull dependency images from registry"
     echo ""
     echo "Push Commands:"
@@ -1384,6 +1473,9 @@ case "$1" in
         ;;
     prefetch)
         prefetch_base_images "$2"
+        ;;
+    pull-common)
+        pull_common_images
         ;;
     pull-all)
         if [[ -z "$2" ]]; then
