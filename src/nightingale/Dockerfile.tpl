@@ -39,13 +39,15 @@ ENV GOPROXY=${GO_PROXY}
 
 # Step 1: Download front-end release and embed using statik
 # This creates the front/statik package required by the build
+# Note: GitHub API must be accessed directly (mirrors don't support API)
+#       Only file downloads use the mirror
 RUN set -eux; \
     # Install statik tool
     go install github.com/rakyll/statik@latest; \
-    # Get latest fe release tag from GitHub API (with mirror support)
-    TAG=$(curl -sX GET ${GITHUB_MIRROR}api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+    # Get latest fe release tag from GitHub API (must access directly, not via mirror)
+    TAG=$(curl -sX GET https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
     echo "Downloading n9e-fe version: ${TAG}"; \
-    # Download front-end release
+    # Download front-end release (use mirror for file downloads)
     curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
     # Extract to pub directory
     tar zxf n9e-fe-${TAG}.tar.gz; \
