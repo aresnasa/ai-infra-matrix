@@ -198,15 +198,15 @@ render_template() {
     return 0
 }
 
-# Render all Dockerfile.tpl files in src/*/
+# Render all Dockerfile.tpl files in src/*/ and docker-compose.yml.tpl
 render_all_templates() {
     local force="${1:-false}"
     
     log_info "=========================================="
-    log_info "🔧 Rendering Dockerfile templates"
+    log_info "🔧 Rendering templates"
     log_info "=========================================="
     log_info "Source: .env / .env.example"
-    log_info "Pattern: src/*/Dockerfile.tpl"
+    log_info "Pattern: src/*/Dockerfile.tpl, docker-compose.yml.tpl"
     echo
     
     # Show key variables being used
@@ -219,11 +219,38 @@ render_all_templates() {
     log_info "  SLURM_VERSION=${SLURM_VERSION:-<empty>}"
     log_info "  SALTSTACK_VERSION=${SALTSTACK_VERSION:-<empty>}"
     log_info "  CATEGRAF_VERSION=${CATEGRAF_VERSION:-<empty>}"
+    log_info "  IMAGE_TAG=${IMAGE_TAG:-<empty>}"
     echo
     
     local success_count=0
     local fail_count=0
     local skip_count=0
+    
+    # Render docker-compose.yml.tpl if exists
+    local compose_tpl="${SCRIPT_DIR}/docker-compose.yml.tpl"
+    if [[ -f "$compose_tpl" ]]; then
+        local compose_output="${SCRIPT_DIR}/docker-compose.yml"
+        
+        # Check if output file exists and is newer than template
+        if [[ "$force" != "true" ]] && [[ -f "$compose_output" ]]; then
+            if [[ "$compose_output" -nt "$compose_tpl" ]] && [[ "$compose_output" -nt "$ENV_FILE" ]]; then
+                log_info "Skipping docker-compose.yml (up to date)"
+                skip_count=$((skip_count + 1))
+            else
+                if render_template "$compose_tpl" "$compose_output"; then
+                    success_count=$((success_count + 1))
+                else
+                    fail_count=$((fail_count + 1))
+                fi
+            fi
+        else
+            if render_template "$compose_tpl" "$compose_output"; then
+                success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+    fi
     
     # Find all Dockerfile.tpl files
     while IFS= read -r -d '' template_file; do
