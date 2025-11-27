@@ -1,5 +1,5 @@
 # 全局 ARG 声明（用于多个构建阶段）
-ARG NODE_IMAGE_VERSION=22.21-bookworm
+ARG NODE_IMAGE_VERSION=22-bookworm
 ARG UBUNTU_VERSION=22.04
 
 # Stage 1: 构建阶段 - 使用 Node.js Debian 镜像
