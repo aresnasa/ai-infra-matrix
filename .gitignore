@@ -85,3 +85,4 @@ docker-compose.yml.backup
 third_party/proxy/
 build.sh.old
 src/nginx/conf.d
+build.sh.backup
