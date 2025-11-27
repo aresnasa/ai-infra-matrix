@@ -911,8 +911,8 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 4: Build Categraf (Multi-Architecture Go Binary)
-# 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
+# Stage 4: Download Categraf (Pre-built Binary from GitHub Releases)
+# 直接下载预编译二进制，避免 Go 版本兼容问题
 # =============================================================================
 FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 
@@ -923,7 +923,7 @@ ARG BUILD_CATEGRAF=true
 ARG CATEGRAF_VERSION=v0.4.25
 ARG CATEGRAF_REPO=https://ghfast.top/github.com/flashcatcloud/categraf.git
 
-# 配置 Go 代理（中国镜像加速）
+# 配置 Go 代理（中国镜像加速）- 仅用于 fallback 源码构建
 ARG GO_PROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GO_PROXY}
 ENV GO111MODULE=on
@@ -945,14 +945,14 @@ RUN set -eux; \
     fi; \
     # 更新包列表
     apt-get update; \
-    # 安装构建依赖 (安装 golang)
-    apt-get install -y --no-install-recommends git make bash tar gzip sed coreutils golang ca-certificates && \
+    # 安装下载工具（不再需要 golang，直接下载预编译二进制）
+    apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
 
-# 复制通用构建脚本和应用特定脚本
+# 复制通用构建脚本和应用特定脚本（仅用于 fallback）
 COPY src/apphub/scripts/build-app.sh /scripts/build-app.sh
 COPY src/apphub/scripts/categraf/ /scripts/categraf/
 RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
@@ -960,12 +960,13 @@ RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 # 创建输出目录
 RUN mkdir -p /out
 
-# 执行构建（使用通用构建脚本）
+# 执行构建或下载（优先下载预编译二进制）
 ARG BUILD_CATEGRAF
 ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
-        # 检查是否有预下载的二进制包
+        # 检测架构
         ARCH=$(uname -m); \
         if [ "${ARCH}" = "x86_64" ]; then \
             ARCH_SUFFIX="amd64"; \
@@ -975,36 +976,37 @@ RUN set -eux; \
             ARCH_SUFFIX="${ARCH}"; \
         fi; \
         TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
+        # 优先检查本地预下载的包
         if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
             echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
             cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
         else \
-            # 配置代理（如果提供）
-            if [ -n "${GITHUB_PROXY:-}" ]; then \
-                echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
-                export ALL_PROXY="${GITHUB_PROXY}"; \
-                export HTTP_PROXY="${GITHUB_PROXY}"; \
-                export HTTPS_PROXY="${GITHUB_PROXY}"; \
-                export http_proxy="${GITHUB_PROXY}"; \
-                export https_proxy="${GITHUB_PROXY}"; \
-                # 配置 git 使用代理和 SSL
-                git config --global http.proxy "${GITHUB_PROXY}"; \
-                git config --global https.proxy "${GITHUB_PROXY}"; \
-                git config --global http.sslVerify false; \
-                git config --global http.version HTTP/1.1; \
-                echo "✓ Git proxy configured"; \
-            else \
-                echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
-            fi; \
-            echo "Starting Categraf build from source..."; \
-            CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-            CATEGRAF_REPO=${CATEGRAF_REPO} \
-            BUILD_DIR=/build \
-            OUTPUT_DIR=/out \
-            /scripts/build-app.sh categraf; \
+            # 直接从 GitHub releases 下载预编译二进制（推荐，避免 Go 版本兼容问题）
+            echo "📥 Downloading pre-built Categraf ${CATEGRAF_VERSION} for ${ARCH_SUFFIX}..."; \
+            DOWNLOAD_URL="${GITHUB_MIRROR}github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
+            echo "Download URL: ${DOWNLOAD_URL}"; \
+            curl -fsSL -o "/out/${TARBALL_NAME}" "${DOWNLOAD_URL}" || { \
+                echo "❌ Failed to download Categraf binary"; \
+                echo "⚠️  Falling back to source build (requires Go 1.24+)..."; \
+                # Fallback: 从源码构建（可能因 Go 版本问题失败）
+                if [ -n "${GITHUB_PROXY:-}" ]; then \
+                    echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+                    export ALL_PROXY="${GITHUB_PROXY}"; \
+                    export HTTP_PROXY="${GITHUB_PROXY}"; \
+                    export HTTPS_PROXY="${GITHUB_PROXY}"; \
+                    git config --global http.proxy "${GITHUB_PROXY}"; \
+                    git config --global https.proxy "${GITHUB_PROXY}"; \
+                fi; \
+                CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+                CATEGRAF_REPO=${CATEGRAF_REPO} \
+                BUILD_DIR=/build \
+                OUTPUT_DIR=/out \
+                /scripts/build-app.sh categraf; \
+            }; \
+            echo "✓ Categraf ${CATEGRAF_VERSION} downloaded successfully"; \
         fi; \
     else \
-        echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
+        echo "⏭️  Skipping Categraf (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
     fi
 
 # =============================================================================

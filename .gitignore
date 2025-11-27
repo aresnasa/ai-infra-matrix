@@ -84,3 +84,4 @@ docker-compose.yml.v0.3.6
 docker-compose.yml.backup
 third_party/proxy/
 build.sh.old
+src/nginx/conf.d

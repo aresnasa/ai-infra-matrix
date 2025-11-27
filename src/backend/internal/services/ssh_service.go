@@ -37,7 +37,7 @@ type SSHConfig struct {
 
 // AppHubConfig AppHub包仓库配置
 type AppHubConfig struct {
-	BaseURL  string // AppHub的基础URL，如 http://192.168.0.200:8090
+	BaseURL  string // AppHub的基础URL，如 http://192.168.0.200:28080
 	Username string // 用户名（可选）
 	Password string // 密码（可选）
 }

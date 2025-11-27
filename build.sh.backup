@@ -24,166 +24,20 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # 1. Configuration & Environment
 # ==============================================================================
 
-# 检测外部主机地址 (智能检测真实网络出口IP)
-# 支持 Linux (ip addr) 和 macOS (ifconfig)
-# 自动过滤 loopback、docker、k8s、虚拟网桥等非物理接口
-detect_external_host() {
-    local detected_ip=""
-    
-    # 方法1：使用默认路由检测出口IP (最准确的方法)
-    # Linux: ip route get 1.1.1.1
-    # 这个方法直接获取访问外网时使用的源IP
-    if command -v ip &> /dev/null; then
-        detected_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -n1)
-        # 备用方法：ip route get 1
-        if [[ -z "$detected_ip" ]]; then
-            detected_ip=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n1)
-        fi
-    fi
-    
-    # 方法2：使用 ip addr 枚举接口 (Linux 备用)
-    if [[ -z "$detected_ip" ]] && command -v ip &> /dev/null; then
-        detected_ip=$(ip -4 addr show scope global 2>/dev/null | \
-            grep -v -E "(docker|veth|br-|cni|flannel|calico|weave|kube|virbr|vboxnet|vmnet|tun|tap|lo:)" | \
-            grep "inet " | \
-            awk '{print $2}' | cut -d'/' -f1 | \
-            grep -v -E "^(127\.|10\.96\.|10\.244\.|172\.17\.|172\.18\.|172\.19\.|192\.168\.49\.)" | \
-            head -n1)
-    fi
-    
-    # 方法3：使用 ifconfig (macOS/BSD)
-    if [[ -z "$detected_ip" ]] && command -v ifconfig &> /dev/null; then
-        # macOS: 优先检测 en0 (通常是主网卡)
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            detected_ip=$(ifconfig en0 2>/dev/null | grep "inet " | awk '{print $2}')
-            # 如果 en0 没有IP，尝试其他接口
-            if [[ -z "$detected_ip" ]]; then
-                detected_ip=$(ifconfig | awk '
-                    /^[a-z0-9]+:/ { iface=$1; sub(/:/, "", iface) }
-                    /inet / && !/127\.0\.0\.1/ {
-                        # 排除虚拟接口
-                        if (iface !~ /^(lo|docker|veth|br|vmnet|vboxnet|tun|tap|virbr|utun|bridge|awdl|llw)/)
-                            print $2
-                    }' | head -n1)
-            fi
-        else
-            # 其他 BSD 系统
-            detected_ip=$(ifconfig | awk '
-                /^[a-z0-9]+:/ { iface=$1; sub(/:/, "", iface) }
-                /inet / && !/127\.0\.0\.1/ {
-                    if (iface !~ /^(lo|docker|veth|br|vmnet|vboxnet|tun|tap|virbr)/)
-                        print $2
-                }' | \
-                grep -v -E "^(10\.96\.|10\.244\.|172\.17\.|172\.18\.|172\.19\.)" | \
-                head -n1)
-        fi
-    fi
-    
-    # 方法4：从现有 .env 读取（如果已配置且不是自引用）
-    if [[ -z "$detected_ip" ]] && [[ -f "$ENV_FILE" ]]; then
-        local env_ip=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
-        # 忽略自引用、空值和 localhost
-        if [[ -n "$env_ip" ]] && [[ ! "$env_ip" =~ \$\{ ]] && [[ "$env_ip" != "localhost" ]]; then
-            detected_ip="$env_ip"
-        fi
-    fi
-    
-    # 方法5：hostname -I (Linux 最后备用)
-    if [[ -z "$detected_ip" ]] && command -v hostname &> /dev/null; then
-        detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-    fi
-    
-    # 返回检测到的IP或默认值
-    echo "${detected_ip:-localhost}"
-}
-
-# 更新 .env 文件中的变量
-# 用法: update_env_variable "VAR_NAME" "var_value"
-update_env_variable() {
-    local var_name="$1"
-    local var_value="$2"
-    local env_file="$ENV_FILE"
-    
-    if [[ ! -f "$env_file" ]]; then
-        return 1
-    fi
-    
-    # 检查变量是否已存在
-    if grep -q "^${var_name}=" "$env_file"; then
-        # 更新现有变量 (macOS 兼容)
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|^${var_name}=.*|${var_name}=${var_value}|" "$env_file"
-        else
-            sed -i "s|^${var_name}=.*|${var_name}=${var_value}|" "$env_file"
-        fi
+if [ ! -f "$ENV_FILE" ]; then
+    log_warn ".env file not found. Creating from .env.example..."
+    if [ -f "$ENV_EXAMPLE" ]; then
+        cp "$ENV_EXAMPLE" "$ENV_FILE"
     else
-        # 添加新变量
-        echo "${var_name}=${var_value}" >> "$env_file"
+        log_error ".env.example not found! Cannot initialize configuration."
+        exit 1
     fi
-}
-
-# 初始化或同步 .env 文件
-# 自动检测 EXTERNAL_HOST 等关键变量
-init_env_file() {
-    local force="${1:-false}"
-    
-    # 检测外部地址
-    local detected_host=$(detect_external_host)
-    local detected_port="${EXTERNAL_PORT:-8080}"
-    local detected_scheme="${EXTERNAL_SCHEME:-http}"
-    
-    if [[ ! -f "$ENV_FILE" ]]; then
-        log_info "Creating .env from .env.example..."
-        if [[ -f "$ENV_EXAMPLE" ]]; then
-            cp "$ENV_EXAMPLE" "$ENV_FILE"
-        else
-            log_error ".env.example not found!"
-            return 1
-        fi
-        force="true"
-    fi
-    
-    # 检查是否需要更新关键变量
-    local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
-    
-    # 如果是自引用或空值，需要更新
-    if [[ "$force" == "true" ]] || [[ "$current_host" =~ \$\{ ]] || [[ -z "$current_host" ]]; then
-        log_info "Initializing environment variables..."
-        log_info "  EXTERNAL_HOST=$detected_host"
-        log_info "  EXTERNAL_PORT=$detected_port"
-        log_info "  EXTERNAL_SCHEME=$detected_scheme"
-        
-        update_env_variable "EXTERNAL_HOST" "$detected_host"
-        update_env_variable "DOMAIN" "$detected_host"
-        update_env_variable "EXTERNAL_PORT" "$detected_port"
-        update_env_variable "EXTERNAL_SCHEME" "$detected_scheme"
-        
-        log_info "✓ Environment variables initialized"
-    fi
-}
-
-# 初始化环境
-init_env_file
+fi
 
 # Load .env variables
 set -a
 source "$ENV_FILE"
 set +a
-
-# Initialize COMMON_IMAGES array after loading .env
-# This ensures version variables are available
-COMMON_IMAGES=(
-    "postgres:${POSTGRES_VERSION:-15-alpine}"
-    "mysql:${MYSQL_VERSION:-8.0}"
-    "redis:${REDIS_VERSION:-7-alpine}"
-    "confluentinc/cp-kafka:${KAFKA_VERSION:-7.5.0}"
-    "provectuslabs/kafka-ui:${KAFKA_UI_VERSION:-latest}"
-    "osixia/openldap:${OPENLDAP_VERSION:-stable}"
-    "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
-    "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
-    "minio/minio:${MINIO_VERSION:-latest}"
-    "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
-)
 
 # Ensure SSH Keys
 SSH_KEY_DIR="$SCRIPT_DIR/ssh-key"
@@ -210,13 +64,24 @@ detect_compose_command() {
     fi
 }
 
+detect_external_host() {
+    # Simplified host detection
+    local ip=""
+    if command -v ip >/dev/null 2>&1; then
+        ip=$(ip route get 1 | awk '{print $7;exit}')
+    elif command -v ifconfig >/dev/null 2>&1; then
+        ip=$(ifconfig | grep -E "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
+    fi
+    echo "${ip:-localhost}"
+}
+
 wait_for_apphub_ready() {
     local timeout="${1:-300}"
     local container_name="ai-infra-apphub"
     local check_interval=5
     local elapsed=0
     
-    local apphub_port="${APPHUB_PORT:-28080}"
+    local apphub_port="${APPHUB_PORT:-53434}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
     
@@ -252,93 +117,40 @@ wait_for_apphub_ready() {
 
 # Define variables that need to be rendered in templates
 # These are read from .env and used to replace {{VARIABLE}} placeholders
-# 
-# IMPORTANT: Variables are divided into two categories:
-# 1. BUILD-TIME variables (Dockerfile.tpl) - Used during docker build
-# 2. RUNTIME variables (docker-compose.yml.tpl, config templates) - Used at container startup
-#
-# Build-time variables are baked into the image and cannot be changed at runtime
-# Runtime variables can be overridden via environment when starting containers
 TEMPLATE_VARIABLES=(
-    # ===========================================
-    # Mirror configurations (Build-time)
-    # Used in Dockerfile.tpl for package downloads during build
-    # ===========================================
-    "GITHUB_MIRROR"      # GitHub download accelerator (e.g., https://ghfast.top/)
-    "APT_MIRROR"         # APT mirror for Debian/Ubuntu (e.g., mirrors.aliyun.com)
-    "YUM_MIRROR"         # YUM mirror for Rocky/CentOS (e.g., mirrors.aliyun.com)
-    "ALPINE_MIRROR"      # Alpine mirror (e.g., mirrors.aliyun.com)
-    "GO_PROXY"           # Go module proxy (e.g., https://goproxy.cn,direct)
-    "PYPI_INDEX_URL"     # PyPI mirror (e.g., https://mirrors.aliyun.com/pypi/simple/)
-    "NPM_REGISTRY"       # npm registry mirror (e.g., https://registry.npmmirror.com)
-    
-    # ===========================================
-    # Base image versions (Build-time)
-    # Used in Dockerfile.tpl FROM statements
-    # ===========================================
-    "UBUNTU_VERSION"              # Ubuntu base image (e.g., 22.04)
-    "ROCKYLINUX_VERSION"          # Rocky Linux version (e.g., 9)
-    "ALPINE_VERSION"              # Alpine version (e.g., 3.22)
-    "NGINX_VERSION"               # Nginx version (e.g., stable-alpine-perl)
-    "NGINX_ALPINE_VERSION"        # Nginx Alpine version (e.g., 1.27-alpine)
-    "PYTHON_VERSION"              # Python version (e.g., 3.14)
-    "PYTHON_ALPINE_VERSION"       # Python Alpine version (e.g., 3.14-alpine)
-    "NODE_VERSION"                # Node.js major version (e.g., 22)
-    "NODE_ALPINE_VERSION"         # Node.js Alpine version (e.g., 22-alpine)
-    "NODE_JS_VERSION"             # Node.js full version for prebuilt binaries (e.g., 22.11.0)
-    "GOLANG_VERSION"              # Go version (e.g., 1.25)
-    "GOLANG_IMAGE_VERSION"        # Go image version (e.g., 1.25-bookworm)
-    "JUPYTER_BASE_NOTEBOOK_VERSION"  # Jupyter base notebook version (e.g., latest)
-    
-    # ===========================================
-    # Component/Application versions (Build-time)
-    # Used in Dockerfile.tpl for building specific components
-    # ===========================================
-    "SLURM_VERSION"       # SLURM version (e.g., 24.11.5)
-    "SALTSTACK_VERSION"   # SaltStack version (e.g., 3007.8)
-    "CATEGRAF_VERSION"    # Categraf version (e.g., 0.4.6)
-    "SINGULARITY_VERSION" # Singularity version
-    "GITEA_VERSION"       # Gitea version (e.g., 1.25.1)
-    "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)
-    "PIP_VERSION"         # pip version (e.g., 24.2)
-    
-    # ===========================================
-    # Project settings (Build-time & Runtime)
-    # ===========================================
-    "IMAGE_TAG"           # Docker image tag (e.g., v0.3.8)
-    "TZ"                  # Timezone (e.g., Asia/Shanghai)
-    
-    # ===========================================
-    # Nginx configuration variables (Runtime)
-    # Used in src/nginx/templates/*.conf.tpl
-    # ===========================================
-    "EXTERNAL_HOST"       # External host IP/domain
-    "EXTERNAL_SCHEME"     # http or https
-    "FRONTEND_HOST"       # Frontend service host (default: frontend)
-    "FRONTEND_PORT"       # Frontend service port (default: 3000)
-    "BACKEND_HOST"        # Backend service host (default: backend)
-    "BACKEND_PORT"        # Backend service port (default: 8082)
-    "JUPYTERHUB_HOST"     # JupyterHub service host (default: jupyterhub)
-    "JUPYTERHUB_PORT"     # JupyterHub service port (default: 8000)
-    "NIGHTINGALE_HOST"    # Nightingale service host (default: nightingale)
-    "NIGHTINGALE_PORT"    # Nightingale service port (default: 17000)
-    
-    # ===========================================
-    # Third-party image versions (for docker-compose.yml.tpl)
-    # ===========================================
-    "POSTGRES_VERSION"    # PostgreSQL version (e.g., 15-alpine)
-    "MYSQL_VERSION"       # MySQL version (e.g., 8.0)
-    "REDIS_VERSION"       # Redis version (e.g., 7-alpine)
-    "KAFKA_VERSION"       # Kafka version (e.g., 7.5.0)
-    "KAFKA_UI_VERSION"    # Kafka UI version (e.g., latest)
-    "OPENLDAP_VERSION"    # OpenLDAP version (e.g., stable)
-    "PHPLDAPADMIN_VERSION" # phpLDAPadmin version (e.g., stable)
-    "MINIO_VERSION"       # MinIO version (e.g., latest)
-    "OCEANBASE_VERSION"   # OceanBase version (e.g., 4.3.5-lts)
-    "PROMETHEUS_VERSION"  # Prometheus version (e.g., latest)
-    "GRAFANA_VERSION"     # Grafana version (e.g., latest)
-    "ALERTMANAGER_VERSION" # AlertManager version (e.g., latest)
-    "REDISINSIGHT_VERSION" # RedisInsight version (e.g., latest)
+    # Mirror configurations
+    "GITHUB_MIRROR"
+    "APT_MIRROR"
+    "YUM_MIRROR"
+    "ALPINE_MIRROR"
+    "GO_PROXY"
+    "PYPI_INDEX_URL"
+    "NPM_REGISTRY"
+    # Base image versions
+    "UBUNTU_VERSION"
+    "ROCKYLINUX_VERSION"
+    "ALPINE_VERSION"
+    "NGINX_VERSION"
+    "NGINX_ALPINE_VERSION"
+    "PYTHON_VERSION"
+    "PYTHON_ALPINE_VERSION"
+    "NODE_VERSION"
+    "NODE_ALPINE_VERSION"
+    "NODE_JS_VERSION"
+    "GOLANG_VERSION"
+    "GOLANG_IMAGE_VERSION"
+    "JUPYTER_BASE_NOTEBOOK_VERSION"
+    # Component versions
+    "SLURM_VERSION"
+    "SALTSTACK_VERSION"
+    "CATEGRAF_VERSION"
+    "SINGULARITY_VERSION"
+    "GITEA_VERSION"
+    "JUPYTERHUB_VERSION"
+    "PIP_VERSION"
+    # Project settings
+    "IMAGE_TAG"
+    "TZ"
 )
 
 # Render a single template file
@@ -460,42 +272,6 @@ render_all_templates() {
             fail_count=$((fail_count + 1))
         fi
     done < <(find "$SRC_DIR" -name "Dockerfile.tpl" -print0 2>/dev/null)
-    
-    # ===========================================
-    # Render Nginx configuration templates
-    # ===========================================
-    local nginx_template_dir="${SCRIPT_DIR}/src/nginx/templates"
-    local nginx_output_dir="${SCRIPT_DIR}/src/nginx"
-    
-    if [[ -d "$nginx_template_dir" ]]; then
-        log_info "Rendering Nginx configuration templates..."
-        
-        # Render main server config
-        local main_conf_tpl="$nginx_template_dir/conf.d/server-main.conf.tpl"
-        if [[ -f "$main_conf_tpl" ]]; then
-            local main_conf_out="$nginx_output_dir/conf.d/server-main.conf"
-            mkdir -p "$(dirname "$main_conf_out")"
-            if render_template "$main_conf_tpl" "$main_conf_out"; then
-                success_count=$((success_count + 1))
-            else
-                fail_count=$((fail_count + 1))
-            fi
-        fi
-        
-        # Render includes configs
-        local includes_dir="$nginx_template_dir/conf.d/includes"
-        if [[ -d "$includes_dir" ]]; then
-            mkdir -p "$nginx_output_dir/conf.d/includes"
-            while IFS= read -r -d '' tpl_file; do
-                local out_file="$nginx_output_dir/conf.d/includes/$(basename "${tpl_file%.tpl}")"
-                if render_template "$tpl_file" "$out_file"; then
-                    success_count=$((success_count + 1))
-                else
-                    fail_count=$((fail_count + 1))
-                fi
-            done < <(find "$includes_dir" -name "*.tpl" -print0 2>/dev/null)
-        fi
-    fi
     
     echo
     log_info "=========================================="
@@ -665,11 +441,10 @@ prefetch_base_images() {
     return 0
 }
 
-# Pull all project images from registry
-# Smart mode:
-#   - No registry: Pull only common images from Docker Hub (internet mode)
-#   - With registry: Pull all images from private registry (intranet mode)
-# Args: $1 = registry (optional), $2 = tag
+# Pull all project images from registry or Docker Hub
+# Args: $1 = registry (optional), $2 = tag (optional)
+# If registry is empty, pulls from Docker Hub (public images only)
+# If registry is provided, pulls from private registry (all images)
 pull_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
@@ -683,11 +458,10 @@ pull_all_services() {
     
     if [[ -z "$registry" ]]; then
         # ==========================================
-        # Mode 1: Pull from Docker Hub (internet mode)
-        # Only pulls public common/third-party images
+        # Mode 1: Pull from Docker Hub (public images only)
         # ==========================================
         log_info "=========================================="
-        log_info "Pulling images from Docker Hub (Internet Mode)"
+        log_info "Pulling ALL images from Docker Hub"
         log_info "=========================================="
         log_info "Mode: Public (Docker Hub)"
         log_info "Max retries: $max_retries"
@@ -697,7 +471,7 @@ pull_all_services() {
         log_info "=== Phase 1: Common/third-party images ==="
         for image in "${COMMON_IMAGES[@]}"; do
             total_count=$((total_count + 1))
-            log_info "[$total_count/${#COMMON_IMAGES[@]}] $image"
+            log_info "[$total_count] $image"
             
             if docker image inspect "$image" &>/dev/null; then
                 log_info "  ✓ Already exists"
@@ -716,19 +490,17 @@ pull_all_services() {
         echo
         
         log_info "=== Phase 2: Project services (skipped - need registry) ==="
-        log_info "ℹ️  Project images require registry to pull"
-        log_info "💡 Usage: $0 pull-all <registry> [tag]"
+        log_info "Project services require a registry parameter"
+        log_info "Usage: $0 pull-all <registry> [tag]"
         echo
-        
     else
         # ==========================================
-        # Mode 2: Pull from private registry (intranet mode)
-        # Pulls all images: common + dependency + project
+        # Mode 2: Pull from private registry (all images)
         # ==========================================
         registry="${registry%/}"  # Remove trailing slash
         
         log_info "=========================================="
-        log_info "Pulling images from Private Registry (Intranet Mode)"
+        log_info "Pulling ALL images from private registry"
         log_info "=========================================="
         log_info "Mode: Private Registry"
         log_info "Registry: $registry"
@@ -758,7 +530,7 @@ pull_all_services() {
             
             # Try to pull from private registry
             if pull_image_with_retry "$remote_image" "$max_retries"; then
-                # Tag as original image name for docker-compose compatibility
+                # Tag as original image name for compatibility
                 if docker tag "$remote_image" "$image"; then
                     log_info "  ✓ Pulled and tagged as $image"
                     success_count=$((success_count + 1))
@@ -793,7 +565,7 @@ pull_all_services() {
             fi
             
             if pull_image_with_retry "$remote_image" "$max_retries"; then
-                # Tag as original image name for docker-compose compatibility
+                # Tag as original image name
                 if docker tag "$remote_image" "$source_image"; then
                     log_info "  ✓ Pulled and tagged"
                     success_count=$((success_count + 1))
@@ -827,7 +599,7 @@ pull_all_services() {
                 fi
             else
                 log_warn "  ✗ Failed"
-                failed_services+=("$service")
+                failed_services+=("service:$service")
             fi
         done
         echo
@@ -838,7 +610,6 @@ pull_all_services() {
     
     if [[ ${#failed_services[@]} -gt 0 ]]; then
         log_warn "Failed: ${failed_services[*]}"
-        log_info "Check failure log: $FAILURE_LOG"
         return 1
     fi
     
@@ -846,14 +617,42 @@ pull_all_services() {
     return 0
 }
 
-# Pull only common/third-party images (no registry required)
-# Useful for preparing environment before starting services
+# Common/third-party images used in docker-compose
+# These are public images from Docker Hub
+COMMON_IMAGES=(
+    "postgres:15-alpine"
+    "mysql:8.0"
+    "redis:7-alpine"
+    "confluentinc/cp-kafka:7.5.0"
+    "provectuslabs/kafka-ui:latest"
+    "osixia/openldap:stable"
+    "osixia/phpldapadmin:stable"
+    "redislabs/redisinsight:latest"
+    "minio/minio:latest"
+    "oceanbase/oceanbase-ce:4.3.5-lts"
+)
+
+# Pull only common/third-party images
+# Args: $1 = registry (optional), $2 = max_retries (optional)
+# If registry is empty, pulls from Docker Hub
+# If registry is provided, pulls from private registry
 pull_common_images() {
-    local max_retries="${1:-$DEFAULT_MAX_RETRIES}"
+    local registry="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
     
-    log_info "=========================================="
-    log_info "Pulling common/third-party images"
-    log_info "=========================================="
+    # Remove trailing slash from registry
+    registry="${registry%/}"
+    
+    if [[ -z "$registry" ]]; then
+        log_info "=========================================="
+        log_info "Pulling common images from Docker Hub"
+        log_info "=========================================="
+    else
+        log_info "=========================================="
+        log_info "Pulling common images from private registry"
+        log_info "=========================================="
+        log_info "Registry: $registry"
+    fi
     log_info "Images to pull: ${#COMMON_IMAGES[@]}"
     log_info "Max retries: $max_retries"
     echo
@@ -864,20 +663,43 @@ pull_common_images() {
     
     for image in "${COMMON_IMAGES[@]}"; do
         total_count=$((total_count + 1))
-        log_info "[$total_count/${#COMMON_IMAGES[@]}] Pulling: $image"
         
-        # Check if image already exists locally
+        # Extract short name for private registry
+        local image_name="${image%%:*}"
+        local image_tag="${image##*:}"
+        local short_name="${image_name##*/}"
+        
+        if [[ -z "$registry" ]]; then
+            # Pull from Docker Hub
+            local pull_image="$image"
+            log_info "[$total_count/${#COMMON_IMAGES[@]}] $pull_image"
+        else
+            # Pull from private registry
+            local pull_image="${registry}/${short_name}:${image_tag}"
+            log_info "[$total_count/${#COMMON_IMAGES[@]}] $pull_image -> $image"
+        fi
+        
+        # Check if original image already exists locally
         if docker image inspect "$image" &>/dev/null; then
-            log_info "  ✓ Already exists: $image"
+            log_info "  ✓ Already exists locally"
             success_count=$((success_count + 1))
             continue
         fi
         
-        if pull_image_with_retry "$image" "$max_retries"; then
-            log_info "  ✓ Pulled: $image"
+        if pull_image_with_retry "$pull_image" "$max_retries"; then
+            if [[ -n "$registry" ]]; then
+                # Tag as original image name for compatibility
+                if docker tag "$pull_image" "$image"; then
+                    log_info "  ✓ Pulled and tagged as $image"
+                else
+                    log_info "  ✓ Pulled (tag failed)"
+                fi
+            else
+                log_info "  ✓ Pulled"
+            fi
             success_count=$((success_count + 1))
         else
-            log_warn "  ✗ Failed: $image"
+            log_warn "  ✗ Failed"
             failed_images+=("$image")
         fi
     done
@@ -981,11 +803,11 @@ push_service() {
 }
 
 # Push all service images (including common/dependency images)
-# This function pushes images in 3 phases for complete offline deployment:
-#   Phase 1: Common images (original tags) - for general use
-#   Phase 2: Dependency images (project tag) - for version-controlled deployment
-#   Phase 3: Project services (project tag) - the main application images
 # Args: $1 = registry, $2 = tag
+# This is the COMPLETE push - includes:
+#   Phase 1: Common/third-party images (from COMMON_IMAGES)
+#   Phase 2: Dependency images (from get_dependency_mappings, with custom tag)
+#   Phase 3: Project services (foundation + dependent services)
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
@@ -1001,7 +823,7 @@ push_all_services() {
     registry="${registry%/}"
     
     log_info "=========================================="
-    log_info "Pushing ALL images to registry"
+    log_info "Pushing ALL images to registry (FULL SET)"
     log_info "=========================================="
     log_info "Registry: $registry"
     log_info "Tag: $tag"
@@ -1014,9 +836,9 @@ push_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Phase 1: Push common/third-party images with original tags
+    # Phase 1: Push common/third-party images (preserve original tags)
     log_info "=== Phase 1: Common/third-party images (original tags) ==="
-    log_info "These images keep their original tags for general compatibility"
+    log_info "These images keep their original version tags"
     echo
     for image in "${COMMON_IMAGES[@]}"; do
         total_count=$((total_count + 1))
@@ -1049,7 +871,7 @@ push_all_services() {
         
         # Push to registry
         if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
+            log_info "  ✓ Pushed: $target_image"
             success_count=$((success_count + 1))
         else
             failed_services+=("common:$image")
@@ -1058,8 +880,8 @@ push_all_services() {
     echo
     
     # Phase 2: Push dependency images with project tag
-    log_info "=== Phase 2: Dependency images (tag: $tag) ==="
-    log_info "These images are tagged with project version for version-controlled deployment"
+    log_info "=== Phase 2: Dependency images (with project tag: $tag) ==="
+    log_info "These images are tagged with project version for consistency"
     echo
     local dependencies=($(get_dependency_mappings))
     for mapping in "${dependencies[@]}"; do
@@ -1090,7 +912,7 @@ push_all_services() {
         
         # Push to registry
         if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
+            log_info "  ✓ Pushed: $target_image"
             success_count=$((success_count + 1))
         else
             failed_services+=("dep:$short_name")
@@ -1100,26 +922,27 @@ push_all_services() {
     
     # Phase 3: Push project services
     log_info "=== Phase 3: Project services (tag: $tag) ==="
-    log_info "Main application images built from src/*"
     echo
     for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
         total_count=$((total_count + 1))
         
-        if push_service "$service" "$tag" "$registry" "$max_retries"; then
-            log_info "  ✓ $service pushed"
+        log_info "[$total_count] Pushing service: $service"
+        if push_service "$service" "$tag" "$registry"; then
             success_count=$((success_count + 1))
         else
-            failed_services+=("$service")
+            failed_services+=("service:$service")
         fi
+        echo
     done
-    echo
     
     log_info "=========================================="
     log_info "Push completed: $success_count/$total_count successful"
+    log_info "  - Common images: ${#COMMON_IMAGES[@]}"
+    log_info "  - Dependency images: ${#dependencies[@]}"
+    log_info "  - Project services: $((${#FOUNDATION_SERVICES[@]} + ${#DEPENDENT_SERVICES[@]}))"
     
     if [[ ${#failed_services[@]} -gt 0 ]]; then
         log_warn "Failed: ${failed_services[*]}"
-        log_info "Check failure log: $FAILURE_LOG"
         return 1
     fi
     
@@ -1514,7 +1337,7 @@ build_all() {
     log_info "=== Phase 4: Building Dependent Services ==="
     
     # Determine AppHub URL for build args
-    local apphub_port="${APPHUB_PORT:-28080}"
+    local apphub_port="${APPHUB_PORT:-53434}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
     
@@ -1781,10 +1604,6 @@ clean_all() {
 print_help() {
     echo "Usage: $0 [command] [options]"
     echo ""
-    echo "Environment Commands:"
-    echo "  init-env [host]     Initialize/sync .env file (auto-detect EXTERNAL_HOST)"
-    echo "  init-env --force    Force re-initialize all environment variables"
-    echo ""
     echo "Build Commands:"
     echo "  build-all, all      Build all components in the correct order (AppHub first)"
     echo "  build-all --force   Force rebuild all (re-render templates, no Docker cache)"
@@ -1798,17 +1617,16 @@ print_help() {
     echo "  start-all           Start all services using docker-compose"
     echo "  stop-all            Stop all services"
     echo ""
-    echo "Pull Commands (Smart Mode):"
-    echo "  prefetch            Prefetch all base images from Dockerfiles"
-    echo "  pull-common         Pull common/third-party images (mysql, kafka, redis, etc.)"
-    echo "  pull-all                        Internet mode: pull common images from Docker Hub"
-    echo "  pull-all <registry> [tag]       Intranet mode: pull all images from private registry"
-    echo "  deps-pull <registry> [tag]      Pull dependency images from registry"
+    echo "Pull Commands:"
+    echo "  prefetch                         Prefetch all base images from Dockerfiles"
+    echo "  pull-common [registry]           Pull common images (from Docker Hub or registry)"
+    echo "  pull-all [registry] [tag]        Pull ALL images (smart: Docker Hub or registry)"
+    echo "  deps-pull <registry> [tag]       Pull dependency images from registry"
     echo ""
     echo "Push Commands:"
     echo "  push <service> <registry> [tag]  Push single service to registry"
-    echo "  push-all <registry> [tag]        Push all images (3 phases: common + deps + project)"
-    echo "  push-dep <registry> [tag]        Push dependency images to registry"
+    echo "  push-all <registry> [tag]        Push ALL images (common + deps + services)"
+    echo "  push-dep <registry> [tag]        Push dependency images only"
     echo ""
     echo "Clean Commands:"
     echo "  clean-images [tag]  Remove ai-infra Docker images (optional: specific tag)"
@@ -1816,49 +1634,28 @@ print_help() {
     echo "  clean-all [--force] Remove all images, volumes and stop containers"
     echo ""
     echo "Template Variables (from .env):"
-    echo "  === Mirror Configuration (Build-time) ==="
     echo "  GITHUB_MIRROR       GitHub mirror URL prefix (e.g., https://ghfast.top/)"
     echo "  APT_MIRROR          APT mirror for Ubuntu/Debian (e.g., mirrors.aliyun.com)"
     echo "  YUM_MIRROR          YUM mirror for Rocky/CentOS"
     echo "  ALPINE_MIRROR       Alpine mirror"
-    echo "  GO_PROXY            Go module proxy"
-    echo "  PYPI_INDEX_URL      PyPI mirror"
-    echo "  NPM_REGISTRY        npm registry mirror"
-    echo ""
-    echo "  === Base Image Versions ==="
     echo "  UBUNTU_VERSION      Ubuntu base image version"
-    echo "  ROCKYLINUX_VERSION  Rocky Linux version"
-    echo "  GOLANG_VERSION      Go version"
-    echo ""
-    echo "  === Component Versions ==="
     echo "  SLURM_VERSION       SLURM version to build"
     echo "  SALTSTACK_VERSION   SaltStack version"
     echo "  CATEGRAF_VERSION    Categraf version"
-    echo "  GITEA_VERSION       Gitea version"
     echo ""
     echo "Examples:"
-    echo "  # Environment setup"
-    echo "  $0 init-env                        # Auto-detect and initialize .env"
-    echo "  $0 init-env 192.168.0.100          # Set specific EXTERNAL_HOST"
-    echo "  $0 init-env --force                # Force re-initialize"
-    echo ""
-    echo "  # Template rendering"
     echo "  $0 render                          # Render templates from .env"
     echo "  $0 render --force                  # Force re-render all templates"
-    echo ""
-    echo "  # Building"
-    echo "  $0 build-all                       # Build all services"
-    echo "  $0 backend                         # Build single service"
-    echo ""
-    echo "  # Internet mode (Docker Hub)"
-    echo "  $0 prefetch                        # Prefetch base images"
+    echo "  $0 build-all"
+    echo "  $0 start-all"
+    echo "  $0 backend"
+    echo "  $0 prefetch"
+    echo "  $0 pull-common                     # Pull common images from Docker Hub"
+    echo "  $0 pull-common harbor.example.com/ai-infra  # Pull common images from registry"
     echo "  $0 pull-all                        # Pull common images from Docker Hub"
-    echo ""
-    echo "  # Intranet mode (Private Registry)"
-    echo "  $0 push-all harbor.example.com/ai-infra v0.3.8    # Push to registry"
-    echo "  $0 pull-all harbor.example.com/ai-infra v0.3.8    # Pull from registry"
-    echo ""
-    echo "  # Cleanup"
+    echo "  $0 pull-all harbor.example.com/ai-infra v0.3.8  # Pull ALL from registry"
+    echo "  $0 push-all harbor.example.com/ai-infra v0.3.8"
+    echo "  $0 push-dep harbor.example.com/ai-infra v0.3.8"
     echo "  $0 clean-all --force"
 }
 
@@ -1872,25 +1669,6 @@ if [ $# -eq 0 ]; then
 fi
 
 case "$1" in
-    init-env)
-        # 初始化或同步 .env 文件
-        if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
-            log_info "Force re-initializing .env..."
-            init_env_file "true"
-        elif [[ -n "$2" ]]; then
-            # 使用指定的 EXTERNAL_HOST
-            log_info "Setting EXTERNAL_HOST=$2..."
-            update_env_variable "EXTERNAL_HOST" "$2"
-            update_env_variable "DOMAIN" "$2"
-            log_info "✓ EXTERNAL_HOST updated to $2"
-        else
-            init_env_file "true"
-        fi
-        # 显示当前配置
-        echo
-        log_info "Current environment configuration:"
-        grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
-        ;;
     build-all|all)
         if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
             build_all "true"
@@ -1924,10 +1702,13 @@ case "$1" in
         prefetch_base_images "$2"
         ;;
     pull-common)
-        pull_common_images
+        # $2 = registry (optional), pulls from Docker Hub if empty
+        pull_common_images "$2"
         ;;
     pull-all)
-        # Smart mode: without registry -> Docker Hub, with registry -> private registry
+        # $2 = registry (optional), $3 = tag (optional)
+        # If no registry, pulls common images from Docker Hub only
+        # If registry provided, pulls all images from private registry
         pull_all_services "$2" "${3:-${IMAGE_TAG:-latest}}"
         ;;
     deps-pull)

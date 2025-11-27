@@ -2019,7 +2019,11 @@ func getSaltStackMasterHost() string {
 	return masterHost
 }
 
+// DefaultAppHubPort 默认 AppHub 端口（与 .env 配置保持一致）
+const DefaultAppHubPort = "28080"
+
 // getAppHubBaseURL 组合AppHub基础URL，基于EXTERNAL_HOST/APPHUB_PORT/EXTERNAL_SCHEME
+// 环境变量优先，否则使用默认值
 func getAppHubBaseURL() string {
 	scheme := os.Getenv("EXTERNAL_SCHEME")
 	if scheme == "" {
@@ -2031,8 +2035,8 @@ func getAppHubBaseURL() string {
 	}
 	port := os.Getenv("APPHUB_PORT")
 	if port == "" {
-		// 与build.sh一致：APPHUB_PORT = EXTERNAL_PORT + 45354，缺省时退回常见端口
-		port = "53434"
+		// 使用默认端口（与 .env 中 APPHUB_PORT 配置一致）
+		port = DefaultAppHubPort
 	}
 	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
