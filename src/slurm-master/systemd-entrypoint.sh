@@ -146,9 +146,47 @@ ensure_systemd() {
 
 ensure_systemd || exit 1
 
+# 检查 cgroup 挂载情况
+echo "🔍 检查 cgroup 挂载..."
+if [ ! -d /sys/fs/cgroup ]; then
+    echo "❌ /sys/fs/cgroup 不存在！"
+    echo "   请确保 docker-compose.yml 中包含以下挂载:"
+    echo "   volumes:"
+    echo "     - /sys/fs/cgroup:/sys/fs/cgroup:rw"
+    exit 1
+fi
+
+# 检测 cgroup 版本
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    echo "✅ 检测到 cgroup v2"
+    CGROUP_VERSION="v2"
+else
+    echo "ℹ️  使用 cgroup v1 或混合模式"
+    CGROUP_VERSION="v1"
+fi
+
+# 列出 cgroup 内容用于调试
+echo "📋 /sys/fs/cgroup 内容:"
+ls -la /sys/fs/cgroup/ 2>/dev/null | head -10
+
+# 确保 systemd 需要的目录存在
+mkdir -p /run/systemd/system
+
+# 对于 cgroup v2，可能需要确保某些权限
+if [ "$CGROUP_VERSION" = "v2" ]; then
+    # 检查是否可写
+    if [ -w /sys/fs/cgroup ]; then
+        echo "✅ cgroup v2 可写"
+    else
+        echo "⚠️  cgroup v2 不可写，可能影响 systemd 启动"
+    fi
+fi
+
 # 如果仍然使用默认的 /sbin/init，则替换为实际存在的 systemd
 if [ "$#" -eq 0 ] || [ "$1" = "/sbin/init" ]; then
-	set -- "$SYSTEMD_BIN"
+    echo "🚀 启动 systemd: $SYSTEMD_BIN"
+    # 直接运行 systemd，不加额外参数（由 systemd 自己判断）
+    set -- "$SYSTEMD_BIN"
 fi
 
 exec "$@"

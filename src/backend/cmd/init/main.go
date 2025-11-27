@@ -1384,6 +1384,10 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
+	// 修复可能存在的类型不兼容问题（boolean -> int）
+	log.Println("Checking and fixing schema compatibility issues...")
+	fixSchemaCompatibility(nightingaleDB_conn)
+
 	log.Println("Ensuring Nightingale schema is up to date using GORM AutoMigrate...")
 	nightingaleModels := models.InitNightingaleModels()
 	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
@@ -1791,4 +1795,41 @@ func initializeNightingaleAlertAggrViews(db *gorm.DB) error {
 	}
 	log.Println("✓ Alert aggregation views initialized")
 	return nil
+}
+
+// fixSchemaCompatibility 修复数据库中可能存在的类型不兼容问题
+// 主要处理从旧版本升级时 boolean -> int 的转换问题
+func fixSchemaCompatibility(db *gorm.DB) {
+	// 检查 event_pipeline 表的 filter_enable 字段类型
+	// PostgreSQL 不能直接 boolean -> bigint，需要先转换
+	var result struct {
+		DataType string
+	}
+
+	err := db.Raw(`
+		SELECT data_type 
+		FROM information_schema.columns 
+		WHERE table_name = 'event_pipeline' 
+		AND column_name = 'filter_enable'
+	`).Scan(&result).Error
+
+	if err != nil {
+		log.Printf("Could not check filter_enable column type: %v", err)
+		return
+	}
+
+	if result.DataType == "boolean" {
+		log.Println("Fixing filter_enable column type (boolean -> integer)...")
+		// 使用 CASE 表达式转换 boolean 到 integer
+		err = db.Exec(`
+			ALTER TABLE event_pipeline 
+			ALTER COLUMN filter_enable TYPE integer 
+			USING CASE WHEN filter_enable THEN 1 ELSE 0 END
+		`).Error
+		if err != nil {
+			log.Printf("Warning: Failed to fix filter_enable column: %v", err)
+		} else {
+			log.Println("✓ filter_enable column type fixed")
+		}
+	}
 }
