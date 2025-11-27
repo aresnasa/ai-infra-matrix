@@ -1714,18 +1714,13 @@ build_all() {
 # Tag private registry images as local images
 # This allows docker-compose to find images that were pulled from a private registry
 # and use them with local names (without the registry prefix)
+#
+# Two modes:
+# 1. If PRIVATE_REGISTRY is set: tag images from that specific registry
+# 2. Auto-detect mode: scan local images for any registry-prefixed ai-infra images
 tag_private_images_as_local() {
     local private_registry="${PRIVATE_REGISTRY:-}"
     local image_tag="${IMAGE_TAG:-v0.3.8}"
-    
-    # If no private registry is configured, skip
-    if [[ -z "$private_registry" ]]; then
-        log_info "No private registry configured, skipping image tagging"
-        return 0
-    fi
-    
-    log_info "Checking for private registry images to tag as local..."
-    log_info "Private registry: ${private_registry}"
     
     # List of ai-infra images that may need tagging
     local images=(
@@ -1746,30 +1741,67 @@ tag_private_images_as_local() {
     local tagged=0
     local skipped=0
     
-    for img in "${images[@]}"; do
-        local private_image="${private_registry}${img}:${image_tag}"
-        local local_image="${img}:${image_tag}"
+    log_info "Checking for images that need local tagging..."
+    
+    # Mode 1: If PRIVATE_REGISTRY is configured, use it directly
+    if [[ -n "$private_registry" ]]; then
+        log_info "Using configured private registry: ${private_registry}"
         
-        # Check if private image exists locally
-        if docker image inspect "$private_image" &>/dev/null; then
-            # Check if local image already exists
-            if docker image inspect "$local_image" &>/dev/null; then
-                log_info "  ⏭️  ${local_image} already exists, skipping"
-                skipped=$((skipped + 1))
-            else
-                # Tag private image as local
-                if docker tag "$private_image" "$local_image"; then
-                    log_info "  ✓ Tagged: ${private_image} -> ${local_image}"
-                    tagged=$((tagged + 1))
+        for img in "${images[@]}"; do
+            local private_image="${private_registry}${img}:${image_tag}"
+            local local_image="${img}:${image_tag}"
+            
+            # Check if private image exists locally
+            if docker image inspect "$private_image" &>/dev/null; then
+                # Check if local image already exists
+                if docker image inspect "$local_image" &>/dev/null; then
+                    skipped=$((skipped + 1))
                 else
-                    log_warn "  ✗ Failed to tag: ${private_image}"
+                    # Tag private image as local
+                    if docker tag "$private_image" "$local_image"; then
+                        log_info "  ✓ Tagged: ${private_image} -> ${local_image}"
+                        tagged=$((tagged + 1))
+                    else
+                        log_warn "  ✗ Failed to tag: ${private_image}"
+                    fi
                 fi
             fi
-        fi
-    done
+        done
+    else
+        # Mode 2: Auto-detect registry-prefixed images
+        log_info "Auto-detecting registry-prefixed images..."
+        
+        for img in "${images[@]}"; do
+            local local_image="${img}:${image_tag}"
+            
+            # Skip if local image already exists
+            if docker image inspect "$local_image" &>/dev/null; then
+                skipped=$((skipped + 1))
+                continue
+            fi
+            
+            # Search for any registry-prefixed version of this image
+            # Pattern: */ai-infra-xxx:tag or */*/*/ai-infra-xxx:tag
+            local found_image=""
+            found_image=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "/${img}:${image_tag}$" | head -1)
+            
+            if [[ -n "$found_image" ]]; then
+                if docker tag "$found_image" "$local_image"; then
+                    log_info "  ✓ Tagged: ${found_image} -> ${local_image}"
+                    tagged=$((tagged + 1))
+                else
+                    log_warn "  ✗ Failed to tag: ${found_image}"
+                fi
+            fi
+        done
+    fi
     
-    if [[ $tagged -gt 0 ]] || [[ $skipped -gt 0 ]]; then
-        log_info "Image tagging complete: $tagged tagged, $skipped skipped"
+    if [[ $tagged -gt 0 ]]; then
+        log_info "Image tagging complete: $tagged tagged, $skipped already exist"
+    elif [[ $skipped -gt 0 ]]; then
+        log_info "All $skipped images already exist locally"
+    else
+        log_info "No registry-prefixed images found to tag"
     fi
 }
 
