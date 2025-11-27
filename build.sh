@@ -1520,6 +1520,22 @@ build_all() {
     if [[ "$force" == "true" ]]; then
         log_info "Starting coordinated build process (FORCE MODE - no cache)..."
         FORCE_BUILD=true
+        
+        # In force mode, auto-detect and update EXTERNAL_HOST if needed
+        log_info "=== Phase -1: Verifying Network Configuration ==="
+        local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+        local detected_host=$(detect_external_host)
+        
+        if [[ "$current_host" != "$detected_host" ]]; then
+            log_warn "EXTERNAL_HOST changed: $current_host -> $detected_host"
+            log_info "Updating .env with new IP address..."
+            update_env_variable "EXTERNAL_HOST" "$detected_host"
+            update_env_variable "DOMAIN" "$detected_host"
+            log_info "✓ EXTERNAL_HOST updated to $detected_host"
+        else
+            log_info "✓ EXTERNAL_HOST is correct: $current_host"
+        fi
+        echo
     else
         log_info "Starting coordinated build process..."
     fi
@@ -1845,7 +1861,7 @@ print_help() {
     echo ""
     echo "Build Commands:"
     echo "  build-all, all      Build all components in the correct order (AppHub first)"
-    echo "  build-all --force   Force rebuild all (re-render templates, no Docker cache)"
+    echo "  build-all --force   Force rebuild all (auto-detect IP, re-render, no cache)"
     echo "  [component]         Build a specific component (e.g., backend, frontend)"
     echo ""
     echo "Template Commands:"
