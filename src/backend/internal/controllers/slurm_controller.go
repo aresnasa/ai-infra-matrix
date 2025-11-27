@@ -2011,10 +2011,17 @@ func (c *SlurmController) InitializeHosts(ctx *gin.Context) {
 }
 
 // getSaltStackMasterHost 从环境变量读取SaltStack Master主机地址
+// 对于外部节点，必须使用 EXTERNAL_HOST 而不是 Docker 内部服务名
 func getSaltStackMasterHost() string {
-	masterHost := os.Getenv("SALTSTACK_MASTER_HOST")
+	// 优先使用 EXTERNAL_HOST（外部可访问的 IP 地址）
+	// 因为外部节点无法访问 Docker 内部服务名 "saltstack"
+	masterHost := os.Getenv("EXTERNAL_HOST")
 	if masterHost == "" {
-		masterHost = "saltstack" // 默认容器名
+		// 回退到 SALTSTACK_MASTER_HOST
+		masterHost = os.Getenv("SALTSTACK_MASTER_HOST")
+		if masterHost == "" {
+			masterHost = "saltstack" // 最后回退到默认容器名
+		}
 	}
 	return masterHost
 }

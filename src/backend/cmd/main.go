@@ -18,6 +18,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -137,6 +138,12 @@ func main() {
 
 	// 记录日志级别设置
 	logrus.WithField("log_level", level.String()).Info("Log level configured")
+
+	// 初始化加密服务
+	if err := utils.InitEncryptionService(cfg.EncryptionKey); err != nil {
+		logrus.WithError(err).Fatal("Failed to initialize encryption service")
+	}
+	logrus.Info("Encryption service initialized successfully")
 
 	// 连接数据库
 	if err := database.Connect(cfg); err != nil {
@@ -444,7 +451,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
-		auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
+		auth.POST("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
 		// JupyterHub单点登录令牌生成
 		auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
 		// JWT令牌验证（用于JupyterHub认证器）
@@ -483,7 +490,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	{
 		users.GET("", userHandler.GetUsers)
 		users.DELETE("/:id", userHandler.DeleteUser)
-		users.PUT("/:id/reset-password", userHandler.AdminResetPassword)
+		users.POST("/:id/reset-password", userHandler.AdminResetPassword)
 		users.PUT("/:id/role-template", userHandler.AdminUpdateRoleTemplate)
 		users.PUT("/:id/groups", userHandler.AdminUpdateUserGroups)
 		users.PUT("/:id/status", userHandler.ToggleUserStatus)

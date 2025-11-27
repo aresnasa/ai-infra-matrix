@@ -1800,25 +1800,49 @@ func initializeNightingaleAlertAggrViews(db *gorm.DB) error {
 // fixSchemaCompatibility 修复数据库中可能存在的类型不兼容问题
 // 主要处理从旧版本升级时 boolean -> int 的转换问题
 func fixSchemaCompatibility(db *gorm.DB) {
-	// 检查 event_pipeline 表的 filter_enable 字段类型
-	// PostgreSQL 不能直接 boolean -> bigint，需要先转换
-	var result struct {
-		DataType string
+	// 首先检查 event_pipeline 表是否存在
+	var tableExists bool
+	err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables 
+			WHERE table_name = 'event_pipeline'
+		)
+	`).Scan(&tableExists).Error
+
+	if err != nil {
+		log.Printf("Could not check if event_pipeline table exists: %v", err)
+		return
 	}
 
-	err := db.Raw(`
+	if !tableExists {
+		log.Println("event_pipeline table does not exist yet, skipping schema fix")
+		return
+	}
+
+	// 检查 event_pipeline 表的 filter_enable 字段类型
+	// PostgreSQL 不能直接 boolean -> bigint，需要先转换
+	var dataType string
+	err = db.Raw(`
 		SELECT data_type 
 		FROM information_schema.columns 
 		WHERE table_name = 'event_pipeline' 
 		AND column_name = 'filter_enable'
-	`).Scan(&result).Error
+	`).Scan(&dataType).Error
 
 	if err != nil {
 		log.Printf("Could not check filter_enable column type: %v", err)
 		return
 	}
 
-	if result.DataType == "boolean" {
+	// 如果列不存在，dataType 会是空字符串
+	if dataType == "" {
+		log.Println("filter_enable column does not exist yet, skipping")
+		return
+	}
+
+	log.Printf("Current filter_enable column type: %s", dataType)
+
+	if dataType == "boolean" {
 		log.Println("Fixing filter_enable column type (boolean -> integer)...")
 		// 使用 CASE 表达式转换 boolean 到 integer
 		err = db.Exec(`
@@ -1831,5 +1855,7 @@ func fixSchemaCompatibility(db *gorm.DB) {
 		} else {
 			log.Println("✓ filter_enable column type fixed")
 		}
+	} else {
+		log.Printf("filter_enable column type is already %s, no fix needed", dataType)
 	}
 }

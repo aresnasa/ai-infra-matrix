@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton, InputNumber, Switch, Divider, Tooltip, Popconfirm } from 'antd';
 import { 
   CheckCircleOutlined, 
   ExclamationCircleOutlined, 
@@ -10,7 +10,15 @@ import {
   ReloadOutlined,
   ThunderboltOutlined,
   DatabaseOutlined,
-  ApiOutlined
+  ApiOutlined,
+  CloudUploadOutlined,
+  PlusOutlined,
+  DeleteOutlined,
+  QuestionCircleOutlined,
+  SafetyCertificateOutlined,
+  WifiOutlined,
+  KeyOutlined,
+  LockOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 
@@ -70,6 +78,32 @@ const SaltStackDashboard = () => {
     { id: 'firewall', name: '防火墙配置', desc: '配置系统防火墙规则' },
     { id: 'user', name: '用户管理', desc: '添加、删除和管理系统用户' },
   ]);
+
+  // 批量安装 Salt Minion 弹窗
+  const [batchInstallVisible, setBatchInstallVisible] = useState(false);
+  const [batchInstallForm] = Form.useForm();
+  const [batchInstallRunning, setBatchInstallRunning] = useState(false);
+  const [batchInstallTaskId, setBatchInstallTaskId] = useState('');
+  const [batchInstallEvents, setBatchInstallEvents] = useState([]);
+  const [batchInstallHosts, setBatchInstallHosts] = useState([
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, sudo_pass: '' }
+  ]);
+  const batchSseRef = useRef(null);
+
+  // SSH 测试弹窗
+  const [sshTestVisible, setSSHTestVisible] = useState(false);
+  const [sshTestForm] = Form.useForm();
+  const [sshTestRunning, setSSHTestRunning] = useState(false);
+  const [sshTestResults, setSSHTestResults] = useState([]);
+  const [sshTestHosts, setSSHTestHosts] = useState([
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '', sudo_pass: '' }
+  ]);
+
+  // 删除/卸载 Minion 状态
+  const [deletingMinion, setDeletingMinion] = useState(null);
+  const [uninstallModalVisible, setUninstallModalVisible] = useState(false);
+  const [uninstallForm] = Form.useForm();
+  const [uninstallMinionId, setUninstallMinionId] = useState('');
 
   const loadStatus = async () => {
     setStatusLoading(true);
@@ -140,8 +174,298 @@ const SaltStackDashboard = () => {
     }
   };
 
+  // 关闭批量安装SSE
+  const closeBatchSSE = () => {
+    if (batchSseRef.current) {
+      try { batchSseRef.current.close?.(); } catch {}
+      batchSseRef.current = null;
+    }
+  };
+
+  // 添加主机行
+  const addHostRow = () => {
+    setBatchInstallHosts([
+      ...batchInstallHosts,
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, sudo_pass: '' }
+    ]);
+  };
+
+  // 删除主机行
+  const removeHostRow = (key) => {
+    if (batchInstallHosts.length <= 1) {
+      message.warning('至少保留一个主机');
+      return;
+    }
+    setBatchInstallHosts(batchInstallHosts.filter(h => h.key !== key));
+  };
+
+  // 更新主机行
+  const updateHostRow = (key, field, value) => {
+    setBatchInstallHosts(batchInstallHosts.map(h => 
+      h.key === key ? { ...h, [field]: value } : h
+    ));
+  };
+
+  // 打开批量安装弹窗
+  const openBatchInstallModal = () => {
+    setBatchInstallVisible(true);
+    setBatchInstallEvents([]);
+    setBatchInstallTaskId('');
+    setBatchInstallRunning(false);
+    setBatchInstallHosts([
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, sudo_pass: '' }
+    ]);
+    batchInstallForm.setFieldsValue({
+      parallel: 3,
+      master_host: 'salt',
+      install_type: 'saltstack',
+      auto_accept: true,
+      global_use_sudo: false,
+      global_sudo_pass: ''
+    });
+  };
+
+  // 启动批量安装SSE
+  const startBatchInstallSSE = (taskId) => {
+    closeBatchSSE();
+    const url = saltStackAPI.getBatchInstallStreamUrl(taskId);
+    const es = new EventSource(url, { withCredentials: false });
+    batchSseRef.current = es;
+    
+    es.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        console.log('[批量安装 SSE事件]', data.type, data);
+        setBatchInstallEvents((prev) => [...prev, data]);
+        
+        if (data.type === 'complete' || data.type === 'error' || data.type === 'closed') {
+          setTimeout(() => {
+            setBatchInstallRunning(false);
+            closeBatchSSE();
+            // 刷新 minions 列表
+            loadMinions();
+          }, 500);
+        }
+      } catch (err) {
+        console.error('[批量安装 SSE] 解析消息失败:', err);
+      }
+    };
+    
+    es.onerror = (err) => {
+      console.error('[批量安装 SSE] 连接错误:', err);
+      closeBatchSSE();
+      setBatchInstallRunning(false);
+    };
+  };
+
+  // 执行批量安装
+  const handleBatchInstall = async () => {
+    try {
+      const values = await batchInstallForm.validateFields();
+      
+      // 验证主机列表
+      const validHosts = batchInstallHosts.filter(h => h.host && h.host.trim());
+      if (validHosts.length === 0) {
+        message.error('请至少添加一个有效的主机');
+        return;
+      }
+
+      // 检查必填字段
+      for (const h of validHosts) {
+        if (!h.username || !h.password) {
+          message.error(`主机 ${h.host} 缺少用户名或密码`);
+          return;
+        }
+      }
+
+      setBatchInstallRunning(true);
+      setBatchInstallEvents([]);
+
+      // 构建请求
+      const payload = {
+        hosts: validHosts.map(h => ({
+          host: h.host.trim(),
+          port: h.port || 22,
+          username: h.username,
+          password: h.password,
+          use_sudo: values.global_use_sudo || h.use_sudo,
+          sudo_pass: (values.global_use_sudo ? values.global_sudo_pass : h.sudo_pass) || h.password
+        })),
+        parallel: values.parallel || 3,
+        master_host: values.master_host || 'salt',
+        install_type: values.install_type || 'saltstack',
+        auto_accept: values.auto_accept ?? true
+      };
+
+      const resp = await saltStackAPI.batchInstallMinion(payload);
+      
+      if (!resp.data?.success) {
+        message.error(resp.data?.message || '启动批量安装失败');
+        setBatchInstallRunning(false);
+        return;
+      }
+
+      const taskId = resp.data?.task_id;
+      if (!taskId) {
+        message.error('未返回任务ID');
+        setBatchInstallRunning(false);
+        return;
+      }
+
+      setBatchInstallTaskId(taskId);
+      message.success(`批量安装任务已创建: ${taskId}`);
+      startBatchInstallSSE(taskId);
+    } catch (e) {
+      message.error('提交批量安装失败: ' + (e?.response?.data?.message || e.message));
+      setBatchInstallRunning(false);
+    }
+  };
+
+  // ========== SSH 测试相关函数 ==========
+  
+  // 打开 SSH 测试弹窗
+  const openSSHTestModal = () => {
+    setSSHTestVisible(true);
+    setSSHTestResults([]);
+    setSSHTestHosts([
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', sudo_pass: '' }
+    ]);
+  };
+
+  // 添加 SSH 测试主机行
+  const addSSHTestHostRow = () => {
+    setSSHTestHosts([
+      ...sshTestHosts,
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', sudo_pass: '' }
+    ]);
+  };
+
+  // 删除 SSH 测试主机行
+  const removeSSHTestHostRow = (key) => {
+    if (sshTestHosts.length <= 1) {
+      message.warning('至少保留一个主机');
+      return;
+    }
+    setSSHTestHosts(sshTestHosts.filter(h => h.key !== key));
+  };
+
+  // 更新 SSH 测试主机行
+  const updateSSHTestHostRow = (key, field, value) => {
+    setSSHTestHosts(sshTestHosts.map(h => 
+      h.key === key ? { ...h, [field]: value } : h
+    ));
+  };
+
+  // 执行 SSH 批量测试
+  const handleSSHTest = async () => {
+    const validHosts = sshTestHosts.filter(h => h.host && h.host.trim());
+    if (validHosts.length === 0) {
+      message.error('请至少添加一个有效的主机');
+      return;
+    }
+
+    for (const h of validHosts) {
+      if (!h.username || !h.password) {
+        message.error(`主机 ${h.host} 缺少用户名或密码`);
+        return;
+      }
+    }
+
+    setSSHTestRunning(true);
+    setSSHTestResults([]);
+
+    try {
+      const payload = {
+        hosts: validHosts.map(h => ({
+          host: h.host.trim(),
+          port: h.port || 22,
+          username: h.username,
+          password: h.password,
+          sudo_pass: h.sudo_pass || h.password
+        })),
+        parallel: 5
+      };
+
+      const resp = await saltStackAPI.batchTestSSH(payload);
+      
+      if (resp.data?.success) {
+        setSSHTestResults(resp.data.data?.results || []);
+        message.success(`测试完成：${resp.data.data?.connected_count}/${resp.data.data?.total} 连接成功，${resp.data.data?.sudo_count} 有 sudo 权限`);
+      } else {
+        message.error(resp.data?.error || 'SSH 测试失败');
+      }
+    } catch (e) {
+      message.error('SSH 测试失败: ' + (e?.response?.data?.message || e.message));
+    } finally {
+      setSSHTestRunning(false);
+    }
+  };
+
+  // ========== Minion 删除/卸载相关函数 ==========
+
+  // 删除 Minion（仅从 Salt Master 删除密钥）
+  const handleDeleteMinion = async (minionId) => {
+    setDeletingMinion(minionId);
+    try {
+      const resp = await saltStackAPI.removeMinionKey(minionId);
+      if (resp.data?.success) {
+        message.success(`Minion ${minionId} 已从 Salt Master 删除`);
+        loadMinions(); // 刷新列表
+      } else {
+        message.error(resp.data?.error || '删除失败');
+      }
+    } catch (e) {
+      message.error('删除 Minion 失败: ' + (e?.response?.data?.message || e.message));
+    } finally {
+      setDeletingMinion(null);
+    }
+  };
+
+  // 打开卸载 Minion 弹窗
+  const openUninstallModal = (minionId) => {
+    setUninstallMinionId(minionId);
+    setUninstallModalVisible(true);
+    uninstallForm.setFieldsValue({
+      host: minionId,
+      port: 22,
+      username: 'root',
+      password: '',
+      use_sudo: false,
+      sudo_pass: ''
+    });
+  };
+
+  // 执行卸载 Minion
+  const handleUninstallMinion = async () => {
+    try {
+      const values = await uninstallForm.validateFields();
+      
+      const resp = await saltStackAPI.uninstallMinion(uninstallMinionId, {
+        host: values.host,
+        port: values.port || 22,
+        username: values.username,
+        password: values.password,
+        use_sudo: values.use_sudo,
+        sudo_pass: values.sudo_pass || values.password
+      });
+
+      if (resp.data?.success) {
+        message.success(`Minion ${uninstallMinionId} 已卸载并从 Master 删除`);
+        setUninstallModalVisible(false);
+        loadMinions();
+      } else {
+        message.error(resp.data?.error || '卸载失败');
+      }
+    } catch (e) {
+      message.error('卸载 Minion 失败: ' + (e?.response?.data?.message || e.message));
+    }
+  };
+
   useEffect(() => {
-    return () => closeSSE();
+    return () => {
+      closeSSE();
+      closeBatchSSE();
+    };
   }, []);
 
   const validateClientSide = (language, code) => {
@@ -475,9 +799,36 @@ const SaltStackDashboard = () => {
                               </Space>
                             }
                             extra={
-                              <Tag color={getStatusColor(minion.status)}>
-                                {minion.status || '未知'}
-                              </Tag>
+                              <Space>
+                                <Tag color={getStatusColor(minion.status)}>
+                                  {minion.status || '未知'}
+                                </Tag>
+                                <Tooltip title="卸载 Minion（SSH远程卸载）">
+                                  <Button 
+                                    type="text" 
+                                    size="small" 
+                                    icon={<SettingOutlined />}
+                                    onClick={() => openUninstallModal(minion.id || minion.name)}
+                                  />
+                                </Tooltip>
+                                <Popconfirm
+                                  title="删除 Minion"
+                                  description="确定要从 Salt Master 删除此 Minion 密钥吗？这不会卸载目标机器上的 Salt Minion 软件。"
+                                  onConfirm={() => handleDeleteMinion(minion.id || minion.name)}
+                                  okText="确定删除"
+                                  cancelText="取消"
+                                >
+                                  <Tooltip title="删除 Minion 密钥">
+                                    <Button 
+                                      type="text" 
+                                      size="small" 
+                                      danger
+                                      icon={<DeleteOutlined />}
+                                      loading={deletingMinion === (minion.id || minion.name)}
+                                    />
+                                  </Tooltip>
+                                </Popconfirm>
+                              </Space>
                             }
                           >
                             <Descriptions size="small" column={1}>
@@ -601,6 +952,20 @@ const SaltStackDashboard = () => {
                 执行命令
               </Button>
               <Button 
+                icon={<CloudUploadOutlined />}
+                onClick={openBatchInstallModal}
+                type="primary"
+                ghost
+              >
+                批量安装 Minion
+              </Button>
+              <Button 
+                icon={<WifiOutlined />}
+                onClick={openSSHTestModal}
+              >
+                SSH 测试
+              </Button>
+              <Button 
                 icon={<SettingOutlined />}
                 onClick={() => {
                   setConfigVisible(true);
@@ -711,6 +1076,487 @@ const SaltStackDashboard = () => {
                 showIcon
                 style={{ marginTop: 16 }}
               />
+            </Form>
+          </Modal>
+
+          {/* 批量安装 Salt Minion 弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <CloudUploadOutlined />
+                批量安装 Salt Minion
+              </Space>
+            }
+            open={batchInstallVisible}
+            onCancel={() => { 
+              setBatchInstallVisible(false); 
+              closeBatchSSE(); 
+              setBatchInstallRunning(false); 
+            }}
+            footer={[
+              <Button 
+                key="cancel" 
+                onClick={() => { 
+                  setBatchInstallVisible(false); 
+                  closeBatchSSE(); 
+                  setBatchInstallRunning(false); 
+                }}
+                disabled={batchInstallRunning}
+              >
+                {batchInstallRunning ? '取消' : '关闭'}
+              </Button>,
+              <Button 
+                key="install" 
+                type="primary" 
+                onClick={handleBatchInstall}
+                loading={batchInstallRunning}
+                icon={<CloudUploadOutlined />}
+              >
+                开始安装
+              </Button>,
+            ]}
+            width={1000}
+            destroyOnClose
+          >
+            <Form form={batchInstallForm} layout="vertical">
+              <Row gutter={16}>
+                <Col span={6}>
+                  <Form.Item 
+                    name="parallel" 
+                    label={
+                      <Space>
+                        并发数
+                        <Tooltip title="同时安装的主机数量，建议不超过10">
+                          <QuestionCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    initialValue={3}
+                  >
+                    <InputNumber min={1} max={20} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item 
+                    name="master_host" 
+                    label="Salt Master 地址"
+                    initialValue="salt"
+                  >
+                    <Input placeholder="例如: salt 或 192.168.1.100" />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item 
+                    name="install_type" 
+                    label="安装类型"
+                    initialValue="saltstack"
+                  >
+                    <Select>
+                      <Option value="saltstack">SaltStack Minion</Option>
+                      <Option value="slurm">SLURM Client</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item 
+                    name="auto_accept" 
+                    label="自动接受 Key"
+                    valuePropName="checked"
+                    initialValue={true}
+                  >
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Divider orientation="left">全局 sudo 设置</Divider>
+              <Row gutter={16}>
+                <Col span={6}>
+                  <Form.Item 
+                    name="global_use_sudo" 
+                    label={
+                      <Space>
+                        使用 sudo
+                        <Tooltip title="如果使用非 root 用户登录，开启此选项使用 sudo 执行安装命令">
+                          <QuestionCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    valuePropName="checked"
+                    initialValue={false}
+                  >
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item 
+                    name="global_sudo_pass" 
+                    label="sudo 密码（留空则使用登录密码）"
+                  >
+                    <Input.Password placeholder="如果sudo需要密码" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Divider orientation="left">
+                <Space>
+                  目标主机列表
+                  <Button type="link" size="small" icon={<PlusOutlined />} onClick={addHostRow}>
+                    添加主机
+                  </Button>
+                </Space>
+              </Divider>
+
+              <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                {batchInstallHosts.map((host, index) => (
+                  <Row gutter={8} key={host.key} style={{ marginBottom: 8 }}>
+                    <Col span={5}>
+                      <Input 
+                        placeholder="主机地址 (IP 或域名)" 
+                        value={host.host}
+                        onChange={(e) => updateHostRow(host.key, 'host', e.target.value)}
+                        addonBefore={`#${index + 1}`}
+                      />
+                    </Col>
+                    <Col span={2}>
+                      <InputNumber 
+                        placeholder="端口" 
+                        value={host.port}
+                        onChange={(v) => updateHostRow(host.key, 'port', v)}
+                        min={1}
+                        max={65535}
+                        style={{ width: '100%' }}
+                      />
+                    </Col>
+                    <Col span={4}>
+                      <Input 
+                        placeholder="用户名" 
+                        value={host.username}
+                        onChange={(e) => updateHostRow(host.key, 'username', e.target.value)}
+                      />
+                    </Col>
+                    <Col span={5}>
+                      <Input.Password 
+                        placeholder="密码" 
+                        value={host.password}
+                        onChange={(e) => updateHostRow(host.key, 'password', e.target.value)}
+                      />
+                    </Col>
+                    <Col span={3}>
+                      <Space>
+                        <Tooltip title="使用 sudo">
+                          <Switch 
+                            size="small"
+                            checked={host.use_sudo}
+                            onChange={(v) => updateHostRow(host.key, 'use_sudo', v)}
+                          />
+                        </Tooltip>
+                        <span style={{ fontSize: 12 }}>sudo</span>
+                      </Space>
+                    </Col>
+                    <Col span={4}>
+                      {host.use_sudo && (
+                        <Input.Password 
+                          placeholder="sudo密码" 
+                          value={host.sudo_pass}
+                          onChange={(e) => updateHostRow(host.key, 'sudo_pass', e.target.value)}
+                          size="small"
+                        />
+                      )}
+                    </Col>
+                    <Col span={1}>
+                      <Button 
+                        type="text" 
+                        danger 
+                        icon={<DeleteOutlined />} 
+                        onClick={() => removeHostRow(host.key)}
+                        disabled={batchInstallHosts.length <= 1}
+                      />
+                    </Col>
+                  </Row>
+                ))}
+              </div>
+            </Form>
+
+            {/* 安装进度 */}
+            <Card size="small" title="安装进度" style={{ marginTop: 16 }}>
+              {batchInstallTaskId && (
+                <div style={{ marginBottom: 8 }}>
+                  <Text type="secondary">任务ID: </Text>
+                  <Text copyable>{batchInstallTaskId}</Text>
+                </div>
+              )}
+              <div style={{ maxHeight: 280, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 12, borderRadius: 6 }}>
+                {batchInstallEvents.length === 0 ? (
+                  <Text type="secondary">等待开始安装...</Text>
+                ) : (
+                  batchInstallEvents.map((ev, idx) => (
+                    <div key={idx} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5 }}>
+                      <span style={{ color: '#7aa2f7' }}>
+                        [{ev.ts ? new Date(ev.ts).toLocaleTimeString() : new Date().toLocaleTimeString()}]
+                      </span>
+                      <span style={{ 
+                        color: ev.type === 'error' ? '#f7768e' : 
+                               ev.type === 'complete' ? '#9ece6a' : 
+                               ev.type === 'progress' ? '#bb9af7' : '#e0af68' 
+                      }}>
+                        {' '}{ev.type}{' '}
+                      </span>
+                      {ev.host && <span style={{ color: '#73daca' }}>({ev.host})</span>}
+                      <span> - {ev.message}</span>
+                      {ev.data && typeof ev.data === 'object' && (
+                        <pre style={{ margin: '4px 0 0 20px', color: '#e0af68', fontSize: 11 }}>
+                          {JSON.stringify(ev.data, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+          </Modal>
+
+          {/* SSH 测试弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <WifiOutlined />
+                SSH 连接测试（含 sudo 权限检查）
+              </Space>
+            }
+            open={sshTestVisible}
+            onCancel={() => setSSHTestVisible(false)}
+            footer={[
+              <Button key="cancel" onClick={() => setSSHTestVisible(false)}>
+                关闭
+              </Button>,
+              <Button 
+                key="test" 
+                type="primary" 
+                onClick={handleSSHTest}
+                loading={sshTestRunning}
+                icon={<SafetyCertificateOutlined />}
+              >
+                开始测试
+              </Button>,
+            ]}
+            width={1000}
+            destroyOnClose
+          >
+            <Alert
+              message="SSH 测试说明"
+              description="此功能将测试 SSH 连接是否成功，并检查是否有 sudo 权限。这对于批量安装前的预检非常有用。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+
+            <Divider orientation="left">
+              <Space>
+                目标主机列表
+                <Button type="link" size="small" icon={<PlusOutlined />} onClick={addSSHTestHostRow}>
+                  添加主机
+                </Button>
+              </Space>
+            </Divider>
+
+            <div style={{ maxHeight: 250, overflow: 'auto' }}>
+              {sshTestHosts.map((host, index) => (
+                <Row gutter={8} key={host.key} style={{ marginBottom: 8 }}>
+                  <Col span={5}>
+                    <Input 
+                      placeholder="主机地址" 
+                      value={host.host}
+                      onChange={(e) => updateSSHTestHostRow(host.key, 'host', e.target.value)}
+                      addonBefore={`#${index + 1}`}
+                    />
+                  </Col>
+                  <Col span={2}>
+                    <InputNumber 
+                      placeholder="端口" 
+                      value={host.port}
+                      onChange={(v) => updateSSHTestHostRow(host.key, 'port', v)}
+                      min={1}
+                      max={65535}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={4}>
+                    <Input 
+                      placeholder="用户名" 
+                      value={host.username}
+                      onChange={(e) => updateSSHTestHostRow(host.key, 'username', e.target.value)}
+                    />
+                  </Col>
+                  <Col span={5}>
+                    <Input.Password 
+                      placeholder="密码" 
+                      value={host.password}
+                      onChange={(e) => updateSSHTestHostRow(host.key, 'password', e.target.value)}
+                    />
+                  </Col>
+                  <Col span={5}>
+                    <Input.Password 
+                      placeholder="sudo密码（可选）" 
+                      value={host.sudo_pass}
+                      onChange={(e) => updateSSHTestHostRow(host.key, 'sudo_pass', e.target.value)}
+                    />
+                  </Col>
+                  <Col span={1}>
+                    <Button 
+                      type="text" 
+                      danger 
+                      icon={<DeleteOutlined />} 
+                      onClick={() => removeSSHTestHostRow(host.key)}
+                      disabled={sshTestHosts.length <= 1}
+                    />
+                  </Col>
+                </Row>
+              ))}
+            </div>
+
+            {/* 测试结果 */}
+            {sshTestResults.length > 0 && (
+              <Card size="small" title="测试结果" style={{ marginTop: 16 }}>
+                <Table
+                  dataSource={sshTestResults}
+                  rowKey="host"
+                  size="small"
+                  pagination={false}
+                  columns={[
+                    {
+                      title: '主机',
+                      dataIndex: 'host',
+                      width: 150,
+                    },
+                    {
+                      title: '连接状态',
+                      dataIndex: 'connected',
+                      width: 100,
+                      render: (v) => v ? 
+                        <Tag color="success" icon={<CheckCircleOutlined />}>连接成功</Tag> : 
+                        <Tag color="error" icon={<ExclamationCircleOutlined />}>连接失败</Tag>
+                    },
+                    {
+                      title: '认证方式',
+                      dataIndex: 'auth_method',
+                      width: 100,
+                      render: (v) => v ? <Tag icon={<KeyOutlined />}>{v}</Tag> : '-'
+                    },
+                    {
+                      title: 'sudo 权限',
+                      dataIndex: 'has_sudo',
+                      width: 120,
+                      render: (v, record) => v ? 
+                        <Tag color="success" icon={<LockOutlined />}>
+                          {record.sudo_no_password ? '免密sudo' : '需要密码'}
+                        </Tag> : 
+                        <Tag color="warning">无sudo</Tag>
+                    },
+                    {
+                      title: '主机名',
+                      dataIndex: 'hostname',
+                      width: 150,
+                    },
+                    {
+                      title: '操作系统',
+                      dataIndex: 'os_info',
+                      ellipsis: true,
+                    },
+                    {
+                      title: '耗时(ms)',
+                      dataIndex: 'duration',
+                      width: 80,
+                    },
+                    {
+                      title: '错误',
+                      dataIndex: 'error',
+                      ellipsis: true,
+                      render: (v) => v ? <Text type="danger">{v}</Text> : '-'
+                    },
+                  ]}
+                />
+              </Card>
+            )}
+          </Modal>
+
+          {/* 卸载 Minion 弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <DeleteOutlined />
+                卸载 Minion: {uninstallMinionId}
+              </Space>
+            }
+            open={uninstallModalVisible}
+            onCancel={() => setUninstallModalVisible(false)}
+            onOk={handleUninstallMinion}
+            okText="确认卸载"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            width={600}
+          >
+            <Alert
+              message="警告"
+              description="此操作将通过 SSH 连接到目标主机，卸载 Salt Minion 软件包并清理配置文件，同时从 Salt Master 删除该 Minion 的密钥。"
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+
+            <Form form={uninstallForm} layout="vertical">
+              <Row gutter={16}>
+                <Col span={16}>
+                  <Form.Item 
+                    name="host" 
+                    label="主机地址"
+                    rules={[{ required: true, message: '请输入主机地址' }]}
+                  >
+                    <Input placeholder="IP 或域名" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="port" label="端口" initialValue={22}>
+                    <InputNumber min={1} max={65535} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item 
+                    name="username" 
+                    label="用户名"
+                    rules={[{ required: true, message: '请输入用户名' }]}
+                  >
+                    <Input placeholder="例如: root" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item 
+                    name="password" 
+                    label="密码"
+                    rules={[{ required: true, message: '请输入密码' }]}
+                  >
+                    <Input.Password placeholder="SSH 登录密码" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item 
+                    name="use_sudo" 
+                    label="使用 sudo"
+                    valuePropName="checked"
+                  >
+                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                  </Form.Item>
+                </Col>
+                <Col span={16}>
+                  <Form.Item name="sudo_pass" label="sudo 密码（留空则使用登录密码）">
+                    <Input.Password placeholder="如果 sudo 需要密码" />
+                  </Form.Item>
+                </Col>
+              </Row>
             </Form>
           </Modal>
         </Space>

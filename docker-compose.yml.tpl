@@ -444,7 +444,9 @@ services:
       - REDIS_DB=1
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-your-encryption-key-change-in-production-32-bytes}
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
+
       - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
       - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
       - SESSION_TIMEOUT=86400
@@ -537,10 +539,11 @@ services:
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - SALT_API_USERNAME=${SALT_API_USERNAME:-saltapi}
       - SALT_API_PASSWORD=${SALT_API_PASSWORD:-aiinfra-salt}
+    ports:
+      - "4505:4505"  # Salt Master Publish Port (外部 Minion 连接)
+      - "4506:4506"  # Salt Master Return Port (外部 Minion 连接)
     expose:
-      - "4505"  # Salt Master Publish Port
-      - "4506"  # Salt Master Return Port
-      - "8002"  # Salt API Port
+      - "8002"  # Salt API Port (仅内部访问)
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - salt_data:/var/cache/salt

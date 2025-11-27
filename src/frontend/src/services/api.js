@@ -134,6 +134,8 @@ export const authAPI = {
   getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
   getProfile: createCachedRequest(() => api.get('/auth/me'), true), 
   refreshToken: () => api.post('/auth/refresh'), // 不缓存token刷新请求
+  changePassword: (data) => api.post('/auth/change-password', data), // 修改密码
+  updateProfile: (data) => api.put('/users/profile', data), // 更新个人信息
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {
@@ -586,6 +588,25 @@ export const saltStackAPI = {
   // SaltStack 批量操作
   batchExecute: (targets, command) => api.post('/saltstack/batch-execute', { targets, command }),
   getMinionDetails: (minionId) => api.get(`/saltstack/minions/${minionId}/details`),
+  
+  // 批量安装 Salt Minion
+  batchInstallMinion: (payload) => api.post('/saltstack/batch-install', payload),
+  getBatchInstallTask: (taskId) => api.get(`/saltstack/batch-install/${taskId}`),
+  listBatchInstallTasks: (params) => api.get('/saltstack/batch-install', { params }),
+  getBatchInstallStreamUrl: (taskId) => {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http';
+    const host = window.location.host;
+    return `${proto}://${host}/api/saltstack/batch-install/${encodeURIComponent(taskId)}/stream`;
+  },
+
+  // SSH 测试（含 sudo 权限检查）
+  testSSH: (config) => api.post('/saltstack/ssh/test', config),
+  batchTestSSH: (payload) => api.post('/saltstack/ssh/test-batch', payload),
+
+  // Minion 管理（删除、卸载）
+  removeMinionKey: (minionId) => api.delete(`/saltstack/minion/${minionId}`),
+  batchRemoveMinionKeys: (minionIds) => api.post('/saltstack/minion/batch-delete', { minion_ids: minionIds }),
+  uninstallMinion: (minionId, sshConfig) => api.post(`/saltstack/minion/${minionId}/uninstall`, sshConfig),
 };
 
 // 增强用户管理API

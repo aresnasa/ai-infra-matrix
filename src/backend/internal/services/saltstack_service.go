@@ -464,6 +464,37 @@ func (s *SaltStackService) RejectMinion(ctx context.Context, minionID string) er
 	return nil
 }
 
+// DeleteMinion 删除Minion密钥（从 Salt Master 中完全移除）
+func (s *SaltStackService) DeleteMinion(ctx context.Context, minionID string) error {
+	log.Printf("[SaltStack] Deleting minion: %s", minionID)
+
+	payload := map[string]interface{}{
+		"fun":    "key.delete",
+		"match":  minionID,
+		"client": "wheel",
+	}
+
+	_, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return fmt.Errorf("failed to delete minion %s: %v", minionID, err)
+	}
+
+	log.Printf("[SaltStack] Minion %s deleted successfully", minionID)
+	return nil
+}
+
+// DeleteMinionBatch 批量删除 Minion 密钥
+func (s *SaltStackService) DeleteMinionBatch(ctx context.Context, minionIDs []string) (map[string]error, error) {
+	results := make(map[string]error)
+
+	for _, minionID := range minionIDs {
+		err := s.DeleteMinion(ctx, minionID)
+		results[minionID] = err
+	}
+
+	return results, nil
+}
+
 // GetMinionStatus 获取Minion状态
 func (s *SaltStackService) GetMinionStatus(ctx context.Context, minionID string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{

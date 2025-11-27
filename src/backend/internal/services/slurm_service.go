@@ -3454,10 +3454,17 @@ func (s *SlurmService) installSaltMinionOnNode(ctx context.Context, req InstallS
 	fmt.Fprintf(logWriter, "[INFO] 在 %s 上安装 Salt-Minion (OS: %s)\n", req.SSHHost, req.OSType)
 
 	// 获取 Salt Master 配置
-	saltMasterHost := os.Getenv("SALT_MASTER_HOST")
+	// 对于外部节点，必须使用 EXTERNAL_HOST（外部可访问的 IP）
+	// 而不是 Docker 内部服务名 "saltstack"
+	saltMasterHost := os.Getenv("EXTERNAL_HOST")
 	if saltMasterHost == "" {
-		saltMasterHost = "saltstack"
+		// 如果没有设置 EXTERNAL_HOST，尝试使用 SALT_MASTER_HOST
+		saltMasterHost = os.Getenv("SALT_MASTER_HOST")
+		if saltMasterHost == "" || saltMasterHost == "saltstack" {
+			return fmt.Errorf("外部节点需要 EXTERNAL_HOST 环境变量来配置 Salt Master 地址")
+		}
 	}
+	fmt.Fprintf(logWriter, "[INFO] Salt Master 地址: %s\n", saltMasterHost)
 
 	// 确定使用哪个安装脚本
 	var scriptPath string
