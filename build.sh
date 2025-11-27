@@ -1852,6 +1852,298 @@ clean_all() {
     return 0
 }
 
+# ==============================================================================
+# Export Offline Images
+# ==============================================================================
+
+# Export all images to tar files for offline deployment
+# Args: $1 = output_dir (default: ./offline-images), $2 = tag, $3 = include common images (default: true)
+export_offline_images() {
+    local output_dir="${1:-./offline-images}"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local include_common="${3:-true}"
+    
+    # Show help
+    if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+        echo "Usage: $0 export-offline [output_dir] [tag] [include_common]"
+        echo ""
+        echo "Arguments:"
+        echo "  output_dir      Output directory (default: ./offline-images)"
+        echo "  tag             Image tag (default: $IMAGE_TAG)"
+        echo "  include_common  Include common images like mysql, redis, kafka (default: true)"
+        echo ""
+        echo "Description:"
+        echo "  Export all AI-Infra service images and dependency images to tar files"
+        echo "  Automatically generates image manifest and import script"
+        echo ""
+        echo "Examples:"
+        echo "  $0 export-offline ./my-images v0.3.8 true"
+        echo "  $0 export-offline ./images v0.3.8 false"
+        return 0
+    fi
+    
+    log_info "=========================================="
+    log_info "📦 Exporting Offline Images"
+    log_info "=========================================="
+    log_info "Output directory: $output_dir"
+    log_info "Image tag: $tag"
+    log_info "Include common images: $include_common"
+    echo
+    
+    # Create output directory
+    mkdir -p "$output_dir"
+    
+    discover_services
+    
+    local exported_count=0
+    local failed_count=0
+    local failed_images=()
+    
+    # Phase 1: Export AI-Infra project images
+    log_info "=== Phase 1: Exporting AI-Infra service images ==="
+    
+    local all_services=("${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
+    
+    for service in "${all_services[@]}"; do
+        local image_name="ai-infra-${service}:${tag}"
+        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
+        local output_file="${output_dir}/${safe_name}.tar"
+        
+        log_info "→ Exporting: $image_name"
+        if docker image inspect "$image_name" >/dev/null 2>&1; then
+            if docker save "$image_name" -o "$output_file"; then
+                local file_size=$(du -h "$output_file" | cut -f1)
+                log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
+                exported_count=$((exported_count + 1))
+            else
+                log_warn "  ✗ Failed to export: $image_name"
+                failed_images+=("$image_name")
+                failed_count=$((failed_count + 1))
+            fi
+        else
+            log_warn "  ! Image not found, skipping: $image_name"
+            failed_images+=("$image_name")
+            failed_count=$((failed_count + 1))
+        fi
+    done
+    echo
+    
+    # Phase 2: Export dependency images (from deps.yaml mapping)
+    log_info "=== Phase 2: Exporting dependency images ==="
+    local dependencies=($(get_dependency_mappings))
+    
+    for mapping in "${dependencies[@]}"; do
+        local source_image="${mapping%%|*}"
+        local short_name="${mapping##*|}"
+        local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
+        local output_file="${output_dir}/${safe_name}.tar"
+        
+        log_info "→ Exporting: $source_image"
+        if docker image inspect "$source_image" >/dev/null 2>&1; then
+            if docker save "$source_image" -o "$output_file"; then
+                local file_size=$(du -h "$output_file" | cut -f1)
+                log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
+                exported_count=$((exported_count + 1))
+            else
+                log_warn "  ✗ Failed to export: $source_image"
+                failed_images+=("$source_image")
+                failed_count=$((failed_count + 1))
+            fi
+        else
+            log_warn "  ! Image not found, skipping: $source_image"
+            failed_images+=("$source_image")
+            failed_count=$((failed_count + 1))
+        fi
+    done
+    echo
+    
+    # Phase 3: Export common/third-party images
+    if [[ "$include_common" == "true" ]]; then
+        log_info "=== Phase 3: Exporting common/third-party images ==="
+        
+        for image in "${COMMON_IMAGES[@]}"; do
+            local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
+            local output_file="${output_dir}/${safe_name}.tar"
+            
+            log_info "→ Exporting: $image"
+            if docker image inspect "$image" >/dev/null 2>&1; then
+                if docker save "$image" -o "$output_file"; then
+                    local file_size=$(du -h "$output_file" | cut -f1)
+                    log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
+                    exported_count=$((exported_count + 1))
+                else
+                    log_warn "  ✗ Failed to export: $image"
+                    failed_images+=("$image")
+                    failed_count=$((failed_count + 1))
+                fi
+            else
+                log_warn "  ! Image not found, skipping: $image"
+                failed_images+=("$image")
+                failed_count=$((failed_count + 1))
+            fi
+        done
+        echo
+    fi
+    
+    # Generate image manifest file
+    log_info "📋 Generating image manifest..."
+    local manifest_file="${output_dir}/images-manifest.txt"
+    cat > "$manifest_file" << EOF
+# AI Infrastructure Matrix - Offline Images Manifest
+# Generated: $(date)
+# Image Tag: $tag
+# Include Common Images: $include_common
+
+# AI-Infra Service Images
+EOF
+    
+    for service in "${all_services[@]}"; do
+        local image_name="ai-infra-${service}:${tag}"
+        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
+        local tar_file="${safe_name}.tar"
+        if [[ -f "${output_dir}/${tar_file}" ]]; then
+            echo "$image_name|$tar_file" >> "$manifest_file"
+        fi
+    done
+    
+    echo "" >> "$manifest_file"
+    echo "# Dependency Images" >> "$manifest_file"
+    
+    for mapping in "${dependencies[@]}"; do
+        local source_image="${mapping%%|*}"
+        local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
+        local tar_file="${safe_name}.tar"
+        if [[ -f "${output_dir}/${tar_file}" ]]; then
+            echo "$source_image|$tar_file" >> "$manifest_file"
+        fi
+    done
+    
+    if [[ "$include_common" == "true" ]]; then
+        echo "" >> "$manifest_file"
+        echo "# Common/Third-party Images" >> "$manifest_file"
+        
+        for image in "${COMMON_IMAGES[@]}"; do
+            local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
+            local tar_file="${safe_name}.tar"
+            if [[ -f "${output_dir}/${tar_file}" ]]; then
+                echo "$image|$tar_file" >> "$manifest_file"
+            fi
+        done
+    fi
+    
+    # Generate import script
+    log_info "📜 Generating import script..."
+    local import_script="${output_dir}/import-images.sh"
+    cat > "$import_script" << 'IMPORT_SCRIPT_EOF'
+#!/bin/bash
+
+# AI Infrastructure Matrix - Offline Images Import Script
+# Usage: ./import-images.sh [images_directory]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGES_DIR="${1:-$SCRIPT_DIR}"
+MANIFEST_FILE="${IMAGES_DIR}/images-manifest.txt"
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+if [[ ! -f "$MANIFEST_FILE" ]]; then
+    log_error "Manifest file not found: $MANIFEST_FILE"
+    exit 1
+fi
+
+log_info "=========================================="
+log_info "Importing Offline Images"
+log_info "=========================================="
+log_info "Images directory: $IMAGES_DIR"
+log_info "Manifest file: $MANIFEST_FILE"
+echo
+
+imported_count=0
+failed_count=0
+
+while IFS='|' read -r image_name tar_file; do
+    # Skip comments and empty lines
+    [[ "$image_name" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "$image_name" ]] && continue
+    
+    tar_path="${IMAGES_DIR}/${tar_file}"
+    
+    if [[ -f "$tar_path" ]]; then
+        log_info "→ Importing: $image_name"
+        if docker load -i "$tar_path"; then
+            log_info "  ✓ Imported successfully: $image_name"
+            imported_count=$((imported_count + 1))
+        else
+            log_error "  ✗ Failed to import: $image_name"
+            failed_count=$((failed_count + 1))
+        fi
+    else
+        log_error "  ✗ Tar file not found: $tar_path"
+        failed_count=$((failed_count + 1))
+    fi
+done < "$MANIFEST_FILE"
+
+echo
+log_info "=========================================="
+log_info "Import completed: $imported_count success, $failed_count failed"
+
+if [[ $failed_count -eq 0 ]]; then
+    log_info "🎉 All images imported successfully!"
+    echo
+    log_info "Next steps:"
+    log_info "  1. Check images: docker images | grep -E 'ai-infra|postgres|redis'"
+    log_info "  2. Start services: docker compose up -d"
+else
+    log_error "Some images failed to import. Please check the errors above."
+fi
+IMPORT_SCRIPT_EOF
+    
+    chmod +x "$import_script"
+    
+    # Calculate total size
+    local total_size=$(du -sh "$output_dir" | cut -f1)
+    
+    # Print summary
+    log_info "=========================================="
+    log_info "🎉 Offline Export Complete!"
+    log_info "=========================================="
+    echo
+    log_info "📊 Export Statistics:"
+    log_info "  • Exported: $exported_count images"
+    log_info "  • Failed: $failed_count images"
+    log_info "  • Total size: $total_size"
+    echo
+    
+    if [[ ${#failed_images[@]} -gt 0 ]]; then
+        log_warn "⚠️  Failed images:"
+        for img in "${failed_images[@]}"; do
+            log_warn "    - $img"
+        done
+        echo
+    fi
+    
+    log_info "📁 Output files:"
+    log_info "  • Images directory: $output_dir"
+    log_info "  • Manifest file: $manifest_file"
+    log_info "  • Import script: $import_script"
+    echo
+    log_info "📋 Usage instructions:"
+    log_info "  1. Copy the entire '$output_dir' directory to the offline environment"
+    log_info "  2. Run: cd $output_dir && ./import-images.sh"
+    log_info "  3. Start services: docker compose up -d"
+    
+    return 0
+}
+
 print_help() {
     echo "Usage: $0 [command] [options]"
     echo ""
@@ -1892,6 +2184,10 @@ print_help() {
     echo "  clean-images [tag]  Remove ai-infra Docker images (optional: specific tag)"
     echo "  clean-volumes       Remove ai-infra Docker volumes"
     echo "  clean-all [--force] Remove all images, volumes and stop containers"
+    echo ""
+    echo "Offline Export Commands:"
+    echo "  export-offline [dir] [tag] [include_common]  Export images to tar files"
+    echo "                                               default: ./offline-images, latest, true"
     echo ""
     echo "Template Variables (from .env):"
     echo "  === Mirror Configuration (Build-time) ==="
@@ -1935,6 +2231,10 @@ print_help() {
     echo "  # Intranet mode (Private Registry)"
     echo "  $0 push-all harbor.example.com/ai-infra v0.3.8    # Push to registry"
     echo "  $0 pull-all harbor.example.com/ai-infra v0.3.8    # Pull from registry"
+    echo ""
+    echo "  # Offline export"
+    echo "  $0 export-offline ./offline-images v0.3.8         # Export all images to tar"
+    echo "  $0 export-offline ./images v0.3.8 false           # Export without common images"
     echo ""
     echo "  # Cleanup"
     echo "  $0 clean-all --force"
@@ -2044,6 +2344,10 @@ case "$1" in
             exit 1
         fi
         push_all_dependencies "$2" "${3:-${IMAGE_TAG:-latest}}"
+        ;;
+    export-offline)
+        # Export all images to tar files for offline deployment
+        export_offline_images "$2" "${3:-${IMAGE_TAG:-latest}}" "${4:-true}"
         ;;
     help|--help|-h)
         print_help
