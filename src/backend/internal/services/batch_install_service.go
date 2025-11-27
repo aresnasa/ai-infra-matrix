@@ -488,20 +488,9 @@ func (s *BatchInstallService) detectOS(client *ssh.Client) (*models.OSInfo, erro
 	var output bytes.Buffer
 	session.Stdout = &output
 
-	cmd := `
-		if [ -f /etc/os-release ]; then
-			. /etc/os-release
-			echo "OS:$ID"
-			echo "VERSION:$VERSION_ID"
-		elif [ -f /etc/redhat-release ]; then
-			echo "OS:rhel"
-			echo "VERSION:$(cat /etc/redhat-release | grep -oE '[0-9]+' | head -1)"
-		else
-			echo "OS:unknown"
-			echo "VERSION:unknown"
-		fi
-		echo "ARCH:$(uname -m)"
-	`
+	// 使用 ScriptLoader 获取操作系统检测脚本
+	scriptLoader := GetScriptLoader()
+	cmd := scriptLoader.GenerateOSDetectScript()
 
 	if err := session.Run(cmd); err != nil {
 		return nil, fmt.Errorf("failed to run detection command: %v", err)
@@ -532,6 +521,7 @@ func (s *BatchInstallService) detectOS(client *ssh.Client) (*models.OSInfo, erro
 }
 
 // installSaltMinion 安装 Salt Minion
+// 优先尝试从 AppHub 下载安装包，如果失败则回退到在线安装（使用 Salt Bootstrap 脚本）
 func (s *BatchInstallService) installSaltMinion(client *ssh.Client, osInfo *models.OSInfo, masterHost, minionID, version, sudoPrefix, taskID, host string) error {
 	// 构建 AppHub URL
 	appHubHost := os.Getenv("EXTERNAL_HOST")
@@ -552,122 +542,29 @@ func (s *BatchInstallService) installSaltMinion(client *ssh.Client, osInfo *mode
 		arch = "arm64"
 	}
 
-	// 根据操作系统构建安装命令
-	var installCmd string
+	// RPM 架构名称
+	rpmArch := osInfo.Arch
+	if rpmArch == "amd64" {
+		rpmArch = "x86_64"
+	} else if rpmArch == "arm64" {
+		rpmArch = "aarch64"
+	}
 
-	switch osInfo.OS {
-	case "ubuntu", "debian":
-		installCmd = fmt.Sprintf(`
-set -e
-echo "=== Starting Salt Minion Installation ==="
-
-# Create temp directory
-cd /tmp
-rm -rf salt-install && mkdir -p salt-install && cd salt-install
-
-echo "=== Downloading Salt packages from AppHub ==="
-# Download salt packages
-curl -fsSL "%s/pkgs/saltstack-deb/salt-common_%s_%s.deb" -o salt-common.deb || { echo "Failed to download salt-common"; exit 1; }
-curl -fsSL "%s/pkgs/saltstack-deb/salt-minion_%s_%s.deb" -o salt-minion.deb || { echo "Failed to download salt-minion"; exit 1; }
-
-echo "=== Installing dependencies ==="
-%sapt-get update -qq || true
-%sapt-get install -y -qq python3 python3-pip python3-setuptools || true
-
-echo "=== Installing Salt packages ==="
-%sdpkg -i salt-common.deb || %sapt-get install -f -y -qq
-%sdpkg -i salt-minion.deb || %sapt-get install -f -y -qq
-
-echo "=== Configuring Salt Minion ==="
-%smkdir -p /etc/salt
-cat << 'SALTCONF' | %stee /etc/salt/minion
-master: %s
-id: %s
-mine_enabled: true
-mine_return_job: true
-mine_interval: 60
-SALTCONF
-
-echo "=== Starting Salt Minion service ==="
-%ssystemctl daemon-reload || true
-%ssystemctl enable salt-minion || true
-%ssystemctl restart salt-minion || true
-sleep 2
-%ssystemctl status salt-minion --no-pager || true
-
-echo "=== Cleaning up ==="
-cd /tmp && rm -rf salt-install
-
-echo "=== Salt Minion Installation Complete ==="
-`, appHubURL, version, arch,
-			appHubURL, version, arch,
-			sudoPrefix, sudoPrefix,
-			sudoPrefix, sudoPrefix,
-			sudoPrefix, sudoPrefix,
-			sudoPrefix, sudoPrefix,
-			masterHost, minionID,
-			sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix)
-
-	case "centos", "rhel", "rocky", "almalinux", "fedora":
-		rpmArch := osInfo.Arch
-		if rpmArch == "amd64" {
-			rpmArch = "x86_64"
-		} else if rpmArch == "arm64" {
-			rpmArch = "aarch64"
-		}
-
-		installCmd = fmt.Sprintf(`
-set -e
-echo "=== Starting Salt Minion Installation ==="
-
-# Create temp directory
-cd /tmp
-rm -rf salt-install && mkdir -p salt-install && cd salt-install
-
-echo "=== Downloading Salt packages from AppHub ==="
-# Download salt packages
-curl -fsSL "%s/pkgs/saltstack-rpm/salt-%s-0.%s.rpm" -o salt.rpm || { echo "Failed to download salt"; exit 1; }
-curl -fsSL "%s/pkgs/saltstack-rpm/salt-minion-%s-0.%s.rpm" -o salt-minion.rpm || { echo "Failed to download salt-minion"; exit 1; }
-
-echo "=== Installing dependencies ==="
-%syum install -y python3 python3-pip || %sdnf install -y python3 python3-pip || true
-
-echo "=== Installing Salt packages ==="
-%srpm -Uvh --replacepkgs salt.rpm || %syum localinstall -y salt.rpm || true
-%srpm -Uvh --replacepkgs salt-minion.rpm || %syum localinstall -y salt-minion.rpm || true
-
-echo "=== Configuring Salt Minion ==="
-%smkdir -p /etc/salt
-cat << 'SALTCONF' | %stee /etc/salt/minion
-master: %s
-id: %s
-mine_enabled: true
-mine_return_job: true
-mine_interval: 60
-SALTCONF
-
-echo "=== Starting Salt Minion service ==="
-%ssystemctl daemon-reload || true
-%ssystemctl enable salt-minion || true
-%ssystemctl restart salt-minion || true
-sleep 2
-%ssystemctl status salt-minion --no-pager || true
-
-echo "=== Cleaning up ==="
-cd /tmp && rm -rf salt-install
-
-echo "=== Salt Minion Installation Complete ==="
-`, appHubURL, version, rpmArch,
-			appHubURL, version, rpmArch,
-			sudoPrefix, sudoPrefix,
-			sudoPrefix, sudoPrefix,
-			sudoPrefix, sudoPrefix,
-			sudoPrefix, sudoPrefix,
-			masterHost, minionID,
-			sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix)
-
-	default:
-		return fmt.Errorf("unsupported operating system: %s", osInfo.OS)
+	// 使用 ScriptLoader 生成安装脚本
+	scriptLoader := GetScriptLoader()
+	installCmd, err := scriptLoader.GenerateSaltInstallScript(SaltInstallParams{
+		AppHubURL:  appHubURL,
+		MasterHost: masterHost,
+		MinionID:   minionID,
+		Version:    version,
+		Arch:       arch,
+		RpmArch:    rpmArch,
+		SudoPrefix: sudoPrefix,
+		OS:         osInfo.OS,
+		OSVersion:  osInfo.Version,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to generate install script: %v", err)
 	}
 
 	// 执行安装命令
@@ -996,45 +893,14 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 		sudoPrefix = fmt.Sprintf("echo '%s' | sudo -S ", sudoPass)
 	}
 
-	// 构建卸载命令
-	var uninstallCmd string
-	switch osInfo.OS {
-	case "ubuntu", "debian":
-		uninstallCmd = fmt.Sprintf(`
-set -e
-echo "=== Stopping Salt Minion service ==="
-%ssystemctl stop salt-minion || true
-%ssystemctl disable salt-minion || true
-
-echo "=== Removing Salt packages ==="
-%sapt-get remove -y salt-minion salt-common || true
-%sapt-get purge -y salt-minion salt-common || true
-%sapt-get autoremove -y || true
-
-echo "=== Cleaning up configuration ==="
-%srm -rf /etc/salt /var/cache/salt /var/log/salt /var/run/salt
-
-echo "=== Salt Minion uninstallation complete ==="
-`, sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix)
-
-	case "centos", "rhel", "rocky", "almalinux", "fedora":
-		uninstallCmd = fmt.Sprintf(`
-set -e
-echo "=== Stopping Salt Minion service ==="
-%ssystemctl stop salt-minion || true
-%ssystemctl disable salt-minion || true
-
-echo "=== Removing Salt packages ==="
-%syum remove -y salt-minion salt || %sdnf remove -y salt-minion salt || true
-
-echo "=== Cleaning up configuration ==="
-%srm -rf /etc/salt /var/cache/salt /var/log/salt /var/run/salt
-
-echo "=== Salt Minion uninstallation complete ==="
-`, sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix, sudoPrefix)
-
-	default:
-		return fmt.Errorf("unsupported operating system: %s", osInfo.OS)
+	// 使用 ScriptLoader 生成卸载脚本
+	scriptLoader := GetScriptLoader()
+	uninstallCmd, err := scriptLoader.GenerateSaltUninstallScript(SaltUninstallParams{
+		SudoPrefix: sudoPrefix,
+		OS:         osInfo.OS,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to generate uninstall script: %v", err)
 	}
 
 	// 执行卸载命令

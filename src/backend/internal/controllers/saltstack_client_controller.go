@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -245,6 +248,15 @@ func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 		saltstack.DELETE("/minion/:minionId", c.DeleteMinion)
 		saltstack.POST("/minion/batch-delete", c.BatchDeleteMinions)
 		saltstack.POST("/minion/:minionId/uninstall", c.UninstallMinion)
+
+		// 主机模板
+		saltstack.GET("/host-templates", c.ListHostTemplates)
+		saltstack.POST("/host-templates", c.CreateHostTemplate)
+		saltstack.GET("/host-templates/:id", c.GetHostTemplate)
+		saltstack.DELETE("/host-templates/:id", c.DeleteHostTemplate)
+		saltstack.GET("/host-templates/:id/hosts", c.GetHostTemplateHosts)
+		saltstack.GET("/host-templates/download/:format", c.DownloadHostTemplate)
+		saltstack.POST("/hosts/parse", c.ParseHostFile)
 
 		// 测试主机
 		saltstack.GET("/test-hosts", c.GetTestHosts)
@@ -773,5 +785,411 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": fmt.Sprintf("Minion %s uninstalled and removed from master", minionID),
+	})
+}
+
+// ========================= 主机模板相关 API =========================
+
+// ListHostTemplates 列出所有主机模板
+// @Summary 列出主机模板
+// @Description 获取用户的所有主机配置模板
+// @Tags SaltStack
+// @Produce json
+// @Param limit query int false "限制返回数量" default(50)
+// @Param offset query int false "偏移量" default(0)
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/host-templates [get]
+func (c *SaltStackClientController) ListHostTemplates(ctx *gin.Context) {
+	limitStr := ctx.DefaultQuery("limit", "50")
+	offsetStr := ctx.DefaultQuery("offset", "0")
+
+	limit, _ := strconv.Atoi(limitStr)
+	offset, _ := strconv.Atoi(offsetStr)
+
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	db := database.GetDB()
+	var templates []models.HostTemplate
+	var total int64
+
+	db.Model(&models.HostTemplate{}).Count(&total)
+	db.Order("created_at desc").Limit(limit).Offset(offset).Find(&templates)
+
+	// 转换为响应格式（不包含主机详情）
+	responses := make([]*models.HostTemplateResponse, 0, len(templates))
+	for _, t := range templates {
+		resp, err := t.ToResponse(false, true)
+		if err != nil {
+			continue
+		}
+		responses = append(responses, resp)
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"templates": responses,
+			"total":     total,
+			"limit":     limit,
+			"offset":    offset,
+		},
+	})
+}
+
+// CreateHostTemplate 创建主机模板
+// @Summary 创建主机模板
+// @Description 创建新的主机配置模板（主机数据加密存储）
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body models.HostTemplateCreateRequest true "创建请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/host-templates [post]
+func (c *SaltStackClientController) CreateHostTemplate(ctx *gin.Context) {
+	var req models.HostTemplateCreateRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if len(req.Hosts) == 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "At least one host is required",
+		})
+		return
+	}
+
+	// 创建模板
+	template := &models.HostTemplate{
+		Name:        req.Name,
+		Description: req.Description,
+		Format:      req.Format,
+		CreatedBy:   1, // TODO: 从 JWT 获取用户 ID
+	}
+
+	// 加密存储主机数据
+	if err := template.SetHosts(req.Hosts); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to encrypt host data",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	db := database.GetDB()
+	if err := db.Create(template).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to create template",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	resp, _ := template.ToResponse(false, true)
+
+	logrus.WithFields(logrus.Fields{
+		"template_id": template.ID,
+		"name":        template.Name,
+		"host_count":  template.HostCount,
+	}).Info("Host template created")
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Host template created successfully",
+		"data":    resp,
+	})
+}
+
+// GetHostTemplate 获取主机模板详情
+// @Summary 获取主机模板详情
+// @Description 获取指定主机模板的详细信息
+// @Tags SaltStack
+// @Produce json
+// @Param id path int true "模板ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/host-templates/{id} [get]
+func (c *SaltStackClientController) GetHostTemplate(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid template ID",
+		})
+		return
+	}
+
+	db := database.GetDB()
+	var template models.HostTemplate
+	if err := db.First(&template, id).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Template not found",
+		})
+		return
+	}
+
+	// 返回包含主机列表（密码脱敏）
+	resp, err := template.ToResponse(true, true)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get template data",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+// GetHostTemplateHosts 获取主机模板的主机列表（包含密码）
+// @Summary 获取主机模板主机列表
+// @Description 获取指定主机模板的完整主机列表（包含密码，用于批量安装）
+// @Tags SaltStack
+// @Produce json
+// @Param id path int true "模板ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/host-templates/{id}/hosts [get]
+func (c *SaltStackClientController) GetHostTemplateHosts(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid template ID",
+		})
+		return
+	}
+
+	db := database.GetDB()
+	var template models.HostTemplate
+	if err := db.First(&template, id).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Template not found",
+		})
+		return
+	}
+
+	// 获取完整主机列表（包含密码）
+	hosts, err := template.GetHosts()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to decrypt host data",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"template_id":   template.ID,
+			"template_name": template.Name,
+			"hosts":         hosts,
+			"count":         len(hosts),
+		},
+	})
+}
+
+// DeleteHostTemplate 删除主机模板
+// @Summary 删除主机模板
+// @Description 删除指定的主机配置模板
+// @Tags SaltStack
+// @Produce json
+// @Param id path int true "模板ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/host-templates/{id} [delete]
+func (c *SaltStackClientController) DeleteHostTemplate(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid template ID",
+		})
+		return
+	}
+
+	db := database.GetDB()
+	result := db.Delete(&models.HostTemplate{}, id)
+	if result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to delete template",
+			"message": result.Error.Error(),
+		})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Template not found",
+		})
+		return
+	}
+
+	logrus.WithField("template_id", id).Info("Host template deleted")
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Template deleted successfully",
+	})
+}
+
+// DownloadHostTemplate 下载主机模板示例文件
+// @Summary 下载主机模板
+// @Description 下载指定格式的主机配置模板示例文件
+// @Tags SaltStack
+// @Produce text/plain
+// @Param format path string true "格式" Enums(csv, json, yaml, ini)
+// @Success 200 {string} string "模板内容"
+// @Router /api/saltstack/host-templates/download/{format} [get]
+func (c *SaltStackClientController) DownloadHostTemplate(ctx *gin.Context) {
+	format := strings.ToLower(ctx.Param("format"))
+
+	parser := services.NewHostParserService()
+	var content, filename, contentType string
+
+	switch format {
+	case "csv":
+		content = parser.GenerateCSVTemplate()
+		filename = "hosts_template.csv"
+		contentType = "text/csv"
+	case "json":
+		content = parser.GenerateJSONTemplate()
+		filename = "hosts_template.json"
+		contentType = "application/json"
+	case "yaml", "yml":
+		content = parser.GenerateYAMLTemplate()
+		filename = "hosts_template.yaml"
+		contentType = "application/x-yaml"
+	case "ini":
+		content = parser.GenerateAnsibleINITemplate()
+		filename = "hosts_template.ini"
+		contentType = "text/plain"
+	default:
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid format. Supported: csv, json, yaml, ini",
+		})
+		return
+	}
+
+	ctx.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	ctx.Header("Content-Type", contentType)
+	ctx.String(http.StatusOK, content)
+}
+
+// ParseHostFileRequest 解析主机文件请求
+type ParseHostFileRequest struct {
+	Content  string `json:"content" binding:"required"`
+	Format   string `json:"format"`   // 可选，如果提供则使用指定格式
+	Filename string `json:"filename"` // 文件名，用于自动检测格式
+}
+
+// ParseHostFile 解析上传的主机文件
+// @Summary 解析主机文件
+// @Description 解析上传的主机配置文件（CSV/JSON/YAML/INI格式）
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body ParseHostFileRequest true "文件内容"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/hosts/parse [post]
+func (c *SaltStackClientController) ParseHostFile(ctx *gin.Context) {
+	var req ParseHostFileRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	parser := services.NewHostParserService()
+	var hosts []services.HostConfig
+	var err error
+
+	// 确定解析格式
+	format := strings.ToLower(req.Format)
+	if format == "" && req.Filename != "" {
+		// 从文件名自动检测格式
+		if strings.HasSuffix(strings.ToLower(req.Filename), ".csv") {
+			format = "csv"
+		} else if strings.HasSuffix(strings.ToLower(req.Filename), ".json") {
+			format = "json"
+		} else if strings.HasSuffix(strings.ToLower(req.Filename), ".yaml") || strings.HasSuffix(strings.ToLower(req.Filename), ".yml") {
+			format = "yaml"
+		} else if strings.HasSuffix(strings.ToLower(req.Filename), ".ini") {
+			format = "ini"
+		}
+	}
+
+	// 根据格式解析
+	contentBytes := []byte(req.Content)
+	switch format {
+	case "csv":
+		hosts, err = parser.ParseCSV(contentBytes)
+	case "json":
+		hosts, err = parser.ParseJSON(contentBytes)
+	case "yaml", "yml":
+		hosts, err = parser.ParseYAML(contentBytes)
+	case "ini":
+		hosts, err = parser.ParseAnsibleINI(contentBytes)
+	default:
+		// 尝试自动检测格式
+		hosts, err = parser.AutoDetectAndParse(contentBytes)
+	}
+
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Failed to parse file",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 转换为前端需要的格式
+	hostList := make([]models.HostTemplateHost, 0, len(hosts))
+	for _, h := range hosts {
+		hostList = append(hostList, models.HostTemplateHost{
+			Host:     h.Host,
+			Port:     h.Port,
+			Username: h.Username,
+			Password: h.Password,
+			UseSudo:  h.UseSudo,
+			MinionID: h.MinionID,
+			Group:    h.Group,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"hosts":  hostList,
+			"count":  len(hostList),
+			"format": format,
+		},
 	})
 }

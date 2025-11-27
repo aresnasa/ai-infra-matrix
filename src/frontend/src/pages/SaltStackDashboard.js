@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton, InputNumber, Switch, Divider, Tooltip, Popconfirm } from 'antd';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton, InputNumber, Switch, Divider, Tooltip, Popconfirm, Upload, Dropdown, Menu } from 'antd';
 import { 
   CheckCircleOutlined, 
   ExclamationCircleOutlined, 
@@ -14,11 +14,16 @@ import {
   CloudUploadOutlined,
   PlusOutlined,
   DeleteOutlined,
+  HistoryOutlined,
+  SyncOutlined,
   QuestionCircleOutlined,
   SafetyCertificateOutlined,
   WifiOutlined,
   KeyOutlined,
-  LockOutlined
+  LockOutlined,
+  UploadOutlined,
+  DownloadOutlined,
+  FileTextOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 
@@ -86,9 +91,12 @@ const SaltStackDashboard = () => {
   const [batchInstallTaskId, setBatchInstallTaskId] = useState('');
   const [batchInstallEvents, setBatchInstallEvents] = useState([]);
   const [batchInstallHosts, setBatchInstallHosts] = useState([
-    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, sudo_pass: '' }
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
   ]);
   const batchSseRef = useRef(null);
+  
+  // 文件导入相关状态
+  const [importLoading, setImportLoading] = useState(false);
 
   // SSH 测试弹窗
   const [sshTestVisible, setSSHTestVisible] = useState(false);
@@ -96,7 +104,7 @@ const SaltStackDashboard = () => {
   const [sshTestRunning, setSSHTestRunning] = useState(false);
   const [sshTestResults, setSSHTestResults] = useState([]);
   const [sshTestHosts, setSSHTestHosts] = useState([
-    { key: Date.now(), host: '', port: 22, username: 'root', password: '', sudo_pass: '' }
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '' }
   ]);
 
   // 删除/卸载 Minion 状态
@@ -104,6 +112,13 @@ const SaltStackDashboard = () => {
   const [uninstallModalVisible, setUninstallModalVisible] = useState(false);
   const [uninstallForm] = Form.useForm();
   const [uninstallMinionId, setUninstallMinionId] = useState('');
+
+  // 安装任务历史状态
+  const [installTasks, setInstallTasks] = useState([]);
+  const [installTasksLoading, setInstallTasksLoading] = useState(false);
+  const [installTasksTotal, setInstallTasksTotal] = useState(0);
+  const [installTasksPage, setInstallTasksPage] = useState({ current: 1, pageSize: 10 });
+  const [expandedTaskId, setExpandedTaskId] = useState(null);
 
   const loadStatus = async () => {
     setStatusLoading(true);
@@ -146,6 +161,23 @@ const SaltStackDashboard = () => {
     }
   };
 
+  // 加载安装任务历史
+  const loadInstallTasks = useCallback(async (page = installTasksPage.current, pageSize = installTasksPage.pageSize) => {
+    setInstallTasksLoading(true);
+    try {
+      const offset = (page - 1) * pageSize;
+      const response = await saltStackAPI.listBatchInstallTasks({ limit: pageSize, offset });
+      const data = response.data?.data || {};
+      setInstallTasks(data.tasks || []);
+      setInstallTasksTotal(data.total || 0);
+      setInstallTasksPage({ current: page, pageSize });
+    } catch (e) {
+      console.error('加载安装任务历史失败', e);
+    } finally {
+      setInstallTasksLoading(false);
+    }
+  }, [installTasksPage.current, installTasksPage.pageSize]);
+
   const loadAllData = async () => {
     // 并行加载所有数据，但不阻塞页面渲染
     await Promise.all([loadStatus(), loadMinions(), loadJobs()]);
@@ -186,7 +218,7 @@ const SaltStackDashboard = () => {
   const addHostRow = () => {
     setBatchInstallHosts([
       ...batchInstallHosts,
-      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, sudo_pass: '' }
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
     ]);
   };
 
@@ -206,6 +238,96 @@ const SaltStackDashboard = () => {
     ));
   };
 
+  // 下载主机模板
+  const downloadHostTemplate = async (format) => {
+    try {
+      const response = await fetch(`/api/saltstack/host-templates/download/${format}`);
+      if (!response.ok) throw new Error('下载失败');
+      
+      const blob = await response.blob();
+      const filename = `hosts_template.${format === 'ini' ? 'ini' : format}`;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      message.success(`已下载 ${filename}`);
+    } catch (e) {
+      message.error('下载模板失败: ' + e.message);
+    }
+  };
+
+  // 导入主机文件
+  const handleFileImport = async (file) => {
+    setImportLoading(true);
+    try {
+      const content = await file.text();
+      const response = await fetch('/api/saltstack/hosts/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, filename: file.name })
+      });
+      
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.message || result.error || '解析失败');
+      }
+
+      const hosts = result.data?.hosts || [];
+      if (hosts.length === 0) {
+        message.warning('文件中没有找到有效的主机配置');
+        return;
+      }
+
+      // 将解析的主机添加到列表
+      const newHosts = hosts.map((h, idx) => ({
+        key: Date.now() + idx,
+        host: h.host || '',
+        port: h.port || 22,
+        username: h.username || 'root',
+        password: h.password || '',
+        use_sudo: h.use_sudo || false,
+        minion_id: h.minion_id || '',
+        group: h.group || ''
+      }));
+
+      // 如果当前只有一个空行，则替换；否则追加
+      if (batchInstallHosts.length === 1 && !batchInstallHosts[0].host) {
+        setBatchInstallHosts(newHosts);
+      } else {
+        setBatchInstallHosts([...batchInstallHosts, ...newHosts]);
+      }
+
+      message.success(`成功导入 ${hosts.length} 个主机配置`);
+    } catch (e) {
+      message.error('导入失败: ' + e.message);
+    } finally {
+      setImportLoading(false);
+    }
+    return false; // 阻止默认上传行为
+  };
+
+  // 模板下载菜单
+  const templateMenu = (
+    <Menu onClick={({ key }) => downloadHostTemplate(key)}>
+      <Menu.Item key="csv" icon={<FileTextOutlined />}>
+        CSV 格式 (.csv)
+      </Menu.Item>
+      <Menu.Item key="json" icon={<FileTextOutlined />}>
+        JSON 格式 (.json)
+      </Menu.Item>
+      <Menu.Item key="yaml" icon={<FileTextOutlined />}>
+        YAML 格式 (.yaml)
+      </Menu.Item>
+      <Menu.Item key="ini" icon={<FileTextOutlined />}>
+        Ansible INI 格式 (.ini)
+      </Menu.Item>
+    </Menu>
+  );
+
   // 打开批量安装弹窗
   const openBatchInstallModal = () => {
     setBatchInstallVisible(true);
@@ -213,15 +335,14 @@ const SaltStackDashboard = () => {
     setBatchInstallTaskId('');
     setBatchInstallRunning(false);
     setBatchInstallHosts([
-      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, sudo_pass: '' }
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
     ]);
     batchInstallForm.setFieldsValue({
       parallel: 3,
       master_host: 'salt',
       install_type: 'saltstack',
       auto_accept: true,
-      global_use_sudo: false,
-      global_sudo_pass: ''
+      global_use_sudo: false
     });
   };
 
@@ -281,7 +402,7 @@ const SaltStackDashboard = () => {
       setBatchInstallRunning(true);
       setBatchInstallEvents([]);
 
-      // 构建请求
+      // 构建请求（Linux 中登录密码和 sudo 密码相同）
       const payload = {
         hosts: validHosts.map(h => ({
           host: h.host.trim(),
@@ -289,7 +410,7 @@ const SaltStackDashboard = () => {
           username: h.username,
           password: h.password,
           use_sudo: values.global_use_sudo || h.use_sudo,
-          sudo_pass: (values.global_use_sudo ? values.global_sudo_pass : h.sudo_pass) || h.password
+          sudo_pass: h.password  // Linux 用户密码即 sudo 密码
         })),
         parallel: values.parallel || 3,
         master_host: values.master_host || 'salt',
@@ -328,7 +449,7 @@ const SaltStackDashboard = () => {
     setSSHTestVisible(true);
     setSSHTestResults([]);
     setSSHTestHosts([
-      { key: Date.now(), host: '', port: 22, username: 'root', password: '', sudo_pass: '' }
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '' }
     ]);
   };
 
@@ -336,7 +457,7 @@ const SaltStackDashboard = () => {
   const addSSHTestHostRow = () => {
     setSSHTestHosts([
       ...sshTestHosts,
-      { key: Date.now(), host: '', port: 22, username: 'root', password: '', sudo_pass: '' }
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '' }
     ]);
   };
 
@@ -375,13 +496,14 @@ const SaltStackDashboard = () => {
     setSSHTestResults([]);
 
     try {
+      // Linux 中登录密码和 sudo 密码相同
       const payload = {
         hosts: validHosts.map(h => ({
           host: h.host.trim(),
           port: h.port || 22,
           username: h.username,
           password: h.password,
-          sudo_pass: h.sudo_pass || h.password
+          sudo_pass: h.password  // Linux 用户密码即 sudo 密码
         })),
         parallel: 5
       };
@@ -430,8 +552,7 @@ const SaltStackDashboard = () => {
       port: 22,
       username: 'root',
       password: '',
-      use_sudo: false,
-      sudo_pass: ''
+      use_sudo: false
     });
   };
 
@@ -440,13 +561,14 @@ const SaltStackDashboard = () => {
     try {
       const values = await uninstallForm.validateFields();
       
+      // Linux 中登录密码和 sudo 密码相同
       const resp = await saltStackAPI.uninstallMinion(uninstallMinionId, {
         host: values.host,
         port: values.port || 22,
         username: values.username,
         password: values.password,
         use_sudo: values.use_sudo,
-        sudo_pass: values.sudo_pass || values.password
+        sudo_pass: values.password  // Linux 用户密码即 sudo 密码
       });
 
       if (resp.data?.success) {
@@ -715,7 +837,15 @@ const SaltStackDashboard = () => {
 
           {/* 详细信息选项卡 */}
           <Card>
-            <Tabs defaultActiveKey="overview" size="large">
+            <Tabs 
+              defaultActiveKey="overview" 
+              size="large"
+              onChange={(key) => {
+                if (key === 'install-tasks' && installTasks.length === 0 && !installTasksLoading) {
+                  loadInstallTasks(1);
+                }
+              }}
+            >
               <TabPane tab="系统概览" key="overview" icon={<DatabaseOutlined />}>
                 <Row gutter={16}>
                   <Col span={12}>
@@ -926,6 +1056,222 @@ const SaltStackDashboard = () => {
                     {jobs.length === 0 && (
                       <div style={{ textAlign: 'center', padding: '40px 0' }}>
                         <Text type="secondary">暂无作业历史</Text>
+                      </div>
+                    )}
+                  </>
+                )}
+              </TabPane>
+
+              <TabPane tab="安装任务" key="install-tasks" icon={<HistoryOutlined />}>
+                {installTasksLoading && installTasks.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16 }}>正在加载安装任务历史...</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text type="secondary">共 {installTasksTotal} 个安装任务</Text>
+                      <Button 
+                        icon={<ReloadOutlined />} 
+                        onClick={() => loadInstallTasks(1)} 
+                        loading={installTasksLoading}
+                      >
+                        刷新
+                      </Button>
+                    </div>
+                    <Table
+                      dataSource={installTasks}
+                      rowKey="id"
+                      loading={installTasksLoading}
+                      size="small"
+                      pagination={{
+                        current: installTasksPage.current,
+                        pageSize: installTasksPage.pageSize,
+                        total: installTasksTotal,
+                        showSizeChanger: true,
+                        showTotal: (total) => `共 ${total} 条`,
+                        onChange: (page, pageSize) => loadInstallTasks(page, pageSize),
+                      }}
+                      expandable={{
+                        expandedRowKeys: expandedTaskId ? [expandedTaskId] : [],
+                        onExpand: (expanded, record) => {
+                          setExpandedTaskId(expanded ? record.id : null);
+                        },
+                        expandedRowRender: (record) => (
+                          <div style={{ padding: '8px 0' }}>
+                            <Table
+                              dataSource={record.hostResults || []}
+                              rowKey="id"
+                              size="small"
+                              pagination={false}
+                              columns={[
+                                {
+                                  title: '主机',
+                                  dataIndex: 'host',
+                                  key: 'host',
+                                  width: 150,
+                                  render: (host, row) => (
+                                    <Tooltip title={`${row.user || 'root'}@${host}:${row.port || 22}`}>
+                                      <Text code>{host}</Text>
+                                    </Tooltip>
+                                  ),
+                                },
+                                {
+                                  title: '状态',
+                                  dataIndex: 'status',
+                                  key: 'status',
+                                  width: 100,
+                                  render: (status) => (
+                                    <Tag 
+                                      color={status === 'success' ? 'green' : 'red'}
+                                      icon={status === 'success' ? <CheckCircleOutlined /> : <ExclamationCircleOutlined />}
+                                    >
+                                      {status === 'success' ? '成功' : '失败'}
+                                    </Tag>
+                                  ),
+                                },
+                                {
+                                  title: '耗时',
+                                  dataIndex: 'duration',
+                                  key: 'duration',
+                                  width: 100,
+                                  render: (duration) => {
+                                    if (!duration) return '-';
+                                    if (duration < 1000) return `${duration}ms`;
+                                    const seconds = Math.floor(duration / 1000);
+                                    if (seconds < 60) return `${seconds}s`;
+                                    const minutes = Math.floor(seconds / 60);
+                                    const remainingSeconds = seconds % 60;
+                                    return `${minutes}m ${remainingSeconds}s`;
+                                  },
+                                },
+                                {
+                                  title: '错误信息',
+                                  dataIndex: 'error',
+                                  key: 'error',
+                                  ellipsis: true,
+                                  render: (error) => error ? (
+                                    <Tooltip title={error}>
+                                      <Text type="danger" ellipsis>{error}</Text>
+                                    </Tooltip>
+                                  ) : '-',
+                                },
+                              ]}
+                            />
+                          </div>
+                        ),
+                      }}
+                      columns={[
+                        {
+                          title: '任务名称',
+                          dataIndex: 'taskName',
+                          key: 'taskName',
+                          width: 200,
+                          ellipsis: true,
+                          render: (name, record) => (
+                            <Space>
+                              <Text strong>{name || `任务 #${record.id}`}</Text>
+                            </Space>
+                          ),
+                        },
+                        {
+                          title: '状态',
+                          dataIndex: 'status',
+                          key: 'status',
+                          width: 120,
+                          filters: [
+                            { text: '等待中', value: 'pending' },
+                            { text: '运行中', value: 'running' },
+                            { text: '已完成', value: 'completed' },
+                            { text: '失败', value: 'failed' },
+                          ],
+                          onFilter: (value, record) => record.status === value,
+                          render: (status) => {
+                            const statusConfig = {
+                              pending: { color: 'default', icon: <ClockCircleOutlined />, text: '等待中' },
+                              running: { color: 'processing', icon: <SyncOutlined spin />, text: '运行中' },
+                              completed: { color: 'success', icon: <CheckCircleOutlined />, text: '已完成' },
+                              failed: { color: 'error', icon: <ExclamationCircleOutlined />, text: '失败' },
+                            };
+                            const config = statusConfig[status] || { color: 'default', icon: null, text: status };
+                            return (
+                              <Tag color={config.color} icon={config.icon}>
+                                {config.text}
+                              </Tag>
+                            );
+                          },
+                        },
+                        {
+                          title: '进度',
+                          key: 'progress',
+                          width: 180,
+                          render: (_, record) => {
+                            const total = record.totalHosts || 0;
+                            const success = record.successHosts || 0;
+                            const failed = record.failedHosts || 0;
+                            const completed = success + failed;
+                            const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+                            
+                            if (record.status === 'running') {
+                              return (
+                                <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                                  <Progress percent={percent} size="small" status="active" />
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    {completed}/{total} 主机
+                                  </Text>
+                                </Space>
+                              );
+                            }
+                            
+                            return (
+                              <Space>
+                                <Tag color="green">{success} 成功</Tag>
+                                {failed > 0 && <Tag color="red">{failed} 失败</Tag>}
+                                <Text type="secondary">/ {total}</Text>
+                              </Space>
+                            );
+                          },
+                        },
+                        {
+                          title: '开始时间',
+                          dataIndex: 'startTime',
+                          key: 'startTime',
+                          width: 170,
+                          sorter: (a, b) => new Date(a.startTime) - new Date(b.startTime),
+                          defaultSortOrder: 'descend',
+                          render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                        },
+                        {
+                          title: '耗时',
+                          dataIndex: 'duration',
+                          key: 'duration',
+                          width: 100,
+                          render: (duration, record) => {
+                            if (record.status === 'running') {
+                              return <Tag color="processing">进行中</Tag>;
+                            }
+                            if (!duration) return '-';
+                            if (duration < 60) return `${duration}s`;
+                            const minutes = Math.floor(duration / 60);
+                            const seconds = duration % 60;
+                            return `${minutes}m ${seconds}s`;
+                          },
+                        },
+                      ]}
+                    />
+                    {installTasks.length === 0 && !installTasksLoading && (
+                      <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                        <Text type="secondary">暂无安装任务历史</Text>
+                        <div style={{ marginTop: 16 }}>
+                          <Button 
+                            type="primary" 
+                            icon={<CloudUploadOutlined />} 
+                            onClick={openBatchInstallModal}
+                          >
+                            开始批量安装
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </>
@@ -1189,12 +1535,9 @@ const SaltStackDashboard = () => {
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item 
-                    name="global_sudo_pass" 
-                    label="sudo 密码（留空则使用登录密码）"
-                  >
-                    <Input.Password placeholder="如果sudo需要密码" />
-                  </Form.Item>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    💡 提示：Linux 中登录密码和 sudo 密码相同
+                  </Text>
                 </Col>
               </Row>
 
@@ -1204,8 +1547,34 @@ const SaltStackDashboard = () => {
                   <Button type="link" size="small" icon={<PlusOutlined />} onClick={addHostRow}>
                     添加主机
                   </Button>
+                  <Upload
+                    accept=".csv,.json,.yaml,.yml,.ini"
+                    showUploadList={false}
+                    beforeUpload={handleFileImport}
+                    disabled={importLoading}
+                  >
+                    <Button type="link" size="small" icon={<UploadOutlined />} loading={importLoading}>
+                      导入文件
+                    </Button>
+                  </Upload>
+                  <Dropdown overlay={templateMenu} trigger={['click']}>
+                    <Button type="link" size="small" icon={<DownloadOutlined />}>
+                      下载模板
+                    </Button>
+                  </Dropdown>
                 </Space>
               </Divider>
+
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={
+                  <span>
+                    支持导入 CSV、JSON、YAML、Ansible INI 格式的主机配置文件
+                  </span>
+                }
+              />
 
               <div style={{ maxHeight: 300, overflow: 'auto' }}>
                 {batchInstallHosts.map((host, index) => (
@@ -1235,14 +1604,14 @@ const SaltStackDashboard = () => {
                         onChange={(e) => updateHostRow(host.key, 'username', e.target.value)}
                       />
                     </Col>
-                    <Col span={5}>
+                    <Col span={6}>
                       <Input.Password 
                         placeholder="密码" 
                         value={host.password}
                         onChange={(e) => updateHostRow(host.key, 'password', e.target.value)}
                       />
                     </Col>
-                    <Col span={3}>
+                    <Col span={4}>
                       <Space>
                         <Tooltip title="使用 sudo">
                           <Switch 
@@ -1253,16 +1622,6 @@ const SaltStackDashboard = () => {
                         </Tooltip>
                         <span style={{ fontSize: 12 }}>sudo</span>
                       </Space>
-                    </Col>
-                    <Col span={4}>
-                      {host.use_sudo && (
-                        <Input.Password 
-                          placeholder="sudo密码" 
-                          value={host.sudo_pass}
-                          onChange={(e) => updateHostRow(host.key, 'sudo_pass', e.target.value)}
-                          size="small"
-                        />
-                      )}
                     </Col>
                     <Col span={1}>
                       <Button 
@@ -1388,18 +1747,11 @@ const SaltStackDashboard = () => {
                       onChange={(e) => updateSSHTestHostRow(host.key, 'username', e.target.value)}
                     />
                   </Col>
-                  <Col span={5}>
+                  <Col span={7}>
                     <Input.Password 
-                      placeholder="密码" 
+                      placeholder="密码（同 sudo 密码）" 
                       value={host.password}
                       onChange={(e) => updateSSHTestHostRow(host.key, 'password', e.target.value)}
-                    />
-                  </Col>
-                  <Col span={5}>
-                    <Input.Password 
-                      placeholder="sudo密码（可选）" 
-                      value={host.sudo_pass}
-                      onChange={(e) => updateSSHTestHostRow(host.key, 'sudo_pass', e.target.value)}
                     />
                   </Col>
                   <Col span={1}>
@@ -1534,7 +1886,7 @@ const SaltStackDashboard = () => {
                 <Col span={12}>
                   <Form.Item 
                     name="password" 
-                    label="密码"
+                    label="密码（同 sudo 密码）"
                     rules={[{ required: true, message: '请输入密码' }]}
                   >
                     <Input.Password placeholder="SSH 登录密码" />
@@ -1552,9 +1904,9 @@ const SaltStackDashboard = () => {
                   </Form.Item>
                 </Col>
                 <Col span={16}>
-                  <Form.Item name="sudo_pass" label="sudo 密码（留空则使用登录密码）">
-                    <Input.Password placeholder="如果 sudo 需要密码" />
-                  </Form.Item>
+                  <Text type="secondary" style={{ lineHeight: '32px' }}>
+                    💡 Linux 中登录密码即 sudo 密码
+                  </Text>
                 </Col>
               </Row>
             </Form>

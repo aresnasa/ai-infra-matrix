@@ -307,6 +307,7 @@ func migrateTaskSchema() error {
 		&models.JobTemplate{},
 		&models.ObjectStorageConfig{},
 		&models.ObjectStorageLog{},
+		&models.HostTemplate{},
 		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},
