@@ -1711,6 +1711,68 @@ build_all() {
     log_info "=== Build Process Completed Successfully ==="
 }
 
+# Tag private registry images as local images
+# This allows docker-compose to find images that were pulled from a private registry
+# and use them with local names (without the registry prefix)
+tag_private_images_as_local() {
+    local private_registry="${PRIVATE_REGISTRY:-}"
+    local image_tag="${IMAGE_TAG:-v0.3.8}"
+    
+    # If no private registry is configured, skip
+    if [[ -z "$private_registry" ]]; then
+        log_info "No private registry configured, skipping image tagging"
+        return 0
+    fi
+    
+    log_info "Checking for private registry images to tag as local..."
+    log_info "Private registry: ${private_registry}"
+    
+    # List of ai-infra images that may need tagging
+    local images=(
+        "ai-infra-frontend"
+        "ai-infra-backend"
+        "ai-infra-backend-init"
+        "ai-infra-nginx"
+        "ai-infra-apphub"
+        "ai-infra-saltstack"
+        "ai-infra-slurm-master"
+        "ai-infra-jupyterhub"
+        "ai-infra-singleuser"
+        "ai-infra-gitea"
+        "ai-infra-nightingale"
+        "ai-infra-test-containers"
+    )
+    
+    local tagged=0
+    local skipped=0
+    
+    for img in "${images[@]}"; do
+        local private_image="${private_registry}${img}:${image_tag}"
+        local local_image="${img}:${image_tag}"
+        
+        # Check if private image exists locally
+        if docker image inspect "$private_image" &>/dev/null; then
+            # Check if local image already exists
+            if docker image inspect "$local_image" &>/dev/null; then
+                log_info "  ⏭️  ${local_image} already exists, skipping"
+                skipped=$((skipped + 1))
+            else
+                # Tag private image as local
+                if docker tag "$private_image" "$local_image"; then
+                    log_info "  ✓ Tagged: ${private_image} -> ${local_image}"
+                    tagged=$((tagged + 1))
+                else
+                    log_warn "  ✗ Failed to tag: ${private_image}"
+                fi
+            fi
+        fi
+    done
+    
+    if [[ $tagged -gt 0 ]] || [[ $skipped -gt 0 ]]; then
+        log_info "Image tagging complete: $tagged tagged, $skipped skipped"
+    fi
+}
+
 start_all() {
     log_info "Starting all services..."
     local compose_cmd=$(detect_compose_command)
@@ -1718,6 +1780,9 @@ start_all() {
         log_error "docker-compose not found!"
         exit 1
     fi
+    
+    # Tag private registry images as local if needed
+    tag_private_images_as_local
     
     # Use --no-build to prevent rebuilding when images already exist
     $compose_cmd up -d --no-build
@@ -2273,6 +2338,7 @@ print_help() {
     echo "Service Commands:"
     echo "  start-all           Start all services using docker-compose"
     echo "  stop-all            Stop all services"
+    echo "  tag-images          Tag private registry images as local (for intranet)"
     echo ""
     echo "Pull Commands (Smart Mode):"
     echo "  prefetch            Prefetch all base images from Dockerfiles"
@@ -2395,6 +2461,9 @@ case "$1" in
         ;;
     start-all)
         start_all
+        ;;
+    tag-images)
+        tag_private_images_as_local
         ;;
     stop-all)
         stop_all
