@@ -521,9 +521,11 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
+    cgroup: host
     tmpfs:
       - /run
       - /run/lock
+      - /tmp
     env_file:
       - .env
     environment:
@@ -573,9 +575,12 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
+    # cgroup 配置：让容器拥有自己的 cgroup 命名空间，这对 systemd 运行至关重要
+    cgroup: host
     tmpfs:
       - /run
       - /run/lock
+      - /tmp
     dns:
       - 223.5.5.5
       - 8.8.8.8

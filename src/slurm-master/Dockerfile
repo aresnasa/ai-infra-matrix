@@ -359,6 +359,11 @@ RUN set -eux; \
         gettext-base 2>/dev/null || \
     echo "⚠️  部分工具包安装失败"; \
     \
+    # 【重要】删除构建时使用的 APT 源配置
+    # 避免将构建机器的 IP 地址写入镜像
+    echo "🧹 清理构建时的 APT 源配置..."; \
+    rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
+    \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
     \
     # 验证SLURM已成功安装

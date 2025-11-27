@@ -1872,6 +1872,44 @@ tag_private_images_as_local() {
     fi
 }
 
+# 更新运行时环境变量（启动阶段使用）
+# 与构建阶段不同，运行时需要检测当前机器的真实 IP
+update_runtime_env() {
+    log_info "=========================================="
+    log_info "🔄 更新运行时环境变量"
+    log_info "=========================================="
+    
+    # 检测当前机器的外部地址
+    local detected_host=$(detect_external_host)
+    local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+    
+    log_info "当前配置的 EXTERNAL_HOST: ${current_host:-<未设置>}"
+    log_info "检测到的本机地址: $detected_host"
+    
+    # 如果 IP 不同，说明是在不同机器上运行
+    if [[ "$current_host" != "$detected_host" ]]; then
+        log_info "⚠️  检测到环境变化（可能是从其他机器构建的镜像）"
+        log_info "   正在更新 EXTERNAL_HOST: $current_host -> $detected_host"
+        
+        # 更新 .env 文件中的 EXTERNAL_HOST
+        update_env_variable "EXTERNAL_HOST" "$detected_host"
+        update_env_variable "DOMAIN" "$detected_host"
+        
+        # 重新加载环境变量
+        set -a
+        source "$ENV_FILE"
+        set +a
+        
+        # 重新渲染配置模板
+        log_info "🔧 重新渲染配置模板..."
+        render_templates
+        
+        log_info "✓ 运行时环境变量已更新"
+    else
+        log_info "✓ EXTERNAL_HOST 配置正确，无需更新"
+    fi
+}
+
 start_all() {
     log_info "Starting all services..."
     local compose_cmd=$(detect_compose_command)
@@ -1879,6 +1917,10 @@ start_all() {
         log_error "docker-compose not found!"
         exit 1
     fi
+    
+    # 【关键】在启动前更新运行时环境变量
+    # 这解决了构建阶段与运行阶段在不同机器上 IP 不一致的问题
+    update_runtime_env
     
     # Tag private registry images as local if needed
     tag_private_images_as_local

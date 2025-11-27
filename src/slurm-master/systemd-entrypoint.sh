@@ -172,7 +172,7 @@ ls -la /sys/fs/cgroup/ 2>/dev/null | head -10
 # 确保 systemd 需要的目录存在
 mkdir -p /run/systemd/system
 
-# 对于 cgroup v2，可能需要确保某些权限
+# 对于 cgroup v2，需要特殊处理
 if [ "$CGROUP_VERSION" = "v2" ]; then
     # 检查是否可写
     if [ -w /sys/fs/cgroup ]; then
@@ -180,7 +180,31 @@ if [ "$CGROUP_VERSION" = "v2" ]; then
     else
         echo "⚠️  cgroup v2 不可写，可能影响 systemd 启动"
     fi
+    
+    # cgroup v2 需要将控制器委托给容器
+    # 检查是否有自己的 cgroup 子树
+    CONTAINER_CGROUP=""
+    if [ -f /proc/1/cgroup ]; then
+        CONTAINER_CGROUP=$(cat /proc/1/cgroup | grep "^0::" | cut -d: -f3)
+        echo "📋 容器 cgroup 路径: ${CONTAINER_CGROUP:-/}"
+    fi
+    
+    # 尝试启用控制器
+    if [ -f /sys/fs/cgroup/cgroup.subtree_control ]; then
+        echo "📋 当前启用的控制器:"
+        cat /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || echo "(无)"
+        
+        # 尝试启用必要的控制器
+        for controller in cpu cpuset io memory pids; do
+            if [ -f /sys/fs/cgroup/cgroup.controllers ] && grep -q "$controller" /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
+                echo "+$controller" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+            fi
+        done
+    fi
 fi
+
+# 设置 systemd 需要的环境变量
+export container=docker
 
 # 如果仍然使用默认的 /sbin/init，则替换为实际存在的 systemd
 if [ "$#" -eq 0 ] || [ "$1" = "/sbin/init" ]; then
