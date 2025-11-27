@@ -670,6 +670,10 @@ prefetch_base_images() {
 #   - No registry: Pull only common images from Docker Hub (internet mode)
 #   - With registry: Pull all images from private registry (intranet mode)
 # Args: $1 = registry (optional), $2 = tag
+# 
+# For Harbor/private registries, registry path should include project name:
+#   ✓ harbor.example.com/ai-infra    (correct - includes project)
+#   ✗ harbor.example.com             (wrong - missing project)
 pull_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
@@ -680,6 +684,32 @@ pull_all_services() {
     local success_count=0
     local total_count=0
     local failed_services=()
+    
+    # Validate registry path for private registries (Harbor requires project in path)
+    if [[ -n "$registry" ]]; then
+        # Check if registry contains project path (should have at least one /)
+        if [[ ! "$registry" =~ / ]]; then
+            log_warn "=========================================="
+            log_warn "⚠️  Registry path may be incomplete!"
+            log_warn "=========================================="
+            log_warn "Provided: $registry"
+            log_warn ""
+            log_warn "Harbor registries require a project name in the path:"
+            log_warn "  ✓ $registry/ai-infra    (recommended)"
+            log_warn "  ✓ $registry/<project>   (your project name)"
+            log_warn ""
+            log_warn "Example usage:"
+            log_warn "  $0 pull-all $registry/ai-infra $tag"
+            log_warn ""
+            read -p "Continue anyway? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log_info "Cancelled. Please use correct registry path."
+                return 1
+            fi
+            log_warn "Continuing with incomplete registry path..."
+        fi
+    fi
     
     if [[ -z "$registry" ]]; then
         # ==========================================
@@ -986,6 +1016,10 @@ push_service() {
 #   Phase 2: Dependency images (project tag) - for version-controlled deployment
 #   Phase 3: Project services (project tag) - the main application images
 # Args: $1 = registry, $2 = tag
+#
+# For Harbor/private registries, registry path should include project name:
+#   ✓ harbor.example.com/ai-infra    (correct - includes project)
+#   ✗ harbor.example.com             (wrong - missing project)
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
@@ -993,8 +1027,32 @@ push_all_services() {
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push-all"
-        log_info "Usage: $0 push-all <registry> [tag]"
+        log_info "Usage: $0 push-all <registry/project> [tag]"
+        log_info "Example: $0 push-all harbor.example.com/ai-infra v0.3.8"
         return 1
+    fi
+    
+    # Validate registry path (Harbor requires project in path)
+    if [[ ! "$registry" =~ / ]]; then
+        log_warn "=========================================="
+        log_warn "⚠️  Registry path may be incomplete!"
+        log_warn "=========================================="
+        log_warn "Provided: $registry"
+        log_warn ""
+        log_warn "Harbor registries require a project name in the path:"
+        log_warn "  ✓ $registry/ai-infra    (recommended)"
+        log_warn "  ✓ $registry/<project>   (your project name)"
+        log_warn ""
+        log_warn "Example usage:"
+        log_warn "  $0 push-all $registry/ai-infra $tag"
+        log_warn ""
+        read -p "Continue anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cancelled. Please use correct registry path."
+            return 1
+        fi
+        log_warn "Continuing with incomplete registry path..."
     fi
     
     # Ensure registry ends without trailing slash
@@ -1801,14 +1859,18 @@ print_help() {
     echo "Pull Commands (Smart Mode):"
     echo "  prefetch            Prefetch all base images from Dockerfiles"
     echo "  pull-common         Pull common/third-party images (mysql, kafka, redis, etc.)"
-    echo "  pull-all                        Internet mode: pull common images from Docker Hub"
-    echo "  pull-all <registry> [tag]       Intranet mode: pull all images from private registry"
-    echo "  deps-pull <registry> [tag]      Pull dependency images from registry"
+    echo "  pull-all                              Internet mode: pull from Docker Hub"
+    echo "  pull-all <registry/project> [tag]    Intranet mode: pull from private registry"
+    echo "  deps-pull <registry/project> [tag]   Pull dependency images from registry"
     echo ""
     echo "Push Commands:"
-    echo "  push <service> <registry> [tag]  Push single service to registry"
-    echo "  push-all <registry> [tag]        Push all images (3 phases: common + deps + project)"
-    echo "  push-dep <registry> [tag]        Push dependency images to registry"
+    echo "  push <service> <registry/project> [tag]  Push single service to registry"
+    echo "  push-all <registry/project> [tag]        Push all images (3 phases)"
+    echo "  push-dep <registry/project> [tag]        Push dependency images to registry"
+    echo ""
+    echo "  ⚠️  Harbor registries require project name in path:"
+    echo "     ✓ harbor.example.com/ai-infra     (correct)"
+    echo "     ✗ harbor.example.com              (wrong - missing project)"
     echo ""
     echo "Clean Commands:"
     echo "  clean-images [tag]  Remove ai-infra Docker images (optional: specific tag)"
