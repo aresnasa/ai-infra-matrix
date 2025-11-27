@@ -650,13 +650,13 @@ prefetch_base_images() {
     for image in "${unique_images[@]}"; do
         if docker image inspect "$image" >/dev/null 2>&1; then
             log_info "  ✓ Exists: $image"
-            ((skip_count++))
+            skip_count=$((skip_count + 1))
         else
             log_info "  ⬇ Pulling: $image"
             if pull_image_with_retry "$image" "$max_retries"; then
-                ((pull_count++))
+                pull_count=$((pull_count + 1))
             else
-                ((fail_count++))
+                fail_count=$((fail_count + 1))
             fi
         fi
     done
@@ -1669,10 +1669,10 @@ clean_images() {
     for img in "${images_to_remove[@]}"; do
         if docker rmi "$img" 2>/dev/null; then
             log_info "  ✓ Removed: $img"
-            ((removed++))
+            removed=$((removed + 1))
         else
             log_warn "  ✗ Failed to remove: $img (may be in use)"
-            ((failed++))
+            failed=$((failed + 1))
         fi
     done
     
@@ -1732,10 +1732,10 @@ clean_volumes() {
     for vol in "${volumes_to_remove[@]}"; do
         if docker volume rm "$vol" 2>/dev/null; then
             log_info "  ✓ Removed: $vol"
-            ((removed++))
+            removed=$((removed + 1))
         else
             log_warn "  ✗ Failed to remove: $vol (may be in use)"
-            ((failed++))
+            failed=$((failed + 1))
         fi
     done
     
