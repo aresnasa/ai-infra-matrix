@@ -1,6 +1,6 @@
 # Build stage
-ARG GOLANG_IMAGE_VERSION=1.25-bookworm
-FROM golang:${GOLANG_IMAGE_VERSION} AS builder
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+FROM ${GOLANG_IMAGE} AS builder
 
 # Build arguments for versions
 ARG GOLANG_VERSION=1.25
@@ -88,8 +88,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage - Backend Service (Default)
-ARG GOLANG_IMAGE_VERSION=1.25-bookworm
-FROM golang:${GOLANG_IMAGE_VERSION} AS backend
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+FROM ${GOLANG_IMAGE} AS backend
 
 # Build arguments for versions
 ARG GO_PROXY=https://goproxy.cn,direct
@@ -205,8 +205,8 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.description="AI Infra Matrix - Backend service"
 
 # Backend Init Stage - for database initialization
-ARG GOLANG_IMAGE_VERSION=1.25-bookworm
-FROM golang:${GOLANG_IMAGE_VERSION} AS backend-init
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+FROM ${GOLANG_IMAGE} AS backend-init
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"

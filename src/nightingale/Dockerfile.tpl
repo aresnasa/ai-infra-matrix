@@ -2,12 +2,14 @@
 # Build from source code in third_party/nightingale
 
 # Stage 1: Build
-ARG GOLANG_IMAGE_VERSION={{GOLANG_IMAGE_VERSION}}
-FROM golang:${GOLANG_IMAGE_VERSION} AS builder
+ARG GOLANG_IMAGE={{GOLANG_IMAGE}}
+FROM ${GOLANG_IMAGE} AS builder
 
 ARG APT_MIRROR={{APT_MIRROR}}
 ARG GO_PROXY=https://goproxy.cn,direct
 ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
+ARG INTERNAL_FILE_SERVER={{INTERNAL_FILE_SERVER}}
+ARG N9E_FE_VERSION={{N9E_FE_VERSION}}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -39,16 +41,39 @@ ENV GOPROXY=${GO_PROXY}
 
 # Step 1: Download front-end release and embed using statik
 # This creates the front/statik package required by the build
-# Note: GitHub API must be accessed directly (mirrors don't support API)
-#       Only file downloads use the mirror
+# 
+# 支持三种下载模式:
+# 1. 内网环境 (INTERNAL_FILE_SERVER 非空): 从内部文件服务器下载
+#    文件路径: ${INTERNAL_FILE_SERVER}/nightingale/n9e-fe-${VERSION}.tar.gz
+# 2. 互联网环境 + 指定版本 (N9E_FE_VERSION 非空): 使用 GitHub 镜像下载指定版本
+# 3. 互联网环境 + 自动版本: 从 GitHub API 获取最新版本并下载
 RUN set -eux; \
     # Install statik tool
     go install github.com/rakyll/statik@latest; \
-    # Get latest fe release tag from GitHub API (must access directly, not via mirror)
-    TAG=$(curl -sX GET https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
-    echo "Downloading n9e-fe version: ${TAG}"; \
-    # Download front-end release (use mirror for file downloads)
-    curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
+    \
+    # Determine download strategy
+    if [ -n "${INTERNAL_FILE_SERVER}" ] && [ "${INTERNAL_FILE_SERVER}" != "http://files.example.com" ]; then \
+        # 内网模式: 从内部文件服务器下载
+        TAG="${N9E_FE_VERSION:-v7.7.2}"; \
+        echo "Intranet mode: Downloading n9e-fe ${TAG} from internal server"; \
+        curl -fsSL -o n9e-fe-${TAG}.tar.gz "${INTERNAL_FILE_SERVER}/nightingale/n9e-fe-${TAG}.tar.gz"; \
+    elif [ -n "${N9E_FE_VERSION}" ]; then \
+        # 指定版本模式: 使用 GitHub 镜像下载
+        TAG="${N9E_FE_VERSION}"; \
+        echo "Fixed version mode: Downloading n9e-fe ${TAG}"; \
+        curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
+    else \
+        # 自动版本模式: 从 GitHub API 获取最新版本
+        echo "Auto version mode: Fetching latest version from GitHub API"; \
+        TAG=$(curl -sX GET https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+        if [ -z "${TAG}" ]; then \
+            echo "ERROR: Failed to get version from GitHub API. Please set N9E_FE_VERSION or INTERNAL_FILE_SERVER"; \
+            exit 1; \
+        fi; \
+        echo "Downloading n9e-fe version: ${TAG}"; \
+        curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
+    fi; \
+    \
     # Extract to pub directory
     tar zxf n9e-fe-${TAG}.tar.gz; \
     # Embed front-end files into Go binary using statik
@@ -63,7 +88,8 @@ RUN go mod download
 RUN go build -ldflags "-w -s" -o n9e ./cmd/center/main.go
 
 # Stage 2: Runtime
-FROM ubuntu:22.04
+ARG UBUNTU_IMAGE={{UBUNTU_IMAGE}}
+FROM ${UBUNTU_IMAGE}
 
 ARG APT_MIRROR={{APT_MIRROR}}
 ENV DEBIAN_FRONTEND=noninteractive

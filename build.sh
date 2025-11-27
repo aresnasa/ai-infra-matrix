@@ -122,6 +122,81 @@ update_env_variable() {
     fi
 }
 
+# 同步 .env 与 .env.example 中的缺失变量
+# 用法: sync_env_with_example
+sync_env_with_example() {
+    local env_file="$ENV_FILE"
+    local example_file="$ENV_EXAMPLE"
+    
+    if [[ ! -f "$example_file" ]]; then
+        log_error ".env.example not found: $example_file"
+        return 1
+    fi
+    
+    if [[ ! -f "$env_file" ]]; then
+        log_info "Creating .env from .env.example..."
+        cp "$example_file" "$env_file"
+        return 0
+    fi
+    
+    local missing_vars=()
+    local updated_vars=()
+    
+    # 读取 .env.example 中的所有变量，同步缺失的变量到 .env
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # 跳过注释和空行
+        if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+            continue
+        fi
+        
+        # 提取变量名和值
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local example_value="${BASH_REMATCH[2]}"
+            
+            # 检查 .env 中是否存在该变量
+            if ! grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
+                # 变量不存在，添加到文件末尾
+                echo "${var_name}=${example_value}" >> "$env_file"
+                missing_vars+=("$var_name")
+            else
+                # 变量存在，检查是否为空值
+                local current_value
+                current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
+                
+                # 如果当前值为空且 example 有默认值，则更新
+                if [[ -z "$current_value" ]] && [[ -n "$example_value" ]]; then
+                    update_env_variable "$var_name" "$example_value"
+                    updated_vars+=("$var_name")
+                fi
+            fi
+        fi
+    done < "$example_file"
+    
+    # 显示同步结果
+    if [[ ${#missing_vars[@]} -gt 0 ]]; then
+        log_info "Added ${#missing_vars[@]} new variables from .env.example:"
+        for var in "${missing_vars[@]}"; do
+            log_info "  + $var"
+        done
+    fi
+    
+    if [[ ${#updated_vars[@]} -gt 0 ]]; then
+        log_info "Updated ${#updated_vars[@]} empty variables with defaults:"
+        for var in "${updated_vars[@]}"; do
+            log_info "  ↻ $var"
+        done
+    fi
+    
+    if [[ ${#missing_vars[@]} -eq 0 ]] && [[ ${#updated_vars[@]} -eq 0 ]]; then
+        log_info "✓ .env is in sync with .env.example"
+    else
+        log_info "✓ Synced ${#missing_vars[@]} new + ${#updated_vars[@]} updated variables"
+    fi
+    
+    return 0
+}
+
 # 初始化或同步 .env 文件
 # 自动检测 EXTERNAL_HOST 等关键变量
 init_env_file() {
@@ -142,6 +217,9 @@ init_env_file() {
         fi
         force="true"
     fi
+    
+    # 同步 .env.example 中的新变量到 .env
+    sync_env_with_example
     
     # 检查是否需要更新关键变量
     local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
@@ -271,6 +349,7 @@ TEMPLATE_VARIABLES=(
     "GO_PROXY"           # Go module proxy (e.g., https://goproxy.cn,direct)
     "PYPI_INDEX_URL"     # PyPI mirror (e.g., https://mirrors.aliyun.com/pypi/simple/)
     "NPM_REGISTRY"       # npm registry mirror (e.g., https://registry.npmmirror.com)
+    "INTERNAL_FILE_SERVER"  # Internal file server for intranet (e.g., http://192.168.1.100:8080/packages)
     
     # ===========================================
     # Base image versions (Build-time)
@@ -286,9 +365,23 @@ TEMPLATE_VARIABLES=(
     "NODE_VERSION"                # Node.js major version (e.g., 22)
     "NODE_ALPINE_VERSION"         # Node.js Alpine version (e.g., 22-alpine)
     "NODE_JS_VERSION"             # Node.js full version for prebuilt binaries (e.g., 22.11.0)
+    "NODE_IMAGE_VERSION"          # Node.js image version (e.g., 22-alpine)
     "GOLANG_VERSION"              # Go version (e.g., 1.25)
     "GOLANG_IMAGE_VERSION"        # Go image version (e.g., 1.25-bookworm)
     "JUPYTER_BASE_NOTEBOOK_VERSION"  # Jupyter base notebook version (e.g., latest)
+    
+    # ===========================================
+    # Full base image names (for private registry support)
+    # 完整基础镜像名称 (支持内网私有仓库)
+    # Internet: golang:1.25-bookworm
+    # Intranet: harbor.example.com/library/golang:1.25-bookworm
+    # ===========================================
+    "GOLANG_IMAGE"                # Full golang image name (e.g., golang:1.25-bookworm)
+    "UBUNTU_IMAGE"                # Full ubuntu image name (e.g., ubuntu:22.04)
+    "ROCKYLINUX_IMAGE"            # Full rockylinux image name (e.g., rockylinux:9)
+    "NODE_IMAGE"                  # Full node image name (e.g., node:22-alpine)
+    "JUPYTER_BASE_IMAGE"          # Full jupyter base image name (e.g., jupyter/base-notebook:latest)
+    "GITEA_IMAGE"                 # Full gitea image name (e.g., gitea/gitea:1.25.1)
     
     # ===========================================
     # Component/Application versions (Build-time)
@@ -301,6 +394,7 @@ TEMPLATE_VARIABLES=(
     "GITEA_VERSION"       # Gitea version (e.g., 1.25.1)
     "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)
     "PIP_VERSION"         # pip version (e.g., 24.2)
+    "N9E_FE_VERSION"      # Nightingale frontend version (e.g., v7.7.2, empty for auto-detect)
     
     # ===========================================
     # Project settings (Build-time & Runtime)
@@ -393,6 +487,18 @@ render_all_templates() {
     log_info "=========================================="
     log_info "🔧 Rendering templates"
     log_info "=========================================="
+    
+    # Step 1: Sync .env with .env.example (add missing variables)
+    log_info "Step 1: Syncing .env with .env.example..."
+    sync_env_with_example
+    
+    # Reload .env after sync
+    set -a
+    source "$ENV_FILE"
+    set +a
+    
+    log_info ""
+    log_info "Step 2: Rendering template files..."
     log_info "Source: .env / .env.example"
     log_info "Pattern: src/*/Dockerfile.tpl, docker-compose.yml.tpl"
     echo
@@ -1610,7 +1716,8 @@ start_all() {
         exit 1
     fi
     
-    $compose_cmd up -d
+    # Use --no-build to prevent rebuilding when images already exist
+    $compose_cmd up -d --no-build
     log_info "All services started."
 }
 
