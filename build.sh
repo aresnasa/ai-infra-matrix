@@ -970,6 +970,34 @@ pull_all_services() {
             fi
         done
         echo
+        
+        # Phase 4: Pull special images (multi-stage build targets, etc.)
+        # These are images that don't have their own src/ directory
+        log_info "=== Phase 4: Special images (tag: $tag) ==="
+        local special_images=(
+            "backend-init"    # Multi-stage build target from backend
+        )
+        for special in "${special_images[@]}"; do
+            total_count=$((total_count + 1))
+            local image_name="ai-infra-${special}:${tag}"
+            local remote_image="${registry}/${image_name}"
+            
+            log_info "[$total_count] $remote_image"
+            
+            if pull_image_with_retry "$remote_image" "$max_retries"; then
+                if docker tag "$remote_image" "$image_name"; then
+                    log_info "  ✓ Pulled and tagged as $image_name"
+                    success_count=$((success_count + 1))
+                else
+                    log_warn "  ⚠ Pulled but failed to tag"
+                    success_count=$((success_count + 1))
+                fi
+            else
+                log_warn "  ✗ Failed"
+                failed_services+=("special:$special")
+            fi
+        done
+        echo
     fi
     
     log_info "=========================================="
@@ -1277,6 +1305,45 @@ push_all_services() {
             success_count=$((success_count + 1))
         else
             failed_services+=("$service")
+        fi
+    done
+    echo
+    
+    # Phase 4: Push special images (multi-stage build targets, etc.)
+    log_info "=== Phase 4: Special images (tag: $tag) ==="
+    log_info "Images from multi-stage builds that don't have their own src/ directory"
+    echo
+    local special_images=(
+        "backend-init"    # Multi-stage build target from backend
+    )
+    for special in "${special_images[@]}"; do
+        total_count=$((total_count + 1))
+        local image_name="ai-infra-${special}:${tag}"
+        local target_image="${registry}/${image_name}"
+        
+        log_info "[$total_count] $image_name -> $target_image"
+        
+        # Check if source image exists locally
+        if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+            log_warn "  ✗ Source image not found: $image_name"
+            log_info "    Hint: Build with 'docker compose build backend-init'"
+            failed_services+=("special:$special")
+            continue
+        fi
+        
+        # Tag for registry
+        if ! docker tag "$image_name" "$target_image"; then
+            log_warn "  ✗ Failed to tag: $target_image"
+            failed_services+=("special:$special")
+            continue
+        fi
+        
+        # Push to registry
+        if push_image_with_retry "$target_image" "$max_retries"; then
+            log_info "  ✓ Pushed"
+            success_count=$((success_count + 1))
+        else
+            failed_services+=("special:$special")
         fi
     done
     echo
@@ -2381,7 +2448,7 @@ print_help() {
     echo ""
     echo "Push Commands:"
     echo "  push <service> <registry/project> [tag]  Push single service to registry"
-    echo "  push-all <registry/project> [tag]        Push all images (3 phases)"
+    echo "  push-all <registry/project> [tag]        Push all images (4 phases)"
     echo "  push-dep <registry/project> [tag]        Push dependency images to registry"
     echo ""
     echo "  ⚠️  Harbor registries require project name in path:"

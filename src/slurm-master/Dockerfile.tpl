@@ -133,11 +133,28 @@ RUN set -eux; \
     # 显示最终使用的源
     echo "📋 最终使用的APT源:"; \
     cat /etc/apt/sources.list; \
-    # 安装基础工具
-    echo "📦 安装基础工具包..."; \
-    apt-get install -y --no-install-recommends ca-certificates curl
+    # 【关键】在换源成功后立即安装 systemd（SLURM Master 必需的核心依赖）
+    echo "🔧 【关键步骤】安装 systemd + 基础工具..."; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        systemd \
+        systemd-sysv && \
+    # 立即验证 systemd 安装成功
+    echo "🔍 验证 systemd 安装..."; \
+    if [ -x /lib/systemd/systemd ] && [ -e /sbin/init ]; then \
+        echo "✅ systemd 核心已安装: /lib/systemd/systemd"; \
+        echo "✅ /sbin/init 符号链接存在"; \
+        ls -la /lib/systemd/systemd /sbin/init; \
+        /lib/systemd/systemd --version; \
+    else \
+        echo "❌ systemd 安装验证失败！"; \
+        echo "   /lib/systemd/systemd 存在: $([ -x /lib/systemd/systemd ] && echo '是' || echo '否')"; \
+        echo "   /sbin/init 存在: $([ -e /sbin/init ] && echo '是' || echo '否')"; \
+        exit 1; \
+    fi
 
-# 安装基础依赖（ca-certificates和curl已在上面安装）
+# 安装其他基础依赖（ca-certificates和curl已在上面安装）
 RUN set -eux; \
     # Refresh index right before install to avoid stale caches across layers
     for i in 1 2 3; do \
@@ -145,8 +162,6 @@ RUN set -eux; \
     done; \
     # Install with --fix-missing and retries to improve robustness on flaky mirrors
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
-        systemd \
-        systemd-sysv \
         # networking and diagnostics \
         curl \
         wget \

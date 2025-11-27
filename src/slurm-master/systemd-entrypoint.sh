@@ -87,43 +87,60 @@ ln -sf /etc/systemd/system/slurmctld.service /etc/systemd/system/multi-user.targ
 ln -sf /etc/systemd/system/slurmdbd.service /etc/systemd/system/multi-user.target.wants/slurmdbd.service
 ln -sf /lib/systemd/system/munge.service /etc/systemd/system/multi-user.target.wants/munge.service
 
-# 动态查找 systemd 可执行文件，如缺失则在容器启动时补装
+# 动态查找 systemd 可执行文件
+# 在正确构建的镜像中，systemd 应该已经安装
+# 如果找不到，说明镜像构建有问题，给出明确提示
 ensure_systemd() {
-	local candidate="/sbin/init"
+	# 检查常见的 systemd 路径
+	if [ -x /sbin/init ]; then
+		# 验证 /sbin/init 是否真的是 systemd
+		if /sbin/init --version 2>&1 | grep -q systemd; then
+			SYSTEMD_BIN="/sbin/init"
+			echo "✅ 找到 systemd: $SYSTEMD_BIN"
+			return 0
+		fi
+	fi
 
-	if [ -x "$candidate" ]; then
-		SYSTEMD_BIN="$candidate"
+	if [ -x /lib/systemd/systemd ]; then
+		SYSTEMD_BIN="/lib/systemd/systemd"
+		echo "✅ 找到 systemd: $SYSTEMD_BIN"
 		return 0
 	fi
 
 	if command -v systemd >/dev/null 2>&1; then
 		SYSTEMD_BIN="$(command -v systemd)"
+		echo "✅ 找到 systemd: $SYSTEMD_BIN"
 		return 0
 	fi
 
-	if [ -x /lib/systemd/systemd ]; then
-		SYSTEMD_BIN="/lib/systemd/systemd"
-		return 0
-	fi
-
-	echo "systemd 未找到，尝试在启动阶段安装 (systemd systemd-sysv)..."
+	# systemd 未找到，尝试运行时安装（仅作为后备方案）
+	echo "⚠️  systemd 未找到，这可能表示镜像构建不完整"
+	echo "📦 尝试在启动阶段安装 systemd..."
 	export DEBIAN_FRONTEND=noninteractive
-	if apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv; then
-		if command -v systemd >/dev/null 2>&1; then
-			SYSTEMD_BIN="$(command -v systemd)"
-			return 0
-		elif [ -x /lib/systemd/systemd ]; then
+	
+	# 使用多种方式尝试安装
+	if apt-get update 2>/dev/null && apt-get install -y --no-install-recommends systemd systemd-sysv 2>/dev/null; then
+		echo "✅ systemd 安装成功"
+		if [ -x /lib/systemd/systemd ]; then
 			SYSTEMD_BIN="/lib/systemd/systemd"
 			return 0
 		elif [ -x /sbin/init ]; then
 			SYSTEMD_BIN="/sbin/init"
 			return 0
 		fi
-	else
-		echo "在容器启动时安装 systemd 失败" >&2
 	fi
 
-	echo "无法找到 systemd 可执行文件" >&2
+	# 所有尝试都失败
+	echo "❌ 无法找到或安装 systemd" >&2
+	echo "" >&2
+	echo "可能的原因:" >&2
+	echo "  1. 镜像构建时未能成功安装 systemd" >&2
+	echo "  2. 使用的是旧版本镜像，需要重新构建" >&2
+	echo "  3. 容器内网络无法访问 APT 源" >&2
+	echo "" >&2
+	echo "建议:" >&2
+	echo "  - 重新构建镜像: ./build.sh slurm-master" >&2
+	echo "  - 或从私有仓库拉取最新镜像" >&2
 	return 1
 }
 
