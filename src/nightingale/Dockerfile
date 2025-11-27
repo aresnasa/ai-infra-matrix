@@ -1,8 +1,11 @@
 # Nightingale Dockerfile for AI Infra Matrix
 # Build from source code in third_party/nightingale
 
-# Stage 1: Build
+# 全局 ARG 声明 - 必须在所有 FROM 之前声明才能在 FROM 中使用
 ARG GOLANG_IMAGE=golang:1.25-bookworm
+ARG UBUNTU_IMAGE=ubuntu:22.04
+
+# Stage 1: Build
 FROM ${GOLANG_IMAGE} AS builder
 
 ARG APT_MIRROR=mirrors.aliyun.com
@@ -88,7 +91,7 @@ RUN go mod download
 RUN go build -ldflags "-w -s" -o n9e ./cmd/center/main.go
 
 # Stage 2: Runtime
-ARG UBUNTU_IMAGE=ubuntu:22.04
+# UBUNTU_IMAGE 已在文件顶部全局声明
 FROM ${UBUNTU_IMAGE}
 
 ARG APT_MIRROR=mirrors.aliyun.com

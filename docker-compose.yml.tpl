@@ -552,14 +552,14 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 4506 && nc -z 127.0.0.1 8002"]
+      test: ["CMD", "sh", "-c", "pgrep -f salt-master && pgrep -f salt-api"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 90s
     restart: unless-stopped
 
-    # SLURM Master 服务
+  # SLURM Master 服务
   slurm-master:
     image: ai-infra-slurm-master:{{IMAGE_TAG}}
     build:
@@ -576,6 +576,9 @@ services:
     tmpfs:
       - /run
       - /run/lock
+    dns:
+      - 223.5.5.5
+      - 8.8.8.8
     env_file:
       - .env
     environment:
