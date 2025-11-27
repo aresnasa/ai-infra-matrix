@@ -1902,7 +1902,7 @@ update_runtime_env() {
         
         # 重新渲染配置模板
         log_info "🔧 重新渲染配置模板..."
-        render_templates
+        render_all_templates "true"
         
         log_info "✓ 运行时环境变量已更新"
     else
