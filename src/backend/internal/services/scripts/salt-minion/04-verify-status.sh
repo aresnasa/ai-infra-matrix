@@ -19,12 +19,12 @@ else
 fi
 
 # 检查配置文件
-if [ -f /etc/salt/minion.d/99-master-address.conf ]; then
+if [ -f /etc/salt/minion ]; then
 	echo "[Salt] ✓ Master配置文件存在"
 	echo "Master配置:"
-	cat /etc/salt/minion.d/99-master-address.conf
+	cat /etc/salt/minion
 else
-	echo "[Salt] ✗ Master配置文件不存在"
+	echo "[Salt] ✗ Master配置文件 /etc/salt/minion 不存在"
 	exit 1
 fi
 

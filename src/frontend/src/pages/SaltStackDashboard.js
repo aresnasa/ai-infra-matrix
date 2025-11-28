@@ -23,9 +23,12 @@ import {
   LockOutlined,
   UploadOutlined,
   DownloadOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  DashboardOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
+import MinionsTable from '../components/MinionsTable';
+import ResizableMetricsPanel from '../components/ResizableMetricsPanel';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -911,9 +914,9 @@ const SaltStackDashboard = () => {
             >
               <TabPane tab="系统概览" key="overview" icon={<DatabaseOutlined />}>
                 <Row gutter={16}>
-                  <Col span={12}>
-                    <Card title="Master信息" size="small" loading={statusLoading}>
-                      <Descriptions size="small" column={1}>
+                  <Col span={24}>
+                    <Card title="Master信息" size="small" loading={statusLoading} style={{ marginBottom: 16 }}>
+                      <Descriptions size="small" column={4}>
                         <Descriptions.Item label="版本">
                           {status?.salt_version || (statusLoading ? '加载中...' : '未知')}
                         </Descriptions.Item>
@@ -929,126 +932,67 @@ const SaltStackDashboard = () => {
                       </Descriptions>
                     </Card>
                   </Col>
-                  <Col span={12}>
-                    <Card title="性能指标" size="small" loading={statusLoading}>
-                      {statusLoading ? (
-                        <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                          <Spin size="small" />
-                          <div style={{ marginTop: 8 }}>正在获取性能数据...</div>
-                        </div>
-                      ) : (
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <div>
-                            <Text>CPU使用率</Text>
-                            <Progress 
-                              percent={status?.cpu_usage || 0} 
-                              size="small" 
-                              status={status?.cpu_usage > 80 ? 'exception' : 'active'}
-                            />
-                          </div>
-                          <div>
-                            <Text>内存使用率</Text>
-                            <Progress 
-                              percent={status?.memory_usage || 0} 
-                              size="small" 
-                              status={status?.memory_usage > 85 ? 'exception' : 'active'}
-                            />
-                          </div>
-                          <div>
-                            <Text>活跃连接数</Text>
-                            <Progress 
-                              percent={Math.min((status?.active_connections || 0) / 100 * 100, 100)} 
-                              size="small"
-                              showInfo={false}
-                            />
-                            <Text type="secondary"> {status?.active_connections || 0}/100</Text>
-                          </div>
-                        </Space>
-                      )}
-                    </Card>
-                  </Col>
                 </Row>
+                
+                {/* 可调整大小的性能指标面板 */}
+                <ResizableMetricsPanel
+                  title="节点性能监控"
+                  loading={statusLoading || minionsLoading}
+                  minHeight={200}
+                  maxHeight={600}
+                  defaultHeight={350}
+                  nodes={[
+                    // Master 节点
+                    {
+                      id: 'salt-master',
+                      name: 'Salt Master',
+                      metrics: {
+                        status: status?.master_status === 'running' ? 'online' : 'offline',
+                        cpu_usage: status?.cpu_usage || 0,
+                        memory_usage: status?.memory_usage || 0,
+                        active_connections: status?.active_connections || 0,
+                        network_bandwidth: status?.network_bandwidth || 0,
+                        ib_status: 'N/A',
+                        roce_status: 'N/A',
+                        gpu_utilization: 0,
+                        gpu_memory: 0,
+                      },
+                    },
+                    // Minion 节点 (从 minions 数据动态生成)
+                    ...minions.map(minion => ({
+                      id: minion.id || minion.name,
+                      name: minion.id || minion.name,
+                      metrics: {
+                        status: minion.status?.toLowerCase() === 'up' || minion.status?.toLowerCase() === 'online' ? 'online' : 'offline',
+                        cpu_usage: minion.cpu_usage || 0,
+                        memory_usage: minion.memory_usage || 0,
+                        active_connections: minion.active_connections || 0,
+                        network_bandwidth: minion.network_bandwidth || 0,
+                        ib_status: minion.ib_status || 'N/A',
+                        roce_status: minion.roce_status || 'N/A',
+                        gpu_utilization: minion.gpu_utilization || 0,
+                        gpu_memory: minion.gpu_memory || 0,
+                      },
+                    })),
+                  ]}
+                  onRefresh={loadAllData}
+                />
               </TabPane>
 
               <TabPane tab="Minions管理" key="minions" icon={<DesktopOutlined />}>
-                {minionsLoading ? (
-                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
-                    <Spin size="large" />
-                    <div style={{ marginTop: 16 }}>正在加载Minions数据...</div>
-                  </div>
-                ) : (
-                  <>
-                    <List
-                      grid={{ gutter: 16, column: 2 }}
-                      dataSource={minions}
-                      renderItem={minion => (
-                        <List.Item>
-                          <Card 
-                            size="small" 
-                            title={
-                              <Space>
-                                <Badge status={getStatusColor(minion.status)} />
-                                {minion.id || minion.name}
-                              </Space>
-                            }
-                            extra={
-                              <Space>
-                                <Tag color={getStatusColor(minion.status)}>
-                                  {minion.status || '未知'}
-                                </Tag>
-                                <Tooltip title="卸载 Minion（SSH远程卸载）">
-                                  <Button 
-                                    type="text" 
-                                    size="small" 
-                                    icon={<SettingOutlined />}
-                                    onClick={() => openUninstallModal(minion.id || minion.name)}
-                                  />
-                                </Tooltip>
-                                <Popconfirm
-                                  title="删除 Minion"
-                                  description="确定要从 Salt Master 删除此 Minion 密钥吗？这不会卸载目标机器上的 Salt Minion 软件。"
-                                  onConfirm={() => handleDeleteMinion(minion.id || minion.name)}
-                                  okText="确定删除"
-                                  cancelText="取消"
-                                >
-                                  <Tooltip title="删除 Minion 密钥">
-                                    <Button 
-                                      type="text" 
-                                      size="small" 
-                                      danger
-                                      icon={<DeleteOutlined />}
-                                      loading={deletingMinion === (minion.id || minion.name)}
-                                    />
-                                  </Tooltip>
-                                </Popconfirm>
-                              </Space>
-                            }
-                          >
-                            <Descriptions size="small" column={1}>
-                              <Descriptions.Item label="操作系统">
-                                {minion.os || '未知'}
-                              </Descriptions.Item>
-                              <Descriptions.Item label="架构">
-                                {minion.arch || '未知'}
-                              </Descriptions.Item>
-                              <Descriptions.Item label="Salt版本">
-                                {minion.salt_version || '未知'}
-                              </Descriptions.Item>
-                              <Descriptions.Item label="最后响应">
-                                {minion.last_seen || '未知'}
-                              </Descriptions.Item>
-                            </Descriptions>
-                          </Card>
-                        </List.Item>
-                      )}
-                    />
-                    {minions.length === 0 && (
-                      <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                        <Text type="secondary">暂无Minion数据</Text>
-                      </div>
-                    )}
-                  </>
-                )}
+                <MinionsTable
+                  minions={minions}
+                  loading={minionsLoading}
+                  onRefresh={loadMinions}
+                  onDelete={handleDeleteMinion}
+                  onBatchDelete={async (minionIds) => {
+                    // 批量删除
+                    for (const id of minionIds) {
+                      await handleDeleteMinion(id);
+                    }
+                  }}
+                  onUninstall={openUninstallModal}
+                />
               </TabPane>
 
               <TabPane tab="作业历史" key="jobs" icon={<PlayCircleOutlined />}>

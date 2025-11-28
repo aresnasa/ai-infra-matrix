@@ -2274,19 +2274,30 @@ func (s *SSHService) executeSaltMinionScript(client *ssh.Client, conn SSHConnect
 }
 
 // configureSaltMinion 配置salt-minion连接到master
+// 使用外部脚本 scripts/salt-minion/03-configure-connection.sh
 func (s *SSHService) configureSaltMinion(client *ssh.Client, config PackageInstallationConfig, hostname string) StepResult {
 	startTime := time.Now()
 
 	minionID := s.getMinionID(config.MinionID, hostname)
 
-	// 配置minion文件
-	configCmd := fmt.Sprintf(`
-cat > /etc/salt/minion.d/99-master-address.conf <<EOF
-master: %s
-master_port: %d
-id: %s
-EOF
-`, config.SaltMasterHost, config.SaltMasterPort, minionID)
+	// 读取配置脚本
+	scriptLoader := GetScriptLoader()
+	script, err := scriptLoader.GetScript("salt-minion/03-configure-connection.sh")
+	if err != nil {
+		return StepResult{
+			Name:      "configure_salt_minion",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("读取配置脚本失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+
+	// 设置环境变量并执行脚本
+	envVars := fmt.Sprintf("export SALT_MASTER_HOST='%s' SALT_MINION_ID='%s'",
+		config.SaltMasterHost, minionID)
+	fullCmd := envVars + "\n" + script
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -2301,7 +2312,7 @@ EOF
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput(configCmd)
+	output, err := session.CombinedOutput(fullCmd)
 	outputStr := string(output)
 
 	if err != nil {
@@ -2318,7 +2329,7 @@ EOF
 	return StepResult{
 		Name:      "configure_salt_minion",
 		Success:   true,
-		Output:    fmt.Sprintf("已配置minion连接到 %s:%d，ID: %s\n%s", config.SaltMasterHost, config.SaltMasterPort, minionID, outputStr),
+		Output:    fmt.Sprintf("已配置minion连接到 %s，ID: %s\n%s", config.SaltMasterHost, minionID, outputStr),
 		Error:     "",
 		Duration:  time.Since(startTime),
 		Timestamp: time.Now(),
