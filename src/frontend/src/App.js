@@ -132,6 +132,9 @@ const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
 });
+const RoleTemplateManagement = withLazyLoading(React.lazy(() => import('./pages/RoleTemplateManagement')), {
+  loadingText: '正在加载角色模板管理...'
+});
 const FileBrowser = withLazyLoading(React.lazy(() => import('./pages/FileBrowser')),
   { loadingText: '正在加载文件浏览器...' }
 );
@@ -701,6 +704,16 @@ function App() {
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <AdminUsers />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/role-templates"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <RoleTemplateManagement />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

@@ -587,3 +587,211 @@ func (c *RBACController) GetUserPermissions(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, permissions)
 }
+
+// ==================== 角色模板管理 ====================
+
+// ListRoleTemplates 获取角色模板列表
+// @Summary 获取角色模板列表
+// @Description 获取所有角色模板
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Param active_only query bool false "只获取启用的模板"
+// @Success 200 {array} models.RoleTemplate
+// @Router /rbac/role-templates [get]
+func (c *RBACController) ListRoleTemplates(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "role_templates", "list", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	activeOnly := ctx.Query("active_only") == "true"
+	templates, err := c.rbacService.ListRoleTemplates(activeOnly)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, templates)
+}
+
+// GetRoleTemplate 获取角色模板详情
+// @Summary 获取角色模板详情
+// @Description 根据ID获取角色模板详情
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Param id path int true "角色模板ID"
+// @Success 200 {object} models.RoleTemplate
+// @Router /rbac/role-templates/{id} [get]
+func (c *RBACController) GetRoleTemplate(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "role_templates", "read", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的角色模板ID"})
+		return
+	}
+
+	template, err := c.rbacService.GetRoleTemplateByID(uint(id))
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, template)
+}
+
+// CreateRoleTemplate 创建角色模板
+// @Summary 创建角色模板
+// @Description 创建新的角色模板
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Param request body models.CreateRoleTemplateRequest true "创建角色模板请求"
+// @Success 201 {object} models.RoleTemplate
+// @Router /rbac/role-templates [post]
+func (c *RBACController) CreateRoleTemplate(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "role_templates", "create", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	var req models.CreateRoleTemplateRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	template, err := c.rbacService.CreateRoleTemplateFromRequest(req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, template)
+}
+
+// UpdateRoleTemplate 更新角色模板
+// @Summary 更新角色模板
+// @Description 更新角色模板信息
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Param id path int true "角色模板ID"
+// @Param request body models.UpdateRoleTemplateRequest true "更新角色模板请求"
+// @Success 200 {object} models.RoleTemplate
+// @Router /rbac/role-templates/{id} [put]
+func (c *RBACController) UpdateRoleTemplate(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "role_templates", "update", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的角色模板ID"})
+		return
+	}
+
+	var req models.UpdateRoleTemplateRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	template, err := c.rbacService.UpdateRoleTemplate(uint(id), req)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, template)
+}
+
+// DeleteRoleTemplate 删除角色模板
+// @Summary 删除角色模板
+// @Description 删除角色模板
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Param id path int true "角色模板ID"
+// @Success 204
+// @Router /rbac/role-templates/{id} [delete]
+func (c *RBACController) DeleteRoleTemplate(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "role_templates", "delete", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	id, err := strconv.ParseUint(ctx.Param("id"), 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的角色模板ID"})
+		return
+	}
+
+	if err := c.rbacService.DeleteRoleTemplate(uint(id)); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.Status(http.StatusNoContent)
+}
+
+// GetAvailableResources 获取可配置的资源列表
+// @Summary 获取可配置的资源列表
+// @Description 获取可用于配置权限的资源列表
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Success 200 {array} string
+// @Router /rbac/resources [get]
+func (c *RBACController) GetAvailableResources(ctx *gin.Context) {
+	resources := c.rbacService.GetAvailableResources()
+	ctx.JSON(http.StatusOK, resources)
+}
+
+// GetAvailableVerbs 获取可配置的操作列表
+// @Summary 获取可配置的操作列表
+// @Description 获取可用于配置权限的操作动词列表
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Success 200 {array} string
+// @Router /rbac/verbs [get]
+func (c *RBACController) GetAvailableVerbs(ctx *gin.Context) {
+	verbs := c.rbacService.GetAvailableVerbs()
+	ctx.JSON(http.StatusOK, verbs)
+}
+
+// SyncRoleTemplates 同步角色模板到角色
+// @Summary 同步角色模板到角色
+// @Description 将角色模板同步为实际角色
+// @Tags RBAC - Role Templates
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /rbac/role-templates/sync [post]
+func (c *RBACController) SyncRoleTemplates(ctx *gin.Context) {
+	userID := ctx.GetUint("user_id")
+	if !c.rbacService.CheckPermission(userID, "role_templates", "admin", "*", "") {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	// 重新初始化 RBAC 会同步模板
+	if err := c.rbacService.InitializeDefaultRBAC(); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "角色模板同步成功"})
+}

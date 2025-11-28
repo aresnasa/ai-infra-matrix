@@ -108,6 +108,15 @@ const DEFAULT_NAV_ITEMS = [
     visible: true,
     order: 7,
     roles: ['admin', 'super-admin']
+  },
+  {
+    id: 'role-templates',
+    key: '/admin/role-templates',
+    label: '角色模板',
+    icon: 'TeamOutlined',
+    visible: true,
+    order: 8,
+    roles: ['admin', 'super-admin']
   }
 ];
 

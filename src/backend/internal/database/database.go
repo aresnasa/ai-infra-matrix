@@ -287,6 +287,8 @@ func migrateTaskSchema() error {
 		&models.UserRole{},
 		&models.UserGroupRole{},
 		&models.RolePermission{},
+		&models.RoleTemplate{},
+		&models.RoleTemplatePermission{},
 		&models.UserNavigationConfig{},
 		&models.LDAPConfig{},
 		&models.KubernetesCluster{},

@@ -632,6 +632,18 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// 角色分配
 		rbac.POST("/assign-role", rbacController.AssignRole)
 		rbac.DELETE("/revoke-role", rbacController.RevokeRole)
+
+		// 角色模板管理
+		rbac.GET("/role-templates", rbacController.ListRoleTemplates)
+		rbac.GET("/role-templates/:id", rbacController.GetRoleTemplate)
+		rbac.POST("/role-templates", rbacController.CreateRoleTemplate)
+		rbac.PUT("/role-templates/:id", rbacController.UpdateRoleTemplate)
+		rbac.DELETE("/role-templates/:id", rbacController.DeleteRoleTemplate)
+		rbac.POST("/role-templates/sync", rbacController.SyncRoleTemplates)
+
+		// 资源和操作列表（用于前端配置）
+		rbac.GET("/resources", rbacController.GetAvailableResources)
+		rbac.GET("/verbs", rbacController.GetAvailableVerbs)
 	}
 
 	// 管理员路由（需要管理员权限）

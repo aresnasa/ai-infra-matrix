@@ -766,4 +766,58 @@ export const objectStorageAPI = {
   })
 };
 
+// 角色模板 API
+export const roleTemplateAPI = {
+  // 获取所有角色模板
+  list: (activeOnly = false) => api.get('/rbac/role-templates', { params: { active_only: activeOnly } }),
+
+  // 获取角色模板详情
+  get: (id) => api.get(`/rbac/role-templates/${id}`),
+
+  // 创建角色模板
+  create: (data) => api.post('/rbac/role-templates', data),
+
+  // 更新角色模板
+  update: (id, data) => api.put(`/rbac/role-templates/${id}`, data),
+
+  // 删除角色模板
+  delete: (id) => api.delete(`/rbac/role-templates/${id}`),
+
+  // 同步角色模板到角色
+  sync: () => api.post('/rbac/role-templates/sync'),
+
+  // 获取可用资源列表
+  getResources: () => api.get('/rbac/resources'),
+
+  // 获取可用操作列表
+  getVerbs: () => api.get('/rbac/verbs'),
+};
+
+// RBAC API
+export const rbacAPI = {
+  // 检查权限
+  checkPermission: (data) => api.post('/rbac/check-permission', data),
+
+  // 角色管理
+  getRoles: () => api.get('/rbac/roles'),
+  getRole: (id) => api.get(`/rbac/roles/${id}`),
+  createRole: (data) => api.post('/rbac/roles', data),
+  updateRole: (id, data) => api.put(`/rbac/roles/${id}`, data),
+  deleteRole: (id) => api.delete(`/rbac/roles/${id}`),
+
+  // 用户组管理
+  getGroups: () => api.get('/rbac/groups'),
+  createGroup: (data) => api.post('/rbac/groups', data),
+  addUserToGroup: (groupId, userId) => api.post(`/rbac/groups/${groupId}/users/${userId}`),
+  removeUserFromGroup: (groupId, userId) => api.delete(`/rbac/groups/${groupId}/users/${userId}`),
+
+  // 权限管理
+  getPermissions: () => api.get('/rbac/permissions'),
+  createPermission: (data) => api.post('/rbac/permissions', data),
+
+  // 角色分配
+  assignRole: (data) => api.post('/rbac/assign-role', data),
+  revokeRole: (data) => api.delete('/rbac/revoke-role', { data }),
+};
+
 export default api;
