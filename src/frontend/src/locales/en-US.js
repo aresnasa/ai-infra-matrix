@@ -66,6 +66,44 @@ export default {
   },
 
   // Navigation Menu
+  nav: {
+    projects: 'Projects',
+    monitoring: 'Monitoring',
+    gitea: 'Gitea',
+    kubernetes: 'Kubernetes',
+    ansible: 'Ansible',
+    jupyterhub: 'JupyterHub',
+    slurm: 'SLURM',
+    saltstack: 'SaltStack',
+    objectStorage: 'Object Storage',
+    roleTemplates: 'Role Templates',
+    adminCenter: 'Admin Center',
+    customizeNav: 'Customize Navigation',
+    customizeNavDesc: 'Drag cards to reorder navigation items, click the eye icon to show/hide items',
+    resetDefault: 'Reset Default',
+    saveConfig: 'Save Config',
+    noPermission: '(No Permission)',
+    clickToHide: 'Click to hide',
+    clickToShow: 'Click to show',
+    configSaved: 'Navigation configuration saved',
+    configSaveFailed: 'Failed to save configuration',
+    resetToDefault: 'Reset to default configuration',
+    usingDefaultConfig: 'Using default navigation configuration',
+    // Admin Center submenu
+    userManagement: 'User Management',
+    projectManagement: 'Project Management',
+    ldapManagement: 'LDAP Management',
+    systemTest: 'System Test',
+    trash: 'Trash',
+    aiAssistant: 'AI Assistant',
+    jupyterhubManagement: 'JupyterHub Management',
+    // User menu
+    profile: 'Profile',
+    logout: 'Logout',
+    admin: 'Admin',
+  },
+
+  // Navigation Menu (legacy)
   menu: {
     dashboard: 'Dashboard',
     overview: 'Overview',

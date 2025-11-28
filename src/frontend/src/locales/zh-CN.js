@@ -82,6 +82,25 @@ export default {
     customizeNavDesc: '拖拽下方卡片可重新排序导航项，点击眼睛图标可显示/隐藏导航项',
     resetDefault: '重置默认',
     saveConfig: '保存配置',
+    noPermission: '(无权限)',
+    clickToHide: '点击隐藏',
+    clickToShow: '点击显示',
+    configSaved: '导航配置已保存',
+    configSaveFailed: '保存配置失败',
+    resetToDefault: '已重置为默认配置',
+    usingDefaultConfig: '使用默认导航配置',
+    // 管理中心子菜单
+    userManagement: '用户管理',
+    projectManagement: '项目管理',
+    ldapManagement: 'LDAP管理中心',
+    systemTest: '系统测试',
+    trash: '回收站',
+    aiAssistant: 'AI助手管理',
+    jupyterhubManagement: 'JupyterHub管理',
+    // 用户菜单
+    profile: '个人信息',
+    logout: '退出登录',
+    admin: '管理员',
   },
 
   // 导航菜单（旧版兼容）
