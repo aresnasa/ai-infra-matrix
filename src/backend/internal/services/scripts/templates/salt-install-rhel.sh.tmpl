@@ -1,0 +1,156 @@
+#!/bin/bash
+# =============================================================================
+# Salt Minion Installation Script for RHEL/CentOS/Rocky/AlmaLinux/Fedora
+# =============================================================================
+# This template is used by ScriptLoader to generate installation scripts
+# Template variables (Go text/template syntax):
+#   {{.AppHubURL}}   - AppHub server URL for downloading packages
+#   {{.MasterHost}}  - Salt Master hostname/IP
+#   {{.MinionID}}    - Minion identifier
+#   {{.Version}}     - Salt version to install
+#   {{.RpmArch}}     - RPM architecture (x86_64, aarch64)
+#   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
+# =============================================================================
+
+set -e
+echo "=== Starting Salt Minion Installation ==="
+echo "=== Target: RHEL/CentOS/Rocky/AlmaLinux/Fedora System ==="
+echo "=== AppHub URL: {{.AppHubURL}} ==="
+echo "=== Salt Version: {{.Version}} ==="
+echo "=== Architecture: {{.RpmArch}} ==="
+
+APPHUB_SUCCESS=0
+
+# Create temp directory
+cd /tmp
+rm -rf salt-install && mkdir -p salt-install && cd salt-install
+
+echo "=== Trying to download Salt packages from AppHub ==="
+
+# Strip 'v' prefix from version if present (e.g., v3007.8 -> 3007.8)
+SALT_VERSION="{{.Version}}"
+SALT_VERSION="${SALT_VERSION#v}"
+echo "    Normalized version: $SALT_VERSION"
+
+# Define package URLs (try multiple naming conventions)
+# Format 1: salt-3007.8-0.x86_64.rpm (standard)
+# Format 2: salt-v3007.8-0.x86_64.rpm (with v prefix)
+SALT_PKG_URL_1="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+SALT_MINION_URL_1="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-minion-${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+SALT_PKG_URL_2="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-v${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+SALT_MINION_URL_2="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-minion-v${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+
+download_rpm() {
+    local url="$1"
+    local output="$2"
+    echo "    Trying: $url"
+    if curl -fsSL --connect-timeout 15 "$url" -o "$output" 2>/dev/null && [ -s "$output" ]; then
+        if file "$output" | grep -qE "(RPM|compressed)"; then
+            return 0
+        fi
+        rm -f "$output"
+    fi
+    return 1
+}
+
+SALT_DOWNLOADED=0
+MINION_DOWNLOADED=0
+
+# Try downloading salt package
+for url in "$SALT_PKG_URL_1" "$SALT_PKG_URL_2"; do
+    if download_rpm "$url" "salt.rpm"; then
+        SALT_DOWNLOADED=1
+        echo "    Downloaded salt.rpm successfully"
+        break
+    fi
+done
+
+# Try downloading salt-minion package
+for url in "$SALT_MINION_URL_1" "$SALT_MINION_URL_2"; do
+    if download_rpm "$url" "salt-minion.rpm"; then
+        MINION_DOWNLOADED=1
+        echo "    Downloaded salt-minion.rpm successfully"
+        break
+    fi
+done
+
+if [ "$SALT_DOWNLOADED" -eq 1 ] && [ "$MINION_DOWNLOADED" -eq 1 ]; then
+    echo "=== Downloaded packages from AppHub ==="
+    
+    echo "=== Installing dependencies ==="
+    {{.SudoPrefix}}yum install -y python3 python3-pip 2>/dev/null || {{.SudoPrefix}}dnf install -y python3 python3-pip 2>/dev/null || true
+    
+    echo "=== Installing Salt packages from AppHub ==="
+    {{.SudoPrefix}}rpm -Uvh --replacepkgs --nodeps salt.rpm 2>/dev/null || {{.SudoPrefix}}yum localinstall -y salt.rpm 2>/dev/null || {{.SudoPrefix}}dnf install -y ./salt.rpm 2>/dev/null || true
+    {{.SudoPrefix}}rpm -Uvh --replacepkgs --nodeps salt-minion.rpm 2>/dev/null || {{.SudoPrefix}}yum localinstall -y salt-minion.rpm 2>/dev/null || {{.SudoPrefix}}dnf install -y ./salt-minion.rpm 2>/dev/null || true
+    
+    # Verify installation
+    if command -v salt-minion >/dev/null 2>&1; then
+        echo "=== Salt Minion installed successfully from AppHub ==="
+        APPHUB_SUCCESS=1
+    else
+        echo "=== Salt Minion installation from AppHub failed, trying bootstrap ==="
+    fi
+else
+    echo "=== AppHub download failed ==="
+    # Show what we got (for debugging) - use find instead of glob to avoid zsh errors
+    find . -maxdepth 1 -name "*.rpm" -ls 2>/dev/null || echo "No RPM files downloaded"
+fi
+
+# If AppHub failed, use Salt Bootstrap script
+if [ "$APPHUB_SUCCESS" -eq 0 ]; then
+    echo "=== Using Salt Bootstrap script for online installation ==="
+    cd /tmp
+    rm -f bootstrap-salt.sh
+    
+    # Download Salt Bootstrap script (GitHub raw URL, avoid saltproject.io which returns HTML)
+    BOOTSTRAP_DOWNLOADED=0
+    for url in "https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh" \
+               "https://github.com/saltstack/salt-bootstrap/raw/stable/bootstrap-salt.sh"; do
+        echo "Trying to download from: $url"
+        if curl -fsSL --connect-timeout 15 -o bootstrap-salt.sh "$url" 2>/dev/null; then
+            # Verify it's a shell script, not HTML
+            if head -1 bootstrap-salt.sh | grep -q '^#!'; then
+                echo "Downloaded bootstrap script successfully"
+                BOOTSTRAP_DOWNLOADED=1
+                break
+            else
+                echo "Invalid content (not a shell script), trying next URL..."
+                rm -f bootstrap-salt.sh
+            fi
+        fi
+    done
+    
+    if [ "$BOOTSTRAP_DOWNLOADED" -eq 0 ]; then
+        echo "Failed to download Salt Bootstrap script"
+        exit 1
+    fi
+    
+    # Make executable and run
+    chmod +x bootstrap-salt.sh
+    {{.SudoPrefix}}bash bootstrap-salt.sh -x python3 stable || { echo "Bootstrap failed"; exit 1; }
+    
+    echo "=== Salt Bootstrap installation completed ==="
+fi
+
+echo "=== Configuring Salt Minion ==="
+{{.SudoPrefix}}mkdir -p /etc/salt
+cat << 'SALTCONF' | {{.SudoPrefix}}tee /etc/salt/minion
+master: {{.MasterHost}}
+id: {{.MinionID}}
+mine_enabled: true
+mine_return_job: true
+mine_interval: 60
+SALTCONF
+
+echo "=== Starting Salt Minion service ==="
+{{.SudoPrefix}}systemctl daemon-reload || true
+{{.SudoPrefix}}systemctl enable salt-minion || true
+{{.SudoPrefix}}systemctl restart salt-minion || true
+sleep 2
+{{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+
+echo "=== Cleaning up ==="
+cd /tmp && rm -rf salt-install bootstrap-salt.sh
+
+echo "=== Salt Minion Installation Complete ==="

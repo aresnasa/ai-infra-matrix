@@ -1,0 +1,27 @@
+#!/bin/bash
+# =============================================================================
+# Operating System Detection Script
+# =============================================================================
+# This script detects the operating system type, version, and architecture.
+# Output format: KEY:VALUE (one per line)
+#   OS:       Operating system ID (ubuntu, debian, centos, rhel, fedora, etc.)
+#   VERSION:  Operating system version number
+#   ARCH:     CPU architecture (x86_64, aarch64, armv7l, etc.)
+# =============================================================================
+
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    echo "OS:$ID"
+    echo "VERSION:$VERSION_ID"
+elif [ -f /etc/redhat-release ]; then
+    echo "OS:rhel"
+    echo "VERSION:$(cat /etc/redhat-release | grep -oE '[0-9]+' | head -1)"
+elif [ -f /etc/debian_version ]; then
+    echo "OS:debian"
+    echo "VERSION:$(cat /etc/debian_version)"
+else
+    echo "OS:unknown"
+    echo "VERSION:unknown"
+fi
+
+echo "ARCH:$(uname -m)"

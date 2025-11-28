@@ -67,7 +67,6 @@ ssh-key/
 config/ai_assistant_config.yaml
 config/example-hosts.txt
 config/postgres-init/
-scripts/
 !scripts/download_third_party.sh
 !scripts/convert_dockerfiles_to_tpl.py
 playwright-report/

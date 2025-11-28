@@ -1,0 +1,198 @@
+#!/bin/bash
+# =============================================================================
+# KeyVault 密钥同步脚本模板
+# 由 AI-Infra-Matrix Backend 动态生成
+# =============================================================================
+# 此脚本使用一次性令牌安全地同步密钥
+# 令牌有效期短暂，使用后立即失效
+# =============================================================================
+
+set -euo pipefail
+
+# ==================== 配置变量 (由模板渲染) ====================
+KEYVAULT_URL="{{.KeyVaultURL}}"
+SYNC_TOKEN="{{.SyncToken}}"
+KEY_NAME="{{.KeyName}}"
+OUTPUT_FILE="{{.OutputFile}}"
+KEY_PERMISSION="{{.Permission}}"
+VERIFY_CHECKSUM="{{.VerifyChecksum}}"
+EXPECTED_CHECKSUM="{{.ExpectedChecksum}}"
+
+# ==================== 辅助函数 ====================
+
+log_info() {
+    echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') $1"
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') $1" >&2
+}
+
+log_success() {
+    echo "[SUCCESS] $(date '+%Y-%m-%d %H:%M:%S') $1"
+}
+
+# 检查必要工具
+check_dependencies() {
+    local missing=()
+    
+    if ! command -v curl &> /dev/null; then
+        missing+=("curl")
+    fi
+    
+    if [[ "$VERIFY_CHECKSUM" == "true" ]] && ! command -v sha256sum &> /dev/null; then
+        if ! command -v shasum &> /dev/null; then
+            missing+=("sha256sum or shasum")
+        fi
+    fi
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "缺少必要工具: ${missing[*]}"
+        log_info "请安装缺少的工具后重试"
+        exit 1
+    fi
+}
+
+# 计算 SHA256 校验和
+calculate_checksum() {
+    local file="$1"
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum &> /dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        log_error "无法计算校验和：未找到 sha256sum 或 shasum"
+        return 1
+    fi
+}
+
+# 同步密钥
+sync_key() {
+    log_info "正在从 KeyVault 同步密钥: $KEY_NAME"
+    
+    # 创建临时文件
+    local tmp_file
+    tmp_file=$(mktemp)
+    trap "rm -f $tmp_file" EXIT
+    
+    # 发送同步请求
+    local http_code
+    http_code=$(curl -sS -w "%{http_code}" -o "$tmp_file" \
+        -X POST "${KEYVAULT_URL}/sync" \
+        -H "Content-Type: application/json" \
+        -d "{\"sync_token\": \"${SYNC_TOKEN}\", \"key_name\": \"${KEY_NAME}\"}" \
+        2>/dev/null) || {
+        log_error "网络请求失败"
+        return 1
+    }
+    
+    # 检查 HTTP 状态码
+    if [[ "$http_code" != "200" ]]; then
+        log_error "API 返回错误 (HTTP $http_code)"
+        if [[ -f "$tmp_file" ]]; then
+            cat "$tmp_file" >&2
+        fi
+        return 1
+    fi
+    
+    # 检查是否有错误响应
+    if grep -q '"error"' "$tmp_file"; then
+        local error_msg
+        error_msg=$(grep -o '"error":"[^"]*"' "$tmp_file" | cut -d'"' -f4)
+        log_error "同步失败: $error_msg"
+        return 1
+    fi
+    
+    # 提取密钥数据 (Base64 编码)
+    local key_data_base64
+    key_data_base64=$(grep -o '"key_data":"[^"]*"' "$tmp_file" | cut -d'"' -f4)
+    
+    if [[ -z "$key_data_base64" ]]; then
+        log_error "响应中未找到密钥数据"
+        return 1
+    fi
+    
+    # 确保输出目录存在
+    local output_dir
+    output_dir=$(dirname "$OUTPUT_FILE")
+    if [[ ! -d "$output_dir" ]]; then
+        log_info "创建目录: $output_dir"
+        mkdir -p "$output_dir"
+    fi
+    
+    # Base64 解码并保存
+    echo "$key_data_base64" | base64 -d > "$OUTPUT_FILE" 2>/dev/null || {
+        # macOS 兼容
+        echo "$key_data_base64" | base64 -D > "$OUTPUT_FILE" 2>/dev/null || {
+            log_error "Base64 解码失败"
+            return 1
+        }
+    }
+    
+    # 设置文件权限
+    chmod "$KEY_PERMISSION" "$OUTPUT_FILE"
+    
+    # 验证校验和
+    if [[ "$VERIFY_CHECKSUM" == "true" ]] && [[ -n "$EXPECTED_CHECKSUM" ]]; then
+        local actual_checksum
+        actual_checksum=$(calculate_checksum "$OUTPUT_FILE")
+        
+        if [[ "$actual_checksum" != "$EXPECTED_CHECKSUM" ]]; then
+            log_error "校验和不匹配!"
+            log_error "期望: $EXPECTED_CHECKSUM"
+            log_error "实际: $actual_checksum"
+            rm -f "$OUTPUT_FILE"
+            return 1
+        fi
+        log_info "校验和验证通过"
+    fi
+    
+    log_success "密钥已同步到: $OUTPUT_FILE"
+    log_info "文件权限: $KEY_PERMISSION"
+    
+    return 0
+}
+
+# ==================== 主函数 ====================
+
+main() {
+    log_info "=========================================="
+    log_info "KeyVault 密钥同步脚本"
+    log_info "=========================================="
+    
+    # 检查依赖
+    check_dependencies
+    
+    # 验证配置
+    if [[ -z "$KEYVAULT_URL" ]] || [[ "$KEYVAULT_URL" == "{{.KeyVaultURL}}" ]]; then
+        log_error "KeyVault URL 未配置"
+        exit 1
+    fi
+    
+    if [[ -z "$SYNC_TOKEN" ]] || [[ "$SYNC_TOKEN" == "{{.SyncToken}}" ]]; then
+        log_error "同步令牌未配置"
+        exit 1
+    fi
+    
+    if [[ -z "$KEY_NAME" ]] || [[ "$KEY_NAME" == "{{.KeyName}}" ]]; then
+        log_error "密钥名称未配置"
+        exit 1
+    fi
+    
+    if [[ -z "$OUTPUT_FILE" ]] || [[ "$OUTPUT_FILE" == "{{.OutputFile}}" ]]; then
+        log_error "输出文件路径未配置"
+        exit 1
+    fi
+    
+    # 执行同步
+    if sync_key; then
+        log_success "密钥同步完成"
+        exit 0
+    else
+        log_error "密钥同步失败"
+        exit 1
+    fi
+}
+
+# 执行主函数
+main "$@"

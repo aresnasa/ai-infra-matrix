@@ -1,0 +1,69 @@
+#!/bin/bash
+# =============================================================================
+# Salt Minion Installation Script for Generic Systems (Bootstrap)
+# =============================================================================
+# This template is used by ScriptLoader for systems without specific support
+# Uses Salt Bootstrap script for maximum compatibility
+# Template variables (Go text/template syntax):
+#   {{.MasterHost}}  - Salt Master hostname/IP
+#   {{.MinionID}}    - Minion identifier
+#   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
+#   {{.OS}}          - Operating system name
+#   {{.OSVersion}}   - Operating system version
+# =============================================================================
+
+set -e
+echo "=== Starting Salt Minion Installation (Bootstrap) ==="
+echo "=== Detected OS: {{.OS}} {{.OSVersion}} ==="
+
+cd /tmp
+rm -f bootstrap-salt.sh
+
+echo "=== Downloading Salt Bootstrap script ==="
+# Download Salt Bootstrap script (GitHub raw URL, avoid saltproject.io which returns HTML)
+BOOTSTRAP_DOWNLOADED=0
+for url in "https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh" \
+           "https://github.com/saltstack/salt-bootstrap/raw/stable/bootstrap-salt.sh"; do
+    echo "Trying to download from: $url"
+    if curl -fsSL --connect-timeout 15 -o bootstrap-salt.sh "$url" 2>/dev/null; then
+        # Verify it's a shell script, not HTML
+        if head -1 bootstrap-salt.sh | grep -q '^#!'; then
+            echo "Downloaded bootstrap script successfully"
+            BOOTSTRAP_DOWNLOADED=1
+            break
+        else
+            echo "Invalid content (not a shell script), trying next URL..."
+            rm -f bootstrap-salt.sh
+        fi
+    fi
+done
+
+if [ "$BOOTSTRAP_DOWNLOADED" -eq 0 ]; then
+    echo "Failed to download Salt Bootstrap script"
+    exit 1
+fi
+
+chmod +x bootstrap-salt.sh
+{{.SudoPrefix}}bash bootstrap-salt.sh -x python3 stable || { echo "Bootstrap failed"; exit 1; }
+
+echo "=== Configuring Salt Minion ==="
+{{.SudoPrefix}}mkdir -p /etc/salt
+cat << 'SALTCONF' | {{.SudoPrefix}}tee /etc/salt/minion
+master: {{.MasterHost}}
+id: {{.MinionID}}
+mine_enabled: true
+mine_return_job: true
+mine_interval: 60
+SALTCONF
+
+echo "=== Starting Salt Minion service ==="
+{{.SudoPrefix}}systemctl daemon-reload || true
+{{.SudoPrefix}}systemctl enable salt-minion || true
+{{.SudoPrefix}}systemctl restart salt-minion || true
+sleep 2
+{{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+
+echo "=== Cleaning up ==="
+rm -f /tmp/bootstrap-salt.sh
+
+echo "=== Salt Minion Installation Complete ==="

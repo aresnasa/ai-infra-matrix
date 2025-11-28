@@ -1,0 +1,26 @@
+#!/bin/bash
+# =============================================================================
+# Salt Minion Uninstallation Script for Generic Systems
+# =============================================================================
+# Template variables (Go text/template syntax):
+#   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
+# =============================================================================
+
+set -e
+echo "=== Uninstalling Salt Minion ==="
+echo "=== Target: Generic System ==="
+
+# Stop and disable service
+echo "=== Stopping Salt Minion service ==="
+{{.SudoPrefix}}systemctl stop salt-minion 2>/dev/null || true
+{{.SudoPrefix}}systemctl disable salt-minion 2>/dev/null || true
+
+# Clean up configuration and data
+echo "=== Cleaning up Salt directories ==="
+{{.SudoPrefix}}rm -rf /etc/salt
+{{.SudoPrefix}}rm -rf /var/cache/salt
+{{.SudoPrefix}}rm -rf /var/log/salt
+{{.SudoPrefix}}rm -rf /var/run/salt
+
+echo "=== Salt Minion Uninstall Complete ==="
+echo "=== Note: Manual package removal may be needed depending on your system ==="
