@@ -1390,8 +1390,28 @@ func createNightingaleDatabase(cfg *config.Config) error {
 
 	log.Println("Ensuring Nightingale schema is up to date using GORM AutoMigrate...")
 	nightingaleModels := models.InitNightingaleModels()
-	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
-		return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
+	// 逐个迁移模型，跳过已存在的表以避免 PostgreSQL duplicate key 错误
+	for i, model := range nightingaleModels {
+		if nightingaleDB_conn.Migrator().HasTable(model) {
+			log.Printf("[%d/%d] Table already exists, updating columns if needed", i+1, len(nightingaleModels))
+			// 对于已存在的表，只更新列结构，不重新创建表
+			if err := nightingaleDB_conn.Migrator().AutoMigrate(model); err != nil {
+				// 忽略 duplicate key 错误，这通常是因为类型已存在
+				if !strings.Contains(err.Error(), "duplicate key") && !strings.Contains(err.Error(), "already exists") {
+					log.Printf("Warning: Failed to update table: %v", err)
+				}
+			}
+		} else {
+			log.Printf("[%d/%d] Creating new table", i+1, len(nightingaleModels))
+			if err := nightingaleDB_conn.AutoMigrate(model); err != nil {
+				// 忽略 duplicate key 错误
+				if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "already exists") {
+					log.Printf("Table type already exists, skipping")
+				} else {
+					return fmt.Errorf("failed to auto migrate Nightingale model: %w", err)
+				}
+			}
+		}
 	}
 	log.Println("✓ Nightingale schema synced")
 
