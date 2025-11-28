@@ -4,21 +4,26 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"text/template"
 
 	"github.com/sirupsen/logrus"
 )
 
-//go:embed scripts/*.sh scripts/**/*.sh
+//go:embed scripts/*.sh scripts/**/*.sh scripts/**/*.tmpl
 var embeddedScripts embed.FS
 
 // ScriptLoader 脚本加载器服务
 // 优先从文件系统加载脚本，如果不存在则从嵌入的脚本中加载
+// 设计说明：
+//   - 脚本模板使用 Go text/template 语法
+//   - 优先从 SCRIPTS_DIR 环境变量指定的目录加载（便于运维修改）
+//   - 文件系统找不到时回退到嵌入资源（确保程序可独立运行）
+//   - 模板文件使用 .tmpl 后缀
 type ScriptLoader struct {
 	scriptsDir    string
 	templateCache map[string]*template.Template
@@ -30,30 +35,54 @@ type ScriptParams map[string]interface{}
 
 // SaltInstallParams Salt Minion 安装参数
 type SaltInstallParams struct {
-	AppHubURL  string
-	MasterHost string
-	MinionID   string
-	Version    string
-	Arch       string
-	RpmArch    string
-	SudoPrefix string
-	OS         string
-	OSVersion  string
+	AppHubURL  string // AppHub 服务地址，用于下载安装包
+	MasterHost string // Salt Master 主机地址
+	MinionID   string // Minion 标识符
+	Version    string // Salt 版本号
+	Arch       string // DEB 包架构 (amd64, arm64)
+	RpmArch    string // RPM 包架构 (x86_64, aarch64)
+	SudoPrefix string // sudo 前缀 (空或 "sudo ")
+	OS         string // 操作系统类型 (ubuntu, debian, centos, rhel, etc.)
+	OSVersion  string // 操作系统版本
 }
 
 // SaltUninstallParams Salt Minion 卸载参数
 type SaltUninstallParams struct {
-	SudoPrefix string
-	OS         string
+	SudoPrefix string // sudo 前缀 (空或 "sudo ")
+	OS         string // 操作系统类型
 }
 
 // SSHTestParams SSH 测试参数
 type SSHTestParams struct {
-	SudoPass string
+	SudoPass string // sudo 密码（用于测试 sudo 权限）
 }
 
 // OSDetectParams 操作系统检测参数
 type OSDetectParams struct{}
+
+// 模板文件映射 - 定义各类脚本对应的模板文件
+var templateFiles = map[string]map[string]string{
+	"salt-install": {
+		"ubuntu":    "templates/salt-install-debian.sh.tmpl",
+		"debian":    "templates/salt-install-debian.sh.tmpl",
+		"centos":    "templates/salt-install-rhel.sh.tmpl",
+		"rhel":      "templates/salt-install-rhel.sh.tmpl",
+		"rocky":     "templates/salt-install-rhel.sh.tmpl",
+		"almalinux": "templates/salt-install-rhel.sh.tmpl",
+		"fedora":    "templates/salt-install-rhel.sh.tmpl",
+		"default":   "templates/salt-install-generic.sh.tmpl",
+	},
+	"salt-uninstall": {
+		"ubuntu":    "templates/salt-uninstall-debian.sh.tmpl",
+		"debian":    "templates/salt-uninstall-debian.sh.tmpl",
+		"centos":    "templates/salt-uninstall-rhel.sh.tmpl",
+		"rhel":      "templates/salt-uninstall-rhel.sh.tmpl",
+		"rocky":     "templates/salt-uninstall-rhel.sh.tmpl",
+		"almalinux": "templates/salt-uninstall-rhel.sh.tmpl",
+		"fedora":    "templates/salt-uninstall-rhel.sh.tmpl",
+		"default":   "templates/salt-uninstall-generic.sh.tmpl",
+	},
+}
 
 var (
 	scriptLoaderInstance *ScriptLoader
@@ -75,7 +104,9 @@ func GetScriptLoader() *ScriptLoader {
 			templateCache: make(map[string]*template.Template),
 		}
 
-		logrus.Infof("[ScriptLoader] 初始化，脚本目录: %s", scriptsDir)
+		logrus.Infof("[ScriptLoader] 初始化完成")
+		logrus.Infof("[ScriptLoader] 外部脚本目录: %s", scriptsDir)
+		logrus.Infof("[ScriptLoader] 运维人员可修改外部脚本目录中的模板文件，无需重新编译程序")
 	})
 	return scriptLoaderInstance
 }
@@ -91,18 +122,18 @@ func NewScriptLoader(scriptsDir string) *ScriptLoader {
 // GetScript 获取脚本内容
 // scriptName: 脚本名称，如 "install-salt-minion.sh" 或 "salt-minion/01-install-salt-minion.sh"
 func (s *ScriptLoader) GetScript(scriptName string) (string, error) {
-	// 1. 优先从文件系统加载
+	// 1. 优先从文件系统加载（便于运维修改）
 	fsPath := filepath.Join(s.scriptsDir, scriptName)
 	if content, err := os.ReadFile(fsPath); err == nil {
 		logrus.Debugf("[ScriptLoader] 从文件系统加载脚本: %s", fsPath)
 		return string(content), nil
 	}
 
-	// 2. 从嵌入的脚本中加载
+	// 2. 从嵌入的脚本中加载（确保程序可独立运行）
 	embeddedPath := "scripts/" + scriptName
 	content, err := embeddedScripts.ReadFile(embeddedPath)
 	if err != nil {
-		return "", fmt.Errorf("脚本未找到: %s (尝试路径: %s, %s)", scriptName, fsPath, embeddedPath)
+		return "", fmt.Errorf("脚本未找到: %s (已尝试路径: %s, embedded:%s)", scriptName, fsPath, embeddedPath)
 	}
 
 	logrus.Debugf("[ScriptLoader] 从嵌入资源加载脚本: %s", embeddedPath)
@@ -111,6 +142,7 @@ func (s *ScriptLoader) GetScript(scriptName string) (string, error) {
 
 // GetScriptTemplate 获取脚本模板
 func (s *ScriptLoader) GetScriptTemplate(scriptName string) (*template.Template, error) {
+	// 检查缓存
 	s.cacheMutex.RLock()
 	if tmpl, ok := s.templateCache[scriptName]; ok {
 		s.cacheMutex.RUnlock()
@@ -127,7 +159,7 @@ func (s *ScriptLoader) GetScriptTemplate(scriptName string) (*template.Template,
 	// 解析为模板
 	tmpl, err := template.New(scriptName).Parse(content)
 	if err != nil {
-		return nil, fmt.Errorf("解析脚本模板失败: %v", err)
+		return nil, fmt.Errorf("解析脚本模板失败 [%s]: %v", scriptName, err)
 	}
 
 	// 缓存模板
@@ -147,7 +179,7 @@ func (s *ScriptLoader) RenderScript(scriptName string, params interface{}) (stri
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, params); err != nil {
-		return "", fmt.Errorf("渲染脚本失败: %v", err)
+		return "", fmt.Errorf("渲染脚本失败 [%s]: %v", scriptName, err)
 	}
 
 	return buf.String(), nil
@@ -164,7 +196,7 @@ func (s *ScriptLoader) ListScripts() ([]string, error) {
 			if err != nil {
 				return nil // 忽略错误，继续遍历
 			}
-			if !info.IsDir() && strings.HasSuffix(info.Name(), ".sh") {
+			if !info.IsDir() && (strings.HasSuffix(info.Name(), ".sh") || strings.HasSuffix(info.Name(), ".tmpl")) {
 				relPath, _ := filepath.Rel(s.scriptsDir, path)
 				scripts = append(scripts, relPath)
 				seen[relPath] = true
@@ -181,7 +213,7 @@ func (s *ScriptLoader) ListScripts() ([]string, error) {
 		if err != nil {
 			return nil
 		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".sh") {
+		if !d.IsDir() && (strings.HasSuffix(d.Name(), ".sh") || strings.HasSuffix(d.Name(), ".tmpl")) {
 			relPath := strings.TrimPrefix(path, "scripts/")
 			if !seen[relPath] {
 				scripts = append(scripts, relPath)
@@ -196,279 +228,93 @@ func (s *ScriptLoader) ListScripts() ([]string, error) {
 	return scripts, nil
 }
 
-// ClearCache 清除模板缓存
+// ClearCache 清除模板缓存（用于热更新脚本后生效）
 func (s *ScriptLoader) ClearCache() {
 	s.cacheMutex.Lock()
 	defer s.cacheMutex.Unlock()
 	s.templateCache = make(map[string]*template.Template)
+	logrus.Info("[ScriptLoader] 模板缓存已清除")
 }
 
-// ========================= 预定义脚本生成函数 =========================
+// ReloadScript 重新加载指定脚本的模板（从缓存中移除）
+func (s *ScriptLoader) ReloadScript(scriptName string) {
+	s.cacheMutex.Lock()
+	defer s.cacheMutex.Unlock()
+	delete(s.templateCache, scriptName)
+	logrus.Infof("[ScriptLoader] 脚本模板已从缓存移除: %s", scriptName)
+}
+
+// GetScriptsDir 获取外部脚本目录路径
+func (s *ScriptLoader) GetScriptsDir() string {
+	return s.scriptsDir
+}
+
+// ========================= 脚本生成函数 =========================
+// 以下函数基于外部模板文件生成脚本
+// 模板文件位于 scripts/templates/ 目录
+// 运维人员可直接修改模板文件，无需重新编译程序
+
+// getTemplateForOS 根据操作系统获取对应的模板文件名
+func getTemplateForOS(scriptType, osName string) string {
+	osMap, ok := templateFiles[scriptType]
+	if !ok {
+		return ""
+	}
+	if tmplName, ok := osMap[osName]; ok {
+		return tmplName
+	}
+	return osMap["default"]
+}
 
 // GenerateSaltInstallScript 生成 Salt Minion 安装脚本
 func (s *ScriptLoader) GenerateSaltInstallScript(params SaltInstallParams) (string, error) {
-	// 如果有模板脚本，优先使用模板
-	if script, err := s.RenderScript("templates/salt-install.sh.tmpl", params); err == nil {
-		return script, nil
+	// 获取对应操作系统的模板
+	templateName := getTemplateForOS("salt-install", params.OS)
+	if templateName == "" {
+		templateName = "templates/salt-install-generic.sh.tmpl"
 	}
 
-	// 回退到内置脚本生成
-	return s.generateSaltInstallScriptInline(params)
-}
-
-// generateSaltInstallScriptInline 生成内联 Salt 安装脚本（向后兼容）
-func (s *ScriptLoader) generateSaltInstallScriptInline(params SaltInstallParams) (string, error) {
-	switch params.OS {
-	case "ubuntu", "debian":
-		return s.generateDebianSaltInstallScript(params), nil
-	case "centos", "rhel", "rocky", "almalinux", "fedora":
-		return s.generateRhelSaltInstallScript(params), nil
-	default:
-		return s.generateGenericSaltInstallScript(params), nil
+	script, err := s.RenderScript(templateName, params)
+	if err != nil {
+		logrus.Warnf("[ScriptLoader] 加载模板 %s 失败: %v，将使用通用模板", templateName, err)
+		// 尝试通用模板
+		script, err = s.RenderScript("templates/salt-install-generic.sh.tmpl", params)
+		if err != nil {
+			return "", fmt.Errorf("无法生成 Salt 安装脚本: %v", err)
+		}
 	}
-}
 
-func (s *ScriptLoader) generateDebianSaltInstallScript(p SaltInstallParams) string {
-	return fmt.Sprintf(`
-set -e
-echo "=== Starting Salt Minion Installation ==="
-
-APPHUB_SUCCESS=0
-
-# Create temp directory
-cd /tmp
-rm -rf salt-install && mkdir -p salt-install && cd salt-install
-
-echo "=== Trying to download Salt packages from AppHub ==="
-# Try to download salt packages from AppHub
-if curl -fsSL --connect-timeout 10 "%s/pkgs/saltstack-deb/salt-common_%s_%s.deb" -o salt-common.deb 2>/dev/null && \
-   curl -fsSL --connect-timeout 10 "%s/pkgs/saltstack-deb/salt-minion_%s_%s.deb" -o salt-minion.deb 2>/dev/null; then
-    echo "=== Downloaded packages from AppHub ==="
-    
-    echo "=== Installing dependencies ==="
-    %sapt-get update -qq || true
-    %sapt-get install -y -qq python3 python3-pip python3-setuptools || true
-    
-    echo "=== Installing Salt packages from AppHub ==="
-    %sdpkg -i salt-common.deb || %sapt-get install -f -y -qq
-    %sdpkg -i salt-minion.deb || %sapt-get install -f -y -qq
-    APPHUB_SUCCESS=1
-else
-    echo "=== AppHub download failed, falling back to online installation ==="
-fi
-
-# If AppHub failed, use Salt Bootstrap script
-if [ "$APPHUB_SUCCESS" -eq 0 ]; then
-    echo "=== Using Salt Bootstrap script for online installation ==="
-    cd /tmp
-    rm -f bootstrap-salt.sh
-    
-    # Download Salt Bootstrap script
-    curl -fsSL -o bootstrap-salt.sh https://bootstrap.saltproject.io || \
-    curl -fsSL -o bootstrap-salt.sh https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh || \
-    { echo "Failed to download Salt Bootstrap script"; exit 1; }
-    
-    # Make executable and run
-    chmod +x bootstrap-salt.sh
-    %sbash bootstrap-salt.sh -x python3 stable || { echo "Bootstrap failed"; exit 1; }
-    
-    echo "=== Salt Bootstrap installation completed ==="
-fi
-
-echo "=== Configuring Salt Minion ==="
-%smkdir -p /etc/salt
-cat << 'SALTCONF' | %stee /etc/salt/minion
-master: %s
-id: %s
-mine_enabled: true
-mine_return_job: true
-mine_interval: 60
-SALTCONF
-
-echo "=== Starting Salt Minion service ==="
-%ssystemctl daemon-reload || true
-%ssystemctl enable salt-minion || true
-%ssystemctl restart salt-minion || true
-sleep 2
-%ssystemctl status salt-minion --no-pager || true
-
-echo "=== Cleaning up ==="
-cd /tmp && rm -rf salt-install bootstrap-salt.sh
-
-echo "=== Salt Minion Installation Complete ==="
-`, p.AppHubURL, p.Version, p.Arch,
-		p.AppHubURL, p.Version, p.Arch,
-		p.SudoPrefix, p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.MasterHost, p.MinionID,
-		p.SudoPrefix, p.SudoPrefix, p.SudoPrefix, p.SudoPrefix)
-}
-
-func (s *ScriptLoader) generateRhelSaltInstallScript(p SaltInstallParams) string {
-	return fmt.Sprintf(`
-set -e
-echo "=== Starting Salt Minion Installation ==="
-
-APPHUB_SUCCESS=0
-
-# Create temp directory
-cd /tmp
-rm -rf salt-install && mkdir -p salt-install && cd salt-install
-
-echo "=== Trying to download Salt packages from AppHub ==="
-# Try to download salt packages from AppHub
-if curl -fsSL --connect-timeout 10 "%s/pkgs/saltstack-rpm/salt-%s-0.%s.rpm" -o salt.rpm 2>/dev/null && \
-   curl -fsSL --connect-timeout 10 "%s/pkgs/saltstack-rpm/salt-minion-%s-0.%s.rpm" -o salt-minion.rpm 2>/dev/null; then
-    echo "=== Downloaded packages from AppHub ==="
-    
-    echo "=== Installing dependencies ==="
-    %syum install -y python3 python3-pip || %sdnf install -y python3 python3-pip || true
-    
-    echo "=== Installing Salt packages from AppHub ==="
-    %srpm -Uvh --replacepkgs salt.rpm || %syum localinstall -y salt.rpm || true
-    %srpm -Uvh --replacepkgs salt-minion.rpm || %syum localinstall -y salt-minion.rpm || true
-    APPHUB_SUCCESS=1
-else
-    echo "=== AppHub download failed, falling back to online installation ==="
-fi
-
-# If AppHub failed, use Salt Bootstrap script
-if [ "$APPHUB_SUCCESS" -eq 0 ]; then
-    echo "=== Using Salt Bootstrap script for online installation ==="
-    cd /tmp
-    rm -f bootstrap-salt.sh
-    
-    # Download Salt Bootstrap script
-    curl -fsSL -o bootstrap-salt.sh https://bootstrap.saltproject.io || \
-    curl -fsSL -o bootstrap-salt.sh https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh || \
-    { echo "Failed to download Salt Bootstrap script"; exit 1; }
-    
-    # Make executable and run
-    chmod +x bootstrap-salt.sh
-    %sbash bootstrap-salt.sh -x python3 stable || { echo "Bootstrap failed"; exit 1; }
-    
-    echo "=== Salt Bootstrap installation completed ==="
-fi
-
-echo "=== Configuring Salt Minion ==="
-%smkdir -p /etc/salt
-cat << 'SALTCONF' | %stee /etc/salt/minion
-master: %s
-id: %s
-mine_enabled: true
-mine_return_job: true
-mine_interval: 60
-SALTCONF
-
-echo "=== Starting Salt Minion service ==="
-%ssystemctl daemon-reload || true
-%ssystemctl enable salt-minion || true
-%ssystemctl restart salt-minion || true
-sleep 2
-%ssystemctl status salt-minion --no-pager || true
-
-echo "=== Cleaning up ==="
-cd /tmp && rm -rf salt-install bootstrap-salt.sh
-
-echo "=== Salt Minion Installation Complete ==="
-`, p.AppHubURL, p.Version, p.RpmArch,
-		p.AppHubURL, p.Version, p.RpmArch,
-		p.SudoPrefix, p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.MasterHost, p.MinionID,
-		p.SudoPrefix, p.SudoPrefix, p.SudoPrefix, p.SudoPrefix)
-}
-
-func (s *ScriptLoader) generateGenericSaltInstallScript(p SaltInstallParams) string {
-	return fmt.Sprintf(`
-set -e
-echo "=== Starting Salt Minion Installation (Bootstrap) ==="
-echo "=== Detected OS: %s %s ==="
-
-cd /tmp
-rm -f bootstrap-salt.sh
-
-echo "=== Downloading Salt Bootstrap script ==="
-curl -fsSL -o bootstrap-salt.sh https://bootstrap.saltproject.io || \
-curl -fsSL -o bootstrap-salt.sh https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh || \
-{ echo "Failed to download Salt Bootstrap script"; exit 1; }
-
-chmod +x bootstrap-salt.sh
-%sbash bootstrap-salt.sh -x python3 stable || { echo "Bootstrap failed"; exit 1; }
-
-echo "=== Configuring Salt Minion ==="
-%smkdir -p /etc/salt
-cat << 'SALTCONF' | %stee /etc/salt/minion
-master: %s
-id: %s
-mine_enabled: true
-mine_return_job: true
-mine_interval: 60
-SALTCONF
-
-echo "=== Starting Salt Minion service ==="
-%ssystemctl daemon-reload || true
-%ssystemctl enable salt-minion || true
-%ssystemctl restart salt-minion || true
-sleep 2
-%ssystemctl status salt-minion --no-pager || true
-
-echo "=== Cleaning up ==="
-rm -f /tmp/bootstrap-salt.sh
-
-echo "=== Salt Minion Installation Complete ==="
-`, p.OS, p.OSVersion,
-		p.SudoPrefix,
-		p.SudoPrefix, p.SudoPrefix,
-		p.MasterHost, p.MinionID,
-		p.SudoPrefix, p.SudoPrefix, p.SudoPrefix, p.SudoPrefix)
+	return script, nil
 }
 
 // GenerateSaltUninstallScript 生成 Salt Minion 卸载脚本
 func (s *ScriptLoader) GenerateSaltUninstallScript(params SaltUninstallParams) (string, error) {
-	switch params.OS {
-	case "ubuntu", "debian":
-		return fmt.Sprintf(`
-set -e
-echo "=== Uninstalling Salt Minion ==="
-%ssystemctl stop salt-minion || true
-%ssystemctl disable salt-minion || true
-%sapt-get remove -y salt-minion salt-common || true
-%sapt-get autoremove -y || true
-%srm -rf /etc/salt /var/cache/salt /var/log/salt /var/run/salt
-echo "=== Salt Minion Uninstall Complete ==="
-`, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix), nil
-	case "centos", "rhel", "rocky", "almalinux", "fedora":
-		return fmt.Sprintf(`
-set -e
-echo "=== Uninstalling Salt Minion ==="
-%ssystemctl stop salt-minion || true
-%ssystemctl disable salt-minion || true
-%syum remove -y salt-minion salt || %sdnf remove -y salt-minion salt || true
-%srm -rf /etc/salt /var/cache/salt /var/log/salt /var/run/salt
-echo "=== Salt Minion Uninstall Complete ==="
-`, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix), nil
-	default:
-		return fmt.Sprintf(`
-set -e
-echo "=== Uninstalling Salt Minion ==="
-%ssystemctl stop salt-minion || true
-%ssystemctl disable salt-minion || true
-%srm -rf /etc/salt /var/cache/salt /var/log/salt /var/run/salt
-echo "=== Salt Minion Uninstall Complete (manual package removal may be needed) ==="
-`, params.SudoPrefix, params.SudoPrefix, params.SudoPrefix), nil
+	// 获取对应操作系统的模板
+	templateName := getTemplateForOS("salt-uninstall", params.OS)
+	if templateName == "" {
+		templateName = "templates/salt-uninstall-generic.sh.tmpl"
 	}
+
+	script, err := s.RenderScript(templateName, params)
+	if err != nil {
+		logrus.Warnf("[ScriptLoader] 加载模板 %s 失败: %v，将使用通用模板", templateName, err)
+		// 尝试通用模板
+		script, err = s.RenderScript("templates/salt-uninstall-generic.sh.tmpl", params)
+		if err != nil {
+			return "", fmt.Errorf("无法生成 Salt 卸载脚本: %v", err)
+		}
+	}
+
+	return script, nil
 }
 
 // GenerateOSDetectScript 生成操作系统检测脚本
 func (s *ScriptLoader) GenerateOSDetectScript() string {
-	return `
+	script, err := s.GetScript("templates/os-detect.sh.tmpl")
+	if err != nil {
+		logrus.Warnf("[ScriptLoader] 无法加载 OS 检测脚本模板: %v，使用内置脚本", err)
+		// 回退到内置脚本（确保基本功能可用）
+		return `
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     echo "OS:$ID"
@@ -482,12 +328,19 @@ else
 fi
 echo "ARCH:$(uname -m)"
 `
+	}
+	return script
 }
 
 // GenerateSSHTestScript 生成 SSH 连接测试脚本
 func (s *ScriptLoader) GenerateSSHTestScript(sudoPass string) string {
-	if sudoPass != "" {
-		return fmt.Sprintf(`
+	params := SSHTestParams{SudoPass: sudoPass}
+	script, err := s.RenderScript("templates/ssh-test.sh.tmpl", params)
+	if err != nil {
+		logrus.Warnf("[ScriptLoader] 无法加载 SSH 测试脚本模板: %v，使用内置脚本", err)
+		// 回退到内置脚本
+		if sudoPass != "" {
+			return fmt.Sprintf(`
 export SUDO_ASKPASS=/dev/null
 echo '%s' | sudo -S -v 2>/dev/null && echo "SUDO:yes:nopassword" || {
     if echo '%s' | sudo -S true 2>/dev/null; then
@@ -499,6 +352,8 @@ echo '%s' | sudo -S -v 2>/dev/null && echo "SUDO:yes:nopassword" || {
 hostname
 uname -a
 `, sudoPass, sudoPass)
+		}
+		return `hostname && uname -a`
 	}
-	return `hostname && uname -a`
+	return script
 }

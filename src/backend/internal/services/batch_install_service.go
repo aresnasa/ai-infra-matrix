@@ -212,6 +212,13 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 				Type:    "error",
 				Message: fmt.Sprintf("Installation failed with panic: %v", r),
 			})
+			// 更新任务状态为失败
+			if database.DB != nil && task.ID > 0 {
+				task.Status = "failed"
+				now := time.Now()
+				task.EndTime = &now
+				database.DB.Save(task)
+			}
 		}
 		// 延迟关闭 SSE 通道，让客户端有时间接收最后的消息
 		time.Sleep(2 * time.Second)
@@ -221,6 +228,13 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 	s.sendEvent(taskID, SSEEvent{
 		Type:    "progress",
 		Message: fmt.Sprintf("Starting batch installation for %d hosts with %d parallel workers", len(req.Hosts), req.Parallel),
+		Data: map[string]interface{}{
+			"completed": 0,
+			"total":     len(req.Hosts),
+			"success":   0,
+			"failed":    0,
+			"progress":  0,
+		},
 	})
 
 	// 创建工作通道
@@ -266,6 +280,7 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 	var hostResults []HostInstallResult
 	successCount := 0
 	failedCount := 0
+	totalHosts := len(req.Hosts)
 
 	for result := range results {
 		hostResults = append(hostResults, result)
@@ -286,26 +301,57 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 				Output:   result.Message,
 			}
 			database.DB.Create(hostResult)
+
+			// 实时更新任务统计
+			task.SuccessHosts = successCount
+			task.FailedHosts = failedCount
+			task.UpdateHostStats()
+			database.DB.Save(task)
+		}
+
+		// 计算进度
+		completedCount := successCount + failedCount
+		progress := 0
+		if totalHosts > 0 {
+			progress = completedCount * 100 / totalHosts
 		}
 
 		// 发送进度事件
 		s.sendEvent(taskID, SSEEvent{
 			Type:    "progress",
 			Host:    result.Host,
-			Message: fmt.Sprintf("Completed: %d/%d (Success: %d, Failed: %d)", successCount+failedCount, len(req.Hosts), successCount, failedCount),
+			Message: fmt.Sprintf("Completed: %d/%d (Success: %d, Failed: %d)", completedCount, totalHosts, successCount, failedCount),
 			Data: map[string]interface{}{
-				"completed": successCount + failedCount,
-				"total":     len(req.Hosts),
+				"completed": completedCount,
+				"total":     totalHosts,
 				"success":   successCount,
 				"failed":    failedCount,
+				"progress":  progress,
+				"host_result": map[string]interface{}{
+					"host":     result.Host,
+					"status":   result.Status,
+					"error":    result.Error,
+					"duration": result.Duration,
+				},
 			},
 		})
 	}
 
-	// 更新任务状态
+	// 计算最终状态
+	finalStatus := "completed"
+	if failedCount > 0 && successCount == 0 {
+		finalStatus = "failed"
+	} else if failedCount > 0 {
+		finalStatus = "partial" // 部分成功
+	}
+
+	// 更新任务最终状态
 	if database.DB != nil && task.ID > 0 {
+		task.Status = finalStatus
 		task.SuccessHosts = successCount
 		task.FailedHosts = failedCount
+		now := time.Now()
+		task.EndTime = &now
 		task.UpdateHostStats()
 		database.DB.Save(task)
 	}
@@ -313,21 +359,24 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 	// 发送完成事件
 	s.sendEvent(taskID, SSEEvent{
 		Type:    "complete",
-		Message: fmt.Sprintf("Batch installation completed. Success: %d, Failed: %d", successCount, failedCount),
-		Data: BatchInstallResult{
-			TaskID:       taskID,
-			TotalHosts:   len(req.Hosts),
-			SuccessHosts: successCount,
-			FailedHosts:  failedCount,
-			HostResults:  hostResults,
+		Message: fmt.Sprintf("Batch installation %s. Success: %d, Failed: %d", finalStatus, successCount, failedCount),
+		Data: map[string]interface{}{
+			"task_id":       taskID,
+			"total_hosts":   totalHosts,
+			"success_hosts": successCount,
+			"failed_hosts":  failedCount,
+			"status":        finalStatus,
+			"progress":      100,
+			"host_results":  hostResults,
 		},
 	})
 
 	logrus.WithFields(logrus.Fields{
 		"task_id": taskID,
-		"total":   len(req.Hosts),
+		"total":   totalHosts,
 		"success": successCount,
 		"failed":  failedCount,
+		"status":  finalStatus,
 	}).Info("Batch Salt Minion installation completed")
 }
 

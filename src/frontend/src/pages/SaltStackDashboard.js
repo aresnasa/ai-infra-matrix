@@ -359,12 +359,35 @@ const SaltStackDashboard = () => {
         console.log('[批量安装 SSE事件]', data.type, data);
         setBatchInstallEvents((prev) => [...prev, data]);
         
+        // 实时更新任务列表中的进度（如果有进度数据）
+        if (data.type === 'progress' && data.data) {
+          const { completed, total, success, failed, progress, host_result } = data.data;
+          setInstallTasks((prevTasks) => {
+            return prevTasks.map(task => {
+              if (task.taskName?.includes(taskId)) {
+                return {
+                  ...task,
+                  successHosts: success || task.successHosts,
+                  failedHosts: failed || task.failedHosts,
+                  // 如果有 host_result，更新 hostResults
+                  hostResults: host_result ? [
+                    ...(task.hostResults || []),
+                    host_result
+                  ] : task.hostResults
+                };
+              }
+              return task;
+            });
+          });
+        }
+        
         if (data.type === 'complete' || data.type === 'error' || data.type === 'closed') {
           setTimeout(() => {
             setBatchInstallRunning(false);
             closeBatchSSE();
-            // 刷新 minions 列表
+            // 刷新 minions 列表和安装任务列表
             loadMinions();
+            loadInstallTasks(1);
           }, 500);
         }
       } catch (err) {
@@ -376,6 +399,8 @@ const SaltStackDashboard = () => {
       console.error('[批量安装 SSE] 连接错误:', err);
       closeBatchSSE();
       setBatchInstallRunning(false);
+      // SSE 错误时也刷新任务列表以获取最新状态
+      loadInstallTasks(1);
     };
   };
 
@@ -435,6 +460,8 @@ const SaltStackDashboard = () => {
 
       setBatchInstallTaskId(taskId);
       message.success(`批量安装任务已创建: ${taskId}`);
+      // 立即刷新安装任务列表，显示新创建的任务
+      loadInstallTasks(1);
       startBatchInstallSSE(taskId);
     } catch (e) {
       message.error('提交批量安装失败: ' + (e?.response?.data?.message || e.message));
