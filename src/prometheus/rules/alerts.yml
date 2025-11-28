@@ -1,0 +1,78 @@
+# =============================================================================
+# AI-Infra-Matrix 基础告警规则
+# =============================================================================
+
+groups:
+  - name: node_alerts
+    rules:
+      # CPU 使用率告警
+      - alert: HighCpuUsage
+        expr: 100 - (avg by(instance) (rate(cpu_usage_idle[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 80% (current: {{ $value | printf \"%.2f\" }}%)"
+
+      # 内存使用率告警
+      - alert: HighMemoryUsage
+        expr: (1 - mem_available_percent / 100) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 85% (current: {{ $value | printf \"%.2f\" }}%)"
+
+      # 磁盘使用率告警
+      - alert: HighDiskUsage
+        expr: disk_used_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is above 85% on {{ $labels.path }} (current: {{ $value | printf \"%.2f\" }}%)"
+
+      # 节点宕机告警
+      - alert: NodeDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.instance }} is down"
+          description: "Node has been unreachable for more than 1 minute"
+
+  - name: service_alerts
+    rules:
+      # SaltStack Master 不可用
+      - alert: SaltStackMasterDown
+        expr: absent(up{job="saltstack"}) or up{job="saltstack"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SaltStack Master is down"
+          description: "SaltStack Master has been unreachable for more than 2 minutes"
+
+      # Nightingale 服务不可用
+      - alert: NightingaleDown
+        expr: absent(up{job="nightingale"}) or up{job="nightingale"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nightingale is down"
+          description: "Nightingale monitoring service has been unreachable for more than 2 minutes"
+
+      # 后端服务不可用
+      - alert: BackendDown
+        expr: absent(up{job="backend"}) or up{job="backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend service is down"
+          description: "AI-Infra-Matrix backend has been unreachable for more than 2 minutes"

@@ -42,6 +42,19 @@ components:
     build_type: "go"
     output: "/usr/share/nginx/html/pkgs/categraf"
     
+  prometheus:
+    enabled: true
+    version: "3.7.3"
+    # Prometheus 从 GitHub Release 下载预编译二进制
+    source: "github-release"
+    github_repo: "prometheus/prometheus"
+    # 下载 URL 模板
+    download_urls:
+      amd64: "https://github.com/prometheus/prometheus/releases/download/v{version}/prometheus-{version}.linux-amd64.tar.gz"
+      arm64: "https://github.com/prometheus/prometheus/releases/download/v{version}/prometheus-{version}.linux-arm64.tar.gz"
+    output: "/usr/share/nginx/html/pkgs/prometheus"
+    description: "Prometheus monitoring system and time series database"
+    
   singularity:
     enabled: false  # 暂时禁用 - deb 包下载问题待解决
     version: "v4.2.1"

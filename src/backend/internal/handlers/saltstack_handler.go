@@ -26,15 +26,17 @@ import (
 
 // SaltStackHandler 处理SaltStack相关的API请求
 type SaltStackHandler struct {
-	config *config.Config
-	cache  *redis.Client
+	config         *config.Config
+	cache          *redis.Client
+	metricsService *services.MetricsService
 }
 
 // NewSaltStackHandler 创建新的SaltStack处理器
 func NewSaltStackHandler(cfg *config.Config, cache *redis.Client) *SaltStackHandler {
 	return &SaltStackHandler{
-		config: cfg,
-		cache:  cache,
+		config:         cfg,
+		cache:          cache,
+		metricsService: services.NewMetricsService(),
 	}
 }
 
@@ -540,7 +542,28 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 }
 
 // getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数）
+// 优先从VictoriaMetrics/Nightingale获取聚合监控数据，如无数据则回退到Salt API
 func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int) {
+	// 首先尝试从VictoriaMetrics获取监控数据
+	cpuUsage, memoryUsage, activeConnections, err := h.metricsService.GetSaltStackMetrics()
+	if err != nil {
+		log.Printf("[MetricsService] 从VictoriaMetrics获取监控数据失败: %v", err)
+	}
+
+	// 如果从VictoriaMetrics获取到有效数据，直接返回
+	if cpuUsage > 0 || memoryUsage > 0 || activeConnections > 0 {
+		log.Printf("[MetricsService] 从VictoriaMetrics获取到监控数据: CPU=%d%%, Memory=%d%%, Connections=%d",
+			cpuUsage, memoryUsage, activeConnections)
+		return cpuUsage, memoryUsage, activeConnections
+	}
+
+	// VictoriaMetrics无数据，回退到Salt API方式获取
+	log.Printf("[MetricsService] VictoriaMetrics无数据，回退到Salt API方式获取性能指标")
+	return h.getPerformanceMetricsFromSalt(client)
+}
+
+// getPerformanceMetricsFromSalt 从Salt API获取性能指标（回退方式）
+func (h *SaltStackHandler) getPerformanceMetricsFromSalt(client *saltAPIClient) (int, int, int) {
 	// 默认值
 	cpuUsage := 0
 	memoryUsage := 0

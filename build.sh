@@ -433,9 +433,24 @@ TEMPLATE_VARIABLES=(
     "MINIO_VERSION"       # MinIO version (e.g., latest)
     "OCEANBASE_VERSION"   # OceanBase version (e.g., 4.3.5-lts)
     "PROMETHEUS_VERSION"  # Prometheus version (e.g., latest)
+    "VICTORIAMETRICS_VERSION" # VictoriaMetrics version (e.g., v1.115.0)
     "GRAFANA_VERSION"     # Grafana version (e.g., latest)
     "ALERTMANAGER_VERSION" # AlertManager version (e.g., latest)
     "REDISINSIGHT_VERSION" # RedisInsight version (e.g., latest)
+    
+    # ===========================================
+    # SaltStack configuration (Runtime)
+    # Used for external node minion installation
+    # ===========================================
+    "SALT_MASTER_HOST"    # Salt Master host for container internal (e.g., saltstack)
+    "SALT_MASTER_PORT"    # Salt Master publish port (e.g., 4505)
+    "SALT_RETURN_PORT"    # Salt Master return port (e.g., 4506)
+    "SALT_API_PORT"       # Salt API port (e.g., 8002)
+    
+    # ===========================================
+    # AppHub configuration (Runtime)
+    # ===========================================
+    "APPHUB_PORT"         # AppHub port for package download (e.g., 28080)
 )
 
 # Render a single template file
@@ -604,6 +619,36 @@ render_all_templates() {
                 fi
             done < <(find "$includes_dir" -name "*.tpl" -print0 2>/dev/null)
         fi
+    fi
+    
+    # ===========================================
+    # Render scripts/templates (e.g., install-salt-minion.sh.tpl)
+    # These scripts contain EXTERNAL_HOST and other runtime variables
+    # ===========================================
+    local scripts_template_dir="${SCRIPT_DIR}/scripts/templates"
+    if [[ -d "$scripts_template_dir" ]]; then
+        log_info "Rendering script templates (scripts/templates/)..."
+        
+        while IFS= read -r -d '' tpl_file; do
+            local tpl_basename=$(basename "$tpl_file")
+            local out_file="${SCRIPT_DIR}/scripts/${tpl_basename%.tpl}"
+            
+            # Check if output file exists and is newer than template
+            if [[ "$force" != "true" ]] && [[ -f "$out_file" ]]; then
+                if [[ "$out_file" -nt "$tpl_file" ]] && [[ "$out_file" -nt "$ENV_FILE" ]]; then
+                    log_info "Skipping $(basename "$out_file") (up to date)"
+                    skip_count=$((skip_count + 1))
+                    continue
+                fi
+            fi
+            
+            if render_template "$tpl_file" "$out_file"; then
+                chmod +x "$out_file" 2>/dev/null || true
+                success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        done < <(find "$scripts_template_dir" -name "*.tpl" -print0 2>/dev/null)
     fi
     
     echo

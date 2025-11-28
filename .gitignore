@@ -4,6 +4,7 @@ third_party/openscow/
 # third_party/nightingale/
 !third_party/python/*.tar.gz
 private-docs/
+
 src/apphub/third_party/
 src/*/third_party/
 ssh-key/

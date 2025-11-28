@@ -1174,4 +1174,39 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		navigation.DELETE("/config", navigationController.ResetNavigationConfig)
 		navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
 	}
+
+	// KeyVault 密钥保管库路由
+	keyVaultHandler := handlers.NewKeyVaultHandler()
+	// 自动迁移 KeyVault 数据库表
+	if err := keyVaultHandler.AutoMigrate(); err != nil {
+		log.Printf("Warning: Failed to migrate KeyVault tables: %v", err)
+	}
+
+	keyvault := api.Group("/keyvault")
+	{
+		// 公开端点：健康检查
+		keyvault.GET("/health", keyVaultHandler.HealthCheck)
+
+		// 同步端点：使用一次性令牌，不需要 JWT（令牌本身包含鉴权信息）
+		keyvault.POST("/sync", keyVaultHandler.SyncKey)
+		keyvault.POST("/sync/batch", keyVaultHandler.SyncMultipleKeys)
+		keyvault.POST("/sync/store", keyVaultHandler.StoreKeyWithToken)
+
+		// 需要 JWT 认证的端点
+		keyvaultAuth := keyvault.Group("")
+		keyvaultAuth.Use(middleware.AuthMiddlewareWithSession())
+		{
+			// 生成同步令牌
+			keyvaultAuth.POST("/sync-token", keyVaultHandler.GenerateSyncToken)
+
+			// 密钥管理（需要认证）
+			keyvaultAuth.GET("/keys", keyVaultHandler.ListKeys)
+			keyvaultAuth.GET("/keys/:name", keyVaultHandler.GetKey)
+			keyvaultAuth.POST("/keys", keyVaultHandler.StoreKey)
+			keyvaultAuth.DELETE("/keys/:name", keyVaultHandler.DeleteKey)
+
+			// 访问日志（需要认证）
+			keyvaultAuth.GET("/logs", keyVaultHandler.GetAccessLogs)
+		}
+	}
 }

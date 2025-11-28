@@ -327,6 +327,8 @@ services:
       LDAP_SERVER: "${LDAP_HOST:-openldap}"
       LDAP_PORT: "${LDAP_PORT:-389}"
       LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=example,dc=org}"
+      # 外部访问地址（用于外部节点连接 Salt Master 等场景）
+      EXTERNAL_HOST: "${EXTERNAL_HOST:-}"
       # SLURM Master SSH 配置（用于缩容等操作）
       SLURM_MASTER_HOST: "${SLURM_MASTER_HOST:-slurm-master}"
       SLURM_MASTER_PORT: "${SLURM_MASTER_PORT:-22}"
@@ -853,6 +855,33 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
+  # VictoriaMetrics - 时序数据库 (Prometheus 兼容)
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:{{VICTORIAMETRICS_VERSION}}
+    container_name: ai-infra-victoriametrics
+    hostname: victoriametrics
+    environment:
+      TZ: {{TZ}}
+    ports:
+      - "${EXTERNAL_HOST}:${VICTORIAMETRICS_PORT:-8428}:8428"
+    volumes:
+      - victoriametrics_data:/victoria-metrics-data
+    command:
+      - "--storageDataPath=/victoria-metrics-data"
+      - "--httpListenAddr=:8428"
+      - "--retentionPeriod=${VICTORIAMETRICS_RETENTION:-30d}"
+      - "--search.latencyOffset=0s"
+      - "--search.maxUniqueTimeseries=300000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8428/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
   # Nightingale - 监控告警系统
   nightingale:
     build:
@@ -878,6 +907,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      victoriametrics:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/api/v1/health"]
@@ -934,6 +965,8 @@ volumes:
     name: ai-infra-nightingale-data
   nightingale_logs:
     name: ai-infra-nightingale-logs
+  victoriametrics_data:
+    name: ai-infra-victoriametrics-data
 
 networks:
   ai-infra-network:

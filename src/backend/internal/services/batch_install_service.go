@@ -155,13 +155,22 @@ func (s *BatchInstallService) BatchInstallSaltMinion(ctx context.Context, req Ba
 	if req.Parallel <= 0 {
 		req.Parallel = 3
 	}
-	if req.MasterHost == "" {
-		// 尝试从环境变量获取
-		req.MasterHost = os.Getenv("EXTERNAL_HOST")
-		if req.MasterHost == "" {
-			req.MasterHost = "saltstack"
+
+	// 处理 MasterHost - 如果是容器名称（如 "salt", "saltstack"），替换为实际的外部 IP
+	externalHost := os.Getenv("EXTERNAL_HOST")
+	if req.MasterHost == "" || req.MasterHost == "salt" || req.MasterHost == "saltstack" {
+		if externalHost != "" {
+			req.MasterHost = externalHost
+			logrus.Infof("[BatchInstall] Using EXTERNAL_HOST for master: %s", req.MasterHost)
+		} else {
+			// 如果没有设置 EXTERNAL_HOST，保持原值（可能是主机名）
+			if req.MasterHost == "" {
+				req.MasterHost = "saltstack"
+			}
+			logrus.Warnf("[BatchInstall] EXTERNAL_HOST not set, using: %s (minion may not be able to connect)", req.MasterHost)
 		}
 	}
+
 	if req.Version == "" {
 		req.Version = os.Getenv("SALTSTACK_VERSION")
 		if req.Version == "" {
@@ -302,11 +311,12 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 			}
 			database.DB.Create(hostResult)
 
-			// 实时更新任务统计
-			task.SuccessHosts = successCount
-			task.FailedHosts = failedCount
-			task.UpdateHostStats()
-			database.DB.Save(task)
+			// 实时更新任务统计 - 直接设置计数，不调用 UpdateHostStats
+			// 因为 UpdateHostStats 会从 task.HostResults 重新计算，但我们的 HostResults 未加载
+			database.DB.Model(task).Updates(map[string]interface{}{
+				"success_hosts": successCount,
+				"failed_hosts":  failedCount,
+			})
 		}
 
 		// 计算进度
@@ -347,13 +357,18 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 
 	// 更新任务最终状态
 	if database.DB != nil && task.ID > 0 {
-		task.Status = finalStatus
-		task.SuccessHosts = successCount
-		task.FailedHosts = failedCount
 		now := time.Now()
-		task.EndTime = &now
-		task.UpdateHostStats()
-		database.DB.Save(task)
+		duration := now.Sub(task.StartTime).Seconds()
+		durationInt := int64(duration)
+
+		// 使用 Updates 直接更新，避免 UpdateHostStats 重置值
+		database.DB.Model(task).Updates(map[string]interface{}{
+			"status":        finalStatus,
+			"success_hosts": successCount,
+			"failed_hosts":  failedCount,
+			"end_time":      now,
+			"duration":      durationInt,
+		})
 	}
 
 	// 发送完成事件
@@ -475,6 +490,39 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 		})
 		s.logToDatabase(taskID, "error", hostConfig.Host, result.Error)
 		return result
+	}
+
+	s.sendEvent(taskID, SSEEvent{
+		Type:    "log",
+		Host:    hostConfig.Host,
+		Message: "Salt Minion installed, waiting for key registration...",
+	})
+
+	// 自动接受 Minion Key（如果启用）
+	if req.AutoAccept {
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    hostConfig.Host,
+			Message: fmt.Sprintf("Auto-accepting minion key for %s...", minionID),
+		})
+
+		// 等待 minion 密钥出现并接受
+		acceptErr := s.waitAndAcceptMinionKey(ctx, minionID, taskID, hostConfig.Host)
+		if acceptErr != nil {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    hostConfig.Host,
+				Message: fmt.Sprintf("Warning: Failed to auto-accept minion key: %v", acceptErr),
+			})
+			s.logToDatabase(taskID, "warn", hostConfig.Host, fmt.Sprintf("Minion installed but key not auto-accepted: %v", acceptErr))
+			// 不标记为失败，因为 minion 已安装，只是 key 未被接受
+		} else {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    hostConfig.Host,
+				Message: fmt.Sprintf("Minion key accepted for %s", minionID),
+			})
+		}
 	}
 
 	result.Status = "success"
@@ -969,4 +1017,82 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 
 	logrus.WithField("host", config.Host).Info("Salt Minion uninstalled successfully")
 	return nil
+}
+
+// waitAndAcceptMinionKey 等待并接受 Minion 密钥
+func (s *BatchInstallService) waitAndAcceptMinionKey(ctx context.Context, minionID, taskID, host string) error {
+	// 创建 SaltStack 服务实例
+	saltService := NewSaltStackService()
+	if saltService == nil {
+		return fmt.Errorf("SaltStack service not available")
+	}
+
+	// 等待 minion 密钥出现（最多等待 60 秒）
+	maxWait := 60 * time.Second
+	pollInterval := 3 * time.Second
+	deadline := time.Now().Add(maxWait)
+
+	s.sendEvent(taskID, SSEEvent{
+		Type:    "log",
+		Host:    host,
+		Message: fmt.Sprintf("Waiting for minion key to appear (max %v)...", maxWait),
+	})
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// 获取 Salt 状态（包含密钥信息）
+		status, err := saltService.GetStatus(ctx)
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to get salt status, retrying...")
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// 检查是否在 unaccepted 列表中
+		for _, k := range status.UnacceptedKeys {
+			if k == minionID {
+				s.sendEvent(taskID, SSEEvent{
+					Type:    "log",
+					Host:    host,
+					Message: fmt.Sprintf("Found unaccepted key for %s, accepting...", minionID),
+				})
+
+				// 接受密钥
+				if err := saltService.AcceptMinion(ctx, minionID); err != nil {
+					return fmt.Errorf("failed to accept minion key: %v", err)
+				}
+
+				// 等待一小段时间让 master 处理
+				time.Sleep(2 * time.Second)
+
+				s.sendEvent(taskID, SSEEvent{
+					Type:    "log",
+					Host:    host,
+					Message: fmt.Sprintf("Minion key for %s accepted successfully", minionID),
+				})
+				return nil
+			}
+		}
+
+		// 检查是否已经在 accepted 列表中
+		for _, k := range status.AcceptedKeys {
+			if k == minionID {
+				s.sendEvent(taskID, SSEEvent{
+					Type:    "log",
+					Host:    host,
+					Message: fmt.Sprintf("Minion key for %s is already accepted", minionID),
+				})
+				return nil
+			}
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	return fmt.Errorf("timeout waiting for minion key to appear")
 }
