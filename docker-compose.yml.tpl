@@ -358,6 +358,8 @@ services:
       E2E_ALLOW_FAKE_LDAP: "${E2E_ALLOW_FAKE_LDAP:-true}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       TZ: "Asia/Shanghai"
+      # 外部脚本目录 - 优先加载外部脚本模板
+      SCRIPTS_DIR: /app/scripts
     expose:
       - "8082"
     ports:
@@ -380,6 +382,8 @@ services:
     volumes:
       - ./src/backend/outputs:/app/outputs
       - ./src/backend/uploads:/app/uploads
+      # 外部脚本目录 - 优先加载，可覆盖内置脚本模板
+      - ./src/backend/internal/services/scripts:/app/scripts:ro
     networks:
       - ai-infra-network
     healthcheck:
