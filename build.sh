@@ -261,6 +261,7 @@ COMMON_IMAGES=(
     "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
     "minio/minio:${MINIO_VERSION:-latest}"
     "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
+    "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
 )
 
 # Ensure SSH Keys
@@ -1418,6 +1419,7 @@ get_dependency_mappings() {
         "osixia/openldap:${OPENLDAP_VERSION:-stable}|openldap"
         "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|phpldapadmin"
         "mysql:${MYSQL_VERSION:-8.0}|mysql"
+        "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}|victoria-metrics"
     )
     echo "${mappings[@]}"
 }
