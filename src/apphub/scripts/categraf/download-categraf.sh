@@ -2,6 +2,9 @@
 # =============================================================================
 # Categraf Download Script for AppHub
 # 下载 Categraf 预编译二进制到 AppHub (多架构支持)
+#
+# 注意: 此脚本已被整合到统一下载脚本 scripts/download_third_party.sh
+#       建议使用统一脚本进行下载，此脚本保留用于 AppHub 独立使用场景
 # =============================================================================
 
 set -e
@@ -13,46 +16,52 @@ if [[ ! "${CATEGRAF_VERSION}" == v* ]]; then
     CATEGRAF_VERSION="v${CATEGRAF_VERSION}"
 fi
 OUTPUT_DIR="${OUTPUT_DIR:-/usr/share/nginx/html/pkgs/categraf}"
-GITHUB_MIRROR="${GITHUB_MIRROR:-}"
+GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
 
 echo "📦 Downloading Categraf ${CATEGRAF_VERSION}..."
 
 # 创建输出目录
 mkdir -p "${OUTPUT_DIR}"
 
-# 下载函数
+# 下载函数 (带镜像回退)
 download_categraf() {
     local arch=$1
     local filename="categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz"
-    local url="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${filename}"
-    
-    # 如果配置了 GitHub 镜像
-    if [ -n "${GITHUB_MIRROR}" ]; then
-        # 移除尾部斜杠
-        GITHUB_MIRROR="${GITHUB_MIRROR%/}"
-        url="${GITHUB_MIRROR}/https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${filename}"
-    fi
-    
-    echo "  Downloading ${filename}..."
-    echo "  URL: ${url}"
+    local base_url="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${filename}"
+    # 移除尾部斜杠
+    local mirror="${GITHUB_MIRROR%/}"
+    local mirror_url="${mirror}/${base_url}"
     
     if [ -f "${OUTPUT_DIR}/${filename}" ]; then
         echo "  ✓ ${filename} already exists, skipping"
         return 0
     fi
     
-    if curl -fsSL -o "${OUTPUT_DIR}/${filename}" "${url}"; then
+    echo "  📥 Downloading ${filename}..."
+    
+    # 首先尝试镜像
+    if [ -n "${GITHUB_MIRROR}" ]; then
+        echo "     Trying mirror..."
+        if curl -fsSL -m 30 --retry 3 -o "${OUTPUT_DIR}/${filename}" "${mirror_url}" 2>/dev/null; then
+            echo "  ✓ Downloaded ${filename} (via mirror)"
+            if command -v sha256sum &> /dev/null; then
+                sha256sum "${OUTPUT_DIR}/${filename}" > "${OUTPUT_DIR}/${filename}.sha256"
+            fi
+            return 0
+        fi
+        echo "  ⚠ Mirror failed, trying direct download..."
+    fi
+    
+    # 直接下载
+    if curl -fsSL -m 60 --retry 3 -o "${OUTPUT_DIR}/${filename}" "${base_url}"; then
         echo "  ✓ Downloaded ${filename}"
-        
-        # 生成校验和
         if command -v sha256sum &> /dev/null; then
             sha256sum "${OUTPUT_DIR}/${filename}" > "${OUTPUT_DIR}/${filename}.sha256"
-            echo "  ✓ Generated checksum"
         fi
-        
         return 0
     else
         echo "  ✗ Failed to download ${filename}"
+        rm -f "${OUTPUT_DIR}/${filename}"
         return 1
     fi
 }

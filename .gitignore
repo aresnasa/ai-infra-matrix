@@ -1,7 +1,23 @@
+# Third-party 排除规则
+# 以下目录由于体积过大或不需要版本控制而排除
 third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
-# third_party/nightingale/
+third_party/proxy/
+
+# 保留以下目录用于 AppHub 构建缓存 (由 scripts/download_third_party.sh 下载)
+# - prometheus/     监控时序数据库
+# - node_exporter/  主机指标采集
+# - alertmanager/   告警管理
+# - categraf/       夜莺监控采集器
+# - munge/          Slurm 认证
+# - singularity/    容器运行时
+# - saltstack/      配置管理
+# - slurm/          Slurm 调度器
+# - nightingale/    夜莺监控
+# - python/         Python 依赖包
+# - nodejs/         Node.js 依赖包
+
 !third_party/python/*.tar.gz
 private-docs/
 
@@ -82,7 +98,6 @@ kafka_current.yml
 kafka_old.yml
 docker-compose.yml.v0.3.6
 docker-compose.yml.backup
-third_party/proxy/
 build.sh.old
 src/nginx/conf.d
 build.sh.backup

@@ -1240,50 +1240,114 @@ COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 # Copy Singularity packages from singularity-builder stage
 COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 
-# Download Prometheus, Node Exporter, Categraf and Python dependencies (monitoring tools - multi-arch)
+# =============================================================================
+# Download/Copy Prometheus, Node Exporter, Categraf and Python dependencies
+# 监控工具包 - 优先使用预下载的 third_party/ 文件，否则在线下载
+# 使用 scripts/download_third_party.sh 预下载可加速构建
+# =============================================================================
 ARG PROMETHEUS_VERSION={{PROMETHEUS_VERSION}}
 ARG NODE_EXPORTER_VERSION={{NODE_EXPORTER_VERSION}}
 ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
 ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
 ARG PYPI_INDEX_URL={{PYPI_INDEX_URL}}
+
+# Copy pre-downloaded packages from third_party (if available)
+# 复制预下载的包 (如果存在)
+COPY third_party/prometheus/ /third_party/prometheus/
+COPY third_party/node_exporter/ /third_party/node_exporter/
+COPY third_party/alertmanager/ /third_party/alertmanager/
+
+# Copy download scripts as fallback
 COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
 COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
 COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
 COPY src/apphub/scripts/categraf/install-categraf.sh /scripts/categraf/install-categraf.sh
 COPY src/apphub/scripts/saltstack/download-python-deps.sh /tmp/download-python-deps.sh
+
 RUN set -eux; \
     chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     mkdir -p /scripts/categraf; \
-    # Download Prometheus
-    PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
-    GITHUB_MIRROR=${GITHUB_MIRROR} \
-    OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
-    /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
-    # Download Node Exporter
-    NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
-    GITHUB_MIRROR=${GITHUB_MIRROR} \
-    OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
-    /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
-    # Download Categraf (multi-arch to overwrite single-arch from categraf-builder)
+    mkdir -p /usr/share/nginx/html/pkgs/prometheus; \
+    mkdir -p /usr/share/nginx/html/pkgs/node_exporter; \
+    mkdir -p /usr/share/nginx/html/pkgs/alertmanager; \
+    \
+    # 去掉版本号前的 v 前缀 (Prometheus 文件名不带 v)
+    PROMETHEUS_VER="${PROMETHEUS_VERSION#v}"; \
+    NODE_EXPORTER_VER="${NODE_EXPORTER_VERSION#v}"; \
+    \
+    # === Prometheus ===
+    echo "📦 Processing Prometheus..."; \
+    prometheus_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/prometheus/prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/prometheus/prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz from third_party"; \
+            prometheus_copied=$((prometheus_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$prometheus_copied" -lt 2 ]; then \
+        echo "  ⚠ Pre-downloaded files not found, downloading..."; \
+        PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
+        GITHUB_MIRROR=${GITHUB_MIRROR} \
+        OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
+        /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
+    fi; \
+    \
+    # === Node Exporter ===
+    echo "📦 Processing Node Exporter..."; \
+    node_exporter_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/node_exporter/node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/node_exporter/node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz from third_party"; \
+            node_exporter_copied=$((node_exporter_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$node_exporter_copied" -lt 2 ]; then \
+        echo "  ⚠ Pre-downloaded files not found, downloading..."; \
+        NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
+        GITHUB_MIRROR=${GITHUB_MIRROR} \
+        OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
+        /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
+    fi; \
+    \
+    # === Alertmanager (copy if available) ===
+    echo "📦 Processing Alertmanager..."; \
+    cp /third_party/alertmanager/*.tar.gz /usr/share/nginx/html/pkgs/alertmanager/ 2>/dev/null || \
+        echo "  ⚠ Alertmanager files not found in third_party, skipping..."; \
+    \
+    # === Categraf (multi-arch to overwrite single-arch from categraf-builder) ===
+    echo "📦 Processing Categraf..."; \
     CATEGRAF_VERSION=${CATEGRAF_VERSION} \
     GITHUB_MIRROR=${GITHUB_MIRROR} \
     OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
     /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
-    # Download Python dependencies for SaltStack (looseversion for Python 3.12+)
+    \
+    # === Python dependencies for SaltStack (looseversion for Python 3.12+) ===
+    echo "📦 Processing Python dependencies..."; \
     PYPI_MIRROR=${PYPI_INDEX_URL:-https://pypi.org/simple} \
     PYPI_MIRROR_CN=https://mirrors.aliyun.com/pypi/simple \
     OUTPUT_DIR=/usr/share/nginx/html/pkgs/python-deps \
     /tmp/download-python-deps.sh || echo "⚠️ Python deps download failed, continuing..."; \
+    \
     # Cleanup
     rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
+    rm -rf /third_party; \
+    \
     # Summary
     prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    alertmanager_count=$(ls -1 /usr/share/nginx/html/pkgs/alertmanager/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     python_deps_count=$(ls -1 /usr/share/nginx/html/pkgs/python-deps/*.whl /usr/share/nginx/html/pkgs/python-deps/*.tar.gz 2>/dev/null | wc -l || echo 0); \
-    echo "📊 Monitoring Tools & Dependencies Downloaded:"; \
+    echo "📊 Monitoring Tools & Dependencies:"; \
     echo "  - Prometheus packages: ${prometheus_count}"; \
     echo "  - Node Exporter packages: ${node_exporter_count}"; \
+    echo "  - Alertmanager packages: ${alertmanager_count}"; \
     echo "  - Categraf packages: ${categraf_count}"; \
     echo "  - Python dependencies: ${python_deps_count}"
 
@@ -1307,6 +1371,7 @@ RUN set -eux; \
     singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/ | grep -E '\.(deb|rpm)$' | wc -l || echo 0); \
     prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    alertmanager_count=$(ls -1 /usr/share/nginx/html/pkgs/alertmanager/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     # Check if RPM metadata was copied from rpm-builder
     slurm_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] && echo "yes" || echo "no"); \
     salt_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ] && echo "yes" || echo "no"); \
@@ -1318,6 +1383,9 @@ RUN set -eux; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count} (metadata: ${salt_rpm_metadata})"; \
     echo "  - Categraf packages: ${categraf_count}"; \
     echo "  - Singularity packages: ${singularity_count}"; \
+    echo "  - Prometheus packages: ${prometheus_count}"; \
+    echo "  - Node Exporter packages: ${node_exporter_count}"; \
+    echo "  - Alertmanager packages: ${alertmanager_count}"; \
     echo "  - Prometheus packages: ${prometheus_count}"; \
     echo "  - Node Exporter packages: ${node_exporter_count}"; \
     # Check if any packages are missing

@@ -2,6 +2,9 @@
 # =============================================================================
 # Prometheus Download Script for AppHub
 # 下载 Prometheus 预编译二进制到 AppHub
+#
+# 注意: 此脚本已被整合到统一下载脚本 scripts/download_third_party.sh
+#       建议使用统一脚本进行下载，此脚本保留用于 AppHub 独立使用场景
 # =============================================================================
 
 set -e
@@ -11,41 +14,45 @@ PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-3.7.3}"
 # 去掉版本号前的 v 前缀 (如果有)
 PROMETHEUS_VERSION="${PROMETHEUS_VERSION#v}"
 OUTPUT_DIR="${OUTPUT_DIR:-/usr/share/nginx/html/pkgs/prometheus}"
-GITHUB_MIRROR="${GITHUB_MIRROR:-}"
+GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
 
 echo "📦 Downloading Prometheus ${PROMETHEUS_VERSION}..."
 
 # 创建输出目录
 mkdir -p "${OUTPUT_DIR}"
 
-# 下载函数
+# 下载函数 (带镜像回退)
 download_prometheus() {
     local arch=$1
     local filename="prometheus-${PROMETHEUS_VERSION}.linux-${arch}.tar.gz"
-    local url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${filename}"
-    
-    # 如果配置了 GitHub 镜像
-    if [ -n "${GITHUB_MIRROR}" ]; then
-        url="${GITHUB_MIRROR}/https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${filename}"
-    fi
-    
-    echo "  Downloading ${filename}..."
+    local base_url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${filename}"
+    local mirror_url="${GITHUB_MIRROR}${base_url}"
     
     if [ -f "${OUTPUT_DIR}/${filename}" ]; then
         echo "  ✓ ${filename} already exists, skipping"
         return 0
     fi
     
-    if curl -fsSL -o "${OUTPUT_DIR}/${filename}" "${url}"; then
+    echo "  📥 Downloading ${filename}..."
+    
+    # 首先尝试镜像
+    if [ -n "${GITHUB_MIRROR}" ]; then
+        if curl -fsSL -m 30 --retry 3 -o "${OUTPUT_DIR}/${filename}" "${mirror_url}" 2>/dev/null; then
+            echo "  ✓ Downloaded ${filename} (via mirror)"
+            sha256sum "${OUTPUT_DIR}/${filename}" > "${OUTPUT_DIR}/${filename}.sha256"
+            return 0
+        fi
+        echo "  ⚠ Mirror failed, trying direct download..."
+    fi
+    
+    # 直接下载
+    if curl -fsSL -m 60 --retry 3 -o "${OUTPUT_DIR}/${filename}" "${base_url}"; then
         echo "  ✓ Downloaded ${filename}"
-        
-        # 生成校验和
         sha256sum "${OUTPUT_DIR}/${filename}" > "${OUTPUT_DIR}/${filename}.sha256"
-        echo "  ✓ Generated checksum"
-        
         return 0
     else
         echo "  ✗ Failed to download ${filename}"
+        rm -f "${OUTPUT_DIR}/${filename}"
         return 1
     fi
 }

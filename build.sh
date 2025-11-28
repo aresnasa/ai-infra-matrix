@@ -2552,6 +2552,10 @@ print_help() {
     echo "  clean-volumes       Remove ai-infra Docker volumes"
     echo "  clean-all [--force] Remove all images, volumes and stop containers"
     echo ""
+    echo "Download Commands:"
+    echo "  download-deps       Download third-party dependencies to third_party/"
+    echo "                      (Prometheus, Node Exporter, Alertmanager, Categraf, etc.)"
+    echo ""
     echo "Offline Export Commands:"
     echo "  export-offline [dir] [tag] [include_common]  Export images to tar files"
     echo "                                               default: ./offline-images, latest, true"
@@ -2605,6 +2609,9 @@ print_help() {
     echo ""
     echo "  # Cleanup"
     echo "  $0 clean-all --force"
+    echo ""
+    echo "  # Download third-party dependencies (for faster AppHub builds)"
+    echo "  $0 download-deps                       # Download to third_party/"
 }
 
 # ==============================================================================
@@ -2746,6 +2753,18 @@ case "$COMMAND" in
     export-offline)
         # Export all images to tar files for offline deployment
         export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}"
+        ;;
+    download-deps)
+        # Download third-party dependencies to third_party/
+        log_info "📦 Downloading third-party dependencies..."
+        if [[ -x "$SCRIPT_DIR/scripts/download_third_party.sh" ]]; then
+            "$SCRIPT_DIR/scripts/download_third_party.sh"
+            log_info "✅ Third-party dependencies downloaded to third_party/"
+            log_info "💡 These files will be used during AppHub build for faster builds"
+        else
+            log_error "download_third_party.sh not found or not executable"
+            exit 1
+        fi
         ;;
     help|--help|-h)
         print_help

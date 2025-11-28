@@ -2,6 +2,9 @@
 # =============================================================================
 # Node Exporter Download Script for AppHub
 # 下载 Node Exporter 预编译二进制到 AppHub
+#
+# 注意: 此脚本已被整合到统一下载脚本 scripts/download_third_party.sh
+#       建议使用统一脚本进行下载，此脚本保留用于 AppHub 独立使用场景
 # =============================================================================
 set -e
 
@@ -10,7 +13,7 @@ NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-1.8.2}"
 # 去掉版本号前的 v 前缀 (如果有)
 NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION#v}"
 OUTPUT_DIR="${OUTPUT_DIR:-/usr/share/nginx/html/pkgs/node_exporter}"
-GITHUB_MIRROR="${GITHUB_MIRROR:-}"
+GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
 
 echo "📦 Downloading Node Exporter ${NODE_EXPORTER_VERSION}..."
 
@@ -19,34 +22,34 @@ mkdir -p "$OUTPUT_DIR"
 download_node_exporter() {
     local arch="$1"
     local filename="node_exporter-${NODE_EXPORTER_VERSION}.linux-${arch}.tar.gz"
-    local url="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/${filename}"
+    local base_url="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/${filename}"
+    local mirror_url="${GITHUB_MIRROR}${base_url}"
     
-    # 使用 GitHub 镜像加速 (如果配置了)
-    if [[ -n "$GITHUB_MIRROR" ]]; then
-        url="${GITHUB_MIRROR}${url}"
+    if [[ -f "${OUTPUT_DIR}/${filename}" ]]; then
+        echo "  ✓ ${filename} already exists, skipping"
+        return 0
     fi
     
     echo "  📥 Downloading ${arch}..."
-    echo "     URL: $url"
     
-    if command -v wget &> /dev/null; then
-        wget -q --show-progress -O "${OUTPUT_DIR}/${filename}" "$url" || {
-            echo "  ⚠️  wget failed, trying curl..."
-            curl -fsSL -o "${OUTPUT_DIR}/${filename}" "$url"
-        }
-    elif command -v curl &> /dev/null; then
-        curl -fsSL -o "${OUTPUT_DIR}/${filename}" "$url"
-    else
-        echo "  ❌ Neither wget nor curl available"
-        return 1
+    # 首先尝试镜像
+    if [[ -n "$GITHUB_MIRROR" ]]; then
+        echo "     Trying mirror: ${mirror_url}"
+        if curl -fsSL -m 30 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$mirror_url" 2>/dev/null; then
+            echo "  ✓ Downloaded ${filename} (via mirror)"
+            return 0
+        fi
+        echo "  ⚠️  Mirror failed, trying direct download..."
     fi
     
-    # 验证下载
-    if [[ -f "${OUTPUT_DIR}/${filename}" ]]; then
-        local size=$(stat -f%z "${OUTPUT_DIR}/${filename}" 2>/dev/null || stat -c%s "${OUTPUT_DIR}/${filename}" 2>/dev/null)
-        echo "  ✓ Downloaded: ${filename} (${size} bytes)"
+    # 直接下载
+    echo "     URL: $base_url"
+    if curl -fsSL -m 60 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$base_url"; then
+        echo "  ✓ Downloaded ${filename}"
+        return 0
     else
         echo "  ❌ Download failed: ${filename}"
+        rm -f "${OUTPUT_DIR}/${filename}"
         return 1
     fi
 }
@@ -56,7 +59,25 @@ download_node_exporter "amd64"
 download_node_exporter "arm64"
 
 # 创建版本文件
-echo "${NODE_EXPORTER_VERSION}" > "${OUTPUT_DIR}/VERSION"
+cat > "${OUTPUT_DIR}/version.json" << EOF
+{
+    "name": "node_exporter",
+    "version": "${NODE_EXPORTER_VERSION}",
+    "files": [
+        {
+            "filename": "node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz",
+            "arch": "amd64",
+            "os": "linux"
+        },
+        {
+            "filename": "node_exporter-${NODE_EXPORTER_VERSION}.linux-arm64.tar.gz",
+            "arch": "arm64",
+            "os": "linux"
+        }
+    ],
+    "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
 
 # 创建安装脚本
 cat > "${OUTPUT_DIR}/install.sh" << 'INSTALL_SCRIPT'
