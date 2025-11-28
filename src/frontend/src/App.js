@@ -2,6 +2,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider, Spin, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import enUS from 'antd/locale/en_US';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoadingFallback, { AdminLoadingFallback, ProjectLoadingFallback } from './components/LoadingFallback';
@@ -11,6 +12,7 @@ import AIAssistantFloat from './components/AIAssistantFloat';
 import { useSmartPreload } from './hooks/usePagePreload';
 import { useAPIHealth } from './hooks/useAPIHealth'; // 使用优化版本
 import { usePerformanceMonitor } from './hooks/usePerformanceMonitor';
+import { I18nProvider, useI18n } from './hooks/useI18n';
 import AuthPage from './pages/AuthPage';
 import { authAPI } from './services/api';
 import { authCache } from './utils/authCache';
@@ -444,7 +446,27 @@ function App() {
   console.log('==================');
 
   return (
-    <ConfigProvider locale={zhCN}>
+    <I18nProvider>
+      <AppContent 
+        user={user}
+        handleLogin={handleLogin}
+        handleLogout={handleLogout}
+        apiHealth={apiHealth}
+        LazyLoadingSpinner={LazyLoadingSpinner}
+      />
+    </I18nProvider>
+  );
+}
+
+// 内部组件：使用 I18n 上下文来切换 Ant Design 语言
+function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpinner }) {
+  const { locale } = useI18n();
+  
+  // Ant Design 语言包映射
+  const antdLocale = locale === 'en-US' ? enUS : zhCN;
+
+  return (
+    <ConfigProvider locale={antdLocale}>
       <ErrorBoundary>
         <Router>
           {!user ? (

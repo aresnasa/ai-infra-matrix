@@ -29,6 +29,7 @@ import {
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
 import ResizableMetricsPanel from '../components/ResizableMetricsPanel';
+import { useI18n } from '../hooks/useI18n';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -51,6 +52,8 @@ const StatisticSkeleton = ({ title, icon }) => (
 );
 
 const SaltStackDashboard = () => {
+  const { t } = useI18n();
+  
   // 页面状态管理
   const [pageLoaded, setPageLoaded] = useState(false);
   
@@ -912,21 +915,21 @@ const SaltStackDashboard = () => {
                 }
               }}
             >
-              <TabPane tab="系统概览" key="overview" icon={<DatabaseOutlined />}>
+              <TabPane tab={t('saltstack.systemOverview')} key="overview" icon={<DatabaseOutlined />}>
                 <Row gutter={16}>
                   <Col span={24}>
-                    <Card title="Master信息" size="small" loading={statusLoading} style={{ marginBottom: 16 }}>
+                    <Card title={t('saltstack.masterInfo')} size="small" loading={statusLoading} style={{ marginBottom: 16 }}>
                       <Descriptions size="small" column={4}>
-                        <Descriptions.Item label="版本">
-                          {status?.salt_version || (statusLoading ? '加载中...' : '未知')}
+                        <Descriptions.Item label={t('saltstack.saltVersion')}>
+                          {status?.salt_version || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
                         </Descriptions.Item>
-                        <Descriptions.Item label="启动时间">
-                          {status?.uptime || (statusLoading ? '获取中...' : '未知')}
+                        <Descriptions.Item label={t('saltstack.uptime')}>
+                          {status?.uptime || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
                         </Descriptions.Item>
-                        <Descriptions.Item label="配置文件">
+                        <Descriptions.Item label={t('saltstack.configFile')}>
                           {status?.config_file || '/etc/salt/master'}
                         </Descriptions.Item>
-                        <Descriptions.Item label="日志级别">
+                        <Descriptions.Item label={t('saltstack.logLevel')}>
                           <Tag color="blue">{status?.log_level || 'info'}</Tag>
                         </Descriptions.Item>
                       </Descriptions>
@@ -936,7 +939,7 @@ const SaltStackDashboard = () => {
                 
                 {/* 可调整大小的性能指标面板 */}
                 <ResizableMetricsPanel
-                  title="节点性能监控"
+                  title={t('saltstack.performanceMetrics')}
                   loading={statusLoading || minionsLoading}
                   minHeight={200}
                   maxHeight={600}
@@ -979,7 +982,7 @@ const SaltStackDashboard = () => {
                 />
               </TabPane>
 
-              <TabPane tab="Minions管理" key="minions" icon={<DesktopOutlined />}>
+              <TabPane tab={t('saltstack.minionsManagement')} key="minions" icon={<DesktopOutlined />}>
                 <MinionsTable
                   minions={minions}
                   loading={minionsLoading}
@@ -995,11 +998,11 @@ const SaltStackDashboard = () => {
                 />
               </TabPane>
 
-              <TabPane tab="作业历史" key="jobs" icon={<PlayCircleOutlined />}>
+              <TabPane tab={t('saltstack.jobsHistory')} key="jobs" icon={<PlayCircleOutlined />}>
                 {jobsLoading ? (
                   <div style={{ textAlign: 'center', padding: '60px 0' }}>
                     <Spin size="large" />
-                    <div style={{ marginTop: 16 }}>正在加载作业历史...</div>
+                    <div style={{ marginTop: 16 }}>{t('common.loading')}...</div>
                   </div>
                 ) : (
                   <>
@@ -1069,22 +1072,22 @@ const SaltStackDashboard = () => {
                 )}
               </TabPane>
 
-              <TabPane tab="安装任务" key="install-tasks" icon={<HistoryOutlined />}>
+              <TabPane tab={t('saltstack.installTasksHistory')} key="install-tasks" icon={<HistoryOutlined />}>
                 {installTasksLoading && installTasks.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '60px 0' }}>
                     <Spin size="large" />
-                    <div style={{ marginTop: 16 }}>正在加载安装任务历史...</div>
+                    <div style={{ marginTop: 16 }}>{t('common.loading')}...</div>
                   </div>
                 ) : (
                   <>
                     <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text type="secondary">共 {installTasksTotal} 个安装任务</Text>
+                      <Text type="secondary">{t('common.total', { count: installTasksTotal })}</Text>
                       <Button 
                         icon={<ReloadOutlined />} 
                         onClick={() => loadInstallTasks(1)} 
                         loading={installTasksLoading}
                       >
-                        刷新
+                        {t('common.refresh')}
                       </Button>
                     </div>
                     <Table

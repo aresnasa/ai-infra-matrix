@@ -14,6 +14,7 @@ import {
   AreaChartOutlined,
   DragOutlined,
 } from '@ant-design/icons';
+import { useI18n } from '../hooks/useI18n';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -88,6 +89,7 @@ const NodeMetricsPanel = ({
   metrics = {},
   loading = false,
   expanded = false,
+  t,
 }) => {
   return (
     <Card 
@@ -96,7 +98,7 @@ const NodeMetricsPanel = ({
           <DesktopOutlined />
           <Text strong>{nodeName || nodeId}</Text>
           <Tag color={metrics.status === 'online' ? 'green' : 'red'}>
-            {metrics.status || '未知'}
+            {metrics.status === 'online' ? t('minions.status.online') : t('minions.status.unknown')}
           </Tag>
         </Space>
       }
@@ -106,27 +108,27 @@ const NodeMetricsPanel = ({
       <Row gutter={[8, 8]}>
         <Col span={6}>
           <MetricCard
-            title="CPU 使用率"
+            title={t('metrics.cpuUsage')}
             value={metrics.cpu_usage || 0}
             icon={<DashboardOutlined />}
             color="#1890ff"
             loading={loading}
-            tooltip="当前 CPU 使用率"
+            tooltip={t('metrics.cpuUsageTooltip')}
           />
         </Col>
         <Col span={6}>
           <MetricCard
-            title="内存使用率"
+            title={t('metrics.memoryUsage')}
             value={metrics.memory_usage || 0}
             icon={<CloudServerOutlined />}
             color="#52c41a"
             loading={loading}
-            tooltip="当前内存使用率"
+            tooltip={t('metrics.memoryUsageTooltip')}
           />
         </Col>
         <Col span={6}>
           <MetricCard
-            title="活跃连接数"
+            title={t('metrics.activeConnections')}
             value={metrics.active_connections || 0}
             maxValue={1000}
             unit=""
@@ -134,12 +136,12 @@ const NodeMetricsPanel = ({
             color="#722ed1"
             showProgress={false}
             loading={loading}
-            tooltip="当前网络连接数"
+            tooltip={t('metrics.activeConnectionsTooltip')}
           />
         </Col>
         <Col span={6}>
           <MetricCard
-            title="网络带宽"
+            title={t('metrics.networkBandwidth')}
             value={metrics.network_bandwidth || 0}
             unit=" Mbps"
             maxValue={10000}
@@ -147,7 +149,7 @@ const NodeMetricsPanel = ({
             color="#fa8c16"
             showProgress={false}
             loading={loading}
-            tooltip="当前网络带宽使用"
+            tooltip={t('metrics.networkBandwidthTooltip')}
           />
         </Col>
         
@@ -156,46 +158,46 @@ const NodeMetricsPanel = ({
           <>
             <Col span={6}>
               <MetricCard
-                title="IB 设备状态"
+                title={t('metrics.ibStatus')}
                 value={metrics.ib_status || 'N/A'}
                 unit=""
                 icon={<AreaChartOutlined />}
                 color="#13c2c2"
                 showProgress={false}
                 loading={loading}
-                tooltip="InfiniBand 设备状态 (基于 ib-exporter)"
+                tooltip={t('metrics.ibStatusTooltip')}
               />
             </Col>
             <Col span={6}>
               <MetricCard
-                title="ROCE 网络"
+                title={t('metrics.roceNetwork')}
                 value={metrics.roce_status || 'N/A'}
                 unit=""
                 icon={<WifiOutlined />}
                 color="#eb2f96"
                 showProgress={false}
                 loading={loading}
-                tooltip="ROCE 网络状态 (基于 ROCE-exporter)"
+                tooltip={t('metrics.roceNetworkTooltip')}
               />
             </Col>
             <Col span={6}>
               <MetricCard
-                title="GPU 利用率"
+                title={t('metrics.gpuUtilization')}
                 value={metrics.gpu_utilization || 0}
                 icon={<ThunderboltOutlined />}
                 color="#f5222d"
                 loading={loading}
-                tooltip="GPU 利用率 (基于 nvidia-dcgm)"
+                tooltip={t('metrics.gpuUtilizationTooltip')}
               />
             </Col>
             <Col span={6}>
               <MetricCard
-                title="GPU 显存"
+                title={t('metrics.gpuMemory')}
                 value={metrics.gpu_memory || 0}
                 icon={<CloudServerOutlined />}
                 color="#faad14"
                 loading={loading}
-                tooltip="GPU 显存使用率"
+                tooltip={t('metrics.gpuMemoryTooltip')}
               />
             </Col>
           </>
@@ -224,8 +226,9 @@ const ResizableMetricsPanel = ({
   minHeight = 200,
   maxHeight = 800,
   defaultHeight = 400,
-  title = '性能指标监控',
+  title,
 }) => {
+  const { t } = useI18n();
   const [height, setHeight] = useState(defaultHeight);
   const [isResizing, setIsResizing] = useState(false);
   const [selectedNode, setSelectedNode] = useState('all');
@@ -283,8 +286,8 @@ const ResizableMetricsPanel = ({
       title={
         <Space>
           <DashboardOutlined />
-          <span>{title}</span>
-          <Tag color="blue">{nodes.length} 节点</Tag>
+          <span>{title || t('metrics.title')}</span>
+          <Tag color="blue">{t('metrics.nodeCount', { count: nodes.length })}</Tag>
         </Space>
       }
       extra={
@@ -295,18 +298,18 @@ const ResizableMetricsPanel = ({
             style={{ width: 180 }}
             size="small"
           >
-            <Option value="all">全部节点</Option>
+            <Option value="all">{t('metrics.allNodes')}</Option>
             {nodes.map(node => (
               <Option key={node.id} value={node.id}>{node.name || node.id}</Option>
             ))}
           </Select>
-          <Tooltip title={showExpanded ? '收起扩展指标' : '展开扩展指标（IB/ROCE/GPU）'}>
+          <Tooltip title={showExpanded ? t('metrics.collapseExtended') : t('metrics.expandExtended')}>
             <Tag 
               color={showExpanded ? 'blue' : 'default'}
               style={{ cursor: 'pointer' }}
               onClick={() => setShowExpanded(!showExpanded)}
             >
-              <AreaChartOutlined /> {showExpanded ? '收起' : '扩展'}
+              <AreaChartOutlined /> {showExpanded ? t('metrics.collapse') : t('metrics.expand')}
             </Tag>
           </Tooltip>
         </Space>
@@ -322,11 +325,11 @@ const ResizableMetricsPanel = ({
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
           <Spin size="large" />
           <div style={{ marginTop: 16 }}>
-            <Text type="secondary">正在加载性能数据...</Text>
+            <Text type="secondary">{t('metrics.loadingData')}</Text>
           </div>
         </div>
       ) : displayNodes.length === 0 ? (
-        <Empty description="暂无节点数据" />
+        <Empty description={t('metrics.noNodeData')} />
       ) : (
         <Tabs
           type="card"
@@ -341,7 +344,7 @@ const ResizableMetricsPanel = ({
                   color={node.metrics?.status === 'online' ? 'green' : 'red'}
                   style={{ marginLeft: 4, marginRight: 0 }}
                 >
-                  {node.metrics?.status === 'online' ? '在线' : '离线'}
+                  {node.metrics?.status === 'online' ? t('minions.status.online') : t('minions.status.offline')}
                 </Tag>
               </Space>
             ),
@@ -349,7 +352,7 @@ const ResizableMetricsPanel = ({
               <Row gutter={[12, 12]}>
                 <Col span={6}>
                   <MetricCard
-                    title="CPU 使用率"
+                    title={t('metrics.cpuUsage')}
                     value={node.metrics?.cpu_usage || 0}
                     icon={<DashboardOutlined />}
                     color="#1890ff"
@@ -358,7 +361,7 @@ const ResizableMetricsPanel = ({
                 </Col>
                 <Col span={6}>
                   <MetricCard
-                    title="内存使用率"
+                    title={t('metrics.memoryUsage')}
                     value={node.metrics?.memory_usage || 0}
                     icon={<CloudServerOutlined />}
                     color="#52c41a"
@@ -367,7 +370,7 @@ const ResizableMetricsPanel = ({
                 </Col>
                 <Col span={6}>
                   <MetricCard
-                    title="活跃连接数"
+                    title={t('metrics.activeConnections')}
                     value={node.metrics?.active_connections || 0}
                     maxValue={1000}
                     unit=""
@@ -379,7 +382,7 @@ const ResizableMetricsPanel = ({
                 </Col>
                 <Col span={6}>
                   <MetricCard
-                    title="网络带宽"
+                    title={t('metrics.networkBandwidth')}
                     value={node.metrics?.network_bandwidth || 0}
                     unit=" Mbps"
                     maxValue={10000}
@@ -394,42 +397,42 @@ const ResizableMetricsPanel = ({
                   <>
                     <Col span={6}>
                       <MetricCard
-                        title="IB 设备状态"
+                        title={t('metrics.ibStatus')}
                         value={node.metrics?.ib_status || 'N/A'}
                         unit=""
                         icon={<AreaChartOutlined />}
                         color="#13c2c2"
                         showProgress={false}
-                        tooltip="InfiniBand 设备状态 (基于 ib-exporter 实现)"
+                        tooltip={t('metrics.ibStatusTooltip')}
                       />
                     </Col>
                     <Col span={6}>
                       <MetricCard
-                        title="ROCE 网络"
+                        title={t('metrics.roceNetwork')}
                         value={node.metrics?.roce_status || 'N/A'}
                         unit=""
                         icon={<WifiOutlined />}
                         color="#eb2f96"
                         showProgress={false}
-                        tooltip="ROCE 网络状态 (基于 ROCE-exporter 实现)"
+                        tooltip={t('metrics.roceNetworkTooltip')}
                       />
                     </Col>
                     <Col span={6}>
                       <MetricCard
-                        title="GPU 利用率"
+                        title={t('metrics.gpuUtilization')}
                         value={node.metrics?.gpu_utilization || 0}
                         icon={<ThunderboltOutlined />}
                         color="#f5222d"
-                        tooltip="GPU 利用率 (基于 nvidia-dcgm 实现)"
+                        tooltip={t('metrics.gpuUtilizationTooltip')}
                       />
                     </Col>
                     <Col span={6}>
                       <MetricCard
-                        title="GPU 显存"
+                        title={t('metrics.gpuMemory')}
                         value={node.metrics?.gpu_memory || 0}
                         icon={<CloudServerOutlined />}
                         color="#faad14"
-                        tooltip="GPU 显存使用率"
+                        tooltip={t('metrics.gpuMemoryTooltip')}
                       />
                     </Col>
                   </>

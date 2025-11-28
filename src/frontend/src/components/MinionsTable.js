@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons';
 import SearchInput from './SearchInput';
 import { useSearch, highlightText } from '../hooks/useSearch';
+import { useI18n } from '../hooks/useI18n';
 
 const { Text } = Typography;
 
@@ -98,6 +99,8 @@ const MinionsTable = ({
   onUninstall,
   onRemoteSearch,
 }) => {
+  const { t, locale } = useI18n();
+  
   // 选中的行
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   // 批量操作确认弹窗
@@ -132,7 +135,7 @@ const MinionsTable = ({
       Table.SELECTION_NONE,
       {
         key: 'online',
-        text: '选择在线节点',
+        text: t('saltstack.selectOnlineNodes'),
         onSelect: (changableRowKeys) => {
           const onlineKeys = filteredMinions
             .filter(m => ['up', 'online', 'running'].includes(m.status?.toLowerCase()))
@@ -142,7 +145,7 @@ const MinionsTable = ({
       },
       {
         key: 'offline',
-        text: '选择离线节点',
+        text: t('saltstack.selectOfflineNodes'),
         onSelect: (changableRowKeys) => {
           const offlineKeys = filteredMinions
             .filter(m => ['down', 'offline', 'stopped'].includes(m.status?.toLowerCase()))
@@ -162,11 +165,11 @@ const MinionsTable = ({
   // 处理批量删除
   const handleBatchDelete = useCallback(() => {
     if (selectedRowKeys.length === 0) {
-      message.warning('请先选择要删除的节点');
+      message.warning(t('saltstack.atLeastOneHost'));
       return;
     }
     setBatchDeleteVisible(true);
-  }, [selectedRowKeys]);
+  }, [selectedRowKeys, t]);
 
   // 确认批量删除
   const confirmBatchDelete = useCallback(async () => {
@@ -174,11 +177,11 @@ const MinionsTable = ({
       await onBatchDelete?.(selectedRowKeys);
       setSelectedRowKeys([]);
       setBatchDeleteVisible(false);
-      message.success(`已删除 ${selectedRowKeys.length} 个节点`);
+      message.success(t('saltstack.deletedNodes', { count: selectedRowKeys.length }));
     } catch (error) {
-      message.error('批量删除失败: ' + error.message);
+      message.error(t('common.failed') + ': ' + error.message);
     }
-  }, [selectedRowKeys, onBatchDelete]);
+  }, [selectedRowKeys, onBatchDelete, t]);
 
   // 导出选中数据
   const handleExport = useCallback(() => {
@@ -187,7 +190,7 @@ const MinionsTable = ({
       : filteredMinions;
     
     const csv = [
-      ['ID', '操作系统', '架构', 'Salt版本', '内核版本', 'GPU驱动', '状态', '最后响应'].join(','),
+      ['ID', t('saltstack.os'), t('saltstack.arch'), t('saltstack.saltVersion'), t('saltstack.kernelVersion'), t('saltstack.gpuDriver'), t('common.status'), t('saltstack.lastSeen')].join(','),
       ...exportData.map(m => [
         m.id || m.name,
         m.os || '',
@@ -207,8 +210,8 @@ const MinionsTable = ({
     a.download = `minions_export_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    message.success(`已导出 ${exportData.length} 条数据`);
-  }, [filteredMinions, selectedRowKeys]);
+    message.success(t('common.export') + `: ${exportData.length}`);
+  }, [filteredMinions, selectedRowKeys, t]);
 
   // 批量操作菜单
   const batchMenu = (
@@ -220,7 +223,7 @@ const MinionsTable = ({
         onClick={handleBatchDelete}
         disabled={selectedRowKeys.length === 0}
       >
-        批量删除 ({selectedRowKeys.length})
+        {t('saltstack.batchDelete')} ({selectedRowKeys.length})
       </Menu.Item>
       <Menu.Divider />
       <Menu.Item 
@@ -228,14 +231,14 @@ const MinionsTable = ({
         icon={<ExportOutlined />}
         onClick={handleExport}
       >
-        导出 {selectedRowKeys.length > 0 ? `选中 (${selectedRowKeys.length})` : '全部'}
+        {selectedRowKeys.length > 0 ? t('saltstack.exportSelected') + ` (${selectedRowKeys.length})` : t('saltstack.exportAll')}
       </Menu.Item>
       <Menu.Item 
         key="selectAll" 
         icon={<SelectOutlined />}
         onClick={() => setSelectedRowKeys(filteredMinions.map(m => m.id || m.name))}
       >
-        全选当前页
+        {t('common.selectAll')}
       </Menu.Item>
       <Menu.Item 
         key="invertSelect" 
@@ -246,7 +249,7 @@ const MinionsTable = ({
           setSelectedRowKeys(inverted);
         }}
       >
-        反选
+        {t('minions.batch.inverseSelect')}
       </Menu.Item>
       <Menu.Item 
         key="clearSelect" 
@@ -254,7 +257,7 @@ const MinionsTable = ({
         onClick={() => setSelectedRowKeys([])}
         disabled={selectedRowKeys.length === 0}
       >
-        清空选择
+        {t('minions.batch.clearSelect')}
       </Menu.Item>
     </Menu>
   );
@@ -271,7 +274,7 @@ const MinionsTable = ({
   // 表格列定义
   const columns = [
     {
-      title: 'ID / 主机名',
+      title: t('minions.columns.id'),
       dataIndex: 'id',
       key: 'id',
       width: 180,
@@ -285,28 +288,29 @@ const MinionsTable = ({
       ),
     },
     {
-      title: '状态',
+      title: t('minions.columns.status'),
       dataIndex: 'status',
       key: 'status',
       width: 90,
       filters: [
-        { text: '在线', value: 'up' },
-        { text: '在线', value: 'online' },
-        { text: '离线', value: 'down' },
-        { text: '离线', value: 'offline' },
+        { text: t('minions.status.online'), value: 'up' },
+        { text: t('minions.status.online'), value: 'online' },
+        { text: t('minions.status.offline'), value: 'down' },
+        { text: t('minions.status.offline'), value: 'offline' },
       ],
       onFilter: (value, record) => record.status?.toLowerCase() === value,
       render: (status) => {
         const color = STATUS_COLORS[status?.toLowerCase()] || 'default';
+        const isOnline = status === 'up' || status === 'online';
         return (
           <Tag color={color} icon={color === 'success' ? <CheckCircleOutlined /> : <ExclamationCircleOutlined />}>
-            {status === 'up' || status === 'online' ? '在线' : status === 'down' || status === 'offline' ? '离线' : status || '未知'}
+            {isOnline ? t('minions.status.online') : status === 'down' || status === 'offline' ? t('minions.status.offline') : status || t('minions.status.unknown')}
           </Tag>
         );
       },
     },
     {
-      title: '操作系统',
+      title: t('minions.columns.os'),
       dataIndex: 'os',
       key: 'os',
       width: 120,
@@ -320,7 +324,7 @@ const MinionsTable = ({
       ),
     },
     {
-      title: 'CPU架构',
+      title: t('minions.columns.arch'),
       dataIndex: 'arch',
       key: 'arch',
       width: 100,
@@ -331,7 +335,7 @@ const MinionsTable = ({
       ),
     },
     {
-      title: 'Salt版本',
+      title: t('minions.columns.saltVersion'),
       dataIndex: 'salt_version',
       key: 'salt_version',
       width: 120,
@@ -343,7 +347,7 @@ const MinionsTable = ({
       ),
     },
     {
-      title: '内核版本',
+      title: t('minions.columns.kernel'),
       dataIndex: 'kernel_version',
       key: 'kernel_version',
       width: 180,
@@ -357,7 +361,7 @@ const MinionsTable = ({
       ),
     },
     {
-      title: 'GPU驱动',
+      title: t('minions.columns.gpuDriver'),
       dataIndex: 'gpu_driver_version',
       key: 'gpu_driver_version',
       width: 120,
@@ -372,7 +376,7 @@ const MinionsTable = ({
       ),
     },
     {
-      title: '最后响应',
+      title: t('minions.columns.lastSeen'),
       dataIndex: 'last_seen',
       key: 'last_seen',
       width: 160,
@@ -382,7 +386,7 @@ const MinionsTable = ({
         time ? (
           <Tooltip title={time}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {new Date(time).toLocaleString('zh-CN')}
+              {new Date(time).toLocaleString(locale === 'zh-CN' ? 'zh-CN' : 'en-US')}
             </Text>
           </Tooltip>
         ) : (
@@ -391,13 +395,13 @@ const MinionsTable = ({
       ),
     },
     {
-      title: '操作',
+      title: t('minions.columns.actions'),
       key: 'actions',
       width: 120,
       fixed: 'right',
       render: (_, record) => (
         <Space size="small">
-          <Tooltip title="卸载 Minion">
+          <Tooltip title={t('minions.actions.uninstall')}>
             <Button
               type="text"
               size="small"
@@ -406,13 +410,13 @@ const MinionsTable = ({
             />
           </Tooltip>
           <Popconfirm
-            title="删除 Minion"
-            description="确定要从 Salt Master 删除此 Minion 密钥吗？"
+            title={t('minions.actions.deleteTitle')}
+            description={t('minions.actions.deleteConfirm')}
             onConfirm={() => handleDelete(record.id || record.name)}
-            okText="确定"
-            cancelText="取消"
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
           >
-            <Tooltip title="删除密钥">
+            <Tooltip title={t('minions.actions.deleteKey')}>
               <Button
                 type="text"
                 size="small"
@@ -434,7 +438,7 @@ const MinionsTable = ({
           <SearchInput
             value={searchText}
             onChange={setSearchText}
-            placeholder="搜索 ID、IP、操作系统、内核版本、驱动版本..."
+            placeholder={t('minions.search.placeholder')}
             loading={isSearching}
             namespace="minions"
             searchFields={SEARCH_FIELDS}
@@ -448,12 +452,12 @@ const MinionsTable = ({
           <Space>
             {selectedRowKeys.length > 0 && (
               <Tag color="blue">
-                已选 {selectedRowKeys.length} 项
+                {t('minions.selected', { count: selectedRowKeys.length })}
               </Tag>
             )}
             <Dropdown overlay={batchMenu} trigger={['click']}>
               <Button icon={<MoreOutlined />}>
-                批量操作
+                {t('minions.batch.title')}
               </Button>
             </Dropdown>
             <Button 
@@ -461,7 +465,7 @@ const MinionsTable = ({
               onClick={onRefresh}
               loading={loading}
             >
-              刷新
+              {t('common.refresh')}
             </Button>
           </Space>
         </Col>
@@ -479,12 +483,12 @@ const MinionsTable = ({
         pagination={{
           showSizeChanger: true,
           showQuickJumper: true,
-          showTotal: (total) => `共 ${total} 条`,
+          showTotal: (total) => t('common.total', { count: total }),
           defaultPageSize: 20,
           pageSizeOptions: ['10', '20', '50', '100'],
         }}
         locale={{
-          emptyText: searchText ? '未找到匹配的节点' : '暂无 Minion 数据',
+          emptyText: searchText ? t('minions.search.noResults') : t('minions.noData'),
         }}
       />
 
@@ -493,24 +497,24 @@ const MinionsTable = ({
         title={
           <Space>
             <ExclamationCircleOutlined style={{ color: '#faad14' }} />
-            确认批量删除
+            {t('minions.batch.deleteConfirmTitle')}
           </Space>
         }
         open={batchDeleteVisible}
         onOk={confirmBatchDelete}
         onCancel={() => setBatchDeleteVisible(false)}
-        okText="确认删除"
+        okText={t('minions.batch.confirmDelete')}
         okButtonProps={{ danger: true }}
-        cancelText="取消"
+        cancelText={t('common.cancel')}
       >
-        <p>确定要删除以下 <Text strong>{selectedRowKeys.length}</Text> 个 Minion 的密钥吗？</p>
+        <p>{t('minions.batch.deleteConfirmMessage', { count: selectedRowKeys.length })}</p>
         <div style={{ maxHeight: 200, overflow: 'auto', background: '#f5f5f5', padding: 12, borderRadius: 6 }}>
           {selectedRowKeys.map(key => (
             <Tag key={key} style={{ margin: 2 }}>{key}</Tag>
           ))}
         </div>
         <p style={{ marginTop: 12, color: '#999' }}>
-          注意：此操作仅从 Salt Master 删除密钥，不会卸载目标机器上的 Salt Minion 软件。
+          {t('minions.batch.deleteNote')}
         </p>
       </Modal>
     </div>

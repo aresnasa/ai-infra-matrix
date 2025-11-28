@@ -5,6 +5,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
 import { getAvailableMenuItems, isAdmin, getUserRoleDisplayName } from '../utils/permissions';
+import LanguageSwitcher from './LanguageSwitcher';
+import { useI18n } from '../hooks/useI18n';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -12,6 +14,7 @@ const { Title } = Typography;
 const Layout = ({ children, user, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
 
   // 获取用户权限信息
   const userIsAdmin = isAdmin(user);
@@ -317,6 +320,9 @@ const Layout = ({ children, user, onLogout }) => {
             </Button>
           </Dropdown>
         )}
+
+        {/* 语言切换器 */}
+        <LanguageSwitcher size="small" showLabel={false} />
 
         {/* 右侧用户菜单 */}
         <Dropdown

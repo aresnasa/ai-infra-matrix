@@ -11,6 +11,7 @@ import {
   HistoryOutlined,
   FilterOutlined,
 } from '@ant-design/icons';
+import { useI18n } from '../hooks/useI18n';
 
 const { Text } = Typography;
 
@@ -79,7 +80,7 @@ const SearchInput = ({
   value = '',
   onChange,
   onSearch,
-  placeholder = '搜索...',
+  placeholder,
   loading = false,
   namespace = 'default',
   searchFields = [],
@@ -92,6 +93,7 @@ const SearchInput = ({
   style = {},
   ...restProps
 }) => {
+  const { t } = useI18n();
   const [focused, setFocused] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [history, setHistory] = useState([]);
@@ -170,14 +172,14 @@ const SearchInput = ({
         marginBottom: 4
       }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          <HistoryOutlined /> 搜索历史
+          <HistoryOutlined /> {t('search.history')}
         </Text>
         <Text
           type="secondary"
           style={{ fontSize: 12, cursor: 'pointer' }}
           onClick={clearHistory}
         >
-          清空
+          {t('search.clearHistory')}
         </Text>
       </div>
       {history.map((term, index) => (
@@ -204,7 +206,7 @@ const SearchInput = ({
     <Tooltip
       title={
         <div>
-          <div style={{ marginBottom: 4 }}>可搜索字段：</div>
+          <div style={{ marginBottom: 4 }}>{t('search.searchableFields')}:</div>
           {searchFields.map((field, idx) => (
             <Tag key={idx} size="small" style={{ marginBottom: 2 }}>
               {field}
@@ -220,7 +222,7 @@ const SearchInput = ({
   // 搜索统计
   const statsDisplay = showStats && resultCount !== undefined && totalCount !== undefined && value && (
     <Text type="secondary" style={{ fontSize: 12, marginLeft: 8, whiteSpace: 'nowrap' }}>
-      找到 {resultCount}/{totalCount}
+      {t('search.found', { count: resultCount, total: totalCount })}
     </Text>
   );
 
@@ -248,7 +250,7 @@ const SearchInput = ({
                 setHistoryVisible(false);
               }, 200);
             }}
-            placeholder={placeholder}
+            placeholder={placeholder || t('search.placeholder')}
             prefix={loading ? <Spin size="small" /> : <SearchOutlined />}
             suffix={
               <Space size={4}>
