@@ -1434,6 +1434,11 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		log.Printf("Warning: Failed to initialize Nightingale alert aggregation views: %v", err)
 	}
 
+	// Initialize default Prometheus datasource
+	if err := initializeNightingalePrometheusDatasource(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale Prometheus datasource: %v", err)
+	}
+
 	log.Println("✓ Nightingale database initialization completed!")
 	return nil
 } // initializeNightingaleRoles initializes default roles in Nightingale using GORM
@@ -1858,4 +1863,79 @@ func fixSchemaCompatibility(db *gorm.DB) {
 	} else {
 		log.Printf("filter_enable column type is already %s, no fix needed", dataType)
 	}
+}
+
+// initializeNightingalePrometheusDatasource creates default Prometheus datasource in Nightingale
+func initializeNightingalePrometheusDatasource(db *gorm.DB) error {
+	log.Println("Initializing Nightingale Prometheus datasource...")
+
+	// Get Prometheus URL from environment, default to internal service name
+	prometheusURL := getEnvCompat("PROMETHEUS_URL", "http://prometheus:9090")
+
+	currentTime := time.Now().Unix()
+
+	// Check if default Prometheus datasource exists
+	var existingDS models.NightingaleDatasource
+	result := db.Where("name = ?", "Prometheus").First(&existingDS)
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create default Prometheus datasource
+		// Settings JSON for Prometheus datasource
+		settings := `{}`
+
+		// HTTP configuration JSON
+		httpConfig := fmt.Sprintf(`{"url":"%s","timeout":30000}`, prometheusURL)
+
+		// Auth configuration JSON (empty for now, can add basic auth if needed)
+		authConfig := `{}`
+
+		datasource := &models.NightingaleDatasource{
+			Name:           "Prometheus",
+			Identifier:     "prometheus-default",
+			Description:    "Default Prometheus datasource for AI Infra Matrix monitoring",
+			Category:       "prometheus",
+			PluginID:       0,
+			PluginType:     "prometheus",
+			PluginTypeName: "Prometheus",
+			ClusterName:    "default",
+			Settings:       settings,
+			Status:         "enabled",
+			HTTP:           httpConfig,
+			Auth:           authConfig,
+			IsDefault:      true,
+			CreatedAt:      currentTime,
+			CreatedBy:      "system",
+			UpdatedAt:      currentTime,
+			UpdatedBy:      "system",
+		}
+
+		if err := db.Create(datasource).Error; err != nil {
+			return fmt.Errorf("failed to create Prometheus datasource: %w", err)
+		}
+
+		log.Printf("✓ Prometheus datasource created")
+		log.Printf("  URL: %s", prometheusURL)
+		log.Printf("  Name: Prometheus")
+		log.Printf("  Category: prometheus")
+
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query Prometheus datasource: %w", result.Error)
+	} else {
+		// Update existing datasource URL if needed
+		httpConfig := fmt.Sprintf(`{"url":"%s","timeout":30000}`, prometheusURL)
+		if existingDS.HTTP != httpConfig {
+			existingDS.HTTP = httpConfig
+			existingDS.UpdatedAt = currentTime
+			existingDS.UpdatedBy = "system"
+			if err := db.Save(&existingDS).Error; err != nil {
+				log.Printf("Warning: Failed to update Prometheus datasource URL: %v", err)
+			} else {
+				log.Printf("✓ Prometheus datasource URL updated to: %s", prometheusURL)
+			}
+		} else {
+			log.Printf("✓ Prometheus datasource already exists with correct URL")
+		}
+	}
+
+	return nil
 }

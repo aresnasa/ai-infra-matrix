@@ -11,11 +11,11 @@ FROM prom/prometheus:${PROMETHEUS_VERSION}
 # 标签信息
 LABEL maintainer="AI-Infra-Matrix Team"
 LABEL description="Prometheus Server for AI-Infra-Matrix Monitoring"
-LABEL version="${PROMETHEUS_VERSION}"
+LABEL version="{{PROMETHEUS_VERSION}}"
 
-# 复制配置文件
-COPY prometheus.yml /etc/prometheus/prometheus.yml
-COPY rules/ /etc/prometheus/rules/
+# 复制配置文件（从项目根目录的 build context）
+COPY src/prometheus/prometheus.yml /etc/prometheus/prometheus.yml
+COPY src/prometheus/rules/ /etc/prometheus/rules/
 
 # 设置数据目录权限
 USER root
