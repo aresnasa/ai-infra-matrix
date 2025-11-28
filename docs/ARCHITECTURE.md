@@ -200,6 +200,83 @@ MINIO_BUCKET = gitea
 └──────┘ └─────┘ └─────┘
 ```
 
+### KeyVault 安全服务
+
+**技术栈**: Go + HMAC-SHA256
+
+**职责**:
+
+- Salt Master 公钥安全分发
+- 一次性令牌生成与验证
+- 密钥安全存储
+- 请求签名验证
+
+**安全分发流程**:
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                 安全密钥分发流程                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. 管理员/后端服务                                          │
+│     │                                                       │
+│     ├──► 调用 /api/keyvault/salt/generate-token             │
+│     │                                                       │
+│     ▼                                                       │
+│  2. KeyVault 服务                                           │
+│     │                                                       │
+│     ├──► 生成一次性 Token (UUID)                            │
+│     ├──► 生成 Nonce (随机 16 字节 hex)                       │
+│     ├──► 计算 HMAC-SHA256 签名                              │
+│     ├──► 存储 Token 到内存 (5 分钟过期)                      │
+│     │                                                       │
+│     ▼                                                       │
+│  3. 返回给管理员                                             │
+│     │   {token, signature, nonce, expires_at}               │
+│     │                                                       │
+│     ▼                                                       │
+│  4. 批量安装脚本                                             │
+│     │                                                       │
+│     ├──► 携带 token + signature + nonce                     │
+│     ├──► 调用 /api/keyvault/salt/master-pub                 │
+│     │                                                       │
+│     ▼                                                       │
+│  5. KeyVault 验证                                           │
+│     │                                                       │
+│     ├──► 验证 Token 是否存在且未过期                         │
+│     ├──► 验证 HMAC 签名                                     │
+│     ├──► 验证 Nonce 未被使用过                              │
+│     ├──► 标记 Token 为已使用（一次性）                       │
+│     │                                                       │
+│     ▼                                                       │
+│  6. 返回 Master 公钥                                        │
+│     │   {pub_key: "base64_encoded_key"}                     │
+│     │                                                       │
+│     ▼                                                       │
+│  7. Minion 安装脚本                                         │
+│     │                                                       │
+│     └──► 将公钥写入 /etc/salt/pki/minion/minion_master.pub  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**安全特性**:
+
+| 特性 | 描述 |
+|------|------|
+| 一次性令牌 | 令牌使用后立即销毁 |
+| HMAC 签名 | 防止令牌篡改 |
+| Nonce | 防止重放攻击 |
+| 过期时间 | 默认 5 分钟有效期 |
+| 请求超时 | 默认 10 秒超时 |
+
+**API 端点**:
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/keyvault/salt/generate-token` | POST | 生成一次性令牌（需认证） |
+| `/api/keyvault/salt/master-pub` | GET | 获取 Master 公钥（需令牌） |
+
 ### AppHub
 
 **技术栈**: Ubuntu/RockyLinux + APK/RPM 构建工具
@@ -351,6 +428,64 @@ networks:
 └──────────────┘
 ```
 
+### RBAC 权限模型
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    RBAC 权限模型                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  User (用户)                                                │
+│    │                                                        │
+│    ├──► role_template (角色模板)                            │
+│    │     ├── admin         : 系统管理员                     │
+│    │     ├── sre           : SRE运维工程师                  │
+│    │     ├── data-developer: 数据开发人员                   │
+│    │     ├── model-developer: 模型开发人员                  │
+│    │     └── engineer      : 工程研发人员                   │
+│    │                                                        │
+│    └──► roles (角色关联)                                    │
+│          │                                                  │
+│          └──► permissions (权限)                            │
+│               ├── resource : 资源类型 (projects, hosts...)  │
+│               ├── verb     : 操作 (create, read, update...) │
+│               └── scope    : 范围 (* 或 own)                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**角色模板权限示例**:
+
+| 角色模板 | 资源权限 |
+|----------|----------|
+| `admin` | `*:*:*` (所有权限) |
+| `sre` | `saltstack:*:*`, `ansible:*:*`, `kubernetes:*:*`, `hosts:read:*` |
+| `data-developer` | `projects:create:*`, `jupyterhub:*:*`, `hosts:read:*` |
+| `model-developer` | `jupyterhub:*:own`, `projects:read:*` |
+| `engineer` | `kubernetes:*:*`, `projects:*:own` |
+
+### KeyVault 安全密钥分发
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│              KeyVault 安全分发机制                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌────────────┐      ┌──────────────┐      ┌────────────┐  │
+│  │   Admin    │ ───► │  KeyVault    │ ───► │  Minion    │  │
+│  │  Request   │      │   Service    │      │   Node     │  │
+│  └────────────┘      └──────────────┘      └────────────┘  │
+│                                                             │
+│  安全措施:                                                   │
+│  ├── HMAC-SHA256 签名验证                                   │
+│  ├── 一次性令牌 (使用后销毁)                                │
+│  ├── Nonce 防重放                                           │
+│  ├── 5 分钟有效期                                           │
+│  └── 请求超时限制                                           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### 数据加密
 
 - 传输层: HTTPS/TLS
@@ -484,3 +619,5 @@ helm install ai-infra ./helm/ai-infra-matrix
 - [部署指南](QUICK_START.md)
 - [API 文档](API_REFERENCE.md)
 - [开发指南](DEVELOPMENT_SETUP.md)
+- [认证系统设计](AUTHENTICATION.md)
+- [Salt Key 安全分发](../docs-all/SALT_KEY_SECURITY.md)

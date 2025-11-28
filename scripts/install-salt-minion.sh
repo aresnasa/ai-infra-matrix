@@ -23,7 +23,10 @@ MINION_ID="${MINION_ID:-}"
 APPHUB_URL="${APPHUB_URL:-http://192.168.0.200:28080}"
 USE_OFFICIAL="${USE_OFFICIAL:-false}"
 # Master 公钥 URL (用于预同步 Master 公钥到 Minion)
-MASTER_PUB_URL="${MASTER_PUB_URL:-${APPHUB_URL}/pkgs/saltstack/master.pub}"
+# 支持两种模式:
+#   1. 静态模式: 直接从 AppHub 获取 (需要预先同步公钥到 AppHub)
+#   2. Token 模式: 通过 API 一次性 Token 安全获取 (推荐，由批量安装自动设置)
+MASTER_PUB_URL="${MASTER_PUB_URL:-}"
 
 # ===========================================
 # 颜色输出
@@ -266,6 +269,10 @@ EOF
 # ===========================================
 # 预同步 Salt Master 公钥到 Minion
 # 这样 Minion 启动时就知道要信任哪个 Master
+#
+# 支持两种获取方式:
+#   1. Token 模式: 通过 API 一次性 Token 安全获取（推荐，MASTER_PUB_URL 含 token 参数）
+#   2. 静态模式: 从 AppHub 静态文件获取（需要预先同步公钥）
 # ===========================================
 sync_master_pubkey() {
     log_info "同步 Salt Master 公钥..."
@@ -274,28 +281,37 @@ sync_master_pubkey() {
     mkdir -p /etc/salt/pki/minion
     chmod 700 /etc/salt/pki/minion
     
-    # 尝试从 AppHub 下载 Master 公钥
     local master_pub_file="/etc/salt/pki/minion/minion_master.pub"
     local downloaded=false
     
-    log_info "尝试从 AppHub 获取 Master 公钥: $MASTER_PUB_URL"
+    # 如果没有设置 MASTER_PUB_URL，跳过预同步
+    if [[ -z "$MASTER_PUB_URL" ]]; then
+        log_info "未配置 MASTER_PUB_URL，跳过 Master 公钥预同步"
+        log_info "Minion 将在首次连接时自动获取 Master 公钥"
+        return 0
+    fi
     
+    log_info "尝试获取 Master 公钥: $MASTER_PUB_URL"
+    
+    # 下载 Master 公钥
     if command -v curl >/dev/null 2>&1; then
         if curl -fsSL --connect-timeout 10 -o "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
             if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
                 downloaded=true
-                log_info "✓ Master 公钥下载成功"
+                log_info "✓ Master 公钥下载成功 (curl)"
             else
                 rm -f "$master_pub_file"
+                log_warn "下载的文件不是有效的公钥"
             fi
         fi
     elif command -v wget >/dev/null 2>&1; then
         if wget -q --timeout=10 -O "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
             if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
                 downloaded=true
-                log_info "✓ Master 公钥下载成功"
+                log_info "✓ Master 公钥下载成功 (wget)"
             else
                 rm -f "$master_pub_file"
+                log_warn "下载的文件不是有效的公钥"
             fi
         fi
     fi
@@ -303,10 +319,16 @@ sync_master_pubkey() {
     if [[ "$downloaded" == "true" ]]; then
         chmod 644 "$master_pub_file"
         log_info "Master 公钥已保存到: $master_pub_file"
+        
+        # 验证公钥内容
+        log_info "公钥信息:"
+        head -2 "$master_pub_file" | sed 's/^/  /'
+        log_info "  ... ($(wc -l < "$master_pub_file") 行)"
+        
         return 0
     else
-        log_warn "无法从 AppHub 获取 Master 公钥，将在首次连接时自动获取"
-        log_warn "（这可能需要 Master 的 auto_accept 设置为 true）"
+        log_warn "无法获取 Master 公钥，将在首次连接时自动获取"
+        log_warn "（这需要 Master 的 auto_accept 设置为 true）"
         return 0  # 不视为失败，Salt 可以在首次连接时获取公钥
     fi
 }

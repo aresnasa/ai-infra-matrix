@@ -31,6 +31,7 @@ SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
 
 - 🖥️ **Slurm HPC调度** - 企业级作业调度系统，支持集群管理和资源调度
 - 🛠️ **SaltStack自动化** - 自动化配置管理和节点部署
+- 🔐 **KeyVault安全管理** - 安全的密钥和证书分发，一次性令牌机制
 - 📦 **AppHub应用仓库** - Slurm/Categraf等应用包的构建和分发
 - 🐍 **JupyterHub集成** - 多用户Jupyter环境，支持GPU计算
 - 🗃️ **Gitea代码仓库** - 轻量级Git服务，支持S3对象存储后端
@@ -54,6 +55,7 @@ graph TB
     subgraph "核心服务层"
         Frontend[前端应用<br/>React SPA]
         Backend[后端API<br/>Go + FastAPI]
+        KeyVault[KeyVault<br/>密钥管理服务]
         JupyterHub[JupyterHub<br/>机器学习环境]
         Gitea[Gitea<br/>Git代码仓库]
         Nightingale[Nightingale<br/>监控告警平台]
@@ -81,12 +83,14 @@ graph TB
     Nginx --> Gitea
     Nginx --> Nightingale
     
+    Backend --> KeyVault
     Backend --> SlurmMaster
     Backend --> SaltStack
     Backend --> Postgres
     Backend --> Redis
     Backend --> Kafka
     
+    KeyVault --> SaltStack
     JupyterHub --> Postgres
     Gitea --> Postgres
     Gitea --> MinIO
@@ -162,72 +166,138 @@ docker compose up -d
 
 - [系统架构设计](docs/ARCHITECTURE.md)
 - [认证系统设计](docs/AUTHENTICATION.md)
+- [Salt Key安全分发](docs-all/SALT_KEY_SECURITY.md)
 - [项目结构说明](docs/PROJECT_STRUCTURE.md)
 
 ## 🛠️ 构建与部署
 
-### ⚠️ 重要说明
-
-**版本参数现在是必需的！** 为了避免错误的默认版本影响构建环境，必须明确指定版本号。
-
-### 基本构建
+### 环境初始化
 
 ```bash
-# 开发模式构建
-./build.sh dev --version v0.3.8
+# 自动检测并初始化 .env 文件（推荐）
+./build.sh init-env
 
-# 生产模式构建
-./build.sh prod --version v0.3.8
+# 使用指定的外部地址
+./build.sh init-env 192.168.0.100
 
-# 也可以使用完整路径
-./scripts/all-ops.sh prod --version v0.3.8
+# 强制重新初始化
+./build.sh init-env --force
+```
+
+### 模板渲染
+
+```bash
+# 渲染所有 Dockerfile.tpl 和配置模板
+./build.sh render
+
+# 强制重新渲染（忽略缓存）
+./build.sh render --force
+```
+
+### 构建命令
+
+```bash
+# 构建所有服务（按正确顺序）
+./build.sh build-all
+
+# 强制重建所有服务（无缓存）
+./build.sh build-all --force
+
+# 构建单个组件
+./build.sh backend
+./build.sh frontend
+
+# 强制重建单个组件
+./build.sh backend --force
+```
+
+### 服务管理
+
+```bash
+# 启动所有服务
+./build.sh start-all
+
+# 停止所有服务
+./build.sh stop-all
+
+# 为私有仓库镜像打本地标签
+./build.sh tag-images
+```
+
+### 镜像拉取（智能模式）
+
+```bash
+# 预拉取所有基础镜像
+./build.sh prefetch
+
+# 拉取公共/第三方镜像（mysql, redis, kafka等）
+./build.sh pull-common
+
+# 互联网模式：从 Docker Hub 拉取
+./build.sh pull-all
+
+# 内网模式：从私有仓库拉取（需要 project 路径）
+./build.sh pull-all harbor.example.com/ai-infra v0.3.8
+
+# 拉取依赖镜像
+./build.sh deps-pull harbor.example.com/ai-infra v0.3.8
 ```
 
 ### 镜像推送
 
 ```bash
-# 推送到Docker Hub
-./build.sh prod --version v0.3.8 --registry docker.io/username --push
+# 推送单个服务到仓库
+./build.sh push backend harbor.example.com/ai-infra v0.3.8
 
-# 推送到阿里云ACR
-./build.sh prod --version v0.3.8 --registry xxx.aliyuncs.com/ai-infra-matrix --push
+# 推送所有镜像（4个阶段：通用、依赖、项目、特殊）
+./build.sh push-all harbor.example.com/ai-infra v0.3.8
 
 # 推送依赖镜像
-./build.sh push-dep registry.internal.com/ai-infra/
+./build.sh push-dep harbor.example.com/ai-infra v0.3.8
 ```
 
-### 使用内部镜像仓库启动
+> ⚠️ **Harbor 私有仓库注意事项**：路径必须包含项目名
+>
+> - ✓ `harbor.example.com/ai-infra`（正确）
+> - ✗ `harbor.example.com`（错误 - 缺少项目名）
 
-如果您已经将镜像推送到内部镜像仓库，可以直接使用内部镜像启动服务：
+### 离线部署
 
 ```bash
-# 使用内部仓库启动（推荐）
-./build.sh start-internal registry.company.com/ai-infra/ v0.3.8
+# 导出所有镜像到 tar 文件
+./build.sh export-offline ./offline-images v0.3.8
 
-# 使用默认标签启动
-./build.sh start-internal registry.company.com/ai-infra/
+# 导出时排除公共镜像
+./build.sh export-offline ./offline-images v0.3.8 false
 
-# 停止服务
-./build.sh stop
-
-# 使用示例脚本（需要先修改配置）
-./start-internal-example.sh
+# 在离线环境导入
+cd ./offline-images && ./import-images.sh
 ```
 
-**优势：**
-
-- 🚀 **快速启动** - 无需本地构建，直接拉取镜像
-- 🔒 **企业安全** - 使用内部镜像仓库，符合企业安全要求
-- 🎯 **版本控制** - 精确控制使用的镜像版本
-- 📦 **离线部署** - 支持离线环境部署
-
-详细说明请参考：[内部镜像仓库启动指南](docs/INTERNAL_REGISTRY_GUIDE.md)
-
-### 多架构构建
+### 清理命令
 
 ```bash
-# 多架构构建并推送
-./build.sh prod --multi-arch --registry docker.io/username --push --version v0.3.8
+# 清理项目镜像（可选指定标签）
+./build.sh clean-images v0.3.8
+
+# 清理项目数据卷
+./build.sh clean-volumes
+
+# 完全清理（停止容器、删除镜像和数据卷）
+./build.sh clean-all --force
+```
+
+### 全局选项
+
+所有命令都支持以下全局选项：
+
+- `--force` / `-f` / `--no-cache`：强制重建，不使用 Docker 缓存
+
+### 模拟模式
+
+```bash
+# 测试模式：跳过实际的 Docker 操作
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
 ```
 
 ## ⚙️ SLURM 配置与 MPI
@@ -252,6 +322,44 @@ docker compose up -d
 - 配置文件同步
 - 远程命令执行
 - Minion状态管理
+- **安全密钥分发** - 一次性令牌机制确保Salt Master公钥安全传输
+
+### 🔐 KeyVault安全服务
+
+KeyVault 是平台的安全密钥管理服务，提供：
+
+- **一次性令牌机制** - 生成一次性使用的安全令牌用于密钥分发
+- **Salt Master公钥安全分发** - 确保Minion节点安全获取Master公钥
+- **HMAC签名验证** - 使用HMAC-SHA256签名确保请求完整性
+- **Nonce重放防护** - 防止令牌重放攻击
+- **自动过期机制** - 令牌默认5分钟有效期，可配置
+
+**工作流程：**
+
+```mermaid
+sequenceDiagram
+    participant Admin as 管理员/后端
+    participant API as KeyVault API
+    participant Minion as Salt Minion
+    
+    Admin->>API: 生成一次性令牌
+    API-->>Admin: 返回token, signature, nonce
+    Admin->>Minion: 传递令牌信息
+    Minion->>API: 请求Master公钥(token+signature+nonce)
+    API->>API: 验证签名和令牌
+    API-->>Minion: 返回Master公钥
+    API->>API: 销毁令牌(一次性使用)
+```
+
+**安全特性：**
+
+- ✅ 令牌一次性使用，获取后立即销毁
+- ✅ HMAC签名防止令牌篡改
+- ✅ Nonce防止重放攻击
+- ✅ 令牌有效期限制
+- ✅ 请求超时限制(默认10秒)
+
+详见 [Salt Key安全分发设计文档](docs-all/SALT_KEY_SECURITY.md)
 
 ### 📦 AppHub应用仓库
 
@@ -287,6 +395,27 @@ docker compose up -d
 - 告警规则配置
 - 仪表盘可视化
 - Prometheus兼容
+
+### 👥 RBAC权限管理系统
+
+平台提供完整的基于角色的访问控制(RBAC)系统：
+
+**预定义角色模板：**
+
+| 角色模板 | 说明 | 主要权限 |
+|----------|------|----------|
+| `admin` | 系统管理员 | 所有权限 |
+| `sre` | SRE运维工程师 | SaltStack、Ansible、Kubernetes、主机管理 |
+| `data-developer` | 数据开发人员 | JupyterHub、项目管理、数据分析 |
+| `model-developer` | 模型开发人员 | JupyterHub、项目管理 |
+| `engineer` | 工程研发人员 | Kubernetes、项目管理 |
+
+**特性：**
+
+- 🔐 角色继承和权限组合
+- 🔑 资源级别权限控制
+- 👥 用户组管理
+- 📋 权限审计日志
 
 ## 🔧 配置管理
 

@@ -117,9 +117,16 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // 检查用户权限
-  const hasRole = (requiredRoles, userRoles = []) => {
+  // 检查用户权限 - 支持检查 roles 数组和 role_template 字段
+  const hasRole = (requiredRoles, userRoles = [], roleTemplate = null) => {
     if (!Array.isArray(requiredRoles) || requiredRoles.length === 0) return true;
+    
+    // 检查 role_template 是否匹配
+    if (roleTemplate && requiredRoles.includes(roleTemplate)) {
+      return true;
+    }
+    
+    // 检查 roles 数组是否匹配
     if (!Array.isArray(userRoles) || userRoles.length === 0) return false;
     return requiredRoles.some(role => userRoles.includes(role));
   };  // 加载用户自定义导航配置
@@ -212,8 +219,9 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   // 获取可见且有权限的导航项
   const getVisibleNavItems = () => {
     const userRoles = user?.roles?.map(r => r.name) || [];
+    const roleTemplate = user?.role_template || user?.roleTemplate;
     return navItems
-      .filter(item => item.visible && hasRole(item.roles, userRoles))
+      .filter(item => item.visible && hasRole(item.roles, userRoles, roleTemplate))
       .sort((a, b) => a.order - b.order);
   };
 
@@ -249,7 +257,10 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
       
       <DragDropContext onDragEnd={handleDragEnd} onDragStart={() => setIsDragging(true)}>
         <Droppable droppableId="navigation-items">
-          {(provided) => (
+          {(provided) => {
+            const userRoles = user?.roles?.map(r => r.name) || [];
+            const roleTemplate = user?.role_template || user?.roleTemplate;
+            return (
             <div {...provided.droppableProps} ref={provided.innerRef}>
               {navItems.map((item, index) => (
                 <Draggable key={item.id} draggableId={item.id} index={index}>
@@ -260,7 +271,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                       size="small"
                       style={{
                         marginBottom: 8,
-                        opacity: !hasRole(item.roles, user?.roles?.map(r => r.name) || []) ? 0.5 : 1,
+                        opacity: !hasRole(item.roles, userRoles, roleTemplate) ? 0.5 : 1,
                         backgroundColor: snapshot.isDragging ? '#f0f0f0' : '#fff',
                         transform: snapshot.isDragging ? 'rotate(5deg)' : 'none',
                         ...provided.draggableProps.style
@@ -272,7 +283,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                             <DragOutlined style={{ color: '#999' }} />
                           </div>
                           <span>{item.label}</span>
-                          {!hasRole(item.roles, user?.roles?.map(r => r.name) || []) && (
+                          {!hasRole(item.roles, userRoles, roleTemplate) && (
                             <Text type="secondary" style={{ marginLeft: 8 }}>
                               (无权限)
                             </Text>
@@ -283,7 +294,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                             <Button
                               type="text"
                               size="small"
-                              disabled={!hasRole(item.roles, user?.roles?.map(r => r.name) || [])}
+                              disabled={!hasRole(item.roles, userRoles, roleTemplate)}
                               icon={item.visible ? <EyeOutlined /> : <EyeInvisibleOutlined />}
                               onClick={() => toggleItemVisibility(item.id)}
                             />
@@ -296,7 +307,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
               ))}
               {provided.placeholder}
             </div>
-          )}
+          )}}
         </Droppable>
       </DragDropContext>
     </Modal>
