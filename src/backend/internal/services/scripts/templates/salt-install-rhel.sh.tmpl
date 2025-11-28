@@ -143,6 +143,30 @@ mine_return_job: true
 mine_interval: 60
 SALTCONF
 
+# Sync Master public key if URL is provided
+{{if .MasterPubURL}}
+echo "=== Syncing Salt Master Public Key ==="
+{{.SudoPrefix}}mkdir -p /etc/salt/pki/minion
+{{.SudoPrefix}}chmod 700 /etc/salt/pki/minion
+
+MASTER_PUB_FILE="/etc/salt/pki/minion/minion_master.pub"
+echo "    Downloading from: {{.MasterPubURL}}"
+
+if curl -fsSL --connect-timeout 10 -o "$MASTER_PUB_FILE" "{{.MasterPubURL}}" 2>/dev/null; then
+    if [ -s "$MASTER_PUB_FILE" ] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY" "$MASTER_PUB_FILE" 2>/dev/null; then
+        {{.SudoPrefix}}chmod 644 "$MASTER_PUB_FILE"
+        echo "    Master public key synced successfully"
+    else
+        rm -f "$MASTER_PUB_FILE"
+        echo "    Warning: Downloaded content is not a valid public key"
+    fi
+else
+    echo "    Warning: Failed to download master public key (minion will auto-fetch on first connect)"
+fi
+{{else}}
+echo "=== Skipping Master key sync (no URL provided) ==="
+{{end}}
+
 echo "=== Starting Salt Minion service ==="
 {{.SudoPrefix}}systemctl daemon-reload || true
 {{.SudoPrefix}}systemctl enable salt-minion || true

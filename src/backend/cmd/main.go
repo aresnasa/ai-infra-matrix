@@ -1030,6 +1030,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	saltStackClientController := controllers.NewSaltStackClientController()
 	saltStackClientController.RegisterRoutes(api)
 
+	// Salt Master 公钥安全分发路由（部分端点无需认证，使用一次性令牌）
+	saltKeyHandler := handlers.NewSaltKeyHandler()
+	saltKeyHandler.RegisterRoutes(api)
+
 	// SLURM 集群管理路由（需要认证）
 	slurmClusterController := controllers.NewSlurmClusterController(database.GetSlurmDB())
 	slurmClusterController.RegisterRoutes(api)

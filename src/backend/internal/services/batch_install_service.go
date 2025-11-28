@@ -647,18 +647,34 @@ func (s *BatchInstallService) installSaltMinion(client *ssh.Client, osInfo *mode
 		rpmArch = "aarch64"
 	}
 
+	// 生成 Master 公钥获取 URL（使用一次性令牌）
+	masterPubURL := ""
+	if saltKeyHandler := GetSaltKeyHandler(); saltKeyHandler != nil {
+		_, url, err := saltKeyHandler.GenerateInstallTokenForBatch(minionID, 600) // 10分钟有效期
+		if err == nil {
+			masterPubURL = url
+			logrus.WithFields(logrus.Fields{
+				"minion_id":      minionID,
+				"master_pub_url": url[:50] + "...",
+			}).Info("Generated install token for master pub key")
+		} else {
+			logrus.WithError(err).Warn("Failed to generate install token, master pub key will not be pre-synced")
+		}
+	}
+
 	// 使用 ScriptLoader 生成安装脚本
 	scriptLoader := GetScriptLoader()
 	installCmd, err := scriptLoader.GenerateSaltInstallScript(SaltInstallParams{
-		AppHubURL:  appHubURL,
-		MasterHost: masterHost,
-		MinionID:   minionID,
-		Version:    version,
-		Arch:       arch,
-		RpmArch:    rpmArch,
-		SudoPrefix: sudoPrefix,
-		OS:         osInfo.OS,
-		OSVersion:  osInfo.Version,
+		AppHubURL:    appHubURL,
+		MasterHost:   masterHost,
+		MinionID:     minionID,
+		Version:      version,
+		Arch:         arch,
+		RpmArch:      rpmArch,
+		SudoPrefix:   sudoPrefix,
+		OS:           osInfo.OS,
+		OSVersion:    osInfo.Version,
+		MasterPubURL: masterPubURL,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to generate install script: %v", err)

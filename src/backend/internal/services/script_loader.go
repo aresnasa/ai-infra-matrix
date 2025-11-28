@@ -35,15 +35,16 @@ type ScriptParams map[string]interface{}
 
 // SaltInstallParams Salt Minion 安装参数
 type SaltInstallParams struct {
-	AppHubURL  string // AppHub 服务地址，用于下载安装包
-	MasterHost string // Salt Master 主机地址
-	MinionID   string // Minion 标识符
-	Version    string // Salt 版本号
-	Arch       string // DEB 包架构 (amd64, arm64)
-	RpmArch    string // RPM 包架构 (x86_64, aarch64)
-	SudoPrefix string // sudo 前缀 (空或 "sudo ")
-	OS         string // 操作系统类型 (ubuntu, debian, centos, rhel, etc.)
-	OSVersion  string // 操作系统版本
+	AppHubURL    string // AppHub 服务地址，用于下载安装包
+	MasterHost   string // Salt Master 主机地址
+	MinionID     string // Minion 标识符
+	Version      string // Salt 版本号
+	Arch         string // DEB 包架构 (amd64, arm64)
+	RpmArch      string // RPM 包架构 (x86_64, aarch64)
+	SudoPrefix   string // sudo 前缀 (空或 "sudo ")
+	OS           string // 操作系统类型 (ubuntu, debian, centos, rhel, etc.)
+	OSVersion    string // 操作系统版本
+	MasterPubURL string // Master 公钥下载 URL（一次性令牌）
 }
 
 // SaltUninstallParams Salt Minion 卸载参数

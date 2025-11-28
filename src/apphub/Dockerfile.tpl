@@ -1171,6 +1171,9 @@ RUN chmod 600 /root/.ssh/authorized_keys && \
 # Copy nginx config
 COPY src/apphub/nginx.conf /etc/nginx/nginx.conf
 
+# Copy custom index.html (AppHub homepage)
+COPY src/apphub/html/index.html /usr/share/nginx/html/index.html
+
 # Create directories for packages
 RUN mkdir -p \
     /usr/share/nginx/html/deb \

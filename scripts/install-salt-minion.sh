@@ -22,6 +22,8 @@ SALT_VERSION="${SALT_VERSION:-3007.1}"
 MINION_ID="${MINION_ID:-}"
 APPHUB_URL="${APPHUB_URL:-http://192.168.0.200:28080}"
 USE_OFFICIAL="${USE_OFFICIAL:-false}"
+# Master 公钥 URL (用于预同步 Master 公钥到 Minion)
+MASTER_PUB_URL="${MASTER_PUB_URL:-${APPHUB_URL}/pkgs/saltstack/master.pub}"
 
 # ===========================================
 # 颜色输出
@@ -262,6 +264,54 @@ EOF
 }
 
 # ===========================================
+# 预同步 Salt Master 公钥到 Minion
+# 这样 Minion 启动时就知道要信任哪个 Master
+# ===========================================
+sync_master_pubkey() {
+    log_info "同步 Salt Master 公钥..."
+    
+    # 创建 Minion PKI 目录
+    mkdir -p /etc/salt/pki/minion
+    chmod 700 /etc/salt/pki/minion
+    
+    # 尝试从 AppHub 下载 Master 公钥
+    local master_pub_file="/etc/salt/pki/minion/minion_master.pub"
+    local downloaded=false
+    
+    log_info "尝试从 AppHub 获取 Master 公钥: $MASTER_PUB_URL"
+    
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsSL --connect-timeout 10 -o "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
+            if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
+                downloaded=true
+                log_info "✓ Master 公钥下载成功"
+            else
+                rm -f "$master_pub_file"
+            fi
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -q --timeout=10 -O "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
+            if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
+                downloaded=true
+                log_info "✓ Master 公钥下载成功"
+            else
+                rm -f "$master_pub_file"
+            fi
+        fi
+    fi
+    
+    if [[ "$downloaded" == "true" ]]; then
+        chmod 644 "$master_pub_file"
+        log_info "Master 公钥已保存到: $master_pub_file"
+        return 0
+    else
+        log_warn "无法从 AppHub 获取 Master 公钥，将在首次连接时自动获取"
+        log_warn "（这可能需要 Master 的 auto_accept 设置为 true）"
+        return 0  # 不视为失败，Salt 可以在首次连接时获取公钥
+    fi
+}
+
+# ===========================================
 # 配置 Minion
 # ===========================================
 configure_minion() {
@@ -444,29 +494,32 @@ install_looseversion_from_apphub() {
     
     cd "$tmp_dir"
     
-    # 尝试下载 looseversion wheel 包
-    local wheel_file="looseversion-1.3.0-py3-none-any.whl"
-    local tar_file="looseversion-1.3.0.tar.gz"
+    # 尝试下载所有可用的 wheel 文件
     local downloaded=false
     
-    # 优先下载 wheel 包
-    if command -v wget >/dev/null 2>&1; then
-        if wget -q --timeout=10 "${deps_url}/${wheel_file}" 2>/dev/null; then
-            log_info "✓ 下载成功: $wheel_file"
-            downloaded=true
-        elif wget -q --timeout=10 "${deps_url}/${tar_file}" 2>/dev/null; then
-            log_info "✓ 下载成功: $tar_file"
-            downloaded=true
+    # 首先获取目录列表来确定实际的文件名
+    # 支持的文件名模式：looseversion-*.whl
+    local wheel_patterns=(
+        "looseversion-1.3.0-py2.py3-none-any.whl"
+        "looseversion-1.3.0-py3-none-any.whl"
+        "looseversion-1.3.0.tar.gz"
+    )
+    
+    for whl in "${wheel_patterns[@]}"; do
+        if command -v wget >/dev/null 2>&1; then
+            if wget -q --timeout=10 "${deps_url}/${whl}" 2>/dev/null; then
+                log_info "✓ 下载成功: $whl"
+                downloaded=true
+                break
+            fi
+        elif command -v curl >/dev/null 2>&1; then
+            if curl -fsSL --connect-timeout 10 -o "$whl" "${deps_url}/${whl}" 2>/dev/null && [[ -s "$whl" ]]; then
+                log_info "✓ 下载成功: $whl"
+                downloaded=true
+                break
+            fi
         fi
-    elif command -v curl >/dev/null 2>&1; then
-        if curl -fsSL --connect-timeout 10 -o "$wheel_file" "${deps_url}/${wheel_file}" 2>/dev/null; then
-            log_info "✓ 下载成功: $wheel_file"
-            downloaded=true
-        elif curl -fsSL --connect-timeout 10 -o "$tar_file" "${deps_url}/${tar_file}" 2>/dev/null; then
-            log_info "✓ 下载成功: $tar_file"
-            downloaded=true
-        fi
-    fi
+    done
     
     if [[ "$downloaded" != "true" ]]; then
         log_warn "无法从 AppHub 下载 Python 依赖包"
@@ -474,24 +527,23 @@ install_looseversion_from_apphub() {
     fi
     
     # 安装下载的包
-    local pkg_file=""
-    if [[ -f "$wheel_file" ]]; then
-        pkg_file="$wheel_file"
-    elif [[ -f "$tar_file" ]]; then
-        pkg_file="$tar_file"
-    fi
+    local pkg_file=$(ls -1 looseversion-*.whl looseversion-*.tar.gz 2>/dev/null | head -1)
     
-    if [[ -n "$pkg_file" ]]; then
+    if [[ -n "$pkg_file" ]] && [[ -f "$pkg_file" ]]; then
         log_info "安装 $pkg_file..."
         
         # 尝试多种安装方式
         if $pip_cmd install "$pkg_file" --break-system-packages 2>/dev/null; then
+            log_info "✓ 使用 $pip_cmd 安装成功"
             return 0
         elif $pip_cmd install "$pkg_file" 2>/dev/null; then
+            log_info "✓ 使用 $pip_cmd 安装成功"
             return 0
         elif $python_cmd -m pip install "$pkg_file" --break-system-packages 2>/dev/null; then
+            log_info "✓ 使用 $python_cmd -m pip 安装成功"
             return 0
         elif $python_cmd -m pip install "$pkg_file" 2>/dev/null; then
+            log_info "✓ 使用 $python_cmd -m pip 安装成功"
             return 0
         fi
     fi
@@ -708,8 +760,14 @@ main() {
     # 配置
     configure_minion "$SALT_MASTER" "$MINION_ID"
     
+    # 预同步 Master 公钥（可选，提高首次连接成功率）
+    sync_master_pubkey
+    
     # 启动服务
-    start_service
+    if ! start_service; then
+        log_error "Salt Minion 服务启动失败"
+        exit 1
+    fi
     
     # 输出结果
     echo ""
