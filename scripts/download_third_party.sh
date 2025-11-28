@@ -62,7 +62,9 @@ download_file() {
     local final_url="$url"
     
     if [ "$use_mirror" = true ] && [[ "$url" == *"github.com"* ]] && [ -n "$GITHUB_MIRROR" ]; then
-        final_url="${GITHUB_MIRROR}${url}"
+        # 移除 url 中的 https:// 前缀，避免重复
+        local url_without_scheme="${url#https://}"
+        final_url="${GITHUB_MIRROR}${url_without_scheme}"
     fi
     
     if [ -f "$output_file" ]; then
@@ -147,6 +149,8 @@ ALERTMANAGER_VERSION=$(get_env_var ALERTMANAGER_VERSION "v0.28.1")
 echo "================================================================"
 echo "  Third-Party Dependencies Downloader"
 echo "================================================================"
+echo "GitHub Mirror: ${GITHUB_MIRROR:-<disabled>}"
+echo ""
 echo "Versions detected:"
 echo "  SaltStack:      $SALTSTACK_VERSION"
 echo "  Categraf:       $CATEGRAF_VERSION"
