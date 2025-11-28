@@ -932,6 +932,8 @@ ARG APT_MIRROR={{APT_MIRROR}}
 
 # 配置 APT 镜像源并安装依赖
 RUN set -eux; \
+    # 清理可能损坏的 apt 缓存
+    rm -rf /var/lib/apt/lists/*; \
     # 备份原始源配置
     cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
     # 检测架构并配置镜像源
@@ -943,8 +945,12 @@ RUN set -eux; \
         sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
         sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    # 更新包列表
-    apt-get update; \
+    # 更新包列表（带回退机制）
+    if ! apt-get update; then \
+        echo "镜像源更新失败，回退到官方源..."; \
+        mv /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        apt-get update; \
+    fi; \
     # 安装下载工具（不再需要 golang，直接下载预编译二进制）
     apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
     rm -rf /var/lib/apt/lists/*

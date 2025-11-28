@@ -238,7 +238,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-deb,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://ghfast.top/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="https://gh-proxy.com/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -458,7 +458,7 @@ RUN set -eux; \
             cp "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" munge.tar.xz; \
         else \
             echo "Downloading Munge..."; \
-            wget "https://ghfast.top/github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+            wget "https://gh-proxy.com/github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
         fi; \
         tar xf munge.tar.xz; \
         cd "munge-${MUNGE_VERSION}"; \
@@ -598,7 +598,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://ghfast.top/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="https://gh-proxy.com/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -921,7 +921,7 @@ ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
 ARG CATEGRAF_VERSION=v0.4.25
-ARG CATEGRAF_REPO=https://ghfast.top/github.com/flashcatcloud/categraf.git
+ARG CATEGRAF_REPO=https://gh-proxy.com/github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）- 仅用于 fallback 源码构建
 ARG GO_PROXY=https://goproxy.cn,direct
@@ -932,6 +932,8 @@ ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
 RUN set -eux; \
+    # 清理可能损坏的 apt 缓存
+    rm -rf /var/lib/apt/lists/*; \
     # 备份原始源配置
     cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
     # 检测架构并配置镜像源
@@ -943,8 +945,12 @@ RUN set -eux; \
         sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
         sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    # 更新包列表
-    apt-get update; \
+    # 更新包列表（带回退机制）
+    if ! apt-get update; then \
+        echo "镜像源更新失败，回退到官方源..."; \
+        mv /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        apt-get update; \
+    fi; \
     # 安装下载工具（不再需要 golang，直接下载预编译二进制）
     apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -963,7 +969,7 @@ RUN mkdir -p /out
 # 执行构建或下载（优先下载预编译二进制）
 ARG BUILD_CATEGRAF
 ARG GITHUB_PROXY
-ARG GITHUB_MIRROR=https://ghfast.top/
+ARG GITHUB_MIRROR=https://gh-proxy.com/
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
         # 检测架构
@@ -1053,7 +1059,7 @@ RUN set -eux; \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
         mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
-        RELEASE_URL="https://ghfast.top/github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
+        RELEASE_URL="https://gh-proxy.com/github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
         CURL_OPTS=""; \
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
@@ -1250,7 +1256,7 @@ ARG PROMETHEUS_VERSION=v3.4.1
 ARG NODE_EXPORTER_VERSION=v1.8.2
 ARG ALERTMANAGER_VERSION=v0.28.1
 ARG CATEGRAF_VERSION=v0.4.25
-ARG GITHUB_MIRROR=https://ghfast.top/
+ARG GITHUB_MIRROR=https://gh-proxy.com/
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 # Copy ALL pre-downloaded packages from third_party/ directory

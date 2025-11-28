@@ -10,7 +10,7 @@ FROM ${GOLANG_IMAGE} AS builder
 
 ARG APT_MIRROR=mirrors.aliyun.com
 ARG GO_PROXY=https://goproxy.cn,direct
-ARG GITHUB_MIRROR=https://ghfast.top/
+ARG GITHUB_MIRROR=https://gh-proxy.com/
 ARG INTERNAL_FILE_SERVER=http://files.example.com
 ARG N9E_FE_VERSION=
 
