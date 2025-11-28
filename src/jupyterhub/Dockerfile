@@ -146,13 +146,18 @@ COPY third_party/ /third_party/
 
 # 安装 Python 依赖和 configurable-http-proxy
 RUN set -eux; \
-    # 步骤1: 配置 npm 镜像源（多重降级）
-    echo "配置 npm 镜像源: ${NPM_REGISTRY}"; \
-    npm config set registry "${NPM_REGISTRY}" || \
-    npm config set registry "https://registry.npmmirror.com" || \
-    npm config set registry "https://registry.npm.taobao.org" || \
-    npm config set registry "https://registry.npmjs.org"; \
-    npm config get registry; \
+    # 步骤1: 配置 npm 镜像源（强制使用国内源）
+    echo "配置 npm 镜像源..."; \
+    # 优先使用传入的 NPM_REGISTRY，否则使用 npmmirror
+    NPM_REG="${NPM_REGISTRY:-https://registry.npmmirror.com}"; \
+    echo "设置 npm registry: ${NPM_REG}"; \
+    npm config set registry "${NPM_REG}"; \
+    # 设置超时和重试
+    npm config set fetch-timeout 120000; \
+    npm config set fetch-retries 5; \
+    npm config set fetch-retry-mintimeout 20000; \
+    npm config set fetch-retry-maxtimeout 120000; \
+    npm config list; \
     \
     # 步骤2: pip 配置已在之前的 RUN 中通过 ~/.pip/pip.conf 设置
     # 步骤3: 安装 Python 依赖（带重试）
@@ -187,8 +192,17 @@ RUN set -eux; \
              PYCURL_SSL_LIBRARY=openssl pip3 install --no-cache-dir --no-binary=:all: pycurl --break-system-packages); \
     fi; \
     \
-    # 步骤5: 安装 configurable-http-proxy
-    npm install -g configurable-http-proxy
+    # 步骤5: 安装 configurable-http-proxy（带多重降级和重试）
+    echo "📦 安装 configurable-http-proxy..."; \
+    npm install -g configurable-http-proxy || \
+        (echo "❌ npmmirror 安装失败，尝试淘宝源..."; \
+         npm config set registry "https://registry.npm.taobao.org"; \
+         npm install -g configurable-http-proxy) || \
+        (echo "❌ 淘宝源失败，尝试官方 npmjs..."; \
+         npm config set registry "https://registry.npmjs.org"; \
+         npm install -g configurable-http-proxy); \
+    echo "✓ configurable-http-proxy 安装完成"; \
+    configurable-http-proxy --version || echo "版本检查跳过"
 
 # 用户和目录
 RUN useradd -m -s /bin/bash admin && \
