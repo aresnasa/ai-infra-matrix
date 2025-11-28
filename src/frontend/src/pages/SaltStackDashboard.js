@@ -367,13 +367,34 @@ const SaltStackDashboard = () => {
               if (task.taskName?.includes(taskId)) {
                 return {
                   ...task,
-                  successHosts: success || task.successHosts,
-                  failedHosts: failed || task.failedHosts,
+                  // 更新所有统计字段
+                  totalHosts: total || task.totalHosts,
+                  successHosts: success ?? task.successHosts,
+                  failedHosts: failed ?? task.failedHosts,
                   // 如果有 host_result，更新 hostResults
                   hostResults: host_result ? [
                     ...(task.hostResults || []),
                     host_result
                   ] : task.hostResults
+                };
+              }
+              return task;
+            });
+          });
+        }
+        
+        // 处理完成事件时也更新统计数据
+        if (data.type === 'complete' && data.data) {
+          const { total_hosts, success_hosts, failed_hosts, status } = data.data;
+          setInstallTasks((prevTasks) => {
+            return prevTasks.map(task => {
+              if (task.taskName?.includes(taskId)) {
+                return {
+                  ...task,
+                  totalHosts: total_hosts || task.totalHosts,
+                  successHosts: success_hosts ?? task.successHosts,
+                  failedHosts: failed_hosts ?? task.failedHosts,
+                  status: status || task.status
                 };
               }
               return task;
@@ -460,8 +481,23 @@ const SaltStackDashboard = () => {
 
       setBatchInstallTaskId(taskId);
       message.success(`批量安装任务已创建: ${taskId}`);
-      // 立即刷新安装任务列表，显示新创建的任务
-      loadInstallTasks(1);
+      
+      // 立即添加一个临时任务到列表（避免等待后端返回时进度显示为0）
+      const tempTask = {
+        id: Date.now(),
+        taskName: taskId,
+        taskType: 'saltstack',
+        status: 'running',
+        totalHosts: validHosts.length,
+        successHosts: 0,
+        failedHosts: 0,
+        startTime: new Date().toISOString(),
+        hostResults: []
+      };
+      setInstallTasks(prev => [tempTask, ...prev.filter(t => !t.taskName?.includes(taskId))]);
+      
+      // 延迟刷新安装任务列表，让后端有时间创建记录
+      setTimeout(() => loadInstallTasks(1), 2000);
       startBatchInstallSSE(taskId);
     } catch (e) {
       message.error('提交批量安装失败: ' + (e?.response?.data?.message || e.message));
