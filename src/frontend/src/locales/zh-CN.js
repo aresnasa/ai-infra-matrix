@@ -66,6 +66,25 @@ export default {
   },
 
   // 导航菜单
+  nav: {
+    projects: '项目管理',
+    monitoring: '监控仪表板',
+    gitea: 'Gitea',
+    kubernetes: 'Kubernetes',
+    ansible: 'Ansible',
+    jupyterhub: 'JupyterHub',
+    slurm: 'SLURM',
+    saltstack: 'SaltStack',
+    objectStorage: '对象存储',
+    roleTemplates: '角色模板',
+    adminCenter: '管理中心',
+    customizeNav: '自定义导航栏',
+    customizeNavDesc: '拖拽下方卡片可重新排序导航项，点击眼睛图标可显示/隐藏导航项',
+    resetDefault: '重置默认',
+    saveConfig: '保存配置',
+  },
+
+  // 导航菜单（旧版兼容）
   menu: {
     dashboard: '仪表盘',
     overview: '概览',

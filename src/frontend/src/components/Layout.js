@@ -322,7 +322,7 @@ const Layout = ({ children, user, onLogout }) => {
         )}
 
         {/* 语言切换器 */}
-        <LanguageSwitcher size="small" showLabel={false} />
+        <LanguageSwitcher size="small" showLabel={true} darkMode={true} />
 
         {/* 右侧用户菜单 */}
         <Dropdown
