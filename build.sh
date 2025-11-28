@@ -1972,7 +1972,8 @@ start_all() {
     tag_private_images_as_local
     
     # Use --no-build to prevent rebuilding when images already exist
-    $compose_cmd up -d --no-build
+    # Use --pull never to prevent checking remote registry (important for offline/intranet environments)
+    $compose_cmd up -d --no-build --pull never
     log_info "All services started."
 }
 
