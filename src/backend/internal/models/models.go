@@ -1030,8 +1030,11 @@ type SaltStackTask struct {
 type TaskLog struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	TaskID    string    `json:"task_id" gorm:"index;not null;size:100"`
+	Host      string    `json:"host" gorm:"index;size:255"`        // 主机地址
 	LogLevel  string    `json:"log_level" gorm:"not null;size:20"` // info, warn, error, debug
+	Category  string    `json:"category" gorm:"size:50"`           // ssh, install, config, key
 	Message   string    `json:"message" gorm:"type:text"`
+	Output    string    `json:"output" gorm:"type:text"` // 命令输出
 	Timestamp time.Time `json:"timestamp"`
 	CreatedAt time.Time `json:"created_at"`
 }

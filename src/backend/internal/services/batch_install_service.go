@@ -681,11 +681,12 @@ func (s *BatchInstallService) installSaltMinion(client *ssh.Client, osInfo *mode
 	}
 
 	// 执行安装命令
-	return s.runCommand(client, installCmd, taskID, host)
+	return s.runCommandWithLogging(client, installCmd, taskID, host)
 }
 
-// runCommand 执行 SSH 命令并记录输出
-func (s *BatchInstallService) runCommand(client *ssh.Client, cmd, taskID, host string) error {
+// runCommandWithLogging 执行 SSH 命令并记录输出到数据库
+func (s *BatchInstallService) runCommandWithLogging(client *ssh.Client, cmd, taskID, host string) error {
+	startTime := time.Now()
 	session, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("failed to create session: %v", err)
@@ -703,35 +704,94 @@ func (s *BatchInstallService) runCommand(client *ssh.Client, cmd, taskID, host s
 		return fmt.Errorf("failed to create stderr pipe: %v", err)
 	}
 
+	// 用于收集完整输出
+	var stdoutBuf, stderrBuf strings.Builder
+	var stdoutMu, stderrMu sync.Mutex
+
 	// 启动命令
 	if err := session.Start(cmd); err != nil {
 		return fmt.Errorf("failed to start command: %v", err)
 	}
 
-	// 读取输出并发送 SSE 事件
+	// 读取输出并发送 SSE 事件，同时收集完整输出
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func() {
-		s.streamOutput(stdout, taskID, host, "stdout")
+		defer wg.Done()
+		s.streamOutputWithBuffer(stdout, taskID, host, "stdout", &stdoutBuf, &stdoutMu)
 	}()
 	go func() {
-		s.streamOutput(stderr, taskID, host, "stderr")
+		defer wg.Done()
+		s.streamOutputWithBuffer(stderr, taskID, host, "stderr", &stderrBuf, &stderrMu)
 	}()
 
+	// 等待输出读取完成
+	wg.Wait()
+
 	// 等待命令完成
-	if err := session.Wait(); err != nil {
-		return fmt.Errorf("command failed: %v", err)
+	cmdErr := session.Wait()
+	duration := time.Since(startTime).Milliseconds()
+
+	// 获取完整输出
+	stdoutMu.Lock()
+	fullStdout := stdoutBuf.String()
+	stdoutMu.Unlock()
+
+	stderrMu.Lock()
+	fullStderr := stderrBuf.String()
+	stderrMu.Unlock()
+
+	// 记录 SSH 命令执行日志
+	exitCode := 0
+	status := "success"
+	if cmdErr != nil {
+		status = "failed"
+		// 尝试获取退出码
+		if exitErr, ok := cmdErr.(*ssh.ExitError); ok {
+			exitCode = exitErr.ExitStatus()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	// 保存到 SSHLog 表
+	s.logSSHCommand(taskID, host, "[Salt Minion Installation Script]", fullStdout, fullStderr, exitCode, duration, status)
+
+	// 同时保存摘要到 TaskLog 表
+	outputSummary := fullStdout
+	if len(outputSummary) > 5000 {
+		outputSummary = outputSummary[:5000] + "\n... [truncated]"
+	}
+	s.logToDatabaseWithCategory(taskID, "info", host, "install", "Salt Minion installation script executed", outputSummary)
+
+	if cmdErr != nil {
+		s.logToDatabaseWithCategory(taskID, "error", host, "install", fmt.Sprintf("Installation script failed with exit code %d", exitCode), fullStderr)
+		return fmt.Errorf("command failed: %v", cmdErr)
 	}
 
 	return nil
 }
 
-// streamOutput 流式输出
-func (s *BatchInstallService) streamOutput(reader io.Reader, taskID, host, streamType string) {
-	buf := make([]byte, 1024)
+// runCommand 执行 SSH 命令并记录输出 (保留旧函数以兼容)
+func (s *BatchInstallService) runCommand(client *ssh.Client, cmd, taskID, host string) error {
+	return s.runCommandWithLogging(client, cmd, taskID, host)
+}
+
+// streamOutputWithBuffer 流式输出并收集到 buffer
+func (s *BatchInstallService) streamOutputWithBuffer(reader io.Reader, taskID, host, streamType string, buf *strings.Builder, mu *sync.Mutex) {
+	scanner := make([]byte, 4096)
 	for {
-		n, err := reader.Read(buf)
+		n, err := reader.Read(scanner)
 		if n > 0 {
-			output := string(buf[:n])
-			// 按行发送
+			output := string(scanner[:n])
+
+			// 收集到 buffer
+			mu.Lock()
+			buf.WriteString(output)
+			mu.Unlock()
+
+			// 按行发送 SSE 事件
 			lines := strings.Split(output, "\n")
 			for _, line := range lines {
 				line = strings.TrimSpace(line)
@@ -744,6 +804,10 @@ func (s *BatchInstallService) streamOutput(reader io.Reader, taskID, host, strea
 							"stream": streamType,
 						},
 					})
+					// 同时记录每行到数据库（仅重要的行）
+					if strings.HasPrefix(line, "===") || strings.Contains(line, "error") || strings.Contains(line, "Error") || strings.Contains(line, "failed") || strings.Contains(line, "Failed") {
+						s.logToDatabaseWithCategory(taskID, "info", host, "output", line, "")
+					}
 				}
 			}
 		}
@@ -755,19 +819,53 @@ func (s *BatchInstallService) streamOutput(reader io.Reader, taskID, host, strea
 
 // logToDatabase 记录日志到数据库
 func (s *BatchInstallService) logToDatabase(taskID, level, host, message string) {
+	s.logToDatabaseWithCategory(taskID, level, host, "general", message, "")
+}
+
+// logToDatabaseWithCategory 记录带分类的日志到数据库
+func (s *BatchInstallService) logToDatabaseWithCategory(taskID, level, host, category, message, output string) {
 	if database.DB == nil {
 		return
 	}
 
 	log := &models.TaskLog{
 		TaskID:    taskID,
+		Host:      host,
 		LogLevel:  level,
-		Message:   fmt.Sprintf("[%s] %s", host, message),
+		Category:  category,
+		Message:   message,
+		Output:    output,
 		Timestamp: time.Now(),
 	}
 
 	if err := database.DB.Create(log).Error; err != nil {
 		logrus.WithError(err).Warn("Failed to save task log to database")
+	}
+}
+
+// logSSHCommand 记录 SSH 命令执行日志
+func (s *BatchInstallService) logSSHCommand(taskID, host, command, output, errorOutput string, exitCode int, duration int64, status string) {
+	if database.DB == nil {
+		return
+	}
+
+	sshLog := &models.SSHLog{
+		TaskID:      taskID,
+		Host:        host,
+		Port:        22,
+		User:        "", // 可以在调用时传入
+		Command:     command,
+		Output:      output,
+		ErrorOutput: errorOutput,
+		ExitCode:    exitCode,
+		Duration:    duration,
+		Status:      status,
+		StartTime:   time.Now().Add(-time.Duration(duration) * time.Millisecond),
+		EndTime:     time.Now(),
+	}
+
+	if err := database.DB.Create(sshLog).Error; err != nil {
+		logrus.WithError(err).Warn("Failed to save SSH log to database")
 	}
 }
 
@@ -779,6 +877,51 @@ func (s *BatchInstallService) GetTaskLogs(taskID string) ([]models.TaskLog, erro
 
 	var logs []models.TaskLog
 	err := database.DB.Where("task_id = ?", taskID).Order("timestamp ASC").Find(&logs).Error
+	return logs, err
+}
+
+// GetTaskLogsFiltered 获取带过滤条件的任务日志
+func (s *BatchInstallService) GetTaskLogsFiltered(taskID, host, level, category string, limit, offset int) ([]models.TaskLog, int64, error) {
+	if database.DB == nil {
+		return nil, 0, fmt.Errorf("database not initialized")
+	}
+
+	query := database.DB.Where("task_id = ?", taskID)
+
+	if host != "" {
+		query = query.Where("host = ?", host)
+	}
+	if level != "" {
+		query = query.Where("log_level = ?", level)
+	}
+	if category != "" {
+		query = query.Where("category = ?", category)
+	}
+
+	var total int64
+	if err := query.Model(&models.TaskLog{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var logs []models.TaskLog
+	err := query.Order("timestamp ASC").Limit(limit).Offset(offset).Find(&logs).Error
+	return logs, total, err
+}
+
+// GetSSHLogs 获取 SSH 执行日志
+func (s *BatchInstallService) GetSSHLogs(taskID, host string) ([]models.SSHLog, error) {
+	if database.DB == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	query := database.DB.Where("task_id = ?", taskID)
+
+	if host != "" {
+		query = query.Where("host = ?", host)
+	}
+
+	var logs []models.SSHLog
+	err := query.Order("start_time ASC").Find(&logs).Error
 	return logs, err
 }
 
@@ -1036,28 +1179,32 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 }
 
 // waitAndAcceptMinionKey 等待并接受 Minion 密钥
-func (s *BatchInstallService) waitAndAcceptMinionKey(ctx context.Context, minionID, taskID, host string) error {
+// 注意：此函数使用独立的 context，不受调用方 context 取消的影响
+func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, minionID, taskID, host string) error {
+	// 创建独立的 context，设置 60 秒超时
+	// 不使用 parentCtx 是因为它可能在 HTTP 请求结束后被取消
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	// 创建 SaltStack 服务实例
 	saltService := NewSaltStackService()
 	if saltService == nil {
 		return fmt.Errorf("SaltStack service not available")
 	}
 
-	// 等待 minion 密钥出现（最多等待 60 秒）
-	maxWait := 60 * time.Second
+	// 等待 minion 密钥出现
 	pollInterval := 3 * time.Second
-	deadline := time.Now().Add(maxWait)
 
 	s.sendEvent(taskID, SSEEvent{
 		Type:    "log",
 		Host:    host,
-		Message: fmt.Sprintf("Waiting for minion key to appear (max %v)...", maxWait),
+		Message: "Waiting for minion key to appear (max 60s)...",
 	})
 
-	for time.Now().Before(deadline) {
+	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("timeout waiting for minion key")
 		default:
 		}
 
@@ -1109,6 +1256,4 @@ func (s *BatchInstallService) waitAndAcceptMinionKey(ctx context.Context, minion
 
 		time.Sleep(pollInterval)
 	}
-
-	return fmt.Errorf("timeout waiting for minion key to appear")
 }

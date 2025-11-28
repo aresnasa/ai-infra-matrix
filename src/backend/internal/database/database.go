@@ -310,6 +310,10 @@ func migrateTaskSchema() error {
 		&models.ObjectStorageConfig{},
 		&models.ObjectStorageLog{},
 		&models.HostTemplate{},
+		// SaltStack 任务日志表
+		&models.SaltStackTask{},
+		&models.TaskLog{},
+		&models.SSHLog{},
 		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},

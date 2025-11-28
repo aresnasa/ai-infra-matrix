@@ -227,21 +227,36 @@ func (s *SaltKeyService) ReadMasterPubKey() ([]byte, error) {
 	return nil, fmt.Errorf("master public key not found in any known location")
 }
 
-// getAPIURL 获取 API URL
+// getAPIURL 获取 API URL（用于外部访问）
 func (s *SaltKeyService) getAPIURL() string {
+	// 优先使用显式配置的 API_URL
 	apiURL := os.Getenv("API_URL")
-	if apiURL == "" {
-		externalHost := os.Getenv("EXTERNAL_HOST")
-		if externalHost == "" {
-			externalHost = "localhost"
-		}
-		apiPort := os.Getenv("API_PORT")
-		if apiPort == "" {
-			apiPort = "8000"
-		}
-		apiURL = fmt.Sprintf("http://%s:%s", externalHost, apiPort)
+	if apiURL != "" {
+		return strings.TrimSuffix(apiURL, "/")
 	}
-	return strings.TrimSuffix(apiURL, "/")
+
+	// 否则使用 EXTERNAL_HOST + EXTERNAL_PORT（nginx 端口）构建 URL
+	externalHost := os.Getenv("EXTERNAL_HOST")
+	if externalHost == "" {
+		externalHost = "localhost"
+	}
+
+	// 使用 EXTERNAL_PORT（nginx 端口），而不是内部 API_PORT
+	// 因为外部机器需要通过 nginx 代理访问 /api 路径
+	externalPort := os.Getenv("EXTERNAL_PORT")
+	if externalPort == "" {
+		externalPort = os.Getenv("NGINX_PORT")
+	}
+	if externalPort == "" {
+		externalPort = "8080"
+	}
+
+	externalScheme := os.Getenv("EXTERNAL_SCHEME")
+	if externalScheme == "" {
+		externalScheme = "http"
+	}
+
+	return fmt.Sprintf("%s://%s:%s", externalScheme, externalHost, externalPort)
 }
 
 // startCleanupTask 启动清理任务

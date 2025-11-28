@@ -238,6 +238,8 @@ func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 		saltstack.POST("/batch-install", c.BatchInstallMinion)
 		saltstack.GET("/batch-install/:taskId", c.GetBatchInstallTask)
 		saltstack.GET("/batch-install/:taskId/stream", c.StreamBatchInstallProgress)
+		saltstack.GET("/batch-install/:taskId/logs", c.GetBatchInstallTaskLogs)
+		saltstack.GET("/batch-install/:taskId/ssh-logs", c.GetBatchInstallSSHLogs)
 		saltstack.GET("/batch-install", c.ListBatchInstallTasks)
 
 		// SSH 测试（含 sudo 权限检查）
@@ -414,6 +416,105 @@ func (c *SaltStackClientController) ListBatchInstallTasks(ctx *gin.Context) {
 			"limit":  limit,
 			"offset": offset,
 		},
+	})
+}
+
+// GetBatchInstallTaskLogs 获取批量安装任务日志
+// @Summary 获取批量安装任务日志
+// @Description 获取指定批量安装任务的详细日志记录
+// @Tags SaltStack
+// @Produce json
+// @Param taskId path string true "任务ID"
+// @Param host query string false "按主机过滤"
+// @Param level query string false "按日志级别过滤 (info, warn, error, debug)"
+// @Param category query string false "按分类过滤 (ssh, install, config, key, output)"
+// @Param limit query int false "限制返回数量" default(100)
+// @Param offset query int false "偏移量" default(0)
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Router /api/saltstack/batch-install/{taskId}/logs [get]
+func (c *SaltStackClientController) GetBatchInstallTaskLogs(ctx *gin.Context) {
+	taskID := ctx.Param("taskId")
+	if taskID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Task ID required",
+		})
+		return
+	}
+
+	// 查询参数
+	host := ctx.Query("host")
+	level := ctx.Query("level")
+	category := ctx.Query("category")
+	limitStr := ctx.DefaultQuery("limit", "100")
+	offsetStr := ctx.DefaultQuery("offset", "0")
+
+	limit, _ := strconv.Atoi(limitStr)
+	offset, _ := strconv.Atoi(offsetStr)
+	if limit <= 0 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	logs, total, err := c.batchInstallService.GetTaskLogsFiltered(taskID, host, level, category, limit, offset)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get task logs",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"logs":   logs,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		},
+	})
+}
+
+// GetBatchInstallSSHLogs 获取批量安装任务的 SSH 执行日志
+// @Summary 获取SSH执行日志
+// @Description 获取指定批量安装任务的SSH命令执行详细日志
+// @Tags SaltStack
+// @Produce json
+// @Param taskId path string true "任务ID"
+// @Param host query string false "按主机过滤"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Router /api/saltstack/batch-install/{taskId}/ssh-logs [get]
+func (c *SaltStackClientController) GetBatchInstallSSHLogs(ctx *gin.Context) {
+	taskID := ctx.Param("taskId")
+	if taskID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Task ID required",
+		})
+		return
+	}
+
+	host := ctx.Query("host")
+
+	logs, err := c.batchInstallService.GetSSHLogs(taskID, host)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get SSH logs",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    logs,
 	})
 }
 
