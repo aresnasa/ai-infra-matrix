@@ -12,7 +12,13 @@
 #   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
 # =============================================================================
 
-set -e
+# 不使用 set -e，因为某些命令（如 dpkg）可能返回非零退出码但不是致命错误
+# set -e
+
+# 禁用 debconf 前端以避免交互式提示
+export DEBIAN_FRONTEND=noninteractive
+export DEBCONF_NONINTERACTIVE_SEEN=true
+
 echo "=== Starting Salt Minion Installation ==="
 echo "=== Target: Debian/Ubuntu System ==="
 
@@ -73,12 +79,15 @@ if [ "$COMMON_DOWNLOADED" -eq 1 ] && [ "$MINION_DOWNLOADED" -eq 1 ]; then
     echo "=== Downloaded packages from AppHub ==="
     
     echo "=== Installing dependencies ==="
-    {{.SudoPrefix}}apt-get update -qq || true
-    {{.SudoPrefix}}apt-get install -y -qq python3 python3-pip python3-setuptools || true
+    {{.SudoPrefix}}apt-get update -qq 2>/dev/null || true
+    {{.SudoPrefix}}apt-get install -y -qq python3 python3-pip python3-setuptools 2>/dev/null || true
     
     echo "=== Installing Salt packages from AppHub ==="
-    {{.SudoPrefix}}dpkg -i salt-common.deb || {{.SudoPrefix}}apt-get install -f -y -qq
-    {{.SudoPrefix}}dpkg -i salt-minion.deb || {{.SudoPrefix}}apt-get install -f -y -qq
+    # 使用 || true 确保即使有警告也能继续
+    {{.SudoPrefix}}dpkg -i salt-common.deb 2>&1 || true
+    {{.SudoPrefix}}apt-get install -f -y -qq 2>/dev/null || true
+    {{.SudoPrefix}}dpkg -i salt-minion.deb 2>&1 || true
+    {{.SudoPrefix}}apt-get install -f -y -qq 2>/dev/null || true
     
     # Verify installation
     if command -v salt-minion >/dev/null 2>&1; then
