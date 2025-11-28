@@ -6,7 +6,7 @@
 ARG PROMETHEUS_VERSION=v3.4.1
 
 # 使用官方 Prometheus 镜像
-FROM prom/prometheus:v${PROMETHEUS_VERSION}
+FROM prom/prometheus:${PROMETHEUS_VERSION}
 
 # 标签信息
 LABEL maintainer="AI-Infra-Matrix Team"
