@@ -1143,7 +1143,9 @@ RUN set -eux; \
         openssh-server \
         net-tools \
         iputils-ping \
-        procps && \
+        procps \
+        python3 \
+        python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
 # Configure SSH server for backend access (仅配置公钥认证，无密码登录)
@@ -1235,17 +1237,19 @@ COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 # Copy Singularity packages from singularity-builder stage
 COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 
-# Download Prometheus, Node Exporter, and Categraf (monitoring tools - multi-arch)
+# Download Prometheus, Node Exporter, Categraf and Python dependencies (monitoring tools - multi-arch)
 ARG PROMETHEUS_VERSION={{PROMETHEUS_VERSION}}
 ARG NODE_EXPORTER_VERSION={{NODE_EXPORTER_VERSION}}
 ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
 ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
+ARG PYPI_INDEX_URL={{PYPI_INDEX_URL}}
 COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
 COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
 COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
 COPY src/apphub/scripts/categraf/install-categraf.sh /scripts/categraf/install-categraf.sh
+COPY src/apphub/scripts/saltstack/download-python-deps.sh /tmp/download-python-deps.sh
 RUN set -eux; \
-    chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh; \
+    chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     mkdir -p /scripts/categraf; \
     # Download Prometheus
     PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
@@ -1262,16 +1266,23 @@ RUN set -eux; \
     GITHUB_MIRROR=${GITHUB_MIRROR} \
     OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
     /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+    # Download Python dependencies for SaltStack (looseversion for Python 3.12+)
+    PYPI_MIRROR=${PYPI_INDEX_URL:-https://pypi.org/simple} \
+    PYPI_MIRROR_CN=https://mirrors.aliyun.com/pypi/simple \
+    OUTPUT_DIR=/usr/share/nginx/html/pkgs/python-deps \
+    /tmp/download-python-deps.sh || echo "⚠️ Python deps download failed, continuing..."; \
     # Cleanup
-    rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh; \
+    rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     # Summary
     prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
-    echo "📊 Monitoring Tools Downloaded:"; \
+    python_deps_count=$(ls -1 /usr/share/nginx/html/pkgs/python-deps/*.whl /usr/share/nginx/html/pkgs/python-deps/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    echo "📊 Monitoring Tools & Dependencies Downloaded:"; \
     echo "  - Prometheus packages: ${prometheus_count}"; \
     echo "  - Node Exporter packages: ${node_exporter_count}"; \
-    echo "  - Categraf packages: ${categraf_count}"
+    echo "  - Categraf packages: ${categraf_count}"; \
+    echo "  - Python dependencies: ${python_deps_count}"
 
 # Organize packages and generate DEB indexes (RPM metadata already generated in rpm-builder stage)
 RUN set -eux; \
@@ -1403,6 +1414,15 @@ RUN set -eux; \
         echo "⚠️  Note: YUM/DNF metadata generation skipped (can be enabled if createrepo is installed)"; \
         echo "⚠️  Packages can be downloaded directly via HTTP"; \
     fi
+
+# Copy installation scripts (rendered from templates by build.sh render)
+# These scripts are pre-configured with EXTERNAL_HOST and other settings
+COPY scripts/install-salt-minion.sh /usr/share/nginx/html/scripts/install-salt-minion.sh
+COPY scripts/install-categraf.sh /usr/share/nginx/html/scripts/install-categraf.sh
+COPY scripts/install-node-exporter.sh /usr/share/nginx/html/scripts/install-node-exporter.sh
+COPY scripts/install-prometheus.sh /usr/share/nginx/html/scripts/install-prometheus.sh
+RUN chmod +x /usr/share/nginx/html/scripts/*.sh && \
+    echo "✓ Installation scripts copied to /scripts/"
 
 # Expose port
 EXPOSE 80

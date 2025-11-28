@@ -2509,14 +2509,18 @@ IMPORT_SCRIPT_EOF
 print_help() {
     echo "Usage: $0 [command] [options]"
     echo ""
+    echo "Global Options (can be used with any command):"
+    echo "  --force, -f, --no-cache    Force rebuild without Docker cache"
+    echo ""
     echo "Environment Commands:"
     echo "  init-env [host]     Initialize/sync .env file (auto-detect EXTERNAL_HOST)"
     echo "  init-env --force    Force re-initialize all environment variables"
     echo ""
     echo "Build Commands:"
-    echo "  build-all, all      Build all components in the correct order (AppHub first)"
-    echo "  build-all --force   Force rebuild all (auto-detect IP, re-render, no cache)"
-    echo "  [component]         Build a specific component (e.g., backend, frontend)"
+    echo "  build-all, all           Build all components in the correct order"
+    echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
+    echo "  [component]              Build a specific component (e.g., backend, frontend)"
+    echo "  [component] --force      Force rebuild a component without cache"
     echo ""
     echo "Template Commands:"
     echo "  render, sync        Render all Dockerfile.tpl templates from .env config"
@@ -2612,18 +2616,46 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-case "$1" in
+# Parse global options first (--force, --no-cache, -f)
+# These can appear anywhere in the command line
+FORCE_BUILD=false
+FORCE_RENDER=false
+REMAINING_ARGS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f|--no-cache)
+            FORCE_BUILD=true
+            FORCE_RENDER=true
+            ;;
+        *)
+            REMAINING_ARGS+=("$arg")
+            ;;
+    esac
+done
+
+# Show force mode message after parsing
+if [[ "$FORCE_BUILD" == "true" ]]; then
+    log_info "🔧 Force mode enabled (--no-cache for Docker builds)"
+fi
+
+COMMAND="${REMAINING_ARGS[0]:-}"
+ARG2="${REMAINING_ARGS[1]:-}"
+ARG3="${REMAINING_ARGS[2]:-}"
+ARG4="${REMAINING_ARGS[3]:-}"
+
+case "$COMMAND" in
     init-env)
         # 初始化或同步 .env 文件
-        if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        if [[ "$FORCE_BUILD" == "true" ]]; then
             log_info "Force re-initializing .env..."
             init_env_file "true"
-        elif [[ -n "$2" ]]; then
+        elif [[ -n "$ARG2" ]]; then
             # 使用指定的 EXTERNAL_HOST
-            log_info "Setting EXTERNAL_HOST=$2..."
-            update_env_variable "EXTERNAL_HOST" "$2"
-            update_env_variable "DOMAIN" "$2"
-            log_info "✓ EXTERNAL_HOST updated to $2"
+            log_info "Setting EXTERNAL_HOST=$ARG2..."
+            update_env_variable "EXTERNAL_HOST" "$ARG2"
+            update_env_variable "DOMAIN" "$ARG2"
+            log_info "✓ EXTERNAL_HOST updated to $ARG2"
         else
             init_env_file "true"
         fi
@@ -2633,14 +2665,14 @@ case "$1" in
         grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
         ;;
     build-all|all)
-        if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        if [[ "$FORCE_BUILD" == "true" ]]; then
             build_all "true"
         else
             build_all
         fi
         ;;
     render|sync|sync-templates)
-        if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        if [[ "$FORCE_BUILD" == "true" ]] || [[ "$FORCE_RENDER" == "true" ]]; then
             render_all_templates "true"
         else
             render_all_templates
@@ -2656,71 +2688,90 @@ case "$1" in
         stop_all
         ;;
     clean-images)
-        clean_images "$2" "${3:-false}"
+        clean_images "$ARG2" "${ARG3:-false}"
         ;;
     clean-volumes)
-        clean_volumes "${2:-false}"
+        clean_volumes "${ARG2:-false}"
         ;;
     clean-all)
-        clean_all "$2"
+        clean_all "$ARG2"
         ;;
     prefetch)
-        prefetch_base_images "$2"
+        prefetch_base_images "$ARG2"
         ;;
     pull-common)
         pull_common_images
         ;;
     pull-all)
         # Smart mode: without registry -> Docker Hub, with registry -> private registry
-        pull_all_services "$2" "${3:-${IMAGE_TAG:-latest}}"
+        pull_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
         ;;
     deps-pull)
-        if [[ -z "$2" ]]; then
+        if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
             log_info "Usage: $0 deps-pull <registry> [tag]"
             exit 1
         fi
-        pull_and_tag_dependencies "$2" "${3:-${IMAGE_TAG:-latest}}"
+        pull_and_tag_dependencies "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
         ;;
     push)
-        if [[ -z "$2" ]]; then
+        if [[ -z "$ARG2" ]]; then
             log_error "Service name is required"
             log_info "Usage: $0 push <service> <registry> [tag]"
             exit 1
         fi
-        if [[ -z "$3" ]]; then
+        if [[ -z "$ARG3" ]]; then
             log_error "Registry is required"
             log_info "Usage: $0 push <service> <registry> [tag]"
             exit 1
         fi
-        push_service "$2" "${4:-${IMAGE_TAG:-latest}}" "$3"
+        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3"
         ;;
     push-all)
-        if [[ -z "$2" ]]; then
+        if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
             log_info "Usage: $0 push-all <registry> [tag]"
             exit 1
         fi
-        push_all_services "$2" "${3:-${IMAGE_TAG:-latest}}"
+        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
         ;;
     push-dep|push-dependencies)
-        if [[ -z "$2" ]]; then
+        if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
             log_info "Usage: $0 push-dep <registry> [tag]"
             exit 1
         fi
-        push_all_dependencies "$2" "${3:-${IMAGE_TAG:-latest}}"
+        push_all_dependencies "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
         ;;
     export-offline)
         # Export all images to tar files for offline deployment
-        export_offline_images "$2" "${3:-${IMAGE_TAG:-latest}}" "${4:-true}"
+        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}"
         ;;
     help|--help|-h)
         print_help
         ;;
+    "")
+        print_help
+        ;;
     *)
-        # Single component build
-        for component in "$@"; do
+        # Single component build - collect all non-option arguments as components
+        components=()
+        for arg in "${REMAINING_ARGS[@]}"; do
+            # Skip if it's an option (starts with -)
+            [[ "$arg" == -* ]] && continue
+            components+=("$arg")
+        done
+        
+        if [[ ${#components[@]} -eq 0 ]]; then
+            log_error "No component specified"
+            print_help
+            exit 1
+        fi
+        
+        log_info "Building components: ${components[*]}"
+        [[ "$FORCE_BUILD" == "true" ]] && log_info "  with --no-cache (force rebuild)"
+        
+        for component in "${components[@]}"; do
             build_component "$component"
         done
         ;;

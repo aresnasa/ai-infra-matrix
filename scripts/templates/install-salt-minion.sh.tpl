@@ -308,23 +308,317 @@ EOF
 }
 
 # ===========================================
+# 修复 Salt 依赖问题 (针对新版 Python 系统)
+# 特别针对 Fedora 43 (Python 3.14+) 等新系统
+# 优先使用 AppHub 中预下载的 Python 包
+# ===========================================
+fix_salt_dependencies() {
+    log_info "检查并修复 Salt 依赖..."
+    
+    # 检测系统 Python 版本
+    local sys_python=$(command -v python3 2>/dev/null)
+    local sys_version=""
+    local sys_major=0
+    local sys_minor=0
+    
+    if [[ -n "$sys_python" ]]; then
+        sys_version=$("$sys_python" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+        sys_major=$("$sys_python" -c "import sys; print(sys.version_info.major)" 2>/dev/null)
+        sys_minor=$("$sys_python" -c "import sys; print(sys.version_info.minor)" 2>/dev/null)
+        log_info "系统 Python 版本: $sys_version"
+    fi
+    
+    # 检查是否使用 relenv 包 (官方独立 Python 环境)
+    local salt_python="/opt/saltstack/salt/bin/python3"
+    local salt_pip="/opt/saltstack/salt/bin/pip3"
+    local use_relenv=false
+    
+    if [[ -x "$salt_python" ]]; then
+        log_info "检测到 SaltStack relenv 环境: $salt_python"
+        use_relenv=true
+        
+        # 确保 relenv Python 有必要的依赖
+        if ! "$salt_python" -c "import looseversion" 2>/dev/null; then
+            log_info "安装缺失依赖: looseversion (relenv 环境)"
+            install_looseversion_from_apphub "$salt_pip" "$salt_python" || \
+            "$salt_pip" install looseversion 2>/dev/null || true
+        fi
+    fi
+    
+    # Python 3.12+ 移除了 distutils.version.LooseVersion，需要安装 looseversion
+    # 特别是 Fedora 43 (Python 3.14) 等新系统
+    if [[ "$sys_major" -ge 3 ]] && [[ "$sys_minor" -ge 12 ]]; then
+        log_info "Python $sys_version >= 3.12 需要安装 looseversion 模块..."
+        
+        # 确保 pip 可用
+        if ! command -v pip3 >/dev/null 2>&1; then
+            log_info "安装 pip..."
+            if command -v dnf >/dev/null 2>&1; then
+                dnf install -y python3-pip 2>/dev/null || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                apt-get install -y python3-pip 2>/dev/null || true
+            fi
+        fi
+        
+        # 方法1: 优先从 AppHub 安装 (离线/内网环境友好)
+        log_info "尝试从 AppHub 安装 looseversion..."
+        if install_looseversion_from_apphub "pip3" "$sys_python"; then
+            log_info "✓ 从 AppHub 安装 looseversion 成功"
+        else
+            # 方法2: 使用 pip3 安装到系统
+            log_info "尝试使用 pip3 安装 looseversion..."
+            pip3 install looseversion --break-system-packages 2>/dev/null || \
+            pip3 install looseversion 2>/dev/null || true
+            
+            # 方法3: 使用 python3 -m pip 安装
+            if ! "$sys_python" -c "import looseversion" 2>/dev/null; then
+                log_info "尝试使用 python3 -m pip 安装 looseversion..."
+                "$sys_python" -m pip install looseversion --break-system-packages 2>/dev/null || \
+                "$sys_python" -m pip install looseversion 2>/dev/null || true
+            fi
+            
+            # 方法4: 检查是否有系统包可用
+            if ! "$sys_python" -c "import looseversion" 2>/dev/null; then
+                log_info "尝试从系统包安装 python3-looseversion..."
+                if command -v dnf >/dev/null 2>&1; then
+                    dnf install -y python3-looseversion 2>/dev/null || true
+                fi
+            fi
+        fi
+        
+        # 验证安装
+        if "$sys_python" -c "import looseversion" 2>/dev/null; then
+            log_info "✓ looseversion 模块安装成功"
+        else
+            log_warn "looseversion 安装失败，Salt Minion 可能无法启动"
+            log_warn "请手动执行: pip3 install looseversion --break-system-packages"
+        fi
+    fi
+    
+    # 如果使用系统 Python (非 relenv)，确保 Salt 能找到所有依赖
+    if [[ "$use_relenv" != "true" ]]; then
+        # 检查 Salt 安装位置
+        local salt_site_packages=""
+        if [[ -d "/usr/lib/python${sys_version}/site-packages/salt" ]]; then
+            salt_site_packages="/usr/lib/python${sys_version}/site-packages"
+            log_info "Salt 安装在系统 site-packages: $salt_site_packages"
+        elif [[ -d "/usr/lib64/python${sys_version}/site-packages/salt" ]]; then
+            salt_site_packages="/usr/lib64/python${sys_version}/site-packages"
+            log_info "Salt 安装在系统 site-packages: $salt_site_packages"
+        fi
+        
+        # 确保 looseversion 对 Salt 可见
+        if [[ -n "$salt_site_packages" ]]; then
+            # 查找 looseversion 安装位置
+            local looseversion_path=$("$sys_python" -c "import looseversion; print(looseversion.__file__)" 2>/dev/null | xargs dirname 2>/dev/null || true)
+            
+            if [[ -n "$looseversion_path" ]] && [[ ! "$looseversion_path" == "$salt_site_packages"* ]]; then
+                log_info "looseversion 路径: $looseversion_path"
+                # 如果 looseversion 不在 Salt 能访问的路径，创建软链接
+                if [[ -d "$looseversion_path" ]] && [[ ! -e "$salt_site_packages/looseversion" ]]; then
+                    log_info "创建 looseversion 软链接到 Salt site-packages..."
+                    ln -sf "$looseversion_path" "$salt_site_packages/looseversion" 2>/dev/null || true
+                fi
+            fi
+        fi
+    fi
+}
+
+# ===========================================
+# 从 AppHub 安装 looseversion
+# 优先使用预下载的 Python 包，避免网络访问
+# ===========================================
+install_looseversion_from_apphub() {
+    local pip_cmd="${1:-pip3}"
+    local python_cmd="${2:-python3}"
+    
+    # AppHub Python 依赖包 URL
+    local deps_url="${APPHUB_URL}/pkgs/python-deps"
+    
+    log_info "尝试从 AppHub 下载 Python 依赖包..."
+    log_info "AppHub URL: $deps_url"
+    
+    # 创建临时目录
+    local tmp_dir=$(mktemp -d)
+    trap "rm -rf $tmp_dir" RETURN
+    
+    cd "$tmp_dir"
+    
+    # 尝试下载 looseversion wheel 包
+    local wheel_file="looseversion-1.3.0-py3-none-any.whl"
+    local tar_file="looseversion-1.3.0.tar.gz"
+    local downloaded=false
+    
+    # 优先下载 wheel 包
+    if command -v wget >/dev/null 2>&1; then
+        if wget -q --timeout=10 "${deps_url}/${wheel_file}" 2>/dev/null; then
+            log_info "✓ 下载成功: $wheel_file"
+            downloaded=true
+        elif wget -q --timeout=10 "${deps_url}/${tar_file}" 2>/dev/null; then
+            log_info "✓ 下载成功: $tar_file"
+            downloaded=true
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        if curl -fsSL --connect-timeout 10 -o "$wheel_file" "${deps_url}/${wheel_file}" 2>/dev/null; then
+            log_info "✓ 下载成功: $wheel_file"
+            downloaded=true
+        elif curl -fsSL --connect-timeout 10 -o "$tar_file" "${deps_url}/${tar_file}" 2>/dev/null; then
+            log_info "✓ 下载成功: $tar_file"
+            downloaded=true
+        fi
+    fi
+    
+    if [[ "$downloaded" != "true" ]]; then
+        log_warn "无法从 AppHub 下载 Python 依赖包"
+        return 1
+    fi
+    
+    # 安装下载的包
+    local pkg_file=""
+    if [[ -f "$wheel_file" ]]; then
+        pkg_file="$wheel_file"
+    elif [[ -f "$tar_file" ]]; then
+        pkg_file="$tar_file"
+    fi
+    
+    if [[ -n "$pkg_file" ]]; then
+        log_info "安装 $pkg_file..."
+        
+        # 尝试多种安装方式
+        if $pip_cmd install "$pkg_file" --break-system-packages 2>/dev/null; then
+            return 0
+        elif $pip_cmd install "$pkg_file" 2>/dev/null; then
+            return 0
+        elif $python_cmd -m pip install "$pkg_file" --break-system-packages 2>/dev/null; then
+            return 0
+        elif $python_cmd -m pip install "$pkg_file" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    
+    log_warn "从 AppHub 安装失败"
+    return 1
+}
+
+# ===========================================
+# 修复 Systemd 服务配置
+# ===========================================
+fix_systemd_service() {
+    log_info "检查 Systemd 服务配置..."
+    
+    local service_file="/etc/systemd/system/salt-minion.service"
+    local lib_service_file="/usr/lib/systemd/system/salt-minion.service"
+    
+    # 优先使用 /etc/systemd/system 下的配置
+    if [[ ! -f "$service_file" ]] && [[ -f "$lib_service_file" ]]; then
+        cp "$lib_service_file" "$service_file"
+    fi
+    
+    # 检查是否使用 relenv 包
+    local salt_python="/opt/saltstack/salt/bin/python3"
+    local salt_minion_bin="/opt/saltstack/salt/salt-minion"
+    
+    if [[ -x "$salt_python" ]] && [[ -x "$salt_minion_bin" ]]; then
+        log_info "配置使用 SaltStack relenv Python 环境..."
+        
+        # 创建/更新 systemd 服务文件
+        cat > "$service_file" <<'EOF'
+[Unit]
+Description=The Salt Minion
+Documentation=man:salt-minion(1) file:///usr/share/doc/salt/html/contents.html https://docs.saltproject.io
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+LimitNOFILE=8192
+
+# 使用 relenv 环境的 Python 和 Salt
+ExecStart=/opt/saltstack/salt/salt-minion
+
+KillMode=process
+Restart=on-failure
+RestartSec=3
+
+# 环境变量确保使用正确的 Python
+Environment="PATH=/opt/saltstack/salt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        log_info "已更新 systemd 服务配置使用 relenv 环境"
+    else
+        # 检查系统安装的 salt-minion
+        local sys_salt_minion=$(command -v salt-minion 2>/dev/null)
+        if [[ -n "$sys_salt_minion" ]]; then
+            log_info "使用系统安装的 salt-minion: $sys_salt_minion"
+            
+            # 检查现有服务文件
+            if [[ -f "$service_file" ]] || [[ -f "$lib_service_file" ]]; then
+                log_info "Systemd 服务文件已存在"
+            else
+                # 创建基本服务文件
+                cat > "$service_file" <<EOF
+[Unit]
+Description=The Salt Minion
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=$sys_salt_minion
+KillMode=process
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                log_info "已创建 systemd 服务配置"
+            fi
+        fi
+    fi
+    
+    systemctl daemon-reload
+}
+
+# ===========================================
 # 启动服务
 # ===========================================
 start_service() {
     log_info "启动 Salt Minion 服务..."
     
+    # 先修复依赖和服务配置
+    fix_salt_dependencies
+    fix_systemd_service
+    
     systemctl daemon-reload || true
     systemctl enable salt-minion || true
     systemctl restart salt-minion || true
     
-    sleep 2
+    sleep 3
     
     if systemctl is-active --quiet salt-minion; then
         log_info "Salt Minion 服务已启动"
         return 0
     else
-        log_warn "Salt Minion 服务可能未正常启动"
-        systemctl status salt-minion --no-pager || true
+        log_warn "Salt Minion 服务启动失败，尝试诊断..."
+        
+        # 诊断信息
+        log_info "检查服务状态..."
+        systemctl status salt-minion --no-pager -l 2>&1 | head -20 || true
+        
+        log_info "检查日志..."
+        journalctl -u salt-minion --no-pager -n 20 2>&1 || true
+        
+        # 尝试手动启动获取错误
+        log_info "尝试手动启动获取详细错误..."
+        if [[ -x "/opt/saltstack/salt/salt-minion" ]]; then
+            timeout 5 /opt/saltstack/salt/salt-minion --log-level=debug 2>&1 | head -30 || true
+        elif command -v salt-minion >/dev/null 2>&1; then
+            timeout 5 salt-minion --log-level=debug 2>&1 | head -30 || true
+        fi
+        
         return 1
     fi
 }
