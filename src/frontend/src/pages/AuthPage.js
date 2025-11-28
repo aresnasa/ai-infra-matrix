@@ -3,6 +3,8 @@ import { Form, Input, Button, Card, message, Tabs, Row, Col, Select, Checkbox, A
 import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 import './Auth.css';
 
 const { TabPane } = Tabs;
@@ -11,29 +13,33 @@ const { Option } = Select;
 // 角色模板配置 - 根据团队权限重新定义
 const ROLE_TEMPLATES = {
   'data-developer': {
-    name: '数据开发团队',
-    description: '专注于数据分析和模型开发，主要使用Jupyter和Slurm环境',
+    nameKey: 'roleTemplates.dataDeveloper',
+    descKey: 'roleTemplates.dataDeveloperDesc',
     permissions: ['JupyterHub访问', 'Slurm作业调度', '项目管理', '数据分析工具'],
+    permissionsEn: ['JupyterHub Access', 'Slurm Job Scheduling', 'Project Management', 'Data Analysis Tools'],
     allowedRoutes: ['/projects', '/jupyterhub', '/slurm', '/dashboard', '/enhanced-dashboard'],
     restrictedRoutes: ['/admin', '/saltstack', '/ansible', '/kubernetes', '/kafka-ui']
   },
   'sre': {
-    name: 'SRE运维团队',
-    description: '负责基础设施运维，拥有SaltStack、Ansible和K8s管理权限',
+    nameKey: 'roleTemplates.sre',
+    descKey: 'roleTemplates.sreDesc',
     permissions: ['SaltStack管理', 'Ansible自动化', 'Kubernetes集群管理', '主机管理', '系统监控', '日志管理'],
+    permissionsEn: ['SaltStack Management', 'Ansible Automation', 'Kubernetes Cluster', 'Host Management', 'System Monitoring', 'Log Management'],
     allowedRoutes: ['/projects', '/jupyterhub', '/slurm', '/saltstack', '/ansible', '/kubernetes', '/dashboard', '/enhanced-dashboard', '/admin'],
     restrictedRoutes: []
   },
   'audit': {
-    name: '审计审核团队',
-    description: '负责系统审计和聊天机器人审核，拥有Kafka和审核工具权限',
+    nameKey: 'roleTemplates.audit',
+    descKey: 'roleTemplates.auditDesc',
     permissions: ['Kafka消息队列管理', '聊天机器人审核', '系统审计', '日志分析', '合规检查'],
+    permissionsEn: ['Kafka Queue Management', 'Chatbot Review', 'System Audit', 'Log Analysis', 'Compliance Check'],
     allowedRoutes: ['/projects', '/kafka-ui', '/dashboard', '/enhanced-dashboard', '/audit-logs'],
     restrictedRoutes: ['/admin', '/saltstack', '/ansible', '/kubernetes', '/jupyterhub', '/slurm']
   }
 };
 
 const AuthPage = ({ onLogin }) => {
+  const { t, locale } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
   const [loading, setLoading] = useState(false);
@@ -42,16 +48,45 @@ const AuthPage = ({ onLogin }) => {
   const [requiresApproval, setRequiresApproval] = useState(true);
   const [ldapValidationStatus, setLdapValidationStatus] = useState(null); // null, 'validating', 'success', 'error'
 
+  // 获取角色模板名称
+  const getRoleTemplateName = (key) => {
+    const names = {
+      'data-developer': { 'zh-CN': '数据开发团队', 'en-US': 'Data Developer Team' },
+      'sre': { 'zh-CN': 'SRE运维团队', 'en-US': 'SRE Operations Team' },
+      'audit': { 'zh-CN': '审计审核团队', 'en-US': 'Audit Review Team' }
+    };
+    return names[key]?.[locale] || key;
+  };
+
+  // 获取角色模板描述
+  const getRoleTemplateDesc = (key) => {
+    const descs = {
+      'data-developer': { 
+        'zh-CN': '专注于数据分析和模型开发，主要使用Jupyter和Slurm环境', 
+        'en-US': 'Focus on data analysis and model development, mainly using Jupyter and Slurm environments' 
+      },
+      'sre': { 
+        'zh-CN': '负责基础设施运维，拥有SaltStack、Ansible和K8s管理权限', 
+        'en-US': 'Responsible for infrastructure operations, with SaltStack, Ansible and K8s management permissions' 
+      },
+      'audit': { 
+        'zh-CN': '负责系统审计和聊天机器人审核，拥有Kafka和审核工具权限', 
+        'en-US': 'Responsible for system audit and chatbot review, with Kafka and audit tools permissions' 
+      }
+    };
+    return descs[key]?.[locale] || '';
+  };
+
   const handleLogin = async (values) => {
     setLoading(true);
     try {
       const response = await authAPI.login(values);
       const { token, user, expires_at } = response.data;
 
-      console.log('=== 登录API调用成功 ===');
-      console.log('获得token:', token ? '是' : '否');
-      console.log('登录用户:', user);
-      console.log('登录前的位置:', location.state?.from);
+      console.log('=== Login API Success ===');
+      console.log('Got token:', token ? 'yes' : 'no');
+      console.log('Login user:', user);
+      console.log('Location before login:', location.state?.from);
 
       // 保存token
       localStorage.setItem('token', token);
@@ -60,7 +95,7 @@ const AuthPage = ({ onLogin }) => {
       // 确保localStorage写入完成
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      message.success('登录成功！正在加载权限信息...');
+      message.success(t('auth.loginSuccess'));
 
       // 传递完整的登录响应数据，包括token信息
       await onLogin({
@@ -71,12 +106,12 @@ const AuthPage = ({ onLogin }) => {
 
       // 登录成功后，重定向到用户之前想访问的页面
       const from = location.state?.from?.pathname || '/projects';
-      console.log('登录后重定向到:', from);
+      console.log('Redirect after login:', from);
       navigate(from, { replace: true });
 
     } catch (error) {
-      console.error('登录失败:', error);
-      message.error(error.response?.data?.error || '登录失败，请检查用户名和密码');
+      console.error('Login failed:', error);
+      message.error(error.response?.data?.error || t('auth.loginFailed'));
     } finally {
       setLoading(false);
     }
@@ -95,12 +130,12 @@ const AuthPage = ({ onLogin }) => {
 
       if (!ldapCheckResponse.data.valid) {
         setLdapValidationStatus('error');
-        message.error('LDAP验证失败：用户名或密码错误，或用户不存在于LDAP中');
+        message.error(t('auth.ldapValidateError'));
         return;
       }
 
       setLdapValidationStatus('success');
-      message.success('LDAP验证成功！正在提交注册申请...');
+      message.success(t('auth.ldapValidateSuccessMsg'));
 
       // 提交注册申请
       const registerData = {
@@ -112,21 +147,21 @@ const AuthPage = ({ onLogin }) => {
       const response = await authAPI.register(registerData);
 
       if (requiresApproval) {
-        message.success('注册申请已提交！请等待管理员审批。');
+        message.success(t('auth.registerSuccess'));
         setActiveTab('login');
       } else {
-        message.success('注册成功！请登录');
+        message.success(t('auth.registerSuccessNoApproval'));
         setActiveTab('login');
       }
 
     } catch (error) {
-      console.error('注册失败:', error);
+      console.error('Register failed:', error);
       setLdapValidationStatus('error');
 
       if (error.response?.data?.error?.includes('LDAP')) {
-        message.error('LDAP验证失败：请确保您在LDAP系统中存在且密码正确');
+        message.error(t('auth.ldapValidateFailed'));
       } else {
-        message.error(error.response?.data?.error || '注册失败');
+        message.error(error.response?.data?.error || t('auth.loginFailed'));
       }
     } finally {
       setLoading(false);
@@ -141,16 +176,20 @@ const AuthPage = ({ onLogin }) => {
     if (!selectedRoleTemplate) return null;
 
     const template = ROLE_TEMPLATES[selectedRoleTemplate];
+    const templateName = getRoleTemplateName(selectedRoleTemplate);
+    const templateDesc = getRoleTemplateDesc(selectedRoleTemplate);
+    const permissions = locale === 'en-US' ? template.permissionsEn : template.permissions;
+    
     return (
       <Alert
-        message={`${template.name} - 权限说明`}
+        message={`${templateName} - ${t('auth.roleTemplatePermissions')}`}
         description={
           <div>
-            <p>{template.description}</p>
+            <p>{templateDesc}</p>
             <Divider style={{ margin: '8px 0' }} />
-            <strong>包含权限：</strong>
+            <strong>{t('auth.includedPermissions')}：</strong>
             <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
-              {(template.permissions || []).map((perm, index) => (
+              {(permissions || []).map((perm, index) => (
                 <li key={index}>{perm}</li>
               ))}
             </ul>
@@ -165,16 +204,21 @@ const AuthPage = ({ onLogin }) => {
 
   return (
     <div className="auth-container">
+      {/* 右上角语言切换 */}
+      <div style={{ position: 'absolute', top: 16, right: 16 }}>
+        <LanguageSwitcher showLabel={true} />
+      </div>
+      
       <Row justify="center" align="middle" style={{ minHeight: '100vh' }}>
         <Col xs={22} sm={20} md={16} lg={12} xl={10}>
           <Card title={
             <div style={{ textAlign: 'center' }}>
-              <h2>AI-Infra-Matrix</h2>
-              <p style={{ color: '#666', margin: '8px 0' }}>智能基础设施管理平台</p>
+              <h2>{t('auth.systemTitle')}</h2>
+              <p style={{ color: '#666', margin: '8px 0' }}>{t('auth.systemSubtitle')}</p>
             </div>
           }>
             <Tabs activeKey={activeTab} onChange={setActiveTab} centered>
-              <TabPane tab="登录" key="login">
+              <TabPane tab={t('auth.login')} key="login">
                 <Form
                   name="login"
                   onFinish={handleLogin}
@@ -183,42 +227,42 @@ const AuthPage = ({ onLogin }) => {
                 >
                   <Form.Item
                     name="username"
-                    rules={[{ required: true, message: '请输入用户名!' }]}
+                    rules={[{ required: true, message: t('auth.usernameRequired') }]}
                   >
                     <Input
                       prefix={<UserOutlined />}
-                      placeholder="用户名"
+                      placeholder={t('auth.username')}
                     />
                   </Form.Item>
 
                   <Form.Item
                     name="password"
-                    rules={[{ required: true, message: '请输入密码!' }]}
+                    rules={[{ required: true, message: t('auth.passwordRequired') }]}
                   >
                     <Input.Password
                       prefix={<LockOutlined />}
-                      placeholder="密码"
+                      placeholder={t('auth.password')}
                     />
                   </Form.Item>
 
                   <Form.Item>
                     <Button type="primary" htmlType="submit" loading={loading} block>
-                      登录
+                      {t('auth.login')}
                     </Button>
                   </Form.Item>
                 </Form>
 
                 <div style={{ textAlign: 'center', marginTop: 16, fontSize: '12px', color: '#888' }}>
-                  <p>默认管理员账户：</p>
-                  <p>用户名: admin</p>
-                  <p>密码: admin123</p>
+                  <p>{t('auth.defaultAdmin')}</p>
+                  <p>{t('auth.defaultUsername')}</p>
+                  <p>{t('auth.defaultPassword')}</p>
                 </div>
               </TabPane>
 
-              <TabPane tab="注册" key="register">
+              <TabPane tab={t('auth.register')} key="register">
                 <Alert
-                  message="注册须知"
-                  description="注册前请确保您已在LDAP系统中存在。注册后需要管理员审批才能使用系统。"
+                  message={t('auth.registerNotice')}
+                  description={t('auth.registerNoticeDesc')}
                   type="warning"
                   showIcon
                   style={{ marginBottom: 16 }}
@@ -233,13 +277,13 @@ const AuthPage = ({ onLogin }) => {
                   <Form.Item
                     name="username"
                     rules={[
-                      { required: true, message: '请输入用户名!' },
-                      { min: 3, max: 50, message: '用户名长度为3-50个字符!' }
+                      { required: true, message: t('auth.usernameRequired') },
+                      { min: 3, max: 50, message: t('auth.usernameLength') }
                     ]}
                   >
                     <Input
                       prefix={<UserOutlined />}
-                      placeholder="用户名"
+                      placeholder={t('auth.username')}
                       onChange={() => setLdapValidationStatus(null)}
                     />
                   </Form.Item>
@@ -247,26 +291,26 @@ const AuthPage = ({ onLogin }) => {
                   <Form.Item
                     name="email"
                     rules={[
-                      { required: true, message: '请输入邮箱!' },
-                      { type: 'email', message: '请输入有效的邮箱地址!' }
+                      { required: true, message: t('auth.emailRequired') },
+                      { type: 'email', message: t('auth.emailInvalid') }
                     ]}
                   >
                     <Input
                       prefix={<MailOutlined />}
-                      placeholder="邮箱"
+                      placeholder={t('auth.email')}
                     />
                   </Form.Item>
 
                   <Form.Item
                     name="password"
                     rules={[
-                      { required: true, message: '请输入密码!' },
-                      { min: 6, message: '密码至少6位!' }
+                      { required: true, message: t('auth.passwordRequired') },
+                      { min: 6, message: t('auth.passwordMinLength') }
                     ]}
                   >
                     <Input.Password
                       prefix={<LockOutlined />}
-                      placeholder="密码"
+                      placeholder={t('auth.password')}
                       onChange={() => setLdapValidationStatus(null)}
                     />
                   </Form.Item>
@@ -275,45 +319,45 @@ const AuthPage = ({ onLogin }) => {
                     name="confirmPassword"
                     dependencies={['password']}
                     rules={[
-                      { required: true, message: '请确认密码!' },
+                      { required: true, message: t('auth.confirmPasswordRequired') },
                       ({ getFieldValue }) => ({
                         validator(_, value) {
                           if (!value || getFieldValue('password') === value) {
                             return Promise.resolve();
                           }
-                          return Promise.reject(new Error('两次输入的密码不一致!'));
+                          return Promise.reject(new Error(t('auth.passwordMismatch')));
                         },
                       }),
                     ]}
                   >
                     <Input.Password
                       prefix={<LockOutlined />}
-                      placeholder="确认密码"
+                      placeholder={t('auth.confirmPassword')}
                     />
                   </Form.Item>
 
                   <Form.Item
                     name="department"
-                    rules={[{ required: true, message: '请输入部门!' }]}
+                    rules={[{ required: true, message: t('auth.departmentRequired') }]}
                   >
                     <Input
                       prefix={<TeamOutlined />}
-                      placeholder="部门"
+                      placeholder={t('auth.department')}
                     />
                   </Form.Item>
 
                   <Form.Item
                     name="role_template"
-                    rules={[{ required: true, message: '请选择角色模板!' }]}
+                    rules={[{ required: true, message: t('auth.roleTemplateRequired') }]}
                   >
                     <Select
-                      placeholder="选择角色模板"
+                      placeholder={t('auth.selectRoleTemplate')}
                       onChange={handleRoleTemplateChange}
                       size="large"
                     >
                       {Object.entries(ROLE_TEMPLATES || {}).map(([key, template]) => (
                         <Option key={key} value={key}>
-                          {template.name}
+                          {getRoleTemplateName(key)}
                         </Option>
                       ))}
                     </Select>
@@ -326,14 +370,14 @@ const AuthPage = ({ onLogin }) => {
                       checked={requiresApproval}
                       onChange={(e) => setRequiresApproval(e.target.checked)}
                     >
-                      需要管理员审批（推荐）
+                      {t('auth.requiresApproval')}
                     </Checkbox>
                   </Form.Item>
 
                   {ldapValidationStatus === 'validating' && (
                     <Alert
-                      message="正在验证LDAP..."
-                      description="正在验证您的LDAP账户信息，请稍候..."
+                      message={t('auth.ldapValidating')}
+                      description={t('auth.ldapValidatingDesc')}
                       type="info"
                       showIcon
                       style={{ marginBottom: 16 }}
@@ -342,8 +386,8 @@ const AuthPage = ({ onLogin }) => {
 
                   {ldapValidationStatus === 'success' && (
                     <Alert
-                      message="LDAP验证成功"
-                      description="您的LDAP账户验证通过，可以继续注册。"
+                      message={t('auth.ldapValidateSuccess')}
+                      description={t('auth.ldapValidateSuccessDesc')}
                       type="success"
                       showIcon
                       icon={<CheckCircleOutlined />}
@@ -353,8 +397,8 @@ const AuthPage = ({ onLogin }) => {
 
                   {ldapValidationStatus === 'error' && (
                     <Alert
-                      message="LDAP验证失败"
-                      description="请检查用户名和密码，或联系管理员确认您在LDAP系统中的账户状态。"
+                      message={t('auth.ldapValidateFailed')}
+                      description={t('auth.ldapValidateFailedDesc')}
                       type="error"
                       showIcon
                       icon={<ExclamationCircleOutlined />}
@@ -370,18 +414,18 @@ const AuthPage = ({ onLogin }) => {
                       block
                       disabled={ldapValidationStatus === 'error'}
                     >
-                      {requiresApproval ? '提交注册申请' : '注册'}
+                      {requiresApproval ? t('auth.submitRegister') : t('auth.register')}
                     </Button>
                   </Form.Item>
                 </Form>
 
                 <div style={{ marginTop: 16, padding: 16, backgroundColor: '#f9f9f9', borderRadius: 4 }}>
-                  <h4 style={{ marginBottom: 8 }}>注册流程说明：</h4>
+                  <h4 style={{ marginBottom: 8 }}>{t('auth.registerProcess')}</h4>
                   <ol style={{ margin: 0, paddingLeft: 20, fontSize: '12px', color: '#666' }}>
-                    <li>输入LDAP账户信息进行验证</li>
-                    <li>选择适合您的角色模板</li>
-                    <li>提交注册申请等待管理员审批</li>
-                    <li>审批通过后即可登录使用系统</li>
+                    <li>{t('auth.registerStep1')}</li>
+                    <li>{t('auth.registerStep2')}</li>
+                    <li>{t('auth.registerStep3')}</li>
+                    <li>{t('auth.registerStep4')}</li>
                   </ol>
                 </div>
               </TabPane>

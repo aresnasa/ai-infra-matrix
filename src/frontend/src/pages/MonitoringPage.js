@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Spin, Alert, Button } from 'antd';
 import { ReloadOutlined, FullscreenOutlined } from '@ant-design/icons';
+import { useI18n } from '../hooks/useI18n';
 import '../App.css';
 
 /**
@@ -8,6 +9,7 @@ import '../App.css';
  * 使用 iframe 嵌入 Nightingale 监控系统
  */
 const MonitoringPage = () => {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [iframeKey, setIframeKey] = useState(0);
@@ -55,12 +57,12 @@ const MonitoringPage = () => {
     const timeout = setTimeout(() => {
       if (loading) {
         setLoading(false);
-        setError('监控系统加载超时，请检查网络连接');
+        setError(t('monitoring.loadTimeout'));
       }
     }, 15000); // 15秒超时
 
     return () => clearTimeout(timeout);
-  }, [nightingaleUrl, loading]);
+  }, [nightingaleUrl, loading, t]);
 
   // iframe 加载完成处理
   const handleIframeLoad = () => {
@@ -73,7 +75,7 @@ const MonitoringPage = () => {
   const handleIframeError = () => {
     console.error('Failed to load Nightingale iframe');
     setLoading(false);
-    setError('无法加载监控系统，请检查 Nightingale 服务是否正常运行');
+    setError(t('monitoring.loadFailed'));
   };
 
   // 刷新 iframe
@@ -91,7 +93,7 @@ const MonitoringPage = () => {
   return (
     <div style={{ height: 'calc(100vh - 112px)', display: 'flex', flexDirection: 'column' }}>
       <Card 
-        title="监控仪表板" 
+        title={t('monitoring.title')}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}
         bodyStyle={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}
         extra={
@@ -101,20 +103,20 @@ const MonitoringPage = () => {
               onClick={handleRefresh}
               style={{ marginRight: 8 }}
             >
-              刷新
+              {t('monitoring.refresh')}
             </Button>
             <Button 
               icon={<FullscreenOutlined />} 
               onClick={handleFullscreen}
             >
-              新窗口打开
+              {t('monitoring.openNewWindow')}
             </Button>
           </div>
         }
       >
         {error && (
           <Alert
-            message="加载错误"
+            message={t('monitoring.loadError')}
             description={error}
             type="error"
             showIcon
@@ -134,7 +136,7 @@ const MonitoringPage = () => {
           }}>
             <Spin size="large" />
             <div style={{ marginTop: 16, color: '#999' }}>
-              正在加载监控系统...
+              {t('monitoring.loadingSystem')}
             </div>
           </div>
         )}

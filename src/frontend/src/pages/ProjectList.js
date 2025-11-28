@@ -27,11 +27,13 @@ import { useNavigate } from 'react-router-dom';
 import { projectAPI } from '../services/api';
 import { usePageAPIStatus } from '../hooks/usePageAPIStatus';
 import EnhancedLoading from '../components/EnhancedLoading';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Paragraph } = Typography;
 const { TextArea } = Input;
 
 const ProjectList = ({ onError, retryCount }) => {
+  const { t, locale } = useI18n();
   const [localLoading, setLocalLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
@@ -76,17 +78,17 @@ const ProjectList = ({ onError, retryCount }) => {
     try {
       if (editingProject) {
         await projectAPI.updateProject(editingProject.id, values);
-        message.success('项目更新成功');
+        message.success(t('projects.updateSuccess'));
       } else {
         await projectAPI.createProject(values);
-        message.success('项目创建成功');
+        message.success(t('projects.createSuccess'));
       }
       setModalVisible(false);
       form.resetFields();
       setEditingProject(null);
       refresh(); // 使用新的refresh方法
     } catch (error) {
-      message.error(editingProject ? '项目更新失败' : '项目创建失败');
+      message.error(editingProject ? t('projects.updateFailed') : t('projects.createFailed'));
       console.error('Error saving project:', error);
     } finally {
       setLocalLoading(false);
@@ -96,19 +98,19 @@ const ProjectList = ({ onError, retryCount }) => {
   // 删除项目
   const handleDelete = async (id) => {
     Modal.confirm({
-      title: '确认删除',
-      content: '确定要删除这个项目吗？此操作不可恢复。',
-      okText: '删除',
+      title: t('projects.confirmDelete'),
+      content: t('projects.confirmDeleteDesc'),
+      okText: t('common.delete'),
       okType: 'danger',
-      cancelText: '取消',
+      cancelText: t('common.cancel'),
       onOk: async () => {
         setLocalLoading(true);
         try {
           await projectAPI.deleteProject(id);
-          message.success('项目删除成功');
+          message.success(t('projects.deleteSuccess'));
           refresh(); // 使用新的refresh方法
         } catch (error) {
-          message.error('项目删除失败');
+          message.error(t('projects.deleteFailed'));
           console.error('Error deleting project:', error);
         } finally {
           setLocalLoading(false);
@@ -124,15 +126,15 @@ const ProjectList = ({ onError, retryCount }) => {
 
   const formatDate = (dateString) => {
     if (!dateString) return '-';
-    return new Date(dateString).toLocaleDateString('zh-CN');
+    return new Date(dateString).toLocaleDateString(locale === 'zh-CN' ? 'zh-CN' : 'en-US');
   };
 
   return (
     <div className="content-container">
       <div className="page-header">
-        <Title level={2}>项目管理</Title>
+        <Title level={2}>{t('projects.title')}</Title>
         <Paragraph type="secondary">
-          管理您的Ansible项目，配置主机、变量和任务，然后生成playbook文件
+          {t('projects.subtitle')}
         </Paragraph>
       </div>
 
@@ -144,7 +146,7 @@ const ProjectList = ({ onError, retryCount }) => {
           size="large"
           disabled={loading || localLoading}
         >
-          创建新项目
+          {t('projects.createProject')}
         </Button>
         {error && (
           <Button 
@@ -153,7 +155,7 @@ const ProjectList = ({ onError, retryCount }) => {
             onClick={retry}
             size="large"
           >
-            重试
+            {t('common.refresh')}
           </Button>
         )}
       </div>
@@ -161,7 +163,7 @@ const ProjectList = ({ onError, retryCount }) => {
       {/* 显示API状态 */}
       {loading && (
         <EnhancedLoading 
-          text="加载项目列表中..."
+          text={t('projects.loadingProjects')}
           showAPIStatus={true}
         />
       )}
@@ -169,13 +171,13 @@ const ProjectList = ({ onError, retryCount }) => {
       {/* 显示错误信息 */}
       {error && !loading && (
         <Alert
-          message="加载失败"
+          message={t('projects.loadFailed')}
           description={error.message}
           type="error"
           showIcon
           action={
             <Button size="small" onClick={retry}>
-              重试
+              {t('common.refresh')}
             </Button>
           }
           style={{ marginBottom: 16 }}
@@ -187,11 +189,11 @@ const ProjectList = ({ onError, retryCount }) => {
         <Spin spinning={localLoading}>
           {projects.length === 0 ? (
             <Empty
-              description="暂无项目"
+              description={t('projects.noProjects')}
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             >
               <Button type="primary" onClick={() => openModal()}>
-                创建第一个项目
+                {t('projects.createFirstProject')}
               </Button>
             </Empty>
           ) : (
@@ -219,12 +221,12 @@ const ProjectList = ({ onError, retryCount }) => {
                     <Card.Meta
                       avatar={<DesktopOutlined style={{ fontSize: '24px', color: '#1890ff' }} />}
                       title={project.name}
-                      description={project.description || '暂无描述'}
+                      description={project.description || t('projects.noDescription')}
                     />
                     <div className="project-stats">
                       <div className="stat-item">
                         <SettingOutlined />
-                        创建时间: {formatDate(project.created_at)}
+                        {t('projects.createdAt')}: {formatDate(project.created_at)}
                       </div>
                     </div>
                   </Card>
@@ -236,12 +238,12 @@ const ProjectList = ({ onError, retryCount }) => {
       )}
 
       <Modal
-        title={editingProject ? '编辑项目' : '创建项目'}
+        title={editingProject ? t('projects.editProject') : t('projects.createProject')}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
         destroyOnClose
       >
         <Form
@@ -251,24 +253,24 @@ const ProjectList = ({ onError, retryCount }) => {
         >
           <Form.Item
             name="name"
-            label="项目名称"
+            label={t('projects.projectName')}
             rules={[
-              { required: true, message: '请输入项目名称' },
-              { max: 255, message: '项目名称不能超过255个字符' }
+              { required: true, message: t('projects.projectNameRequired') },
+              { max: 255, message: t('projects.projectNameMaxLength') }
             ]}
           >
-            <Input placeholder="输入项目名称" />
+            <Input placeholder={t('projects.projectNamePlaceholder')} />
           </Form.Item>
           
           <Form.Item
             name="description"
-            label="项目描述"
+            label={t('projects.projectDescription')}
             rules={[
-              { max: 1000, message: '项目描述不能超过1000个字符' }
+              { max: 1000, message: t('projects.projectDescMaxLength') }
             ]}
           >
             <TextArea 
-              placeholder="输入项目描述" 
+              placeholder={t('projects.projectDescPlaceholder')} 
               rows={4}
               showCount
               maxLength={1000}
