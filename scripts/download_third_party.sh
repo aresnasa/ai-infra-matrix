@@ -1,119 +1,215 @@
 #!/bin/bash
+#
+# Third-Party Dependencies Downloader
+# 统一的第三方依赖下载脚本，支持 GitHub 镜像加速
+#
+# 用法:
+#   ./download_third_party.sh [options] [component...]
+#
+# 选项:
+#   -h, --help          显示帮助信息
+#   -l, --list          列出所有可用组件
+#   -v, --version VER   指定组件版本 (仅当下载单个组件时有效)
+#   -a, --arch ARCH     指定架构 (amd64, arm64, all), 默认: all
+#   -m, --mirror URL    设置 GitHub 镜像 URL
+#   --no-mirror         禁用 GitHub 镜像
+#
+# 示例:
+#   ./download_third_party.sh                    # 下载所有组件
+#   ./download_third_party.sh prometheus         # 只下载 Prometheus
+#   ./download_third_party.sh -v 3.4.1 prometheus # 下载指定版本
+#   ./download_third_party.sh --no-mirror prometheus  # 禁用镜像下载
+#   GITHUB_MIRROR="https://ghproxy.net/" ./download_third_party.sh prometheus
+#
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 THIRD_PARTY_DIR="$PROJECT_ROOT/third_party"
-DOCKERFILE="$PROJECT_ROOT/src/apphub/Dockerfile"
+COMPONENTS_JSON="$THIRD_PARTY_DIR/components.json"
 ENV_FILE="$PROJECT_ROOT/.env"
+DOCKERFILE="$PROJECT_ROOT/src/apphub/Dockerfile"
 
-mkdir -p "$THIRD_PARTY_DIR"
-
-# GitHub 镜像加速 (可通过环境变量覆盖)
+# GitHub 镜像加速 (可通过环境变量或参数覆盖)
 GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
 
-# Helper to extract ARG value from Dockerfile
-get_arg() {
-    local name=$1
-    grep "ARG $name=" "$DOCKERFILE" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' '
+# 默认架构
+TARGET_ARCH="all"
+
+# 指定版本
+SPECIFIED_VERSION=""
+
+# =============================================================================
+# 工具函数
+# =============================================================================
+
+# 显示帮助信息
+show_help() {
+    head -30 "$0" | grep -E "^#" | sed 's/^# \?//'
+    echo ""
+    echo "可用组件:"
+    list_components
 }
 
-# Helper to extract variable from RUN command
-get_run_var() {
-    local name=$1
-    # Use sed to extract value between quotes or after =, handling quotes, spaces, semicolons, and backslashes
-    grep "$name=" "$DOCKERFILE" | head -1 | sed -E "s/.*$name=\"?([^ \";\\\\]+)\"?.*/\1/"
+# 列出所有可用组件
+list_components() {
+    if [ ! -f "$COMPONENTS_JSON" ]; then
+        echo "❌ 配置文件不存在: $COMPONENTS_JSON"
+        exit 1
+    fi
+    
+    echo ""
+    echo "组件名称          描述"
+    echo "---------------   --------------------------------------------------"
+    
+    # 使用 jq 解析 JSON
+    if command -v jq &> /dev/null; then
+        jq -r '.components | to_entries[] | "\(.key)\t\(.value.description)"' "$COMPONENTS_JSON" | \
+            while IFS=$'\t' read -r name desc; do
+                printf "%-17s %s\n" "$name" "$desc"
+            done
+    else
+        # 简单的 grep 解析
+        grep -E '"[a-z_]+":' "$COMPONENTS_JSON" | head -20 | sed 's/.*"\([^"]*\)".*/\1/' | grep -v "components"
+    fi
+    echo ""
 }
 
-# Helper to extract version from .env file
-get_env_var() {
-    local name=$1
-    local default=$2
-    if [ -f "$ENV_FILE" ]; then
-        local val=$(grep "^$name=" "$ENV_FILE" | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+# 从 JSON 获取组件属性
+get_component_prop() {
+    local component=$1
+    local prop=$2
+    local default=${3:-}
+    
+    if command -v jq &> /dev/null; then
+        local val=$(jq -r ".components.${component}.${prop} // empty" "$COMPONENTS_JSON" 2>/dev/null)
         echo "${val:-$default}"
     else
         echo "$default"
     fi
 }
 
-# 确保版本号以 v 开头
-ensure_v_prefix() {
-    local ver=$1
-    if [[ ! "$ver" =~ ^v ]]; then
-        echo "v${ver}"
-    else
-        echo "$ver"
+# 从 JSON 获取数组属性
+get_component_array() {
+    local component=$1
+    local prop=$2
+    
+    if command -v jq &> /dev/null; then
+        jq -r ".components.${component}.${prop}[]? // empty" "$COMPONENTS_JSON" 2>/dev/null
     fi
 }
 
-# 确保版本号不以 v 开头
-strip_v_prefix() {
+# 从 .env 文件获取版本
+get_env_version() {
+    local var_name=$1
+    local default=$2
+    
+    if [ -f "$ENV_FILE" ]; then
+        local val=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# 从 Dockerfile 获取 ARG 值
+get_dockerfile_arg() {
+    local name=$1
+    local default=$2
+    
+    if [ -f "$DOCKERFILE" ]; then
+        local val=$(grep "ARG $name=" "$DOCKERFILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# 确保版本号有正确的前缀
+ensure_prefix() {
     local ver=$1
-    echo "${ver#v}"
+    local prefix=$2
+    
+    if [ -z "$prefix" ] || [ "$prefix" = "v" ]; then
+        if [[ ! "$ver" =~ ^v ]]; then
+            echo "v${ver}"
+        else
+            echo "$ver"
+        fi
+    elif [ "$prefix" = "munge-" ]; then
+        if [[ ! "$ver" =~ ^munge- ]]; then
+            echo "munge-${ver}"
+        else
+            echo "$ver"
+        fi
+    elif [ "$prefix" = "slurm-" ]; then
+        if [[ ! "$ver" =~ ^slurm- ]]; then
+            echo "slurm-${ver}"
+        else
+            echo "$ver"
+        fi
+    else
+        echo "${ver}"
+    fi
+}
+
+# 去除版本前缀
+strip_prefix() {
+    local ver=$1
+    ver="${ver#v}"
+    ver="${ver#munge-}"
+    ver="${ver#slurm-}"
+    echo "$ver"
 }
 
 # 通用下载函数
-# Usage: download_file <url> <output_file> [use_mirror]
 download_file() {
     local url=$1
     local output_file=$2
     local use_mirror=${3:-true}
     local final_url="$url"
     
+    # 应用 GitHub 镜像
     if [ "$use_mirror" = true ] && [[ "$url" == *"github.com"* ]] && [ -n "$GITHUB_MIRROR" ]; then
-        # 移除 url 中的 https:// 前缀，避免重复
         local url_without_scheme="${url#https://}"
         final_url="${GITHUB_MIRROR}${url_without_scheme}"
     fi
     
-    if [ -f "$output_file" ]; then
-        echo "✓ Already exists: $(basename "$output_file")"
+    # 检查文件是否已存在且非空
+    if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+        echo "  ✓ 已存在: $(basename "$output_file")"
         return 0
     fi
     
-    echo "📥 Downloading: $(basename "$output_file")..."
+    # 删除可能存在的空文件
+    [ -f "$output_file" ] && rm -f "$output_file"
+    
+    echo "  📥 下载中: $(basename "$output_file")"
+    echo "     URL: $final_url"
     
     # 首先尝试镜像
-    if wget -nv -T 30 -t 3 "$final_url" -O "$output_file" 2>/dev/null; then
-        echo "✓ Downloaded: $(basename "$output_file")"
-        return 0
-    fi
-    
-    # 镜像失败则尝试直接下载
-    if [ "$final_url" != "$url" ]; then
-        echo "⚠ Mirror failed, trying direct download..."
-        if wget -nv -T 60 -t 3 "$url" -O "$output_file" 2>/dev/null; then
-            echo "✓ Downloaded (direct): $(basename "$output_file")"
+    if wget -q --show-progress -T 30 -t 3 "$final_url" -O "$output_file" 2>/dev/null; then
+        if [ -s "$output_file" ]; then
+            echo "  ✓ 下载成功: $(basename "$output_file")"
             return 0
         fi
     fi
     
-    echo "✗ Failed to download: $(basename "$output_file")"
+    # 镜像失败则尝试直接下载
+    if [ "$final_url" != "$url" ]; then
+        echo "  ⚠ 镜像下载失败，尝试直接下载..."
+        rm -f "$output_file"
+        if wget -q --show-progress -T 60 -t 3 "$url" -O "$output_file" 2>/dev/null; then
+            if [ -s "$output_file" ]; then
+                echo "  ✓ 直接下载成功: $(basename "$output_file")"
+                return 0
+            fi
+        fi
+    fi
+    
+    echo "  ✗ 下载失败: $(basename "$output_file")"
     rm -f "$output_file"
     return 1
-}
-
-# 通用 GitHub Release 下载函数
-# Usage: download_github_release <owner/repo> <version> <filename_pattern> <output_dir> <architectures>
-# filename_pattern 支持 {VERSION} 和 {ARCH} 占位符
-download_github_release() {
-    local repo=$1
-    local version=$2
-    local pattern=$3
-    local output_dir=$4
-    shift 4
-    local archs=("$@")
-    
-    mkdir -p "$output_dir"
-    
-    for arch in "${archs[@]}"; do
-        local filename=$(echo "$pattern" | sed "s/{VERSION}/$version/g" | sed "s/{ARCH}/$arch/g")
-        local url="https://github.com/${repo}/releases/download/${version}/${filename}"
-        local output_file="${output_dir}/${filename}"
-        
-        download_file "$url" "$output_file" true || true
-    done
 }
 
 # 生成 version.json 文件
@@ -132,207 +228,263 @@ EOF
 }
 
 # =============================================================================
-# 获取版本号
+# 组件下载函数
 # =============================================================================
 
-SALTSTACK_VERSION=$(get_arg SALTSTACK_VERSION)
-CATEGRAF_VERSION=$(get_arg CATEGRAF_VERSION)
-SINGULARITY_VERSION=$(get_arg SINGULARITY_VERSION)
-MUNGE_VERSION=$(get_run_var MUNGE_VERSION)
-PROMETHEUS_VERSION=$(get_env_var PROMETHEUS_VERSION "v3.4.1")
-NODE_EXPORTER_VERSION=$(get_env_var NODE_EXPORTER_VERSION "v1.8.2")
-ALERTMANAGER_VERSION=$(get_env_var ALERTMANAGER_VERSION "v0.28.1")
-
-# 默认值
-[ -z "$MUNGE_VERSION" ] && MUNGE_VERSION="0.5.16"
-
-echo "================================================================"
-echo "  Third-Party Dependencies Downloader"
-echo "================================================================"
-echo "GitHub Mirror: ${GITHUB_MIRROR:-<disabled>}"
-echo ""
-echo "Versions detected:"
-echo "  SaltStack:      $SALTSTACK_VERSION"
-echo "  Categraf:       $CATEGRAF_VERSION"
-echo "  Singularity:    $SINGULARITY_VERSION"
-echo "  Munge:          $MUNGE_VERSION"
-echo "  Prometheus:     $PROMETHEUS_VERSION"
-echo "  Node Exporter:  $NODE_EXPORTER_VERSION"
-echo "  Alertmanager:   $ALERTMANAGER_VERSION"
-echo "================================================================"
-echo ""
-
-# =============================================================================
-# 1. Prometheus (Tarball)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing Prometheus..."
-PROMETHEUS_DIR="$THIRD_PARTY_DIR/prometheus"
-mkdir -p "$PROMETHEUS_DIR"
-
-PROMETHEUS_VERSION=$(ensure_v_prefix "$PROMETHEUS_VERSION")
-PROMETHEUS_VER_NUM=$(strip_v_prefix "$PROMETHEUS_VERSION")
-
-download_github_release \
-    "prometheus/prometheus" \
-    "$PROMETHEUS_VERSION" \
-    "prometheus-{VERSION}-linux-{ARCH}.tar.gz" \
-    "$PROMETHEUS_DIR" \
-    "amd64" "arm64"
-
-# 替换文件名中的版本号为不带 v 的格式
-for arch in amd64 arm64; do
-    old_file="${PROMETHEUS_DIR}/prometheus-${PROMETHEUS_VERSION}-linux-${arch}.tar.gz"
-    new_file="${PROMETHEUS_DIR}/prometheus-${PROMETHEUS_VER_NUM}.linux-${arch}.tar.gz"
-    if [ -f "$old_file" ] && [ ! -f "$new_file" ]; then
-        mv "$old_file" "$new_file"
+# 通用 GitHub Release 下载
+download_component() {
+    local component=$1
+    
+    echo ""
+    echo "================================================================"
+    
+    local name=$(get_component_prop "$component" "name" "$component")
+    local desc=$(get_component_prop "$component" "description" "")
+    local github_repo=$(get_component_prop "$component" "github_repo")
+    local version_env=$(get_component_prop "$component" "version_env")
+    local default_version=$(get_component_prop "$component" "default_version")
+    local version_prefix=$(get_component_prop "$component" "version_prefix" "v")
+    local filename_version_prefix=$(get_component_prop "$component" "filename_version_prefix" "")
+    local filename_pattern=$(get_component_prop "$component" "filename_pattern")
+    
+    # 获取版本号: 命令行参数 > 环境变量 > .env文件 > Dockerfile > 默认值
+    local version=""
+    if [ -n "$SPECIFIED_VERSION" ]; then
+        version="$SPECIFIED_VERSION"
+    elif [ -n "$version_env" ]; then
+        version=$(get_env_version "$version_env" "")
+        [ -z "$version" ] && version=$(get_dockerfile_arg "$version_env" "")
     fi
-done
+    [ -z "$version" ] && version="$default_version"
+    
+    # 处理版本号前缀
+    local tag_version=$(ensure_prefix "$version" "$version_prefix")
+    local file_version="$version"
+    if [ -n "$filename_version_prefix" ]; then
+        file_version="${filename_version_prefix}$(strip_prefix "$version")"
+    else
+        file_version="$(strip_prefix "$version")"
+    fi
+    
+    echo "📦 $name ($component)"
+    [ -n "$desc" ] && echo "   $desc"
+    echo "   版本: $tag_version"
+    echo "   仓库: $github_repo"
+    echo "================================================================"
+    
+    local output_dir="$THIRD_PARTY_DIR/$component"
+    mkdir -p "$output_dir"
+    
+    # 获取架构列表
+    local archs=()
+    while IFS= read -r arch; do
+        [ -n "$arch" ] && archs+=("$arch")
+    done < <(get_component_array "$component" "architectures")
+    
+    # 如果没有架构配置，默认使用 amd64 和 arm64
+    [ ${#archs[@]} -eq 0 ] && archs=("amd64" "arm64")
+    
+    # 过滤架构
+    if [ "$TARGET_ARCH" != "all" ]; then
+        local filtered_archs=()
+        for arch in "${archs[@]}"; do
+            if [ "$arch" = "$TARGET_ARCH" ] || [ -z "$arch" ]; then
+                filtered_archs+=("$arch")
+            fi
+        done
+        archs=("${filtered_archs[@]}")
+    fi
+    
+    # 特殊处理: SaltStack 有多个包和格式
+    if [ "$component" = "saltstack" ]; then
+        download_saltstack "$tag_version" "$file_version" "$output_dir"
+    else
+        # 通用下载逻辑
+        for arch in "${archs[@]}"; do
+            local filename=$(echo "$filename_pattern" | sed "s/{VERSION}/$file_version/g" | sed "s/{ARCH}/$arch/g")
+            local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+            
+            download_file "$url" "${output_dir}/${filename}" true || true
+        done
+    fi
+    
+    generate_version_json "$output_dir" "$component" "$tag_version"
+    echo ""
+}
 
-# Prometheus 使用不同的命名格式，重新下载正确的文件
-for arch in amd64 arm64; do
-    filename="prometheus-${PROMETHEUS_VER_NUM}.linux-${arch}.tar.gz"
-    url="https://github.com/prometheus/prometheus/releases/download/${PROMETHEUS_VERSION}/${filename}"
-    output_file="${PROMETHEUS_DIR}/${filename}"
-    download_file "$url" "$output_file" true || true
-done
-
-generate_version_json "$PROMETHEUS_DIR" "prometheus" "$PROMETHEUS_VERSION"
-
-# =============================================================================
-# 2. Node Exporter (Tarball)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing Node Exporter..."
-NODE_EXPORTER_DIR="$THIRD_PARTY_DIR/node_exporter"
-mkdir -p "$NODE_EXPORTER_DIR"
-
-NODE_EXPORTER_VERSION=$(ensure_v_prefix "$NODE_EXPORTER_VERSION")
-NODE_EXPORTER_VER_NUM=$(strip_v_prefix "$NODE_EXPORTER_VERSION")
-
-for arch in amd64 arm64; do
-    filename="node_exporter-${NODE_EXPORTER_VER_NUM}.linux-${arch}.tar.gz"
-    url="https://github.com/prometheus/node_exporter/releases/download/${NODE_EXPORTER_VERSION}/${filename}"
-    output_file="${NODE_EXPORTER_DIR}/${filename}"
-    download_file "$url" "$output_file" true || true
-done
-
-generate_version_json "$NODE_EXPORTER_DIR" "node_exporter" "$NODE_EXPORTER_VERSION"
-
-# =============================================================================
-# 3. Alertmanager (Tarball)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing Alertmanager..."
-ALERTMANAGER_DIR="$THIRD_PARTY_DIR/alertmanager"
-mkdir -p "$ALERTMANAGER_DIR"
-
-ALERTMANAGER_VERSION=$(ensure_v_prefix "$ALERTMANAGER_VERSION")
-ALERTMANAGER_VER_NUM=$(strip_v_prefix "$ALERTMANAGER_VERSION")
-
-for arch in amd64 arm64; do
-    filename="alertmanager-${ALERTMANAGER_VER_NUM}.linux-${arch}.tar.gz"
-    url="https://github.com/prometheus/alertmanager/releases/download/${ALERTMANAGER_VERSION}/${filename}"
-    output_file="${ALERTMANAGER_DIR}/${filename}"
-    download_file "$url" "$output_file" true || true
-done
-
-generate_version_json "$ALERTMANAGER_DIR" "alertmanager" "$ALERTMANAGER_VERSION"
-
-# =============================================================================
-# 4. Categraf (Tarball)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing Categraf..."
-CATEGRAF_DIR="$THIRD_PARTY_DIR/categraf"
-mkdir -p "$CATEGRAF_DIR"
-
-CATEGRAF_VERSION=$(ensure_v_prefix "$CATEGRAF_VERSION")
-
-for arch in amd64 arm64; do
-    filename="categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz"
-    url="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${filename}"
-    output_file="${CATEGRAF_DIR}/${filename}"
-    download_file "$url" "$output_file" true || true
-done
-
-generate_version_json "$CATEGRAF_DIR" "categraf" "$CATEGRAF_VERSION"
-
-# =============================================================================
-# 5. Munge (Tarball)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing Munge..."
-MUNGE_DIR="$THIRD_PARTY_DIR/munge"
-mkdir -p "$MUNGE_DIR"
-
-MUNGE_FILE="munge-${MUNGE_VERSION}.tar.xz"
-url="https://github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/${MUNGE_FILE}"
-download_file "$url" "${MUNGE_DIR}/${MUNGE_FILE}" true || true
-
-generate_version_json "$MUNGE_DIR" "munge" "$MUNGE_VERSION"
-
-# =============================================================================
-# 6. Singularity (DEB)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing Singularity..."
-SINGULARITY_DIR="$THIRD_PARTY_DIR/singularity"
-mkdir -p "$SINGULARITY_DIR"
-
-SINGULARITY_VERSION=$(ensure_v_prefix "$SINGULARITY_VERSION")
-SINGULARITY_VER_NUM=$(strip_v_prefix "$SINGULARITY_VERSION")
-
-for arch in amd64 arm64; do
-    filename="singularity-ce_${SINGULARITY_VER_NUM}-1~ubuntu22.04_${arch}.deb"
-    url="https://github.com/sylabs/singularity/releases/download/${SINGULARITY_VERSION}/${filename}"
-    output_file="${SINGULARITY_DIR}/${filename}"
-    download_file "$url" "$output_file" true || true
-done
-
-generate_version_json "$SINGULARITY_DIR" "singularity" "$SINGULARITY_VERSION"
-
-# =============================================================================
-# 7. SaltStack (DEB & RPM)
-# =============================================================================
-echo "----------------------------------------------------------------"
-echo "📦 Processing SaltStack..."
-SALT_DIR="$THIRD_PARTY_DIR/saltstack"
-mkdir -p "$SALT_DIR"
-
-SALTSTACK_VERSION=$(ensure_v_prefix "$SALTSTACK_VERSION")
-SALT_VER_NUM=$(strip_v_prefix "$SALTSTACK_VERSION")
-
-# DEB packages
-for arch in amd64 arm64; do
-    for pkg in salt-common salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do
-        filename="${pkg}_${SALT_VER_NUM}_${arch}.deb"
-        url="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}/${filename}"
-        output_file="${SALT_DIR}/${filename}"
-        download_file "$url" "$output_file" true || true
+# SaltStack 特殊下载 (DEB + RPM)
+download_saltstack() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    
+    local packages=()
+    while IFS= read -r pkg; do
+        [ -n "$pkg" ] && packages+=("$pkg")
+    done < <(get_component_array "saltstack" "packages")
+    
+    # DEB packages
+    echo ""
+    echo "  📦 下载 DEB 包..."
+    for arch in amd64 arm64; do
+        if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+            continue
+        fi
+        for pkg in "${packages[@]}"; do
+            local filename="${pkg}_${file_version}_${arch}.deb"
+            local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
+            download_file "$url" "${output_dir}/${filename}" true || true
+        done
     done
-done
-
-# RPM packages
-for arch in x86_64 aarch64; do
-    for pkg in salt salt-master salt-minion salt-api salt-ssh salt-syndic salt-cloud; do
-        filename="${pkg}-${SALT_VER_NUM}-0.${arch}.rpm"
-        url="https://github.com/saltstack/salt/releases/download/${SALTSTACK_VERSION}/${filename}"
-        output_file="${SALT_DIR}/${filename}"
-        download_file "$url" "$output_file" true || true
+    
+    # RPM packages
+    echo ""
+    echo "  📦 下载 RPM 包..."
+    for arch in amd64 arm64; do
+        if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+            continue
+        fi
+        local rpm_arch="x86_64"
+        [ "$arch" = "arm64" ] && rpm_arch="aarch64"
+        
+        for pkg in "${packages[@]}"; do
+            # RPM 包名去掉 -common 后缀
+            local rpm_pkg="${pkg/-common/}"
+            local filename="${rpm_pkg}-${file_version}-0.${rpm_arch}.rpm"
+            local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
+            download_file "$url" "${output_dir}/${filename}" true || true
+        done
     done
-done
-
-generate_version_json "$SALT_DIR" "saltstack" "$SALTSTACK_VERSION"
+}
 
 # =============================================================================
-# 完成
+# 主程序
 # =============================================================================
-echo ""
-echo "================================================================"
-echo "✅ All third-party dependencies processed."
-echo "================================================================"
-echo ""
-echo "Downloaded files location: $THIRD_PARTY_DIR"
-echo ""
-ls -la "$THIRD_PARTY_DIR"
+
+# 检查 jq 是否可用
+check_jq() {
+    if ! command -v jq &> /dev/null; then
+        echo "⚠ 警告: jq 未安装，部分功能可能受限"
+        echo "  安装方法: brew install jq (macOS) 或 apt install jq (Linux)"
+        echo ""
+    fi
+}
+
+# 获取所有组件列表
+get_all_components() {
+    if command -v jq &> /dev/null; then
+        jq -r '.components | keys[]' "$COMPONENTS_JSON" 2>/dev/null
+    else
+        # 简单解析
+        grep -E '^\s+"[a-z_]+":' "$COMPONENTS_JSON" | sed 's/.*"\([^"]*\)".*/\1/' | grep -v "components"
+    fi
+}
+
+# 存储要下载的组件
+DOWNLOAD_COMPONENTS=()
+
+# 解析命令行参数
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -l|--list)
+                list_components
+                exit 0
+                ;;
+            -v|--version)
+                SPECIFIED_VERSION="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                TARGET_ARCH="$2"
+                shift 2
+                ;;
+            -m|--mirror)
+                GITHUB_MIRROR="$2"
+                shift 2
+                ;;
+            --no-mirror)
+                GITHUB_MIRROR=""
+                shift
+                ;;
+            -*)
+                echo "❌ 未知选项: $1"
+                show_help
+                exit 1
+                ;;
+            *)
+                DOWNLOAD_COMPONENTS+=("$1")
+                shift
+                ;;
+        esac
+    done
+}
+
+main() {
+    check_jq
+    
+    # 检查配置文件
+    if [ ! -f "$COMPONENTS_JSON" ]; then
+        echo "❌ 配置文件不存在: $COMPONENTS_JSON"
+        exit 1
+    fi
+    
+    # 解析参数
+    parse_args "$@"
+    
+    # 如果没有指定组件，下载所有组件
+    if [ ${#DOWNLOAD_COMPONENTS[@]} -eq 0 ]; then
+        while IFS= read -r comp; do
+            [ -n "$comp" ] && DOWNLOAD_COMPONENTS+=("$comp")
+        done < <(get_all_components)
+    fi
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║          Third-Party Dependencies Downloader                   ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "GitHub 镜像: ${GITHUB_MIRROR:-<已禁用>}"
+    echo "目标架构:    ${TARGET_ARCH}"
+    echo "输出目录:    ${THIRD_PARTY_DIR}"
+    echo "组件数量:    ${#DOWNLOAD_COMPONENTS[@]}"
+    echo ""
+    
+    mkdir -p "$THIRD_PARTY_DIR"
+    
+    local success=0
+    local failed=0
+    
+    for component in "${DOWNLOAD_COMPONENTS[@]}"; do
+        # 检查组件是否存在
+        local comp_name=$(get_component_prop "$component" "name")
+        if [ -z "$comp_name" ] || [ "$comp_name" = "null" ]; then
+            echo "⚠ 跳过未知组件: $component"
+            ((failed++))
+            continue
+        fi
+        
+        if download_component "$component"; then
+            ((success++))
+        else
+            ((failed++))
+        fi
+    done
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                         下载完成                               ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "成功: $success / 总计: $((success + failed))"
+    echo ""
+    echo "文件位置: $THIRD_PARTY_DIR"
+    echo ""
+    ls -la "$THIRD_PARTY_DIR"
+}
+
+main "$@"

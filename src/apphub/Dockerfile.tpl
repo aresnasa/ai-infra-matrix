@@ -1242,22 +1242,22 @@ COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 
 # =============================================================================
 # Download/Copy Prometheus, Node Exporter, Categraf and Python dependencies
-# 监控工具包 - 优先使用预下载的 third_party/ 文件，否则在线下载
-# 使用 scripts/download_third_party.sh 预下载可加速构建
+# 监控工具包 - 直接从 third_party/ 复制预下载的文件
+# 使用 scripts/download_third_party.sh 预下载所有依赖
+# 构建前请运行: ./build.sh download-deps 或 ./scripts/download_third_party.sh
 # =============================================================================
 ARG PROMETHEUS_VERSION={{PROMETHEUS_VERSION}}
 ARG NODE_EXPORTER_VERSION={{NODE_EXPORTER_VERSION}}
+ARG ALERTMANAGER_VERSION={{ALERTMANAGER_VERSION}}
 ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
 ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
 ARG PYPI_INDEX_URL={{PYPI_INDEX_URL}}
 
-# Copy pre-downloaded packages from third_party (if available)
-# 复制预下载的包 (如果存在)
-COPY third_party/prometheus/ /third_party/prometheus/
-COPY third_party/node_exporter/ /third_party/node_exporter/
-COPY third_party/alertmanager/ /third_party/alertmanager/
+# Copy ALL pre-downloaded packages from third_party/ directory
+# 复制所有预下载的包
+COPY third_party/ /third_party/
 
-# Copy download scripts as fallback
+# Copy download scripts as fallback for any missing packages
 COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
 COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
 COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
@@ -1270,10 +1270,13 @@ RUN set -eux; \
     mkdir -p /usr/share/nginx/html/pkgs/prometheus; \
     mkdir -p /usr/share/nginx/html/pkgs/node_exporter; \
     mkdir -p /usr/share/nginx/html/pkgs/alertmanager; \
+    mkdir -p /usr/share/nginx/html/pkgs/categraf; \
+    mkdir -p /usr/share/nginx/html/pkgs/python-deps; \
     \
     # 去掉版本号前的 v 前缀 (Prometheus 文件名不带 v)
     PROMETHEUS_VER="${PROMETHEUS_VERSION#v}"; \
     NODE_EXPORTER_VER="${NODE_EXPORTER_VERSION#v}"; \
+    ALERTMANAGER_VER="${ALERTMANAGER_VERSION#v}"; \
     \
     # === Prometheus ===
     echo "📦 Processing Prometheus..."; \
@@ -1281,14 +1284,14 @@ RUN set -eux; \
     for arch in amd64 arm64; do \
         src_file="/third_party/prometheus/prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz"; \
         dst_file="/usr/share/nginx/html/pkgs/prometheus/prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz"; \
-        if [ -f "$src_file" ]; then \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
             cp "$src_file" "$dst_file"; \
             echo "  ✓ Copied prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz from third_party"; \
             prometheus_copied=$((prometheus_copied + 1)); \
         fi; \
     done; \
     if [ "$prometheus_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found, downloading..."; \
+        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
@@ -1301,31 +1304,103 @@ RUN set -eux; \
     for arch in amd64 arm64; do \
         src_file="/third_party/node_exporter/node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz"; \
         dst_file="/usr/share/nginx/html/pkgs/node_exporter/node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz"; \
-        if [ -f "$src_file" ]; then \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
             cp "$src_file" "$dst_file"; \
             echo "  ✓ Copied node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz from third_party"; \
             node_exporter_copied=$((node_exporter_copied + 1)); \
         fi; \
     done; \
     if [ "$node_exporter_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found, downloading..."; \
+        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
         /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
     fi; \
     \
-    # === Alertmanager (copy if available) ===
+    # === Alertmanager ===
     echo "📦 Processing Alertmanager..."; \
-    cp /third_party/alertmanager/*.tar.gz /usr/share/nginx/html/pkgs/alertmanager/ 2>/dev/null || \
-        echo "  ⚠ Alertmanager files not found in third_party, skipping..."; \
+    alertmanager_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/alertmanager/alertmanager-${ALERTMANAGER_VER}.linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/alertmanager/alertmanager-${ALERTMANAGER_VER}.linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied alertmanager-${ALERTMANAGER_VER}.linux-${arch}.tar.gz from third_party"; \
+            alertmanager_copied=$((alertmanager_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$alertmanager_copied" -lt 2 ]; then \
+        echo "  ⚠ Alertmanager files not found in third_party (optional, skipping)"; \
+    fi; \
     \
-    # === Categraf (multi-arch to overwrite single-arch from categraf-builder) ===
+    # === Categraf ===
     echo "📦 Processing Categraf..."; \
-    CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-    GITHUB_MIRROR=${GITHUB_MIRROR} \
-    OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
-    /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+    categraf_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/categraf/categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/categraf/categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz from third_party"; \
+            categraf_copied=$((categraf_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$categraf_copied" -lt 2 ]; then \
+        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
+        CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+        GITHUB_MIRROR=${GITHUB_MIRROR} \
+        OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
+        /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+    fi; \
+    \
+    # === SaltStack packages (DEB) ===
+    echo "📦 Processing SaltStack DEB packages..."; \
+    saltstack_deb_copied=0; \
+    if [ -d "/third_party/saltstack" ]; then \
+        for deb_file in /third_party/saltstack/*.deb; do \
+            if [ -f "$deb_file" ] && [ -s "$deb_file" ]; then \
+                cp "$deb_file" /usr/share/nginx/html/pkgs/saltstack-deb/; \
+                saltstack_deb_copied=$((saltstack_deb_copied + 1)); \
+            fi; \
+        done; \
+        echo "  ✓ Copied ${saltstack_deb_copied} SaltStack DEB packages from third_party"; \
+    fi; \
+    \
+    # === SaltStack packages (RPM) ===
+    echo "📦 Processing SaltStack RPM packages..."; \
+    saltstack_rpm_copied=0; \
+    if [ -d "/third_party/saltstack" ]; then \
+        for rpm_file in /third_party/saltstack/*.rpm; do \
+            if [ -f "$rpm_file" ] && [ -s "$rpm_file" ]; then \
+                cp "$rpm_file" /usr/share/nginx/html/pkgs/saltstack-rpm/; \
+                saltstack_rpm_copied=$((saltstack_rpm_copied + 1)); \
+            fi; \
+        done; \
+        echo "  ✓ Copied ${saltstack_rpm_copied} SaltStack RPM packages from third_party"; \
+    fi; \
+    \
+    # === Singularity packages ===
+    echo "📦 Processing Singularity packages..."; \
+    singularity_copied=0; \
+    if [ -d "/third_party/singularity" ]; then \
+        mkdir -p /usr/share/nginx/html/pkgs/singularity; \
+        for pkg_file in /third_party/singularity/*.deb /third_party/singularity/*.rpm; do \
+            if [ -f "$pkg_file" ] && [ -s "$pkg_file" ]; then \
+                cp "$pkg_file" /usr/share/nginx/html/pkgs/singularity/; \
+                singularity_copied=$((singularity_copied + 1)); \
+            fi; \
+        done; \
+        echo "  ✓ Copied ${singularity_copied} Singularity packages from third_party"; \
+    fi; \
+    \
+    # === Munge source ===
+    echo "📦 Processing Munge..."; \
+    if [ -d "/third_party/munge" ]; then \
+        mkdir -p /usr/share/nginx/html/pkgs/munge; \
+        cp /third_party/munge/*.tar.xz /usr/share/nginx/html/pkgs/munge/ 2>/dev/null || true; \
+        echo "  ✓ Copied Munge source from third_party"; \
+    fi; \
     \
     # === Python dependencies for SaltStack (looseversion for Python 3.12+) ===
     echo "📦 Processing Python dependencies..."; \
@@ -1344,11 +1419,16 @@ RUN set -eux; \
     alertmanager_count=$(ls -1 /usr/share/nginx/html/pkgs/alertmanager/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     python_deps_count=$(ls -1 /usr/share/nginx/html/pkgs/python-deps/*.whl /usr/share/nginx/html/pkgs/python-deps/*.tar.gz 2>/dev/null | wc -l || echo 0); \
-    echo "📊 Monitoring Tools & Dependencies:"; \
+    saltstack_deb_final=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+    saltstack_rpm_final=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    echo ""; \
+    echo "📊 Package Summary (from third_party/):"; \
     echo "  - Prometheus packages: ${prometheus_count}"; \
     echo "  - Node Exporter packages: ${node_exporter_count}"; \
     echo "  - Alertmanager packages: ${alertmanager_count}"; \
     echo "  - Categraf packages: ${categraf_count}"; \
+    echo "  - SaltStack DEB packages: ${saltstack_deb_final}"; \
+    echo "  - SaltStack RPM packages: ${saltstack_rpm_final}"; \
     echo "  - Python dependencies: ${python_deps_count}"
 
 # Organize packages and generate DEB indexes (RPM metadata already generated in rpm-builder stage)

@@ -1,0 +1,106 @@
+{
+  "components": {
+    "prometheus": {
+      "name": "Prometheus",
+      "description": "Prometheus monitoring system and time series database",
+      "source": "github-release",
+      "github_repo": "prometheus/prometheus",
+      "version_env": "PROMETHEUS_VERSION",
+      "default_version": "3.4.1",
+      "version_prefix": "v",
+      "filename_version_prefix": "",
+      "architectures": ["amd64", "arm64"],
+      "filename_pattern": "prometheus-{VERSION}.linux-{ARCH}.tar.gz"
+    },
+    "node_exporter": {
+      "name": "Node Exporter",
+      "description": "Prometheus exporter for hardware and OS metrics",
+      "source": "github-release",
+      "github_repo": "prometheus/node_exporter",
+      "version_env": "NODE_EXPORTER_VERSION",
+      "default_version": "1.8.2",
+      "version_prefix": "v",
+      "filename_version_prefix": "",
+      "architectures": ["amd64", "arm64"],
+      "filename_pattern": "node_exporter-{VERSION}.linux-{ARCH}.tar.gz"
+    },
+    "alertmanager": {
+      "name": "Alertmanager",
+      "description": "Prometheus Alertmanager",
+      "source": "github-release",
+      "github_repo": "prometheus/alertmanager",
+      "version_env": "ALERTMANAGER_VERSION",
+      "default_version": "0.28.1",
+      "version_prefix": "v",
+      "filename_version_prefix": "",
+      "architectures": ["amd64", "arm64"],
+      "filename_pattern": "alertmanager-{VERSION}.linux-{ARCH}.tar.gz"
+    },
+    "categraf": {
+      "name": "Categraf",
+      "description": "One-stop telemetry collector for metrics, logs, and traces",
+      "source": "github-release",
+      "github_repo": "flashcatcloud/categraf",
+      "version_env": "CATEGRAF_VERSION",
+      "default_version": "0.4.25",
+      "version_prefix": "v",
+      "filename_version_prefix": "v",
+      "architectures": ["amd64", "arm64"],
+      "filename_pattern": "categraf-{VERSION}-linux-{ARCH}.tar.gz"
+    },
+    "munge": {
+      "name": "Munge",
+      "description": "MUNGE authentication service",
+      "source": "github-release",
+      "github_repo": "dun/munge",
+      "version_env": "MUNGE_VERSION",
+      "default_version": "0.5.16",
+      "version_prefix": "munge-",
+      "filename_version_prefix": "",
+      "architectures": [""],
+      "filename_pattern": "munge-{VERSION}.tar.xz"
+    },
+    "singularity": {
+      "name": "Singularity",
+      "description": "Singularity Container Runtime for HPC",
+      "source": "github-release",
+      "github_repo": "sylabs/singularity",
+      "version_env": "SINGULARITY_VERSION",
+      "default_version": "4.2.1",
+      "version_prefix": "v",
+      "filename_version_prefix": "",
+      "architectures": ["amd64", "arm64"],
+      "filename_pattern": "singularity-ce_{VERSION}-1~ubuntu22.04_{ARCH}.deb"
+    },
+    "saltstack": {
+      "name": "SaltStack",
+      "description": "SaltStack configuration management",
+      "source": "github-release",
+      "github_repo": "saltstack/salt",
+      "version_env": "SALTSTACK_VERSION",
+      "default_version": "3006.10",
+      "version_prefix": "v",
+      "filename_version_prefix": "",
+      "architectures": ["amd64", "arm64"],
+      "packages": ["salt-common", "salt-master", "salt-minion", "salt-api", "salt-ssh", "salt-syndic", "salt-cloud"],
+      "filename_pattern_deb": "{PACKAGE}_{VERSION}_{ARCH}.deb",
+      "filename_pattern_rpm": "{PACKAGE}-{VERSION}-0.{ARCH}.rpm",
+      "rpm_arch_map": {
+        "amd64": "x86_64",
+        "arm64": "aarch64"
+      }
+    },
+    "slurm": {
+      "name": "Slurm",
+      "description": "Slurm Workload Manager",
+      "source": "github-release",
+      "github_repo": "SchedMD/slurm",
+      "version_env": "SLURM_VERSION",
+      "default_version": "25.05.4",
+      "version_prefix": "slurm-",
+      "filename_version_prefix": "",
+      "architectures": [""],
+      "filename_pattern": "slurm-{VERSION}.tar.bz2"
+    }
+  }
+}

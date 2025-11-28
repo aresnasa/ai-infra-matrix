@@ -3,8 +3,10 @@
 # Prometheus Download Script for AppHub
 # 下载 Prometheus 预编译二进制到 AppHub
 #
-# 注意: 此脚本已被整合到统一下载脚本 scripts/download_third_party.sh
-#       建议使用统一脚本进行下载，此脚本保留用于 AppHub 独立使用场景
+# 注意: 此脚本已被整合到统一下载脚本:
+#   - 项目根目录: scripts/download_third_party.sh
+#   - AppHub 目录: scripts/download-github-release.sh
+# 建议使用统一脚本进行下载，此脚本保留用于 AppHub 独立使用场景
 # =============================================================================
 
 set -e
@@ -26,7 +28,9 @@ download_prometheus() {
     local arch=$1
     local filename="prometheus-${PROMETHEUS_VERSION}.linux-${arch}.tar.gz"
     local base_url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/${filename}"
-    local mirror_url="${GITHUB_MIRROR}${base_url}"
+    # 移除 https:// 前缀避免重复
+    local base_url_without_scheme="${base_url#https://}"
+    local mirror_url="${GITHUB_MIRROR}${base_url_without_scheme}"
     
     if [ -f "${OUTPUT_DIR}/${filename}" ]; then
         echo "  ✓ ${filename} already exists, skipping"
