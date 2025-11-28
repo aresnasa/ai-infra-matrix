@@ -1235,6 +1235,44 @@ COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 # Copy Singularity packages from singularity-builder stage
 COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 
+# Download Prometheus, Node Exporter, and Categraf (monitoring tools - multi-arch)
+ARG PROMETHEUS_VERSION={{PROMETHEUS_VERSION}}
+ARG NODE_EXPORTER_VERSION={{NODE_EXPORTER_VERSION}}
+ARG CATEGRAF_VERSION={{CATEGRAF_VERSION}}
+ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
+COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
+COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
+COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
+COPY src/apphub/scripts/categraf/install-categraf.sh /scripts/categraf/install-categraf.sh
+RUN set -eux; \
+    chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh; \
+    mkdir -p /scripts/categraf; \
+    # Download Prometheus
+    PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
+    GITHUB_MIRROR=${GITHUB_MIRROR} \
+    OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
+    /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
+    # Download Node Exporter
+    NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
+    GITHUB_MIRROR=${GITHUB_MIRROR} \
+    OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
+    /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
+    # Download Categraf (multi-arch to overwrite single-arch from categraf-builder)
+    CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+    GITHUB_MIRROR=${GITHUB_MIRROR} \
+    OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
+    /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+    # Cleanup
+    rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh; \
+    # Summary
+    prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    echo "📊 Monitoring Tools Downloaded:"; \
+    echo "  - Prometheus packages: ${prometheus_count}"; \
+    echo "  - Node Exporter packages: ${node_exporter_count}"; \
+    echo "  - Categraf packages: ${categraf_count}"
+
 # Organize packages and generate DEB indexes (RPM metadata already generated in rpm-builder stage)
 RUN set -eux; \
     echo "📦 Organizing packages..."; \
@@ -1253,6 +1291,8 @@ RUN set -eux; \
     salt_rpm_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/ | grep -E '\.(deb|rpm)$' | wc -l || echo 0); \
+    prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     # Check if RPM metadata was copied from rpm-builder
     slurm_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] && echo "yes" || echo "no"); \
     salt_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ] && echo "yes" || echo "no"); \
@@ -1264,6 +1304,8 @@ RUN set -eux; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count} (metadata: ${salt_rpm_metadata})"; \
     echo "  - Categraf packages: ${categraf_count}"; \
     echo "  - Singularity packages: ${singularity_count}"; \
+    echo "  - Prometheus packages: ${prometheus_count}"; \
+    echo "  - Node Exporter packages: ${node_exporter_count}"; \
     # Check if any packages are missing
     if [ "$slurm_deb_count" -eq 0 ] && [ "$salt_deb_count" -eq 0 ] && [ "$slurm_rpm_count" -eq 0 ] && [ "$salt_rpm_count" -eq 0 ]; then \
         echo "❌ Error: No packages found for SLURM or SaltStack"; \
@@ -1329,14 +1371,16 @@ RUN set -eux; \
     if [ "$categraf_count" -gt 0 ]; then \
         cd /usr/share/nginx/html/pkgs/categraf; \
         echo "✓ Categraf packages available at /pkgs/categraf/"; \
-        # Create latest symlink for amd64
-        latest_amd64=$(ls -t categraf-*-linux-amd64.tar.gz 2>/dev/null | head -1); \
+        # Remove existing latest symlinks to avoid self-reference
+        rm -f categraf-latest-linux-amd64.tar.gz categraf-latest-linux-arm64.tar.gz 2>/dev/null || true; \
+        # Create latest symlink for amd64 (exclude 'latest' from search)
+        latest_amd64=$(ls -t categraf-v*-linux-amd64.tar.gz 2>/dev/null | head -1); \
         if [ -n "$latest_amd64" ]; then \
             ln -sf "$latest_amd64" categraf-latest-linux-amd64.tar.gz; \
             echo "  ✓ Created symlink: categraf-latest-linux-amd64.tar.gz -> $latest_amd64"; \
         fi; \
-        # Create latest symlink for arm64
-        latest_arm64=$(ls -t categraf-*-linux-arm64.tar.gz 2>/dev/null | head -1); \
+        # Create latest symlink for arm64 (exclude 'latest' from search)
+        latest_arm64=$(ls -t categraf-v*-linux-arm64.tar.gz 2>/dev/null | head -1); \
         if [ -n "$latest_arm64" ]; then \
             ln -sf "$latest_arm64" categraf-latest-linux-arm64.tar.gz; \
             echo "  ✓ Created symlink: categraf-latest-linux-arm64.tar.gz -> $latest_arm64"; \

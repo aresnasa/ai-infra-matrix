@@ -393,6 +393,7 @@ TEMPLATE_VARIABLES=(
     "SLURM_VERSION"       # SLURM version (e.g., 24.11.5)
     "SALTSTACK_VERSION"   # SaltStack version (e.g., 3007.8)
     "CATEGRAF_VERSION"    # Categraf version (e.g., 0.4.6)
+    "NODE_EXPORTER_VERSION" # Node Exporter version (e.g., v1.8.2)
     "SINGULARITY_VERSION" # Singularity version
     "GITEA_VERSION"       # Gitea version (e.g., 1.25.1)
     "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)

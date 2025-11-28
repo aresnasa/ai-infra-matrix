@@ -8,6 +8,8 @@ set -e
 
 # 配置
 PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-3.7.3}"
+# 去掉版本号前的 v 前缀 (如果有)
+PROMETHEUS_VERSION="${PROMETHEUS_VERSION#v}"
 OUTPUT_DIR="${OUTPUT_DIR:-/usr/share/nginx/html/pkgs/prometheus}"
 GITHUB_MIRROR="${GITHUB_MIRROR:-}"
 

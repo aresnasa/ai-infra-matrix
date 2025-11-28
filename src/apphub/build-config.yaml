@@ -55,6 +55,19 @@ components:
     output: "/usr/share/nginx/html/pkgs/prometheus"
     description: "Prometheus monitoring system and time series database"
     
+  node_exporter:
+    enabled: true
+    version: "1.8.2"
+    # Node Exporter 从 GitHub Release 下载预编译二进制
+    source: "github-release"
+    github_repo: "prometheus/node_exporter"
+    # 下载 URL 模板
+    download_urls:
+      amd64: "https://github.com/prometheus/node_exporter/releases/download/v{version}/node_exporter-{version}.linux-amd64.tar.gz"
+      arm64: "https://github.com/prometheus/node_exporter/releases/download/v{version}/node_exporter-{version}.linux-arm64.tar.gz"
+    output: "/usr/share/nginx/html/pkgs/node_exporter"
+    description: "Prometheus exporter for hardware and OS metrics"
+    
   singularity:
     enabled: false  # 暂时禁用 - deb 包下载问题待解决
     version: "v4.2.1"
