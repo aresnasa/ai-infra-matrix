@@ -48,13 +48,32 @@ chmod +x bootstrap-salt.sh
 
 echo "=== Configuring Salt Minion ==="
 {{.SudoPrefix}}mkdir -p /etc/salt
-cat << 'SALTCONF' | {{.SudoPrefix}}tee /etc/salt/minion
+
+# 清理旧的配置文件（minion.d 目录中的配置会覆盖主配置）
+echo "    Cleaning old configuration files..."
+{{.SudoPrefix}}rm -f /etc/salt/minion.d/master.conf 2>/dev/null || true
+{{.SudoPrefix}}rm -f /etc/salt/minion.d/*.conf 2>/dev/null || true
+
+# 清理旧的 PKI 密钥（确保使用新的 master 密钥）
+echo "    Cleaning old PKI keys..."
+{{.SudoPrefix}}rm -rf /etc/salt/pki/minion/* 2>/dev/null || true
+
+# 创建临时配置文件，然后用 sudo 移动（避免管道与 sudo 的兼容性问题）
+TEMP_MINION_CONF=$(mktemp)
+cat > "$TEMP_MINION_CONF" << 'SALTCONF'
 master: {{.MasterHost}}
 id: {{.MinionID}}
 mine_enabled: true
 mine_return_job: true
 mine_interval: 60
 SALTCONF
+
+{{.SudoPrefix}}cp "$TEMP_MINION_CONF" /etc/salt/minion
+{{.SudoPrefix}}chmod 640 /etc/salt/minion
+rm -f "$TEMP_MINION_CONF"
+echo "    Minion configuration written to /etc/salt/minion"
+echo "    Master: {{.MasterHost}}"
+echo "    Minion ID: {{.MinionID}}"
 
 # Sync Master public key if URL is provided
 {{if .MasterPubURL}}
