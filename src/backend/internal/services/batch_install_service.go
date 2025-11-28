@@ -13,6 +13,7 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
@@ -186,7 +187,9 @@ func (s *BatchInstallService) BatchInstallSaltMinion(ctx context.Context, req Ba
 		TotalHosts: len(req.Hosts),
 		StartTime:  time.Now(),
 	}
-	task.SetConfig(req)
+	// 存储脱敏后的配置到数据库（保护敏感信息）
+	maskedReq := s.maskBatchInstallRequest(req)
+	task.SetConfig(maskedReq)
 
 	if database.DB != nil {
 		if err := database.DB.Create(task).Error; err != nil {
@@ -823,18 +826,23 @@ func (s *BatchInstallService) logToDatabase(taskID, level, host, message string)
 }
 
 // logToDatabaseWithCategory 记录带分类的日志到数据库
+// 自动脱敏日志中的敏感信息（密码、密钥、Token等）
 func (s *BatchInstallService) logToDatabaseWithCategory(taskID, level, host, category, message, output string) {
 	if database.DB == nil {
 		return
 	}
+
+	// 脱敏日志消息和输出中的敏感信息
+	maskedMessage := utils.MaskLogMessage(message)
+	maskedOutput := utils.MaskLogMessage(output)
 
 	log := &models.TaskLog{
 		TaskID:    taskID,
 		Host:      host,
 		LogLevel:  level,
 		Category:  category,
-		Message:   message,
-		Output:    output,
+		Message:   maskedMessage,
+		Output:    maskedOutput,
 		Timestamp: time.Now(),
 	}
 
@@ -844,19 +852,25 @@ func (s *BatchInstallService) logToDatabaseWithCategory(taskID, level, host, cat
 }
 
 // logSSHCommand 记录 SSH 命令执行日志
+// 自动脱敏命令和输出中的敏感信息
 func (s *BatchInstallService) logSSHCommand(taskID, host, command, output, errorOutput string, exitCode int, duration int64, status string) {
 	if database.DB == nil {
 		return
 	}
+
+	// 脱敏命令和输出中的敏感信息
+	maskedCommand := utils.MaskLogMessage(command)
+	maskedOutput := utils.MaskLogMessage(output)
+	maskedErrorOutput := utils.MaskLogMessage(errorOutput)
 
 	sshLog := &models.SSHLog{
 		TaskID:      taskID,
 		Host:        host,
 		Port:        22,
 		User:        "", // 可以在调用时传入
-		Command:     command,
-		Output:      output,
-		ErrorOutput: errorOutput,
+		Command:     maskedCommand,
+		Output:      maskedOutput,
+		ErrorOutput: maskedErrorOutput,
 		ExitCode:    exitCode,
 		Duration:    duration,
 		Status:      status,
@@ -1256,4 +1270,34 @@ func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, 
 
 		time.Sleep(pollInterval)
 	}
+}
+
+// maskBatchInstallRequest 创建脱敏后的请求副本用于存储到数据库
+// 保留主机、端口、用户名的前几位，密码和密钥完全脱敏
+func (s *BatchInstallService) maskBatchInstallRequest(req BatchInstallRequest) BatchInstallRequest {
+	maskedReq := BatchInstallRequest{
+		Hosts:       make([]HostInstallConfig, len(req.Hosts)),
+		Parallel:    req.Parallel,
+		MasterHost:  req.MasterHost,
+		InstallType: req.InstallType,
+		UseSudo:     req.UseSudo,
+		SudoPass:    utils.MaskPassword(req.SudoPass),
+		AutoAccept:  req.AutoAccept,
+		Version:     req.Version,
+	}
+
+	for i, host := range req.Hosts {
+		maskedReq.Hosts[i] = HostInstallConfig{
+			Host:     host.Host,
+			Port:     host.Port,
+			Username: host.Username, // 保留用户名用于问题排查
+			Password: utils.MaskPassword(host.Password),
+			KeyPath:  host.KeyPath,
+			MinionID: host.MinionID,
+			UseSudo:  host.UseSudo,
+			SudoPass: utils.MaskPassword(host.SudoPass),
+		}
+	}
+
+	return maskedReq
 }

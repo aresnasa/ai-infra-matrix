@@ -2217,9 +2217,19 @@ func (c *SlurmController) InstallPackages(ctx *gin.Context) {
 		EnableSlurmClient: req.EnableSlurmClient,
 	}
 
-	// 设置默认值
-	if installConfig.SaltMasterHost == "" {
-		installConfig.SaltMasterHost = "saltstack" // 默认使用容器名
+	// 设置默认值 - 使用 EXTERNAL_HOST 而不是容器名
+	if installConfig.SaltMasterHost == "" || installConfig.SaltMasterHost == "saltstack" {
+		externalHost := os.Getenv("EXTERNAL_HOST")
+		if externalHost != "" {
+			installConfig.SaltMasterHost = externalHost
+		} else {
+			// 回退到 SALT_MASTER_HOST 或默认值
+			installConfig.SaltMasterHost = os.Getenv("SALT_MASTER_HOST")
+			if installConfig.SaltMasterHost == "" || installConfig.SaltMasterHost == "saltstack" {
+				installConfig.SaltMasterHost = "saltstack" // 最后的回退
+				logrus.Warn("EXTERNAL_HOST not set, using 'saltstack' as master host (may not work for external minions)")
+			}
+		}
 	}
 	if installConfig.SaltMasterPort == 0 {
 		installConfig.SaltMasterPort = 4506

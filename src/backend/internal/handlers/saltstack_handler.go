@@ -563,86 +563,200 @@ func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, in
 }
 
 // getPerformanceMetricsFromSalt 从Salt API获取性能指标（回退方式）
+// 使用 Salt 内置的 status 模块获取系统指标，而不是 cmd.run
 func (h *SaltStackHandler) getPerformanceMetricsFromSalt(client *saltAPIClient) (int, int, int) {
 	// 默认值
 	cpuUsage := 0
 	memoryUsage := 0
 	activeConnections := 0
 
-	// 尝试获取Salt Master自身的性能信息
-	// 在Salt Master上执行命令获取系统信息（Salt Master通常也是一个minion，minion_id为localhost或主机名）
+	// 首先尝试获取 salt-master-local 的指标（Salt Master 自身）
+	// 如果没有，则尝试获取第一个可用 minion 的指标
+	targetMinion := "salt-master-local"
 
-	// 构造本地执行命令获取CPU使用率 (使用 ps 命令获取salt-master进程CPU)
+	// 使用 status.cpuload 获取 CPU 负载（1分钟、5分钟、15分钟平均负载）
+	// 这比 cmd.run ps 更可靠
 	cpuPayload := map[string]interface{}{
 		"client": "local",
-		"tgt":    "*",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"ps aux | grep -E 'salt-master|salt-api' | grep -v grep | awk '{sum+=$3} END {print int(sum)}'"},
+		"tgt":    targetMinion,
+		"fun":    "status.cpuload",
 	}
 	cpuResp, err := client.makeRequest("/", "POST", cpuPayload)
 	if err == nil {
-		if ret, ok := cpuResp["return"].([]interface{}); ok && len(ret) > 0 {
-			if retMap, ok := ret[0].(map[string]interface{}); ok {
-				// 遍历返回结果，取第一个非空值
-				for _, v := range retMap {
-					if valStr, ok := v.(string); ok {
-						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil && val > 0 {
-							cpuUsage = val
-							break
-						}
-					}
-				}
-			}
+		if cpuValue := h.extractSaltCPULoad(cpuResp, targetMinion); cpuValue > 0 {
+			cpuUsage = cpuValue
 		}
 	}
 
-	// 获取内存使用率 (使用 ps 命令获取salt进程内存百分比)
+	// 如果 salt-master-local 没有返回数据，尝试获取任意一个 minion 的数据
+	if cpuUsage == 0 {
+		cpuPayload["tgt"] = "*"
+		cpuResp, err = client.makeRequest("/", "POST", cpuPayload)
+		if err == nil {
+			cpuUsage = h.extractFirstSaltCPULoad(cpuResp)
+		}
+	}
+
+	// 使用 status.meminfo 获取内存信息
 	memPayload := map[string]interface{}{
 		"client": "local",
-		"tgt":    "*",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"ps aux | grep -E 'salt-master|salt-api' | grep -v grep | awk '{sum+=$4} END {print int(sum)}'"},
+		"tgt":    targetMinion,
+		"fun":    "status.meminfo",
 	}
 	memResp, err := client.makeRequest("/", "POST", memPayload)
 	if err == nil {
-		if ret, ok := memResp["return"].([]interface{}); ok && len(ret) > 0 {
-			if retMap, ok := ret[0].(map[string]interface{}); ok {
-				for _, v := range retMap {
-					if valStr, ok := v.(string); ok {
-						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil && val > 0 {
-							memoryUsage = val
-							break
-						}
-					}
-				}
-			}
+		if memValue := h.extractSaltMemoryUsage(memResp, targetMinion); memValue > 0 {
+			memoryUsage = memValue
 		}
 	}
 
-	// 获取Salt Master活跃连接数 (检查4505和4506端口的连接数)
+	// 如果 salt-master-local 没有返回数据，尝试获取任意一个 minion 的数据
+	if memoryUsage == 0 {
+		memPayload["tgt"] = "*"
+		memResp, err = client.makeRequest("/", "POST", memPayload)
+		if err == nil {
+			memoryUsage = h.extractFirstSaltMemoryUsage(memResp)
+		}
+	}
+
+	// 使用 runner 获取活跃连接数（已连接的 minion 数量）
+	// 这比检查端口更准确
 	connPayload := map[string]interface{}{
-		"client": "local",
-		"tgt":    "*",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"netstat -an 2>/dev/null | grep -E ':(4505|4506)' | grep ESTABLISHED | wc -l || ss -tan 2>/dev/null | grep -E ':(4505|4506)' | grep ESTAB | wc -l"},
+		"client": "runner",
+		"fun":    "manage.status",
 	}
 	connResp, err := client.makeRequest("/", "POST", connPayload)
 	if err == nil {
-		if ret, ok := connResp["return"].([]interface{}); ok && len(ret) > 0 {
-			if retMap, ok := ret[0].(map[string]interface{}); ok {
-				for _, v := range retMap {
-					if valStr, ok := v.(string); ok {
-						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil {
-							activeConnections = val
-							break
+		activeConnections = h.extractActiveMinions(connResp)
+	}
+
+	log.Printf("[SaltMetrics] 从Salt API获取到指标: CPU=%d%%, Memory=%d%%, Connections=%d",
+		cpuUsage, memoryUsage, activeConnections)
+
+	return cpuUsage, memoryUsage, activeConnections
+}
+
+// extractSaltCPULoad 从 status.cpuload 响应中提取 CPU 使用率
+// cpuload 返回格式: {"return": [{"minion_id": {"1-min": 0.5, "5-min": 0.3, "15-min": 0.2}}]}
+// 我们取 1 分钟平均负载并转换为百分比（假设单核 100% 负载）
+func (h *SaltStackHandler) extractSaltCPULoad(resp map[string]interface{}, minionID string) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			if minionData, ok := retMap[minionID]; ok {
+				if loadMap, ok := minionData.(map[string]interface{}); ok {
+					// 取 1 分钟负载
+					if load1, ok := loadMap["1-min"].(float64); ok {
+						// 将负载转换为百分比（假设 1.0 = 100%）
+						// 对于多核系统，可能需要除以核心数
+						cpuPercent := int(load1 * 100)
+						if cpuPercent > 100 {
+							cpuPercent = 100
 						}
+						return cpuPercent
 					}
 				}
 			}
 		}
 	}
+	return 0
+}
 
-	return cpuUsage, memoryUsage, activeConnections
+// extractFirstSaltCPULoad 从任意 minion 提取 CPU 负载
+func (h *SaltStackHandler) extractFirstSaltCPULoad(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			for _, minionData := range retMap {
+				if loadMap, ok := minionData.(map[string]interface{}); ok {
+					if load1, ok := loadMap["1-min"].(float64); ok {
+						cpuPercent := int(load1 * 100)
+						if cpuPercent > 100 {
+							cpuPercent = 100
+						}
+						return cpuPercent
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// extractSaltMemoryUsage 从 status.meminfo 响应中提取内存使用率
+// meminfo 返回格式: {"return": [{"minion_id": {"MemTotal": {"value": "8094236", "unit": "kB"}, ...}}]}
+func (h *SaltStackHandler) extractSaltMemoryUsage(resp map[string]interface{}, minionID string) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			if minionData, ok := retMap[minionID]; ok {
+				return h.calculateMemoryUsage(minionData)
+			}
+		}
+	}
+	return 0
+}
+
+// extractFirstSaltMemoryUsage 从任意 minion 提取内存使用率
+func (h *SaltStackHandler) extractFirstSaltMemoryUsage(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			for _, minionData := range retMap {
+				if usage := h.calculateMemoryUsage(minionData); usage > 0 {
+					return usage
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// calculateMemoryUsage 计算内存使用率百分比
+func (h *SaltStackHandler) calculateMemoryUsage(minionData interface{}) int {
+	memMap, ok := minionData.(map[string]interface{})
+	if !ok {
+		return 0
+	}
+
+	// 提取 MemTotal 和 MemAvailable
+	var memTotal, memAvailable float64
+
+	if memTotalData, ok := memMap["MemTotal"].(map[string]interface{}); ok {
+		if valStr, ok := memTotalData["value"].(string); ok {
+			memTotal, _ = strconv.ParseFloat(valStr, 64)
+		}
+	}
+
+	if memAvailData, ok := memMap["MemAvailable"].(map[string]interface{}); ok {
+		if valStr, ok := memAvailData["value"].(string); ok {
+			memAvailable, _ = strconv.ParseFloat(valStr, 64)
+		}
+	}
+
+	// 计算内存使用率
+	if memTotal > 0 {
+		memUsed := memTotal - memAvailable
+		memPercent := int((memUsed / memTotal) * 100)
+		if memPercent < 0 {
+			memPercent = 0
+		}
+		if memPercent > 100 {
+			memPercent = 100
+		}
+		return memPercent
+	}
+
+	return 0
+}
+
+// extractActiveMinions 从 runner manage.status 响应中提取活跃 minion 数量
+// 返回格式: {"return": [{"up": ["minion1", "minion2"], "down": []}]}
+func (h *SaltStackHandler) extractActiveMinions(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if statusMap, ok := ret[0].(map[string]interface{}); ok {
+			if upList, ok := statusMap["up"].([]interface{}); ok {
+				return len(upList)
+			}
+		}
+	}
+	return 0
 }
 
 // getDemoSaltStackStatus 获取演示用的SaltStack状态
