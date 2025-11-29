@@ -10,11 +10,13 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { objectStorageAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
 
 const ObjectStoragePage = () => {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [storageConfigs, setStorageConfigs] = useState([]);
@@ -105,28 +107,28 @@ const ObjectStoragePage = () => {
   // 存储类型配置
   const storageTypeConfigs = {
     minio: {
-      name: 'MinIO',
+      name: t('objectStorage.minio'),
       icon: <DatabaseOutlined />,
       color: '#C73A2F',
-      description: '高性能分布式对象存储，兼容S3 API'
+      description: t('objectStorage.minioDesc')
     },
     aws_s3: {
-      name: 'Amazon S3',
+      name: t('objectStorage.awsS3'),
       icon: <CloudServerOutlined />,
       color: '#FF9900',
-      description: 'AWS原生对象存储服务'
+      description: t('objectStorage.awsS3Desc')
     },
     aliyun_oss: {
-      name: '阿里云OSS',
+      name: t('objectStorage.aliyunOss'),
       icon: <CloudServerOutlined />,
       color: '#FF6A00',
-      description: '阿里云对象存储服务'
+      description: t('objectStorage.aliyunOssDesc')
     },
     tencent_cos: {
-      name: '腾讯云COS',
+      name: t('objectStorage.tencentCos'),
       icon: <CloudServerOutlined />,
       color: '#006EFF',
-      description: '腾讯云对象存储'
+      description: t('objectStorage.tencentCosDesc')
     }
   };
 
@@ -136,7 +138,7 @@ const ObjectStoragePage = () => {
       name: type.toUpperCase(),
       icon: <CloudServerOutlined />,
       color: '#1890ff',
-      description: '对象存储服务'
+      description: t('objectStorage.storageServices')
     };
   };
 
@@ -176,11 +178,11 @@ const ObjectStoragePage = () => {
             <Space>
               {config.is_active && (
                 <Tag color="green" icon={<CheckCircleOutlined />}>
-                  当前激活
+                  {t('objectStorage.currentActive')}
                 </Tag>
               )}
               <Tag color={config.status === 'connected' ? 'green' : 'red'}>
-                {config.status === 'connected' ? '已连接' : '未连接'}
+                {config.status === 'connected' ? t('objectStorage.connected') : t('objectStorage.notConnected')}
               </Tag>
               <Button
                 size="small"
@@ -188,7 +190,7 @@ const ObjectStoragePage = () => {
                 onClick={() => handleAccessStorage(config)}
                 disabled={config.status !== 'connected'}
               >
-                访问
+                {t('objectStorage.access')}
               </Button>
             </Space>
           </Col>
@@ -203,7 +205,7 @@ const ObjectStoragePage = () => {
       // 跳转到Minio控制台页面
       navigate(`/object-storage/minio/${config.id}`);
     } else {
-      message.info('该存储类型暂不支持Web控制台访问');
+      message.info(t('objectStorage.notSupportWebConsole'));
     }
   };
 
@@ -212,7 +214,7 @@ const ObjectStoragePage = () => {
       <div style={{ textAlign: 'center', padding: '50px' }}>
         <Spin size="large" />
         <div style={{ marginTop: '16px' }}>
-          <Text>加载对象存储配置中...</Text>
+          <Text>{t('objectStorage.loading')}</Text>
         </div>
       </div>
     );
@@ -224,13 +226,13 @@ const ObjectStoragePage = () => {
         <div>
           <Title level={2}>
             <CloudServerOutlined style={{ marginRight: '8px', color: '#1890ff' }} />
-            对象存储管理
+            {t('objectStorage.title')}
           </Title>
           <Paragraph type="secondary">
-            统一管理MinIO、S3等各种对象存储服务，提供文件上传、下载和管理功能
+            {t('objectStorage.subtitle')}
             {lastRefresh && (
               <span style={{ marginLeft: '16px', fontSize: '12px' }}>
-                上次更新: {new Date(lastRefresh).toLocaleTimeString()}
+                {t('objectStorage.lastUpdate')}: {new Date(lastRefresh).toLocaleTimeString()}
               </span>
             )}
           </Paragraph>
@@ -241,27 +243,27 @@ const ObjectStoragePage = () => {
             onClick={() => loadStorageConfigs()}
             loading={loading}
           >
-            刷新
+            {t('objectStorage.refresh')}
           </Button>
           <Button
             type={autoRefreshEnabled ? "primary" : "default"}
             onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
             ghost={autoRefreshEnabled}
           >
-            {autoRefreshEnabled ? '🔄 自动刷新' : '⏸️ 已暂停'}
+            {autoRefreshEnabled ? `🔄 ${t('objectStorage.autoRefresh')}` : `⏸️ ${t('objectStorage.paused')}`}
           </Button>
           <Button 
             icon={<SettingOutlined />}
             onClick={() => navigate('/admin/object-storage')}
           >
-            存储配置
+            {t('objectStorage.storageConfig')}
           </Button>
           <Button 
             type="primary" 
             icon={<PlusOutlined />}
             onClick={() => navigate('/admin/object-storage?action=add')}
           >
-            添加存储
+            {t('objectStorage.addStorage')}
           </Button>
         </Space>
       </div>
@@ -270,16 +272,16 @@ const ObjectStoragePage = () => {
         <Card>
           <div style={{ textAlign: 'center', padding: '40px' }}>
             <CloudServerOutlined style={{ fontSize: '64px', color: '#d9d9d9', marginBottom: '16px' }} />
-            <Title level={4} type="secondary">尚未配置对象存储</Title>
+            <Title level={4} type="secondary">{t('objectStorage.noStorageConfig')}</Title>
             <Paragraph type="secondary">
-              请先配置至少一个对象存储服务才能使用此功能
+              {t('objectStorage.noStorageConfigDesc')}
             </Paragraph>
             <Button 
               type="primary" 
               icon={<PlusOutlined />}
               onClick={() => navigate('/admin/object-storage?action=add')}
             >
-              立即配置
+              {t('objectStorage.configNow')}
             </Button>
           </div>
         </Card>
@@ -289,39 +291,39 @@ const ObjectStoragePage = () => {
             tab={
               <span>
                 <MonitorOutlined />
-                概览
+                {t('objectStorage.overview')}
               </span>
             }
             key="overview"
           >
             <Row gutter={[16, 16]}>
               <Col xs={24} lg={16}>
-                <Card title="存储服务列表" style={{ marginBottom: '16px' }}>
+                <Card title={t('objectStorage.storageList')} style={{ marginBottom: '16px' }}>
                   {storageConfigs.map(renderConfigCard)}
                 </Card>
               </Col>
               
               <Col xs={24} lg={8}>
                 {statistics && (
-                  <Card title="存储统计" style={{ marginBottom: '16px' }}>
+                  <Card title={t('objectStorage.storageStats')} style={{ marginBottom: '16px' }}>
                     <Row gutter={16}>
                       <Col span={12}>
                         <Statistic
-                          title="存储桶数量"
+                          title={t('objectStorage.bucketCount')}
                           value={statistics.bucket_count || 0}
                           prefix={<DatabaseOutlined />}
                         />
                       </Col>
                       <Col span={12}>
                         <Statistic
-                          title="对象数量"
+                          title={t('objectStorage.objectCount')}
                           value={statistics.object_count || 0}
                           prefix={<ApiOutlined />}
                         />
                       </Col>
                     </Row>
                     <div style={{ marginTop: '16px' }}>
-                      <Text>已用存储空间</Text>
+                      <Text>{t('objectStorage.usedSpace')}</Text>
                       <Progress
                         percent={statistics.usage_percent || 0}
                         format={() => statistics.used_space || '0 B'}
@@ -330,13 +332,13 @@ const ObjectStoragePage = () => {
                     </div>
                     <div style={{ marginTop: '12px' }}>
                       <Text type="secondary" style={{ fontSize: '12px' }}>
-                        总容量: {statistics.total_space || 'N/A'}
+                        {t('objectStorage.totalCapacity')}: {statistics.total_space || 'N/A'}
                       </Text>
                     </div>
                   </Card>
                 )}
 
-                <Card title="快速操作">
+                <Card title={t('objectStorage.quickActions')}>
                   <Space direction="vertical" style={{ width: '100%' }}>
                     {activeConfig && activeConfig.type === 'minio' && (
                       <Button
@@ -344,7 +346,7 @@ const ObjectStoragePage = () => {
                         icon={<LinkOutlined />}
                         onClick={() => handleAccessStorage(activeConfig)}
                       >
-                        访问MinIO控制台
+                        {t('objectStorage.accessMinioConsole')}
                       </Button>
                     )}
                     <Button
@@ -352,14 +354,14 @@ const ObjectStoragePage = () => {
                       icon={<SettingOutlined />}
                       onClick={() => navigate('/admin/object-storage')}
                     >
-                      管理存储配置
+                      {t('objectStorage.manageStorageConfig')}
                     </Button>
                     <Button
                       block
                       icon={<SafetyOutlined />}
-                      onClick={() => message.info('权限管理功能开发中')}
+                      onClick={() => message.info(t('objectStorage.featureInDevelopment'))}
                     >
-                      权限管理
+                      {t('objectStorage.permissionManagement')}
                     </Button>
                   </Space>
                 </Card>
@@ -371,7 +373,7 @@ const ObjectStoragePage = () => {
             tab={
               <span>
                 <DatabaseOutlined />
-                存储服务
+                {t('objectStorage.storageServices')}
               </span>
             }
             key="services"
@@ -400,8 +402,8 @@ const ObjectStoragePage = () => {
 
             <Alert
               style={{ marginTop: '16px' }}
-              message="支持多种对象存储"
-              description="系统支持MinIO、AWS S3、阿里云OSS、腾讯云COS等多种对象存储服务，可以根据需要配置和切换。"
+              message={t('objectStorage.supportMultipleStorage')}
+              description={t('objectStorage.supportMultipleStorageDesc')}
               type="info"
               showIcon
             />

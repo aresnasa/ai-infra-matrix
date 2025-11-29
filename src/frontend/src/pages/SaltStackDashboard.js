@@ -856,9 +856,9 @@ const SaltStackDashboard = () => {
             />
           )}
 
-          {/* 状态概览 - 每个卡片独立加载 */}
-          <Row gutter={16}>
-            <Col span={6}>
+          {/* 状态概览 - 两行布局，每行两个卡片 */}
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12}>
               <Card>
                 <Statistic 
                   title={t('saltstack.masterStatus')} 
@@ -871,7 +871,20 @@ const SaltStackDashboard = () => {
                 />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12}>
+              <Card>
+                <Statistic 
+                  title={t('saltstack.apiStatus')} 
+                  value={status?.api_status || (statusLoading ? t('saltstack.checking') : t('saltstack.unknown'))} 
+                  prefix={<ApiOutlined />}
+                  valueStyle={{ 
+                    color: statusLoading ? '#999' : (status?.api_status === 'running' ? '#3f8600' : '#cf1322') 
+                  }}
+                  loading={statusLoading}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12}>
               <Card>
                 <Statistic 
                   title={t('saltstack.onlineMinions')} 
@@ -882,26 +895,13 @@ const SaltStackDashboard = () => {
                 />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12}>
               <Card>
                 <Statistic 
                   title={t('saltstack.offlineMinions')} 
                   value={status?.minions_down || (statusLoading ? '...' : 0)} 
                   prefix={<ExclamationCircleOutlined />}
                   valueStyle={{ color: statusLoading ? '#999' : '#cf1322' }}
-                  loading={statusLoading}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic 
-                  title={t('saltstack.apiStatus')} 
-                  value={status?.api_status || (statusLoading ? t('saltstack.checking') : t('saltstack.unknown'))} 
-                  prefix={<ApiOutlined />}
-                  valueStyle={{ 
-                    color: statusLoading ? '#999' : (status?.api_status === 'running' ? '#3f8600' : '#cf1322') 
-                  }}
                   loading={statusLoading}
                 />
               </Card>
@@ -1010,68 +1010,117 @@ const SaltStackDashboard = () => {
                   </div>
                 ) : (
                   <>
-                    <List
+                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text type="secondary">{t('saltstack.total', { count: jobs.length })}</Text>
+                      <Button 
+                        icon={<ReloadOutlined />} 
+                        onClick={loadJobs} 
+                        loading={jobsLoading}
+                      >
+                        {t('common.refresh')}
+                      </Button>
+                    </div>
+                    <Table
                       dataSource={jobs}
-                      renderItem={job => (
-                        <List.Item>
-                          <Card 
-                            size="small" 
-                            style={{ width: '100%' }}
-                            title={
-                              <Space>
-                                <Tag color={getJobStatusColor(job.status)}>
-                                  {job.status || t('saltstack.unknown')}
-                                </Tag>
-                                <Text strong>{job.function || job.command}</Text>
-                              </Space>
-                            }
-                            extra={
-                              <Text type="secondary">
-                                {job.timestamp || job.start_time}
-                              </Text>
-                            }
-                          >
-                            <Descriptions size="small" column={2}>
-                              <Descriptions.Item label={t('saltstack.target')}>
-                                {job.target || t('saltstack.allNodes')}
-                              </Descriptions.Item>
-                              <Descriptions.Item label={t('saltstack.user')}>
-                                {job.user || 'root'}
-                              </Descriptions.Item>
-                              <Descriptions.Item label={t('saltstack.duration')}>
-                                {job.duration || t('saltstack.unknown')}
-                              </Descriptions.Item>
-                              <Descriptions.Item label={t('saltstack.returnCode')}>
-                                <Tag color={job.return_code === 0 ? 'green' : 'red'}>
-                                  {job.return_code ?? t('saltstack.unknown')}
-                                </Tag>
-                              </Descriptions.Item>
-                            </Descriptions>
-                            {job.result && (
-                              <div style={{ marginTop: 8 }}>
-                                <Text type="secondary">{t('saltstack.result')}:</Text>
-                                <Paragraph 
-                                  code 
-                                  style={{ 
-                                    marginTop: 4, 
-                                    marginBottom: 0, 
-                                    maxHeight: 100, 
-                                    overflow: 'auto' 
-                                  }}
-                                >
-                                  {typeof job.result === 'string' ? job.result : JSON.stringify(job.result, null, 2)}
-                                </Paragraph>
-                              </div>
-                            )}
-                          </Card>
-                        </List.Item>
-                      )}
+                      rowKey={(record, index) => record.jid || record.id || index}
+                      loading={jobsLoading}
+                      size="small"
+                      pagination={{
+                        showSizeChanger: true,
+                        showTotal: (total) => t('common.total', { count: total }),
+                        defaultPageSize: 10,
+                        pageSizeOptions: ['10', '20', '50'],
+                      }}
+                      columns={[
+                        {
+                          title: t('saltstack.function'),
+                          dataIndex: 'function',
+                          key: 'function',
+                          width: 200,
+                          ellipsis: true,
+                          render: (func, record) => (
+                            <Text strong>{func || record.command || '-'}</Text>
+                          ),
+                        },
+                        {
+                          title: t('common.status'),
+                          dataIndex: 'status',
+                          key: 'status',
+                          width: 100,
+                          render: (status) => (
+                            <Tag color={getJobStatusColor(status)}>
+                              {status || t('saltstack.unknown')}
+                            </Tag>
+                          ),
+                        },
+                        {
+                          title: t('saltstack.target'),
+                          dataIndex: 'target',
+                          key: 'target',
+                          width: 150,
+                          ellipsis: true,
+                          render: (target) => target || t('saltstack.allNodes'),
+                        },
+                        {
+                          title: t('saltstack.user'),
+                          dataIndex: 'user',
+                          key: 'user',
+                          width: 100,
+                          render: (user) => user || 'root',
+                        },
+                        {
+                          title: t('saltstack.duration'),
+                          dataIndex: 'duration',
+                          key: 'duration',
+                          width: 100,
+                          render: (duration) => duration || '-',
+                        },
+                        {
+                          title: t('saltstack.returnCode'),
+                          dataIndex: 'return_code',
+                          key: 'return_code',
+                          width: 100,
+                          render: (code) => (
+                            <Tag color={code === 0 ? 'green' : code !== undefined ? 'red' : 'default'}>
+                              {code ?? '-'}
+                            </Tag>
+                          ),
+                        },
+                        {
+                          title: t('common.time'),
+                          dataIndex: 'timestamp',
+                          key: 'timestamp',
+                          width: 180,
+                          render: (time, record) => (
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {time || record.start_time || '-'}
+                            </Text>
+                          ),
+                        },
+                      ]}
+                      expandable={{
+                        expandedRowRender: (job) => job.result ? (
+                          <div style={{ padding: '8px 0' }}>
+                            <Text type="secondary">{t('saltstack.result')}:</Text>
+                            <Paragraph 
+                              code 
+                              style={{ 
+                                marginTop: 4, 
+                                marginBottom: 0, 
+                                maxHeight: 200, 
+                                overflow: 'auto' 
+                              }}
+                            >
+                              {typeof job.result === 'string' ? job.result : JSON.stringify(job.result, null, 2)}
+                            </Paragraph>
+                          </div>
+                        ) : null,
+                        rowExpandable: (job) => !!job.result,
+                      }}
+                      locale={{
+                        emptyText: t('saltstack.noJobs'),
+                      }}
                     />
-                    {jobs.length === 0 && (
-                      <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                        <Text type="secondary">{t('saltstack.noJobs')}</Text>
-                      </div>
-                    )}
                   </>
                 )}
               </TabPane>

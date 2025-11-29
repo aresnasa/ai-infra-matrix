@@ -105,7 +105,10 @@ func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
 	// 从环境变量读取超时配置，默认30秒（适应跨网络环境）
 	timeoutSec := 30
 	if t := os.Getenv("SALT_API_TIMEOUT"); t != "" {
-		if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+		// 支持带单位的时间值（如 "65s", "1m"）或纯数字（秒）
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
 			timeoutSec = parsed
 		}
 	}
@@ -906,7 +909,10 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 	// 创建带超时控制的 context
 	timeoutSec := 60 // 默认60秒总超时
 	if t := os.Getenv("SALT_API_REQUEST_TIMEOUT"); t != "" {
-		if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+		// 支持带单位的时间值（如 "60s", "2m"）或纯数字（秒）
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
 			timeoutSec = parsed
 		}
 	}

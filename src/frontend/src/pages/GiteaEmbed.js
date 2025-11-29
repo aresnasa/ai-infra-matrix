@@ -23,11 +23,25 @@ const resolveGiteaUrl = () => {
 };
 
 const GiteaEmbed = () => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const iframeRef = useRef(null);
   const base = useMemo(() => resolveGiteaUrl(), []);
-  const [currentUrl, setCurrentUrl] = useState(base);
+  
+  // 添加语言参数到 URL，Gitea 支持 lang 参数
+  const getUrlWithLang = (url) => {
+    // Gitea 语言代码：zh-CN, en-US 等
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}lang=${locale}`;
+  };
+  
+  const [currentUrl, setCurrentUrl] = useState(() => getUrlWithLang(base));
   const [iframeKey, setIframeKey] = useState(0);
+
+  // 监听语言变化，刷新 iframe
+  useEffect(() => {
+    setCurrentUrl(getUrlWithLang(base));
+    setIframeKey(Date.now());
+  }, [locale, base]);
 
   // Detect if configured URL is cross-origin (very likely to be blocked by X-Frame-Options/CSP)
   const isCrossOrigin = useMemo(() => {
@@ -50,7 +64,7 @@ const GiteaEmbed = () => {
           // prefer same-origin path for embedding
           // eslint-disable-next-line no-underscore-dangle
           window.__GITEA_URL__ = '/gitea/';
-          setCurrentUrl('/gitea/');
+          setCurrentUrl(getUrlWithLang('/gitea/'));
           setIframeKey(Date.now());
         }
       } catch (err) {
@@ -59,7 +73,7 @@ const GiteaEmbed = () => {
     };
     trySwitchToLocal();
     return () => { cancelled = true; };
-  }, [isCrossOrigin]);
+  }, [isCrossOrigin, locale]);
 
   const reload = () => {
     // Force reload without leaving the page
@@ -71,7 +85,7 @@ const GiteaEmbed = () => {
   const switchToSameOrigin = () => {
     // eslint-disable-next-line no-underscore-dangle
     window.__GITEA_URL__ = '/gitea/';
-    setCurrentUrl('/gitea/');
+    setCurrentUrl(getUrlWithLang('/gitea/'));
     setIframeKey(Date.now());
   };
 

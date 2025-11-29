@@ -89,6 +89,8 @@ const generateFilters = (data, field) => {
  * @param {function} props.onBatchDelete - 批量删除回调
  * @param {function} props.onUninstall - 卸载 Minion 回调
  * @param {function} props.onRemoteSearch - 远程搜索回调 (可选，用于全文索引)
+ * @param {boolean} props.compact - 是否使用简洁模式 (只显示 ID 和状态)
+ * @param {boolean} props.showActions - 是否显示操作列 (默认 true)
  */
 const MinionsTable = ({
   minions = [],
@@ -98,6 +100,8 @@ const MinionsTable = ({
   onBatchDelete,
   onUninstall,
   onRemoteSearch,
+  compact = false,
+  showActions = true,
 }) => {
   const { t, locale } = useI18n();
   
@@ -271,21 +275,39 @@ const MinionsTable = ({
     return highlightText(text, highlights);
   }, [searchText]);
 
-  // 表格列定义
-  const columns = [
+  // 简洁版 ID 显示：只保留最后一段（去掉长域名前缀）
+  const getSimplifiedId = useCallback((id) => {
+    if (!id) return '-';
+    // 如果 ID 包含点号，只取最后一段（通常是主机名）
+    const parts = id.split('.');
+    return parts.length > 1 ? parts[0] : id;
+  }, []);
+
+  // 基础列定义（ID 和 Status）
+  const baseColumns = [
     {
       title: t('minions.columns.id'),
       dataIndex: 'id',
       key: 'id',
-      width: 180,
-      fixed: 'left',
+      width: compact ? 150 : 180,
+      fixed: compact ? undefined : 'left',
       sorter: (a, b) => (a.id || a.name || '').localeCompare(b.id || b.name || ''),
-      render: (id, record) => (
-        <Space>
-          <Badge status={STATUS_COLORS[record.status?.toLowerCase()] || 'default'} />
-          <Text strong>{renderHighlightedText(id || record.name, record, 'id')}</Text>
-        </Space>
-      ),
+      render: (id, record) => {
+        const displayId = compact ? getSimplifiedId(id || record.name) : (id || record.name);
+        const fullId = id || record.name;
+        return (
+          <Space>
+            <Badge status={STATUS_COLORS[record.status?.toLowerCase()] || 'default'} />
+            {compact ? (
+              <Tooltip title={fullId}>
+                <Text strong>{renderHighlightedText(displayId, record, 'id')}</Text>
+              </Tooltip>
+            ) : (
+              <Text strong>{renderHighlightedText(fullId, record, 'id')}</Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: t('minions.columns.status'),
@@ -309,6 +331,10 @@ const MinionsTable = ({
         );
       },
     },
+  ];
+
+  // 扩展列定义（OS, Arch, Salt Version 等）
+  const extendedColumns = [
     {
       title: t('minions.columns.os'),
       dataIndex: 'os',
@@ -394,98 +420,112 @@ const MinionsTable = ({
         )
       ),
     },
-    {
-      title: t('minions.columns.actions'),
-      key: 'actions',
-      width: 120,
-      fixed: 'right',
-      render: (_, record) => (
-        <Space size="small">
-          <Tooltip title={t('minions.actions.uninstall')}>
+  ];
+
+  // 操作列
+  const actionColumn = {
+    title: t('minions.columns.actions'),
+    key: 'actions',
+    width: 120,
+    fixed: compact ? undefined : 'right',
+    render: (_, record) => (
+      <Space size="small">
+        <Tooltip title={t('minions.actions.uninstall')}>
+          <Button
+            type="text"
+            size="small"
+            icon={<SettingOutlined />}
+            onClick={() => onUninstall?.(record.id || record.name)}
+          />
+        </Tooltip>
+        <Popconfirm
+          title={t('minions.actions.deleteTitle')}
+          description={t('minions.actions.deleteConfirm')}
+          onConfirm={() => handleDelete(record.id || record.name)}
+          okText={t('common.confirm')}
+          cancelText={t('common.cancel')}
+        >
+          <Tooltip title={t('minions.actions.deleteKey')}>
             <Button
               type="text"
               size="small"
-              icon={<SettingOutlined />}
-              onClick={() => onUninstall?.(record.id || record.name)}
+              danger
+              icon={<DeleteOutlined />}
             />
           </Tooltip>
-          <Popconfirm
-            title={t('minions.actions.deleteTitle')}
-            description={t('minions.actions.deleteConfirm')}
-            onConfirm={() => handleDelete(record.id || record.name)}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-          >
-            <Tooltip title={t('minions.actions.deleteKey')}>
-              <Button
-                type="text"
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
+        </Popconfirm>
+      </Space>
+    ),
+  };
+
+  // 根据 compact 模式和 showActions 决定最终列
+  const columns = useMemo(() => {
+    if (compact) {
+      // 简洁模式: 只显示 ID 和 Status
+      return showActions ? [...baseColumns, actionColumn] : baseColumns;
+    }
+    // 完整模式: 显示所有列
+    return showActions ? [...baseColumns, ...extendedColumns, actionColumn] : [...baseColumns, ...extendedColumns];
+  }, [compact, showActions, baseColumns, extendedColumns, actionColumn]);
 
   return (
     <div>
-      {/* 工具栏 */}
-      <Row gutter={16} style={{ marginBottom: 16 }} align="middle">
-        <Col flex="auto">
-          <SearchInput
-            value={searchText}
-            onChange={setSearchText}
-            placeholder={t('minions.search.placeholder')}
-            loading={isSearching}
-            namespace="minions"
-            searchFields={SEARCH_FIELDS}
-            resultCount={searchStats.resultCount}
-            totalCount={searchStats.totalCount}
-            showStats={!!searchText}
-            style={{ maxWidth: 500 }}
-          />
-        </Col>
-        <Col>
-          <Space>
-            {selectedRowKeys.length > 0 && (
-              <Tag color="blue">
-                {t('minions.selected', { count: selectedRowKeys.length })}
-              </Tag>
-            )}
-            <Dropdown overlay={batchMenu} trigger={['click']}>
-              <Button icon={<MoreOutlined />}>
-                {t('minions.batch.title')}
+      {/* 工具栏 - compact 模式下简化显示 */}
+      {!compact && (
+        <Row gutter={16} style={{ marginBottom: 16 }} align="middle">
+          <Col flex="auto">
+            <SearchInput
+              value={searchText}
+              onChange={setSearchText}
+              placeholder={t('minions.search.placeholder')}
+              loading={isSearching}
+              namespace="minions"
+              searchFields={SEARCH_FIELDS}
+              resultCount={searchStats.resultCount}
+              totalCount={searchStats.totalCount}
+              showStats={!!searchText}
+              style={{ maxWidth: 500 }}
+            />
+          </Col>
+          <Col>
+            <Space>
+              {selectedRowKeys.length > 0 && (
+                <Tag color="blue">
+                  {t('minions.selected', { count: selectedRowKeys.length })}
+                </Tag>
+              )}
+              <Dropdown overlay={batchMenu} trigger={['click']}>
+                <Button icon={<MoreOutlined />}>
+                  {t('minions.batch.title')}
+                </Button>
+              </Dropdown>
+              <Button 
+                icon={<ReloadOutlined spin={loading} />}
+                onClick={onRefresh}
+                loading={loading}
+              >
+                {t('common.refresh')}
               </Button>
-            </Dropdown>
-            <Button 
-              icon={<ReloadOutlined spin={loading} />}
-              onClick={onRefresh}
-              loading={loading}
-            >
-              {t('common.refresh')}
-            </Button>
-          </Space>
-        </Col>
-      </Row>
+            </Space>
+          </Col>
+        </Row>
+      )}
 
       {/* 表格 */}
       <Table
         columns={columns}
         dataSource={filteredMinions}
         rowKey={(record) => record.id || record.name}
-        rowSelection={rowSelection}
+        rowSelection={compact ? undefined : rowSelection}
         loading={loading}
         size="small"
-        scroll={{ x: 1200 }}
+        scroll={compact ? undefined : { x: 1200 }}
         pagination={{
           showSizeChanger: true,
           showQuickJumper: true,
           showTotal: (total) => t('common.total', { count: total }),
-          defaultPageSize: 20,
-          pageSizeOptions: ['10', '20', '50', '100'],
+          defaultPageSize: compact ? 10 : 20,
+          pageSizeOptions: compact ? ['5', '10', '20'] : ['10', '20', '50', '100'],
         }}
         locale={{
           emptyText: searchText ? t('minions.search.noResults') : t('minions.noData'),

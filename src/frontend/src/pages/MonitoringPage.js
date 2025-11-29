@@ -9,7 +9,7 @@ import '../App.css';
  * 使用 iframe 嵌入 Nightingale 监控系统
  */
 const MonitoringPage = () => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [iframeKey, setIframeKey] = useState(0);
@@ -17,37 +17,33 @@ const MonitoringPage = () => {
   // Nightingale 服务地址 - 使用环境变量或动态构建
   // 支持完整URL或仅端口号配置，默认使用 nginx 代理路径
   const getNightingaleUrl = () => {
+    let baseUrl = '';
+    
     // 优先使用完整的 URL 配置
     if (process.env.REACT_APP_NIGHTINGALE_URL) {
-      return process.env.REACT_APP_NIGHTINGALE_URL;
-    }
-    
-    // 如果配置了端口，使用直接端口访问
-    if (process.env.REACT_APP_NIGHTINGALE_PORT) {
+      baseUrl = process.env.REACT_APP_NIGHTINGALE_URL;
+    } else if (process.env.REACT_APP_NIGHTINGALE_PORT) {
+      // 如果配置了端口，使用直接端口访问
       const port = process.env.REACT_APP_NIGHTINGALE_PORT;
-      return `${window.location.protocol}//${window.location.hostname}:${port}`;
+      baseUrl = `${window.location.protocol}//${window.location.hostname}:${port}`;
+    } else {
+      // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
+      const currentPort = window.location.port ? `:${window.location.port}` : '';
+      baseUrl = `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
     }
     
-    // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
-    // 注意：由于 Nightingale 的客户端路由限制，根路径会显示 404
-    // 用户需要点击左侧菜单中的功能（如仪表板、告警规则等）来访问具体页面
-    // const currentPort = window.location.port ? `:${window.location.port}` : '';
-    // return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
-
-    // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
-    // 使用独立的 17001 端口代理，解决 Nightingale 客户端路由在子路径下的 404 问题
-    // 同时保留 Nginx 的 AuthRequest 功能
-    // const currentPort = window.location.port ? `:${window.location.port}` : '';
-    // 假设 17001 端口与当前页面在同一主机上
-    // return `${window.location.protocol}//${window.location.hostname}:17001/`;
-
-    // 回退到使用 /nightingale/ 路径，避免端口被防火墙拦截
-    // 注意：这可能会导致 404 问题，但比连接被拒绝要好
-    const currentPort = window.location.port ? `:${window.location.port}` : '';
-    return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
+    // 添加语言参数，Nightingale 支持 lang=en 或 lang=zh
+    const n9eLang = locale === 'en-US' ? 'en' : 'zh';
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}lang=${n9eLang}`;
   };
   
   const nightingaleUrl = getNightingaleUrl();
+
+  // 监听语言变化，刷新 iframe
+  useEffect(() => {
+    setIframeKey(prev => prev + 1);
+  }, [locale]);
 
   useEffect(() => {
     // 组件挂载时的初始化

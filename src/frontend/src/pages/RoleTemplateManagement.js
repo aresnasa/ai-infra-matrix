@@ -37,6 +37,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { roleTemplateAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -54,31 +55,32 @@ const iconMap = {
   safety: <SafetyCertificateOutlined />,
 };
 
-// 颜色选项
-const colorOptions = [
-  { value: 'red', label: '红色', color: '#f5222d' },
-  { value: 'orange', label: '橙色', color: '#fa8c16' },
-  { value: 'gold', label: '金色', color: '#faad14' },
-  { value: 'green', label: '绿色', color: '#52c41a' },
-  { value: 'blue', label: '蓝色', color: '#1890ff' },
-  { value: 'purple', label: '紫色', color: '#722ed1' },
-  { value: 'cyan', label: '青色', color: '#13c2c2' },
-  { value: 'magenta', label: '洋红', color: '#eb2f96' },
-];
-
-// 图标选项
-const iconOptions = [
-  { value: 'crown', label: '皇冠', icon: <CrownOutlined /> },
-  { value: 'tool', label: '工具', icon: <ToolOutlined /> },
-  { value: 'database', label: '数据库', icon: <DatabaseOutlined /> },
-  { value: 'experiment', label: '实验', icon: <ExperimentOutlined /> },
-  { value: 'code', label: '代码', icon: <CodeOutlined /> },
-  { value: 'user', label: '用户', icon: <UserOutlined /> },
-  { value: 'lock', label: '锁', icon: <LockOutlined /> },
-  { value: 'safety', label: '安全', icon: <SafetyCertificateOutlined /> },
-];
-
 const RoleTemplateManagement = () => {
+  const { t } = useI18n();
+
+  // 颜色选项
+  const colorOptions = [
+    { value: 'red', label: t('roleTemplate.red'), color: '#f5222d' },
+    { value: 'orange', label: t('roleTemplate.orange'), color: '#fa8c16' },
+    { value: 'gold', label: t('roleTemplate.gold'), color: '#faad14' },
+    { value: 'green', label: t('roleTemplate.green'), color: '#52c41a' },
+    { value: 'blue', label: t('roleTemplate.blue'), color: '#1890ff' },
+    { value: 'purple', label: t('roleTemplate.purple'), color: '#722ed1' },
+    { value: 'cyan', label: t('roleTemplate.cyan'), color: '#13c2c2' },
+    { value: 'magenta', label: t('roleTemplate.magenta'), color: '#eb2f96' },
+  ];
+
+  // 图标选项
+  const iconOptions = [
+    { value: 'crown', label: t('roleTemplate.crown'), icon: <CrownOutlined /> },
+    { value: 'tool', label: t('roleTemplate.tool'), icon: <ToolOutlined /> },
+    { value: 'database', label: t('roleTemplate.database'), icon: <DatabaseOutlined /> },
+    { value: 'experiment', label: t('roleTemplate.experiment'), icon: <ExperimentOutlined /> },
+    { value: 'code', label: t('roleTemplate.code'), icon: <CodeOutlined /> },
+    { value: 'user', label: t('roleTemplate.user'), icon: <UserOutlined /> },
+    { value: 'lock', label: t('roleTemplate.lock'), icon: <LockOutlined /> },
+    { value: 'safety', label: t('roleTemplate.safety'), icon: <SafetyCertificateOutlined /> },
+  ];
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -95,12 +97,12 @@ const RoleTemplateManagement = () => {
       const response = await roleTemplateAPI.list();
       setTemplates(response.data || []);
     } catch (error) {
-      message.error('获取角色模板列表失败');
+      message.error(t('roleTemplate.fetchFailed'));
       console.error('Error fetching templates:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // 获取资源和操作列表
   const fetchResourcesAndVerbs = useCallback(async () => {
@@ -156,15 +158,15 @@ const RoleTemplateManagement = () => {
 
       if (editingTemplate) {
         await roleTemplateAPI.update(editingTemplate.id, data);
-        message.success('角色模板更新成功');
+        message.success(t('roleTemplate.updateSuccess'));
       } else {
         await roleTemplateAPI.create(data);
-        message.success('角色模板创建成功');
+        message.success(t('roleTemplate.createSuccess'));
       }
       setModalVisible(false);
       fetchTemplates();
     } catch (error) {
-      message.error(editingTemplate ? '更新失败' : '创建失败');
+      message.error(editingTemplate ? t('roleTemplate.updateFailed') : t('roleTemplate.createFailed'));
       console.error('Error saving template:', error);
     }
   };
@@ -173,10 +175,10 @@ const RoleTemplateManagement = () => {
   const handleDelete = async (id) => {
     try {
       await roleTemplateAPI.delete(id);
-      message.success('角色模板删除成功');
+      message.success(t('roleTemplate.deleteSuccess'));
       fetchTemplates();
     } catch (error) {
-      message.error('删除失败: ' + (error.response?.data?.error || error.message));
+      message.error(t('roleTemplate.deleteFailed') + ': ' + (error.response?.data?.error || error.message));
       console.error('Error deleting template:', error);
     }
   };
@@ -186,9 +188,9 @@ const RoleTemplateManagement = () => {
     setSyncLoading(true);
     try {
       await roleTemplateAPI.sync();
-      message.success('角色模板同步成功');
+      message.success(t('roleTemplate.syncSuccess'));
     } catch (error) {
-      message.error('同步失败');
+      message.error(t('roleTemplate.syncFailed'));
       console.error('Error syncing templates:', error);
     } finally {
       setSyncLoading(false);
@@ -198,7 +200,7 @@ const RoleTemplateManagement = () => {
   // 表格列定义
   const columns = [
     {
-      title: '模板名称',
+      title: t('roleTemplate.columns.name'),
       dataIndex: 'name',
       key: 'name',
       width: 150,
@@ -208,25 +210,25 @@ const RoleTemplateManagement = () => {
             {iconMap[record.icon] || <SafetyCertificateOutlined />}
           </span>
           <Text strong>{record.display_name || text}</Text>
-          {record.is_system && <Tag color="volcano">系统</Tag>}
+          {record.is_system && <Tag color="volcano">{t('roleTemplate.system')}</Tag>}
         </Space>
       ),
     },
     {
-      title: '标识',
+      title: t('roleTemplate.columns.identifier'),
       dataIndex: 'name',
       key: 'identifier',
       width: 120,
       render: (text) => <Tag color="default">{text}</Tag>,
     },
     {
-      title: '描述',
+      title: t('roleTemplate.columns.description'),
       dataIndex: 'description',
       key: 'description',
       ellipsis: true,
     },
     {
-      title: '权限数量',
+      title: t('roleTemplate.columns.permissionCount'),
       dataIndex: 'permissions',
       key: 'permissions_count',
       width: 100,
@@ -235,30 +237,30 @@ const RoleTemplateManagement = () => {
       ),
     },
     {
-      title: '优先级',
+      title: t('roleTemplate.columns.priority'),
       dataIndex: 'priority',
       key: 'priority',
       width: 80,
       sorter: (a, b) => (b.priority || 0) - (a.priority || 0),
     },
     {
-      title: '状态',
+      title: t('roleTemplate.columns.status'),
       dataIndex: 'is_active',
       key: 'is_active',
       width: 80,
       render: (isActive) => (
         <Tag color={isActive ? 'success' : 'default'}>
-          {isActive ? '启用' : '禁用'}
+          {isActive ? t('roleTemplate.enabled') : t('roleTemplate.disabled')}
         </Tag>
       ),
     },
     {
-      title: '操作',
+      title: t('roleTemplate.columns.actions'),
       key: 'actions',
       width: 150,
       render: (_, record) => (
         <Space>
-          <Tooltip title="编辑">
+          <Tooltip title={t('common.edit')}>
             <Button
               type="text"
               icon={<EditOutlined />}
@@ -267,12 +269,12 @@ const RoleTemplateManagement = () => {
           </Tooltip>
           {!record.is_system && (
             <Popconfirm
-              title="确定要删除这个角色模板吗？"
+              title={t('roleTemplate.deleteConfirm')}
               onConfirm={() => handleDelete(record.id)}
-              okText="删除"
-              cancelText="取消"
+              okText={t('common.delete')}
+              cancelText={t('common.cancel')}
             >
-              <Tooltip title="删除">
+              <Tooltip title={t('common.delete')}>
                 <Button type="text" danger icon={<DeleteOutlined />} />
               </Tooltip>
             </Popconfirm>
@@ -287,9 +289,9 @@ const RoleTemplateManagement = () => {
     const permissions = record.permissions || [];
     return (
       <div style={{ padding: '8px 0' }}>
-        <Text strong>权限列表：</Text>
+        <Text strong>{t('roleTemplate.permissionList')}：</Text>
         {permissions.length === 0 ? (
-          <Text type="secondary" style={{ marginLeft: 8 }}>无权限配置</Text>
+          <Text type="secondary" style={{ marginLeft: 8 }}>{t('roleTemplate.noPermissions')}</Text>
         ) : (
           <div style={{ marginTop: 8 }}>
             {permissions.map((perm, index) => (
@@ -310,10 +312,10 @@ const RoleTemplateManagement = () => {
         <Col>
           <Title level={2} style={{ margin: 0 }}>
             <SafetyCertificateOutlined style={{ marginRight: 8 }} />
-            角色模板管理
+            {t('roleTemplate.title')}
           </Title>
           <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-            管理系统角色模板，配置不同角色的权限策略。模板可以被分配给用户，控制其访问权限。
+            {t('roleTemplate.description')}
           </Paragraph>
         </Col>
         <Col>
@@ -323,21 +325,21 @@ const RoleTemplateManagement = () => {
               onClick={fetchTemplates}
               loading={loading}
             >
-              刷新
+              {t('common.refresh')}
             </Button>
             <Button
               icon={<SyncOutlined />}
               onClick={handleSync}
               loading={syncLoading}
             >
-              同步到角色
+              {t('roleTemplate.syncToRoles')}
             </Button>
             <Button
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => openModal()}
             >
-              创建模板
+              {t('roleTemplate.createTemplate')}
             </Button>
           </Space>
         </Col>
@@ -355,19 +357,19 @@ const RoleTemplateManagement = () => {
           }}
           pagination={{
             pageSize: 10,
-            showTotal: (total) => `共 ${total} 个模板`,
+            showTotal: (total) => t('roleTemplate.totalTemplates', { count: total }),
           }}
         />
       </Card>
 
       {/* 创建/编辑模态框 */}
       <Modal
-        title={editingTemplate ? '编辑角色模板' : '创建角色模板'}
+        title={editingTemplate ? t('roleTemplate.editTemplate') : t('roleTemplate.createTemplate')}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
         width={800}
         destroyOnClose
       >
@@ -380,15 +382,15 @@ const RoleTemplateManagement = () => {
             <Col span={12}>
               <Form.Item
                 name="name"
-                label="模板标识"
+                label={t('roleTemplate.form.identifier')}
                 rules={[
-                  { required: true, message: '请输入模板标识' },
-                  { pattern: /^[a-z][a-z0-9-]*$/, message: '只能包含小写字母、数字和连字符，且以字母开头' },
+                  { required: true, message: t('roleTemplate.form.identifierRequired') },
+                  { pattern: /^[a-z][a-z0-9-]*$/, message: t('roleTemplate.form.identifierPattern') },
                 ]}
-                extra="用于系统内部标识，如 data-developer"
+                extra={t('roleTemplate.form.identifierHint')}
               >
                 <Input
-                  placeholder="输入模板标识"
+                  placeholder={t('roleTemplate.form.identifierPlaceholder')}
                   disabled={editingTemplate?.is_system}
                 />
               </Form.Item>
@@ -396,27 +398,27 @@ const RoleTemplateManagement = () => {
             <Col span={12}>
               <Form.Item
                 name="display_name"
-                label="显示名称"
+                label={t('roleTemplate.form.displayName')}
               >
-                <Input placeholder="输入显示名称" />
+                <Input placeholder={t('roleTemplate.form.displayNamePlaceholder')} />
               </Form.Item>
             </Col>
           </Row>
 
           <Form.Item
             name="description"
-            label="描述"
+            label={t('roleTemplate.form.description')}
           >
-            <TextArea rows={2} placeholder="输入模板描述" />
+            <TextArea rows={2} placeholder={t('roleTemplate.form.descriptionPlaceholder')} />
           </Form.Item>
 
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item
                 name="color"
-                label="颜色"
+                label={t('roleTemplate.form.color')}
               >
-                <Select placeholder="选择颜色">
+                <Select placeholder={t('roleTemplate.form.colorPlaceholder')}>
                   {colorOptions.map(option => (
                     <Option key={option.value} value={option.value}>
                       <Space>
@@ -437,9 +439,9 @@ const RoleTemplateManagement = () => {
             <Col span={8}>
               <Form.Item
                 name="icon"
-                label="图标"
+                label={t('roleTemplate.form.icon')}
               >
-                <Select placeholder="选择图标">
+                <Select placeholder={t('roleTemplate.form.iconPlaceholder')}>
                   {iconOptions.map(option => (
                     <Option key={option.value} value={option.value}>
                       <Space>
@@ -454,8 +456,8 @@ const RoleTemplateManagement = () => {
             <Col span={8}>
               <Form.Item
                 name="priority"
-                label="优先级"
-                extra="数值越大优先级越高"
+                label={t('roleTemplate.form.priority')}
+                extra={t('roleTemplate.form.priorityHint')}
               >
                 <InputNumber min={0} max={100} style={{ width: '100%' }} />
               </Form.Item>
@@ -464,13 +466,13 @@ const RoleTemplateManagement = () => {
 
           <Form.Item
             name="is_active"
-            label="启用状态"
+            label={t('roleTemplate.form.status')}
             valuePropName="checked"
           >
-            <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+            <Switch checkedChildren={t('roleTemplate.enabled')} unCheckedChildren={t('roleTemplate.disabled')} />
           </Form.Item>
 
-          <Divider>权限配置</Divider>
+          <Divider>{t('roleTemplate.permissionConfig')}</Divider>
 
           <Form.List name="permissions">
             {(fields, { add, remove }) => (
@@ -481,13 +483,13 @@ const RoleTemplateManagement = () => {
                       <Form.Item
                         {...restField}
                         name={[name, 'resource']}
-                        rules={[{ required: true, message: '请选择资源' }]}
+                        rules={[{ required: true, message: t('roleTemplate.form.resourceRequired') }]}
                         style={{ marginBottom: 0 }}
                       >
-                        <Select placeholder="选择资源" showSearch>
+                        <Select placeholder={t('roleTemplate.form.resourcePlaceholder')} showSearch>
                           {resources.map(resource => (
                             <Option key={resource} value={resource}>
-                              {resource === '*' ? '所有资源' : resource}
+                              {resource === '*' ? t('roleTemplate.allResources') : resource}
                             </Option>
                           ))}
                         </Select>
@@ -497,13 +499,13 @@ const RoleTemplateManagement = () => {
                       <Form.Item
                         {...restField}
                         name={[name, 'verb']}
-                        rules={[{ required: true, message: '请选择操作' }]}
+                        rules={[{ required: true, message: t('roleTemplate.form.verbRequired') }]}
                         style={{ marginBottom: 0 }}
                       >
-                        <Select placeholder="选择操作" showSearch>
+                        <Select placeholder={t('roleTemplate.form.verbPlaceholder')} showSearch>
                           {verbs.map(verb => (
                             <Option key={verb} value={verb}>
-                              {verb === '*' ? '所有操作' : verb}
+                              {verb === '*' ? t('roleTemplate.allOperations') : verb}
                             </Option>
                           ))}
                         </Select>
@@ -516,9 +518,9 @@ const RoleTemplateManagement = () => {
                         initialValue="*"
                         style={{ marginBottom: 0 }}
                       >
-                        <Select placeholder="选择作用域">
-                          <Option value="*">所有</Option>
-                          <Option value="own">仅自己</Option>
+                        <Select placeholder={t('roleTemplate.form.scopePlaceholder')}>
+                          <Option value="*">{t('roleTemplate.scopeAll')}</Option>
+                          <Option value="own">{t('roleTemplate.scopeOwn')}</Option>
                         </Select>
                       </Form.Item>
                     </Col>
@@ -539,7 +541,7 @@ const RoleTemplateManagement = () => {
                     block
                     icon={<PlusOutlined />}
                   >
-                    添加权限
+                    {t('roleTemplate.addPermission')}
                   </Button>
                 </Form.Item>
               </>
@@ -548,7 +550,7 @@ const RoleTemplateManagement = () => {
 
           {/* 权限快捷模板 */}
           <div style={{ marginTop: 16 }}>
-            <Text type="secondary">快捷添加：</Text>
+            <Text type="secondary">{t('roleTemplate.quickAdd')}：</Text>
             <Space style={{ marginTop: 8 }}>
               <Button
                 size="small"
@@ -559,7 +561,7 @@ const RoleTemplateManagement = () => {
                   });
                 }}
               >
-                超级管理员
+                {t('roleTemplate.superAdmin')}
               </Button>
               <Button
                 size="small"
@@ -575,7 +577,7 @@ const RoleTemplateManagement = () => {
                   });
                 }}
               >
-                数据开发
+                {t('roleTemplate.dataDeveloper')}
               </Button>
               <Button
                 size="small"
@@ -592,7 +594,7 @@ const RoleTemplateManagement = () => {
                   });
                 }}
               >
-                SRE
+                {t('roleTemplate.sre')}
               </Button>
             </Space>
           </div>
