@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin } from 'antd';
 import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { userAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
 const AdminUsers = () => {
+  const { t } = useI18n();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
@@ -24,11 +26,11 @@ const AdminUsers = () => {
         setUsers(response.data.users);
       } else {
         setUsers([]);
-        message.warning('获取用户数据格式异常');
+        message.warning(t('admin.getUsersFormatError'));
       }
     } catch (error) {
       console.error('获取用户列表失败:', error);
-      message.error('获取用户列表失败');
+      message.error(t('admin.getUsersFailed'));
       setUsers([]);
     } finally {
       setLoading(false);
@@ -42,13 +44,14 @@ const AdminUsers = () => {
       // 使用用户API更新用户信息，包含角色信息
       const userData = { role: newRole };
       await userAPI.updateUser(userId, userData);
-      message.success(`用户权限已更新为${newRole === 'admin' ? '管理员' : '普通用户'}`);
+      const roleText = newRole === 'admin' ? t('admin.admin') : t('admin.regularUser');
+      message.success(t('admin.permissionUpdated').replace('{role}', roleText));
       fetchUsers(); // 重新获取用户列表
       setPermissionModalVisible(false);
       setSelectedUser(null);
     } catch (error) {
       console.error('更新用户权限失败:', error);
-      message.error('更新用户权限失败');
+      message.error(t('admin.updatePermissionFailed'));
     } finally {
       setUpdatingUser(false);
     }
@@ -76,15 +79,15 @@ const AdminUsers = () => {
   // 获取用户角色标签
   const getRoleTag = (role) => {
     if (role === 'admin') {
-      return <Tag color="red" icon={<CrownOutlined />}>管理员</Tag>;
+      return <Tag color="red" icon={<CrownOutlined />}>{t('admin.admin')}</Tag>;
     }
-    return <Tag color="blue" icon={<UserOutlined />}>普通用户</Tag>;
+    return <Tag color="blue" icon={<UserOutlined />}>{t('admin.regularUser')}</Tag>;
   };
 
   // 表格列配置
   const columns = [
     {
-      title: '用户名',
+      title: t('admin.username'),
       dataIndex: 'username',
       key: 'username',
       render: (username, record) => (
@@ -95,34 +98,34 @@ const AdminUsers = () => {
       ),
     },
     {
-      title: '邮箱',
+      title: t('admin.email'),
       dataIndex: 'email',
       key: 'email',
-      render: (email) => email || '未设置',
+      render: (email) => email || t('admin.notSet'),
     },
     {
-      title: '角色',
+      title: t('admin.role'),
       dataIndex: 'role',
       key: 'role',
       render: (role) => getRoleTag(role),
     },
     {
-      title: '状态',
+      title: t('admin.status'),
       dataIndex: 'is_active',
       key: 'is_active',
       render: (isActive) => (
         <Tag color={isActive ? 'green' : 'red'}>
           {isActive ? <CheckCircleOutlined /> : <ExclamationCircleOutlined />}
-          {isActive ? '活跃' : '禁用'}
+          {isActive ? t('admin.active') : t('admin.disabled')}
         </Tag>
       ),
     },
     {
-      title: '创建时间',
+      title: t('admin.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       render: (createdAt) => {
-        if (!createdAt) return '未知';
+        if (!createdAt) return t('admin.unknown');
         try {
           return new Date(createdAt).toLocaleString('zh-CN');
         } catch {
@@ -131,7 +134,7 @@ const AdminUsers = () => {
       },
     },
     {
-      title: '操作',
+      title: t('admin.action'),
       key: 'action',
       render: (_, record) => (
         <Space size="middle">
@@ -141,7 +144,7 @@ const AdminUsers = () => {
             icon={<UserSwitchOutlined />}
             onClick={() => openPermissionModal(record)}
           >
-            修改权限
+            {t('admin.modifyPermission')}
           </Button>
         </Space>
       ),
@@ -160,22 +163,22 @@ const AdminUsers = () => {
           <div>
             <Title level={2} style={{ marginBottom: '8px' }}>
               <UserOutlined style={{ marginRight: '12px' }} />
-              用户权限管理
+              {t('admin.userPermissions')}
             </Title>
             <Text type="secondary">
-              管理系统用户权限，只有管理员用户才能访问此页面
+              {t('admin.userPermissionsDesc')}
             </Text>
           </div>
 
           <Alert
-            message="权限说明"
-            description="管理员用户可以管理系统所有功能，普通用户只能使用基本功能。您可以在这里调整用户的权限级别。"
+            message={t('admin.permissionNote')}
+            description={t('admin.permissionNoteDesc')}
             type="info"
             showIcon
             style={{ marginBottom: '24px' }}
           />
 
-          <Card title="用户列表" size="small">
+          <Card title={t('admin.userList')} size="small">
             <Table
               columns={columns}
               dataSource={users}
@@ -186,10 +189,10 @@ const AdminUsers = () => {
                 pageSize: 10,
                 showSizeChanger: true,
                 showQuickJumper: true,
-                showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
+                showTotal: (total, range) => t('admin.showing').replace('{start}', range[0]).replace('{end}', range[1]).replace('{total}', total),
               }}
               locale={{
-                emptyText: '暂无用户数据',
+                emptyText: t('admin.noUserData'),
               }}
             />
           </Card>
@@ -201,7 +204,7 @@ const AdminUsers = () => {
         title={
           <Space>
             <UserSwitchOutlined />
-            修改用户权限
+            {t('admin.modifyUserPermission')}
           </Space>
         }
         open={permissionModalVisible}
@@ -213,21 +216,21 @@ const AdminUsers = () => {
           <div style={{ padding: '16px 0' }}>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
               <div>
-                <Text strong>用户名：</Text>
+                <Text strong>{t('admin.username')}：</Text>
                 <Text>{selectedUser.username}</Text>
               </div>
               <div>
-                <Text strong>当前角色：</Text>
+                <Text strong>{t('admin.currentRole')}：</Text>
                 {getRoleTag(selectedUser.role)}
               </div>
 
               <div>
                 <Text strong style={{ marginBottom: '8px', display: 'block' }}>
-                  选择新角色：
+                  {t('admin.selectNewRole')}：
                 </Text>
                 <Select
                   style={{ width: '100%' }}
-                  placeholder="请选择用户角色"
+                  placeholder={t('admin.selectUserRole')}
                   onChange={handleRoleChange}
                   loading={updatingUser}
                   disabled={updatingUser}
@@ -235,13 +238,13 @@ const AdminUsers = () => {
                   <Option value="user">
                     <Space>
                       <UserOutlined />
-                      普通用户
+                      {t('admin.regularUser')}
                     </Space>
                   </Option>
                   <Option value="admin">
                     <Space>
                       <CrownOutlined />
-                      管理员
+                      {t('admin.admin')}
                     </Space>
                   </Option>
                 </Select>
@@ -251,7 +254,7 @@ const AdminUsers = () => {
                 <div style={{ textAlign: 'center', padding: '16px' }}>
                   <Spin size="small" />
                   <div style={{ marginTop: '8px' }}>
-                    <Text type="secondary">正在更新用户权限...</Text>
+                    <Text type="secondary">{t('admin.updatingPermission')}</Text>
                   </div>
                 </div>
               )}

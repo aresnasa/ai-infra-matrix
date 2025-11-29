@@ -29,12 +29,14 @@ import {
   SyncOutlined
 } from '@ant-design/icons';
 import { adminAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
 
 const AdminAuthSettings = () => {
+  const { t } = useI18n();
   const [form] = Form.useForm();
   const [ldapForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -64,7 +66,7 @@ const AdminAuthSettings = () => {
       ldapForm.setFieldsValue(ldapResponse.data);
     } catch (error) {
       if (error.response?.status !== 404) {
-        message.error('加载认证设置失败');
+        message.error(t('admin.loadAuthSettingsFailed'));
       }
     } finally {
       setLoading(false);
@@ -88,7 +90,7 @@ const AdminAuthSettings = () => {
           enabled: true
         });
         
-        message.success('LDAP认证配置已保存并启用');
+        message.success(t('admin.ldapConfigSaved'));
       } else {
         // 禁用LDAP，使用本地认证
         if (ldapConfig) {
@@ -98,12 +100,12 @@ const AdminAuthSettings = () => {
           });
         }
         
-        message.success('已切换到本地数据库认证');
+        message.success(t('admin.switchToLocalAuth'));
       }
       
       await loadAuthSettings();
     } catch (error) {
-      message.error('保存认证设置失败');
+      message.error(t('admin.saveAuthSettingsFailed'));
     } finally {
       setSaving(false);
     }
@@ -119,13 +121,13 @@ const AdminAuthSettings = () => {
       
       setTestResult({
         success: true,
-        message: response.data.message || 'LDAP连接测试成功',
+        message: response.data.message || t('admin.testSuccess'),
         details: response.data
       });
     } catch (error) {
       setTestResult({
         success: false,
-        message: error.response?.data?.error || 'LDAP连接测试失败',
+        message: error.response?.data?.error || t('admin.testFailed'),
         details: error.response?.data
       });
     } finally {
@@ -140,7 +142,7 @@ const AdminAuthSettings = () => {
 
   const handleSyncLDAP = async () => {
     if (!ldapConfig || !ldapConfig.enabled) {
-      message.error('请先启用并保存LDAP配置');
+      message.error(t('admin.enableLdapFirst'));
       return;
     }
 
@@ -156,7 +158,7 @@ const AdminAuthSettings = () => {
       setSyncResult({
         syncId: syncId,
         status: 'running',
-        message: '正在同步LDAP用户和用户组...',
+        message: t('admin.preparingSync'),
         progress: 0
       });
 
@@ -174,7 +176,7 @@ const AdminAuthSettings = () => {
             clearInterval(statusInterval);
           }
         } catch (error) {
-          console.error('检查同步状态失败:', error);
+          console.error('Failed to check sync status:', error);
           clearInterval(statusInterval);
         }
       };
@@ -185,12 +187,12 @@ const AdminAuthSettings = () => {
       // 初始状态检查
       setTimeout(checkSyncStatus, 1000);
       
-      message.success('LDAP同步已启动');
+      message.success(t('admin.ldapSyncStarted'));
     } catch (error) {
-      message.error('启动LDAP同步失败: ' + (error.response?.data?.error || error.message));
+      message.error(t('admin.ldapSyncFailed') + ': ' + (error.response?.data?.error || error.message));
       setSyncResult({
         status: 'failed',
-        message: error.response?.data?.error || '同步启动失败',
+        message: error.response?.data?.error || t('admin.ldapSyncFailed'),
         error: error.message
       });
     } finally {
@@ -203,7 +205,7 @@ const AdminAuthSettings = () => {
       const response = await adminAPI.getLDAPSyncHistory(5);
       setSyncHistory(response.data.history || []);
     } catch (error) {
-      console.error('加载同步历史失败:', error);
+      console.error('Failed to load sync history:', error);
     }
   };
 
@@ -219,32 +221,32 @@ const AdminAuthSettings = () => {
     <div style={{ padding: '24px' }}>
       <Title level={2}>
         <SettingOutlined style={{ marginRight: '8px' }} />
-        认证设置
+        {t('admin.authSettings')}
       </Title>
       
       <Alert
-        message="认证模式说明"
-        description="系统支持两种认证模式：本地数据库认证和LDAP认证。切换认证模式后，用户需要使用对应的认证方式登录。"
+        message={t('admin.authModeNote')}
+        description={t('admin.authModeNoteDesc')}
         type="info"
         showIcon
         style={{ marginBottom: '24px' }}
       />
 
-      <Card title="认证模式选择" style={{ marginBottom: '24px' }}>
+      <Card title={t('admin.authModeSelect')} style={{ marginBottom: '24px' }}>
         <Radio.Group value={authMode} onChange={handleAuthModeChange} size="large">
           <Space direction="vertical" size="large">
             <Radio value="local">
               <UserOutlined style={{ marginRight: '8px' }} />
-              本地数据库认证
+              {t('admin.localAuth')}
               <Paragraph type="secondary" style={{ marginLeft: '24px', marginBottom: 0 }}>
-                使用系统内置的用户数据库进行认证，适合小型团队或独立部署。
+                {t('admin.localAuthDesc')}
               </Paragraph>
             </Radio>
             <Radio value="ldap">
               <LockOutlined style={{ marginRight: '8px' }} />
-              LDAP认证
+              {t('admin.ldapAuthMode')}
               <Paragraph type="secondary" style={{ marginLeft: '24px', marginBottom: 0 }}>
-                集成企业LDAP/Active Directory，支持统一身份认证，适合大型组织。
+                {t('admin.ldapAuthModeDesc')}
               </Paragraph>
             </Radio>
           </Space>
@@ -253,7 +255,7 @@ const AdminAuthSettings = () => {
 
       {authMode === 'ldap' && (
         <Card 
-          title="LDAP配置" 
+          title={t('admin.ldapConfiguration')} 
           extra={
             <Space>
               <Button 
@@ -261,7 +263,7 @@ const AdminAuthSettings = () => {
                 onClick={showTestModal}
                 disabled={testing}
               >
-                测试连接
+                {t('admin.testConnection')}
               </Button>
               {ldapConfig?.enabled && (
                 <Button 
@@ -271,7 +273,7 @@ const AdminAuthSettings = () => {
                   loading={syncing}
                   disabled={testing || saving}
                 >
-                  同步用户
+                  {t('admin.syncUsers')}
                 </Button>
               )}
             </Space>
@@ -283,16 +285,16 @@ const AdminAuthSettings = () => {
                 <Form.Item
                   label={
                     <span>
-                      LDAP服务器地址
-                      <Tooltip title="LDAP服务器的地址，格式：ldap://域名:端口 或 ldaps://域名:端口">
+                      {t('admin.ldapServer')}
+                      <Tooltip title={t('admin.ldapServerPlaceholder')}>
                         <InfoCircleOutlined style={{ marginLeft: '4px' }} />
                       </Tooltip>
                     </span>
                   }
                   name="server"
                   rules={[
-                    { required: true, message: '请输入LDAP服务器地址' },
-                    { pattern: /^ldaps?:\/\/.+/, message: '请输入有效的LDAP地址' }
+                    { required: true, message: t('admin.pleaseCompleteLdapForm') },
+                    { pattern: /^ldaps?:\/\/.+/, message: t('admin.pleaseCompleteLdapForm') }
                   ]}
                 >
                   <Input placeholder="ldap://ldap.company.com:389" />
@@ -300,11 +302,11 @@ const AdminAuthSettings = () => {
               </Col>
               <Col span={12}>
                 <Form.Item
-                  label="端口"
+                  label={t('admin.port')}
                   name="port"
                   rules={[
-                    { required: true, message: '请输入端口号' },
-                    { type: 'number', min: 1, max: 65535, message: '端口号范围：1-65535' }
+                    { required: true, message: t('admin.pleaseCompleteLdapForm') },
+                    { type: 'number', min: 1, max: 65535, message: t('admin.pleaseCompleteLdapForm') }
                   ]}
                 >
                   <Input type="number" placeholder="389" />
@@ -317,14 +319,14 @@ const AdminAuthSettings = () => {
                 <Form.Item
                   label={
                     <span>
-                      Base DN
-                      <Tooltip title="LDAP搜索的根目录，例如：dc=company,dc=com">
+                      {t('admin.baseDn')}
+                      <Tooltip title={t('admin.baseDnTooltip')}>
                         <InfoCircleOutlined style={{ marginLeft: '4px' }} />
                       </Tooltip>
                     </span>
                   }
                   name="base_dn"
-                  rules={[{ required: true, message: '请输入Base DN' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="dc=company,dc=com" />
                 </Form.Item>
@@ -333,14 +335,14 @@ const AdminAuthSettings = () => {
                 <Form.Item
                   label={
                     <span>
-                      用户DN模板
-                      <Tooltip title="用户登录时的DN模板，{username}会被替换为实际用户名">
+                      {t('admin.userDnTemplate')}
+                      <Tooltip title={t('admin.userDnTemplateTooltip')}>
                         <InfoCircleOutlined style={{ marginLeft: '4px' }} />
                       </Tooltip>
                     </span>
                   }
                   name="user_dn_template"
-                  rules={[{ required: true, message: '请输入用户DN模板' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="uid={username},ou=users,dc=company,dc=com" />
                 </Form.Item>
@@ -350,20 +352,20 @@ const AdminAuthSettings = () => {
             <Row gutter={[16, 0]}>
               <Col span={12}>
                 <Form.Item
-                  label="管理员DN"
+                  label={t('admin.adminDn')}
                   name="bind_dn"
-                  rules={[{ required: true, message: '请输入管理员DN' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="cn=admin,dc=company,dc=com" />
                 </Form.Item>
               </Col>
               <Col span={12}>
                 <Form.Item
-                  label="管理员密码"
+                  label={t('admin.adminPassword')}
                   name="bind_password"
-                  rules={[{ required: true, message: '请输入管理员密码' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
-                  <Input.Password placeholder="管理员密码" />
+                  <Input.Password placeholder={t('admin.adminPassword')} />
                 </Form.Item>
               </Col>
             </Row>
@@ -371,30 +373,30 @@ const AdminAuthSettings = () => {
             <Row gutter={[16, 0]}>
               <Col span={8}>
                 <Form.Item
-                  label="用户名属性"
+                  label={t('admin.usernameAttr')}
                   name="username_attribute"
                   initialValue="uid"
-                  rules={[{ required: true, message: '请输入用户名属性' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="uid" />
                 </Form.Item>
               </Col>
               <Col span={8}>
                 <Form.Item
-                  label="邮箱属性"
+                  label={t('admin.emailAttr')}
                   name="email_attribute"
                   initialValue="mail"
-                  rules={[{ required: true, message: '请输入邮箱属性' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="mail" />
                 </Form.Item>
               </Col>
               <Col span={8}>
                 <Form.Item
-                  label="显示名称属性"
+                  label={t('admin.displayNameAttr')}
                   name="display_name_attribute"
                   initialValue="cn"
-                  rules={[{ required: true, message: '请输入显示名称属性' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="cn" />
                 </Form.Item>
@@ -406,22 +408,22 @@ const AdminAuthSettings = () => {
                 <Form.Item
                   label={
                     <span>
-                      用户搜索过滤器
-                      <Tooltip title="搜索用户的LDAP过滤器，{username}会被替换为实际用户名">
+                      {t('admin.userSearchFilter')}
+                      <Tooltip title={t('admin.userSearchFilterTooltip')}>
                         <InfoCircleOutlined style={{ marginLeft: '4px' }} />
                       </Tooltip>
                     </span>
                   }
                   name="user_filter"
                   initialValue="(&(objectClass=inetOrgPerson)(uid={username}))"
-                  rules={[{ required: true, message: '请输入用户搜索过滤器' }]}
+                  rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
                 >
                   <Input placeholder="(&(objectClass=inetOrgPerson)(uid={username}))" />
                 </Form.Item>
               </Col>
               <Col span={12}>
                 <Form.Item
-                  label="用户搜索基础DN"
+                  label={t('admin.userSearchBase')}
                   name="user_search_base"
                   initialValue="ou=users"
                 >
@@ -431,22 +433,22 @@ const AdminAuthSettings = () => {
             </Row>
 
             <Form.Item
-              label="连接超时(秒)"
+              label={t('admin.connectionTimeout')}
               name="timeout"
               initialValue={30}
               rules={[
-                { required: true, message: '请输入连接超时时间' },
-                { type: 'number', min: 1, max: 300, message: '超时时间范围：1-300秒' }
+                { required: true, message: t('admin.pleaseCompleteLdapForm') },
+                { type: 'number', min: 1, max: 300, message: t('admin.pleaseCompleteLdapForm') }
               ]}
             >
               <Input type="number" placeholder="30" />
             </Form.Item>
 
-            <Form.Item label="启用TLS" name="enable_tls" valuePropName="checked">
+            <Form.Item label={t('admin.enableTls')} name="enable_tls" valuePropName="checked">
               <Switch />
             </Form.Item>
 
-            <Form.Item label="跳过TLS验证" name="skip_tls_verify" valuePropName="checked">
+            <Form.Item label={t('admin.skipTlsVerify')} name="skip_tls_verify" valuePropName="checked">
               <Switch />
             </Form.Item>
           </Form>
@@ -455,14 +457,14 @@ const AdminAuthSettings = () => {
 
       {authMode === 'ldap' && ldapConfig?.enabled && (
         <Card 
-          title="同步历史" 
+          title={t('admin.syncHistory')} 
           style={{ marginTop: '24px' }}
           extra={
             <Button 
               size="small"
               onClick={loadSyncHistory}
             >
-              刷新
+              {t('admin.refresh')}
             </Button>
           }
         >
@@ -480,9 +482,9 @@ const AdminAuthSettings = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <Text strong>
-                        {sync.status === 'completed' && '✅ 同步完成'}
-                        {sync.status === 'failed' && '❌ 同步失败'}
-                        {sync.status === 'running' && '🔄 同步中'}
+                        {sync.status === 'completed' && `✅ ${t('admin.syncCompleted')}`}
+                        {sync.status === 'failed' && `❌ ${t('admin.syncFailed')}`}
+                        {sync.status === 'running' && `🔄 ${t('admin.syncing')}`}
                       </Text>
                       <div style={{ marginTop: '4px' }}>
                         <Text type="secondary" style={{ fontSize: '12px' }}>
@@ -490,7 +492,7 @@ const AdminAuthSettings = () => {
                         </Text>
                         {sync.duration && (
                           <Text type="secondary" style={{ fontSize: '12px', marginLeft: '12px' }}>
-                            耗时: {Math.round(sync.duration / 1000000000)}秒
+                            {t('admin.duration')}: {Math.round(sync.duration / 1000000000)}{t('admin.seconds')}
                           </Text>
                         )}
                       </div>
@@ -498,9 +500,9 @@ const AdminAuthSettings = () => {
                     {sync.result && (
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '12px' }}>
-                          <Text type="secondary">用户: </Text>
+                          <Text type="secondary">{t('admin.users')}: </Text>
                           <Text>{sync.result.users_created + sync.result.users_updated}</Text>
-                          <Text type="secondary" style={{ marginLeft: '8px' }}>组: </Text>
+                          <Text type="secondary" style={{ marginLeft: '8px' }}>{t('admin.groups')}: </Text>
                           <Text>{sync.result.groups_created + sync.result.groups_updated}</Text>
                         </div>
                       </div>
@@ -516,7 +518,7 @@ const AdminAuthSettings = () => {
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: '24px' }}>
-              <Text type="secondary">暂无同步记录</Text>
+              <Text type="secondary">{t('admin.noSyncRecord')}</Text>
             </div>
           )}
         </Card>
@@ -531,22 +533,22 @@ const AdminAuthSettings = () => {
             loading={saving}
             size="large"
           >
-            保存设置
+            {t('admin.saveSettings')}
           </Button>
           <Button onClick={loadAuthSettings} disabled={saving}>
-            重置
+            {t('admin.reset')}
           </Button>
         </Space>
       </Card>
 
       {/* LDAP测试连接模态框 */}
       <Modal
-        title="LDAP连接测试"
+        title={t('admin.testConnection')}
         open={testModalVisible}
         onCancel={() => setTestModalVisible(false)}
         footer={[
           <Button key="close" onClick={() => setTestModalVisible(false)}>
-            关闭
+            {t('common.close')}
           </Button>,
           <Button 
             key="test" 
@@ -555,17 +557,17 @@ const AdminAuthSettings = () => {
             onClick={handleTestLDAP}
             loading={testing}
           >
-            测试连接
+            {t('admin.testConnection')}
           </Button>
         ]}
       >
         <Space direction="vertical" style={{ width: '100%' }}>
-          <Text>点击"测试连接"按钮验证LDAP服务器配置是否正确。</Text>
+          <Text>{t('admin.testConnectionBtn')}</Text>
           
           {testing && (
             <div style={{ textAlign: 'center', padding: '20px' }}>
               <Spin />
-              <div style={{ marginTop: '8px' }}>正在测试连接...</div>
+              <div style={{ marginTop: '8px' }}>{t('admin.testingConnection')}</div>
             </div>
           )}
           
@@ -576,13 +578,13 @@ const AdminAuthSettings = () => {
               description={testResult.details && (
                 <div>
                   {testResult.details.server_info && (
-                    <div>服务器信息: {testResult.details.server_info}</div>
+                    <div>{t('admin.serverInfo')}: {testResult.details.server_info}</div>
                   )}
                   {testResult.details.bind_result && (
-                    <div>绑定结果: {testResult.details.bind_result}</div>
+                    <div>{t('admin.bindResult')}: {testResult.details.bind_result}</div>
                   )}
                   {testResult.details.search_result && (
-                    <div>搜索结果: {testResult.details.search_result}</div>
+                    <div>{t('admin.searchResult')}: {testResult.details.search_result}</div>
                   )}
                 </div>
               )}
@@ -594,12 +596,12 @@ const AdminAuthSettings = () => {
 
       {/* LDAP同步状态模态框 */}
       <Modal
-        title="LDAP用户同步"
+        title={t('admin.ldapSyncTitle')}
         open={syncModalVisible}
         onCancel={() => setSyncModalVisible(false)}
         footer={[
           <Button key="close" onClick={() => setSyncModalVisible(false)}>
-            关闭
+            {t('common.close')}
           </Button>
         ]}
         width={600}
@@ -615,7 +617,7 @@ const AdminAuthSettings = () => {
                   </div>
                   {syncResult.progress > 0 && (
                     <div style={{ marginTop: '8px' }}>
-                      <Text type="secondary">进度: {syncResult.progress.toFixed(1)}%</Text>
+                      <Text type="secondary">{t('admin.progress')}: {syncResult.progress.toFixed(1)}%</Text>
                     </div>
                   )}
                 </div>
@@ -624,32 +626,32 @@ const AdminAuthSettings = () => {
               {syncResult.status === 'completed' && (
                 <Alert
                   type="success"
-                  message="同步完成"
+                  message={t('admin.syncCompleted')}
                   description={
                     <div>
-                      <div>同步ID: {syncResult.id}</div>
-                      <div>开始时间: {new Date(syncResult.start_time).toLocaleString()}</div>
+                      <div>{t('admin.syncId')}: {syncResult.id}</div>
+                      <div>{t('admin.startTime')}: {new Date(syncResult.start_time).toLocaleString()}</div>
                       {syncResult.end_time && (
-                        <div>结束时间: {new Date(syncResult.end_time).toLocaleString()}</div>
+                        <div>{t('admin.endTime')}: {new Date(syncResult.end_time).toLocaleString()}</div>
                       )}
                       {syncResult.duration && (
-                        <div>耗时: {Math.round(syncResult.duration / 1000000000)}秒</div>
+                        <div>{t('admin.duration')}: {Math.round(syncResult.duration / 1000000000)}{t('admin.seconds')}</div>
                       )}
                       {syncResult.result && (
                         <div style={{ marginTop: '12px' }}>
-                          <Text strong>同步结果:</Text>
+                          <Text strong>{t('admin.syncResult')}:</Text>
                           <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
-                            <li>创建用户: {syncResult.result.users_created}</li>
-                            <li>更新用户: {syncResult.result.users_updated}</li>
-                            <li>创建用户组: {syncResult.result.groups_created}</li>
-                            <li>更新用户组: {syncResult.result.groups_updated}</li>
-                            <li>分配角色: {syncResult.result.roles_assigned}</li>
-                            <li>总用户数: {syncResult.result.total_users}</li>
-                            <li>总用户组数: {syncResult.result.total_groups}</li>
+                            <li>{t('admin.usersCreated')}: {syncResult.result.users_created}</li>
+                            <li>{t('admin.usersUpdated')}: {syncResult.result.users_updated}</li>
+                            <li>{t('admin.groupsCreated')}: {syncResult.result.groups_created}</li>
+                            <li>{t('admin.groupsUpdated')}: {syncResult.result.groups_updated}</li>
+                            <li>{t('admin.rolesAssigned')}: {syncResult.result.roles_assigned}</li>
+                            <li>{t('admin.totalUsersCount')}: {syncResult.result.total_users}</li>
+                            <li>{t('admin.totalGroupsCount')}: {syncResult.result.total_groups}</li>
                           </ul>
                           {syncResult.result.errors && Array.isArray(syncResult.result.errors) && syncResult.result.errors.length > 0 && (
                             <div style={{ marginTop: '12px' }}>
-                              <Text type="danger">错误信息:</Text>
+                              <Text type="danger">{t('admin.errorInfo')}:</Text>
                               <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
                                 {syncResult.result.errors.map((error, index) => (
                                   <li key={index} style={{ color: '#ff4d4f' }}>{error}</li>
@@ -668,16 +670,16 @@ const AdminAuthSettings = () => {
               {syncResult.status === 'failed' && (
                 <Alert
                   type="error"
-                  message="同步失败"
+                  message={t('admin.syncFailed')}
                   description={
                     <div>
-                      <div>同步ID: {syncResult.id}</div>
-                      <div>开始时间: {new Date(syncResult.start_time).toLocaleString()}</div>
+                      <div>{t('admin.syncId')}: {syncResult.id}</div>
+                      <div>{t('admin.startTime')}: {new Date(syncResult.start_time).toLocaleString()}</div>
                       {syncResult.end_time && (
-                        <div>结束时间: {new Date(syncResult.end_time).toLocaleString()}</div>
+                        <div>{t('admin.endTime')}: {new Date(syncResult.end_time).toLocaleString()}</div>
                       )}
                       <div style={{ marginTop: '12px' }}>
-                        <Text type="danger">错误信息: {syncResult.error || syncResult.message}</Text>
+                        <Text type="danger">{t('admin.errorInfo')}: {syncResult.error || syncResult.message}</Text>
                       </div>
                     </div>
                   }

@@ -23,6 +23,7 @@ import {
   BookOutlined
 } from '@ant-design/icons';
 import { adminAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -30,6 +31,7 @@ const { TextArea } = Input;
 const { Panel } = Collapse;
 
 const AdminLDAP = () => {
+  const { t } = useI18n();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -51,7 +53,7 @@ const AdminLDAP = () => {
       setLdapEnabled(response.data.enabled || false);
     } catch (error) {
       if (error.response?.status !== 404) {
-        message.error('加载LDAP配置失败');
+        message.error(t('admin.ldapConfigSaveFailed'));
       }
     } finally {
       setLoading(false);
@@ -62,11 +64,11 @@ const AdminLDAP = () => {
     setSaving(true);
     try {
       await adminAPI.updateLDAPConfig(values);
-      message.success('LDAP配置保存成功');
+      message.success(t('admin.ldapConfigSaveSuccess'));
       await loadLDAPConfig();
       setTestResult(null); // 清除之前的测试结果
     } catch (error) {
-      message.error(error.response?.data?.message || '保存LDAP配置失败');
+      message.error(error.response?.data?.message || t('admin.ldapConfigSaveFailed'));
     } finally {
       setSaving(false);
     }
@@ -76,26 +78,26 @@ const AdminLDAP = () => {
     try {
       const values = await form.validateFields();
       if (!values.enabled) {
-        message.warning('请先启用LDAP认证');
+        message.warning(t('admin.enableLdapAuth'));
         return;
       }
       setTesting(true);
       const response = await adminAPI.testLDAPConnection(values);
       setTestResult({
         success: true,
-        message: response.data.message || '连接测试成功'
+        message: response.data.message || t('admin.ldapTestSuccess')
       });
-      message.success('LDAP连接测试成功');
+      message.success(t('admin.ldapTestSuccess'));
     } catch (error) {
       if (error.errorFields) {
-        message.error('请先完善表单信息');
+        message.error(t('admin.pleaseCompleteLdapForm'));
         return;
       }
       setTestResult({
         success: false,
-        message: error.response?.data?.message || '连接测试失败'
+        message: error.response?.data?.message || t('admin.ldapTestFailed')
       });
-      message.error('LDAP连接测试失败');
+      message.error(t('admin.ldapTestFailed'));
     } finally {
       setTesting(false);
     }
@@ -139,7 +141,7 @@ const AdminLDAP = () => {
     
     form.setFieldsValue(testConfig);
     setLdapEnabled(true);
-    message.success('已填充测试环境配置');
+    message.success(t('admin.testConfigFilled'));
   };
 
   if (loading) {
@@ -156,10 +158,10 @@ const AdminLDAP = () => {
         <div style={{ marginBottom: '24px' }}>
           <Title level={2}>
             <SafetyOutlined style={{ marginRight: '8px', color: '#1890ff' }} />
-            LDAP配置管理
+            {t('admin.ldapConfigManagement')}
           </Title>
           <Text type="secondary">
-            配置LDAP服务器连接信息，启用企业级用户认证
+            {t('admin.ldapConfigManagementDesc')}
           </Text>
         </div>
 
@@ -177,9 +179,9 @@ const AdminLDAP = () => {
             header={
               <span>
                 <BookOutlined style={{ marginRight: '8px', color: '#28a745' }} />
-                <strong>配置样例参考</strong>
+                <strong>{t('admin.configExampleRef')}</strong>
                 <Text type="secondary" style={{ marginLeft: '8px' }}>
-                  点击展开查看完整的LDAP配置示例
+                  {t('admin.clickToViewExample')}
                 </Text>
               </span>
             } 
@@ -192,7 +194,7 @@ const AdminLDAP = () => {
               border: '1px dashed #d9d9d9'
             }}>
               <Title level={4} style={{ marginBottom: '16px', color: '#52c41a' }}>
-                🔧 测试环境配置样例
+                🔧 {t('admin.testEnvConfig')}
               </Title>
               <div style={{ 
                 fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
@@ -203,24 +205,24 @@ const AdminLDAP = () => {
                 border: '1px solid #e9ecef',
                 marginBottom: '16px'
               }}>
-                <div style={{ color: '#6a737d', marginBottom: '8px' }}>/* 基本连接配置 */</div>
-                <div><strong>服务器地址:</strong> openldap</div>
-                <div><strong>端口:</strong> 389</div>
-                <div><strong>使用SSL:</strong> false</div>
-                <div><strong>StartTLS:</strong> false</div>
-                <div style={{ marginTop: '12px', color: '#6a737d', marginBottom: '8px' }}>/* 认证信息 */</div>
-                <div><strong>绑定DN:</strong> cn=admin,dc=testcompany,dc=com</div>
-                <div><strong>绑定密码:</strong> admin123</div>
-                <div><strong>基准DN:</strong> dc=testcompany,dc=com</div>
+                <div style={{ color: '#6a737d', marginBottom: '8px' }}>/* {t('admin.basicConnConfig')} */</div>
+                <div><strong>{t('admin.serverAddress')}:</strong> openldap</div>
+                <div><strong>{t('admin.port')}:</strong> 389</div>
+                <div><strong>{t('admin.useSSL')}:</strong> false</div>
+                <div><strong>{t('admin.startTLS')}:</strong> false</div>
+                <div style={{ marginTop: '12px', color: '#6a737d', marginBottom: '8px' }}>/* {t('admin.authInfo')} */</div>
+                <div><strong>{t('admin.bindDn')}:</strong> cn=admin,dc=testcompany,dc=com</div>
+                <div><strong>{t('admin.bindPassword')}:</strong> admin123</div>
+                <div><strong>{t('admin.baseSearchDn')}:</strong> dc=testcompany,dc=com</div>
               </div>
               
               <Alert
-                message="配置提示"
+                message={t('admin.configTips')}
                 description={
                   <div>
-                    <p>✅ <strong>测试环境</strong>: 使用上述配置可直接连接当前Docker环境中的LDAP服务</p>
-                    <p>⚙️ <strong>生产环境</strong>: 请根据您的实际LDAP服务器信息进行调整</p>
-                    <p>🔐 <strong>安全建议</strong>: 生产环境建议启用SSL/TLS加密连接</p>
+                    <p>✅ <strong>{t('admin.testEnvTip')}</strong></p>
+                    <p>⚙️ <strong>{t('admin.prodEnvTip')}</strong></p>
+                    <p>🔐 <strong>{t('admin.securityTip')}</strong></p>
                   </div>
                 }
                 type="info"
@@ -234,10 +236,10 @@ const AdminLDAP = () => {
                   onClick={fillTestConfig}
                   style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
                 >
-                  🚀 快速填充测试配置
+                  🚀 {t('admin.quickFillTestConfig')}
                 </Button>
                 <Text type="secondary" style={{ marginLeft: '8px', fontSize: '12px' }}>
-                  一键填充上述测试环境配置到表单
+                  {t('admin.oneClickFill')}
                 </Text>
               </div>
             </div>
@@ -246,7 +248,7 @@ const AdminLDAP = () => {
 
         {testResult && (
           <Alert
-            message={testResult.success ? '连接测试成功' : '连接测试失败'}
+            message={testResult.success ? t('admin.ldapTestSuccess') : t('admin.ldapTestFailed')}
             description={testResult.message}
             type={testResult.success ? 'success' : 'error'}
             showIcon
@@ -266,16 +268,16 @@ const AdminLDAP = () => {
             timeout: 30
           }}
         >
-          <Card size="small" title="基本配置" style={{ marginBottom: '16px' }}>
+          <Card size="small" title={t('admin.basicConfig')} style={{ marginBottom: '16px' }}>
             <Form.Item
               name="enabled"
-              label="启用LDAP认证"
+              label={t('admin.enableLdapAuthLabel')}
               valuePropName="checked"
-              extra={ldapEnabled ? "LDAP认证已启用，用户可通过企业账户登录" : "LDAP认证已禁用，仅本地账户可登录"}
+              extra={ldapEnabled ? t('admin.ldapEnabled') : t('admin.ldapDisabled')}
             >
               <Switch 
-                checkedChildren="启用" 
-                unCheckedChildren="禁用"
+                checkedChildren={t('admin.enabled')} 
+                unCheckedChildren={t('admin.disabledLabel')}
                 onChange={handleLdapToggle}
               />
             </Form.Item>
@@ -284,8 +286,8 @@ const AdminLDAP = () => {
               name="server"
               label={
                 <span>
-                  LDAP服务器地址
-                  <Tooltip title="LDAP服务器的IP地址或域名">
+                  {t('admin.ldapServer')}
+                  <Tooltip title={t('admin.ldapServerPlaceholder')}>
                     <InfoCircleOutlined style={{ marginLeft: 4 }} />
                   </Tooltip>
                 </span>
@@ -293,38 +295,38 @@ const AdminLDAP = () => {
               rules={[
                 { 
                   required: ldapEnabled, 
-                  message: '请输入LDAP服务器地址' 
+                  message: t('admin.pleaseCompleteLdapForm') 
                 }
               ]}
             >
               <Input 
-                placeholder="测试环境: openldap | 生产环境: ldap.company.com" 
+                placeholder={t('admin.serverAddressPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
 
             <Form.Item
               name="port"
-              label="端口"
+              label={t('admin.port')}
               rules={[
-                { required: ldapEnabled, message: '请输入端口号' },
-                { type: 'number', min: 1, max: 65535, message: '端口号范围1-65535' }
+                { required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') },
+                { type: 'number', min: 1, max: 65535, message: t('admin.pleaseCompleteLdapForm') }
               ]}
             >
               <Input 
                 type="number" 
-                placeholder="389 (LDAP) 或 636 (LDAPS)" 
+                placeholder={t('admin.portPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
 
             <Form.Item
               name="security"
-              label="安全连接"
-              rules={[{ required: ldapEnabled, message: '请选择安全连接类型' }]}
+              label={t('admin.securityConnection')}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Select disabled={!ldapEnabled}>
-                <Option value="none">无加密</Option>
+                <Option value="none">{t('admin.noEncryption')}</Option>
                 <Option value="ssl">SSL/TLS</Option>
                 <Option value="starttls">StartTLS</Option>
               </Select>
@@ -332,10 +334,10 @@ const AdminLDAP = () => {
 
             <Form.Item
               name="timeout"
-              label="连接超时(秒)"
+              label={t('admin.connectionTimeoutSeconds')}
               rules={[
-                { required: ldapEnabled, message: '请输入超时时间' },
-                { type: 'number', min: 1, max: 300, message: '超时时间范围1-300秒' }
+                { required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') },
+                { type: 'number', min: 1, max: 300, message: t('admin.pleaseCompleteLdapForm') }
               ]}
             >
               <Input 
@@ -347,7 +349,7 @@ const AdminLDAP = () => {
 
           <Card 
             size="small" 
-            title="认证配置" 
+            title={t('admin.authConfig')} 
             style={{ 
               marginBottom: '16px',
               opacity: ldapEnabled ? 1 : 0.6
@@ -357,27 +359,27 @@ const AdminLDAP = () => {
               name="bind_dn"
               label={
                 <span>
-                  绑定DN
-                  <Tooltip title="用于连接LDAP的管理员账户DN">
+                  {t('admin.bindDn')}
+                  <Tooltip title={t('admin.bindDnTooltip')}>
                     <InfoCircleOutlined style={{ marginLeft: 4 }} />
                   </Tooltip>
                 </span>
               }
-              rules={[{ required: ldapEnabled, message: '请输入绑定DN' }]}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Input 
-                placeholder="测试环境: cn=admin,dc=testcompany,dc=com" 
+                placeholder={t('admin.bindDnPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
 
             <Form.Item
               name="bind_password"
-              label="绑定密码"
-              rules={[{ required: ldapEnabled, message: '请输入绑定密码' }]}
+              label={t('admin.bindPassword')}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Input.Password 
-                placeholder="测试环境: admin123" 
+                placeholder={t('admin.bindPasswordPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
@@ -386,16 +388,16 @@ const AdminLDAP = () => {
               name="base_dn"
               label={
                 <span>
-                  搜索基准DN
-                  <Tooltip title="用户搜索的起始位置">
+                  {t('admin.baseSearchDn')}
+                  <Tooltip title={t('admin.searchBaseDnTooltip')}>
                     <InfoCircleOutlined style={{ marginLeft: 4 }} />
                   </Tooltip>
                 </span>
               }
-              rules={[{ required: ldapEnabled, message: '请输入搜索基准DN' }]}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Input 
-                placeholder="测试环境: dc=testcompany,dc=com | 生产环境: ou=users,dc=company,dc=com" 
+                placeholder={t('admin.searchBaseDnPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
@@ -404,16 +406,16 @@ const AdminLDAP = () => {
               name="user_filter"
               label={
                 <span>
-                  用户搜索过滤器
-                  <Tooltip title="用于搜索用户的LDAP过滤器，{username}会被实际用户名替换">
+                  {t('admin.userSearchFilterLabel')}
+                  <Tooltip title={t('admin.userSearchFilterTooltipLabel')}>
                     <InfoCircleOutlined style={{ marginLeft: 4 }} />
                   </Tooltip>
                 </span>
               }
-              rules={[{ required: ldapEnabled, message: '请输入用户搜索过滤器' }]}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Input 
-                placeholder="例如: (uid={username}) 或 (sAMAccountName={username})" 
+                placeholder={t('admin.userSearchFilterPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
@@ -421,7 +423,7 @@ const AdminLDAP = () => {
 
           <Card 
             size="small" 
-            title="用户属性映射" 
+            title={t('admin.userAttrMapping')} 
             style={{ 
               marginBottom: '16px',
               opacity: ldapEnabled ? 1 : 0.6
@@ -429,32 +431,32 @@ const AdminLDAP = () => {
           >
             <Form.Item
               name="username_attr"
-              label="用户名属性"
-              rules={[{ required: ldapEnabled, message: '请输入用户名属性' }]}
+              label={t('admin.usernameAttr')}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Input 
-                placeholder="例如: uid 或 sAMAccountName" 
+                placeholder={t('admin.usernameAttrPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
 
             <Form.Item
               name="email_attr"
-              label="邮箱属性"
-              rules={[{ required: ldapEnabled, message: '请输入邮箱属性' }]}
+              label={t('admin.emailAttr')}
+              rules={[{ required: ldapEnabled, message: t('admin.pleaseCompleteLdapForm') }]}
             >
               <Input 
-                placeholder="例如: mail" 
+                placeholder={t('admin.emailAttrPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
 
             <Form.Item
               name="display_name_attr"
-              label="显示名称属性"
+              label={t('admin.displayNameAttr')}
             >
               <Input 
-                placeholder="例如: displayName 或 cn" 
+                placeholder={t('admin.displayNameAttrPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
@@ -462,7 +464,7 @@ const AdminLDAP = () => {
 
           <Card 
             size="small" 
-            title="管理员权限" 
+            title={t('admin.adminPermissions')} 
             style={{ 
               marginBottom: '24px',
               opacity: ldapEnabled ? 1 : 0.6
@@ -472,25 +474,25 @@ const AdminLDAP = () => {
               name="admin_group_dn"
               label={
                 <span>
-                  管理员组DN
-                  <Tooltip title="具有管理员权限的LDAP组，留空则所有用户都是普通用户">
+                  {t('admin.adminGroupDn')}
+                  <Tooltip title={t('admin.adminGroupDnTooltip')}>
                     <InfoCircleOutlined style={{ marginLeft: 4 }} />
                   </Tooltip>
                 </span>
               }
             >
               <Input 
-                placeholder="例如: cn=admins,ou=groups,dc=company,dc=com" 
+                placeholder={t('admin.adminGroupDnPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
 
             <Form.Item
               name="group_member_attr"
-              label="组成员属性"
+              label={t('admin.groupMemberAttr')}
             >
               <Input 
-                placeholder="例如: member 或 memberUid" 
+                placeholder={t('admin.groupMemberAttrPlaceholder')} 
                 disabled={!ldapEnabled}
               />
             </Form.Item>
@@ -505,7 +507,7 @@ const AdminLDAP = () => {
               icon={<SaveOutlined />}
               loading={saving}
             >
-              保存配置
+              {t('admin.saveConfig')}
             </Button>
             
             <Button
@@ -514,11 +516,11 @@ const AdminLDAP = () => {
               onClick={handleTest}
               disabled={!ldapEnabled}
             >
-              测试连接
+              {t('admin.testConnectionBtn')}
             </Button>
             
             <Button onClick={handleReset}>
-              重置
+              {t('admin.reset')}
             </Button>
           </Space>
         </Form>

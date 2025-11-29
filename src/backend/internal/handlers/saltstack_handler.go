@@ -102,10 +102,48 @@ type saltAPIClient struct {
 
 // newSaltAPIClient 创建Salt API客户端
 func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
+	// 从环境变量读取超时配置，默认30秒（适应跨网络环境）
+	timeoutSec := 30
+	if t := os.Getenv("SALT_API_TIMEOUT"); t != "" {
+		if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+
 	return &saltAPIClient{
 		baseURL: h.getSaltAPIURL(),
 		client: &http.Client{
-			Timeout: 10 * time.Second, // 设置较短超时以避免 SSH minions 连接超时阻塞整个请求
+			Timeout: time.Duration(timeoutSec) * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second, // 连接超时
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
+		},
+	}
+}
+
+// newSaltAPIClientWithTimeout 创建带自定义超时的Salt API客户端
+func (h *SaltStackHandler) newSaltAPIClientWithTimeout(timeout time.Duration) *saltAPIClient {
+	return &saltAPIClient{
+		baseURL: h.getSaltAPIURL(),
+		client: &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
 		},
 	}
 }
@@ -322,34 +360,94 @@ func (c *saltAPIClient) makeLocal(fun string, arg []interface{}, kwarg map[strin
 
 // GetSaltStackStatus 获取SaltStack状态
 func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+	cacheKey := "saltstack:status"
+
 	// 尝试从缓存获取
-	if cached, err := h.cache.Get(context.Background(), "saltstack:status").Result(); err == nil {
+	if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
 		var status SaltStackStatus
 		if err := json.Unmarshal([]byte(cached), &status); err == nil {
-			c.JSON(http.StatusOK, gin.H{"data": status})
+			c.JSON(http.StatusOK, gin.H{"data": status, "cached": true})
 			return
 		}
 	}
 
+	// 创建带超时控制的 context
+	timeoutSec := 45 // 状态检查使用较短超时
+	if t := os.Getenv("SALT_API_STATUS_TIMEOUT"); t != "" {
+		if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
 	// 创建API客户端
 	client := h.newSaltAPIClient()
 
-	// 连接Salt API（要求真实集群，失败则返回错误，不再返回演示数据）
-	if err := client.authenticate(); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
-		return
+	// 使用 goroutine 执行，以便响应 context 取消
+	type result struct {
+		status SaltStackStatus
+		err    error
 	}
+	resultChan := make(chan result, 1)
 
-	// 获取实际状态
-	status, err := h.getRealSaltStackStatus(client)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Salt状态失败: %v", err)})
+	go func() {
+		// 连接Salt API
+		if err := client.authenticate(); err != nil {
+			resultChan <- result{err: fmt.Errorf("salt API authentication failed: %v", err)}
+			return
+		}
+
+		// 获取实际状态
+		status, err := h.getRealSaltStackStatus(client)
+		if err != nil {
+			resultChan <- result{err: fmt.Errorf("failed to get salt status: %v", err)}
+			return
+		}
+		resultChan <- result{status: status}
+	}()
+
+	// 等待结果或超时
+	select {
+	case <-ctx.Done():
+		// 超时，尝试返回旧缓存
+		if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+			var status SaltStackStatus
+			if err := json.Unmarshal([]byte(cached), &status); err == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"data":    status,
+					"cached":  true,
+					"warning": "请求超时，返回缓存数据",
+				})
+				return
+			}
+		}
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "获取 Salt 状态超时，请检查网络连接"})
 		return
-	}
 
-	// 缓存状态（1分钟）
-	h.cacheStatus(&status, 60)
-	c.JSON(http.StatusOK, gin.H{"data": status})
+	case res := <-resultChan:
+		if res.err != nil {
+			// 尝试返回旧缓存
+			if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+				var status SaltStackStatus
+				if err := json.Unmarshal([]byte(cached), &status); err == nil {
+					c.JSON(http.StatusOK, gin.H{
+						"data":    status,
+						"cached":  true,
+						"warning": res.err.Error(),
+					})
+					return
+				}
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": res.err.Error()})
+			return
+		}
+
+		// 缓存状态（2分钟）
+		h.cacheStatus(&res.status, 120)
+		c.JSON(http.StatusOK, gin.H{"data": res.status})
+	}
 }
 
 // SaltDebugInfo 用于输出调试信息，便于快速定位集成问题
@@ -793,37 +891,97 @@ func (h *SaltStackHandler) getDemoSaltStackStatus() SaltStackStatus {
 
 // GetSaltMinions 获取Salt Minion列表
 func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
+	ctx := c.Request.Context()
+	cacheKey := "saltstack:minions"
+
 	// 尝试从缓存获取
-	if cached, err := h.cache.Get(context.Background(), "saltstack:minions").Result(); err == nil {
+	if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
 		var minions []SaltMinion
 		if err := json.Unmarshal([]byte(cached), &minions); err == nil {
-			c.JSON(http.StatusOK, gin.H{"data": minions})
+			c.JSON(http.StatusOK, gin.H{"data": minions, "cached": true})
 			return
 		}
 	}
 
+	// 创建带超时控制的 context
+	timeoutSec := 60 // 默认60秒总超时
+	if t := os.Getenv("SALT_API_REQUEST_TIMEOUT"); t != "" {
+		if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
 	// 创建API客户端
 	client := h.newSaltAPIClient()
 
-	// 认证
-	if err := client.authenticate(); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+	// 使用 goroutine 执行认证和获取数据，以便可以响应 context 取消
+	type result struct {
+		minions []SaltMinion
+		err     error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		// 认证
+		if err := client.authenticate(); err != nil {
+			resultChan <- result{err: fmt.Errorf("salt API authentication failed: %v", err)}
+			return
+		}
+
+		// 获取真实数据
+		minions, err := h.getRealMinions(client)
+		if err != nil {
+			resultChan <- result{err: fmt.Errorf("failed to get minions: %v", err)}
+			return
+		}
+		resultChan <- result{minions: minions}
+	}()
+
+	// 等待结果或超时
+	select {
+	case <-ctx.Done():
+		// 超时，尝试返回旧缓存
+		if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+			var minions []SaltMinion
+			if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"data":    minions,
+					"cached":  true,
+					"warning": "请求超时，返回缓存数据",
+				})
+				return
+			}
+		}
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "获取 Minions 超时，请检查网络连接"})
 		return
-	}
 
-	// 获取真实数据
-	minions, err := h.getRealMinions(client)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Minions失败: %v", err)})
-		return
-	}
+	case res := <-resultChan:
+		if res.err != nil {
+			// 尝试返回旧缓存
+			if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+				var minions []SaltMinion
+				if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+					c.JSON(http.StatusOK, gin.H{
+						"data":    minions,
+						"cached":  true,
+						"warning": res.err.Error(),
+					})
+					return
+				}
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": res.err.Error()})
+			return
+		}
 
-	// 缓存数据
-	if data, err := json.Marshal(minions); err == nil {
-		h.cache.Set(context.Background(), "saltstack:minions", string(data), 120*time.Second)
-	}
+		// 缓存数据（缓存时间延长到 5 分钟）
+		if data, err := json.Marshal(res.minions); err == nil {
+			h.cache.Set(context.Background(), cacheKey, string(data), 300*time.Second)
+		}
 
-	c.JSON(http.StatusOK, gin.H{"data": minions, "demo": false})
+		c.JSON(http.StatusOK, gin.H{"data": res.minions, "demo": false})
+	}
 }
 
 // getDemoMinions 获取演示用的Minion数据
@@ -1090,30 +1248,69 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 	}
 	up, down := h.parseManageStatus(statusResp)
 
-	// 将 up 的节点获取详细 grains
+	// 并发获取 up 节点的 grains 信息
 	var minions []SaltMinion
-	for _, id := range up {
-		// GET /minions/{id}
-		r, err := client.makeRequest("/minions/"+id, "GET", nil)
-		if err != nil {
-			// 如果失败，至少添加一个基本项
-			minions = append(minions, SaltMinion{ID: id, Status: "up"})
-			continue
+
+	if len(up) > 0 {
+		// 使用 channel 收集结果
+		type minionResult struct {
+			minion SaltMinion
+			err    error
 		}
-		grains := h.parseMinionGrains(r, id)
-		m := SaltMinion{
-			ID:           id,
-			Status:       "up",
-			OS:           fmt.Sprintf("%v", grains["os"]),
-			OSVersion:    fmt.Sprintf("%v", grains["osrelease"]),
-			Architecture: fmt.Sprintf("%v", grains["osarch"]),
-			Arch:         fmt.Sprintf("%v", grains["osarch"]),
-			SaltVersion:  fmt.Sprintf("%v", grains["saltversion"]),
-			LastSeen:     time.Now(),
-			Grains:       grains,
+		resultChan := make(chan minionResult, len(up))
+
+		// 限制并发数，避免过多请求
+		maxConcurrent := 5
+		if envMax := os.Getenv("SALT_API_MAX_CONCURRENT"); envMax != "" {
+			if parsed, err := strconv.Atoi(envMax); err == nil && parsed > 0 {
+				maxConcurrent = parsed
+			}
 		}
-		minions = append(minions, m)
+		semaphore := make(chan struct{}, maxConcurrent)
+
+		// 为并发请求创建带短超时的客户端
+		concurrentClient := h.newSaltAPIClientWithTimeout(15 * time.Second)
+		concurrentClient.token = client.token // 复用已认证的 token
+
+		for _, id := range up {
+			go func(minionID string) {
+				semaphore <- struct{}{}        // 获取信号量
+				defer func() { <-semaphore }() // 释放信号量
+
+				// 尝试获取 grains
+				r, err := concurrentClient.makeRequest("/minions/"+minionID, "GET", nil)
+				if err != nil {
+					// 如果获取失败，返回基本信息
+					resultChan <- minionResult{
+						minion: SaltMinion{ID: minionID, Status: "up", LastSeen: time.Now()},
+						err:    nil, // 不视为致命错误
+					}
+					return
+				}
+
+				grains := h.parseMinionGrains(r, minionID)
+				m := SaltMinion{
+					ID:           minionID,
+					Status:       "up",
+					OS:           fmt.Sprintf("%v", grains["os"]),
+					OSVersion:    fmt.Sprintf("%v", grains["osrelease"]),
+					Architecture: fmt.Sprintf("%v", grains["osarch"]),
+					Arch:         fmt.Sprintf("%v", grains["osarch"]),
+					SaltVersion:  fmt.Sprintf("%v", grains["saltversion"]),
+					LastSeen:     time.Now(),
+					Grains:       grains,
+				}
+				resultChan <- minionResult{minion: m, err: nil}
+			}(id)
+		}
+
+		// 收集所有结果
+		for i := 0; i < len(up); i++ {
+			result := <-resultChan
+			minions = append(minions, result.minion)
+		}
 	}
+
 	// 将 down 的节点也加入列表以便页面展示
 	for _, id := range down {
 		minions = append(minions, SaltMinion{ID: id, Status: "down"})

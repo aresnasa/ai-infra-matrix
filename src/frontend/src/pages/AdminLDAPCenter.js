@@ -46,6 +46,7 @@ import {
   ExclamationCircleOutlined
 } from '@ant-design/icons';
 import { adminAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -58,6 +59,7 @@ const { TabPane } = Tabs;
  * 采用只读LDAP策略，保证数据安全
  */
 const AdminLDAPCenter = () => {
+  const { t } = useI18n();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -97,7 +99,7 @@ const AdminLDAPCenter = () => {
       setLdapEnabled(ldapConfig.enabled || ldapConfig.is_enabled || false);
     } catch (error) {
       if (error.response?.status !== 404) {
-        message.error('加载LDAP配置失败');
+        message.error(t('admin.ldapConfigSaveFailed'));
       }
     } finally {
       setLoading(false);
@@ -115,7 +117,7 @@ const AdminLDAPCenter = () => {
       setUsers(localResponse.data.users || localResponse.data || []);
       setLdapUsers(ldapResponse.data.users || []);
     } catch (error) {
-      message.error('加载用户列表失败');
+      message.error(t('admin.loadUsersFailed'));
     }
   };
 
@@ -134,11 +136,11 @@ const AdminLDAPCenter = () => {
     setSaving(true);
     try {
       await adminAPI.updateLDAPConfig(values);
-      message.success('LDAP配置保存成功');
+      message.success(t('admin.ldapConfigSaveSuccess'));
       await loadLDAPConfig();
       setTestResult(null); // 清除之前的测试结果
     } catch (error) {
-      message.error(error.response?.data?.message || '保存LDAP配置失败');
+      message.error(error.response?.data?.message || t('admin.ldapConfigSaveFailed'));
     } finally {
       setSaving(false);
     }
@@ -149,7 +151,7 @@ const AdminLDAPCenter = () => {
     try {
       const values = await form.validateFields();
       if (!values.enabled && !values.is_enabled) {
-        message.warning('请先启用LDAP认证');
+        message.warning(t('admin.enableLdapAuth'));
         return;
       }
       
@@ -157,19 +159,19 @@ const AdminLDAPCenter = () => {
       const response = await adminAPI.testLDAPConnection(values);
       setTestResult({
         success: true,
-        message: response.data.message || '连接测试成功'
+        message: response.data.message || t('admin.ldapTestSuccess')
       });
-      message.success('LDAP连接测试成功');
+      message.success(t('admin.ldapTestSuccess'));
     } catch (error) {
       if (error.errorFields) {
-        message.error('请先完善表单信息');
+        message.error(t('admin.pleaseCompleteLdapForm'));
         return;
       }
       setTestResult({
         success: false,
-        message: error.response?.data?.message || error.response?.data?.error || '连接测试失败'
+        message: error.response?.data?.message || error.response?.data?.error || t('admin.ldapTestFailed')
       });
-      message.error('LDAP连接测试失败');
+      message.error(t('admin.ldapTestFailed'));
     } finally {
       setTesting(false);
     }
@@ -178,19 +180,19 @@ const AdminLDAPCenter = () => {
   // 同步LDAP用户
   const handleSyncUsers = async () => {
     if (!ldapEnabled) {
-      message.warning('请先启用LDAP认证');
+      message.warning(t('admin.enableLdapAuth'));
       return;
     }
 
     setSyncing(true);
     try {
       const response = await adminAPI.syncLDAPUsers();
-      message.success('LDAP用户同步完成');
+      message.success(t('admin.ldapSyncComplete'));
       setSyncStatus(response.data);
       await loadUsers();
       await loadSyncHistory();
     } catch (error) {
-      message.error(error.response?.data?.message || '同步LDAP用户失败');
+      message.error(error.response?.data?.message || t('admin.ldapSyncError'));
     } finally {
       setSyncing(false);
     }
@@ -200,10 +202,10 @@ const AdminLDAPCenter = () => {
   const toggleUserStatus = async (userId, currentStatus) => {
     try {
       await adminAPI.toggleUserStatus(userId, !currentStatus);
-      message.success(currentStatus ? '用户已禁用' : '用户已启用');
+      message.success(t('admin.toggleUserSuccess', { action: currentStatus ? t('admin.disable') : t('admin.enable') }));
       await loadUsers();
     } catch (error) {
-      message.error('切换用户状态失败');
+      message.error(t('admin.toggleUserFailed'));
     }
   };
 
@@ -236,7 +238,7 @@ const AdminLDAPCenter = () => {
   // 用户表格列定义
   const userColumns = [
     {
-      title: '用户名',
+      title: t('common.username'),
       dataIndex: 'username',
       key: 'username',
       render: (text, record) => (
@@ -246,50 +248,50 @@ const AdminLDAPCenter = () => {
             <Tag color="blue">LDAP</Tag>
           )}
           {!record.is_active && (
-            <Tag color="red">已禁用</Tag>
+            <Tag color="red">{t('admin.disable')}</Tag>
           )}
         </Space>
       )
     },
     {
-      title: '邮箱',
+      title: t('common.email'),
       dataIndex: 'email',
       key: 'email'
     },
     {
-      title: '姓名',
+      title: t('admin.name'),
       dataIndex: 'name',
       key: 'name'
     },
     {
-      title: '认证源',
+      title: t('admin.authSource'),
       dataIndex: 'auth_source',
       key: 'auth_source',
       render: (source) => (
         <Tag color={source === 'ldap' ? 'blue' : 'green'}>
-          {source === 'ldap' ? 'LDAP' : '本地'}
+          {source === 'ldap' ? 'LDAP' : t('admin.local')}
         </Tag>
       )
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'is_active',
       key: 'is_active',
       render: (active) => (
         <Badge 
           status={active ? 'success' : 'error'} 
-          text={active ? '启用' : '禁用'} 
+          text={active ? t('admin.enable') : t('admin.disable')} 
         />
       )
     },
     {
-      title: '最后登录',
+      title: t('admin.lastLogin'),
       dataIndex: 'last_login',
       key: 'last_login',
-      render: (lastLogin) => lastLogin ? new Date(lastLogin).toLocaleString() : '从未登录'
+      render: (lastLogin) => lastLogin ? new Date(lastLogin).toLocaleString() : t('admin.neverLoggedIn')
     },
     {
-      title: '操作',
+      title: t('common.action'),
       key: 'action',
       render: (_, record) => (
         <Space>
@@ -298,22 +300,22 @@ const AdminLDAPCenter = () => {
             icon={<EyeOutlined />}
             onClick={() => showUserDetails(record)}
           >
-            详情
+            {t('admin.details')}
           </Button>
           {record.auth_source === 'ldap' && (
             <Popconfirm
-              title={`确定要${record.is_active ? '禁用' : '启用'}该用户吗？`}
-              description="这只会影响本系统的访问权限，不会修改LDAP数据"
+              title={t('admin.confirmToggleUser', { action: record.is_active ? t('admin.disable') : t('admin.enable') })}
+              description={t('admin.toggleUserNote')}
               onConfirm={() => toggleUserStatus(record.id, record.is_active)}
-              okText="确定"
-              cancelText="取消"
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
             >
               <Button
                 size="small"
                 icon={record.is_active ? <LockOutlined /> : <UnlockOutlined />}
                 danger={record.is_active}
               >
-                {record.is_active ? '禁用' : '启用'}
+                {record.is_active ? t('admin.disable') : t('admin.enable')}
               </Button>
             </Popconfirm>
           )}
@@ -327,12 +329,12 @@ const AdminLDAPCenter = () => {
     <div>
       {/* 安全提示 */}
       <Alert
-        message="LDAP只读模式"
+        message={t('admin.readOnlyMode')}
         description={
           <div>
-            <p>✅ <strong>安全策略</strong>: 本系统采用LDAP只读模式，仅用于认证和用户同步</p>
-            <p>🔒 <strong>用户管理</strong>: 所有用户的创建、修改、删除需要通过企业LDAP系统进行</p>
-            <p>📋 <strong>本地管理</strong>: 仅支持禁用/启用本系统的用户访问权限</p>
+            <p>✅ <strong>{t('admin.readOnlyModeDesc1')}</strong></p>
+            <p>🔒 <strong>{t('admin.readOnlyModeDesc2')}</strong></p>
+            <p>📋 <strong>{t('admin.readOnlyModeDesc3')}</strong></p>
           </div>
         }
         type="info"
@@ -343,7 +345,7 @@ const AdminLDAPCenter = () => {
       {/* 测试结果显示 */}
       {testResult && (
         <Alert
-          message={testResult.success ? '连接测试成功' : '连接测试失败'}
+          message={testResult.success ? t('admin.ldapTestSuccess') : t('admin.ldapTestFailed')}
           description={testResult.message}
           type={testResult.success ? 'success' : 'error'}
           showIcon
@@ -369,18 +371,18 @@ const AdminLDAPCenter = () => {
         }}
       >
         {/* 基本配置 */}
-        <Card size="small" title="基本配置" style={{ marginBottom: 16 }}>
+        <Card size="small" title={t('admin.basicConfig')} style={{ marginBottom: 16 }}>
           <Form.Item
             name={['enabled', 'is_enabled']}
-            label="启用LDAP认证"
+            label={t('admin.enableLdapAuthLabel')}
             valuePropName="checked"
-            extra={ldapEnabled ? "LDAP认证已启用，用户可通过企业账户登录" : "LDAP认证已禁用，仅本地账户可登录"}
+            extra={ldapEnabled ? t('admin.ldapEnabled') : t('admin.ldapDisabled')}
           >
             <Switch 
               checked={ldapEnabled}
               onChange={handleLdapToggle}
-              checkedChildren="启用" 
-              unCheckedChildren="禁用"
+              checkedChildren={t('admin.enabled')} 
+              unCheckedChildren={t('admin.disabledLabel')}
             />
           </Form.Item>
 
@@ -388,17 +390,17 @@ const AdminLDAPCenter = () => {
             <Col span={16}>
               <Form.Item
                 name="server"
-                label="LDAP服务器"
-                rules={[{ required: true, message: '请输入LDAP服务器地址' }]}
+                label={t('admin.ldapServerLabel')}
+                rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
               >
-                <Input placeholder="ldap.company.com 或 192.168.1.100" />
+                <Input placeholder="ldap.company.com" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
                 name="port"
-                label="端口"
-                rules={[{ required: true, message: '请输入端口号' }]}
+                label={t('admin.port')}
+                rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
               >
                 <Input placeholder="389" type="number" />
               </Form.Item>
@@ -409,57 +411,57 @@ const AdminLDAPCenter = () => {
             <Col span={12}>
               <Form.Item
                 name={['use_ssl', 'useSSL']}
-                label="使用SSL/TLS"
+                label={t('admin.useSSLTLS')}
                 valuePropName="checked"
               >
-                <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+                <Switch checkedChildren={t('admin.enabled')} unCheckedChildren={t('admin.disabledLabel')} />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item
                 name={['skip_verify', 'skipVerify']}
-                label="跳过证书验证"
+                label={t('admin.skipCertVerify')}
                 valuePropName="checked"
               >
-                <Switch checkedChildren="跳过" unCheckedChildren="验证" />
+                <Switch checkedChildren={t('admin.skip')} unCheckedChildren={t('admin.verify')} />
               </Form.Item>
             </Col>
           </Row>
         </Card>
 
         {/* 绑定配置 */}
-        <Card size="small" title="绑定认证" style={{ marginBottom: 16 }}>
+        <Card size="small" title={t('admin.bindAuth')} style={{ marginBottom: 16 }}>
           <Form.Item
             name={['bind_dn', 'bindDN']}
-            label="绑定DN"
-            rules={[{ required: true, message: '请输入绑定DN' }]}
+            label={t('admin.bindDn')}
+            rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
           >
             <Input placeholder="cn=admin,dc=company,dc=com" />
           </Form.Item>
 
           <Form.Item
             name={['bind_password', 'bindPassword']}
-            label="绑定密码"
-            rules={[{ required: true, message: '请输入绑定密码' }]}
+            label={t('admin.bindPassword')}
+            rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
           >
-            <Input.Password placeholder="管理员密码" />
+            <Input.Password placeholder={t('admin.adminPassword')} />
           </Form.Item>
 
           <Form.Item
             name={['base_dn', 'baseDN']}
-            label="基准DN"
-            rules={[{ required: true, message: '请输入基准DN' }]}
+            label={t('admin.baseDn')}
+            rules={[{ required: true, message: t('admin.pleaseCompleteLdapForm') }]}
           >
             <Input placeholder="dc=company,dc=com" />
           </Form.Item>
         </Card>
 
         {/* 用户配置 */}
-        <Card size="small" title="用户属性映射" style={{ marginBottom: 16 }}>
+        <Card size="small" title={t('admin.userAttrMappingLabel')} style={{ marginBottom: 16 }}>
           <Form.Item
             name={['user_filter', 'userFilter']}
-            label="用户过滤器"
-            extra="使用{username}作为用户名占位符"
+            label={t('admin.userFilter')}
+            extra={t('admin.userFilterHint')}
           >
             <Input placeholder="(uid={username})" />
           </Form.Item>
@@ -468,7 +470,7 @@ const AdminLDAPCenter = () => {
             <Col span={8}>
               <Form.Item
                 name={['username_attr', 'usernameAttr']}
-                label="用户名属性"
+                label={t('admin.usernameAttr')}
               >
                 <Input placeholder="uid" />
               </Form.Item>
@@ -476,7 +478,7 @@ const AdminLDAPCenter = () => {
             <Col span={8}>
               <Form.Item
                 name={['name_attr', 'nameAttr']}
-                label="姓名属性"
+                label={t('admin.nameAttr')}
               >
                 <Input placeholder="cn" />
               </Form.Item>
@@ -484,7 +486,7 @@ const AdminLDAPCenter = () => {
             <Col span={8}>
               <Form.Item
                 name={['email_attr', 'emailAttr']}
-                label="邮箱属性"
+                label={t('admin.emailAttr')}
               >
                 <Input placeholder="mail" />
               </Form.Item>
@@ -502,7 +504,7 @@ const AdminLDAPCenter = () => {
               loading={saving}
               disabled={!ldapEnabled}
             >
-              保存配置
+              {t('admin.saveConfig')}
             </Button>
             
             <Button 
@@ -511,14 +513,14 @@ const AdminLDAPCenter = () => {
               loading={testing}
               disabled={!ldapEnabled}
             >
-              测试连接
+              {t('admin.testConnectionBtn')}
             </Button>
             
             <Button 
               icon={<ReloadOutlined />} 
               onClick={handleReset}
             >
-              重置
+              {t('admin.reset')}
             </Button>
           </Space>
         </Card>
@@ -534,7 +536,7 @@ const AdminLDAPCenter = () => {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="总用户数"
+              title={t('admin.totalCount', { count: '' })}
               value={users.length}
               prefix={<UserOutlined />}
             />
@@ -543,7 +545,7 @@ const AdminLDAPCenter = () => {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="LDAP用户"
+              title={t('admin.ldapUsers')}
               value={users.filter(u => u.auth_source === 'ldap').length}
               prefix={<TeamOutlined />}
             />
@@ -552,7 +554,7 @@ const AdminLDAPCenter = () => {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="启用用户"
+              title={t('admin.enabledUsers')}
               value={users.filter(u => u.is_active).length}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#3f8600' }}
@@ -562,7 +564,7 @@ const AdminLDAPCenter = () => {
         <Col span={6}>
           <Card size="small">
             <Statistic
-              title="禁用用户"
+              title={t('admin.disabledUsers')}
               value={users.filter(u => !u.is_active).length}
               prefix={<LockOutlined />}
               valueStyle={{ color: '#cf1322' }}
@@ -581,20 +583,20 @@ const AdminLDAPCenter = () => {
             loading={syncing}
             disabled={!ldapEnabled}
           >
-            同步LDAP用户
+            {t('admin.syncLdapUsers')}
           </Button>
           
           <Button
             icon={<ReloadOutlined />}
             onClick={loadUsers}
           >
-            刷新列表
+            {t('admin.refreshList')}
           </Button>
         </Space>
       </Card>
 
       {/* 用户列表 */}
-      <Card title="用户列表">
+      <Card title={t('admin.userManagementTab')}>
         <Table
           columns={userColumns}
           dataSource={users}
@@ -604,7 +606,7 @@ const AdminLDAPCenter = () => {
             total: users.length,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 个用户`
+            showTotal: (total) => t('admin.totalCount', { count: total })
           }}
         />
       </Card>
@@ -616,11 +618,11 @@ const AdminLDAPCenter = () => {
     <div>
       {syncStatus && (
         <Alert
-          message="最新同步结果"
+          message={t('admin.latestSyncResult')}
           description={
             <div>
-              <p>同步时间: {new Date(syncStatus.start_time).toLocaleString()}</p>
-              <p>处理用户: {syncStatus.total_users} | 新增: {syncStatus.created_users} | 更新: {syncStatus.updated_users}</p>
+              <p>{t('admin.syncTime')}: {new Date(syncStatus.start_time).toLocaleString()}</p>
+              <p>{t('admin.processedUsers')}: {syncStatus.total_users} | {t('admin.newUsers')}: {syncStatus.created_users} | {t('admin.updatedUsers')}: {syncStatus.updated_users}</p>
             </div>
           }
           type="success"
@@ -628,7 +630,7 @@ const AdminLDAPCenter = () => {
         />
       )}
 
-      <Card title="同步历史">
+      <Card title={t('admin.syncHistoryTab')}>
         {Array.isArray(syncHistory) && syncHistory.length > 0 ? (
           <Timeline>
             {syncHistory.map((record, index) => (
@@ -641,11 +643,11 @@ const AdminLDAPCenter = () => {
                   <Text strong>{new Date(record.start_time).toLocaleString()}</Text>
                   <br />
                   <Text type="secondary">
-                    处理 {record.total_users} 个用户，新增 {record.created_users}，更新 {record.updated_users}
+                    {t('admin.processed')} {record.total_users} {t('admin.users')}, {t('admin.created')} {record.created_users}, {t('admin.updated')} {record.updated_users}
                   </Text>
                   {record.error_message && (
                     <div>
-                      <Text type="danger">错误: {record.error_message}</Text>
+                      <Text type="danger">{t('admin.error')}: {record.error_message}</Text>
                     </div>
                   )}
                 </div>
@@ -653,7 +655,7 @@ const AdminLDAPCenter = () => {
             ))}
           </Timeline>
         ) : (
-          <Empty description="暂无同步历史" />
+          <Empty description={t('admin.noSyncHistory')} />
         )}
       </Card>
     </div>
@@ -664,10 +666,10 @@ const AdminLDAPCenter = () => {
       <div style={{ marginBottom: 16 }}>
         <Title level={2}>
           <SettingOutlined style={{ marginRight: 8 }} />
-          LDAP管理中心
+          {t('admin.ldapCenter')}
         </Title>
         <Paragraph type="secondary">
-          统一的LDAP配置和用户管理中心，采用只读策略确保数据安全
+          {t('admin.ldapCenterDesc')}
         </Paragraph>
       </div>
 
@@ -677,7 +679,7 @@ const AdminLDAPCenter = () => {
             tab={
               <span>
                 <SettingOutlined />
-                LDAP配置
+                {t('admin.ldapConfigTab')}
               </span>
             } 
             key="config"
@@ -689,7 +691,7 @@ const AdminLDAPCenter = () => {
             tab={
               <span>
                 <UserOutlined />
-                用户管理
+                {t('admin.userManagementTab')}
               </span>
             } 
             key="users"
@@ -701,7 +703,7 @@ const AdminLDAPCenter = () => {
             tab={
               <span>
                 <SyncOutlined />
-                同步历史
+                {t('admin.syncHistoryTab')}
               </span>
             } 
             key="sync"
@@ -713,39 +715,39 @@ const AdminLDAPCenter = () => {
 
       {/* 用户详情模态框 */}
       <Modal
-        title="用户详情"
+        title={t('admin.userDetails')}
         visible={userModalVisible}
         onCancel={() => setUserModalVisible(false)}
         footer={[
           <Button key="close" onClick={() => setUserModalVisible(false)}>
-            关闭
+            {t('common.close')}
           </Button>
         ]}
         width={600}
       >
         {selectedUser && (
           <Descriptions column={2} bordered>
-            <Descriptions.Item label="用户名">{selectedUser.username}</Descriptions.Item>
-            <Descriptions.Item label="邮箱">{selectedUser.email}</Descriptions.Item>
-            <Descriptions.Item label="姓名">{selectedUser.name || '未设置'}</Descriptions.Item>
-            <Descriptions.Item label="认证源">
+            <Descriptions.Item label={t('common.username')}>{selectedUser.username}</Descriptions.Item>
+            <Descriptions.Item label={t('common.email')}>{selectedUser.email}</Descriptions.Item>
+            <Descriptions.Item label={t('admin.name')}>{selectedUser.name || t('admin.none')}</Descriptions.Item>
+            <Descriptions.Item label={t('admin.authSource')}>
               <Tag color={selectedUser.auth_source === 'ldap' ? 'blue' : 'green'}>
-                {selectedUser.auth_source === 'ldap' ? 'LDAP' : '本地'}
+                {selectedUser.auth_source === 'ldap' ? 'LDAP' : t('admin.local')}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="状态">
+            <Descriptions.Item label={t('common.status')}>
               <Badge 
                 status={selectedUser.is_active ? 'success' : 'error'} 
-                text={selectedUser.is_active ? '启用' : '禁用'} 
+                text={selectedUser.is_active ? t('admin.enable') : t('admin.disable')} 
               />
             </Descriptions.Item>
-            <Descriptions.Item label="LDAP DN">
-              {selectedUser.ldap_dn || '无'}
+            <Descriptions.Item label={t('admin.ldapDn')}>
+              {selectedUser.ldap_dn || t('admin.none')}
             </Descriptions.Item>
-            <Descriptions.Item label="最后登录">
-              {selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleString() : '从未登录'}
+            <Descriptions.Item label={t('admin.lastLogin')}>
+              {selectedUser.last_login ? new Date(selectedUser.last_login).toLocaleString() : t('admin.neverLoggedIn')}
             </Descriptions.Item>
-            <Descriptions.Item label="创建时间">
+            <Descriptions.Item label={t('common.createdAt')}>
               {new Date(selectedUser.created_at).toLocaleString()}
             </Descriptions.Item>
           </Descriptions>

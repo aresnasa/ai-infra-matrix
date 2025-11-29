@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Card, Alert, Button, Space, Spin, Typography } from 'antd';
 import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
+import { useI18n } from '../hooks/useI18n';
 
 // Embedded Jupyter subpage with SSO preflight and full-height iframe
 const EmbeddedJupyter = () => {
+  const { t } = useI18n();
   const [ready, setReady] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState(null);
@@ -43,14 +45,14 @@ const EmbeddedJupyter = () => {
       }
     } catch (e) {
       if (!cancelled) {
-        setError('无法预检JupyterHub会话，将直接尝试加载。');
+        setError(t('jupyter.preflightError'));
         setReady(true);
       }
     } finally {
       if (!cancelled) setChecking(false);
     }
     return () => { cancelled = true; };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     preflight();
@@ -77,11 +79,11 @@ const EmbeddedJupyter = () => {
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         <Card
           size="small"
-          title={<span style={{ fontSize: 14 }}>Jupyter 工作区</span>}
+          title={<span style={{ fontSize: 14 }}>{t('jupyter.title')}</span>}
           extra={
             <Space>
-              <Button icon={<ReloadOutlined />} onClick={handleRefresh} size="small">刷新</Button>
-              <Button icon={<ExportOutlined />} onClick={openInNewTab} size="small">新窗口打开</Button>
+              <Button icon={<ReloadOutlined />} onClick={handleRefresh} size="small">{t('common.refresh')}</Button>
+              <Button icon={<ExportOutlined />} onClick={openInNewTab} size="small">{t('jupyter.openNewWindow')}</Button>
             </Space>
           }
           bodyStyle={{ padding: 12 }}
@@ -92,7 +94,7 @@ const EmbeddedJupyter = () => {
             showIcon
             message={
               <span style={{ fontSize: 12 }}>
-                内嵌同源 JupyterHub。若需认证，会跳转登录并返回此页。
+                {t('jupyter.embeddedInfo')}
               </span>
             }
             style={{ padding: '6px 8px' }}
@@ -101,7 +103,7 @@ const EmbeddedJupyter = () => {
 
         {checking && !ready ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 240 }}>
-            <Spin size="large" tip="正在准备会话..." />
+            <Spin size="large" tip={t('jupyter.preparing')} />
           </div>
         ) : (
           <>

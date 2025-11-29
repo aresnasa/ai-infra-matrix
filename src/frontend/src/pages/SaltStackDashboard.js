@@ -83,11 +83,11 @@ const SaltStackDashboard = () => {
   const [configVisible, setConfigVisible] = useState(false);
   const [configForm] = Form.useForm();
   const [configTemplates] = useState([
-    { id: 'nginx', name: 'Nginx 配置', desc: '安装和配置 Nginx Web 服务器' },
-    { id: 'mysql', name: 'MySQL 配置', desc: '安装和配置 MySQL 数据库' },
-    { id: 'docker', name: 'Docker 配置', desc: '安装和配置 Docker 容器引擎' },
-    { id: 'firewall', name: '防火墙配置', desc: '配置系统防火墙规则' },
-    { id: 'user', name: '用户管理', desc: '添加、删除和管理系统用户' },
+    { id: 'nginx', name: 'Nginx', desc: 'Install and configure Nginx web server' },
+    { id: 'mysql', name: 'MySQL', desc: 'Install and configure MySQL database' },
+    { id: 'docker', name: 'Docker', desc: 'Install and configure Docker container engine' },
+    { id: 'firewall', name: 'Firewall', desc: 'Configure system firewall rules' },
+    { id: 'user', name: 'User Management', desc: 'Add, delete and manage system users' },
   ]);
 
   // 批量安装 Salt Minion 弹窗
@@ -231,7 +231,7 @@ const SaltStackDashboard = () => {
   // 删除主机行
   const removeHostRow = (key) => {
     if (batchInstallHosts.length <= 1) {
-      message.warning('至少保留一个主机');
+      message.warning(t('saltstack.atLeastOneHostRequired'));
       return;
     }
     setBatchInstallHosts(batchInstallHosts.filter(h => h.key !== key));
@@ -248,7 +248,7 @@ const SaltStackDashboard = () => {
   const downloadHostTemplate = async (format) => {
     try {
       const response = await fetch(`/api/saltstack/host-templates/download/${format}`);
-      if (!response.ok) throw new Error('下载失败');
+      if (!response.ok) throw new Error(t('saltstack.downloadFailed'));
       
       const blob = await response.blob();
       const filename = `hosts_template.${format === 'ini' ? 'ini' : format}`;
@@ -260,9 +260,9 @@ const SaltStackDashboard = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      message.success(`已下载 ${filename}`);
+      message.success(t('saltstack.downloadedTemplate', { filename }));
     } catch (e) {
-      message.error('下载模板失败: ' + e.message);
+      message.error(t('saltstack.downloadTemplateFailed') + ': ' + e.message);
     }
   };
 
@@ -279,12 +279,12 @@ const SaltStackDashboard = () => {
       
       const result = await response.json();
       if (!result.success) {
-        throw new Error(result.message || result.error || '解析失败');
+        throw new Error(result.message || result.error || t('saltstack.parseFailed'));
       }
 
       const hosts = result.data?.hosts || [];
       if (hosts.length === 0) {
-        message.warning('文件中没有找到有效的主机配置');
+        message.warning(t('saltstack.noValidHostConfig'));
         return;
       }
 
@@ -307,9 +307,9 @@ const SaltStackDashboard = () => {
         setBatchInstallHosts([...batchInstallHosts, ...newHosts]);
       }
 
-      message.success(`成功导入 ${hosts.length} 个主机配置`);
+      message.success(t('saltstack.importedHosts', { count: hosts.length }));
     } catch (e) {
-      message.error('导入失败: ' + e.message);
+      message.error(t('saltstack.importFailed') + ': ' + e.message);
     } finally {
       setImportLoading(false);
     }
@@ -439,14 +439,14 @@ const SaltStackDashboard = () => {
       // 验证主机列表
       const validHosts = batchInstallHosts.filter(h => h.host && h.host.trim());
       if (validHosts.length === 0) {
-        message.error('请至少添加一个有效的主机');
+        message.error(t('saltstack.atLeastOneHost'));
         return;
       }
 
       // 检查必填字段
       for (const h of validHosts) {
         if (!h.username || !h.password) {
-          message.error(`主机 ${h.host} 缺少用户名或密码`);
+          message.error(t('saltstack.missingCredentials', { host: h.host }));
           return;
         }
       }
@@ -473,20 +473,20 @@ const SaltStackDashboard = () => {
       const resp = await saltStackAPI.batchInstallMinion(payload);
       
       if (!resp.data?.success) {
-        message.error(resp.data?.message || '启动批量安装失败');
+        message.error(resp.data?.message || t('saltstack.startInstallFailed'));
         setBatchInstallRunning(false);
         return;
       }
 
       const taskId = resp.data?.task_id;
       if (!taskId) {
-        message.error('未返回任务ID');
+        message.error(t('saltstack.noTaskIdReturned'));
         setBatchInstallRunning(false);
         return;
       }
 
       setBatchInstallTaskId(taskId);
-      message.success(`批量安装任务已创建: ${taskId}`);
+      message.success(t('saltstack.installTaskCreated', { taskId }));
       
       // 立即添加一个临时任务到列表（避免等待后端返回时进度显示为0）
       const tempTask = {
@@ -506,7 +506,7 @@ const SaltStackDashboard = () => {
       setTimeout(() => loadInstallTasks(1), 2000);
       startBatchInstallSSE(taskId);
     } catch (e) {
-      message.error('提交批量安装失败: ' + (e?.response?.data?.message || e.message));
+      message.error(t('saltstack.submitInstallFailed') + ': ' + (e?.response?.data?.message || e.message));
       setBatchInstallRunning(false);
     }
   };
@@ -533,7 +533,7 @@ const SaltStackDashboard = () => {
   // 删除 SSH 测试主机行
   const removeSSHTestHostRow = (key) => {
     if (sshTestHosts.length <= 1) {
-      message.warning('至少保留一个主机');
+      message.warning(t('saltstack.atLeastOneHostRequired'));
       return;
     }
     setSSHTestHosts(sshTestHosts.filter(h => h.key !== key));
@@ -550,13 +550,13 @@ const SaltStackDashboard = () => {
   const handleSSHTest = async () => {
     const validHosts = sshTestHosts.filter(h => h.host && h.host.trim());
     if (validHosts.length === 0) {
-      message.error('请至少添加一个有效的主机');
+      message.error(t('saltstack.atLeastOneHost'));
       return;
     }
 
     for (const h of validHosts) {
       if (!h.username || !h.password) {
-        message.error(`主机 ${h.host} 缺少用户名或密码`);
+        message.error(t('saltstack.missingCredentials', { host: h.host }));
         return;
       }
     }
@@ -581,12 +581,16 @@ const SaltStackDashboard = () => {
       
       if (resp.data?.success) {
         setSSHTestResults(resp.data.data?.results || []);
-        message.success(`测试完成：${resp.data.data?.connected_count}/${resp.data.data?.total} 连接成功，${resp.data.data?.sudo_count} 有 sudo 权限`);
+        message.success(t('saltstack.testCompleted', { 
+          connected: resp.data.data?.connected_count, 
+          total: resp.data.data?.total, 
+          sudo: resp.data.data?.sudo_count 
+        }));
       } else {
-        message.error(resp.data?.error || 'SSH 测试失败');
+        message.error(resp.data?.error || t('saltstack.sshTestFailed'));
       }
     } catch (e) {
-      message.error('SSH 测试失败: ' + (e?.response?.data?.message || e.message));
+      message.error(t('saltstack.sshTestFailed') + ': ' + (e?.response?.data?.message || e.message));
     } finally {
       setSSHTestRunning(false);
     }
@@ -600,13 +604,13 @@ const SaltStackDashboard = () => {
     try {
       const resp = await saltStackAPI.removeMinionKey(minionId);
       if (resp.data?.success) {
-        message.success(`Minion ${minionId} 已从 Salt Master 删除`);
+        message.success(t('saltstack.minionDeleted', { id: minionId }));
         loadMinions(); // 刷新列表
       } else {
-        message.error(resp.data?.error || '删除失败');
+        message.error(resp.data?.error || t('saltstack.deleteMinionFailed'));
       }
     } catch (e) {
-      message.error('删除 Minion 失败: ' + (e?.response?.data?.message || e.message));
+      message.error(t('saltstack.deleteMinionFailed') + ': ' + (e?.response?.data?.message || e.message));
     } finally {
       setDeletingMinion(null);
     }
@@ -641,14 +645,14 @@ const SaltStackDashboard = () => {
       });
 
       if (resp.data?.success) {
-        message.success(`Minion ${uninstallMinionId} 已卸载并从 Master 删除`);
+        message.success(t('saltstack.uninstallSuccess', { id: uninstallMinionId }));
         setUninstallModalVisible(false);
         loadMinions();
       } else {
-        message.error(resp.data?.error || '卸载失败');
+        message.error(resp.data?.error || t('saltstack.uninstallMinionFailed'));
       }
     } catch (e) {
-      message.error('卸载 Minion 失败: ' + (e?.response?.data?.message || e.message));
+      message.error(t('saltstack.uninstallFailed') + ': ' + (e?.response?.data?.message || e.message));
     }
   };
 
@@ -660,19 +664,19 @@ const SaltStackDashboard = () => {
   }, []);
 
   const validateClientSide = (language, code) => {
-    if (!code || !code.trim()) return '请输入要执行的代码';
-    if (code.length > 20000) return '代码过长，最大20000字符';
+    if (!code || !code.trim()) return t('saltstack.codeRequired');
+    if (code.length > 20000) return t('saltstack.codeTooLong');
     // 简单引号平衡检查
     let single = 0, dbl = 0;
     for (let i = 0; i < code.length; i++) {
       const ch = code[i];
       if (ch === '\'') single ^= 1; else if (ch === '"') dbl ^= 1;
     }
-    if (single || dbl) return '引号不平衡，请检查代码';
+    if (single || dbl) return t('saltstack.quoteUnbalanced');
     if (language === 'python') {
       const lines = code.split('\n');
       for (const ln of lines) {
-        if (ln.startsWith('\t') && ln.trimStart().startsWith(' ')) return 'Python 缩进混用制表符与空格';
+        if (ln.startsWith('\t') && ln.trimStart().startsWith(' ')) return t('saltstack.pythonIndentMixed');
       }
     }
     return '';
@@ -689,9 +693,9 @@ const SaltStackDashboard = () => {
     try {
       const values = await execForm.validateFields(['language', 'code']);
       const lang = values.language;
-      const prompt = `为 Salt 下发的${lang}脚本提供补全建议，仅给出代码片段，不要解释。`;
+      const prompt = `Provide completion suggestions for ${lang} script executed via Salt, only provide code snippets, no explanation.`;
       await aiAPI.quickChat(prompt, 'salt-exec-suggest'); // 预留：后端应返回异步消息ID，这里仅调用以示占位
-      message.info('已发送智能补全请求（占位），后端实现后将展示建议');
+      message.info(t('saltstack.smartCompleteRequest'));
     } catch (e) {
       // 忽略
     }
@@ -748,23 +752,23 @@ const SaltStackDashboard = () => {
       });
       const opId = resp.data?.opId || resp.data?.data?.opId || resp.data?.id || resp.data?.op_id;
       if (!opId) {
-        message.error('未返回操作ID');
+        message.error(t('saltstack.noOpIdReturned'));
         setExecRunning(false);
         return;
       }
       setExecOpId(opId);
       startSSE(opId);
     } catch (e) {
-      message.error('提交执行失败: ' + (e?.response?.data?.error || e.message));
+      message.error(t('saltstack.submitExecFailed') + ': ' + (e?.response?.data?.error || e.message));
       setExecRunning(false);
     }
   };
 
   const execFooter = (
     <Space>
-      <Button onClick={() => setExecVisible(false)} disabled={execRunning}>关闭</Button>
-      <Button onClick={handleSuggest} disabled={execRunning}>智能补全（预留）</Button>
-      <Button type="primary" onClick={handleExecute} loading={execRunning}>执行</Button>
+      <Button onClick={() => setExecVisible(false)} disabled={execRunning}>{t('saltstack.close')}</Button>
+      <Button onClick={handleSuggest} disabled={execRunning}>{t('saltstack.smartComplete')}</Button>
+      <Button type="primary" onClick={handleExecute} loading={execRunning}>{t('saltstack.execute')}</Button>
     </Space>
   );
 
@@ -792,7 +796,7 @@ const SaltStackDashboard = () => {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
         <Spin size="large" />
-        <div style={{ marginTop: 16 }}>初始化SaltStack界面...</div>
+        <div style={{ marginTop: 16 }}>{t('saltstack.initInterface')}</div>
       </div>
     );
   }
@@ -804,10 +808,10 @@ const SaltStackDashboard = () => {
           <div>
             <Title level={2}>
               <ThunderboltOutlined style={{ marginRight: 8, color: '#1890ff' }} />
-              SaltStack 配置管理
+              {t('saltstack.title')}
             </Title>
             <Paragraph type="secondary">
-              基于 SaltStack 的基础设施自动化配置管理系统
+              {t('saltstack.subtitle')}
             </Paragraph>
           </div>
 
@@ -815,11 +819,11 @@ const SaltStackDashboard = () => {
             <Alert 
               type="error" 
               showIcon 
-              message="无法连接到SaltStack"
+              message={t('saltstack.connectionError')}
               description={
                 <Space>
-                  <span>请确认SaltStack服务正在运行且后端API可达。</span>
-                  <Button size="small" onClick={loadAllData}>重试</Button>
+                  <span>{t('saltstack.connectionErrorDesc')}</span>
+                  <Button size="small" onClick={loadAllData}>{t('saltstack.retry')}</Button>
                 </Space>
               }
             />
@@ -829,8 +833,8 @@ const SaltStackDashboard = () => {
             <Alert 
               type="info" 
               showIcon 
-              message="演示模式" 
-              description="显示SaltStack演示数据"
+              message={t('saltstack.demoMode')} 
+              description={t('saltstack.demoModeDesc')}
             />
           )}
 
@@ -839,13 +843,13 @@ const SaltStackDashboard = () => {
             <Alert 
               type="info" 
               showIcon 
-              message="正在加载数据" 
+              message={t('saltstack.loadingData')} 
               description={
                 <Space>
                   <span>
-                    状态数据: {statusLoading ? '加载中...' : '✓'} | 
-                    Minions: {minionsLoading ? '加载中...' : '✓'} | 
-                    作业历史: {jobsLoading ? '加载中...' : '✓'}
+                    {t('saltstack.statusData')}: {statusLoading ? t('common.loading') : '✓'} | 
+                    {t('saltstack.minionsData')}: {minionsLoading ? t('common.loading') : '✓'} | 
+                    {t('saltstack.jobsData')}: {jobsLoading ? t('common.loading') : '✓'}
                   </span>
                 </Space>
               }
@@ -857,8 +861,8 @@ const SaltStackDashboard = () => {
             <Col span={6}>
               <Card>
                 <Statistic 
-                  title="Master状态" 
-                  value={status?.master_status || (statusLoading ? '加载中...' : '未知')} 
+                  title={t('saltstack.masterStatus')} 
+                  value={status?.master_status || (statusLoading ? t('common.loading') : t('saltstack.unknown'))} 
                   prefix={<SettingOutlined />}
                   valueStyle={{ 
                     color: statusLoading ? '#999' : (status?.master_status === 'running' ? '#3f8600' : '#cf1322') 
@@ -870,7 +874,7 @@ const SaltStackDashboard = () => {
             <Col span={6}>
               <Card>
                 <Statistic 
-                  title="在线Minions" 
+                  title={t('saltstack.onlineMinions')} 
                   value={status?.minions_up || (statusLoading ? '...' : 0)} 
                   prefix={<DesktopOutlined />}
                   valueStyle={{ color: statusLoading ? '#999' : '#3f8600' }}
@@ -881,7 +885,7 @@ const SaltStackDashboard = () => {
             <Col span={6}>
               <Card>
                 <Statistic 
-                  title="离线Minions" 
+                  title={t('saltstack.offlineMinions')} 
                   value={status?.minions_down || (statusLoading ? '...' : 0)} 
                   prefix={<ExclamationCircleOutlined />}
                   valueStyle={{ color: statusLoading ? '#999' : '#cf1322' }}
@@ -892,8 +896,8 @@ const SaltStackDashboard = () => {
             <Col span={6}>
               <Card>
                 <Statistic 
-                  title="API状态" 
-                  value={status?.api_status || (statusLoading ? '检测中...' : '未知')} 
+                  title={t('saltstack.apiStatus')} 
+                  value={status?.api_status || (statusLoading ? t('saltstack.checking') : t('saltstack.unknown'))} 
                   prefix={<ApiOutlined />}
                   valueStyle={{ 
                     color: statusLoading ? '#999' : (status?.api_status === 'running' ? '#3f8600' : '#cf1322') 
@@ -1016,7 +1020,7 @@ const SaltStackDashboard = () => {
                             title={
                               <Space>
                                 <Tag color={getJobStatusColor(job.status)}>
-                                  {job.status || '未知'}
+                                  {job.status || t('saltstack.unknown')}
                                 </Tag>
                                 <Text strong>{job.function || job.command}</Text>
                               </Space>
@@ -1028,24 +1032,24 @@ const SaltStackDashboard = () => {
                             }
                           >
                             <Descriptions size="small" column={2}>
-                              <Descriptions.Item label="目标">
-                                {job.target || '所有节点'}
+                              <Descriptions.Item label={t('saltstack.target')}>
+                                {job.target || t('saltstack.allNodes')}
                               </Descriptions.Item>
-                              <Descriptions.Item label="用户">
+                              <Descriptions.Item label={t('saltstack.user')}>
                                 {job.user || 'root'}
                               </Descriptions.Item>
-                              <Descriptions.Item label="持续时间">
-                                {job.duration || '未知'}
+                              <Descriptions.Item label={t('saltstack.duration')}>
+                                {job.duration || t('saltstack.unknown')}
                               </Descriptions.Item>
-                              <Descriptions.Item label="返回码">
+                              <Descriptions.Item label={t('saltstack.returnCode')}>
                                 <Tag color={job.return_code === 0 ? 'green' : 'red'}>
-                                  {job.return_code ?? '未知'}
+                                  {job.return_code ?? t('saltstack.unknown')}
                                 </Tag>
                               </Descriptions.Item>
                             </Descriptions>
                             {job.result && (
                               <div style={{ marginTop: 8 }}>
-                                <Text type="secondary">结果:</Text>
+                                <Text type="secondary">{t('saltstack.result')}:</Text>
                                 <Paragraph 
                                   code 
                                   style={{ 
@@ -1065,7 +1069,7 @@ const SaltStackDashboard = () => {
                     />
                     {jobs.length === 0 && (
                       <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                        <Text type="secondary">暂无作业历史</Text>
+                        <Text type="secondary">{t('saltstack.noJobs')}</Text>
                       </div>
                     )}
                   </>
@@ -1081,7 +1085,7 @@ const SaltStackDashboard = () => {
                 ) : (
                   <>
                     <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text type="secondary">{t('common.total', { count: installTasksTotal })}</Text>
+                      <Text type="secondary">{t('saltstack.total', { count: installTasksTotal })}</Text>
                       <Button 
                         icon={<ReloadOutlined />} 
                         onClick={() => loadInstallTasks(1)} 
@@ -1100,7 +1104,7 @@ const SaltStackDashboard = () => {
                         pageSize: installTasksPage.pageSize,
                         total: installTasksTotal,
                         showSizeChanger: true,
-                        showTotal: (total) => `共 ${total} 条`,
+                        showTotal: (total) => t('saltstack.total', { count: total }),
                         onChange: (page, pageSize) => loadInstallTasks(page, pageSize),
                       }}
                       expandable={{
@@ -1117,7 +1121,7 @@ const SaltStackDashboard = () => {
                               pagination={false}
                               columns={[
                                 {
-                                  title: '主机',
+                                  title: t('saltstack.hostAddress'),
                                   dataIndex: 'host',
                                   key: 'host',
                                   width: 150,
@@ -1128,7 +1132,7 @@ const SaltStackDashboard = () => {
                                   ),
                                 },
                                 {
-                                  title: '状态',
+                                  title: t('saltstack.taskStatus'),
                                   dataIndex: 'status',
                                   key: 'status',
                                   width: 100,
@@ -1137,12 +1141,12 @@ const SaltStackDashboard = () => {
                                       color={status === 'success' ? 'green' : 'red'}
                                       icon={status === 'success' ? <CheckCircleOutlined /> : <ExclamationCircleOutlined />}
                                     >
-                                      {status === 'success' ? '成功' : '失败'}
+                                      {status === 'success' ? t('saltstack.success') : t('saltstack.failed')}
                                     </Tag>
                                   ),
                                 },
                                 {
-                                  title: '耗时',
+                                  title: t('saltstack.duration'),
                                   dataIndex: 'duration',
                                   key: 'duration',
                                   width: 100,
@@ -1157,7 +1161,7 @@ const SaltStackDashboard = () => {
                                   },
                                 },
                                 {
-                                  title: '错误信息',
+                                  title: t('saltstack.error'),
                                   dataIndex: 'error',
                                   key: 'error',
                                   ellipsis: true,
@@ -1174,35 +1178,35 @@ const SaltStackDashboard = () => {
                       }}
                       columns={[
                         {
-                          title: '任务名称',
+                          title: t('saltstack.taskName'),
                           dataIndex: 'taskName',
                           key: 'taskName',
                           width: 200,
                           ellipsis: true,
                           render: (name, record) => (
                             <Space>
-                              <Text strong>{name || `任务 #${record.id}`}</Text>
+                              <Text strong>{name || `${t('saltstack.taskName')} #${record.id}`}</Text>
                             </Space>
                           ),
                         },
                         {
-                          title: '状态',
+                          title: t('saltstack.taskStatus'),
                           dataIndex: 'status',
                           key: 'status',
                           width: 120,
                           filters: [
-                            { text: '等待中', value: 'pending' },
-                            { text: '运行中', value: 'running' },
-                            { text: '已完成', value: 'completed' },
-                            { text: '失败', value: 'failed' },
+                            { text: t('saltstack.taskPending'), value: 'pending' },
+                            { text: t('saltstack.taskRunning'), value: 'running' },
+                            { text: t('saltstack.taskCompleted'), value: 'completed' },
+                            { text: t('saltstack.taskFailed'), value: 'failed' },
                           ],
                           onFilter: (value, record) => record.status === value,
                           render: (status) => {
                             const statusConfig = {
-                              pending: { color: 'default', icon: <ClockCircleOutlined />, text: '等待中' },
-                              running: { color: 'processing', icon: <SyncOutlined spin />, text: '运行中' },
-                              completed: { color: 'success', icon: <CheckCircleOutlined />, text: '已完成' },
-                              failed: { color: 'error', icon: <ExclamationCircleOutlined />, text: '失败' },
+                              pending: { color: 'default', icon: <ClockCircleOutlined />, text: t('saltstack.taskPending') },
+                              running: { color: 'processing', icon: <SyncOutlined spin />, text: t('saltstack.taskRunning') },
+                              completed: { color: 'success', icon: <CheckCircleOutlined />, text: t('saltstack.taskCompleted') },
+                              failed: { color: 'error', icon: <ExclamationCircleOutlined />, text: t('saltstack.taskFailed') },
                             };
                             const config = statusConfig[status] || { color: 'default', icon: null, text: status };
                             return (
@@ -1213,7 +1217,7 @@ const SaltStackDashboard = () => {
                           },
                         },
                         {
-                          title: '进度',
+                          title: t('saltstack.progress'),
                           key: 'progress',
                           width: 180,
                           render: (_, record) => {
@@ -1228,7 +1232,7 @@ const SaltStackDashboard = () => {
                                 <Space direction="vertical" size={0} style={{ width: '100%' }}>
                                   <Progress percent={percent} size="small" status="active" />
                                   <Text type="secondary" style={{ fontSize: 12 }}>
-                                    {completed}/{total} 主机
+                                    {completed}/{total} {t('saltstack.hosts')}
                                   </Text>
                                 </Space>
                               );
@@ -1236,15 +1240,15 @@ const SaltStackDashboard = () => {
                             
                             return (
                               <Space>
-                                <Tag color="green">{success} 成功</Tag>
-                                {failed > 0 && <Tag color="red">{failed} 失败</Tag>}
+                                <Tag color="green">{success} {t('saltstack.successCount')}</Tag>
+                                {failed > 0 && <Tag color="red">{failed} {t('saltstack.failedCount')}</Tag>}
                                 <Text type="secondary">/ {total}</Text>
                               </Space>
                             );
                           },
                         },
                         {
-                          title: '开始时间',
+                          title: t('saltstack.startTime'),
                           dataIndex: 'startTime',
                           key: 'startTime',
                           width: 170,
@@ -1253,13 +1257,13 @@ const SaltStackDashboard = () => {
                           render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
                         },
                         {
-                          title: '耗时',
+                          title: t('saltstack.duration'),
                           dataIndex: 'duration',
                           key: 'duration',
                           width: 100,
                           render: (duration, record) => {
                             if (record.status === 'running') {
-                              return <Tag color="processing">进行中</Tag>;
+                              return <Tag color="processing">{t('saltstack.inProgress')}</Tag>;
                             }
                             if (!duration) return '-';
                             if (duration < 60) return `${duration}s`;
@@ -1272,14 +1276,14 @@ const SaltStackDashboard = () => {
                     />
                     {installTasks.length === 0 && !installTasksLoading && (
                       <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                        <Text type="secondary">暂无安装任务历史</Text>
+                        <Text type="secondary">{t('saltstack.noInstallTasks')}</Text>
                         <div style={{ marginTop: 16 }}>
                           <Button 
                             type="primary" 
                             icon={<CloudUploadOutlined />} 
                             onClick={openBatchInstallModal}
                           >
-                            开始批量安装
+                            {t('saltstack.startBatchInstall')}
                           </Button>
                         </div>
                       </div>
@@ -1299,13 +1303,13 @@ const SaltStackDashboard = () => {
                 onClick={loadAllData}
                 loading={statusLoading || minionsLoading || jobsLoading}
               >
-                刷新数据
+                {t('saltstack.refreshData')}
               </Button>
               <Button 
                 icon={<PlayCircleOutlined />}
                 onClick={openExecModal}
               >
-                执行命令
+                {t('saltstack.executeCommand')}
               </Button>
               <Button 
                 icon={<CloudUploadOutlined />}
@@ -1313,13 +1317,13 @@ const SaltStackDashboard = () => {
                 type="primary"
                 ghost
               >
-                批量安装 Minion
+                {t('saltstack.batchInstallMinion')}
               </Button>
               <Button 
                 icon={<WifiOutlined />}
                 onClick={openSSHTestModal}
               >
-                SSH 测试
+                {t('saltstack.sshTest')}
               </Button>
               <Button 
                 icon={<SettingOutlined />}
@@ -1328,41 +1332,41 @@ const SaltStackDashboard = () => {
                   configForm.setFieldsValue({ target: '*' });
                 }}
               >
-                配置管理
+                {t('saltstack.configManagement')}
               </Button>
             </Space>
           </Card>
 
           {/* 执行命令弹窗 */}
           <Modal
-            title="执行自定义命令（Bash / Python）"
+            title={t('saltstack.executeCustomCommand')}
             open={execVisible}
             onCancel={() => { setExecVisible(false); closeSSE(); setExecRunning(false); }}
             footer={execFooter}
             width={900}
           >
             <Form form={execForm} layout="vertical">
-              <Form.Item name="target" label="目标节点" rules={[{ required: true, message: '请输入目标，例如 * 或 compute* 或 列表' }]}>
-                <Input placeholder="例如: * 或 compute* 或 ai-infra-web-01" />
+              <Form.Item name="target" label={t('saltstack.targetNodes')} rules={[{ required: true, message: t('saltstack.targetRequired') }]}>
+                <Input placeholder={t('saltstack.targetNodesPlaceholder')} />
               </Form.Item>
-              <Form.Item name="language" label="语言" rules={[{ required: true }]}> 
+              <Form.Item name="language" label={t('saltstack.language')} rules={[{ required: true }]}> 
                 <Select>
                   <Option value="bash">Bash</Option>
                   <Option value="python">Python</Option>
                 </Select>
               </Form.Item>
-              <Form.Item name="code" label="代码" rules={[{ required: true, message: '请输入要执行的代码' }]}>
-                <TextArea rows={10} placeholder="# 在此粘贴脚本..." style={{ fontFamily: 'monospace' }} />
+              <Form.Item name="code" label={t('saltstack.code')} rules={[{ required: true, message: t('saltstack.codeRequired') }]}>
+                <TextArea rows={10} placeholder={t('saltstack.codePlaceholder')} style={{ fontFamily: 'monospace' }} />
               </Form.Item>
-              <Form.Item name="timeout" label="超时（秒）">
+              <Form.Item name="timeout" label={t('saltstack.timeout')}>
                 <Input type="number" min={10} max={3600} placeholder="120" />
               </Form.Item>
             </Form>
 
-            <Card size="small" title="执行进度" style={{ marginTop: 12 }}>
+            <Card size="small" title={t('saltstack.executeProgress')} style={{ marginTop: 12 }}>
               <div style={{ maxHeight: 240, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 8, borderRadius: 6 }}>
                 {execEvents.length === 0 ? (
-                  <Text type="secondary">等待执行或无日志...</Text>
+                  <Text type="secondary">{t('saltstack.waitingForExecution')}</Text>
                 ) : (
                   execEvents.map((ev, idx) => (
                     <div key={idx} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
@@ -1382,24 +1386,24 @@ const SaltStackDashboard = () => {
 
           {/* 配置管理弹窗 */}
           <Modal
-            title="Salt 配置模板管理"
+            title={t('saltstack.configTemplateManagement')}
             open={configVisible}
             onCancel={() => setConfigVisible(false)}
             footer={[
-              <Button key="cancel" onClick={() => setConfigVisible(false)}>取消</Button>,
+              <Button key="cancel" onClick={() => setConfigVisible(false)}>{t('saltstack.cancel')}</Button>,
               <Button 
                 key="apply" 
                 type="primary" 
                 onClick={() => {
                   configForm.validateFields().then(values => {
-                    message.info(`将应用配置模板: ${values.template} 到目标: ${values.target}`);
+                    message.info(t('saltstack.applyTemplateInfo', { template: values.template, target: values.target }));
                     // TODO: 调用后端 API 应用配置模板
                     // saltStackAPI.applyTemplate({ template: values.template, target: values.target });
                     setConfigVisible(false);
                   });
                 }}
               >
-                应用配置
+                {t('saltstack.applyConfig')}
               </Button>,
             ]}
             width={700}
@@ -1407,27 +1411,27 @@ const SaltStackDashboard = () => {
             <Form form={configForm} layout="vertical">
               <Form.Item 
                 name="target" 
-                label="目标节点" 
-                rules={[{ required: true, message: '请输入目标节点' }]}
+                label={t('saltstack.targetNodes')} 
+                rules={[{ required: true, message: t('saltstack.targetRequired') }]}
               >
-                <Input placeholder="例如: * 或 web* 或 db01" />
+                <Input placeholder={t('saltstack.targetNodesPlaceholder')} />
               </Form.Item>
               <Form.Item 
                 name="template" 
-                label="配置模板" 
-                rules={[{ required: true, message: '请选择配置模板' }]}
+                label={t('saltstack.configTemplate')} 
+                rules={[{ required: true, message: t('saltstack.selectTemplate') }]}
               >
-                <Select placeholder="选择要应用的配置模板">
-                  {configTemplates.map(t => (
-                    <Option key={t.id} value={t.id}>
-                      {t.name} - {t.desc}
+                <Select placeholder={t('saltstack.selectTemplate')}>
+                  {configTemplates.map(tpl => (
+                    <Option key={tpl.id} value={tpl.id}>
+                      {tpl.name} - {tpl.desc}
                     </Option>
                   ))}
                 </Select>
               </Form.Item>
               <Alert
-                message="提示"
-                description="选择配置模板后，将通过 Salt State 在目标节点上应用相应的配置。此功能需要后端 API 支持。"
+                message={t('saltstack.hint')}
+                description={t('saltstack.configHint')}
                 type="info"
                 showIcon
                 style={{ marginTop: 16 }}
@@ -1440,7 +1444,7 @@ const SaltStackDashboard = () => {
             title={
               <Space>
                 <CloudUploadOutlined />
-                批量安装 Salt Minion
+                {t('saltstack.batchInstallMinion')}
               </Space>
             }
             open={batchInstallVisible}
@@ -1459,7 +1463,7 @@ const SaltStackDashboard = () => {
                 }}
                 disabled={batchInstallRunning}
               >
-                {batchInstallRunning ? '取消' : '关闭'}
+                {batchInstallRunning ? t('saltstack.cancel') : t('saltstack.close')}
               </Button>,
               <Button 
                 key="install" 
@@ -1468,7 +1472,7 @@ const SaltStackDashboard = () => {
                 loading={batchInstallRunning}
                 icon={<CloudUploadOutlined />}
               >
-                开始安装
+                {t('saltstack.startInstall')}
               </Button>,
             ]}
             width={1000}
@@ -1481,8 +1485,8 @@ const SaltStackDashboard = () => {
                     name="parallel" 
                     label={
                       <Space>
-                        并发数
-                        <Tooltip title="同时安装的主机数量，建议不超过10">
+                        {t('saltstack.parallel')}
+                        <Tooltip title={t('saltstack.parallelHint')}>
                           <QuestionCircleOutlined />
                         </Tooltip>
                       </Space>
@@ -1495,16 +1499,16 @@ const SaltStackDashboard = () => {
                 <Col span={6}>
                   <Form.Item 
                     name="master_host" 
-                    label="Salt Master 地址"
+                    label={t('saltstack.masterHost')}
                     initialValue="salt"
                   >
-                    <Input placeholder="例如: salt 或 192.168.1.100" />
+                    <Input placeholder="salt / 192.168.1.100" />
                   </Form.Item>
                 </Col>
                 <Col span={6}>
                   <Form.Item 
                     name="install_type" 
-                    label="安装类型"
+                    label={t('saltstack.installType')}
                     initialValue="saltstack"
                   >
                     <Select>
@@ -1516,24 +1520,24 @@ const SaltStackDashboard = () => {
                 <Col span={6}>
                   <Form.Item 
                     name="auto_accept" 
-                    label="自动接受 Key"
+                    label={t('saltstack.autoAccept')}
                     valuePropName="checked"
                     initialValue={true}
                   >
-                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
                   </Form.Item>
                 </Col>
               </Row>
 
-              <Divider orientation="left">全局 sudo 设置</Divider>
+              <Divider orientation="left">{t('saltstack.globalSudoSettings')}</Divider>
               <Row gutter={16}>
                 <Col span={6}>
                   <Form.Item 
                     name="global_use_sudo" 
                     label={
                       <Space>
-                        使用 sudo
-                        <Tooltip title="如果使用非 root 用户登录，开启此选项使用 sudo 执行安装命令">
+                        {t('saltstack.useSudo')}
+                        <Tooltip title={t('saltstack.sudoHint')}>
                           <QuestionCircleOutlined />
                         </Tooltip>
                       </Space>
@@ -1541,21 +1545,21 @@ const SaltStackDashboard = () => {
                     valuePropName="checked"
                     initialValue={false}
                   >
-                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    💡 提示：Linux 中登录密码和 sudo 密码相同
+                    💡 {t('saltstack.sudoHint')}
                   </Text>
                 </Col>
               </Row>
 
               <Divider orientation="left">
                 <Space>
-                  目标主机列表
+                  {t('saltstack.targetHostList')}
                   <Button type="link" size="small" icon={<PlusOutlined />} onClick={addHostRow}>
-                    添加主机
+                    {t('saltstack.addHost')}
                   </Button>
                   <Upload
                     accept=".csv,.json,.yaml,.yml,.ini"
@@ -1564,12 +1568,12 @@ const SaltStackDashboard = () => {
                     disabled={importLoading}
                   >
                     <Button type="link" size="small" icon={<UploadOutlined />} loading={importLoading}>
-                      导入文件
+                      {t('saltstack.importFile')}
                     </Button>
                   </Upload>
                   <Dropdown overlay={templateMenu} trigger={['click']}>
                     <Button type="link" size="small" icon={<DownloadOutlined />}>
-                      下载模板
+                      {t('saltstack.downloadTemplate')}
                     </Button>
                   </Dropdown>
                 </Space>
@@ -1579,11 +1583,7 @@ const SaltStackDashboard = () => {
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message={
-                  <span>
-                    支持导入 CSV、JSON、YAML、Ansible INI 格式的主机配置文件
-                  </span>
-                }
+                message={t('saltstack.importFileHint')}
               />
 
               <div style={{ maxHeight: 300, overflow: 'auto' }}>
@@ -1591,7 +1591,7 @@ const SaltStackDashboard = () => {
                   <Row gutter={8} key={host.key} style={{ marginBottom: 8 }}>
                     <Col span={5}>
                       <Input 
-                        placeholder="主机地址 (IP 或域名)" 
+                        placeholder={t('saltstack.hostAddressPlaceholder')} 
                         value={host.host}
                         onChange={(e) => updateHostRow(host.key, 'host', e.target.value)}
                         addonBefore={`#${index + 1}`}
@@ -1599,7 +1599,7 @@ const SaltStackDashboard = () => {
                     </Col>
                     <Col span={2}>
                       <InputNumber 
-                        placeholder="端口" 
+                        placeholder={t('saltstack.port')} 
                         value={host.port}
                         onChange={(v) => updateHostRow(host.key, 'port', v)}
                         min={1}
@@ -1609,21 +1609,21 @@ const SaltStackDashboard = () => {
                     </Col>
                     <Col span={4}>
                       <Input 
-                        placeholder="用户名" 
+                        placeholder={t('saltstack.usernamePlaceholder')} 
                         value={host.username}
                         onChange={(e) => updateHostRow(host.key, 'username', e.target.value)}
                       />
                     </Col>
                     <Col span={6}>
                       <Input.Password 
-                        placeholder="密码" 
+                        placeholder={t('saltstack.passwordPlaceholder')} 
                         value={host.password}
                         onChange={(e) => updateHostRow(host.key, 'password', e.target.value)}
                       />
                     </Col>
                     <Col span={4}>
                       <Space>
-                        <Tooltip title="使用 sudo">
+                        <Tooltip title={t('saltstack.useSudo')}>
                           <Switch 
                             size="small"
                             checked={host.use_sudo}
@@ -1648,16 +1648,16 @@ const SaltStackDashboard = () => {
             </Form>
 
             {/* 安装进度 */}
-            <Card size="small" title="安装进度" style={{ marginTop: 16 }}>
+            <Card size="small" title={t('saltstack.installProgress')} style={{ marginTop: 16 }}>
               {batchInstallTaskId && (
                 <div style={{ marginBottom: 8 }}>
-                  <Text type="secondary">任务ID: </Text>
+                  <Text type="secondary">{t('saltstack.taskId')}: </Text>
                   <Text copyable>{batchInstallTaskId}</Text>
                 </div>
               )}
               <div style={{ maxHeight: 280, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 12, borderRadius: 6 }}>
                 {batchInstallEvents.length === 0 ? (
-                  <Text type="secondary">等待开始安装...</Text>
+                  <Text type="secondary">{t('saltstack.waitingForInstall')}</Text>
                 ) : (
                   batchInstallEvents.map((ev, idx) => (
                     <div key={idx} style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5 }}>
@@ -1690,14 +1690,14 @@ const SaltStackDashboard = () => {
             title={
               <Space>
                 <WifiOutlined />
-                SSH 连接测试（含 sudo 权限检查）
+                {t('saltstack.sshTestTitle')}
               </Space>
             }
             open={sshTestVisible}
             onCancel={() => setSSHTestVisible(false)}
             footer={[
               <Button key="cancel" onClick={() => setSSHTestVisible(false)}>
-                关闭
+                {t('saltstack.close')}
               </Button>,
               <Button 
                 key="test" 
@@ -1706,15 +1706,15 @@ const SaltStackDashboard = () => {
                 loading={sshTestRunning}
                 icon={<SafetyCertificateOutlined />}
               >
-                开始测试
+                {t('saltstack.startTest')}
               </Button>,
             ]}
             width={1000}
             destroyOnClose
           >
             <Alert
-              message="SSH 测试说明"
-              description="此功能将测试 SSH 连接是否成功，并检查是否有 sudo 权限。这对于批量安装前的预检非常有用。"
+              message={t('saltstack.sshTest')}
+              description={t('saltstack.sshTestDesc')}
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
@@ -1722,9 +1722,9 @@ const SaltStackDashboard = () => {
 
             <Divider orientation="left">
               <Space>
-                目标主机列表
+                {t('saltstack.targetHostList')}
                 <Button type="link" size="small" icon={<PlusOutlined />} onClick={addSSHTestHostRow}>
-                  添加主机
+                  {t('saltstack.addHost')}
                 </Button>
               </Space>
             </Divider>
@@ -1734,7 +1734,7 @@ const SaltStackDashboard = () => {
                 <Row gutter={8} key={host.key} style={{ marginBottom: 8 }}>
                   <Col span={5}>
                     <Input 
-                      placeholder="主机地址" 
+                      placeholder={t('saltstack.hostAddress')} 
                       value={host.host}
                       onChange={(e) => updateSSHTestHostRow(host.key, 'host', e.target.value)}
                       addonBefore={`#${index + 1}`}
@@ -1742,7 +1742,7 @@ const SaltStackDashboard = () => {
                   </Col>
                   <Col span={2}>
                     <InputNumber 
-                      placeholder="端口" 
+                      placeholder={t('saltstack.port')} 
                       value={host.port}
                       onChange={(v) => updateSSHTestHostRow(host.key, 'port', v)}
                       min={1}
@@ -1752,14 +1752,14 @@ const SaltStackDashboard = () => {
                   </Col>
                   <Col span={4}>
                     <Input 
-                      placeholder="用户名" 
+                      placeholder={t('saltstack.username')} 
                       value={host.username}
                       onChange={(e) => updateSSHTestHostRow(host.key, 'username', e.target.value)}
                     />
                   </Col>
                   <Col span={7}>
                     <Input.Password 
-                      placeholder="密码（同 sudo 密码）" 
+                      placeholder={t('saltstack.passwordHint')} 
                       value={host.password}
                       onChange={(e) => updateSSHTestHostRow(host.key, 'password', e.target.value)}
                     />
@@ -1779,7 +1779,7 @@ const SaltStackDashboard = () => {
 
             {/* 测试结果 */}
             {sshTestResults.length > 0 && (
-              <Card size="small" title="测试结果" style={{ marginTop: 16 }}>
+              <Card size="small" title={t('saltstack.result')} style={{ marginTop: 16 }}>
                 <Table
                   dataSource={sshTestResults}
                   rowKey="host"
@@ -1787,51 +1787,51 @@ const SaltStackDashboard = () => {
                   pagination={false}
                   columns={[
                     {
-                      title: '主机',
+                      title: t('saltstack.hostAddress'),
                       dataIndex: 'host',
                       width: 150,
                     },
                     {
-                      title: '连接状态',
+                      title: t('saltstack.connectionStatus'),
                       dataIndex: 'connected',
                       width: 100,
                       render: (v) => v ? 
-                        <Tag color="success" icon={<CheckCircleOutlined />}>连接成功</Tag> : 
-                        <Tag color="error" icon={<ExclamationCircleOutlined />}>连接失败</Tag>
+                        <Tag color="success" icon={<CheckCircleOutlined />}>{t('saltstack.connectionSuccess')}</Tag> : 
+                        <Tag color="error" icon={<ExclamationCircleOutlined />}>{t('saltstack.connectionFailed')}</Tag>
                     },
                     {
-                      title: '认证方式',
+                      title: t('saltstack.authMethod'),
                       dataIndex: 'auth_method',
                       width: 100,
                       render: (v) => v ? <Tag icon={<KeyOutlined />}>{v}</Tag> : '-'
                     },
                     {
-                      title: 'sudo 权限',
+                      title: t('saltstack.sudoPermission'),
                       dataIndex: 'has_sudo',
                       width: 120,
                       render: (v, record) => v ? 
                         <Tag color="success" icon={<LockOutlined />}>
-                          {record.sudo_no_password ? '免密sudo' : '需要密码'}
+                          {record.sudo_no_password ? t('saltstack.passwordlessSudo') : t('saltstack.needPassword')}
                         </Tag> : 
-                        <Tag color="warning">无sudo</Tag>
+                        <Tag color="warning">{t('saltstack.noSudo')}</Tag>
                     },
                     {
-                      title: '主机名',
+                      title: t('saltstack.hostname'),
                       dataIndex: 'hostname',
                       width: 150,
                     },
                     {
-                      title: '操作系统',
+                      title: t('saltstack.osInfo'),
                       dataIndex: 'os_info',
                       ellipsis: true,
                     },
                     {
-                      title: '耗时(ms)',
+                      title: t('saltstack.duration') + '(ms)',
                       dataIndex: 'duration',
                       width: 80,
                     },
                     {
-                      title: '错误',
+                      title: t('saltstack.error'),
                       dataIndex: 'error',
                       ellipsis: true,
                       render: (v) => v ? <Text type="danger">{v}</Text> : '-'
@@ -1847,20 +1847,20 @@ const SaltStackDashboard = () => {
             title={
               <Space>
                 <DeleteOutlined />
-                卸载 Minion: {uninstallMinionId}
+                {t('saltstack.uninstallTitle', { id: uninstallMinionId })}
               </Space>
             }
             open={uninstallModalVisible}
             onCancel={() => setUninstallModalVisible(false)}
             onOk={handleUninstallMinion}
-            okText="确认卸载"
+            okText={t('saltstack.confirmUninstall')}
             okButtonProps={{ danger: true }}
-            cancelText="取消"
+            cancelText={t('saltstack.cancel')}
             width={600}
           >
             <Alert
-              message="警告"
-              description="此操作将通过 SSH 连接到目标主机，卸载 Salt Minion 软件包并清理配置文件，同时从 Salt Master 删除该 Minion 的密钥。"
+              message={t('saltstack.warning')}
+              description={t('saltstack.uninstallWarning')}
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
@@ -1871,14 +1871,14 @@ const SaltStackDashboard = () => {
                 <Col span={16}>
                   <Form.Item 
                     name="host" 
-                    label="主机地址"
-                    rules={[{ required: true, message: '请输入主机地址' }]}
+                    label={t('saltstack.hostAddress')}
+                    rules={[{ required: true, message: t('saltstack.targetRequired') }]}
                   >
-                    <Input placeholder="IP 或域名" />
+                    <Input placeholder="IP / Domain" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name="port" label="端口" initialValue={22}>
+                  <Form.Item name="port" label={t('saltstack.port')} initialValue={22}>
                     <InputNumber min={1} max={65535} style={{ width: '100%' }} />
                   </Form.Item>
                 </Col>
@@ -1887,19 +1887,19 @@ const SaltStackDashboard = () => {
                 <Col span={12}>
                   <Form.Item 
                     name="username" 
-                    label="用户名"
-                    rules={[{ required: true, message: '请输入用户名' }]}
+                    label={t('saltstack.username')}
+                    rules={[{ required: true, message: t('saltstack.targetRequired') }]}
                   >
-                    <Input placeholder="例如: root" />
+                    <Input placeholder="root" />
                   </Form.Item>
                 </Col>
                 <Col span={12}>
                   <Form.Item 
                     name="password" 
-                    label="密码（同 sudo 密码）"
-                    rules={[{ required: true, message: '请输入密码' }]}
+                    label={t('saltstack.passwordHint')}
+                    rules={[{ required: true, message: t('saltstack.targetRequired') }]}
                   >
-                    <Input.Password placeholder="SSH 登录密码" />
+                    <Input.Password placeholder={t('saltstack.passwordHint')} />
                   </Form.Item>
                 </Col>
               </Row>
@@ -1907,15 +1907,15 @@ const SaltStackDashboard = () => {
                 <Col span={8}>
                   <Form.Item 
                     name="use_sudo" 
-                    label="使用 sudo"
+                    label={t('saltstack.useSudo')}
                     valuePropName="checked"
                   >
-                    <Switch checkedChildren="是" unCheckedChildren="否" />
+                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
                   </Form.Item>
                 </Col>
                 <Col span={16}>
                   <Text type="secondary" style={{ lineHeight: '32px' }}>
-                    💡 Linux 中登录密码即 sudo 密码
+                    💡 {t('saltstack.sudoHint')}
                   </Text>
                 </Col>
               </Row>

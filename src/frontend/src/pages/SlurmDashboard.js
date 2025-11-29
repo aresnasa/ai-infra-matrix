@@ -4,11 +4,13 @@ import { slurmAPI, saltStackAPI } from '../services/api';
 import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined, PlayCircleOutlined, PauseCircleOutlined, StopOutlined, DownOutlined, CloseCircleOutlined, ReloadOutlined, HourglassOutlined, WarningOutlined } from '@ant-design/icons';
 import SaltCommandExecutor from '../components/SaltCommandExecutor';
 import SlurmClusterStatus from '../components/SlurmClusterStatus';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
 
 const SlurmDashboard = () => {
+  const { t } = useI18n();
   const [summary, setSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -73,30 +75,30 @@ const SlurmDashboard = () => {
   // 节点管理函数
   const handleNodeOperation = async (action, actionLabel, reason = '') => {
     if (selectedRowKeys.length === 0) {
-      message.warning('请先选择要操作的节点');
+      message.warning(t('slurm.selectNodes'));
       return;
     }
 
     Modal.confirm({
-      title: `确认${actionLabel}节点`,
-      content: `您确定要将选中的 ${selectedRowKeys.length} 个节点设置为 ${actionLabel} 状态吗？`,
-      okText: '确认',
-      cancelText: '取消',
+      title: `${t('slurm.confirm')}${actionLabel}${t('slurm.nodes')}`,
+      content: t('slurm.confirmNodeOperation', { count: selectedRowKeys.length, action: actionLabel }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
       onOk: async () => {
         setOperationLoading(true);
         try {
           const response = await slurmAPI.manageNodes(selectedRowKeys, action, reason);
           if (response.data?.success) {
-            message.success(response.data.message || `成功${actionLabel} ${selectedRowKeys.length} 个节点`);
+            message.success(response.data.message || t('slurm.nodeOperationSuccess', { action: actionLabel, count: selectedRowKeys.length }));
             setSelectedRowKeys([]);
             // 重新加载节点列表
             await load();
           } else {
-            message.error(response.data?.error || `${actionLabel}节点失败`);
+            message.error(response.data?.error || t('slurm.nodeOperationFailed', { action: actionLabel }));
           }
         } catch (error) {
           console.error(`${actionLabel}节点失败:`, error);
-          message.error(error.response?.data?.error || `${actionLabel}节点失败，请稍后重试`);
+          message.error(error.response?.data?.error || t('slurm.nodeOperationFailedRetry', { action: actionLabel }));
         } finally {
           setOperationLoading(false);
         }
@@ -107,30 +109,30 @@ const SlurmDashboard = () => {
   // 作业管理函数
   const handleJobOperation = async (action, actionLabel) => {
     if (selectedJobKeys.length === 0) {
-      message.warning('请先选择要操作的作业');
+      message.warning(t('slurm.selectJobs'));
       return;
     }
 
     Modal.confirm({
-      title: `确认${actionLabel}作业`,
-      content: `您确定要对选中的 ${selectedJobKeys.length} 个作业执行 ${actionLabel} 操作吗？`,
-      okText: '确认',
-      cancelText: '取消',
+      title: `${t('slurm.confirm')}${actionLabel}${t('slurm.jobs')}`,
+      content: t('slurm.confirmJobOperation', { count: selectedJobKeys.length, action: actionLabel }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
       onOk: async () => {
         setOperationLoading(true);
         try {
           const response = await slurmAPI.manageJobs(selectedJobKeys, action);
           if (response.data?.success) {
-            message.success(response.data.message || `成功${actionLabel} ${selectedJobKeys.length} 个作业`);
+            message.success(response.data.message || t('slurm.jobOperationSuccess', { action: actionLabel, count: selectedJobKeys.length }));
             setSelectedJobKeys([]);
             // 重新加载作业列表
             await load();
           } else {
-            message.error(response.data?.error || `${actionLabel}作业失败`);
+            message.error(response.data?.error || t('slurm.jobOperationFailed', { action: actionLabel }));
           }
         } catch (error) {
           console.error(`${actionLabel}作业失败:`, error);
-          message.error(error.response?.data?.error || `${actionLabel}作业失败，请稍后重试`);
+          message.error(error.response?.data?.error || t('slurm.jobOperationFailedRetry', { action: actionLabel }));
         } finally {
           setOperationLoading(false);
         }
@@ -142,27 +144,27 @@ const SlurmDashboard = () => {
   const nodeOperationMenuItems = [
     {
       key: 'resume',
-      label: '恢复 (RESUME)',
+      label: t('slurm.resume'),
       icon: <PlayCircleOutlined />,
-      onClick: () => handleNodeOperation('resume', '恢复', '手动恢复节点'),
+      onClick: () => handleNodeOperation('resume', t('slurm.resume'), t('slurm.manualResume')),
     },
     {
       key: 'drain',
-      label: '排空 (DRAIN)',
+      label: t('slurm.drain'),
       icon: <PauseCircleOutlined />,
-      onClick: () => handleNodeOperation('drain', '排空', '节点维护'),
+      onClick: () => handleNodeOperation('drain', t('slurm.drain'), t('slurm.nodeMaintenance')),
     },
     {
       key: 'down',
-      label: '下线 (DOWN)',
+      label: t('slurm.down'),
       icon: <StopOutlined />,
-      onClick: () => handleNodeOperation('down', '下线', '节点故障或维护'),
+      onClick: () => handleNodeOperation('down', t('slurm.down'), t('slurm.nodeFailure')),
     },
     {
       key: 'idle',
-      label: '空闲 (IDLE)',
+      label: t('slurm.idle'),
       icon: <CheckCircleOutlined />,
-      onClick: () => handleNodeOperation('idle', '设为空闲', '手动设置空闲'),
+      onClick: () => handleNodeOperation('idle', t('slurm.idle'), t('slurm.manualSetIdle')),
     },
   ];
 
@@ -170,48 +172,48 @@ const SlurmDashboard = () => {
   const jobOperationMenuItems = [
     {
       key: 'cancel',
-      label: '取消作业 (Cancel)',
+      label: t('slurm.cancelJob'),
       icon: <CloseCircleOutlined />,
       danger: true,
-      onClick: () => handleJobOperation('cancel', '取消'),
+      onClick: () => handleJobOperation('cancel', t('slurm.cancel')),
     },
     {
       key: 'hold',
-      label: '暂停调度 (Hold)',
+      label: t('slurm.holdJob'),
       icon: <PauseCircleOutlined />,
-      onClick: () => handleJobOperation('hold', '暂停调度'),
+      onClick: () => handleJobOperation('hold', t('slurm.hold')),
     },
     {
       key: 'release',
-      label: '释放调度 (Release)',
+      label: t('slurm.releaseJob'),
       icon: <PlayCircleOutlined />,
-      onClick: () => handleJobOperation('release', '释放调度'),
+      onClick: () => handleJobOperation('release', t('slurm.release')),
     },
     {
       key: 'suspend',
-      label: '挂起作业 (Suspend)',
+      label: t('slurm.suspendJob'),
       icon: <HourglassOutlined />,
-      onClick: () => handleJobOperation('suspend', '挂起'),
+      onClick: () => handleJobOperation('suspend', t('slurm.suspend')),
     },
     {
       key: 'resume',
-      label: '恢复作业 (Resume)',
+      label: t('slurm.resumeJob'),
       icon: <PlayCircleOutlined />,
-      onClick: () => handleJobOperation('resume', '恢复'),
+      onClick: () => handleJobOperation('resume', t('slurm.resume')),
     },
     {
       key: 'requeue',
-      label: '重新排队 (Requeue)',
+      label: t('slurm.requeueJob'),
       icon: <ReloadOutlined />,
-      onClick: () => handleJobOperation('requeue', '重新排队'),
+      onClick: () => handleJobOperation('requeue', t('slurm.requeue')),
     },
   ];
 
   const columnsNodes = [
-    { title: '节点', dataIndex: 'name', key: 'name' },
-    { title: '分区', dataIndex: 'partition', key: 'partition' },
+    { title: t('slurm.node'), dataIndex: 'name', key: 'name' },
+    { title: t('slurm.partition'), dataIndex: 'partition', key: 'partition' },
     { 
-      title: 'SLURM 状态', 
+      title: t('slurm.slurmStatus'), 
       dataIndex: 'state', 
       key: 'state', 
       render: (s) => {
@@ -225,7 +227,7 @@ const SlurmDashboard = () => {
       }
     },
     {
-      title: 'SaltStack状态',
+      title: t('slurm.saltStackStatus'),
       dataIndex: 'salt_status',
       key: 'salt_status',
       render: (status, record) => {
@@ -234,7 +236,7 @@ const SlurmDashboard = () => {
           return (
             <Tooltip title={record.salt_status_error}>
               <Tag color="default" icon={<WarningOutlined />}>
-                API 错误
+                {t('slurm.apiError')}
               </Tag>
             </Tooltip>
           );
@@ -243,25 +245,25 @@ const SlurmDashboard = () => {
         // 处理未配置或未知状态
         if (!status || status === 'unknown' || status === 'not_configured') {
           return (
-            <Tooltip title="此节点未配置 SaltStack Minion 或 Minion ID 不匹配">
+            <Tooltip title={t('slurm.notConfiguredTooltip')}>
               <Tag color="default" icon={<CloseCircleOutlined />}>
-                未配置
+                {t('slurm.notConfigured')}
               </Tag>
             </Tooltip>
           );
         }
         
         const statusConfig = {
-          'accepted': { color: 'green', icon: <CheckCircleOutlined />, text: '已连接' },
-          'pending': { color: 'orange', icon: <HourglassOutlined />, text: '待接受' },
-          'rejected': { color: 'red', icon: <CloseCircleOutlined />, text: '已拒绝' },
-          'denied': { color: 'red', icon: <CloseCircleOutlined />, text: '已拒绝' },
+          'accepted': { color: 'green', icon: <CheckCircleOutlined />, text: t('slurm.connected') },
+          'pending': { color: 'orange', icon: <HourglassOutlined />, text: t('slurm.pending') },
+          'rejected': { color: 'red', icon: <CloseCircleOutlined />, text: t('slurm.rejected') },
+          'denied': { color: 'red', icon: <CloseCircleOutlined />, text: t('slurm.rejected') },
         };
         
         const config = statusConfig[status] || { 
           color: 'default', 
           icon: <CloseCircleOutlined />,
-          text: '未配置'
+          text: t('slurm.notConfigured')
         };
         
         return (
@@ -277,65 +279,65 @@ const SlurmDashboard = () => {
       }
     },
     { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
-    { title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb' },
+    { title: t('slurm.memoryMB'), dataIndex: 'memory_mb', key: 'memory_mb' },
   ];
 
   const columnsJobs = [
-    { title: '作业ID', dataIndex: 'id', key: 'id' },
-    { title: '名称', dataIndex: 'name', key: 'name' },
-    { title: '用户', dataIndex: 'user', key: 'user' },
-    { title: '分区', dataIndex: 'partition', key: 'partition' },
-    { title: '状态', dataIndex: 'state', key: 'state', render: (s) => <Tag color={s === 'RUNNING' ? 'blue' : s === 'PENDING' ? 'orange' : 'default'}>{s}</Tag> },
-    { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
-    { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
-    { title: '原因', dataIndex: 'reason', key: 'reason' },
+    { title: t('slurm.jobId'), dataIndex: 'id', key: 'id' },
+    { title: t('slurm.jobName'), dataIndex: 'name', key: 'name' },
+    { title: t('slurm.user'), dataIndex: 'user', key: 'user' },
+    { title: t('slurm.partition'), dataIndex: 'partition', key: 'partition' },
+    { title: t('slurm.status'), dataIndex: 'state', key: 'state', render: (s) => <Tag color={s === 'RUNNING' ? 'blue' : s === 'PENDING' ? 'orange' : 'default'}>{s}</Tag> },
+    { title: t('slurm.elapsed'), dataIndex: 'elapsed', key: 'elapsed' },
+    { title: t('slurm.nodeCount'), dataIndex: 'nodes', key: 'nodes' },
+    { title: t('slurm.reason'), dataIndex: 'reason', key: 'reason' },
   ];
 
   return (
     <div style={{ padding: 24 }}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-        <Title level={2}>Slurm 集群管理</Title>
+        <Title level={2}>{t('slurm.title')}</Title>
         
         {error && (
           <Alert 
             type="error" 
             showIcon 
-            message="无法加载Slurm数据"
+            message={t('slurm.loadFailed')}
             description={
               <Space>
-                <span>请确认已登录且后端 /api/slurm 接口可达。</span>
-                <Button size="small" onClick={load}>重试</Button>
+                <span>{t('slurm.loadFailedDesc')}</span>
+                <Button size="small" onClick={load}>{t('common.retry')}</Button>
               </Space>
             }
           />
         )}
         {demo && (
-          <Alert type="info" showIcon message="使用演示数据：未检测到Slurm命令(sinfo/squeue)，展示示例统计" />
+          <Alert type="info" showIcon message={t('slurm.demoMode')} />
         )}
 
         <Tabs activeKey={activeTab} onChange={setActiveTab}>
           {/* 概览页签 */}
-          <TabPane tab="集群概览" key="overview">
+          <TabPane tab={t('slurm.clusterOverview')} key="overview">
 
         <Row gutter={16}>
           <Col span={6}>
             <Card>
-              <Statistic title="节点总数" value={summary?.nodes_total || 0} loading={loading} />
+              <Statistic title={t('slurm.totalNodes')} value={summary?.nodes_total || 0} loading={loading} />
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="空闲节点" value={summary?.nodes_idle || 0} loading={loading} />
+              <Statistic title={t('slurm.idleNodes')} value={summary?.nodes_idle || 0} loading={loading} />
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="占用节点" value={summary?.nodes_alloc || 0} loading={loading} />
+              <Statistic title={t('slurm.allocNodes')} value={summary?.nodes_alloc || 0} loading={loading} />
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="分区数量" value={summary?.partitions || 0} loading={loading} />
+              <Statistic title={t('slurm.partitionCount')} value={summary?.partitions || 0} loading={loading} />
             </Card>
           </Col>
         </Row>
@@ -343,17 +345,17 @@ const SlurmDashboard = () => {
         <Row gutter={16}>
           <Col span={8}>
             <Card>
-              <Statistic title="运行中作业" value={summary?.jobs_running || 0} loading={loading} />
+              <Statistic title={t('slurm.runningJobs')} value={summary?.jobs_running || 0} loading={loading} />
             </Card>
           </Col>
           <Col span={8}>
             <Card>
-              <Statistic title="等待中作业" value={summary?.jobs_pending || 0} loading={loading} />
+              <Statistic title={t('slurm.pendingJobs')} value={summary?.jobs_pending || 0} loading={loading} />
             </Card>
           </Col>
           <Col span={8}>
             <Card>
-              <Statistic title="其他状态" value={summary?.jobs_other || 0} loading={loading} />
+              <Statistic title={t('slurm.otherJobs')} value={summary?.jobs_other || 0} loading={loading} />
             </Card>
           </Col>
         </Row>
@@ -365,15 +367,15 @@ const SlurmDashboard = () => {
           title={
             <Space>
               <CloudServerOutlined />
-              <span>SaltStack 集成状态</span>
+              <span>{t('slurm.saltStackIntegration')}</span>
               {saltStackData?.enabled && (
-                <Tag color="green" icon={<CheckCircleOutlined />}>已启用</Tag>
+                <Tag color="green" icon={<CheckCircleOutlined />}>{t('slurm.enabled')}</Tag>
               )}
               {saltStackData && !saltStackData.enabled && (
-                <Tag color="default">未启用</Tag>
+                <Tag color="default">{t('slurm.notEnabled')}</Tag>
               )}
               {!saltStackData && (
-                <Tag color="orange" icon={<SyncOutlined spin />}>加载中...</Tag>
+                <Tag color="orange" icon={<SyncOutlined spin />}>{t('common.loading')}</Tag>
               )}
             </Space>
           }
@@ -385,7 +387,7 @@ const SlurmDashboard = () => {
                 icon={<ReloadOutlined />} 
                 onClick={loadSaltStackIntegration}
               >
-                刷新
+                {t('common.refresh')}
               </Button>
             </Space>
           }
@@ -393,8 +395,8 @@ const SlurmDashboard = () => {
         >
           {!saltStackData && !saltStackLoading && (
             <Alert
-              message="SaltStack 数据加载失败"
-              description="无法获取 SaltStack 集成状态，请检查后端服务或稍后重试。"
+              message={t('slurm.saltStackLoadFailed')}
+              description={t('slurm.saltStackLoadFailedDesc')}
               type="warning"
               showIcon
             />
@@ -407,8 +409,8 @@ const SlurmDashboard = () => {
                 <Col span={8}>
                   <Card size="small">
                     <Statistic
-                      title="Master 状态"
-                      value={saltStackData.master_status || '未知'}
+                      title={t('slurm.masterStatus')}
+                      value={saltStackData.master_status || t('slurm.unknown')}
                       valueStyle={{ 
                         color: saltStackData.master_status === 'running' ? '#3f8600' : '#cf1322',
                         fontSize: '16px'
@@ -419,8 +421,8 @@ const SlurmDashboard = () => {
                 <Col span={8}>
                   <Card size="small">
                     <Statistic
-                      title="API 状态"
-                      value={saltStackData.api_status || '未知'}
+                      title={t('slurm.apiStatus')}
+                      value={saltStackData.api_status || t('slurm.unknown')}
                       valueStyle={{ 
                         color: saltStackData.api_status === 'connected' ? '#3f8600' : '#cf1322',
                         fontSize: '16px'
@@ -431,7 +433,7 @@ const SlurmDashboard = () => {
                 <Col span={8}>
                   <Card size="small">
                     <Statistic
-                      title="活跃作业"
+                      title={t('slurm.activeJobs')}
                       value={saltStackData.recent_jobs || 0}
                       prefix={<SyncOutlined />}
                     />
@@ -443,7 +445,7 @@ const SlurmDashboard = () => {
               <Row gutter={16}>
                 <Col span={8}>
                   <Statistic
-                    title="连接的 Minions"
+                    title={t('slurm.onlineMinions')}
                     value={saltStackData.minions?.online || 0}
                     valueStyle={{ color: '#3f8600' }}
                     prefix={<CheckCircleOutlined />}
@@ -451,14 +453,14 @@ const SlurmDashboard = () => {
                 </Col>
                 <Col span={8}>
                   <Statistic
-                    title="离线 Minions"
+                    title={t('slurm.offlineMinions')}
                     value={saltStackData.minions?.offline || 0}
                     valueStyle={{ color: '#cf1322' }}
                   />
                 </Col>
                 <Col span={8}>
                   <Statistic
-                    title="Minion 总数"
+                    title={t('slurm.totalMinions')}
                     value={saltStackData.minions?.total || 0}
                     prefix={<HddOutlined />}
                   />
@@ -467,7 +469,7 @@ const SlurmDashboard = () => {
 
               {saltStackData.minion_list && saltStackData.minion_list.length > 0 && (
                 <div style={{ marginTop: '16px' }}>
-                  <Text strong>Minion 节点列表:</Text>
+                  <Text strong>{t('slurm.minionList')}:</Text>
                   <div style={{ marginTop: '8px' }}>
                     <Space wrap>
                       {saltStackData.minion_list.map((minion) => (
@@ -488,12 +490,12 @@ const SlurmDashboard = () => {
         </Card>
 
         <Card 
-          title="节点列表" 
+          title={t('slurm.nodesList')} 
           extra={
             <Space>
               {selectedRowKeys.length > 0 && (
                 <>
-                  <Text type="secondary">已选择 {selectedRowKeys.length} 个节点</Text>
+                  <Text type="secondary">{t('slurm.selectedNodes', { count: selectedRowKeys.length })}</Text>
                   <Dropdown 
                     menu={{ items: nodeOperationMenuItems }}
                     placement="bottomRight"
@@ -504,7 +506,7 @@ const SlurmDashboard = () => {
                       loading={operationLoading}
                       icon={<DownOutlined />}
                     >
-                      节点操作
+                      {t('slurm.nodeOperation')}
                     </Button>
                   </Dropdown>
                 </>
@@ -515,7 +517,7 @@ const SlurmDashboard = () => {
                 loading={loading}
                 size="small"
               >
-                刷新状态
+                {t('slurm.refreshStatus')}
               </Button>
               {loading && <Spin size="small" />}
             </Space>
@@ -540,15 +542,15 @@ const SlurmDashboard = () => {
         </Card>
 
         <Card
-          title="作业队列"
+          title={t('slurm.jobQueue')}
           extra={
             <Space>
               {selectedJobKeys.length > 0 && (
                 <>
-                  <Text type="secondary">已选择 {selectedJobKeys.length} 个作业</Text>
+                  <Text type="secondary">{t('slurm.selectedJobs', { count: selectedJobKeys.length })}</Text>
                   <Dropdown menu={{ items: jobOperationMenuItems }}>
                     <Button loading={operationLoading}>
-                      作业操作 <DownOutlined />
+                      {t('slurm.jobOperation')} <DownOutlined />
                     </Button>
                   </Dropdown>
                 </>
@@ -572,12 +574,12 @@ const SlurmDashboard = () => {
           </TabPane>
 
           {/* 集群状态监控页签 */}
-          <TabPane tab="集群状态监控" key="cluster-status">
+          <TabPane tab={t('slurm.clusterStatusMonitor')} key="cluster-status">
             <SlurmClusterStatus />
           </TabPane>
 
           {/* SaltStack 命令执行页签 */}
-          <TabPane tab="SaltStack 命令执行" key="salt-commands">
+          <TabPane tab={t('slurm.saltStackCommand')} key="salt-commands">
             <SaltCommandExecutor />
           </TabPane>
         </Tabs>

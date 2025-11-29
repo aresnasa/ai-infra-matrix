@@ -26,6 +26,7 @@ import {
   ProjectOutlined
 } from '@ant-design/icons';
 import { adminAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -33,6 +34,7 @@ const { RangePicker } = DatePicker;
 const { Option } = Select;
 
 const AdminTrash = () => {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState([]);
   const [pagination, setPagination] = useState({
@@ -69,7 +71,7 @@ const AdminTrash = () => {
         total: response.data.total || 0
       }));
     } catch (error) {
-      message.error('加载回收站数据失败');
+      message.error(t('admin.loadTrashFailed'));
     } finally {
       setLoading(false);
     }
@@ -78,45 +80,45 @@ const AdminTrash = () => {
   const handleRestore = async (projectId, projectName) => {
     try {
       await adminAPI.restoreProject(projectId);
-      message.success(`项目 "${projectName}" 恢复成功`);
+      message.success(t('admin.restoreSuccess').replace('{name}', projectName));
       loadTrashProjects();
     } catch (error) {
-      message.error(error.response?.data?.message || '恢复项目失败');
+      message.error(error.response?.data?.message || t('admin.restoreFailed'));
     }
   };
 
   const handleForceDelete = async (projectId, projectName) => {
     try {
       await adminAPI.forceDeleteProject(projectId);
-      message.success(`项目 "${projectName}" 已永久删除`);
+      message.success(t('admin.permanentDeleteSuccess').replace('{name}', projectName));
       loadTrashProjects();
     } catch (error) {
-      message.error(error.response?.data?.message || '删除项目失败');
+      message.error(error.response?.data?.message || t('admin.permanentDeleteFailed'));
     }
   };
 
   const handleClearTrash = () => {
     Modal.confirm({
-      title: '清空回收站',
+      title: t('admin.clearTrashConfirm'),
       icon: <ExclamationCircleOutlined />,
       content: (
         <div>
-          <p>确定要清空整个回收站吗？</p>
+          <p>{t('admin.clearTrashConfirmDesc')}</p>
           <p style={{ color: '#ff4d4f', marginBottom: 0 }}>
-            ⚠️ 此操作将永久删除回收站中的所有项目，无法恢复！
+            ⚠️ {t('admin.clearTrashWarning')}
           </p>
         </div>
       ),
-      okText: '确定清空',
+      okText: t('admin.confirmClear'),
       okType: 'danger',
-      cancelText: '取消',
+      cancelText: t('admin.cancel'),
       onOk: async () => {
         try {
           await adminAPI.clearTrash();
-          message.success('回收站清空成功');
+          message.success(t('admin.clearTrashSuccess'));
           loadTrashProjects();
         } catch (error) {
-          message.error(error.response?.data?.message || '清空回收站失败');
+          message.error(error.response?.data?.message || t('admin.clearTrashFailed'));
         }
       }
     });
@@ -147,7 +149,7 @@ const AdminTrash = () => {
 
   const columns = [
     {
-      title: '项目名称',
+      title: t('admin.projectName'),
       dataIndex: 'name',
       key: 'name',
       render: (text, record) => (
@@ -162,31 +164,31 @@ const AdminTrash = () => {
       )
     },
     {
-      title: '创建者',
+      title: t('admin.creator'),
       dataIndex: 'creator_name',
       key: 'creator_name',
       width: 120,
       render: (text) => (
         <Space>
           <UserOutlined />
-          <Text>{text || '未知'}</Text>
+          <Text>{text || t('admin.unknown')}</Text>
         </Space>
       )
     },
     {
-      title: '删除者',
+      title: t('admin.deletedBy'),
       dataIndex: 'deleted_by_name',
       key: 'deleted_by_name',
       width: 120,
       render: (text) => (
         <Space>
           <UserOutlined />
-          <Text>{text || '未知'}</Text>
+          <Text>{text || t('admin.unknown')}</Text>
         </Space>
       )
     },
     {
-      title: '删除时间',
+      title: t('admin.deletedAt'),
       dataIndex: 'deleted_at',
       key: 'deleted_at',
       width: 180,
@@ -198,60 +200,60 @@ const AdminTrash = () => {
       )
     },
     {
-      title: '文件数量',
+      title: t('admin.filesCount'),
       dataIndex: 'files_count',
       key: 'files_count',
       width: 100,
       render: (count) => (
-        <Tag color="blue">{count || 0} 个文件</Tag>
+        <Tag color="blue">{count || 0} {t('admin.files')}</Tag>
       )
     },
     {
-      title: '操作',
+      title: t('admin.action'),
       key: 'actions',
       width: 200,
       render: (_, record) => (
         <Space>
-          <Tooltip title="恢复项目">
+          <Tooltip title={t('admin.restoreProject')}>
             <Popconfirm
-              title="恢复项目"
-              description={`确定要恢复项目 "${record.name}" 吗？`}
+              title={t('admin.restoreProject')}
+              description={t('admin.confirmRestore').replace('{name}', record.name)}
               onConfirm={() => handleRestore(record.id, record.name)}
-              okText="确定"
-              cancelText="取消"
+              okText={t('admin.confirm')}
+              cancelText={t('admin.cancel')}
             >
               <Button
                 type="primary"
                 size="small"
                 icon={<UndoOutlined />}
               >
-                恢复
+                {t('admin.restore')}
               </Button>
             </Popconfirm>
           </Tooltip>
           
-          <Tooltip title="永久删除">
+          <Tooltip title={t('admin.permanentDelete')}>
             <Popconfirm
-              title="永久删除项目"
+              title={t('admin.permanentDelete')}
               description={
                 <div>
-                  <p>确定要永久删除项目 "{record.name}" 吗？</p>
+                  <p>{t('admin.confirmPermanentDelete').replace('{name}', record.name)}</p>
                   <p style={{ color: '#ff4d4f', marginBottom: 0 }}>
-                    ⚠️ 此操作无法恢复！
+                    ⚠️ {t('admin.permanentDeleteWarning')}
                   </p>
                 </div>
               }
               onConfirm={() => handleForceDelete(record.id, record.name)}
-              okText="确定删除"
+              okText={t('admin.confirm')}
               okType="danger"
-              cancelText="取消"
+              cancelText={t('admin.cancel')}
             >
               <Button
                 danger
                 size="small"
                 icon={<DeleteOutlined />}
               >
-                删除
+                {t('admin.delete')}
               </Button>
             </Popconfirm>
           </Tooltip>
@@ -268,10 +270,10 @@ const AdminTrash = () => {
             <div>
               <Title level={2}>
                 <DeleteOutlined style={{ marginRight: '8px', color: '#ff4d4f' }} />
-                回收站管理
+                {t('admin.trashManagement')}
               </Title>
               <Text type="secondary">
-                管理已删除的项目，支持恢复或永久删除
+                {t('admin.trashManagementDesc')}
               </Text>
             </div>
             <Button
@@ -280,7 +282,7 @@ const AdminTrash = () => {
               onClick={handleClearTrash}
               disabled={projects.length === 0}
             >
-              清空回收站
+              {t('admin.clearTrash')}
             </Button>
           </div>
         </div>
@@ -289,14 +291,14 @@ const AdminTrash = () => {
         <Card size="small" style={{ marginBottom: '16px' }}>
           <Space wrap>
             <Input.Search
-              placeholder="搜索项目名称..."
+              placeholder={t('admin.searchProjectName')}
               style={{ width: 200 }}
               onSearch={handleSearch}
               allowClear
             />
             
             <RangePicker
-              placeholder={['开始日期', '结束日期']}
+              placeholder={[t('admin.startDate'), t('admin.endDate')]}
               onChange={handleDateRangeChange}
               style={{ width: 240 }}
             />
@@ -306,10 +308,10 @@ const AdminTrash = () => {
               onChange={handleSortChange}
               style={{ width: 160 }}
             >
-              <Option value="deleted_at_desc">删除时间 ↓</Option>
-              <Option value="deleted_at_asc">删除时间 ↑</Option>
-              <Option value="name_asc">项目名称 A-Z</Option>
-              <Option value="name_desc">项目名称 Z-A</Option>
+              <Option value="deleted_at_desc">{t('admin.sortDeletedAtDesc')}</Option>
+              <Option value="deleted_at_asc">{t('admin.sortDeletedAtAsc')}</Option>
+              <Option value="name_asc">{t('admin.sortNameAsc')}</Option>
+              <Option value="name_desc">{t('admin.sortNameDesc')}</Option>
             </Select>
           </Space>
         </Card>
@@ -319,7 +321,7 @@ const AdminTrash = () => {
           <div style={{ marginBottom: '16px' }}>
             <Space>
               <Tag icon={<ProjectOutlined />} color="orange">
-                回收站中共有 {pagination.total} 个已删除项目
+                {t('admin.trashCount').replace('{count}', pagination.total)}
               </Tag>
             </Space>
           </div>
@@ -336,14 +338,14 @@ const AdminTrash = () => {
             showSizeChanger: true,
             showQuickJumper: true,
             showTotal: (total, range) =>
-              `第 ${range[0]}-${range[1]} 条，共 ${total} 条`
+              t('admin.showing').replace('{start}', range[0]).replace('{end}', range[1]).replace('{total}', total)
           }}
           onChange={handleTableChange}
           locale={{
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="回收站为空"
+                description={t('admin.trashEmpty')}
               />
             )
           }}
