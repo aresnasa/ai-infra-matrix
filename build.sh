@@ -1959,7 +1959,7 @@ update_runtime_env() {
 }
 
 start_all() {
-    log_info "Starting all services..."
+    log_info "Starting all services (with HA profile for SaltStack multi-master)..."
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found!"
@@ -1975,8 +1975,9 @@ start_all() {
     
     # Use --no-build to prevent rebuilding when images already exist
     # Use --pull never to prevent checking remote registry (important for offline/intranet environments)
-    $compose_cmd up -d --no-build --pull never
-    log_info "All services started."
+    # Use --profile ha to enable SaltStack multi-master high availability
+    $compose_cmd --profile ha up -d --no-build --pull never
+    log_info "All services started (SaltStack HA enabled)."
 }
 
 # ==============================================================================
@@ -2466,7 +2467,7 @@ if [[ $failed_count -eq 0 ]]; then
     echo
     log_info "Next steps:"
     log_info "  1. Check images: docker images | grep -E 'ai-infra|postgres|redis'"
-    log_info "  2. Start services: docker compose up -d"
+    log_info "  2. Start services: docker compose --profile ha up -d"
 else
     log_error "Some images failed to import. Please check the errors above."
 fi
@@ -2504,7 +2505,7 @@ IMPORT_SCRIPT_EOF
     log_info "📋 Usage instructions:"
     log_info "  1. Copy the entire '$output_dir' directory to the offline environment"
     log_info "  2. Run: cd $output_dir && ./import-images.sh"
-    log_info "  3. Start services: docker compose up -d"
+    log_info "  3. Start services: docker compose --profile ha up -d"
     
     return 0
 }

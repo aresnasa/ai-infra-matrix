@@ -1014,9 +1014,36 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		CPUUsage:          cpuUsage,
 		MemoryUsage:       memoryUsage,
 		ActiveConnections: activeConnections,
+		// 多 Master 高可用信息
+		ActiveMasterURL:  client.baseURL,
+		MasterCount:      h.masterPool.GetMasterCount(),
+		HealthyMasters:   h.masterPool.GetHealthyCount(),
+		MasterHealthInfo: h.getMasterHealthInfo(),
 	}
 	_ = down // 可用于前端显示 down 数量
 	return status, nil
+}
+
+// getMasterHealthInfo 获取所有 Master 的健康信息
+func (h *SaltStackHandler) getMasterHealthInfo() []MasterHealthInfo {
+	masters := h.masterPool.GetAllMasters()
+	result := make([]MasterHealthInfo, 0, len(masters))
+
+	h.masterPool.mu.RLock()
+	defer h.masterPool.mu.RUnlock()
+
+	for _, m := range masters {
+		info := MasterHealthInfo{
+			URL:      m.URL,
+			Priority: m.Priority,
+			Healthy:  h.masterPool.healthStatus[m.URL],
+		}
+		if lastCheck, exists := h.masterPool.lastCheck[m.URL]; exists {
+			info.LastCheck = lastCheck
+		}
+		result = append(result, info)
+	}
+	return result
 }
 
 // getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数）

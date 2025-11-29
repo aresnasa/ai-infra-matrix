@@ -334,12 +334,14 @@ services:
       SLURM_MASTER_PORT: "${SLURM_MASTER_PORT:-22}"
       SLURM_MASTER_USER: "${SLURM_MASTER_USER:-root}"
       SLURM_MASTER_PASSWORD: "${SLURM_MASTER_PASSWORD}"
-      # SaltStack 配置
+      # SaltStack 配置 (多 Master 高可用)
       SALTSTACK_ENABLED: "${SALTSTACK_ENABLED:-true}"
       SALTSTACK_MASTER_HOST: "${SALTSTACK_MASTER_HOST:-${EXTERNAL_HOST}}"
       SALTSTACK_MASTER_URL: "${SALTSTACK_MASTER_URL:-}"
+      # 多 Master URL 列表 (逗号分隔，用于高可用故障转移)
+      SALT_MASTER_URLS: "${SALT_MASTER_URLS:-http://salt-master-1:8002,http://salt-master-2:8002}"
       SALT_API_SCHEME: "${SALT_API_SCHEME:-http}"
-      SALT_MASTER_HOST: "${SALT_MASTER_HOST:-saltstack}"
+      SALT_MASTER_HOST: "${SALT_MASTER_HOST:-salt-master-1}"
       SALT_API_PORT: "${SALT_API_PORT:-8002}"
       SALT_API_USERNAME: "${SALT_API_USERNAME:-saltapi}"
       SALT_API_PASSWORD: "${SALT_API_PASSWORD:-aiinfra-salt}"
@@ -517,15 +519,26 @@ services:
       - ai-infra-network
     restart: "no"
 
-# SaltStack 配置管理服务
-  saltstack:
+# ============================================================================
+# SaltStack 多 Master 高可用架构
+# ============================================================================
+# 架构说明：
+# - salt-master-1 (主节点): 负责生成和管理 PKI 密钥，对外暴露端口
+# - salt-master-2 (备用节点): 共享同一套 PKI 密钥，提供故障转移
+# - 所有 Master 共享 salt_keys volume，确保密钥一致
+# - 后端通过 SaltMasterPool 自动选择健康的 Master
+# ============================================================================
+
+  # SaltStack Master 1 (主节点 - 负责端口暴露)
+  salt-master-1:
     image: ai-infra-saltstack:{{IMAGE_TAG}}
     build:
-      context: ./src/saltstack
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./src/saltstack/Dockerfile
       args:
         VERSION: {{IMAGE_TAG}}
-    container_name: ai-infra-saltstack
+    container_name: ai-infra-salt-master-1
+    hostname: salt-master-1
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -538,37 +551,102 @@ services:
       - .env
     environment:
       - TZ=Asia/Shanghai
-      # Suppress upstream deprecation warnings to keep logs clean
       - PYTHONWARNINGS=ignore::DeprecationWarning
-      - SALT_MASTER_HOST=saltstack
+      - SALT_MASTER_ID=salt-master-1
+      - SALT_MASTER_ROLE=primary
       - AI_INFRA_BACKEND_URL=${BACKEND_URL:-http://backend:8082}
       - DEBUG_MODE=${DEBUG_MODE:-false}
       - SALT_API_USERNAME=${SALT_API_USERNAME:-saltapi}
       - SALT_API_PASSWORD=${SALT_API_PASSWORD:-aiinfra-salt}
+      - START_LOCAL_MINION=${SALT_START_LOCAL_MINION:-false}
     ports:
-      - "4505:4505"  # Salt Master Publish Port (外部 Minion 连接)
-      - "4506:4506"  # Salt Master Return Port (外部 Minion 连接)
+      - "4505:4505"
+      - "4506:4506"
     expose:
-      - "8002"  # Salt API Port (仅内部访问)
+      - "8002"
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
-      - salt_data:/var/cache/salt
+      - salt_master_1_cache:/var/cache/salt
       - salt_logs:/var/log/salt
       - salt_keys:/etc/salt/pki
+      - salt_states:/srv/salt
+      - salt_pillar:/srv/pillar
     networks:
-      - ai-infra-network
+      ai-infra-network:
+        aliases:
+          - saltstack
+          - salt-master
     depends_on:
       backend:
         condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "sh", "-c", "pgrep -f salt-master && pgrep -f salt-api"]
+      test: ["CMD", "sh", "-c", "pgrep -f salt-master && pgrep -f salt-api && nc -z 127.0.0.1 8002"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 90s
     restart: unless-stopped
+
+  # SaltStack Master 2 (备用节点 - 故障转移)
+  salt-master-2:
+    image: ai-infra-saltstack:{{IMAGE_TAG}}
+    build:
+      context: .
+      dockerfile: ./src/saltstack/Dockerfile
+      args:
+        VERSION: {{IMAGE_TAG}}
+    container_name: ai-infra-salt-master-2
+    hostname: salt-master-2
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONWARNINGS=ignore::DeprecationWarning
+      - SALT_MASTER_ID=salt-master-2
+      - SALT_MASTER_ROLE=secondary
+      - AI_INFRA_BACKEND_URL=${BACKEND_URL:-http://backend:8082}
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+      - SALT_API_USERNAME=${SALT_API_USERNAME:-saltapi}
+      - SALT_API_PASSWORD=${SALT_API_PASSWORD:-aiinfra-salt}
+      - START_LOCAL_MINION=false
+    ports:
+      - "4507:4505"
+      - "4508:4506"
+    expose:
+      - "8002"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - salt_master_2_cache:/var/cache/salt
+      - salt_logs:/var/log/salt
+      - salt_keys:/etc/salt/pki
+      - salt_states:/srv/salt
+      - salt_pillar:/srv/pillar
+    networks:
+      ai-infra-network:
+        aliases:
+          - salt-master-backup
+    depends_on:
+      salt-master-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "sh", "-c", "pgrep -f salt-master && pgrep -f salt-api && nc -z 127.0.0.1 8002"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    profiles:
+      - ha
 
   # SLURM Master 服务
   slurm-master:
@@ -705,7 +783,7 @@ services:
         condition: service_healthy
       jupyterhub:
         condition: service_healthy
-      saltstack:
+      salt-master-1:
         condition: service_healthy
       slurm-master:
         condition: service_healthy
@@ -947,10 +1025,18 @@ volumes:
     name: ai-infra-nginx-logs
   salt_data:
     name: ai-infra-salt-data
+  salt_master_1_cache:
+    name: ai-infra-salt-master-1-cache
+  salt_master_2_cache:
+    name: ai-infra-salt-master-2-cache
   salt_logs:
     name: ai-infra-salt-logs
   salt_keys:
     name: ai-infra-salt-keys
+  salt_states:
+    name: ai-infra-salt-states
+  salt_pillar:
+    name: ai-infra-salt-pillar
   slurm_master_data:
     name: ai-infra-slurm-master-data
   slurm_master_logs:
