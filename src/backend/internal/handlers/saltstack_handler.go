@@ -943,7 +943,13 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		result.apiInfo, _ = client.makeRequest("/", "GET", nil)
 
 		// 获取 up/down 状态 - 这是最重要的
-		result.manageStatus, result.err = client.makeRunner("manage.status", nil)
+		// 设置较短的超时参数，避免等待离线 minion 过久
+		// timeout: 等待 minion 响应的超时时间 (秒)
+		// gather_job_timeout: 收集作业结果的超时时间 (秒)
+		result.manageStatus, result.err = client.makeRunner("manage.status", map[string]interface{}{
+			"timeout":            5, // 5 秒等待 minion 响应
+			"gather_job_timeout": 3, // 3 秒收集结果
+		})
 		if result.err != nil {
 			resultChan <- result
 			return
