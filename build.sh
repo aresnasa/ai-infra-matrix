@@ -2531,7 +2531,7 @@ print_help() {
     echo "  render --force      Force re-render all templates (ignore cache)"
     echo ""
     echo "Service Commands:"
-    echo "  start-all           Start all services using docker-compose"
+    echo "  start-all           Start all services (with SaltStack HA multi-master)"
     echo "  stop-all            Stop all services"
     echo "  tag-images          Tag private registry images as local (for intranet)"
     echo ""
