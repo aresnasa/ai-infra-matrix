@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
@@ -29,14 +30,219 @@ type SaltStackHandler struct {
 	config         *config.Config
 	cache          *redis.Client
 	metricsService *services.MetricsService
+	masterPool     *SaltMasterPool // 多 Master 连接池
+}
+
+// SaltMasterPool 管理多个 Salt Master 的连接池
+type SaltMasterPool struct {
+	masters       []SaltMasterConfig
+	healthStatus  map[string]bool      // Master URL -> 健康状态
+	lastCheck     map[string]time.Time // Master URL -> 上次检查时间
+	mu            sync.RWMutex
+	checkInterval time.Duration
+}
+
+// SaltMasterConfig 单个 Salt Master 配置
+type SaltMasterConfig struct {
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Eauth    string `json:"eauth"`
+	Priority int    `json:"priority"` // 优先级，数字越小优先级越高
+}
+
+// NewSaltMasterPool 创建 Master 连接池
+func NewSaltMasterPool() *SaltMasterPool {
+	pool := &SaltMasterPool{
+		masters:       make([]SaltMasterConfig, 0),
+		healthStatus:  make(map[string]bool),
+		lastCheck:     make(map[string]time.Time),
+		checkInterval: 30 * time.Second,
+	}
+	pool.loadMastersFromEnv()
+	return pool
+}
+
+// loadMastersFromEnv 从环境变量加载 Master 配置
+// 支持两种配置方式：
+// 1. 单 Master: SALTSTACK_MASTER_URL 或 SALT_MASTER_HOST
+// 2. 多 Master: SALT_MASTERS_CONFIG (JSON 格式)
+func (p *SaltMasterPool) loadMastersFromEnv() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// 方式1: 从 JSON 配置加载多 Master
+	if configJSON := os.Getenv("SALT_MASTERS_CONFIG"); configJSON != "" {
+		var configs []SaltMasterConfig
+		if err := json.Unmarshal([]byte(configJSON), &configs); err == nil && len(configs) > 0 {
+			p.masters = configs
+			// 按优先级排序
+			sort.Slice(p.masters, func(i, j int) bool {
+				return p.masters[i].Priority < p.masters[j].Priority
+			})
+			log.Printf("[SaltMasterPool] 从 SALT_MASTERS_CONFIG 加载了 %d 个 Master", len(p.masters))
+			return
+		}
+	}
+
+	// 方式2: 从逗号分隔的 URL 列表加载
+	if urlList := os.Getenv("SALT_MASTER_URLS"); urlList != "" {
+		urls := strings.Split(urlList, ",")
+		username := getEnv("SALT_API_USERNAME", "saltapi")
+		password := os.Getenv("SALT_API_PASSWORD")
+		eauth := getEnv("SALT_API_EAUTH", "file")
+
+		for i, u := range urls {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				p.masters = append(p.masters, SaltMasterConfig{
+					URL:      u,
+					Username: username,
+					Password: password,
+					Eauth:    eauth,
+					Priority: i,
+				})
+			}
+		}
+		if len(p.masters) > 0 {
+			log.Printf("[SaltMasterPool] 从 SALT_MASTER_URLS 加载了 %d 个 Master", len(p.masters))
+			return
+		}
+	}
+
+	// 方式3: 单 Master 兼容模式
+	var masterURL string
+	if base := strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL")); base != "" {
+		if parsed, err := url.Parse(base); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			masterURL = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		} else {
+			masterURL = base
+		}
+	} else {
+		scheme := getEnv("SALT_API_SCHEME", "http")
+		host := getEnv("SALT_MASTER_HOST", "saltstack")
+		port := getEnv("SALT_API_PORT", "8002")
+		masterURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	}
+
+	p.masters = []SaltMasterConfig{{
+		URL:      masterURL,
+		Username: getEnv("SALT_API_USERNAME", "saltapi"),
+		Password: os.Getenv("SALT_API_PASSWORD"),
+		Eauth:    getEnv("SALT_API_EAUTH", "file"),
+		Priority: 0,
+	}}
+	log.Printf("[SaltMasterPool] 使用单 Master 模式: %s", masterURL)
+}
+
+// GetHealthyMaster 获取一个健康的 Master，支持故障转移
+func (p *SaltMasterPool) GetHealthyMaster() (*SaltMasterConfig, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if len(p.masters) == 0 {
+		return nil, errors.New("no salt masters configured")
+	}
+
+	// 按优先级顺序尝试每个 Master
+	for i := range p.masters {
+		master := &p.masters[i]
+		// 如果有健康状态记录且健康，直接返回
+		if healthy, exists := p.healthStatus[master.URL]; exists && healthy {
+			return master, nil
+		}
+		// 如果没有记录或上次检查时间过久，尝试这个 Master
+		if lastCheck, exists := p.lastCheck[master.URL]; !exists || time.Since(lastCheck) > p.checkInterval {
+			return master, nil
+		}
+	}
+
+	// 所有 Master 都不健康，返回第一个（让调用方重试）
+	return &p.masters[0], nil
+}
+
+// GetAllMasters 获取所有配置的 Master（用于并行探测）
+func (p *SaltMasterPool) GetAllMasters() []SaltMasterConfig {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make([]SaltMasterConfig, len(p.masters))
+	copy(result, p.masters)
+	return result
+}
+
+// UpdateHealth 更新 Master 健康状态
+func (p *SaltMasterPool) UpdateHealth(url string, healthy bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.healthStatus[url] = healthy
+	p.lastCheck[url] = time.Now()
+	if healthy {
+		log.Printf("[SaltMasterPool] Master %s 健康检查通过", url)
+	} else {
+		log.Printf("[SaltMasterPool] Master %s 健康检查失败", url)
+	}
+}
+
+// GetMasterCount 获取配置的 Master 数量
+func (p *SaltMasterPool) GetMasterCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.masters)
+}
+
+// GetHealthyCount 获取健康的 Master 数量
+func (p *SaltMasterPool) GetHealthyCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	count := 0
+	for _, healthy := range p.healthStatus {
+		if healthy {
+			count++
+		}
+	}
+	return count
 }
 
 // NewSaltStackHandler 创建新的SaltStack处理器
 func NewSaltStackHandler(cfg *config.Config, cache *redis.Client) *SaltStackHandler {
-	return &SaltStackHandler{
+	handler := &SaltStackHandler{
 		config:         cfg,
 		cache:          cache,
 		metricsService: services.NewMetricsService(),
+		masterPool:     NewSaltMasterPool(),
+	}
+	// 启动后台健康检查
+	go handler.startHealthCheck()
+	return handler
+}
+
+// startHealthCheck 启动后台健康检查
+func (h *SaltStackHandler) startHealthCheck() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// 首次立即检查
+	h.checkAllMastersHealth()
+
+	for range ticker.C {
+		h.checkAllMastersHealth()
+	}
+}
+
+// checkAllMastersHealth 检查所有 Master 的健康状态
+func (h *SaltStackHandler) checkAllMastersHealth() {
+	masters := h.masterPool.GetAllMasters()
+	if len(masters) <= 1 {
+		return // 单 Master 模式不需要健康检查
+	}
+
+	for _, master := range masters {
+		go func(m SaltMasterConfig) {
+			client := h.newSaltAPIClientForMaster(&m)
+			// 尝试简单的 GET / 请求来检查连通性
+			_, err := client.makeRequest("/", "GET", nil)
+			h.masterPool.UpdateHealth(m.URL, err == nil)
+		}(master)
 	}
 }
 
@@ -64,6 +270,19 @@ type SaltStackStatus struct {
 	CPUUsage          int    `json:"cpu_usage,omitempty"`
 	MemoryUsage       int    `json:"memory_usage,omitempty"`
 	ActiveConnections int    `json:"active_connections,omitempty"`
+	// 多 Master 高可用字段
+	ActiveMasterURL  string             `json:"active_master_url,omitempty"`
+	MasterCount      int                `json:"master_count,omitempty"`
+	HealthyMasters   int                `json:"healthy_masters,omitempty"`
+	MasterHealthInfo []MasterHealthInfo `json:"master_health_info,omitempty"`
+}
+
+// MasterHealthInfo 单个 Master 的健康信息
+type MasterHealthInfo struct {
+	URL       string    `json:"url"`
+	Healthy   bool      `json:"healthy"`
+	LastCheck time.Time `json:"last_check,omitempty"`
+	Priority  int       `json:"priority"`
 }
 
 // SaltMinion Salt Minion信息
@@ -95,26 +314,32 @@ type SaltJob struct {
 
 // saltAPIClient SaltStack API客户端
 type saltAPIClient struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL  string
+	token    string
+	client   *http.Client
+	username string
+	password string
+	eauth    string
 }
 
-// newSaltAPIClient 创建Salt API客户端
+// newSaltAPIClient 创建Salt API客户端（使用多 Master 故障转移）
 func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
-	// 从环境变量读取超时配置，默认30秒（适应跨网络环境）
-	timeoutSec := 30
-	if t := os.Getenv("SALT_API_TIMEOUT"); t != "" {
-		// 支持带单位的时间值（如 "65s", "1m"）或纯数字（秒）
-		if d, err := time.ParseDuration(t); err == nil && d > 0 {
-			timeoutSec = int(d.Seconds())
-		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
-			timeoutSec = parsed
-		}
+	master, err := h.masterPool.GetHealthyMaster()
+	if err != nil {
+		log.Printf("[SaltStack] 获取健康 Master 失败: %v, 使用默认配置", err)
+		return h.newSaltAPIClientDefault()
 	}
+	return h.newSaltAPIClientForMaster(master)
+}
 
+// newSaltAPIClientDefault 使用默认配置创建客户端（兼容旧逻辑）
+func (h *SaltStackHandler) newSaltAPIClientDefault() *saltAPIClient {
+	timeoutSec := h.getAPITimeout()
 	return &saltAPIClient{
-		baseURL: h.getSaltAPIURL(),
+		baseURL:  h.getSaltAPIURL(),
+		username: getEnv("SALT_API_USERNAME", "saltapi"),
+		password: os.Getenv("SALT_API_PASSWORD"),
+		eauth:    getEnv("SALT_API_EAUTH", "file"),
 		client: &http.Client{
 			Timeout: time.Duration(timeoutSec) * time.Second,
 			Transport: &http.Transport{
@@ -123,7 +348,7 @@ func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
 				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
 				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second, // 连接超时
+					Timeout:   10 * time.Second,
 					KeepAlive: 30 * time.Second,
 				}).DialContext,
 			},
@@ -131,10 +356,63 @@ func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
 	}
 }
 
+// newSaltAPIClientForMaster 为指定 Master 创建客户端
+func (h *SaltStackHandler) newSaltAPIClientForMaster(master *SaltMasterConfig) *saltAPIClient {
+	timeoutSec := h.getAPITimeout()
+	return &saltAPIClient{
+		baseURL:  master.URL,
+		username: master.Username,
+		password: master.Password,
+		eauth:    master.Eauth,
+		client: &http.Client{
+			Timeout: time.Duration(timeoutSec) * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
+		},
+	}
+}
+
+// getAPITimeout 获取 API 超时配置
+func (h *SaltStackHandler) getAPITimeout() int {
+	timeoutSec := 30
+	if t := os.Getenv("SALT_API_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+	return timeoutSec
+}
+
 // newSaltAPIClientWithTimeout 创建带自定义超时的Salt API客户端
 func (h *SaltStackHandler) newSaltAPIClientWithTimeout(timeout time.Duration) *saltAPIClient {
+	master, _ := h.masterPool.GetHealthyMaster()
+	baseURL := h.getSaltAPIURL()
+	username := getEnv("SALT_API_USERNAME", "saltapi")
+	password := os.Getenv("SALT_API_PASSWORD")
+	eauth := getEnv("SALT_API_EAUTH", "file")
+
+	if master != nil {
+		baseURL = master.URL
+		username = master.Username
+		password = master.Password
+		eauth = master.Eauth
+	}
+
 	return &saltAPIClient{
-		baseURL: h.getSaltAPIURL(),
+		baseURL:  baseURL,
+		username: username,
+		password: password,
+		eauth:    eauth,
 		client: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -149,6 +427,50 @@ func (h *SaltStackHandler) newSaltAPIClientWithTimeout(timeout time.Duration) *s
 			},
 		},
 	}
+}
+
+// newSaltAPIClientWithFailover 带故障转移的客户端创建（尝试所有 Master）
+func (h *SaltStackHandler) newSaltAPIClientWithFailover() (*saltAPIClient, error) {
+	masters := h.masterPool.GetAllMasters()
+	if len(masters) == 0 {
+		return nil, errors.New("no salt masters configured")
+	}
+
+	timeoutSec := h.getAPITimeout()
+
+	// 尝试每个 Master
+	for _, master := range masters {
+		client := &saltAPIClient{
+			baseURL:  master.URL,
+			username: master.Username,
+			password: master.Password,
+			eauth:    master.Eauth,
+			client: &http.Client{
+				Timeout: time.Duration(timeoutSec) * time.Second,
+				Transport: &http.Transport{
+					MaxIdleConns:        100,
+					MaxIdleConnsPerHost: 10,
+					IdleConnTimeout:     90 * time.Second,
+					DisableKeepAlives:   false,
+					DialContext: (&net.Dialer{
+						Timeout:   5 * time.Second, // 故障转移时使用较短连接超时
+						KeepAlive: 30 * time.Second,
+					}).DialContext,
+				},
+			},
+		}
+
+		// 尝试认证
+		if err := client.authenticate(); err == nil {
+			h.masterPool.UpdateHealth(master.URL, true)
+			return client, nil
+		} else {
+			h.masterPool.UpdateHealth(master.URL, false)
+			log.Printf("[SaltStack] Master %s 认证失败: %v, 尝试下一个", master.URL, err)
+		}
+	}
+
+	return nil, errors.New("all salt masters are unavailable")
 }
 
 // getSaltAPIURL 获取Salt API URL
@@ -177,11 +499,22 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// authenticate 向Salt API认证 - 临时绕过认证
+// authenticate 向Salt API认证
 func (c *saltAPIClient) authenticate() error {
-	username := getEnv("SALT_API_USERNAME", "saltapi")
-	password := os.Getenv("SALT_API_PASSWORD")
-	eauth := getEnv("SALT_API_EAUTH", "file")
+	// 优先使用客户端存储的凭证，否则从环境变量获取（兼容旧代码）
+	username := c.username
+	password := c.password
+	eauth := c.eauth
+
+	if username == "" {
+		username = getEnv("SALT_API_USERNAME", "saltapi")
+	}
+	if password == "" {
+		password = os.Getenv("SALT_API_PASSWORD")
+	}
+	if eauth == "" {
+		eauth = getEnv("SALT_API_EAUTH", "file")
+	}
 
 	// 如果未配置密码，则尝试无认证直接使用
 	if password == "" {
@@ -376,9 +709,12 @@ func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
 	}
 
 	// 创建带超时控制的 context
-	timeoutSec := 45 // 状态检查使用较短超时
+	timeoutSec := 60 // 状态检查使用 60 秒超时
 	if t := os.Getenv("SALT_API_STATUS_TIMEOUT"); t != "" {
-		if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+		// 支持带单位的时间值（如 "60s", "2m"）或纯数字（秒）
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
 			timeoutSec = parsed
 		}
 	}
@@ -398,14 +734,14 @@ func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
 	go func() {
 		// 连接Salt API
 		if err := client.authenticate(); err != nil {
-			resultChan <- result{err: fmt.Errorf("salt API authentication failed: %v", err)}
+			resultChan <- result{err: fmt.Errorf("salt API 认证失败: %v", err)}
 			return
 		}
 
 		// 获取实际状态
 		status, err := h.getRealSaltStackStatus(client)
 		if err != nil {
-			resultChan <- result{err: fmt.Errorf("failed to get salt status: %v", err)}
+			resultChan <- result{err: fmt.Errorf("获取 salt 状态失败: %v", err)}
 			return
 		}
 		resultChan <- result{status: status}
@@ -590,25 +926,66 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 
 // getRealSaltStackStatus 获取真实的SaltStack状态
 func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltStackStatus, error) {
-	// 获取 API 根信息（用于APIVersion）
-	apiInfo, _ := client.makeRequest("/", "GET", nil)
-
-	// 获取 up/down 状态
-	manageStatus, err := client.makeRunner("manage.status", nil)
-	if err != nil {
-		return SaltStackStatus{}, err
+	// 使用并行请求获取状态，提高响应速度
+	type apiResult struct {
+		apiInfo      map[string]interface{}
+		manageStatus map[string]interface{}
+		keysResp     map[string]interface{}
+		err          error
 	}
+
+	// 并行获取 API 信息、管理状态和密钥信息
+	resultChan := make(chan apiResult, 1)
+	go func() {
+		var result apiResult
+
+		// 获取 API 根信息（用于APIVersion）- 这个通常很快
+		result.apiInfo, _ = client.makeRequest("/", "GET", nil)
+
+		// 获取 up/down 状态 - 这是最重要的
+		result.manageStatus, result.err = client.makeRunner("manage.status", nil)
+		if result.err != nil {
+			resultChan <- result
+			return
+		}
+
+		// 获取 keys
+		result.keysResp, result.err = client.makeWheel("key.list_all", nil)
+		resultChan <- result
+	}()
+
+	// 等待基础状态获取完成（最多 30 秒）
+	var apiInfo, manageStatus, keysResp map[string]interface{}
+	select {
+	case result := <-resultChan:
+		if result.err != nil {
+			return SaltStackStatus{}, result.err
+		}
+		apiInfo = result.apiInfo
+		manageStatus = result.manageStatus
+		keysResp = result.keysResp
+	case <-time.After(30 * time.Second):
+		return SaltStackStatus{}, fmt.Errorf("获取 Salt 基础状态超时")
+	}
+
 	up, down := h.parseManageStatus(manageStatus)
-
-	// 获取 keys
-	keysResp, err := client.makeWheel("key.list_all", nil)
-	if err != nil {
-		return SaltStackStatus{}, err
-	}
 	minions, pre, rejected := h.parseWheelKeys(keysResp)
 
-	// 获取性能指标
-	cpuUsage, memoryUsage, activeConnections := h.getPerformanceMetrics(client)
+	// 性能指标在单独的 goroutine 中获取，设置较短超时，失败不影响主要状态
+	cpuUsage, memoryUsage, activeConnections := 0, 0, 0
+	metricsChan := make(chan [3]int, 1)
+	go func() {
+		cpu, mem, conn := h.getPerformanceMetrics(client)
+		metricsChan <- [3]int{cpu, mem, conn}
+	}()
+
+	// 等待性能指标，最多 5 秒
+	select {
+	case metrics := <-metricsChan:
+		cpuUsage, memoryUsage, activeConnections = metrics[0], metrics[1], metrics[2]
+	case <-time.After(5 * time.Second):
+		log.Printf("[SaltStack] 获取性能指标超时，使用默认值")
+	}
 
 	// 构造状态
 	status := SaltStackStatus{

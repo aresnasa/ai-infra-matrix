@@ -1805,6 +1805,22 @@ func mysqlDataBaseInit(db *gorm.DB) error {
 }
 
 func postgresDataBaseInit(db *gorm.DB) error {
+	// Pre-migration: Fix NULL values in existing tables to avoid NOT NULL constraint errors
+	// These updates are idempotent and safe to run on every startup
+	nullFixQueries := []string{
+		"UPDATE target SET host_tags = '' WHERE host_tags IS NULL",
+		"UPDATE target SET tags = '' WHERE tags IS NULL",
+		"UPDATE target SET note = '' WHERE note IS NULL",
+		"UPDATE target SET host_ip = '' WHERE host_ip IS NULL",
+		"UPDATE target SET agent_version = '' WHERE agent_version IS NULL",
+		"UPDATE target SET engine_name = '' WHERE engine_name IS NULL",
+		"UPDATE target SET os = '' WHERE os IS NULL",
+	}
+	for _, query := range nullFixQueries {
+		// Ignore errors - table might not exist yet on fresh install
+		db.Exec(query)
+	}
+
 	dts := []interface{}{
 		&InitTaskMeta{},
 		&InitTaskAction{},

@@ -1295,4 +1295,51 @@ export default {
       safety: '安全',
     },
   },
+
+  // Minions 管理
+  minions: {
+    // 表格列 - 使用简洁的 key
+    columns: {
+      id: 'ID',
+      status: '状态',
+      os: '操作系统',
+      arch: '架构',
+      saltVersion: 'Salt 版本',
+      kernel: '内核版本',
+      gpuDriver: 'GPU 驱动',
+      lastSeen: '最后在线',
+      actions: '操作',
+    },
+    // 状态
+    status: {
+      online: '在线',
+      offline: '离线',
+      unknown: '未知',
+    },
+    // 搜索
+    search: {
+      placeholder: '搜索 ID、IP、操作系统、内核版本...',
+      noResults: '未找到匹配的节点',
+    },
+    // 操作
+    actions: {
+      uninstall: '卸载 Minion',
+      deleteKey: '删除密钥',
+      deleteTitle: '删除 Minion 密钥',
+      deleteConfirm: '此操作将从 Salt Master 删除该 Minion 的密钥，是否继续？',
+    },
+    // 批量操作
+    batch: {
+      title: '批量操作',
+      inverseSelect: '反选',
+      clearSelect: '清除选择',
+      deleteConfirmTitle: '确认批量删除',
+      deleteConfirmMessage: '确定要删除选中的 {count} 个 Minion 密钥吗？',
+      confirmDelete: '确认删除',
+      deleteNote: '删除后，这些 Minion 需要重新接受密钥才能连接。',
+    },
+    // 其他
+    selected: '已选 {count} 项',
+    noData: '暂无 Minion 数据',
+  },
 };

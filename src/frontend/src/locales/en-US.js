@@ -1288,4 +1288,51 @@ export default {
       safety: 'Safety',
     },
   },
+
+  // Minions Management
+  minions: {
+    // Table columns - simplified keys
+    columns: {
+      id: 'ID',
+      status: 'Status',
+      os: 'OS',
+      arch: 'Arch',
+      saltVersion: 'Salt Version',
+      kernel: 'Kernel',
+      gpuDriver: 'GPU Driver',
+      lastSeen: 'Last Seen',
+      actions: 'Actions',
+    },
+    // Status
+    status: {
+      online: 'Online',
+      offline: 'Offline',
+      unknown: 'Unknown',
+    },
+    // Search
+    search: {
+      placeholder: 'Search ID, IP, OS, kernel version...',
+      noResults: 'No matching nodes found',
+    },
+    // Actions
+    actions: {
+      uninstall: 'Uninstall Minion',
+      deleteKey: 'Delete Key',
+      deleteTitle: 'Delete Minion Key',
+      deleteConfirm: 'This will remove the key from Salt Master. Continue?',
+    },
+    // Batch operations
+    batch: {
+      title: 'Batch Operations',
+      inverseSelect: 'Inverse Select',
+      clearSelect: 'Clear Selection',
+      deleteConfirmTitle: 'Confirm Batch Delete',
+      deleteConfirmMessage: 'Are you sure you want to delete {count} Minion keys?',
+      confirmDelete: 'Confirm Delete',
+      deleteNote: 'After deletion, these Minions need to re-accept keys to connect.',
+    },
+    // Other
+    selected: '{count} selected',
+    noData: 'No Minion data',
+  },
 };
