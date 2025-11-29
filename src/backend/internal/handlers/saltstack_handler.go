@@ -889,7 +889,10 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	// runner.manage.status
 	{
 		start := time.Now()
-		r, err := client.makeRunner("manage.status", nil)
+		r, err := client.makeRunner("manage.status", map[string]interface{}{
+			"timeout":            5,
+			"gather_job_timeout": 3,
+		})
 		res.ManageStatus["duration_ms"] = time.Since(start).Milliseconds()
 		if err != nil {
 			res.ManageStatus["ok"] = false
@@ -1658,7 +1661,11 @@ func (h *SaltStackHandler) extractKeys(resp map[string]interface{}, keyType stri
 
 func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, error) {
 	// 使用 runner manage.status 获取 up/down 列表
-	statusResp, err := client.makeRunner("manage.status", nil)
+	// 设置较短超时，避免等待离线 minion 过久
+	statusResp, err := client.makeRunner("manage.status", map[string]interface{}{
+		"timeout":            5,
+		"gather_job_timeout": 3,
+	})
 	if err != nil {
 		return nil, err
 	}
