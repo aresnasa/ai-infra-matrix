@@ -4,6 +4,7 @@ third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
 third_party/proxy/
+ci_cd.sh
 
 # 排除大型二进制文件 (超过 GitHub 100MB 限制)
 # 这些文件在构建时会自动从镜像下载
