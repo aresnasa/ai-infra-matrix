@@ -16,7 +16,7 @@ const (
 )
 
 // MinionDeleteTask Minion 删除任务记录
-// 用于实现软删除 + 后台异步真实删除
+// 用于实现软删除 + 后台异步真实删除 + SSH 远程卸载
 type MinionDeleteTask struct {
 	ID           uint           `json:"id" gorm:"primaryKey"`
 	MinionID     string         `json:"minion_id" gorm:"not null;index;size:255"`
@@ -31,6 +31,15 @@ type MinionDeleteTask struct {
 	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
 	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
 	CreatedBy    string         `json:"created_by,omitempty" gorm:"size:100"`
+
+	// SSH 远程卸载配置（可选，用于彻底卸载远程节点上的 salt-minion）
+	SSHHost     string `json:"ssh_host,omitempty" gorm:"size:255"`     // SSH 主机地址
+	SSHPort     int    `json:"ssh_port,omitempty" gorm:"default:22"`   // SSH 端口
+	SSHUsername string `json:"ssh_username,omitempty" gorm:"size:100"` // SSH 用户名
+	SSHPassword string `json:"-" gorm:"size:500"`                      // SSH 密码（加密存储，不返回给前端）
+	SSHKeyPath  string `json:"ssh_key_path,omitempty" gorm:"size:500"` // SSH 私钥路径
+	UseSudo     bool   `json:"use_sudo" gorm:"default:false"`          // 是否使用 sudo
+	Uninstall   bool   `json:"uninstall" gorm:"default:false"`         // 是否执行远程卸载（不仅仅是删除密钥）
 }
 
 // TableName 指定表名

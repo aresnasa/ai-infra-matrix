@@ -9,11 +9,40 @@
 set -e
 echo "=== Uninstalling Salt Minion ==="
 echo "=== Target: Generic System ==="
+echo "=== Timestamp: $(date '+%Y-%m-%d %H:%M:%S') ==="
 
-# Stop and disable service
+# Stop and disable service (with multiple retry)
 echo "=== Stopping Salt Minion service ==="
-{{.SudoPrefix}}systemctl stop salt-minion 2>/dev/null || true
+for i in 1 2 3; do
+    {{.SudoPrefix}}systemctl stop salt-minion 2>/dev/null && break || sleep 2
+done
 {{.SudoPrefix}}systemctl disable salt-minion 2>/dev/null || true
+
+# Kill any remaining salt-minion processes
+echo "=== Killing remaining salt-minion processes ==="
+{{.SudoPrefix}}pkill -9 -f salt-minion 2>/dev/null || true
+{{.SudoPrefix}}pkill -9 -f salt-call 2>/dev/null || true
+sleep 1
+
+# Try to detect and use the appropriate package manager
+echo "=== Attempting package removal ==="
+if command -v apt-get &> /dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    {{.SudoPrefix}}apt-get remove -y --purge salt-minion salt-common 2>/dev/null || true
+    {{.SudoPrefix}}apt-get autoremove -y 2>/dev/null || true
+elif command -v dnf &> /dev/null; then
+    {{.SudoPrefix}}dnf remove -y salt-minion salt 2>/dev/null || true
+elif command -v yum &> /dev/null; then
+    {{.SudoPrefix}}yum remove -y salt-minion salt 2>/dev/null || true
+elif command -v zypper &> /dev/null; then
+    {{.SudoPrefix}}zypper remove -y salt-minion salt 2>/dev/null || true
+elif command -v apk &> /dev/null; then
+    {{.SudoPrefix}}apk del salt-minion salt 2>/dev/null || true
+elif command -v pacman &> /dev/null; then
+    {{.SudoPrefix}}pacman -R --noconfirm salt 2>/dev/null || true
+else
+    echo "WARNING: Unknown package manager, skipping package removal"
+fi
 
 # Clean up configuration and data
 echo "=== Cleaning up Salt directories ==="
@@ -21,6 +50,30 @@ echo "=== Cleaning up Salt directories ==="
 {{.SudoPrefix}}rm -rf /var/cache/salt
 {{.SudoPrefix}}rm -rf /var/log/salt
 {{.SudoPrefix}}rm -rf /var/run/salt
+{{.SudoPrefix}}rm -rf /srv/salt
+{{.SudoPrefix}}rm -rf /srv/pillar
+{{.SudoPrefix}}rm -rf /opt/saltstack
+
+# Remove salt user if exists
+echo "=== Removing salt user ==="
+{{.SudoPrefix}}userdel -r salt 2>/dev/null || true
+{{.SudoPrefix}}groupdel salt 2>/dev/null || true
+
+# Verify uninstallation
+echo "=== Verifying uninstallation ==="
+if command -v salt-minion &> /dev/null; then
+    echo "WARNING: salt-minion command still exists"
+    which salt-minion || true
+else
+    echo "OK: salt-minion command removed"
+fi
+
+if [ -d /etc/salt ]; then
+    echo "WARNING: /etc/salt directory still exists"
+else
+    echo "OK: /etc/salt directory removed"
+fi
 
 echo "=== Salt Minion Uninstall Complete ==="
-echo "=== Note: Manual package removal may be needed depending on your system ==="
+echo "=== Completed at: $(date '+%Y-%m-%d %H:%M:%S') ==="
+

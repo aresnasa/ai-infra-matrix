@@ -856,13 +856,20 @@ func (c *SaltStackClientController) DeleteMinion(ctx *gin.Context) {
 
 // BatchDeleteMinionsRequest 批量删除 Minion 请求
 type BatchDeleteMinionsRequest struct {
-	MinionIDs []string `json:"minion_ids" binding:"required,min=1"`
-	Force     bool     `json:"force"` // 强制删除（包括在线节点）
+	MinionIDs   []string          `json:"minion_ids" binding:"required,min=1"`
+	Force       bool              `json:"force"`        // 强制删除（包括在线节点）
+	Uninstall   bool              `json:"uninstall"`    // 是否通过 SSH 卸载远程 salt-minion
+	SSHPort     int               `json:"ssh_port"`     // SSH 端口（默认 22）
+	SSHUsername string            `json:"ssh_username"` // SSH 用户名
+	SSHPassword string            `json:"ssh_password"` // SSH 密码
+	SSHKeyPath  string            `json:"ssh_key_path"` // SSH 私钥路径
+	UseSudo     bool              `json:"use_sudo"`     // 是否使用 sudo
+	HostMapping map[string]string `json:"host_mapping"` // minion_id -> ssh_host 映射（可选）
 }
 
 // BatchDeleteMinions 批量删除 Minion（软删除 + 后台异步真实删除）
 // @Summary 批量删除Minion
-// @Description 批量软删除Minion并在后台异步执行真实删除，立即返回结果提升用户体验
+// @Description 批量软删除Minion并在后台异步执行真实删除，支持通过SSH远程卸载salt-minion
 // @Tags SaltStack
 // @Accept json
 // @Produce json
@@ -886,15 +893,42 @@ func (c *SaltStackClientController) BatchDeleteMinions(ctx *gin.Context) {
 		createdBy = user.(string)
 	}
 
+	// 设置默认 SSH 端口
+	sshPort := req.SSHPort
+	if sshPort == 0 {
+		sshPort = 22
+	}
+
 	// 使用软删除服务
 	deleteSvc := services.GetMinionDeleteService()
-	tasks, err := deleteSvc.SoftDeleteBatch(ctx.Request.Context(), req.MinionIDs, req.Force, createdBy)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to create delete tasks: %v", err),
-		})
-		return
+	tasks := make([]*models.MinionDeleteTask, 0, len(req.MinionIDs))
+
+	for _, minionID := range req.MinionIDs {
+		// 确定 SSH 主机地址
+		sshHost := minionID // 默认使用 minionID 作为主机地址
+		if req.HostMapping != nil {
+			if host, ok := req.HostMapping[minionID]; ok && host != "" {
+				sshHost = host
+			}
+		}
+
+		opts := services.SoftDeleteOptions{
+			Force:       req.Force,
+			Uninstall:   req.Uninstall,
+			SSHHost:     sshHost,
+			SSHPort:     sshPort,
+			SSHUsername: req.SSHUsername,
+			SSHPassword: req.SSHPassword,
+			SSHKeyPath:  req.SSHKeyPath,
+			UseSudo:     req.UseSudo,
+		}
+
+		task, err := deleteSvc.SoftDeleteWithOptions(ctx.Request.Context(), minionID, opts, createdBy)
+		if err != nil {
+			logrus.WithError(err).WithField("minion_id", minionID).Warn("创建批量删除任务失败")
+			continue
+		}
+		tasks = append(tasks, task)
 	}
 
 	details := make([]gin.H, 0, len(tasks))
