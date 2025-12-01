@@ -68,6 +68,7 @@ const SaltStackDashboard = () => {
   // 分组状态
   const [minionGroups, setMinionGroups] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState('');
+  const [groupsLoading, setGroupsLoading] = useState(false);
   
   // 加载状态 - 分别管理每个数据块的加载状态
   const [statusLoading, setStatusLoading] = useState(false);
@@ -158,11 +159,14 @@ const SaltStackDashboard = () => {
 
   // 加载分组列表
   const loadMinionGroups = async () => {
+    setGroupsLoading(true);
     try {
       const response = await saltStackAPI.listMinionGroups();
       setMinionGroups(response.data?.data || []);
     } catch (e) {
       console.error('加载Minion分组失败', e);
+    } finally {
+      setGroupsLoading(false);
     }
   };
 
