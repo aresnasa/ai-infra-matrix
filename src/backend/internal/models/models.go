@@ -385,21 +385,43 @@ type RolePermission struct {
 
 // RoleTemplate 角色模板表 - 支持动态配置的角色模板
 type RoleTemplate struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	Name        string         `json:"name" gorm:"uniqueIndex;not null;size:100"` // 模板名称，如 admin, sre, data-developer
-	DisplayName string         `json:"display_name" gorm:"size:100"`              // 显示名称
-	Description string         `json:"description" gorm:"size:500"`               // 模板描述
-	IsSystem    bool           `json:"is_system" gorm:"default:false"`            // 是否系统内置（内置模板不可删除）
-	IsActive    bool           `json:"is_active" gorm:"default:true"`             // 是否启用
-	Priority    int            `json:"priority" gorm:"default:0"`                 // 优先级，用于排序
-	Color       string         `json:"color" gorm:"size:20;default:'blue'"`       // 显示颜色
-	Icon        string         `json:"icon" gorm:"size:50"`                       // 图标名称
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+	ID            uint           `json:"id" gorm:"primaryKey"`
+	Name          string         `json:"name" gorm:"uniqueIndex;not null;size:100"` // 模板名称，如 admin, sre, data-developer
+	DisplayName   string         `json:"display_name" gorm:"size:100"`              // 显示名称（中文）
+	DisplayNameEN string         `json:"display_name_en" gorm:"size:100"`           // 显示名称（英文）
+	Description   string         `json:"description" gorm:"size:500"`               // 模板描述（中文）
+	DescriptionEN string         `json:"description_en" gorm:"size:500"`            // 模板描述（英文）
+	IsSystem      bool           `json:"is_system" gorm:"default:false"`            // 是否系统内置（内置模板不可删除）
+	IsActive      bool           `json:"is_active" gorm:"default:true"`             // 是否启用
+	Priority      int            `json:"priority" gorm:"default:0"`                 // 优先级，用于排序
+	Color         string         `json:"color" gorm:"size:20;default:'blue'"`       // 显示颜色
+	Icon          string         `json:"icon" gorm:"size:50"`                       // 图标名称
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// 关联关系
 	Permissions []RoleTemplatePermission `json:"permissions,omitempty" gorm:"foreignKey:RoleTemplateID"`
+}
+
+// GetDisplayName 根据语言返回显示名称
+func (r *RoleTemplate) GetDisplayName(lang string) string {
+	if lang == "en" || lang == "en-US" {
+		if r.DisplayNameEN != "" {
+			return r.DisplayNameEN
+		}
+	}
+	return r.DisplayName
+}
+
+// GetDescription 根据语言返回描述
+func (r *RoleTemplate) GetDescription(lang string) string {
+	if lang == "en" || lang == "en-US" {
+		if r.DescriptionEN != "" {
+			return r.DescriptionEN
+		}
+	}
+	return r.Description
 }
 
 // RoleTemplatePermission 角色模板权限关系表

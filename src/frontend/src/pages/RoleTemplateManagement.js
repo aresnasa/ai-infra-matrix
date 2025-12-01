@@ -56,7 +56,23 @@ const iconMap = {
 };
 
 const RoleTemplateManagement = () => {
-  const { t } = useI18n();
+  const { t, isEnUS } = useI18n();
+
+  // 获取本地化的显示名称
+  const getLocalizedDisplayName = (record) => {
+    if (isEnUS && record.display_name_en) {
+      return record.display_name_en;
+    }
+    return record.display_name || record.name;
+  };
+
+  // 获取本地化的描述
+  const getLocalizedDescription = (record) => {
+    if (isEnUS && record.description_en) {
+      return record.description_en;
+    }
+    return record.description || '';
+  };
 
   // 颜色选项
   const colorOptions = [
@@ -209,7 +225,7 @@ const RoleTemplateManagement = () => {
           <span style={{ color: colorOptions.find(c => c.value === record.color)?.color || '#1890ff' }}>
             {iconMap[record.icon] || <SafetyCertificateOutlined />}
           </span>
-          <Text strong>{record.display_name || text}</Text>
+          <Text strong>{getLocalizedDisplayName(record)}</Text>
           {record.is_system && <Tag color="volcano">{t('roleTemplate.system')}</Tag>}
         </Space>
       ),
@@ -226,6 +242,7 @@ const RoleTemplateManagement = () => {
       dataIndex: 'description',
       key: 'description',
       ellipsis: true,
+      render: (text, record) => getLocalizedDescription(record),
     },
     {
       title: t('roleTemplate.columns.permissionCount'),

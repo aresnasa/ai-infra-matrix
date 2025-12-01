@@ -1,5 +1,7 @@
 # 系统架构设计
 
+**中文** | **[English](en/ARCHITECTURE.md)**
+
 ## 概述
 
 AI Infrastructure Matrix 是一个企业级 HPC 与 AI 基础设施平台，采用微服务架构和容器化部署。

@@ -425,13 +425,15 @@ func (s *RBACService) CreatePermission(resource, verb, scope, description string
 
 // 默认角色模板定义（用于初始化）
 type DefaultRoleTemplate struct {
-	Name        string
-	DisplayName string
-	Description string
-	Color       string
-	Icon        string
-	Priority    int
-	Permissions []struct {
+	Name          string
+	DisplayName   string // 中文显示名称
+	DisplayNameEN string // 英文显示名称
+	Description   string // 中文描述
+	DescriptionEN string // 英文描述
+	Color         string
+	Icon          string
+	Priority      int
+	Permissions   []struct {
 		Resource string
 		Verb     string
 		Scope    string
@@ -442,12 +444,14 @@ type DefaultRoleTemplate struct {
 // 预定义角色模板（仅用于初始化时创建默认模板）
 var defaultRoleTemplates = []DefaultRoleTemplate{
 	{
-		Name:        "admin",
-		DisplayName: "系统管理员",
-		Description: "系统管理员 - 拥有所有权限",
-		Color:       "red",
-		Icon:        "crown",
-		Priority:    100,
+		Name:          "admin",
+		DisplayName:   "系统管理员",
+		DisplayNameEN: "System Administrator",
+		Description:   "系统管理员 - 拥有所有权限",
+		DescriptionEN: "System Administrator - Has all permissions",
+		Color:         "red",
+		Icon:          "crown",
+		Priority:      100,
 		Permissions: []struct {
 			Resource string
 			Verb     string
@@ -458,12 +462,14 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 		IsSystem: true,
 	},
 	{
-		Name:        "data-developer",
-		DisplayName: "数据开发",
-		Description: "数据开发人员 - 主要关注数据处理和分析",
-		Color:       "blue",
-		Icon:        "database",
-		Priority:    50,
+		Name:          "data-developer",
+		DisplayName:   "数据开发",
+		DisplayNameEN: "Data Developer",
+		Description:   "数据开发人员 - 主要关注数据处理和分析",
+		DescriptionEN: "Data Developer - Focuses on data processing and analysis",
+		Color:         "blue",
+		Icon:          "database",
+		Priority:      50,
 		Permissions: []struct {
 			Resource string
 			Verb     string
@@ -482,12 +488,14 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 		IsSystem: true,
 	},
 	{
-		Name:        "model-developer",
-		DisplayName: "模型开发",
-		Description: "模型开发人员 - 主要关注Jupyter环境",
-		Color:       "purple",
-		Icon:        "experiment",
-		Priority:    50,
+		Name:          "model-developer",
+		DisplayName:   "模型开发",
+		DisplayNameEN: "Model Developer",
+		Description:   "模型开发人员 - 主要关注Jupyter环境",
+		DescriptionEN: "Model Developer - Focuses on Jupyter environment",
+		Color:         "purple",
+		Icon:          "experiment",
+		Priority:      50,
 		Permissions: []struct {
 			Resource string
 			Verb     string
@@ -503,12 +511,14 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 		IsSystem: true,
 	},
 	{
-		Name:        "sre",
-		DisplayName: "SRE工程师",
-		Description: "SRE工程师 - 关注SaltStack、Ansible和K8s",
-		Color:       "orange",
-		Icon:        "tool",
-		Priority:    60,
+		Name:          "sre",
+		DisplayName:   "SRE工程师",
+		DisplayNameEN: "SRE Engineer",
+		Description:   "SRE工程师 - 关注SaltStack、Ansible和K8s",
+		DescriptionEN: "SRE Engineer - Focuses on SaltStack, Ansible and K8s",
+		Color:         "orange",
+		Icon:          "tool",
+		Priority:      60,
 		Permissions: []struct {
 			Resource string
 			Verb     string
@@ -534,12 +544,14 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 		IsSystem: true,
 	},
 	{
-		Name:        "engineer",
-		DisplayName: "工程研发",
-		Description: "工程研发人员 - 主要关注K8s环境",
-		Color:       "green",
-		Icon:        "code",
-		Priority:    40,
+		Name:          "engineer",
+		DisplayName:   "工程研发",
+		DisplayNameEN: "Software Engineer",
+		Description:   "工程研发人员 - 主要关注K8s环境",
+		DescriptionEN: "Software Engineer - Focuses on K8s environment",
+		Color:         "green",
+		Icon:          "code",
+		Priority:      40,
 		Permissions: []struct {
 			Resource string
 			Verb     string
@@ -733,14 +745,16 @@ func (s *RBACService) initializeDefaultRoleTemplates() error {
 		if err == gorm.ErrRecordNotFound {
 			// 创建角色模板
 			roleTemplate := models.RoleTemplate{
-				Name:        template.Name,
-				DisplayName: template.DisplayName,
-				Description: template.Description,
-				IsSystem:    template.IsSystem,
-				IsActive:    true,
-				Priority:    template.Priority,
-				Color:       template.Color,
-				Icon:        template.Icon,
+				Name:          template.Name,
+				DisplayName:   template.DisplayName,
+				DisplayNameEN: template.DisplayNameEN,
+				Description:   template.Description,
+				DescriptionEN: template.DescriptionEN,
+				IsSystem:      template.IsSystem,
+				IsActive:      true,
+				Priority:      template.Priority,
+				Color:         template.Color,
+				Icon:          template.Icon,
 			}
 			if err := s.db.Create(&roleTemplate).Error; err != nil {
 				return fmt.Errorf("创建角色模板失败: %v", err)
@@ -756,6 +770,15 @@ func (s *RBACService) initializeDefaultRoleTemplates() error {
 				}
 				if err := s.db.Create(&templatePerm).Error; err != nil {
 					return fmt.Errorf("创建角色模板权限失败: %v", err)
+				}
+			}
+		} else if err == nil {
+			// 更新现有角色模板的英文字段（如果为空）
+			if existing.DisplayNameEN == "" || existing.DescriptionEN == "" {
+				existing.DisplayNameEN = template.DisplayNameEN
+				existing.DescriptionEN = template.DescriptionEN
+				if err := s.db.Save(&existing).Error; err != nil {
+					return fmt.Errorf("更新角色模板英文字段失败: %v", err)
 				}
 			}
 		}

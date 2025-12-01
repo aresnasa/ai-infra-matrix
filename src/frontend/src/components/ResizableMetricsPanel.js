@@ -13,6 +13,7 @@ import {
   DesktopOutlined,
   AreaChartOutlined,
   DragOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import { useI18n } from '../hooks/useI18n';
 
@@ -97,8 +98,15 @@ const NodeMetricsPanel = ({
         <Space>
           <DesktopOutlined />
           <Text strong>{nodeName || nodeId}</Text>
-          <Tag color={metrics.status === 'online' ? 'green' : 'red'}>
-            {metrics.status === 'online' ? t('minions.status.online') : t('minions.status.unknown')}
+          <Tag 
+            color={metrics.status === 'online' ? 'green' : metrics.status === 'deleting' ? 'orange' : 'red'}
+            icon={metrics.status === 'deleting' ? <SyncOutlined spin /> : null}
+          >
+            {metrics.status === 'online' 
+              ? t('minions.status.online') 
+              : metrics.status === 'deleting' 
+                ? (t('minions.status.deleting') || '删除中')
+                : t('minions.status.unknown')}
           </Tag>
         </Space>
       }
@@ -341,10 +349,15 @@ const ResizableMetricsPanel = ({
                 <DesktopOutlined />
                 {node.name || node.id}
                 <Tag 
-                  color={node.metrics?.status === 'online' ? 'green' : 'red'}
+                  color={node.metrics?.status === 'online' ? 'green' : node.metrics?.status === 'deleting' ? 'orange' : 'red'}
+                  icon={node.metrics?.status === 'deleting' ? <SyncOutlined spin /> : null}
                   style={{ marginLeft: 4, marginRight: 0 }}
                 >
-                  {node.metrics?.status === 'online' ? t('minions.status.online') : t('minions.status.offline')}
+                  {node.metrics?.status === 'online' 
+                    ? t('minions.status.online') 
+                    : node.metrics?.status === 'deleting'
+                      ? (t('minions.status.deleting') || '删除中')
+                      : t('minions.status.offline')}
                 </Tag>
               </Space>
             ),

@@ -1,5 +1,7 @@
 # 系统监控指南
 
+**中文** | **[English](en/MONITORING.md)**
+
 ## 概述
 
 AI Infrastructure Matrix 集成了 Nightingale 监控系统，提供全栈监控和告警功能。

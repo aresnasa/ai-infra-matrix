@@ -1,5 +1,7 @@
 # 备份与恢复指南
 
+**中文** | **[English](en/BACKUP_RECOVERY.md)**
+
 ## 概述
 
 本指南介绍 AI Infrastructure Matrix 的数据备份和恢复策略。

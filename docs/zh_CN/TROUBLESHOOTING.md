@@ -1,5 +1,7 @@
 # 故障排除指南
 
+**中文** | **[English](en/TROUBLESHOOTING.md)**
+
 ## 常见问题
 
 ### 服务无法启动

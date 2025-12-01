@@ -1,5 +1,7 @@
 # API 参考文档
 
+**中文** | **[English](en/API_REFERENCE.md)**
+
 ## 概述
 
 AI Infrastructure Matrix 提供 RESTful API 用于程序化访问和集成。

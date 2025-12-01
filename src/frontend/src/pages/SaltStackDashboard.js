@@ -117,8 +117,8 @@ const SaltStackDashboard = () => {
     { key: Date.now(), host: '', port: 22, username: 'root', password: '' }
   ]);
 
-  // 删除/卸载 Minion 状态
-  const [deletingMinion, setDeletingMinion] = useState(null);
+  // 删除/卸载 Minion 状态（使用 Set 追踪多个删除中的 minion）
+  const [deletingMinionIds, setDeletingMinionIds] = useState(new Set());
   const [uninstallModalVisible, setUninstallModalVisible] = useState(false);
   const [uninstallForm] = Form.useForm();
   const [uninstallMinionId, setUninstallMinionId] = useState('');
@@ -680,20 +680,40 @@ const SaltStackDashboard = () => {
   // ========== Minion 删除/卸载相关函数 ==========
 
   // 删除 Minion（仅从 Salt Master 删除密钥，支持强制删除）
+  // 优化：先在前端显示"删除中"状态，再执行实际删除，最后刷新列表
   const handleDeleteMinion = async (minionId, force = false) => {
-    setDeletingMinion(minionId);
+    // 1. 立即将该 minion 标记为删除中（前端即时反馈）
+    setDeletingMinionIds(prev => new Set([...prev, minionId]));
+    
+    // 2. 同时更新本地 minions 列表，将状态改为 deleting
+    setMinions(prev => prev.map(m => 
+      (m.id === minionId || m.name === minionId) 
+        ? { ...m, status: 'deleting', pending_delete: true }
+        : m
+    ));
+    
     try {
+      // 3. 调用 API 执行实际删除
       const resp = await saltStackAPI.removeMinionKey(minionId, force);
       if (resp.data?.success) {
         message.success(t('saltstack.minionDeleted', { id: minionId }));
-        loadMinions(); // 刷新列表
+        // 4. 删除成功后刷新列表（此时该 minion 应该已从 Salt Master 移除）
+        await loadMinions();
       } else {
+        // 删除失败，恢复原状态
         message.error(resp.data?.error || t('saltstack.deleteMinionFailed'));
+        await loadMinions(); // 刷新以恢复真实状态
       }
     } catch (e) {
       message.error(t('saltstack.deleteMinionFailed') + ': ' + (e?.response?.data?.message || e.message));
+      await loadMinions(); // 刷新以恢复真实状态
     } finally {
-      setDeletingMinion(null);
+      // 5. 从删除中列表移除
+      setDeletingMinionIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(minionId);
+        return newSet;
+      });
     }
   };
 
@@ -1047,21 +1067,36 @@ const SaltStackDashboard = () => {
                       },
                     },
                     // Minion 节点 (从 minions 数据动态生成)
-                    ...minions.map(minion => ({
-                      id: minion.id || minion.name,
-                      name: minion.id || minion.name,
-                      metrics: {
-                        status: minion.status?.toLowerCase() === 'up' || minion.status?.toLowerCase() === 'online' ? 'online' : 'offline',
-                        cpu_usage: minion.cpu_usage || 0,
-                        memory_usage: minion.memory_usage || 0,
-                        active_connections: minion.active_connections || 0,
-                        network_bandwidth: minion.network_bandwidth || 0,
-                        ib_status: minion.ib_status || 'N/A',
-                        roce_status: minion.roce_status || 'N/A',
-                        gpu_utilization: minion.gpu_utilization || 0,
-                        gpu_memory: minion.gpu_memory || 0,
-                      },
-                    })),
+                    ...minions.map(minion => {
+                      const minionId = minion.id || minion.name;
+                      // 检查是否正在删除中
+                      const isDeleting = deletingMinionIds.has(minionId) || 
+                                        minion.status?.toLowerCase() === 'deleting' || 
+                                        minion.pending_delete;
+                      // 确定显示状态
+                      let displayStatus = 'offline';
+                      if (isDeleting) {
+                        displayStatus = 'deleting';
+                      } else if (minion.status?.toLowerCase() === 'up' || minion.status?.toLowerCase() === 'online') {
+                        displayStatus = 'online';
+                      }
+                      
+                      return {
+                        id: minionId,
+                        name: minionId,
+                        metrics: {
+                          status: displayStatus,
+                          cpu_usage: minion.cpu_usage || 0,
+                          memory_usage: minion.memory_usage || 0,
+                          active_connections: minion.active_connections || 0,
+                          network_bandwidth: minion.network_bandwidth || 0,
+                          ib_status: minion.ib_status || 'N/A',
+                          roce_status: minion.roce_status || 'N/A',
+                          gpu_utilization: minion.gpu_utilization || 0,
+                          gpu_memory: minion.gpu_memory || 0,
+                        },
+                      };
+                    }),
                   ]}
                   onRefresh={loadAllData}
                 />
@@ -1071,11 +1106,22 @@ const SaltStackDashboard = () => {
                 <MinionsTable
                   minions={minions}
                   loading={minionsLoading}
+                  deletingMinionIds={deletingMinionIds}
                   onRefresh={loadMinions}
                   onDelete={handleDeleteMinion}
                   onBatchDelete={async (minionIds, force = false) => {
-                    // 批量删除，支持强制删除选项
+                    // 1. 立即将所有待删除的 minion 标记为删除中（前端即时反馈）
+                    setDeletingMinionIds(prev => new Set([...prev, ...minionIds]));
+                    
+                    // 2. 同时更新本地 minions 列表，将状态改为 deleting
+                    setMinions(prev => prev.map(m => 
+                      minionIds.includes(m.id) || minionIds.includes(m.name)
+                        ? { ...m, status: 'deleting', pending_delete: true }
+                        : m
+                    ));
+                    
                     try {
+                      // 3. 调用 API 执行批量删除
                       const resp = await saltStackAPI.batchRemoveMinionKeys(minionIds, force);
                       if (resp.data?.success) {
                         message.success(t('saltstack.batchDeleteSuccess', { count: resp.data?.success_count || minionIds.length }));
@@ -1085,9 +1131,18 @@ const SaltStackDashboard = () => {
                           failed: resp.data?.failed_count || 0 
                         }));
                       }
-                      loadMinions(); // 刷新列表
+                      // 4. 删除完成后刷新列表
+                      await loadMinions();
                     } catch (e) {
                       message.error(t('saltstack.batchDeleteFailed') + ': ' + (e?.response?.data?.message || e.message));
+                      await loadMinions(); // 刷新以恢复真实状态
+                    } finally {
+                      // 5. 从删除中列表移除
+                      setDeletingMinionIds(prev => {
+                        const newSet = new Set(prev);
+                        minionIds.forEach(id => newSet.delete(id));
+                        return newSet;
+                      });
                     }
                   }}
                   onUninstall={openUninstallModal}

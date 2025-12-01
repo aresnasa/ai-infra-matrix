@@ -1,5 +1,7 @@
 # 认证系统设计
 
+**中文** | **[English](en/AUTHENTICATION.md)**
+
 ## 概述
 
 AI Infrastructure Matrix 的认证系统基于 JWT (JSON Web Token)，提供统一的身份认证和授权机制。

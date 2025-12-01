@@ -1,5 +1,7 @@
 # Helm Chart 部署指南
 
+**中文** | **[English](en/HELM_GUIDE.md)**
+
 ## 概述
 
 本指南介绍如何使用 Helm Chart 快速部署 AI Infrastructure Matrix。

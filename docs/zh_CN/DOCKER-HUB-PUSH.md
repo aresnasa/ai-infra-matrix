@@ -1,5 +1,7 @@
 # 依赖镜像推送功能 - Docker Hub 集成
 
+**中文** | **[English](en/DOCKER-HUB-PUSH.md)**
+
 ## 概述
 
 AI-Infra-Matrix 现在支持自动推送所有依赖镜像到 Docker Hub，解决国内网络环境下拉取镜像困难的问题。

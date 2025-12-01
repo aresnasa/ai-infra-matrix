@@ -1,5 +1,7 @@
 # Kubernetes 部署指南
 
+**中文** | **[English](en/KUBERNETES_DEPLOYMENT.md)**
+
 ## 概述
 
 本指南介绍如何将 AI Infrastructure Matrix 部署到 Kubernetes 集群。

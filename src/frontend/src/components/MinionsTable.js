@@ -86,6 +86,7 @@ const generateFilters = (data, field) => {
  * @param {object} props
  * @param {array} props.minions - Minion 数据数组
  * @param {boolean} props.loading - 是否加载中
+ * @param {Set} props.deletingMinionIds - 正在删除中的 Minion ID 集合
  * @param {function} props.onRefresh - 刷新回调
  * @param {function} props.onDelete - 删除单个 Minion 回调
  * @param {function} props.onBatchDelete - 批量删除回调
@@ -97,6 +98,7 @@ const generateFilters = (data, field) => {
 const MinionsTable = ({
   minions = [],
   loading = false,
+  deletingMinionIds = new Set(),
   onRefresh,
   onDelete,
   onBatchDelete,
@@ -329,10 +331,15 @@ const MinionsTable = ({
       ],
       onFilter: (value, record) => record.status?.toLowerCase() === value,
       render: (status, record) => {
+        const minionId = record.id || record.name;
         const lowerStatus = status?.toLowerCase();
         const color = STATUS_COLORS[lowerStatus] || 'default';
         const isOnline = lowerStatus === 'up' || lowerStatus === 'online';
-        const isDeleting = lowerStatus === 'deleting' || lowerStatus === 'pending_delete' || record.pending_delete;
+        // 优先使用 deletingMinionIds 判断是否正在删除（前端实时状态）
+        const isDeleting = deletingMinionIds.has(minionId) || 
+                          lowerStatus === 'deleting' || 
+                          lowerStatus === 'pending_delete' || 
+                          record.pending_delete;
         
         if (isDeleting) {
           return (
@@ -449,6 +456,26 @@ const MinionsTable = ({
     render: (_, record) => {
       const minionId = record.id || record.name;
       const isOnline = ['up', 'online', 'running'].includes(record.status?.toLowerCase());
+      // 检查是否正在删除中
+      const isDeleting = deletingMinionIds.has(minionId) || 
+                        record.status?.toLowerCase() === 'deleting' || 
+                        record.pending_delete;
+      
+      // 如果正在删除中，显示禁用的按钮
+      if (isDeleting) {
+        return (
+          <Space size="small">
+            <Tooltip title={t('minions.status.deleting') || '删除中'}>
+              <Button
+                type="text"
+                size="small"
+                icon={<SyncOutlined spin />}
+                disabled
+              />
+            </Tooltip>
+          </Space>
+        );
+      }
       
       const deleteMenu = (
         <Menu>

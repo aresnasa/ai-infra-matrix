@@ -1,5 +1,7 @@
 # AI Infrastructure Matrix 用户操作手册
 
+**中文** | **[English](en/USER_GUIDE.md)**
+
 ## 概述
 
 本手册提供 AI Infrastructure Matrix 平台的详细使用说明，帮助用户快速上手各项功能。
