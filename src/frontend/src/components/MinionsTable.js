@@ -75,6 +75,7 @@ const SEARCH_FIELDS = [
   'kernel_version',
   'salt_version',
   'gpu_driver_version',
+  'group',
 ];
 
 /**
@@ -83,6 +84,20 @@ const SEARCH_FIELDS = [
 const generateFilters = (data, field) => {
   const values = [...new Set(data.map(item => item[field]).filter(Boolean))];
   return values.map(v => ({ text: v, value: v }));
+};
+
+/**
+ * 分组颜色映射
+ */
+const GROUP_COLORS = {
+  default: 'default',
+  compute: 'blue',
+  gpu: 'purple',
+  storage: 'orange',
+  web: 'green',
+  database: 'gold',
+  master: 'red',
+  worker: 'cyan',
 };
 
 /**
@@ -99,6 +114,10 @@ const generateFilters = (data, field) => {
  * @param {function} props.onRemoteSearch - 远程搜索回调 (可选，用于全文索引)
  * @param {boolean} props.compact - 是否使用简洁模式 (只显示 ID 和状态)
  * @param {boolean} props.showActions - 是否显示操作列 (默认 true)
+ * @param {array} props.groups - 可用的分组列表
+ * @param {string} props.selectedGroup - 当前选中的分组筛选
+ * @param {function} props.onGroupChange - 分组筛选变化回调
+ * @param {function} props.onSetGroup - 设置单个 Minion 分组回调
  */
 const MinionsTable = ({
   minions = [],
@@ -111,6 +130,10 @@ const MinionsTable = ({
   onRemoteSearch,
   compact = false,
   showActions = true,
+  groups = [],
+  selectedGroup = '',
+  onGroupChange,
+  onSetGroup,
 }) => {
   const { t, locale } = useI18n();
   
@@ -454,6 +477,24 @@ const MinionsTable = ({
       ),
     },
     {
+      title: t('minions.columns.group', '分组'),
+      dataIndex: 'group',
+      key: 'group',
+      width: 120,
+      filters: generateFilters(minions, 'group'),
+      onFilter: (value, record) => record.group === value,
+      render: (group, record) => {
+        const groupColor = GROUP_COLORS[group?.toLowerCase()] || GROUP_COLORS.default;
+        return group ? (
+          <Tag color={groupColor}>
+            {renderHighlightedText(group, record, 'group')}
+          </Tag>
+        ) : (
+          <Text type="secondary">-</Text>
+        );
+      },
+    },
+    {
       title: t('minions.columns.lastSeen'),
       dataIndex: 'last_seen',
       key: 'last_seen',
@@ -478,7 +519,7 @@ const MinionsTable = ({
   const actionColumn = {
     title: t('minions.columns.actions'),
     key: 'actions',
-    width: 140,
+    width: 180,
     fixed: compact ? undefined : 'right',
     render: (_, record) => {
       const minionId = record.id || record.name;
@@ -543,9 +584,46 @@ const MinionsTable = ({
           </Menu.Item>
         </Menu>
       );
+
+      // 分组设置菜单
+      const groupMenu = groups.length > 0 ? (
+        <Menu>
+          {groups.map(g => (
+            <Menu.Item 
+              key={g.id || g.name}
+              onClick={() => onSetGroup?.(minionId, g.name)}
+            >
+              <Tag color={g.color || 'default'}>{g.name || g.display_name}</Tag>
+            </Menu.Item>
+          ))}
+          {record.group && (
+            <>
+              <Menu.Divider />
+              <Menu.Item 
+                key="clear"
+                danger
+                onClick={() => onSetGroup?.(minionId, '')}
+              >
+                {t('minions.actions.clearGroup', '清除分组')}
+              </Menu.Item>
+            </>
+          )}
+        </Menu>
+      ) : null;
       
       return (
         <Space size="small">
+          {groups.length > 0 && onSetGroup && (
+            <Dropdown overlay={groupMenu} trigger={['click']}>
+              <Tooltip title={t('minions.actions.setGroup', '设置分组')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<SettingOutlined style={{ color: '#1890ff' }} />}
+                />
+              </Tooltip>
+            </Dropdown>
+          )}
           <Tooltip title={t('minions.actions.uninstall')}>
             <Button
               type="text"

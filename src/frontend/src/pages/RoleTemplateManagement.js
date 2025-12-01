@@ -219,7 +219,8 @@ const RoleTemplateManagement = () => {
       title: t('roleTemplate.columns.name'),
       dataIndex: 'name',
       key: 'name',
-      width: 150,
+      width: 220,
+      ellipsis: true,
       render: (text, record) => (
         <Space>
           <span style={{ color: colorOptions.find(c => c.value === record.color)?.color || '#1890ff' }}>
@@ -234,7 +235,8 @@ const RoleTemplateManagement = () => {
       title: t('roleTemplate.columns.identifier'),
       dataIndex: 'name',
       key: 'identifier',
-      width: 120,
+      width: 160,
+      ellipsis: true,
       render: (text) => <Tag color="default">{text}</Tag>,
     },
     {

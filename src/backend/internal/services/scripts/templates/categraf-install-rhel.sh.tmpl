@@ -80,7 +80,7 @@ BINARY_NAME="categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}.tar.gz"
 DOWNLOAD_URL=""
 
 if [ -n "$APPHUB_URL" ]; then
-    DOWNLOAD_URL="${APPHUB_URL}/packages/categraf/${BINARY_NAME}"
+    DOWNLOAD_URL="${APPHUB_URL}/pkgs/categraf/${BINARY_NAME}"
 else
     # Use GitHub release
     DOWNLOAD_URL="https://github.com/flashcatcloud/categraf/releases/download/v${CATEGRAF_VERSION}/${BINARY_NAME}"
@@ -100,11 +100,40 @@ fi
 
 echo "=== Extracting Categraf ==="
 tar -xzf ${BINARY_NAME}
-${SUDO_PREFIX}cp -f categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}/categraf $INSTALL_DIR/
+
+# Find the extracted directory and categraf binary
+EXTRACT_DIR=$(ls -d categraf-*-${ARCH_SUFFIX} 2>/dev/null | head -1)
+if [ -z "$EXTRACT_DIR" ]; then
+    EXTRACT_DIR=$(ls -d categraf-* 2>/dev/null | head -1)
+fi
+
+if [ -z "$EXTRACT_DIR" ]; then
+    echo "ERROR: Cannot find extracted categraf directory"
+    ls -la
+    exit 1
+fi
+
+echo "=== Found extract directory: $EXTRACT_DIR ==="
+
+# Find and copy categraf binary
+if [ -f "$EXTRACT_DIR/bin/categraf" ]; then
+    ${SUDO_PREFIX}cp -f "$EXTRACT_DIR/bin/categraf" $INSTALL_DIR/
+elif [ -f "$EXTRACT_DIR/categraf" ]; then
+    ${SUDO_PREFIX}cp -f "$EXTRACT_DIR/categraf" $INSTALL_DIR/
+else
+    echo "ERROR: Cannot find categraf binary in $EXTRACT_DIR"
+    ls -la "$EXTRACT_DIR"
+    exit 1
+fi
 ${SUDO_PREFIX}chmod +x $INSTALL_DIR/categraf
 
+# Copy default config if exists
+if [ -d "$EXTRACT_DIR/conf" ]; then
+    ${SUDO_PREFIX}cp -r "$EXTRACT_DIR/conf/"* $INSTALL_DIR/conf/ 2>/dev/null || true
+fi
+
 # Clean up
-rm -rf categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}*
+rm -rf categraf-*
 
 # Determine hostname for ident
 if [ -z "$HOSTNAME_IDENT" ]; then

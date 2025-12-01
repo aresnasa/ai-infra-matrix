@@ -65,6 +65,7 @@ type HostInstallConfig struct {
 	MinionID string `json:"minion_id,omitempty"` // 可选，默认使用 hostname
 	UseSudo  bool   `json:"use_sudo,omitempty"`  // 覆盖全局设置
 	SudoPass string `json:"sudo_pass,omitempty"` // 覆盖全局设置
+	Group    string `json:"group,omitempty"`     // 分组名称
 }
 
 // BatchInstallResult 批量安装结果
@@ -994,8 +995,12 @@ func (s *BatchInstallService) installCategraf(client *ssh.Client, osInfo *models
 	if categrafVersion == "" {
 		categrafVersion = os.Getenv("CATEGRAF_VERSION")
 		if categrafVersion == "" {
-			categrafVersion = "0.4.10"
+			categrafVersion = "v0.4.25"
 		}
+	}
+	// Ensure version starts with 'v'
+	if categrafVersion != "" && categrafVersion[0] != 'v' {
+		categrafVersion = "v" + categrafVersion
 	}
 
 	appHubURL := os.Getenv("APPHUB_URL")

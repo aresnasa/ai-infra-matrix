@@ -25,7 +25,9 @@ import {
   DownloadOutlined,
   FileTextOutlined,
   DashboardOutlined,
-  CopyOutlined
+  CopyOutlined,
+  TeamOutlined,
+  EditOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
@@ -63,6 +65,10 @@ const SaltStackDashboard = () => {
   const [minions, setMinions] = useState([]);
   const [jobs, setJobs] = useState([]);
   
+  // 分组状态
+  const [minionGroups, setMinionGroups] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState('');
+  
   // 加载状态 - 分别管理每个数据块的加载状态
   const [statusLoading, setStatusLoading] = useState(false);
   const [minionsLoading, setMinionsLoading] = useState(false);
@@ -98,7 +104,7 @@ const SaltStackDashboard = () => {
   const [batchInstallTaskId, setBatchInstallTaskId] = useState('');
   const [batchInstallEvents, setBatchInstallEvents] = useState([]);
   const [batchInstallHosts, setBatchInstallHosts] = useState([
-    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, group: '' }
   ]);
   const batchSseRef = useRef(null);
   
@@ -123,6 +129,11 @@ const SaltStackDashboard = () => {
   const [uninstallForm] = Form.useForm();
   const [uninstallMinionId, setUninstallMinionId] = useState('');
 
+  // 分组管理状态
+  const [groupModalVisible, setGroupModalVisible] = useState(false);
+  const [groupForm] = Form.useForm();
+  const [editingGroup, setEditingGroup] = useState(null);
+
   // 安装任务历史状态
   const [installTasks, setInstallTasks] = useState([]);
   const [installTasksLoading, setInstallTasksLoading] = useState(false);
@@ -142,6 +153,16 @@ const SaltStackDashboard = () => {
       setError(e);
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  // 加载分组列表
+  const loadMinionGroups = async () => {
+    try {
+      const response = await saltStackAPI.listMinionGroups();
+      setMinionGroups(response.data?.data || []);
+    } catch (e) {
+      console.error('加载Minion分组失败', e);
     }
   };
 
@@ -206,8 +227,8 @@ const SaltStackDashboard = () => {
   const loadAllData = async () => {
     // 先加载 master 状态，确保 SaltStack 服务可用
     await loadStatus();
-    // 然后并行加载 minion 列表和 jobs
-    await Promise.all([loadMinions(), loadJobs()]);
+    // 然后并行加载 minion 列表、jobs 和分组
+    await Promise.all([loadMinions(), loadJobs(), loadMinionGroups()]);
   };
 
   // 仅加载 Minion 数据（不包含 Master 状态）
@@ -288,11 +309,11 @@ const SaltStackDashboard = () => {
   const addHostRow = () => {
     setBatchInstallHosts([
       ...batchInstallHosts,
-      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, group: '' }
     ]);
   };
 
-  // 复制第一行配置到当前行（仅复制端口、用户名、密码、sudo 配置，不复制 host）
+  // 复制第一行配置到当前行（仅复制端口、用户名、密码、sudo、分组配置，不复制 host）
   const copyFirstRowConfig = (targetKey) => {
     if (batchInstallHosts.length === 0) return;
     const firstRow = batchInstallHosts[0];
@@ -302,7 +323,8 @@ const SaltStackDashboard = () => {
         port: firstRow.port, 
         username: firstRow.username, 
         password: firstRow.password, 
-        use_sudo: firstRow.use_sudo 
+        use_sudo: firstRow.use_sudo,
+        group: firstRow.group,
       } : h
     ));
     message.success(t('saltstack.configCopied', '已复制第一行配置'));
@@ -679,6 +701,93 @@ const SaltStackDashboard = () => {
       message.error(t('saltstack.sshTestFailed') + ': ' + (e?.response?.data?.message || e.message));
     } finally {
       setSSHTestRunning(false);
+    }
+  };
+
+  // ========== Minion 分组管理函数 ==========
+
+  // 设置单个 Minion 的分组
+  const handleSetMinionGroup = async (minionId, groupName) => {
+    try {
+      // 设置分组（groupName 为空表示清除分组）
+      const resp = await saltStackAPI.setMinionGroup(minionId, groupName || '');
+      if (resp.data?.success) {
+        if (groupName) {
+          message.success(t('saltstack.minionGroupSet', { id: minionId }));
+        } else {
+          message.success(t('saltstack.minionGroupRemoved', { id: minionId }));
+        }
+        await loadMinions(); // 刷新 minions 列表以更新分组信息
+      } else {
+        message.error(resp.data?.message || t('saltstack.minionGroupSetFailed'));
+      }
+    } catch (e) {
+      message.error(t('saltstack.minionGroupSetFailed') + ': ' + (e?.response?.data?.message || e.message));
+    }
+  };
+
+  // 打开新建分组弹窗
+  const openCreateGroupModal = () => {
+    setEditingGroup(null);
+    groupForm.resetFields();
+    setGroupModalVisible(true);
+  };
+
+  // 打开编辑分组弹窗
+  const openEditGroupModal = (group) => {
+    setEditingGroup(group);
+    groupForm.setFieldsValue({
+      name: group.name,
+      description: group.description,
+      color: group.color || 'blue',
+      icon: group.icon || '',
+    });
+    setGroupModalVisible(true);
+  };
+
+  // 保存分组（新建或更新）
+  const handleSaveGroup = async () => {
+    try {
+      const values = await groupForm.validateFields();
+      if (editingGroup) {
+        // 更新
+        const resp = await saltStackAPI.updateMinionGroup(editingGroup.id, values);
+        if (resp.data?.success) {
+          message.success(t('saltstack.groupUpdated', '分组已更新'));
+          await loadMinionGroups();
+          setGroupModalVisible(false);
+        } else {
+          message.error(resp.data?.message || t('saltstack.groupUpdateFailed', '更新分组失败'));
+        }
+      } else {
+        // 新建
+        const resp = await saltStackAPI.createMinionGroup(values);
+        if (resp.data?.success) {
+          message.success(t('saltstack.groupCreated', '分组已创建'));
+          await loadMinionGroups();
+          setGroupModalVisible(false);
+        } else {
+          message.error(resp.data?.message || t('saltstack.groupCreateFailed', '创建分组失败'));
+        }
+      }
+    } catch (e) {
+      if (e.errorFields) return; // 表单验证失败
+      message.error(t('saltstack.groupSaveFailed', '保存分组失败') + ': ' + (e?.response?.data?.message || e.message));
+    }
+  };
+
+  // 删除分组
+  const handleDeleteGroup = async (groupId) => {
+    try {
+      const resp = await saltStackAPI.deleteMinionGroup(groupId);
+      if (resp.data?.success) {
+        message.success(t('saltstack.groupDeleted', '分组已删除'));
+        await loadMinionGroups();
+      } else {
+        message.error(resp.data?.message || t('saltstack.groupDeleteFailed', '删除分组失败'));
+      }
+    } catch (e) {
+      message.error(t('saltstack.groupDeleteFailed', '删除分组失败') + ': ' + (e?.response?.data?.message || e.message));
     }
   };
 
@@ -1114,6 +1223,10 @@ const SaltStackDashboard = () => {
                   deletingMinionIds={deletingMinionIds}
                   onRefresh={loadMinions}
                   onDelete={handleDeleteMinion}
+                  groups={minionGroups}
+                  selectedGroup={selectedGroup}
+                  onGroupChange={setSelectedGroup}
+                  onSetGroup={handleSetMinionGroup}
                   onBatchDelete={async (minionIds, options = {}) => {
                     // options 可以包含: { force, uninstall, ssh_username, ssh_password, ssh_port, use_sudo }
                     const { force = false, ...restOptions } = options;
@@ -1496,6 +1609,122 @@ const SaltStackDashboard = () => {
                   </>
                 )}
               </TabPane>
+
+              <TabPane tab={t('saltstack.groupManagement', '分组管理')} key="groups" icon={<TeamOutlined />}>
+                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text type="secondary">
+                    {t('saltstack.totalGroups', { count: minionGroups.length })}
+                  </Text>
+                  <Space>
+                    <Button 
+                      icon={<ReloadOutlined />} 
+                      onClick={loadMinionGroups}
+                      loading={groupsLoading}
+                    >
+                      {t('common.refresh')}
+                    </Button>
+                    <Button 
+                      type="primary" 
+                      icon={<PlusOutlined />} 
+                      onClick={openCreateGroupModal}
+                    >
+                      {t('saltstack.createGroup', '创建分组')}
+                    </Button>
+                  </Space>
+                </div>
+                <Table
+                  dataSource={minionGroups}
+                  rowKey="id"
+                  loading={groupsLoading}
+                  size="small"
+                  pagination={{
+                    showSizeChanger: true,
+                    showTotal: (total) => t('common.total', { count: total }),
+                    defaultPageSize: 10,
+                    pageSizeOptions: ['10', '20', '50'],
+                  }}
+                  columns={[
+                    {
+                      title: t('saltstack.groupName', '分组名称'),
+                      dataIndex: 'name',
+                      key: 'name',
+                      width: 180,
+                      render: (name, record) => (
+                        <Tag color={record.color || 'default'} icon={record.icon ? <TeamOutlined /> : null}>
+                          {name}
+                        </Tag>
+                      ),
+                    },
+                    {
+                      title: t('saltstack.groupDescription', '描述'),
+                      dataIndex: 'description',
+                      key: 'description',
+                      ellipsis: true,
+                    },
+                    {
+                      title: t('saltstack.groupColor', '颜色'),
+                      dataIndex: 'color',
+                      key: 'color',
+                      width: 100,
+                      render: (color) => <Tag color={color || 'default'}>{color || 'default'}</Tag>,
+                    },
+                    {
+                      title: t('common.createdAt', '创建时间'),
+                      dataIndex: 'created_at',
+                      key: 'created_at',
+                      width: 180,
+                      render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                    },
+                    {
+                      title: t('common.actions', '操作'),
+                      key: 'actions',
+                      width: 150,
+                      render: (_, record) => (
+                        <Space>
+                          <Tooltip title={t('common.edit', '编辑')}>
+                            <Button 
+                              type="link" 
+                              size="small" 
+                              icon={<EditOutlined />} 
+                              onClick={() => openEditGroupModal(record)}
+                            />
+                          </Tooltip>
+                          <Popconfirm
+                            title={t('saltstack.confirmDeleteGroup', '确定要删除此分组吗？')}
+                            description={t('saltstack.deleteGroupHint', '删除分组不会影响已分配的 Minion')}
+                            onConfirm={() => handleDeleteGroup(record.id)}
+                            okText={t('common.confirm', '确定')}
+                            cancelText={t('common.cancel', '取消')}
+                          >
+                            <Tooltip title={t('common.delete', '删除')}>
+                              <Button 
+                                type="link" 
+                                size="small" 
+                                danger
+                                icon={<DeleteOutlined />} 
+                              />
+                            </Tooltip>
+                          </Popconfirm>
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+                {minionGroups.length === 0 && !groupsLoading && (
+                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                    <Text type="secondary">{t('saltstack.noGroups', '暂无分组')}</Text>
+                    <div style={{ marginTop: 16 }}>
+                      <Button 
+                        type="primary" 
+                        icon={<PlusOutlined />} 
+                        onClick={openCreateGroupModal}
+                      >
+                        {t('saltstack.createGroup', '创建分组')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </TabPane>
             </Tabs>
           </Card>
 
@@ -1842,7 +2071,7 @@ const SaltStackDashboard = () => {
               <div style={{ maxHeight: 300, overflow: 'auto' }}>
                 {batchInstallHosts.map((host, index) => (
                   <Row gutter={8} key={host.key} style={{ marginBottom: 8 }}>
-                    <Col span={5}>
+                    <Col span={4}>
                       <Input 
                         placeholder={t('saltstack.hostAddressPlaceholder')} 
                         value={host.host}
@@ -1872,19 +2101,34 @@ const SaltStackDashboard = () => {
                         style={{ width: '100%' }}
                       />
                     </Col>
-                    <Col span={4}>
+                    <Col span={3}>
                       <Input 
                         placeholder={t('saltstack.usernamePlaceholder')} 
                         value={host.username}
                         onChange={(e) => updateHostRow(host.key, 'username', e.target.value)}
                       />
                     </Col>
-                    <Col span={6}>
+                    <Col span={5}>
                       <Input.Password 
                         placeholder={t('saltstack.passwordPlaceholder')} 
                         value={host.password}
                         onChange={(e) => updateHostRow(host.key, 'password', e.target.value)}
                       />
+                    </Col>
+                    <Col span={4}>
+                      <Select
+                        placeholder={t('saltstack.selectGroup', '选择分组')}
+                        value={host.group || undefined}
+                        onChange={(v) => updateHostRow(host.key, 'group', v)}
+                        allowClear
+                        style={{ width: '100%' }}
+                      >
+                        {minionGroups.map(g => (
+                          <Select.Option key={g.id} value={g.name}>
+                            <Tag color={g.color || 'default'}>{g.name}</Tag>
+                          </Select.Option>
+                        ))}
+                      </Select>
                     </Col>
                     <Col span={4}>
                       <Space>
@@ -2207,6 +2451,67 @@ const SaltStackDashboard = () => {
                   </Text>
                 </Col>
               </Row>
+            </Form>
+          </Modal>
+
+          {/* 分组管理弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <TeamOutlined />
+                {editingGroup ? t('saltstack.editGroup', '编辑分组') : t('saltstack.createGroup', '创建分组')}
+              </Space>
+            }
+            open={groupModalVisible}
+            onCancel={() => setGroupModalVisible(false)}
+            onOk={handleSaveGroup}
+            okText={t('common.save', '保存')}
+            cancelText={t('common.cancel', '取消')}
+            width={500}
+          >
+            <Form form={groupForm} layout="vertical">
+              <Form.Item 
+                name="name" 
+                label={t('saltstack.groupName', '分组名称')}
+                rules={[
+                  { required: true, message: t('saltstack.groupNameRequired', '请输入分组名称') },
+                  { max: 100, message: t('saltstack.groupNameMaxLength', '分组名称最多100个字符') },
+                ]}
+              >
+                <Input placeholder={t('saltstack.groupNamePlaceholder', '如：compute、gpu、storage')} />
+              </Form.Item>
+              <Form.Item 
+                name="description" 
+                label={t('saltstack.groupDescription', '描述')}
+                rules={[
+                  { max: 500, message: t('saltstack.groupDescMaxLength', '描述最多500个字符') },
+                ]}
+              >
+                <Input.TextArea 
+                  placeholder={t('saltstack.groupDescPlaceholder', '分组的用途说明')} 
+                  rows={3}
+                />
+              </Form.Item>
+              <Form.Item 
+                name="color" 
+                label={t('saltstack.groupColor', '标签颜色')}
+                initialValue="blue"
+              >
+                <Select>
+                  <Select.Option value="default"><Tag color="default">default</Tag></Select.Option>
+                  <Select.Option value="blue"><Tag color="blue">blue</Tag></Select.Option>
+                  <Select.Option value="green"><Tag color="green">green</Tag></Select.Option>
+                  <Select.Option value="red"><Tag color="red">red</Tag></Select.Option>
+                  <Select.Option value="orange"><Tag color="orange">orange</Tag></Select.Option>
+                  <Select.Option value="purple"><Tag color="purple">purple</Tag></Select.Option>
+                  <Select.Option value="cyan"><Tag color="cyan">cyan</Tag></Select.Option>
+                  <Select.Option value="gold"><Tag color="gold">gold</Tag></Select.Option>
+                  <Select.Option value="magenta"><Tag color="magenta">magenta</Tag></Select.Option>
+                  <Select.Option value="volcano"><Tag color="volcano">volcano</Tag></Select.Option>
+                  <Select.Option value="geekblue"><Tag color="geekblue">geekblue</Tag></Select.Option>
+                  <Select.Option value="lime"><Tag color="lime">lime</Tag></Select.Option>
+                </Select>
+              </Form.Item>
             </Form>
           </Modal>
         </Space>

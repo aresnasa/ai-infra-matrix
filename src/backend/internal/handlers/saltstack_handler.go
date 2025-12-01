@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
@@ -27,10 +28,11 @@ import (
 
 // SaltStackHandler 处理SaltStack相关的API请求
 type SaltStackHandler struct {
-	config         *config.Config
-	cache          *redis.Client
-	metricsService *services.MetricsService
-	masterPool     *SaltMasterPool // 多 Master 连接池
+	config             *config.Config
+	cache              *redis.Client
+	metricsService     *services.MetricsService
+	masterPool         *SaltMasterPool              // 多 Master 连接池
+	minionGroupService *services.MinionGroupService // Minion 分组服务
 }
 
 // SaltMasterPool 管理多个 Salt Master 的连接池
@@ -206,10 +208,11 @@ func (p *SaltMasterPool) GetHealthyCount() int {
 // NewSaltStackHandler 创建新的SaltStack处理器
 func NewSaltStackHandler(cfg *config.Config, cache *redis.Client) *SaltStackHandler {
 	handler := &SaltStackHandler{
-		config:         cfg,
-		cache:          cache,
-		metricsService: services.NewMetricsService(),
-		masterPool:     NewSaltMasterPool(),
+		config:             cfg,
+		cache:              cache,
+		metricsService:     services.NewMetricsService(),
+		masterPool:         NewSaltMasterPool(),
+		minionGroupService: services.NewMinionGroupService(),
 	}
 	// 启动后台健康检查
 	go handler.startHealthCheck()
@@ -297,6 +300,7 @@ type SaltMinion struct {
 	LastSeen     time.Time              `json:"last_seen"`
 	Grains       map[string]interface{} `json:"grains"`
 	Pillar       map[string]interface{} `json:"pillar,omitempty"`
+	Group        string                 `json:"group,omitempty"` // 分组名称
 }
 
 // SaltJob Salt作业信息
@@ -1394,6 +1398,14 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 			return
 		}
 
+		// 为每个 Minion 添加分组信息
+		groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+		for i := range res.minions {
+			if group, ok := groupMap[res.minions[i].ID]; ok {
+				res.minions[i].Group = group
+			}
+		}
+
 		// 缓存数据（缓存时间延长到 5 分钟）
 		if data, err := json.Marshal(res.minions); err == nil {
 			h.cache.Set(context.Background(), cacheKey, string(data), 300*time.Second)
@@ -2272,4 +2284,158 @@ func extractLocalResults(resp map[string]interface{}) map[string]string {
 		}
 	}
 	return out
+}
+
+// ==================== Minion 分组管理 API ====================
+
+// ListMinionGroups 获取所有分组
+func (h *SaltStackHandler) ListMinionGroups(c *gin.Context) {
+	groups, err := h.minionGroupService.ListGroups()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": groups})
+}
+
+// CreateMinionGroup 创建分组
+func (h *SaltStackHandler) CreateMinionGroup(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		DisplayName string `json:"display_name"`
+		Description string `json:"description"`
+		Color       string `json:"color"`
+		Priority    int    `json:"priority"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	group := &models.MinionGroup{
+		Name:        req.Name,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		Color:       req.Color,
+		Priority:    req.Priority,
+	}
+	if group.DisplayName == "" {
+		group.DisplayName = group.Name
+	}
+	if group.Color == "" {
+		group.Color = "blue"
+	}
+
+	if err := h.minionGroupService.CreateGroup(group); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": group})
+}
+
+// UpdateMinionGroup 更新分组
+func (h *SaltStackHandler) UpdateMinionGroup(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid group id"})
+		return
+	}
+
+	var req map[string]interface{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 过滤允许更新的字段
+	updates := make(map[string]interface{})
+	allowedFields := []string{"display_name", "description", "color", "priority", "name"}
+	for _, field := range allowedFields {
+		if val, ok := req[field]; ok {
+			updates[field] = val
+		}
+	}
+
+	if err := h.minionGroupService.UpdateGroup(uint(id), updates); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "updated"})
+}
+
+// DeleteMinionGroup 删除分组
+func (h *SaltStackHandler) DeleteMinionGroup(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid group id"})
+		return
+	}
+
+	if err := h.minionGroupService.DeleteGroup(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "deleted"})
+}
+
+// SetMinionGroup 设置 Minion 的分组
+func (h *SaltStackHandler) SetMinionGroup(c *gin.Context) {
+	var req struct {
+		MinionID  string `json:"minion_id" binding:"required"`
+		GroupName string `json:"group_name"` // 空字符串表示移除分组
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if err := h.minionGroupService.SetMinionGroup(req.MinionID, req.GroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 清除 minions 缓存，使分组更新立即生效
+	h.cache.Del(context.Background(), "saltstack:minions")
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "group set successfully"})
+}
+
+// BatchSetMinionGroups 批量设置 Minion 分组
+func (h *SaltStackHandler) BatchSetMinionGroups(c *gin.Context) {
+	var req struct {
+		MinionGroups map[string]string `json:"minion_groups" binding:"required"` // minionID -> groupName
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if err := h.minionGroupService.BatchSetMinionGroups(req.MinionGroups); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 清除 minions 缓存
+	h.cache.Del(context.Background(), "saltstack:minions")
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "groups set successfully", "count": len(req.MinionGroups)})
+}
+
+// GetGroupMinions 获取分组内的 Minion 列表
+func (h *SaltStackHandler) GetGroupMinions(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid group id"})
+		return
+	}
+
+	minionIDs, err := h.minionGroupService.GetGroupMinions(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": minionIDs})
 }

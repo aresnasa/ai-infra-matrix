@@ -1123,6 +1123,38 @@ func (SSHLog) TableName() string {
 	return "ssh_logs"
 }
 
+// MinionGroup Salt Minion 分组表
+type MinionGroup struct {
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	Name        string         `json:"name" gorm:"uniqueIndex;not null;size:100"` // 分组名称
+	DisplayName string         `json:"display_name" gorm:"size:200"`              // 显示名称
+	Description string         `json:"description" gorm:"type:text"`              // 分组描述
+	Color       string         `json:"color" gorm:"size:20;default:'blue'"`       // 标签颜色
+	Priority    int            `json:"priority" gorm:"default:0"`                 // 排序优先级
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+}
+
+func (MinionGroup) TableName() string {
+	return "minion_groups"
+}
+
+// MinionGroupMembership Minion 分组成员关系表
+type MinionGroupMembership struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	MinionID  string    `json:"minion_id" gorm:"index;not null;size:255"` // Salt Minion ID
+	GroupID   uint      `json:"group_id" gorm:"index;not null"`           // 分组 ID
+	CreatedAt time.Time `json:"created_at"`
+
+	// 关联关系
+	Group MinionGroup `json:"group,omitempty" gorm:"foreignKey:GroupID"`
+}
+
+func (MinionGroupMembership) TableName() string {
+	return "minion_group_memberships"
+}
+
 // OSInfo 操作系统信息
 type OSInfo struct {
 	OS      string `json:"os"`

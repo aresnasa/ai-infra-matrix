@@ -641,6 +641,15 @@ export const saltStackAPI = {
   listDeleteTasks: (params) => api.get('/saltstack/minion/delete-tasks', { params }),
   cancelDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/cancel`),
   retryDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/retry`),
+
+  // Minion 分组管理
+  listMinionGroups: () => api.get('/saltstack/groups'),
+  createMinionGroup: (groupData) => api.post('/saltstack/groups', groupData),
+  updateMinionGroup: (id, groupData) => api.put(`/saltstack/groups/${id}`, groupData),
+  deleteMinionGroup: (id) => api.delete(`/saltstack/groups/${id}`),
+  getGroupMinions: (id) => api.get(`/saltstack/groups/${id}/minions`),
+  setMinionGroup: (minionId, groupName) => api.post('/saltstack/minions/set-group', { minion_id: minionId, group_name: groupName }),
+  batchSetMinionGroups: (minionGroups) => api.post('/saltstack/minions/batch-set-groups', { minion_groups: minionGroups }),
 };
 
 // 增强用户管理API

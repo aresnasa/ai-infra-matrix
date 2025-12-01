@@ -1086,6 +1086,15 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/progress/:opId/stream", saltStackHandler.StreamProgress)
 		// 连接性调试端点（仅限已登录用户调用，用于排查Salt API问题）
 		saltstack.GET("/_debug", saltStackHandler.DebugSaltConnectivity)
+
+		// Minion 分组管理
+		saltstack.GET("/groups", saltStackHandler.ListMinionGroups)
+		saltstack.POST("/groups", saltStackHandler.CreateMinionGroup)
+		saltstack.PUT("/groups/:id", saltStackHandler.UpdateMinionGroup)
+		saltstack.DELETE("/groups/:id", saltStackHandler.DeleteMinionGroup)
+		saltstack.GET("/groups/:id/minions", saltStackHandler.GetGroupMinions)
+		saltstack.POST("/minions/set-group", saltStackHandler.SetMinionGroup)
+		saltstack.POST("/minions/batch-set-groups", saltStackHandler.BatchSetMinionGroups)
 	}
 
 	// 仪表板统计路由（需要认证）
