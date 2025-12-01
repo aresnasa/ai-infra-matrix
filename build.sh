@@ -237,6 +237,62 @@ init_env_file() {
         update_env_variable "EXTERNAL_SCHEME" "$detected_scheme"
         
         log_info "✓ Environment variables initialized"
+    else
+        # .env 已存在且有有效的 EXTERNAL_HOST，检查 IP 是否变更
+        check_ip_change "$current_host" "$detected_host"
+    fi
+}
+
+# 检查 IP 是否变更，如果变更则提示用户
+check_ip_change() {
+    local current_host="$1"
+    local detected_host="$2"
+    
+    # 如果当前配置的是域名而非 IP，跳过检查
+    if [[ ! "$current_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 0
+    fi
+    
+    # 如果检测到的也不是 IP（比如是 localhost），跳过检查
+    if [[ ! "$detected_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 0
+    fi
+    
+    # 比较 IP 是否变更
+    if [[ "$current_host" != "$detected_host" ]]; then
+        echo ""
+        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_warn "⚠️  检测到 IP 地址变更 / IP Address Change Detected"
+        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_warn "  当前配置 / Current:  EXTERNAL_HOST=$current_host"
+        log_warn "  检测到的 / Detected: EXTERNAL_HOST=$detected_host"
+        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        
+        # 交互式询问用户
+        if [[ -t 0 ]]; then
+            # 终端交互模式
+            read -p "是否更新为新检测到的 IP? / Update to detected IP? [y/N]: " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                log_info "正在更新 EXTERNAL_HOST 为 $detected_host..."
+                update_env_variable "EXTERNAL_HOST" "$detected_host"
+                update_env_variable "DOMAIN" "$detected_host"
+                log_info "✓ IP 地址已更新 / IP address updated"
+                log_info "  请重新执行 render 以更新配置文件 / Please re-run render to update config files"
+                log_info "  命令 / Command: ./build.sh render"
+            else
+                log_info "保持当前配置 / Keeping current configuration: $current_host"
+                log_info "  如需手动更新，请编辑 .env 文件 / To update manually, edit .env file"
+            fi
+        else
+            # 非交互模式，仅提示
+            log_warn "非交互模式，保持当前配置 / Non-interactive mode, keeping current config"
+            log_warn "如需更新，请执行 / To update, run:"
+            log_warn "  ./build.sh init --force"
+            log_warn "  或手动编辑 .env 文件 / or edit .env file manually"
+        fi
+        echo ""
     fi
 }
 
