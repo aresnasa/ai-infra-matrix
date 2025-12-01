@@ -236,6 +236,7 @@ func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 
 		// 批量安装
 		saltstack.POST("/batch-install", c.BatchInstallMinion)
+		saltstack.GET("/batch-install/calculate-parallel", c.CalculateParallel) // 计算动态并行度
 		saltstack.GET("/batch-install/:taskId", c.GetBatchInstallTask)
 		saltstack.GET("/batch-install/:taskId/stream", c.StreamBatchInstallProgress)
 		saltstack.GET("/batch-install/:taskId/logs", c.GetBatchInstallTaskLogs)
@@ -298,10 +299,8 @@ func (c *SaltStackClientController) BatchInstallMinion(ctx *gin.Context) {
 		return
 	}
 
-	// 设置默认值
-	if req.Parallel <= 0 {
-		req.Parallel = 3
-	}
+	// 设置默认值（并行度会在 BatchInstallSaltMinion 中自动计算）
+	// req.Parallel 为 0 时会自动使用动态并行度
 	if req.MasterHost == "" {
 		req.MasterHost = "salt"
 	}
@@ -309,12 +308,17 @@ func (c *SaltStackClientController) BatchInstallMinion(ctx *gin.Context) {
 		req.InstallType = "saltstack"
 	}
 
+	// 获取并行度配置信息（用于日志和返回）
+	parallelInfo := services.GetParallelInfo(len(req.Hosts), req.Parallel, 100)
+
 	logrus.WithFields(logrus.Fields{
-		"host_count":   len(req.Hosts),
-		"parallel":     req.Parallel,
-		"master_host":  req.MasterHost,
-		"install_type": req.InstallType,
-		"use_sudo":     req.UseSudo,
+		"host_count":        len(req.Hosts),
+		"parallel":          parallelInfo.Parallel,
+		"percentage":        fmt.Sprintf("%.1f%%", parallelInfo.Percentage),
+		"is_auto_calculate": parallelInfo.IsAutoCalculate,
+		"master_host":       req.MasterHost,
+		"install_type":      req.InstallType,
+		"use_sudo":          req.UseSudo,
 	}).Info("Starting batch install")
 
 	// 启动批量安装任务
@@ -332,11 +336,57 @@ func (c *SaltStackClientController) BatchInstallMinion(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"success":    true,
-		"message":    "Batch installation started",
-		"task_id":    taskID,
-		"host_count": len(req.Hosts),
-		"stream_url": fmt.Sprintf("/api/saltstack/batch-install/%s/stream", taskID),
+		"success":          true,
+		"message":          "Batch installation started",
+		"task_id":          taskID,
+		"host_count":       len(req.Hosts),
+		"parallel":         parallelInfo.Parallel,
+		"percentage":       parallelInfo.Percentage,
+		"is_auto_parallel": parallelInfo.IsAutoCalculate,
+		"stream_url":       fmt.Sprintf("/api/saltstack/batch-install/%s/stream", taskID),
+	})
+}
+
+// CalculateParallel 计算动态并行度
+// @Summary 计算动态并行度
+// @Description 根据节点数量计算推荐的并行度
+// @Tags SaltStack
+// @Produce json
+// @Param host_count query int true "节点数量"
+// @Param max_parallel query int false "最大并行度（默认100）"
+// @Success 200 {object} services.ParallelConfig
+// @Router /api/saltstack/batch-install/calculate-parallel [get]
+func (c *SaltStackClientController) CalculateParallel(ctx *gin.Context) {
+	hostCountStr := ctx.Query("host_count")
+	if hostCountStr == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "host_count parameter is required",
+		})
+		return
+	}
+
+	hostCount, err := strconv.Atoi(hostCountStr)
+	if err != nil || hostCount < 0 {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "invalid host_count parameter",
+		})
+		return
+	}
+
+	maxParallel := 100
+	if maxStr := ctx.Query("max_parallel"); maxStr != "" {
+		if max, err := strconv.Atoi(maxStr); err == nil && max > 0 {
+			maxParallel = max
+		}
+	}
+
+	parallelInfo := services.GetParallelInfo(hostCount, 0, maxParallel)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    parallelInfo,
 	})
 }
 
@@ -717,10 +767,11 @@ func (c *SaltStackClientController) BatchTestSSHConnections(ctx *gin.Context) {
 
 // DeleteMinion 删除 Minion（从 Salt Master 中移除密钥）
 // @Summary 删除Minion
-// @Description 从Salt Master中删除Minion密钥
+// @Description 从Salt Master中删除Minion密钥，支持强制删除在线节点
 // @Tags SaltStack
 // @Produce json
 // @Param minionId path string true "Minion ID"
+// @Param force query bool false "强制删除（包括在线节点）"
 // @Success 200 {object} map[string]interface{}
 // @Router /api/saltstack/minion/{minionId} [delete]
 func (c *SaltStackClientController) DeleteMinion(ctx *gin.Context) {
@@ -733,8 +784,11 @@ func (c *SaltStackClientController) DeleteMinion(ctx *gin.Context) {
 		return
 	}
 
+	// 检查是否强制删除
+	forceDelete := ctx.Query("force") == "true"
+
 	saltSvc := services.NewSaltStackService()
-	err := saltSvc.DeleteMinion(ctx.Request.Context(), minionID)
+	err := saltSvc.DeleteMinionWithForce(ctx.Request.Context(), minionID, forceDelete)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -743,22 +797,27 @@ func (c *SaltStackClientController) DeleteMinion(ctx *gin.Context) {
 		return
 	}
 
-	logrus.WithField("minion_id", minionID).Info("Minion deleted successfully")
+	logrus.WithFields(logrus.Fields{
+		"minion_id": minionID,
+		"force":     forceDelete,
+	}).Info("Minion deleted successfully")
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": fmt.Sprintf("Minion %s deleted successfully", minionID),
+		"force":   forceDelete,
 	})
 }
 
 // BatchDeleteMinionsRequest 批量删除 Minion 请求
 type BatchDeleteMinionsRequest struct {
 	MinionIDs []string `json:"minion_ids" binding:"required,min=1"`
+	Force     bool     `json:"force"` // 强制删除（包括在线节点）
 }
 
 // BatchDeleteMinions 批量删除 Minion
 // @Summary 批量删除Minion
-// @Description 从Salt Master中批量删除Minion密钥
+// @Description 从Salt Master中批量删除Minion密钥，支持强制删除在线节点
 // @Tags SaltStack
 // @Accept json
 // @Produce json
@@ -777,7 +836,7 @@ func (c *SaltStackClientController) BatchDeleteMinions(ctx *gin.Context) {
 	}
 
 	saltSvc := services.NewSaltStackService()
-	results, _ := saltSvc.DeleteMinionBatch(ctx.Request.Context(), req.MinionIDs)
+	results, _ := saltSvc.DeleteMinionBatchWithForce(ctx.Request.Context(), req.MinionIDs, req.Force)
 
 	successCount := 0
 	failedCount := 0

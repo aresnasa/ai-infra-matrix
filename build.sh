@@ -2171,6 +2171,10 @@ clean_all() {
     log_info "Step 1/4: Stopping all containers..."
     stop_all 2>/dev/null || log_warn "No containers to stop or compose not available"
     
+    # 清理可能存在的 HA 模式容器（不在 docker-compose 标准管理下的容器）
+    log_info "Cleaning up HA profile containers..."
+    docker rm -f ai-infra-salt-master-2 2>/dev/null || true
+    
     echo
     log_info "Step 2/4: Removing project images..."
     clean_images "" "$force"

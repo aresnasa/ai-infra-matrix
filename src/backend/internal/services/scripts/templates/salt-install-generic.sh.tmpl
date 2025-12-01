@@ -102,11 +102,79 @@ echo "=== Skipping Master key sync (no URL provided) ==="
 echo "=== Starting Salt Minion service ==="
 {{.SudoPrefix}}systemctl daemon-reload || true
 {{.SudoPrefix}}systemctl enable salt-minion || true
-{{.SudoPrefix}}systemctl restart salt-minion || true
-sleep 2
+
+# Retry starting salt-minion service up to 3 times
+START_RETRIES=3
+START_SUCCESS=0
+for i in $(seq 1 $START_RETRIES); do
+    echo "    Attempting to start salt-minion (attempt $i/$START_RETRIES)..."
+    {{.SudoPrefix}}systemctl restart salt-minion
+    if [ $? -eq 0 ]; then
+        START_SUCCESS=1
+        echo "    salt-minion service started successfully on attempt $i"
+        break
+    else
+        echo "    Failed to start salt-minion on attempt $i"
+        if [ $i -lt $START_RETRIES ]; then
+            echo "    Waiting 3 seconds before retry..."
+            sleep 3
+        fi
+    fi
+done
+
+if [ $START_SUCCESS -eq 0 ]; then
+    echo "ERROR: Failed to start salt-minion service after $START_RETRIES attempts"
+    {{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+    {{.SudoPrefix}}journalctl -u salt-minion --no-pager -n 30 || true
+    exit 1
+fi
+
+# Wait for service to stabilize
+echo "=== Waiting for Salt Minion service to stabilize ==="
+sleep 3
+
+# Verify service is running
+echo "=== Verifying Salt Minion service status ==="
+MAX_RETRIES=5
+RETRY_COUNT=0
+SERVICE_RUNNING=0
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if {{.SudoPrefix}}systemctl is-active --quiet salt-minion; then
+        echo "    Salt Minion service is running (attempt $((RETRY_COUNT + 1)))"
+        SERVICE_RUNNING=1
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo "    Service not active yet, retrying in 2 seconds... (attempt $RETRY_COUNT/$MAX_RETRIES)"
+            sleep 2
+        fi
+    fi
+done
+
+if [ $SERVICE_RUNNING -eq 0 ]; then
+    echo "ERROR: Salt Minion service failed to start after $MAX_RETRIES attempts"
+    {{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+    {{.SudoPrefix}}journalctl -u salt-minion --no-pager -n 50 || true
+    exit 1
+fi
+
+# Show service status for logging
+echo "=== Salt Minion Service Status ==="
 {{.SudoPrefix}}systemctl status salt-minion --no-pager || true
 
+# Verify salt-minion process is running
+echo "=== Verifying salt-minion process ==="
+if pgrep -f "salt-minion" > /dev/null 2>&1; then
+    echo "    salt-minion process is running"
+else
+    echo "ERROR: salt-minion process is not running"
+    exit 1
+fi
+
 echo "=== Cleaning up ==="
-rm -f /tmp/bootstrap-salt.sh
+cd /tmp && rm -rf salt-install bootstrap-salt.sh
 
 echo "=== Salt Minion Installation Complete ==="
+echo "SERVICE_STATUS=running"

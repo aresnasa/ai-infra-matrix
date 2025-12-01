@@ -109,6 +109,8 @@ const MinionsTable = ({
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   // 批量操作确认弹窗
   const [batchDeleteVisible, setBatchDeleteVisible] = useState(false);
+  // 强制删除选项
+  const [forceDelete, setForceDelete] = useState(false);
 
   // 使用通用搜索 Hook
   const {
@@ -160,9 +162,9 @@ const MinionsTable = ({
     ],
   };
 
-  // 处理删除单个
-  const handleDelete = useCallback((minionId) => {
-    onDelete?.(minionId);
+  // 处理删除单个（支持强制删除）
+  const handleDelete = useCallback((minionId, force = false) => {
+    onDelete?.(minionId, force);
     setSelectedRowKeys(prev => prev.filter(k => k !== minionId));
   }, [onDelete]);
 
@@ -172,20 +174,22 @@ const MinionsTable = ({
       message.warning(t('saltstack.atLeastOneHost'));
       return;
     }
+    setForceDelete(false); // 重置强制删除选项
     setBatchDeleteVisible(true);
   }, [selectedRowKeys, t]);
 
   // 确认批量删除
   const confirmBatchDelete = useCallback(async () => {
     try {
-      await onBatchDelete?.(selectedRowKeys);
+      await onBatchDelete?.(selectedRowKeys, forceDelete);
       setSelectedRowKeys([]);
       setBatchDeleteVisible(false);
+      setForceDelete(false);
       message.success(t('saltstack.deletedNodes', { count: selectedRowKeys.length }));
     } catch (error) {
       message.error(t('common.failed') + ': ' + error.message);
     }
-  }, [selectedRowKeys, onBatchDelete, t]);
+  }, [selectedRowKeys, onBatchDelete, forceDelete, t]);
 
   // 导出选中数据
   const handleExport = useCallback(() => {
@@ -426,36 +430,57 @@ const MinionsTable = ({
   const actionColumn = {
     title: t('minions.columns.actions'),
     key: 'actions',
-    width: 120,
+    width: 140,
     fixed: compact ? undefined : 'right',
-    render: (_, record) => (
-      <Space size="small">
-        <Tooltip title={t('minions.actions.uninstall')}>
-          <Button
-            type="text"
-            size="small"
-            icon={<SettingOutlined />}
-            onClick={() => onUninstall?.(record.id || record.name)}
-          />
-        </Tooltip>
-        <Popconfirm
-          title={t('minions.actions.deleteTitle')}
-          description={t('minions.actions.deleteConfirm')}
-          onConfirm={() => handleDelete(record.id || record.name)}
-          okText={t('common.confirm')}
-          cancelText={t('common.cancel')}
-        >
-          <Tooltip title={t('minions.actions.deleteKey')}>
+    render: (_, record) => {
+      const minionId = record.id || record.name;
+      const isOnline = ['up', 'online', 'running'].includes(record.status?.toLowerCase());
+      
+      const deleteMenu = (
+        <Menu>
+          <Menu.Item 
+            key="delete" 
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(minionId, false)}
+            disabled={isOnline}
+          >
+            {t('minions.actions.deleteKey', '删除密钥')}
+            {isOnline && <Text type="secondary" style={{ marginLeft: 4, fontSize: 11 }}>({t('minions.actions.nodeOnline', '节点在线')})</Text>}
+          </Menu.Item>
+          <Menu.Item 
+            key="forceDelete" 
+            icon={<DeleteOutlined />}
+            danger
+            onClick={() => handleDelete(minionId, true)}
+          >
+            {t('minions.actions.forceDelete', '强制删除')}
+          </Menu.Item>
+        </Menu>
+      );
+      
+      return (
+        <Space size="small">
+          <Tooltip title={t('minions.actions.uninstall')}>
             <Button
               type="text"
               size="small"
-              danger
-              icon={<DeleteOutlined />}
+              icon={<SettingOutlined />}
+              onClick={() => onUninstall?.(record.id || record.name)}
             />
           </Tooltip>
-        </Popconfirm>
-      </Space>
-    ),
+          <Dropdown overlay={deleteMenu} trigger={['click']}>
+            <Tooltip title={t('minions.actions.deleteKey')}>
+              <Button
+                type="text"
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+              />
+            </Tooltip>
+          </Dropdown>
+        </Space>
+      );
+    },
   };
 
   // 根据 compact 模式和 showActions 决定最终列
@@ -542,7 +567,10 @@ const MinionsTable = ({
         }
         open={batchDeleteVisible}
         onOk={confirmBatchDelete}
-        onCancel={() => setBatchDeleteVisible(false)}
+        onCancel={() => {
+          setBatchDeleteVisible(false);
+          setForceDelete(false);
+        }}
         okText={t('minions.batch.confirmDelete')}
         okButtonProps={{ danger: true }}
         cancelText={t('common.cancel')}
@@ -552,6 +580,19 @@ const MinionsTable = ({
           {selectedRowKeys.map(key => (
             <Tag key={key} style={{ margin: 2 }}>{key}</Tag>
           ))}
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={forceDelete}
+              onChange={(e) => setForceDelete(e.target.checked)}
+              style={{ marginRight: 8 }}
+            />
+            <span style={{ color: forceDelete ? '#ff4d4f' : '#666' }}>
+              {t('minions.batch.forceDelete', '强制删除（包括在线节点）')}
+            </span>
+          </label>
         </div>
         <p style={{ marginTop: 12, color: '#999' }}>
           {t('minions.batch.deleteNote')}

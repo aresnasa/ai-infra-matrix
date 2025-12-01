@@ -593,6 +593,9 @@ export const saltStackAPI = {
   batchInstallMinion: (payload) => api.post('/saltstack/batch-install', payload),
   getBatchInstallTask: (taskId) => api.get(`/saltstack/batch-install/${taskId}`),
   listBatchInstallTasks: (params) => api.get('/saltstack/batch-install', { params }),
+  calculateParallel: (hostCount, maxParallel) => api.get('/saltstack/batch-install/calculate-parallel', { 
+    params: { host_count: hostCount, max_parallel: maxParallel } 
+  }),
   getBatchInstallStreamUrl: (taskId) => {
     const proto = window.location.protocol === 'https:' ? 'https' : 'http';
     const host = window.location.host;
@@ -604,8 +607,8 @@ export const saltStackAPI = {
   batchTestSSH: (payload) => api.post('/saltstack/ssh/test-batch', payload),
 
   // Minion 管理（删除、卸载）
-  removeMinionKey: (minionId) => api.delete(`/saltstack/minion/${minionId}`),
-  batchRemoveMinionKeys: (minionIds) => api.post('/saltstack/minion/batch-delete', { minion_ids: minionIds }),
+  removeMinionKey: (minionId, force = false) => api.delete(`/saltstack/minion/${minionId}`, { params: { force } }),
+  batchRemoveMinionKeys: (minionIds, force = false) => api.post('/saltstack/minion/batch-delete', { minion_ids: minionIds, force }),
   uninstallMinion: (minionId, sshConfig) => api.post(`/saltstack/minion/${minionId}/uninstall`, sshConfig),
 };
 

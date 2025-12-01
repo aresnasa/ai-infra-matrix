@@ -24,7 +24,8 @@ import {
   UploadOutlined,
   DownloadOutlined,
   FileTextOutlined,
-  DashboardOutlined
+  DashboardOutlined,
+  CopyOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
@@ -100,6 +101,9 @@ const SaltStackDashboard = () => {
     { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
   ]);
   const batchSseRef = useRef(null);
+  
+  // 动态并行度信息
+  const [parallelInfo, setParallelInfo] = useState({ parallel: 0, percentage: 0, is_auto_calculate: true });
   
   // 文件导入相关状态
   const [importLoading, setImportLoading] = useState(false);
@@ -185,8 +189,10 @@ const SaltStackDashboard = () => {
   }, [installTasksPage.current, installTasksPage.pageSize]);
 
   const loadAllData = async () => {
-    // 并行加载所有数据，但不阻塞页面渲染
-    await Promise.all([loadStatus(), loadMinions(), loadJobs()]);
+    // 先加载 master 状态，确保 SaltStack 服务可用
+    await loadStatus();
+    // 然后并行加载 minion 列表和 jobs
+    await Promise.all([loadMinions(), loadJobs()]);
   };
 
   // 页面初始化效果 - 立即显示静态内容
@@ -203,6 +209,37 @@ const SaltStackDashboard = () => {
     const interval = setInterval(loadAllData, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // 当主机列表变化时，计算动态并行度
+  useEffect(() => {
+    const validHosts = batchInstallHosts.filter(h => h.host && h.host.trim());
+    const hostCount = validHosts.length;
+    
+    // 使用前端模拟的动态并行度计算（与后端逻辑一致）
+    // 这样可以在用户输入时实时显示，无需调用API
+    const calculateParallel = (count) => {
+      if (count <= 0) return { parallel: 0, percentage: 0 };
+      let parallel;
+      if (count <= 20) parallel = count;
+      else if (count <= 50) parallel = Math.ceil(count * 0.6);
+      else if (count <= 100) parallel = Math.ceil(count * 0.5);
+      else if (count <= 500) parallel = Math.ceil(count * 0.2);
+      else if (count <= 1000) parallel = Math.ceil(count * 0.1);
+      else if (count <= 5000) parallel = Math.ceil(count * 0.03);
+      else if (count <= 10000) parallel = Math.ceil(count * 0.01);
+      else parallel = Math.ceil(count * 0.001);
+      
+      parallel = Math.max(1, Math.min(parallel, 100)); // 最小1，最大100
+      return {
+        parallel,
+        percentage: count > 0 ? (parallel / count * 100) : 0,
+        host_count: count,
+        is_auto_calculate: true
+      };
+    };
+    
+    setParallelInfo(calculateParallel(hostCount));
+  }, [batchInstallHosts]);
 
   // 关闭SSE
   const closeSSE = () => {
@@ -226,6 +263,22 @@ const SaltStackDashboard = () => {
       ...batchInstallHosts,
       { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
     ]);
+  };
+
+  // 复制第一行配置到当前行（仅复制端口、用户名、密码、sudo 配置，不复制 host）
+  const copyFirstRowConfig = (targetKey) => {
+    if (batchInstallHosts.length === 0) return;
+    const firstRow = batchInstallHosts[0];
+    setBatchInstallHosts(batchInstallHosts.map(h => 
+      h.key === targetKey ? { 
+        ...h, 
+        port: firstRow.port, 
+        username: firstRow.username, 
+        password: firstRow.password, 
+        use_sudo: firstRow.use_sudo 
+      } : h
+    ));
+    message.success(t('saltstack.configCopied', '已复制第一行配置'));
   };
 
   // 删除主机行
@@ -455,6 +508,7 @@ const SaltStackDashboard = () => {
       setBatchInstallEvents([]);
 
       // 构建请求（Linux 中登录密码和 sudo 密码相同）
+      // parallel 为 0 或未设置时，后端将自动计算动态并行度
       const payload = {
         hosts: validHosts.map(h => ({
           host: h.host.trim(),
@@ -464,7 +518,7 @@ const SaltStackDashboard = () => {
           use_sudo: values.global_use_sudo || h.use_sudo,
           sudo_pass: h.password  // Linux 用户密码即 sudo 密码
         })),
-        parallel: values.parallel || 3,
+        parallel: values.parallel || 0, // 0 表示自动计算并行度
         master_host: values.master_host || 'salt',
         install_type: values.install_type || 'saltstack',
         auto_accept: values.auto_accept ?? true
@@ -598,11 +652,11 @@ const SaltStackDashboard = () => {
 
   // ========== Minion 删除/卸载相关函数 ==========
 
-  // 删除 Minion（仅从 Salt Master 删除密钥）
-  const handleDeleteMinion = async (minionId) => {
+  // 删除 Minion（仅从 Salt Master 删除密钥，支持强制删除）
+  const handleDeleteMinion = async (minionId, force = false) => {
     setDeletingMinion(minionId);
     try {
-      const resp = await saltStackAPI.removeMinionKey(minionId);
+      const resp = await saltStackAPI.removeMinionKey(minionId, force);
       if (resp.data?.success) {
         message.success(t('saltstack.minionDeleted', { id: minionId }));
         loadMinions(); // 刷新列表
@@ -992,10 +1046,21 @@ const SaltStackDashboard = () => {
                   loading={minionsLoading}
                   onRefresh={loadMinions}
                   onDelete={handleDeleteMinion}
-                  onBatchDelete={async (minionIds) => {
-                    // 批量删除
-                    for (const id of minionIds) {
-                      await handleDeleteMinion(id);
+                  onBatchDelete={async (minionIds, force = false) => {
+                    // 批量删除，支持强制删除选项
+                    try {
+                      const resp = await saltStackAPI.batchRemoveMinionKeys(minionIds, force);
+                      if (resp.data?.success) {
+                        message.success(t('saltstack.batchDeleteSuccess', { count: resp.data?.success_count || minionIds.length }));
+                      } else if (resp.data?.failed_count > 0) {
+                        message.warning(t('saltstack.batchDeletePartial', { 
+                          success: resp.data?.success_count || 0, 
+                          failed: resp.data?.failed_count || 0 
+                        }));
+                      }
+                      loadMinions(); // 刷新列表
+                    } catch (e) {
+                      message.error(t('saltstack.batchDeleteFailed') + ': ' + (e?.response?.data?.message || e.message));
                     }
                   }}
                   onUninstall={openUninstallModal}
@@ -1643,7 +1708,19 @@ const SaltStackDashboard = () => {
                         placeholder={t('saltstack.hostAddressPlaceholder')} 
                         value={host.host}
                         onChange={(e) => updateHostRow(host.key, 'host', e.target.value)}
-                        addonBefore={`#${index + 1}`}
+                        addonBefore={
+                          <Space size={4}>
+                            {index > 0 && (
+                              <Tooltip title={t('saltstack.copyFirstRowConfig', '复制第一行配置')}>
+                                <CopyOutlined 
+                                  style={{ cursor: 'pointer', color: '#1890ff' }}
+                                  onClick={() => copyFirstRowConfig(host.key)}
+                                />
+                              </Tooltip>
+                            )}
+                            <span>{`#${index + 1}`}</span>
+                          </Space>
+                        }
                       />
                     </Col>
                     <Col span={2}>
@@ -1694,6 +1771,29 @@ const SaltStackDashboard = () => {
                   </Row>
                 ))}
               </div>
+
+              {/* 动态并行度信息 */}
+              {parallelInfo.host_count > 0 && (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ marginTop: 12 }}
+                  message={
+                    <Space>
+                      <span>{t('saltstack.dynamicParallel', '动态并行度')}: </span>
+                      <Tag color="blue">{parallelInfo.parallel} {t('saltstack.workers', '并发')}</Tag>
+                      <span>/</span>
+                      <span>{parallelInfo.host_count} {t('saltstack.hosts', '台主机')}</span>
+                      <span>({parallelInfo.percentage.toFixed(1)}%)</span>
+                    </Space>
+                  }
+                  description={
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('saltstack.dynamicParallelHint', '根据主机数量自动计算最优并发数，避免网络/资源过载')}
+                    </Text>
+                  }
+                />
+              )}
             </Form>
 
             {/* 安装进度 */}

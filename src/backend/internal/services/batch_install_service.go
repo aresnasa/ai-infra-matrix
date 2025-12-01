@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -105,6 +106,108 @@ func NewBatchInstallService() *BatchInstallService {
 	}
 }
 
+// CalculateDynamicParallel 计算动态并行度
+// 根据节点数量动态计算并行度，遵循指数递减规律：
+//   - <= 20 台: 100% 并发（直接使用节点数）
+//   - 21-50 台: 60% 并发
+//   - 51-100 台: 50% 并发
+//   - 101-500 台: 20% 并发
+//   - 501-1000 台: 10% 并发
+//   - 1001-5000 台: 3% 并发
+//   - 5001-10000 台: 1% 并发
+//   - > 10000 台: 0.1% 并发
+//
+// 最小并发数为 1，最大并发数默认为 100（可通过 maxParallel 参数调整）
+func CalculateDynamicParallel(hostCount int, maxParallel int) int {
+	if hostCount <= 0 {
+		return 1
+	}
+	if maxParallel <= 0 {
+		maxParallel = 100 // 默认最大并发数
+	}
+
+	var parallel int
+
+	switch {
+	case hostCount <= 20:
+		// 小规模：100% 并发（直接使用节点数）
+		parallel = hostCount
+	case hostCount <= 50:
+		// 小规模：60% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.6))
+	case hostCount <= 100:
+		// 中小规模：50% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.5))
+	case hostCount <= 500:
+		// 中规模：20% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.2))
+	case hostCount <= 1000:
+		// 中大规模：10% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.1))
+	case hostCount <= 5000:
+		// 大规模：3% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.03))
+	case hostCount <= 10000:
+		// 超大规模：1% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.01))
+	default:
+		// 超超大规模：0.1% 并发
+		parallel = int(math.Ceil(float64(hostCount) * 0.001))
+	}
+
+	// 确保最小并发数为 1
+	if parallel < 1 {
+		parallel = 1
+	}
+
+	// 确保不超过最大并发数
+	if parallel > maxParallel {
+		parallel = maxParallel
+	}
+
+	return parallel
+}
+
+// GetParallelConfig 获取并行度配置信息（用于 API 返回）
+type ParallelConfig struct {
+	HostCount       int     `json:"host_count"`
+	Parallel        int     `json:"parallel"`
+	Percentage      float64 `json:"percentage"`
+	MaxParallel     int     `json:"max_parallel"`
+	IsAutoCalculate bool    `json:"is_auto_calculate"`
+}
+
+// GetParallelInfo 获取并行度详细信息
+func GetParallelInfo(hostCount int, requestedParallel int, maxParallel int) ParallelConfig {
+	if maxParallel <= 0 {
+		maxParallel = 100
+	}
+
+	config := ParallelConfig{
+		HostCount:   hostCount,
+		MaxParallel: maxParallel,
+	}
+
+	// 如果请求中指定了并行度且大于0，使用指定值
+	if requestedParallel > 0 {
+		config.Parallel = requestedParallel
+		if config.Parallel > maxParallel {
+			config.Parallel = maxParallel
+		}
+		config.IsAutoCalculate = false
+	} else {
+		// 自动计算
+		config.Parallel = CalculateDynamicParallel(hostCount, maxParallel)
+		config.IsAutoCalculate = true
+	}
+
+	if hostCount > 0 {
+		config.Percentage = float64(config.Parallel) / float64(hostCount) * 100
+	}
+
+	return config
+}
+
 // GetSSEChannel 获取或创建 SSE 通道
 func (s *BatchInstallService) GetSSEChannel(taskID string) chan SSEEvent {
 	s.channelsMutex.Lock()
@@ -152,10 +255,18 @@ func (s *BatchInstallService) BatchInstallSaltMinion(ctx context.Context, req Ba
 	// 生成任务ID
 	taskID := fmt.Sprintf("batch-salt-%s", uuid.New().String()[:8])
 
-	// 设置默认值
-	if req.Parallel <= 0 {
-		req.Parallel = 3
-	}
+	// 计算动态并行度
+	// 如果请求中指定了 Parallel > 0，使用指定值；否则自动计算
+	parallelInfo := GetParallelInfo(len(req.Hosts), req.Parallel, 100)
+	req.Parallel = parallelInfo.Parallel
+
+	logrus.WithFields(logrus.Fields{
+		"task_id":           taskID,
+		"host_count":        parallelInfo.HostCount,
+		"parallel":          parallelInfo.Parallel,
+		"percentage":        fmt.Sprintf("%.1f%%", parallelInfo.Percentage),
+		"is_auto_calculate": parallelInfo.IsAutoCalculate,
+	}).Info("Calculated parallel workers for batch install")
 
 	// 处理 MasterHost - 如果是容器名称（如 "salt", "saltstack"），替换为实际的外部 IP
 	externalHost := os.Getenv("EXTERNAL_HOST")
@@ -239,13 +350,15 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 
 	s.sendEvent(taskID, SSEEvent{
 		Type:    "progress",
-		Message: fmt.Sprintf("Starting batch installation for %d hosts with %d parallel workers", len(req.Hosts), req.Parallel),
+		Message: fmt.Sprintf("Starting batch installation for %d hosts with %d parallel workers (%.1f%% concurrency)", len(req.Hosts), req.Parallel, float64(req.Parallel)/float64(len(req.Hosts))*100),
 		Data: map[string]interface{}{
-			"completed": 0,
-			"total":     len(req.Hosts),
-			"success":   0,
-			"failed":    0,
-			"progress":  0,
+			"completed":  0,
+			"total":      len(req.Hosts),
+			"success":    0,
+			"failed":     0,
+			"progress":   0,
+			"parallel":   req.Parallel,
+			"percentage": float64(req.Parallel) / float64(len(req.Hosts)) * 100,
 		},
 	})
 
@@ -502,6 +615,7 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 	})
 
 	// 自动接受 Minion Key（如果启用）
+	keyAccepted := false
 	if req.AutoAccept {
 		s.sendEvent(taskID, SSEEvent{
 			Type:    "log",
@@ -520,6 +634,7 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 			s.logToDatabase(taskID, "warn", hostConfig.Host, fmt.Sprintf("Minion installed but key not auto-accepted: %v", acceptErr))
 			// 不标记为失败，因为 minion 已安装，只是 key 未被接受
 		} else {
+			keyAccepted = true
 			s.sendEvent(taskID, SSEEvent{
 				Type:    "log",
 				Host:    hostConfig.Host,
@@ -528,8 +643,41 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 		}
 	}
 
+	// 验证 minion 是否能响应 test.ping（如果 key 已接受）
+	if keyAccepted {
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    hostConfig.Host,
+			Message: fmt.Sprintf("Verifying minion %s is responding to master...", minionID),
+		})
+
+		pingErr := s.verifyMinionPing(ctx, minionID, taskID, hostConfig.Host)
+		if pingErr != nil {
+			result.Status = "partial"
+			result.Error = fmt.Sprintf("Minion installed but not responding: %v", pingErr)
+			result.Message = result.Error
+			result.Duration = time.Since(startTime).Milliseconds()
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "warning",
+				Host:    hostConfig.Host,
+				Message: result.Error,
+			})
+			s.logToDatabase(taskID, "warn", hostConfig.Host, result.Error)
+			return result
+		}
+
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    hostConfig.Host,
+			Message: fmt.Sprintf("Minion %s verified - responding to test.ping", minionID),
+		})
+	}
+
 	result.Status = "success"
 	result.Message = "Salt Minion installed and started successfully"
+	if keyAccepted {
+		result.Message = "Salt Minion installed, key accepted, and verified responding"
+	}
 	result.Duration = time.Since(startTime).Milliseconds()
 
 	s.sendEvent(taskID, SSEEvent{
@@ -1088,14 +1236,16 @@ func (s *BatchInstallService) BatchTestSSHConnections(ctx context.Context, req S
 		return nil, fmt.Errorf("no hosts specified")
 	}
 
-	// 设置默认并发数
-	parallel := req.Parallel
-	if parallel <= 0 {
-		parallel = 5
-	}
-	if parallel > 20 {
-		parallel = 20
-	}
+	// 使用动态并行度计算（SSH 测试最大并发 50）
+	parallelInfo := GetParallelInfo(len(req.Hosts), req.Parallel, 50)
+	parallel := parallelInfo.Parallel
+
+	logrus.WithFields(logrus.Fields{
+		"host_count":        parallelInfo.HostCount,
+		"parallel":          parallel,
+		"percentage":        fmt.Sprintf("%.1f%%", parallelInfo.Percentage),
+		"is_auto_calculate": parallelInfo.IsAutoCalculate,
+	}).Info("Calculated parallel workers for SSH batch test")
 
 	// 创建工作通道
 	jobs := make(chan HostInstallConfig, len(req.Hosts))
@@ -1270,6 +1420,72 @@ func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, 
 
 		time.Sleep(pollInterval)
 	}
+}
+
+// verifyMinionPing 验证 Minion 能否响应 test.ping
+// 使用独立的 context，设置 30 秒超时，最多重试 10 次
+func (s *BatchInstallService) verifyMinionPing(parentCtx context.Context, minionID, taskID, host string) error {
+	// 创建独立的 context，设置 30 秒超时
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 创建 SaltStack 服务实例
+	saltService := NewSaltStackService()
+	if saltService == nil {
+		return fmt.Errorf("SaltStack service not available")
+	}
+
+	maxRetries := 10
+	pollInterval := 2 * time.Second
+
+	s.sendEvent(taskID, SSEEvent{
+		Type:    "log",
+		Host:    host,
+		Message: fmt.Sprintf("Verifying minion %s can respond to test.ping (max %d attempts)...", minionID, maxRetries),
+	})
+
+	for retry := 1; retry <= maxRetries; retry++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for minion ping response")
+		default:
+		}
+
+		// 执行 test.ping
+		online, err := saltService.Ping(ctx, minionID)
+		if err != nil {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    host,
+				Message: fmt.Sprintf("Ping attempt %d/%d failed: %v", retry, maxRetries, err),
+			})
+			if retry < maxRetries {
+				time.Sleep(pollInterval)
+			}
+			continue
+		}
+
+		if online {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    host,
+				Message: fmt.Sprintf("Minion %s responded to test.ping successfully (attempt %d/%d)", minionID, retry, maxRetries),
+			})
+			return nil
+		}
+
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    host,
+			Message: fmt.Sprintf("Ping attempt %d/%d: no response from minion %s", retry, maxRetries, minionID),
+		})
+
+		if retry < maxRetries {
+			time.Sleep(pollInterval)
+		}
+	}
+
+	return fmt.Errorf("minion %s did not respond to test.ping after %d attempts", minionID, maxRetries)
 }
 
 // maskBatchInstallRequest 创建脱敏后的请求副本用于存储到数据库

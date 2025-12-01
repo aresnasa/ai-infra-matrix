@@ -466,7 +466,29 @@ func (s *SaltStackService) RejectMinion(ctx context.Context, minionID string) er
 
 // DeleteMinion 删除Minion密钥（从 Salt Master 中完全移除）
 func (s *SaltStackService) DeleteMinion(ctx context.Context, minionID string) error {
-	log.Printf("[SaltStack] Deleting minion: %s", minionID)
+	return s.DeleteMinionWithForce(ctx, minionID, false)
+}
+
+// DeleteMinionWithForce 删除Minion密钥，支持强制删除在线节点
+func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID string, force bool) error {
+	log.Printf("[SaltStack] Deleting minion: %s (force=%v)", minionID, force)
+
+	// 如果不是强制删除，先检查节点是否在线（通过 test.ping）
+	if !force {
+		pingPayload := map[string]interface{}{
+			"fun":     "test.ping",
+			"tgt":     minionID,
+			"client":  "local",
+			"timeout": 3,
+		}
+		pingResult, err := s.executeSaltCommand(ctx, pingPayload)
+		if err == nil && pingResult != nil {
+			// 检查 ping 结果中是否有该 minion 的响应
+			if _, exists := pingResult[minionID]; exists {
+				return fmt.Errorf("minion %s is online, use force=true to delete online minions", minionID)
+			}
+		}
+	}
 
 	payload := map[string]interface{}{
 		"fun":    "key.delete",
@@ -479,16 +501,21 @@ func (s *SaltStackService) DeleteMinion(ctx context.Context, minionID string) er
 		return fmt.Errorf("failed to delete minion %s: %v", minionID, err)
 	}
 
-	log.Printf("[SaltStack] Minion %s deleted successfully", minionID)
+	log.Printf("[SaltStack] Minion %s deleted successfully (force=%v)", minionID, force)
 	return nil
 }
 
 // DeleteMinionBatch 批量删除 Minion 密钥
 func (s *SaltStackService) DeleteMinionBatch(ctx context.Context, minionIDs []string) (map[string]error, error) {
+	return s.DeleteMinionBatchWithForce(ctx, minionIDs, false)
+}
+
+// DeleteMinionBatchWithForce 批量删除 Minion 密钥，支持强制删除
+func (s *SaltStackService) DeleteMinionBatchWithForce(ctx context.Context, minionIDs []string, force bool) (map[string]error, error) {
 	results := make(map[string]error)
 
 	for _, minionID := range minionIDs {
-		err := s.DeleteMinion(ctx, minionID)
+		err := s.DeleteMinionWithForce(ctx, minionID, force)
 		results[minionID] = err
 	}
 
