@@ -585,10 +585,11 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 		sudoPass = hostConfig.Password // 默认使用登录密码
 	}
 
-	// 构建安装命令
+	// 构建 sudo 前缀 - 使用标准 sudo 格式，密码通过环境变量传递
+	// 注意：非 root 用户需要 sudo，root 用户不需要
 	sudoPrefix := ""
-	if useSudo && hostConfig.Username != "root" {
-		sudoPrefix = fmt.Sprintf("echo '%s' | sudo -S ", sudoPass)
+	if hostConfig.Username != "root" && useSudo {
+		sudoPrefix = "sudo "
 	}
 
 	// 获取 minion ID
@@ -1406,14 +1407,10 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 		return fmt.Errorf("OS detection failed: %v", err)
 	}
 
-	// 确定 sudo 前缀
+	// 确定 sudo 前缀 - 使用标准 sudo 格式
 	sudoPrefix := ""
 	if config.UseSudo && config.Username != "root" {
-		sudoPass := config.SudoPass
-		if sudoPass == "" {
-			sudoPass = config.Password
-		}
-		sudoPrefix = fmt.Sprintf("echo '%s' | sudo -S ", sudoPass)
+		sudoPrefix = "sudo "
 	}
 
 	// 使用 ScriptLoader 生成卸载脚本

@@ -24,6 +24,7 @@ CATEGRAF_VERSION="{{.CategrafVersion}}"
 APPHUB_URL="{{.AppHubURL}}"
 HOSTNAME_IDENT="{{.Hostname}}"
 HOST_IP="{{.HostIP}}"
+SUDO_PREFIX="{{.SudoPrefix}}"
 
 # Set defaults
 if [ -z "$N9E_PORT" ]; then
@@ -43,17 +44,17 @@ echo "Hostname: $HOSTNAME_IDENT"
 # Create installation directory
 INSTALL_DIR="/opt/categraf"
 echo "=== Creating installation directory: $INSTALL_DIR ==="
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.cpu
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.mem
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.disk
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.diskio
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.net
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.netstat
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.kernel
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.system
-{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.processes
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.cpu
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.mem
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.disk
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.diskio
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.net
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.netstat
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.kernel
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.system
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.processes
 
 # Detect architecture
 ARCH=$(uname -m)
@@ -88,12 +89,19 @@ fi
 echo "=== Downloading Categraf from: $DOWNLOAD_URL ==="
 cd /tmp
 rm -f categraf*.tar.gz
-curl -fsSL -o ${BINARY_NAME} "$DOWNLOAD_URL" || wget -q -O ${BINARY_NAME} "$DOWNLOAD_URL"
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "${BINARY_NAME}" "$DOWNLOAD_URL"
+elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "${BINARY_NAME}" "$DOWNLOAD_URL"
+else
+    echo "ERROR: Neither curl nor wget is available"
+    exit 1
+fi
 
 echo "=== Extracting Categraf ==="
 tar -xzf ${BINARY_NAME}
-{{.SudoPrefix}}cp -f categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}/categraf $INSTALL_DIR/
-{{.SudoPrefix}}chmod +x $INSTALL_DIR/categraf
+${SUDO_PREFIX}cp -f categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}/categraf $INSTALL_DIR/
+${SUDO_PREFIX}chmod +x $INSTALL_DIR/categraf
 
 # Clean up
 rm -rf categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}*
@@ -103,138 +111,98 @@ if [ -z "$HOSTNAME_IDENT" ]; then
     HOSTNAME_IDENT=$(hostname -f 2>/dev/null || hostname)
 fi
 
-# Create main configuration
+# Create main configuration using echo commands
 echo "=== Creating configuration files ==="
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/config.toml > /dev/null
-[global]
-# print configs
-print_configs = false
+${SUDO_PREFIX}sh -c "echo '[global]' > $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'print_configs = false' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'hostname = \"$HOSTNAME_IDENT\"' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'omit_hostname = false' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '[global.labels]' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '# host_ip = \"$HOST_IP\"' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '[[writers]]' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'url = \"http://${N9E_HOST}:${N9E_PORT}/prometheus/v1/write\"' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'timeout = 5000' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'dial_timeout = 2500' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'max_idle_conns_per_host = 100' >> $INSTALL_DIR/conf/config.toml"
 
-# Hostname setting, auto detect by default
-hostname = "$HOSTNAME_IDENT"
+# CPU config
+${SUDO_PREFIX}sh -c "echo '[cpu]' > $INSTALL_DIR/conf/input.cpu/cpu.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.cpu/cpu.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_per_cpu = false' >> $INSTALL_DIR/conf/input.cpu/cpu.toml"
 
-# Omit hostname in metrics
-omit_hostname = false
+# Memory config
+${SUDO_PREFIX}sh -c "echo '[mem]' > $INSTALL_DIR/conf/input.mem/mem.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.mem/mem.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_platform_fields = true' >> $INSTALL_DIR/conf/input.mem/mem.toml"
 
-# Set interval (seconds)
-interval = 15
+# Disk config
+${SUDO_PREFIX}sh -c "echo '[disk]' > $INSTALL_DIR/conf/input.disk/disk.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.disk/disk.toml"
 
-# Labels to add to all metrics
-[global.labels]
-# region = "default"
-# env = "prod"
-# host_ip = "$HOST_IP"
+# DiskIO config
+${SUDO_PREFIX}sh -c "echo '[diskio]' > $INSTALL_DIR/conf/input.diskio/diskio.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.diskio/diskio.toml"
 
-[[writers]]
-url = "http://${N9E_HOST}:${N9E_PORT}/prometheus/v1/write"
-# Basic auth
-# basic_auth_user = ""
-# basic_auth_pass = ""
+# Net config
+${SUDO_PREFIX}sh -c "echo '[net]' > $INSTALL_DIR/conf/input.net/net.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.net/net.toml"
 
-# timeout settings
-timeout = 5000
-dial_timeout = 2500
-max_idle_conns_per_host = 100
-EOF
+# Netstat config
+${SUDO_PREFIX}sh -c "echo '[netstat]' > $INSTALL_DIR/conf/input.netstat/netstat.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.netstat/netstat.toml"
 
-# Create input plugins configuration
-# CPU
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.cpu/cpu.toml > /dev/null
-[cpu]
-interval = 15
-collect_per_cpu = false
-EOF
+# Kernel config
+${SUDO_PREFIX}sh -c "echo '[kernel]' > $INSTALL_DIR/conf/input.kernel/kernel.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.kernel/kernel.toml"
 
-# Memory
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.mem/mem.toml > /dev/null
-[mem]
-interval = 15
-collect_platform_fields = true
-EOF
+# System config
+${SUDO_PREFIX}sh -c "echo '[system]' > $INSTALL_DIR/conf/input.system/system.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.system/system.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_loadavg = true' >> $INSTALL_DIR/conf/input.system/system.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_uptime = true' >> $INSTALL_DIR/conf/input.system/system.toml"
 
-# Disk
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.disk/disk.toml > /dev/null
-[disk]
-interval = 15
-# ignore_fs = ["tmpfs", "devtmpfs", "devfs", "iso9660", "overlay", "aufs", "squashfs"]
-EOF
+# Processes config
+${SUDO_PREFIX}sh -c "echo '[processes]' > $INSTALL_DIR/conf/input.processes/processes.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.processes/processes.toml"
 
-# DiskIO
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.diskio/diskio.toml > /dev/null
-[diskio]
-interval = 15
-EOF
-
-# Network
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.net/net.toml > /dev/null
-[net]
-interval = 15
-# interfaces = ["eth0", "eth1"]
-EOF
-
-# Netstat
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.netstat/netstat.toml > /dev/null
-[netstat]
-interval = 15
-EOF
-
-# Kernel
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.kernel/kernel.toml > /dev/null
-[kernel]
-interval = 15
-EOF
-
-# System
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.system/system.toml > /dev/null
-[system]
-interval = 15
-collect_loadavg = true
-collect_uptime = true
-EOF
-
-# Processes
-cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.processes/processes.toml > /dev/null
-[processes]
-interval = 15
-EOF
-
-# Create systemd service
+# Create systemd service file
 echo "=== Creating systemd service ==="
-cat <<EOF | {{.SudoPrefix}}tee /etc/systemd/system/categraf.service > /dev/null
-[Unit]
-Description=Categraf Monitoring Agent
-Documentation=https://github.com/flashcatcloud/categraf
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/categraf
-Restart=on-failure
-RestartSec=5s
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
+${SUDO_PREFIX}sh -c "echo '[Unit]' > /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Description=Categraf Monitoring Agent' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Documentation=https://github.com/flashcatcloud/categraf' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'After=network.target' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '[Service]' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Type=simple' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'User=root' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'WorkingDirectory=$INSTALL_DIR' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'ExecStart=$INSTALL_DIR/categraf' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Restart=on-failure' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'RestartSec=5s' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'LimitNOFILE=65536' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '[Install]' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'WantedBy=multi-user.target' >> /etc/systemd/system/categraf.service"
 
 # Reload and start service
 echo "=== Starting Categraf service ==="
-{{.SudoPrefix}}systemctl daemon-reload
-{{.SudoPrefix}}systemctl enable categraf
-{{.SudoPrefix}}systemctl restart categraf
+${SUDO_PREFIX}systemctl daemon-reload
+${SUDO_PREFIX}systemctl enable categraf
+${SUDO_PREFIX}systemctl restart categraf
 
 # Wait for service to start
 sleep 3
 
 # Verify installation
 echo "=== Verifying Categraf installation ==="
-if {{.SudoPrefix}}systemctl is-active --quiet categraf; then
+if ${SUDO_PREFIX}systemctl is-active --quiet categraf; then
     echo "OK: Categraf service is running"
 else
     echo "WARNING: Categraf service may not be running"
-    {{.SudoPrefix}}systemctl status categraf --no-pager || true
+    ${SUDO_PREFIX}systemctl status categraf --no-pager || true
 fi
 
 echo "=== Categraf version ==="
@@ -242,5 +210,5 @@ $INSTALL_DIR/categraf --version || true
 
 echo "=== Categraf Installation Complete ==="
 echo "=== Service Status ==="
-{{.SudoPrefix}}systemctl status categraf --no-pager -l || true
+${SUDO_PREFIX}systemctl status categraf --no-pager -l || true
 echo "=== Completed at: $(date '+%Y-%m-%d %H:%M:%S') ==="
