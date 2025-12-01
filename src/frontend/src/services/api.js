@@ -610,6 +610,13 @@ export const saltStackAPI = {
   removeMinionKey: (minionId, force = false) => api.delete(`/saltstack/minion/${minionId}`, { params: { force } }),
   batchRemoveMinionKeys: (minionIds, force = false) => api.post('/saltstack/minion/batch-delete', { minion_ids: minionIds, force }),
   uninstallMinion: (minionId, sshConfig) => api.post(`/saltstack/minion/${minionId}/uninstall`, sshConfig),
+  
+  // 删除任务管理（软删除 + 异步真实删除）
+  getPendingDeleteMinions: () => api.get('/saltstack/minion/pending-deletes'),
+  getDeleteTaskStatus: (minionId) => api.get(`/saltstack/minion/delete-tasks/${minionId}`),
+  listDeleteTasks: (params) => api.get('/saltstack/minion/delete-tasks', { params }),
+  cancelDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/cancel`),
+  retryDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/retry`),
 };
 
 // 增强用户管理API

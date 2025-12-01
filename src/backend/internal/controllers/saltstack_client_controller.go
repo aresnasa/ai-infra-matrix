@@ -251,6 +251,12 @@ func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 		saltstack.DELETE("/minion/:minionId", c.DeleteMinion)
 		saltstack.POST("/minion/batch-delete", c.BatchDeleteMinions)
 		saltstack.POST("/minion/:minionId/uninstall", c.UninstallMinion)
+		// 删除任务管理
+		saltstack.GET("/minion/delete-tasks", c.ListDeleteTasks)
+		saltstack.GET("/minion/delete-tasks/:minionId", c.GetDeleteTaskStatus)
+		saltstack.POST("/minion/delete-tasks/:minionId/cancel", c.CancelDeleteTask)
+		saltstack.POST("/minion/delete-tasks/:minionId/retry", c.RetryDeleteTask)
+		saltstack.GET("/minion/pending-deletes", c.GetPendingDeleteMinions)
 
 		// 主机模板
 		saltstack.GET("/host-templates", c.ListHostTemplates)
@@ -765,13 +771,14 @@ func (c *SaltStackClientController) BatchTestSSHConnections(ctx *gin.Context) {
 	})
 }
 
-// DeleteMinion 删除 Minion（从 Salt Master 中移除密钥）
+// DeleteMinion 删除 Minion（软删除 + 后台异步真实删除）
 // @Summary 删除Minion
-// @Description 从Salt Master中删除Minion密钥，支持强制删除在线节点
+// @Description 软删除Minion并在后台异步执行真实删除，立即返回结果提升用户体验
 // @Tags SaltStack
 // @Produce json
 // @Param minionId path string true "Minion ID"
 // @Param force query bool false "强制删除（包括在线节点）"
+// @Param sync query bool false "同步删除（等待真实删除完成，默认false使用软删除）"
 // @Success 200 {object} map[string]interface{}
 // @Router /api/saltstack/minion/{minionId} [delete]
 func (c *SaltStackClientController) DeleteMinion(ctx *gin.Context) {
@@ -786,26 +793,64 @@ func (c *SaltStackClientController) DeleteMinion(ctx *gin.Context) {
 
 	// 检查是否强制删除
 	forceDelete := ctx.Query("force") == "true"
+	// 检查是否同步删除（兼容旧逻辑）
+	syncDelete := ctx.Query("sync") == "true"
 
-	saltSvc := services.NewSaltStackService()
-	err := saltSvc.DeleteMinionWithForce(ctx.Request.Context(), minionID, forceDelete)
+	// 获取当前用户
+	createdBy := ""
+	if user, exists := ctx.Get("username"); exists {
+		createdBy = user.(string)
+	}
+
+	// 如果是同步删除，使用旧逻辑
+	if syncDelete {
+		saltSvc := services.NewSaltStackService()
+		err := saltSvc.DeleteMinionWithForce(ctx.Request.Context(), minionID, forceDelete)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   fmt.Sprintf("Failed to delete minion: %v", err),
+			})
+			return
+		}
+		logrus.WithFields(logrus.Fields{
+			"minion_id": minionID,
+			"force":     forceDelete,
+			"sync":      true,
+		}).Info("Minion deleted successfully (sync)")
+		ctx.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": fmt.Sprintf("Minion %s deleted successfully", minionID),
+			"force":   forceDelete,
+			"sync":    true,
+		})
+		return
+	}
+
+	// 默认使用软删除（立即返回，后台异步执行真实删除）
+	deleteSvc := services.GetMinionDeleteService()
+	task, err := deleteSvc.SoftDelete(ctx.Request.Context(), minionID, forceDelete, createdBy)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   fmt.Sprintf("Failed to delete minion: %v", err),
+			"error":   fmt.Sprintf("Failed to create delete task: %v", err),
 		})
 		return
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"minion_id": minionID,
+		"task_id":   task.ID,
 		"force":     forceDelete,
-	}).Info("Minion deleted successfully")
+	}).Info("Minion soft-delete task created")
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": fmt.Sprintf("Minion %s deleted successfully", minionID),
+		"message": fmt.Sprintf("Minion %s 已标记删除，后台正在执行真实删除", minionID),
+		"task_id": task.ID,
+		"status":  task.Status,
 		"force":   forceDelete,
+		"async":   true,
 	})
 }
 
@@ -815,9 +860,9 @@ type BatchDeleteMinionsRequest struct {
 	Force     bool     `json:"force"` // 强制删除（包括在线节点）
 }
 
-// BatchDeleteMinions 批量删除 Minion
+// BatchDeleteMinions 批量删除 Minion（软删除 + 后台异步真实删除）
 // @Summary 批量删除Minion
-// @Description 从Salt Master中批量删除Minion密钥，支持强制删除在线节点
+// @Description 批量软删除Minion并在后台异步执行真实删除，立即返回结果提升用户体验
 // @Tags SaltStack
 // @Accept json
 // @Produce json
@@ -835,36 +880,206 @@ func (c *SaltStackClientController) BatchDeleteMinions(ctx *gin.Context) {
 		return
 	}
 
-	saltSvc := services.NewSaltStackService()
-	results, _ := saltSvc.DeleteMinionBatchWithForce(ctx.Request.Context(), req.MinionIDs, req.Force)
+	// 获取当前用户
+	createdBy := ""
+	if user, exists := ctx.Get("username"); exists {
+		createdBy = user.(string)
+	}
 
-	successCount := 0
-	failedCount := 0
-	details := make([]gin.H, 0, len(results))
+	// 使用软删除服务
+	deleteSvc := services.GetMinionDeleteService()
+	tasks, err := deleteSvc.SoftDeleteBatch(ctx.Request.Context(), req.MinionIDs, req.Force, createdBy)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to create delete tasks: %v", err),
+		})
+		return
+	}
 
-	for minionID, err := range results {
-		if err == nil {
-			successCount++
-			details = append(details, gin.H{
-				"minion_id": minionID,
-				"success":   true,
-			})
-		} else {
-			failedCount++
-			details = append(details, gin.H{
-				"minion_id": minionID,
-				"success":   false,
-				"error":     err.Error(),
-			})
+	details := make([]gin.H, 0, len(tasks))
+	for _, task := range tasks {
+		details = append(details, gin.H{
+			"minion_id": task.MinionID,
+			"task_id":   task.ID,
+			"status":    task.Status,
+			"success":   true,
+		})
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"count": len(tasks),
+		"force": req.Force,
+	}).Info("Batch soft-delete tasks created")
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"message":       fmt.Sprintf("%d 个 Minion 已标记删除，后台正在执行真实删除", len(tasks)),
+		"success_count": len(tasks),
+		"failed_count":  len(req.MinionIDs) - len(tasks),
+		"details":       details,
+		"async":         true,
+	})
+}
+
+// ListDeleteTasks 列出删除任务
+// @Summary 列出删除任务
+// @Description 获取 Minion 删除任务列表
+// @Tags SaltStack
+// @Produce json
+// @Param status query string false "任务状态过滤 (pending, deleting, completed, failed, cancelled)"
+// @Param limit query int false "返回数量限制"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minion/delete-tasks [get]
+func (c *SaltStackClientController) ListDeleteTasks(ctx *gin.Context) {
+	status := ctx.Query("status")
+	limitStr := ctx.Query("limit")
+	limit := 100
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
 		}
 	}
 
+	deleteSvc := services.GetMinionDeleteService()
+	tasks, err := deleteSvc.ListDeleteTasks(status, limit)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to list delete tasks: %v", err),
+		})
+		return
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
-		"success":       failedCount == 0,
-		"message":       fmt.Sprintf("Deleted %d minions, %d failed", successCount, failedCount),
-		"success_count": successCount,
-		"failed_count":  failedCount,
-		"details":       details,
+		"success": true,
+		"data":    tasks,
+		"count":   len(tasks),
+	})
+}
+
+// GetDeleteTaskStatus 获取删除任务状态
+// @Summary 获取删除任务状态
+// @Description 根据 Minion ID 获取最新的删除任务状态
+// @Tags SaltStack
+// @Produce json
+// @Param minionId path string true "Minion ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minion/delete-tasks/{minionId} [get]
+func (c *SaltStackClientController) GetDeleteTaskStatus(ctx *gin.Context) {
+	minionID := ctx.Param("minionId")
+	if minionID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Minion ID is required",
+		})
+		return
+	}
+
+	deleteSvc := services.GetMinionDeleteService()
+	task, err := deleteSvc.GetDeleteTaskByMinionID(minionID)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("No delete task found for minion %s", minionID),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    task,
+	})
+}
+
+// CancelDeleteTask 取消删除任务
+// @Summary 取消删除任务
+// @Description 取消待处理或失败的删除任务
+// @Tags SaltStack
+// @Produce json
+// @Param minionId path string true "Minion ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minion/delete-tasks/{minionId}/cancel [post]
+func (c *SaltStackClientController) CancelDeleteTask(ctx *gin.Context) {
+	minionID := ctx.Param("minionId")
+	if minionID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Minion ID is required",
+		})
+		return
+	}
+
+	deleteSvc := services.GetMinionDeleteService()
+	if err := deleteSvc.CancelDelete(minionID); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Delete task for minion %s cancelled", minionID),
+	})
+}
+
+// RetryDeleteTask 重试删除任务
+// @Summary 重试删除任务
+// @Description 重试失败的删除任务
+// @Tags SaltStack
+// @Produce json
+// @Param minionId path string true "Minion ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minion/delete-tasks/{minionId}/retry [post]
+func (c *SaltStackClientController) RetryDeleteTask(ctx *gin.Context) {
+	minionID := ctx.Param("minionId")
+	if minionID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Minion ID is required",
+		})
+		return
+	}
+
+	deleteSvc := services.GetMinionDeleteService()
+	if err := deleteSvc.RetryDelete(minionID); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("Delete task for minion %s retried", minionID),
+	})
+}
+
+// GetPendingDeleteMinions 获取待删除的 Minion 列表
+// @Summary 获取待删除的 Minion 列表
+// @Description 获取所有状态为 pending 或 deleting 的 Minion ID
+// @Tags SaltStack
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minion/pending-deletes [get]
+func (c *SaltStackClientController) GetPendingDeleteMinions(ctx *gin.Context) {
+	deleteSvc := services.GetMinionDeleteService()
+	minionIDs, err := deleteSvc.GetPendingDeleteMinionIDs()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to get pending deletes: %v", err),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"minion_ids": minionIDs,
+		"count":      len(minionIDs),
 	})
 }
 

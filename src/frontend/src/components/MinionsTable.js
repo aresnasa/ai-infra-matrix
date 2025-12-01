@@ -52,6 +52,8 @@ const STATUS_COLORS = {
   stopped: 'error',
   pending: 'processing',
   starting: 'processing',
+  deleting: 'warning',      // 软删除状态 - 正在后台删除
+  pending_delete: 'warning', // 待删除状态
   unknown: 'default',
 };
 
@@ -317,17 +319,29 @@ const MinionsTable = ({
       title: t('minions.columns.status'),
       dataIndex: 'status',
       key: 'status',
-      width: 90,
+      width: 100,
       filters: [
         { text: t('minions.status.online'), value: 'up' },
         { text: t('minions.status.online'), value: 'online' },
         { text: t('minions.status.offline'), value: 'down' },
         { text: t('minions.status.offline'), value: 'offline' },
+        { text: t('minions.status.deleting') || '删除中', value: 'deleting' },
       ],
       onFilter: (value, record) => record.status?.toLowerCase() === value,
-      render: (status) => {
-        const color = STATUS_COLORS[status?.toLowerCase()] || 'default';
-        const isOnline = status === 'up' || status === 'online';
+      render: (status, record) => {
+        const lowerStatus = status?.toLowerCase();
+        const color = STATUS_COLORS[lowerStatus] || 'default';
+        const isOnline = lowerStatus === 'up' || lowerStatus === 'online';
+        const isDeleting = lowerStatus === 'deleting' || lowerStatus === 'pending_delete' || record.pending_delete;
+        
+        if (isDeleting) {
+          return (
+            <Tag color="warning" icon={<SyncOutlined spin />}>
+              {t('minions.status.deleting') || '删除中'}
+            </Tag>
+          );
+        }
+        
         return (
           <Tag color={color} icon={color === 'success' ? <CheckCircleOutlined /> : <ExclamationCircleOutlined />}>
             {isOnline ? t('minions.status.online') : status === 'down' || status === 'offline' ? t('minions.status.offline') : status || t('minions.status.unknown')}

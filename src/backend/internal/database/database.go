@@ -314,6 +314,8 @@ func migrateTaskSchema() error {
 		&models.SaltStackTask{},
 		&models.TaskLog{},
 		&models.SSHLog{},
+		// Minion 软删除任务表
+		&models.MinionDeleteTask{},
 		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},

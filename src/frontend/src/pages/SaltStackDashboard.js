@@ -148,9 +148,24 @@ const SaltStackDashboard = () => {
   const loadMinions = async () => {
     setMinionsLoading(true);
     try {
-      const response = await saltStackAPI.getMinions();
-      setMinions(response.data?.data || []);
-      setDemo(prev => prev || Boolean(response.data?.demo));
+      // 并行获取 Minion 列表和待删除状态
+      const [minionsRes, pendingDeletesRes] = await Promise.all([
+        saltStackAPI.getMinions(),
+        saltStackAPI.getPendingDeleteMinions().catch(() => ({ data: { minion_ids: [] } })),
+      ]);
+      
+      const minionList = minionsRes.data?.data || [];
+      const pendingDeleteIds = new Set(pendingDeletesRes.data?.minion_ids || []);
+      
+      // 标记待删除的 Minion
+      const minionsWithDeleteStatus = minionList.map(minion => ({
+        ...minion,
+        pending_delete: pendingDeleteIds.has(minion.id || minion.name),
+        status: pendingDeleteIds.has(minion.id || minion.name) ? 'deleting' : minion.status,
+      }));
+      
+      setMinions(minionsWithDeleteStatus);
+      setDemo(prev => prev || Boolean(minionsRes.data?.demo));
     } catch (e) {
       console.error('加载SaltStack Minions失败', e);
     } finally {
