@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
@@ -228,6 +229,8 @@ func (c *SaltStackClientController) GetTestHosts(ctx *gin.Context) {
 // RegisterRoutes 注册SaltStack客户端相关路由
 func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 	saltstack := api.Group("/saltstack")
+	// 应用认证中间件 - 所有 saltstack 客户端 API 都需要认证
+	saltstack.Use(middleware.AuthMiddlewareWithSession())
 	{
 		// 客户端安装
 		saltstack.POST("/install", c.InstallSaltMinionAsync)

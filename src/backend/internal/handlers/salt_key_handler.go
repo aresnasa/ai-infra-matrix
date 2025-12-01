@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -48,10 +49,14 @@ func (h *SaltKeyHandler) RegisterRoutes(r *gin.RouterGroup) {
 		saltKey.POST("/master-pub", h.GetMasterPubKey)
 		saltKey.GET("/master-pub/simple", h.GetMasterPubKeySimple)
 
-		// 需要认证的端点
-		saltKey.POST("/install-token", h.GenerateInstallToken)
-		saltKey.GET("/install-tokens", h.ListInstallTokens)
-		saltKey.DELETE("/install-token/:token", h.RevokeInstallToken)
+		// 需要认证的端点（管理 install token 需要登录）
+		authSaltKey := saltKey.Group("")
+		authSaltKey.Use(middleware.AuthMiddlewareWithSession())
+		{
+			authSaltKey.POST("/install-token", h.GenerateInstallToken)
+			authSaltKey.GET("/install-tokens", h.ListInstallTokens)
+			authSaltKey.DELETE("/install-token/:token", h.RevokeInstallToken)
+		}
 	}
 }
 
