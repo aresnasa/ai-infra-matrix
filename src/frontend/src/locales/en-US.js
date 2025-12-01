@@ -209,6 +209,18 @@ export default {
     sudoHint: 'Linux login password is the same as sudo password',
     confirmUninstall: 'Confirm Uninstall',
 
+    // Monitoring Agent Settings
+    monitoringSettings: 'Monitoring Agent Settings',
+    installCategraf: 'Install Categraf',
+    categrafHint: 'Categraf is a lightweight monitoring agent for collecting CPU, memory, disk and other metrics',
+    n9eHost: 'N9E Server Address',
+    n9eHostHint: 'Nightingale monitoring server address, leave empty to use system default',
+    n9eHostPlaceholder: 'Leave empty for default',
+    n9ePort: 'Port',
+    categrafVersion: 'Categraf Version',
+    categrafVersionHint: 'Leave empty to use system default version',
+    categrafVersionPlaceholder: 'Leave empty for default',
+
     // Job History
     jobsHistory: 'Job History',
     function: 'Function/Command',
@@ -1336,6 +1348,10 @@ export default {
       deleteConfirmMessage: 'Are you sure you want to delete {count} Minion keys?',
       confirmDelete: 'Confirm Delete',
       deleteNote: 'After deletion, these Minions need to re-accept keys to connect.',
+      forceDelete: 'Force delete (including online nodes)',
+      uninstallMode: 'Also uninstall salt-minion component (SSH credentials required)',
+      sshConfig: 'SSH Connection Configuration',
+      uninstallNote: 'Note: Uninstall mode will SSH to target nodes and uninstall salt-minion package.',
     },
     // Other
     selected: '{count} selected',

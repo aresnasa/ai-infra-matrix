@@ -608,7 +608,31 @@ export const saltStackAPI = {
 
   // Minion 管理（删除、卸载）
   removeMinionKey: (minionId, force = false) => api.delete(`/saltstack/minion/${minionId}`, { params: { force } }),
-  batchRemoveMinionKeys: (minionIds, force = false) => api.post('/saltstack/minion/batch-delete', { minion_ids: minionIds, force }),
+  /**
+   * 批量删除 Minion 密钥
+   * @param {string[]} minionIds - 要删除的 Minion ID 列表
+   * @param {Object} options - 删除选项
+   * @param {boolean} options.force - 是否强制删除（不等待确认）
+   * @param {boolean} options.uninstall - 是否通过 SSH 卸载 salt-minion 组件
+   * @param {string} options.ssh_username - SSH 用户名
+   * @param {string} options.ssh_password - SSH 密码
+   * @param {string} options.ssh_key_path - SSH 密钥路径
+   * @param {number} options.ssh_port - SSH 端口（默认22）
+   * @param {boolean} options.use_sudo - 是否使用 sudo
+   */
+  batchRemoveMinionKeys: (minionIds, options = {}) => {
+    const { force = false, uninstall = false, ssh_username, ssh_password, ssh_key_path, ssh_port, use_sudo } = options;
+    return api.post('/saltstack/minion/batch-delete', { 
+      minion_ids: minionIds, 
+      force,
+      uninstall,
+      ssh_username,
+      ssh_password,
+      ssh_key_path,
+      ssh_port,
+      use_sudo,
+    });
+  },
   uninstallMinion: (minionId, sshConfig) => api.post(`/saltstack/minion/${minionId}/uninstall`, sshConfig),
   
   // 删除任务管理（软删除 + 异步真实删除）

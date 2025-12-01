@@ -1,0 +1,246 @@
+#!/bin/bash
+# =============================================================================
+# Categraf Installation Script for RHEL/CentOS/Rocky/AlmaLinux
+# =============================================================================
+# Template variables (Go text/template syntax):
+#   {{.SudoPrefix}}       - Sudo command prefix (empty or "sudo ")
+#   {{.N9EHost}}          - Nightingale/n9e server host
+#   {{.N9EPort}}          - Nightingale/n9e port (default: 17000)
+#   {{.CategrafVersion}}  - Categraf version (default: 0.4.10)
+#   {{.AppHubURL}}        - AppHub URL for downloading binaries (optional)
+#   {{.Hostname}}         - Target hostname for ident
+#   {{.HostIP}}           - Target host IP
+# =============================================================================
+
+set -e
+echo "=== Installing Categraf Monitoring Agent ==="
+echo "=== Target: RHEL/CentOS/Rocky/AlmaLinux System ==="
+echo "=== Timestamp: $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+# Configuration
+N9E_HOST="{{.N9EHost}}"
+N9E_PORT="{{.N9EPort}}"
+CATEGRAF_VERSION="{{.CategrafVersion}}"
+APPHUB_URL="{{.AppHubURL}}"
+HOSTNAME_IDENT="{{.Hostname}}"
+HOST_IP="{{.HostIP}}"
+
+# Set defaults
+if [ -z "$N9E_PORT" ]; then
+    N9E_PORT="17000"
+fi
+if [ -z "$CATEGRAF_VERSION" ]; then
+    CATEGRAF_VERSION="0.4.10"
+fi
+
+echo "=== Configuration ==="
+echo "N9E Host: $N9E_HOST"
+echo "N9E Port: $N9E_PORT"
+echo "Categraf Version: $CATEGRAF_VERSION"
+echo "AppHub URL: $APPHUB_URL"
+echo "Hostname: $HOSTNAME_IDENT"
+
+# Create installation directory
+INSTALL_DIR="/opt/categraf"
+echo "=== Creating installation directory: $INSTALL_DIR ==="
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.cpu
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.mem
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.disk
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.diskio
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.net
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.netstat
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.kernel
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.system
+{{.SudoPrefix}}mkdir -p $INSTALL_DIR/conf/input.processes
+
+# Detect architecture
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64)
+        ARCH_SUFFIX="linux-amd64"
+        ;;
+    aarch64)
+        ARCH_SUFFIX="linux-arm64"
+        ;;
+    armv7l)
+        ARCH_SUFFIX="linux-armv7"
+        ;;
+    *)
+        echo "ERROR: Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+echo "=== Detected architecture: $ARCH -> $ARCH_SUFFIX ==="
+
+# Download categraf binary
+BINARY_NAME="categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}.tar.gz"
+DOWNLOAD_URL=""
+
+if [ -n "$APPHUB_URL" ]; then
+    DOWNLOAD_URL="${APPHUB_URL}/packages/categraf/${BINARY_NAME}"
+else
+    # Use GitHub release
+    DOWNLOAD_URL="https://github.com/flashcatcloud/categraf/releases/download/v${CATEGRAF_VERSION}/${BINARY_NAME}"
+fi
+
+echo "=== Downloading Categraf from: $DOWNLOAD_URL ==="
+cd /tmp
+rm -f categraf*.tar.gz
+curl -fsSL -o ${BINARY_NAME} "$DOWNLOAD_URL" || wget -q -O ${BINARY_NAME} "$DOWNLOAD_URL"
+
+echo "=== Extracting Categraf ==="
+tar -xzf ${BINARY_NAME}
+{{.SudoPrefix}}cp -f categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}/categraf $INSTALL_DIR/
+{{.SudoPrefix}}chmod +x $INSTALL_DIR/categraf
+
+# Clean up
+rm -rf categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}*
+
+# Determine hostname for ident
+if [ -z "$HOSTNAME_IDENT" ]; then
+    HOSTNAME_IDENT=$(hostname -f 2>/dev/null || hostname)
+fi
+
+# Create main configuration
+echo "=== Creating configuration files ==="
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/config.toml > /dev/null
+[global]
+# print configs
+print_configs = false
+
+# Hostname setting, auto detect by default
+hostname = "$HOSTNAME_IDENT"
+
+# Omit hostname in metrics
+omit_hostname = false
+
+# Set interval (seconds)
+interval = 15
+
+# Labels to add to all metrics
+[global.labels]
+# region = "default"
+# env = "prod"
+# host_ip = "$HOST_IP"
+
+[[writers]]
+url = "http://${N9E_HOST}:${N9E_PORT}/prometheus/v1/write"
+# Basic auth
+# basic_auth_user = ""
+# basic_auth_pass = ""
+
+# timeout settings
+timeout = 5000
+dial_timeout = 2500
+max_idle_conns_per_host = 100
+EOF
+
+# Create input plugins configuration
+# CPU
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.cpu/cpu.toml > /dev/null
+[cpu]
+interval = 15
+collect_per_cpu = false
+EOF
+
+# Memory
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.mem/mem.toml > /dev/null
+[mem]
+interval = 15
+collect_platform_fields = true
+EOF
+
+# Disk
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.disk/disk.toml > /dev/null
+[disk]
+interval = 15
+# ignore_fs = ["tmpfs", "devtmpfs", "devfs", "iso9660", "overlay", "aufs", "squashfs"]
+EOF
+
+# DiskIO
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.diskio/diskio.toml > /dev/null
+[diskio]
+interval = 15
+EOF
+
+# Network
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.net/net.toml > /dev/null
+[net]
+interval = 15
+# interfaces = ["eth0", "eth1"]
+EOF
+
+# Netstat
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.netstat/netstat.toml > /dev/null
+[netstat]
+interval = 15
+EOF
+
+# Kernel
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.kernel/kernel.toml > /dev/null
+[kernel]
+interval = 15
+EOF
+
+# System
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.system/system.toml > /dev/null
+[system]
+interval = 15
+collect_loadavg = true
+collect_uptime = true
+EOF
+
+# Processes
+cat <<EOF | {{.SudoPrefix}}tee $INSTALL_DIR/conf/input.processes/processes.toml > /dev/null
+[processes]
+interval = 15
+EOF
+
+# Create systemd service
+echo "=== Creating systemd service ==="
+cat <<EOF | {{.SudoPrefix}}tee /etc/systemd/system/categraf.service > /dev/null
+[Unit]
+Description=Categraf Monitoring Agent
+Documentation=https://github.com/flashcatcloud/categraf
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/categraf
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload and start service
+echo "=== Starting Categraf service ==="
+{{.SudoPrefix}}systemctl daemon-reload
+{{.SudoPrefix}}systemctl enable categraf
+{{.SudoPrefix}}systemctl restart categraf
+
+# Wait for service to start
+sleep 3
+
+# Verify installation
+echo "=== Verifying Categraf installation ==="
+if {{.SudoPrefix}}systemctl is-active --quiet categraf; then
+    echo "OK: Categraf service is running"
+else
+    echo "WARNING: Categraf service may not be running"
+    {{.SudoPrefix}}systemctl status categraf --no-pager || true
+fi
+
+echo "=== Categraf version ==="
+$INSTALL_DIR/categraf --version || true
+
+echo "=== Categraf Installation Complete ==="
+echo "=== Service Status ==="
+{{.SudoPrefix}}systemctl status categraf --no-pager -l || true
+echo "=== Completed at: $(date '+%Y-%m-%d %H:%M:%S') ==="

@@ -209,6 +209,18 @@ export default {
     sudoHint: 'Linux 中登录密码即 sudo 密码',
     confirmUninstall: '确认卸载',
 
+    // 监控代理设置
+    monitoringSettings: '监控代理设置',
+    installCategraf: '安装 Categraf',
+    categrafHint: 'Categraf 是轻量级的监控采集代理，用于采集节点的 CPU、内存、磁盘等监控指标',
+    n9eHost: 'N9E 服务器地址',
+    n9eHostHint: 'Nightingale 监控系统的服务器地址，留空则使用系统默认配置',
+    n9eHostPlaceholder: '留空使用默认地址',
+    n9ePort: '端口',
+    categrafVersion: 'Categraf 版本',
+    categrafVersionHint: '留空使用系统默认版本',
+    categrafVersionPlaceholder: '留空使用默认版本',
+
     // 作业历史
     jobsHistory: '作业历史',
     function: '函数/命令',
@@ -1343,6 +1355,10 @@ export default {
       deleteConfirmMessage: '确定要删除选中的 {count} 个 Minion 密钥吗？',
       confirmDelete: '确认删除',
       deleteNote: '删除后，这些 Minion 需要重新接受密钥才能连接。',
+      forceDelete: '强制删除（包括在线节点）',
+      uninstallMode: '同时卸载 salt-minion 组件（需要 SSH 凭证）',
+      sshConfig: 'SSH 连接配置',
+      uninstallNote: '注意：卸载模式将通过 SSH 连接到目标节点并卸载 salt-minion 软件包。',
     },
     // 其他
     selected: '已选 {count} 项',

@@ -548,7 +548,12 @@ const SaltStackDashboard = () => {
         parallel: values.parallel || 0, // 0 表示自动计算并行度
         master_host: values.master_host || 'salt',
         install_type: values.install_type || 'saltstack',
-        auto_accept: values.auto_accept ?? true
+        auto_accept: values.auto_accept ?? true,
+        // Categraf 监控代理安装选项
+        install_categraf: values.install_categraf ?? false,
+        n9e_host: values.n9e_host || '',
+        n9e_port: values.n9e_port || '17000',
+        categraf_version: values.categraf_version || '',
       };
 
       const resp = await saltStackAPI.batchInstallMinion(payload);
@@ -1109,7 +1114,10 @@ const SaltStackDashboard = () => {
                   deletingMinionIds={deletingMinionIds}
                   onRefresh={loadMinions}
                   onDelete={handleDeleteMinion}
-                  onBatchDelete={async (minionIds, force = false) => {
+                  onBatchDelete={async (minionIds, options = {}) => {
+                    // options 可以包含: { force, uninstall, ssh_username, ssh_password, ssh_port, use_sudo }
+                    const { force = false, ...restOptions } = options;
+                    
                     // 1. 立即将所有待删除的 minion 标记为删除中（前端即时反馈）
                     setDeletingMinionIds(prev => new Set([...prev, ...minionIds]));
                     
@@ -1121,10 +1129,11 @@ const SaltStackDashboard = () => {
                     ));
                     
                     try {
-                      // 3. 调用 API 执行批量删除
-                      const resp = await saltStackAPI.batchRemoveMinionKeys(minionIds, force);
+                      // 3. 调用 API 执行批量删除（传递完整的 options）
+                      const resp = await saltStackAPI.batchRemoveMinionKeys(minionIds, { force, ...restOptions });
                       if (resp.data?.success) {
-                        message.success(t('saltstack.batchDeleteSuccess', { count: resp.data?.success_count || minionIds.length }));
+                        const uninstallMsg = restOptions.uninstall ? t('saltstack.batchUninstallSuccess', '（含卸载）') : '';
+                        message.success(t('saltstack.batchDeleteSuccess', { count: resp.data?.success_count || minionIds.length }) + uninstallMsg);
                       } else if (resp.data?.failed_count > 0) {
                         message.warning(t('saltstack.batchDeletePartial', { 
                           success: resp.data?.success_count || 0, 
@@ -1748,6 +1757,54 @@ const SaltStackDashboard = () => {
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     💡 {t('saltstack.sudoHint')}
                   </Text>
+                </Col>
+              </Row>
+
+              <Divider orientation="left">{t('saltstack.monitoringSettings', '监控代理设置')}</Divider>
+              <Row gutter={16}>
+                <Col span={6}>
+                  <Form.Item 
+                    name="install_categraf" 
+                    label={
+                      <Space>
+                        {t('saltstack.installCategraf', '安装 Categraf')}
+                        <Tooltip title={t('saltstack.categrafHint', 'Categraf 是轻量级的监控采集代理，用于采集节点的 CPU、内存、磁盘等监控指标')}>
+                          <QuestionCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                    valuePropName="checked"
+                    initialValue={false}
+                  >
+                    <Switch checkedChildren="Yes" unCheckedChildren="No" />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item 
+                    name="n9e_host" 
+                    label={t('saltstack.n9eHost', 'N9E 服务器地址')}
+                    tooltip={t('saltstack.n9eHostHint', 'Nightingale 监控系统的服务器地址，留空则使用系统默认配置')}
+                  >
+                    <Input placeholder={t('saltstack.n9eHostPlaceholder', '留空使用默认地址')} />
+                  </Form.Item>
+                </Col>
+                <Col span={4}>
+                  <Form.Item 
+                    name="n9e_port" 
+                    label={t('saltstack.n9ePort', '端口')}
+                    initialValue="17000"
+                  >
+                    <Input placeholder="17000" />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item 
+                    name="categraf_version" 
+                    label={t('saltstack.categrafVersion', 'Categraf 版本')}
+                    tooltip={t('saltstack.categrafVersionHint', '留空使用系统默认版本')}
+                  >
+                    <Input placeholder={t('saltstack.categrafVersionPlaceholder', '留空使用默认版本')} />
+                  </Form.Item>
                 </Col>
               </Row>
 

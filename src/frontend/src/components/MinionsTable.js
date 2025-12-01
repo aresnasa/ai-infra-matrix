@@ -19,6 +19,11 @@ import {
   Badge,
   Row,
   Col,
+  Form,
+  Input,
+  InputNumber,
+  Checkbox,
+  Collapse,
 } from 'antd';
 import {
   DeleteOutlined,
@@ -115,6 +120,14 @@ const MinionsTable = ({
   const [batchDeleteVisible, setBatchDeleteVisible] = useState(false);
   // 强制删除选项
   const [forceDelete, setForceDelete] = useState(false);
+  // SSH 卸载选项
+  const [uninstallMode, setUninstallMode] = useState(false);
+  const [sshConfig, setSshConfig] = useState({
+    ssh_username: 'root',
+    ssh_password: '',
+    ssh_port: 22,
+    use_sudo: false,
+  });
 
   // 使用通用搜索 Hook
   const {
@@ -179,21 +192,35 @@ const MinionsTable = ({
       return;
     }
     setForceDelete(false); // 重置强制删除选项
+    setUninstallMode(false); // 重置卸载模式
+    setSshConfig({
+      ssh_username: 'root',
+      ssh_password: '',
+      ssh_port: 22,
+      use_sudo: false,
+    });
     setBatchDeleteVisible(true);
   }, [selectedRowKeys, t]);
 
   // 确认批量删除
   const confirmBatchDelete = useCallback(async () => {
     try {
-      await onBatchDelete?.(selectedRowKeys, forceDelete);
+      // 构建删除选项
+      const options = {
+        force: forceDelete,
+        uninstall: uninstallMode,
+        ...(uninstallMode ? sshConfig : {}),
+      };
+      await onBatchDelete?.(selectedRowKeys, options);
       setSelectedRowKeys([]);
       setBatchDeleteVisible(false);
       setForceDelete(false);
+      setUninstallMode(false);
       message.success(t('saltstack.deletedNodes', { count: selectedRowKeys.length }));
     } catch (error) {
       message.error(t('common.failed') + ': ' + error.message);
     }
-  }, [selectedRowKeys, onBatchDelete, forceDelete, t]);
+  }, [selectedRowKeys, onBatchDelete, forceDelete, uninstallMode, sshConfig, t]);
 
   // 导出选中数据
   const handleExport = useCallback(() => {
@@ -629,32 +656,98 @@ const MinionsTable = ({
         onCancel={() => {
           setBatchDeleteVisible(false);
           setForceDelete(false);
+          setUninstallMode(false);
         }}
         okText={t('minions.batch.confirmDelete')}
         okButtonProps={{ danger: true }}
         cancelText={t('common.cancel')}
+        width={600}
       >
         <p>{t('minions.batch.deleteConfirmMessage', { count: selectedRowKeys.length })}</p>
-        <div style={{ maxHeight: 200, overflow: 'auto', background: '#f5f5f5', padding: 12, borderRadius: 6 }}>
+        <div style={{ maxHeight: 150, overflow: 'auto', background: '#f5f5f5', padding: 12, borderRadius: 6, marginBottom: 16 }}>
           {selectedRowKeys.map(key => (
             <Tag key={key} style={{ margin: 2 }}>{key}</Tag>
           ))}
         </div>
-        <div style={{ marginTop: 16 }}>
-          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={forceDelete}
-              onChange={(e) => setForceDelete(e.target.checked)}
-              style={{ marginRight: 8 }}
-            />
+        
+        {/* 删除选项 */}
+        <div style={{ marginBottom: 16 }}>
+          <Checkbox
+            checked={forceDelete}
+            onChange={(e) => setForceDelete(e.target.checked)}
+          >
             <span style={{ color: forceDelete ? '#ff4d4f' : '#666' }}>
               {t('minions.batch.forceDelete', '强制删除（包括在线节点）')}
             </span>
-          </label>
+          </Checkbox>
         </div>
-        <p style={{ marginTop: 12, color: '#999' }}>
+        
+        {/* SSH 卸载选项 */}
+        <div style={{ marginBottom: 16 }}>
+          <Checkbox
+            checked={uninstallMode}
+            onChange={(e) => setUninstallMode(e.target.checked)}
+          >
+            <span style={{ color: uninstallMode ? '#1890ff' : '#666' }}>
+              {t('minions.batch.uninstallMode', '同时卸载 salt-minion 组件（需要 SSH 凭证）')}
+            </span>
+          </Checkbox>
+        </div>
+        
+        {/* SSH 配置表单 */}
+        {uninstallMode && (
+          <Collapse defaultActiveKey={['ssh']} style={{ marginBottom: 16 }}>
+            <Collapse.Panel header={t('minions.batch.sshConfig', 'SSH 连接配置')} key="ssh">
+              <Form layout="vertical" size="small">
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <Form.Item label={t('saltstack.batchInstall.username', '用户名')}>
+                      <Input
+                        value={sshConfig.ssh_username}
+                        onChange={(e) => setSshConfig(prev => ({ ...prev, ssh_username: e.target.value }))}
+                        placeholder="root"
+                      />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item label={t('saltstack.batchInstall.port', '端口')}>
+                      <InputNumber
+                        value={sshConfig.ssh_port}
+                        onChange={(val) => setSshConfig(prev => ({ ...prev, ssh_port: val || 22 }))}
+                        min={1}
+                        max={65535}
+                        style={{ width: '100%' }}
+                      />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Form.Item label={t('saltstack.batchInstall.password', '密码')}>
+                  <Input.Password
+                    value={sshConfig.ssh_password}
+                    onChange={(e) => setSshConfig(prev => ({ ...prev, ssh_password: e.target.value }))}
+                    placeholder={t('saltstack.batchInstall.passwordPlaceholder', '输入 SSH 密码')}
+                  />
+                </Form.Item>
+                <Form.Item>
+                  <Checkbox
+                    checked={sshConfig.use_sudo}
+                    onChange={(e) => setSshConfig(prev => ({ ...prev, use_sudo: e.target.checked }))}
+                  >
+                    {t('saltstack.batchInstall.useSudo', '使用 sudo 执行卸载命令')}
+                  </Checkbox>
+                </Form.Item>
+              </Form>
+            </Collapse.Panel>
+          </Collapse>
+        )}
+        
+        <p style={{ color: '#999', fontSize: 12 }}>
           {t('minions.batch.deleteNote')}
+          {uninstallMode && (
+            <span style={{ display: 'block', marginTop: 4, color: '#faad14' }}>
+              {t('minions.batch.uninstallNote', '注意：卸载模式将通过 SSH 连接到目标节点并卸载 salt-minion 软件包。')}
+            </span>
+          )}
         </p>
       </Modal>
     </div>

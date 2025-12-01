@@ -83,6 +83,16 @@ var templateFiles = map[string]map[string]string{
 		"fedora":    "templates/salt-uninstall-rhel.sh.tmpl",
 		"default":   "templates/salt-uninstall-generic.sh.tmpl",
 	},
+	"categraf-install": {
+		"ubuntu":    "templates/categraf-install-debian.sh.tmpl",
+		"debian":    "templates/categraf-install-debian.sh.tmpl",
+		"centos":    "templates/categraf-install-rhel.sh.tmpl",
+		"rhel":      "templates/categraf-install-rhel.sh.tmpl",
+		"rocky":     "templates/categraf-install-rhel.sh.tmpl",
+		"almalinux": "templates/categraf-install-rhel.sh.tmpl",
+		"fedora":    "templates/categraf-install-rhel.sh.tmpl",
+		"default":   "templates/categraf-install-debian.sh.tmpl",
+	},
 }
 
 var (
@@ -357,4 +367,26 @@ uname -a
 		return `hostname && uname -a`
 	}
 	return script
+}
+
+// GenerateCategrafInstallScript 生成 Categraf 安装脚本
+func (s *ScriptLoader) GenerateCategrafInstallScript(params map[string]string) (string, error) {
+	// 获取对应操作系统的模板
+	osType := params["OS"]
+	templateName := getTemplateForOS("categraf-install", osType)
+	if templateName == "" {
+		templateName = "templates/categraf-install-debian.sh.tmpl"
+	}
+
+	script, err := s.RenderScript(templateName, params)
+	if err != nil {
+		logrus.Warnf("[ScriptLoader] 加载模板 %s 失败: %v，将使用通用模板", templateName, err)
+		// 尝试 Debian 模板作为通用模板
+		script, err = s.RenderScript("templates/categraf-install-debian.sh.tmpl", params)
+		if err != nil {
+			return "", fmt.Errorf("无法生成 Categraf 安装脚本: %v", err)
+		}
+	}
+
+	return script, nil
 }

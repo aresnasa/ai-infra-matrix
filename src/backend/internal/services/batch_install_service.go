@@ -37,14 +37,18 @@ type SSEEvent struct {
 
 // BatchInstallRequest 批量安装请求
 type BatchInstallRequest struct {
-	Hosts       []HostInstallConfig `json:"hosts"`
-	Parallel    int                 `json:"parallel"`     // 并发数，默认3
-	MasterHost  string              `json:"master_host"`  // Salt Master 地址
-	InstallType string              `json:"install_type"` // saltstack, slurm
-	UseSudo     bool                `json:"use_sudo"`     // 是否使用 sudo
-	SudoPass    string              `json:"sudo_pass"`    // sudo 密码（如果不同于登录密码）
-	AutoAccept  bool                `json:"auto_accept"`  // 自动接受 minion key
-	Version     string              `json:"version"`      // 安装版本
+	Hosts           []HostInstallConfig `json:"hosts"`
+	Parallel        int                 `json:"parallel"`         // 并发数，默认3
+	MasterHost      string              `json:"master_host"`      // Salt Master 地址
+	InstallType     string              `json:"install_type"`     // saltstack, slurm
+	UseSudo         bool                `json:"use_sudo"`         // 是否使用 sudo
+	SudoPass        string              `json:"sudo_pass"`        // sudo 密码（如果不同于登录密码）
+	AutoAccept      bool                `json:"auto_accept"`      // 自动接受 minion key
+	Version         string              `json:"version"`          // 安装版本
+	InstallCategraf bool                `json:"install_categraf"` // 是否同时安装 Categraf 监控代理
+	N9EHost         string              `json:"n9e_host"`         // Nightingale 服务器地址
+	N9EPort         string              `json:"n9e_port"`         // Nightingale 端口（默认 17000）
+	CategrafVersion string              `json:"categraf_version"` // Categraf 版本
 }
 
 // HostInstallConfig 单主机安装配置
@@ -673,10 +677,41 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 		})
 	}
 
+	// 安装 Categraf 监控代理（如果启用）
+	if req.InstallCategraf {
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    hostConfig.Host,
+			Message: "Installing Categraf monitoring agent...",
+		})
+		s.logToDatabase(taskID, "info", hostConfig.Host, "Installing Categraf monitoring agent...")
+
+		categrafErr := s.installCategraf(client, osInfo, req, sudoPrefix, taskID, hostConfig.Host, minionID)
+		if categrafErr != nil {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "warning",
+				Host:    hostConfig.Host,
+				Message: fmt.Sprintf("Categraf installation failed: %v (Salt Minion was installed successfully)", categrafErr),
+			})
+			s.logToDatabase(taskID, "warn", hostConfig.Host, fmt.Sprintf("Categraf installation failed: %v", categrafErr))
+			// 不标记为失败，因为 Salt Minion 已安装成功
+		} else {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    hostConfig.Host,
+				Message: "Categraf monitoring agent installed successfully",
+			})
+			s.logToDatabase(taskID, "info", hostConfig.Host, "Categraf monitoring agent installed successfully")
+		}
+	}
+
 	result.Status = "success"
 	result.Message = "Salt Minion installed and started successfully"
 	if keyAccepted {
 		result.Message = "Salt Minion installed, key accepted, and verified responding"
+	}
+	if req.InstallCategraf {
+		result.Message += " (with Categraf monitoring)"
 	}
 	result.Duration = time.Since(startTime).Milliseconds()
 
@@ -922,6 +957,74 @@ func (s *BatchInstallService) runCommandWithLogging(client *ssh.Client, cmd, tas
 	}
 
 	return nil
+}
+
+// installCategraf 安装 Categraf 监控代理
+func (s *BatchInstallService) installCategraf(client *ssh.Client, osInfo *models.OSInfo, req BatchInstallRequest, sudoPrefix, taskID, host, hostname string) error {
+	scriptLoader := GetScriptLoader()
+
+	// 设置默认值
+	n9eHost := req.N9EHost
+	if n9eHost == "" {
+		n9eHost = os.Getenv("N9E_HOST")
+		if n9eHost == "" {
+			n9eHost = os.Getenv("EXTERNAL_HOST")
+		}
+	}
+
+	n9ePort := req.N9EPort
+	if n9ePort == "" {
+		n9ePort = os.Getenv("N9E_PORT")
+		if n9ePort == "" {
+			n9ePort = "17000"
+		}
+	}
+
+	categrafVersion := req.CategrafVersion
+	if categrafVersion == "" {
+		categrafVersion = os.Getenv("CATEGRAF_VERSION")
+		if categrafVersion == "" {
+			categrafVersion = "0.4.10"
+		}
+	}
+
+	appHubURL := os.Getenv("APPHUB_URL")
+	if appHubURL == "" {
+		externalHost := os.Getenv("EXTERNAL_HOST")
+		apphubPort := os.Getenv("APPHUB_PORT")
+		if externalHost != "" && apphubPort != "" {
+			appHubURL = fmt.Sprintf("http://%s:%s", externalHost, apphubPort)
+		}
+	}
+
+	// 模板数据
+	data := map[string]string{
+		"SudoPrefix":      sudoPrefix,
+		"N9EHost":         n9eHost,
+		"N9EPort":         n9ePort,
+		"CategrafVersion": categrafVersion,
+		"AppHubURL":       appHubURL,
+		"Hostname":        hostname,
+		"HostIP":          host,
+		"OS":              strings.ToLower(osInfo.OS),
+	}
+
+	// 生成安装脚本
+	script, err := scriptLoader.GenerateCategrafInstallScript(data)
+	if err != nil {
+		return fmt.Errorf("failed to generate Categraf install script: %v", err)
+	}
+
+	// 执行安装脚本
+	logrus.WithFields(logrus.Fields{
+		"task_id":  taskID,
+		"host":     host,
+		"n9e_host": n9eHost,
+		"n9e_port": n9ePort,
+		"version":  categrafVersion,
+	}).Info("[BatchInstall] Installing Categraf monitoring agent")
+
+	return s.runCommandWithLogging(client, script, taskID, host)
 }
 
 // runCommand 执行 SSH 命令并记录输出 (保留旧函数以兼容)
