@@ -64,15 +64,19 @@ func (s *giteaServiceImpl) auth(req *http.Request) {
 }
 
 // resolveUsername applies aliasing rules for reserved names (e.g., "admin").
-func (s *giteaServiceImpl) resolveUsername(u models.User) (username string) {
+// Returns the target username and whether the user should be skipped.
+func (s *giteaServiceImpl) resolveUsername(u models.User) (username string, skip bool) {
 	username = u.Username
 	if username == "admin" {
 		alias := s.cfg.Gitea.AliasAdminTo
-		if alias != "" {
-			username = alias
+		if alias == "" || alias == "admin" {
+			// If alias is empty or "admin", skip this user
+			// because Gitea's built-in admin user is managed separately
+			return username, true
 		}
+		username = alias
 	}
-	return
+	return username, false
 }
 
 // EnsureUser creates or updates user in Gitea using admin API
@@ -85,7 +89,12 @@ func (s *giteaServiceImpl) EnsureUser(u models.User) error {
 	}
 
 	// Map reserved usernames if necessary (e.g., admin -> test)
-	targetUsername := s.resolveUsername(u)
+	targetUsername, skip := s.resolveUsername(u)
+	if skip {
+		// Skip Gitea's built-in admin user to avoid conflicts
+		logrus.WithField("username", u.Username).Debug("Skipping Gitea sync for built-in admin user")
+		return nil
+	}
 
 	// First, try to get user (public endpoint)
 	// Note: GET /admin/users/{username} returns 405 in Gitea; use /users/{username} to check existence

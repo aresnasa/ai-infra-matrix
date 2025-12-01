@@ -343,8 +343,52 @@ const SaltStackDashboard = () => {
     setBatchInstallHosts(batchInstallHosts.filter(h => h.key !== key));
   };
 
-  // 更新主机行
+  // IP 地址验证正则表达式
+  const isValidIPOrHostname = (value) => {
+    if (!value || !value.trim()) return true; // 空值允许
+    const trimmed = value.trim();
+    
+    // IPv4 地址验证
+    const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (ipv4Pattern.test(trimmed)) {
+      const parts = trimmed.split('.');
+      return parts.every(part => {
+        const num = parseInt(part, 10);
+        return num >= 0 && num <= 255;
+      });
+    }
+    
+    // IPv6 地址验证 (简化版)
+    const ipv6Pattern = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/;
+    if (ipv6Pattern.test(trimmed)) return true;
+    
+    // 主机名验证 (允许域名和简单主机名)
+    const hostnamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+    return hostnamePattern.test(trimmed);
+  };
+
+  // 检查主机是否重复
+  const isDuplicateHost = (host, currentKey) => {
+    if (!host || !host.trim()) return false;
+    const trimmed = host.trim().toLowerCase();
+    return batchInstallHosts.some(h => 
+      h.key !== currentKey && h.host && h.host.trim().toLowerCase() === trimmed
+    );
+  };
+
+  // 更新主机行（带验证）
   const updateHostRow = (key, field, value) => {
+    if (field === 'host' && value) {
+      const trimmedValue = value.trim();
+      // IP/主机名格式验证
+      if (trimmedValue && !isValidIPOrHostname(trimmedValue)) {
+        message.warning(t('saltstack.invalidIPOrHostname', '无效的 IP 地址或主机名格式'));
+      }
+      // 重复检测
+      if (isDuplicateHost(trimmedValue, key)) {
+        message.warning(t('saltstack.duplicateHost', '该主机地址已存在'));
+      }
+    }
     setBatchInstallHosts(batchInstallHosts.map(h => 
       h.key === key ? { ...h, [field]: value } : h
     ));
@@ -389,17 +433,74 @@ const SaltStackDashboard = () => {
         return false;
       }
 
-      // 将解析的主机添加到列表
-      const newHosts = hosts.map((h, idx) => ({
-        key: Date.now() + idx,
-        host: h.host || '',
-        port: h.port || 22,
-        username: h.username || 'root',
-        password: h.password || '',
-        use_sudo: h.use_sudo || false,
-        minion_id: h.minion_id || '',
-        group: h.group || ''
-      }));
+      // 验证并转换主机列表
+      let validCount = 0;
+      let invalidCount = 0;
+      let duplicateCount = 0;
+      const invalidHosts = [];
+
+      // 获取现有的主机列表（用于去重检查）
+      const existingHosts = new Set(
+        batchInstallHosts
+          .filter(h => h.host && h.host.trim())
+          .map(h => h.host.trim().toLowerCase())
+      );
+
+      // 用于跟踪本次导入中的重复
+      const importedHosts = new Set();
+
+      const newHosts = [];
+      hosts.forEach((h, idx) => {
+        const hostValue = (h.host || '').trim();
+        const hostLower = hostValue.toLowerCase();
+
+        // 验证 IP/主机名格式
+        if (hostValue && !isValidIPOrHostname(hostValue)) {
+          invalidCount++;
+          invalidHosts.push(hostValue);
+          return; // 跳过无效主机
+        }
+
+        // 检查与现有列表的重复
+        if (hostValue && existingHosts.has(hostLower)) {
+          duplicateCount++;
+          return; // 跳过重复主机
+        }
+
+        // 检查本次导入中的重复
+        if (hostValue && importedHosts.has(hostLower)) {
+          duplicateCount++;
+          return; // 跳过重复主机
+        }
+
+        // 添加到导入集合
+        if (hostValue) {
+          importedHosts.add(hostLower);
+        }
+
+        validCount++;
+        newHosts.push({
+          key: Date.now() + idx + validCount, // 确保 key 唯一
+          host: hostValue,
+          port: h.port || 22,
+          username: h.username || 'root',
+          password: h.password || '',
+          use_sudo: h.use_sudo || false,
+          minion_id: h.minion_id || '',
+          group: h.group || ''
+        });
+      });
+
+      if (newHosts.length === 0) {
+        if (duplicateCount > 0) {
+          message.warning(t('saltstack.allHostsDuplicate', `所有 ${duplicateCount} 个主机已存在于列表中`));
+        } else if (invalidCount > 0) {
+          message.error(t('saltstack.allHostsInvalid', `所有 ${invalidCount} 个主机地址格式无效`));
+        } else {
+          message.warning(t('saltstack.noValidHostConfig'));
+        }
+        return false;
+      }
 
       // 如果当前只有一个空行，则替换；否则追加
       if (batchInstallHosts.length === 1 && !batchInstallHosts[0].host) {
@@ -408,7 +509,21 @@ const SaltStackDashboard = () => {
         setBatchInstallHosts([...batchInstallHosts, ...newHosts]);
       }
 
-      message.success(t('saltstack.importedHosts', { count: hosts.length }));
+      // 构建导入结果消息
+      let resultMsg = t('saltstack.importedHosts', { count: validCount });
+      if (duplicateCount > 0) {
+        resultMsg += `, ${t('saltstack.skippedDuplicates', { count: duplicateCount })}`;
+      }
+      if (invalidCount > 0) {
+        resultMsg += `, ${t('saltstack.skippedInvalid', { count: invalidCount })}`;
+      }
+      
+      if (duplicateCount > 0 || invalidCount > 0) {
+        message.info(resultMsg);
+      } else {
+        message.success(resultMsg);
+      }
+
     } catch (e) {
       console.error('文件导入失败:', e);
       message.error(t('saltstack.importFailed') + ': ' + (e.response?.data?.error || e.message));

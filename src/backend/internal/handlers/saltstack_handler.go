@@ -290,17 +290,25 @@ type MasterHealthInfo struct {
 
 // SaltMinion Salt Minion信息
 type SaltMinion struct {
-	ID           string                 `json:"id"`
-	Status       string                 `json:"status"`
-	OS           string                 `json:"os"`
-	OSVersion    string                 `json:"os_version"`
-	Architecture string                 `json:"architecture"`
-	Arch         string                 `json:"arch,omitempty"`
-	SaltVersion  string                 `json:"salt_version,omitempty"`
-	LastSeen     time.Time              `json:"last_seen"`
-	Grains       map[string]interface{} `json:"grains"`
-	Pillar       map[string]interface{} `json:"pillar,omitempty"`
-	Group        string                 `json:"group,omitempty"` // 分组名称
+	ID               string                 `json:"id"`
+	Status           string                 `json:"status"`
+	OS               string                 `json:"os"`
+	OSVersion        string                 `json:"os_version"`
+	Architecture     string                 `json:"architecture"`
+	Arch             string                 `json:"arch,omitempty"`
+	SaltVersion      string                 `json:"salt_version,omitempty"`
+	LastSeen         time.Time              `json:"last_seen"`
+	Grains           map[string]interface{} `json:"grains"`
+	Pillar           map[string]interface{} `json:"pillar,omitempty"`
+	Group            string                 `json:"group,omitempty"` // 分组名称
+	KernelVersion    string                 `json:"kernel_version,omitempty"`
+	GPUDriverVersion string                 `json:"gpu_driver_version,omitempty"`
+	CUDAVersion      string                 `json:"cuda_version,omitempty"`
+	GPUCount         int                    `json:"gpu_count,omitempty"`
+	GPUModel         string                 `json:"gpu_model,omitempty"`
+	NPUVersion       string                 `json:"npu_version,omitempty"`
+	NPUCount         int                    `json:"npu_count,omitempty"`
+	NPUModel         string                 `json:"npu_model,omitempty"`
 }
 
 // SaltJob Salt作业信息
@@ -1775,15 +1783,16 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 
 				grains := h.parseMinionGrains(r, minionID)
 				m := SaltMinion{
-					ID:           minionID,
-					Status:       "up",
-					OS:           fmt.Sprintf("%v", grains["os"]),
-					OSVersion:    fmt.Sprintf("%v", grains["osrelease"]),
-					Architecture: fmt.Sprintf("%v", grains["osarch"]),
-					Arch:         fmt.Sprintf("%v", grains["osarch"]),
-					SaltVersion:  fmt.Sprintf("%v", grains["saltversion"]),
-					LastSeen:     time.Now(),
-					Grains:       grains,
+					ID:            minionID,
+					Status:        "up",
+					OS:            fmt.Sprintf("%v", grains["os"]),
+					OSVersion:     fmt.Sprintf("%v", grains["osrelease"]),
+					Architecture:  fmt.Sprintf("%v", grains["osarch"]),
+					Arch:          fmt.Sprintf("%v", grains["osarch"]),
+					SaltVersion:   fmt.Sprintf("%v", grains["saltversion"]),
+					LastSeen:      time.Now(),
+					Grains:        grains,
+					KernelVersion: h.extractKernelVersion(grains),
 				}
 				resultChan <- minionResult{minion: m, err: nil}
 			}(id)
@@ -2488,4 +2497,286 @@ func (h *SaltStackHandler) GetGroupMinions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": minionIDs})
+}
+
+// GetMinionDetails 获取 Minion 详细信息（包含 GPU/NPU 信息）
+// @Summary 获取Minion详细信息
+// @Description 获取指定 Minion 的详细信息，包括内核版本、GPU/NPU 驱动信息
+// @Tags SaltStack
+// @Produce json
+// @Param minionId path string true "Minion ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minions/{minionId}/details [get]
+func (h *SaltStackHandler) GetMinionDetails(c *gin.Context) {
+	minionID := c.Param("minionId")
+	if minionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Minion ID is required"})
+		return
+	}
+
+	// 创建 API 客户端
+	client := h.newSaltAPIClient()
+	if err := client.authenticate(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+		return
+	}
+
+	// 获取 grains 信息
+	grainsResp, err := client.makeRequest("/minions/"+minionID, "GET", nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": fmt.Sprintf("获取 Minion 信息失败: %v", err)})
+		return
+	}
+	grains := h.parseMinionGrains(grainsResp, minionID)
+
+	// 构建基本 Minion 信息
+	minion := SaltMinion{
+		ID:            minionID,
+		Status:        "up",
+		OS:            fmt.Sprintf("%v", grains["os"]),
+		OSVersion:     fmt.Sprintf("%v", grains["osrelease"]),
+		Architecture:  fmt.Sprintf("%v", grains["osarch"]),
+		Arch:          fmt.Sprintf("%v", grains["osarch"]),
+		SaltVersion:   fmt.Sprintf("%v", grains["saltversion"]),
+		LastSeen:      time.Now(),
+		Grains:        grains,
+		KernelVersion: h.extractKernelVersion(grains),
+	}
+
+	// 并行获取 GPU 和 NPU 信息
+	var wg sync.WaitGroup
+	var gpuInfo GPUInfo
+	var npuInfo NPUInfo
+
+	wg.Add(2)
+
+	// 获取 GPU 信息 (nvidia-smi)
+	go func() {
+		defer wg.Done()
+		gpuInfo = h.getGPUInfo(client, minionID)
+	}()
+
+	// 获取 NPU 信息 (npu-smi)
+	go func() {
+		defer wg.Done()
+		npuInfo = h.getNPUInfo(client, minionID)
+	}()
+
+	wg.Wait()
+
+	// 填充 GPU/NPU 信息
+	if gpuInfo.DriverVersion != "" {
+		minion.GPUDriverVersion = gpuInfo.DriverVersion
+		minion.CUDAVersion = gpuInfo.CUDAVersion
+		minion.GPUCount = gpuInfo.GPUCount
+		minion.GPUModel = gpuInfo.GPUModel
+	}
+
+	if npuInfo.Version != "" {
+		minion.NPUVersion = npuInfo.Version
+		minion.NPUCount = npuInfo.NPUCount
+		minion.NPUModel = npuInfo.NPUModel
+	}
+
+	// 获取分组信息
+	if groupName := h.minionGroupService.GetMinionGroupName(minionID); groupName != "" {
+		minion.Group = groupName
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": minion})
+}
+
+// GPUInfo NVIDIA GPU 信息结构
+type GPUInfo struct {
+	DriverVersion string `json:"driver_version"`
+	CUDAVersion   string `json:"cuda_version"`
+	GPUCount      int    `json:"gpu_count"`
+	GPUModel      string `json:"gpu_model"`
+}
+
+// NPUInfo 华为 NPU 信息结构
+type NPUInfo struct {
+	Version  string `json:"version"`
+	NPUCount int    `json:"npu_count"`
+	NPUModel string `json:"npu_model"`
+}
+
+// extractKernelVersion 从 grains 中提取内核版本
+func (h *SaltStackHandler) extractKernelVersion(grains map[string]interface{}) string {
+	// 优先使用 kernelrelease
+	if kr, ok := grains["kernelrelease"].(string); ok && kr != "" {
+		return kr
+	}
+	// 回退到 kernel
+	if k, ok := grains["kernel"].(string); ok && k != "" {
+		return k
+	}
+	return ""
+}
+
+// getGPUInfo 通过 nvidia-smi 获取 GPU 信息
+func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GPUInfo {
+	info := GPUInfo{}
+
+	// 执行 nvidia-smi 命令获取驱动版本和 CUDA 版本
+	// nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits
+	// nvidia-smi --query-gpu=name,count --format=csv,noheader
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>/dev/null | head -1"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		return info
+	}
+
+	// 解析驱动版本
+	if output := h.extractCmdOutput(resp, minionID); output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "error") {
+		info.DriverVersion = strings.TrimSpace(output)
+	}
+
+	// 获取 CUDA 版本
+	// nvidia-smi 的输出头部包含 CUDA Version
+	// 例如: CUDA Version: 13.0
+	cudaPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \\K[0-9.]+' | head -1"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+	cudaResp, err := client.makeRequest("/", "POST", cudaPayload)
+	if err == nil {
+		if cudaOutput := h.extractCmdOutput(cudaResp, minionID); cudaOutput != "" {
+			info.CUDAVersion = strings.TrimSpace(cudaOutput)
+		}
+	}
+
+	// 获取 GPU 数量和型号
+	countPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi --query-gpu=name,count --format=csv,noheader 2>/dev/null | head -1"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+	countResp, err := client.makeRequest("/", "POST", countPayload)
+	if err == nil {
+		if countOutput := h.extractCmdOutput(countResp, minionID); countOutput != "" {
+			// 输出格式: "NVIDIA H100 80GB HBM3, 8"
+			parts := strings.Split(countOutput, ",")
+			if len(parts) >= 1 {
+				info.GPUModel = strings.TrimSpace(parts[0])
+			}
+		}
+	}
+
+	// 获取 GPU 数量
+	gpuCountPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi -L 2>/dev/null | wc -l"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+	gpuCountResp, err := client.makeRequest("/", "POST", gpuCountPayload)
+	if err == nil {
+		if gpuCountOutput := h.extractCmdOutput(gpuCountResp, minionID); gpuCountOutput != "" {
+			if count, parseErr := strconv.Atoi(strings.TrimSpace(gpuCountOutput)); parseErr == nil {
+				info.GPUCount = count
+			}
+		}
+	}
+
+	return info
+}
+
+// getNPUInfo 通过 npu-smi 获取华为 NPU 信息
+func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NPUInfo {
+	info := NPUInfo{}
+
+	// 执行 npu-smi info 命令
+	// 输出格式:
+	// +------------------------------------------------------------------------------------------------+
+	// | npu-smi 24.1.1                   Version: 24.1.1                                               |
+	// +------------------------------------------------------------------------------------------------+
+	// | NPU   Name      Health          Power(W)   Temp(C)   ...
+	// | 0     910B3     OK              68.9       36        ...
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"npu-smi info 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		return info
+	}
+
+	output := h.extractCmdOutput(resp, minionID)
+	if output == "" || strings.Contains(strings.ToLower(output), "not found") || strings.Contains(strings.ToLower(output), "command not found") {
+		return info
+	}
+
+	// 解析 npu-smi 版本
+	// 格式: | npu-smi 24.1.1                   Version: 24.1.1 |
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		// 解析版本号
+		if strings.Contains(line, "npu-smi") && strings.Contains(line, "Version:") {
+			// 提取 Version: 后的版本号
+			if idx := strings.Index(line, "Version:"); idx != -1 {
+				versionPart := strings.TrimSpace(line[idx+len("Version:"):])
+				// 移除末尾的 | 和空格
+				versionPart = strings.TrimSuffix(strings.TrimSpace(versionPart), "|")
+				info.Version = strings.TrimSpace(versionPart)
+			}
+		}
+
+		// 解析 NPU 型号和数量
+		// 格式: | 0     910B3     OK ...
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "|") && !strings.Contains(line, "NPU") && !strings.Contains(line, "npu-smi") && !strings.Contains(line, "---") {
+			fields := strings.Fields(strings.Trim(line, "|"))
+			if len(fields) >= 2 {
+				// 第一个字段是数字（NPU ID），第二个字段是型号
+				if _, err := strconv.Atoi(fields[0]); err == nil {
+					info.NPUCount++
+					if info.NPUModel == "" {
+						info.NPUModel = fields[1]
+					}
+				}
+			}
+		}
+	}
+
+	return info
+}
+
+// extractCmdOutput 从 cmd.run 的响应中提取输出
+func (h *SaltStackHandler) extractCmdOutput(resp map[string]interface{}, minionID string) string {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if output, ok := m[minionID].(string); ok {
+				return output
+			}
+		}
+	}
+	return ""
 }

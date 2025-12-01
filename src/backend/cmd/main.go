@@ -1078,6 +1078,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	{
 		saltstack.GET("/status", saltStackHandler.GetSaltStackStatus)
 		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
+		saltstack.GET("/minions/:minionId/details", saltStackHandler.GetMinionDetails)
 		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
 		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
 		// 自定义脚本执行（异步）+ 进度
