@@ -80,11 +80,12 @@ type BatchInstallResult struct {
 
 // HostInstallResult 单主机安装结果
 type HostInstallResult struct {
-	Host     string `json:"host"`
-	Status   string `json:"status"` // success, failed
-	Message  string `json:"message"`
-	Duration int64  `json:"duration"` // 耗时（毫秒）
-	Error    string `json:"error,omitempty"`
+	Host     string   `json:"host"`
+	Status   string   `json:"status"` // success, failed, partial
+	Message  string   `json:"message"`
+	Duration int64    `json:"duration"` // 耗时（毫秒）
+	Error    string   `json:"error,omitempty"`
+	Warnings []string `json:"warnings,omitempty"` // 警告信息列表
 }
 
 // SSHTestRequest SSH 测试请求
@@ -1065,8 +1066,17 @@ func (s *BatchInstallService) streamOutputWithBuffer(reader io.Reader, taskID, h
 			for _, line := range lines {
 				line = strings.TrimSpace(line)
 				if line != "" {
+					// 检测 Warning 行并发送 warning 类型事件
+					eventType := "log"
+					lineLC := strings.ToLower(line)
+					if strings.Contains(lineLC, "warning:") || strings.Contains(lineLC, "warn:") {
+						eventType = "warning"
+					} else if strings.Contains(lineLC, "error:") || strings.Contains(lineLC, "failed:") {
+						eventType = "error"
+					}
+
 					s.sendEvent(taskID, SSEEvent{
-						Type:    "log",
+						Type:    eventType,
 						Host:    host,
 						Message: line,
 						Data: map[string]string{
@@ -1074,8 +1084,14 @@ func (s *BatchInstallService) streamOutputWithBuffer(reader io.Reader, taskID, h
 						},
 					})
 					// 同时记录每行到数据库（仅重要的行）
-					if strings.HasPrefix(line, "===") || strings.Contains(line, "error") || strings.Contains(line, "Error") || strings.Contains(line, "failed") || strings.Contains(line, "Failed") {
-						s.logToDatabaseWithCategory(taskID, "info", host, "output", line, "")
+					if strings.HasPrefix(line, "===") || strings.Contains(lineLC, "error") || strings.Contains(lineLC, "failed") || strings.Contains(lineLC, "warning") {
+						logLevel := "info"
+						if eventType == "warning" {
+							logLevel = "warn"
+						} else if eventType == "error" {
+							logLevel = "error"
+						}
+						s.logToDatabaseWithCategory(taskID, logLevel, host, "output", line, "")
 					}
 				}
 			}

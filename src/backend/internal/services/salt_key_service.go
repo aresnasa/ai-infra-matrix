@@ -208,7 +208,21 @@ func (s *SaltKeyService) GetSecretKey() string {
 }
 
 // ReadMasterPubKey 读取 Master 公钥
+// 优先从 KeyVault 读取，如果不存在则尝试从文件系统读取
 func (s *SaltKeyService) ReadMasterPubKey() ([]byte, error) {
+	// 1. 优先从 KeyVault 读取 (适用于容器化部署)
+	kvService := NewKeyVaultService()
+	if kvService != nil {
+		keyData, _, err := kvService.GetKey("salt_master_public", 0, "system", "", "salt-key-service")
+		if err == nil && keyData != "" {
+			logrus.Debug("[SaltKeyService] Master public key loaded from KeyVault")
+			return []byte(keyData), nil
+		}
+		// KeyVault 中没找到，继续尝试文件系统
+		logrus.WithError(err).Debug("[SaltKeyService] KeyVault lookup failed, trying filesystem")
+	}
+
+	// 2. 从文件系统读取 (适用于非容器化部署或挂载了 pki 目录的场景)
 	paths := []string{
 		"/etc/salt/pki/master/master.pub",
 		"/data/saltstack/pki/master/master.pub",
@@ -220,11 +234,12 @@ func (s *SaltKeyService) ReadMasterPubKey() ([]byte, error) {
 			continue
 		}
 		if data, err := os.ReadFile(path); err == nil {
+			logrus.WithField("path", path).Debug("[SaltKeyService] Master public key loaded from filesystem")
 			return data, nil
 		}
 	}
 
-	return nil, fmt.Errorf("master public key not found in any known location")
+	return nil, fmt.Errorf("master public key not found in KeyVault or filesystem locations")
 }
 
 // getAPIURL 获取 API URL（用于外部访问）

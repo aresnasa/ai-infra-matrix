@@ -564,7 +564,7 @@ export const slurmAPI = {
 // SaltStack API
 export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
-  getMinions: () => api.get('/saltstack/minions'),
+  getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
@@ -605,6 +605,9 @@ export const saltStackAPI = {
   // SSH 测试（含 sudo 权限检查）
   testSSH: (config) => api.post('/saltstack/ssh/test', config),
   batchTestSSH: (payload) => api.post('/saltstack/ssh/test-batch', payload),
+
+  // 主机文件解析
+  parseHostFile: (content, filename) => api.post('/saltstack/hosts/parse', { content, filename }),
 
   // Minion 管理（删除、卸载）
   removeMinionKey: (minionId, force = false) => api.delete(`/saltstack/minion/${minionId}`, { params: { force } }),

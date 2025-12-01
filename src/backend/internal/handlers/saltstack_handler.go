@@ -1314,12 +1314,17 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 	ctx := c.Request.Context()
 	cacheKey := "saltstack:minions"
 
-	// 尝试从缓存获取
-	if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
-		var minions []SaltMinion
-		if err := json.Unmarshal([]byte(cached), &minions); err == nil {
-			c.JSON(http.StatusOK, gin.H{"data": minions, "cached": true})
-			return
+	// 检查是否强制刷新（支持 ?refresh=true 或 ?force=true）
+	forceRefresh := c.Query("refresh") == "true" || c.Query("force") == "true"
+
+	// 尝试从缓存获取（除非强制刷新）
+	if !forceRefresh {
+		if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
+			var minions []SaltMinion
+			if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+				c.JSON(http.StatusOK, gin.H{"data": minions, "cached": true})
+				return
+			}
 		}
 	}
 

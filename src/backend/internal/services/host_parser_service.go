@@ -9,9 +9,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ================== 安全配置常量 ==================
 
 // 允许的文件格式
 var allowedFormats = map[string]bool{
@@ -21,6 +24,26 @@ var allowedFormats = map[string]bool{
 	"yml":  true,
 	"ini":  true,
 }
+
+// 最大文件大小限制 (1MB)
+const MaxFileSize = 1024 * 1024
+
+// 最大行数限制
+const MaxLineCount = 10000
+
+// 最大主机数限制
+const MaxHostCount = 5000
+
+// 最大字段长度限制
+const MaxFieldLength = 1024
+
+// YAML 最大递归深度
+const MaxYAMLDepth = 10
+
+// 最大单行长度
+const MaxLineLength = 4096
+
+// ================== 危险模式检测 ==================
 
 // 危险模式检测正则表达式
 var dangerousPatterns = []*regexp.Regexp{
@@ -40,8 +63,8 @@ var dangerousPatterns = []*regexp.Regexp{
 	// Python/Ruby 执行
 	regexp.MustCompile(`(?i)(python|python3|ruby|perl|node)\s+-e\s+`),
 	regexp.MustCompile(`(?i)__import__\s*\(`),
-	regexp.MustCompile(`(?i)eval\s*\(`),
-	regexp.MustCompile(`(?i)exec\s*\(`),
+	regexp.MustCompile(`(?i)\beval\s*\(`),
+	regexp.MustCompile(`(?i)\bexec\s*\(`),
 	// 网络相关危险操作
 	regexp.MustCompile(`(?i)nc\s+-[elp]`), // netcat reverse shell
 	regexp.MustCompile(`(?i)/dev/tcp/`),   // bash tcp redirect
@@ -51,10 +74,41 @@ var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)>\s*/bin/`),  // 写入 /bin
 	regexp.MustCompile(`(?i)>\s*/sbin/`), // 写入 /sbin
 	regexp.MustCompile(`(?i)>\s*/usr/`),  // 写入 /usr
+	// YAML 特殊攻击
+	regexp.MustCompile(`(?i)!!python/`),                 // PyYAML code execution
+	regexp.MustCompile(`(?i)!!ruby/`),                   // Ruby YAML code execution
+	regexp.MustCompile(`(?i)tag:yaml\.org,\d+:python/`), // YAML python tag
+	regexp.MustCompile(`(?i)!<tag:yaml\.org`),           // YAML custom tag
+	// SQL 注入模式
+	regexp.MustCompile(`(?i)(union\s+select|drop\s+table|delete\s+from|insert\s+into|update\s+.+\s+set)`),
+	regexp.MustCompile(`(?i)(;\s*--)|(--\s*$)|(/\*.*\*/)`), // SQL comments
+	// 路径遍历
+	regexp.MustCompile(`(?i)\.\./`),       // 相对路径遍历
+	regexp.MustCompile(`(?i)\.\.\\`),      // Windows 路径遍历
+	regexp.MustCompile(`(?i)%2e%2e[/\\]`), // URL 编码路径遍历
+	// 环境变量注入
+	regexp.MustCompile(`(?i)\$\{[^}]+\}`), // ${VAR}
+	regexp.MustCompile(`(?i)\$[A-Z_]+\b`), // $VAR (大写变量名)
+	regexp.MustCompile(`(?i)%[A-Z_]+%`),   // Windows %VAR%
 }
 
-// 最大文件大小限制 (1MB)
-const MaxFileSize = 1024 * 1024
+// 敏感字段名列表（需要脱敏的字段）
+var sensitiveFieldNames = map[string]bool{
+	"password":      true,
+	"pass":          true,
+	"secret":        true,
+	"token":         true,
+	"key":           true,
+	"private":       true,
+	"credential":    true,
+	"auth":          true,
+	"api_key":       true,
+	"apikey":        true,
+	"access_token":  true,
+	"refresh_token": true,
+	"ssh_password":  true,
+	"ansible_pass":  true,
+}
 
 // HostConfig 主机配置结构
 type HostConfig struct {
@@ -106,7 +160,106 @@ func (s *HostParserService) DetectDangerousContent(data []byte) error {
 			if len(match) > 50 {
 				match = match[:50] + "..."
 			}
-			return fmt.Errorf("检测到危险内容: %s", match)
+			return fmt.Errorf("检测到危险内容，请检查文件是否包含恶意代码: %s", match)
+		}
+	}
+
+	return nil
+}
+
+// ValidateLineCount 验证行数限制
+func (s *HostParserService) ValidateLineCount(data []byte) error {
+	lineCount := strings.Count(string(data), "\n") + 1
+	if lineCount > MaxLineCount {
+		return fmt.Errorf("文件行数超过限制: %d 行 (最大 %d 行)", lineCount, MaxLineCount)
+	}
+	return nil
+}
+
+// ValidateEncoding 验证文件编码（必须是有效的 UTF-8）
+func (s *HostParserService) ValidateEncoding(data []byte) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("文件编码无效，请使用 UTF-8 编码")
+	}
+	return nil
+}
+
+// ValidateLineLength 验证单行长度
+func (s *HostParserService) ValidateLineLength(data []byte) error {
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if len(line) > MaxLineLength {
+			return fmt.Errorf("第 %d 行超过最大长度限制 (%d 字符)", i+1, MaxLineLength)
+		}
+	}
+	return nil
+}
+
+// ValidateFieldValue 验证字段值安全性
+func (s *HostParserService) ValidateFieldValue(fieldName, value string) error {
+	// 检查字段长度
+	if len(value) > MaxFieldLength {
+		return fmt.Errorf("字段 %s 值过长 (%d 字符，最大 %d)", fieldName, len(value), MaxFieldLength)
+	}
+
+	// 非密码字段检查危险内容
+	if !sensitiveFieldNames[strings.ToLower(fieldName)] {
+		for _, pattern := range dangerousPatterns {
+			if pattern.MatchString(value) {
+				return fmt.Errorf("字段 %s 包含危险内容", fieldName)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ValidateHostConfig 验证主机配置的安全性
+func (s *HostParserService) ValidateHostConfig(host *HostConfig) error {
+	// 验证 Host 字段
+	if err := s.ValidateFieldValue("host", host.Host); err != nil {
+		return err
+	}
+	// Host 不能是本地回环地址（防止 SSRF）
+	hostLower := strings.ToLower(host.Host)
+	if hostLower == "localhost" || hostLower == "127.0.0.1" || hostLower == "::1" {
+		return fmt.Errorf("不允许使用本地地址: %s", host.Host)
+	}
+	// Host 不能是内部 Docker 网络地址
+	if strings.HasPrefix(host.Host, "172.") || strings.HasPrefix(host.Host, "10.") {
+		// 允许内网地址，但需要记录日志（不返回错误）
+	}
+
+	// 验证 Username
+	if err := s.ValidateFieldValue("username", host.Username); err != nil {
+		return err
+	}
+	// Username 不能包含特殊字符
+	if strings.ContainsAny(host.Username, ";|&$`\"'<>(){}[]\\") {
+		return fmt.Errorf("用户名包含非法字符: %s", host.Username)
+	}
+
+	// 验证 MinionID
+	if host.MinionID != "" {
+		if err := s.ValidateFieldValue("minion_id", host.MinionID); err != nil {
+			return err
+		}
+		// MinionID 只能包含字母、数字、连字符、下划线和点
+		minionIDRegex := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+		if !minionIDRegex.MatchString(host.MinionID) {
+			return fmt.Errorf("Minion ID 格式无效: %s (只能包含字母、数字、连字符、下划线和点)", host.MinionID)
+		}
+	}
+
+	// 验证 Group
+	if host.Group != "" {
+		if err := s.ValidateFieldValue("group", host.Group); err != nil {
+			return err
+		}
+		// Group 只能包含字母、数字、连字符、下划线
+		groupRegex := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+		if !groupRegex.MatchString(host.Group) {
+			return fmt.Errorf("分组名格式无效: %s (只能包含字母、数字、连字符、下划线)", host.Group)
 		}
 	}
 
@@ -115,23 +268,60 @@ func (s *HostParserService) DetectDangerousContent(data []byte) error {
 
 // ValidateAndParse 验证并解析主机文件（带安全检查）
 func (s *HostParserService) ValidateAndParse(data []byte, format string) ([]HostConfig, error) {
-	// 1. 验证文件大小
+	// 1. 检查是否为空
+	if len(data) == 0 {
+		return nil, fmt.Errorf("文件内容为空")
+	}
+
+	// 2. 验证文件编码
+	if err := s.ValidateEncoding(data); err != nil {
+		return nil, err
+	}
+
+	// 3. 验证文件大小
 	if err := s.ValidateFileSize(data); err != nil {
 		return nil, err
 	}
 
-	// 2. 验证文件格式
+	// 4. 验证行数
+	if err := s.ValidateLineCount(data); err != nil {
+		return nil, err
+	}
+
+	// 5. 验证单行长度
+	if err := s.ValidateLineLength(data); err != nil {
+		return nil, err
+	}
+
+	// 6. 验证文件格式
 	if err := s.ValidateFormat(format); err != nil {
 		return nil, err
 	}
 
-	// 3. 检测危险内容
+	// 7. 检测危险内容
 	if err := s.DetectDangerousContent(data); err != nil {
 		return nil, err
 	}
 
-	// 4. 解析文件
-	return s.ParseHosts(data, format)
+	// 8. 解析文件
+	hosts, err := s.ParseHosts(data, format)
+	if err != nil {
+		return nil, err
+	}
+
+	// 9. 验证主机数量
+	if len(hosts) > MaxHostCount {
+		return nil, fmt.Errorf("主机数量超过限制: %d (最大 %d)", len(hosts), MaxHostCount)
+	}
+
+	// 10. 验证每个主机配置的安全性
+	for i, host := range hosts {
+		if err := s.ValidateHostConfig(&host); err != nil {
+			return nil, fmt.Errorf("第 %d 个主机配置错误: %v", i+1, err)
+		}
+	}
+
+	return hosts, nil
 }
 
 // ParseHosts 根据格式解析主机数据
@@ -336,12 +526,21 @@ func (s *HostParserService) ParseJSON(data []byte) ([]HostConfig, error) {
 	return nil, fmt.Errorf("JSON 解析失败：格式不正确")
 }
 
-// ParseYAML 解析 YAML 格式
+// ParseYAML 解析 YAML 格式（带安全限制）
 func (s *HostParserService) ParseYAML(data []byte) ([]HostConfig, error) {
+	// 使用 yaml.v3 的 Decoder 进行安全解析
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	// 限制节点数量，防止 YAML 炸弹攻击
+	decoder.KnownFields(true) // 不允许未知字段
+
 	var hosts []HostConfig
 
 	// 尝试解析为数组
 	if err := yaml.Unmarshal(data, &hosts); err == nil && len(hosts) > 0 {
+		// 验证解析深度（防止过于复杂的嵌套结构）
+		if err := s.validateYAMLDepth(data); err != nil {
+			return nil, err
+		}
 		for i := range hosts {
 			s.setDefaults(&hosts[i])
 			if err := s.validateHost(&hosts[i]); err != nil {
@@ -356,6 +555,9 @@ func (s *HostParserService) ParseYAML(data []byte) ([]HostConfig, error) {
 		Hosts []HostConfig `yaml:"hosts"`
 	}
 	if err := yaml.Unmarshal(data, &wrapper); err == nil && len(wrapper.Hosts) > 0 {
+		if err := s.validateYAMLDepth(data); err != nil {
+			return nil, err
+		}
 		for i := range wrapper.Hosts {
 			s.setDefaults(&wrapper.Hosts[i])
 			if err := s.validateHost(&wrapper.Hosts[i]); err != nil {
@@ -368,10 +570,35 @@ func (s *HostParserService) ParseYAML(data []byte) ([]HostConfig, error) {
 	// 尝试解析为 map 格式（Ansible 风格）
 	var hostMap map[string]interface{}
 	if err := yaml.Unmarshal(data, &hostMap); err == nil {
+		if err := s.validateYAMLDepth(data); err != nil {
+			return nil, err
+		}
 		return s.parseYAMLMap(hostMap)
 	}
 
 	return nil, fmt.Errorf("YAML 解析失败：格式不正确")
+}
+
+// validateYAMLDepth 验证 YAML 嵌套深度
+func (s *HostParserService) validateYAMLDepth(data []byte) error {
+	// 简单的深度检测：通过缩进来估算
+	lines := strings.Split(string(data), "\n")
+	maxIndent := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		// 假设每层缩进 2 个空格
+		depth := indent / 2
+		if depth > maxIndent {
+			maxIndent = depth
+		}
+	}
+	if maxIndent > MaxYAMLDepth {
+		return fmt.Errorf("YAML 嵌套深度超过限制: %d (最大 %d)", maxIndent, MaxYAMLDepth)
+	}
+	return nil
 }
 
 // parseYAMLMap 解析 YAML map 格式

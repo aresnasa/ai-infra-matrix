@@ -170,12 +170,12 @@ const SaltStackDashboard = () => {
     }
   };
 
-  const loadMinions = async () => {
+  const loadMinions = async (forceRefresh = false) => {
     setMinionsLoading(true);
     try {
       // 并行获取 Minion 列表和待删除状态
       const [minionsRes, pendingDeletesRes] = await Promise.all([
-        saltStackAPI.getMinions(),
+        saltStackAPI.getMinions(forceRefresh),
         saltStackAPI.getPendingDeleteMinions().catch(() => ({ data: { minion_ids: [] } })),
       ]);
       
@@ -377,21 +377,16 @@ const SaltStackDashboard = () => {
     setImportLoading(true);
     try {
       const content = await file.text();
-      const response = await fetch('/api/saltstack/hosts/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, filename: file.name })
-      });
+      const response = await saltStackAPI.parseHostFile(content, file.name);
       
-      const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.message || result.error || t('saltstack.parseFailed'));
+      if (!response.data?.success) {
+        throw new Error(response.data?.message || response.data?.error || t('saltstack.parseFailed'));
       }
 
-      const hosts = result.data?.hosts || [];
+      const hosts = response.data?.data?.hosts || [];
       if (hosts.length === 0) {
         message.warning(t('saltstack.noValidHostConfig'));
-        return;
+        return false;
       }
 
       // 将解析的主机添加到列表
@@ -415,7 +410,8 @@ const SaltStackDashboard = () => {
 
       message.success(t('saltstack.importedHosts', { count: hosts.length }));
     } catch (e) {
-      message.error(t('saltstack.importFailed') + ': ' + e.message);
+      console.error('文件导入失败:', e);
+      message.error(t('saltstack.importFailed') + ': ' + (e.response?.data?.error || e.message));
     } finally {
       setImportLoading(false);
     }
@@ -1225,7 +1221,7 @@ const SaltStackDashboard = () => {
                   minions={minions}
                   loading={minionsLoading}
                   deletingMinionIds={deletingMinionIds}
-                  onRefresh={loadMinions}
+                  onRefresh={() => loadMinions(true)}
                   onDelete={handleDeleteMinion}
                   groups={minionGroups}
                   selectedGroup={selectedGroup}
