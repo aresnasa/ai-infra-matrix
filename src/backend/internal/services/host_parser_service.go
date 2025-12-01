@@ -13,6 +13,49 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// 允许的文件格式
+var allowedFormats = map[string]bool{
+	"csv":  true,
+	"json": true,
+	"yaml": true,
+	"yml":  true,
+	"ini":  true,
+}
+
+// 危险模式检测正则表达式
+var dangerousPatterns = []*regexp.Regexp{
+	// Shell 命令执行
+	regexp.MustCompile(`(?i)\$\([^)]+\)`),                                    // $(command)
+	regexp.MustCompile("(?i)`[^`]+`"),                                        // `command`
+	regexp.MustCompile(`(?i)\|\s*(bash|sh|zsh|ksh|csh|tcsh|fish)`),           // | bash
+	regexp.MustCompile(`(?i)(bash|sh|zsh)\s+-c\s+`),                          // bash -c
+	regexp.MustCompile(`(?i)(curl|wget)\s+.*(http|ftp).*\|\s*(bash|sh|zsh)`), // curl | bash
+	// 危险命令
+	regexp.MustCompile(`(?i)\b(rm\s+-rf|dd\s+if=|mkfs|fdisk|parted)\b`),
+	regexp.MustCompile(`(?i)\b(chmod\s+777|chown\s+-R|sudo\s+su)\b`),
+	// 脚本注入
+	regexp.MustCompile(`(?i)<script[^>]*>`),          // HTML script tag
+	regexp.MustCompile(`(?i)javascript:`),            // javascript:
+	regexp.MustCompile(`(?i)on\w+\s*=\s*["'][^"']+`), // event handlers
+	// Python/Ruby 执行
+	regexp.MustCompile(`(?i)(python|python3|ruby|perl|node)\s+-e\s+`),
+	regexp.MustCompile(`(?i)__import__\s*\(`),
+	regexp.MustCompile(`(?i)eval\s*\(`),
+	regexp.MustCompile(`(?i)exec\s*\(`),
+	// 网络相关危险操作
+	regexp.MustCompile(`(?i)nc\s+-[elp]`), // netcat reverse shell
+	regexp.MustCompile(`(?i)/dev/tcp/`),   // bash tcp redirect
+	// 文件操作危险模式
+	regexp.MustCompile(`(?i)>\s*/etc/`),  // 写入 /etc
+	regexp.MustCompile(`(?i)>\s*/root/`), // 写入 /root
+	regexp.MustCompile(`(?i)>\s*/bin/`),  // 写入 /bin
+	regexp.MustCompile(`(?i)>\s*/sbin/`), // 写入 /sbin
+	regexp.MustCompile(`(?i)>\s*/usr/`),  // 写入 /usr
+}
+
+// 最大文件大小限制 (1MB)
+const MaxFileSize = 1024 * 1024
+
 // HostConfig 主机配置结构
 type HostConfig struct {
 	Host     string `json:"host" yaml:"host" csv:"host"`
@@ -30,6 +73,65 @@ type HostParserService struct{}
 // NewHostParserService 创建主机解析服务
 func NewHostParserService() *HostParserService {
 	return &HostParserService{}
+}
+
+// ValidateFormat 验证文件格式是否在白名单中
+func (s *HostParserService) ValidateFormat(format string) error {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "" {
+		return nil // 允许空格式，将使用自动检测
+	}
+	if !allowedFormats[format] {
+		return fmt.Errorf("不支持的文件格式: %s，仅支持 csv, json, yaml, yml, ini", format)
+	}
+	return nil
+}
+
+// ValidateFileSize 验证文件大小
+func (s *HostParserService) ValidateFileSize(data []byte) error {
+	if len(data) > MaxFileSize {
+		return fmt.Errorf("文件大小超过限制: %d bytes (最大 %d bytes)", len(data), MaxFileSize)
+	}
+	return nil
+}
+
+// DetectDangerousContent 检测危险内容
+func (s *HostParserService) DetectDangerousContent(data []byte) error {
+	content := string(data)
+
+	for _, pattern := range dangerousPatterns {
+		if pattern.MatchString(content) {
+			match := pattern.FindString(content)
+			// 截断匹配内容，避免泄露太多信息
+			if len(match) > 50 {
+				match = match[:50] + "..."
+			}
+			return fmt.Errorf("检测到危险内容: %s", match)
+		}
+	}
+
+	return nil
+}
+
+// ValidateAndParse 验证并解析主机文件（带安全检查）
+func (s *HostParserService) ValidateAndParse(data []byte, format string) ([]HostConfig, error) {
+	// 1. 验证文件大小
+	if err := s.ValidateFileSize(data); err != nil {
+		return nil, err
+	}
+
+	// 2. 验证文件格式
+	if err := s.ValidateFormat(format); err != nil {
+		return nil, err
+	}
+
+	// 3. 检测危险内容
+	if err := s.DetectDangerousContent(data); err != nil {
+		return nil, err
+	}
+
+	// 4. 解析文件
+	return s.ParseHosts(data, format)
 }
 
 // ParseHosts 根据格式解析主机数据

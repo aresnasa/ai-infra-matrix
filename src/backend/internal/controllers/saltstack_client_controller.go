@@ -1287,8 +1287,6 @@ func (c *SaltStackClientController) ParseHostFile(ctx *gin.Context) {
 	}
 
 	parser := services.NewHostParserService()
-	var hosts []services.HostConfig
-	var err error
 
 	// 确定解析格式
 	format := strings.ToLower(req.Format)
@@ -1305,22 +1303,9 @@ func (c *SaltStackClientController) ParseHostFile(ctx *gin.Context) {
 		}
 	}
 
-	// 根据格式解析
+	// 使用安全解析方法（包含文件类型、大小、恶意内容检查）
 	contentBytes := []byte(req.Content)
-	switch format {
-	case "csv":
-		hosts, err = parser.ParseCSV(contentBytes)
-	case "json":
-		hosts, err = parser.ParseJSON(contentBytes)
-	case "yaml", "yml":
-		hosts, err = parser.ParseYAML(contentBytes)
-	case "ini":
-		hosts, err = parser.ParseAnsibleINI(contentBytes)
-	default:
-		// 尝试自动检测格式
-		hosts, err = parser.AutoDetectAndParse(contentBytes)
-	}
-
+	hosts, err := parser.ValidateAndParse(contentBytes, format)
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,

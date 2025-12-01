@@ -441,7 +441,16 @@ const MinionsTable = ({
           <Menu.Item 
             key="delete" 
             icon={<DeleteOutlined />}
-            onClick={() => handleDelete(minionId, false)}
+            onClick={() => {
+              Modal.confirm({
+                title: t('minions.actions.confirmDelete', '确认删除'),
+                content: t('minions.actions.confirmDeleteContent', { id: minionId }),
+                okText: t('common.confirm', '确认'),
+                cancelText: t('common.cancel', '取消'),
+                okButtonProps: { danger: true },
+                onOk: () => handleDelete(minionId, false),
+              });
+            }}
             disabled={isOnline}
           >
             {t('minions.actions.deleteKey', '删除密钥')}
@@ -451,7 +460,16 @@ const MinionsTable = ({
             key="forceDelete" 
             icon={<DeleteOutlined />}
             danger
-            onClick={() => handleDelete(minionId, true)}
+            onClick={() => {
+              Modal.confirm({
+                title: t('minions.actions.confirmForceDelete', '确认强制删除'),
+                content: t('minions.actions.confirmForceDeleteContent', { id: minionId }),
+                okText: t('common.confirm', '确认'),
+                cancelText: t('common.cancel', '取消'),
+                okButtonProps: { danger: true },
+                onOk: () => handleDelete(minionId, true),
+              });
+            }}
           >
             {t('minions.actions.forceDelete', '强制删除')}
           </Menu.Item>
