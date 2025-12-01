@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/cache"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
@@ -19,6 +20,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
 )
+
+// 定义 minions 缓存键常量
+const saltMinionsKey = "saltstack:minions"
 
 // BatchInstallService 批量安装服务
 type BatchInstallService struct {
@@ -489,6 +493,11 @@ func (s *BatchInstallService) runBatchInstall(ctx context.Context, taskID string
 			"end_time":      now,
 			"duration":      durationInt,
 		})
+	}
+
+	// 清除 minions 缓存，确保前端能立即获取最新的 minion 列表
+	if successCount > 0 {
+		s.invalidateMinionsCache()
 	}
 
 	// 发送完成事件
@@ -1616,4 +1625,20 @@ func (s *BatchInstallService) maskBatchInstallRequest(req BatchInstallRequest) B
 	}
 
 	return maskedReq
+}
+
+// invalidateMinionsCache 使 minions 缓存失效
+// 在批量安装完成后调用，确保前端能立即获取最新的 minion 列表
+func (s *BatchInstallService) invalidateMinionsCache() {
+	if cache.RDB == nil {
+		logrus.Warn("[BatchInstall] Redis client not available, skip cache invalidation")
+		return
+	}
+
+	err := cache.Delete(saltMinionsKey)
+	if err != nil {
+		logrus.WithError(err).Warn("[BatchInstall] Failed to invalidate minions cache")
+	} else {
+		logrus.Info("[BatchInstall] Minions cache invalidated, frontend will fetch fresh data")
+	}
 }
