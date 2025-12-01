@@ -57,7 +57,7 @@ func NewSaltMasterPool() *SaltMasterPool {
 		masters:       make([]SaltMasterConfig, 0),
 		healthStatus:  make(map[string]bool),
 		lastCheck:     make(map[string]time.Time),
-		checkInterval: 30 * time.Second,
+		checkInterval: 180 * time.Second, // Master 健康检查间隔: 3分钟
 	}
 	pool.loadMastersFromEnv()
 	return pool

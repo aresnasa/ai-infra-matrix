@@ -195,6 +195,11 @@ const SaltStackDashboard = () => {
     await Promise.all([loadMinions(), loadJobs()]);
   };
 
+  // 仅加载 Minion 数据（不包含 Master 状态）
+  const loadMinionData = async () => {
+    await Promise.all([loadMinions(), loadJobs()]);
+  };
+
   // 页面初始化效果 - 立即显示静态内容
   useEffect(() => {
     // 标记页面已加载，显示静态内容
@@ -205,9 +210,16 @@ const SaltStackDashboard = () => {
       loadAllData();
     }, 100); // 延迟100ms让静态内容先渲染
     
-    // 设置定时刷新（60秒）
-    const interval = setInterval(loadAllData, 60000);
-    return () => clearInterval(interval);
+    // 设置定时刷新
+    // Master 状态检查：3分钟一次（180秒）
+    const masterInterval = setInterval(loadStatus, 180000);
+    // Minion 列表检查：1分钟一次（60秒）
+    const minionInterval = setInterval(loadMinionData, 60000);
+    
+    return () => {
+      clearInterval(masterInterval);
+      clearInterval(minionInterval);
+    };
   }, []);
 
   // 当主机列表变化时，计算动态并行度
