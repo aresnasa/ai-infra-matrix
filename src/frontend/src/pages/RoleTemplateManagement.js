@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Resizable } from 'react-resizable';
+import 'react-resizable/css/styles.css';
 import {
   Card,
   Table,
@@ -43,6 +45,41 @@ const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
 
+// 可拖拽调整宽度的表头单元格
+const ResizableTitle = (props) => {
+  const { onResize, width, ...restProps } = props;
+
+  if (!width) {
+    return <th {...restProps} />;
+  }
+
+  return (
+    <Resizable
+      width={width}
+      height={0}
+      handle={
+        <span
+          className="react-resizable-handle"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            right: -5,
+            bottom: 0,
+            width: 10,
+            height: '100%',
+            cursor: 'col-resize',
+            zIndex: 1,
+          }}
+        />
+      }
+      onResize={onResize}
+      draggableOpts={{ enableUserSelectHack: false }}
+    >
+      <th {...restProps} />
+    </Resizable>
+  );
+};
+
 // 图标映射
 const iconMap = {
   crown: <CrownOutlined />,
@@ -53,6 +90,18 @@ const iconMap = {
   user: <UserOutlined />,
   lock: <LockOutlined />,
   safety: <SafetyCertificateOutlined />,
+};
+
+// 颜色映射 (静态)
+const colorMap = {
+  red: '#f5222d',
+  orange: '#fa8c16',
+  gold: '#faad14',
+  green: '#52c41a',
+  blue: '#1890ff',
+  purple: '#722ed1',
+  cyan: '#13c2c2',
+  magenta: '#eb2f96',
 };
 
 const RoleTemplateManagement = () => {
@@ -105,6 +154,17 @@ const RoleTemplateManagement = () => {
   const [verbs, setVerbs] = useState([]);
   const [form] = Form.useForm();
   const [syncLoading, setSyncLoading] = useState(false);
+  
+  // 列宽状态
+  const [columnWidths, setColumnWidths] = useState({
+    name: 220,
+    identifier: 160,
+    description: 200,
+    permissions_count: 100,
+    priority: 80,
+    is_active: 80,
+    actions: 150,
+  });
 
   // 获取角色模板列表
   const fetchTemplates = useCallback(async () => {
@@ -140,7 +200,7 @@ const RoleTemplateManagement = () => {
   }, [fetchTemplates, fetchResourcesAndVerbs]);
 
   // 打开模态框
-  const openModal = (template = null) => {
+  const openModal = useCallback((template = null) => {
     setEditingTemplate(template);
     if (template) {
       const permissions = template.permissions?.map(p => ({
@@ -162,7 +222,7 @@ const RoleTemplateManagement = () => {
       });
     }
     setModalVisible(true);
-  };
+  }, [form]);
 
   // 保存角色模板
   const handleSave = async (values) => {
@@ -188,7 +248,7 @@ const RoleTemplateManagement = () => {
   };
 
   // 删除角色模板
-  const handleDelete = async (id) => {
+  const handleDelete = useCallback(async (id) => {
     try {
       await roleTemplateAPI.delete(id);
       message.success(t('roleTemplate.deleteSuccess'));
@@ -197,7 +257,7 @@ const RoleTemplateManagement = () => {
       message.error(t('roleTemplate.deleteFailed') + ': ' + (error.response?.data?.error || error.message));
       console.error('Error deleting template:', error);
     }
-  };
+  }, [t, fetchTemplates]);
 
   // 同步角色模板到角色
   const handleSync = async () => {
@@ -213,20 +273,28 @@ const RoleTemplateManagement = () => {
     }
   };
 
+  // 处理列宽调整
+  const handleResize = (key) => (e, { size }) => {
+    setColumnWidths((prev) => ({
+      ...prev,
+      [key]: size.width,
+    }));
+  };
+
   // 表格列定义
-  const columns = [
+  const baseColumns = useMemo(() => [
     {
       title: t('roleTemplate.columns.name'),
       dataIndex: 'name',
       key: 'name',
-      width: 220,
+      width: columnWidths.name,
       ellipsis: true,
       render: (text, record) => (
         <Space>
-          <span style={{ color: colorOptions.find(c => c.value === record.color)?.color || '#1890ff' }}>
+          <span style={{ color: colorMap[record.color] || '#1890ff' }}>
             {iconMap[record.icon] || <SafetyCertificateOutlined />}
           </span>
-          <Text strong>{getLocalizedDisplayName(record)}</Text>
+          <Text strong>{isEnUS && record.display_name_en ? record.display_name_en : (record.display_name || record.name)}</Text>
           {record.is_system && <Tag color="volcano">{t('roleTemplate.system')}</Tag>}
         </Space>
       ),
@@ -235,7 +303,7 @@ const RoleTemplateManagement = () => {
       title: t('roleTemplate.columns.identifier'),
       dataIndex: 'name',
       key: 'identifier',
-      width: 160,
+      width: columnWidths.identifier,
       ellipsis: true,
       render: (text) => <Tag color="default">{text}</Tag>,
     },
@@ -243,14 +311,15 @@ const RoleTemplateManagement = () => {
       title: t('roleTemplate.columns.description'),
       dataIndex: 'description',
       key: 'description',
+      width: columnWidths.description,
       ellipsis: true,
-      render: (text, record) => getLocalizedDescription(record),
+      render: (text, record) => isEnUS && record.description_en ? record.description_en : (record.description || ''),
     },
     {
       title: t('roleTemplate.columns.permissionCount'),
       dataIndex: 'permissions',
       key: 'permissions_count',
-      width: 100,
+      width: columnWidths.permissions_count,
       render: (permissions) => (
         <Badge count={permissions?.length || 0} showZero style={{ backgroundColor: '#52c41a' }} />
       ),
@@ -259,14 +328,14 @@ const RoleTemplateManagement = () => {
       title: t('roleTemplate.columns.priority'),
       dataIndex: 'priority',
       key: 'priority',
-      width: 80,
+      width: columnWidths.priority,
       sorter: (a, b) => (b.priority || 0) - (a.priority || 0),
     },
     {
       title: t('roleTemplate.columns.status'),
       dataIndex: 'is_active',
       key: 'is_active',
-      width: 80,
+      width: columnWidths.is_active,
       render: (isActive) => (
         <Tag color={isActive ? 'success' : 'default'}>
           {isActive ? t('roleTemplate.enabled') : t('roleTemplate.disabled')}
@@ -276,7 +345,7 @@ const RoleTemplateManagement = () => {
     {
       title: t('roleTemplate.columns.actions'),
       key: 'actions',
-      width: 150,
+      width: columnWidths.actions,
       render: (_, record) => (
         <Space>
           <Tooltip title={t('common.edit')}>
@@ -301,7 +370,16 @@ const RoleTemplateManagement = () => {
         </Space>
       ),
     },
-  ];
+  ], [t, columnWidths, isEnUS, openModal, handleDelete]);
+
+  // 为列添加拖拽调整宽度功能
+  const columns = baseColumns.map((col) => ({
+    ...col,
+    onHeaderCell: (column) => ({
+      width: column.width,
+      onResize: handleResize(column.key),
+    }),
+  }));
 
   // 展开行显示权限详情
   const expandedRowRender = (record) => {
@@ -370,6 +448,11 @@ const RoleTemplateManagement = () => {
           dataSource={templates}
           rowKey="id"
           loading={loading}
+          components={{
+            header: {
+              cell: ResizableTitle,
+            },
+          }}
           expandable={{
             expandedRowRender,
             rowExpandable: () => true,
@@ -378,6 +461,7 @@ const RoleTemplateManagement = () => {
             pageSize: 10,
             showTotal: (total) => t('roleTemplate.totalTemplates', { count: total }),
           }}
+          bordered
         />
       </Card>
 

@@ -6,11 +6,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/cache"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
+
+// 缓存键
+const saltMinionsCacheKey = "saltstack:minions"
 
 // MinionDeleteService Minion 删除服务
 // 实现软删除 + 后台异步真实删除 + 并发处理
@@ -186,7 +190,21 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 		return
 	}
 
+	// 3. 清除 Minions 缓存，确保前端获取最新列表
+	s.clearMinionsCache()
+
 	logger.Info("[MinionDeleteService] Minion 删除成功")
+}
+
+// clearMinionsCache 清除 Minions 缓存
+func (s *MinionDeleteService) clearMinionsCache() {
+	if cache.RDB != nil {
+		if err := cache.RDB.Del(context.Background(), saltMinionsCacheKey).Err(); err != nil {
+			logrus.WithError(err).Warn("[MinionDeleteService] 清除 Minions 缓存失败")
+		} else {
+			logrus.Debug("[MinionDeleteService] Minions 缓存已清除")
+		}
+	}
 }
 
 // SoftDeleteOptions 软删除选项
@@ -315,6 +333,26 @@ func (s *MinionDeleteService) GetPendingDeleteMinionIDs() ([]string, error) {
 		models.MinionDeleteStatusPending,
 		models.MinionDeleteStatusDeleting,
 	}).Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+
+	minionIDs := make([]string, len(tasks))
+	for i, task := range tasks {
+		minionIDs[i] = task.MinionID
+	}
+	return minionIDs, nil
+}
+
+// GetRecentlyCompletedMinionIDs 获取最近一段时间内完成删除的 Minion ID 列表
+// 用于过滤 Salt Master 可能仍然返回的已删除节点残留数据
+func (s *MinionDeleteService) GetRecentlyCompletedMinionIDs(duration time.Duration) ([]string, error) {
+	var tasks []models.MinionDeleteTask
+	cutoff := time.Now().Add(-duration)
+	if err := s.db.Select("minion_id").Where(
+		"status = ? AND completed_at > ?",
+		models.MinionDeleteStatusCompleted,
+		cutoff,
+	).Find(&tasks).Error; err != nil {
 		return nil, err
 	}
 

@@ -63,6 +63,7 @@ export default {
     notFound: '未找到',
     copySuccess: '复制成功',
     copyFailed: '复制失败',
+    createdAt: '创建时间',
   },
 
   // 导航菜单
@@ -373,6 +374,31 @@ export default {
     uninstallFailed: '卸载 Minion 失败',
     uninstallMinionFailed: '卸载失败',
     smartCompleteRequest: '已发送智能补全请求（占位），后端实现后将展示建议',
+
+    // 分组管理
+    totalGroups: '共 {count} 个分组',
+    groupName: '分组名称',
+    groupDescription: '描述',
+    groupColor: '标签颜色',
+    groupNameRequired: '请输入分组名称',
+    groupNameMaxLength: '分组名称最多100个字符',
+    groupNamePlaceholder: '如：compute、gpu、storage',
+    createGroup: '创建分组',
+    editGroup: '编辑分组',
+    deleteGroupConfirm: '确定要删除此分组吗？',
+    groupCreated: '分组创建成功',
+    groupUpdated: '分组更新成功',
+    groupDeleted: '分组删除成功',
+    groupCreateFailed: '创建分组失败',
+    groupUpdateFailed: '更新分组失败',
+    groupDeleteFailed: '删除分组失败',
+    noGroups: '暂无分组',
+    groupManagement: '分组管理',
+    allGroups: '所有分组',
+    selectGroup: '选择分组',
+    setGroup: '设置分组',
+    groupSetSuccess: '分组设置成功',
+    groupSetFailed: '设置分组失败',
   },
 
   // 搜索相关
@@ -1326,6 +1352,7 @@ export default {
       kernel: '内核版本',
       gpuDriver: 'GPU 驱动',
       lastSeen: '最后在线',
+      group: '组',
       actions: '操作',
     },
     // 状态

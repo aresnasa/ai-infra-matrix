@@ -63,6 +63,7 @@ export default {
     notFound: 'Not Found',
     copySuccess: 'Copied successfully',
     copyFailed: 'Copy failed',
+    createdAt: 'Created At',
   },
 
   // Navigation Menu
@@ -373,6 +374,31 @@ export default {
     uninstallFailed: 'Failed to uninstall Minion',
     uninstallMinionFailed: 'Uninstall failed',
     smartCompleteRequest: 'Smart completion request sent (placeholder), suggestions will be shown when backend is implemented',
+
+    // Group Management
+    totalGroups: 'Total {count} groups',
+    groupName: 'Group Name',
+    groupDescription: 'Description',
+    groupColor: 'Label Color',
+    groupNameRequired: 'Please enter group name',
+    groupNameMaxLength: 'Group name cannot exceed 100 characters',
+    groupNamePlaceholder: 'e.g.: compute, gpu, storage',
+    createGroup: 'Create Group',
+    editGroup: 'Edit Group',
+    deleteGroupConfirm: 'Are you sure you want to delete this group?',
+    groupCreated: 'Group created successfully',
+    groupUpdated: 'Group updated successfully',
+    groupDeleted: 'Group deleted successfully',
+    groupCreateFailed: 'Failed to create group',
+    groupUpdateFailed: 'Failed to update group',
+    groupDeleteFailed: 'Failed to delete group',
+    noGroups: 'No groups',
+    groupManagement: 'Group Management',
+    allGroups: 'All Groups',
+    selectGroup: 'Select Group',
+    setGroup: 'Set Group',
+    groupSetSuccess: 'Group set successfully',
+    groupSetFailed: 'Failed to set group',
   },
 
   // Search Related
@@ -1319,6 +1345,7 @@ export default {
       kernel: 'Kernel',
       gpuDriver: 'GPU Driver',
       lastSeen: 'Last Seen',
+      group: 'Group',
       actions: 'Actions',
     },
     // Status

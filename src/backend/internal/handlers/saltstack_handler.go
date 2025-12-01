@@ -1671,6 +1671,44 @@ func (h *SaltStackHandler) extractKeys(resp map[string]interface{}, keyType stri
 	return []string{}
 }
 
+// getRecentlyDeletedMinionIDs 获取最近已完成删除的 Minion ID 列表
+// 返回最近 5 分钟内完成删除的 Minion，用于过滤 Salt Master 可能还返回的残留数据
+func (h *SaltStackHandler) getRecentlyDeletedMinionIDs() map[string]bool {
+	deletedIDs := make(map[string]bool)
+
+	deleteSvc := services.GetMinionDeleteService()
+	if deleteSvc == nil {
+		return deletedIDs
+	}
+
+	// 获取最近完成删除的任务
+	recentlyDeleted, err := deleteSvc.GetRecentlyCompletedMinionIDs(5 * time.Minute)
+	if err != nil {
+		return deletedIDs
+	}
+
+	for _, id := range recentlyDeleted {
+		deletedIDs[id] = true
+	}
+
+	return deletedIDs
+}
+
+// filterDeletedMinions 从 Minion ID 列表中过滤掉已删除的
+func (h *SaltStackHandler) filterDeletedMinions(minionIDs []string, deletedIDs map[string]bool) []string {
+	if len(deletedIDs) == 0 {
+		return minionIDs
+	}
+
+	filtered := make([]string, 0, len(minionIDs))
+	for _, id := range minionIDs {
+		if !deletedIDs[id] {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
+}
+
 func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, error) {
 	// 使用 runner manage.status 获取 up/down 列表
 	// 设置较短超时，避免等待离线 minion 过久
@@ -1682,6 +1720,13 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 		return nil, err
 	}
 	up, down := h.parseManageStatus(statusResp)
+
+	// 获取最近已完成删除的 Minion ID 列表（用于过滤）
+	deletedMinionIDs := h.getRecentlyDeletedMinionIDs()
+
+	// 过滤掉已删除的 Minion
+	up = h.filterDeletedMinions(up, deletedMinionIDs)
+	down = h.filterDeletedMinions(down, deletedMinionIDs)
 
 	// 并发获取 up 节点的 grains 信息
 	var minions []SaltMinion
