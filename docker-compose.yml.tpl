@@ -972,8 +972,8 @@ services:
   # Nightingale - 监控告警系统
   nightingale:
     build:
-      context: ./src/nightingale
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/nightingale/Dockerfile
     image: ${PRIVATE_REGISTRY}ai-infra-nightingale:{{IMAGE_TAG}}
     container_name: ai-infra-nightingale
     hostname: nightingale
@@ -982,12 +982,21 @@ services:
     environment:
       GIN_MODE: release
       TZ: Asia/Shanghai
-      WAIT_HOSTS: postgres:5432, ai-infra-redis:6379
+      # PostgreSQL 配置
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      N9E_DB_NAME: ${N9E_DB_NAME:-nightingale}
+      # Redis 配置
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "${EXTERNAL_HOST}:${NIGHTINGALE_PORT:-17000}:17000"  # HTTP API
       - "${EXTERNAL_HOST}:${NIGHTINGALE_ALERT_PORT:-19000}:19000"  # Alert engine
     volumes:
-      - ./src/nightingale/etc:/app/etc:ro
+      - ./src/nightingale/etc:/app/etc
       - nightingale_data:/app/data
       - nightingale_logs:/app/logs
     depends_on:
@@ -997,6 +1006,8 @@ services:
         condition: service_healthy
       victoriametrics:
         condition: service_healthy
+      backend-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/api/v1/health"]
       interval: 30s
