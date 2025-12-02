@@ -389,6 +389,8 @@ export default {
     groupNameRequired: 'Please enter group name',
     groupNameMaxLength: 'Group name cannot exceed 100 characters',
     groupNamePlaceholder: 'e.g.: compute, gpu, storage',
+    groupDescMaxLength: 'Description cannot exceed 500 characters',
+    groupDescPlaceholder: 'Optional: Enter group description',
     createGroup: 'Create Group',
     editGroup: 'Edit Group',
     deleteGroupConfirm: 'Are you sure you want to delete this group?',

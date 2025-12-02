@@ -389,6 +389,8 @@ export default {
     groupNameRequired: '请输入分组名称',
     groupNameMaxLength: '分组名称最多100个字符',
     groupNamePlaceholder: '如：compute、gpu、storage',
+    groupDescMaxLength: '描述最多500个字符',
+    groupDescPlaceholder: '可选：输入分组描述',
     createGroup: '创建分组',
     editGroup: '编辑分组',
     deleteGroupConfirm: '确定要删除此分组吗？',
