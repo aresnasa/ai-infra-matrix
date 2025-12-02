@@ -2161,7 +2161,10 @@ const SaltStackDashboard = () => {
                   <Upload
                     accept=".csv,.json,.yaml,.yml,.ini"
                     showUploadList={false}
-                    beforeUpload={handleFileImport}
+                    beforeUpload={(file) => {
+                      handleFileImport(file);
+                      return false; // 阻止默认上传行为
+                    }}
                     disabled={importLoading}
                   >
                     <Button type="link" size="small" icon={<UploadOutlined />} loading={importLoading}>
