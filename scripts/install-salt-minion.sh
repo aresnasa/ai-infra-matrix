@@ -6,7 +6,7 @@
 # 生成时间: 由 build.sh sync 命令渲染
 # 
 # 变量说明:
-#   192.168.0.199 - Salt Master 外部访问地址
+#   192.168.18.127 - Salt Master 外部访问地址
 #   4505 - Salt Master 端口 (默认 4505)
 #   28080 - AppHub 端口 (默认 8090)
 # =============================================================================
@@ -16,11 +16,11 @@ set -eo pipefail
 # ===========================================
 # 环境配置 (已由模板渲染替换)
 # ===========================================
-SALT_MASTER="${SALT_MASTER:-192.168.0.199}"
+SALT_MASTER="${SALT_MASTER:-192.168.18.127}"
 SALT_MASTER_PORT="${SALT_MASTER_PORT:-4505}"
 SALT_VERSION="${SALT_VERSION:-3007.1}"
 MINION_ID="${MINION_ID:-}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.0.199:28080}"
+APPHUB_URL="${APPHUB_URL:-http://192.168.18.127:28080}"
 USE_OFFICIAL="${USE_OFFICIAL:-false}"
 # Master 公钥 URL (用于预同步 Master 公钥到 Minion)
 # 支持两种模式:
@@ -48,8 +48,8 @@ usage() {
 SaltStack Minion 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
-  Salt Master: 192.168.0.199:4505
-  AppHub URL:  http://192.168.0.199:28080
+  Salt Master: 192.168.18.127:4505
+  AppHub URL:  http://192.168.18.127:28080
 
 用法: $0 [OPTIONS]
 
@@ -73,7 +73,7 @@ SaltStack Minion 安装脚本 (预配置模板)
     $0 --minion-id worker01
 
     # 使用 curl 管道安装 (已知 Master 地址)
-    curl -fsSL http://192.168.0.199:28080/packages/install-salt-minion.sh | bash
+    curl -fsSL http://192.168.18.127:28080/packages/install-salt-minion.sh | bash
 EOF
     exit 0
 }
@@ -668,84 +668,33 @@ start_service() {
     
     systemctl daemon-reload || true
     systemctl enable salt-minion || true
+    systemctl restart salt-minion || true
     
-    # 停止可能存在的旧进程
-    systemctl stop salt-minion 2>/dev/null || true
-    sleep 1
+    sleep 3
     
-    # 清理旧的 Minion 密钥缓存（如果存在问题）
-    # 这样可以确保 Minion 重新生成密钥并与 Master 建立新连接
-    # rm -f /etc/salt/pki/minion/minion.pem /etc/salt/pki/minion/minion.pub 2>/dev/null || true
-    
-    # 首次启动
-    log_info "首次启动 Salt Minion..."
-    systemctl start salt-minion || true
-    
-    # 等待服务启动并完成初始化
-    local max_attempts=3
-    local wait_time=5
-    
-    for attempt in $(seq 1 $max_attempts); do
-        log_info "等待 Salt Minion 初始化... (尝试 $attempt/$max_attempts)"
-        sleep $wait_time
+    if systemctl is-active --quiet salt-minion; then
+        log_info "Salt Minion 服务已启动"
+        return 0
+    else
+        log_warn "Salt Minion 服务启动失败，尝试诊断..."
         
-        if systemctl is-active --quiet salt-minion; then
-            # 服务正在运行，检查是否已经与 Master 建立连接
-            log_info "Salt Minion 服务正在运行"
-            
-            # 等待 Minion 完成与 Master 的密钥交换
-            # 首次连接时，如果没有预先同步 Master 公钥，需要额外时间
-            if [[ ! -f /etc/salt/pki/minion/minion_master.pub ]]; then
-                log_info "等待 Minion 获取 Master 公钥..."
-                sleep 3
-                
-                # 如果 Master 公钥仍然不存在，重启一次服务以触发重新连接
-                if [[ ! -f /etc/salt/pki/minion/minion_master.pub ]]; then
-                    log_warn "Master 公钥尚未获取，重启服务以触发重新连接..."
-                    systemctl restart salt-minion
-                    sleep 5
-                fi
-            fi
-            
-            # 再次检查服务状态
-            if systemctl is-active --quiet salt-minion; then
-                log_info "✓ Salt Minion 服务启动成功"
-                
-                # 显示连接状态
-                if [[ -f /etc/salt/pki/minion/minion_master.pub ]]; then
-                    log_info "✓ 已获取 Master 公钥"
-                fi
-                if [[ -f /etc/salt/pki/minion/minion.pem ]]; then
-                    log_info "✓ Minion 密钥已生成"
-                fi
-                
-                return 0
-            fi
-        else
-            log_warn "Salt Minion 服务未运行，尝试重启..."
-            systemctl restart salt-minion || true
+        # 诊断信息
+        log_info "检查服务状态..."
+        systemctl status salt-minion --no-pager -l 2>&1 | head -20 || true
+        
+        log_info "检查日志..."
+        journalctl -u salt-minion --no-pager -n 20 2>&1 || true
+        
+        # 尝试手动启动获取错误
+        log_info "尝试手动启动获取详细错误..."
+        if [[ -x "/opt/saltstack/salt/salt-minion" ]]; then
+            timeout 5 /opt/saltstack/salt/salt-minion --log-level=debug 2>&1 | head -30 || true
+        elif command -v salt-minion >/dev/null 2>&1; then
+            timeout 5 salt-minion --log-level=debug 2>&1 | head -30 || true
         fi
-    done
-    
-    # 所有尝试失败后的诊断
-    log_warn "Salt Minion 服务启动失败，进行诊断..."
-    
-    # 诊断信息
-    log_info "检查服务状态..."
-    systemctl status salt-minion --no-pager -l 2>&1 | head -20 || true
-    
-    log_info "检查日志..."
-    journalctl -u salt-minion --no-pager -n 20 2>&1 || true
-    
-    # 尝试手动启动获取错误
-    log_info "尝试手动启动获取详细错误..."
-    if [[ -x "/opt/saltstack/salt/salt-minion" ]]; then
-        timeout 5 /opt/saltstack/salt/salt-minion --log-level=debug 2>&1 | head -30 || true
-    elif command -v salt-minion >/dev/null 2>&1; then
-        timeout 5 salt-minion --log-level=debug 2>&1 | head -30 || true
+        
+        return 1
     fi
-    
-    return 1
 }
 
 # ===========================================
@@ -755,7 +704,7 @@ main() {
     parse_args "$@"
     
     # 验证参数
-    if [[ -z "$SALT_MASTER" ]] || [[ "$SALT_MASTER" == "192.168.0.199" ]]; then
+    if [[ -z "$SALT_MASTER" ]] || [[ "$SALT_MASTER" == "192.168.18.127" ]]; then
         log_error "Salt Master 地址未配置"
         log_error "请确保模板已正确渲染，或使用 --master 参数指定"
         exit 1
@@ -793,7 +742,7 @@ main() {
     local installed=false
     
     # 优先从 AppHub 安装
-    if [[ "$USE_OFFICIAL" != "true" ]] && [[ -n "$APPHUB_URL" ]] && [[ "$APPHUB_URL" != *"192.168.0.199"* ]]; then
+    if [[ "$USE_OFFICIAL" != "true" ]] && [[ -n "$APPHUB_URL" ]] && [[ "$APPHUB_URL" != *"192.168.18.127"* ]]; then
         if check_apphub "$APPHUB_URL"; then
             log_info "AppHub 可用，从 AppHub 安装..."
             

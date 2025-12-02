@@ -866,8 +866,8 @@ func (InitPostgresAlertHisEvent) TableName() string {
 }
 
 type InitBoardBusiGroup struct {
-	BusiGroupID int64 `primaryKey;gorm:"not null;default:0;comment:busi group id"`
-	BoardID     int64 `primaryKey;gorm:"not null;default:0;comment:board id"`
+	BusiGroupID int64 `gorm:"primaryKey;not null;default:0;comment:busi group id"`
+	BoardID     int64 `gorm:"primaryKey;not null;default:0;comment:board id"`
 }
 
 func (InitBoardBusiGroup) TableName() string {
@@ -1805,21 +1805,35 @@ func mysqlDataBaseInit(db *gorm.DB) error {
 }
 
 func postgresDataBaseInit(db *gorm.DB) error {
-	// Pre-migration: Fix NULL values in existing tables to avoid NOT NULL constraint errors
-	// These updates are idempotent and safe to run on every startup
-	nullFixQueries := []string{
-		"UPDATE target SET host_tags = '' WHERE host_tags IS NULL",
-		"UPDATE target SET tags = '' WHERE tags IS NULL",
-		"UPDATE target SET note = '' WHERE note IS NULL",
-		"UPDATE target SET host_ip = '' WHERE host_ip IS NULL",
-		"UPDATE target SET agent_version = '' WHERE agent_version IS NULL",
-		"UPDATE target SET engine_name = '' WHERE engine_name IS NULL",
-		"UPDATE target SET os = '' WHERE os IS NULL",
+	// Check if target table exists and has the necessary columns before fixing NULL values
+	var targetTableExists bool
+	db.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'target')").Scan(&targetTableExists)
+
+	if targetTableExists {
+		// Pre-migration: Fix NULL values in existing tables to avoid NOT NULL constraint errors
+		// Only update columns that exist in the table
+		columnsToFix := map[string]string{
+			"host_tags":     "UPDATE target SET host_tags = '' WHERE host_tags IS NULL",
+			"tags":          "UPDATE target SET tags = '' WHERE tags IS NULL",
+			"note":          "UPDATE target SET note = '' WHERE note IS NULL",
+			"host_ip":       "UPDATE target SET host_ip = '' WHERE host_ip IS NULL",
+			"agent_version": "UPDATE target SET agent_version = '' WHERE agent_version IS NULL",
+			"engine_name":   "UPDATE target SET engine_name = '' WHERE engine_name IS NULL",
+			"os":            "UPDATE target SET os = '' WHERE os IS NULL",
+		}
+
+		for column, query := range columnsToFix {
+			var columnExists bool
+			db.Raw("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'target' AND column_name = ?)", column).Scan(&columnExists)
+			if columnExists {
+				db.Exec(query)
+			}
+		}
 	}
-	for _, query := range nullFixQueries {
-		// Ignore errors - table might not exist yet on fresh install
-		db.Exec(query)
-	}
+
+	// Check if board_busigroup table exists (it has composite primary key that can't be altered)
+	var boardBusigroupExists bool
+	db.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'board_busigroup')").Scan(&boardBusigroupExists)
 
 	dts := []interface{}{
 		&InitTaskMeta{},
@@ -1828,7 +1842,7 @@ func postgresDataBaseInit(db *gorm.DB) error {
 		&InitTaskSchedulerHealth{},
 		&InitTaskHostDoing{},
 		&InitTaskHost{},
-		&InitBoardBusiGroup{},
+		// Skip InitBoardBusiGroup if table already exists (composite PK can't be altered)
 		&InitBuiltinComponent{},
 		&InitpostgresBuiltinPayload{},
 		&InitNotificationRecord{},
@@ -1867,6 +1881,12 @@ func postgresDataBaseInit(db *gorm.DB) error {
 		&InitChart{},
 		&InitChartShare{},
 		&InitPostgresAlertRule{}}
+
+	// Add InitBoardBusiGroup only if table doesn't exist
+	if !boardBusigroupExists {
+		// Insert at position 6 (after InitTaskHost)
+		dts = append(dts[:6], append([]interface{}{&InitBoardBusiGroup{}}, dts[6:]...)...)
+	}
 
 	for _, dt := range dts {
 		err := db.AutoMigrate(dt)

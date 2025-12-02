@@ -121,8 +121,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Set timezone
 ENV TZ=Asia/Shanghai
-# N9E_CONFIGS 由 entrypoint.sh 自动设置为 /app/etc-runtime
-# 源配置在 /app/etc (只读)，运行时配置在 /app/etc-runtime (可写)
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Copy binary

@@ -257,7 +257,7 @@ fi
 
 # Show service status for logging
 echo "=== Salt Minion Service Status ==="
-{{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+{{.SudoPrefix}}systemctl status salt-minion --no-pager 2>/dev/null || true
 
 # Verify salt-minion process is running
 echo "=== Verifying salt-minion process ==="
@@ -268,8 +268,40 @@ else
     exit 1
 fi
 
+# Verify Master connectivity (non-blocking)
+echo "=== Verifying Master Connectivity ==="
+MASTER_HOST="{{.MasterHost}}"
+CONNECT_OK=0
+
+# Try to verify network connectivity to master
+for i in 1 2 3; do
+    if timeout 3 bash -c "echo > /dev/tcp/${MASTER_HOST}/4505" 2>/dev/null || \
+       timeout 3 bash -c "echo > /dev/tcp/${MASTER_HOST}/4506" 2>/dev/null; then
+        echo "    ✓ Salt Master ports (4505/4506) are reachable"
+        CONNECT_OK=1
+        break
+    fi
+    echo "    Waiting for Master connectivity... (attempt $i/3)"
+    sleep 2
+done
+
+if [ $CONNECT_OK -eq 0 ]; then
+    echo "    ⚠ Could not verify Master connectivity (this may be normal if firewall rules are strict)"
+fi
+
+# Verify configuration
+echo "=== Verifying Configuration ==="
+if [ -f /etc/salt/minion ]; then
+    echo "    ✓ Minion configuration file exists"
+    echo "    Configured Master: $(grep '^master:' /etc/salt/minion 2>/dev/null | awk '{print $2}' || echo 'not found')"
+    echo "    Configured ID: $(grep '^id:' /etc/salt/minion 2>/dev/null | awk '{print $2}' || echo 'not found')"
+else
+    echo "    ⚠ Minion configuration file not found"
+fi
+
 echo "=== Cleaning up ==="
 cd /tmp && rm -rf salt-install bootstrap-salt.sh
 
 echo "=== Salt Minion Installation Complete ==="
 echo "SERVICE_STATUS=running"
+echo "INSTALL_SUCCESS=true"
