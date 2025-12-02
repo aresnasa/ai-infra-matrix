@@ -3,26 +3,34 @@
 # 主机文件解析 API 调试脚本
 # =============================================================================
 # 用法:
-#   ./test-host-parser-api.sh [API_URL]
+#   ./test-host-parser-api.sh [API_URL] [USERNAME] [PASSWORD]
 #
 # 参数:
-#   API_URL - API 服务地址，默认 http://localhost:8080
+#   API_URL  - API 服务地址，默认 http://localhost:8080
+#   USERNAME - 登录用户名，默认 admin
+#   PASSWORD - 登录密码，默认 admin123
 #
 # 示例:
 #   ./test-host-parser-api.sh
 #   ./test-host-parser-api.sh http://192.168.18.127:8080
+#   ./test-host-parser-api.sh http://192.168.18.127:8080 admin admin123
 # =============================================================================
 
 set -e
 
 API_URL="${1:-http://localhost:8080}"
+USERNAME="${2:-admin}"
+PASSWORD="${3:-admin123}"
+
 DEBUG_ENDPOINT="${API_URL}/api/saltstack/hosts/parse/debug"
 NORMAL_ENDPOINT="${API_URL}/api/saltstack/hosts/parse"
+LOGIN_ENDPOINT="${API_URL}/api/auth/login"
 
 echo "=============================================="
 echo " 主机文件解析 API 调试工具"
 echo "=============================================="
 echo "API URL: ${API_URL}"
+echo "用户名: ${USERNAME}"
 echo "调试接口: ${DEBUG_ENDPOINT}"
 echo "普通接口: ${NORMAL_ENDPOINT}"
 echo ""
@@ -63,6 +71,36 @@ format_json() {
     fi
 }
 
+# 登录获取 Token
+get_token() {
+    print_header "登录认证"
+    echo "正在登录..."
+    
+    LOGIN_RESPONSE=$(curl -s -X POST "${LOGIN_ENDPOINT}" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
+    
+    # 提取 token
+    if command -v jq &> /dev/null; then
+        TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token // .data.token // empty')
+    else
+        TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+    fi
+    
+    if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+        print_success "登录成功"
+        echo "Token: ${TOKEN:0:50}..."
+        AUTH_HEADER="Authorization: Bearer $TOKEN"
+    else
+        print_error "登录失败"
+        echo "响应: $LOGIN_RESPONSE"
+        echo ""
+        echo "提示: 请检查用户名和密码是否正确"
+        echo "用法: $0 [API_URL] [USERNAME] [PASSWORD]"
+        exit 1
+    fi
+}
+
 # 测试 1: CSV 格式
 test_csv() {
     print_header "测试 1: CSV 格式解析"
@@ -79,6 +117,7 @@ test_csv() {
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$CSV_CONTENT" | jq -Rs '.'), \"filename\": \"test.csv\"}")
     
     echo "响应结果:"
@@ -107,6 +146,7 @@ test_json() {
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$JSON_CONTENT" | jq -Rs '.'), \"filename\": \"test.json\"}")
     
     echo "响应结果:"
@@ -146,6 +186,7 @@ test_yaml() {
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$YAML_CONTENT" | jq -Rs '.'), \"filename\": \"test.yaml\"}")
     
     echo "响应结果:"
@@ -176,6 +217,7 @@ db1 ansible_host=192.168.4.20 ansible_port=22 ansible_user=dba ansible_password=
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$INI_CONTENT" | jq -Rs '.'), \"filename\": \"inventory.ini\"}")
     
     echo "响应结果:"
@@ -202,6 +244,7 @@ test_auto_detect() {
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$CSV_CONTENT" | jq -Rs '.'), \"filename\": \"hostfile\"}")
     
     echo "响应结果:"
@@ -229,6 +272,7 @@ no structure at all'
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$INVALID_CONTENT" | jq -Rs '.'), \"filename\": \"invalid.txt\"}")
     
     echo "响应结果:"
@@ -248,6 +292,7 @@ test_empty_file() {
     echo "调用调试接口（空内容）..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d '{"content": "", "filename": "empty.csv"}')
     
     echo "响应结果:"
@@ -275,6 +320,7 @@ $(rm -rf /),22,root,password'
     echo "调用调试接口..."
     RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$DANGEROUS_CONTENT" | jq -Rs '.'), \"filename\": \"dangerous.csv\"}")
     
     echo "响应结果:"
@@ -302,6 +348,7 @@ test_normal_endpoint() {
     echo "调用普通接口..."
     RESPONSE=$(curl -s -X POST "${NORMAL_ENDPOINT}" \
         -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
         -d "{\"content\": $(echo "$CSV_CONTENT" | jq -Rs '.'), \"filename\": \"test.csv\"}")
     
     echo "响应结果:"
@@ -332,6 +379,7 @@ test_interactive() {
         echo "调用调试接口..."
         RESPONSE=$(curl -s -X POST "${DEBUG_ENDPOINT}" \
             -H "Content-Type: application/json" \
+            -H "$AUTH_HEADER" \
             -d "{\"content\": $(echo "$CONTENT" | jq -Rs '.'), \"filename\": \"$FILENAME\"}")
         
         echo "响应结果:"
@@ -406,4 +454,5 @@ check_dependencies() {
 }
 
 check_dependencies
+get_token
 main
