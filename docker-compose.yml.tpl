@@ -996,7 +996,7 @@ services:
       - "${EXTERNAL_HOST}:${NIGHTINGALE_PORT:-17000}:17000"  # HTTP API
       - "${EXTERNAL_HOST}:${NIGHTINGALE_ALERT_PORT:-19000}:19000"  # Alert engine
     volumes:
-      - ./src/nightingale/etc:/app/etc
+      - ./src/nightingale/etc:/app/etc:ro
       - nightingale_data:/app/data
       - nightingale_logs:/app/logs
     depends_on:
