@@ -608,6 +608,8 @@ export const saltStackAPI = {
 
   // 主机文件解析
   parseHostFile: (content, filename) => api.post('/saltstack/hosts/parse', { content, filename }),
+  // 调试解析接口（返回详细解析过程）
+  parseHostFileDebug: (content, filename) => api.post('/saltstack/hosts/parse/debug', { content, filename }),
 
   // Minion 管理（删除、卸载）
   removeMinionKey: (minionId, force = false) => api.delete(`/saltstack/minion/${minionId}`, { params: { force } }),

@@ -419,17 +419,37 @@ const SaltStackDashboard = () => {
   // 导入主机文件
   const handleFileImport = async (file) => {
     setImportLoading(true);
+    
+    // 调试日志
+    console.group('🔍 [DEBUG] 主机文件导入');
+    console.log('📄 文件名:', file.name);
+    console.log('📦 文件大小:', file.size, 'bytes');
+    console.log('📝 文件类型:', file.type);
+    
     try {
       const content = await file.text();
+      console.log('📜 文件内容长度:', content.length);
+      console.log('📜 文件内容预览 (前500字符):', content.substring(0, 500));
+      
+      console.log('🌐 调用 API: parseHostFile');
       const response = await saltStackAPI.parseHostFile(content, file.name);
       
+      console.log('✅ API 响应:', response);
+      console.log('✅ 响应数据:', response.data);
+      
       if (!response.data?.success) {
+        console.error('❌ 解析失败:', response.data?.message || response.data?.error);
         throw new Error(response.data?.message || response.data?.error || t('saltstack.parseFailed'));
       }
 
       const hosts = response.data?.data?.hosts || [];
+      console.log('📋 解析到的主机数:', hosts.length);
+      console.log('📋 解析到的主机列表:', hosts);
+      
       if (hosts.length === 0) {
+        console.warn('⚠️ 没有有效的主机配置');
         message.warning(t('saltstack.noValidHostConfig'));
+        console.groupEnd();
         return false;
       }
 
@@ -445,6 +465,7 @@ const SaltStackDashboard = () => {
           .filter(h => h.host && h.host.trim())
           .map(h => h.host.trim().toLowerCase())
       );
+      console.log('🔄 现有主机列表:', Array.from(existingHosts));
 
       // 用于跟踪本次导入中的重复
       const importedHosts = new Set();
@@ -458,18 +479,21 @@ const SaltStackDashboard = () => {
         if (hostValue && !isValidIPOrHostname(hostValue)) {
           invalidCount++;
           invalidHosts.push(hostValue);
+          console.warn(`⚠️ 主机 ${idx + 1}: ${hostValue} - IP/主机名格式无效`);
           return; // 跳过无效主机
         }
 
         // 检查与现有列表的重复
         if (hostValue && existingHosts.has(hostLower)) {
           duplicateCount++;
+          console.warn(`⚠️ 主机 ${idx + 1}: ${hostValue} - 与现有列表重复`);
           return; // 跳过重复主机
         }
 
         // 检查本次导入中的重复
         if (hostValue && importedHosts.has(hostLower)) {
           duplicateCount++;
+          console.warn(`⚠️ 主机 ${idx + 1}: ${hostValue} - 本次导入中重复`);
           return; // 跳过重复主机
         }
 
@@ -479,7 +503,7 @@ const SaltStackDashboard = () => {
         }
 
         validCount++;
-        newHosts.push({
+        const newHost = {
           key: Date.now() + idx + validCount, // 确保 key 唯一
           host: hostValue,
           port: h.port || 22,
@@ -488,7 +512,17 @@ const SaltStackDashboard = () => {
           use_sudo: h.use_sudo || false,
           minion_id: h.minion_id || '',
           group: h.group || ''
-        });
+        };
+        console.log(`✓ 主机 ${idx + 1}: ${hostValue} - 有效`, newHost);
+        newHosts.push(newHost);
+      });
+
+      console.log('📊 导入统计:', {
+        总数: hosts.length,
+        有效: validCount,
+        无效: invalidCount,
+        重复: duplicateCount,
+        无效主机: invalidHosts
       });
 
       if (newHosts.length === 0) {
@@ -499,13 +533,16 @@ const SaltStackDashboard = () => {
         } else {
           message.warning(t('saltstack.noValidHostConfig'));
         }
+        console.groupEnd();
         return false;
       }
 
       // 如果当前只有一个空行，则替换；否则追加
       if (batchInstallHosts.length === 1 && !batchInstallHosts[0].host) {
+        console.log('🔄 替换现有空行');
         setBatchInstallHosts(newHosts);
       } else {
+        console.log('🔄 追加到现有列表');
         setBatchInstallHosts([...batchInstallHosts, ...newHosts]);
       }
 
@@ -523,9 +560,14 @@ const SaltStackDashboard = () => {
       } else {
         message.success(resultMsg);
       }
+      
+      console.log('✅ 导入完成:', resultMsg);
+      console.groupEnd();
 
     } catch (e) {
-      console.error('文件导入失败:', e);
+      console.error('❌ 文件导入失败:', e);
+      console.error('❌ 错误详情:', e.response?.data);
+      console.groupEnd();
       message.error(t('saltstack.importFailed') + ': ' + (e.response?.data?.error || e.message));
     } finally {
       setImportLoading(false);

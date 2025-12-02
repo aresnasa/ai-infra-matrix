@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
@@ -269,6 +270,7 @@ func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 		saltstack.GET("/host-templates/:id/hosts", c.GetHostTemplateHosts)
 		saltstack.GET("/host-templates/download/:format", c.DownloadHostTemplate)
 		saltstack.POST("/hosts/parse", c.ParseHostFile)
+		saltstack.POST("/hosts/parse/debug", c.ParseHostFileDebug) // 调试接口
 
 		// 测试主机
 		saltstack.GET("/test-hosts", c.GetTestHosts)
@@ -1588,5 +1590,257 @@ func (c *SaltStackClientController) ParseHostFile(ctx *gin.Context) {
 			"count":  len(hostList),
 			"format": format,
 		},
+	})
+}
+
+// ParseHostFileDebugRequest 调试解析主机文件请求
+type ParseHostFileDebugRequest struct {
+	Content  string `json:"content" binding:"required"`
+	Format   string `json:"format"`   // 可选，如果提供则使用指定格式
+	Filename string `json:"filename"` // 文件名，用于自动检测格式
+}
+
+// ParseHostFileDebug 调试解析上传的主机文件（返回详细解析过程）
+// @Summary 调试解析主机文件
+// @Description 调试解析上传的主机配置文件，返回详细的解析过程和验证结果
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body ParseHostFileDebugRequest true "文件内容"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/hosts/parse/debug [post]
+func (c *SaltStackClientController) ParseHostFileDebug(ctx *gin.Context) {
+	var req ParseHostFileDebugRequest
+	debugInfo := make(map[string]interface{})
+	debugInfo["timestamp"] = time.Now().Format(time.RFC3339)
+	debugInfo["steps"] = []map[string]interface{}{}
+
+	addStep := func(name string, status string, details interface{}) {
+		steps := debugInfo["steps"].([]map[string]interface{})
+		debugInfo["steps"] = append(steps, map[string]interface{}{
+			"step":    len(steps) + 1,
+			"name":    name,
+			"status":  status,
+			"details": details,
+		})
+	}
+
+	// 1. 解析请求
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		addStep("解析请求体", "failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"message": err.Error(),
+			"debug":   debugInfo,
+		})
+		return
+	}
+
+	addStep("解析请求体", "success", map[string]interface{}{
+		"filename":       req.Filename,
+		"format":         req.Format,
+		"content_length": len(req.Content),
+		"content_preview": func() string {
+			if len(req.Content) > 500 {
+				return req.Content[:500] + "..."
+			}
+			return req.Content
+		}(),
+	})
+
+	parser := services.NewHostParserService()
+	contentBytes := []byte(req.Content)
+
+	// 2. 检测文件格式
+	format := strings.ToLower(req.Format)
+	if format == "" && req.Filename != "" {
+		if strings.HasSuffix(strings.ToLower(req.Filename), ".csv") {
+			format = "csv"
+		} else if strings.HasSuffix(strings.ToLower(req.Filename), ".json") {
+			format = "json"
+		} else if strings.HasSuffix(strings.ToLower(req.Filename), ".yaml") || strings.HasSuffix(strings.ToLower(req.Filename), ".yml") {
+			format = "yaml"
+		} else if strings.HasSuffix(strings.ToLower(req.Filename), ".ini") {
+			format = "ini"
+		}
+	}
+	addStep("检测文件格式", "success", map[string]interface{}{
+		"detected_format": format,
+		"from_filename":   req.Filename,
+		"from_param":      req.Format,
+	})
+
+	// 3. 验证文件编码
+	if err := parser.ValidateEncoding(contentBytes); err != nil {
+		addStep("验证文件编码", "failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Encoding validation failed",
+			"message": err.Error(),
+			"debug":   debugInfo,
+		})
+		return
+	}
+	addStep("验证文件编码", "success", map[string]interface{}{
+		"encoding": "UTF-8",
+	})
+
+	// 4. 验证文件大小
+	if err := parser.ValidateFileSize(contentBytes); err != nil {
+		addStep("验证文件大小", "failed", map[string]interface{}{
+			"error":     err.Error(),
+			"file_size": len(contentBytes),
+			"max_size":  1024 * 1024,
+		})
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "File size validation failed",
+			"message": err.Error(),
+			"debug":   debugInfo,
+		})
+		return
+	}
+	addStep("验证文件大小", "success", map[string]interface{}{
+		"file_size":    len(contentBytes),
+		"max_size":     1024 * 1024,
+		"size_percent": fmt.Sprintf("%.2f%%", float64(len(contentBytes))/float64(1024*1024)*100),
+	})
+
+	// 5. 验证行数
+	lineCount := strings.Count(req.Content, "\n") + 1
+	if err := parser.ValidateLineCount(contentBytes); err != nil {
+		addStep("验证行数", "failed", map[string]interface{}{
+			"error":      err.Error(),
+			"line_count": lineCount,
+			"max_lines":  10000,
+		})
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Line count validation failed",
+			"message": err.Error(),
+			"debug":   debugInfo,
+		})
+		return
+	}
+	addStep("验证行数", "success", map[string]interface{}{
+		"line_count": lineCount,
+		"max_lines":  10000,
+	})
+
+	// 6. 检测危险内容
+	if err := parser.DetectDangerousContent(contentBytes); err != nil {
+		addStep("安全检查", "failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Security check failed",
+			"message": err.Error(),
+			"debug":   debugInfo,
+		})
+		return
+	}
+	addStep("安全检查", "success", map[string]interface{}{
+		"dangerous_patterns_checked": true,
+	})
+
+	// 7. 解析文件内容
+	hosts, err := parser.ParseHosts(contentBytes, format)
+	if err != nil {
+		addStep("解析文件内容", "failed", map[string]interface{}{
+			"error":  err.Error(),
+			"format": format,
+		})
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Failed to parse file",
+			"message": err.Error(),
+			"debug":   debugInfo,
+		})
+		return
+	}
+
+	// 解析每个主机的详细信息
+	hostsDebug := make([]map[string]interface{}, 0, len(hosts))
+	for i, h := range hosts {
+		hostDebug := map[string]interface{}{
+			"index":     i + 1,
+			"host":      h.Host,
+			"port":      h.Port,
+			"username":  h.Username,
+			"password":  strings.Repeat("*", len(h.Password)), // 脱敏
+			"use_sudo":  h.UseSudo,
+			"minion_id": h.MinionID,
+			"group":     h.Group,
+		}
+
+		// 验证每个主机配置
+		if err := parser.ValidateHostConfig(&h); err != nil {
+			hostDebug["validation"] = "failed"
+			hostDebug["validation_error"] = err.Error()
+		} else {
+			hostDebug["validation"] = "passed"
+		}
+
+		hostsDebug = append(hostsDebug, hostDebug)
+	}
+
+	addStep("解析文件内容", "success", map[string]interface{}{
+		"format":      format,
+		"hosts_count": len(hosts),
+		"hosts":       hostsDebug,
+	})
+
+	// 8. 验证主机配置安全性
+	validHosts := 0
+	invalidHosts := 0
+	validationErrors := []string{}
+	for i, host := range hosts {
+		if err := parser.ValidateHostConfig(&host); err != nil {
+			invalidHosts++
+			validationErrors = append(validationErrors, fmt.Sprintf("主机 %d (%s): %v", i+1, host.Host, err))
+		} else {
+			validHosts++
+		}
+	}
+
+	addStep("验证主机配置安全性", func() string {
+		if invalidHosts > 0 {
+			return "warning"
+		}
+		return "success"
+	}(), map[string]interface{}{
+		"valid_hosts":       validHosts,
+		"invalid_hosts":     invalidHosts,
+		"validation_errors": validationErrors,
+	})
+
+	// 转换为前端需要的格式
+	hostList := make([]models.HostTemplateHost, 0, len(hosts))
+	for _, h := range hosts {
+		hostList = append(hostList, models.HostTemplateHost{
+			Host:     h.Host,
+			Port:     h.Port,
+			Username: h.Username,
+			Password: h.Password,
+			UseSudo:  h.UseSudo,
+			MinionID: h.MinionID,
+			Group:    h.Group,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"hosts":  hostList,
+			"count":  len(hostList),
+			"format": format,
+		},
+		"debug": debugInfo,
 	})
 }
