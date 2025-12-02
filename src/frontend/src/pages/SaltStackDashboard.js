@@ -1373,6 +1373,122 @@ const SaltStackDashboard = () => {
                 />
               </TabPane>
 
+              <TabPane tab={t('saltstack.groupManagement', '分组管理')} key="groups" icon={<TeamOutlined />}>
+                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text type="secondary">
+                    {t('saltstack.totalGroups', { count: minionGroups.length })}
+                  </Text>
+                  <Space>
+                    <Button 
+                      icon={<ReloadOutlined />} 
+                      onClick={loadMinionGroups}
+                      loading={groupsLoading}
+                    >
+                      {t('common.refresh')}
+                    </Button>
+                    <Button 
+                      type="primary" 
+                      icon={<PlusOutlined />} 
+                      onClick={openCreateGroupModal}
+                    >
+                      {t('saltstack.createGroup', '创建分组')}
+                    </Button>
+                  </Space>
+                </div>
+                <Table
+                  dataSource={minionGroups}
+                  rowKey="id"
+                  loading={groupsLoading}
+                  size="small"
+                  pagination={{
+                    showSizeChanger: true,
+                    showTotal: (total) => t('common.total', { count: total }),
+                    defaultPageSize: 10,
+                    pageSizeOptions: ['10', '20', '50'],
+                  }}
+                  columns={[
+                    {
+                      title: t('saltstack.groupName', '分组名称'),
+                      dataIndex: 'name',
+                      key: 'name',
+                      width: 180,
+                      render: (name, record) => (
+                        <Tag color={record.color || 'default'} icon={record.icon ? <TeamOutlined /> : null}>
+                          {name}
+                        </Tag>
+                      ),
+                    },
+                    {
+                      title: t('saltstack.groupDescription', '描述'),
+                      dataIndex: 'description',
+                      key: 'description',
+                      ellipsis: true,
+                    },
+                    {
+                      title: t('saltstack.groupColor', '颜色'),
+                      dataIndex: 'color',
+                      key: 'color',
+                      width: 100,
+                      render: (color) => <Tag color={color || 'default'}>{color || 'default'}</Tag>,
+                    },
+                    {
+                      title: t('common.createdAt', '创建时间'),
+                      dataIndex: 'created_at',
+                      key: 'created_at',
+                      width: 180,
+                      render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                    },
+                    {
+                      title: t('common.actions', '操作'),
+                      key: 'actions',
+                      width: 150,
+                      render: (_, record) => (
+                        <Space>
+                          <Tooltip title={t('common.edit', '编辑')}>
+                            <Button 
+                              type="link" 
+                              size="small" 
+                              icon={<EditOutlined />} 
+                              onClick={() => openEditGroupModal(record)}
+                            />
+                          </Tooltip>
+                          <Popconfirm
+                            title={t('saltstack.confirmDeleteGroup', '确定要删除此分组吗？')}
+                            description={t('saltstack.deleteGroupHint', '删除分组不会影响已分配的 Minion')}
+                            onConfirm={() => handleDeleteGroup(record.id)}
+                            okText={t('common.confirm', '确定')}
+                            cancelText={t('common.cancel', '取消')}
+                          >
+                            <Tooltip title={t('common.delete', '删除')}>
+                              <Button 
+                                type="link" 
+                                size="small" 
+                                danger
+                                icon={<DeleteOutlined />} 
+                              />
+                            </Tooltip>
+                          </Popconfirm>
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+                {minionGroups.length === 0 && !groupsLoading && (
+                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                    <Text type="secondary">{t('saltstack.noGroups', '暂无分组')}</Text>
+                    <div style={{ marginTop: 16 }}>
+                      <Button 
+                        type="primary" 
+                        icon={<PlusOutlined />} 
+                        onClick={openCreateGroupModal}
+                      >
+                        {t('saltstack.createGroup', '创建分组')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </TabPane>
+
               <TabPane tab={t('saltstack.minionsManagement')} key="minions" icon={<DesktopOutlined />}>
                 <MinionsTable
                   minions={minions}
@@ -1764,122 +1880,6 @@ const SaltStackDashboard = () => {
                       </div>
                     )}
                   </>
-                )}
-              </TabPane>
-
-              <TabPane tab={t('saltstack.groupManagement', '分组管理')} key="groups" icon={<TeamOutlined />}>
-                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text type="secondary">
-                    {t('saltstack.totalGroups', { count: minionGroups.length })}
-                  </Text>
-                  <Space>
-                    <Button 
-                      icon={<ReloadOutlined />} 
-                      onClick={loadMinionGroups}
-                      loading={groupsLoading}
-                    >
-                      {t('common.refresh')}
-                    </Button>
-                    <Button 
-                      type="primary" 
-                      icon={<PlusOutlined />} 
-                      onClick={openCreateGroupModal}
-                    >
-                      {t('saltstack.createGroup', '创建分组')}
-                    </Button>
-                  </Space>
-                </div>
-                <Table
-                  dataSource={minionGroups}
-                  rowKey="id"
-                  loading={groupsLoading}
-                  size="small"
-                  pagination={{
-                    showSizeChanger: true,
-                    showTotal: (total) => t('common.total', { count: total }),
-                    defaultPageSize: 10,
-                    pageSizeOptions: ['10', '20', '50'],
-                  }}
-                  columns={[
-                    {
-                      title: t('saltstack.groupName', '分组名称'),
-                      dataIndex: 'name',
-                      key: 'name',
-                      width: 180,
-                      render: (name, record) => (
-                        <Tag color={record.color || 'default'} icon={record.icon ? <TeamOutlined /> : null}>
-                          {name}
-                        </Tag>
-                      ),
-                    },
-                    {
-                      title: t('saltstack.groupDescription', '描述'),
-                      dataIndex: 'description',
-                      key: 'description',
-                      ellipsis: true,
-                    },
-                    {
-                      title: t('saltstack.groupColor', '颜色'),
-                      dataIndex: 'color',
-                      key: 'color',
-                      width: 100,
-                      render: (color) => <Tag color={color || 'default'}>{color || 'default'}</Tag>,
-                    },
-                    {
-                      title: t('common.createdAt', '创建时间'),
-                      dataIndex: 'created_at',
-                      key: 'created_at',
-                      width: 180,
-                      render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
-                    },
-                    {
-                      title: t('common.actions', '操作'),
-                      key: 'actions',
-                      width: 150,
-                      render: (_, record) => (
-                        <Space>
-                          <Tooltip title={t('common.edit', '编辑')}>
-                            <Button 
-                              type="link" 
-                              size="small" 
-                              icon={<EditOutlined />} 
-                              onClick={() => openEditGroupModal(record)}
-                            />
-                          </Tooltip>
-                          <Popconfirm
-                            title={t('saltstack.confirmDeleteGroup', '确定要删除此分组吗？')}
-                            description={t('saltstack.deleteGroupHint', '删除分组不会影响已分配的 Minion')}
-                            onConfirm={() => handleDeleteGroup(record.id)}
-                            okText={t('common.confirm', '确定')}
-                            cancelText={t('common.cancel', '取消')}
-                          >
-                            <Tooltip title={t('common.delete', '删除')}>
-                              <Button 
-                                type="link" 
-                                size="small" 
-                                danger
-                                icon={<DeleteOutlined />} 
-                              />
-                            </Tooltip>
-                          </Popconfirm>
-                        </Space>
-                      ),
-                    },
-                  ]}
-                />
-                {minionGroups.length === 0 && !groupsLoading && (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <Text type="secondary">{t('saltstack.noGroups', '暂无分组')}</Text>
-                    <div style={{ marginTop: 16 }}>
-                      <Button 
-                        type="primary" 
-                        icon={<PlusOutlined />} 
-                        onClick={openCreateGroupModal}
-                      >
-                        {t('saltstack.createGroup', '创建分组')}
-                      </Button>
-                    </div>
-                  </div>
                 )}
               </TabPane>
             </Tabs>
@@ -2282,6 +2282,26 @@ const SaltStackDashboard = () => {
                         onChange={(v) => updateHostRow(host.key, 'group', v)}
                         allowClear
                         style={{ width: '100%' }}
+                        loading={groupsLoading}
+                        dropdownRender={(menu) => (
+                          <>
+                            <div style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'flex-end' }}>
+                              <Button
+                                type="link"
+                                size="small"
+                                icon={<ReloadOutlined spin={groupsLoading} />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  loadMinionGroups();
+                                }}
+                                loading={groupsLoading}
+                              >
+                                {t('common.refresh', '刷新')}
+                              </Button>
+                            </div>
+                            {menu}
+                          </>
+                        )}
                       >
                         {minionGroups.map(g => (
                           <Select.Option key={g.id} value={g.name}>

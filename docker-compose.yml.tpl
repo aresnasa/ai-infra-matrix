@@ -542,6 +542,8 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
+    # cgroup 配置: 支持 cgroupv1 和 cgroupv2
+    # 自动检测: CGROUP_VERSION={{CGROUP_VERSION}}
     cgroup: host
     tmpfs:
       - /run
@@ -565,7 +567,7 @@ services:
     expose:
       - "8002"
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - {{CGROUP_MOUNT}}
       - salt_master_1_cache:/var/cache/salt
       - salt_logs:/var/log/salt
       - salt_keys:/etc/salt/pki
@@ -602,6 +604,8 @@ services:
     privileged: true
     security_opt:
       - seccomp:unconfined
+    # cgroup 配置: 支持 cgroupv1 和 cgroupv2
+    # 自动检测: CGROUP_VERSION={{CGROUP_VERSION}}
     cgroup: host
     tmpfs:
       - /run
@@ -625,7 +629,7 @@ services:
     expose:
       - "8002"
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - {{CGROUP_MOUNT}}
       - salt_master_2_cache:/var/cache/salt
       - salt_logs:/var/log/salt
       - salt_keys:/etc/salt/pki
@@ -663,6 +667,7 @@ services:
     security_opt:
       - seccomp:unconfined
     # cgroup 配置：让容器拥有自己的 cgroup 命名空间，这对 systemd 运行至关重要
+    # 自动检测: CGROUP_VERSION={{CGROUP_VERSION}}
     cgroup: host
     tmpfs:
       - /run
@@ -714,7 +719,7 @@ services:
       - "6817:6817"  # SLURM Controller 外部访问
       - "6818:6818"  # SLURM Database Daemon 外部访问
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - {{CGROUP_MOUNT}}
       - slurm_master_data:/var/lib/slurm
       - slurm_master_logs:/var/log/slurm
       - slurm_master_spool:/var/spool/slurm

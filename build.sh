@@ -97,6 +97,51 @@ detect_external_host() {
     echo "${detected_ip:-localhost}"
 }
 
+# 检测 cgroup 版本 (v1 或 v2)
+# cgroupv2 使用统一的层次结构，通常挂载在 /sys/fs/cgroup
+# cgroupv1 使用多层次结构，有多个子系统目录
+detect_cgroup_version() {
+    local cgroup_version="v1"  # 默认 v1
+    
+    # 方法1：检查 /sys/fs/cgroup/cgroup.controllers (cgroupv2 特有)
+    if [[ -f "/sys/fs/cgroup/cgroup.controllers" ]]; then
+        cgroup_version="v2"
+    # 方法2：检查 /sys/fs/cgroup 的挂载类型
+    elif command -v stat &> /dev/null; then
+        local cgroup_fstype
+        cgroup_fstype=$(stat -f -c %T /sys/fs/cgroup 2>/dev/null || stat -f %T /sys/fs/cgroup 2>/dev/null)
+        if [[ "$cgroup_fstype" == "cgroup2fs" ]] || [[ "$cgroup_fstype" == "cgroup2" ]]; then
+            cgroup_version="v2"
+        fi
+    # 方法3：通过 mount 命令检查
+    elif command -v mount &> /dev/null; then
+        if mount | grep -q "cgroup2 on /sys/fs/cgroup"; then
+            cgroup_version="v2"
+        fi
+    fi
+    
+    echo "$cgroup_version"
+}
+
+# 根据 cgroup 版本生成适当的挂载配置
+# cgroupv1: 需要挂载 /sys/fs/cgroup:/sys/fs/cgroup:ro 或 :rw
+# cgroupv2: 可能需要 /sys/fs/cgroup:/sys/fs/cgroup:rw,rslave 或仅使用 cgroup: host
+get_cgroup_mount() {
+    local cgroup_version="${1:-$(detect_cgroup_version)}"
+    
+    case "$cgroup_version" in
+        v2)
+            # cgroupv2 挂载配置
+            # 使用 rw,rslave 确保 systemd 可以正常工作
+            echo "/sys/fs/cgroup:/sys/fs/cgroup:rw"
+            ;;
+        v1|*)
+            # cgroupv1 挂载配置
+            echo "/sys/fs/cgroup:/sys/fs/cgroup:rw"
+            ;;
+    esac
+}
+
 # 更新 .env 文件中的变量
 # 用法: update_env_variable "VAR_NAME" "var_value"
 update_env_variable() {
@@ -509,6 +554,13 @@ TEMPLATE_VARIABLES=(
     # AppHub configuration (Runtime)
     # ===========================================
     "APPHUB_PORT"         # AppHub port for package download (e.g., 28080)
+    
+    # ===========================================
+    # Cgroup configuration (Runtime - auto-detected)
+    # These variables are auto-detected and set during template rendering
+    # ===========================================
+    "CGROUP_VERSION"      # Cgroup version: v1 or v2 (auto-detected)
+    "CGROUP_MOUNT"        # Cgroup mount path for docker-compose volumes
 )
 
 # Render a single template file
@@ -572,6 +624,19 @@ render_all_templates() {
     set -a
     source "$ENV_FILE"
     set +a
+    
+    # Step 1.5: Auto-detect cgroup version and set environment variables
+    log_info ""
+    log_info "Step 1.5: Detecting cgroup version..."
+    local detected_cgroup_version=$(detect_cgroup_version)
+    local detected_cgroup_mount=$(get_cgroup_mount "$detected_cgroup_version")
+    
+    # Export cgroup variables for template rendering
+    export CGROUP_VERSION="$detected_cgroup_version"
+    export CGROUP_MOUNT="$detected_cgroup_mount"
+    
+    log_info "  CGROUP_VERSION=$CGROUP_VERSION"
+    log_info "  CGROUP_MOUNT=$CGROUP_MOUNT"
     
     log_info ""
     log_info "Step 2: Rendering template files..."
