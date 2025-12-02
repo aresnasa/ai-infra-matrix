@@ -121,7 +121,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Set timezone
 ENV TZ=Asia/Shanghai
-ENV N9E_CONFIGS=/app/etc
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Copy binary
