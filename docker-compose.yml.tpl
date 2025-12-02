@@ -1067,3 +1067,8 @@ networks:
   ai-infra-network:
     name: ai-infra-network
     driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.238.0/24
+          gateway: 172.16.238.1
