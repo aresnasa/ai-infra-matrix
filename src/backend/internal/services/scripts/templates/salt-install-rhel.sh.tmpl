@@ -190,22 +190,34 @@ echo "=== Starting Salt Minion service ==="
 {{.SudoPrefix}}systemctl daemon-reload || true
 {{.SudoPrefix}}systemctl enable salt-minion || true
 
-# Retry starting salt-minion service up to 3 times
+# Initial start to trigger key exchange with master
+echo "    Initial start to trigger key exchange..."
+{{.SudoPrefix}}systemctl start salt-minion || true
+
+# Wait for key exchange to complete (master needs time to receive the key request)
+echo "=== Waiting for key exchange with Salt Master ==="
+sleep 5
+
+# Restart service to ensure clean connection after key exchange
+echo "    Restarting service for reliable master connection..."
+{{.SudoPrefix}}systemctl restart salt-minion || true
+
+# Wait for service to stabilize after restart
+echo "=== Waiting for Salt Minion service to stabilize ==="
+sleep 3
+
+# Retry starting salt-minion service up to 3 times if needed
 START_RETRIES=3
 START_SUCCESS=0
 for i in $(seq 1 $START_RETRIES); do
-    echo "    Attempting to start salt-minion (attempt $i/$START_RETRIES)..."
-    {{.SudoPrefix}}systemctl restart salt-minion
-    if [ $? -eq 0 ]; then
+    if {{.SudoPrefix}}systemctl is-active --quiet salt-minion; then
         START_SUCCESS=1
-        echo "    salt-minion service started successfully on attempt $i"
+        echo "    salt-minion service is running (verified on attempt $i/$START_RETRIES)"
         break
     else
-        echo "    Failed to start salt-minion on attempt $i"
-        if [ $i -lt $START_RETRIES ]; then
-            echo "    Waiting 3 seconds before retry..."
-            sleep 3
-        fi
+        echo "    Attempting to restart salt-minion (attempt $i/$START_RETRIES)..."
+        {{.SudoPrefix}}systemctl restart salt-minion
+        sleep 3
     fi
 done
 
@@ -215,10 +227,6 @@ if [ $START_SUCCESS -eq 0 ]; then
     {{.SudoPrefix}}journalctl -u salt-minion --no-pager -n 30 || true
     exit 1
 fi
-
-# Wait for service to stabilize
-echo "=== Waiting for Salt Minion service to stabilize ==="
-sleep 3
 
 # Verify service is running
 echo "=== Verifying Salt Minion service status ==="

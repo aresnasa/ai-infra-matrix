@@ -315,24 +315,44 @@ EOF
     log_info "配置已写入 /etc/salt/minion"
 }
 
-# 启动服务
+# 启动服务 (增强版 - 支持密钥交换等待和重试)
 start_service() {
     log_info "启动 Salt Minion 服务..."
     
+    local MAX_RETRIES=3
+    local RETRY_INTERVAL=5
+    
     systemctl daemon-reload || true
     systemctl enable salt-minion || true
+    
+    # 首次启动以触发与 master 的密钥交换
+    log_info "首次启动服务以触发密钥交换..."
+    systemctl start salt-minion || true
+    
+    # 等待密钥交换完成
+    log_info "等待与 Salt Master 进行密钥交换..."
+    sleep 5
+    
+    # 重启服务以确保与 master 的可靠连接
+    log_info "重启服务以确保可靠连接..."
     systemctl restart salt-minion || true
+    sleep 3
     
-    sleep 2
+    # 验证服务状态并在需要时重试
+    for i in $(seq 1 $MAX_RETRIES); do
+        if systemctl is-active --quiet salt-minion; then
+            log_info "✓ Salt Minion 服务已启动 (第 $i 次检查)"
+            return 0
+        else
+            log_warn "服务未就绪，尝试重启 ($i/$MAX_RETRIES)..."
+            systemctl restart salt-minion || true
+            sleep $RETRY_INTERVAL
+        fi
+    done
     
-    if systemctl is-active --quiet salt-minion; then
-        log_info "Salt Minion 服务已启动"
-        return 0
-    else
-        log_warn "Salt Minion 服务可能未正常启动"
-        systemctl status salt-minion --no-pager || true
-        return 1
-    fi
+    log_warn "Salt Minion 服务可能未正常启动"
+    systemctl status salt-minion --no-pager || true
+    return 1
 }
 
 # 主函数
