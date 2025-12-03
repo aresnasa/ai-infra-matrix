@@ -861,6 +861,8 @@ const SaltStackDashboard = () => {
         }
 
         validCount++;
+        // 调试: 打印原始值和解析后的值
+        console.log(`🔍 主机 ${hostValue} install_categraf 原始值:`, h.install_categraf, `类型:`, typeof h.install_categraf, `=> 解析结果:`, parseBoolValue(h.install_categraf));
         newHosts.push({
           key: Date.now() + idx + validCount,
           host: hostValue,
@@ -875,6 +877,7 @@ const SaltStackDashboard = () => {
       });
 
       console.log('📊 导入统计:', { 总数: hosts.length, 有效: validCount, 无效: invalidCount, 重复: duplicateCount });
+      console.log('📋 最终 newHosts:', newHosts.map(h => ({ host: h.host, install_categraf: h.install_categraf })));
 
       if (newHosts.length === 0) {
         if (duplicateCount > 0) {

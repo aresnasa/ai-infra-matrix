@@ -1573,13 +1573,14 @@ func (c *SaltStackClientController) ParseHostFile(ctx *gin.Context) {
 	hostList := make([]models.HostTemplateHost, 0, len(hosts))
 	for _, h := range hosts {
 		hostList = append(hostList, models.HostTemplateHost{
-			Host:     h.Host,
-			Port:     h.Port,
-			Username: h.Username,
-			Password: h.Password,
-			UseSudo:  h.UseSudo,
-			MinionID: h.MinionID,
-			Group:    h.Group,
+			Host:            h.Host,
+			Port:            h.Port,
+			Username:        h.Username,
+			Password:        h.Password,
+			UseSudo:         h.UseSudo,
+			MinionID:        h.MinionID,
+			Group:           h.Group,
+			InstallCategraf: h.InstallCategraf,
 		})
 	}
 
@@ -1824,13 +1825,14 @@ func (c *SaltStackClientController) ParseHostFileDebug(ctx *gin.Context) {
 	hostList := make([]models.HostTemplateHost, 0, len(hosts))
 	for _, h := range hosts {
 		hostList = append(hostList, models.HostTemplateHost{
-			Host:     h.Host,
-			Port:     h.Port,
-			Username: h.Username,
-			Password: h.Password,
-			UseSudo:  h.UseSudo,
-			MinionID: h.MinionID,
-			Group:    h.Group,
+			Host:            h.Host,
+			Port:            h.Port,
+			Username:        h.Username,
+			Password:        h.Password,
+			UseSudo:         h.UseSudo,
+			MinionID:        h.MinionID,
+			Group:           h.Group,
+			InstallCategraf: h.InstallCategraf,
 		})
 	}
 

@@ -36,13 +36,14 @@ type HostTemplate struct {
 
 // HostTemplateHost 主机配置（用于返回给前端，不包含加密数据）
 type HostTemplateHost struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"` // 返回时可选择隐藏
-	UseSudo  bool   `json:"use_sudo"`
-	MinionID string `json:"minion_id,omitempty"`
-	Group    string `json:"group,omitempty"`
+	Host            string `json:"host"`
+	Port            int    `json:"port"`
+	Username        string `json:"username"`
+	Password        string `json:"password"` // 返回时可选择隐藏
+	UseSudo         bool   `json:"use_sudo"`
+	MinionID        string `json:"minion_id,omitempty"`
+	Group           string `json:"group,omitempty"`
+	InstallCategraf bool   `json:"install_categraf,omitempty"`
 }
 
 // HostTemplateCreateRequest 创建主机模板请求

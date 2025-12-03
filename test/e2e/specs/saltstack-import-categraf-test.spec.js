@@ -9,20 +9,29 @@ const { test, expect } = require('@playwright/test');
 test.describe('SaltStack 导入配置和日志框测试', () => {
   test.beforeEach(async ({ page }) => {
     // 登录
-    await page.goto('http://localhost:3000/login');
-    await page.fill('input[placeholder*="用户名"], input[placeholder*="Username"]', 'admin');
+    await page.goto('http://192.168.0.199:8080/login');
+    await page.fill('input[placeholder*="用户名"], input[placeholder*="Username"], input[id="username"]', 'admin');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
-    await page.waitForURL('**/dashboard', { timeout: 10000 });
+    // 等待登录完成，可能跳转到 /projects 或 /dashboard
+    await page.waitForURL(/\/(dashboard|projects|saltstack)/, { timeout: 15000 });
     
     // 导航到 SaltStack 页面
-    await page.click('text=SaltStack');
+    await page.goto('http://192.168.0.199:8080/saltstack');
     await page.waitForSelector('.ant-card', { timeout: 10000 });
   });
 
   test('导入 CSV 配置后 Categraf 开关应正确显示', async ({ page }) => {
-    // 打开批量安装弹窗
-    const installButton = page.locator('button:has-text("批量安装"), button:has-text("Batch Install")');
+    // 监听控制台输出 - 捕获所有相关日志
+    page.on('console', msg => {
+      const text = msg.text();
+      if (text.includes('install_categraf') || text.includes('Categraf') || text.includes('导入') || text.includes('API') || text.includes('解析') || text.includes('newHosts') || text.includes('原始值')) {
+        console.log('Browser console:', text);
+      }
+    });
+
+    // 打开批量安装 Salt Minion 弹窗
+    const installButton = page.locator('button:has-text("批量安装 Salt Minion"), button:has-text("Batch Install Salt Minion")');
     await installButton.click();
     await page.waitForSelector('.ant-modal', { timeout: 5000 });
 
@@ -44,40 +53,43 @@ test.describe('SaltStack 导入配置和日志框测试', () => {
     const importButton = page.locator('.ant-modal button:has-text("立即导入"), .ant-modal button:has-text("Import Now")');
     await importButton.click();
 
-    // 等待导入完成
-    await page.waitForTimeout(1000);
+    // 等待导入完成并等待更长时间以确保 React 状态更新
+    await page.waitForTimeout(2000);
 
-    // 检查 Categraf 开关状态
-    // 第一行: install_categraf=true，开关应该是开启的
-    const firstCategrafSwitch = page.locator('.ant-row').nth(0).locator('.ant-switch:has-text("Categraf")');
-    
-    // 检查每行的 Categraf 开关状态
-    const hostRows = page.locator('[class*="host-row"], .ant-row:has(input[placeholder*="主机地址"]), .ant-row:has(input[placeholder*="host"])');
-    
     // 截图记录
     await page.screenshot({ path: 'test-screenshots/categraf-import-test.png', fullPage: true });
 
     // 检查开关的 aria-checked 属性或 class
     // 根据 antd Switch 组件，开启状态会有 ant-switch-checked class
-    const switches = page.locator('.ant-switch:has-text("Categraf")');
-    const count = await switches.count();
-    console.log(`找到 ${count} 个 Categraf 开关`);
+    // 注意：第一个 Switch 是表单顶部的全局 Categraf 开关，我们需要跳过它
+    // 找到主机列表中的 Categraf 开关（在 Space 组件中，有 Categraf 文字）
+    const hostListSwitches = page.locator('.ant-row .ant-space .ant-switch').filter({ hasText: 'Categraf' });
+    const count = await hostListSwitches.count();
+    console.log(`找到 ${count} 个主机列表中的 Categraf 开关`);
+
+    // 打印所有开关的状态
+    for (let i = 0; i < count; i++) {
+      const sw = hostListSwitches.nth(i);
+      const isChecked = await sw.evaluate(el => el.classList.contains('ant-switch-checked'));
+      const ariaChecked = await sw.getAttribute('aria-checked');
+      console.log(`开关 ${i + 1}: checked class=${isChecked}, aria-checked=${ariaChecked}`);
+    }
 
     if (count >= 3) {
       // 第一行应该是开启的 (true)
-      const switch1 = switches.nth(0);
+      const switch1 = hostListSwitches.nth(0);
       const isChecked1 = await switch1.evaluate(el => el.classList.contains('ant-switch-checked'));
       console.log(`第一行 Categraf 开关状态: ${isChecked1 ? '开启' : '关闭'}`);
       expect(isChecked1).toBe(true);
 
       // 第二行应该是关闭的 (false)
-      const switch2 = switches.nth(1);
+      const switch2 = hostListSwitches.nth(1);
       const isChecked2 = await switch2.evaluate(el => el.classList.contains('ant-switch-checked'));
       console.log(`第二行 Categraf 开关状态: ${isChecked2 ? '开启' : '关闭'}`);
       expect(isChecked2).toBe(false);
 
       // 第三行应该是开启的 (true)
-      const switch3 = switches.nth(2);
+      const switch3 = hostListSwitches.nth(2);
       const isChecked3 = await switch3.evaluate(el => el.classList.contains('ant-switch-checked'));
       console.log(`第三行 Categraf 开关状态: ${isChecked3 ? '开启' : '关闭'}`);
       expect(isChecked3).toBe(true);
@@ -85,8 +97,8 @@ test.describe('SaltStack 导入配置和日志框测试', () => {
   });
 
   test('导入 JSON 配置后 Categraf 开关应正确显示', async ({ page }) => {
-    // 打开批量安装弹窗
-    const installButton = page.locator('button:has-text("批量安装"), button:has-text("Batch Install")');
+    // 打开批量安装 Salt Minion 弹窗
+    const installButton = page.locator('button:has-text("批量安装 Salt Minion"), button:has-text("Batch Install Salt Minion")');
     await installButton.click();
     await page.waitForSelector('.ant-modal', { timeout: 5000 });
 
@@ -129,8 +141,8 @@ test.describe('SaltStack 导入配置和日志框测试', () => {
   });
 
   test('安装进度日志框 Ctrl+A 应只选中日志内容', async ({ page }) => {
-    // 打开批量安装弹窗
-    const installButton = page.locator('button:has-text("批量安装"), button:has-text("Batch Install")');
+    // 打开批量安装 Salt Minion 弹窗
+    const installButton = page.locator('button:has-text("批量安装 Salt Minion"), button:has-text("Batch Install Salt Minion")');
     await installButton.click();
     await page.waitForSelector('.ant-modal', { timeout: 5000 });
 
