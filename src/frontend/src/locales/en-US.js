@@ -431,6 +431,8 @@ export default {
     skippedInvalid: 'skipped {count} invalid hosts',
     allHostsDuplicate: 'All {count} hosts already exist in the list',
     allHostsInvalid: 'All {count} host addresses have invalid format',
+    autoCreatedGroup: 'Auto-created from imported config',
+    autoCreatedGroups: 'Auto-created {count} new groups',
     invalidIPOrHostname: 'Invalid IP address or hostname format',
     duplicateHost: 'This host address already exists in the list',
     submitInstallFailed: 'Failed to submit batch installation',

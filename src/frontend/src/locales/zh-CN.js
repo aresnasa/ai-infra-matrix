@@ -431,6 +431,8 @@ export default {
     skippedInvalid: '跳过 {count} 个无效主机',
     allHostsDuplicate: '所有 {count} 个主机已存在于列表中',
     allHostsInvalid: '所有 {count} 个主机地址格式无效',
+    autoCreatedGroup: '通过导入配置自动创建',
+    autoCreatedGroups: '自动创建了 {count} 个新分组',
     invalidIPOrHostname: '无效的 IP 地址或主机名格式',
     duplicateHost: '该主机地址已存在于列表中',
     submitInstallFailed: '提交批量安装失败',

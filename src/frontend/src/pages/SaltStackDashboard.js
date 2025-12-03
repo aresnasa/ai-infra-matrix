@@ -544,6 +544,64 @@ const SaltStackDashboard = () => {
     }
   };
 
+  // 同步导入配置中的分组到分组管理
+  // 检查导入的主机中是否有新的分组名，如果有则自动创建
+  const syncImportedGroups = async (hosts) => {
+    // 提取所有非空的分组名
+    const importedGroupNames = [...new Set(
+      hosts
+        .map(h => (h.group || '').trim())
+        .filter(g => g !== '')
+    )];
+    
+    if (importedGroupNames.length === 0) {
+      return; // 没有分组需要同步
+    }
+
+    // 获取现有分组名列表
+    const existingGroupNames = new Set(minionGroups.map(g => g.name));
+    
+    // 找出需要创建的新分组
+    const newGroupNames = importedGroupNames.filter(name => !existingGroupNames.has(name));
+    
+    if (newGroupNames.length === 0) {
+      return; // 所有分组都已存在
+    }
+
+    console.log('🔄 需要创建的新分组:', newGroupNames);
+
+    // 预定义的颜色列表，用于自动分配
+    const colors = ['blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'gold', 'lime', 'volcano', 'geekblue'];
+    
+    // 批量创建分组
+    let createdCount = 0;
+    for (let i = 0; i < newGroupNames.length; i++) {
+      const groupName = newGroupNames[i];
+      try {
+        const resp = await saltStackAPI.createMinionGroup({
+          name: groupName,
+          description: t('saltstack.autoCreatedGroup', '通过导入配置自动创建'),
+          color: colors[i % colors.length],
+        });
+        
+        if (resp.data?.success) {
+          createdCount++;
+          console.log(`✓ 分组 "${groupName}" 创建成功`);
+        } else {
+          console.warn(`⚠️ 分组 "${groupName}" 创建失败:`, resp.data?.message);
+        }
+      } catch (e) {
+        console.warn(`⚠️ 分组 "${groupName}" 创建失败:`, e.message);
+      }
+    }
+
+    // 刷新分组列表
+    if (createdCount > 0) {
+      await loadMinionGroups();
+      message.info(t('saltstack.autoCreatedGroups', { count: createdCount }));
+    }
+  };
+
   // 导入主机文件
   const handleFileImport = async (file) => {
     setImportLoading(true);
@@ -690,6 +748,9 @@ const SaltStackDashboard = () => {
         message.success(resultMsg);
       }
       
+      // 同步导入配置中的分组到分组管理
+      await syncImportedGroups(newHosts);
+      
       console.log('✅ 导入完成:', resultMsg);
       console.groupEnd();
 
@@ -835,6 +896,9 @@ const SaltStackDashboard = () => {
       message.success(resultMsg);
       console.log('✅ 粘贴导入完成:', resultMsg);
       console.groupEnd();
+      
+      // 同步导入配置中的分组到分组管理
+      await syncImportedGroups(newHosts);
       
       // 关闭弹窗
       setPasteImportVisible(false);
