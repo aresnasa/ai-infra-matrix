@@ -3220,7 +3220,22 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   <Text copyable>{batchInstallTaskId}</Text>
                 </div>
               )}
-              <div style={{ maxHeight: 280, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 12, borderRadius: 6 }}>
+              <div 
+                style={{ maxHeight: 280, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 12, borderRadius: 6 }}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  // 拦截 Ctrl+A，只选中日志框内的内容
+                  if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const selection = window.getSelection();
+                    const range = document.createRange();
+                    range.selectNodeContents(e.currentTarget);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                  }
+                }}
+              >
                 {batchInstallEvents.length === 0 ? (
                   <Text type="secondary">{t('saltstack.waitingForInstall')}</Text>
                 ) : (
