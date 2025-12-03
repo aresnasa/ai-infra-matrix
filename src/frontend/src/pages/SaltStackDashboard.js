@@ -115,6 +115,12 @@ const SaltStackDashboard = () => {
   // 文件导入相关状态
   const [importLoading, setImportLoading] = useState(false);
 
+  // 粘贴导入弹窗状态
+  const [pasteImportVisible, setPasteImportVisible] = useState(false);
+  const [pasteContent, setPasteContent] = useState('');
+  const [pasteFormat, setPasteFormat] = useState('csv');
+  const [pasteImportLoading, setPasteImportLoading] = useState(false);
+
   // SSH 测试弹窗
   const [sshTestVisible, setSSHTestVisible] = useState(false);
   const [sshTestForm] = Form.useForm();
@@ -573,6 +579,196 @@ const SaltStackDashboard = () => {
       setImportLoading(false);
     }
     return false; // 阻止默认上传行为
+  };
+
+  // 打开粘贴导入弹窗
+  const openPasteImportModal = () => {
+    setPasteImportVisible(true);
+    setPasteContent('');
+    setPasteFormat('csv');
+  };
+
+  // 处理粘贴导入
+  const handlePasteImport = async () => {
+    if (!pasteContent || !pasteContent.trim()) {
+      message.warning(t('saltstack.pasteContentEmpty', '请输入配置内容'));
+      return;
+    }
+
+    setPasteImportLoading(true);
+    
+    console.group('🔍 [DEBUG] 粘贴内容导入');
+    console.log('📝 格式:', pasteFormat);
+    console.log('📜 内容长度:', pasteContent.length);
+    console.log('📜 内容预览:', pasteContent.substring(0, 300));
+    
+    try {
+      // 构造虚拟文件名以便后端识别格式
+      const filename = `paste.${pasteFormat}`;
+      
+      console.log('🌐 调用 API: parseHostFile');
+      const response = await saltStackAPI.parseHostFile(pasteContent, filename);
+      
+      console.log('✅ API 响应:', response);
+      
+      if (!response.data?.success) {
+        console.error('❌ 解析失败:', response.data?.message || response.data?.error);
+        throw new Error(response.data?.message || response.data?.error || t('saltstack.parseFailed'));
+      }
+
+      const hosts = response.data?.data?.hosts || [];
+      console.log('📋 解析到的主机数:', hosts.length);
+      
+      if (hosts.length === 0) {
+        console.warn('⚠️ 没有有效的主机配置');
+        message.warning(t('saltstack.noValidHostConfig'));
+        console.groupEnd();
+        return;
+      }
+
+      // 验证并转换主机列表（复用现有逻辑）
+      let validCount = 0;
+      let invalidCount = 0;
+      let duplicateCount = 0;
+      const invalidHosts = [];
+
+      const existingHosts = new Set(
+        batchInstallHosts
+          .filter(h => h.host && h.host.trim())
+          .map(h => h.host.trim().toLowerCase())
+      );
+
+      const importedHosts = new Set();
+      const newHosts = [];
+      
+      hosts.forEach((h, idx) => {
+        const hostValue = (h.host || '').trim();
+        const hostLower = hostValue.toLowerCase();
+
+        if (hostValue && !isValidIPOrHostname(hostValue)) {
+          invalidCount++;
+          invalidHosts.push(hostValue);
+          return;
+        }
+
+        if (hostValue && existingHosts.has(hostLower)) {
+          duplicateCount++;
+          return;
+        }
+
+        if (hostValue && importedHosts.has(hostLower)) {
+          duplicateCount++;
+          return;
+        }
+
+        if (hostValue) {
+          importedHosts.add(hostLower);
+        }
+
+        validCount++;
+        newHosts.push({
+          key: Date.now() + idx + validCount,
+          host: hostValue,
+          port: h.port || 22,
+          username: h.username || 'root',
+          password: h.password || '',
+          use_sudo: h.use_sudo || false,
+          minion_id: h.minion_id || '',
+          group: h.group || ''
+        });
+      });
+
+      console.log('📊 导入统计:', { 总数: hosts.length, 有效: validCount, 无效: invalidCount, 重复: duplicateCount });
+
+      if (newHosts.length === 0) {
+        if (duplicateCount > 0) {
+          message.warning(t('saltstack.allHostsDuplicate', `所有 ${duplicateCount} 个主机已存在于列表中`));
+        } else if (invalidCount > 0) {
+          message.error(t('saltstack.allHostsInvalid', `所有 ${invalidCount} 个主机地址格式无效`));
+        } else {
+          message.warning(t('saltstack.noValidHostConfig'));
+        }
+        console.groupEnd();
+        return;
+      }
+
+      // 如果当前只有一个空行，则替换；否则追加
+      if (batchInstallHosts.length === 1 && !batchInstallHosts[0].host) {
+        setBatchInstallHosts(newHosts);
+      } else {
+        setBatchInstallHosts([...batchInstallHosts, ...newHosts]);
+      }
+
+      // 构建导入结果消息
+      let resultMsg = t('saltstack.importedHosts', { count: validCount });
+      if (duplicateCount > 0) {
+        resultMsg += `, ${t('saltstack.skippedDuplicates', { count: duplicateCount })}`;
+      }
+      if (invalidCount > 0) {
+        resultMsg += `, ${t('saltstack.skippedInvalid', { count: invalidCount })}`;
+      }
+      
+      message.success(resultMsg);
+      console.log('✅ 粘贴导入完成:', resultMsg);
+      console.groupEnd();
+      
+      // 关闭弹窗
+      setPasteImportVisible(false);
+      setPasteContent('');
+
+    } catch (e) {
+      console.error('❌ 粘贴导入失败:', e);
+      console.groupEnd();
+      message.error(t('saltstack.importFailed') + ': ' + (e.response?.data?.error || e.message));
+    } finally {
+      setPasteImportLoading(false);
+    }
+  };
+
+  // 获取粘贴格式的示例内容
+  const getPasteFormatExample = (format) => {
+    switch (format) {
+      case 'csv':
+        return `host,port,username,password,use_sudo,group
+192.168.1.100,22,root,password123,false,web
+192.168.1.101,22,admin,pass456,true,db
+node1.example.com,2222,deploy,secretpwd,false,`;
+      case 'json':
+        return `[
+  {"host": "192.168.1.100", "port": 22, "username": "root", "password": "password123", "use_sudo": false, "group": "web"},
+  {"host": "192.168.1.101", "port": 22, "username": "admin", "password": "pass456", "use_sudo": true, "group": "db"},
+  {"host": "node1.example.com", "port": 2222, "username": "deploy", "password": "secretpwd"}
+]`;
+      case 'yaml':
+        return `hosts:
+  - host: 192.168.1.100
+    port: 22
+    username: root
+    password: password123
+    use_sudo: false
+    group: web
+  - host: 192.168.1.101
+    port: 22
+    username: admin
+    password: pass456
+    use_sudo: true
+    group: db
+  - host: node1.example.com
+    port: 2222
+    username: deploy
+    password: secretpwd`;
+      case 'ini':
+        return `[web]
+192.168.1.100 ansible_port=22 ansible_user=root ansible_password=password123
+
+[db]
+192.168.1.101 ansible_port=22 ansible_user=admin ansible_password=pass456 ansible_become=true
+
+[all]
+node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretpwd`;
+      default:
+        return '';
+    }
   };
 
   // 模板下载菜单
@@ -2213,6 +2409,9 @@ const SaltStackDashboard = () => {
                       {t('saltstack.importFile')}
                     </Button>
                   </Upload>
+                  <Button type="link" size="small" icon={<CopyOutlined />} onClick={openPasteImportModal}>
+                    {t('saltstack.pasteImport', '粘贴导入')}
+                  </Button>
                   <Dropdown overlay={templateMenu} trigger={['click']}>
                     <Button type="link" size="small" icon={<DownloadOutlined />}>
                       {t('saltstack.downloadTemplate')}
@@ -2395,6 +2594,133 @@ const SaltStackDashboard = () => {
                 )}
               </div>
             </Card>
+          </Modal>
+
+          {/* 粘贴导入弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <CopyOutlined />
+                {t('saltstack.pasteImportTitle', '粘贴导入配置')}
+              </Space>
+            }
+            open={pasteImportVisible}
+            onCancel={() => {
+              setPasteImportVisible(false);
+              setPasteContent('');
+            }}
+            footer={[
+              <Button 
+                key="cancel" 
+                onClick={() => {
+                  setPasteImportVisible(false);
+                  setPasteContent('');
+                }}
+              >
+                {t('saltstack.cancel', '取消')}
+              </Button>,
+              <Button 
+                key="import" 
+                type="primary" 
+                onClick={handlePasteImport}
+                loading={pasteImportLoading}
+                icon={<CloudUploadOutlined />}
+                disabled={!pasteContent || !pasteContent.trim()}
+              >
+                {t('saltstack.importNow', '立即导入')}
+              </Button>,
+            ]}
+            width={800}
+            destroyOnClose
+          >
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={t('saltstack.pasteImportHint', '请将 CSV、JSON 或 YAML 格式的主机配置粘贴到下方文本框中')}
+              description={t('saltstack.pasteImportDesc', '支持的格式：CSV（逗号分隔）、JSON（数组格式）、YAML（hosts 列表）、Ansible INI 格式')}
+            />
+            
+            <Row gutter={16} style={{ marginBottom: 16 }}>
+              <Col span={6}>
+                <Text strong>{t('saltstack.selectFormat', '选择格式')}:</Text>
+              </Col>
+              <Col span={18}>
+                <Select
+                  value={pasteFormat}
+                  onChange={setPasteFormat}
+                  style={{ width: 200 }}
+                >
+                  <Option value="csv">CSV (.csv)</Option>
+                  <Option value="json">JSON (.json)</Option>
+                  <Option value="yaml">YAML (.yaml)</Option>
+                  <Option value="ini">Ansible INI (.ini)</Option>
+                </Select>
+                <Button 
+                  type="link" 
+                  size="small"
+                  onClick={() => setPasteContent(getPasteFormatExample(pasteFormat))}
+                  style={{ marginLeft: 8 }}
+                >
+                  {t('saltstack.fillExample', '填入示例')}
+                </Button>
+              </Col>
+            </Row>
+
+            <TextArea
+              rows={12}
+              value={pasteContent}
+              onChange={(e) => setPasteContent(e.target.value)}
+              placeholder={getPasteFormatExample(pasteFormat)}
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
+
+            <div style={{ marginTop: 12 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                💡 {t('saltstack.pasteFormatTip', '提示：可以直接从 Excel、文本编辑器或其他来源复制数据粘贴到上方')}
+              </Text>
+            </div>
+
+            <Divider orientation="left" style={{ marginTop: 16, marginBottom: 12 }}>
+              {t('saltstack.formatReference', '格式参考')}
+            </Divider>
+
+            <Row gutter={16}>
+              <Col span={12}>
+                <Card size="small" title="CSV 格式" style={{ marginBottom: 8 }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+{`host,port,username,password,use_sudo,group
+192.168.1.100,22,root,pass123,false,web`}
+                  </pre>
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small" title="JSON 格式" style={{ marginBottom: 8 }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+{`[{"host":"192.168.1.100","port":22,
+  "username":"root","password":"pass"}]`}
+                  </pre>
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small" title="YAML 格式">
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+{`hosts:
+  - host: 192.168.1.100
+    port: 22
+    username: root`}
+                  </pre>
+                </Card>
+              </Col>
+              <Col span={12}>
+                <Card size="small" title="Ansible INI 格式">
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+{`[web]
+192.168.1.100 ansible_user=root`}
+                  </pre>
+                </Card>
+              </Col>
+            </Row>
           </Modal>
 
           {/* SSH 测试弹窗 */}

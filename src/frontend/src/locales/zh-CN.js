@@ -266,6 +266,19 @@ export default {
     passwordPlaceholder: '密码',
     copyFirstRowConfig: '复制第一行配置',
     configCopied: '已复制第一行配置',
+    
+    // 粘贴导入
+    pasteImport: '粘贴导入',
+    pasteImportTitle: '粘贴导入配置',
+    pasteImportHint: '请将 CSV、JSON 或 YAML 格式的主机配置粘贴到下方文本框中',
+    pasteImportDesc: '支持的格式：CSV（逗号分隔）、JSON（数组格式）、YAML（hosts 列表）、Ansible INI 格式',
+    pasteContentEmpty: '请输入配置内容',
+    selectFormat: '选择格式',
+    fillExample: '填入示例',
+    importNow: '立即导入',
+    pasteFormatTip: '提示：可以直接从 Excel、文本编辑器或其他来源复制数据粘贴到上方',
+    formatReference: '格式参考',
+    
     dynamicParallel: '动态并行度',
     workers: '并发',
     hosts: '台主机',

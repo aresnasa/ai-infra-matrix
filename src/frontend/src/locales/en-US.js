@@ -266,6 +266,19 @@ export default {
     passwordPlaceholder: 'Password',
     copyFirstRowConfig: 'Copy first row config',
     configCopied: 'First row config copied',
+    
+    // Paste Import
+    pasteImport: 'Paste Import',
+    pasteImportTitle: 'Paste Import Configuration',
+    pasteImportHint: 'Paste CSV, JSON or YAML format host configuration into the text box below',
+    pasteImportDesc: 'Supported formats: CSV (comma-separated), JSON (array format), YAML (hosts list), Ansible INI format',
+    pasteContentEmpty: 'Please enter configuration content',
+    selectFormat: 'Select Format',
+    fillExample: 'Fill Example',
+    importNow: 'Import Now',
+    pasteFormatTip: 'Tip: You can copy data directly from Excel, text editors or other sources and paste it above',
+    formatReference: 'Format Reference',
+    
     dynamicParallel: 'Dynamic Parallel',
     workers: 'workers',
     hosts: 'hosts',
