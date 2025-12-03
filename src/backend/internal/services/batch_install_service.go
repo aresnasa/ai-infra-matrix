@@ -3,10 +3,12 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -715,6 +717,58 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 				Message: "Categraf monitoring agent installed successfully",
 			})
 			s.logToDatabase(taskID, "info", hostConfig.Host, "Categraf monitoring agent installed successfully")
+		}
+	}
+
+	// 设置 Minion 分组（如果指定了分组）
+	if hostConfig.Group != "" && minionID != "" {
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    hostConfig.Host,
+			Message: fmt.Sprintf("Setting minion group to: %s", hostConfig.Group),
+		})
+		s.logToDatabase(taskID, "info", hostConfig.Host, fmt.Sprintf("Setting minion group to: %s", hostConfig.Group))
+
+		if err := s.setMinionGroup(minionID, hostConfig.Group); err != nil {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "warning",
+				Host:    hostConfig.Host,
+				Message: fmt.Sprintf("Failed to set minion group: %v", err),
+			})
+			s.logToDatabase(taskID, "warn", hostConfig.Host, fmt.Sprintf("Failed to set minion group: %v", err))
+		} else {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    hostConfig.Host,
+				Message: fmt.Sprintf("Minion group set to: %s", hostConfig.Group),
+			})
+			s.logToDatabase(taskID, "info", hostConfig.Host, fmt.Sprintf("Minion group set to: %s", hostConfig.Group))
+		}
+	}
+
+	// 部署节点指标采集（GPU/IB 检测）
+	if keyAccepted && minionID != "" {
+		s.sendEvent(taskID, SSEEvent{
+			Type:    "log",
+			Host:    hostConfig.Host,
+			Message: "Deploying node metrics collection (GPU/IB detection)...",
+		})
+		s.logToDatabase(taskID, "info", hostConfig.Host, "Deploying node metrics collection...")
+
+		if err := s.deployNodeMetrics(minionID, req.MasterHost); err != nil {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "warning",
+				Host:    hostConfig.Host,
+				Message: fmt.Sprintf("Failed to deploy node metrics: %v", err),
+			})
+			s.logToDatabase(taskID, "warn", hostConfig.Host, fmt.Sprintf("Failed to deploy node metrics: %v", err))
+		} else {
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    hostConfig.Host,
+				Message: "Node metrics collection deployed successfully",
+			})
+			s.logToDatabase(taskID, "info", hostConfig.Host, "Node metrics collection deployed successfully")
 		}
 	}
 
@@ -1663,4 +1717,156 @@ func (s *BatchInstallService) invalidateMinionsCache() {
 	} else {
 		logrus.Info("[BatchInstall] Minions cache invalidated, frontend will fetch fresh data")
 	}
+}
+
+// setMinionGroup 设置 Minion 的分组
+// 如果分组不存在则自动创建
+func (s *BatchInstallService) setMinionGroup(minionID string, groupName string) error {
+	if minionID == "" || groupName == "" {
+		return nil
+	}
+
+	db := database.GetDB()
+	if db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	// 先删除该 Minion 的所有分组关系
+	if err := db.Where("minion_id = ?", minionID).Delete(&models.MinionGroupMembership{}).Error; err != nil {
+		logrus.WithError(err).Warnf("[BatchInstall] Failed to clear existing group for minion %s", minionID)
+	}
+
+	// 查找或创建分组
+	var group models.MinionGroup
+	err := db.Where("name = ?", groupName).First(&group).Error
+	if err != nil {
+		// 分组不存在，创建新分组
+		group = models.MinionGroup{
+			Name:        groupName,
+			DisplayName: groupName,
+			Description: "Auto-created during batch installation",
+		}
+		if err := db.Create(&group).Error; err != nil {
+			return fmt.Errorf("failed to create group: %v", err)
+		}
+		logrus.Infof("[BatchInstall] Created new group: %s", groupName)
+	}
+
+	// 添加成员关系
+	membership := models.MinionGroupMembership{
+		MinionID: minionID,
+		GroupID:  group.ID,
+	}
+	if err := db.Create(&membership).Error; err != nil {
+		return fmt.Errorf("failed to add minion to group: %v", err)
+	}
+
+	logrus.Infof("[BatchInstall] Minion %s added to group %s", minionID, groupName)
+	return nil
+}
+
+// deployNodeMetrics 部署节点指标采集（GPU/IB 检测脚本）
+// 通过 Salt API 执行 state.apply node-metrics
+func (s *BatchInstallService) deployNodeMetrics(minionID string, masterHost string) error {
+	if minionID == "" {
+		return fmt.Errorf("minion ID is required")
+	}
+
+	// 获取 Salt API 配置
+	saltAPIURL := os.Getenv("SALT_API_URL")
+	saltAPIUser := os.Getenv("SALT_API_USERNAME")
+	if saltAPIUser == "" {
+		saltAPIUser = os.Getenv("SALT_API_USER")
+	}
+	if saltAPIUser == "" {
+		saltAPIUser = "saltapi"
+	}
+	saltAPIPass := os.Getenv("SALT_API_PASSWORD")
+	saltAPIEauth := os.Getenv("SALT_API_EAUTH")
+	if saltAPIEauth == "" {
+		saltAPIEauth = "file"
+	}
+
+	if saltAPIURL == "" {
+		// 尝试从 master host 构建 URL
+		if masterHost != "" {
+			saltAPIURL = fmt.Sprintf("https://%s:8000", masterHost)
+		} else {
+			return fmt.Errorf("SALT_API_URL not configured")
+		}
+	}
+
+	if saltAPIPass == "" {
+		return fmt.Errorf("Salt API password not configured")
+	}
+
+	// 获取回调 URL
+	callbackURL := os.Getenv("NODE_METRICS_CALLBACK_URL")
+	if callbackURL == "" {
+		backendURL := os.Getenv("BACKEND_URL")
+		if backendURL == "" {
+			backendURL = "http://localhost:8080"
+		}
+		callbackURL = backendURL + "/api/saltstack/node-metrics/callback"
+	}
+
+	// 获取 API Token
+	apiToken := os.Getenv("NODE_METRICS_API_TOKEN")
+
+	// 构建 pillar 数据
+	pillarData := map[string]interface{}{
+		"node_metrics": map[string]interface{}{
+			"callback_url":     callbackURL,
+			"collect_interval": 3,
+			"api_token":        apiToken,
+		},
+	}
+
+	// 构建请求 payload
+	payload := map[string]interface{}{
+		"client":   "local",
+		"tgt":      minionID,
+		"fun":      "state.apply",
+		"arg":      []string{"node-metrics"},
+		"pillar":   pillarData,
+		"username": saltAPIUser,
+		"password": saltAPIPass,
+		"eauth":    saltAPIEauth,
+	}
+
+	// 发送 HTTP 请求
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %v", err)
+	}
+
+	// 创建 HTTP 客户端（跳过 TLS 验证）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   60 * time.Second,
+	}
+
+	req, err := http.NewRequest("POST", saltAPIURL+"/", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("salt API error: %d %s", resp.StatusCode, string(body))
+	}
+
+	logrus.Infof("[BatchInstall] Deployed node-metrics state to minion %s", minionID)
+	return nil
 }

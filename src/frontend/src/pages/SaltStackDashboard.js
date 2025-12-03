@@ -495,6 +495,17 @@ const SaltStackDashboard = () => {
     return hostnamePattern.test(trimmed);
   };
 
+  // 解析布尔值（支持字符串 "true"/"false"/"yes"/"no"/"1"/"0" 和布尔值）
+  const parseBoolValue = (value) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase().trim();
+      return lower === 'true' || lower === 'yes' || lower === '1';
+    }
+    if (typeof value === 'number') return value === 1;
+    return false;
+  };
+
   // 检查主机是否重复
   const isDuplicateHost = (host, currentKey) => {
     if (!host || !host.trim()) return false;
@@ -695,10 +706,10 @@ const SaltStackDashboard = () => {
           port: h.port || 22,
           username: h.username || 'root',
           password: h.password || '',
-          use_sudo: h.use_sudo || false,
+          use_sudo: parseBoolValue(h.use_sudo),
           minion_id: h.minion_id || '',
           group: h.group || '',
-          install_categraf: h.install_categraf || false
+          install_categraf: parseBoolValue(h.install_categraf)
         };
         console.log(`✓ 主机 ${idx + 1}: ${hostValue} - 有效`, newHost);
         newHosts.push(newHost);
@@ -856,10 +867,10 @@ const SaltStackDashboard = () => {
           port: h.port || 22,
           username: h.username || 'root',
           password: h.password || '',
-          use_sudo: h.use_sudo || false,
+          use_sudo: parseBoolValue(h.use_sudo),
           minion_id: h.minion_id || '',
           group: h.group || '',
-          install_categraf: h.install_categraf || false
+          install_categraf: parseBoolValue(h.install_categraf)
         });
       });
 
