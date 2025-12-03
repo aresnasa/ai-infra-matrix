@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -693,7 +694,9 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 	}
 
 	// 安装 Categraf 监控代理（如果启用）
-	if req.InstallCategraf {
+	// 检查全局设置或单主机设置
+	shouldInstallCategraf := req.InstallCategraf || hostConfig.InstallCategraf
+	if shouldInstallCategraf {
 		s.sendEvent(taskID, SSEEvent{
 			Type:    "log",
 			Host:    hostConfig.Host,
@@ -1529,10 +1532,11 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 
 // waitAndAcceptMinionKey 等待并接受 Minion 密钥
 // 注意：此函数使用独立的 context，不受调用方 context 取消的影响
+// 优化：增加随机延迟和指数退避，避免大量并发请求同时访问 Salt Master
 func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, minionID, taskID, host string) error {
-	// 创建独立的 context，设置 60 秒超时
+	// 创建独立的 context，设置 90 秒超时（增加超时时间）
 	// 不使用 parentCtx 是因为它可能在 HTTP 请求结束后被取消
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	// 创建 SaltStack 服务实例
@@ -1541,29 +1545,50 @@ func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, 
 		return fmt.Errorf("SaltStack service not available")
 	}
 
-	// 等待 minion 密钥出现
-	pollInterval := 3 * time.Second
+	// 添加随机延迟（0-3秒），避免多个节点同时请求
+	jitter := time.Duration(rand.Intn(3000)) * time.Millisecond
+	time.Sleep(jitter)
+
+	// 初始轮询间隔和最大间隔
+	basePollInterval := 2 * time.Second
+	maxPollInterval := 10 * time.Second
+	currentInterval := basePollInterval
 
 	s.sendEvent(taskID, SSEEvent{
 		Type:    "log",
 		Host:    host,
-		Message: "Waiting for minion key to appear (max 60s)...",
+		Message: "Waiting for minion key to appear (max 90s)...",
 	})
 
-	for {
+	retryCount := 0
+	maxRetries := 30 // 最多重试 30 次
+
+	for retryCount < maxRetries {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for minion key")
 		default:
 		}
 
+		retryCount++
+
 		// 获取 Salt 状态（包含密钥信息）
 		status, err := saltService.GetStatus(ctx)
 		if err != nil {
 			logrus.WithError(err).Warn("Failed to get salt status, retrying...")
-			time.Sleep(pollInterval)
+			// 使用指数退避
+			time.Sleep(currentInterval)
+			if currentInterval < maxPollInterval {
+				currentInterval = time.Duration(float64(currentInterval) * 1.5)
+				if currentInterval > maxPollInterval {
+					currentInterval = maxPollInterval
+				}
+			}
 			continue
 		}
+
+		// 重置间隔（成功获取状态）
+		currentInterval = basePollInterval
 
 		// 检查是否在 unaccepted 列表中
 		for _, k := range status.UnacceptedKeys {
@@ -1574,13 +1599,26 @@ func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, 
 					Message: fmt.Sprintf("Found unaccepted key for %s, accepting...", minionID),
 				})
 
-				// 接受密钥
-				if err := saltService.AcceptMinion(ctx, minionID); err != nil {
-					return fmt.Errorf("failed to accept minion key: %v", err)
+				// 添加小延迟再接受，避免 Salt Master 负载过高
+				time.Sleep(time.Duration(rand.Intn(1000)) * time.Millisecond)
+
+				// 接受密钥，带重试
+				acceptRetries := 3
+				var acceptErr error
+				for i := 0; i < acceptRetries; i++ {
+					acceptErr = saltService.AcceptMinion(ctx, minionID)
+					if acceptErr == nil {
+						break
+					}
+					logrus.WithError(acceptErr).Warnf("Accept minion key attempt %d failed, retrying...", i+1)
+					time.Sleep(time.Duration(i+1) * time.Second)
+				}
+				if acceptErr != nil {
+					return fmt.Errorf("failed to accept minion key after %d attempts: %v", acceptRetries, acceptErr)
 				}
 
 				// 等待一小段时间让 master 处理
-				time.Sleep(2 * time.Second)
+				time.Sleep(3 * time.Second)
 
 				s.sendEvent(taskID, SSEEvent{
 					Type:    "log",
@@ -1603,15 +1641,18 @@ func (s *BatchInstallService) waitAndAcceptMinionKey(parentCtx context.Context, 
 			}
 		}
 
-		time.Sleep(pollInterval)
+		time.Sleep(currentInterval)
 	}
+
+	return fmt.Errorf("timeout waiting for minion key after %d retries", maxRetries)
 }
 
 // verifyMinionPing 验证 Minion 能否响应 test.ping
-// 使用独立的 context，设置 30 秒超时，最多重试 10 次
+// 使用独立的 context，设置更长超时，最多重试 15 次
+// 优化：增加随机延迟和指数退避，处理大并发场景下 Salt Master 负载问题
 func (s *BatchInstallService) verifyMinionPing(parentCtx context.Context, minionID, taskID, host string) error {
-	// 创建独立的 context，设置 30 秒超时
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 创建独立的 context，设置 60 秒超时（增加超时时间）
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// 创建 SaltStack 服务实例
@@ -1620,8 +1661,14 @@ func (s *BatchInstallService) verifyMinionPing(parentCtx context.Context, minion
 		return fmt.Errorf("SaltStack service not available")
 	}
 
-	maxRetries := 10
-	pollInterval := 2 * time.Second
+	// 添加随机延迟（0-2秒），避免多个节点同时 ping
+	jitter := time.Duration(rand.Intn(2000)) * time.Millisecond
+	time.Sleep(jitter)
+
+	maxRetries := 15 // 增加重试次数
+	basePollInterval := 2 * time.Second
+	maxPollInterval := 8 * time.Second
+	currentInterval := basePollInterval
 
 	s.sendEvent(taskID, SSEEvent{
 		Type:    "log",
@@ -1645,7 +1692,14 @@ func (s *BatchInstallService) verifyMinionPing(parentCtx context.Context, minion
 				Message: fmt.Sprintf("Ping attempt %d/%d failed: %v", retry, maxRetries, err),
 			})
 			if retry < maxRetries {
-				time.Sleep(pollInterval)
+				// 使用指数退避
+				time.Sleep(currentInterval)
+				if currentInterval < maxPollInterval {
+					currentInterval = time.Duration(float64(currentInterval) * 1.3)
+					if currentInterval > maxPollInterval {
+						currentInterval = maxPollInterval
+					}
+				}
 			}
 			continue
 		}
@@ -1666,7 +1720,14 @@ func (s *BatchInstallService) verifyMinionPing(parentCtx context.Context, minion
 		})
 
 		if retry < maxRetries {
-			time.Sleep(pollInterval)
+			// 使用指数退避
+			time.Sleep(currentInterval)
+			if currentInterval < maxPollInterval {
+				currentInterval = time.Duration(float64(currentInterval) * 1.3)
+				if currentInterval > maxPollInterval {
+					currentInterval = maxPollInterval
+				}
+			}
 		}
 	}
 

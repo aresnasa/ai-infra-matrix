@@ -1123,13 +1123,15 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           username: h.username,
           password: h.password,
           use_sudo: values.global_use_sudo || h.use_sudo,
-          sudo_pass: h.password  // Linux 用户密码即 sudo 密码
+          sudo_pass: h.password,  // Linux 用户密码即 sudo 密码
+          group: h.group || '',  // 传递分组信息
+          install_categraf: h.install_categraf || false,  // 传递每个主机的 Categraf 安装设置
         })),
         parallel: values.parallel || 0, // 0 表示自动计算并行度
         master_host: values.master_host || 'salt',
         install_type: values.install_type || 'saltstack',
         auto_accept: values.auto_accept ?? true,
-        // Categraf 监控代理安装选项
+        // Categraf 监控代理安装选项（全局设置）
         install_categraf: values.install_categraf ?? false,
         n9e_host: values.n9e_host || '',
         n9e_port: values.n9e_port || '17000',
