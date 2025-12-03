@@ -266,7 +266,7 @@ helm rollback ai-infra-matrix 1 -n ai-infra-matrix
 
 ## 📄 许可证
 
-此项目使用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+此项目使用 Apache License 2.0 许可证 - 查看 [LICENSE](../../LICENSE) 文件了解详情。
 
 ## 🆘 支持
 

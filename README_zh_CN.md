@@ -1,6 +1,6 @@
 # AI Infrastructure Matrix
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Docker](https://img.shields.io/badge/Docker-20.10+-blue.svg)](https://www.docker.com/)
 [![Version](https://img.shields.io/badge/Version-v0.3.8-green.svg)](https://github.com/aresnasa/ai-infra-matrix)
 
@@ -504,7 +504,7 @@ docker exec ai-infra-minio mc mirror /data /backup
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证。详见 [LICENSE](LICENSE) 文件。
+本项目采用 Apache License 2.0 许可证。详见 [LICENSE](LICENSE) 文件。
 
 ## 🙋 支持与反馈
 
