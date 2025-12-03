@@ -39,15 +39,28 @@ echo "=== Removing Salt repository ==="
 {{.SudoPrefix}}rm -f /etc/yum.repos.d/salt*.repo 2>/dev/null || true
 {{.SudoPrefix}}rm -f /etc/yum.repos.d/apphub*.repo 2>/dev/null || true
 
+# Clean up Minion keys first (important for re-installation)
+echo "=== Cleaning up Salt Minion keys ==="
+{{.SudoPrefix}}rm -rf /etc/salt/pki/minion 2>/dev/null || true
+{{.SudoPrefix}}rm -f /etc/salt/minion_id 2>/dev/null || true
+echo "OK: Minion keys and ID removed"
+
 # Clean up configuration and data
 echo "=== Cleaning up Salt directories ==="
 {{.SudoPrefix}}rm -rf /etc/salt
 {{.SudoPrefix}}rm -rf /var/cache/salt
 {{.SudoPrefix}}rm -rf /var/log/salt
 {{.SudoPrefix}}rm -rf /var/run/salt
+{{.SudoPrefix}}rm -rf /run/salt 2>/dev/null || true
 {{.SudoPrefix}}rm -rf /srv/salt
 {{.SudoPrefix}}rm -rf /srv/pillar
 {{.SudoPrefix}}rm -rf /opt/saltstack
+
+# Clean up systemd service files
+echo "=== Cleaning up systemd service files ==="
+{{.SudoPrefix}}rm -f /etc/systemd/system/salt-minion.service 2>/dev/null || true
+{{.SudoPrefix}}rm -f /usr/lib/systemd/system/salt-minion.service 2>/dev/null || true
+{{.SudoPrefix}}systemctl daemon-reload 2>/dev/null || true
 
 # Remove salt user if exists
 echo "=== Removing salt user ==="
