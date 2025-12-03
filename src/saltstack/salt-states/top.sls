@@ -3,6 +3,7 @@ base:
   '*':
     - common
     - ai-infra-monitoring
+    - node-metrics
   
   'ai-infra-*':
     - ai-infra-agent

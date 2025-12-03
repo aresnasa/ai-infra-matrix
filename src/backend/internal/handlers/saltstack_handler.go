@@ -3407,3 +3407,93 @@ func (h *SaltStackHandler) getNodeMetricsCallbackURL(c *gin.Context) string {
 
 	return fmt.Sprintf("%s://%s/api/saltstack/node-metrics/callback", scheme, host)
 }
+
+// TriggerMetricsCollection 触发节点指标采集
+// @Summary 触发节点指标采集
+// @Description 通过 Salt API 触发指定节点立即执行指标采集脚本
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "触发请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/trigger [post]
+func (h *SaltStackHandler) TriggerMetricsCollection(c *gin.Context) {
+	var req struct {
+		Target string `json:"target"` // Minion ID 或通配符，默认 "*"
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 如果没有请求体，使用默认值
+		req.Target = "*"
+	}
+
+	if req.Target == "" {
+		req.Target = "*"
+	}
+
+	// 获取 Salt API 客户端
+	client := h.newSaltAPIClient()
+	if client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get Salt API client",
+		})
+		return
+	}
+
+	// 执行采集脚本
+	collectCmd := "/opt/ai-infra/scripts/collect-node-metrics.sh"
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    req.Target,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{collectCmd},
+		"kwarg": map[string]interface{}{
+			"timeout": 30,
+			"shell":   "/bin/bash",
+		},
+	}
+
+	result, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		log.Printf("[TriggerMetricsCollection] Salt API error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Salt API error: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[TriggerMetricsCollection] Triggered metrics collection for target: %s", req.Target)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Metrics collection triggered",
+		"target":  req.Target,
+		"result":  result,
+	})
+}
+
+// GetNodeMetricsSummary 获取节点指标汇总统计
+// @Summary 获取节点指标汇总统计
+// @Description 获取所有节点的 GPU/IB 等硬件指标汇总
+// @Tags SaltStack
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/summary [get]
+func (h *SaltStackHandler) GetNodeMetricsSummary(c *gin.Context) {
+	metricsService := services.NewNodeMetricsService()
+	summary, err := metricsService.GetMetricsSummary()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get metrics summary: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    summary,
+	})
+}

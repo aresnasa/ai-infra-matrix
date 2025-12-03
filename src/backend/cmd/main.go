@@ -1106,7 +1106,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/minions/install-categraf/:task_id/stream", saltStackHandler.CategrafInstallStream)
 		// 节点指标采集（管理接口需要认证，回调接口在上面单独注册无需认证）
 		saltstack.GET("/node-metrics", saltStackHandler.GetNodeMetrics)
+		saltstack.GET("/node-metrics/summary", saltStackHandler.GetNodeMetricsSummary)
 		saltstack.POST("/node-metrics/deploy", saltStackHandler.DeployNodeMetricsState)
+		saltstack.POST("/node-metrics/trigger", saltStackHandler.TriggerMetricsCollection)
 	}
 
 	// 仪表板统计路由（需要认证）

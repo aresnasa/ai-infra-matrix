@@ -465,16 +465,64 @@ const MinionsTable = ({
       title: t('minions.columns.gpuDriver'),
       dataIndex: 'gpu_driver_version',
       key: 'gpu_driver_version',
-      width: 120,
-      render: (version, record) => (
-        version ? (
-          <Tag color="purple">
-            {renderHighlightedText(version, record, 'gpu_driver_version')}
-          </Tag>
-        ) : (
-          <Text type="secondary">-</Text>
-        )
-      ),
+      width: 140,
+      render: (version, record) => {
+        // 优先使用 gpu_info.driver_version（从采集脚本获取）
+        const driverVersion = record.gpu_info?.driver_version || version;
+        const cudaVersion = record.gpu_info?.cuda_version;
+        const gpuCount = record.gpu_info?.gpu_count || 0;
+        
+        if (driverVersion) {
+          return (
+            <Tooltip title={
+              <div>
+                <div>驱动: {driverVersion}</div>
+                {cudaVersion && <div>CUDA: {cudaVersion}</div>}
+                {gpuCount > 0 && <div>GPU数量: {gpuCount}</div>}
+              </div>
+            }>
+              <Tag color="purple">
+                {driverVersion}
+              </Tag>
+            </Tooltip>
+          );
+        }
+        return <Text type="secondary">-</Text>;
+      },
+    },
+    {
+      title: t('minions.columns.ibStatus', 'IB 状态'),
+      dataIndex: 'ib_status',
+      key: 'ib_status',
+      width: 100,
+      render: (status, record) => {
+        // 优先使用 ib_info（从采集脚本获取）
+        const ibInfo = record.ib_info;
+        const activeCount = ibInfo?.active_count || 0;
+        
+        if (activeCount > 0) {
+          return (
+            <Tooltip title={
+              <div>
+                <div>活跃端口: {activeCount}</div>
+                {ibInfo?.ports?.map((port, idx) => (
+                  <div key={idx}>{port.name}: {port.state} ({port.rate})</div>
+                ))}
+              </div>
+            }>
+              <Tag color="green">{activeCount} Active</Tag>
+            </Tooltip>
+          );
+        } else if (status) {
+          const isActive = status === 'Active' || status === 'active';
+          return (
+            <Tag color={isActive ? 'green' : 'red'}>
+              {status}
+            </Tag>
+          );
+        }
+        return <Text type="secondary">-</Text>;
+      },
     },
     {
       title: t('minions.columns.group', '分组'),
