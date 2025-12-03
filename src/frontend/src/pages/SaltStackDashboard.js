@@ -79,6 +79,9 @@ const SaltStackDashboard = () => {
   const [minionsLoading, setMinionsLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   
+  // IB 端口告警状态
+  const [ibAlerts, setIbAlerts] = useState([]);
+  
   // 全局状态
   const [demo, setDemo] = useState(false);
   const [error, setError] = useState(null);
@@ -174,6 +177,15 @@ const SaltStackDashboard = () => {
   const [installTasksPage, setInstallTasksPage] = useState({ current: 1, pageSize: 10 });
   const [expandedTaskId, setExpandedTaskId] = useState(null);
 
+  // 自动刷新状态
+  const [autoRefreshMinions, setAutoRefreshMinions] = useState(false);
+  const [autoRefreshTasks, setAutoRefreshTasks] = useState(false);
+  const [autoRefreshOverview, setAutoRefreshOverview] = useState(false);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(10); // 默认10秒
+  const autoRefreshMinionsRef = useRef(null);
+  const autoRefreshTasksRef = useRef(null);
+  const autoRefreshOverviewRef = useRef(null);
+
   const loadStatus = async () => {
     setStatusLoading(true);
     try {
@@ -205,16 +217,20 @@ const SaltStackDashboard = () => {
   const loadMinions = async (forceRefresh = false) => {
     setMinionsLoading(true);
     try {
-      // 并行获取 Minion 列表、待删除状态和节点指标
-      const [minionsRes, pendingDeletesRes, nodeMetricsRes] = await Promise.all([
+      // 并行获取 Minion 列表、待删除状态、节点指标和 IB 告警
+      const [minionsRes, pendingDeletesRes, nodeMetricsRes, ibAlertsRes] = await Promise.all([
         saltStackAPI.getMinions(forceRefresh),
         saltStackAPI.getPendingDeleteMinions().catch(() => ({ data: { minion_ids: [] } })),
         saltStackAPI.getNodeMetrics().catch(() => ({ data: { data: [] } })),
+        saltStackAPI.getIBPortAlerts().catch(() => ({ data: { data: [] } })),
       ]);
       
       const minionList = minionsRes.data?.data || [];
       const pendingDeleteIds = new Set(pendingDeletesRes.data?.minion_ids || []);
       const nodeMetricsList = nodeMetricsRes.data?.data || [];
+      
+      // 更新 IB 告警状态
+      setIbAlerts(ibAlertsRes.data?.data || []);
       
       // 构建节点指标映射表
       const metricsMap = {};
@@ -237,11 +253,39 @@ const SaltStackDashboard = () => {
             driver_version: metrics.gpu.driver_version || '',
             cuda_version: metrics.gpu.cuda_version || '',
             memory_total: metrics.gpu.memory_total || '',
+            // 新增 GPU 利用率和显存信息
+            utilization: metrics.gpu.utilization || 0,
+            memory_used: metrics.gpu.memory_used || '',
+            memory_free: metrics.gpu.memory_free || '',
+            gpus: metrics.gpu.gpus || [],
           } : minion.gpu_info,
           ib_info: metrics?.ib ? {
             active_count: metrics.ib.active_count || 0,
             ports: metrics.ib.ports || [],
           } : minion.ib_info,
+          // 新增 CPU/内存/网络/RoCE 指标
+          cpu_info: metrics?.cpu ? {
+            model: metrics.cpu.model || '',
+            cores: metrics.cpu.cores || 0,
+            threads: metrics.cpu.threads || 0,
+            frequency: metrics.cpu.frequency || '',
+            usage: metrics.cpu.usage || 0,
+          } : null,
+          memory_info: metrics?.memory ? {
+            total: metrics.memory.total || '',
+            used: metrics.memory.used || '',
+            free: metrics.memory.free || '',
+            usage_percent: metrics.memory.usage_percent || 0,
+          } : null,
+          network_info: metrics?.network ? {
+            interfaces: metrics.network.interfaces || [],
+            total_rx_rate: metrics.network.total_rx_rate || '',
+            total_tx_rate: metrics.network.total_tx_rate || '',
+          } : null,
+          roce_info: metrics?.roce ? {
+            count: metrics.roce.count || 0,
+            interfaces: metrics.roce.interfaces || [],
+          } : null,
           metrics_collected_at: metrics?.collected_at,
         };
       });
@@ -419,6 +463,67 @@ const SaltStackDashboard = () => {
     
     setParallelInfo(calculateParallel(hostCount));
   }, [batchInstallHosts]);
+
+  // 自动刷新 Minions 列表
+  useEffect(() => {
+    if (autoRefreshMinions) {
+      autoRefreshMinionsRef.current = setInterval(() => {
+        loadMinions(false); // 静默刷新，不显示 loading
+      }, autoRefreshInterval * 1000);
+    } else {
+      if (autoRefreshMinionsRef.current) {
+        clearInterval(autoRefreshMinionsRef.current);
+        autoRefreshMinionsRef.current = null;
+      }
+    }
+    return () => {
+      if (autoRefreshMinionsRef.current) {
+        clearInterval(autoRefreshMinionsRef.current);
+        autoRefreshMinionsRef.current = null;
+      }
+    };
+  }, [autoRefreshMinions, autoRefreshInterval]);
+
+  // 自动刷新安装任务
+  useEffect(() => {
+    if (autoRefreshTasks) {
+      autoRefreshTasksRef.current = setInterval(() => {
+        loadInstallTasks();
+      }, autoRefreshInterval * 1000);
+    } else {
+      if (autoRefreshTasksRef.current) {
+        clearInterval(autoRefreshTasksRef.current);
+        autoRefreshTasksRef.current = null;
+      }
+    }
+    return () => {
+      if (autoRefreshTasksRef.current) {
+        clearInterval(autoRefreshTasksRef.current);
+        autoRefreshTasksRef.current = null;
+      }
+    };
+  }, [autoRefreshTasks, autoRefreshInterval, loadInstallTasks]);
+
+  // 自动刷新系统概览
+  useEffect(() => {
+    if (autoRefreshOverview) {
+      autoRefreshOverviewRef.current = setInterval(() => {
+        loadStatus();
+        loadMinions(false);
+      }, autoRefreshInterval * 1000);
+    } else {
+      if (autoRefreshOverviewRef.current) {
+        clearInterval(autoRefreshOverviewRef.current);
+        autoRefreshOverviewRef.current = null;
+      }
+    }
+    return () => {
+      if (autoRefreshOverviewRef.current) {
+        clearInterval(autoRefreshOverviewRef.current);
+        autoRefreshOverviewRef.current = null;
+      }
+    };
+  }, [autoRefreshOverview, autoRefreshInterval]);
 
   // 关闭SSE
   const closeSSE = () => {
@@ -1630,6 +1735,18 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
     }
   };
 
+  // 忽略 IB 端口告警
+  const handleIgnoreIBPort = async (minionId, portName, portNum, reason = '') => {
+    try {
+      await saltStackAPI.addIBPortIgnore(minionId, portName, portNum, reason);
+      message.success(t('saltstack.ibPortIgnored', { port: portName }) || `已忽略端口 ${portName} 的告警`);
+      // 刷新 minions 列表以更新告警状态
+      await loadMinions();
+    } catch (e) {
+      message.error(t('saltstack.ibPortIgnoreFailed') || '忽略端口告警失败: ' + (e?.response?.data?.error || e.message));
+    }
+  };
+
   // 打开卸载 Minion 弹窗
   const openUninstallModal = (minionId) => {
     setUninstallMinionId(minionId);
@@ -1943,6 +2060,26 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       style={{ marginBottom: 16 }}
                       extra={
                         <Space>
+                          <Tooltip title={t('common.autoRefresh', '自动刷新')}>
+                            <Space size="small">
+                              <Switch 
+                                size="small"
+                                checked={autoRefreshOverview}
+                                onChange={setAutoRefreshOverview}
+                              />
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                {autoRefreshOverview ? `${autoRefreshInterval}s` : t('common.autoRefresh', '自动刷新')}
+                              </Text>
+                            </Space>
+                          </Tooltip>
+                          <Button
+                            icon={<ReloadOutlined spin={statusLoading} />}
+                            onClick={() => { loadStatus(); loadMinions(true); }}
+                            loading={statusLoading}
+                            size="small"
+                          >
+                            {t('common.refresh')}
+                          </Button>
                           <Button
                             icon={<DashboardOutlined />}
                             onClick={() => setDeployMetricsVisible(true)}
@@ -2308,6 +2445,24 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </TabPane>
 
               <TabPane tab={t('saltstack.minionsManagement')} key="minions" icon={<DesktopOutlined />}>
+                {/* 自动刷新控制头部 */}
+                <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                  <Space>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('common.autoRefresh', '自动刷新')}:
+                    </Text>
+                    <Switch 
+                      size="small"
+                      checked={autoRefreshMinions}
+                      onChange={setAutoRefreshMinions}
+                    />
+                    {autoRefreshMinions && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        ({autoRefreshInterval}s)
+                      </Text>
+                    )}
+                  </Space>
+                </div>
                 <MinionsTable
                   minions={minions}
                   loading={minionsLoading}
@@ -2318,6 +2473,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   selectedGroup={selectedGroup}
                   onGroupChange={setSelectedGroup}
                   onSetGroup={handleSetMinionGroup}
+                  ibAlerts={ibAlerts}
+                  onIgnoreIBPort={handleIgnoreIBPort}
                   onBatchDelete={async (minionIds, options = {}) => {
                     // options 可以包含: { force, uninstall, ssh_username, ssh_password, ssh_port, use_sudo }
                     const { force = false, ...restOptions } = options;
@@ -2495,13 +2652,28 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   <>
                     <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Text type="secondary">{t('saltstack.total', { count: installTasksTotal })}</Text>
-                      <Button 
-                        icon={<ReloadOutlined />} 
-                        onClick={() => loadInstallTasks(1)} 
-                        loading={installTasksLoading}
-                      >
-                        {t('common.refresh')}
-                      </Button>
+                      <Space>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {t('common.autoRefresh', '自动刷新')}:
+                        </Text>
+                        <Switch 
+                          size="small"
+                          checked={autoRefreshTasks}
+                          onChange={setAutoRefreshTasks}
+                        />
+                        {autoRefreshTasks && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            ({autoRefreshInterval}s)
+                          </Text>
+                        )}
+                        <Button 
+                          icon={<ReloadOutlined />} 
+                          onClick={() => loadInstallTasks(1)} 
+                          loading={installTasksLoading}
+                        >
+                          {t('common.refresh')}
+                        </Button>
+                      </Space>
                     </div>
                     <Table
                       dataSource={installTasks}

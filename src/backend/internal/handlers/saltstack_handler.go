@@ -3084,7 +3084,7 @@ func (h *SaltStackHandler) CategrafInstallStream(c *gin.Context) {
 
 // NodeMetricsCallback 接收节点指标回调
 // @Summary 接收节点指标回调
-// @Description 接收从 Salt Minion 定期采集的 GPU/IB 等硬件信息。支持可选的 API Token 认证。
+// @Description 接收从 Salt Minion 定期采集的 CPU/内存/网络/GPU/IB/RoCE 等硬件信息。支持可选的 API Token 认证。
 // @Tags SaltStack
 // @Accept json
 // @Produce json
@@ -3142,6 +3142,31 @@ func (h *SaltStackHandler) NodeMetricsCallback(c *gin.Context) {
 		Timestamp: timestamp,
 	}
 
+	// 处理 CPU 信息
+	if req.CPU != nil {
+		metrics.CPUCores = req.CPU.Cores
+		metrics.CPUModel = req.CPU.Model
+		metrics.CPUUsagePercent = req.CPU.UsagePercent
+		metrics.CPULoadAvg = req.CPU.LoadAvg
+	}
+
+	// 处理内存信息
+	if req.Memory != nil {
+		metrics.MemoryTotalGB = req.Memory.TotalGB
+		metrics.MemoryUsedGB = req.Memory.UsedGB
+		metrics.MemoryAvailableGB = req.Memory.AvailableGB
+		metrics.MemoryUsagePercent = req.Memory.UsagePercent
+	}
+
+	// 处理网络信息
+	if req.Network != nil {
+		metrics.ActiveConnections = req.Network.ActiveConnections
+		if req.Network.Interfaces != nil {
+			networkJSON, _ := json.Marshal(req.Network.Interfaces)
+			metrics.NetworkInfo = string(networkJSON)
+		}
+	}
+
 	// 处理 GPU 信息
 	if req.GPU != nil {
 		metrics.GPUDriverVersion = req.GPU.DriverVersion
@@ -3149,6 +3174,10 @@ func (h *SaltStackHandler) NodeMetricsCallback(c *gin.Context) {
 		metrics.GPUCount = req.GPU.Count
 		metrics.GPUModel = req.GPU.Model
 		metrics.GPUMemoryTotal = req.GPU.MemoryTotal
+		metrics.GPUAvgUtilization = req.GPU.AvgUtilization
+		metrics.GPUMemoryUsedMB = req.GPU.MemoryUsedMB
+		metrics.GPUMemoryTotalMB = req.GPU.MemoryTotalMB
+		metrics.GPUMemoryUsagePercent = req.GPU.MemoryUsagePercent
 		if req.GPU.GPUs != nil {
 			gpuInfoJSON, _ := json.Marshal(req.GPU.GPUs)
 			metrics.GPUInfo = string(gpuInfoJSON)
@@ -3158,16 +3187,25 @@ func (h *SaltStackHandler) NodeMetricsCallback(c *gin.Context) {
 	// 处理 IB 信息
 	if req.IB != nil {
 		metrics.IBActiveCount = req.IB.ActiveCount
+		metrics.IBDownCount = req.IB.DownCount
+		metrics.IBTotalCount = req.IB.TotalCount
 		if req.IB.Ports != nil {
 			ibPortsJSON, _ := json.Marshal(req.IB.Ports)
 			metrics.IBPortsInfo = string(ibPortsJSON)
 		}
 	}
 
+	// 处理 RoCE 信息
+	if req.RoCE != nil {
+		roceJSON, _ := json.Marshal(req.RoCE)
+		metrics.RoCEInfo = string(roceJSON)
+	}
+
 	// 处理系统信息
 	if req.System != nil {
 		metrics.KernelVersion = req.System.KernelVersion
 		metrics.OSVersion = req.System.OSVersion
+		metrics.UptimeSeconds = req.System.UptimeSeconds
 	}
 
 	// 保存原始数据
@@ -3185,8 +3223,10 @@ func (h *SaltStackHandler) NodeMetricsCallback(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[NodeMetricsCallback] Received metrics from minion: %s, GPU count: %d, IB active: %d",
-		req.MinionID, metrics.GPUCount, metrics.IBActiveCount)
+	log.Printf("[NodeMetricsCallback] Received metrics from minion: %s, CPU: %.1f%%, Mem: %.1f%%, GPU count: %d (util: %.1f%%), IB: %d active, %d down",
+		req.MinionID, metrics.CPUUsagePercent, metrics.MemoryUsagePercent,
+		metrics.GPUCount, metrics.GPUAvgUtilization,
+		metrics.IBActiveCount, metrics.IBDownCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -3256,14 +3296,51 @@ func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest
 		CollectedAt: m.Timestamp,
 	}
 
+	// CPU 信息
+	if m.CPUCores > 0 || m.CPUModel != "" {
+		resp.CPU = &models.NodeCPUMetrics{
+			Cores:        m.CPUCores,
+			Model:        m.CPUModel,
+			UsagePercent: m.CPUUsagePercent,
+			LoadAvg:      m.CPULoadAvg,
+		}
+	}
+
+	// 内存信息
+	if m.MemoryTotalGB > 0 {
+		resp.Memory = &models.NodeMemoryMetrics{
+			TotalGB:      m.MemoryTotalGB,
+			UsedGB:       m.MemoryUsedGB,
+			AvailableGB:  m.MemoryAvailableGB,
+			UsagePercent: m.MemoryUsagePercent,
+		}
+	}
+
+	// 网络信息
+	if m.NetworkInfo != "" || m.ActiveConnections > 0 {
+		resp.Network = &models.NodeNetworkMetrics{
+			ActiveConnections: m.ActiveConnections,
+		}
+		if m.NetworkInfo != "" {
+			var interfaces []models.NodeNetworkInterface
+			if err := json.Unmarshal([]byte(m.NetworkInfo), &interfaces); err == nil {
+				resp.Network.Interfaces = interfaces
+			}
+		}
+	}
+
 	// GPU 信息
 	if m.GPUCount > 0 || m.GPUDriverVersion != "" {
 		resp.GPU = &models.NodeGPUMetrics{
-			DriverVersion: m.GPUDriverVersion,
-			CUDAVersion:   m.CUDAVersion,
-			Count:         m.GPUCount,
-			Model:         m.GPUModel,
-			MemoryTotal:   m.GPUMemoryTotal,
+			DriverVersion:      m.GPUDriverVersion,
+			CUDAVersion:        m.CUDAVersion,
+			Count:              m.GPUCount,
+			Model:              m.GPUModel,
+			MemoryTotal:        m.GPUMemoryTotal,
+			AvgUtilization:     m.GPUAvgUtilization,
+			MemoryUsedMB:       m.GPUMemoryUsedMB,
+			MemoryTotalMB:      m.GPUMemoryTotalMB,
+			MemoryUsagePercent: m.GPUMemoryUsagePercent,
 		}
 		// 解析详细 GPU 信息
 		if m.GPUInfo != "" {
@@ -3275,9 +3352,11 @@ func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest
 	}
 
 	// IB 信息
-	if m.IBActiveCount > 0 || m.IBPortsInfo != "" {
+	if m.IBActiveCount > 0 || m.IBDownCount > 0 || m.IBPortsInfo != "" {
 		resp.IB = &models.NodeIBMetrics{
 			ActiveCount: m.IBActiveCount,
+			DownCount:   m.IBDownCount,
+			TotalCount:  m.IBTotalCount,
 		}
 		// 解析 IB 端口信息
 		if m.IBPortsInfo != "" {
@@ -3288,11 +3367,20 @@ func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest
 		}
 	}
 
+	// RoCE 信息
+	if m.RoCEInfo != "" {
+		var roce models.NodeRoCEMetrics
+		if err := json.Unmarshal([]byte(m.RoCEInfo), &roce); err == nil {
+			resp.RoCE = &roce
+		}
+	}
+
 	// 系统信息
 	if m.KernelVersion != "" || m.OSVersion != "" {
 		resp.System = &models.NodeSystemMetrics{
 			KernelVersion: m.KernelVersion,
 			OSVersion:     m.OSVersion,
+			UptimeSeconds: m.UptimeSeconds,
 		}
 	}
 
@@ -3495,5 +3583,162 @@ func (h *SaltStackHandler) GetNodeMetricsSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    summary,
+	})
+}
+
+// GetIBPortIgnores 获取指定 minion 的 IB 端口忽略列表
+// @Summary 获取 IB 端口忽略列表
+// @Description 获取指定 minion 已忽略的 IB 端口列表
+// @Tags SaltStack
+// @Produce json
+// @Param minion_id query string false "Minion ID（不指定则返回所有）"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-ignores [get]
+func (h *SaltStackHandler) GetIBPortIgnores(c *gin.Context) {
+	minionID := c.Query("minion_id")
+
+	metricsService := services.NewNodeMetricsService()
+	ignores, err := metricsService.GetIBPortIgnores(minionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get IB port ignores: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    ignores,
+	})
+}
+
+// AddIBPortIgnore 添加 IB 端口忽略
+// @Summary 添加 IB 端口忽略
+// @Description 将指定 minion 的 IB 端口加入忽略列表（因物理未接线等原因）
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "忽略请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-ignores [post]
+func (h *SaltStackHandler) AddIBPortIgnore(c *gin.Context) {
+	var req struct {
+		MinionID string `json:"minion_id" binding:"required"`
+		PortName string `json:"port_name" binding:"required"`
+		PortNum  int    `json:"port_num"`
+		Reason   string `json:"reason"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	// 默认端口号为 1
+	if req.PortNum <= 0 {
+		req.PortNum = 1
+	}
+
+	// 获取当前用户
+	createdBy := "system"
+	if user, exists := c.Get("username"); exists {
+		createdBy = user.(string)
+	}
+
+	metricsService := services.NewNodeMetricsService()
+	if err := metricsService.AddIBPortIgnore(req.MinionID, req.PortName, req.PortNum, req.Reason, createdBy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to add IB port ignore: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[AddIBPortIgnore] Added ignore for minion=%s port=%s portNum=%d by=%s reason=%s",
+		req.MinionID, req.PortName, req.PortNum, createdBy, req.Reason)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"message":   "IB port ignore added",
+		"minion_id": req.MinionID,
+		"port_name": req.PortName,
+		"port_num":  req.PortNum,
+		"reason":    req.Reason,
+	})
+}
+
+// RemoveIBPortIgnore 移除 IB 端口忽略
+// @Summary 移除 IB 端口忽略
+// @Description 将指定 minion 的 IB 端口从忽略列表中移除
+// @Tags SaltStack
+// @Produce json
+// @Param minion_id path string true "Minion ID"
+// @Param port_name path string true "Port Name"
+// @Param port_num query int false "Port Number (不指定则删除所有匹配的端口)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-ignores/{minion_id}/{port_name} [delete]
+func (h *SaltStackHandler) RemoveIBPortIgnore(c *gin.Context) {
+	minionID := c.Param("minion_id")
+	portName := c.Param("port_name")
+
+	if minionID == "" || portName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "minion_id and port_name are required",
+		})
+		return
+	}
+
+	// 从查询参数获取 port_num，默认为 0（删除所有匹配的端口号）
+	portNum := 0
+	if portNumStr := c.Query("port_num"); portNumStr != "" {
+		if pn, err := strconv.Atoi(portNumStr); err == nil {
+			portNum = pn
+		}
+	}
+
+	metricsService := services.NewNodeMetricsService()
+	if err := metricsService.RemoveIBPortIgnore(minionID, portName, portNum); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to remove IB port ignore: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[RemoveIBPortIgnore] Removed ignore for minion=%s port=%s portNum=%d", minionID, portName, portNum)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "IB port ignore removed",
+	})
+}
+
+// GetIBPortAlerts 获取 IB 端口告警列表
+// @Summary 获取 IB 端口告警列表
+// @Description 获取所有 Down 状态但未被忽略的 IB 端口告警
+// @Tags SaltStack
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-alerts [get]
+func (h *SaltStackHandler) GetIBPortAlerts(c *gin.Context) {
+	metricsService := services.NewNodeMetricsService()
+	alerts, err := metricsService.GetIBPortAlerts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get IB port alerts: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    alerts,
+		"total":   len(alerts),
 	})
 }

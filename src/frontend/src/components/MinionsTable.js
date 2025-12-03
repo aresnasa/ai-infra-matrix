@@ -118,6 +118,8 @@ const GROUP_COLORS = {
  * @param {string} props.selectedGroup - 当前选中的分组筛选
  * @param {function} props.onGroupChange - 分组筛选变化回调
  * @param {function} props.onSetGroup - 设置单个 Minion 分组回调
+ * @param {array} props.ibAlerts - IB 端口告警列表
+ * @param {function} props.onIgnoreIBPort - 忽略 IB 端口回调
  */
 const MinionsTable = ({
   minions = [],
@@ -134,6 +136,8 @@ const MinionsTable = ({
   selectedGroup = '',
   onGroupChange,
   onSetGroup,
+  ibAlerts = [],
+  onIgnoreIBPort,
 }) => {
   const { t, locale } = useI18n();
   
@@ -491,7 +495,7 @@ const MinionsTable = ({
       },
     },
     {
-      title: t('minions.columns.ibStatus', 'IB 状态'),
+      title: t('minions.columns.ibStatus'),
       dataIndex: 'ib_status',
       key: 'ib_status',
       width: 100,
@@ -504,7 +508,7 @@ const MinionsTable = ({
           return (
             <Tooltip title={
               <div>
-                <div>活跃端口: {activeCount}</div>
+                <div>{t('minions.columns.ibActivePorts')}: {activeCount}</div>
                 {ibInfo?.ports?.map((port, idx) => (
                   <div key={idx}>{port.name}: {port.state} ({port.rate})</div>
                 ))}
@@ -695,6 +699,146 @@ const MinionsTable = ({
     },
   };
 
+  // 展开行渲染函数 - 显示详细的监控数据
+  const expandedRowRender = useCallback((record) => {
+    const minionId = record.id || record.name;
+    const minionAlerts = ibAlerts.filter(a => a.minion_id === minionId);
+    
+    return (
+      <div style={{ padding: '12px 24px', background: '#fafafa' }}>
+        <Row gutter={[24, 16]}>
+          {/* CPU 信息 */}
+          {record.cpu_info && (
+            <Col span={6}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>{t('minions.metrics.cpu', 'CPU 信息')}</div>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                <div>{t('minions.metrics.cpuModel', '型号')}: {record.cpu_info.model || '-'}</div>
+                <div>{t('minions.metrics.cpuCores', '核心')}: {record.cpu_info.cores || 0} / {record.cpu_info.threads || 0} {t('minions.metrics.threads', '线程')}</div>
+                <div>{t('minions.metrics.cpuFrequency', '主频')}: {record.cpu_info.frequency || '-'}</div>
+                {record.cpu_info.usage > 0 && (
+                  <div>{t('minions.metrics.cpuUsage', 'CPU 使用率')}: <Tag color={record.cpu_info.usage > 80 ? 'red' : record.cpu_info.usage > 50 ? 'orange' : 'green'}>{record.cpu_info.usage.toFixed(1)}%</Tag></div>
+                )}
+              </div>
+            </Col>
+          )}
+          
+          {/* 内存信息 */}
+          {record.memory_info && (
+            <Col span={6}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>{t('minions.metrics.memory', '内存信息')}</div>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                <div>{t('minions.metrics.memoryTotal', '总量')}: {record.memory_info.total || '-'}</div>
+                <div>{t('minions.metrics.memoryUsed', '已用')}: {record.memory_info.used || '-'}</div>
+                <div>{t('minions.metrics.memoryFree', '可用')}: {record.memory_info.free || '-'}</div>
+                {record.memory_info.usage_percent > 0 && (
+                  <div>{t('minions.metrics.memoryUsage', '使用率')}: <Tag color={record.memory_info.usage_percent > 90 ? 'red' : record.memory_info.usage_percent > 70 ? 'orange' : 'green'}>{record.memory_info.usage_percent.toFixed(1)}%</Tag></div>
+                )}
+              </div>
+            </Col>
+          )}
+          
+          {/* 网络信息 */}
+          {record.network_info && (
+            <Col span={6}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>{t('minions.metrics.network', '网络信息')}</div>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                <div>{t('minions.metrics.networkRx', '总接收')}: {record.network_info.total_rx_rate || '-'}</div>
+                <div>{t('minions.metrics.networkTx', '总发送')}: {record.network_info.total_tx_rate || '-'}</div>
+                {record.network_info.interfaces?.slice(0, 3).map((iface, idx) => (
+                  <div key={idx} style={{ marginTop: 4 }}>
+                    <Tag size="small">{iface.name}</Tag> {iface.ip || '-'} ({iface.state})
+                  </div>
+                ))}
+              </div>
+            </Col>
+          )}
+          
+          {/* RoCE 网络 */}
+          {record.roce_info && record.roce_info.count > 0 && (
+            <Col span={6}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>{t('minions.metrics.roce', 'RoCE 网络')}</div>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                <div>{t('minions.metrics.roceCount', '接口数')}: {record.roce_info.count}</div>
+                {record.roce_info.interfaces?.map((iface, idx) => (
+                  <div key={idx} style={{ marginTop: 4 }}>
+                    <Tag size="small" color="purple">{iface.rdma_dev}</Tag> → {iface.netdev}
+                  </div>
+                ))}
+              </div>
+            </Col>
+          )}
+          
+          {/* GPU 详细信息 */}
+          {record.gpu_info && record.gpu_info.gpu_count > 0 && (
+            <Col span={12}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>{t('minions.metrics.gpu', 'GPU 信息')}</div>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                <div>{t('minions.metrics.gpuCount', '数量')}: {record.gpu_info.gpu_count}</div>
+                <div>{t('minions.metrics.gpuModel', '型号')}: {record.gpu_info.gpu_model || '-'}</div>
+                <div>{t('minions.metrics.gpuDriver', '驱动')}: {record.gpu_info.driver_version || '-'} | CUDA: {record.gpu_info.cuda_version || '-'}</div>
+                {record.gpu_info.gpus?.slice(0, 4).map((gpu, idx) => (
+                  <div key={idx} style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag size="small">GPU {idx}</Tag>
+                    <span>{t('minions.metrics.gpuUtil', '利用率')}: {gpu.utilization || 0}%</span>
+                    <span>{t('minions.metrics.gpuMem', '显存')}: {gpu.memory_used || '-'}/{gpu.memory_total || '-'}</span>
+                  </div>
+                ))}
+              </div>
+            </Col>
+          )}
+          
+          {/* IB 端口告警 */}
+          {minionAlerts.length > 0 && (
+            <Col span={12}>
+              <div style={{ fontWeight: 500, marginBottom: 8, color: '#ff4d4f' }}>
+                <ExclamationCircleOutlined style={{ marginRight: 4 }} />
+                {t('minions.metrics.ibAlerts', 'IB 端口告警')}
+              </div>
+              <div style={{ fontSize: 12 }}>
+                {minionAlerts.map((alert, idx) => (
+                  <div key={idx} style={{ marginBottom: 8, padding: 8, background: '#fff2f0', borderRadius: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <Tag color="error">{alert.port_name}:{alert.port_num}</Tag>
+                      <span style={{ color: '#ff4d4f' }}>{t('minions.metrics.portDown', '端口 Down')}</span>
+                      <span style={{ marginLeft: 8, color: '#999' }}>{t('minions.metrics.expectedRate', '预期速率')}: {alert.expected_rate}</span>
+                    </div>
+                    {onIgnoreIBPort && (
+                      <Popconfirm
+                        title={t('minions.metrics.ignoreConfirm', '确认忽略此端口告警？')}
+                        description={t('minions.metrics.ignoreDesc', '忽略后将不再显示此端口的 Down 状态告警')}
+                        onConfirm={() => onIgnoreIBPort(minionId, alert.port_name, alert.port_num, t('minions.metrics.ignoreReason', '物理未接线'))}
+                        okText={t('common.confirm', '确认')}
+                        cancelText={t('common.cancel', '取消')}
+                      >
+                        <Button type="link" size="small">{t('minions.metrics.ignore', '忽略')}</Button>
+                      </Popconfirm>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Col>
+          )}
+          
+          {/* 无监控数据提示 */}
+          {!record.cpu_info && !record.memory_info && !record.network_info && !record.roce_info && !record.gpu_info && minionAlerts.length === 0 && (
+            <Col span={24}>
+              <Text type="secondary">{t('minions.metrics.noData', '暂无监控数据，请部署节点指标采集')}</Text>
+            </Col>
+          )}
+          
+          {/* 采集时间 */}
+          {record.metrics_collected_at && (
+            <Col span={24}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {t('minions.metrics.collectedAt', '最后采集')}: {new Date(record.metrics_collected_at).toLocaleString()}
+              </Text>
+            </Col>
+          )}
+        </Row>
+      </div>
+    );
+  }, [ibAlerts, onIgnoreIBPort, t]);
+
   // 根据 compact 模式和 showActions 决定最终列
   const columns = useMemo(() => {
     if (compact) {
@@ -757,6 +901,10 @@ const MinionsTable = ({
         loading={loading}
         size="small"
         scroll={compact ? undefined : { x: 1200 }}
+        expandable={compact ? undefined : {
+          expandedRowRender,
+          rowExpandable: () => true,
+        }}
         pagination={{
           showSizeChanger: true,
           showQuickJumper: true,

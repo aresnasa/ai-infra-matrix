@@ -322,6 +322,8 @@ func migrateTaskSchema() error {
 		// 节点指标表
 		&models.NodeMetrics{},
 		&models.NodeMetricsLatest{},
+		// IB 端口忽略表
+		&models.IBPortIgnore{},
 		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},

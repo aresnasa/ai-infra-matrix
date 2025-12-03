@@ -1109,6 +1109,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/node-metrics/summary", saltStackHandler.GetNodeMetricsSummary)
 		saltstack.POST("/node-metrics/deploy", saltStackHandler.DeployNodeMetricsState)
 		saltstack.POST("/node-metrics/trigger", saltStackHandler.TriggerMetricsCollection)
+		// IB 端口忽略管理和告警
+		saltstack.GET("/ib-ignores", saltStackHandler.GetIBPortIgnores)
+		saltstack.POST("/ib-ignores", saltStackHandler.AddIBPortIgnore)
+		saltstack.DELETE("/ib-ignores/:minion_id/:port_name", saltStackHandler.RemoveIBPortIgnore)
+		saltstack.GET("/ib-alerts", saltStackHandler.GetIBPortAlerts)
 	}
 
 	// 仪表板统计路由（需要认证）

@@ -667,6 +667,12 @@ export const saltStackAPI = {
   // 节点指标采集
   getNodeMetrics: (minionId = '') => api.get('/saltstack/node-metrics', { params: minionId ? { minion_id: minionId } : {} }),
   deployNodeMetricsState: (target, interval = 3) => api.post('/saltstack/node-metrics/deploy', { target, interval }),
+  
+  // IB 端口忽略管理
+  getIBPortIgnores: (minionId = '') => api.get('/saltstack/ib-ignores', { params: minionId ? { minion_id: minionId } : {} }),
+  addIBPortIgnore: (minionId, portName, portNum = 1, reason = '') => api.post('/saltstack/ib-ignores', { minion_id: minionId, port_name: portName, port_num: portNum, reason }),
+  removeIBPortIgnore: (minionId, portName, portNum = 0) => api.delete(`/saltstack/ib-ignores/${encodeURIComponent(minionId)}/${encodeURIComponent(portName)}`, { params: portNum ? { port_num: portNum } : {} }),
+  getIBPortAlerts: () => api.get('/saltstack/ib-alerts'),
 };
 
 // 增强用户管理API
