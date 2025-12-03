@@ -149,11 +149,13 @@ const SaltStackDashboard = () => {
   const [quickGroupModalVisible, setQuickGroupModalVisible] = useState(false);
   const [quickGroupForm] = Form.useForm();
   const [quickGroupCreating, setQuickGroupCreating] = useState(false);
+  const [quickGroupName, setQuickGroupName] = useState('');
 
   // 批量安装 Categraf 弹窗
   const [batchCategrafVisible, setBatchCategrafVisible] = useState(false);
   const [batchCategrafForm] = Form.useForm();
   const [batchCategrafRunning, setBatchCategrafRunning] = useState(false);
+  const [batchCategrafTaskId, setBatchCategrafTaskId] = useState('');
   const [batchCategrafHosts, setBatchCategrafHosts] = useState([
     { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
   ]);
