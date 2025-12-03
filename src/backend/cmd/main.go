@@ -1073,6 +1073,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 	// SaltStack 管理路由（需要认证）
 	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
+
+	// 节点指标回调 API（使用 API Token 认证，允许节点直接上报）
+	// 这个路由不使用 session 认证，而是使用 X-API-Token 头进行认证
+	api.POST("/saltstack/node-metrics/callback", saltStackHandler.NodeMetricsCallback)
+
 	saltstack := api.Group("/saltstack")
 	saltstack.Use(middleware.AuthMiddlewareWithSession())
 	{
@@ -1096,6 +1101,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/groups/:id/minions", saltStackHandler.GetGroupMinions)
 		saltstack.POST("/minions/set-group", saltStackHandler.SetMinionGroup)
 		saltstack.POST("/minions/batch-set-groups", saltStackHandler.BatchSetMinionGroups)
+		// 批量为 Minion 安装 Categraf
+		saltstack.POST("/minions/install-categraf", saltStackHandler.InstallCategrafOnMinions)
+		saltstack.GET("/minions/install-categraf/:task_id/stream", saltStackHandler.CategrafInstallStream)
+		// 节点指标采集（管理接口需要认证，回调接口在上面单独注册无需认证）
+		saltstack.GET("/node-metrics", saltStackHandler.GetNodeMetrics)
+		saltstack.POST("/node-metrics/deploy", saltStackHandler.DeployNodeMetricsState)
 	}
 
 	// 仪表板统计路由（需要认证）

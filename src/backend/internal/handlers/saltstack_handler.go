@@ -2780,3 +2780,603 @@ func (h *SaltStackHandler) extractCmdOutput(resp map[string]interface{}, minionI
 	}
 	return ""
 }
+
+// ================== 批量为 Minion 安装 Categraf ==================
+
+// categrafInstallTask 存储 Categraf 安装任务信息
+type categrafInstallTask struct {
+	TaskID    string              `json:"task_id"`
+	MinionIDs []string            `json:"minion_ids"`
+	Status    string              `json:"status"` // pending, running, completed, failed
+	Events    []map[string]string `json:"events"`
+	StartTime time.Time           `json:"start_time"`
+}
+
+var categrafInstallTasks = make(map[string]*categrafInstallTask)
+var categrafInstallTasksMutex sync.RWMutex
+
+// InstallCategrafOnMinions 批量为 Minion 安装 Categraf
+// @Summary 批量为 Minion 安装 Categraf
+// @Description 通过 Salt State 在指定的 Minion 上安装 Categraf 监控代理
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param body body object true "安装请求" example({"minion_ids": ["minion1", "minion2"]})
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minions/install-categraf [post]
+func (h *SaltStackHandler) InstallCategrafOnMinions(c *gin.Context) {
+	var req struct {
+		MinionIDs []string `json:"minion_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if len(req.MinionIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "minion_ids cannot be empty"})
+		return
+	}
+
+	// 生成任务 ID
+	taskID := fmt.Sprintf("categraf-%d", time.Now().UnixNano())
+
+	// 创建任务记录
+	task := &categrafInstallTask{
+		TaskID:    taskID,
+		MinionIDs: req.MinionIDs,
+		Status:    "pending",
+		Events:    make([]map[string]string, 0),
+		StartTime: time.Now(),
+	}
+
+	categrafInstallTasksMutex.Lock()
+	categrafInstallTasks[taskID] = task
+	categrafInstallTasksMutex.Unlock()
+
+	// 异步执行安装
+	go h.executeCategrafInstall(taskID, req.MinionIDs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Categraf installation task created",
+		"data": gin.H{
+			"task_id":    taskID,
+			"minion_ids": req.MinionIDs,
+		},
+	})
+}
+
+// executeCategrafInstall 异步执行 Categraf 安装
+func (h *SaltStackHandler) executeCategrafInstall(taskID string, minionIDs []string) {
+	categrafInstallTasksMutex.Lock()
+	task := categrafInstallTasks[taskID]
+	if task == nil {
+		categrafInstallTasksMutex.Unlock()
+		return
+	}
+	task.Status = "running"
+	categrafInstallTasksMutex.Unlock()
+
+	defer func() {
+		categrafInstallTasksMutex.Lock()
+		if task.Status == "running" {
+			task.Status = "completed"
+		}
+		categrafInstallTasksMutex.Unlock()
+	}()
+
+	// 添加开始事件
+	h.addCategrafEvent(taskID, map[string]string{
+		"type":      "start",
+		"message":   fmt.Sprintf("Starting Categraf installation on %d minions", len(minionIDs)),
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+
+	for _, minionID := range minionIDs {
+		h.addCategrafEvent(taskID, map[string]string{
+			"type":      "running",
+			"status":    "running",
+			"minion_id": minionID,
+			"message":   fmt.Sprintf("Installing Categraf on %s...", minionID),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+
+		// 通过 Salt State 安装 Categraf
+		// 使用 state.apply 命令执行 categraf state
+		payload := map[string]interface{}{
+			"client": "local",
+			"tgt":    minionID,
+			"fun":    "state.apply",
+			"arg":    []string{"categraf"},
+		}
+
+		client := h.newSaltAPIClient()
+		resp, err := client.makeRequest("/", "POST", payload)
+		if err != nil {
+			h.addCategrafEvent(taskID, map[string]string{
+				"type":      "error",
+				"status":    "error",
+				"minion_id": minionID,
+				"message":   fmt.Sprintf("Failed to install Categraf on %s: %v", minionID, err),
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+			continue
+		}
+
+		// 解析响应，检查是否成功
+		success, message := h.checkStateApplyResult(resp, minionID)
+		if success {
+			h.addCategrafEvent(taskID, map[string]string{
+				"type":      "success",
+				"status":    "success",
+				"minion_id": minionID,
+				"message":   fmt.Sprintf("Categraf installed successfully on %s: %s", minionID, message),
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+		} else {
+			h.addCategrafEvent(taskID, map[string]string{
+				"type":      "error",
+				"status":    "error",
+				"minion_id": minionID,
+				"message":   fmt.Sprintf("Categraf installation failed on %s: %s", minionID, message),
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+		}
+	}
+
+	// 添加完成事件
+	h.addCategrafEvent(taskID, map[string]string{
+		"type":      "complete",
+		"message":   "Categraf installation completed",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}
+
+// addCategrafEvent 添加 Categraf 安装事件
+func (h *SaltStackHandler) addCategrafEvent(taskID string, event map[string]string) {
+	categrafInstallTasksMutex.Lock()
+	defer categrafInstallTasksMutex.Unlock()
+
+	if task, ok := categrafInstallTasks[taskID]; ok {
+		task.Events = append(task.Events, event)
+	}
+}
+
+// checkStateApplyResult 检查 state.apply 的结果
+func (h *SaltStackHandler) checkStateApplyResult(resp map[string]interface{}, minionID string) (bool, string) {
+	ret, ok := resp["return"].([]interface{})
+	if !ok || len(ret) == 0 {
+		return false, "empty response"
+	}
+
+	minionResp, ok := ret[0].(map[string]interface{})
+	if !ok {
+		return false, "invalid response format"
+	}
+
+	minionResult, ok := minionResp[minionID]
+	if !ok {
+		return false, "no result for minion"
+	}
+
+	// 检查是否所有 state 都成功
+	switch result := minionResult.(type) {
+	case map[string]interface{}:
+		allSuccess := true
+		var messages []string
+		for _, stateResult := range result {
+			if sr, ok := stateResult.(map[string]interface{}); ok {
+				if success, ok := sr["result"].(bool); ok && !success {
+					allSuccess = false
+					if comment, ok := sr["comment"].(string); ok {
+						messages = append(messages, comment)
+					}
+				}
+			}
+		}
+		if allSuccess {
+			return true, "all states applied successfully"
+		}
+		return false, strings.Join(messages, "; ")
+	case string:
+		// 可能是错误消息
+		return false, result
+	default:
+		return false, "unknown response type"
+	}
+}
+
+// CategrafInstallStream SSE 流式返回 Categraf 安装进度
+// @Summary Categraf 安装进度流
+// @Description 通过 SSE 流式返回 Categraf 安装任务的进度
+// @Tags SaltStack
+// @Produce text/event-stream
+// @Param task_id path string true "任务 ID"
+// @Success 200 {string} string "event-stream"
+// @Router /api/saltstack/minions/install-categraf/{task_id}/stream [get]
+func (h *SaltStackHandler) CategrafInstallStream(c *gin.Context) {
+	taskID := c.Param("task_id")
+
+	categrafInstallTasksMutex.RLock()
+	task := categrafInstallTasks[taskID]
+	categrafInstallTasksMutex.RUnlock()
+
+	if task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "task not found"})
+		return
+	}
+
+	// 设置 SSE 头
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// 发送已有事件
+	sentIndex := 0
+	for {
+		categrafInstallTasksMutex.RLock()
+		task = categrafInstallTasks[taskID]
+		if task == nil {
+			categrafInstallTasksMutex.RUnlock()
+			break
+		}
+		events := task.Events
+		status := task.Status
+		categrafInstallTasksMutex.RUnlock()
+
+		// 发送新事件
+		for i := sentIndex; i < len(events); i++ {
+			eventData, _ := json.Marshal(events[i])
+			c.SSEvent("message", string(eventData))
+			c.Writer.Flush()
+			sentIndex = i + 1
+		}
+
+		// 任务完成则退出
+		if status == "completed" || status == "failed" {
+			break
+		}
+
+		// 等待新事件
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// 发送关闭事件
+	closeEvent, _ := json.Marshal(map[string]string{
+		"type":      "closed",
+		"message":   "Stream closed",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+	c.SSEvent("message", string(closeEvent))
+	c.Writer.Flush()
+}
+
+// ==================== 节点指标采集相关 ====================
+
+// NodeMetricsCallback 接收节点指标回调
+// @Summary 接收节点指标回调
+// @Description 接收从 Salt Minion 定期采集的 GPU/IB 等硬件信息。支持可选的 API Token 认证。
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param X-API-Token header string false "API Token（可选，如配置 NODE_METRICS_API_TOKEN 环境变量则必须提供）"
+// @Param request body models.NodeMetricsCallbackRequest true "节点指标数据"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/callback [post]
+func (h *SaltStackHandler) NodeMetricsCallback(c *gin.Context) {
+	// 可选的 API Token 认证
+	expectedToken := os.Getenv("NODE_METRICS_API_TOKEN")
+	if expectedToken != "" {
+		providedToken := c.GetHeader("X-API-Token")
+		if providedToken != expectedToken {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Invalid or missing API token",
+			})
+			return
+		}
+	}
+
+	var req models.NodeMetricsCallbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	if req.MinionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "minion_id is required",
+		})
+		return
+	}
+
+	// 解析时间戳
+	var timestamp time.Time
+	if req.Timestamp != "" {
+		parsed, err := time.Parse(time.RFC3339, req.Timestamp)
+		if err != nil {
+			timestamp = time.Now()
+		} else {
+			timestamp = parsed
+		}
+	} else {
+		timestamp = time.Now()
+	}
+
+	// 构建 NodeMetrics 记录
+	metrics := &models.NodeMetrics{
+		MinionID:  req.MinionID,
+		Timestamp: timestamp,
+	}
+
+	// 处理 GPU 信息
+	if req.GPU != nil {
+		metrics.GPUDriverVersion = req.GPU.DriverVersion
+		metrics.CUDAVersion = req.GPU.CUDAVersion
+		metrics.GPUCount = req.GPU.Count
+		metrics.GPUModel = req.GPU.Model
+		metrics.GPUMemoryTotal = req.GPU.MemoryTotal
+		if req.GPU.GPUs != nil {
+			gpuInfoJSON, _ := json.Marshal(req.GPU.GPUs)
+			metrics.GPUInfo = string(gpuInfoJSON)
+		}
+	}
+
+	// 处理 IB 信息
+	if req.IB != nil {
+		metrics.IBActiveCount = req.IB.ActiveCount
+		if req.IB.Ports != nil {
+			ibPortsJSON, _ := json.Marshal(req.IB.Ports)
+			metrics.IBPortsInfo = string(ibPortsJSON)
+		}
+	}
+
+	// 处理系统信息
+	if req.System != nil {
+		metrics.KernelVersion = req.System.KernelVersion
+		metrics.OSVersion = req.System.OSVersion
+	}
+
+	// 保存原始数据
+	rawDataJSON, _ := json.Marshal(req)
+	metrics.RawData = string(rawDataJSON)
+
+	// 调用服务保存指标
+	metricsService := services.NewNodeMetricsService()
+	if err := metricsService.SaveNodeMetrics(metrics); err != nil {
+		log.Printf("[NodeMetricsCallback] Failed to save metrics for minion %s: %v", req.MinionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to save metrics: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[NodeMetricsCallback] Received metrics from minion: %s, GPU count: %d, IB active: %d",
+		req.MinionID, metrics.GPUCount, metrics.IBActiveCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Metrics received and saved",
+		"minion":  req.MinionID,
+	})
+}
+
+// GetNodeMetrics 获取节点指标
+// @Summary 获取节点指标
+// @Description 获取指定节点的最新硬件指标（GPU/IB）
+// @Tags SaltStack
+// @Produce json
+// @Param minion_id query string false "Minion ID，留空获取所有节点"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics [get]
+func (h *SaltStackHandler) GetNodeMetrics(c *gin.Context) {
+	minionID := c.Query("minion_id")
+
+	metricsService := services.NewNodeMetricsService()
+
+	if minionID != "" {
+		// 获取单个节点的最新指标
+		metrics, err := metricsService.GetLatestMetrics(minionID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "Metrics not found for minion: " + minionID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    h.formatNodeMetricsResponse(metrics),
+		})
+		return
+	}
+
+	// 获取所有节点的最新指标
+	allMetrics, err := metricsService.GetAllLatestMetrics()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get metrics: " + err.Error(),
+		})
+		return
+	}
+
+	// 格式化响应
+	var results []models.NodeMetricsResponse
+	for _, m := range allMetrics {
+		results = append(results, h.formatNodeMetricsResponse(&m))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    results,
+		"total":   len(results),
+	})
+}
+
+// formatNodeMetricsResponse 格式化节点指标响应
+func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest) models.NodeMetricsResponse {
+	resp := models.NodeMetricsResponse{
+		MinionID:    m.MinionID,
+		CollectedAt: m.Timestamp,
+	}
+
+	// GPU 信息
+	if m.GPUCount > 0 || m.GPUDriverVersion != "" {
+		resp.GPU = &models.NodeGPUMetrics{
+			DriverVersion: m.GPUDriverVersion,
+			CUDAVersion:   m.CUDAVersion,
+			Count:         m.GPUCount,
+			Model:         m.GPUModel,
+			MemoryTotal:   m.GPUMemoryTotal,
+		}
+		// 解析详细 GPU 信息
+		if m.GPUInfo != "" {
+			var gpus []models.NodeGPUDetailInfo
+			if err := json.Unmarshal([]byte(m.GPUInfo), &gpus); err == nil {
+				resp.GPU.GPUs = gpus
+			}
+		}
+	}
+
+	// IB 信息
+	if m.IBActiveCount > 0 || m.IBPortsInfo != "" {
+		resp.IB = &models.NodeIBMetrics{
+			ActiveCount: m.IBActiveCount,
+		}
+		// 解析 IB 端口信息
+		if m.IBPortsInfo != "" {
+			var ports []models.NodeIBPortInfo
+			if err := json.Unmarshal([]byte(m.IBPortsInfo), &ports); err == nil {
+				resp.IB.Ports = ports
+			}
+		}
+	}
+
+	// 系统信息
+	if m.KernelVersion != "" || m.OSVersion != "" {
+		resp.System = &models.NodeSystemMetrics{
+			KernelVersion: m.KernelVersion,
+			OSVersion:     m.OSVersion,
+		}
+	}
+
+	return resp
+}
+
+// DeployNodeMetricsState 部署节点指标采集 State
+// @Summary 部署节点指标采集
+// @Description 向指定 Minion 部署节点指标采集脚本和定时任务
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "部署请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/deploy [post]
+func (h *SaltStackHandler) DeployNodeMetricsState(c *gin.Context) {
+	var req struct {
+		Target   string `json:"target" binding:"required"` // Minion ID 或通配符
+		Interval int    `json:"interval"`                  // 采集间隔（分钟），默认 3
+		APIToken string `json:"api_token"`                 // 可选的 API Token
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	if req.Interval <= 0 {
+		req.Interval = 3
+	}
+
+	// 获取回调 URL
+	callbackURL := h.getNodeMetricsCallbackURL(c)
+
+	// 获取 API Token（优先使用请求中的，否则使用环境变量）
+	apiToken := req.APIToken
+	if apiToken == "" {
+		apiToken = os.Getenv("NODE_METRICS_API_TOKEN")
+	}
+
+	// 构建 pillar 数据
+	pillarData := map[string]interface{}{
+		"node_metrics": map[string]interface{}{
+			"callback_url":     callbackURL,
+			"collect_interval": req.Interval,
+			"api_token":        apiToken,
+		},
+	}
+
+	// 获取 Salt API 客户端
+	client := h.newSaltAPIClient()
+	if client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get Salt API client",
+		})
+		return
+	}
+
+	// 执行 state.apply
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    req.Target,
+		"fun":    "state.apply",
+		"arg":    []string{"node-metrics"},
+		"pillar": pillarData,
+	}
+
+	result, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		log.Printf("[DeployNodeMetricsState] Salt API error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Salt API error: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[DeployNodeMetricsState] Deployed node-metrics state to target: %s", req.Target)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"message":     "Node metrics state deployed",
+		"target":      req.Target,
+		"interval":    req.Interval,
+		"callbackURL": callbackURL,
+		"result":      result,
+	})
+}
+
+// getNodeMetricsCallbackURL 获取节点指标回调 URL
+func (h *SaltStackHandler) getNodeMetricsCallbackURL(c *gin.Context) string {
+	// 优先从环境变量获取
+	if callbackURL := os.Getenv("NODE_METRICS_CALLBACK_URL"); callbackURL != "" {
+		return callbackURL
+	}
+
+	// 从配置获取后端地址
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	// 尝试获取真实主机地址
+	host := c.Request.Host
+	if forwardedHost := c.GetHeader("X-Forwarded-Host"); forwardedHost != "" {
+		host = forwardedHost
+	}
+
+	return fmt.Sprintf("%s://%s/api/saltstack/node-metrics/callback", scheme, host)
+}

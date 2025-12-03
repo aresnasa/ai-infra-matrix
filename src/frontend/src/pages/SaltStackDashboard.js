@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton, InputNumber, Switch, Divider, Tooltip, Popconfirm, Upload, Dropdown, Menu } from 'antd';
+import { Card, Row, Col, Statistic, Table, Tag, Space, Alert, Spin, Button, Layout, Typography, List, Progress, Descriptions, Badge, Tabs, Modal, Form, Input, Select, message, Skeleton, InputNumber, Switch, Divider, Tooltip, Popconfirm, Upload, Dropdown, Menu, Checkbox, Empty, Timeline } from 'antd';
 import { 
   CheckCircleOutlined, 
   ExclamationCircleOutlined, 
@@ -27,7 +27,8 @@ import {
   DashboardOutlined,
   CopyOutlined,
   TeamOutlined,
-  EditOutlined
+  EditOutlined,
+  LoadingOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
@@ -70,6 +71,9 @@ const SaltStackDashboard = () => {
   const [selectedGroup, setSelectedGroup] = useState('');
   const [groupsLoading, setGroupsLoading] = useState(false);
   
+  // 系统概览分组筛选
+  const [overviewGroupFilter, setOverviewGroupFilter] = useState('all'); // 'all' 或分组名
+  
   // 加载状态 - 分别管理每个数据块的加载状态
   const [statusLoading, setStatusLoading] = useState(false);
   const [minionsLoading, setMinionsLoading] = useState(false);
@@ -105,7 +109,7 @@ const SaltStackDashboard = () => {
   const [batchInstallTaskId, setBatchInstallTaskId] = useState('');
   const [batchInstallEvents, setBatchInstallEvents] = useState([]);
   const [batchInstallHosts, setBatchInstallHosts] = useState([
-    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, group: '' }
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, group: '', install_categraf: false }
   ]);
   const batchSseRef = useRef(null);
   
@@ -140,6 +144,26 @@ const SaltStackDashboard = () => {
   const [groupModalVisible, setGroupModalVisible] = useState(false);
   const [groupForm] = Form.useForm();
   const [editingGroup, setEditingGroup] = useState(null);
+
+  // 快速创建分组弹窗（在批量安装中使用）
+  const [quickGroupModalVisible, setQuickGroupModalVisible] = useState(false);
+  const [quickGroupForm] = Form.useForm();
+  const [quickGroupCreating, setQuickGroupCreating] = useState(false);
+
+  // 批量安装 Categraf 弹窗
+  const [batchCategrafVisible, setBatchCategrafVisible] = useState(false);
+  const [batchCategrafForm] = Form.useForm();
+  const [batchCategrafRunning, setBatchCategrafRunning] = useState(false);
+  const [batchCategrafHosts, setBatchCategrafHosts] = useState([
+    { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
+  ]);
+  const [batchCategrafEvents, setBatchCategrafEvents] = useState([]);
+  const batchCategrafSseRef = useRef(null);
+
+  // 部署节点指标采集弹窗
+  const [deployMetricsVisible, setDeployMetricsVisible] = useState(false);
+  const [deployMetricsForm] = Form.useForm();
+  const [deployMetricsLoading, setDeployMetricsLoading] = useState(false);
 
   // 安装任务历史状态
   const [installTasks, setInstallTasks] = useState([]);
@@ -179,21 +203,46 @@ const SaltStackDashboard = () => {
   const loadMinions = async (forceRefresh = false) => {
     setMinionsLoading(true);
     try {
-      // 并行获取 Minion 列表和待删除状态
-      const [minionsRes, pendingDeletesRes] = await Promise.all([
+      // 并行获取 Minion 列表、待删除状态和节点指标
+      const [minionsRes, pendingDeletesRes, nodeMetricsRes] = await Promise.all([
         saltStackAPI.getMinions(forceRefresh),
         saltStackAPI.getPendingDeleteMinions().catch(() => ({ data: { minion_ids: [] } })),
+        saltStackAPI.getNodeMetrics().catch(() => ({ data: { data: [] } })),
       ]);
       
       const minionList = minionsRes.data?.data || [];
       const pendingDeleteIds = new Set(pendingDeletesRes.data?.minion_ids || []);
+      const nodeMetricsList = nodeMetricsRes.data?.data || [];
       
-      // 标记待删除的 Minion
-      const minionsWithDeleteStatus = minionList.map(minion => ({
-        ...minion,
-        pending_delete: pendingDeleteIds.has(minion.id || minion.name),
-        status: pendingDeleteIds.has(minion.id || minion.name) ? 'deleting' : minion.status,
-      }));
+      // 构建节点指标映射表
+      const metricsMap = {};
+      nodeMetricsList.forEach(m => {
+        metricsMap[m.minion_id] = m;
+      });
+      
+      // 标记待删除的 Minion 并合并节点指标
+      const minionsWithDeleteStatus = minionList.map(minion => {
+        const minionId = minion.id || minion.name;
+        const metrics = metricsMap[minionId];
+        return {
+          ...minion,
+          pending_delete: pendingDeleteIds.has(minionId),
+          status: pendingDeleteIds.has(minionId) ? 'deleting' : minion.status,
+          // 合并采集到的 GPU/IB 指标
+          gpu_info: metrics?.gpu ? {
+            gpu_count: metrics.gpu.count || 0,
+            gpu_model: metrics.gpu.model || '',
+            driver_version: metrics.gpu.driver_version || '',
+            cuda_version: metrics.gpu.cuda_version || '',
+            memory_total: metrics.gpu.memory_total || '',
+          } : minion.gpu_info,
+          ib_info: metrics?.ib ? {
+            active_count: metrics.ib.active_count || 0,
+            ports: metrics.ib.ports || [],
+          } : minion.ib_info,
+          metrics_collected_at: metrics?.collected_at,
+        };
+      });
       
       setMinions(minionsWithDeleteStatus);
       setDemo(prev => prev || Boolean(minionsRes.data?.demo));
@@ -233,6 +282,76 @@ const SaltStackDashboard = () => {
       setInstallTasksLoading(false);
     }
   }, [installTasksPage.current, installTasksPage.pageSize]);
+
+  // 计算按分组筛选后的 minions
+  const filteredMinions = useMemo(() => {
+    if (overviewGroupFilter === 'all') {
+      return minions;
+    }
+    if (overviewGroupFilter === 'ungrouped') {
+      return minions.filter(m => !m.group || m.group === '');
+    }
+    return minions.filter(m => m.group === overviewGroupFilter);
+  }, [minions, overviewGroupFilter]);
+
+  // 计算分组聚合统计
+  const groupStats = useMemo(() => {
+    const stats = {
+      total: minions.length,
+      online: minions.filter(m => m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'accepted').length,
+      offline: minions.filter(m => m.status?.toLowerCase() !== 'up' && m.status?.toLowerCase() !== 'accepted').length,
+      byGroup: {},
+      gpuInfo: { total: 0, withGpu: 0, models: {} },
+      ibInfo: { total: 0, active: 0, down: 0 },
+    };
+
+    // 按分组统计
+    minions.forEach(m => {
+      const groupName = m.group || '未分组';
+      if (!stats.byGroup[groupName]) {
+        stats.byGroup[groupName] = {
+          total: 0,
+          online: 0,
+          offline: 0,
+          gpuCount: 0,
+          ibActive: 0,
+        };
+      }
+      stats.byGroup[groupName].total++;
+      const isOnline = m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'accepted';
+      if (isOnline) {
+        stats.byGroup[groupName].online++;
+      } else {
+        stats.byGroup[groupName].offline++;
+      }
+
+      // GPU 统计
+      if (m.gpu_info?.gpu_count > 0 || m.gpu_model) {
+        stats.gpuInfo.withGpu++;
+        stats.gpuInfo.total += m.gpu_info?.gpu_count || 1;
+        const model = m.gpu_info?.gpu_model || m.gpu_model || 'Unknown';
+        stats.gpuInfo.models[model] = (stats.gpuInfo.models[model] || 0) + 1;
+        stats.byGroup[groupName].gpuCount += m.gpu_info?.gpu_count || 1;
+      }
+
+      // IB 统计（优先使用采集到的 ib_info）
+      if (m.ib_info?.active_count > 0) {
+        stats.ibInfo.total++;
+        stats.ibInfo.active++;
+        stats.byGroup[groupName].ibActive += m.ib_info.active_count || 1;
+      } else if (m.ib_status) {
+        stats.ibInfo.total++;
+        if (m.ib_status === 'Active' || m.ib_status === 'active') {
+          stats.ibInfo.active++;
+          stats.byGroup[groupName].ibActive++;
+        } else {
+          stats.ibInfo.down++;
+        }
+      }
+    });
+
+    return stats;
+  }, [minions]);
 
   const loadAllData = async () => {
     // 先加载 master 状态，确保 SaltStack 服务可用
@@ -319,11 +438,11 @@ const SaltStackDashboard = () => {
   const addHostRow = () => {
     setBatchInstallHosts([
       ...batchInstallHosts,
-      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, group: '' }
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false, group: '', install_categraf: false }
     ]);
   };
 
-  // 复制第一行配置到当前行（仅复制端口、用户名、密码、sudo、分组配置，不复制 host）
+  // 复制第一行配置到当前行（仅复制端口、用户名、密码、sudo、分组、Categraf配置，不复制 host）
   const copyFirstRowConfig = (targetKey) => {
     if (batchInstallHosts.length === 0) return;
     const firstRow = batchInstallHosts[0];
@@ -335,6 +454,7 @@ const SaltStackDashboard = () => {
         password: firstRow.password, 
         use_sudo: firstRow.use_sudo,
         group: firstRow.group,
+        install_categraf: firstRow.install_categraf,
       } : h
     ));
     message.success(t('saltstack.configCopied', '已复制第一行配置'));
@@ -517,7 +637,8 @@ const SaltStackDashboard = () => {
           password: h.password || '',
           use_sudo: h.use_sudo || false,
           minion_id: h.minion_id || '',
-          group: h.group || ''
+          group: h.group || '',
+          install_categraf: h.install_categraf || false
         };
         console.log(`✓ 主机 ${idx + 1}: ${hostValue} - 有效`, newHost);
         newHosts.push(newHost);
@@ -674,7 +795,8 @@ const SaltStackDashboard = () => {
           password: h.password || '',
           use_sudo: h.use_sudo || false,
           minion_id: h.minion_id || '',
-          group: h.group || ''
+          group: h.group || '',
+          install_categraf: h.install_categraf || false
         });
       });
 
@@ -729,15 +851,15 @@ const SaltStackDashboard = () => {
   const getPasteFormatExample = (format) => {
     switch (format) {
       case 'csv':
-        return `host,port,username,password,use_sudo,group
-192.168.1.100,22,root,password123,false,web
-192.168.1.101,22,admin,pass456,true,db
-node1.example.com,2222,deploy,secretpwd,false,`;
+        return `host,port,username,password,use_sudo,group,install_categraf
+192.168.1.100,22,root,password123,false,web,true
+192.168.1.101,22,admin,pass456,true,db,true
+node1.example.com,2222,deploy,secretpwd,false,,false`;
       case 'json':
         return `[
-  {"host": "192.168.1.100", "port": 22, "username": "root", "password": "password123", "use_sudo": false, "group": "web"},
-  {"host": "192.168.1.101", "port": 22, "username": "admin", "password": "pass456", "use_sudo": true, "group": "db"},
-  {"host": "node1.example.com", "port": 2222, "username": "deploy", "password": "secretpwd"}
+  {"host": "192.168.1.100", "port": 22, "username": "root", "password": "password123", "use_sudo": false, "group": "web", "install_categraf": true},
+  {"host": "192.168.1.101", "port": 22, "username": "admin", "password": "pass456", "use_sudo": true, "group": "db", "install_categraf": true},
+  {"host": "node1.example.com", "port": 2222, "username": "deploy", "password": "secretpwd", "install_categraf": false}
 ]`;
       case 'yaml':
         return `hosts:
@@ -747,25 +869,28 @@ node1.example.com,2222,deploy,secretpwd,false,`;
     password: password123
     use_sudo: false
     group: web
+    install_categraf: true
   - host: 192.168.1.101
     port: 22
     username: admin
     password: pass456
     use_sudo: true
     group: db
+    install_categraf: true
   - host: node1.example.com
     port: 2222
     username: deploy
-    password: secretpwd`;
+    password: secretpwd
+    install_categraf: false`;
       case 'ini':
         return `[web]
-192.168.1.100 ansible_port=22 ansible_user=root ansible_password=password123
+192.168.1.100 ansible_port=22 ansible_user=root ansible_password=password123 install_categraf=true
 
 [db]
-192.168.1.101 ansible_port=22 ansible_user=admin ansible_password=pass456 ansible_become=true
+192.168.1.101 ansible_port=22 ansible_user=admin ansible_password=pass456 ansible_become=true install_categraf=true
 
 [all]
-node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretpwd`;
+node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretpwd install_categraf=false`;
       default:
         return '';
     }
@@ -1129,6 +1254,245 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
     }
   };
 
+  // 快速创建分组（在批量安装弹窗中使用）
+  const handleQuickCreateGroup = async () => {
+    try {
+      const values = await quickGroupForm.validateFields();
+      setQuickGroupCreating(true);
+      
+      const resp = await saltStackAPI.createMinionGroup({
+        name: values.name,
+        description: values.description || '',
+        color: values.color || 'blue',
+      });
+      
+      if (resp.data?.success) {
+        message.success(t('saltstack.groupCreated', '分组已创建'));
+        await loadMinionGroups(); // 刷新分组列表
+        setQuickGroupModalVisible(false);
+        quickGroupForm.resetFields();
+        return resp.data?.data?.name || values.name; // 返回创建的分组名
+      } else {
+        message.error(resp.data?.message || t('saltstack.groupCreateFailed', '创建分组失败'));
+      }
+    } catch (e) {
+      if (e.errorFields) return;
+      message.error(t('saltstack.groupCreateFailed', '创建分组失败') + ': ' + (e?.response?.data?.message || e.message));
+    } finally {
+      setQuickGroupCreating(false);
+    }
+    return null;
+  };
+
+  // ========== 批量安装 Categraf 相关函数 ==========
+
+  // 打开批量安装 Categraf 弹窗（针对已接受的 Minion）
+  const openBatchCategrafModal = () => {
+    // 从已接受的 Minion 列表中获取主机
+    const acceptedMinions = minions.filter(m => m.status === 'accepted');
+    
+    // 转换为弹窗所需的格式，默认全选
+    const hostList = acceptedMinions.map(m => ({
+      minion_id: m.minion_id,
+      host: m.ip_address || m.minion_id,
+      group: m.group || '',
+      categraf_installed: m.categraf_installed || false,
+      selected: !m.categraf_installed, // 默认选中未安装 Categraf 的
+    }));
+    
+    setBatchCategrafVisible(true);
+    setBatchCategrafEvents([]);
+    setBatchCategrafRunning(false);
+    setBatchCategrafHosts(hostList);
+    setBatchCategrafTaskId('');
+  };
+
+  // 执行批量为 Minion 安装 Categraf（通过 Salt State）
+  const handleBatchCategrafInstall = async () => {
+    const selectedHosts = batchCategrafHosts.filter(h => h.selected);
+    if (selectedHosts.length === 0) {
+      message.warning(t('saltstack.selectAtLeastOneMinion', '请至少选择一个 Minion'));
+      return;
+    }
+
+    setBatchCategrafRunning(true);
+    setBatchCategrafEvents([]);
+
+    try {
+      const minionIds = selectedHosts.map(h => h.minion_id);
+      
+      // 调用后端 API 通过 Salt 安装 Categraf
+      const resp = await saltStackAPI.installCategrafOnMinions({
+        minion_ids: minionIds,
+      });
+
+      if (resp.data?.success && resp.data?.data?.task_id) {
+        setBatchCategrafTaskId(resp.data.data.task_id);
+        message.success(t('saltstack.categrafTaskCreated', { taskId: resp.data.data.task_id }));
+        // 启动 SSE 监听
+        startCategrafSSE(resp.data.data.task_id);
+      } else {
+        message.error(resp.data?.message || t('saltstack.categrafInstallFailed', '批量安装 Categraf 失败'));
+        setBatchCategrafRunning(false);
+      }
+    } catch (e) {
+      message.error(t('saltstack.categrafInstallFailed', '批量安装 Categraf 失败') + ': ' + (e?.response?.data?.message || e.message));
+      setBatchCategrafRunning(false);
+    }
+  };
+
+  // 关闭 Categraf 安装 SSE（针对 Minion）
+  const closeBatchCategrafSSE = () => {
+    if (batchCategrafSseRef.current) {
+      batchCategrafSseRef.current.close();
+      batchCategrafSseRef.current = null;
+    }
+  };
+
+  // 部署节点指标采集
+  const handleDeployNodeMetrics = async () => {
+    try {
+      const values = await deployMetricsForm.validateFields();
+      setDeployMetricsLoading(true);
+      
+      const resp = await saltStackAPI.deployNodeMetricsState(values.target, values.interval || 3);
+      
+      if (resp.data?.success) {
+        message.success(t('saltstack.deployMetricsSuccess', '指标采集已部署'));
+        setDeployMetricsVisible(false);
+        deployMetricsForm.resetFields();
+        // 刷新 minion 列表以获取最新指标
+        setTimeout(() => loadMinions(), 5000);
+      } else {
+        message.error(resp.data?.message || t('saltstack.deployMetricsFailed', '部署指标采集失败'));
+      }
+    } catch (e) {
+      if (e.errorFields) return; // 表单验证错误
+      message.error(t('saltstack.deployMetricsFailed', '部署指标采集失败') + ': ' + (e?.response?.data?.message || e.message));
+    } finally {
+      setDeployMetricsLoading(false);
+    }
+  };
+
+  // 添加 Categraf 主机行
+  const addCategrafHostRow = () => {
+    setBatchCategrafHosts([
+      ...batchCategrafHosts,
+      { key: Date.now(), host: '', port: 22, username: 'root', password: '', use_sudo: false }
+    ]);
+  };
+
+  // 更新 Categraf 主机行
+  const updateCategrafHostRow = (key, field, value) => {
+    setBatchCategrafHosts(batchCategrafHosts.map(h => 
+      h.key === key ? { ...h, [field]: value } : h
+    ));
+  };
+
+  // 删除 Categraf 主机行
+  const removeCategrafHostRow = (key) => {
+    if (batchCategrafHosts.length <= 1) {
+      message.warning(t('saltstack.atLeastOneHost'));
+      return;
+    }
+    setBatchCategrafHosts(batchCategrafHosts.filter(h => h.key !== key));
+  };
+
+  // 关闭 Categraf SSE
+  const closeCategrafSSE = () => {
+    if (batchCategrafSseRef.current) {
+      batchCategrafSseRef.current.close();
+      batchCategrafSseRef.current = null;
+    }
+  };
+
+  // 执行批量安装 Categraf
+  const handleBatchCategraf = async () => {
+    try {
+      const values = await batchCategrafForm.validateFields();
+      
+      // 验证主机列表
+      const validHosts = batchCategrafHosts.filter(h => h.host && h.host.trim());
+      if (validHosts.length === 0) {
+        message.error(t('saltstack.atLeastOneHost'));
+        return;
+      }
+
+      // 验证每个主机的凭据
+      for (const host of validHosts) {
+        if (!host.username || !host.password) {
+          message.error(t('saltstack.missingCredentials', { host: host.host }));
+          return;
+        }
+      }
+
+      setBatchCategrafRunning(true);
+      setBatchCategrafEvents([]);
+
+      const payload = {
+        hosts: validHosts.map(h => ({
+          host: h.host.trim(),
+          port: h.port || 22,
+          username: h.username,
+          password: h.password,
+          use_sudo: h.use_sudo || false,
+        })),
+        parallel: values.parallel || 3,
+        n9e_host: values.n9e_host || '',
+        n9e_port: values.n9e_port || '17000',
+        categraf_version: values.categraf_version || '',
+      };
+
+      const resp = await saltStackAPI.batchInstallCategraf(payload);
+      if (resp.data?.success && resp.data?.data?.task_id) {
+        message.success(t('saltstack.categrafTaskCreated', { taskId: resp.data.data.task_id }));
+        // 启动 SSE 监听
+        startCategrafSSE(resp.data.data.task_id);
+      } else {
+        message.error(resp.data?.message || t('saltstack.categrafInstallFailed', '批量安装 Categraf 失败'));
+        setBatchCategrafRunning(false);
+      }
+    } catch (e) {
+      if (e.errorFields) return;
+      message.error(t('saltstack.categrafInstallFailed', '批量安装 Categraf 失败') + ': ' + (e?.response?.data?.message || e.message));
+      setBatchCategrafRunning(false);
+    }
+  };
+
+  // 启动 Categraf SSE
+  const startCategrafSSE = (taskId) => {
+    closeCategrafSSE();
+    const url = saltStackAPI.getCategrafInstallStreamUrl ? 
+      saltStackAPI.getCategrafInstallStreamUrl(taskId) :
+      saltStackAPI.getBatchInstallStreamUrl(taskId); // 复用现有 URL
+    
+    const es = new EventSource(url, { withCredentials: false });
+    batchCategrafSseRef.current = es;
+    
+    es.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        console.log('[Categraf SSE事件]', data.type, data);
+        setBatchCategrafEvents((prev) => [...prev, data]);
+        
+        if (data.type === 'complete' || data.type === 'error' || data.type === 'closed') {
+          setTimeout(() => {
+            setBatchCategrafRunning(false);
+            closeCategrafSSE();
+          }, 500);
+        }
+      } catch (err) {
+        console.error('[Categraf SSE] 解析消息失败:', err);
+      }
+    };
+    
+    es.onerror = (err) => {
+      console.error('[Categraf SSE] 连接错误:', err);
+      closeCategrafSSE();
+      setBatchCategrafRunning(false);
+    };
+  };
+
   // 删除分组
   const handleDeleteGroup = async (groupId) => {
     try {
@@ -1490,7 +1854,30 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               <TabPane tab={t('saltstack.systemOverview')} key="overview" icon={<DatabaseOutlined />}>
                 <Row gutter={16}>
                   <Col span={24}>
-                    <Card title={t('saltstack.masterInfo')} size="small" loading={statusLoading} style={{ marginBottom: 16 }}>
+                    <Card 
+                      title={t('saltstack.masterInfo')} 
+                      size="small" 
+                      loading={statusLoading} 
+                      style={{ marginBottom: 16 }}
+                      extra={
+                        <Space>
+                          <Button
+                            icon={<DashboardOutlined />}
+                            onClick={() => setDeployMetricsVisible(true)}
+                            disabled={minions.filter(m => m.status === 'accepted').length === 0}
+                          >
+                            {t('saltstack.deployNodeMetrics', '部署指标采集')}
+                          </Button>
+                          <Button
+                            icon={<ThunderboltOutlined />}
+                            onClick={openBatchCategrafModal}
+                            disabled={minions.filter(m => m.status === 'accepted').length === 0}
+                          >
+                            {t('saltstack.batchInstallCategraf', '批量安装 Categraf')}
+                          </Button>
+                        </Space>
+                      }
+                    >
                       <Descriptions size="small" column={4}>
                         <Descriptions.Item label={t('saltstack.saltVersion')}>
                           {status?.salt_version || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
@@ -1508,17 +1895,170 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     </Card>
                   </Col>
                 </Row>
+
+                {/* 分组筛选和聚合统计 */}
+                <Card 
+                  size="small" 
+                  style={{ marginBottom: 16 }}
+                  title={
+                    <Space>
+                      <TeamOutlined />
+                      {t('saltstack.groupOverview', '分组概览')}
+                    </Space>
+                  }
+                  extra={
+                    <Space>
+                      <Text type="secondary">{t('saltstack.filterByGroup', '按分组筛选')}:</Text>
+                      <Select
+                        value={overviewGroupFilter}
+                        onChange={setOverviewGroupFilter}
+                        style={{ width: 180 }}
+                        size="small"
+                      >
+                        <Select.Option value="all">
+                          {t('saltstack.allGroups', '全部分组')} ({minions.length})
+                        </Select.Option>
+                        <Select.Option value="ungrouped">
+                          {t('saltstack.ungrouped', '未分组')} ({minions.filter(m => !m.group).length})
+                        </Select.Option>
+                        {minionGroups.map(g => (
+                          <Select.Option key={g.id} value={g.name}>
+                            <Tag color={g.color || 'default'} style={{ marginRight: 4 }}>{g.name}</Tag>
+                            ({minions.filter(m => m.group === g.name).length})
+                          </Select.Option>
+                        ))}
+                      </Select>
+                    </Space>
+                  }
+                >
+                  <Row gutter={[16, 16]}>
+                    {/* 总体统计 */}
+                    <Col xs={24} sm={12} md={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#f6ffed' }}>
+                        <Statistic 
+                          title={t('saltstack.totalMinions', '总节点数')} 
+                          value={filteredMinions.length}
+                          prefix={<DesktopOutlined />}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#e6f7ff' }}>
+                        <Statistic 
+                          title={t('saltstack.onlineMinions', '在线节点')} 
+                          value={filteredMinions.filter(m => m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'accepted').length}
+                          prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                          valueStyle={{ color: '#52c41a' }}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: '#fff7e6' }}>
+                        <Statistic 
+                          title={t('saltstack.gpuNodes', 'GPU 节点')} 
+                          value={groupStats.gpuInfo.withGpu}
+                          suffix={`/ ${groupStats.gpuInfo.total} GPUs`}
+                          prefix={<DashboardOutlined style={{ color: '#fa8c16' }} />}
+                        />
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                      <Card size="small" style={{ textAlign: 'center', background: groupStats.ibInfo.down > 0 ? '#fff1f0' : '#f6ffed' }}>
+                        <Statistic 
+                          title={t('saltstack.ibStatus', 'IB 网络')} 
+                          value={groupStats.ibInfo.active}
+                          suffix={`/ ${groupStats.ibInfo.total}`}
+                          prefix={<ApiOutlined style={{ color: groupStats.ibInfo.down > 0 ? '#ff4d4f' : '#52c41a' }} />}
+                          valueStyle={{ color: groupStats.ibInfo.down > 0 ? '#ff4d4f' : '#52c41a' }}
+                        />
+                        {groupStats.ibInfo.down > 0 && (
+                          <Text type="danger" style={{ fontSize: 12 }}>
+                            {groupStats.ibInfo.down} {t('saltstack.ibDown', '个离线')}
+                          </Text>
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
+
+                  {/* 按分组的统计表格 */}
+                  {Object.keys(groupStats.byGroup).length > 1 && (
+                    <div style={{ marginTop: 16 }}>
+                      <Text strong style={{ marginBottom: 8, display: 'block' }}>
+                        {t('saltstack.groupStatistics', '分组统计')}
+                      </Text>
+                      <Table
+                        size="small"
+                        dataSource={Object.entries(groupStats.byGroup).map(([name, stats]) => ({
+                          key: name,
+                          name,
+                          ...stats,
+                        }))}
+                        pagination={false}
+                        columns={[
+                          {
+                            title: t('saltstack.groupName', '分组名称'),
+                            dataIndex: 'name',
+                            key: 'name',
+                            render: (name) => (
+                              <Tag 
+                                color={name === '未分组' ? 'default' : minionGroups.find(g => g.name === name)?.color || 'blue'}
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => setOverviewGroupFilter(name === '未分组' ? 'ungrouped' : name)}
+                              >
+                                {name}
+                              </Tag>
+                            ),
+                          },
+                          {
+                            title: t('saltstack.total', '总数'),
+                            dataIndex: 'total',
+                            key: 'total',
+                            align: 'center',
+                          },
+                          {
+                            title: t('saltstack.online', '在线'),
+                            dataIndex: 'online',
+                            key: 'online',
+                            align: 'center',
+                            render: (v) => <Text style={{ color: '#52c41a' }}>{v}</Text>,
+                          },
+                          {
+                            title: t('saltstack.offline', '离线'),
+                            dataIndex: 'offline',
+                            key: 'offline',
+                            align: 'center',
+                            render: (v) => v > 0 ? <Text type="danger">{v}</Text> : '-',
+                          },
+                          {
+                            title: 'GPU',
+                            dataIndex: 'gpuCount',
+                            key: 'gpuCount',
+                            align: 'center',
+                            render: (v) => v > 0 ? v : '-',
+                          },
+                          {
+                            title: 'IB Active',
+                            dataIndex: 'ibActive',
+                            key: 'ibActive',
+                            align: 'center',
+                            render: (v) => v > 0 ? <Text style={{ color: '#52c41a' }}>{v}</Text> : '-',
+                          },
+                        ]}
+                      />
+                    </div>
+                  )}
+                </Card>
                 
                 {/* 可调整大小的性能指标面板 */}
                 <ResizableMetricsPanel
-                  title={t('saltstack.performanceMetrics')}
+                  title={`${t('saltstack.performanceMetrics')}${overviewGroupFilter !== 'all' ? ` - ${overviewGroupFilter === 'ungrouped' ? t('saltstack.ungrouped') : overviewGroupFilter}` : ''}`}
                   loading={statusLoading || minionsLoading}
                   minHeight={200}
                   maxHeight={600}
                   defaultHeight={350}
                   nodes={[
-                    // Master 节点
-                    {
+                    // Master 节点（仅在"全部"筛选时显示）
+                    ...(overviewGroupFilter === 'all' ? [{
                       id: 'salt-master',
                       name: 'Salt Master',
                       metrics: {
@@ -1532,9 +2072,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         gpu_utilization: 0,
                         gpu_memory: 0,
                       },
-                    },
-                    // Minion 节点 (从 minions 数据动态生成)
-                    ...minions.map(minion => {
+                    }] : []),
+                    // Minion 节点 (使用筛选后的 minions)
+                    ...filteredMinions.map(minion => {
                       const minionId = minion.id || minion.name;
                       // 检查是否正在删除中
                       const isDeleting = deletingMinionIds.has(minionId) || 
@@ -2484,6 +3024,34 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         loading={groupsLoading}
                         dropdownRender={(menu) => (
                           <>
+                            <div style={{ padding: '8px', borderBottom: '1px solid #f0f0f0' }}>
+                              <Space.Compact style={{ width: '100%' }}>
+                                <Input
+                                  placeholder={t('saltstack.quickCreateGroupPlaceholder', '输入新分组名称')}
+                                  value={quickGroupName}
+                                  onChange={(e) => setQuickGroupName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    e.stopPropagation();
+                                    if (e.key === 'Enter' && quickGroupName.trim()) {
+                                      handleQuickCreateGroup();
+                                    }
+                                  }}
+                                  style={{ flex: 1 }}
+                                />
+                                <Button
+                                  type="primary"
+                                  icon={<PlusOutlined />}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleQuickCreateGroup();
+                                  }}
+                                  loading={quickGroupCreating}
+                                  disabled={!quickGroupName.trim()}
+                                >
+                                  {t('common.create', '创建')}
+                                </Button>
+                              </Space.Compact>
+                            </div>
                             <div style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'flex-end' }}>
                               <Button
                                 type="link"
@@ -2509,26 +3077,35 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         ))}
                       </Select>
                     </Col>
-                    <Col span={4}>
-                      <Space>
+                    <Col span={5}>
+                      <Space size="small">
                         <Tooltip title={t('saltstack.useSudo')}>
                           <Switch 
                             size="small"
                             checked={host.use_sudo}
                             onChange={(v) => updateHostRow(host.key, 'use_sudo', v)}
+                            checkedChildren="sudo"
+                            unCheckedChildren="sudo"
                           />
                         </Tooltip>
-                        <span style={{ fontSize: 12 }}>sudo</span>
+                        <Tooltip title={t('saltstack.installCategraf', '安装 Categraf')}>
+                          <Switch 
+                            size="small"
+                            checked={host.install_categraf}
+                            onChange={(v) => updateHostRow(host.key, 'install_categraf', v)}
+                            checkedChildren="Categraf"
+                            unCheckedChildren="Categraf"
+                          />
+                        </Tooltip>
+                        <Button 
+                          type="text" 
+                          danger 
+                          icon={<DeleteOutlined />} 
+                          onClick={() => removeHostRow(host.key)}
+                          disabled={batchInstallHosts.length <= 1}
+                          size="small"
+                        />
                       </Space>
-                    </Col>
-                    <Col span={1}>
-                      <Button 
-                        type="text" 
-                        danger 
-                        icon={<DeleteOutlined />} 
-                        onClick={() => removeHostRow(host.key)}
-                        disabled={batchInstallHosts.length <= 1}
-                      />
                     </Col>
                   </Row>
                 ))}
@@ -2721,6 +3298,250 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 </Card>
               </Col>
             </Row>
+          </Modal>
+
+          {/* 批量安装 Categraf 弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <ThunderboltOutlined />
+                {t('saltstack.batchCategrafTitle', '批量安装 Categraf')}
+              </Space>
+            }
+            open={batchCategrafVisible}
+            onCancel={() => {
+              closeBatchCategrafSSE();
+              setBatchCategrafVisible(false);
+              setBatchCategrafHosts([]);
+              setBatchCategrafEvents([]);
+            }}
+            footer={batchCategrafRunning ? null : [
+              <Button 
+                key="cancel" 
+                onClick={() => {
+                  closeBatchCategrafSSE();
+                  setBatchCategrafVisible(false);
+                  setBatchCategrafHosts([]);
+                  setBatchCategrafEvents([]);
+                }}
+              >
+                {t('saltstack.cancel', '取消')}
+              </Button>,
+              <Button 
+                key="install" 
+                type="primary" 
+                onClick={handleBatchCategrafInstall}
+                disabled={batchCategrafHosts.filter(h => h.selected).length === 0}
+                icon={<CloudUploadOutlined />}
+              >
+                {t('saltstack.installCategraf', '安装 Categraf')}
+                {batchCategrafHosts.filter(h => h.selected).length > 0 && 
+                  ` (${batchCategrafHosts.filter(h => h.selected).length})`
+                }
+              </Button>,
+            ]}
+            width={900}
+            destroyOnClose
+          >
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={t('saltstack.batchCategrafHint', '为已安装 Salt Minion 但未安装 Categraf 的节点补充安装监控代理')}
+              description={t('saltstack.batchCategrafDesc', 'Categraf 是一个轻量级的监控代理，用于收集系统指标并发送到 Nightingale 监控平台')}
+            />
+
+            {!batchCategrafRunning ? (
+              <>
+                <Divider orientation="left">
+                  <Space>
+                    {t('saltstack.selectTargetMinions', '选择目标 Minion')}
+                    <Checkbox
+                      checked={batchCategrafHosts.length > 0 && batchCategrafHosts.every(h => h.selected)}
+                      indeterminate={batchCategrafHosts.some(h => h.selected) && !batchCategrafHosts.every(h => h.selected)}
+                      onChange={(e) => {
+                        setBatchCategrafHosts(batchCategrafHosts.map(h => ({
+                          ...h,
+                          selected: e.target.checked
+                        })));
+                      }}
+                    >
+                      {t('saltstack.selectAll', '全选')}
+                    </Checkbox>
+                  </Space>
+                </Divider>
+
+                {batchCategrafHosts.length === 0 ? (
+                  <Empty description={t('saltstack.noMinionsNeedCategraf', '没有需要安装 Categraf 的 Minion')} />
+                ) : (
+                  <Table
+                    size="small"
+                    dataSource={batchCategrafHosts}
+                    rowKey="minion_id"
+                    pagination={{ pageSize: 10 }}
+                    columns={[
+                      {
+                        title: t('saltstack.select', '选择'),
+                        width: 60,
+                        render: (_, record) => (
+                          <Checkbox
+                            checked={record.selected}
+                            onChange={(e) => {
+                              setBatchCategrafHosts(batchCategrafHosts.map(h => 
+                                h.minion_id === record.minion_id 
+                                  ? { ...h, selected: e.target.checked }
+                                  : h
+                              ));
+                            }}
+                          />
+                        ),
+                      },
+                      {
+                        title: 'Minion ID',
+                        dataIndex: 'minion_id',
+                        width: 200,
+                      },
+                      {
+                        title: t('saltstack.hostAddress', '主机地址'),
+                        dataIndex: 'host',
+                        width: 150,
+                      },
+                      {
+                        title: t('saltstack.group', '分组'),
+                        dataIndex: 'group',
+                        width: 120,
+                        render: (group) => group ? <Tag color="blue">{group}</Tag> : '-',
+                      },
+                      {
+                        title: t('saltstack.categrafStatus', 'Categraf 状态'),
+                        dataIndex: 'categraf_installed',
+                        width: 120,
+                        render: (installed) => installed 
+                          ? <Tag color="green">{t('saltstack.installed', '已安装')}</Tag>
+                          : <Tag color="orange">{t('saltstack.notInstalled', '未安装')}</Tag>,
+                      },
+                    ]}
+                  />
+                )}
+              </>
+            ) : (
+              <Card size="small" title={t('saltstack.installProgress', '安装进度')}>
+                {batchCategrafTaskId && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Text type="secondary">{t('saltstack.taskId', '任务ID')}: </Text>
+                    <Text copyable>{batchCategrafTaskId}</Text>
+                  </div>
+                )}
+                
+                <Timeline style={{ maxHeight: 400, overflow: 'auto' }}>
+                  {batchCategrafEvents.map((event, idx) => (
+                    <Timeline.Item 
+                      key={idx} 
+                      color={
+                        event.status === 'success' ? 'green' : 
+                        event.status === 'error' ? 'red' : 
+                        event.status === 'running' ? 'blue' : 'gray'
+                      }
+                    >
+                      <Space>
+                        {event.status === 'running' && <LoadingOutlined />}
+                        <Text type={event.status === 'error' ? 'danger' : undefined}>
+                          {event.host || event.minion_id || ''}: {event.message}
+                        </Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {event.timestamp}
+                        </Text>
+                      </Space>
+                    </Timeline.Item>
+                  ))}
+                </Timeline>
+                
+                {batchCategrafRunning && (
+                  <div style={{ textAlign: 'center', marginTop: 16 }}>
+                    <Spin tip={t('saltstack.installing', '安装中...')} />
+                  </div>
+                )}
+              </Card>
+            )}
+          </Modal>
+
+          {/* 部署节点指标采集弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <DashboardOutlined />
+                {t('saltstack.deployNodeMetrics', '部署指标采集')}
+              </Space>
+            }
+            open={deployMetricsVisible}
+            onCancel={() => {
+              setDeployMetricsVisible(false);
+              deployMetricsForm.resetFields();
+            }}
+            footer={[
+              <Button 
+                key="cancel" 
+                onClick={() => {
+                  setDeployMetricsVisible(false);
+                  deployMetricsForm.resetFields();
+                }}
+              >
+                {t('saltstack.cancel', '取消')}
+              </Button>,
+              <Button 
+                key="deploy" 
+                type="primary" 
+                loading={deployMetricsLoading}
+                onClick={handleDeployNodeMetrics}
+                icon={<CloudUploadOutlined />}
+              >
+                {t('saltstack.deploy', '部署')}
+              </Button>,
+            ]}
+            width={600}
+            destroyOnClose
+          >
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={t('saltstack.deployNodeMetricsDesc', '向选定节点部署 GPU/IB 指标采集脚本和定时任务')}
+              description={t('saltstack.deployNodeMetricsHint', '部署后，节点将定期采集 GPU 驱动版本、CUDA 版本、IB 端口状态等信息并上报到系统')}
+            />
+
+            <Form
+              form={deployMetricsForm}
+              layout="vertical"
+              initialValues={{ interval: 3, target: '*' }}
+            >
+              <Form.Item
+                name="target"
+                label={t('saltstack.targetMinions', '目标节点')}
+                rules={[{ required: true, message: t('saltstack.targetRequired', '请输入目标节点') }]}
+                tooltip={t('saltstack.targetTooltip', '可以是单个 Minion ID、通配符（如 gpu-* 或 *）或逗号分隔的多个 ID')}
+              >
+                <Input placeholder={t('saltstack.targetPlaceholder', '例如: * 或 gpu-node-* 或 node1,node2')} />
+              </Form.Item>
+
+              <Form.Item
+                name="interval"
+                label={t('saltstack.collectInterval', '采集间隔（分钟）')}
+                rules={[{ required: true, message: t('saltstack.intervalRequired', '请输入采集间隔') }]}
+              >
+                <InputNumber min={1} max={60} style={{ width: '100%' }} />
+              </Form.Item>
+            </Form>
+
+            <Divider style={{ margin: '16px 0' }} />
+
+            <Text type="secondary">
+              {t('saltstack.metricsInfo', '采集的指标包括：')}
+            </Text>
+            <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
+              <li>{t('saltstack.gpuMetrics', 'GPU 信息：驱动版本、CUDA 版本、GPU 数量、型号、显存')}</li>
+              <li>{t('saltstack.ibMetrics', 'IB 网络：活跃端口数量、端口状态、速率、固件版本')}</li>
+              <li>{t('saltstack.sysMetrics', '系统信息：内核版本、操作系统版本')}</li>
+            </ul>
           </Modal>
 
           {/* SSH 测试弹窗 */}

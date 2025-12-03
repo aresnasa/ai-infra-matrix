@@ -112,13 +112,14 @@ var sensitiveFieldNames = map[string]bool{
 
 // HostConfig 主机配置结构
 type HostConfig struct {
-	Host     string `json:"host" yaml:"host" csv:"host"`
-	Port     int    `json:"port" yaml:"port" csv:"port"`
-	Username string `json:"username" yaml:"username" csv:"username"`
-	Password string `json:"password" yaml:"password" csv:"password"`
-	UseSudo  bool   `json:"use_sudo" yaml:"use_sudo" csv:"use_sudo"`
-	MinionID string `json:"minion_id,omitempty" yaml:"minion_id,omitempty" csv:"minion_id"`
-	Group    string `json:"group,omitempty" yaml:"group,omitempty" csv:"group"`
+	Host            string `json:"host" yaml:"host" csv:"host"`
+	Port            int    `json:"port" yaml:"port" csv:"port"`
+	Username        string `json:"username" yaml:"username" csv:"username"`
+	Password        string `json:"password" yaml:"password" csv:"password"`
+	UseSudo         bool   `json:"use_sudo" yaml:"use_sudo" csv:"use_sudo"`
+	MinionID        string `json:"minion_id,omitempty" yaml:"minion_id,omitempty" csv:"minion_id"`
+	Group           string `json:"group,omitempty" yaml:"group,omitempty" csv:"group"`
+	InstallCategraf bool   `json:"install_categraf,omitempty" yaml:"install_categraf,omitempty" csv:"install_categraf"`
 }
 
 // HostParserService 主机数据解析服务
@@ -477,6 +478,14 @@ func (s *HostParserService) ParseCSV(data []byte) ([]HostConfig, error) {
 		}
 		if idx, ok := headerMap["group"]; ok && idx < len(record) {
 			host.Group = strings.TrimSpace(record[idx])
+		}
+		if idx, ok := headerMap["install_categraf"]; ok && idx < len(record) {
+			val := strings.ToLower(strings.TrimSpace(record[idx]))
+			host.InstallCategraf = val == "true" || val == "yes" || val == "1"
+		}
+		if idx, ok := headerMap["categraf"]; ok && idx < len(record) {
+			val := strings.ToLower(strings.TrimSpace(record[idx]))
+			host.InstallCategraf = val == "true" || val == "yes" || val == "1"
 		}
 
 		if host.Host == "" {
@@ -947,6 +956,14 @@ func (s *HostParserService) StreamParseCSV(reader io.Reader, callback func(host 
 		}
 		if idx, ok := headerMap["group"]; ok && idx < len(record) {
 			host.Group = strings.TrimSpace(record[idx])
+		}
+		if idx, ok := headerMap["install_categraf"]; ok && idx < len(record) {
+			val := strings.ToLower(strings.TrimSpace(record[idx]))
+			host.InstallCategraf = val == "true" || val == "yes" || val == "1"
+		}
+		if idx, ok := headerMap["categraf"]; ok && idx < len(record) {
+			val := strings.ToLower(strings.TrimSpace(record[idx]))
+			host.InstallCategraf = val == "true" || val == "yes" || val == "1"
 		}
 
 		if host.Host == "" {

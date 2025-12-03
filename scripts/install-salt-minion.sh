@@ -6,7 +6,7 @@
 # 生成时间: 由 build.sh sync 命令渲染
 # 
 # 变量说明:
-#   192.168.18.127 - Salt Master 外部访问地址
+#   192.168.0.199 - Salt Master 外部访问地址
 #   4505 - Salt Master 端口 (默认 4505)
 #   28080 - AppHub 端口 (默认 8090)
 # =============================================================================
@@ -16,11 +16,11 @@ set -eo pipefail
 # ===========================================
 # 环境配置 (已由模板渲染替换)
 # ===========================================
-SALT_MASTER="${SALT_MASTER:-192.168.18.127}"
+SALT_MASTER="${SALT_MASTER:-192.168.0.199}"
 SALT_MASTER_PORT="${SALT_MASTER_PORT:-4505}"
 SALT_VERSION="${SALT_VERSION:-3007.1}"
 MINION_ID="${MINION_ID:-}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.18.127:28080}"
+APPHUB_URL="${APPHUB_URL:-http://192.168.0.199:28080}"
 USE_OFFICIAL="${USE_OFFICIAL:-false}"
 # Master 公钥 URL (用于预同步 Master 公钥到 Minion)
 # 支持两种模式:
@@ -48,8 +48,8 @@ usage() {
 SaltStack Minion 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
-  Salt Master: 192.168.18.127:4505
-  AppHub URL:  http://192.168.18.127:28080
+  Salt Master: 192.168.0.199:4505
+  AppHub URL:  http://192.168.0.199:28080
 
 用法: $0 [OPTIONS]
 
@@ -73,7 +73,7 @@ SaltStack Minion 安装脚本 (预配置模板)
     $0 --minion-id worker01
 
     # 使用 curl 管道安装 (已知 Master 地址)
-    curl -fsSL http://192.168.18.127:28080/packages/install-salt-minion.sh | bash
+    curl -fsSL http://192.168.0.199:28080/packages/install-salt-minion.sh | bash
 EOF
     exit 0
 }
@@ -704,7 +704,7 @@ main() {
     parse_args "$@"
     
     # 验证参数
-    if [[ -z "$SALT_MASTER" ]] || [[ "$SALT_MASTER" == "192.168.18.127" ]]; then
+    if [[ -z "$SALT_MASTER" ]] || [[ "$SALT_MASTER" == "192.168.0.199" ]]; then
         log_error "Salt Master 地址未配置"
         log_error "请确保模板已正确渲染，或使用 --master 参数指定"
         exit 1
@@ -742,7 +742,7 @@ main() {
     local installed=false
     
     # 优先从 AppHub 安装
-    if [[ "$USE_OFFICIAL" != "true" ]] && [[ -n "$APPHUB_URL" ]] && [[ "$APPHUB_URL" != *"192.168.18.127"* ]]; then
+    if [[ "$USE_OFFICIAL" != "true" ]] && [[ -n "$APPHUB_URL" ]] && [[ "$APPHUB_URL" != *"192.168.0.199"* ]]; then
         if check_apphub "$APPHUB_URL"; then
             log_info "AppHub 可用，从 AppHub 安装..."
             

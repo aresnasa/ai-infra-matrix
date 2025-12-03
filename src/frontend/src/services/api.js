@@ -655,6 +655,18 @@ export const saltStackAPI = {
   getGroupMinions: (id) => api.get(`/saltstack/groups/${id}/minions`),
   setMinionGroup: (minionId, groupName) => api.post('/saltstack/minions/set-group', { minion_id: minionId, group_name: groupName }),
   batchSetMinionGroups: (minionGroups) => api.post('/saltstack/minions/batch-set-groups', { minion_groups: minionGroups }),
+
+  // 批量为 Minion 安装 Categraf（通过 Salt State）
+  installCategrafOnMinions: (payload) => api.post('/saltstack/minions/install-categraf', payload),
+  getCategrafInstallStreamUrl: (taskId) => {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http';
+    const host = window.location.host;
+    return `${proto}://${host}/api/saltstack/minions/install-categraf/${encodeURIComponent(taskId)}/stream`;
+  },
+
+  // 节点指标采集
+  getNodeMetrics: (minionId = '') => api.get('/saltstack/node-metrics', { params: minionId ? { minion_id: minionId } : {} }),
+  deployNodeMetricsState: (target, interval = 3) => api.post('/saltstack/node-metrics/deploy', { target, interval }),
 };
 
 // 增强用户管理API

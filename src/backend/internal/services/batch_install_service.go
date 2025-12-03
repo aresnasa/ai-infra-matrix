@@ -57,15 +57,16 @@ type BatchInstallRequest struct {
 
 // HostInstallConfig 单主机安装配置
 type HostInstallConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	KeyPath  string `json:"key_path,omitempty"`
-	MinionID string `json:"minion_id,omitempty"` // 可选，默认使用 hostname
-	UseSudo  bool   `json:"use_sudo,omitempty"`  // 覆盖全局设置
-	SudoPass string `json:"sudo_pass,omitempty"` // 覆盖全局设置
-	Group    string `json:"group,omitempty"`     // 分组名称
+	Host            string `json:"host"`
+	Port            int    `json:"port"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	KeyPath         string `json:"key_path,omitempty"`
+	MinionID        string `json:"minion_id,omitempty"`        // 可选，默认使用 hostname
+	UseSudo         bool   `json:"use_sudo,omitempty"`         // 覆盖全局设置
+	SudoPass        string `json:"sudo_pass,omitempty"`        // 覆盖全局设置
+	Group           string `json:"group,omitempty"`            // 分组名称
+	InstallCategraf bool   `json:"install_categraf,omitempty"` // 是否安装 Categraf
 }
 
 // BatchInstallResult 批量安装结果
