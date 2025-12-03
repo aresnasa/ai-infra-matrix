@@ -1330,6 +1330,15 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 		if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
 			var minions []SaltMinion
 			if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+				// 从数据库获取最新的分组信息并更新到缓存的 Minion 数据中
+				groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+				for i := range minions {
+					if group, ok := groupMap[minions[i].ID]; ok {
+						minions[i].Group = group
+					} else {
+						minions[i].Group = "" // 清除旧分组信息
+					}
+				}
 				c.JSON(http.StatusOK, gin.H{"data": minions, "cached": true})
 				return
 			}
@@ -1382,6 +1391,15 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 		if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
 			var minions []SaltMinion
 			if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+				// 从数据库获取最新的分组信息
+				groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+				for i := range minions {
+					if group, ok := groupMap[minions[i].ID]; ok {
+						minions[i].Group = group
+					} else {
+						minions[i].Group = ""
+					}
+				}
 				c.JSON(http.StatusOK, gin.H{
 					"data":    minions,
 					"cached":  true,
@@ -1399,6 +1417,15 @@ func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
 			if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
 				var minions []SaltMinion
 				if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+					// 从数据库获取最新的分组信息
+					groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+					for i := range minions {
+						if group, ok := groupMap[minions[i].ID]; ok {
+							minions[i].Group = group
+						} else {
+							minions[i].Group = ""
+						}
+					}
 					c.JSON(http.StatusOK, gin.H{
 						"data":    minions,
 						"cached":  true,
