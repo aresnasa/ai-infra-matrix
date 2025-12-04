@@ -207,9 +207,11 @@ const ObjectStoragePage = () => {
 
   // 处理访问存储
   const handleAccessStorage = (config) => {
-    if (config.type === 'minio' && config.web_url) {
-      // 跳转到Minio控制台页面
-      navigate(`/object-storage/minio/${config.id}`);
+    // SeaweedFS 和 MinIO 支持 Web 控制台访问
+    // SeaweedFS 通过 Filer 提供 Web UI，即使没有配置 web_url 也可以通过同源代理访问
+    if (config.type === 'seaweedfs' || (config.type === 'minio' && config.web_url)) {
+      // 跳转到存储控制台页面
+      navigate(`/object-storage/console/${config.id}`);
     } else {
       message.info(t('objectStorage.notSupportWebConsole'));
     }
@@ -346,13 +348,15 @@ const ObjectStoragePage = () => {
 
                 <Card title={t('objectStorage.quickActions')}>
                   <Space direction="vertical" style={{ width: '100%' }}>
-                    {activeConfig && activeConfig.type === 'minio' && (
+                    {activeConfig && (activeConfig.type === 'seaweedfs' || activeConfig.type === 'minio') && (
                       <Button
                         block
                         icon={<LinkOutlined />}
                         onClick={() => handleAccessStorage(activeConfig)}
                       >
-                        {t('objectStorage.accessMinioConsole')}
+                        {activeConfig.type === 'seaweedfs' 
+                          ? t('objectStorage.accessSeaweedFSConsole') 
+                          : t('objectStorage.accessMinioConsole')}
                       </Button>
                     )}
                     <Button

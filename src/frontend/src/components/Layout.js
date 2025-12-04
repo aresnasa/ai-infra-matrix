@@ -165,6 +165,12 @@ const Layout = ({ children, user, onLogout }) => {
       label: t('nav.jupyterhubManagement'),
       onClick: () => navigate('/admin/jupyterhub'),
     },
+    {
+      key: '/admin/object-storage',
+      icon: <DatabaseOutlined />,
+      label: t('nav.objectStorageManagement'),
+      onClick: () => navigate('/admin/object-storage'),
+    },
   ];
 
   const handleMenuClick = ({ key }) => {

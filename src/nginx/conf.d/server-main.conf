@@ -108,6 +108,7 @@ server {
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
     include /etc/nginx/conf.d/includes/minio.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
+    include /etc/nginx/conf.d/includes/seaweedfs.conf;
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {

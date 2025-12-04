@@ -1,6 +1,22 @@
 # SeaweedFS Object Storage Configuration
 # This file handles SeaweedFS Filer, S3 API and Master routing
 
+# SeaweedFS Filer 静态资源路由 (CSS/JS 等)
+location ^~ /seaweedfsstatic/ {
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Content-Security-Policy;
+    
+    proxy_pass http://seaweedfs_filer/seaweedfsstatic/;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    
+    # 静态资源缓存
+    proxy_cache_valid 200 1d;
+    expires 1d;
+    add_header Cache-Control "public, immutable";
+}
+
 # SeaweedFS S3 API 路由 (用于 S3 兼容访问)
 location ^~ /seaweedfs-s3/ {
     # S3 API 直通代理

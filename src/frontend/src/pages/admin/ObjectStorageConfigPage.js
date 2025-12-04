@@ -318,7 +318,7 @@ const ObjectStorageConfigPage = () => {
             <DatabaseOutlined style={{ marginRight: '8px', color: '#1890ff' }} />
             对象存储配置
           </Title>
-          <Text type="secondary">管理MinIO、S3等对象存储服务的连接配置</Text>
+          <Text type="secondary">管理SeaweedFS、MinIO、S3等对象存储服务的连接配置</Text>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadConfigs}>

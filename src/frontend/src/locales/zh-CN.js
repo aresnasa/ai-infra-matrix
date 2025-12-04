@@ -99,6 +99,7 @@ export default {
     trash: '回收站',
     aiAssistant: 'AI助手管理',
     jupyterhubManagement: 'JupyterHub管理',
+    objectStorageManagement: '对象存储管理',
     // 用户菜单
     profile: '个人信息',
     logout: '退出登录',
@@ -979,7 +980,7 @@ export default {
     ldapConfigDesc: '详细的LDAP服务器配置和测试',
     systemTestDesc: '执行系统健康检查和功能测试',
     trashDesc: '查看和恢复已删除的项目和用户',
-    objectStorageDesc: '管理MinIO、S3等对象存储服务配置',
+    objectStorageDesc: '管理SeaweedFS、MinIO、S3等对象存储服务配置',
     // 徽章
     hot: '热门',
     new: '新功能',

@@ -146,8 +146,8 @@ func (s *ObjectStorageService) SetActiveConfig(id uint) error {
 
 	// 使用事务确保原子性
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 将所有配置设为非激活
-		if err := tx.Model(&models.ObjectStorageConfig{}).Update("is_active", false).Error; err != nil {
+		// 将所有配置设为非激活（使用 Where("1=1") 满足 GORM 的 WHERE 条件要求）
+		if err := tx.Model(&models.ObjectStorageConfig{}).Where("1 = 1").Update("is_active", false).Error; err != nil {
 			return err
 		}
 

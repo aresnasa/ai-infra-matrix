@@ -123,8 +123,8 @@ const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')
 const ObjectStoragePage = withLazyLoading(React.lazy(() => import('./pages/ObjectStoragePage')), {
   loadingText: '正在加载对象存储管理...'
 });
-const MinIOConsolePage = withLazyLoading(React.lazy(() => import('./pages/MinIOConsolePage')), {
-  loadingText: '正在加载MinIO控制台...'
+const StorageConsolePage = withLazyLoading(React.lazy(() => import('./pages/StorageConsolePage')), {
+  loadingText: '正在加载存储控制台...'
 });
 const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages/admin/ObjectStorageConfigPage')), {
   loadingText: '正在加载对象存储配置...'
@@ -617,13 +617,13 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                       }
                     />
 
-                    {/* MinIO控制台页面 - 允许数据开发和SRE团队 */}
+                    {/* 存储控制台页面 - 支持 SeaweedFS/MinIO，允许数据开发和SRE团队 */}
                     <Route
-                      path="/object-storage/minio/:configId"
+                      path="/object-storage/console/:configId"
                       element={
                         <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
-                            <MinIOConsolePage />
+                            <StorageConsolePage />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

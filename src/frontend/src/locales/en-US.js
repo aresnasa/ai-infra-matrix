@@ -99,6 +99,7 @@ export default {
     trash: 'Trash',
     aiAssistant: 'AI Assistant',
     jupyterhubManagement: 'JupyterHub Management',
+    objectStorageManagement: 'Object Storage',
     // User menu
     profile: 'Profile',
     logout: 'Logout',
