@@ -16,13 +16,30 @@ upstream jupyterhub {
     server {{JUPYTERHUB_HOST}}:{{JUPYTERHUB_PORT}};
 }
 
-# MinIO Upstream Definitions
+# MinIO Upstream Definitions (保留兼容性)
 upstream minio_api {
     server minio:9000;
 }
 
 upstream minio_console {
     server minio:9001;
+}
+
+# SeaweedFS Upstream Definitions
+upstream seaweedfs_master {
+    server seaweedfs-master:9333;
+}
+
+upstream seaweedfs_volume {
+    server seaweedfs-volume:8080;
+}
+
+upstream seaweedfs_filer {
+    server seaweedfs-filer:8888;
+}
+
+upstream seaweedfs_s3 {
+    server seaweedfs-filer:8333;
 }
 
 upstream nightingale_console {

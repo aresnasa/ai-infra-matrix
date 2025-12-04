@@ -1285,7 +1285,7 @@ export default {
   // 对象存储管理
   objectStorage: {
     title: '对象存储管理',
-    subtitle: '统一管理MinIO、S3等各种对象存储服务，提供文件上传、下载和管理功能',
+    subtitle: '统一管理SeaweedFS、MinIO、S3等各种对象存储服务，提供文件上传、下载和管理功能',
     lastUpdate: '上次更新',
     refresh: '刷新',
     autoRefresh: '自动刷新',
@@ -1311,13 +1311,16 @@ export default {
     totalCapacity: '总容量',
     quickActions: '快速操作',
     accessMinioConsole: '访问MinIO控制台',
+    accessSeaweedFSConsole: '访问SeaweedFS控制台',
     manageStorageConfig: '管理存储配置',
     permissionManagement: '权限管理',
     featureInDevelopment: '功能开发中',
     supportMultipleStorage: '支持多种对象存储',
-    supportMultipleStorageDesc: '系统支持MinIO、AWS S3、阿里云OSS、腾讯云COS等多种对象存储服务，可以根据需要配置和切换。',
+    supportMultipleStorageDesc: '系统支持SeaweedFS、MinIO、AWS S3、阿里云OSS、腾讯云COS等多种对象存储服务，可以根据需要配置和切换。',
     notSupportWebConsole: '该存储类型暂不支持Web控制台访问',
     // 存储类型
+    seaweedfs: 'SeaweedFS',
+    seaweedfsDesc: '高性能分布式文件系统，支持S3 API和JWT认证',
     minio: 'MinIO',
     minioDesc: '高性能分布式对象存储，兼容S3 API',
     awsS3: 'Amazon S3',
@@ -1326,6 +1329,13 @@ export default {
     aliyunOssDesc: '阿里云对象存储服务',
     tencentCos: '腾讯云COS',
     tencentCosDesc: '腾讯云对象存储',
+    // SeaweedFS 特有
+    masterUrl: 'Master 地址',
+    filerUrl: 'Filer 地址',
+    jwtSecret: 'JWT 密钥',
+    clusterStatus: '集群状态',
+    volumeServers: 'Volume 服务器',
+    freeSpace: '可用空间',
   },
 
   // 角色模板管理

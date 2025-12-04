@@ -61,6 +61,15 @@ type SSHTestParams struct {
 // OSDetectParams 操作系统检测参数
 type OSDetectParams struct{}
 
+// NodeMetricsDeployParams 节点指标采集部署参数
+type NodeMetricsDeployParams struct {
+	CallbackURL     string // 指标回调 URL
+	CollectInterval string // 采集间隔（分钟）
+	APIToken        string // API 认证令牌
+	MinionID        string // Minion 标识符
+	CollectScript   string // 采集脚本内容
+}
+
 // 模板文件映射 - 定义各类脚本对应的模板文件
 var templateFiles = map[string]map[string]string{
 	"salt-install": {
@@ -92,6 +101,9 @@ var templateFiles = map[string]map[string]string{
 		"almalinux": "templates/categraf-install-rhel.sh.tmpl",
 		"fedora":    "templates/categraf-install-rhel.sh.tmpl",
 		"default":   "templates/categraf-install-debian.sh.tmpl",
+	},
+	"node-metrics-deploy": {
+		"default": "templates/node-metrics-deploy.sh.tmpl",
 	},
 }
 
@@ -386,6 +398,24 @@ func (s *ScriptLoader) GenerateCategrafInstallScript(params map[string]string) (
 		if err != nil {
 			return "", fmt.Errorf("无法生成 Categraf 安装脚本: %v", err)
 		}
+	}
+
+	return script, nil
+}
+
+// GenerateNodeMetricsDeployScript 生成节点指标采集部署脚本
+func (s *ScriptLoader) GenerateNodeMetricsDeployScript(params NodeMetricsDeployParams) (string, error) {
+	// 首先加载采集脚本内容
+	collectScript, err := s.GetScript("node-metrics/collect-node-metrics.sh")
+	if err != nil {
+		return "", fmt.Errorf("无法加载节点指标采集脚本: %v", err)
+	}
+	params.CollectScript = collectScript
+
+	// 渲染部署模板
+	script, err := s.RenderScript("templates/node-metrics-deploy.sh.tmpl", params)
+	if err != nil {
+		return "", fmt.Errorf("无法生成节点指标部署脚本: %v", err)
 	}
 
 	return script, nil

@@ -1278,7 +1278,7 @@ export default {
   // Object Storage Management
   objectStorage: {
     title: 'Object Storage Management',
-    subtitle: 'Unified management of MinIO, S3 and other object storage services, providing file upload, download and management functions',
+    subtitle: 'Unified management of SeaweedFS, MinIO, S3 and other object storage services, providing file upload, download and management functions',
     lastUpdate: 'Last Update',
     refresh: 'Refresh',
     autoRefresh: 'Auto Refresh',
@@ -1304,13 +1304,16 @@ export default {
     totalCapacity: 'Total Capacity',
     quickActions: 'Quick Actions',
     accessMinioConsole: 'Access MinIO Console',
+    accessSeaweedFSConsole: 'Access SeaweedFS Console',
     manageStorageConfig: 'Manage Storage Config',
     permissionManagement: 'Permission Management',
     featureInDevelopment: 'Feature in development',
     supportMultipleStorage: 'Support Multiple Storage',
-    supportMultipleStorageDesc: 'The system supports MinIO, AWS S3, Alibaba Cloud OSS, Tencent Cloud COS and other object storage services, which can be configured and switched as needed.',
+    supportMultipleStorageDesc: 'The system supports SeaweedFS, MinIO, AWS S3, Alibaba Cloud OSS, Tencent Cloud COS and other object storage services, which can be configured and switched as needed.',
     notSupportWebConsole: 'This storage type does not support Web console access',
     // Storage types
+    seaweedfs: 'SeaweedFS',
+    seaweedfsDesc: 'High-performance distributed file system with S3 API and JWT authentication support',
     minio: 'MinIO',
     minioDesc: 'High-performance distributed object storage, S3 API compatible',
     awsS3: 'Amazon S3',
@@ -1319,6 +1322,13 @@ export default {
     aliyunOssDesc: 'Alibaba Cloud Object Storage Service',
     tencentCos: 'Tencent Cloud COS',
     tencentCosDesc: 'Tencent Cloud Object Storage',
+    // SeaweedFS specific
+    masterUrl: 'Master URL',
+    filerUrl: 'Filer URL',
+    jwtSecret: 'JWT Secret',
+    clusterStatus: 'Cluster Status',
+    volumeServers: 'Volume Servers',
+    freeSpace: 'Free Space',
   },
 
   // Role Template Management

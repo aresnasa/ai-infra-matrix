@@ -160,9 +160,11 @@ func (s *ObjectStorageService) SetActiveConfig(id uint) error {
 // TestConnection 测试连接
 func (s *ObjectStorageService) TestConnection(config *models.ObjectStorageConfig) error {
 	switch config.Type {
-	case "minio":
+	case models.StorageTypeSeaweedFS:
+		return s.testSeaweedFSConnection(config)
+	case models.StorageTypeMinIO:
 		return s.testMinIOConnection(config)
-	case "aws_s3":
+	case models.StorageTypeAWSS3:
 		return s.testS3Connection(config)
 	default:
 		return fmt.Errorf("不支持的存储类型: %s", config.Type)
@@ -203,7 +205,9 @@ func (s *ObjectStorageService) GetStatistics(id uint) (*models.ObjectStorageStat
 	}
 
 	switch config.Type {
-	case "minio":
+	case models.StorageTypeSeaweedFS:
+		return s.getSeaweedFSStatistics(config)
+	case models.StorageTypeMinIO:
 		return s.getMinIOStatistics(config)
 	default:
 		// 返回空统计信息
@@ -223,6 +227,22 @@ func (s *ObjectStorageService) validateConfig(config *models.ObjectStorageConfig
 		return fmt.Errorf("存储类型不能为空")
 	}
 
+	// SeaweedFS 支持多种端点配置
+	if config.Type == models.StorageTypeSeaweedFS {
+		// SeaweedFS 至少需要配置 Master 或 Filer 或 S3 端点
+		if config.Endpoint == "" && config.MasterURL == "" && config.FilerURL == "" {
+			return fmt.Errorf("SeaweedFS 需要配置 S3 端点、Master 地址或 Filer 地址")
+		}
+		// 如果配置了 S3 端点，需要 AccessKey 和 SecretKey
+		if config.Endpoint != "" {
+			if config.AccessKey == "" || config.SecretKey == "" {
+				return fmt.Errorf("SeaweedFS S3 端点需要配置 AccessKey 和 SecretKey")
+			}
+		}
+		return nil
+	}
+
+	// 其他存储类型必须配置端点
 	if config.Endpoint == "" {
 		return fmt.Errorf("服务端点不能为空")
 	}
@@ -236,11 +256,31 @@ func (s *ObjectStorageService) validateConfig(config *models.ObjectStorageConfig
 	}
 
 	// MinIO需要Web控制台地址
-	if config.Type == "minio" && config.WebURL == "" {
+	if config.Type == models.StorageTypeMinIO && config.WebURL == "" {
 		return fmt.Errorf("MinIO配置需要Web控制台地址")
 	}
 
 	return nil
+}
+
+// testSeaweedFSConnection 测试 SeaweedFS 连接
+func (s *ObjectStorageService) testSeaweedFSConnection(config *models.ObjectStorageConfig) error {
+	service, err := NewSeaweedFSService(config)
+	if err != nil {
+		return fmt.Errorf("创建 SeaweedFS 服务失败: %v", err)
+	}
+
+	return service.TestConnection()
+}
+
+// getSeaweedFSStatistics 获取 SeaweedFS 统计信息
+func (s *ObjectStorageService) getSeaweedFSStatistics(config *models.ObjectStorageConfig) (*models.ObjectStorageStatistics, error) {
+	service, err := NewSeaweedFSService(config)
+	if err != nil {
+		return nil, fmt.Errorf("创建 SeaweedFS 服务失败: %v", err)
+	}
+
+	return service.GetStatistics()
 }
 
 // testMinIOConnection 测试MinIO连接

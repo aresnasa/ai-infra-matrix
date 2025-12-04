@@ -1892,8 +1892,16 @@ func (s *BatchInstallService) deployNodeMetrics(minionID string, masterHost stri
 		Timeout:   120 * time.Second,
 	}
 
-	// 构建部署脚本（内联方式，不依赖外部文件）
-	deployScript := s.generateNodeMetricsDeployScript(minionID, callbackURL, apiToken, collectInterval)
+	// 构建部署脚本（使用 ScriptLoader 加载外部脚本）
+	deployScript, err := GetScriptLoader().GenerateNodeMetricsDeployScript(NodeMetricsDeployParams{
+		CallbackURL:     callbackURL,
+		CollectInterval: collectInterval,
+		APIToken:        apiToken,
+		MinionID:        minionID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to generate node metrics deploy script: %v", err)
+	}
 
 	// 构建请求 payload - 使用 cmd.run 执行部署脚本
 	payload := map[string]interface{}{
@@ -1938,121 +1946,4 @@ func (s *BatchInstallService) deployNodeMetrics(minionID string, masterHost stri
 	body, _ := io.ReadAll(resp.Body)
 	logrus.Infof("[BatchInstall] Deployed node-metrics to minion %s, response: %s", minionID, string(body))
 	return nil
-}
-
-// generateNodeMetricsDeployScript 生成节点指标采集部署脚本
-func (s *BatchInstallService) generateNodeMetricsDeployScript(minionID, callbackURL, apiToken, collectInterval string) string {
-	// 内联的采集脚本（简化版，适合通过 Salt API 部署）
-	collectScript := `#!/bin/bash
-# Node Metrics Collection Script - Auto-generated
-set -e
-
-CONFIG_FILE="/opt/ai-infra/scripts/node-metrics.conf"
-source "$CONFIG_FILE" 2>/dev/null || true
-
-CALLBACK_URL="${CALLBACK_URL:-__CALLBACK_URL__}"
-MINION_ID="${MINION_ID:-__MINION_ID__}"
-API_TOKEN="${API_TOKEN:-__API_TOKEN__}"
-
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
-
-# GPU 信息采集
-collect_gpu() {
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        local drv=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
-        local cuda=$(nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[0-9.]+' | head -1)
-        local cnt=$(nvidia-smi -L 2>/dev/null | wc -l)
-        local model=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | sed 's/,//g')
-        local mem=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)
-        echo "{\"driver_version\":\"$drv\",\"cuda_version\":\"$cuda\",\"count\":$cnt,\"model\":\"$model\",\"memory_total\":\"$mem\"}"
-    else
-        echo "null"
-    fi
-}
-
-# IB 信息采集
-collect_ib() {
-    if command -v ibstat >/dev/null 2>&1; then
-        local active=0 ports="["
-        local first=true port="" state="" rate=""
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^CA\ \'([^\']+)\' ]]; then
-                [ -n "$port" ] && { $first && first=false || ports+=","; ports+="{\"name\":\"$port\",\"state\":\"$state\",\"rate\":\"$rate\"}"; [ "$state" = "Active" ] && ((active++)); }
-                port="${BASH_REMATCH[1]}"; state=""; rate=""
-            fi
-            [[ "$line" =~ State:\ *([A-Za-z]+) ]] && state="${BASH_REMATCH[1]}"
-            [[ "$line" =~ Rate:\ *([0-9]+) ]] && rate="${BASH_REMATCH[1]} Gb/sec"
-        done < <(ibstat 2>/dev/null)
-        [ -n "$port" ] && { $first || ports+=","; ports+="{\"name\":\"$port\",\"state\":\"$state\",\"rate\":\"$rate\"}"; [ "$state" = "Active" ] && ((active++)); }
-        ports+="]"
-        echo "{\"active_count\":$active,\"ports\":$ports}"
-    else
-        echo "null"
-    fi
-}
-
-# 系统信息采集
-collect_sys() {
-    local kern=$(uname -r)
-    local os=$(grep -oP 'PRETTY_NAME="\K[^"]+' /etc/os-release 2>/dev/null || echo "")
-    echo "{\"kernel_version\":\"$kern\",\"os_version\":\"$os\",\"hostname\":\"$(hostname)\"}"
-}
-
-# 发送数据
-send_metrics() {
-    local ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local gpu=$(collect_gpu)
-    local ib=$(collect_ib)
-    local sys=$(collect_sys)
-    local payload="{\"minion_id\":\"$MINION_ID\",\"timestamp\":\"$ts\",\"gpu\":$gpu,\"ib\":$ib,\"system\":$sys}"
-    
-    local opts="-s -X POST -H 'Content-Type: application/json'"
-    [ -n "$API_TOKEN" ] && opts="$opts -H 'X-API-Token: $API_TOKEN'"
-    
-    if [ -n "$API_TOKEN" ]; then
-        curl -s -X POST -H "Content-Type: application/json" -H "X-API-Token: $API_TOKEN" -d "$payload" --connect-timeout 10 --max-time 30 "$CALLBACK_URL"
-    else
-        curl -s -X POST -H "Content-Type: application/json" -d "$payload" --connect-timeout 10 --max-time 30 "$CALLBACK_URL"
-    fi
-}
-
-log "Collecting metrics for $MINION_ID..."
-send_metrics && log "Metrics sent successfully" || log "Failed to send metrics"
-`
-
-	// 替换占位符
-	collectScript = strings.ReplaceAll(collectScript, "__CALLBACK_URL__", callbackURL)
-	collectScript = strings.ReplaceAll(collectScript, "__MINION_ID__", minionID)
-	collectScript = strings.ReplaceAll(collectScript, "__API_TOKEN__", apiToken)
-
-	// 部署脚本：创建目录、写入采集脚本、配置文件、设置定时任务
-	deployScript := fmt.Sprintf(`
-# 创建目录
-mkdir -p /opt/ai-infra/scripts /var/log/ai-infra
-
-# 写入配置文件
-cat > /opt/ai-infra/scripts/node-metrics.conf << 'CONFEOF'
-CALLBACK_URL="%s"
-COLLECT_INTERVAL="%s"
-API_TOKEN="%s"
-MINION_ID="%s"
-CONFEOF
-chmod 600 /opt/ai-infra/scripts/node-metrics.conf
-
-# 写入采集脚本
-cat > /opt/ai-infra/scripts/collect-node-metrics.sh << 'SCRIPTEOF'
-%s
-SCRIPTEOF
-chmod 755 /opt/ai-infra/scripts/collect-node-metrics.sh
-
-# 设置定时任务（每 %s 分钟执行一次）
-(crontab -l 2>/dev/null | grep -v 'collect-node-metrics.sh'; echo "*/%s * * * * /opt/ai-infra/scripts/collect-node-metrics.sh >> /var/log/ai-infra/node-metrics.log 2>&1") | crontab -
-
-# 立即执行一次采集
-/opt/ai-infra/scripts/collect-node-metrics.sh >> /var/log/ai-infra/node-metrics.log 2>&1 &
-
-echo "Node metrics collection deployed successfully"
-`, callbackURL, collectInterval, apiToken, minionID, collectScript, collectInterval, collectInterval)
-
-	return deployScript
 }

@@ -106,6 +106,12 @@ const ObjectStoragePage = () => {
 
   // 存储类型配置
   const storageTypeConfigs = {
+    seaweedfs: {
+      name: t('objectStorage.seaweedfs'),
+      icon: <DatabaseOutlined />,
+      color: '#00C853',
+      description: t('objectStorage.seaweedfsDesc')
+    },
     minio: {
       name: t('objectStorage.minio'),
       icon: <DatabaseOutlined />,
