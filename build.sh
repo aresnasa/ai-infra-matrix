@@ -360,7 +360,7 @@ COMMON_IMAGES=(
     "osixia/openldap:${OPENLDAP_VERSION:-stable}"
     "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}"
     "redislabs/redisinsight:${REDISINSIGHT_VERSION:-latest}"
-    "minio/minio:${MINIO_VERSION:-latest}"
+    "chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}"
     "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
     "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
 )
@@ -533,7 +533,8 @@ TEMPLATE_VARIABLES=(
     "KAFKA_UI_VERSION"    # Kafka UI version (e.g., latest)
     "OPENLDAP_VERSION"    # OpenLDAP version (e.g., stable)
     "PHPLDAPADMIN_VERSION" # phpLDAPadmin version (e.g., stable)
-    "MINIO_VERSION"       # MinIO version (e.g., latest)
+    "SEAWEEDFS_IMAGE"     # SeaweedFS image name (e.g., chrislusf/seaweedfs)
+    "SEAWEEDFS_VERSION"   # SeaweedFS version (e.g., latest)
     "OCEANBASE_VERSION"   # OceanBase version (e.g., 4.3.5-lts)
     "PROMETHEUS_VERSION"  # Prometheus version (e.g., latest)
     "VICTORIAMETRICS_VERSION" # VictoriaMetrics version (e.g., v1.115.0)

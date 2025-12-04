@@ -778,7 +778,7 @@ services:
         condition: service_healthy
       openldap:
         condition: service_healthy
-      minio:
+      seaweedfs-filer:
         condition: service_healthy
       gitea:
         condition: service_healthy
@@ -893,28 +893,84 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # MinIO (S3-compatible)
-  minio:
-    image: minio/minio:latest
-    container_name: ai-infra-minio
-    command: server /data --console-address ":9001"
+  # SeaweedFS Master - 管理集群元数据
+  seaweedfs-master:
+    image: {{SEAWEEDFS_IMAGE}}:{{SEAWEEDFS_VERSION}}
+    container_name: ai-infra-seaweedfs-master
+    command: master -ip=seaweedfs-master -ip.bind=0.0.0.0 -port=9333 -mdir=/data -volumeSizeLimitMB=1024
     env_file:
       - .env
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
       - TZ=Asia/Shanghai
     expose:
-      - "9000"
-      - "9001"
+      - "9333"
+      - "19333"
     volumes:
-      - minio_data:/data
+      - seaweedfs_master_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9333/cluster/status"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # SeaweedFS Volume - 存储实际数据
+  seaweedfs-volume:
+    image: {{SEAWEEDFS_IMAGE}}:{{SEAWEEDFS_VERSION}}
+    container_name: ai-infra-seaweedfs-volume
+    command: volume -ip=seaweedfs-volume -ip.bind=0.0.0.0 -port=8080 -dir=/data -max=100 -mserver=seaweedfs-master:9333 -publicUrl=seaweedfs-volume:8080
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    expose:
+      - "8080"
+      - "18080"
+    volumes:
+      - seaweedfs_volume_data:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ai-infra-network
+    restart: unless-stopped
+
+  # SeaweedFS Filer - 提供文件系统接口和 S3 API
+  seaweedfs-filer:
+    image: {{SEAWEEDFS_IMAGE}}:{{SEAWEEDFS_VERSION}}
+    container_name: ai-infra-seaweedfs-filer
+    command: filer -ip=seaweedfs-filer -ip.bind=0.0.0.0 -port=8888 -master=seaweedfs-master:9333 -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    expose:
+      - "8888"  # Filer HTTP API
+      - "18888" # Filer gRPC
+      - "8333"  # S3 API
+    volumes:
+      - seaweedfs_filer_data:/data
+      - ./config/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8888/?pretty=y"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     networks:
       - ai-infra-network
     restart: unless-stopped
@@ -1063,8 +1119,12 @@ volumes:
     name: ai-infra-slurm-munge-data
   gitea_data:
     name: ai-infra-gitea-data
-  minio_data:
-    name: ai-infra-minio-data
+  seaweedfs_master_data:
+    name: ai-infra-seaweedfs-master-data
+  seaweedfs_volume_data:
+    name: ai-infra-seaweedfs-volume-data
+  seaweedfs_filer_data:
+    name: ai-infra-seaweedfs-filer-data
   apphub_logs:
     name: ai-infra-apphub-logs
   nightingale_data:
