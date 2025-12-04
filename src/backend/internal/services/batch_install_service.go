@@ -85,7 +85,8 @@ type BatchInstallResult struct {
 // HostInstallResult 单主机安装结果
 type HostInstallResult struct {
 	Host     string   `json:"host"`
-	Status   string   `json:"status"` // success, failed, partial
+	MinionID string   `json:"minion_id,omitempty"` // 安装的 minion ID
+	Status   string   `json:"status"`              // success, failed, partial
 	Message  string   `json:"message"`
 	Duration int64    `json:"duration"` // 耗时（毫秒）
 	Error    string   `json:"error,omitempty"`
@@ -776,6 +777,7 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 	}
 
 	result.Status = "success"
+	result.MinionID = minionID // 记录 minion ID
 	result.Message = "Salt Minion installed and started successfully"
 	if keyAccepted {
 		result.Message = "Salt Minion installed, key accepted, and verified responding"
