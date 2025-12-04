@@ -102,6 +102,36 @@ func NewSeaweedFSService(config *models.ObjectStorageConfig) (*SeaweedFSService,
 	return service, nil
 }
 
+// getMasterURL 获取带协议前缀的 Master URL
+func (s *SeaweedFSService) getMasterURL() string {
+	url := s.config.MasterURL
+	if url == "" {
+		return ""
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		if s.config.SSLEnabled {
+			return "https://" + url
+		}
+		return "http://" + url
+	}
+	return url
+}
+
+// getFilerURL 获取带协议前缀的 Filer URL
+func (s *SeaweedFSService) getFilerURL() string {
+	url := s.config.FilerURL
+	if url == "" {
+		return ""
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		if s.config.SSLEnabled {
+			return "https://" + url
+		}
+		return "http://" + url
+	}
+	return url
+}
+
 // GenerateJWT 生成 JWT Token
 func (s *SeaweedFSService) GenerateJWT(expiresIn time.Duration) (string, error) {
 	if s.config.JWTSecret == "" {
@@ -190,7 +220,11 @@ func (s *SeaweedFSService) TestConnection() error {
 
 // testMasterConnection 测试 Master 连接
 func (s *SeaweedFSService) testMasterConnection() error {
-	url := strings.TrimSuffix(s.config.MasterURL, "/") + "/cluster/status"
+	masterURL := s.getMasterURL()
+	if masterURL == "" {
+		return fmt.Errorf("Master URL 未配置")
+	}
+	url := strings.TrimSuffix(masterURL, "/") + "/cluster/status"
 	resp, err := s.doRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -206,7 +240,11 @@ func (s *SeaweedFSService) testMasterConnection() error {
 
 // testFilerConnection 测试 Filer 连接
 func (s *SeaweedFSService) testFilerConnection() error {
-	url := strings.TrimSuffix(s.config.FilerURL, "/") + "/?pretty=y"
+	filerURL := s.getFilerURL()
+	if filerURL == "" {
+		return fmt.Errorf("Filer URL 未配置")
+	}
+	url := strings.TrimSuffix(filerURL, "/") + "/?pretty=y"
 	resp, err := s.doRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -222,11 +260,12 @@ func (s *SeaweedFSService) testFilerConnection() error {
 
 // GetClusterStatus 获取集群状态
 func (s *SeaweedFSService) GetClusterStatus() (*SeaweedFSClusterStatus, error) {
-	if s.config.MasterURL == "" {
+	masterURL := s.getMasterURL()
+	if masterURL == "" {
 		return nil, fmt.Errorf("Master URL 未配置")
 	}
 
-	url := strings.TrimSuffix(s.config.MasterURL, "/") + "/cluster/status"
+	url := strings.TrimSuffix(masterURL, "/") + "/cluster/status"
 	resp, err := s.doRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -601,13 +640,14 @@ func formatBytes(bytes int64) string {
 
 // ProxyFilerUI 代理 Filer UI 请求
 func (s *SeaweedFSService) ProxyFilerUI(targetPath string) (*http.Response, error) {
-	if s.config.FilerURL == "" {
+	filerURL := s.getFilerURL()
+	if filerURL == "" {
 		return nil, fmt.Errorf("Filer URL 未配置")
 	}
 
-	filerURL := strings.TrimSuffix(s.config.FilerURL, "/") + "/" + strings.TrimPrefix(targetPath, "/")
+	fullURL := strings.TrimSuffix(filerURL, "/") + "/" + strings.TrimPrefix(targetPath, "/")
 
-	req, err := http.NewRequest("GET", filerURL, nil)
+	req, err := http.NewRequest("GET", fullURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -625,11 +665,12 @@ func (s *SeaweedFSService) ProxyFilerUI(targetPath string) (*http.Response, erro
 
 // GetVolumeServers 获取 Volume 服务器列表
 func (s *SeaweedFSService) GetVolumeServers() ([]map[string]interface{}, error) {
-	if s.config.MasterURL == "" {
+	masterURL := s.getMasterURL()
+	if masterURL == "" {
 		return nil, fmt.Errorf("Master URL 未配置")
 	}
 
-	apiURL := strings.TrimSuffix(s.config.MasterURL, "/") + "/dir/status"
+	apiURL := strings.TrimSuffix(masterURL, "/") + "/dir/status"
 	resp, err := s.doRequest("GET", apiURL, nil)
 	if err != nil {
 		return nil, err
