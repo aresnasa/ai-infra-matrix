@@ -861,12 +861,13 @@ services:
       # Admin bootstrap via reverse-proxy SSO only; admin user will be default admin
       GITEA__storage__STORAGE_TYPE: "${GITEA_STORAGE:-local}"
       DATA_PATH: "${GITEA_DATA_PATH:-/data/gitea}"
-      MINIO_ENDPOINT: "${MINIO_HOST:-minio}:${MINIO_PORT:-9000}"
-      MINIO_BUCKET: "${MINIO_BUCKET_GITEA:-gitea}"
-      MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
-      MINIO_LOCATION: "${MINIO_REGION:-us-east-1}"
-      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:-minioadmin}"
-      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:-minioadmin}"
+      # SeaweedFS S3 兼容存储配置 (用于 Gitea 附件等)
+      MINIO_ENDPOINT: "${SEAWEEDFS_FILER_HOST:-seaweedfs-filer}:${SEAWEEDFS_S3_PORT:-8333}"
+      MINIO_BUCKET: "${SEAWEEDFS_BUCKET_GITEA:-gitea}"
+      MINIO_USE_SSL: "${SEAWEEDFS_USE_SSL:-false}"
+      MINIO_LOCATION: "${SEAWEEDFS_REGION:-us-east-1}"
+      MINIO_ACCESS_KEY: "${SEAWEEDFS_ACCESS_KEY:-admin}"
+      MINIO_SECRET_KEY: "${SEAWEEDFS_SECRET_KEY:-admin123456}"
       TZ: "${TZ:-Asia/Shanghai}"
     expose:
       - "3000"
