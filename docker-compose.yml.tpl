@@ -907,6 +907,7 @@ services:
   seaweedfs-master:
     image: {{SEAWEEDFS_IMAGE}}:{{SEAWEEDFS_VERSION}}
     container_name: ai-infra-seaweedfs-master
+    user: root
     command: master -ip=seaweedfs-master -ip.bind=0.0.0.0 -port=9333 -mdir=/data -volumeSizeLimitMB=1024
     env_file:
       - .env
@@ -931,6 +932,7 @@ services:
   seaweedfs-volume:
     image: {{SEAWEEDFS_IMAGE}}:{{SEAWEEDFS_VERSION}}
     container_name: ai-infra-seaweedfs-volume
+    user: root
     command: volume -ip=seaweedfs-volume -ip.bind=0.0.0.0 -port=8080 -dir=/data -max=100 -mserver=seaweedfs-master:9333 -publicUrl=seaweedfs-volume:8080
     env_file:
       - .env
@@ -958,6 +960,7 @@ services:
   seaweedfs-filer:
     image: {{SEAWEEDFS_IMAGE}}:{{SEAWEEDFS_VERSION}}
     container_name: ai-infra-seaweedfs-filer
+    user: root
     command: filer -ip=seaweedfs-filer -ip.bind=0.0.0.0 -port=8888 -master=seaweedfs-master:9333 -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
     env_file:
       - .env
