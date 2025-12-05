@@ -356,6 +356,15 @@ services:
       GITEA_SYNC_INTERVAL_SECONDS: "${GITEA_SYNC_INTERVAL_SECONDS:-600}"
       # Map reserved username 'admin' to a real admin account in Gitea (use 'admin' as default)
       GITEA_ALIAS_ADMIN_TO: "${GITEA_ALIAS_ADMIN_TO:-admin}"
+      # SeaweedFS 对象存储配置
+      SEAWEEDFS_FILER_HOST: "${SEAWEEDFS_FILER_HOST:-seaweedfs-filer}"
+      SEAWEEDFS_FILER_PORT: "${SEAWEEDFS_FILER_PORT:-8888}"
+      SEAWEEDFS_MASTER_HOST: "${SEAWEEDFS_MASTER_HOST:-seaweedfs-master}"
+      SEAWEEDFS_MASTER_PORT: "${SEAWEEDFS_MASTER_PORT:-9333}"
+      SEAWEEDFS_S3_PORT: "${SEAWEEDFS_S3_PORT:-8333}"
+      SEAWEEDFS_ACCESS_KEY: "${SEAWEEDFS_ACCESS_KEY:-seaweedfs_admin}"
+      SEAWEEDFS_SECRET_KEY: "${SEAWEEDFS_SECRET_KEY:-seaweedfs_secret_key_change_me}"
+      SEAWEEDFS_USE_SSL: "${SEAWEEDFS_USE_SSL:-false}"
       # E2E 测试配置（开发/测试环境）
       E2E_ALLOW_FAKE_LDAP: "${E2E_ALLOW_FAKE_LDAP:-true}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"

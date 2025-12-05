@@ -535,6 +535,12 @@ TEMPLATE_VARIABLES=(
     "PHPLDAPADMIN_VERSION" # phpLDAPadmin version (e.g., stable)
     "SEAWEEDFS_IMAGE"     # SeaweedFS image name (e.g., chrislusf/seaweedfs)
     "SEAWEEDFS_VERSION"   # SeaweedFS version (e.g., latest)
+    "SEAWEEDFS_ACCESS_KEY"  # SeaweedFS S3 admin access key
+    "SEAWEEDFS_SECRET_KEY"  # SeaweedFS S3 admin secret key
+    "SEAWEEDFS_APP_ACCESS_KEY"  # SeaweedFS S3 app access key
+    "SEAWEEDFS_APP_SECRET_KEY"  # SeaweedFS S3 app secret key
+    "SEAWEEDFS_READONLY_ACCESS_KEY"  # SeaweedFS S3 readonly access key
+    "SEAWEEDFS_READONLY_SECRET_KEY"  # SeaweedFS S3 readonly secret key
     "OCEANBASE_VERSION"   # OceanBase version (e.g., 4.3.5-lts)
     "PROMETHEUS_VERSION"  # Prometheus version (e.g., latest)
     "VICTORIAMETRICS_VERSION" # VictoriaMetrics version (e.g., v1.115.0)
@@ -773,6 +779,34 @@ render_all_templates() {
                 fail_count=$((fail_count + 1))
             fi
         done < <(find "$scripts_template_dir" -name "*.tpl" -print0 2>/dev/null)
+    fi
+    
+    # ===========================================
+    # Render config templates (e.g., seaweedfs/s3.json.tpl)
+    # ===========================================
+    local config_template_dir="${SCRIPT_DIR}/config"
+    if [[ -d "$config_template_dir" ]]; then
+        log_info "Rendering config templates (config/*/*.tpl)..."
+        
+        while IFS= read -r -d '' tpl_file; do
+            local out_file="${tpl_file%.tpl}"
+            local config_name=$(basename "$out_file")
+            
+            # Check if output file exists and is newer than template
+            if [[ "$force" != "true" ]] && [[ -f "$out_file" ]]; then
+                if [[ "$out_file" -nt "$tpl_file" ]] && [[ "$out_file" -nt "$ENV_FILE" ]]; then
+                    log_info "Skipping $config_name (up to date)"
+                    skip_count=$((skip_count + 1))
+                    continue
+                fi
+            fi
+            
+            if render_template "$tpl_file" "$out_file"; then
+                success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        done < <(find "$config_template_dir" -name "*.tpl" -print0 2>/dev/null)
     fi
     
     echo
