@@ -50,7 +50,7 @@ python: "3.14-alpine"
 # Applications
 gitea: "1.25.1"
 nginx: "stable-alpine-perl"
-minio: "latest"
+seaweedfs: "latest"
 ```
 
 **Sync Mechanism**:

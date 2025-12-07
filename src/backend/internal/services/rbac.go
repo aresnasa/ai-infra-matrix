@@ -1174,7 +1174,7 @@ func (s *RBACService) GetAvailableResources() []string {
 		"kubernetes",
 		"jupyterhub",
 		"gitea",
-		"minio",
+		"object_storage",
 		"monitoring",
 		"role_templates",
 	}

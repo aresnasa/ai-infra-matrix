@@ -47,7 +47,7 @@
 │  - MySQL (StatefulSet)           │
 │  - Redis (StatefulSet)           │
 │  - Kafka (StatefulSet)           │
-│  - MinIO (StatefulSet)           │
+│  - SeaweedFS (StatefulSet)       │
 │  - OceanBase (StatefulSet)       │
 └──────────┬───────────────────────┘
            │
@@ -170,10 +170,10 @@ kubectl create secret generic db-credentials \
   --from-literal=mysql-password=yourpassword \
   --namespace ai-infra
 
-# MinIO 凭据
-kubectl create secret generic minio-credentials \
-  --from-literal=root-user=minioadmin \
-  --from-literal=root-password=minioadmin \
+# SeaweedFS 凭证
+kubectl create secret generic seaweedfs-credentials \
+  --from-literal=admin-access-key=seaweedfs_admin \
+  --from-literal=admin-secret-key=seaweedfs_secret_key_change_me \
   --namespace ai-infra
 ```
 

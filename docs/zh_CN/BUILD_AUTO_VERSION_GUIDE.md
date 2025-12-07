@@ -48,7 +48,7 @@ python: "3.14-alpine"
 # 应用程序
 gitea: "1.25.1"
 nginx: "stable-alpine-perl"
-minio: "latest"
+seaweedfs: "latest"
 ```
 
 **同步机制**:

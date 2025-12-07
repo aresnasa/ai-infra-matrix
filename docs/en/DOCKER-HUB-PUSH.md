@@ -97,7 +97,7 @@ The script automatically identifies the following dependency images:
 - Zookeeper (Bitnami)
 
 ### Object Storage
-- MinIO
+- SeaweedFS
 
 ### Monitoring
 - Nightingale (Flashcat)

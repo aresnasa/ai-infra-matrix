@@ -17,7 +17,7 @@ Critical data that needs to be backed up:
    - OceanBase (optional)
 
 2. **Object Storage**
-   - MinIO data (Gitea LFS, user files)
+   - SeaweedFS data (Gitea LFS, user files)
 
 3. **Configuration Files**
    - Environment configuration (.env)
@@ -113,38 +113,39 @@ docker cp ai-infra-redis:/data/dump.rdb backup/redis-$(date +%Y%m%d).rdb
 
 ## Object Storage Backup
 
-### MinIO Backup
+### SeaweedFS Backup
 
-#### Using mc Client
+#### Using weed shell Client
 
 ```bash
-# Install mc client
-docker run -it --rm --entrypoint=/bin/sh minio/mc
+# Install weed shell client
+docker exec -it ai-infra-seaweedfs-filer /bin/sh
 
-# Configure alias
-mc alias set local http://minio:9000 minioadmin minioadmin
+# Configure S3 access
+export AWS_ACCESS_KEY_ID=seaweedfs_admin
+export AWS_SECRET_ACCESS_KEY=seaweedfs_secret_key_change_me
 
-# Mirror backup
-mc mirror local/gitea /backup/minio/gitea
+# Use aws cli for backup
+aws --endpoint-url http://seaweedfs-s3:8333 s3 sync s3://gitea /backup/seaweedfs/gitea
 
-# Incremental backup
-mc mirror --watch local/gitea /backup/minio/gitea
+# Incremental backup with aws cli
+aws --endpoint-url http://seaweedfs-s3:8333 s3 sync s3://gitea /backup/seaweedfs/gitea --delete
 ```
 
 #### Data Volume Backup
 
 ```bash
 # Stop service
-docker compose stop minio
+docker compose stop seaweedfs-filer seaweedfs-master seaweedfs-volume
 
 # Backup data volume
 docker run --rm \
-  -v ai-infra-matrix_minio_data:/data \
+  -v ai-infra-matrix_seaweedfs_data:/data \
   -v $(pwd)/backup:/backup \
-  alpine tar czf /backup/minio-data-$(date +%Y%m%d).tar.gz -C /data .
+  alpine tar czf /backup/seaweedfs-data-$(date +%Y%m%d).tar.gz -C /data .
 
 # Start service
-docker compose start minio
+docker compose start seaweedfs-master seaweedfs-volume seaweedfs-filer
 ```
 
 ## Application Data Backup
@@ -223,9 +224,9 @@ docker run --rm \
   alpine tar czf /backup/postgres-volume.tar.gz -C /data .
 
 docker run --rm \
-  -v ai-infra-matrix_minio_data:/data \
+  -v ai-infra-matrix_seaweedfs_data:/data \
   -v $BACKUP_DIR:/backup \
-  alpine tar czf /backup/minio-volume.tar.gz -C /data .
+  alpine tar czf /backup/seaweedfs-volume.tar.gz -C /data .
 
 # 5. Backup application data
 echo "Backing up application data..."
@@ -325,7 +326,7 @@ cp /tmp/full-20251118/docker-compose.yml .
 # 3. Create data volumes
 docker volume create ai-infra-matrix_postgres_data
 docker volume create ai-infra-matrix_mysql_data
-docker volume create ai-infra-matrix_minio_data
+docker volume create ai-infra-matrix_seaweedfs_data
 
 # 4. Restore data volumes
 docker run --rm \

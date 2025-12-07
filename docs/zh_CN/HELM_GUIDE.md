@@ -25,7 +25,7 @@ helm/ai-infra-matrix/
     ├── postgresql/
     ├── mysql/
     ├── redis/
-    └── minio/
+    └── seaweedfs/
 ```
 
 ## 快速开始
@@ -180,7 +180,7 @@ gitea:
   config:
     lfs:
       enabled: true
-      storage: minio
+      storage: seaweedfs
 
 # Slurm Master 配置
 slurmMaster:
@@ -281,13 +281,12 @@ kafka:
     enabled: true
     size: 50Gi
 
-# MinIO
-minio:
+# SeaweedFS
+seaweedfs:
   enabled: true
-  mode: standalone  # or distributed
   
-  rootUser: minioadmin
-  rootPassword: minioadmin
+  accessKey: seaweedfs_admin
+  secretKey: seaweedfs_secret_key_change_me
   
   persistence:
     enabled: true
@@ -370,7 +369,7 @@ persistence:
       size: 50Gi
       accessMode: ReadWriteOnce
     
-    minio:
+    seaweedfs:
       enabled: true
       size: 100Gi
       accessMode: ReadWriteOnce

@@ -159,11 +159,11 @@ Error: LFS upload failed
 
 #### 解决方案
 
-1. 检查 MinIO 状态
+1. 检查 SeaweedFS 状态
 
 ```bash
-docker compose ps minio
-docker compose logs minio
+docker compose ps seaweedfs-filer seaweedfs-master seaweedfs-volume
+docker compose logs seaweedfs-filer
 ```
 
 2. 验证 S3 配置
@@ -173,10 +173,10 @@ docker compose logs minio
 docker exec ai-infra-gitea cat /data/gitea/conf/app.ini | grep -A 5 "\[lfs\]"
 ```
 
-3. 测试 MinIO 连接
+3. 测试 SeaweedFS 连接
 
 ```bash
-docker exec ai-infra-gitea wget -O- http://minio:9000/minio/health/live
+docker exec ai-infra-gitea wget -O- http://seaweedfs-filer:8888/?pretty=y
 ```
 
 ### 前端白屏

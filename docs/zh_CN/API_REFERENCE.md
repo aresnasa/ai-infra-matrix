@@ -222,10 +222,10 @@ Authorization: Bearer <token>
 
 ## 对象存储 API
 
-MinIO 兼容 AWS S3 API，参考：
+SeaweedFS 兼容 AWS S3 API，参考：
 
 - [AWS S3 API 文档](https://docs.aws.amazon.com/s3/)
-- [MinIO SDK](https://min.io/docs/minio/linux/developers/minio-drivers.html)
+- [SeaweedFS S3 API](https://github.com/seaweedfs/seaweedfs/wiki/Amazon-S3-API)
 
 ### Python 示例
 
@@ -233,9 +233,9 @@ MinIO 兼容 AWS S3 API，参考：
 import boto3
 
 s3 = boto3.client('s3',
-    endpoint_url='http://localhost:8080/minio',
-    aws_access_key_id='minioadmin',
-    aws_secret_access_key='minioadmin'
+    endpoint_url='http://localhost:8080/seaweedfs-s3',
+    aws_access_key_id='seaweedfs_admin',
+    aws_secret_access_key='seaweedfs_secret_key_change_me'
 )
 
 # 上传文件

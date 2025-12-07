@@ -13,7 +13,7 @@
 ### 存储和数据库
 - **PostgreSQL** - 主数据库
 - **Redis** - 缓存和会话存储
-- **MinIO** - 对象存储服务
+- **SeaweedFS** - 对象存储服务 (S3兼容)
 
 ### 认证和权限
 - **OpenLDAP** - 目录服务
@@ -108,7 +108,7 @@ jupyterhub:
 | JupyterHub | `http://localhost:8080/jupyterhub/` | 交互式计算环境 |
 | API | `http://localhost:8080/api/` | 后端API |
 | Gitea | `http://localhost:8080/gitea/` | Git仓库管理 |
-| MinIO | `http://localhost:8080/minio/` | 对象存储管理 |
+| SeaweedFS | `http://localhost:8080/seaweedfs/` | 对象存储管理 |
 | phpLDAPadmin | `http://localhost:8080/ldap/` | LDAP管理界面 |
 
 ## 🛠️ 开发和调试

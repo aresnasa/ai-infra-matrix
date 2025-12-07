@@ -38,7 +38,7 @@ AI Infrastructure Matrix 是一个企业级 HPC 与 AI 基础设施平台，采�
 │ PostgreSQL  │    MySQL     │  OceanBase   │     Redis       │
 │ (App Data)  │  (Slurm DB)  │  (Optional)  │  (Cache/MQ)     │
 ├─────────────┼──────────────┼──────────────┼─────────────────┤
-│    Kafka    │    MinIO     │              │                 │
+│    Kafka    │  SeaweedFS   │              │                 │
 │ (Message Q) │  (Object S3) │              │                 │
 └─────────────┴──────────────┴──────────────┴─────────────────┘
 ```
@@ -133,7 +133,7 @@ c.Spawner.mem_limit = '4G'
 - Git 仓库托管
 - Pull Request 工作流
 - Webhook 集成
-- LFS 大文件存储（MinIO 后端）
+- LFS 大文件存储（SeaweedFS 后端）
 
 **集成**:
 
@@ -142,8 +142,10 @@ c.Spawner.mem_limit = '4G'
 ROOT_URL = http://localhost:8080/gitea/
 
 [lfs]
+# 注意: minio 是 Gitea 的存储类型名称，用于 S3 兼容存储
 STORAGE_TYPE = minio
-MINIO_ENDPOINT = minio:9000
+# 实际后端使用 SeaweedFS S3 API
+MINIO_ENDPOINT = seaweedfs-filer:8333
 MINIO_BUCKET = gitea
 ```
 
@@ -363,15 +365,21 @@ MINIO_BUCKET = gitea
 - 分布式锁
 - 临时数据存储
 
-### MinIO
+### SeaweedFS
 
-**用途**: 对象存储
+**用途**: 分布式对象存储
 
 **存储桶**:
 
 - gitea: Gitea LFS 数据
 - jupyter: JupyterHub 用户文件
 - backups: 备份文件
+
+**组件**:
+
+- Master: 元数据管理
+- Volume: 数据存储
+- Filer: 文件系统接口 + S3 API
 
 ## 网络架构
 
@@ -403,7 +411,9 @@ networks:
 | PostgreSQL | 5432 | - | TCP |
 | MySQL | 3306 | - | TCP |
 | Redis | 6379 | - | TCP |
-| MinIO | 9000 | - | HTTP |
+| SeaweedFS Master | 9333 | - | HTTP |
+| SeaweedFS Volume | 8080 | - | HTTP |
+| SeaweedFS Filer | 8888/8333 | - | HTTP |
 
 ## 安全架构
 
@@ -530,7 +540,7 @@ upstream backend {
 - PostgreSQL: 主从复制 + 读写分离
 - MySQL: InnoDB Cluster
 - Redis: Cluster 模式
-- MinIO: 分布式模式
+- SeaweedFS: 分布式模式（Master + Volume + Filer）
 
 ## 监控与日志
 
@@ -610,7 +620,7 @@ helm install ai-infra ./helm/ai-infra-matrix
 | 后端语言 | Go | 高性能、并发友好、部署简单 |
 | 数据库 | PostgreSQL | 功能完善、性能优秀、开源 |
 | 缓存 | Redis | 高性能、数据结构丰富 |
-| 对象存储 | MinIO | S3 兼容、开源、易部署 |
+| 对象存储 | SeaweedFS | 分布式、S3 兼容、高性能 |
 | 监控 | Nightingale | 国产化、功能完善、易用 |
 | 调度器 | Slurm | HPC 标准、功能强大 |
 | 配置管理 | SaltStack | 灵活、强大、Python 生态 |

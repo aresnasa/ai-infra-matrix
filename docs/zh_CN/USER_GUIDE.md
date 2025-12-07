@@ -74,7 +74,7 @@ git clone http://localhost:8080/gitea/username/repository.git
 
 ### LFS 大文件存储
 
-Gitea 已配置 MinIO 作为 LFS 后端，支持大文件存储：
+Gitea 已配置 SeaweedFS 作为 LFS 后端，支持大文件存储：
 
 ```bash
 # 安装 Git LFS
@@ -121,9 +121,9 @@ git commit -m "Track PSD files"
 
 ## 对象存储
 
-### 访问 MinIO 控制台
+### 访问 SeaweedFS Filer 控制台
 
-访问 `http://localhost:8080/minio-console/`
+访问 `http://localhost:8080/seaweedfs-filer/`
 
 ### 创建存储桶
 
@@ -147,9 +147,9 @@ git commit -m "Track PSD files"
 import boto3
 
 s3 = boto3.client('s3',
-    endpoint_url='http://localhost:8080/minio',
-    aws_access_key_id='minioadmin',
-    aws_secret_access_key='minioadmin'
+    endpoint_url='http://localhost:8080/seaweedfs-s3',
+    aws_access_key_id='seaweedfs_admin',
+    aws_secret_access_key='seaweedfs_secret_key_change_me'
 )
 
 # 列出所有桶

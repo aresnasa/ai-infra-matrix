@@ -72,7 +72,7 @@ git clone http://localhost:8080/gitea/username/repository.git
 
 ### LFS Large File Storage
 
-Gitea is configured with MinIO as the LFS backend, supporting large file storage:
+Gitea is configured with SeaweedFS as the LFS backend, supporting large file storage:
 
 ```bash
 # Install Git LFS
@@ -119,9 +119,9 @@ Administrators can:
 
 ## Object Storage
 
-### Accessing MinIO Console
+### Accessing SeaweedFS Filer Console
 
-Visit `http://localhost:8080/minio-console/`
+Visit `http://localhost:8080/seaweedfs-filer/`
 
 ### Creating a Bucket
 
@@ -145,9 +145,9 @@ Access using AWS CLI or boto3:
 import boto3
 
 s3 = boto3.client('s3',
-    endpoint_url='http://localhost:8080/minio',
-    aws_access_key_id='minioadmin',
-    aws_secret_access_key='minioadmin'
+    endpoint_url='http://localhost:8080/seaweedfs-s3',
+    aws_access_key_id='seaweedfs_admin',
+    aws_secret_access_key='seaweedfs_secret_key_change_me'
 )
 
 # List all buckets

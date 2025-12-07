@@ -18,7 +18,7 @@
    - OceanBase（可选）
 
 2. **对象存储**
-   - MinIO 数据（Gitea LFS、用户文件）
+   - SeaweedFS 数据（Gitea LFS、用户文件）
 
 3. **配置文件**
    - 环境配置（.env）
@@ -114,38 +114,34 @@ docker cp ai-infra-redis:/data/dump.rdb backup/redis-$(date +%Y%m%d).rdb
 
 ## 对象存储备份
 
-### MinIO 备份
+### SeaweedFS 备份
 
-#### 使用 mc 客户端
+#### 使用 AWS CLI 客户端
 
 ```bash
-# 安装 mc 客户端
-docker run -it --rm --entrypoint=/bin/sh minio/mc
-
-# 配置别名
-mc alias set local http://minio:9000 minioadmin minioadmin
-
-# 镜像备份
-mc mirror local/gitea /backup/minio/gitea
-
-# 增量备份
-mc mirror --watch local/gitea /backup/minio/gitea
+# 使用 AWS CLI 备份 SeaweedFS 数据
+aws --endpoint-url http://seaweedfs-filer:8333 s3 sync s3://gitea /backup/seaweedfs/gitea
 ```
 
 #### 数据卷备份
 
 ```bash
 # 停止服务
-docker compose stop minio
+docker compose stop seaweedfs-filer seaweedfs-volume seaweedfs-master
 
 # 备份数据卷
 docker run --rm \
-  -v ai-infra-matrix_minio_data:/data \
+  -v ai-infra-matrix_seaweedfs_filer_data:/data \
   -v $(pwd)/backup:/backup \
-  alpine tar czf /backup/minio-data-$(date +%Y%m%d).tar.gz -C /data .
+  alpine tar czf /backup/seaweedfs-filer-data-$(date +%Y%m%d).tar.gz -C /data .
+
+docker run --rm \
+  -v ai-infra-matrix_seaweedfs_volume_data:/data \
+  -v $(pwd)/backup:/backup \
+  alpine tar czf /backup/seaweedfs-volume-data-$(date +%Y%m%d).tar.gz -C /data .
 
 # 启动服务
-docker compose start minio
+docker compose start seaweedfs-master seaweedfs-volume seaweedfs-filer
 ```
 
 ## 应用数据备份
@@ -224,9 +220,9 @@ docker run --rm \
   alpine tar czf /backup/postgres-volume.tar.gz -C /data .
 
 docker run --rm \
-  -v ai-infra-matrix_minio_data:/data \
+  -v ai-infra-matrix_seaweedfs_filer_data:/data \
   -v $BACKUP_DIR:/backup \
-  alpine tar czf /backup/minio-volume.tar.gz -C /data .
+  alpine tar czf /backup/seaweedfs-filer-volume.tar.gz -C /data .
 
 # 5. 备份应用数据
 echo "Backing up application data..."
@@ -326,7 +322,9 @@ cp /tmp/full-20251118/docker-compose.yml .
 # 3. 创建数据卷
 docker volume create ai-infra-matrix_postgres_data
 docker volume create ai-infra-matrix_mysql_data
-docker volume create ai-infra-matrix_minio_data
+docker volume create ai-infra-matrix_seaweedfs_master_data
+docker volume create ai-infra-matrix_seaweedfs_volume_data
+docker volume create ai-infra-matrix_seaweedfs_filer_data
 
 # 4. 恢复数据卷
 docker run --rm \

@@ -36,7 +36,7 @@ AI Infrastructure Matrix is an enterprise-grade HPC and AI infrastructure platfo
 │ PostgreSQL  │    MySQL     │  OceanBase   │     Redis       │
 │ (App Data)  │  (Slurm DB)  │  (Optional)  │  (Cache/MQ)     │
 ├─────────────┼──────────────┼──────────────┼─────────────────┤
-│    Kafka    │    MinIO     │              │                 │
+│    Kafka    │  SeaweedFS   │              │                 │
 │ (Message Q) │  (Object S3) │              │                 │
 └─────────────┴──────────────┴──────────────┴─────────────────┘
 ```
@@ -131,7 +131,7 @@ c.Spawner.mem_limit = '4G'
 - Git repository hosting
 - Pull Request workflow
 - Webhook integration
-- LFS large file storage (MinIO backend)
+- LFS large file storage (SeaweedFS backend)
 
 **Integration**:
 
@@ -140,8 +140,10 @@ c.Spawner.mem_limit = '4G'
 ROOT_URL = http://localhost:8080/gitea/
 
 [lfs]
+# Note: 'minio' is Gitea's storage type name for S3-compatible storage
 STORAGE_TYPE = minio
-MINIO_ENDPOINT = minio:9000
+# Actual backend uses SeaweedFS S3 API
+MINIO_ENDPOINT = seaweedfs-filer:8333
 MINIO_BUCKET = gitea
 ```
 
@@ -361,7 +363,7 @@ MINIO_BUCKET = gitea
 - Distributed locks
 - Temporary data storage
 
-### MinIO
+### SeaweedFS
 
 **Usage**: Object storage
 
@@ -401,7 +403,7 @@ networks:
 | PostgreSQL | 5432 | - | TCP |
 | MySQL | 3306 | - | TCP |
 | Redis | 6379 | - | TCP |
-| MinIO | 9000 | - | HTTP |
+| SeaweedFS | 8333 | - | HTTP |
 
 ## Security Architecture
 
@@ -506,7 +508,7 @@ upstream backend {
 - PostgreSQL: Master-slave replication + Read-write separation
 - MySQL: InnoDB Cluster
 - Redis: Cluster mode
-- MinIO: Distributed mode
+- SeaweedFS: Distributed mode
 
 ## Monitoring and Logging
 
@@ -586,7 +588,7 @@ helm install ai-infra ./helm/ai-infra-matrix
 | Backend Language | Go | High performance, concurrency-friendly, easy deployment |
 | Database | PostgreSQL | Feature-complete, excellent performance, open source |
 | Cache | Redis | High performance, rich data structures |
-| Object Storage | MinIO | S3 compatible, open source, easy to deploy |
+| Object Storage | SeaweedFS | S3 compatible, open source, easy to deploy, high performance |
 | Monitoring | Nightingale | Localized, feature-complete, user-friendly |
 | Scheduler | Slurm | HPC standard, powerful features |
 | Configuration Management | SaltStack | Flexible, powerful, Python ecosystem |

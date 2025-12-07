@@ -25,7 +25,7 @@ helm/ai-infra-matrix/
     ├── postgresql/
     ├── mysql/
     ├── redis/
-    └── minio/
+    └── seaweedfs/
 ```
 
 ## Quick Start

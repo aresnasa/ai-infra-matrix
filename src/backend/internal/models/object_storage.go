@@ -19,12 +19,12 @@ const (
 type ObjectStorageConfig struct {
 	ID          uint           `json:"id" gorm:"primaryKey"`
 	Name        string         `json:"name" gorm:"not null;size:100"`        // 配置名称
-	Type        string         `json:"type" gorm:"not null;size:50"`         // 存储类型：seaweedfs, minio, aws_s3, aliyun_oss, tencent_cos
+	Type        string         `json:"type" gorm:"not null;size:50"`         // 存储类型：seaweedfs, aws_s3, aliyun_oss, tencent_cos (保留 minio 类型用于兼容)
 	Endpoint    string         `json:"endpoint" gorm:"not null;size:255"`    // 服务端点 (S3 API 端点)
 	AccessKey   string         `json:"access_key" gorm:"not null;size:255"`  // 访问密钥ID
 	SecretKey   string         `json:"secret_key" gorm:"not null;size:500"`  // 访问密钥Secret
 	Region      string         `json:"region" gorm:"size:100"`               // 区域
-	WebURL      string         `json:"web_url" gorm:"size:255"`              // Web控制台地址（SeaweedFS Filer UI / MinIO Console）
+	WebURL      string         `json:"web_url" gorm:"size:255"`              // Web控制台地址（SeaweedFS Filer UI）
 	FilerURL    string         `json:"filer_url" gorm:"size:255"`            // SeaweedFS Filer 地址
 	MasterURL   string         `json:"master_url" gorm:"size:255"`           // SeaweedFS Master 地址
 	JWTSecret   string         `json:"jwt_secret" gorm:"size:255"`           // SeaweedFS JWT Secret (用于认证)

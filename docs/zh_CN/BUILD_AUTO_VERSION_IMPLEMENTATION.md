@@ -43,7 +43,7 @@ redis: "7-alpine"
 - 数据库: PostgreSQL, MySQL, Redis, OceanBase
 - 编程语言: Golang, Node, Python
 - 应用程序: Gitea, JupyterHub, Nginx, Kafka
-- 其他: OpenLDAP, Minio, Prometheus, Grafana
+- 其他: OpenLDAP, SeaweedFS, Prometheus, Grafana
 
 **测试结果**: ✅ 通过
 ```

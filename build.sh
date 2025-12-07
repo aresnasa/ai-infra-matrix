@@ -1571,7 +1571,7 @@ get_dependency_mappings() {
         "provectuslabs/kafka-ui:${KAFKAUI_VERSION:-latest}|kafka-ui"
         "postgres:${POSTGRES_VERSION:-15-alpine}|postgres"
         "redis:${REDIS_VERSION:-7-alpine}|redis"
-        "minio/minio:${MINIO_VERSION:-latest}|minio"
+        "chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}|seaweedfs"
         "osixia/openldap:${OPENLDAP_VERSION:-stable}|openldap"
         "osixia/phpldapadmin:${PHPLDAPADMIN_VERSION:-stable}|phpldapadmin"
         "mysql:${MYSQL_VERSION:-8.0}|mysql"

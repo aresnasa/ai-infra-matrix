@@ -36,7 +36,7 @@ SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
 - 📦 **AppHub Repository** - Build and distribution for Slurm/Categraf and other application packages
 - 🐍 **JupyterHub Integration** - Multi-user Jupyter environment with GPU computing support
 - 🗃️ **Gitea Repository** - Lightweight Git service with S3 object storage backend
-- 📦 **MinIO Object Storage** - S3-compatible object storage service
+- 📦 **SeaweedFS Object Storage** - S3-compatible high-performance distributed object storage
 - 📊 **Nightingale Monitoring** - Full-stack monitoring and alerting platform
 - 🚀 **Containerized Deployment** - One-click deployment with Docker Compose, multi-environment support
 - 🌐 **Multi-Registry Support** - Docker Hub, Alibaba Cloud ACR, Harbor and other registries
@@ -73,8 +73,8 @@ graph TB
         MySQL[(MySQL<br/>Slurm Database)]
         OceanBase[(OceanBase<br/>Distributed DB)]
         Redis[(Redis<br/>Cache/Messaging)]
-        Kafka[(Kafka<br/>Message Queue)]
-        MinIO[MinIO<br/>Object Storage]
+        Kafka[(“Kafka<br/>Message Queue”)]
+        SeaweedFS[SeaweedFS<br/>Object Storage]
     end
     
     Client --> Nginx
@@ -94,7 +94,7 @@ graph TB
     KeyVault --> SaltStack
     JupyterHub --> Postgres
     Gitea --> Postgres
-    Gitea --> MinIO
+    Gitea --> SeaweedFS
     SlurmMaster --> MySQL
     AppHub --> SaltStack
 ```
@@ -132,7 +132,7 @@ After deployment, access via browser:
 - 📊 **JupyterHub**: <http://localhost:8080/jupyter>
 - 🗃️ **Gitea**: <http://localhost:8080/gitea/>
 - 📈 **Nightingale**: <http://localhost:8080/n9e>
-- 📦 **MinIO Console**: <http://localhost:8080/minio-console/>
+- 📦 **SeaweedFS Console**: <http://localhost:8080/seaweedfs/>
 
 Default admin account: `admin` / `admin123`
 
@@ -377,12 +377,12 @@ See [Salt Key Security Distribution Design Document](docs-all/SALT_KEY_SECURITY.
 - S3 object storage backend
 - Web interface management
 
-### 📦 MinIO Object Storage
+### 📦 SeaweedFS Object Storage
 
 - S3-compatible API
-- Web management console
+- High-performance distributed storage
 - Gitea LFS backend storage
-- Multi-tenant support
+- Filer Web management console
 
 ### 📈 Nightingale Monitoring System
 
@@ -433,8 +433,8 @@ vi .env.prod
 | `POSTGRES_PASSWORD` | PostgreSQL database password | `postgres` |
 | `MYSQL_ROOT_PASSWORD` | MySQL root password | `mysql123` |
 | `SLURM_DB_PASSWORD` | Slurm database password | `slurm123` |
-| `MINIO_ROOT_USER` | MinIO admin user | `minioadmin` |
-| `MINIO_ROOT_PASSWORD` | MinIO admin password | `minioadmin` |
+| `SEAWEEDFS_S3_ACCESS_KEY` | SeaweedFS S3 access key | `seaweedfs_admin` |
+| `SEAWEEDFS_S3_SECRET_KEY` | SeaweedFS S3 secret key | `seaweedfs_secret_key_change_me` |
 | `ADMIN_USER` | Web admin username | `admin` |
 | `ADMIN_PASSWORD` | Web admin password | `admin123` |
 | `EXTERNAL_HOST` | External access address | `localhost` |
@@ -479,8 +479,8 @@ docker exec ai-infra-postgres pg_dump -U postgres ai-infra-matrix > backup.sql
 # MySQL backup
 docker exec ai-infra-mysql mysqldump -u root -p slurm_acct_db > slurm_backup.sql
 
-# MinIO data backup
-docker exec ai-infra-minio mc mirror /data /backup
+# SeaweedFS data backup
+aws --endpoint-url http://localhost:8333 s3 sync s3://gitea ./seaweedfs_backup/
 ```
 
 ## 🤝 Contributing
@@ -518,7 +518,7 @@ Thanks to the following open source projects:
 - [SaltStack](https://saltproject.io/) - Configuration management and automation
 - [JupyterHub](https://jupyterhub.readthedocs.io/) - Multi-user Jupyter environment
 - [Gitea](https://gitea.io/) - Lightweight Git service
-- [MinIO](https://min.io/) - High-performance object storage
+- [SeaweedFS](https://github.com/seaweedfs/seaweedfs) - High-performance distributed object storage
 - [Nightingale](https://n9e.github.io/) - Monitoring and alerting platform
 - [PostgreSQL](https://www.postgresql.org/) - High-performance relational database
 - [MySQL](https://www.mysql.com/) - Open source relational database
@@ -536,14 +536,13 @@ Thanks to the following open source projects:
 
 ---
 
-## Appendix: Object Storage (MinIO) Environment Variables
+## Appendix: Object Storage (SeaweedFS) Environment Variables
 
-- Proxy routes: /minio/ (S3 API), /minio-console/ (Web console, can be embedded as iframe in frontend)
+- Proxy routes: /seaweedfs/ (Filer Web UI), /seaweedfs-s3/ (S3 API)
 - Key environment variables (.env/.env.example):
-  - MINIO_HOST, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-  - MINIO_REGION (default: us-east-1)
-  - MINIO_USE_SSL (default: false)
-  - MINIO_CONSOLE_URL (default renders to ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/minio-console/)
-  - MINIO_BUCKET_GITEA (bucket name used by Gitea, default: gitea)
+  - SEAWEEDFS_S3_ACCESS_KEY, SEAWEEDFS_S3_SECRET_KEY
+  - SEAWEEDFS_MASTER_URL, SEAWEEDFS_FILER_URL, SEAWEEDFS_S3_PORT
+  - SEAWEEDFS_JWT_SECRET
+  - SEAWEEDFS_BUCKET_GITEA (bucket name used by Gitea, default: gitea)
 
 After modifying these variables, re-render/build and restart services to take effect.

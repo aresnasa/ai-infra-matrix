@@ -15,7 +15,8 @@ set -euo pipefail
 # Optional storage config
 : "${GITEA__storage__STORAGE_TYPE:=local}"
 : "${DATA_PATH:=/data/gitea}"
-: "${MINIO_ENDPOINT:=minio:9000}"
+# S3 compatible storage (SeaweedFS/MinIO) - Gitea uses 'minio' as config type name for S3-compatible storage
+: "${MINIO_ENDPOINT:=seaweedfs-filer:8333}"
 : "${MINIO_BUCKET:=gitea}"
 : "${MINIO_USE_SSL:=false}"
 : "${MINIO_LOCATION:=us-east-1}"

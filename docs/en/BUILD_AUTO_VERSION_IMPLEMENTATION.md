@@ -45,7 +45,7 @@ redis: "7-alpine"
 - Databases: PostgreSQL, MySQL, Redis, OceanBase
 - Programming Languages: Golang, Node, Python
 - Applications: Gitea, JupyterHub, Nginx, Kafka
-- Others: OpenLDAP, Minio, Prometheus, Grafana
+- Others: OpenLDAP, SeaweedFS, Prometheus, Grafana
 
 **Test Result**: ✅ Passed
 ```

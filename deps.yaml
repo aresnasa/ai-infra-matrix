@@ -14,7 +14,7 @@ openldap: "stable"
 phpldapadmin: "stable"
 
 # 存储镜像
-minio: "latest"
+seaweedfs: "latest"
 
 # 消息队列
 kafka: "7.5.0"

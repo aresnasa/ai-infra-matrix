@@ -54,9 +54,10 @@ data:
   LDAP_HOST: {{ printf "%s-openldap" (include "ai-infra-matrix.fullname" .) | quote }}
   LDAP_PORT: {{ .Values.openldap.service.port | quote }}
   
-  # MinIO Configuration
-  MINIO_HOST: {{ printf "%s-minio" (include "ai-infra-matrix.fullname" .) | quote }}
-  MINIO_PORT: {{ .Values.minio.service.port | quote }}
+  # SeaweedFS Configuration
+  SEAWEEDFS_MASTER_URL: {{ printf "http://%s-seaweedfs-master:%d" (include "ai-infra-matrix.fullname" .) (.Values.seaweedfs.service.masterPort | int) | quote }}
+  SEAWEEDFS_FILER_URL: {{ printf "http://%s-seaweedfs-filer:%d" (include "ai-infra-matrix.fullname" .) (.Values.seaweedfs.service.filerPort | int) | quote }}
+  SEAWEEDFS_S3_PORT: {{ .Values.seaweedfs.service.s3Port | quote }}
   
   # Nginx Configuration
   NGINX_PORT: {{ .Values.nginx.service.port | quote }}

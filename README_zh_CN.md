@@ -37,7 +37,7 @@ SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
 - 📦 **AppHub应用仓库** - Slurm/Categraf等应用包的构建和分发
 - 🐍 **JupyterHub集成** - 多用户Jupyter环境，支持GPU计算
 - 🗃️ **Gitea代码仓库** - 轻量级Git服务，支持S3对象存储后端
-- 📦 **MinIO对象存储** - S3兼容的对象存储服务
+- 📦 **SeaweedFS对象存储** - S3兼容的高性能分布式对象存储
 - 📊 **Nightingale监控** - 全栈监控告警平台
 - 🚀 **容器化部署** - Docker Compose一键部署，支持多环境配置
 - 🌐 **多注册表支持** - 支持Docker Hub、阿里云ACR、Harbor等镜像仓库
@@ -74,8 +74,8 @@ graph TB
         MySQL[(MySQL<br/>Slurm数据库)]
         OceanBase[(OceanBase<br/>分布式数据库)]
         Redis[(Redis<br/>缓存/消息)]
-        Kafka[(Kafka<br/>消息队列)]
-        MinIO[MinIO<br/>对象存储]
+        Kafka[(“Kafka<br/>消息队列”)]
+        SeaweedFS[SeaweedFS<br/>对象存储]
     end
     
     Client --> Nginx
@@ -95,7 +95,7 @@ graph TB
     KeyVault --> SaltStack
     JupyterHub --> Postgres
     Gitea --> Postgres
-    Gitea --> MinIO
+    Gitea --> SeaweedFS
     SlurmMaster --> MySQL
     AppHub --> SaltStack
 ```
@@ -133,7 +133,7 @@ docker compose up -d
 - 📊 **JupyterHub**: <http://localhost:8080/jupyter>
 - 🗃️ **Gitea**: <http://localhost:8080/gitea/>
 - 📈 **Nightingale**: <http://localhost:8080/n9e>
-- 📦 **MinIO控制台**: <http://localhost:8080/minio-console/>
+- 📦 **SeaweedFS控制台**: <http://localhost:8080/seaweedfs/>
 
 默认管理员账号：`admin` / `admin123`
 
@@ -379,12 +379,12 @@ sequenceDiagram
 - S3对象存储后端
 - Web界面管理
 
-### 📦 MinIO对象存储
+### 📦 SeaweedFS对象存储
 
 - S3兼容API
-- Web管理控制台
+- 高性能分布式存储
 - Gitea LFS后端存储
-- 多租户支持
+- Filer Web管理控制台
 
 ### 📈 Nightingale监控系统
 
@@ -435,8 +435,8 @@ vi .env.prod
 | `POSTGRES_PASSWORD` | PostgreSQL数据库密码 | `postgres` |
 | `MYSQL_ROOT_PASSWORD` | MySQL root密码 | `mysql123` |
 | `SLURM_DB_PASSWORD` | Slurm数据库密码 | `slurm123` |
-| `MINIO_ROOT_USER` | MinIO管理员用户 | `minioadmin` |
-| `MINIO_ROOT_PASSWORD` | MinIO管理员密码 | `minioadmin` |
+| `SEAWEEDFS_S3_ACCESS_KEY` | SeaweedFS S3访问密钥 | `seaweedfs_admin` |
+| `SEAWEEDFS_S3_SECRET_KEY` | SeaweedFS S3秘密密钥 | `seaweedfs_secret_key_change_me` |
 | `ADMIN_USER` | Web管理员用户名 | `admin` |
 | `ADMIN_PASSWORD` | Web管理员密码 | `admin123` |
 | `EXTERNAL_HOST` | 外部访问地址 | `localhost` |
@@ -481,8 +481,8 @@ docker exec ai-infra-postgres pg_dump -U postgres ai-infra-matrix > backup.sql
 # MySQL备份
 docker exec ai-infra-mysql mysqldump -u root -p slurm_acct_db > slurm_backup.sql
 
-# MinIO数据备份
-docker exec ai-infra-minio mc mirror /data /backup
+# SeaweedFS数据备份
+aws --endpoint-url http://localhost:8333 s3 sync s3://gitea ./seaweedfs_backup/
 ```
 
 ## 🤝 贡献指南
@@ -520,7 +520,7 @@ docker exec ai-infra-minio mc mirror /data /backup
 - [SaltStack](https://saltproject.io/) - 配置管理和自动化
 - [JupyterHub](https://jupyterhub.readthedocs.io/) - 多用户Jupyter环境
 - [Gitea](https://gitea.io/) - 轻量级Git服务
-- [MinIO](https://min.io/) - 高性能对象存储
+- [SeaweedFS](https://github.com/seaweedfs/seaweedfs) - 高性能分布式对象存储
 - [Nightingale](https://n9e.github.io/) - 监控告警平台
 - [PostgreSQL](https://www.postgresql.org/) - 高性能关系数据库
 - [MySQL](https://www.mysql.com/) - 开源关系数据库
@@ -538,14 +538,13 @@ docker exec ai-infra-minio mc mirror /data /backup
 
 ---
 
-## 附录：对象存储（MinIO）环境变量速览
+## 附录：对象存储（SeaweedFS）环境变量速览
 
-- 代理路由：/minio/ (S3 API), /minio-console/ (Web 控制台，可被前端以 iframe 内嵌)
+- 代理路由：/seaweedfs/ (Filer Web UI)，/seaweedfs-s3/ (S3 API)
 - 关键环境变量（.env/.env.example）：
-  - MINIO_HOST, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-  - MINIO_REGION（默认 us-east-1）
-  - MINIO_USE_SSL（默认 false）
-  - MINIO_CONSOLE_URL（默认渲染为 ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/minio-console/）
-  - MINIO_BUCKET_GITEA（Gitea 使用的桶名，默认 gitea）
+  - SEAWEEDFS_S3_ACCESS_KEY, SEAWEEDFS_S3_SECRET_KEY
+  - SEAWEEDFS_MASTER_URL, SEAWEEDFS_FILER_URL, SEAWEEDFS_S3_PORT
+  - SEAWEEDFS_JWT_SECRET
+  - SEAWEEDFS_BUCKET_GITEA（Gitea 使用的桶名，默认 gitea）
 
 修改上述变量后，重新渲染/构建并重启服务以生效。

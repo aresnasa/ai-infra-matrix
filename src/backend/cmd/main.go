@@ -1203,9 +1203,6 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// 统计信息
 		objectStorage.GET("/configs/:id/statistics", objectStorageController.GetStatistics)
-
-		// MinIO Console 代理登录（为iframe设置同源Cookie）
-		objectStorage.POST("/minio/console/proxy-login", controllers.MinIOConsoleProxyLogin)
 	}
 
 	// 导航配置管理路由（需要认证）

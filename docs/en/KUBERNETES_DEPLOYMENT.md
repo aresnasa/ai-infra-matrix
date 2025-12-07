@@ -47,7 +47,7 @@ This guide describes how to deploy AI Infrastructure Matrix to a Kubernetes clus
 │  - MySQL (StatefulSet)           │
 │  - Redis (StatefulSet)           │
 │  - Kafka (StatefulSet)           │
-│  - MinIO (StatefulSet)           │
+│  - SeaweedFS (StatefulSet)       │
 │  - OceanBase (StatefulSet)       │
 └──────────┬───────────────────────┘
            │
@@ -166,8 +166,8 @@ kubectl create secret generic ai-infra-secrets \
   --from-literal=postgres-password=your-password \
   --from-literal=mysql-root-password=your-password \
   --from-literal=redis-password=your-password \
-  --from-literal=minio-access-key=minioadmin \
-  --from-literal=minio-secret-key=minioadmin
+  --from-literal=seaweedfs-access-key=seaweedfs_admin \
+  --from-literal=seaweedfs-secret-key=seaweedfs_secret_key_change_me
 
 # Create configmap
 kubectl create configmap ai-infra-config \

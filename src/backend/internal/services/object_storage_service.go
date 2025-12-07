@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
@@ -162,10 +161,9 @@ func (s *ObjectStorageService) TestConnection(config *models.ObjectStorageConfig
 	switch config.Type {
 	case models.StorageTypeSeaweedFS:
 		return s.testSeaweedFSConnection(config)
-	case models.StorageTypeMinIO:
-		return s.testMinIOConnection(config)
-	case models.StorageTypeAWSS3:
-		return s.testS3Connection(config)
+	case models.StorageTypeMinIO, models.StorageTypeAWSS3:
+		// MinIO 和 AWS S3 使用相同的 S3 兼容测试
+		return s.testS3CompatibleConnection(config)
 	default:
 		return fmt.Errorf("不支持的存储类型: %s", config.Type)
 	}
@@ -207,8 +205,9 @@ func (s *ObjectStorageService) GetStatistics(id uint) (*models.ObjectStorageStat
 	switch config.Type {
 	case models.StorageTypeSeaweedFS:
 		return s.getSeaweedFSStatistics(config)
-	case models.StorageTypeMinIO:
-		return s.getMinIOStatistics(config)
+	case models.StorageTypeMinIO, models.StorageTypeAWSS3:
+		// MinIO 和 AWS S3 使用相同的 S3 兼容统计
+		return s.getS3CompatibleStatistics(config)
 	default:
 		// 返回空统计信息
 		return &models.ObjectStorageStatistics{
@@ -255,11 +254,6 @@ func (s *ObjectStorageService) validateConfig(config *models.ObjectStorageConfig
 		return fmt.Errorf("访问密钥Secret不能为空")
 	}
 
-	// MinIO需要Web控制台地址
-	if config.Type == models.StorageTypeMinIO && config.WebURL == "" {
-		return fmt.Errorf("MinIO配置需要Web控制台地址")
-	}
-
 	return nil
 }
 
@@ -283,15 +277,15 @@ func (s *ObjectStorageService) getSeaweedFSStatistics(config *models.ObjectStora
 	return service.GetStatistics()
 }
 
-// testMinIOConnection 测试MinIO连接
-func (s *ObjectStorageService) testMinIOConnection(config *models.ObjectStorageConfig) error {
-	// 创建MinIO客户端
+// testS3CompatibleConnection 测试 S3 兼容存储连接 (MinIO/AWS S3 等)
+func (s *ObjectStorageService) testS3CompatibleConnection(config *models.ObjectStorageConfig) error {
+	// 创建 S3 兼容客户端
 	client, err := minio.New(config.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
 		Secure: config.SSLEnabled,
 	})
 	if err != nil {
-		return fmt.Errorf("创建MinIO客户端失败: %v", err)
+		return fmt.Errorf("创建 S3 客户端失败: %v", err)
 	}
 
 	// 设置超时
@@ -301,45 +295,15 @@ func (s *ObjectStorageService) testMinIOConnection(config *models.ObjectStorageC
 	// 测试连接 - 尝试列出存储桶
 	_, err = client.ListBuckets(ctx)
 	if err != nil {
-		return fmt.Errorf("MinIO连接测试失败: %v", err)
+		return fmt.Errorf("S3 连接测试失败: %v", err)
 	}
 
 	return nil
 }
 
-// testS3Connection 测试S3连接
+// testS3Connection 测试S3连接 (已废弃，使用 testS3CompatibleConnection)
 func (s *ObjectStorageService) testS3Connection(config *models.ObjectStorageConfig) error {
-	// 构建S3端点
-	endpoint := config.Endpoint
-	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		if config.SSLEnabled {
-			endpoint = "https://" + endpoint
-		} else {
-			endpoint = "http://" + endpoint
-		}
-	}
-
-	// 创建MinIO客户端（兼容S3）
-	client, err := minio.New(strings.TrimPrefix(strings.TrimPrefix(endpoint, "http://"), "https://"), &minio.Options{
-		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
-		Secure: config.SSLEnabled,
-		Region: config.Region,
-	})
-	if err != nil {
-		return fmt.Errorf("创建S3客户端失败: %v", err)
-	}
-
-	// 设置超时
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Timeout)*time.Second)
-	defer cancel()
-
-	// 测试连接
-	_, err = client.ListBuckets(ctx)
-	if err != nil {
-		return fmt.Errorf("S3连接测试失败: %v", err)
-	}
-
-	return nil
+	return s.testS3CompatibleConnection(config)
 }
 
 // testAndUpdateStatus 测试连接并更新状态
@@ -370,15 +334,15 @@ func (s *ObjectStorageService) updateConfigsStatus(configs []models.ObjectStorag
 	}
 }
 
-// getMinIOStatistics 获取MinIO统计信息
-func (s *ObjectStorageService) getMinIOStatistics(config *models.ObjectStorageConfig) (*models.ObjectStorageStatistics, error) {
-	// 创建MinIO客户端
+// getS3CompatibleStatistics 获取 S3 兼容存储统计信息 (MinIO/AWS S3 等)
+func (s *ObjectStorageService) getS3CompatibleStatistics(config *models.ObjectStorageConfig) (*models.ObjectStorageStatistics, error) {
+	// 创建 S3 兼容客户端
 	client, err := minio.New(config.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
 		Secure: config.SSLEnabled,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("创建MinIO客户端失败: %v", err)
+		return nil, fmt.Errorf("创建 S3 客户端失败: %v", err)
 	}
 
 	// 设置超时
@@ -394,7 +358,7 @@ func (s *ObjectStorageService) getMinIOStatistics(config *models.ObjectStorageCo
 	stats := &models.ObjectStorageStatistics{
 		ConfigID:    config.ID,
 		BucketCount: int64(len(buckets)),
-		TotalSpace:  "N/A", // MinIO API不直接提供总容量信息
+		TotalSpace:  "N/A", // S3 API 不直接提供总容量信息
 		UsedSpace:   "N/A",
 	}
 
