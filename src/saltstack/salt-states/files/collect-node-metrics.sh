@@ -15,7 +15,10 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 # 默认值
-CALLBACK_URL="${CALLBACK_URL:-http://localhost:8080/api/saltstack/node-metrics/callback}"
+# 注意: 在实际部署中，CALLBACK_URL 应该通过 Salt State 配置正确的地址
+# - 如果 Minion 在 Docker 网络内，使用 http://ai-infra-backend:8082/api/saltstack/node-metrics/callback
+# - 如果 Minion 在外部网络，使用外部可访问的 URL（如 http://<master-ip>:8080/api/saltstack/node-metrics/callback）
+CALLBACK_URL="${CALLBACK_URL:-http://ai-infra-backend:8082/api/saltstack/node-metrics/callback}"
 MINION_ID="${MINION_ID:-$(hostname)}"
 API_TOKEN="${API_TOKEN:-}"
 

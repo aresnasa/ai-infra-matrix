@@ -3,11 +3,11 @@
 #
 # Pillar 配置:
 #   node_metrics:
-#     callback_url: http://backend:8080/api/saltstack/node-metrics/callback
+#     callback_url: http://ai-infra-backend:8082/api/saltstack/node-metrics/callback
 #     collect_interval: 3  # 分钟
 #     api_token: ""  # 可选
 
-{% set callback_url = salt['pillar.get']('node_metrics:callback_url', 'http://localhost:8080/api/saltstack/node-metrics/callback') %}
+{% set callback_url = salt['pillar.get']('node_metrics:callback_url', 'http://ai-infra-backend:8082/api/saltstack/node-metrics/callback') %}
 {% set collect_interval = salt['pillar.get']('node_metrics:collect_interval', 3) %}
 {% set api_token = salt['pillar.get']('node_metrics:api_token', '') %}
 

@@ -23,6 +23,34 @@ ensure_directories() {
     mkdir -p /srv/pillar
 }
 
+# 同步默认的 Salt States 和 Pillar 文件
+sync_salt_files() {
+    log "📦 同步 Salt States 和 Pillar 文件..."
+    
+    # 同步 Salt States（如果目标目录为空或缺少关键文件）
+    if [ -d "/opt/salt-states-default" ]; then
+        # 检查是否需要同步（如果 /srv/salt 为空或缺少 node-metrics.sls）
+        if [ ! -f "/srv/salt/node-metrics.sls" ]; then
+            log "  📋 同步 Salt States 到 /srv/salt/..."
+            cp -rn /opt/salt-states-default/* /srv/salt/ 2>/dev/null || cp -r /opt/salt-states-default/* /srv/salt/
+            log "  ✅ Salt States 同步完成"
+        else
+            log "  ♻️ Salt States 已存在，跳过同步"
+        fi
+    fi
+    
+    # 同步 Salt Pillar（如果目标目录为空或缺少关键文件）
+    if [ -d "/opt/salt-pillar-default" ]; then
+        if [ ! -f "/srv/pillar/top.sls" ]; then
+            log "  📋 同步 Salt Pillar 到 /srv/pillar/..."
+            cp -rn /opt/salt-pillar-default/* /srv/pillar/ 2>/dev/null || cp -r /opt/salt-pillar-default/* /srv/pillar/
+            log "  ✅ Salt Pillar 同步完成"
+        else
+            log "  ♻️ Salt Pillar 已存在，跳过同步"
+        fi
+    fi
+}
+
 # 生成或等待 Master 密钥（多 Master 高可用核心逻辑）
 setup_master_keys() {
     local role="${SALT_MASTER_ROLE:-standalone}"
@@ -199,6 +227,7 @@ start_systemd() {
 case "${1:-start-services}" in
     start-services)
         ensure_directories
+        sync_salt_files
         setup_master_keys
         configure_multi_master
         verify_configs
