@@ -139,10 +139,8 @@ COPY src/saltstack/salt-master.conf /etc/salt/master.d/master.conf
 COPY src/saltstack/salt-api.conf /etc/salt/master.d/api.conf
 COPY src/saltstack/salt-minion.conf /etc/salt/minion.d/minion.conf
 COPY src/saltstack/salt-users.conf /etc/salt/master.d/users.conf
-# 复制 Salt States 和 Pillar 到备份目录（volume 挂载会覆盖 /srv/salt）
-# entrypoint 会在启动时同步到 /srv/salt 和 /srv/pillar
-COPY src/saltstack/salt-states/ /opt/salt-states-default/
-COPY src/saltstack/salt-pillar/ /opt/salt-pillar-default/
+COPY src/saltstack/salt-states/ /srv/salt/
+COPY src/saltstack/salt-pillar/ /srv/pillar/
 COPY src/saltstack/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
