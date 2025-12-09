@@ -522,6 +522,7 @@ TEMPLATE_VARIABLES=(
     "JUPYTERHUB_PORT"     # JupyterHub service port (default: 8000)
     "NIGHTINGALE_HOST"    # Nightingale service host (default: nightingale)
     "NIGHTINGALE_PORT"    # Nightingale service port (default: 17000)
+    "EXTERNAL_PORT"       # Main Nginx port (default: 8080)
     
     # ===========================================
     # Third-party image versions (for docker-compose.yml.tpl)
@@ -807,6 +808,89 @@ render_all_templates() {
                 fail_count=$((fail_count + 1))
             fi
         done < <(find "$config_template_dir" -name "*.tpl" -print0 2>/dev/null)
+    fi
+    
+    # ===========================================
+    # Render SaltStack pillar and state templates
+    # These templates contain EXTERNAL_HOST and other runtime variables
+    # for configuring node-metrics callback URLs, etc.
+    # ===========================================
+    local saltstack_dir="${SCRIPT_DIR}/src/saltstack"
+    if [[ -d "$saltstack_dir" ]]; then
+        log_info "Rendering SaltStack configuration templates..."
+        
+        # Render pillar templates (*.sls.tpl in salt-pillar/)
+        local pillar_dir="$saltstack_dir/salt-pillar"
+        if [[ -d "$pillar_dir" ]]; then
+            while IFS= read -r -d '' tpl_file; do
+                local out_file="${tpl_file%.tpl}"
+                local config_name=$(basename "$out_file")
+                
+                # Check if output file exists and is newer than template
+                if [[ "$force" != "true" ]] && [[ -f "$out_file" ]]; then
+                    if [[ "$out_file" -nt "$tpl_file" ]] && [[ "$out_file" -nt "$ENV_FILE" ]]; then
+                        log_info "Skipping $config_name (up to date)"
+                        skip_count=$((skip_count + 1))
+                        continue
+                    fi
+                fi
+                
+                if render_template "$tpl_file" "$out_file"; then
+                    success_count=$((success_count + 1))
+                else
+                    fail_count=$((fail_count + 1))
+                fi
+            done < <(find "$pillar_dir" -name "*.sls.tpl" -print0 2>/dev/null)
+        fi
+        
+        # Render state templates (*.sls.tpl in salt-states/)
+        local states_dir="$saltstack_dir/salt-states"
+        if [[ -d "$states_dir" ]]; then
+            while IFS= read -r -d '' tpl_file; do
+                local out_file="${tpl_file%.tpl}"
+                local config_name=$(basename "$out_file")
+                
+                # Check if output file exists and is newer than template
+                if [[ "$force" != "true" ]] && [[ -f "$out_file" ]]; then
+                    if [[ "$out_file" -nt "$tpl_file" ]] && [[ "$out_file" -nt "$ENV_FILE" ]]; then
+                        log_info "Skipping $config_name (up to date)"
+                        skip_count=$((skip_count + 1))
+                        continue
+                    fi
+                fi
+                
+                if render_template "$tpl_file" "$out_file"; then
+                    success_count=$((success_count + 1))
+                else
+                    fail_count=$((fail_count + 1))
+                fi
+            done < <(find "$states_dir" -name "*.sls.tpl" -print0 2>/dev/null)
+        fi
+        
+        # Render script templates in salt-states/files/
+        local files_dir="$saltstack_dir/salt-states/files"
+        if [[ -d "$files_dir" ]]; then
+            while IFS= read -r -d '' tpl_file; do
+                local out_file="${tpl_file%.tpl}"
+                local config_name=$(basename "$out_file")
+                
+                # Check if output file exists and is newer than template
+                if [[ "$force" != "true" ]] && [[ -f "$out_file" ]]; then
+                    if [[ "$out_file" -nt "$tpl_file" ]] && [[ "$out_file" -nt "$ENV_FILE" ]]; then
+                        log_info "Skipping $config_name (up to date)"
+                        skip_count=$((skip_count + 1))
+                        continue
+                    fi
+                fi
+                
+                if render_template "$tpl_file" "$out_file"; then
+                    chmod +x "$out_file" 2>/dev/null || true
+                    success_count=$((success_count + 1))
+                else
+                    fail_count=$((fail_count + 1))
+                fi
+            done < <(find "$files_dir" -name "*.tpl" -print0 2>/dev/null)
+        fi
     fi
     
     echo
