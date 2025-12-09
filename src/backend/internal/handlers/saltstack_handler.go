@@ -1821,6 +1821,16 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 					Grains:        grains,
 					KernelVersion: h.extractKernelVersion(grains),
 				}
+
+				// 尝试实时获取 GPU 信息（不阻塞主流程）
+				gpuInfo := h.getGPUInfo(concurrentClient, minionID)
+				if gpuInfo.DriverVersion != "" {
+					m.GPUDriverVersion = gpuInfo.DriverVersion
+					m.CUDAVersion = gpuInfo.CUDAVersion
+					m.GPUCount = gpuInfo.GPUCount
+					m.GPUModel = gpuInfo.GPUModel
+				}
+
 				resultChan <- minionResult{minion: m, err: nil}
 			}(id)
 		}
@@ -1836,7 +1846,42 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 	for _, id := range down {
 		minions = append(minions, SaltMinion{ID: id, Status: "down"})
 	}
+
+	// 从数据库读取节点指标数据并填充 GPU/IB 信息
+	h.enrichMinionsWithMetrics(minions)
+
 	return minions, nil
+}
+
+// enrichMinionsWithMetrics 从数据库读取节点指标并填充到 Minion 信息中
+func (h *SaltStackHandler) enrichMinionsWithMetrics(minions []SaltMinion) {
+	if len(minions) == 0 {
+		return
+	}
+
+	// 从数据库获取所有节点的最新指标
+	metricsService := services.NewNodeMetricsService()
+	allMetrics, err := metricsService.GetAllLatestMetrics()
+	if err != nil {
+		return // 静默失败，不影响基本 Minion 信息返回
+	}
+
+	// 构建 minionID -> metrics 的映射
+	metricsMap := make(map[string]*models.NodeMetricsLatest)
+	for i := range allMetrics {
+		metricsMap[allMetrics[i].MinionID] = &allMetrics[i]
+	}
+
+	// 填充指标数据到 Minion
+	for i := range minions {
+		if metrics, ok := metricsMap[minions[i].ID]; ok {
+			minions[i].GPUDriverVersion = metrics.GPUDriverVersion
+			minions[i].CUDAVersion = metrics.CUDAVersion
+			minions[i].GPUCount = metrics.GPUCount
+			minions[i].GPUModel = metrics.GPUModel
+			// 注意：IB 信息在 SaltMinion 结构体中没有字段，需要通过前端调用 node-metrics API 获取
+		}
+	}
 }
 
 // parseManageStatus 解析 manage.status 的返回，得到 up/down 列表
