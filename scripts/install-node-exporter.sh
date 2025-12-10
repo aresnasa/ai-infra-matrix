@@ -6,7 +6,7 @@
 # 生成时间: 由 build.sh sync 命令渲染
 #
 # 变量说明:
-#   192.168.3.101 - AppHub 外部访问地址
+#   192.168.0.200 - AppHub 外部访问地址
 #   28080 - AppHub 端口 (默认 28080)
 #   v1.8.2 - Node Exporter 版本
 #   nightingale - Nightingale 服务地址
@@ -19,8 +19,8 @@ set -eo pipefail
 # 环境配置 (已由模板渲染替换)
 # ===========================================
 NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-v1.8.2}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.3.101:28080}"
-NIGHTINGALE_HOST="${NIGHTINGALE_HOST:-192.168.3.101}"
+APPHUB_URL="${APPHUB_URL:-http://192.168.0.200:28080}"
+NIGHTINGALE_HOST="${NIGHTINGALE_HOST:-192.168.0.200}"
 NIGHTINGALE_PORT="${NIGHTINGALE_PORT:-17000}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SERVICE_USER="${SERVICE_USER:-node_exporter}"
@@ -48,8 +48,8 @@ Node Exporter 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
   Node Exporter 版本: v1.8.2
-  AppHub URL: http://192.168.3.101:28080
-  Nightingale: 192.168.3.101:17000
+  AppHub URL: http://192.168.0.200:28080
+  Nightingale: 192.168.0.200:17000
 
 用法: $0 [OPTIONS]
 
@@ -73,7 +73,7 @@ Node Exporter 安装脚本 (预配置模板)
     $0 --port 9101
 
     # 使用 curl 管道安装
-    curl -fsSL http://192.168.3.101:28080/packages/install-node-exporter.sh | bash
+    curl -fsSL http://192.168.0.200:28080/packages/install-node-exporter.sh | bash
 EOF
     exit 0
 }
@@ -149,7 +149,7 @@ detect_init_system() {
 check_apphub() {
     local url="$1"
     
-    if [[ -z "$url" ]] || [[ "$url" == *"192.168.3.101"* ]]; then
+    if [[ -z "$url" ]] || [[ "$url" == *"192.168.0.200"* ]]; then
         return 1
     fi
     

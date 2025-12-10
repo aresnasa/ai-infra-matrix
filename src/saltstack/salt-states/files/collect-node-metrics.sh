@@ -22,9 +22,9 @@ CALLBACK_URL="${CALLBACK_URL:-http://ai-infra-backend:8082/api/saltstack/node-me
 MINION_ID="${MINION_ID:-$(hostname)}"
 API_TOKEN="${API_TOKEN:-}"
 
-# 日志函数
+# 日志函数 - 输出到 stderr，避免与 JSON 输出混合
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >&2
 }
 
 # 检查命令是否存在

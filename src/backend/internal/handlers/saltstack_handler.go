@@ -309,6 +309,12 @@ type SaltMinion struct {
 	NPUVersion       string                 `json:"npu_version,omitempty"`
 	NPUCount         int                    `json:"npu_count,omitempty"`
 	NPUModel         string                 `json:"npu_model,omitempty"`
+	// IB (InfiniBand) 信息
+	IBStatus string `json:"ib_status,omitempty"` // active, inactive, not_installed
+	IBCount  int    `json:"ib_count,omitempty"`
+	IBRate   string `json:"ib_rate,omitempty"` // 如 "200 Gb/sec (4X HDR)"
+	// 数据来源标识：realtime（实时从Salt获取）, cached（从数据库读取）, unavailable（无法获取）
+	DataSource string `json:"data_source,omitempty"`
 }
 
 // SaltJob Salt作业信息
@@ -1800,9 +1806,9 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 				// 尝试获取 grains
 				r, err := concurrentClient.makeRequest("/minions/"+minionID, "GET", nil)
 				if err != nil {
-					// 如果获取失败，返回基本信息
+					// 如果获取失败，返回基本信息，标记数据来源为不可用
 					resultChan <- minionResult{
-						minion: SaltMinion{ID: minionID, Status: "up", LastSeen: time.Now()},
+						minion: SaltMinion{ID: minionID, Status: "up", LastSeen: time.Now(), DataSource: "unavailable"},
 						err:    nil, // 不视为致命错误
 					}
 					return
@@ -1820,6 +1826,7 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 					LastSeen:      time.Now(),
 					Grains:        grains,
 					KernelVersion: h.extractKernelVersion(grains),
+					DataSource:    "realtime", // 默认标记为实时数据
 				}
 
 				// 尝试实时获取 GPU 信息（不阻塞主流程）
@@ -1830,6 +1837,12 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 					m.GPUCount = gpuInfo.GPUCount
 					m.GPUModel = gpuInfo.GPUModel
 				}
+
+				// 尝试实时获取 IB 信息
+				ibInfo := h.getIBInfo(concurrentClient, minionID)
+				m.IBStatus = ibInfo.Status
+				m.IBCount = ibInfo.Count
+				m.IBRate = ibInfo.Rate
 
 				resultChan <- minionResult{minion: m, err: nil}
 			}(id)
@@ -1844,16 +1857,17 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 
 	// 将 down 的节点也加入列表以便页面展示
 	for _, id := range down {
-		minions = append(minions, SaltMinion{ID: id, Status: "down"})
+		minions = append(minions, SaltMinion{ID: id, Status: "down", DataSource: "unavailable"})
 	}
 
-	// 从数据库读取节点指标数据并填充 GPU/IB 信息
+	// 从数据库读取节点指标数据作为兜底（只在实时数据为空时才使用）
 	h.enrichMinionsWithMetrics(minions)
 
 	return minions, nil
 }
 
-// enrichMinionsWithMetrics 从数据库读取节点指标并填充到 Minion 信息中
+// enrichMinionsWithMetrics 从数据库读取节点指标并填充到 Minion 信息中（仅作为兜底数据）
+// 只有在实时数据为空时才使用数据库数据，并将数据来源标记为 "cached"
 func (h *SaltStackHandler) enrichMinionsWithMetrics(minions []SaltMinion) {
 	if len(minions) == 0 {
 		return
@@ -1872,14 +1886,59 @@ func (h *SaltStackHandler) enrichMinionsWithMetrics(minions []SaltMinion) {
 		metricsMap[allMetrics[i].MinionID] = &allMetrics[i]
 	}
 
-	// 填充指标数据到 Minion
+	// 填充指标数据到 Minion（仅在实时数据为空时才使用数据库数据作为兜底）
 	for i := range minions {
 		if metrics, ok := metricsMap[minions[i].ID]; ok {
-			minions[i].GPUDriverVersion = metrics.GPUDriverVersion
-			minions[i].CUDAVersion = metrics.CUDAVersion
-			minions[i].GPUCount = metrics.GPUCount
-			minions[i].GPUModel = metrics.GPUModel
-			// 注意：IB 信息在 SaltMinion 结构体中没有字段，需要通过前端调用 node-metrics API 获取
+			usedCachedData := false
+
+			// GPU 驱动版本兜底
+			if minions[i].GPUDriverVersion == "" && metrics.GPUDriverVersion != "" {
+				minions[i].GPUDriverVersion = metrics.GPUDriverVersion
+				usedCachedData = true
+			}
+			// CUDA 版本兜底
+			if minions[i].CUDAVersion == "" && metrics.CUDAVersion != "" {
+				minions[i].CUDAVersion = metrics.CUDAVersion
+				usedCachedData = true
+			}
+			// GPU 数量兜底
+			if minions[i].GPUCount == 0 && metrics.GPUCount > 0 {
+				minions[i].GPUCount = metrics.GPUCount
+				usedCachedData = true
+			}
+			// GPU 型号兜底
+			if minions[i].GPUModel == "" && metrics.GPUModel != "" {
+				minions[i].GPUModel = metrics.GPUModel
+				usedCachedData = true
+			}
+			// IB 状态兜底（根据数据库中的活跃/总数计算状态）
+			if minions[i].IBStatus == "" || minions[i].IBStatus == "not_installed" {
+				if metrics.IBTotalCount > 0 {
+					if metrics.IBActiveCount > 0 {
+						minions[i].IBStatus = "active"
+					} else {
+						minions[i].IBStatus = "inactive"
+					}
+					usedCachedData = true
+				}
+			}
+			// IB 数量兜底
+			if minions[i].IBCount == 0 && metrics.IBTotalCount > 0 {
+				minions[i].IBCount = metrics.IBTotalCount
+				usedCachedData = true
+			}
+			// IB 速率兜底（从 IBPortsInfo 中解析，如果可用）
+			if minions[i].IBRate == "" && metrics.IBPortsInfo != "" {
+				// 尝试从 IBPortsInfo 中提取速率信息
+				// IBPortsInfo 格式通常为 JSON，可能包含 rate 字段
+				// 这里简单处理，如果需要复杂解析可以扩展
+				usedCachedData = true
+			}
+
+			// 如果使用了缓存数据，且当前数据来源不是 realtime，则标记为 cached
+			if usedCachedData && minions[i].DataSource != "realtime" {
+				minions[i].DataSource = "cached"
+			}
 		}
 	}
 }
@@ -2841,6 +2900,117 @@ func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NP
 	return info
 }
 
+// IBInfo InfiniBand 网络信息结构
+type IBInfo struct {
+	Status string `json:"status"` // active, inactive, not_installed
+	Count  int    `json:"count"`
+	Rate   string `json:"rate"` // 如 "200 Gb/sec (4X HDR)"
+}
+
+// getIBInfo 通过 ibstat 获取 InfiniBand 信息
+func (h *SaltStackHandler) getIBInfo(client *saltAPIClient, minionID string) IBInfo {
+	info := IBInfo{Status: "not_installed"}
+
+	// 检查 ibstat 命令是否存在
+	checkPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"which ibstat 2>/dev/null || command -v ibstat 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	checkResp, err := client.makeRequest("/", "POST", checkPayload)
+	if err != nil {
+		return info
+	}
+
+	checkOutput := h.extractCmdOutput(checkResp, minionID)
+	if checkOutput == "" || strings.Contains(strings.ToLower(checkOutput), "not found") {
+		// ibstat 不存在，表示未安装 InfiniBand
+		return info
+	}
+
+	// 执行 ibstat 获取 IB 状态
+	// 输出格式:
+	// CA 'mlx5_0'
+	//     CA type: MT4123
+	//     Number of ports: 1
+	//     ...
+	//     Port 1:
+	//         State: Active
+	//         Physical state: LinkUp
+	//         Rate: 200
+	//         Base lid: 0
+	//         ...
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"ibstat 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 15,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		info.Status = "unavailable"
+		return info
+	}
+
+	output := h.extractCmdOutput(resp, minionID)
+	if output == "" || strings.Contains(strings.ToLower(output), "error") {
+		info.Status = "unavailable"
+		return info
+	}
+
+	// 解析 ibstat 输出
+	lines := strings.Split(output, "\n")
+	activeCount := 0
+	totalCount := 0
+	var rate string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// 统计 CA 数量
+		if strings.HasPrefix(line, "CA '") {
+			totalCount++
+		}
+
+		// 检查端口状态
+		if strings.HasPrefix(line, "State:") {
+			state := strings.TrimSpace(strings.TrimPrefix(line, "State:"))
+			if strings.ToLower(state) == "active" {
+				activeCount++
+			}
+		}
+
+		// 获取速率
+		if strings.HasPrefix(line, "Rate:") && rate == "" {
+			rateValue := strings.TrimSpace(strings.TrimPrefix(line, "Rate:"))
+			if rateValue != "" && rateValue != "0" {
+				rate = rateValue + " Gb/sec"
+			}
+		}
+	}
+
+	info.Count = totalCount
+	if totalCount > 0 {
+		if activeCount > 0 {
+			info.Status = "active"
+		} else {
+			info.Status = "inactive"
+		}
+	}
+	info.Rate = rate
+
+	return info
+}
+
 // extractCmdOutput 从 cmd.run 的响应中提取输出
 func (h *SaltStackHandler) extractCmdOutput(resp map[string]interface{}, minionID string) string {
 	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
@@ -3374,41 +3544,37 @@ func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest
 		}
 	}
 
-	// GPU 信息
-	if m.GPUCount > 0 || m.GPUDriverVersion != "" {
-		resp.GPU = &models.NodeGPUMetrics{
-			DriverVersion:      m.GPUDriverVersion,
-			CUDAVersion:        m.CUDAVersion,
-			Count:              m.GPUCount,
-			Model:              m.GPUModel,
-			MemoryTotal:        m.GPUMemoryTotal,
-			AvgUtilization:     m.GPUAvgUtilization,
-			MemoryUsedMB:       m.GPUMemoryUsedMB,
-			MemoryTotalMB:      m.GPUMemoryTotalMB,
-			MemoryUsagePercent: m.GPUMemoryUsagePercent,
-		}
-		// 解析详细 GPU 信息
-		if m.GPUInfo != "" {
-			var gpus []models.NodeGPUDetailInfo
-			if err := json.Unmarshal([]byte(m.GPUInfo), &gpus); err == nil {
-				resp.GPU.GPUs = gpus
-			}
+	// GPU 信息 - 始终返回，即使没有 GPU
+	resp.GPU = &models.NodeGPUMetrics{
+		DriverVersion:      m.GPUDriverVersion,
+		CUDAVersion:        m.CUDAVersion,
+		Count:              m.GPUCount,
+		Model:              m.GPUModel,
+		MemoryTotal:        m.GPUMemoryTotal,
+		AvgUtilization:     m.GPUAvgUtilization,
+		MemoryUsedMB:       m.GPUMemoryUsedMB,
+		MemoryTotalMB:      m.GPUMemoryTotalMB,
+		MemoryUsagePercent: m.GPUMemoryUsagePercent,
+	}
+	// 解析详细 GPU 信息
+	if m.GPUInfo != "" {
+		var gpus []models.NodeGPUDetailInfo
+		if err := json.Unmarshal([]byte(m.GPUInfo), &gpus); err == nil {
+			resp.GPU.GPUs = gpus
 		}
 	}
 
-	// IB 信息
-	if m.IBActiveCount > 0 || m.IBDownCount > 0 || m.IBPortsInfo != "" {
-		resp.IB = &models.NodeIBMetrics{
-			ActiveCount: m.IBActiveCount,
-			DownCount:   m.IBDownCount,
-			TotalCount:  m.IBTotalCount,
-		}
-		// 解析 IB 端口信息
-		if m.IBPortsInfo != "" {
-			var ports []models.NodeIBPortInfo
-			if err := json.Unmarshal([]byte(m.IBPortsInfo), &ports); err == nil {
-				resp.IB.Ports = ports
-			}
+	// IB 信息 - 始终返回，即使没有 IB 设备
+	resp.IB = &models.NodeIBMetrics{
+		ActiveCount: m.IBActiveCount,
+		DownCount:   m.IBDownCount,
+		TotalCount:  m.IBTotalCount,
+	}
+	// 解析 IB 端口信息
+	if m.IBPortsInfo != "" {
+		var ports []models.NodeIBPortInfo
+		if err := json.Unmarshal([]byte(m.IBPortsInfo), &ports); err == nil {
+			resp.IB.Ports = ports
 		}
 	}
 
