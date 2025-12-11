@@ -1,9 +1,33 @@
+# Third-party 排除规则
+# 以下目录由于体积过大或不需要版本控制而排除
 third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
+third_party/proxy/
+scripts/ai_cd.sh
+ci_cd.sh
+ai_cd.sh
+# 排除大型二进制文件 (超过 GitHub 100MB 限制)
+# 这些文件在构建时会自动从镜像下载
+third_party/prometheus/*.tar.gz
+third_party/node_exporter/*.tar.gz
+third_party/alertmanager/*.tar.gz
+
+# 保留较小的包 (munge, slurm 源码包可以保留)
+# third_party/munge/*.tar.xz        # ~450KB, 保留
+# third_party/slurm/*.tar.bz2       # ~7MB, 保留
+
+# 保留 version.json 和 .gitkeep 用于目录结构
+!third_party/*/version.json
+!third_party/*/.gitkeep
+private-docs/
+
+src/apphub/third_party/
+src/*/third_party/
 ssh-key/
 sql/
 log/
+*.bak
 *.log
 .env.dev
 .env.prod
@@ -16,6 +40,7 @@ docker-compose.yml
 .env
 .env.backup.*
 .env.example.backup-*
+docker-compose.yml.backup.*
 .env.local
 .env.test
 src/jupyterhub/jupyterhub_config_*
@@ -59,8 +84,8 @@ ssh-key/
 config/ai_assistant_config.yaml
 config/example-hosts.txt
 config/postgres-init/
-scripts/
 !scripts/download_third_party.sh
+!scripts/convert_dockerfiles_to_tpl.py
 playwright-report/
 notebooks/
 package-lock.json
@@ -70,3 +95,10 @@ package.json
 package-lock.json
 manual-install-slurm-node.sh
 ldap-init-data.ldif
+kafka_current.yml
+kafka_old.yml
+docker-compose.yml.v0.3.6
+docker-compose.yml.backup
+build.sh.old
+src/nginx/conf.d
+build.sh.backup

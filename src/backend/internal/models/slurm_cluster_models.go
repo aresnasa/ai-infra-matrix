@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -40,11 +41,11 @@ type SlurmNode struct {
 	NodeType       string         `json:"node_type" gorm:"not null;size:50"` // master, compute, login
 	Host           string         `json:"host" gorm:"not null;size:255"`
 	Port           int            `json:"port" gorm:"default:22"`
-	Username       string         `json:"username" gorm:"not null;size:100"`
+	Username       string         `json:"-" gorm:"not null;size:100"`                  // 加密存储，不在JSON中暴露
 	AuthType       string         `json:"auth_type" gorm:"default:'password';size:20"` // password, key
-	Password       string         `json:"password,omitempty" gorm:"size:255"`
-	KeyPath        string         `json:"key_path,omitempty" gorm:"size:500"`
-	Status         string         `json:"status" gorm:"default:'pending';size:50"` // pending, connecting, installing, configuring, active, failed, removing
+	Password       string         `json:"-" gorm:"size:255"`                           // 加密存储，不在JSON中暴露
+	KeyPath        string         `json:"-" gorm:"size:500"`                           // 不在JSON中暴露
+	Status         string         `json:"status" gorm:"default:'pending';size:50"`     // pending, connecting, installing, configuring, active, failed, removing
 	SaltMinionID   string         `json:"salt_minion_id" gorm:"size:100"`
 	CPUs           int            `json:"cpus" gorm:"default:1"`
 	Memory         int            `json:"memory" gorm:"default:1024"` // MB
@@ -210,10 +211,10 @@ type NodeTemplate struct {
 type SSHConfig struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
-	Username string `json:"username"`
+	Username string `json:"-"`         // 加密存储，不在JSON中暴露
 	AuthType string `json:"auth_type"` // password, key
-	Password string `json:"password,omitempty"`
-	KeyPath  string `json:"key_path,omitempty"`
+	Password string `json:"-"`         // 加密存储，不在JSON中暴露
+	KeyPath  string `json:"-"`         // 不在JSON中暴露
 }
 
 // Scan 实现 database/sql.Scanner 接口
@@ -407,4 +408,126 @@ type DeployClusterRequest struct {
 	ClusterID uint             `json:"cluster_id" binding:"required"`
 	Action    string           `json:"action" binding:"required,oneof=deploy update restart stop"`
 	Config    DeploymentConfig `json:"config"`
+}
+
+// ==================== 敏感数据加密/解密 Hooks ====================
+
+// BeforeCreate 创建前加密敏感字段
+func (n *SlurmNode) BeforeCreate(tx *gorm.DB) error {
+	n.encryptSensitiveFields()
+	return nil
+}
+
+// BeforeUpdate 更新前加密敏感字段
+func (n *SlurmNode) BeforeUpdate(tx *gorm.DB) error {
+	n.encryptSensitiveFields()
+	return nil
+}
+
+// BeforeSave 保存前加密敏感字段
+func (n *SlurmNode) BeforeSave(tx *gorm.DB) error {
+	n.encryptSensitiveFields()
+	return nil
+}
+
+// AfterFind 查询后解密敏感字段
+func (n *SlurmNode) AfterFind(tx *gorm.DB) error {
+	n.decryptSensitiveFields()
+	return nil
+}
+
+// encryptSensitiveFields 加密节点的敏感字段
+func (n *SlurmNode) encryptSensitiveFields() {
+	// 加密 SSH 密码
+	if n.Password != "" {
+		n.Password = utils.EncryptSensitiveField(n.Password)
+	}
+	// 加密 SSH 用户名
+	if n.Username != "" {
+		n.Username = utils.EncryptSensitiveField(n.Username)
+	}
+}
+
+// decryptSensitiveFields 解密节点的敏感字段
+func (n *SlurmNode) decryptSensitiveFields() {
+	// 解密 SSH 密码
+	if n.Password != "" {
+		n.Password = utils.DecryptSensitiveField(n.Password)
+	}
+	// 解密 SSH 用户名
+	if n.Username != "" {
+		n.Username = utils.DecryptSensitiveField(n.Username)
+	}
+}
+
+// ==================== SSHConfig 加密/解密方法 ====================
+
+// EncryptSSHConfig 加密 SSHConfig 的敏感字段
+func (sc *SSHConfig) EncryptSSHConfig() {
+	if sc == nil {
+		return
+	}
+	// 加密用户名
+	if sc.Username != "" {
+		sc.Username = utils.EncryptSensitiveField(sc.Username)
+	}
+	// 加密密码
+	if sc.Password != "" {
+		sc.Password = utils.EncryptSensitiveField(sc.Password)
+	}
+}
+
+// DecryptSSHConfig 解密 SSHConfig 的敏感字段
+func (sc *SSHConfig) DecryptSSHConfig() {
+	if sc == nil {
+		return
+	}
+	// 解密用户名
+	if sc.Username != "" {
+		sc.Username = utils.DecryptSensitiveField(sc.Username)
+	}
+	// 解密密码
+	if sc.Password != "" {
+		sc.Password = utils.DecryptSensitiveField(sc.Password)
+	}
+}
+
+// ==================== SlurmCluster 加密/解密 Hooks ====================
+
+// BeforeCreate 创建前加密敏感字段
+func (c *SlurmCluster) BeforeCreate(tx *gorm.DB) error {
+	c.encryptSensitiveFields()
+	return nil
+}
+
+// BeforeUpdate 更新前加密敏感字段
+func (c *SlurmCluster) BeforeUpdate(tx *gorm.DB) error {
+	c.encryptSensitiveFields()
+	return nil
+}
+
+// BeforeSave 保存前加密敏感字段
+func (c *SlurmCluster) BeforeSave(tx *gorm.DB) error {
+	c.encryptSensitiveFields()
+	return nil
+}
+
+// AfterFind 查询后解密敏感字段
+func (c *SlurmCluster) AfterFind(tx *gorm.DB) error {
+	c.decryptSensitiveFields()
+	return nil
+}
+
+// encryptSensitiveFields 加密集群的敏感字段
+func (c *SlurmCluster) encryptSensitiveFields() {
+	if c.MasterSSH != nil {
+		c.MasterSSH.EncryptSSHConfig()
+	}
+}
+
+// decryptSensitiveFields 解密集群的敏感字段
+func (c *SlurmCluster) decryptSensitiveFields() {
+	if c.MasterSSH != nil {
+		c.MasterSSH.DecryptSSHConfig()
+	}
 }

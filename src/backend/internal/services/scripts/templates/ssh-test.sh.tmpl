@@ -1,0 +1,24 @@
+#!/bin/bash
+# =============================================================================
+# SSH Connection Test Script
+# =============================================================================
+# Tests SSH connectivity and sudo access
+# Template variables (Go text/template syntax):
+#   {{.SudoPass}}  - Sudo password for testing (empty if not provided)
+# =============================================================================
+
+# Test basic connectivity
+hostname
+uname -a
+
+{{if .SudoPass}}
+# Test sudo access with password
+export SUDO_ASKPASS=/dev/null
+echo '{{.SudoPass}}' | sudo -S -v 2>/dev/null && echo "SUDO:yes:nopassword" || {
+    if echo '{{.SudoPass}}' | sudo -S true 2>/dev/null; then
+        echo "SUDO:yes:password"
+    else
+        echo "SUDO:no"
+    fi
+}
+{{end}}

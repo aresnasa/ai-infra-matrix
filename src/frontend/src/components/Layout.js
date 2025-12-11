@@ -5,6 +5,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
 import { getAvailableMenuItems, isAdmin, getUserRoleDisplayName } from '../utils/permissions';
+import LanguageSwitcher from './LanguageSwitcher';
+import { useI18n } from '../hooks/useI18n';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -12,6 +14,7 @@ const { Title } = Typography;
 const Layout = ({ children, user, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
 
   // 获取用户权限信息
   const userIsAdmin = isAdmin(user);
@@ -123,44 +126,50 @@ const Layout = ({ children, user, onLogout }) => {
     {
       key: '/admin/users',
       icon: <UserOutlined />,
-      label: '用户管理',
+      label: t('nav.userManagement'),
       onClick: () => navigate('/admin/users'),
     },
     {
       key: '/admin/projects',
       icon: <ProjectOutlined />,
-      label: '项目管理',
+      label: t('nav.projectManagement'),
       onClick: () => navigate('/admin/projects'),
     },
     {
       key: '/admin/ldap',
       icon: <TeamOutlined />,
-      label: 'LDAP管理中心',
+      label: t('nav.ldapManagement'),
       onClick: () => navigate('/admin/ldap'),
     },
     {
       key: '/admin/test',
       icon: <ExperimentOutlined />,
-      label: '系统测试',
+      label: t('nav.systemTest'),
       onClick: () => navigate('/admin/test'),
     },
     {
       key: '/admin/trash',
       icon: <DeleteOutlined />,
-      label: '回收站',
+      label: t('nav.trash'),
       onClick: () => navigate('/admin/trash'),
     },
     {
       key: '/admin/ai-assistant',
       icon: <CustomMenuIcons.AIAssistant />,
-      label: 'AI助手管理',
+      label: t('nav.aiAssistant'),
       onClick: () => navigate('/admin/ai-assistant'),
     },
     {
       key: '/admin/jupyterhub',
       icon: <CloudServerOutlined />,
-      label: 'JupyterHub管理',
+      label: t('nav.jupyterhubManagement'),
       onClick: () => navigate('/admin/jupyterhub'),
+    },
+    {
+      key: '/admin/object-storage',
+      icon: <DatabaseOutlined />,
+      label: t('nav.objectStorageManagement'),
+      onClick: () => navigate('/admin/object-storage'),
     },
   ];
 
@@ -229,7 +238,7 @@ const Layout = ({ children, user, onLogout }) => {
     {
       key: 'profile',
       icon: <UserOutlined />,
-      label: '个人信息',
+      label: t('nav.profile'),
       onClick: () => navigate('/profile'),
     },
     {
@@ -238,7 +247,7 @@ const Layout = ({ children, user, onLogout }) => {
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: '退出登录',
+      label: t('nav.logout'),
       onClick: onLogout,
     },
   ];
@@ -313,10 +322,13 @@ const Layout = ({ children, user, onLogout }) => {
               icon={<CustomMenuIcons.Menu size={16} />}
               onClick={() => navigate('/admin')}
             >
-              管理中心 <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
+              {t('nav.adminCenter')} <DownOutlined style={{ marginLeft: '4px', fontSize: '12px' }} />
             </Button>
           </Dropdown>
         )}
+
+        {/* 语言切换器 */}
+        <LanguageSwitcher size="small" showLabel={true} darkMode={true} />
 
         {/* 右侧用户菜单 */}
         <Dropdown
@@ -334,7 +346,7 @@ const Layout = ({ children, user, onLogout }) => {
                 borderRadius: '4px',
                 fontSize: '12px' 
               }}>
-                管理员
+                {t('nav.admin')}
               </span>
             )}
             {!userIsAdmin && userRoleDisplayName !== '未知用户' && (

@@ -14,7 +14,7 @@ openldap: "stable"
 phpldapadmin: "stable"
 
 # 存储镜像
-minio: "latest"
+seaweedfs: "latest"
 
 # 消息队列
 kafka: "7.5.0"
@@ -26,7 +26,6 @@ grafana: "latest"
 alertmanager: "latest"
 
 # 代理工具
-tcp-proxy: "latest"
 redisinsight: "latest"
 haproxy: "2.9-alpine"
 
@@ -36,7 +35,7 @@ nginx-alpine: "1.27-alpine"
 
 # 编程语言基础镜像
 golang: "1.25"
-golang-alpine: "1.25-alpine"
+golang-image: "1.25-bookworm"
 node: "22"
 node-alpine: "22-alpine"
 python: "3.14"

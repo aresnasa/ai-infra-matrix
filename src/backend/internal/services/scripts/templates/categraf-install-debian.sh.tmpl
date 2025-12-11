@@ -1,0 +1,243 @@
+#!/bin/bash
+# =============================================================================
+# Categraf Installation Script for Debian/Ubuntu
+# =============================================================================
+# Template variables (Go text/template syntax):
+#   {{.SudoPrefix}}       - Sudo command prefix (empty or "sudo ")
+#   {{.N9EHost}}          - Nightingale/n9e server host
+#   {{.N9EPort}}          - Nightingale/n9e port (default: 17000)
+#   {{.CategrafVersion}}  - Categraf version (default: 0.4.10)
+#   {{.AppHubURL}}        - AppHub URL for downloading binaries (optional)
+#   {{.Hostname}}         - Target hostname for ident
+#   {{.HostIP}}           - Target host IP
+# =============================================================================
+
+set -e
+echo "=== Installing Categraf Monitoring Agent ==="
+echo "=== Target: Debian/Ubuntu System ==="
+echo "=== Timestamp: $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+# Configuration
+N9E_HOST="{{.N9EHost}}"
+N9E_PORT="{{.N9EPort}}"
+CATEGRAF_VERSION="{{.CategrafVersion}}"
+APPHUB_URL="{{.AppHubURL}}"
+HOSTNAME_IDENT="{{.Hostname}}"
+HOST_IP="{{.HostIP}}"
+SUDO_PREFIX="{{.SudoPrefix}}"
+
+# Set defaults
+if [ -z "$N9E_PORT" ]; then
+    N9E_PORT="17000"
+fi
+if [ -z "$CATEGRAF_VERSION" ]; then
+    CATEGRAF_VERSION="0.4.10"
+fi
+
+echo "=== Configuration ==="
+echo "N9E Host: $N9E_HOST"
+echo "N9E Port: $N9E_PORT"
+echo "Categraf Version: $CATEGRAF_VERSION"
+echo "AppHub URL: $APPHUB_URL"
+echo "Hostname: $HOSTNAME_IDENT"
+
+# Create installation directory
+INSTALL_DIR="/opt/categraf"
+echo "=== Creating installation directory: $INSTALL_DIR ==="
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.cpu
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.mem
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.disk
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.diskio
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.net
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.netstat
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.kernel
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.system
+${SUDO_PREFIX}mkdir -p $INSTALL_DIR/conf/input.processes
+
+# Detect architecture
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64)
+        ARCH_SUFFIX="linux-amd64"
+        ;;
+    aarch64)
+        ARCH_SUFFIX="linux-arm64"
+        ;;
+    armv7l)
+        ARCH_SUFFIX="linux-armv7"
+        ;;
+    *)
+        echo "ERROR: Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+echo "=== Detected architecture: $ARCH -> $ARCH_SUFFIX ==="
+
+# Download categraf binary
+BINARY_NAME="categraf-v${CATEGRAF_VERSION}-${ARCH_SUFFIX}.tar.gz"
+DOWNLOAD_URL=""
+
+if [ -n "$APPHUB_URL" ]; then
+    DOWNLOAD_URL="${APPHUB_URL}/pkgs/categraf/${BINARY_NAME}"
+else
+    # Use GitHub release
+    DOWNLOAD_URL="https://github.com/flashcatcloud/categraf/releases/download/v${CATEGRAF_VERSION}/${BINARY_NAME}"
+fi
+
+echo "=== Downloading Categraf from: $DOWNLOAD_URL ==="
+cd /tmp
+rm -f categraf*.tar.gz
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "${BINARY_NAME}" "$DOWNLOAD_URL"
+elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "${BINARY_NAME}" "$DOWNLOAD_URL"
+else
+    echo "ERROR: Neither curl nor wget is available"
+    exit 1
+fi
+
+echo "=== Extracting Categraf ==="
+tar -xzf ${BINARY_NAME}
+
+# Find the extracted directory and categraf binary
+EXTRACT_DIR=$(ls -d categraf-*-${ARCH_SUFFIX} 2>/dev/null | head -1)
+if [ -z "$EXTRACT_DIR" ]; then
+    EXTRACT_DIR=$(ls -d categraf-* 2>/dev/null | head -1)
+fi
+
+if [ -z "$EXTRACT_DIR" ]; then
+    echo "ERROR: Cannot find extracted categraf directory"
+    ls -la
+    exit 1
+fi
+
+echo "=== Found extract directory: $EXTRACT_DIR ==="
+
+# Find and copy categraf binary
+if [ -f "$EXTRACT_DIR/bin/categraf" ]; then
+    ${SUDO_PREFIX}cp -f "$EXTRACT_DIR/bin/categraf" $INSTALL_DIR/
+elif [ -f "$EXTRACT_DIR/categraf" ]; then
+    ${SUDO_PREFIX}cp -f "$EXTRACT_DIR/categraf" $INSTALL_DIR/
+else
+    echo "ERROR: Cannot find categraf binary in $EXTRACT_DIR"
+    ls -la "$EXTRACT_DIR"
+    exit 1
+fi
+${SUDO_PREFIX}chmod +x $INSTALL_DIR/categraf
+
+# Copy default config if exists
+if [ -d "$EXTRACT_DIR/conf" ]; then
+    ${SUDO_PREFIX}cp -r "$EXTRACT_DIR/conf/"* $INSTALL_DIR/conf/ 2>/dev/null || true
+fi
+
+# Clean up
+rm -rf categraf-*
+
+# Determine hostname for ident
+if [ -z "$HOSTNAME_IDENT" ]; then
+    HOSTNAME_IDENT=$(hostname -f 2>/dev/null || hostname)
+fi
+
+# Create main configuration using echo commands
+echo "=== Creating configuration files ==="
+${SUDO_PREFIX}sh -c "echo '[global]' > $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'print_configs = false' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'hostname = \"$HOSTNAME_IDENT\"' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'omit_hostname = false' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '[global.labels]' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '# host_ip = \"$HOST_IP\"' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo '[[writers]]' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'url = \"http://${N9E_HOST}:${N9E_PORT}/prometheus/v1/write\"' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'timeout = 5000' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'dial_timeout = 2500' >> $INSTALL_DIR/conf/config.toml"
+${SUDO_PREFIX}sh -c "echo 'max_idle_conns_per_host = 100' >> $INSTALL_DIR/conf/config.toml"
+
+# CPU config
+${SUDO_PREFIX}sh -c "echo '[cpu]' > $INSTALL_DIR/conf/input.cpu/cpu.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.cpu/cpu.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_per_cpu = false' >> $INSTALL_DIR/conf/input.cpu/cpu.toml"
+
+# Memory config
+${SUDO_PREFIX}sh -c "echo '[mem]' > $INSTALL_DIR/conf/input.mem/mem.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.mem/mem.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_platform_fields = true' >> $INSTALL_DIR/conf/input.mem/mem.toml"
+
+# Disk config
+${SUDO_PREFIX}sh -c "echo '[disk]' > $INSTALL_DIR/conf/input.disk/disk.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.disk/disk.toml"
+
+# DiskIO config
+${SUDO_PREFIX}sh -c "echo '[diskio]' > $INSTALL_DIR/conf/input.diskio/diskio.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.diskio/diskio.toml"
+
+# Net config
+${SUDO_PREFIX}sh -c "echo '[net]' > $INSTALL_DIR/conf/input.net/net.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.net/net.toml"
+
+# Netstat config
+${SUDO_PREFIX}sh -c "echo '[netstat]' > $INSTALL_DIR/conf/input.netstat/netstat.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.netstat/netstat.toml"
+
+# Kernel config
+${SUDO_PREFIX}sh -c "echo '[kernel]' > $INSTALL_DIR/conf/input.kernel/kernel.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.kernel/kernel.toml"
+
+# System config
+${SUDO_PREFIX}sh -c "echo '[system]' > $INSTALL_DIR/conf/input.system/system.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.system/system.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_loadavg = true' >> $INSTALL_DIR/conf/input.system/system.toml"
+${SUDO_PREFIX}sh -c "echo 'collect_uptime = true' >> $INSTALL_DIR/conf/input.system/system.toml"
+
+# Processes config
+${SUDO_PREFIX}sh -c "echo '[processes]' > $INSTALL_DIR/conf/input.processes/processes.toml"
+${SUDO_PREFIX}sh -c "echo 'interval = 15' >> $INSTALL_DIR/conf/input.processes/processes.toml"
+
+# Create systemd service file
+echo "=== Creating systemd service ==="
+${SUDO_PREFIX}sh -c "echo '[Unit]' > /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Description=Categraf Monitoring Agent' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Documentation=https://github.com/flashcatcloud/categraf' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'After=network.target' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '[Service]' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Type=simple' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'User=root' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'WorkingDirectory=$INSTALL_DIR' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'ExecStart=$INSTALL_DIR/categraf' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'Restart=on-failure' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'RestartSec=5s' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'LimitNOFILE=65536' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo '[Install]' >> /etc/systemd/system/categraf.service"
+${SUDO_PREFIX}sh -c "echo 'WantedBy=multi-user.target' >> /etc/systemd/system/categraf.service"
+
+# Reload and start service
+echo "=== Starting Categraf service ==="
+${SUDO_PREFIX}systemctl daemon-reload
+${SUDO_PREFIX}systemctl enable categraf
+${SUDO_PREFIX}systemctl restart categraf
+
+# Wait for service to start
+sleep 3
+
+# Verify installation
+echo "=== Verifying Categraf installation ==="
+if ${SUDO_PREFIX}systemctl is-active --quiet categraf; then
+    echo "OK: Categraf service is running"
+else
+    echo "WARNING: Categraf service may not be running"
+    ${SUDO_PREFIX}systemctl status categraf --no-pager || true
+fi
+
+echo "=== Categraf version ==="
+$INSTALL_DIR/categraf --version || true
+
+echo "=== Categraf Installation Complete ==="
+echo "=== Service Status ==="
+${SUDO_PREFIX}systemctl status categraf --no-pager -l || true
+echo "=== Completed at: $(date '+%Y-%m-%d %H:%M:%S') ==="

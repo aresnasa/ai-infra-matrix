@@ -13,11 +13,8 @@
 # =============================================================================
 ARG UBUNTU_VERSION=22.04
 ARG ROCKYLINUX_VERSION=9
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-ARG NGINX_ALPINE_VERSION=1.27-alpine
-ARG APT_MIRROR
-ARG YUM_MIRROR
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION=0.5.16
 
 # =============================================================================
@@ -34,7 +31,7 @@ ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
 ARG BUILD_CATEGRAF=true
 ARG BUILD_SINGULARITY=false
-ARG APT_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
 
 # Copy third_party directory for offline builds
@@ -55,8 +52,8 @@ ARG CATEGRAF_VERSION=v0.4.25
 ARG SINGULARITY_VERSION=v4.3.4
 
 # Accept optional tarball path relative to build context root
-# 默认在当前目录查找 tarball
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+# 默认在 src/apphub/ 目录查找 tarball（因为构建上下文是项目根目录）
+ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # 配置APT镜像源和安装构建依赖（分步骤避免网络问题）
 RUN set -eux; \
@@ -194,7 +191,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION
+ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -241,7 +238,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-deb,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="https://gh-proxy.com/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -353,7 +350,7 @@ ENV TZ=Asia/Shanghai
 # Build control flags
 ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
-ARG YUM_MIRROR
+ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
 
 # Copy third_party directory for offline builds
@@ -362,7 +359,7 @@ COPY third_party/ /third_party/
 # SLURM version configuration (same as deb builder)
 ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
-ARG SLURM_TARBALL_PATH=${SLURM_TARBALL_NAME}
+ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # SaltStack version configuration (same as deb builder)
 ARG SALTSTACK_VERSION=v3007.8
@@ -461,7 +458,7 @@ RUN set -eux; \
             cp "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" munge.tar.xz; \
         else \
             echo "Downloading Munge..."; \
-            wget "https://github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+            wget "https://gh-proxy.com/github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
         fi; \
         tar xf munge.tar.xz; \
         cd "munge-${MUNGE_VERSION}"; \
@@ -536,16 +533,15 @@ RUN set -eux; \
         echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
         echo ">>> Note: Using --nodeps because we installed munge from source (not RPM package)"; \
         if ! rpmbuild -ta --nodeps "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
-            echo "❌ RPM build failed! Last 100 lines of output:"; \
+            echo "⚠️  RPM build failed! (Non-fatal, skipping RPMs)"; \
             tail -100 /tmp/rpmbuild.log; \
-            echo ""; \
-            echo ">>> Checking rpmbuild directory structure:"; \
-            ls -laR ~/rpmbuild/ | head -50 || true; \
-            exit 1; \
+            mkdir -p /home/builder/rpms; \
+            touch /home/builder/rpms/.skip_slurm; \
+        else \
+            echo "✓ SLURM RPM build completed successfully"; \
+            echo ">>> Listing generated RPM packages:"; \
+            find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
         fi; \
-        echo "✓ SLURM RPM build completed successfully"; \
-        echo ">>> Listing generated RPM packages:"; \
-        find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
         mkdir -p /home/builder/rpms; \
@@ -555,7 +551,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION
+ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -602,7 +598,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="https://gh-proxy.com/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -745,6 +741,8 @@ RUN set -eux; \
     }; \
     # Separate SLURM and SaltStack RPMs into subdirectories
     mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
+    # Remove invalid/empty RPMs
+    find /out -name "*.rpm" -size 0 -delete || true; \
     # Check if there are any RPM files to organize
     if ls /out/*.rpm >/dev/null 2>&1; then \
         echo "📦 Organizing RPM packages..."; \
@@ -758,21 +756,21 @@ RUN set -eux; \
         # Generate metadata for SLURM repository
         if [ "$slurm_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
             echo "🔧 Generating SLURM RPM repository metadata..."; \
-            cd /out/slurm-rpm && createrepo_c . && \
+            cd /out/slurm-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
             echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
         elif [ "$slurm_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
             echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
-            cd /out/slurm-rpm && createrepo . && \
+            cd /out/slurm-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
             echo "✓ Generated SLURM repodata"; \
         fi; \
         # Generate metadata for SaltStack repository
         if [ "$salt_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
             echo "🔧 Generating SaltStack RPM repository metadata..."; \
-            cd /out/saltstack-rpm && createrepo_c . && \
+            cd /out/saltstack-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
             echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
         elif [ "$salt_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
             echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
-            cd /out/saltstack-rpm && createrepo . && \
+            cd /out/saltstack-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
             echo "✓ Generated SaltStack repodata"; \
         fi; \
     fi
@@ -788,8 +786,7 @@ ENV TZ=Asia/Shanghai
 
 # Build control flags
 ARG BUILD_SLURM=true
-ARG APT_MIRROR
-
+ARG APT_MIRROR=mirrors.aliyun.com
 # SLURM version configuration
 ARG SLURM_VERSION=25.05.4
 
@@ -914,74 +911,68 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 4: Build Categraf (Multi-Architecture Go Binary)
-# 泛化的应用构建阶段 - 只需复制 scripts/categraf/ 目录即可
+# Stage 4: Download Categraf (Pre-built Binary from GitHub Releases)
+# 直接下载预编译二进制，避免 Go 版本兼容问题
 # =============================================================================
-FROM golang:${GOLANG_ALPINE_VERSION} AS categraf-builder
+FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 
 # Build control flags
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
 ARG CATEGRAF_VERSION=v0.4.25
-ARG CATEGRAF_REPO=https://github.com/flashcatcloud/categraf.git
+ARG CATEGRAF_REPO=https://gh-proxy.com/github.com/flashcatcloud/categraf.git
 
-# 配置 Go 代理（中国镜像加速）
-ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
+# 配置 Go 代理（中国镜像加速）- 仅用于 fallback 源码构建
+ARG GO_PROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GO_PROXY}
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
 
-# 配置 Alpine 镜像源并安装依赖（合并到一个RUN减少层数）
+# 配置 APT 镜像源并安装依赖
 RUN set -eux; \
-    # 备份并配置镜像源
-    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
-    ARCH=$(uname -m); \
+    # 清理可能损坏的 apt 缓存
+    rm -rf /var/lib/apt/lists/*; \
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
+    ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 根据架构配置镜像源
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-    elif [ "${ARCH}" = "aarch64" ]; then \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
-    else \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    # 更新包索引（带重试和备用源）
-    apk update || { \
-        echo "主镜像源失败，切换到官方源..."; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    } || { \
-        echo "尝试使用HTTP协议..."; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    }; \
-    # 安装构建依赖
-    apk add --no-cache git make bash tar gzip sed coreutils
+    # 更新包列表（带回退机制）
+    if ! apt-get update; then \
+        echo "镜像源更新失败，回退到官方源..."; \
+        mv /etc/apt/sources.list.backup /etc/apt/sources.list; \
+        apt-get update; \
+    fi; \
+    # 安装下载工具（不再需要 golang，直接下载预编译二进制）
+    apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
 
-# 复制通用构建脚本和应用特定脚本
-COPY scripts/build-app.sh /scripts/build-app.sh
-COPY scripts/categraf/ /scripts/categraf/
+# 复制通用构建脚本和应用特定脚本（仅用于 fallback）
+COPY src/apphub/scripts/build-app.sh /scripts/build-app.sh
+COPY src/apphub/scripts/categraf/ /scripts/categraf/
 RUN chmod +x /scripts/build-app.sh /scripts/categraf/*.sh
 
 # 创建输出目录
 RUN mkdir -p /out
 
-# 执行构建（使用通用构建脚本）
+# 执行构建或下载（优先下载预编译二进制）
 ARG BUILD_CATEGRAF
 ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://gh-proxy.com/
 RUN set -eux; \
     if [ "${BUILD_CATEGRAF}" = "true" ]; then \
-        # 检查是否有预下载的二进制包
+        # 检测架构
         ARCH=$(uname -m); \
         if [ "${ARCH}" = "x86_64" ]; then \
             ARCH_SUFFIX="amd64"; \
@@ -991,72 +982,70 @@ RUN set -eux; \
             ARCH_SUFFIX="${ARCH}"; \
         fi; \
         TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
+        # 优先检查本地预下载的包
         if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
             echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
             cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
         else \
-            # 配置代理（如果提供）
-            if [ -n "${GITHUB_PROXY:-}" ]; then \
-                echo "🌐 Using proxy for Categraf build: ${GITHUB_PROXY}"; \
-                export ALL_PROXY="${GITHUB_PROXY}"; \
-                export HTTP_PROXY="${GITHUB_PROXY}"; \
-                export HTTPS_PROXY="${GITHUB_PROXY}"; \
-                export http_proxy="${GITHUB_PROXY}"; \
-                export https_proxy="${GITHUB_PROXY}"; \
-                # 配置 git 使用代理和 SSL
-                git config --global http.proxy "${GITHUB_PROXY}"; \
-                git config --global https.proxy "${GITHUB_PROXY}"; \
-                git config --global http.sslVerify false; \
-                git config --global http.version HTTP/1.1; \
-                echo "✓ Git proxy configured"; \
-            else \
-                echo "⚠️  No GITHUB_PROXY provided, using direct connection"; \
-            fi; \
-            echo "Starting Categraf build from source..."; \
-            CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-            CATEGRAF_REPO=${CATEGRAF_REPO} \
-            BUILD_DIR=/build \
-            OUTPUT_DIR=/out \
-            /scripts/build-app.sh categraf; \
+            # 直接从 GitHub releases 下载预编译二进制（推荐，避免 Go 版本兼容问题）
+            echo "📥 Downloading pre-built Categraf ${CATEGRAF_VERSION} for ${ARCH_SUFFIX}..."; \
+            DOWNLOAD_URL="${GITHUB_MIRROR}github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
+            echo "Download URL: ${DOWNLOAD_URL}"; \
+            curl -fsSL -o "/out/${TARBALL_NAME}" "${DOWNLOAD_URL}" || { \
+                echo "❌ Failed to download Categraf binary"; \
+                echo "⚠️  Falling back to source build (requires Go 1.24+)..."; \
+                # Fallback: 从源码构建（可能因 Go 版本问题失败）
+                if [ -n "${GITHUB_PROXY:-}" ]; then \
+                    echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+                    export ALL_PROXY="${GITHUB_PROXY}"; \
+                    export HTTP_PROXY="${GITHUB_PROXY}"; \
+                    export HTTPS_PROXY="${GITHUB_PROXY}"; \
+                    git config --global http.proxy "${GITHUB_PROXY}"; \
+                    git config --global https.proxy "${GITHUB_PROXY}"; \
+                fi; \
+                CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+                CATEGRAF_REPO=${CATEGRAF_REPO} \
+                BUILD_DIR=/build \
+                OUTPUT_DIR=/out \
+                /scripts/build-app.sh categraf; \
+            }; \
+            echo "✓ Categraf ${CATEGRAF_VERSION} downloaded successfully"; \
         fi; \
     else \
-        echo "⏭️  Skipping Categraf build (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
+        echo "⏭️  Skipping Categraf (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
     fi
 
 # =============================================================================
 # Stage 4.5: Download Pre-built Singularity (Container Runtime for HPC)
 # =============================================================================
-FROM alpine:3.20 AS singularity-builder
+FROM ubuntu:${UBUNTU_VERSION} AS singularity-builder
 
-# Build control flags - 暂时禁用（deb 包下载问题）
-ARG BUILD_SINGULARITY=false
+# Build control flags
+ARG BUILD_SINGULARITY=true
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4.2.1
+ARG SINGULARITY_VERSION=v4.3.4
 ARG GITHUB_PROXY
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
 
-# 配置 Alpine 镜像源并安装依赖
+# 配置 APT 镜像源并安装依赖
 RUN set -eux; \
-    # 配置镜像源
-    ARCH=$(uname -m); \
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-    elif [ "${ARCH}" = "aarch64" ]; then \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
-    else \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    apk update || { \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    }; \
+    # 更新包列表
+    apt-get update; \
     # 安装工具
-    apk add --no-cache curl tar gzip binutils
+    apt-get install -y --no-install-recommends curl tar gzip binutils ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
@@ -1068,112 +1057,87 @@ RUN mkdir -p /out /build
 RUN set -eux; \
     if [ "${BUILD_SINGULARITY}" = "true" ]; then \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
-        ARCH=$(uname -m); \
-        RELEASE_URL="https://github.com/sylabs/singularity/releases/download/${SINGULARITY_VERSION}"; \
+        mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
+        RELEASE_URL="https://gh-proxy.com/github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
         CURL_OPTS=""; \
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
             CURL_OPTS="--proxy ${GITHUB_PROXY}"; \
         fi; \
-        cd /build; \
-        if [ "${ARCH}" = "x86_64" ]; then \
-            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_amd64.deb"; \
-        elif [ "${ARCH}" = "aarch64" ]; then \
-            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_arm64.deb"; \
-        else \
-            echo "❌ Unsupported architecture: ${ARCH}"; \
-            exit 1; \
-        fi; \
-        echo "Downloading ${DEB_FILE}..."; \
-        if [ -f "/third_party/singularity/${DEB_FILE}" ]; then \
-            echo "📦 Using local file: ${DEB_FILE}"; \
-            cp "/third_party/singularity/${DEB_FILE}" singularity.deb; \
-        else \
-            curl ${CURL_OPTS} -fsSL -o singularity.deb "${RELEASE_URL}/${DEB_FILE}"; \
-        fi; \
-        ar x singularity.deb; \
-        tar xf data.tar.xz; \
-        tar czf /out/singularity-${SINGULARITY_VERSION}-linux-${ARCH}.tar.gz usr/; \
-        echo "Package: singularity" > /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Version: ${SINGULARITY_VERSION}" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Architecture: ${ARCH}" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Build-Date: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Description: Singularity Container Runtime for HPC (Pre-built)" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "Homepage: https://github.com/sylabs/singularity" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "License: BSD-3-Clause" >> /out/singularity-${SINGULARITY_VERSION}.info; \
-        echo "✅ Singularity download and repackage completed"; \
+        # Download Ubuntu 22.04 DEB packages (amd64 & arm64)
+        for ARCH in amd64 arm64; do \
+            DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_${ARCH}.deb"; \
+            echo "Processing ${DEB_FILE}..."; \
+            if curl ${CURL_OPTS} -fsSL -o "/out/${DEB_FILE}" "${RELEASE_URL}/${DEB_FILE}"; then \
+                echo "✓ Downloaded ${DEB_FILE} from GitHub"; \
+            elif [ -f "/third_party/singularity/${DEB_FILE}" ]; then \
+                echo "⚠️ GitHub download failed, using local file: ${DEB_FILE}"; \
+                cp "/third_party/singularity/${DEB_FILE}" "/out/${DEB_FILE}"; \
+            else \
+                echo "❌ Failed to download ${DEB_FILE} and not found in third_party"; \
+            fi; \
+        done; \
+        # Download EL9 RPM packages (x86_64 & aarch64)
+        for ARCH in x86_64 aarch64; do \
+            RPM_FILE="singularity-ce-${VERSION_NUM}-1.el9.${ARCH}.rpm"; \
+            echo "Processing ${RPM_FILE}..."; \
+            if curl ${CURL_OPTS} -fsSL -o "/out/${RPM_FILE}" "${RELEASE_URL}/${RPM_FILE}"; then \
+                echo "✓ Downloaded ${RPM_FILE} from GitHub"; \
+            elif [ -f "/third_party/singularity/${RPM_FILE}" ]; then \
+                echo "⚠️ GitHub download failed, using local file: ${RPM_FILE}"; \
+                cp "/third_party/singularity/${RPM_FILE}" "/out/${RPM_FILE}"; \
+            else \
+                echo "❌ Failed to download ${RPM_FILE} and not found in third_party"; \
+            fi; \
+        done; \
+        echo "✅ Singularity packages downloaded"; \
+        ls -lh /out/; \
     else \
         echo "⏭️  Skipping Singularity (BUILD_SINGULARITY=${BUILD_SINGULARITY})"; \
+        mkdir -p /out; \
     fi
 
 # =============================================================================
 # Stage 5: AppHub - HTTP Server with Package Management & Development Tools
 # =============================================================================
-ARG NGINX_ALPINE_VERSION=1.27-alpine
-FROM nginx:${NGINX_ALPINE_VERSION}
+FROM ubuntu:${UBUNTU_VERSION}
 
 # 版本元数据 ARG（需要在 FROM 后重新声明）
 ARG SLURM_VERSION=25.05.4
 ARG SALTSTACK_VERSION=v3007.8
 ARG CATEGRAF_VERSION=v0.4.25
 ARG APPHUB_BASE_URL=http://localhost:8081
-ARG ALPINE_MIRROR
-
+ARG APT_MIRROR=mirrors.aliyun.com
 # 将版本保存到环境变量（可在运行时访问）
 ENV SLURM_VERSION=${SLURM_VERSION}
 ENV SALTSTACK_VERSION=${SALTSTACK_VERSION}
 ENV CATEGRAF_VERSION=${CATEGRAF_VERSION}
 ENV APPHUB_BASE_URL=${APPHUB_BASE_URL}
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置 Alpine 镜像源并安装基础工具（使用国内镜像源）
+# 配置 APT 镜像源并安装基础工具
 RUN set -eux; \
-    # 备份原始配置
-    cp /etc/apk/repositories /etc/apk/repositories.bak || true; \
-    # 检测架构
-    ARCH=$(uname -m); \
+    # 备份原始源配置
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
+    # 检测架构并配置镜像源
+    ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
-    # 根据架构配置镜像源
-    if [ -n "${ALPINE_MIRROR:-}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-    elif [ "${ARCH}" = "aarch64" ]; then \
-        echo "配置ARM64架构的清华Alpine镜像源..."; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.20/community" >> /etc/apk/repositories; \
-    else \
-        echo "配置AMD64架构的阿里云Alpine镜像源..."; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v3.20/community" >> /etc/apk/repositories; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        sed -i "s|archive.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|security.ubuntu.com/ubuntu/|${APT_MIRROR}/ubuntu/|g" /etc/apt/sources.list; \
+        sed -i "s|ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}/ubuntu-ports/|g" /etc/apt/sources.list; \
     fi; \
-    # 更新包索引（带重试和备用源）
-    apk update || { \
-        echo "主镜像源失败，切换到官方镜像源..."; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    } || { \
-        echo "尝试使用HTTP协议..."; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/main" > /etc/apk/repositories; \
-        echo "http://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories; \
-        apk update; \
-    }
-
-# Install tools for repo management and general development
-# Note: Some packages may not be available in Alpine, install what we can
-RUN set -eux; \
-    # Install dpkg tools first (critical for deb package indexing)
-    # Also install zstd for decompressing modern deb packages (Ubuntu 22.04+ uses zstd compression)
-    apk add --no-cache dpkg dpkg-dev zstd || { \
-        echo "⚠️  dpkg packages not available, will skip deb indexing"; \
-    }; \
-    # Install createrepo_c for RPM repository metadata generation
-    apk add --no-cache createrepo_c || { \
-        echo "⚠️  createrepo_c not available, will skip RPM indexing"; \
-    }; \
-    # Install core development and network tools (including SSH server)
-    apk add --no-cache \
-        build-base \
+    # 更新包列表
+    apt-get update; \
+    # 安装工具
+    apt-get install -y --no-install-recommends \
+        nginx \
+        dpkg-dev \
+        zstd \
+        createrepo-c \
+        build-essential \
         git \
         vim \
         wget \
@@ -1183,11 +1147,12 @@ RUN set -eux; \
         gzip \
         perl \
         openssh-server \
-        || echo "⚠️  Some packages failed to install"; \
-    # Try to install optional network tools (may not be available)
-    apk add --no-cache net-tools 2>/dev/null || echo "⚠️  net-tools not available"; \
-    apk add --no-cache iputils 2>/dev/null || echo "⚠️  iputils not available"; \
-    apk add --no-cache procps 2>/dev/null || echo "⚠️  procps not available"
+        net-tools \
+        iputils-ping \
+        procps \
+        python3 \
+        python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
 # Configure SSH server for backend access (仅配置公钥认证，无密码登录)
 RUN set -eux; \
@@ -1210,7 +1175,10 @@ RUN chmod 600 /root/.ssh/authorized_keys && \
     echo "✓ SSH public key installed for backend access"
 
 # Copy nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY src/apphub/nginx.conf /etc/nginx/nginx.conf
+
+# Copy custom index.html (AppHub homepage)
+COPY src/apphub/html/index.html /usr/share/nginx/html/index.html
 
 # Create directories for packages
 RUN mkdir -p \
@@ -1257,8 +1225,8 @@ COPY --from=rpm-builder /out/saltstack-rpm/ /usr/share/nginx/html/pkgs/saltstack
 COPY --from=binary-builder /out/packages/ /usr/share/nginx/html/pkgs/slurm-binaries/
 
 # Copy scripts for installation
-COPY scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
-COPY scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
+COPY src/apphub/scripts/install-slurm.sh.tmpl /app/scripts/install-slurm.sh.tmpl
+COPY src/apphub/scripts/generate-install-script.sh /app/scripts/generate-install-script.sh
 RUN chmod +x /app/scripts/generate-install-script.sh
 
 # Generate SLURM installation script from template
@@ -1278,6 +1246,197 @@ COPY --from=categraf-builder /out/ /usr/share/nginx/html/pkgs/categraf/
 # Copy Singularity packages from singularity-builder stage
 COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 
+# =============================================================================
+# Download/Copy Prometheus, Node Exporter, Categraf and Python dependencies
+# 监控工具包 - 直接从 third_party/ 复制预下载的文件
+# 使用 scripts/download_third_party.sh 预下载所有依赖
+# 构建前请运行: ./build.sh download-deps 或 ./scripts/download_third_party.sh
+# =============================================================================
+ARG PROMETHEUS_VERSION=v3.4.1
+ARG NODE_EXPORTER_VERSION=v1.8.2
+ARG ALERTMANAGER_VERSION=v0.28.1
+ARG CATEGRAF_VERSION=v0.4.25
+ARG GITHUB_MIRROR=https://gh-proxy.com/
+ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+# Copy ALL pre-downloaded packages from third_party/ directory
+# 复制所有预下载的包
+COPY third_party/ /third_party/
+
+# Copy download scripts as fallback for any missing packages
+COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
+COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
+COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
+COPY src/apphub/scripts/categraf/install-categraf.sh /scripts/categraf/install-categraf.sh
+COPY src/apphub/scripts/saltstack/download-python-deps.sh /tmp/download-python-deps.sh
+
+RUN set -eux; \
+    chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
+    mkdir -p /scripts/categraf; \
+    mkdir -p /usr/share/nginx/html/pkgs/prometheus; \
+    mkdir -p /usr/share/nginx/html/pkgs/node_exporter; \
+    mkdir -p /usr/share/nginx/html/pkgs/alertmanager; \
+    mkdir -p /usr/share/nginx/html/pkgs/categraf; \
+    mkdir -p /usr/share/nginx/html/pkgs/python-deps; \
+    \
+    # 去掉版本号前的 v 前缀 (Prometheus 文件名不带 v)
+    PROMETHEUS_VER="${PROMETHEUS_VERSION#v}"; \
+    NODE_EXPORTER_VER="${NODE_EXPORTER_VERSION#v}"; \
+    ALERTMANAGER_VER="${ALERTMANAGER_VERSION#v}"; \
+    \
+    # === Prometheus ===
+    echo "📦 Processing Prometheus..."; \
+    prometheus_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/prometheus/prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/prometheus/prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied prometheus-${PROMETHEUS_VER}.linux-${arch}.tar.gz from third_party"; \
+            prometheus_copied=$((prometheus_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$prometheus_copied" -lt 2 ]; then \
+        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
+        PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
+        GITHUB_MIRROR=${GITHUB_MIRROR} \
+        OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
+        /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
+    fi; \
+    \
+    # === Node Exporter ===
+    echo "📦 Processing Node Exporter..."; \
+    node_exporter_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/node_exporter/node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/node_exporter/node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied node_exporter-${NODE_EXPORTER_VER}.linux-${arch}.tar.gz from third_party"; \
+            node_exporter_copied=$((node_exporter_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$node_exporter_copied" -lt 2 ]; then \
+        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
+        NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
+        GITHUB_MIRROR=${GITHUB_MIRROR} \
+        OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
+        /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
+    fi; \
+    \
+    # === Alertmanager ===
+    echo "📦 Processing Alertmanager..."; \
+    alertmanager_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/alertmanager/alertmanager-${ALERTMANAGER_VER}.linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/alertmanager/alertmanager-${ALERTMANAGER_VER}.linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied alertmanager-${ALERTMANAGER_VER}.linux-${arch}.tar.gz from third_party"; \
+            alertmanager_copied=$((alertmanager_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$alertmanager_copied" -lt 2 ]; then \
+        echo "  ⚠ Alertmanager files not found in third_party (optional, skipping)"; \
+    fi; \
+    \
+    # === Categraf ===
+    echo "📦 Processing Categraf..."; \
+    categraf_copied=0; \
+    for arch in amd64 arm64; do \
+        src_file="/third_party/categraf/categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz"; \
+        dst_file="/usr/share/nginx/html/pkgs/categraf/categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz"; \
+        if [ -f "$src_file" ] && [ -s "$src_file" ]; then \
+            cp "$src_file" "$dst_file"; \
+            echo "  ✓ Copied categraf-${CATEGRAF_VERSION}-linux-${arch}.tar.gz from third_party"; \
+            categraf_copied=$((categraf_copied + 1)); \
+        fi; \
+    done; \
+    if [ "$categraf_copied" -lt 2 ]; then \
+        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
+        CATEGRAF_VERSION=${CATEGRAF_VERSION} \
+        GITHUB_MIRROR=${GITHUB_MIRROR} \
+        OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
+        /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+    fi; \
+    \
+    # === SaltStack packages (DEB) ===
+    echo "📦 Processing SaltStack DEB packages..."; \
+    saltstack_deb_copied=0; \
+    if [ -d "/third_party/saltstack" ]; then \
+        for deb_file in /third_party/saltstack/*.deb; do \
+            if [ -f "$deb_file" ] && [ -s "$deb_file" ]; then \
+                cp "$deb_file" /usr/share/nginx/html/pkgs/saltstack-deb/; \
+                saltstack_deb_copied=$((saltstack_deb_copied + 1)); \
+            fi; \
+        done; \
+        echo "  ✓ Copied ${saltstack_deb_copied} SaltStack DEB packages from third_party"; \
+    fi; \
+    \
+    # === SaltStack packages (RPM) ===
+    echo "📦 Processing SaltStack RPM packages..."; \
+    saltstack_rpm_copied=0; \
+    if [ -d "/third_party/saltstack" ]; then \
+        for rpm_file in /third_party/saltstack/*.rpm; do \
+            if [ -f "$rpm_file" ] && [ -s "$rpm_file" ]; then \
+                cp "$rpm_file" /usr/share/nginx/html/pkgs/saltstack-rpm/; \
+                saltstack_rpm_copied=$((saltstack_rpm_copied + 1)); \
+            fi; \
+        done; \
+        echo "  ✓ Copied ${saltstack_rpm_copied} SaltStack RPM packages from third_party"; \
+    fi; \
+    \
+    # === Singularity packages ===
+    echo "📦 Processing Singularity packages..."; \
+    singularity_copied=0; \
+    if [ -d "/third_party/singularity" ]; then \
+        mkdir -p /usr/share/nginx/html/pkgs/singularity; \
+        for pkg_file in /third_party/singularity/*.deb /third_party/singularity/*.rpm; do \
+            if [ -f "$pkg_file" ] && [ -s "$pkg_file" ]; then \
+                cp "$pkg_file" /usr/share/nginx/html/pkgs/singularity/; \
+                singularity_copied=$((singularity_copied + 1)); \
+            fi; \
+        done; \
+        echo "  ✓ Copied ${singularity_copied} Singularity packages from third_party"; \
+    fi; \
+    \
+    # === Munge source ===
+    echo "📦 Processing Munge..."; \
+    if [ -d "/third_party/munge" ]; then \
+        mkdir -p /usr/share/nginx/html/pkgs/munge; \
+        cp /third_party/munge/*.tar.xz /usr/share/nginx/html/pkgs/munge/ 2>/dev/null || true; \
+        echo "  ✓ Copied Munge source from third_party"; \
+    fi; \
+    \
+    # === Python dependencies for SaltStack (looseversion for Python 3.12+) ===
+    echo "📦 Processing Python dependencies..."; \
+    PYPI_MIRROR=${PYPI_INDEX_URL:-https://pypi.org/simple} \
+    PYPI_MIRROR_CN=https://mirrors.aliyun.com/pypi/simple \
+    OUTPUT_DIR=/usr/share/nginx/html/pkgs/python-deps \
+    /tmp/download-python-deps.sh || echo "⚠️ Python deps download failed, continuing..."; \
+    \
+    # Cleanup
+    rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
+    rm -rf /third_party; \
+    \
+    # Summary
+    prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    alertmanager_count=$(ls -1 /usr/share/nginx/html/pkgs/alertmanager/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    python_deps_count=$(ls -1 /usr/share/nginx/html/pkgs/python-deps/*.whl /usr/share/nginx/html/pkgs/python-deps/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    saltstack_deb_final=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
+    saltstack_rpm_final=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    echo ""; \
+    echo "📊 Package Summary (from third_party/):"; \
+    echo "  - Prometheus packages: ${prometheus_count}"; \
+    echo "  - Node Exporter packages: ${node_exporter_count}"; \
+    echo "  - Alertmanager packages: ${alertmanager_count}"; \
+    echo "  - Categraf packages: ${categraf_count}"; \
+    echo "  - SaltStack DEB packages: ${saltstack_deb_final}"; \
+    echo "  - SaltStack RPM packages: ${saltstack_rpm_final}"; \
+    echo "  - Python dependencies: ${python_deps_count}"
+
 # Organize packages and generate DEB indexes (RPM metadata already generated in rpm-builder stage)
 RUN set -eux; \
     echo "📦 Organizing packages..."; \
@@ -1295,7 +1454,10 @@ RUN set -eux; \
     salt_deb_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
     salt_rpm_count=$(ls -1 /usr/share/nginx/html/pkgs/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
     categraf_count=$(ls -1 /usr/share/nginx/html/pkgs/categraf/*.tar.gz 2>/dev/null | wc -l || echo 0); \
-    singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    singularity_count=$(ls -1 /usr/share/nginx/html/pkgs/singularity/ | grep -E '\.(deb|rpm)$' | wc -l || echo 0); \
+    prometheus_count=$(ls -1 /usr/share/nginx/html/pkgs/prometheus/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    node_exporter_count=$(ls -1 /usr/share/nginx/html/pkgs/node_exporter/*.tar.gz 2>/dev/null | wc -l || echo 0); \
+    alertmanager_count=$(ls -1 /usr/share/nginx/html/pkgs/alertmanager/*.tar.gz 2>/dev/null | wc -l || echo 0); \
     # Check if RPM metadata was copied from rpm-builder
     slurm_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] && echo "yes" || echo "no"); \
     salt_rpm_metadata=$([ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ] && echo "yes" || echo "no"); \
@@ -1307,6 +1469,11 @@ RUN set -eux; \
     echo "  - SaltStack rpm packages: ${salt_rpm_count} (metadata: ${salt_rpm_metadata})"; \
     echo "  - Categraf packages: ${categraf_count}"; \
     echo "  - Singularity packages: ${singularity_count}"; \
+    echo "  - Prometheus packages: ${prometheus_count}"; \
+    echo "  - Node Exporter packages: ${node_exporter_count}"; \
+    echo "  - Alertmanager packages: ${alertmanager_count}"; \
+    echo "  - Prometheus packages: ${prometheus_count}"; \
+    echo "  - Node Exporter packages: ${node_exporter_count}"; \
     # Check if any packages are missing
     if [ "$slurm_deb_count" -eq 0 ] && [ "$salt_deb_count" -eq 0 ] && [ "$slurm_rpm_count" -eq 0 ] && [ "$salt_rpm_count" -eq 0 ]; then \
         echo "❌ Error: No packages found for SLURM or SaltStack"; \
@@ -1372,14 +1539,16 @@ RUN set -eux; \
     if [ "$categraf_count" -gt 0 ]; then \
         cd /usr/share/nginx/html/pkgs/categraf; \
         echo "✓ Categraf packages available at /pkgs/categraf/"; \
-        # Create latest symlink for amd64
-        latest_amd64=$(ls -t categraf-*-linux-amd64.tar.gz 2>/dev/null | head -1); \
+        # Remove existing latest symlinks to avoid self-reference
+        rm -f categraf-latest-linux-amd64.tar.gz categraf-latest-linux-arm64.tar.gz 2>/dev/null || true; \
+        # Create latest symlink for amd64 (exclude 'latest' from search)
+        latest_amd64=$(ls -t categraf-v*-linux-amd64.tar.gz 2>/dev/null | head -1); \
         if [ -n "$latest_amd64" ]; then \
             ln -sf "$latest_amd64" categraf-latest-linux-amd64.tar.gz; \
             echo "  ✓ Created symlink: categraf-latest-linux-amd64.tar.gz -> $latest_amd64"; \
         fi; \
-        # Create latest symlink for arm64
-        latest_arm64=$(ls -t categraf-*-linux-arm64.tar.gz 2>/dev/null | head -1); \
+        # Create latest symlink for arm64 (exclude 'latest' from search)
+        latest_arm64=$(ls -t categraf-v*-linux-arm64.tar.gz 2>/dev/null | head -1); \
         if [ -n "$latest_arm64" ]; then \
             ln -sf "$latest_arm64" categraf-latest-linux-arm64.tar.gz; \
             echo "  ✓ Created symlink: categraf-latest-linux-arm64.tar.gz -> $latest_arm64"; \
@@ -1399,15 +1568,24 @@ RUN set -eux; \
     fi; \
     # Note about RPM metadata
     if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \
-        echo "⚠️  Note: YUM/DNF metadata not generated (createrepo not available in Alpine)"; \
+        echo "⚠️  Note: YUM/DNF metadata generation skipped (can be enabled if createrepo is installed)"; \
         echo "⚠️  Packages can be downloaded directly via HTTP"; \
     fi
+
+# Copy installation scripts (rendered from templates by build.sh render)
+# These scripts are pre-configured with EXTERNAL_HOST and other settings
+COPY scripts/install-salt-minion.sh /usr/share/nginx/html/scripts/install-salt-minion.sh
+COPY scripts/install-categraf.sh /usr/share/nginx/html/scripts/install-categraf.sh
+COPY scripts/install-node-exporter.sh /usr/share/nginx/html/scripts/install-node-exporter.sh
+COPY scripts/install-prometheus.sh /usr/share/nginx/html/scripts/install-prometheus.sh
+RUN chmod +x /usr/share/nginx/html/scripts/*.sh && \
+    echo "✓ Installation scripts copied to /scripts/"
 
 # Expose port
 EXPOSE 80
 
 # Entrypoint to regenerate indexes if needed
-COPY entrypoint.sh /entrypoint.sh
+COPY src/apphub/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

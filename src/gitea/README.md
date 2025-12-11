@@ -4,17 +4,17 @@ This image wraps `gitea/gitea:1.22` with an entrypoint that:
 
 - Waits for PostgreSQL, creates DB/user (idempotent)
 - Renders `/data/gitea/conf/app.ini` to skip the install wizard
-- Supports storage on local/NFS or S3-compatible (MinIO)
+- Supports storage on local/NFS or S3-compatible (SeaweedFS)
 
 Environment highlights:
 
 - DB: `GITEA_DB_TYPE=postgres`, `GITEA_DB_HOST=postgres:5432`, `GITEA_DB_NAME=gitea`, `GITEA_DB_USER=gitea`, `GITEA_DB_PASSWD=...`
 - Server: `ROOT_URL=http://localhost:8080/gitea/`, `SUBURL=/gitea`
-- Storage: `GITEA__storage__STORAGE_TYPE=local|minio`
+- Storage: `GITEA__storage__STORAGE_TYPE=local|minio` (Note: 'minio' is Gitea's config type for S3-compatible storage)
   - local: `DATA_PATH=/data/gitea` (backed by volume, can be NFS)
-  - minio: `MINIO_ENDPOINT=minio:9000`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET=gitea`, `MINIO_USE_SSL=false`
+  - minio: `MINIO_ENDPOINT=seaweedfs-filer:8333`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET=gitea`, `MINIO_USE_SSL=false`
 
-Compose adds an optional `minio` service and `minio_data` volume.
+Compose uses SeaweedFS as the default S3-compatible object storage backend.
 
 References:
 

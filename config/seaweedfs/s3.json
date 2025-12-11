@@ -1,0 +1,48 @@
+{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "seaweedfs_admin",
+          "secretKey": "seaweedfs_secret_key_change_me"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "Write",
+        "List",
+        "Tagging"
+      ]
+    },
+    {
+      "name": "app",
+      "credentials": [
+        {
+          "accessKey": "seaweedfs_app",
+          "secretKey": "seaweedfs_app_secret_change_me"
+        }
+      ],
+      "actions": [
+        "Read",
+        "Write",
+        "List",
+        "Tagging"
+      ]
+    },
+    {
+      "name": "readonly",
+      "credentials": [
+        {
+          "accessKey": "seaweedfs_readonly",
+          "secretKey": "seaweedfs_readonly_secret_change_me"
+        }
+      ],
+      "actions": [
+        "Read",
+        "List"
+      ]
+    }
+  ]
+}

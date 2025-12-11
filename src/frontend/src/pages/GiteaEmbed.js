@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Space, Alert, Card } from 'antd';
 import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
+import { useI18n } from '../hooks/useI18n';
 
 // Simple iframe wrapper to embed a Gitea instance inside the portal.
 // URL priority: window.__GITEA_URL__ (runtime) -> REACT_APP_GITEA_URL (build-time) ->
@@ -22,10 +23,25 @@ const resolveGiteaUrl = () => {
 };
 
 const GiteaEmbed = () => {
+  const { t, locale } = useI18n();
   const iframeRef = useRef(null);
   const base = useMemo(() => resolveGiteaUrl(), []);
-  const [currentUrl, setCurrentUrl] = useState(base);
+  
+  // 添加语言参数到 URL，Gitea 支持 lang 参数
+  const getUrlWithLang = (url) => {
+    // Gitea 语言代码：zh-CN, en-US 等
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}lang=${locale}`;
+  };
+  
+  const [currentUrl, setCurrentUrl] = useState(() => getUrlWithLang(base));
   const [iframeKey, setIframeKey] = useState(0);
+
+  // 监听语言变化，刷新 iframe
+  useEffect(() => {
+    setCurrentUrl(getUrlWithLang(base));
+    setIframeKey(Date.now());
+  }, [locale, base]);
 
   // Detect if configured URL is cross-origin (very likely to be blocked by X-Frame-Options/CSP)
   const isCrossOrigin = useMemo(() => {
@@ -48,7 +64,7 @@ const GiteaEmbed = () => {
           // prefer same-origin path for embedding
           // eslint-disable-next-line no-underscore-dangle
           window.__GITEA_URL__ = '/gitea/';
-          setCurrentUrl('/gitea/');
+          setCurrentUrl(getUrlWithLang('/gitea/'));
           setIframeKey(Date.now());
         }
       } catch (err) {
@@ -57,7 +73,7 @@ const GiteaEmbed = () => {
     };
     trySwitchToLocal();
     return () => { cancelled = true; };
-  }, [isCrossOrigin]);
+  }, [isCrossOrigin, locale]);
 
   const reload = () => {
     // Force reload without leaving the page
@@ -69,7 +85,7 @@ const GiteaEmbed = () => {
   const switchToSameOrigin = () => {
     // eslint-disable-next-line no-underscore-dangle
     window.__GITEA_URL__ = '/gitea/';
-    setCurrentUrl('/gitea/');
+    setCurrentUrl(getUrlWithLang('/gitea/'));
     setIframeKey(Date.now());
   };
 
@@ -86,11 +102,11 @@ const GiteaEmbed = () => {
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         <Card
           size="small"
-          title={<span style={{ fontSize: 14 }}>Gitea 代码托管</span>}
+          title={<span style={{ fontSize: 14 }}>{t('gitea.title')}</span>}
           extra={
             <Space>
-              <Button icon={<ReloadOutlined />} onClick={reload} size="small">刷新</Button>
-              <Button icon={<ExportOutlined />} onClick={openNew} size="small">新窗口打开</Button>
+              <Button icon={<ReloadOutlined />} onClick={reload} size="small">{t('common.refresh')}</Button>
+              <Button icon={<ExportOutlined />} onClick={openNew} size="small">{t('gitea.openNewWindow')}</Button>
             </Space>
           }
           bodyStyle={{ padding: 12 }}
@@ -100,7 +116,7 @@ const GiteaEmbed = () => {
               type="info"
               banner
               showIcon
-              message={<span style={{ fontSize: 12 }}>内嵌 Gitea 地址: <code>{currentUrl}</code></span>}
+              message={<span style={{ fontSize: 12 }}>{t('gitea.embeddedUrl')}: <code>{currentUrl}</code></span>}
               style={{ padding: '6px 8px' }}
             />
             {isCrossOrigin && (
@@ -109,8 +125,8 @@ const GiteaEmbed = () => {
                 showIcon
                 message={
                   <span style={{ fontSize: 12 }}>
-                    当前配置为跨域地址，可能被目标站点的 X-Frame-Options/CSP 阻止内嵌。建议切换为同源网关路径 <code>/gitea/</code>。
-                    <Button size="small" style={{ marginLeft: 8 }} onClick={switchToSameOrigin}>切换为同源</Button>
+                    {t('gitea.crossOriginWarning')} <code>/gitea/</code>
+                    <Button size="small" style={{ marginLeft: 8 }} onClick={switchToSameOrigin}>{t('gitea.switchToSameOrigin')}</Button>
                   </span>
                 }
                 style={{ padding: '6px 8px' }}

@@ -1,72 +1,49 @@
 # Build stage
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-FROM golang:${GOLANG_ALPINE_VERSION} AS builder
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+FROM ${GOLANG_IMAGE} AS builder
 
 # Build arguments for versions
 ARG GOLANG_VERSION=1.25
-ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
-ARG ALPINE_MIRROR
-
+ARG GO_PROXY=https://goproxy.cn,direct
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置Alpine镜像（多镜像源智能回退配置）
+# Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
 RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update --no-cache && \
-        apk add --no-cache git ca-certificates; \
-    else \
-        # 尝试阿里云镜像源
-        { \
-            echo "尝试阿里云镜像源..."; \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用阿里云镜像源"; \
-        } || { \
-            echo "阿里云镜像源失败，尝试清华源..."; \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用清华源"; \
-        } || { \
-            echo "清华源失败，尝试中科大源..."; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用中科大源"; \
-        } || { \
-            echo "所有国内源都失败，使用官方源..."; \
-            cp /etc/apk/repositories.bak /etc/apk/repositories && \
-            apk update && \
-            apk add --no-cache git ca-certificates && \
-            echo "使用官方源"; \
-        }; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi; \
     fi
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+
 ENV GO111MODULE=on
-ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct
+ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=off
 ENV CGO_ENABLED=0
 
 WORKDIR /go/src/github.com/aresnasa/ai-infra-matrix/src/backend
 
 # Copy go.mod and go.sum files first for better caching
-COPY go.mod go.sum ./
+COPY src/backend/go.mod src/backend/go.sum ./
+
+# 复制 third_party 目录以支持离线构建 (Optional, skipped if missing)
+# COPY third_party/ /third_party/
 
 # Download dependencies with retry and fallback
 RUN set -eux; \
@@ -77,7 +54,7 @@ RUN set -eux; \
     else \
         echo "First attempt failed, trying with different proxy..."; \
         # 第二次尝试：只使用官方代理
-        export GOPROXY=https://proxy.golang.org,direct && \
+        export GOPROXY=https://goproxy.cn,direct && \
         if go mod download; then \
             echo "Go modules downloaded with official proxy"; \
         else \
@@ -89,18 +66,18 @@ RUN set -eux; \
             else \
                 echo "All download attempts failed, trying with increased timeout..."; \
                 # 第四次尝试：增加超时时间
-                export GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct && \
+                export GOPROXY=https://goproxy.cn,direct && \
                 export GOSUMDB=off && \
                 timeout 300 go mod download || \
                 (echo "Final attempt with all proxies..." && \
-                 export GOPROXY=https://goproxy.cn,https://proxy.golang.org,https://goproxy.io,direct && \
+                 export GOPROXY=https://goproxy.cn,direct && \
                  go mod download); \
             fi; \
         fi; \
     fi
 
 # Copy source code
-COPY . .
+COPY src/backend/ .
 
 # Update go.mod and go.sum
 RUN go mod tidy
@@ -111,13 +88,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage - Backend Service (Default)
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-FROM golang:${GOLANG_ALPINE_VERSION} AS backend
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+FROM ${GOLANG_IMAGE} AS backend
 
 # Build arguments for versions
-ARG GO_PROXY=https://goproxy.cn,https://proxy.golang.org,direct
-ARG ALPINE_MIRROR
-
+ARG GO_PROXY=https://goproxy.cn,direct
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 ENV GOSUMDB=off
@@ -125,39 +101,33 @@ ENV GOSUMDB=off
 # Keep version metadata available in the final image, too
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置Alpine镜像（多镜像源智能回退配置）
+# Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
 RUN set -eux; \
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update 2>/dev/null; \
-    else \
-        # 尝试阿里云镜像
-        sed -i 's#://[^/]\+/alpine#://mirrors.aliyun.com/alpine#g' /etc/apk/repositories && \
-        (apk update 2>/dev/null || \
-        # 失败则尝试清华镜像
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i 's#://[^/]\+/alpine#://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 再失败则尝试中科大镜像
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i 's#://[^/]\+/alpine#://mirrors.ustc.edu.cn/alpine#g' /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 最后恢复官方源
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update)); \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi; \
     fi
 
-# 更新apk索引并设置时区为上海，添加必要工具（包括SSH客户端和sshpass）
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl openssh-client openssh-keygen sshpass lsof wget docker-cli || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl openssh-client openssh-keygen sshpass lsof wget docker-cli
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata netcat-openbsd bash curl openssh-client openssh-server sshpass lsof wget docker.io \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 复制 SLURM 运行时安装脚本（在容器启动时执行）
-COPY install-slurm-runtime.sh /install-slurm-runtime.sh
+COPY src/backend/install-slurm-runtime.sh /install-slurm-runtime.sh
 RUN chmod +x /install-slurm-runtime.sh
 
 WORKDIR /root/
@@ -168,11 +138,11 @@ COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test-k8s .
 
 # Copy installation scripts for remote execution
-COPY scripts/ /app/scripts/
+COPY src/backend/scripts/ /app/scripts/
 RUN find /app/scripts -type f -name "*.sh" -exec chmod +x {} \;
 
 # Copy SLURM configuration templates for runtime use
-COPY config/slurm /app/config/slurm
+COPY src/backend/config/slurm /app/config/slurm
 
 # 注意：不再从 src/backend/.env 读取配置
 # 所有环境变量统一从项目根目录 .env 文件读取，通过 docker-compose.yml 的 env_file 传递
@@ -235,61 +205,35 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.description="AI Infra Matrix - Backend service"
 
 # Backend Init Stage - for database initialization
-ARG GOLANG_ALPINE_VERSION=1.25-alpine
-FROM golang:${GOLANG_ALPINE_VERSION} AS backend-init
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+FROM ${GOLANG_IMAGE} AS backend-init
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置Alpine镜像（多镜像源智能回退配置）
+# Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
 RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "Using custom Alpine mirror: ${ALPINE_MIRROR}"; \
-        sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
-        apk update --no-cache && \
-        apk add --no-cache git ca-certificates; \
-    else \
-        # 尝试阿里云镜像源
-        { \
-            echo "尝试阿里云镜像源..."; \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用阿里云镜像源"; \
-        } || { \
-            echo "阿里云镜像源失败，尝试清华源..."; \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用清华源"; \
-        } || { \
-            echo "清华源失败，尝试中科大源..."; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            apk add --no-cache git ca-certificates && \
-            echo "成功使用中科大源"; \
-        } || { \
-            echo "所有国内源都失败，使用官方源..."; \
-            cp /etc/apk/repositories.bak /etc/apk/repositories && \
-            apk update && \
-            apk add --no-cache git ca-certificates && \
-            echo "使用官方源"; \
-        }; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}"; \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi; \
     fi
 
-# 更新apk索引并设置时区为上海，添加必要工具
-RUN apk update && apk --no-cache add ca-certificates tzdata netcat-openbsd bash curl postgresql-client || \
-    apk --no-cache add ca-certificates tzdata busybox-extras bash curl postgresql-client
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata netcat-openbsd bash curl postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
@@ -297,6 +241,7 @@ WORKDIR /root/
 
 # Copy the init binary from builder stage
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init .
+COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/cmd/init/n9e_postgres.sql .
 
 # 注意：不再从 src/backend/.env 读取配置
 # 所有环境变量统一从项目根目录 .env 文件读取，通过 docker-compose.yml 的 env_file 传递

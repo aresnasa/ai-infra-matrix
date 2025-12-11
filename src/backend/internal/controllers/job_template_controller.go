@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
@@ -357,6 +358,8 @@ func (jtc *JobTemplateController) GetTemplateCategories(c *gin.Context) {
 // RegisterRoutes 注册路由
 func (jtc *JobTemplateController) RegisterRoutes(r *gin.RouterGroup) {
 	templates := r.Group("/job-templates")
+	// 作业模板管理需要认证
+	templates.Use(middleware.AuthMiddlewareWithSession())
 	{
 		templates.POST("", jtc.CreateTemplate)
 		templates.GET("", jtc.ListTemplates)

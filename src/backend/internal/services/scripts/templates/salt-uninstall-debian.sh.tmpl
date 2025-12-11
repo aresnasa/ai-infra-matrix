@@ -1,0 +1,84 @@
+#!/bin/bash
+# =============================================================================
+# Salt Minion Uninstallation Script for Debian/Ubuntu
+# =============================================================================
+# Template variables (Go text/template syntax):
+#   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
+# =============================================================================
+
+set -e
+echo "=== Uninstalling Salt Minion ==="
+echo "=== Target: Debian/Ubuntu System ==="
+echo "=== Timestamp: $(date '+%Y-%m-%d %H:%M:%S') ==="
+
+# Stop and disable service (with multiple retry)
+echo "=== Stopping Salt Minion service ==="
+for i in 1 2 3; do
+    {{.SudoPrefix}}systemctl stop salt-minion 2>/dev/null && break || sleep 2
+done
+{{.SudoPrefix}}systemctl disable salt-minion 2>/dev/null || true
+
+# Kill any remaining salt-minion processes
+echo "=== Killing remaining salt-minion processes ==="
+{{.SudoPrefix}}pkill -9 -f salt-minion 2>/dev/null || true
+{{.SudoPrefix}}pkill -9 -f salt-call 2>/dev/null || true
+sleep 1
+
+# Remove packages
+echo "=== Removing Salt packages ==="
+export DEBIAN_FRONTEND=noninteractive
+{{.SudoPrefix}}apt-get remove -y --purge salt-minion salt-common salt-api salt-master 2>/dev/null || true
+{{.SudoPrefix}}apt-get autoremove -y 2>/dev/null || true
+{{.SudoPrefix}}apt-get clean 2>/dev/null || true
+
+# Remove Salt repository
+echo "=== Removing Salt repository ==="
+{{.SudoPrefix}}rm -f /etc/apt/sources.list.d/salt*.list 2>/dev/null || true
+{{.SudoPrefix}}rm -f /etc/apt/sources.list.d/apphub*.list 2>/dev/null || true
+{{.SudoPrefix}}rm -f /usr/share/keyrings/salt-archive-keyring*.gpg 2>/dev/null || true
+
+# Clean up Minion keys first (important for re-installation)
+echo "=== Cleaning up Salt Minion keys ==="
+{{.SudoPrefix}}rm -rf /etc/salt/pki/minion 2>/dev/null || true
+{{.SudoPrefix}}rm -f /etc/salt/minion_id 2>/dev/null || true
+echo "OK: Minion keys and ID removed"
+
+# Clean up configuration and data
+echo "=== Cleaning up Salt directories ==="
+{{.SudoPrefix}}rm -rf /etc/salt
+{{.SudoPrefix}}rm -rf /var/cache/salt
+{{.SudoPrefix}}rm -rf /var/log/salt
+{{.SudoPrefix}}rm -rf /var/run/salt
+{{.SudoPrefix}}rm -rf /run/salt 2>/dev/null || true
+{{.SudoPrefix}}rm -rf /srv/salt
+{{.SudoPrefix}}rm -rf /srv/pillar
+{{.SudoPrefix}}rm -rf /opt/saltstack
+
+# Clean up systemd service files
+echo "=== Cleaning up systemd service files ==="
+{{.SudoPrefix}}rm -f /etc/systemd/system/salt-minion.service 2>/dev/null || true
+{{.SudoPrefix}}rm -f /lib/systemd/system/salt-minion.service 2>/dev/null || true
+{{.SudoPrefix}}systemctl daemon-reload 2>/dev/null || true
+
+# Remove salt user if exists
+echo "=== Removing salt user ==="
+{{.SudoPrefix}}userdel -r salt 2>/dev/null || true
+{{.SudoPrefix}}groupdel salt 2>/dev/null || true
+
+# Verify uninstallation
+echo "=== Verifying uninstallation ==="
+if command -v salt-minion &> /dev/null; then
+    echo "WARNING: salt-minion command still exists"
+    which salt-minion || true
+else
+    echo "OK: salt-minion command removed"
+fi
+
+if [ -d /etc/salt ]; then
+    echo "WARNING: /etc/salt directory still exists"
+else
+    echo "OK: /etc/salt directory removed"
+fi
+
+echo "=== Salt Minion Uninstall Complete ==="
+echo "=== Completed at: $(date '+%Y-%m-%d %H:%M:%S') ==="

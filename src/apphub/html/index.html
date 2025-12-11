@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AppHub - AI Infra Matrix</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-color: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --success-color: #22c55e;
+            --warning-color: #f59e0b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 3rem 0;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            margin-bottom: 2rem;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .version-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            color: var(--text-color);
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--primary-color);
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--primary-color);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 1rem;
+            font-size: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .card-desc {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .card-link {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background: var(--bg-color);
+            color: var(--primary-color);
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .card-link:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .card-link svg {
+            width: 16px;
+            height: 16px;
+            margin-right: 0.5rem;
+        }
+
+        .quick-install {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .quick-install h3 {
+            margin-bottom: 1rem;
+            color: var(--text-color);
+        }
+
+        .code-block {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+            position: relative;
+        }
+
+        .code-block code {
+            display: block;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: #475569;
+            color: white;
+            border: none;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+
+        .copy-btn:hover {
+            background: #64748b;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .status-item {
+            background: var(--card-bg);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 0.75rem;
+        }
+
+        .status-dot.online {
+            background: var(--success-color);
+        }
+
+        .status-dot.offline {
+            background: #ef4444;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            header h1 {
+                font-size: 1.75rem;
+            }
+            
+            .cards {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>📦 AppHub</h1>
+            <p>AI Infra Matrix 软件包分发中心</p>
+            <span class="version-badge" id="version">Loading...</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- 快速安装 -->
+        <div class="quick-install">
+            <h3>🚀 快速安装</h3>
+            <div class="code-block">
+                <button class="copy-btn" onclick="copyCode(this)">复制</button>
+                <code id="install-cmd">curl -fsSL http://<span id="host"></span>/scripts/install-salt-minion.sh | bash</code>
+            </div>
+        </div>
+
+        <!-- 服务状态 -->
+        <h2 class="section-title">📊 服务状态</h2>
+        <div class="status-grid">
+            <div class="status-item">
+                <span class="status-dot online" id="status-health"></span>
+                <span>AppHub 服务</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot" id="status-pkgs"></span>
+                <span>软件包仓库</span>
+            </div>
+            <div class="status-item">
+                <span class="status-dot" id="status-scripts"></span>
+                <span>安装脚本</span>
+            </div>
+        </div>
+
+        <!-- 组件列表 -->
+        <h2 class="section-title">🧩 可用组件</h2>
+        <div class="cards">
+            <!-- SaltStack -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🧂</div>
+                    <span class="card-title">SaltStack Minion</span>
+                </div>
+                <p class="card-desc">分布式配置管理和远程执行系统，用于统一管理集群节点</p>
+                <div class="card-links">
+                    <a href="/scripts/install-salt-minion.sh" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        安装脚本
+                    </a>
+                    <a href="/pkgs/saltstack/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        软件包
+                    </a>
+                </div>
+            </div>
+
+            <!-- Categraf -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">📈</div>
+                    <span class="card-title">Categraf</span>
+                </div>
+                <p class="card-desc">轻量级监控采集 Agent，支持多种数据源采集和远程写入</p>
+                <div class="card-links">
+                    <a href="/scripts/install-categraf.sh" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        安装脚本
+                    </a>
+                    <a href="/pkgs/categraf/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        软件包
+                    </a>
+                </div>
+            </div>
+
+            <!-- Node Exporter -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🔍</div>
+                    <span class="card-title">Node Exporter</span>
+                </div>
+                <p class="card-desc">Prometheus 官方节点指标采集器，用于采集主机硬件和操作系统指标</p>
+                <div class="card-links">
+                    <a href="/scripts/install-node-exporter.sh" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        安装脚本
+                    </a>
+                    <a href="/pkgs/node-exporter/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        软件包
+                    </a>
+                </div>
+            </div>
+
+            <!-- Prometheus -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🔥</div>
+                    <span class="card-title">Prometheus</span>
+                </div>
+                <p class="card-desc">开源监控和告警工具包，时序数据库和查询语言</p>
+                <div class="card-links">
+                    <a href="/scripts/install-prometheus.sh" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        安装脚本
+                    </a>
+                    <a href="/pkgs/prometheus/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        软件包
+                    </a>
+                </div>
+            </div>
+
+            <!-- SLURM -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🖥️</div>
+                    <span class="card-title">SLURM</span>
+                </div>
+                <p class="card-desc">高性能计算作业调度系统，用于 HPC 集群资源管理</p>
+                <div class="card-links">
+                    <a href="/pkgs/slurm-deb/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        DEB 包
+                    </a>
+                    <a href="/pkgs/slurm-rpm/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        RPM 包
+                    </a>
+                </div>
+            </div>
+
+            <!-- Python Dependencies -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🐍</div>
+                    <span class="card-title">Python 依赖</span>
+                </div>
+                <p class="card-desc">SaltStack 所需的 Python 依赖包，支持 Python 3.12+ 系统</p>
+                <div class="card-links">
+                    <a href="/pkgs/python-deps/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        Wheel 包
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 目录浏览 -->
+        <h2 class="section-title">📁 目录浏览</h2>
+        <div class="cards">
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">📜</div>
+                    <span class="card-title">安装脚本</span>
+                </div>
+                <p class="card-desc">自动化安装脚本，支持一键部署各组件</p>
+                <div class="card-links">
+                    <a href="/scripts/" class="card-link">浏览目录</a>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">📦</div>
+                    <span class="card-title">软件包仓库</span>
+                </div>
+                <p class="card-desc">所有可用软件包的存储目录</p>
+                <div class="card-links">
+                    <a href="/pkgs/" class="card-link">浏览目录</a>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🐧</div>
+                    <span class="card-title">DEB 仓库</span>
+                </div>
+                <p class="card-desc">Debian/Ubuntu 系统软件包</p>
+                <div class="card-links">
+                    <a href="/deb/" class="card-link">浏览目录</a>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🎩</div>
+                    <span class="card-title">RPM 仓库</span>
+                </div>
+                <p class="card-desc">RHEL/CentOS/Rocky 系统软件包</p>
+                <div class="card-links">
+                    <a href="/rpm/" class="card-link">浏览目录</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>AI Infra Matrix - AppHub | Powered by Nginx</p>
+    </footer>
+
+    <script>
+        // 设置主机地址
+        document.getElementById('host').textContent = window.location.host;
+
+        // 获取版本信息
+        fetch('/health')
+            .then(r => r.text())
+            .then(() => {
+                document.getElementById('version').textContent = 'v0.3.8';
+                document.getElementById('status-health').classList.add('online');
+            })
+            .catch(() => {
+                document.getElementById('version').textContent = 'Unknown';
+                document.getElementById('status-health').classList.add('offline');
+            });
+
+        // 检查服务状态
+        function checkStatus(url, elementId) {
+            fetch(url, { method: 'HEAD' })
+                .then(r => {
+                    document.getElementById(elementId).classList.add(r.ok ? 'online' : 'offline');
+                })
+                .catch(() => {
+                    document.getElementById(elementId).classList.add('offline');
+                });
+        }
+
+        checkStatus('/pkgs/', 'status-pkgs');
+        checkStatus('/scripts/', 'status-scripts');
+
+        // 复制代码
+        function copyCode(btn) {
+            const code = btn.parentElement.querySelector('code').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = '已复制!';
+                setTimeout(() => btn.textContent = '复制', 2000);
+            });
+        }
+    </script>
+</body>
+</html>

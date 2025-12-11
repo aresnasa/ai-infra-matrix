@@ -4,27 +4,63 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"gopkg.in/yaml.v3"
+	"unicode/utf8"
+
 	"github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 )
+
+// ================== 安全配置常量 ==================
+
+// Playbook 最大文件大小限制 (512KB)
+const MaxPlaybookSize = 512 * 1024
+
+// Playbook 最大行数限制
+const MaxPlaybookLines = 5000
+
+// Playbook 最大任务数限制
+const MaxPlaybookTasks = 1000
+
+// Playbook YAML 最大递归深度
+const MaxPlaybookYAMLDepth = 15
+
+// Playbook 危险模式检测正则表达式
+var playbookDangerousPatterns = []*regexp.Regexp{
+	// YAML 特殊攻击标签
+	regexp.MustCompile(`(?i)!!python/`),
+	regexp.MustCompile(`(?i)!!ruby/`),
+	regexp.MustCompile(`(?i)tag:yaml\.org,\d+:python/`),
+	regexp.MustCompile(`(?i)!<tag:yaml\.org`),
+	// 危险的 shell 命令
+	regexp.MustCompile(`(?i)\brm\s+-rf\s+/\s*$`),
+	regexp.MustCompile(`(?i)\bdd\s+if=.*of=/dev/`),
+	regexp.MustCompile(`(?i)\bmkfs\.[a-z]+\s+/dev/`),
+	// 反弹 shell
+	regexp.MustCompile(`(?i)nc\s+-[elp].*\d+\s*$`),
+	regexp.MustCompile(`(?i)/dev/tcp/`),
+	regexp.MustCompile(`(?i)bash\s+-i\s+>&\s*/dev/tcp/`),
+	// 环境变量泄露
+	regexp.MustCompile(`(?i)env\s*\|\s*(curl|wget|nc)`),
+	regexp.MustCompile(`(?i)printenv\s*\|\s*(curl|wget|nc)`),
+}
 
 // ValidationResult 校验结果
 type ValidationResult struct {
-	IsValid   bool               `json:"is_valid"`
-	Errors    []ValidationError  `json:"errors,omitempty"`
-	Warnings  []ValidationError  `json:"warnings,omitempty"`
-	Score     int                `json:"score"` // 0-100 分数
+	IsValid  bool              `json:"is_valid"`
+	Errors   []ValidationError `json:"errors,omitempty"`
+	Warnings []ValidationError `json:"warnings,omitempty"`
+	Score    int               `json:"score"` // 0-100 分数
 }
 
 // ValidationError 校验错误
 type ValidationError struct {
-	Type        string `json:"type"`        // syntax, structure, module, compatibility
-	Severity    string `json:"severity"`    // error, warning, info
-	Message     string `json:"message"`
-	Line        int    `json:"line,omitempty"`
-	Column      int    `json:"column,omitempty"`
-	Field       string `json:"field,omitempty"`
-	Suggestion  string `json:"suggestion,omitempty"`
+	Type       string `json:"type"`     // syntax, structure, module, compatibility
+	Severity   string `json:"severity"` // error, warning, info
+	Message    string `json:"message"`
+	Line       int    `json:"line,omitempty"`
+	Column     int    `json:"column,omitempty"`
+	Field      string `json:"field,omitempty"`
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // AnsibleVersionCompatibility Ansible版本兼容性
@@ -46,7 +82,7 @@ type PlaybookValidationService struct {
 // NewPlaybookValidationService 创建新的校验服务
 func NewPlaybookValidationService() *PlaybookValidationService {
 	return &PlaybookValidationService{
-		supportedVersions: []string{"2.9", "2.10", "2.11", "2.12", "2.13", "2.14", "2.15", "2.16", "3.0", "4.0", "5.0", "6.0", "7.0", "8.0", "9.0"},
+		supportedVersions:   []string{"2.9", "2.10", "2.11", "2.12", "2.13", "2.14", "2.15", "2.16", "3.0", "4.0", "5.0", "6.0", "7.0", "8.0", "9.0"},
 		moduleCompatibility: initModuleCompatibility(),
 	}
 }
@@ -58,6 +94,11 @@ func (s *PlaybookValidationService) ValidatePlaybook(yamlContent []byte) (*Valid
 		Errors:   []ValidationError{},
 		Warnings: []ValidationError{},
 		Score:    100,
+	}
+
+	// 0. 安全检查
+	if err := s.validatePlaybookSecurity(yamlContent, result); err != nil {
+		return result, err
 	}
 
 	// 1. YAML语法校验
@@ -78,6 +119,95 @@ func (s *PlaybookValidationService) ValidatePlaybook(yamlContent []byte) (*Valid
 	s.calculateScore(result)
 
 	return result, nil
+}
+
+// validatePlaybookSecurity 校验 Playbook 安全性
+func (s *PlaybookValidationService) validatePlaybookSecurity(yamlContent []byte, result *ValidationResult) error {
+	// 1. 检查文件大小
+	if len(yamlContent) > MaxPlaybookSize {
+		result.Errors = append(result.Errors, ValidationError{
+			Type:     "security",
+			Severity: "error",
+			Message:  fmt.Sprintf("Playbook 文件大小超过限制 (%d bytes，最大 %d bytes)", len(yamlContent), MaxPlaybookSize),
+		})
+		result.IsValid = false
+		return fmt.Errorf("playbook file size exceeds limit")
+	}
+
+	// 2. 检查文件编码
+	if !utf8.Valid(yamlContent) {
+		result.Errors = append(result.Errors, ValidationError{
+			Type:     "security",
+			Severity: "error",
+			Message:  "Playbook 文件编码无效，请使用 UTF-8 编码",
+		})
+		result.IsValid = false
+		return fmt.Errorf("invalid file encoding")
+	}
+
+	// 3. 检查行数
+	lineCount := strings.Count(string(yamlContent), "\n") + 1
+	if lineCount > MaxPlaybookLines {
+		result.Errors = append(result.Errors, ValidationError{
+			Type:     "security",
+			Severity: "error",
+			Message:  fmt.Sprintf("Playbook 行数超过限制 (%d 行，最大 %d 行)", lineCount, MaxPlaybookLines),
+		})
+		result.IsValid = false
+		return fmt.Errorf("playbook line count exceeds limit")
+	}
+
+	// 4. 检查危险内容
+	content := string(yamlContent)
+	for _, pattern := range playbookDangerousPatterns {
+		if pattern.MatchString(content) {
+			match := pattern.FindString(content)
+			if len(match) > 50 {
+				match = match[:50] + "..."
+			}
+			result.Errors = append(result.Errors, ValidationError{
+				Type:       "security",
+				Severity:   "error",
+				Message:    fmt.Sprintf("检测到危险内容: %s", match),
+				Suggestion: "请检查 Playbook 是否包含恶意代码或危险命令",
+			})
+			result.IsValid = false
+			return fmt.Errorf("dangerous content detected")
+		}
+	}
+
+	// 5. 检查 YAML 嵌套深度
+	if err := s.validatePlaybookYAMLDepth(yamlContent); err != nil {
+		result.Errors = append(result.Errors, ValidationError{
+			Type:     "security",
+			Severity: "error",
+			Message:  err.Error(),
+		})
+		result.IsValid = false
+		return err
+	}
+
+	return nil
+}
+
+// validatePlaybookYAMLDepth 验证 Playbook YAML 嵌套深度
+func (s *PlaybookValidationService) validatePlaybookYAMLDepth(data []byte) error {
+	lines := strings.Split(string(data), "\n")
+	maxIndent := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		depth := indent / 2
+		if depth > maxIndent {
+			maxIndent = depth
+		}
+	}
+	if maxIndent > MaxPlaybookYAMLDepth {
+		return fmt.Errorf("YAML 嵌套深度超过限制: %d (最大 %d)", maxIndent, MaxPlaybookYAMLDepth)
+	}
+	return nil
 }
 
 // ValidateCompatibility 校验版本兼容性
@@ -235,9 +365,9 @@ func (s *PlaybookValidationService) validateTask(task map[string]interface{}, pl
 	// 检查是否有可执行的模块
 	hasModule := false
 	for key := range task {
-		if key != "name" && key != "when" && key != "tags" && key != "vars" && 
-		   key != "register" && key != "become" && key != "become_user" &&
-		   key != "ignore_errors" && key != "changed_when" && key != "failed_when" {
+		if key != "name" && key != "when" && key != "tags" && key != "vars" &&
+			key != "register" && key != "become" && key != "become_user" &&
+			key != "ignore_errors" && key != "changed_when" && key != "failed_when" {
 			hasModule = true
 			break
 		}
@@ -285,7 +415,7 @@ func (s *PlaybookValidationService) validateVariableValue(name string, value int
 				Severity:   "warning",
 				Field:      name,
 				Message:    fmt.Sprintf("Variable '%s' in play %d may have malformed Jinja2 template", name, playIndex),
-				Suggestion: "Ensure Jinja2 templates are properly closed with }}", 
+				Suggestion: "Ensure Jinja2 templates are properly closed with }}",
 			})
 		}
 	}
@@ -309,10 +439,10 @@ func (s *PlaybookValidationService) validateTaskModules(tasks []interface{}, pla
 	for taskIndex, task := range tasks {
 		if taskMap, ok := task.(map[string]interface{}); ok {
 			for moduleName := range taskMap {
-				if moduleName != "name" && moduleName != "when" && moduleName != "tags" && 
-				   moduleName != "vars" && moduleName != "register" && moduleName != "become" && 
-				   moduleName != "become_user" && moduleName != "ignore_errors" && 
-				   moduleName != "changed_when" && moduleName != "failed_when" {
+				if moduleName != "name" && moduleName != "when" && moduleName != "tags" &&
+					moduleName != "vars" && moduleName != "register" && moduleName != "become" &&
+					moduleName != "become_user" && moduleName != "ignore_errors" &&
+					moduleName != "changed_when" && moduleName != "failed_when" {
 					s.validateModule(moduleName, playIndex, taskIndex+1, result)
 					break // 只检查第一个模块
 				}
@@ -351,7 +481,7 @@ func (s *PlaybookValidationService) validateModule(moduleName string, playIndex,
 
 	// 检查已废弃的模块
 	deprecatedModules := map[string]string{
-		"raw": "Consider using shell or command module instead",
+		"raw":     "Consider using shell or command module instead",
 		"include": "Use include_tasks or import_tasks instead",
 	}
 
@@ -435,7 +565,7 @@ func (s *PlaybookValidationService) checkTasksCompatibility(tasks []interface{},
 						}
 					}
 					if !supported {
-						compat.Issues = append(compat.Issues, 
+						compat.Issues = append(compat.Issues,
 							fmt.Sprintf("Module '%s' may not be available in Ansible %s", moduleName, version))
 						compat.Suggestions = append(compat.Suggestions,
 							fmt.Sprintf("Consider upgrading Ansible or using alternative module for '%s'", moduleName))
@@ -449,7 +579,7 @@ func (s *PlaybookValidationService) checkTasksCompatibility(tasks []interface{},
 // calculateScore 计算校验分数
 func (s *PlaybookValidationService) calculateScore(result *ValidationResult) {
 	score := 100
-	
+
 	// 错误扣分更多
 	for _, err := range result.Errors {
 		switch err.Severity {
@@ -502,11 +632,11 @@ func parseVersion(version string) float64 {
 // initModuleCompatibility 初始化模块兼容性映射
 func initModuleCompatibility() map[string][]string {
 	return map[string][]string{
-		"collections": {"2.9"},
-		"podman_image": {"2.10"},
-		"podman_container": {"2.10"},
-		"community.general.telegram": {"2.9"},
-		"ansible.posix.synchronize": {"2.9"},
+		"collections":                          {"2.9"},
+		"podman_image":                         {"2.10"},
+		"podman_container":                     {"2.10"},
+		"community.general.telegram":           {"2.9"},
+		"ansible.posix.synchronize":            {"2.9"},
 		"community.crypto.openssl_certificate": {"2.9"},
 	}
 }

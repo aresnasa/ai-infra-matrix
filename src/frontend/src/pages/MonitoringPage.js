@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Spin, Alert, Button } from 'antd';
 import { ReloadOutlined, FullscreenOutlined } from '@ant-design/icons';
+import { useI18n } from '../hooks/useI18n';
 import '../App.css';
 
 /**
@@ -8,6 +9,7 @@ import '../App.css';
  * 使用 iframe 嵌入 Nightingale 监控系统
  */
 const MonitoringPage = () => {
+  const { t, locale } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [iframeKey, setIframeKey] = useState(0);
@@ -15,25 +17,33 @@ const MonitoringPage = () => {
   // Nightingale 服务地址 - 使用环境变量或动态构建
   // 支持完整URL或仅端口号配置，默认使用 nginx 代理路径
   const getNightingaleUrl = () => {
+    let baseUrl = '';
+    
     // 优先使用完整的 URL 配置
     if (process.env.REACT_APP_NIGHTINGALE_URL) {
-      return process.env.REACT_APP_NIGHTINGALE_URL;
-    }
-    
-    // 如果配置了端口，使用直接端口访问
-    if (process.env.REACT_APP_NIGHTINGALE_PORT) {
+      baseUrl = process.env.REACT_APP_NIGHTINGALE_URL;
+    } else if (process.env.REACT_APP_NIGHTINGALE_PORT) {
+      // 如果配置了端口，使用直接端口访问
       const port = process.env.REACT_APP_NIGHTINGALE_PORT;
-      return `${window.location.protocol}//${window.location.hostname}:${port}`;
+      baseUrl = `${window.location.protocol}//${window.location.hostname}:${port}`;
+    } else {
+      // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
+      const currentPort = window.location.port ? `:${window.location.port}` : '';
+      baseUrl = `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
     }
     
-    // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
-    // 注意：由于 Nightingale 的客户端路由限制，根路径会显示 404
-    // 用户需要点击左侧菜单中的功能（如仪表板、告警规则等）来访问具体页面
-    const currentPort = window.location.port ? `:${window.location.port}` : '';
-    return `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
+    // 添加语言参数，Nightingale 支持 lang=en 或 lang=zh
+    const n9eLang = locale === 'en-US' ? 'en' : 'zh';
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}lang=${n9eLang}`;
   };
   
   const nightingaleUrl = getNightingaleUrl();
+
+  // 监听语言变化，刷新 iframe
+  useEffect(() => {
+    setIframeKey(prev => prev + 1);
+  }, [locale]);
 
   useEffect(() => {
     // 组件挂载时的初始化
@@ -43,12 +53,12 @@ const MonitoringPage = () => {
     const timeout = setTimeout(() => {
       if (loading) {
         setLoading(false);
-        setError('监控系统加载超时，请检查网络连接');
+        setError(t('monitoring.loadTimeout'));
       }
     }, 15000); // 15秒超时
 
     return () => clearTimeout(timeout);
-  }, [nightingaleUrl, loading]);
+  }, [nightingaleUrl, loading, t]);
 
   // iframe 加载完成处理
   const handleIframeLoad = () => {
@@ -61,7 +71,7 @@ const MonitoringPage = () => {
   const handleIframeError = () => {
     console.error('Failed to load Nightingale iframe');
     setLoading(false);
-    setError('无法加载监控系统，请检查 Nightingale 服务是否正常运行');
+    setError(t('monitoring.loadFailed'));
   };
 
   // 刷新 iframe
@@ -79,7 +89,7 @@ const MonitoringPage = () => {
   return (
     <div style={{ height: 'calc(100vh - 112px)', display: 'flex', flexDirection: 'column' }}>
       <Card 
-        title="监控仪表板" 
+        title={t('monitoring.title')}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}
         bodyStyle={{ flex: 1, padding: 0, display: 'flex', flexDirection: 'column', height: '100%' }}
         extra={
@@ -89,20 +99,20 @@ const MonitoringPage = () => {
               onClick={handleRefresh}
               style={{ marginRight: 8 }}
             >
-              刷新
+              {t('monitoring.refresh')}
             </Button>
             <Button 
               icon={<FullscreenOutlined />} 
               onClick={handleFullscreen}
             >
-              新窗口打开
+              {t('monitoring.openNewWindow')}
             </Button>
           </div>
         }
       >
         {error && (
           <Alert
-            message="加载错误"
+            message={t('monitoring.loadError')}
             description={error}
             type="error"
             showIcon
@@ -122,7 +132,7 @@ const MonitoringPage = () => {
           }}>
             <Spin size="large" />
             <div style={{ marginTop: 16, color: '#999' }}>
-              正在加载监控系统...
+              {t('monitoring.loadingSystem')}
             </div>
           </div>
         )}

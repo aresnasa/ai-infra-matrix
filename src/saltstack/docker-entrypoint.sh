@@ -9,6 +9,8 @@ log() {
 log "🧂 AI基础设施矩阵 - SaltStack服务启动中..."
 log "📅 启动时间: $(date)"
 log "🏷️ 版本: ${APP_VERSION:-dev}"
+log "🎯 Master ID: ${SALT_MASTER_ID:-default}"
+log "🔀 Master 角色: ${SALT_MASTER_ROLE:-standalone}"
 
 ensure_directories() {
     mkdir -p /var/log/salt
@@ -17,12 +19,97 @@ ensure_directories() {
     mkdir -p /var/run/salt
     mkdir -p /etc/salt/pki/master
     mkdir -p /etc/salt/pki/minion
+    mkdir -p /srv/salt
+    mkdir -p /srv/pillar
 }
 
-generate_master_keys() {
-    if [ ! -f /etc/salt/pki/master/master.pem ]; then
-        log "🔐 生成Salt Master密钥..."
-        salt-key --gen-keys=master --gen-keys-dir=/etc/salt/pki/master/
+# 同步默认的 Salt States 和 Pillar 文件
+sync_salt_files() {
+    log "📦 同步 Salt States 和 Pillar 文件..."
+    
+    # 同步 Salt States（如果目标目录为空或缺少关键文件）
+    if [ -d "/opt/salt-states-default" ]; then
+        # 检查是否需要同步（如果 /srv/salt 为空或缺少 node-metrics.sls）
+        if [ ! -f "/srv/salt/node-metrics.sls" ]; then
+            log "  📋 同步 Salt States 到 /srv/salt/..."
+            cp -rn /opt/salt-states-default/* /srv/salt/ 2>/dev/null || cp -r /opt/salt-states-default/* /srv/salt/
+            log "  ✅ Salt States 同步完成"
+        else
+            log "  ♻️ Salt States 已存在，跳过同步"
+        fi
+    fi
+    
+    # 同步 Salt Pillar（如果目标目录为空或缺少关键文件）
+    if [ -d "/opt/salt-pillar-default" ]; then
+        if [ ! -f "/srv/pillar/top.sls" ]; then
+            log "  📋 同步 Salt Pillar 到 /srv/pillar/..."
+            cp -rn /opt/salt-pillar-default/* /srv/pillar/ 2>/dev/null || cp -r /opt/salt-pillar-default/* /srv/pillar/
+            log "  ✅ Salt Pillar 同步完成"
+        else
+            log "  ♻️ Salt Pillar 已存在，跳过同步"
+        fi
+    fi
+}
+
+# 生成或等待 Master 密钥（多 Master 高可用核心逻辑）
+setup_master_keys() {
+    local role="${SALT_MASTER_ROLE:-standalone}"
+    local master_id="${SALT_MASTER_ID:-master}"
+    local pki_dir="/etc/salt/pki/master"
+    local max_wait=60
+    local wait_interval=2
+    
+    log "🔐 设置 Master 密钥 (角色: $role)..."
+    
+    if [ "$role" = "primary" ] || [ "$role" = "standalone" ]; then
+        # 主节点：如果没有密钥则生成
+        if [ ! -f "$pki_dir/master.pem" ]; then
+            log "🔑 [Primary] 生成新的 Master 密钥对..."
+            salt-key --gen-keys=master --gen-keys-dir="$pki_dir/"
+            chmod 400 "$pki_dir/master.pem"
+            chmod 644 "$pki_dir/master.pub"
+            log "✅ Master 密钥生成完成"
+        else
+            log "♻️ [Primary] 使用现有的 Master 密钥"
+        fi
+    elif [ "$role" = "secondary" ]; then
+        # 备用节点：等待主节点生成密钥
+        log "⏳ [Secondary] 等待主节点生成 PKI 密钥..."
+        local waited=0
+        while [ ! -f "$pki_dir/master.pem" ] || [ ! -f "$pki_dir/master.pub" ]; do
+            if [ $waited -ge $max_wait ]; then
+                log "❌ [Secondary] 等待主节点密钥超时 (${max_wait}s)"
+                exit 1
+            fi
+            sleep $wait_interval
+            waited=$((waited + wait_interval))
+            log "   等待中... ($waited/${max_wait}s)"
+        done
+        log "✅ [Secondary] 检测到 PKI 密钥，继续启动"
+        
+        # 确保文件权限正确
+        chmod 400 "$pki_dir/master.pem" 2>/dev/null || true
+        chmod 644 "$pki_dir/master.pub" 2>/dev/null || true
+    fi
+    
+    # 显示密钥指纹（用于验证多 Master 密钥一致性）
+    if [ -f "$pki_dir/master.pub" ]; then
+        local fingerprint=$(salt-key --finger-all 2>/dev/null | head -n5 || echo "无法获取指纹")
+        log "🔏 Master 公钥指纹: $(md5sum $pki_dir/master.pub | cut -d' ' -f1)"
+    fi
+}
+
+# 配置多 Master 相关设置
+configure_multi_master() {
+    local master_id="${SALT_MASTER_ID:-master}"
+    local master_conf="/etc/salt/master.d/master.conf"
+    
+    # 添加 Master ID 标识
+    if ! grep -q "^id:" "$master_conf" 2>/dev/null; then
+        echo "" >> "$master_conf"
+        echo "# Multi-Master Configuration" >> "$master_conf"
+        echo "id: $master_id" >> "$master_conf"
+        log "📝 已配置 Master ID: $master_id"
     fi
 }
 
@@ -140,7 +227,9 @@ start_systemd() {
 case "${1:-start-services}" in
     start-services)
         ensure_directories
-        generate_master_keys
+        sync_salt_files
+        setup_master_keys
+        configure_multi_master
         verify_configs
         configure_eauth
         create_systemd_units

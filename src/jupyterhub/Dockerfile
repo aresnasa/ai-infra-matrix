@@ -1,72 +1,116 @@
-# JupyterHub Backend集成 - 精炼版（修复构建问题）
-ARG PYTHON_ALPINE_VERSION=3.14-alpine
-FROM python:${PYTHON_ALPINE_VERSION}
+# JupyterHub Backend集成 - Ubuntu 版本
+ARG UBUNTU_VERSION=22.04
+FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
 ARG PIP_VERSION=24.2
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG ALPINE_MIRROR
-
+ARG APT_MIRROR=mirrors.aliyun.com
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV TZ=Asia/Shanghai
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 基础环境和构建工具（多镜像源智能回退配置）
+# 基础环境配置（APT 镜像源智能回退，支持 x86 和 ARM64 双架构）
 RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    # 尝试自定义镜像源
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "尝试自定义镜像源: ${ALPINE_MIRROR}..."; \
-        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-        apk update --no-cache && \
-        echo "成功使用自定义镜像源"; \
+    # 备份原始 sources.list
+    cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true; \
+    # 获取 Ubuntu 版本代号
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    echo "Detected Ubuntu codename: ${CODENAME}"; \
+    # 检测架构: x86_64 使用 ubuntu, arm64/aarch64 使用 ubuntu-ports
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
+    else \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    echo "Using mirror path: ${UBUNTU_PATH}"; \
+    # 尝试配置镜像源
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "尝试自定义镜像源: ${APT_MIRROR}/${UBUNTU_PATH}..."; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        if apt-get update 2>/dev/null; then \
+            echo "✓ 成功使用自定义镜像源"; \
+        else \
+            echo "❌ 自定义镜像源失败，使用官方源..."; \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        fi; \
     else \
         # 尝试阿里云镜像源
         { \
             echo "尝试阿里云镜像源..."; \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            echo "成功使用阿里云镜像源"; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update && echo "✓ 成功使用阿里云镜像源"; \
         } || { \
-            echo "阿里云镜像源失败，尝试清华源..."; \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            echo "成功使用清华源"; \
+            echo "❌ 阿里云镜像源失败，尝试清华源..."; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.tuna.tsinghua.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update && echo "✓ 成功使用清华源"; \
         } || { \
-            echo "清华源失败，尝试中科大源..."; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories && \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories && \
-            apk update --no-cache && \
-            echo "成功使用中科大源"; \
+            echo "❌ 清华源失败，尝试中科大源..."; \
+            echo "deb https://mirrors.ustc.edu.cn/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb https://mirrors.ustc.edu.cn/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update && echo "✓ 成功使用中科大源"; \
         } || { \
-            echo "所有国内源都失败，使用官方源..."; \
-            cp /etc/apk/repositories.bak /etc/apk/repositories && \
-            apk update && \
-            echo "使用官方源"; \
+            echo "❌ 所有国内源都失败，使用官方源..."; \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
         }; \
     fi; \
-    # 安装必需的运行时依赖
-    apk add --no-cache \
+    # 安装必需的运行时依赖（不包括 nodejs/npm，使用预编译二进制）
+    apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        xz-utils \
         openssl \
         tzdata \
         bash \
-        shadow \
         netcat-openbsd \
-        redis \
+        redis-tools \
         git \
         lsof \
-    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+        build-essential \
+        libcurl4-openssl-dev \
+        libssl-dev \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Node.js 22.x LTS (configurable-http-proxy 需要 Node.js 16+)
+# 使用预下载的二进制包，避免网络依赖
+# Ubuntu 22.04 默认的 nodejs 12.x 太旧，会导致 ESM 加载器错误
+# NODE_JS_VERSION 通过模板渲染注入
+COPY third_party/nodejs/node-v22.11.0-linux-x64.tar.xz /tmp/
+COPY third_party/nodejs/node-v22.11.0-linux-arm64.tar.xz /tmp/
+
+ARG NODE_JS_VERSION=22.11.0
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Installing Node.js ${NODE_JS_VERSION} for ${ARCH}..."; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        NODE_ARCH="x64"; \
+    else \
+        NODE_ARCH="arm64"; \
+    fi; \
+    tar -xJf /tmp/node-v${NODE_JS_VERSION}-linux-${NODE_ARCH}.tar.xz -C /usr/local --strip-components=1; \
+    rm -f /tmp/node-v*.tar.xz; \
+    node --version; \
+    npm --version
 
 WORKDIR /srv/jupyterhub
 
@@ -81,110 +125,95 @@ ENV PIP_INDEX_URL="${PYPI_INDEX_URL}" \
     PIP_TIMEOUT=60
 
 # 升级pip并安装核心工具
-RUN pip install --no-cache-dir --upgrade pip==${PIP_VERSION} setuptools wheel
+# 注意: Ubuntu 22.04 系统 pip 版本较老，不支持 --break-system-packages
+# 需要先升级 pip，然后新版 pip 才支持该选项
+RUN set -eux; \
+    # 配置 pip 镜像源
+    mkdir -p ~/.pip && \
+    echo "[global]" > ~/.pip/pip.conf && \
+    echo "index-url = ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" >> ~/.pip/pip.conf && \
+    echo "trusted-host = mirrors.aliyun.com" >> ~/.pip/pip.conf; \
+    # 先用系统 pip 升级 pip 本身（不带 --break-system-packages）
+    python3 -m pip install --no-cache-dir --upgrade pip==${PIP_VERSION} 2>/dev/null || \
+    pip3 install --no-cache-dir --upgrade pip==${PIP_VERSION}; \
+    # 新版 pip 支持 --break-system-packages，安装其他工具
+    pip3 install --no-cache-dir setuptools wheel --break-system-packages
 
-# 依赖安装（分层优化，优先二进制版本）
-COPY requirements.txt .
+# 依赖安装
+COPY src/jupyterhub/requirements.txt .
 # 复制 third_party 目录以支持离线构建
 COPY third_party/ /third_party/
 
-# Install Node.js and temporary build deps to compile psutil on Alpine, then remove them
+# 安装 Python 依赖和 configurable-http-proxy
 RUN set -eux; \
-    # 步骤1: 配置 Alpine 镜像源（多重降级）
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d. -f1,2); \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-        echo "https://${ALPINE_MIRROR}/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-    else \
-        # 尝试阿里云镜像
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-        echo "https://mirrors.aliyun.com/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-    fi; \
-    if ! apk update 2>/dev/null; then \
-        echo "❌ 阿里云镜像失败，尝试清华镜像..."; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-        echo "https://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-        if ! apk update 2>/dev/null; then \
-            echo "❌ 清华镜像失败，尝试中科大镜像..."; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/main" > /etc/apk/repositories; \
-            echo "https://mirrors.ustc.edu.cn/alpine/v${ALPINE_VERSION}/community" >> /etc/apk/repositories; \
-            if ! apk update 2>/dev/null; then \
-                echo "❌ 中科大镜像失败，使用官方镜像源..."; \
-                mv /etc/apk/repositories.bak /etc/apk/repositories; \
-                apk update || (sleep 5 && apk update) || (sleep 10 && apk update); \
-            fi; \
-        fi; \
-    fi; \
+    # 步骤1: 配置 npm 镜像源（强制使用国内源）
+    echo "配置 npm 镜像源..."; \
+    # 优先使用传入的 NPM_REGISTRY，否则使用 npmmirror
+    NPM_REG="${NPM_REGISTRY:-https://registry.npmmirror.com}"; \
+    echo "设置 npm registry: ${NPM_REG}"; \
+    npm config set registry "${NPM_REG}"; \
+    # 设置超时和重试
+    npm config set fetch-timeout 120000; \
+    npm config set fetch-retries 5; \
+    npm config set fetch-retry-mintimeout 20000; \
+    npm config set fetch-retry-maxtimeout 120000; \
+    npm config list; \
     \
-    # 步骤2: 安装系统依赖
-    apk add --no-cache nodejs npm && \
-    apk add --no-cache --virtual .build-deps \
-        build-base \
-        musl-dev \
-        linux-headers \
-        python3-dev \
-        curl-dev \
-        openssl-dev \
-        zlib-dev; \
+    # 步骤2: pip 配置已在之前的 RUN 中通过 ~/.pip/pip.conf 设置
+    # 步骤3: 安装 Python 依赖（带重试）
+    pip3 install --no-cache-dir --prefer-binary psutil>=5.9.0 --break-system-packages || \
+        (pip3 config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+         pip3 config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
+         pip3 install --no-cache-dir --prefer-binary psutil>=5.9.0 --break-system-packages) || \
+        (pip3 config set global.index-url https://pypi.org/simple/ && \
+         pip3 config unset global.trusted-host && \
+         pip3 install --no-cache-dir --prefer-binary psutil>=5.9.0 --break-system-packages); \
     \
-    # 步骤3: 配置 npm 镜像源（多重降级）
-    npm config set registry ${NPM_REGISTRY} || \
-    npm config set registry https://registry.npm.taobao.org || \
-    npm config set registry https://registry.npmjs.org; \
+    pip3 install --no-cache-dir -r requirements.txt --break-system-packages || \
+        (pip3 config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+         pip3 install --no-cache-dir -r requirements.txt --break-system-packages) || \
+        (pip3 config set global.index-url https://pypi.org/simple/ && \
+         pip3 install --no-cache-dir -r requirements.txt --break-system-packages); \
     \
-    # 步骤4: 配置 pip 镜像源（多重降级）
-    pip config set global.index-url ${PYPI_INDEX_URL} || true; \
-    pip config set global.trusted-host mirrors.aliyun.com || true; \
-    \
-    # 步骤5: 安装 Python 依赖（带重试）
-    pip install --no-cache-dir --prefer-binary psutil>=5.9.0 || \
-        (pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
-         pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
-         pip install --no-cache-dir --prefer-binary psutil>=5.9.0) || \
-        (pip config set global.index-url https://pypi.org/simple/ && \
-         pip config unset global.trusted-host && \
-         pip install --no-cache-dir --prefer-binary psutil>=5.9.0); \
-    \
-    pip install --no-cache-dir -r requirements.txt || \
-        (pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
-         pip install --no-cache-dir -r requirements.txt) || \
-        (pip config set global.index-url https://pypi.org/simple/ && \
-         pip install --no-cache-dir -r requirements.txt); \
-    \
-    # 步骤6: 安装 pycurl（编译安装，带多重降级）
+    # 步骤4: 安装 pycurl（编译安装，带多重降级）
     echo "🔨 开始编译安装 pycurl..."; \
     if [ -f "/third_party/python/pycurl-7.45.3.tar.gz" ]; then \
         echo "📦 使用本地 PyCurl 源码..."; \
-        PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: /third_party/python/pycurl-7.45.3.tar.gz; \
+        PYCURL_SSL_LIBRARY=openssl pip3 install --no-cache-dir --no-binary=:all: /third_party/python/pycurl-7.45.3.tar.gz --break-system-packages; \
     else \
-        PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl || \
+        PYCURL_SSL_LIBRARY=openssl pip3 install --no-cache-dir --no-binary=:all: pycurl --break-system-packages || \
             (echo "❌ 阿里云源安装失败，尝试清华源..."; \
-             pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
-             pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
-             PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl) || \
+             pip3 config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/ && \
+             pip3 config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
+             PYCURL_SSL_LIBRARY=openssl pip3 install --no-cache-dir --no-binary=:all: pycurl --break-system-packages) || \
             (echo "❌ 清华源安装失败，尝试官方 PyPI..."; \
-             pip config set global.index-url https://pypi.org/simple/ && \
-             pip config unset global.trusted-host && \
-             PYCURL_SSL_LIBRARY=openssl pip install --no-cache-dir --no-binary=:all: pycurl); \
+             pip3 config set global.index-url https://pypi.org/simple/ && \
+             pip3 config unset global.trusted-host && \
+             PYCURL_SSL_LIBRARY=openssl pip3 install --no-cache-dir --no-binary=:all: pycurl --break-system-packages); \
     fi; \
     \
-    # 步骤7: 安装 configurable-http-proxy
-    npm install -g configurable-http-proxy; \
-    \
-    # 步骤8: 清理构建依赖
-    apk del .build-deps
+    # 步骤5: 安装 configurable-http-proxy（带多重降级和重试）
+    echo "📦 安装 configurable-http-proxy..."; \
+    npm install -g configurable-http-proxy || \
+        (echo "❌ npmmirror 安装失败，尝试淘宝源..."; \
+         npm config set registry "https://registry.npm.taobao.org"; \
+         npm install -g configurable-http-proxy) || \
+        (echo "❌ 淘宝源失败，尝试官方 npmjs..."; \
+         npm config set registry "https://registry.npmjs.org"; \
+         npm install -g configurable-http-proxy); \
+    echo "✓ configurable-http-proxy 安装完成"; \
+    configurable-http-proxy --version || echo "版本检查跳过"
 
 # 用户和目录
-RUN adduser -D -s /bin/bash admin && \
-    adduser -D -s /bin/bash testuser && \
+RUN useradd -m -s /bin/bash admin && \
+    useradd -m -s /bin/bash testuser && \
     mkdir -p /var/log/jupyterhub
 
 # 配置时间戳（强制重建配置层）
 RUN echo "Build: $(date '+%Y-%m-%d %H:%M:%S')" > /srv/jupyterhub/build_info.txt
 
 # 配置文件（最后复制，优化缓存）
-COPY jupyterhub_config.py backend_integrated_config.py simple_config.py kubernetes_spawner_config.py ./
+COPY src/jupyterhub/jupyterhub_config.py src/jupyterhub/backend_integrated_config.py src/jupyterhub/simple_config.py src/jupyterhub/kubernetes_spawner_config.py ./
 
 # 创建数据库等待脚本（简化版，只检查连接性）
 RUN echo '#!/bin/bash' > /wait-for-db.sh && \

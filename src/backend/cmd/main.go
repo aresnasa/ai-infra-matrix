@@ -18,6 +18,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/middleware"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -137,6 +138,12 @@ func main() {
 
 	// 记录日志级别设置
 	logrus.WithField("log_level", level.String()).Info("Log level configured")
+
+	// 初始化加密服务
+	if err := utils.InitEncryptionService(cfg.EncryptionKey); err != nil {
+		logrus.WithError(err).Fatal("Failed to initialize encryption service")
+	}
+	logrus.Info("Encryption service initialized successfully")
 
 	// 连接数据库
 	if err := database.Connect(cfg); err != nil {
@@ -347,6 +354,10 @@ func main() {
 	// 设置 API 路由
 	setupAPIRoutes(r, cfg, jobService, sshService)
 
+	// 启动节点指标同步服务（定期使用 Salt 命令采集 CPU/内存等指标）
+	services.StartNodeMetricsSync()
+	logrus.Info("NodeMetricsSync service started")
+
 	// 优雅关闭
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -354,6 +365,10 @@ func main() {
 	go func() {
 		<-c
 		logrus.Info("Shutting down server...")
+
+		// 停止节点指标同步服务
+		services.StopNodeMetricsSync()
+		logrus.Info("NodeMetricsSync service stopped")
 
 		// 关闭AI网关服务
 		if err := services.ShutdownAIGateway(); err != nil {
@@ -444,7 +459,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		auth.GET("/profile", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
-		auth.PUT("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
+		auth.POST("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
 		// JupyterHub单点登录令牌生成
 		auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
 		// JWT令牌验证（用于JupyterHub认证器）
@@ -483,7 +498,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	{
 		users.GET("", userHandler.GetUsers)
 		users.DELETE("/:id", userHandler.DeleteUser)
-		users.PUT("/:id/reset-password", userHandler.AdminResetPassword)
+		users.POST("/:id/reset-password", userHandler.AdminResetPassword)
 		users.PUT("/:id/role-template", userHandler.AdminUpdateRoleTemplate)
 		users.PUT("/:id/groups", userHandler.AdminUpdateUserGroups)
 		users.PUT("/:id/status", userHandler.ToggleUserStatus)
@@ -625,6 +640,18 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		// 角色分配
 		rbac.POST("/assign-role", rbacController.AssignRole)
 		rbac.DELETE("/revoke-role", rbacController.RevokeRole)
+
+		// 角色模板管理
+		rbac.GET("/role-templates", rbacController.ListRoleTemplates)
+		rbac.GET("/role-templates/:id", rbacController.GetRoleTemplate)
+		rbac.POST("/role-templates", rbacController.CreateRoleTemplate)
+		rbac.PUT("/role-templates/:id", rbacController.UpdateRoleTemplate)
+		rbac.DELETE("/role-templates/:id", rbacController.DeleteRoleTemplate)
+		rbac.POST("/role-templates/sync", rbacController.SyncRoleTemplates)
+
+		// 资源和操作列表（用于前端配置）
+		rbac.GET("/resources", rbacController.GetAvailableResources)
+		rbac.GET("/verbs", rbacController.GetAvailableVerbs)
 	}
 
 	// 管理员路由（需要管理员权限）
@@ -1023,6 +1050,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	saltStackClientController := controllers.NewSaltStackClientController()
 	saltStackClientController.RegisterRoutes(api)
 
+	// Salt Master 公钥安全分发路由（部分端点无需认证，使用一次性令牌）
+	saltKeyHandler := handlers.NewSaltKeyHandler()
+	saltKeyHandler.RegisterRoutes(api)
+
 	// SLURM 集群管理路由（需要认证）
 	slurmClusterController := controllers.NewSlurmClusterController(database.GetSlurmDB())
 	slurmClusterController.RegisterRoutes(api)
@@ -1050,11 +1081,17 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 	// SaltStack 管理路由（需要认证）
 	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
+
+	// 节点指标回调 API（使用 API Token 认证，允许节点直接上报）
+	// 这个路由不使用 session 认证，而是使用 X-API-Token 头进行认证
+	api.POST("/saltstack/node-metrics/callback", saltStackHandler.NodeMetricsCallback)
+
 	saltstack := api.Group("/saltstack")
 	saltstack.Use(middleware.AuthMiddlewareWithSession())
 	{
 		saltstack.GET("/status", saltStackHandler.GetSaltStackStatus)
 		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
+		saltstack.GET("/minions/:minionId/details", saltStackHandler.GetMinionDetails)
 		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
 		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
 		// 自定义脚本执行（异步）+ 进度
@@ -1063,6 +1100,28 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/progress/:opId/stream", saltStackHandler.StreamProgress)
 		// 连接性调试端点（仅限已登录用户调用，用于排查Salt API问题）
 		saltstack.GET("/_debug", saltStackHandler.DebugSaltConnectivity)
+
+		// Minion 分组管理
+		saltstack.GET("/groups", saltStackHandler.ListMinionGroups)
+		saltstack.POST("/groups", saltStackHandler.CreateMinionGroup)
+		saltstack.PUT("/groups/:id", saltStackHandler.UpdateMinionGroup)
+		saltstack.DELETE("/groups/:id", saltStackHandler.DeleteMinionGroup)
+		saltstack.GET("/groups/:id/minions", saltStackHandler.GetGroupMinions)
+		saltstack.POST("/minions/set-group", saltStackHandler.SetMinionGroup)
+		saltstack.POST("/minions/batch-set-groups", saltStackHandler.BatchSetMinionGroups)
+		// 批量为 Minion 安装 Categraf
+		saltstack.POST("/minions/install-categraf", saltStackHandler.InstallCategrafOnMinions)
+		saltstack.GET("/minions/install-categraf/:task_id/stream", saltStackHandler.CategrafInstallStream)
+		// 节点指标采集（管理接口需要认证，回调接口在上面单独注册无需认证）
+		saltstack.GET("/node-metrics", saltStackHandler.GetNodeMetrics)
+		saltstack.GET("/node-metrics/summary", saltStackHandler.GetNodeMetricsSummary)
+		saltstack.POST("/node-metrics/deploy", saltStackHandler.DeployNodeMetricsState)
+		saltstack.POST("/node-metrics/trigger", saltStackHandler.TriggerMetricsCollection)
+		// IB 端口忽略管理和告警
+		saltstack.GET("/ib-ignores", saltStackHandler.GetIBPortIgnores)
+		saltstack.POST("/ib-ignores", saltStackHandler.AddIBPortIgnore)
+		saltstack.DELETE("/ib-ignores/:minion_id/:port_name", saltStackHandler.RemoveIBPortIgnore)
+		saltstack.GET("/ib-alerts", saltStackHandler.GetIBPortAlerts)
 	}
 
 	// 仪表板统计路由（需要认证）
@@ -1152,9 +1211,6 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// 统计信息
 		objectStorage.GET("/configs/:id/statistics", objectStorageController.GetStatistics)
-
-		// MinIO Console 代理登录（为iframe设置同源Cookie）
-		objectStorage.POST("/minio/console/proxy-login", controllers.MinIOConsoleProxyLogin)
 	}
 
 	// 导航配置管理路由（需要认证）
@@ -1166,5 +1222,40 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		navigation.POST("/config", navigationController.SaveNavigationConfig)
 		navigation.DELETE("/config", navigationController.ResetNavigationConfig)
 		navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
+	}
+
+	// KeyVault 密钥保管库路由
+	keyVaultHandler := handlers.NewKeyVaultHandler()
+	// 自动迁移 KeyVault 数据库表
+	if err := keyVaultHandler.AutoMigrate(); err != nil {
+		log.Printf("Warning: Failed to migrate KeyVault tables: %v", err)
+	}
+
+	keyvault := api.Group("/keyvault")
+	{
+		// 公开端点：健康检查
+		keyvault.GET("/health", keyVaultHandler.HealthCheck)
+
+		// 同步端点：使用一次性令牌，不需要 JWT（令牌本身包含鉴权信息）
+		keyvault.POST("/sync", keyVaultHandler.SyncKey)
+		keyvault.POST("/sync/batch", keyVaultHandler.SyncMultipleKeys)
+		keyvault.POST("/sync/store", keyVaultHandler.StoreKeyWithToken)
+
+		// 需要 JWT 认证的端点
+		keyvaultAuth := keyvault.Group("")
+		keyvaultAuth.Use(middleware.AuthMiddlewareWithSession())
+		{
+			// 生成同步令牌
+			keyvaultAuth.POST("/sync-token", keyVaultHandler.GenerateSyncToken)
+
+			// 密钥管理（需要认证）
+			keyvaultAuth.GET("/keys", keyVaultHandler.ListKeys)
+			keyvaultAuth.GET("/keys/:name", keyVaultHandler.GetKey)
+			keyvaultAuth.POST("/keys", keyVaultHandler.StoreKey)
+			keyvaultAuth.DELETE("/keys/:name", keyVaultHandler.DeleteKey)
+
+			// 访问日志（需要认证）
+			keyvaultAuth.GET("/logs", keyVaultHandler.GetAccessLogs)
+		}
 	}
 }

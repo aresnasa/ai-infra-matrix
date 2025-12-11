@@ -42,6 +42,7 @@ import {
   BugOutlined,
 } from '@ant-design/icons';
 import { ansibleAPI, kubernetesAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -51,6 +52,7 @@ const { Step } = Steps;
 const { Panel } = Collapse;
 
 const AnsibleManagement = () => {
+  const { t } = useI18n();
   const [playbooks, setPlaybooks] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [tplModalOpen, setTplModalOpen] = useState(false);
@@ -85,7 +87,7 @@ const AnsibleManagement = () => {
       setPlaybooks([]);
       // 只在不是"功能暂未实现"的情况下显示错误信息
       if (!error.message.includes('功能暂未实现')) {
-        message.error('获取Playbook列表失败: ' + error.message);
+        message.error(t('ansible.fetchFailed') + ': ' + error.message);
       }
     } finally {
       setLoading(false);
@@ -121,15 +123,15 @@ const AnsibleManagement = () => {
         const defaults = [
           {
             id: 'init-k8s-control-plane',
-            name: '初始化K8s控制平面(kubeadm)',
-            description: '在目标主机上初始化Kubernetes控制平面',
+            name: t('ansible.initK8sControlPlane'),
+            description: t('ansible.initK8sControlPlaneDesc'),
             content: '# kubeadm init playbook placeholder',
             variables: { pod_network_cidr: '10.244.0.0/16' }
           },
           {
             id: 'join-k8s-worker',
-            name: '加入K8s工作节点(kubeadm join)',
-            description: '将工作节点加入现有集群',
+            name: t('ansible.joinK8sWorker'),
+            description: t('ansible.joinK8sWorkerDesc'),
             content: '# kubeadm join playbook placeholder',
             variables: { control_plane_ip: '10.0.0.10' }
           }
@@ -150,17 +152,17 @@ const AnsibleManagement = () => {
     try {
       if (editingPlaybook) {
         await ansibleAPI.updatePlaybook(editingPlaybook.id, values);
-        message.success('Playbook更新成功');
+        message.success(t('ansible.updateSuccess'));
       } else {
         await ansibleAPI.createPlaybook(values);
-        message.success('Playbook添加成功');
+        message.success(t('ansible.addSuccess'));
       }
       setModalVisible(false);
       setEditingPlaybook(null);
       form.resetFields();
       fetchPlaybooks();
     } catch (error) {
-      message.error(editingPlaybook ? '更新失败: ' : '添加失败: ' + error.message);
+      message.error((editingPlaybook ? t('ansible.updateFailed') : t('ansible.addFailed')) + ': ' + error.message);
     }
   };
 
@@ -168,10 +170,10 @@ const AnsibleManagement = () => {
   const handleDelete = async (id) => {
     try {
       await ansibleAPI.deletePlaybook(id);
-      message.success('Playbook删除成功');
+      message.success(t('ansible.deleteSuccess'));
       fetchPlaybooks();
     } catch (error) {
-      message.error('删除失败: ' + error.message);
+      message.error(t('common.deleteFailed') + ': ' + error.message);
     }
   };
 
@@ -203,7 +205,7 @@ const AnsibleManagement = () => {
         success: true,
         data: response.data,
       });
-      message.success('Playbook执行成功');
+      message.success(t('ansible.executeSuccess'));
       
       // 刷新执行历史
       const historyResponse = await ansibleAPI.getExecutionHistory(selectedPlaybook.id);
@@ -213,7 +215,7 @@ const AnsibleManagement = () => {
         success: false,
         error: error.response?.data?.message || error.message,
       });
-      message.error('Playbook执行失败');
+      message.error(t('ansible.executeFailed'));
     } finally {
       setExecuteLoading(false);
     }
@@ -245,16 +247,16 @@ const AnsibleManagement = () => {
       if (tplEditing?.id) {
         try { await ansibleAPI.updateTemplate(tplEditing.id, normalized); await initTemplates(); }
         catch { const list = templates.map(t => t.id === tplEditing.id ? { ...t, ...normalized } : t); saveTemplatesLocal(list); }
-        message.success('模板已更新');
+        message.success(t('ansible.templateUpdated'));
       } else {
         try { await ansibleAPI.createTemplate(normalized); await initTemplates(); }
         catch { const id = `tpl-${Date.now()}`; const list = [...templates, { id, ...normalized }]; saveTemplatesLocal(list); }
-        message.success('模板已创建');
+        message.success(t('ansible.templateCreated'));
       }
       setTplModalOpen(false);
       setTplEditing(null);
     } catch (e) {
-      message.error('保存模板失败: ' + e.message);
+      message.error(t('ansible.templateSaveFailed') + ': ' + e.message);
     }
   };
 
@@ -262,9 +264,9 @@ const AnsibleManagement = () => {
     try {
       try { await ansibleAPI.deleteTemplate(tpl.id); await initTemplates(); }
       catch { saveTemplatesLocal(templates.filter(t => t.id !== tpl.id)); }
-      message.success('模板已删除');
+      message.success(t('ansible.templateDeleted'));
     } catch (e) {
-      message.error('删除失败: ' + e.message);
+      message.error(t('common.deleteFailed') + ': ' + e.message);
     }
   };
 
@@ -283,9 +285,9 @@ const AnsibleManagement = () => {
       const response = await ansibleAPI.generatePlaybook(values);
       setGeneratedPlaybook(response.data.data);
       setCurrentStep(1);
-      message.success('Playbook生成成功');
+      message.success(t('ansible.generateSuccess'));
     } catch (error) {
-      message.error('生成失败: ' + error.message);
+      message.error(t('ansible.generateFailed') + ': ' + error.message);
     } finally {
       setGenerateLoading(false);
     }
@@ -304,13 +306,13 @@ const AnsibleManagement = () => {
       };
       
       await ansibleAPI.createPlaybook(playbookData);
-      message.success('Playbook保存成功');
+      message.success(t('ansible.saveSuccess'));
       setGenerateModalVisible(false);
       setGeneratedPlaybook(null);
       setCurrentStep(0);
       fetchPlaybooks();
     } catch (error) {
-      message.error('保存失败: ' + error.message);
+      message.error(t('ansible.saveFailed') + ': ' + error.message);
     }
   };
 
@@ -329,10 +331,10 @@ const AnsibleManagement = () => {
   // 状态标签
   const getStatusTag = (status) => {
     const statusMap = {
-      success: { color: 'green', icon: <CheckCircleOutlined />, text: '成功' },
-      failed: { color: 'red', icon: <CloseCircleOutlined />, text: '失败' },
-      running: { color: 'blue', icon: <InfoCircleOutlined />, text: '运行中' },
-      pending: { color: 'orange', icon: <InfoCircleOutlined />, text: '等待中' },
+      success: { color: 'green', icon: <CheckCircleOutlined />, text: t('common.success') },
+      failed: { color: 'red', icon: <CloseCircleOutlined />, text: t('common.failed') },
+      running: { color: 'blue', icon: <InfoCircleOutlined />, text: t('ansible.running') },
+      pending: { color: 'orange', icon: <InfoCircleOutlined />, text: t('ansible.pending') },
     };
     const statusInfo = statusMap[status] || statusMap.pending;
     return (
@@ -345,7 +347,7 @@ const AnsibleManagement = () => {
   // 表格列定义
   const columns = [
     {
-      title: 'Playbook名称',
+      title: t('ansible.playbookName'),
       dataIndex: 'name',
       key: 'name',
       render: (text, record) => (
@@ -356,7 +358,7 @@ const AnsibleManagement = () => {
       ),
     },
     {
-      title: '目标主机',
+      title: t('ansible.targetHosts'),
       dataIndex: 'target_hosts',
       key: 'target_hosts',
       render: (hosts) => (
@@ -364,7 +366,7 @@ const AnsibleManagement = () => {
       ),
     },
     {
-      title: '关联集群',
+      title: t('ansible.associatedCluster'),
       dataIndex: 'cluster_id',
       key: 'cluster_id',
       render: (clusterId) => {
@@ -377,36 +379,36 @@ const AnsibleManagement = () => {
       },
     },
     {
-      title: '状态',
+      title: t('ansible.status'),
       dataIndex: 'status',
       key: 'status',
       render: (status) => getStatusTag(status),
     },
     {
-      title: '最后执行',
+      title: t('ansible.lastExecuted'),
       dataIndex: 'last_executed',
       key: 'last_executed',
-      render: (time) => time ? new Date(time).toLocaleString() : '从未执行',
+      render: (time) => time ? new Date(time).toLocaleString() : t('ansible.neverExecuted'),
     },
     {
-      title: '描述',
+      title: t('ansible.description'),
       dataIndex: 'description',
       key: 'description',
       ellipsis: true,
     },
     {
-      title: '创建时间',
+      title: t('ansible.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       render: (time) => time ? new Date(time).toLocaleString() : '-',
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 250,
       render: (_, record) => (
         <Space>
-          <Tooltip title="执行">
+          <Tooltip title={t('ansible.execute')}>
             <Button
               type="primary"
               size="small"
@@ -414,14 +416,14 @@ const AnsibleManagement = () => {
               onClick={() => handleExecute(record)}
             />
           </Tooltip>
-          <Tooltip title="编辑">
+          <Tooltip title={t('common.edit')}>
             <Button
               size="small"
               icon={<EditOutlined />}
               onClick={() => handleEdit(record)}
             />
           </Tooltip>
-          <Tooltip title="历史">
+          <Tooltip title={t('ansible.history')}>
             <Button
               size="small"
               icon={<HistoryOutlined />}
@@ -429,12 +431,12 @@ const AnsibleManagement = () => {
             />
           </Tooltip>
           <Popconfirm
-            title="确定要删除此Playbook吗？"
+            title={t('ansible.confirmDelete')}
             onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
           >
-            <Tooltip title="删除">
+            <Tooltip title={t('common.delete')}>
               <Button
                 size="small"
                 danger
@@ -453,7 +455,7 @@ const AnsibleManagement = () => {
         <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
           <Col>
             <Title level={2} style={{ margin: 0 }}>
-              <CodeOutlined /> Ansible Playbook 管理
+              <CodeOutlined /> {t('ansible.title')}
             </Title>
           </Col>
           <Col>
@@ -463,16 +465,16 @@ const AnsibleManagement = () => {
                 onClick={fetchPlaybooks}
                 loading={loading}
               >
-                刷新
+                {t('common.refresh')}
               </Button>
               <Button onClick={() => openTplModal()}>
-                新建模板
+                {t('ansible.newTemplate')}
               </Button>
               <Button
                 icon={<BugOutlined />}
                 onClick={handleGenerate}
               >
-                智能生成
+                {t('ansible.smartGenerate')}
               </Button>
               <Button
                 type="primary"
@@ -483,7 +485,7 @@ const AnsibleManagement = () => {
                   setModalVisible(true);
                 }}
               >
-                添加Playbook
+                {t('ansible.addPlaybook')}
               </Button>
             </Space>
           </Col>
@@ -502,9 +504,9 @@ const AnsibleManagement = () => {
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
                     description={
                       <span>
-                        暂无Playbook数据
+                        {t('ansible.noPlaybooks')}
                         <br />
-                        <Text type="secondary">您可以点击"智能生成"或"添加Playbook"开始创建</Text>
+                        <Text type="secondary">{t('ansible.noPlaybooksHint')}</Text>
                       </span>
                     }
                   >
@@ -514,7 +516,7 @@ const AnsibleManagement = () => {
                         icon={<BugOutlined />} 
                         onClick={handleGenerate}
                       >
-                        智能生成
+                        {t('ansible.smartGenerate')}
                       </Button>
                       <Button
                         icon={<PlusOutlined />}
@@ -524,7 +526,7 @@ const AnsibleManagement = () => {
                           setModalVisible(true);
                         }}
                       >
-                        添加Playbook
+                        {t('ansible.addPlaybook')}
                       </Button>
                     </Space>
                   </Empty>
@@ -535,11 +537,11 @@ const AnsibleManagement = () => {
                 pageSize: 10,
                 showSizeChanger: true,
                 showQuickJumper: true,
-                showTotal: (total) => `共 ${total} 个Playbook`,
+                showTotal: (total) => t('ansible.totalPlaybooks', { total }),
               }}
             />
           </Tabs.TabPane>
-          <Tabs.TabPane tab="模板库" key="templates">
+          <Tabs.TabPane tab={t('ansible.templateLibrary')} key="templates">
             <Row gutter={[16,16]}>
               {(templates || []).map(tpl => (
                 <Col xs={24} md={12} lg={8} key={tpl.id}>
@@ -548,9 +550,9 @@ const AnsibleManagement = () => {
                     title={tpl.name}
                     extra={
                       <Space>
-                        <Button size="small" onClick={() => openTplModal(tpl)}>编辑</Button>
-                        <Popconfirm title="确认删除模板？" onConfirm={() => deleteTpl(tpl)}>
-                          <Button size="small" danger>删除</Button>
+                        <Button size="small" onClick={() => openTplModal(tpl)}>{t('common.edit')}</Button>
+                        <Popconfirm title={t('ansible.confirmDeleteTemplate')} onConfirm={() => deleteTpl(tpl)}>
+                          <Button size="small" danger>{t('common.delete')}</Button>
                         </Popconfirm>
                       </Space>
                     }
@@ -569,7 +571,7 @@ const AnsibleManagement = () => {
                           variables: JSON.stringify(tpl.variables || {}, null, 2),
                         });
                         setModalVisible(true);
-                      }}>从模板创建</Button>
+                      }}>{t('ansible.createFromTemplate')}</Button>
                     </Space>
                   </Card>
                 </Col>
@@ -581,7 +583,7 @@ const AnsibleManagement = () => {
 
       {/* 添加/编辑Playbook模态框 */}
       <Modal
-        title={editingPlaybook ? '编辑Playbook' : '添加Playbook'}
+        title={editingPlaybook ? t('ansible.editPlaybook') : t('ansible.addPlaybook')}
         open={modalVisible}
         onCancel={() => {
           setModalVisible(false);
@@ -590,8 +592,8 @@ const AnsibleManagement = () => {
         }}
         onOk={() => form.submit()}
         width={900}
-        okText="确定"
-        cancelText="取消"
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       >
         <Form
           form={form}
@@ -602,18 +604,18 @@ const AnsibleManagement = () => {
             <Col span={12}>
               <Form.Item
                 name="name"
-                label="Playbook名称"
-                rules={[{ required: true, message: '请输入Playbook名称' }]}
+                label={t('ansible.playbookName')}
+                rules={[{ required: true, message: t('ansible.pleaseInputPlaybookName') }]}
               >
-                <Input placeholder="输入Playbook名称" />
+                <Input placeholder={t('ansible.inputPlaybookName')} />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item
                 name="cluster_id"
-                label="关联集群"
+                label={t('ansible.associatedCluster')}
               >
-                <Select placeholder="选择关联的Kubernetes集群" allowClear>
+                <Select placeholder={t('ansible.selectCluster')} allowClear>
                   {(clusters || []).map(cluster => (
                     <Option key={cluster.id} value={cluster.id}>
                       {cluster.name}
@@ -626,28 +628,28 @@ const AnsibleManagement = () => {
 
           <Form.Item
             name="target_hosts"
-            label="目标主机"
-            tooltip="Ansible inventory中的主机组或主机名，默认为all"
+            label={t('ansible.targetHosts')}
+            tooltip={t('ansible.targetHostsTooltip')}
           >
             <Input placeholder="all" />
           </Form.Item>
 
           <Form.Item
             name="content"
-            label="Playbook内容"
-            rules={[{ required: true, message: '请输入Playbook内容' }]}
+            label={t('ansible.playbookContent')}
+            rules={[{ required: true, message: t('ansible.pleaseInputPlaybookContent') }]}
           >
             <TextArea
               rows={12}
-              placeholder="输入YAML格式的Ansible Playbook内容..."
+              placeholder={t('ansible.inputPlaybookContentPlaceholder')}
               style={{ fontFamily: 'monospace' }}
             />
           </Form.Item>
 
           <Form.Item
             name="variables"
-            label="变量配置"
-            tooltip="JSON格式的变量配置"
+            label={t('ansible.variablesConfig')}
+            tooltip={t('ansible.variablesConfigTooltip')}
           >
             <TextArea
               rows={4}
@@ -658,11 +660,11 @@ const AnsibleManagement = () => {
 
           <Form.Item
             name="description"
-            label="描述"
+            label={t('ansible.description')}
           >
             <TextArea
               rows={2}
-              placeholder="Playbook描述（可选）"
+              placeholder={t('ansible.descriptionOptional')}
             />
           </Form.Item>
         </Form>
@@ -670,7 +672,7 @@ const AnsibleManagement = () => {
 
       {/* 执行Playbook模态框 */}
       <Modal
-        title="执行Playbook"
+        title={t('ansible.executePlaybook')}
         open={executeModalVisible}
         onCancel={() => {
           setExecuteModalVisible(false);
@@ -681,14 +683,14 @@ const AnsibleManagement = () => {
       >
         {selectedPlaybook && (
           <Tabs defaultActiveKey="execute">
-            <TabPane tab="执行" key="execute">
+            <TabPane tab={t('ansible.execute')} key="execute">
               <Form
                 form={executeForm}
                 layout="vertical"
                 onFinish={executePlaybook}
               >
                 <Alert
-                  message={`即将执行: ${selectedPlaybook.name}`}
+                  message={`${t('ansible.aboutToExecute')}: ${selectedPlaybook.name}`}
                   type="info"
                   showIcon
                   style={{ marginBottom: 16 }}
@@ -696,19 +698,19 @@ const AnsibleManagement = () => {
 
                 <Form.Item
                   name="inventory"
-                  label="Inventory配置"
-                  tooltip="指定目标主机的inventory配置"
+                  label={t('ansible.inventoryConfig')}
+                  tooltip={t('ansible.inventoryConfigTooltip')}
                 >
                   <TextArea
                     rows={4}
-                    placeholder="输入inventory配置或使用默认配置"
+                    placeholder={t('ansible.inputInventoryPlaceholder')}
                   />
                 </Form.Item>
 
                 <Form.Item
                   name="extra_vars"
-                  label="额外变量"
-                  tooltip="运行时传递的额外变量，JSON格式"
+                  label={t('ansible.extraVars')}
+                  tooltip={t('ansible.extraVarsTooltip')}
                 >
                   <TextArea
                     rows={3}
@@ -719,8 +721,8 @@ const AnsibleManagement = () => {
 
                 <Form.Item
                   name="tags"
-                  label="执行标签"
-                  tooltip="只执行指定标签的任务"
+                  label={t('ansible.executionTags')}
+                  tooltip={t('ansible.executionTagsTooltip')}
                 >
                   <Input placeholder="tag1,tag2" />
                 </Form.Item>
@@ -735,7 +737,7 @@ const AnsibleManagement = () => {
                       size="large"
                       block
                     >
-                      开始执行
+                      {t('ansible.startExecution')}
                     </Button>
                   </Col>
                 </Row>
@@ -746,9 +748,9 @@ const AnsibleManagement = () => {
                   <Divider />
                   {executeResult.success ? (
                     <div>
-                      <Badge status="success" text="执行成功" />
+                      <Badge status="success" text={t('ansible.executeSuccess')} />
                       <div style={{ marginTop: 16, padding: 16, backgroundColor: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4 }}>
-                        <Text strong>执行结果:</Text>
+                        <Text strong>{t('ansible.executionResult')}:</Text>
                         <pre style={{ marginTop: 8, fontSize: 12, maxHeight: 300, overflow: 'auto' }}>
                           {JSON.stringify(executeResult.data, null, 2)}
                         </pre>
@@ -756,9 +758,9 @@ const AnsibleManagement = () => {
                     </div>
                   ) : (
                     <div>
-                      <Badge status="error" text="执行失败" />
+                      <Badge status="error" text={t('ansible.executeFailed')} />
                       <div style={{ marginTop: 16, padding: 16, backgroundColor: '#fff2f0', border: '1px solid #ffccc7', borderRadius: 4 }}>
-                        <Text strong>错误信息:</Text>
+                        <Text strong>{t('ansible.errorInfo')}:</Text>
                         <pre style={{ marginTop: 8, fontSize: 12, color: '#ff4d4f', maxHeight: 300, overflow: 'auto' }}>
                           {executeResult.error}
                         </pre>
@@ -769,7 +771,7 @@ const AnsibleManagement = () => {
               )}
             </TabPane>
 
-            <TabPane tab="执行历史" key="history">
+            <TabPane tab={t('ansible.executionHistory')} key="history">
               <Table
                 dataSource={executionHistory}
                 rowKey="id"
@@ -777,21 +779,21 @@ const AnsibleManagement = () => {
                 pagination={false}
                 columns={[
                   {
-                    title: '执行时间',
+                    title: t('ansible.executedAt'),
                     dataIndex: 'executed_at',
                     render: (time) => new Date(time).toLocaleString(),
                   },
                   {
-                    title: '状态',
+                    title: t('ansible.status'),
                     dataIndex: 'status',
                     render: (status) => getStatusTag(status),
                   },
                   {
-                    title: '执行者',
+                    title: t('ansible.executor'),
                     dataIndex: 'executor',
                   },
                   {
-                    title: '耗时',
+                    title: t('ansible.duration'),
                     dataIndex: 'duration',
                     render: (duration) => duration ? `${duration}s` : '-',
                   },
@@ -804,38 +806,38 @@ const AnsibleManagement = () => {
 
       {/* 模板编辑/新增 */}
       <Modal
-        title={tplEditing ? '编辑模板' : '新建模板'}
+        title={tplEditing ? t('ansible.editTemplate') : t('ansible.newTemplate')}
         open={tplModalOpen}
         onCancel={() => { setTplModalOpen(false); setTplEditing(null); tplForm.resetFields(); }}
         onOk={() => tplForm.submit()}
         width={900}
-        okText="保存"
+        okText={t('common.save')}
       >
         <Form form={tplForm} layout="vertical" onFinish={submitTpl}>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="name" label="模板名称" rules={[{ required: true, message: '请输入模板名称' }]}>
-                <Input placeholder="如：初始化K8s控制平面" />
+              <Form.Item name="name" label={t('ansible.templateName')} rules={[{ required: true, message: t('ansible.pleaseInputTemplateName') }]}>
+                <Input placeholder={t('ansible.templateNamePlaceholder')} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="description" label="描述">
-                <Input placeholder="模板用途说明" />
+              <Form.Item name="description" label={t('ansible.description')}>
+                <Input placeholder={t('ansible.templateDescriptionPlaceholder')} />
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="variables" label="默认变量(JSON或YAML字符串)" tooltip="可粘贴JSON；YAML也可，前端会尝试按JSON解析失败则原样保存">
+          <Form.Item name="variables" label={t('ansible.defaultVariables')} tooltip={t('ansible.defaultVariablesTooltip')}>
             <TextArea rows={6} placeholder='{"pod_network_cidr":"10.244.0.0/16"}' />
           </Form.Item>
-          <Form.Item name="content" label="Playbook内容" rules={[{ required: true, message: '请输入Playbook内容' }]}>
-            <TextArea rows={12} placeholder="# 在此粘贴Ansible Playbook YAML内容" />
+          <Form.Item name="content" label={t('ansible.playbookContent')} rules={[{ required: true, message: t('ansible.pleaseInputPlaybookContent') }]}>
+            <TextArea rows={12} placeholder={t('ansible.pastePlaybookYaml')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 智能生成Playbook模态框 */}
       <Modal
-        title="智能生成Playbook"
+        title={t('ansible.smartGeneratePlaybook')}
         open={generateModalVisible}
         onCancel={() => {
           setGenerateModalVisible(false);
@@ -846,9 +848,9 @@ const AnsibleManagement = () => {
         width={1000}
       >
         <Steps current={currentStep} style={{ marginBottom: 24 }}>
-          <Step title="配置需求" icon={<SettingOutlined />} />
-          <Step title="生成结果" icon={<CodeOutlined />} />
-          <Step title="保存Playbook" icon={<FileTextOutlined />} />
+          <Step title={t('ansible.configRequirements')} icon={<SettingOutlined />} />
+          <Step title={t('ansible.generateResult')} icon={<CodeOutlined />} />
+          <Step title={t('ansible.savePlaybook')} icon={<FileTextOutlined />} />
         </Steps>
 
         {currentStep === 0 && (
@@ -858,7 +860,7 @@ const AnsibleManagement = () => {
             onFinish={generatePlaybook}
           >
             <Alert
-              message="描述您希望Ansible Playbook执行的任务，AI将为您生成相应的配置"
+              message={t('ansible.smartGenerateHint')}
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
@@ -866,12 +868,12 @@ const AnsibleManagement = () => {
 
             <Form.Item
               name="task_description"
-              label="任务描述"
-              rules={[{ required: true, message: '请描述您要执行的任务' }]}
+              label={t('ansible.taskDescription')}
+              rules={[{ required: true, message: t('ansible.pleaseDescribeTask') }]}
             >
               <TextArea
                 rows={4}
-                placeholder="例如：在Kubernetes集群上部署Nginx应用，配置负载均衡和存储..."
+                placeholder={t('ansible.taskDescriptionPlaceholder')}
               />
             </Form.Item>
 
@@ -879,9 +881,9 @@ const AnsibleManagement = () => {
               <Col span={12}>
                 <Form.Item
                   name="target_cluster"
-                  label="目标集群"
+                  label={t('ansible.targetCluster')}
                 >
-                  <Select placeholder="选择目标Kubernetes集群">
+                  <Select placeholder={t('ansible.selectTargetCluster')}>
                     {(clusters || []).map(cluster => (
                       <Option key={cluster.id} value={cluster.id}>
                         {cluster.name}
@@ -893,14 +895,14 @@ const AnsibleManagement = () => {
               <Col span={12}>
                 <Form.Item
                   name="application_type"
-                  label="应用类型"
+                  label={t('ansible.applicationType')}
                 >
-                  <Select placeholder="选择应用类型">
-                    <Option value="web">Web应用</Option>
-                    <Option value="database">数据库</Option>
-                    <Option value="microservice">微服务</Option>
-                    <Option value="monitoring">监控工具</Option>
-                    <Option value="other">其他</Option>
+                  <Select placeholder={t('ansible.selectAppType')}>
+                    <Option value="web">{t('ansible.appTypeWeb')}</Option>
+                    <Option value="database">{t('ansible.appTypeDatabase')}</Option>
+                    <Option value="microservice">{t('ansible.appTypeMicroservice')}</Option>
+                    <Option value="monitoring">{t('ansible.appTypeMonitoring')}</Option>
+                    <Option value="other">{t('ansible.appTypeOther')}</Option>
                   </Select>
                 </Form.Item>
               </Col>
@@ -908,11 +910,11 @@ const AnsibleManagement = () => {
 
             <Form.Item
               name="requirements"
-              label="特殊要求"
+              label={t('ansible.specialRequirements')}
             >
               <TextArea
                 rows={3}
-                placeholder="例如：需要持久化存储、高可用部署、特定的网络配置等..."
+                placeholder={t('ansible.specialRequirementsPlaceholder')}
               />
             </Form.Item>
 
@@ -924,7 +926,7 @@ const AnsibleManagement = () => {
               size="large"
               block
             >
-              生成Playbook
+              {t('ansible.generatePlaybook')}
             </Button>
           </Form>
         )}
@@ -932,14 +934,14 @@ const AnsibleManagement = () => {
         {currentStep === 1 && generatedPlaybook && (
           <div>
             <Alert
-              message="Playbook生成成功！请检查生成的内容，确认后可以保存"
+              message={t('ansible.generateSuccessCheck')}
               type="success"
               showIcon
               style={{ marginBottom: 16 }}
             />
             
             <Collapse defaultActiveKey={['1']}>
-              <Panel header="生成的Playbook内容" key="1">
+              <Panel header={t('ansible.generatedPlaybookContent')} key="1">
                 <pre style={{ 
                   backgroundColor: '#f5f5f5', 
                   padding: 16, 
@@ -953,7 +955,7 @@ const AnsibleManagement = () => {
                 </pre>
               </Panel>
               {generatedPlaybook.variables && (
-                <Panel header="变量配置" key="2">
+                <Panel header={t('ansible.variablesConfig')} key="2">
                   <pre style={{ 
                     backgroundColor: '#f5f5f5', 
                     padding: 16, 
@@ -970,10 +972,10 @@ const AnsibleManagement = () => {
             <div style={{ marginTop: 16, textAlign: 'right' }}>
               <Space>
                 <Button onClick={() => setCurrentStep(0)}>
-                  重新生成
+                  {t('ansible.regenerate')}
                 </Button>
                 <Button type="primary" onClick={() => setCurrentStep(2)}>
-                  确认并保存
+                  {t('ansible.confirmAndSave')}
                 </Button>
               </Space>
             </div>
@@ -990,15 +992,15 @@ const AnsibleManagement = () => {
           >
             <Form.Item
               name="name"
-              label="Playbook名称"
-              rules={[{ required: true, message: '请输入Playbook名称' }]}
+              label={t('ansible.playbookName')}
+              rules={[{ required: true, message: t('ansible.pleaseInputPlaybookName') }]}
             >
-              <Input placeholder="输入Playbook名称" />
+              <Input placeholder={t('ansible.inputPlaybookName')} />
             </Form.Item>
 
             <Form.Item
               name="target_hosts"
-              label="目标主机"
+              label={t('ansible.targetHosts')}
               initialValue="all"
             >
               <Input placeholder="all" />
@@ -1006,9 +1008,9 @@ const AnsibleManagement = () => {
 
             <Form.Item
               name="cluster_id"
-              label="关联集群"
+              label={t('ansible.associatedCluster')}
             >
-              <Select placeholder="选择关联的Kubernetes集群">
+              <Select placeholder={t('ansible.selectCluster')}>
                 {(clusters || []).map(cluster => (
                   <Option key={cluster.id} value={cluster.id}>
                     {cluster.name}
@@ -1019,16 +1021,16 @@ const AnsibleManagement = () => {
 
             <Form.Item
               name="description"
-              label="描述"
+              label={t('ansible.description')}
             >
               <TextArea
                 rows={2}
-                placeholder="Playbook描述"
+                placeholder={t('ansible.descriptionOptional')}
               />
             </Form.Item>
 
             <Button type="primary" htmlType="submit" size="large" block>
-              保存Playbook
+              {t('ansible.savePlaybook')}
             </Button>
           </Form>
         )}

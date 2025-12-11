@@ -2011,15 +2011,26 @@ func (c *SlurmController) InitializeHosts(ctx *gin.Context) {
 }
 
 // getSaltStackMasterHost 从环境变量读取SaltStack Master主机地址
+// 对于外部节点，必须使用 EXTERNAL_HOST 而不是 Docker 内部服务名
 func getSaltStackMasterHost() string {
-	masterHost := os.Getenv("SALTSTACK_MASTER_HOST")
+	// 优先使用 EXTERNAL_HOST（外部可访问的 IP 地址）
+	// 因为外部节点无法访问 Docker 内部服务名 "saltstack"
+	masterHost := os.Getenv("EXTERNAL_HOST")
 	if masterHost == "" {
-		masterHost = "saltstack" // 默认容器名
+		// 回退到 SALTSTACK_MASTER_HOST
+		masterHost = os.Getenv("SALTSTACK_MASTER_HOST")
+		if masterHost == "" {
+			masterHost = "saltstack" // 最后回退到默认容器名
+		}
 	}
 	return masterHost
 }
 
+// DefaultAppHubPort 默认 AppHub 端口（与 .env 配置保持一致）
+const DefaultAppHubPort = "28080"
+
 // getAppHubBaseURL 组合AppHub基础URL，基于EXTERNAL_HOST/APPHUB_PORT/EXTERNAL_SCHEME
+// 环境变量优先，否则使用默认值
 func getAppHubBaseURL() string {
 	scheme := os.Getenv("EXTERNAL_SCHEME")
 	if scheme == "" {
@@ -2031,8 +2042,8 @@ func getAppHubBaseURL() string {
 	}
 	port := os.Getenv("APPHUB_PORT")
 	if port == "" {
-		// 与build.sh一致：APPHUB_PORT = EXTERNAL_PORT + 45354，缺省时退回常见端口
-		port = "53434"
+		// 使用默认端口（与 .env 中 APPHUB_PORT 配置一致）
+		port = DefaultAppHubPort
 	}
 	return fmt.Sprintf("%s://%s:%s", scheme, host, port)
 }
@@ -2206,9 +2217,19 @@ func (c *SlurmController) InstallPackages(ctx *gin.Context) {
 		EnableSlurmClient: req.EnableSlurmClient,
 	}
 
-	// 设置默认值
-	if installConfig.SaltMasterHost == "" {
-		installConfig.SaltMasterHost = "saltstack" // 默认使用容器名
+	// 设置默认值 - 使用 EXTERNAL_HOST 而不是容器名
+	if installConfig.SaltMasterHost == "" || installConfig.SaltMasterHost == "saltstack" {
+		externalHost := os.Getenv("EXTERNAL_HOST")
+		if externalHost != "" {
+			installConfig.SaltMasterHost = externalHost
+		} else {
+			// 回退到 SALT_MASTER_HOST 或默认值
+			installConfig.SaltMasterHost = os.Getenv("SALT_MASTER_HOST")
+			if installConfig.SaltMasterHost == "" || installConfig.SaltMasterHost == "saltstack" {
+				installConfig.SaltMasterHost = "saltstack" // 最后的回退
+				logrus.Warn("EXTERNAL_HOST not set, using 'saltstack' as master host (may not work for external minions)")
+			}
+		}
 	}
 	if installConfig.SaltMasterPort == 0 {
 		installConfig.SaltMasterPort = 4506

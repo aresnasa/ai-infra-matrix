@@ -1,54 +1,45 @@
 # 全局 ARG 声明（用于多个构建阶段）
-ARG NODE_ALPINE_VERSION=22-alpine
-ARG NGINX_VERSION=stable-alpine-perl
+ARG NODE_IMAGE_VERSION=22-bookworm
+ARG UBUNTU_VERSION=22.04
 
-# 使用Node.js作为基础镜像
-FROM node:${NODE_ALPINE_VERSION} AS build
+# Stage 1: 构建阶段 - 使用 Node.js Debian 镜像
+FROM node:${NODE_IMAGE_VERSION} AS build
 
 # Build arguments for versions
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置Alpine镜像（多镜像源智能回退配置 - 优化版）
+# 配置 APT 镜像源（Debian bookworm）
 RUN set -eux; \
-    # 备份原始repositories文件
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    # 获取Alpine版本
-    ALPINE_VERSION=$(cat /etc/alpine-release | cut -d'.' -f1,2); \
-    echo "Detected Alpine version: ${ALPINE_VERSION}"; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        sed -i "s#https\?://[^/]\+/alpine#https://${ALPINE_MIRROR}/alpine#g" /etc/apk/repositories && \
-        apk update 2>/dev/null; \
-    else \
-        # 尝试阿里云镜像源（静默失败检测）
-        (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 清华源回退
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 中科大源回退
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
-         apk update 2>/dev/null) || \
-        # 官方源回退（最终方案）
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && apk update); \
-    fi
+    apt-get update || \
+    (sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+     apt-get update)
+
+# 安装时区工具
+RUN apt-get install -y --no-install-recommends tzdata && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
 
 # 复制package.json和package-lock.json
-COPY package*.json ./
+COPY src/frontend/package*.json ./
 
-# 配置npm镜像源
-RUN npm config set registry ${NPM_REGISTRY}
+# 配置npm镜像源（支持多种格式）
+RUN set -eux; \
+    echo "配置 npm 镜像源: ${NPM_REGISTRY}"; \
+    npm config set registry "${NPM_REGISTRY}" || \
+    npm config set registry "https://registry.npmmirror.com" || \
+    npm config set registry "https://registry.npm.taobao.org" || \
+    npm config set registry "https://registry.npmjs.org"; \
+    npm config get registry
 
 # 安装依赖
 RUN npm install --verbose
 
 # 复制源代码
-COPY . .
+COPY src/frontend/ .
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
@@ -62,47 +53,66 @@ ENV APP_VERSION=${VERSION}
 RUN npm run build
 
 # ========================================
-# Stage 2: Production nginx 镜像
+# Stage 2: Production nginx 镜像 (Ubuntu)
 # ========================================
-FROM nginx:${NGINX_VERSION}
+FROM ubuntu:${UBUNTU_VERSION}
 
-# Version metadata (需要在 FROM 之后重新声明ARG，因为跨越了构建阶段)
+# Version metadata
 ARG VERSION="dev"
-ARG ALPINE_MIRROR
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV APP_VERSION=${VERSION}
-
-# 配置Alpine镜像（多镜像源智能回退 - 与build阶段一致）
-RUN set -eux; \
-    cp /etc/apk/repositories /etc/apk/repositories.bak; \
-    if [ -n "${ALPINE_MIRROR}" ]; then \
-        sed -i "s#https\?://[^/]\+/alpine#https://${ALPINE_MIRROR}/alpine#g" /etc/apk/repositories && \
-        apk update 2>/dev/null && apk add --no-cache tzdata; \
-    else \
-        # 尝试阿里云镜像源（静默失败检测）
-        (sed -i "s#https\?://[^/]\+/alpine#https://mirrors.aliyun.com/alpine#g" /etc/apk/repositories && \
-         apk update 2>/dev/null && apk add --no-cache tzdata) || \
-        # 清华源回退
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g" /etc/apk/repositories && \
-         apk update 2>/dev/null && apk add --no-cache tzdata) || \
-        # 中科大源回退
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         sed -i "s#https\?://[^/]\+/alpine#https://mirrors.ustc.edu.cn/alpine#g" /etc/apk/repositories && \
-         apk update 2>/dev/null && apk add --no-cache tzdata) || \
-        # 官方源回退（最终方案）
-        (cp /etc/apk/repositories.bak /etc/apk/repositories && \
-         apk update && apk add --no-cache tzdata) || \
-        echo "tzdata install skipped"; \
-    fi
-
 ENV TZ=Asia/Shanghai
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 配置 APT 镜像源并安装 nginx（支持 x86 和 ARM64 双架构）
+RUN set -eux; \
+    # 备份原始 sources.list
+    cp /etc/apt/sources.list /etc/apt/sources.list.bak 2>/dev/null || true; \
+    # 获取 Ubuntu 版本代号
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    # 检测架构: x86_64 使用 ubuntu, arm64/aarch64 使用 ubuntu-ports
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
+    else \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    echo "Using mirror path: ${UBUNTU_PATH}"; \
+    # 尝试配置镜像源
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        if ! apt-get update 2>/dev/null; then \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        fi; \
+    else \
+        { \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+            echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+            apt-get update; \
+        } || { \
+            cp /etc/apt/sources.list.bak /etc/apt/sources.list 2>/dev/null || true; \
+            apt-get update; \
+        }; \
+    fi; \
+    # 安装 nginx 和必要工具
+    apt-get install -y --no-install-recommends \
+        nginx \
+        tzdata \
+        curl \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # 复制构建的应用到nginx目录
 COPY --from=build /app/build /usr/share/nginx/html
 
 # 复制nginx配置文件
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY src/frontend/nginx.conf /etc/nginx/sites-available/default
 
 # 设置工作目录
 WORKDIR /usr/share/nginx/html

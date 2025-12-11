@@ -2,25 +2,34 @@ ARG UBUNTU_VERSION=22.04
 FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
-ARG SALTSTACK_VERSION=3007.8
+ARG SALTSTACK_VERSION=v3007.8
 ARG PIP_VERSION=24.2
-ARG PIP_INDEX_URL
-ARG APT_MIRROR
-
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
 
-# 配置APT镜像源（阿里云）
+# 配置APT镜像源（支持 x86 和 ARM64 双架构）
 RUN set -eux; \
-    if [ -n "${APT_MIRROR:-}" ]; then \
-        echo "Using custom APT mirror: ${APT_MIRROR}"; \
-        sed -i "s|http://archive.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://security.ubuntu.com/ubuntu/|${APT_MIRROR}|g" /etc/apt/sources.list; \
-        sed -i "s|http://ports.ubuntu.com/ubuntu-ports/|${APT_MIRROR}|g" /etc/apt/sources.list; \
+    ARCH=$(dpkg --print-architecture); \
+    echo "Detected architecture: ${ARCH}"; \
+    if [ "${ARCH}" = "amd64" ]; then \
+        UBUNTU_PATH="ubuntu"; \
     else \
-        sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g; s|ports.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+        UBUNTU_PATH="ubuntu-ports"; \
+    fi; \
+    . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
+    if [ -n "${APT_MIRROR:-}" ]; then \
+        echo "Using custom APT mirror: ${APT_MIRROR}/${UBUNTU_PATH}"; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+    else \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi; \
     apt-get update
 
@@ -60,13 +69,21 @@ RUN set -eux; \
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# 升级pip，解决旧版解析器的依赖冲突问题
-RUN python3 -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}"
+# 配置 PyPI 镜像源并升级pip
+RUN set -eux; \
+    mkdir -p ~/.pip && \
+    echo "[global]" > ~/.pip/pip.conf && \
+    echo "index-url = ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" >> ~/.pip/pip.conf && \
+    echo "trusted-host = mirrors.aliyun.com" >> ~/.pip/pip.conf; \
+    python3 -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}"
 
 # 配置本地化
 RUN locale-gen zh_CN.UTF-8 en_US.UTF-8
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
+
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
 
 # 配置PyPI镜像源与Python警告控制（屏蔽冗余的上游弃用告警）
 ENV PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}" \
@@ -118,13 +135,15 @@ RUN mkdir -p /etc/salt/master.d \
 RUN useradd -m -s /bin/bash saltapi
 
 # 复制配置文件和脚本
-COPY salt-master.conf /etc/salt/master.d/master.conf
-COPY salt-api.conf /etc/salt/master.d/api.conf
-COPY salt-minion.conf /etc/salt/minion.d/minion.conf
-COPY salt-users.conf /etc/salt/master.d/users.conf
-COPY salt-states/ /srv/salt/
-COPY salt-pillar/ /srv/pillar/
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+COPY src/saltstack/salt-master.conf /etc/salt/master.d/master.conf
+COPY src/saltstack/salt-api.conf /etc/salt/master.d/api.conf
+COPY src/saltstack/salt-minion.conf /etc/salt/minion.d/minion.conf
+COPY src/saltstack/salt-users.conf /etc/salt/master.d/users.conf
+# 复制 Salt States 和 Pillar 到备份目录（volume 挂载会覆盖 /srv/salt）
+# entrypoint 会在启动时同步到 /srv/salt 和 /srv/pillar
+COPY src/saltstack/salt-states/ /opt/salt-states-default/
+COPY src/saltstack/salt-pillar/ /opt/salt-pillar-default/
+COPY src/saltstack/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 4505 4506 8002

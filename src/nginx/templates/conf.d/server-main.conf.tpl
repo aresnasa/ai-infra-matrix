@@ -16,13 +16,21 @@ upstream jupyterhub {
     server {{JUPYTERHUB_HOST}}:{{JUPYTERHUB_PORT}};
 }
 
-# MinIO Upstream Definitions
-upstream minio_api {
-    server minio:9000;
+# SeaweedFS Upstream Definitions
+upstream seaweedfs_master {
+    server seaweedfs-master:9333;
 }
 
-upstream minio_console {
-    server minio:9001;
+upstream seaweedfs_volume {
+    server seaweedfs-volume:8080;
+}
+
+upstream seaweedfs_filer {
+    server seaweedfs-filer:8888;
+}
+
+upstream seaweedfs_s3 {
+    server seaweedfs-filer:8333;
 }
 
 upstream nightingale_console {
@@ -89,8 +97,8 @@ server {
     # 按模块拆分：各服务路由在独立文件中，便于单独调试
     include /etc/nginx/conf.d/includes/gitea.conf;
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
-    include /etc/nginx/conf.d/includes/minio.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
+    include /etc/nginx/conf.d/includes/seaweedfs.conf;
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {
@@ -196,7 +204,7 @@ server {
     }
 
     # 轻量级响应头调试端点（可用于验证X-Frame/CSP是否按期望生效）
-    location = /__headers_check/minio-console {
+    location = /__headers_check/seaweedfs-console {
         default_type text/plain;
         add_header X-Frame-Options "SAMEORIGIN" always;
         add_header Content-Security-Policy "frame-ancestors 'self' $external_scheme://$external_host" always;

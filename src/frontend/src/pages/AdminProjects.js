@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, message, Divider, Card, Row, Col } from 'antd';
 import { ProjectOutlined, EditOutlined, DeleteOutlined, UserOutlined, EyeOutlined } from '@ant-design/icons';
 import { adminAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Option } = Select;
 const { TextArea } = Input;
 
 const AdminProjects = () => {
+  const { t } = useI18n();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -39,7 +41,7 @@ const AdminProjects = () => {
         total: response.data.total || 0,
       }));
     } catch (error) {
-      message.error('获取项目列表失败');
+      message.error(t('admin.getProjectsFailed'));
     } finally {
       setLoading(false);
     }
@@ -60,24 +62,24 @@ const AdminProjects = () => {
       const values = await form.validateFields();
       if (editingProject) {
         await adminAPI.updateProjectStatus(editingProject.id, values.status);
-        message.success('项目更新成功');
+        message.success(t('admin.updateProjectSuccess'));
       }
       setModalVisible(false);
       setEditingProject(null);
       form.resetFields();
       fetchProjects();
     } catch (error) {
-      message.error('操作失败');
+      message.error(t('admin.operationFailed'));
     }
   };
 
   const handleDelete = async (id) => {
     try {
       await adminAPI.deleteProject(id);
-      message.success('项目删除成功');
+      message.success(t('admin.deleteProjectSuccess'));
       fetchProjects();
     } catch (error) {
-      message.error('删除失败');
+      message.error(t('admin.deleteFailed'));
     }
   };
 
@@ -88,19 +90,19 @@ const AdminProjects = () => {
       setProjectUsers(response.data.users || []);
       setUserModalVisible(true);
     } catch (error) {
-      message.error('获取项目用户失败');
+      message.error(t('admin.getProjectUsersFailed'));
     }
   };
 
   const handleRemoveUser = async (userId) => {
     try {
       await adminAPI.removeUserFromProject(selectedProject.id, userId);
-      message.success('用户移除成功');
+      message.success(t('admin.removeUserSuccess'));
       // 重新获取项目用户列表
       const response = await adminAPI.getProjectUsers(selectedProject.id);
       setProjectUsers(response.data.users || []);
     } catch (error) {
-      message.error('移除用户失败');
+      message.error(t('admin.removeUserFailed'));
     }
   };
 
@@ -115,9 +117,9 @@ const AdminProjects = () => {
 
   const getStatusText = (status) => {
     switch (status) {
-      case 'active': return '活跃';
-      case 'inactive': return '非活跃';
-      case 'archived': return '已归档';
+      case 'active': return t('admin.activeStatus');
+      case 'inactive': return t('admin.inactiveStatus');
+      case 'archived': return t('admin.archivedStatus');
       default: return status;
     }
   };
@@ -134,10 +136,10 @@ const AdminProjects = () => {
 
   const getRoleText = (role) => {
     switch (role) {
-      case 'owner': return '所有者';
-      case 'admin': return '管理员';
-      case 'member': return '成员';
-      case 'viewer': return '查看者';
+      case 'owner': return t('admin.ownerRole');
+      case 'admin': return t('admin.adminRole');
+      case 'member': return t('admin.memberRole');
+      case 'viewer': return t('admin.viewerRole');
       default: return role;
     }
   };
@@ -150,7 +152,7 @@ const AdminProjects = () => {
       width: 80,
     },
     {
-      title: '项目名称',
+      title: t('admin.projectName'),
       dataIndex: 'name',
       key: 'name',
       render: (text, record) => (
@@ -161,14 +163,14 @@ const AdminProjects = () => {
       ),
     },
     {
-      title: '描述',
+      title: t('admin.description'),
       dataIndex: 'description',
       key: 'description',
       ellipsis: true,
       width: 200,
     },
     {
-      title: '状态',
+      title: t('admin.status'),
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
@@ -178,7 +180,7 @@ const AdminProjects = () => {
       ),
     },
     {
-      title: '所有者',
+      title: t('admin.owner'),
       dataIndex: 'owner_name',
       key: 'owner_name',
       render: (text) => (
@@ -189,19 +191,19 @@ const AdminProjects = () => {
       ),
     },
     {
-      title: '创建时间',
+      title: t('admin.createdAt'),
       dataIndex: 'created_at',
       key: 'created_at',
       render: (time) => new Date(time).toLocaleString(),
     },
     {
-      title: '更新时间',
+      title: t('admin.updatedAt'),
       dataIndex: 'updated_at',
       key: 'updated_at',
       render: (time) => new Date(time).toLocaleString(),
     },
     {
-      title: '操作',
+      title: t('admin.action'),
       key: 'action',
       render: (_, record) => (
         <Space size="middle">
@@ -210,27 +212,27 @@ const AdminProjects = () => {
             icon={<EyeOutlined />}
             onClick={() => handleViewUsers(record)}
           >
-            查看用户
+            {t('admin.viewUsers')}
           </Button>
           <Button
             type="link"
             icon={<EditOutlined />}
             onClick={() => handleEdit(record)}
           >
-            编辑
+            {t('admin.edit')}
           </Button>
           <Popconfirm
-            title="确定要删除这个项目吗？"
+            title={t('admin.confirmDelete')}
             onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
+            okText={t('admin.confirm')}
+            cancelText={t('admin.cancel')}
           >
             <Button
               type="link"
               danger
               icon={<DeleteOutlined />}
             >
-              删除
+              {t('admin.delete')}
             </Button>
           </Popconfirm>
         </Space>
@@ -240,17 +242,17 @@ const AdminProjects = () => {
 
   const userColumns = [
     {
-      title: '用户名',
+      title: t('admin.username'),
       dataIndex: 'username',
       key: 'username',
     },
     {
-      title: '邮箱',
+      title: t('admin.email'),
       dataIndex: 'email',
       key: 'email',
     },
     {
-      title: '角色',
+      title: t('admin.role'),
       dataIndex: 'role',
       key: 'role',
       render: (role) => (
@@ -260,23 +262,23 @@ const AdminProjects = () => {
       ),
     },
     {
-      title: '加入时间',
+      title: t('admin.joinedAt'),
       dataIndex: 'joined_at',
       key: 'joined_at',
       render: (time) => new Date(time).toLocaleString(),
     },
     {
-      title: '操作',
+      title: t('admin.action'),
       key: 'action',
       render: (_, record) => (
         <Popconfirm
-          title="确定要移除这个用户吗？"
+          title={t('admin.confirmRemoveUser')}
           onConfirm={() => handleRemoveUser(record.id)}
-          okText="确定"
-          cancelText="取消"
+          okText={t('admin.confirm')}
+          cancelText={t('admin.cancel')}
         >
           <Button type="link" danger size="small">
-            移除
+            {t('admin.remove')}
           </Button>
         </Popconfirm>
       ),
@@ -287,7 +289,7 @@ const AdminProjects = () => {
     <div style={{ padding: '24px' }}>
       <Card>
         <div style={{ marginBottom: 16 }}>
-          <h2>项目管理</h2>
+          <h2>{t('admin.projectManagement')}</h2>
         </div>
         
         <Table
@@ -299,7 +301,7 @@ const AdminProjects = () => {
             ...pagination,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 项`,
+            showTotal: (total) => t('admin.total').replace('{count}', total),
             onChange: (page, pageSize) => {
               setPagination(prev => ({
                 ...prev,
@@ -313,7 +315,7 @@ const AdminProjects = () => {
 
       {/* 编辑项目模态框 */}
       <Modal
-        title={editingProject ? '编辑项目' : '添加项目'}
+        title={editingProject ? t('admin.editProject') : t('admin.addProject')}
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => {
@@ -321,8 +323,8 @@ const AdminProjects = () => {
           setEditingProject(null);
           form.resetFields();
         }}
-        okText="确定"
-        cancelText="取消"
+        okText={t('admin.confirm')}
+        cancelText={t('admin.cancel')}
       >
         <Form
           form={form}
@@ -331,28 +333,28 @@ const AdminProjects = () => {
         >
           <Form.Item
             name="name"
-            label="项目名称"
-            rules={[{ required: true, message: '请输入项目名称' }]}
+            label={t('admin.projectName')}
+            rules={[{ required: true, message: t('admin.inputProjectName') }]}
           >
-            <Input disabled={!!editingProject} placeholder="请输入项目名称" />
+            <Input disabled={!!editingProject} placeholder={t('admin.inputProjectName')} />
           </Form.Item>
 
           <Form.Item
             name="description"
-            label="项目描述"
+            label={t('admin.description')}
           >
-            <TextArea disabled={!!editingProject} rows={4} placeholder="请输入项目描述" />
+            <TextArea disabled={!!editingProject} rows={4} placeholder={t('admin.inputProjectDesc')} />
           </Form.Item>
 
           <Form.Item
             name="status"
-            label="状态"
-            rules={[{ required: true, message: '请选择状态' }]}
+            label={t('admin.status')}
+            rules={[{ required: true, message: t('admin.selectStatus') }]}
           >
-            <Select placeholder="请选择状态">
-              <Option value="active">活跃</Option>
-              <Option value="inactive">非活跃</Option>
-              <Option value="archived">已归档</Option>
+            <Select placeholder={t('admin.selectStatus')}>
+              <Option value="active">{t('admin.activeStatus')}</Option>
+              <Option value="inactive">{t('admin.inactiveStatus')}</Option>
+              <Option value="archived">{t('admin.archivedStatus')}</Option>
             </Select>
           </Form.Item>
         </Form>
@@ -360,7 +362,7 @@ const AdminProjects = () => {
 
       {/* 查看项目用户模态框 */}
       <Modal
-        title={`项目用户 - ${selectedProject?.name}`}
+        title={`${t('admin.projectUsers')} - ${selectedProject?.name}`}
         open={userModalVisible}
         onCancel={() => {
           setUserModalVisible(false);
@@ -373,7 +375,7 @@ const AdminProjects = () => {
             setSelectedProject(null);
             setProjectUsers([]);
           }}>
-            关闭
+            {t('admin.close')}
           </Button>
         ]}
         width={800}

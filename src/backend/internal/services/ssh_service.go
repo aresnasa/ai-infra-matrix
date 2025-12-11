@@ -2,6 +2,7 @@ package services
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -37,7 +38,7 @@ type SSHConfig struct {
 
 // AppHubConfig AppHub包仓库配置
 type AppHubConfig struct {
-	BaseURL  string // AppHub的基础URL，如 http://192.168.0.200:8090
+	BaseURL  string // AppHub的基础URL，如 http://192.168.0.200:28080
 	Username string // 用户名（可选）
 	Password string // 密码（可选）
 }
@@ -852,33 +853,43 @@ func (s *SSHService) DeploySaltMinion(ctx context.Context, connections []SSHConn
 
 	wg.Wait()
 
-	// 等待所有成功部署的 Minion 被 Master 接受
-	if config.AutoAccept {
-		successfulHosts := []string{}
+	// 收集成功部署的连接用于后续等待
+	successfulConnections := []SSHConnection{}
+	for i, result := range results {
+		if result.Success {
+			successfulConnections = append(successfulConnections, connections[i])
+		}
+	}
+
+	if len(successfulConnections) > 0 {
+		// 使用增强的等待函数，综合等待服务启动 + 密钥接受
+		log.Printf("[Salt] 开始等待 %d 个 Minion 完全部署完成...", len(successfulConnections))
+
+		// 等待 Minion 完全部署（最多等待 6 分钟）
+		waitCtx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+		defer cancel()
+
+		deployErrors := s.waitForMinionsFullyDeployed(waitCtx, successfulConnections, config)
+
+		// 更新结果中的错误信息
 		for i, result := range results {
 			if result.Success {
-				successfulHosts = append(successfulHosts, connections[i].Host)
-			}
-		}
-
-		if len(successfulHosts) > 0 {
-			// 等待 Minion 密钥被接受（最多等待5分钟）
-			waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			defer cancel()
-
-			acceptErrors := s.waitForMinionsAccepted(waitCtx, successfulHosts, config.MasterHost)
-
-			// 更新结果中的错误信息
-			for i, result := range results {
-				if result.Success {
-					host := connections[i].Host
-					if err, exists := acceptErrors[host]; exists && err != nil {
-						results[i].Success = false
-						results[i].Error = fmt.Sprintf("Minion部署成功但未能加入集群: %v", err)
-					}
+				host := connections[i].Host
+				if err, exists := deployErrors[host]; exists && err != nil {
+					results[i].Success = false
+					results[i].Error = fmt.Sprintf("Minion部署后验证失败: %v", err)
 				}
 			}
 		}
+
+		// 统计最终成功数量
+		successCount := 0
+		for _, result := range results {
+			if result.Success {
+				successCount++
+			}
+		}
+		log.Printf("[Salt] Minion 部署完成：成功 %d / 总数 %d", successCount, len(connections))
 	}
 
 	return results, nil
@@ -1081,6 +1092,201 @@ func (s *SSHService) loadDeploymentScripts(dir string) ([]DeploymentScript, erro
 	})
 
 	return scripts, nil
+}
+
+// waitForServiceRunningViaSSH 通过 SSH 等待远程服务启动成功
+// 返回 nil 表示服务已启动，否则返回错误
+func (s *SSHService) waitForServiceRunningViaSSH(ctx context.Context, conn SSHConnection, serviceName string, maxRetries int) error {
+	log.Printf("[DEBUG] 开始等待主机 %s 上的 %s 服务启动...", conn.Host, serviceName)
+
+	// 建立 SSH 连接
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		return fmt.Errorf("SSH 连接失败: %v", err)
+	}
+	defer client.Close()
+
+	// 重试检查服务状态
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("等待超时：服务 %s 未能在指定时间内启动", serviceName)
+		default:
+		}
+
+		// 创建新的会话来检查服务状态
+		session, err := client.NewSession()
+		if err != nil {
+			log.Printf("[DEBUG] 创建 SSH 会话失败: %v，重试中...", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		// 检查服务状态的命令
+		checkCmd := fmt.Sprintf(`
+			if command -v systemctl >/dev/null 2>&1; then
+				if systemctl is-active --quiet %s; then
+					echo "SERVICE_RUNNING"
+					exit 0
+				else
+					echo "SERVICE_NOT_RUNNING"
+					exit 1
+				fi
+			elif command -v service >/dev/null 2>&1; then
+				if service %s status >/dev/null 2>&1; then
+					echo "SERVICE_RUNNING"
+					exit 0
+				else
+					echo "SERVICE_NOT_RUNNING"
+					exit 1
+				fi
+			else
+				if pgrep -x %s >/dev/null 2>&1; then
+					echo "SERVICE_RUNNING"
+					exit 0
+				else
+					echo "SERVICE_NOT_RUNNING"
+					exit 1
+				fi
+			fi
+		`, serviceName, serviceName, serviceName)
+
+		var output bytes.Buffer
+		session.Stdout = &output
+
+		err = session.Run(checkCmd)
+		session.Close()
+
+		if err == nil && strings.Contains(output.String(), "SERVICE_RUNNING") {
+			log.Printf("[DEBUG] ✓ 主机 %s 上的 %s 服务已启动 (第 %d 次检查)", conn.Host, serviceName, i+1)
+			return nil
+		}
+
+		log.Printf("[DEBUG] 主机 %s 上的 %s 服务未就绪，等待重试 (%d/%d)...", conn.Host, serviceName, i+1, maxRetries)
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("服务 %s 在 %d 次重试后仍未启动", serviceName, maxRetries)
+}
+
+// waitForMinionConnectedToMaster 通过 SSH 等待 Minion 连接到 Master
+func (s *SSHService) waitForMinionConnectedToMaster(ctx context.Context, conn SSHConnection, masterHost string, maxRetries int) error {
+	log.Printf("[DEBUG] 开始等待主机 %s 的 salt-minion 连接到 Master %s...", conn.Host, masterHost)
+
+	// 建立 SSH 连接
+	client, err := s.connectSSH(conn)
+	if err != nil {
+		return fmt.Errorf("SSH 连接失败: %v", err)
+	}
+	defer client.Close()
+
+	// 重试检查连接状态
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("等待超时：Minion 未能在指定时间内连接到 Master")
+		default:
+		}
+
+		// 创建新的会话来检查连接状态
+		session, err := client.NewSession()
+		if err != nil {
+			log.Printf("[DEBUG] 创建 SSH 会话失败: %v，重试中...", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		// 检查 salt-minion 是否能与 master 通信
+		// 使用 salt-call 测试连接
+		checkCmd := `
+			# 检查 salt-call 是否可用
+			if command -v salt-call >/dev/null 2>&1; then
+				# 尝试调用 test.ping，但设置短超时
+				timeout 30 salt-call --local test.ping 2>/dev/null && echo "SALT_CALL_OK"
+				
+				# 检查 minion 配置
+				if [ -f /etc/salt/minion ]; then
+					echo "MINION_CONFIG_EXISTS"
+				fi
+				
+				# 检查服务状态
+				if systemctl is-active --quiet salt-minion 2>/dev/null; then
+					echo "SERVICE_ACTIVE"
+				fi
+			else
+				echo "SALT_CALL_NOT_FOUND"
+			fi
+		`
+
+		var output bytes.Buffer
+		session.Stdout = &output
+
+		err = session.Run(checkCmd)
+		session.Close()
+
+		outputStr := output.String()
+
+		// 检查各项条件
+		if strings.Contains(outputStr, "MINION_CONFIG_EXISTS") && strings.Contains(outputStr, "SERVICE_ACTIVE") {
+			log.Printf("[DEBUG] ✓ 主机 %s 的 salt-minion 配置完成且服务正在运行 (第 %d 次检查)", conn.Host, i+1)
+			return nil
+		}
+
+		log.Printf("[DEBUG] 主机 %s 的 salt-minion 尚未就绪，等待重试 (%d/%d)...", conn.Host, i+1, maxRetries)
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("Minion 在 %d 次重试后仍未连接到 Master", maxRetries)
+}
+
+// waitForMinionsFullyDeployed 综合等待 Minion 部署完成（服务启动 + 密钥接受）
+// 返回每个主机的错误信息（如果有）
+func (s *SSHService) waitForMinionsFullyDeployed(ctx context.Context, connections []SSHConnection, config SaltStackDeploymentConfig) map[string]error {
+	errors := make(map[string]error)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, conn := range connections {
+		wg.Add(1)
+		go func(c SSHConnection) {
+			defer wg.Done()
+
+			// 为每个 Minion 设置独立的超时（最多等待 5 分钟）
+			minionCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+
+			// 步骤 1: 等待服务启动（最多重试 12 次，每次 5 秒，共 60 秒）
+			if err := s.waitForServiceRunningViaSSH(minionCtx, c, "salt-minion", 12); err != nil {
+				mu.Lock()
+				errors[c.Host] = fmt.Errorf("服务启动失败: %v", err)
+				mu.Unlock()
+				return
+			}
+
+			// 步骤 2: 等待 Minion 配置生效并连接到 Master（最多重试 12 次）
+			if err := s.waitForMinionConnectedToMaster(minionCtx, c, config.MasterHost, 12); err != nil {
+				mu.Lock()
+				errors[c.Host] = fmt.Errorf("Minion 配置验证失败: %v", err)
+				mu.Unlock()
+				return
+			}
+
+			// 步骤 3: 等待 Minion 密钥被 Master 接受
+			if config.AutoAccept {
+				if err := s.waitForSingleMinionAccepted(minionCtx, c.Host, config.MasterHost); err != nil {
+					mu.Lock()
+					errors[c.Host] = fmt.Errorf("密钥接受失败: %v", err)
+					mu.Unlock()
+					return
+				}
+			}
+
+			log.Printf("[DEBUG] ✓ 主机 %s 的 salt-minion 部署完全成功", c.Host)
+		}(conn)
+	}
+
+	wg.Wait()
+	return errors
 }
 
 // waitForMinionsAccepted 等待 Minion 密钥被 Master 接受
@@ -2274,19 +2480,30 @@ func (s *SSHService) executeSaltMinionScript(client *ssh.Client, conn SSHConnect
 }
 
 // configureSaltMinion 配置salt-minion连接到master
+// 使用外部脚本 scripts/salt-minion/03-configure-connection.sh
 func (s *SSHService) configureSaltMinion(client *ssh.Client, config PackageInstallationConfig, hostname string) StepResult {
 	startTime := time.Now()
 
 	minionID := s.getMinionID(config.MinionID, hostname)
 
-	// 配置minion文件
-	configCmd := fmt.Sprintf(`
-cat > /etc/salt/minion.d/99-master-address.conf <<EOF
-master: %s
-master_port: %d
-id: %s
-EOF
-`, config.SaltMasterHost, config.SaltMasterPort, minionID)
+	// 读取配置脚本
+	scriptLoader := GetScriptLoader()
+	script, err := scriptLoader.GetScript("salt-minion/03-configure-connection.sh")
+	if err != nil {
+		return StepResult{
+			Name:      "configure_salt_minion",
+			Success:   false,
+			Output:    "",
+			Error:     fmt.Sprintf("读取配置脚本失败: %v", err),
+			Duration:  time.Since(startTime),
+			Timestamp: time.Now(),
+		}
+	}
+
+	// 设置环境变量并执行脚本
+	envVars := fmt.Sprintf("export SALT_MASTER_HOST='%s' SALT_MINION_ID='%s'",
+		config.SaltMasterHost, minionID)
+	fullCmd := envVars + "\n" + script
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -2301,7 +2518,7 @@ EOF
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput(configCmd)
+	output, err := session.CombinedOutput(fullCmd)
 	outputStr := string(output)
 
 	if err != nil {
@@ -2318,7 +2535,7 @@ EOF
 	return StepResult{
 		Name:      "configure_salt_minion",
 		Success:   true,
-		Output:    fmt.Sprintf("已配置minion连接到 %s:%d，ID: %s\n%s", config.SaltMasterHost, config.SaltMasterPort, minionID, outputStr),
+		Output:    fmt.Sprintf("已配置minion连接到 %s，ID: %s\n%s", config.SaltMasterHost, minionID, outputStr),
 		Error:     "",
 		Duration:  time.Since(startTime),
 		Timestamp: time.Now(),

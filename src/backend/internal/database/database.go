@@ -287,6 +287,8 @@ func migrateTaskSchema() error {
 		&models.UserRole{},
 		&models.UserGroupRole{},
 		&models.RolePermission{},
+		&models.RoleTemplate{},
+		&models.RoleTemplatePermission{},
 		&models.UserNavigationConfig{},
 		&models.LDAPConfig{},
 		&models.KubernetesCluster{},
@@ -307,6 +309,21 @@ func migrateTaskSchema() error {
 		&models.JobTemplate{},
 		&models.ObjectStorageConfig{},
 		&models.ObjectStorageLog{},
+		&models.HostTemplate{},
+		// SaltStack 任务日志表
+		&models.SaltStackTask{},
+		&models.TaskLog{},
+		&models.SSHLog{},
+		// Minion 软删除任务表
+		&models.MinionDeleteTask{},
+		// Minion 分组表
+		&models.MinionGroup{},
+		&models.MinionGroupMembership{},
+		// 节点指标表
+		&models.NodeMetrics{},
+		&models.NodeMetricsLatest{},
+		// IB 端口忽略表
+		&models.IBPortIgnore{},
 		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},

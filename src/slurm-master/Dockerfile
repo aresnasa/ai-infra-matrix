@@ -6,8 +6,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 # Build arguments for versions
 ARG SLURM_VERSION=25.05.4
 ARG VERSION=v0.3.8
-ARG APT_MIRROR
-
+ARG APT_MIRROR=mirrors.aliyun.com
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
 LABEL description="AI Infrastructure Matrix SLURM Master Service"
@@ -43,6 +42,7 @@ RUN set -eux; \
                 echo "deb http://${APT_MIRROR}/ubuntu/ jammy-backports main restricted universe multiverse"; \
             } > /etc/apt/sources.list; \
         fi; \
+        apt-get update; \
     elif [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "⚙️  配置 ARM64 镜像源（带智能回退）..."; \
         # 尝试阿里云源（静默失败检测）
@@ -133,11 +133,28 @@ RUN set -eux; \
     # 显示最终使用的源
     echo "📋 最终使用的APT源:"; \
     cat /etc/apt/sources.list; \
-    # 安装基础工具
-    echo "📦 安装基础工具包..."; \
-    apt-get install -y --no-install-recommends ca-certificates curl
+    # 【关键】在换源成功后立即安装 systemd（SLURM Master 必需的核心依赖）
+    echo "🔧 【关键步骤】安装 systemd + 基础工具..."; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        systemd \
+        systemd-sysv && \
+    # 立即验证 systemd 安装成功
+    echo "🔍 验证 systemd 安装..."; \
+    if [ -x /lib/systemd/systemd ] && [ -e /sbin/init ]; then \
+        echo "✅ systemd 核心已安装: /lib/systemd/systemd"; \
+        echo "✅ /sbin/init 符号链接存在"; \
+        ls -la /lib/systemd/systemd /sbin/init; \
+        /lib/systemd/systemd --version; \
+    else \
+        echo "❌ systemd 安装验证失败！"; \
+        echo "   /lib/systemd/systemd 存在: $([ -x /lib/systemd/systemd ] && echo '是' || echo '否')"; \
+        echo "   /sbin/init 存在: $([ -e /sbin/init ] && echo '是' || echo '否')"; \
+        exit 1; \
+    fi
 
-# 安装基础依赖（ca-certificates和curl已在上面安装）
+# 安装其他基础依赖（ca-certificates和curl已在上面安装）
 RUN set -eux; \
     # Refresh index right before install to avoid stale caches across layers
     for i in 1 2 3; do \
@@ -145,8 +162,6 @@ RUN set -eux; \
     done; \
     # Install with --fix-missing and retries to improve robustness on flaky mirrors
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
-        systemd \
-        systemd-sysv \
         # networking and diagnostics \
         curl \
         wget \
@@ -222,6 +237,9 @@ RUN mkdir -p /etc/slurm \
     /var/log/munge \
     /var/run/munge \
     /srv/shared
+
+# 复制 third_party 目录以支持离线构建
+COPY third_party/ /third_party/
 
 # 尝试从AppHub安装SLURM包（动态发现所有可用包）
 ARG APPHUB_URL=http://apphub:80
@@ -341,6 +359,11 @@ RUN set -eux; \
         gettext-base 2>/dev/null || \
     echo "⚠️  部分工具包安装失败"; \
     \
+    # 【重要】删除构建时使用的 APT 源配置
+    # 避免将构建机器的 IP 地址写入镜像
+    echo "🧹 清理构建时的 APT 源配置..."; \
+    rm -f /etc/apt/sources.list.d/ai-infra-slurm.list; \
+    \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \
     \
     # 验证SLURM已成功安装
@@ -391,11 +414,11 @@ RUN usermod -a -G munge slurm && \
 # 注意：slurmrestd 现在通过上面的动态包发现自动安装，不再需要单独的安装脚本
 
 # 复制配置与systemd脚本
-COPY config/ /etc/slurm-templates/
-COPY entrypoint.sh /usr/local/bin/slurm-bootstrap.sh
-COPY systemd-entrypoint.sh /usr/local/bin/systemd-entrypoint.sh
-COPY healthcheck.sh /usr/local/bin/healthcheck.sh
-COPY systemd/ /etc/systemd/system/
+COPY src/slurm-master/config/ /etc/slurm-templates/
+COPY src/slurm-master/entrypoint.sh /usr/local/bin/slurm-bootstrap.sh
+COPY src/slurm-master/systemd-entrypoint.sh /usr/local/bin/systemd-entrypoint.sh
+COPY src/slurm-master/healthcheck.sh /usr/local/bin/healthcheck.sh
+COPY src/slurm-master/systemd/ /etc/systemd/system/
 RUN chmod +x /usr/local/bin/slurm-bootstrap.sh /usr/local/bin/systemd-entrypoint.sh /usr/local/bin/healthcheck.sh && \
     ln -sf /etc/systemd/system/slurm-bootstrap.service /etc/systemd/system/multi-user.target.wants/slurm-bootstrap.service && \
     ln -sf /etc/systemd/system/slurmctld.service /etc/systemd/system/multi-user.target.wants/slurmctld.service && \
@@ -428,7 +451,7 @@ RUN chmod 600 /root/.ssh/authorized_keys && \
     echo "✓ SSH public key installed for backend access"
 
 # 复制并启用运行时公钥刷新脚本（支持从共享目录热更新）
-COPY scripts/bootstrap-authorized-keys.sh /usr/local/bin/bootstrap-authorized-keys.sh
+COPY src/slurm-master/scripts/bootstrap-authorized-keys.sh /usr/local/bin/bootstrap-authorized-keys.sh
 RUN chmod +x /usr/local/bin/bootstrap-authorized-keys.sh
 
 # 暴露端口

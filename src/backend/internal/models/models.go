@@ -383,6 +383,60 @@ type RolePermission struct {
 	Permission Permission `json:"permission,omitempty" gorm:"foreignKey:PermissionID"`
 }
 
+// RoleTemplate 角色模板表 - 支持动态配置的角色模板
+type RoleTemplate struct {
+	ID            uint           `json:"id" gorm:"primaryKey"`
+	Name          string         `json:"name" gorm:"uniqueIndex;not null;size:100"` // 模板名称，如 admin, sre, data-developer
+	DisplayName   string         `json:"display_name" gorm:"size:100"`              // 显示名称（中文）
+	DisplayNameEN string         `json:"display_name_en" gorm:"size:100"`           // 显示名称（英文）
+	Description   string         `json:"description" gorm:"size:500"`               // 模板描述（中文）
+	DescriptionEN string         `json:"description_en" gorm:"size:500"`            // 模板描述（英文）
+	IsSystem      bool           `json:"is_system" gorm:"default:false"`            // 是否系统内置（内置模板不可删除）
+	IsActive      bool           `json:"is_active" gorm:"default:true"`             // 是否启用
+	Priority      int            `json:"priority" gorm:"default:0"`                 // 优先级，用于排序
+	Color         string         `json:"color" gorm:"size:20;default:'blue'"`       // 显示颜色
+	Icon          string         `json:"icon" gorm:"size:50"`                       // 图标名称
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
+
+	// 关联关系
+	Permissions []RoleTemplatePermission `json:"permissions,omitempty" gorm:"foreignKey:RoleTemplateID"`
+}
+
+// GetDisplayName 根据语言返回显示名称
+func (r *RoleTemplate) GetDisplayName(lang string) string {
+	if lang == "en" || lang == "en-US" {
+		if r.DisplayNameEN != "" {
+			return r.DisplayNameEN
+		}
+	}
+	return r.DisplayName
+}
+
+// GetDescription 根据语言返回描述
+func (r *RoleTemplate) GetDescription(lang string) string {
+	if lang == "en" || lang == "en-US" {
+		if r.DescriptionEN != "" {
+			return r.DescriptionEN
+		}
+	}
+	return r.Description
+}
+
+// RoleTemplatePermission 角色模板权限关系表
+type RoleTemplatePermission struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	RoleTemplateID uint      `json:"role_template_id" gorm:"not null;index"`
+	Resource       string    `json:"resource" gorm:"not null;size:100"` // 资源名称
+	Verb           string    `json:"verb" gorm:"not null;size:50"`      // 操作动词
+	Scope          string    `json:"scope" gorm:"size:100;default:'*'"` // 作用域
+	CreatedAt      time.Time `json:"created_at"`
+
+	// 关联关系
+	RoleTemplate RoleTemplate `json:"role_template,omitempty" gorm:"foreignKey:RoleTemplateID"`
+}
+
 // LDAP相关模型
 
 // LDAPConfig LDAP配置表
@@ -549,6 +603,37 @@ type CreatePermissionRequest struct {
 	Description string `json:"description,omitempty"`
 }
 
+// 角色模板权限项
+type RoleTemplatePermissionItem struct {
+	Resource string `json:"resource" binding:"required"`
+	Verb     string `json:"verb" binding:"required"`
+	Scope    string `json:"scope,omitempty"`
+}
+
+// 创建角色模板请求
+type CreateRoleTemplateRequest struct {
+	Name        string                       `json:"name" binding:"required,min=1,max=100"`
+	DisplayName string                       `json:"display_name,omitempty"`
+	Description string                       `json:"description,omitempty"`
+	IsActive    *bool                        `json:"is_active,omitempty"`
+	Priority    int                          `json:"priority,omitempty"`
+	Color       string                       `json:"color,omitempty"`
+	Icon        string                       `json:"icon,omitempty"`
+	Permissions []RoleTemplatePermissionItem `json:"permissions,omitempty"`
+}
+
+// 更新角色模板请求
+type UpdateRoleTemplateRequest struct {
+	Name        string                       `json:"name,omitempty"`
+	DisplayName string                       `json:"display_name,omitempty"`
+	Description string                       `json:"description,omitempty"`
+	IsActive    *bool                        `json:"is_active,omitempty"`
+	Priority    int                          `json:"priority,omitempty"`
+	Color       string                       `json:"color,omitempty"`
+	Icon        string                       `json:"icon,omitempty"`
+	Permissions []RoleTemplatePermissionItem `json:"permissions,omitempty"`
+}
+
 // TableName 自定义表名
 func (User) TableName() string {
 	return "users"
@@ -576,6 +661,14 @@ func (PlaybookGeneration) TableName() string {
 
 func (KubernetesCluster) TableName() string {
 	return "kubernetes_clusters"
+}
+
+func (RoleTemplate) TableName() string {
+	return "role_templates"
+}
+
+func (RoleTemplatePermission) TableName() string {
+	return "role_template_permissions"
 }
 
 // BeforeCreate GORM钩子：创建前加密敏感数据
@@ -959,8 +1052,11 @@ type SaltStackTask struct {
 type TaskLog struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	TaskID    string    `json:"task_id" gorm:"index;not null;size:100"`
+	Host      string    `json:"host" gorm:"index;size:255"`        // 主机地址
 	LogLevel  string    `json:"log_level" gorm:"not null;size:20"` // info, warn, error, debug
+	Category  string    `json:"category" gorm:"size:50"`           // ssh, install, config, key
 	Message   string    `json:"message" gorm:"type:text"`
+	Output    string    `json:"output" gorm:"type:text"` // 命令输出
 	Timestamp time.Time `json:"timestamp"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -1025,6 +1121,38 @@ func (TaskLog) TableName() string {
 
 func (SSHLog) TableName() string {
 	return "ssh_logs"
+}
+
+// MinionGroup Salt Minion 分组表
+type MinionGroup struct {
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	Name        string         `json:"name" gorm:"uniqueIndex;not null;size:100"` // 分组名称
+	DisplayName string         `json:"display_name" gorm:"size:200"`              // 显示名称
+	Description string         `json:"description" gorm:"type:text"`              // 分组描述
+	Color       string         `json:"color" gorm:"size:20;default:'blue'"`       // 标签颜色
+	Priority    int            `json:"priority" gorm:"default:0"`                 // 排序优先级
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
+}
+
+func (MinionGroup) TableName() string {
+	return "minion_groups"
+}
+
+// MinionGroupMembership Minion 分组成员关系表
+type MinionGroupMembership struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	MinionID  string    `json:"minion_id" gorm:"index;not null;size:255"` // Salt Minion ID
+	GroupID   uint      `json:"group_id" gorm:"index;not null"`           // 分组 ID
+	CreatedAt time.Time `json:"created_at"`
+
+	// 关联关系
+	Group MinionGroup `json:"group,omitempty" gorm:"foreignKey:GroupID"`
+}
+
+func (MinionGroupMembership) TableName() string {
+	return "minion_group_memberships"
 }
 
 // OSInfo 操作系统信息

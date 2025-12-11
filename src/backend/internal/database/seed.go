@@ -36,66 +36,62 @@ func seedDefaultObjectStorageConfig() error {
 		return nil
 	}
 
-	// 从环境变量读取配置
-	minioHost := os.Getenv("MINIO_HOST")
-	if minioHost == "" {
-		minioHost = "minio"
+	// 从环境变量读取 SeaweedFS 配置
+	seaweedFilerHost := os.Getenv("SEAWEEDFS_FILER_HOST")
+	if seaweedFilerHost == "" {
+		seaweedFilerHost = "seaweedfs-filer"
 	}
 
-	minioPort := os.Getenv("MINIO_PORT")
-	if minioPort == "" {
-		minioPort = "9000"
+	seaweedFilerPort := os.Getenv("SEAWEEDFS_FILER_PORT")
+	if seaweedFilerPort == "" {
+		seaweedFilerPort = "8888"
 	}
 
-	minioConsoleURL := os.Getenv("MINIO_CONSOLE_URL")
-	if minioConsoleURL == "" {
-		// 构造默认的控制台URL
-		externalHost := os.Getenv("EXTERNAL_HOST")
-		externalPort := os.Getenv("EXTERNAL_PORT")
-		if externalHost == "" {
-			externalHost = "localhost"
-		}
-		if externalPort == "" {
-			externalPort = "8080"
-		}
-		minioConsoleURL = fmt.Sprintf("http://%s:%s/minio-console", externalHost, externalPort)
+	seaweedMasterHost := os.Getenv("SEAWEEDFS_MASTER_HOST")
+	if seaweedMasterHost == "" {
+		seaweedMasterHost = "seaweedfs-master"
 	}
 
-	accessKey := os.Getenv("MINIO_ACCESS_KEY")
+	seaweedMasterPort := os.Getenv("SEAWEEDFS_MASTER_PORT")
+	if seaweedMasterPort == "" {
+		seaweedMasterPort = "9333"
+	}
+
+	seaweedS3Port := os.Getenv("SEAWEEDFS_S3_PORT")
+	if seaweedS3Port == "" {
+		seaweedS3Port = "8333"
+	}
+
+	accessKey := os.Getenv("SEAWEEDFS_ACCESS_KEY")
 	if accessKey == "" {
-		accessKey = "minioadmin"
+		accessKey = "seaweedfs_admin"
 	}
 
-	secretKey := os.Getenv("MINIO_SECRET_KEY")
+	secretKey := os.Getenv("SEAWEEDFS_SECRET_KEY")
 	if secretKey == "" {
-		secretKey = "minioadmin"
+		secretKey = "seaweedfs_secret_key_change_me"
 	}
 
-	// 读取区域与SSL设置（可选）
-	region := os.Getenv("MINIO_REGION")
-	if region == "" {
-		region = "us-east-1"
-	}
 	sslEnabled := false
-	if v := os.Getenv("MINIO_USE_SSL"); v != "" {
+	if v := os.Getenv("SEAWEEDFS_USE_SSL"); v != "" {
 		if v == "1" || v == "true" || v == "TRUE" || v == "True" {
 			sslEnabled = true
 		}
 	}
 
-	// 创建默认MinIO配置
+	// 创建默认 SeaweedFS 配置
 	defaultConfig := &models.ObjectStorageConfig{
-		Name:        "默认MinIO存储",
-		Type:        "minio",
-		Endpoint:    fmt.Sprintf("%s:%s", minioHost, minioPort),
+		Name:        "默认SeaweedFS存储",
+		Type:        "seaweedfs",
+		Endpoint:    fmt.Sprintf("%s:%s", seaweedFilerHost, seaweedS3Port), // S3 API 端点
+		FilerURL:    fmt.Sprintf("%s:%s", seaweedFilerHost, seaweedFilerPort),
+		MasterURL:   fmt.Sprintf("%s:%s", seaweedMasterHost, seaweedMasterPort),
 		AccessKey:   accessKey,
 		SecretKey:   secretKey,
-		WebURL:      minioConsoleURL,
-		Region:      region,
 		SSLEnabled:  sslEnabled,
 		IsActive:    true,
 		Status:      "unknown",
-		Description: "系统默认的MinIO对象存储配置",
+		Description: "系统默认的SeaweedFS对象存储配置",
 		CreatedBy:   1, // 假设admin用户ID为1，如果不存在会在外键约束中处理
 	}
 
@@ -115,11 +111,12 @@ func seedDefaultObjectStorageConfig() error {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"name":     defaultConfig.Name,
-		"type":     defaultConfig.Type,
-		"endpoint": defaultConfig.Endpoint,
-		"web_url":  defaultConfig.WebURL,
-	}).Info("Default MinIO object storage configuration created")
+		"name":       defaultConfig.Name,
+		"type":       defaultConfig.Type,
+		"endpoint":   defaultConfig.Endpoint,
+		"filer_url":  defaultConfig.FilerURL,
+		"master_url": defaultConfig.MasterURL,
+	}).Info("Default SeaweedFS object storage configuration created")
 
 	return nil
 }

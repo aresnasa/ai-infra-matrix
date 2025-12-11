@@ -15,8 +15,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/scripts"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
@@ -26,15 +29,224 @@ import (
 
 // SaltStackHandler 处理SaltStack相关的API请求
 type SaltStackHandler struct {
-	config *config.Config
-	cache  *redis.Client
+	config             *config.Config
+	cache              *redis.Client
+	metricsService     *services.MetricsService
+	masterPool         *SaltMasterPool              // 多 Master 连接池
+	minionGroupService *services.MinionGroupService // Minion 分组服务
+}
+
+// SaltMasterPool 管理多个 Salt Master 的连接池
+type SaltMasterPool struct {
+	masters       []SaltMasterConfig
+	healthStatus  map[string]bool      // Master URL -> 健康状态
+	lastCheck     map[string]time.Time // Master URL -> 上次检查时间
+	mu            sync.RWMutex
+	checkInterval time.Duration
+}
+
+// SaltMasterConfig 单个 Salt Master 配置
+type SaltMasterConfig struct {
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Eauth    string `json:"eauth"`
+	Priority int    `json:"priority"` // 优先级，数字越小优先级越高
+}
+
+// NewSaltMasterPool 创建 Master 连接池
+func NewSaltMasterPool() *SaltMasterPool {
+	pool := &SaltMasterPool{
+		masters:       make([]SaltMasterConfig, 0),
+		healthStatus:  make(map[string]bool),
+		lastCheck:     make(map[string]time.Time),
+		checkInterval: 180 * time.Second, // Master 健康检查间隔: 3分钟
+	}
+	pool.loadMastersFromEnv()
+	return pool
+}
+
+// loadMastersFromEnv 从环境变量加载 Master 配置
+// 支持两种配置方式：
+// 1. 单 Master: SALTSTACK_MASTER_URL 或 SALT_MASTER_HOST
+// 2. 多 Master: SALT_MASTERS_CONFIG (JSON 格式)
+func (p *SaltMasterPool) loadMastersFromEnv() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// 方式1: 从 JSON 配置加载多 Master
+	if configJSON := os.Getenv("SALT_MASTERS_CONFIG"); configJSON != "" {
+		var configs []SaltMasterConfig
+		if err := json.Unmarshal([]byte(configJSON), &configs); err == nil && len(configs) > 0 {
+			p.masters = configs
+			// 按优先级排序
+			sort.Slice(p.masters, func(i, j int) bool {
+				return p.masters[i].Priority < p.masters[j].Priority
+			})
+			log.Printf("[SaltMasterPool] 从 SALT_MASTERS_CONFIG 加载了 %d 个 Master", len(p.masters))
+			return
+		}
+	}
+
+	// 方式2: 从逗号分隔的 URL 列表加载
+	if urlList := os.Getenv("SALT_MASTER_URLS"); urlList != "" {
+		urls := strings.Split(urlList, ",")
+		username := getEnv("SALT_API_USERNAME", "saltapi")
+		password := os.Getenv("SALT_API_PASSWORD")
+		eauth := getEnv("SALT_API_EAUTH", "file")
+
+		for i, u := range urls {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				p.masters = append(p.masters, SaltMasterConfig{
+					URL:      u,
+					Username: username,
+					Password: password,
+					Eauth:    eauth,
+					Priority: i,
+				})
+			}
+		}
+		if len(p.masters) > 0 {
+			log.Printf("[SaltMasterPool] 从 SALT_MASTER_URLS 加载了 %d 个 Master", len(p.masters))
+			return
+		}
+	}
+
+	// 方式3: 单 Master 兼容模式
+	var masterURL string
+	if base := strings.TrimSpace(os.Getenv("SALTSTACK_MASTER_URL")); base != "" {
+		if parsed, err := url.Parse(base); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			masterURL = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		} else {
+			masterURL = base
+		}
+	} else {
+		scheme := getEnv("SALT_API_SCHEME", "http")
+		host := getEnv("SALT_MASTER_HOST", "saltstack")
+		port := getEnv("SALT_API_PORT", "8002")
+		masterURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
+	}
+
+	p.masters = []SaltMasterConfig{{
+		URL:      masterURL,
+		Username: getEnv("SALT_API_USERNAME", "saltapi"),
+		Password: os.Getenv("SALT_API_PASSWORD"),
+		Eauth:    getEnv("SALT_API_EAUTH", "file"),
+		Priority: 0,
+	}}
+	log.Printf("[SaltMasterPool] 使用单 Master 模式: %s", masterURL)
+}
+
+// GetHealthyMaster 获取一个健康的 Master，支持故障转移
+func (p *SaltMasterPool) GetHealthyMaster() (*SaltMasterConfig, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if len(p.masters) == 0 {
+		return nil, errors.New("no salt masters configured")
+	}
+
+	// 按优先级顺序尝试每个 Master
+	for i := range p.masters {
+		master := &p.masters[i]
+		// 如果有健康状态记录且健康，直接返回
+		if healthy, exists := p.healthStatus[master.URL]; exists && healthy {
+			return master, nil
+		}
+		// 如果没有记录或上次检查时间过久，尝试这个 Master
+		if lastCheck, exists := p.lastCheck[master.URL]; !exists || time.Since(lastCheck) > p.checkInterval {
+			return master, nil
+		}
+	}
+
+	// 所有 Master 都不健康，返回第一个（让调用方重试）
+	return &p.masters[0], nil
+}
+
+// GetAllMasters 获取所有配置的 Master（用于并行探测）
+func (p *SaltMasterPool) GetAllMasters() []SaltMasterConfig {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make([]SaltMasterConfig, len(p.masters))
+	copy(result, p.masters)
+	return result
+}
+
+// UpdateHealth 更新 Master 健康状态
+func (p *SaltMasterPool) UpdateHealth(url string, healthy bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.healthStatus[url] = healthy
+	p.lastCheck[url] = time.Now()
+	if healthy {
+		log.Printf("[SaltMasterPool] Master %s 健康检查通过", url)
+	} else {
+		log.Printf("[SaltMasterPool] Master %s 健康检查失败", url)
+	}
+}
+
+// GetMasterCount 获取配置的 Master 数量
+func (p *SaltMasterPool) GetMasterCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.masters)
+}
+
+// GetHealthyCount 获取健康的 Master 数量
+func (p *SaltMasterPool) GetHealthyCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	count := 0
+	for _, healthy := range p.healthStatus {
+		if healthy {
+			count++
+		}
+	}
+	return count
 }
 
 // NewSaltStackHandler 创建新的SaltStack处理器
 func NewSaltStackHandler(cfg *config.Config, cache *redis.Client) *SaltStackHandler {
-	return &SaltStackHandler{
-		config: cfg,
-		cache:  cache,
+	handler := &SaltStackHandler{
+		config:             cfg,
+		cache:              cache,
+		metricsService:     services.NewMetricsService(),
+		masterPool:         NewSaltMasterPool(),
+		minionGroupService: services.NewMinionGroupService(),
+	}
+	// 启动后台健康检查
+	go handler.startHealthCheck()
+	return handler
+}
+
+// startHealthCheck 启动后台健康检查
+func (h *SaltStackHandler) startHealthCheck() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// 首次立即检查
+	h.checkAllMastersHealth()
+
+	for range ticker.C {
+		h.checkAllMastersHealth()
+	}
+}
+
+// checkAllMastersHealth 检查所有 Master 的健康状态
+func (h *SaltStackHandler) checkAllMastersHealth() {
+	masters := h.masterPool.GetAllMasters()
+	if len(masters) <= 1 {
+		return // 单 Master 模式不需要健康检查
+	}
+
+	for _, master := range masters {
+		go func(m SaltMasterConfig) {
+			client := h.newSaltAPIClientForMaster(&m)
+			// 尝试简单的 GET / 请求来检查连通性
+			_, err := client.makeRequest("/", "GET", nil)
+			h.masterPool.UpdateHealth(m.URL, err == nil)
+		}(master)
 	}
 }
 
@@ -52,30 +264,64 @@ type SaltStackStatus struct {
 	LastUpdated      time.Time         `json:"last_updated"`
 	Demo             bool              `json:"demo,omitempty"`
 	// 前端兼容字段
-	MasterStatus      string `json:"master_status,omitempty"`
-	APIStatus         string `json:"api_status,omitempty"`
-	MinionsUp         int    `json:"minions_up,omitempty"`
-	MinionsDown       int    `json:"minions_down,omitempty"`
-	SaltVersion       string `json:"salt_version,omitempty"`
-	ConfigFile        string `json:"config_file,omitempty"`
-	LogLevel          string `json:"log_level,omitempty"`
-	CPUUsage          int    `json:"cpu_usage,omitempty"`
-	MemoryUsage       int    `json:"memory_usage,omitempty"`
-	ActiveConnections int    `json:"active_connections,omitempty"`
+	MasterStatus      string  `json:"master_status,omitempty"`
+	APIStatus         string  `json:"api_status,omitempty"`
+	MinionsUp         int     `json:"minions_up,omitempty"`
+	MinionsDown       int     `json:"minions_down,omitempty"`
+	SaltVersion       string  `json:"salt_version,omitempty"`
+	ConfigFile        string  `json:"config_file,omitempty"`
+	LogLevel          string  `json:"log_level,omitempty"`
+	CPUUsage          float64 `json:"cpu_usage,omitempty"`
+	MemoryUsage       int     `json:"memory_usage,omitempty"`
+	ActiveConnections int     `json:"active_connections,omitempty"`
+	NetworkBandwidth  float64 `json:"network_bandwidth,omitempty"` // 网络带宽 (Mbps)
+	// 多 Master 高可用字段
+	ActiveMasterURL  string             `json:"active_master_url,omitempty"`
+	MasterCount      int                `json:"master_count,omitempty"`
+	HealthyMasters   int                `json:"healthy_masters,omitempty"`
+	MasterHealthInfo []MasterHealthInfo `json:"master_health_info,omitempty"`
+}
+
+// MasterHealthInfo 单个 Master 的健康信息
+type MasterHealthInfo struct {
+	URL       string    `json:"url"`
+	Healthy   bool      `json:"healthy"`
+	LastCheck time.Time `json:"last_check,omitempty"`
+	Priority  int       `json:"priority"`
 }
 
 // SaltMinion Salt Minion信息
 type SaltMinion struct {
-	ID           string                 `json:"id"`
-	Status       string                 `json:"status"`
-	OS           string                 `json:"os"`
-	OSVersion    string                 `json:"os_version"`
-	Architecture string                 `json:"architecture"`
-	Arch         string                 `json:"arch,omitempty"`
-	SaltVersion  string                 `json:"salt_version,omitempty"`
-	LastSeen     time.Time              `json:"last_seen"`
-	Grains       map[string]interface{} `json:"grains"`
-	Pillar       map[string]interface{} `json:"pillar,omitempty"`
+	ID               string                 `json:"id"`
+	Status           string                 `json:"status"`
+	OS               string                 `json:"os"`
+	OSVersion        string                 `json:"os_version"`
+	Architecture     string                 `json:"architecture"`
+	Arch             string                 `json:"arch,omitempty"`
+	SaltVersion      string                 `json:"salt_version,omitempty"`
+	LastSeen         time.Time              `json:"last_seen"`
+	Grains           map[string]interface{} `json:"grains"`
+	Pillar           map[string]interface{} `json:"pillar,omitempty"`
+	Group            string                 `json:"group,omitempty"` // 分组名称
+	KernelVersion    string                 `json:"kernel_version,omitempty"`
+	GPUDriverVersion string                 `json:"gpu_driver_version,omitempty"`
+	CUDAVersion      string                 `json:"cuda_version,omitempty"`
+	GPUCount         int                    `json:"gpu_count,omitempty"`
+	GPUModel         string                 `json:"gpu_model,omitempty"`
+	NPUVersion       string                 `json:"npu_version,omitempty"`
+	NPUCount         int                    `json:"npu_count,omitempty"`
+	NPUModel         string                 `json:"npu_model,omitempty"`
+	// IB (InfiniBand) 信息
+	IBStatus string `json:"ib_status,omitempty"` // active, inactive, not_installed
+	IBCount  int    `json:"ib_count,omitempty"`
+	IBRate   string `json:"ib_rate,omitempty"` // 如 "200 Gb/sec (4X HDR)"
+	// CPU/内存使用率信息（实时采集）
+	CPUUsagePercent    float64 `json:"cpu_usage_percent,omitempty"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent,omitempty"`
+	MemoryTotalGB      float64 `json:"memory_total_gb,omitempty"`
+	MemoryUsedGB       float64 `json:"memory_used_gb,omitempty"`
+	// 数据来源标识：realtime（实时从Salt获取）, cached（从数据库读取）, unavailable（无法获取）
+	DataSource string `json:"data_source,omitempty"`
 }
 
 // SaltJob Salt作业信息
@@ -93,19 +339,163 @@ type SaltJob struct {
 
 // saltAPIClient SaltStack API客户端
 type saltAPIClient struct {
-	baseURL string
-	token   string
-	client  *http.Client
+	baseURL  string
+	token    string
+	client   *http.Client
+	username string
+	password string
+	eauth    string
 }
 
-// newSaltAPIClient 创建Salt API客户端
+// newSaltAPIClient 创建Salt API客户端（使用多 Master 故障转移）
 func (h *SaltStackHandler) newSaltAPIClient() *saltAPIClient {
+	master, err := h.masterPool.GetHealthyMaster()
+	if err != nil {
+		log.Printf("[SaltStack] 获取健康 Master 失败: %v, 使用默认配置", err)
+		return h.newSaltAPIClientDefault()
+	}
+	return h.newSaltAPIClientForMaster(master)
+}
+
+// newSaltAPIClientDefault 使用默认配置创建客户端（兼容旧逻辑）
+func (h *SaltStackHandler) newSaltAPIClientDefault() *saltAPIClient {
+	timeoutSec := h.getAPITimeout()
 	return &saltAPIClient{
-		baseURL: h.getSaltAPIURL(),
+		baseURL:  h.getSaltAPIURL(),
+		username: getEnv("SALT_API_USERNAME", "saltapi"),
+		password: os.Getenv("SALT_API_PASSWORD"),
+		eauth:    getEnv("SALT_API_EAUTH", "file"),
 		client: &http.Client{
-			Timeout: 10 * time.Second, // 设置较短超时以避免 SSH minions 连接超时阻塞整个请求
+			Timeout: time.Duration(timeoutSec) * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
 		},
 	}
+}
+
+// newSaltAPIClientForMaster 为指定 Master 创建客户端
+func (h *SaltStackHandler) newSaltAPIClientForMaster(master *SaltMasterConfig) *saltAPIClient {
+	timeoutSec := h.getAPITimeout()
+	return &saltAPIClient{
+		baseURL:  master.URL,
+		username: master.Username,
+		password: master.Password,
+		eauth:    master.Eauth,
+		client: &http.Client{
+			Timeout: time.Duration(timeoutSec) * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
+		},
+	}
+}
+
+// getAPITimeout 获取 API 超时配置
+func (h *SaltStackHandler) getAPITimeout() int {
+	timeoutSec := 30
+	if t := os.Getenv("SALT_API_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+	return timeoutSec
+}
+
+// newSaltAPIClientWithTimeout 创建带自定义超时的Salt API客户端
+func (h *SaltStackHandler) newSaltAPIClientWithTimeout(timeout time.Duration) *saltAPIClient {
+	master, _ := h.masterPool.GetHealthyMaster()
+	baseURL := h.getSaltAPIURL()
+	username := getEnv("SALT_API_USERNAME", "saltapi")
+	password := os.Getenv("SALT_API_PASSWORD")
+	eauth := getEnv("SALT_API_EAUTH", "file")
+
+	if master != nil {
+		baseURL = master.URL
+		username = master.Username
+		password = master.Password
+		eauth = master.Eauth
+	}
+
+	return &saltAPIClient{
+		baseURL:  baseURL,
+		username: username,
+		password: password,
+		eauth:    eauth,
+		client: &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
+		},
+	}
+}
+
+// newSaltAPIClientWithFailover 带故障转移的客户端创建（尝试所有 Master）
+func (h *SaltStackHandler) newSaltAPIClientWithFailover() (*saltAPIClient, error) {
+	masters := h.masterPool.GetAllMasters()
+	if len(masters) == 0 {
+		return nil, errors.New("no salt masters configured")
+	}
+
+	timeoutSec := h.getAPITimeout()
+
+	// 尝试每个 Master
+	for _, master := range masters {
+		client := &saltAPIClient{
+			baseURL:  master.URL,
+			username: master.Username,
+			password: master.Password,
+			eauth:    master.Eauth,
+			client: &http.Client{
+				Timeout: time.Duration(timeoutSec) * time.Second,
+				Transport: &http.Transport{
+					MaxIdleConns:        100,
+					MaxIdleConnsPerHost: 10,
+					IdleConnTimeout:     90 * time.Second,
+					DisableKeepAlives:   false,
+					DialContext: (&net.Dialer{
+						Timeout:   5 * time.Second, // 故障转移时使用较短连接超时
+						KeepAlive: 30 * time.Second,
+					}).DialContext,
+				},
+			},
+		}
+
+		// 尝试认证
+		if err := client.authenticate(); err == nil {
+			h.masterPool.UpdateHealth(master.URL, true)
+			return client, nil
+		} else {
+			h.masterPool.UpdateHealth(master.URL, false)
+			log.Printf("[SaltStack] Master %s 认证失败: %v, 尝试下一个", master.URL, err)
+		}
+	}
+
+	return nil, errors.New("all salt masters are unavailable")
 }
 
 // getSaltAPIURL 获取Salt API URL
@@ -134,11 +524,22 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// authenticate 向Salt API认证 - 临时绕过认证
+// authenticate 向Salt API认证
 func (c *saltAPIClient) authenticate() error {
-	username := getEnv("SALT_API_USERNAME", "saltapi")
-	password := os.Getenv("SALT_API_PASSWORD")
-	eauth := getEnv("SALT_API_EAUTH", "file")
+	// 优先使用客户端存储的凭证，否则从环境变量获取（兼容旧代码）
+	username := c.username
+	password := c.password
+	eauth := c.eauth
+
+	if username == "" {
+		username = getEnv("SALT_API_USERNAME", "saltapi")
+	}
+	if password == "" {
+		password = os.Getenv("SALT_API_PASSWORD")
+	}
+	if eauth == "" {
+		eauth = getEnv("SALT_API_EAUTH", "file")
+	}
 
 	// 如果未配置密码，则尝试无认证直接使用
 	if password == "" {
@@ -320,34 +721,97 @@ func (c *saltAPIClient) makeLocal(fun string, arg []interface{}, kwarg map[strin
 
 // GetSaltStackStatus 获取SaltStack状态
 func (h *SaltStackHandler) GetSaltStackStatus(c *gin.Context) {
+	ctx := c.Request.Context()
+	cacheKey := "saltstack:status"
+
 	// 尝试从缓存获取
-	if cached, err := h.cache.Get(context.Background(), "saltstack:status").Result(); err == nil {
+	if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
 		var status SaltStackStatus
 		if err := json.Unmarshal([]byte(cached), &status); err == nil {
-			c.JSON(http.StatusOK, gin.H{"data": status})
+			c.JSON(http.StatusOK, gin.H{"data": status, "cached": true})
 			return
 		}
 	}
 
+	// 创建带超时控制的 context
+	timeoutSec := 60 // 状态检查使用 60 秒超时
+	if t := os.Getenv("SALT_API_STATUS_TIMEOUT"); t != "" {
+		// 支持带单位的时间值（如 "60s", "2m"）或纯数字（秒）
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
 	// 创建API客户端
 	client := h.newSaltAPIClient()
 
-	// 连接Salt API（要求真实集群，失败则返回错误，不再返回演示数据）
-	if err := client.authenticate(); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
-		return
+	// 使用 goroutine 执行，以便响应 context 取消
+	type result struct {
+		status SaltStackStatus
+		err    error
 	}
+	resultChan := make(chan result, 1)
 
-	// 获取实际状态
-	status, err := h.getRealSaltStackStatus(client)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Salt状态失败: %v", err)})
+	go func() {
+		// 连接Salt API
+		if err := client.authenticate(); err != nil {
+			resultChan <- result{err: fmt.Errorf("salt API 认证失败: %v", err)}
+			return
+		}
+
+		// 获取实际状态
+		status, err := h.getRealSaltStackStatus(client)
+		if err != nil {
+			resultChan <- result{err: fmt.Errorf("获取 salt 状态失败: %v", err)}
+			return
+		}
+		resultChan <- result{status: status}
+	}()
+
+	// 等待结果或超时
+	select {
+	case <-ctx.Done():
+		// 超时，尝试返回旧缓存
+		if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+			var status SaltStackStatus
+			if err := json.Unmarshal([]byte(cached), &status); err == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"data":    status,
+					"cached":  true,
+					"warning": "请求超时，返回缓存数据",
+				})
+				return
+			}
+		}
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "获取 Salt 状态超时，请检查网络连接"})
 		return
-	}
 
-	// 缓存状态（1分钟）
-	h.cacheStatus(&status, 60)
-	c.JSON(http.StatusOK, gin.H{"data": status})
+	case res := <-resultChan:
+		if res.err != nil {
+			// 尝试返回旧缓存
+			if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+				var status SaltStackStatus
+				if err := json.Unmarshal([]byte(cached), &status); err == nil {
+					c.JSON(http.StatusOK, gin.H{
+						"data":    status,
+						"cached":  true,
+						"warning": res.err.Error(),
+					})
+					return
+				}
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": res.err.Error()})
+			return
+		}
+
+		// 缓存状态（2分钟）
+		h.cacheStatus(&res.status, 120)
+		c.JSON(http.StatusOK, gin.H{"data": res.status})
+	}
 }
 
 // SaltDebugInfo 用于输出调试信息，便于快速定位集成问题
@@ -450,7 +914,10 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 	// runner.manage.status
 	{
 		start := time.Now()
-		r, err := client.makeRunner("manage.status", nil)
+		r, err := client.makeRunner("manage.status", map[string]interface{}{
+			"timeout":            5,
+			"gather_job_timeout": 3,
+		})
 		res.ManageStatus["duration_ms"] = time.Since(start).Milliseconds()
 		if err != nil {
 			res.ManageStatus["ok"] = false
@@ -487,25 +954,75 @@ func (h *SaltStackHandler) DebugSaltConnectivity(c *gin.Context) {
 
 // getRealSaltStackStatus 获取真实的SaltStack状态
 func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltStackStatus, error) {
-	// 获取 API 根信息（用于APIVersion）
-	apiInfo, _ := client.makeRequest("/", "GET", nil)
-
-	// 获取 up/down 状态
-	manageStatus, err := client.makeRunner("manage.status", nil)
-	if err != nil {
-		return SaltStackStatus{}, err
+	// 使用并行请求获取状态，提高响应速度
+	type apiResult struct {
+		apiInfo      map[string]interface{}
+		manageStatus map[string]interface{}
+		keysResp     map[string]interface{}
+		err          error
 	}
+
+	// 并行获取 API 信息、管理状态和密钥信息
+	resultChan := make(chan apiResult, 1)
+	go func() {
+		var result apiResult
+
+		// 获取 API 根信息（用于APIVersion）- 这个通常很快
+		result.apiInfo, _ = client.makeRequest("/", "GET", nil)
+
+		// 获取 up/down 状态 - 这是最重要的
+		// 设置较短的超时参数，避免等待离线 minion 过久
+		// timeout: 等待 minion 响应的超时时间 (秒)
+		// gather_job_timeout: 收集作业结果的超时时间 (秒)
+		result.manageStatus, result.err = client.makeRunner("manage.status", map[string]interface{}{
+			"timeout":            5, // 5 秒等待 minion 响应
+			"gather_job_timeout": 3, // 3 秒收集结果
+		})
+		if result.err != nil {
+			resultChan <- result
+			return
+		}
+
+		// 获取 keys
+		result.keysResp, result.err = client.makeWheel("key.list_all", nil)
+		resultChan <- result
+	}()
+
+	// 等待基础状态获取完成（最多 30 秒）
+	var apiInfo, manageStatus, keysResp map[string]interface{}
+	select {
+	case result := <-resultChan:
+		if result.err != nil {
+			return SaltStackStatus{}, result.err
+		}
+		apiInfo = result.apiInfo
+		manageStatus = result.manageStatus
+		keysResp = result.keysResp
+	case <-time.After(30 * time.Second):
+		return SaltStackStatus{}, fmt.Errorf("获取 Salt 基础状态超时")
+	}
+
 	up, down := h.parseManageStatus(manageStatus)
-
-	// 获取 keys
-	keysResp, err := client.makeWheel("key.list_all", nil)
-	if err != nil {
-		return SaltStackStatus{}, err
-	}
 	minions, pre, rejected := h.parseWheelKeys(keysResp)
 
-	// 获取性能指标
-	cpuUsage, memoryUsage, activeConnections := h.getPerformanceMetrics(client)
+	// 性能指标在单独的 goroutine 中获取，设置较短超时，失败不影响主要状态
+	cpuUsage, memoryUsage, activeConnections := 0, 0, 0
+	metricsChan := make(chan [3]int, 1)
+	go func() {
+		log.Printf("[SaltStack] 开始获取性能指标...")
+		cpu, mem, conn := h.getPerformanceMetrics(client)
+		log.Printf("[SaltStack] 性能指标获取完成: CPU=%d%%, Memory=%d%%, Connections=%d", cpu, mem, conn)
+		metricsChan <- [3]int{cpu, mem, conn}
+	}()
+
+	// 等待性能指标，最多 10 秒
+	select {
+	case metrics := <-metricsChan:
+		cpuUsage, memoryUsage, activeConnections = metrics[0], metrics[1], metrics[2]
+		log.Printf("[SaltStack] 使用获取到的性能指标: CPU=%d%%, Memory=%d%%, Connections=%d", cpuUsage, memoryUsage, activeConnections)
+	case <-time.After(10 * time.Second):
+		log.Printf("[SaltStack] 获取性能指标超时（10秒），使用默认值")
+	}
 
 	// 构造状态
 	status := SaltStackStatus{
@@ -531,95 +1048,325 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		SaltVersion:       h.extractAPISaltVersion(apiInfo),
 		ConfigFile:        "/etc/salt/master",
 		LogLevel:          "info",
-		CPUUsage:          cpuUsage,
+		CPUUsage:          float64(cpuUsage),
 		MemoryUsage:       memoryUsage,
 		ActiveConnections: activeConnections,
+		NetworkBandwidth:  0, // 网络带宽需要实时采集，暂时为0
+		// 多 Master 高可用信息
+		ActiveMasterURL:  client.baseURL,
+		MasterCount:      h.masterPool.GetMasterCount(),
+		HealthyMasters:   h.masterPool.GetHealthyCount(),
+		MasterHealthInfo: h.getMasterHealthInfo(),
 	}
 	_ = down // 可用于前端显示 down 数量
 	return status, nil
 }
 
+// getMasterHealthInfo 获取所有 Master 的健康信息
+func (h *SaltStackHandler) getMasterHealthInfo() []MasterHealthInfo {
+	masters := h.masterPool.GetAllMasters()
+	result := make([]MasterHealthInfo, 0, len(masters))
+
+	h.masterPool.mu.RLock()
+	defer h.masterPool.mu.RUnlock()
+
+	for _, m := range masters {
+		info := MasterHealthInfo{
+			URL:      m.URL,
+			Priority: m.Priority,
+			Healthy:  h.masterPool.healthStatus[m.URL],
+		}
+		if lastCheck, exists := h.masterPool.lastCheck[m.URL]; exists {
+			info.LastCheck = lastCheck
+		}
+		result = append(result, info)
+	}
+	return result
+}
+
 // getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数）
+// 优先级：1. 本地系统采集（容器/VM/物理机自适应）2. VictoriaMetrics 3. Salt API
 func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int) {
+	// 优先使用统一的系统指标采集服务（自动检测容器/VM/物理机环境）
+	systemMetrics, err := services.CollectSystemMetrics()
+	if err == nil && systemMetrics != nil {
+		cpuUsage := int(systemMetrics.CPUUsagePercent)
+		memoryUsage := int(systemMetrics.MemoryUsagePercent)
+		activeConnections := systemMetrics.ActiveConnections
+
+		// 如果采集到有效数据
+		if cpuUsage > 0 || memoryUsage > 0 || activeConnections > 0 {
+			log.Printf("[MetricsService] 从本地系统采集(%s/%s)获取到指标: CPU=%d%%, Memory=%d%%, Connections=%d",
+				systemMetrics.DeploymentType, systemMetrics.MetricsSource,
+				cpuUsage, memoryUsage, activeConnections)
+			return cpuUsage, memoryUsage, activeConnections
+		}
+	} else if err != nil {
+		log.Printf("[MetricsService] 本地系统采集失败: %v", err)
+	}
+
+	// 回退：从VictoriaMetrics获取监控数据
+	cpuUsage, memoryUsage, activeConnections, err := h.metricsService.GetSaltStackMetrics()
+	if err != nil {
+		log.Printf("[MetricsService] 从VictoriaMetrics获取监控数据失败: %v", err)
+	}
+
+	// 如果从VictoriaMetrics获取到有效数据，直接返回
+	if cpuUsage > 0 || memoryUsage > 0 || activeConnections > 0 {
+		log.Printf("[MetricsService] 从VictoriaMetrics获取到监控数据: CPU=%d%%, Memory=%d%%, Connections=%d",
+			cpuUsage, memoryUsage, activeConnections)
+		return cpuUsage, memoryUsage, activeConnections
+	}
+
+	// 最后回退：Salt API方式获取
+	log.Printf("[MetricsService] VictoriaMetrics无数据，回退到Salt API方式获取性能指标")
+	return h.getPerformanceMetricsFromSalt(client)
+}
+
+// getPerformanceMetricsFromSalt 从Salt API获取性能指标（回退方式）
+// 使用 Salt 内置的 status 模块获取系统指标
+func (h *SaltStackHandler) getPerformanceMetricsFromSalt(client *saltAPIClient) (int, int, int) {
 	// 默认值
 	cpuUsage := 0
 	memoryUsage := 0
 	activeConnections := 0
 
-	// 尝试获取Salt Master自身的性能信息
-	// 在Salt Master上执行命令获取系统信息（Salt Master通常也是一个minion，minion_id为localhost或主机名）
+	// 获取任意一个在线 minion 的指标作为集群代表
+	// 因为 Salt Master 自身通常不作为 minion 运行
+	targetMinion := "*"
 
-	// 构造本地执行命令获取CPU使用率 (使用 ps 命令获取salt-master进程CPU)
+	log.Printf("[SaltMetrics] 开始从 Salt API 获取性能指标，目标: %s", targetMinion)
+
+	// 使用 status.cpustats 获取更准确的 CPU 使用率
+	// 优先尝试 status.cpustats，它返回详细的 CPU 使用统计
 	cpuPayload := map[string]interface{}{
 		"client": "local",
-		"tgt":    "*",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"ps aux | grep -E 'salt-master|salt-api' | grep -v grep | awk '{sum+=$3} END {print int(sum)}'"},
+		"tgt":    targetMinion,
+		"fun":    "status.cpustats",
+		"kwarg": map[string]interface{}{
+			"timeout": 5,
+		},
 	}
 	cpuResp, err := client.makeRequest("/", "POST", cpuPayload)
-	if err == nil {
-		if ret, ok := cpuResp["return"].([]interface{}); ok && len(ret) > 0 {
-			if retMap, ok := ret[0].(map[string]interface{}); ok {
-				// 遍历返回结果，取第一个非空值
-				for _, v := range retMap {
-					if valStr, ok := v.(string); ok {
-						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil && val > 0 {
-							cpuUsage = val
-							break
-						}
-					}
-				}
-			}
+	if err != nil {
+		log.Printf("[SaltMetrics] status.cpustats 请求失败: %v", err)
+	} else {
+		cpuUsage = h.extractCPUUsageFromStats(cpuResp)
+		log.Printf("[SaltMetrics] status.cpustats 返回 CPU 使用率: %d%%", cpuUsage)
+	}
+
+	// 如果 cpustats 没有数据，回退到 cpuload（负载平均值）
+	if cpuUsage == 0 {
+		log.Printf("[SaltMetrics] cpustats 无数据，尝试 cpuload...")
+		cpuPayload["fun"] = "status.cpuload"
+		cpuResp, err = client.makeRequest("/", "POST", cpuPayload)
+		if err != nil {
+			log.Printf("[SaltMetrics] status.cpuload 请求失败: %v", err)
+		} else {
+			cpuUsage = h.extractFirstSaltCPULoad(cpuResp)
+			log.Printf("[SaltMetrics] status.cpuload 返回 CPU 负载转换: %d%%", cpuUsage)
 		}
 	}
 
-	// 获取内存使用率 (使用 ps 命令获取salt进程内存百分比)
+	// 使用 status.meminfo 获取内存信息
 	memPayload := map[string]interface{}{
 		"client": "local",
-		"tgt":    "*",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"ps aux | grep -E 'salt-master|salt-api' | grep -v grep | awk '{sum+=$4} END {print int(sum)}'"},
+		"tgt":    targetMinion,
+		"fun":    "status.meminfo",
+		"kwarg": map[string]interface{}{
+			"timeout": 5,
+		},
 	}
 	memResp, err := client.makeRequest("/", "POST", memPayload)
-	if err == nil {
-		if ret, ok := memResp["return"].([]interface{}); ok && len(ret) > 0 {
-			if retMap, ok := ret[0].(map[string]interface{}); ok {
-				for _, v := range retMap {
-					if valStr, ok := v.(string); ok {
-						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil && val > 0 {
-							memoryUsage = val
-							break
-						}
-					}
-				}
-			}
-		}
+	if err != nil {
+		log.Printf("[SaltMetrics] status.meminfo 请求失败: %v", err)
+	} else {
+		memoryUsage = h.extractFirstSaltMemoryUsage(memResp)
+		log.Printf("[SaltMetrics] status.meminfo 返回内存使用率: %d%%", memoryUsage)
 	}
 
-	// 获取Salt Master活跃连接数 (检查4505和4506端口的连接数)
+	// 使用 runner 获取活跃连接数（已连接的 minion 数量）
 	connPayload := map[string]interface{}{
-		"client": "local",
-		"tgt":    "*",
-		"fun":    "cmd.run",
-		"arg":    []interface{}{"netstat -an 2>/dev/null | grep -E ':(4505|4506)' | grep ESTABLISHED | wc -l || ss -tan 2>/dev/null | grep -E ':(4505|4506)' | grep ESTAB | wc -l"},
+		"client": "runner",
+		"fun":    "manage.status",
 	}
 	connResp, err := client.makeRequest("/", "POST", connPayload)
-	if err == nil {
-		if ret, ok := connResp["return"].([]interface{}); ok && len(ret) > 0 {
-			if retMap, ok := ret[0].(map[string]interface{}); ok {
-				for _, v := range retMap {
-					if valStr, ok := v.(string); ok {
-						if val, err := strconv.Atoi(strings.TrimSpace(valStr)); err == nil {
-							activeConnections = val
-							break
+	if err != nil {
+		log.Printf("[SaltMetrics] manage.status 请求失败: %v", err)
+	} else {
+		activeConnections = h.extractActiveMinions(connResp)
+		log.Printf("[SaltMetrics] manage.status 返回活跃连接数: %d", activeConnections)
+	}
+
+	log.Printf("[SaltMetrics] 最终获取到的指标: CPU=%d%%, Memory=%d%%, Connections=%d",
+		cpuUsage, memoryUsage, activeConnections)
+
+	return cpuUsage, memoryUsage, activeConnections
+}
+
+// extractSaltCPULoad 从 status.cpuload 响应中提取 CPU 使用率
+// cpuload 返回格式: {"return": [{"minion_id": {"1-min": 0.5, "5-min": 0.3, "15-min": 0.2}}]}
+// 我们取 1 分钟平均负载并转换为百分比（假设单核 100% 负载）
+func (h *SaltStackHandler) extractSaltCPULoad(resp map[string]interface{}, minionID string) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			if minionData, ok := retMap[minionID]; ok {
+				if loadMap, ok := minionData.(map[string]interface{}); ok {
+					// 取 1 分钟负载
+					if load1, ok := loadMap["1-min"].(float64); ok {
+						// 将负载转换为百分比（假设 1.0 = 100%）
+						// 对于多核系统，可能需要除以核心数
+						cpuPercent := int(load1 * 100)
+						if cpuPercent > 100 {
+							cpuPercent = 100
 						}
+						return cpuPercent
 					}
 				}
 			}
 		}
 	}
+	return 0
+}
 
-	return cpuUsage, memoryUsage, activeConnections
+// extractFirstSaltCPULoad 从任意 minion 提取 CPU 负载
+func (h *SaltStackHandler) extractFirstSaltCPULoad(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			for _, minionData := range retMap {
+				if loadMap, ok := minionData.(map[string]interface{}); ok {
+					if load1, ok := loadMap["1-min"].(float64); ok {
+						cpuPercent := int(load1 * 100)
+						if cpuPercent > 100 {
+							cpuPercent = 100
+						}
+						return cpuPercent
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// extractCPUUsageFromStats 从 status.cpustats 响应中提取真正的 CPU 使用率
+// cpustats 返回格式: {"return": [{"minion_id": {"user": 1.5, "system": 0.8, "idle": 97.7, ...}}]}
+// CPU 使用率 = 100 - idle
+func (h *SaltStackHandler) extractCPUUsageFromStats(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			for _, minionData := range retMap {
+				if statsMap, ok := minionData.(map[string]interface{}); ok {
+					// 尝试从 idle 计算使用率
+					if idle, ok := statsMap["idle"].(float64); ok {
+						cpuUsage := int(100 - idle)
+						if cpuUsage < 0 {
+							cpuUsage = 0
+						}
+						if cpuUsage > 100 {
+							cpuUsage = 100
+						}
+						return cpuUsage
+					}
+					// 备用：累加 user + system + nice + iowait 等
+					var totalUsage float64
+					for key, value := range statsMap {
+						if key != "idle" && key != "steal" {
+							if v, ok := value.(float64); ok {
+								totalUsage += v
+							}
+						}
+					}
+					if totalUsage > 0 {
+						cpuUsage := int(totalUsage)
+						if cpuUsage > 100 {
+							cpuUsage = 100
+						}
+						return cpuUsage
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// extractSaltMemoryUsage 从 status.meminfo 响应中提取内存使用率
+// meminfo 返回格式: {"return": [{"minion_id": {"MemTotal": {"value": "8094236", "unit": "kB"}, ...}}]}
+func (h *SaltStackHandler) extractSaltMemoryUsage(resp map[string]interface{}, minionID string) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			if minionData, ok := retMap[minionID]; ok {
+				return h.calculateMemoryUsage(minionData)
+			}
+		}
+	}
+	return 0
+}
+
+// extractFirstSaltMemoryUsage 从任意 minion 提取内存使用率
+func (h *SaltStackHandler) extractFirstSaltMemoryUsage(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			for _, minionData := range retMap {
+				if usage := h.calculateMemoryUsage(minionData); usage > 0 {
+					return usage
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// calculateMemoryUsage 计算内存使用率百分比
+func (h *SaltStackHandler) calculateMemoryUsage(minionData interface{}) int {
+	memMap, ok := minionData.(map[string]interface{})
+	if !ok {
+		return 0
+	}
+
+	// 提取 MemTotal 和 MemAvailable
+	var memTotal, memAvailable float64
+
+	if memTotalData, ok := memMap["MemTotal"].(map[string]interface{}); ok {
+		if valStr, ok := memTotalData["value"].(string); ok {
+			memTotal, _ = strconv.ParseFloat(valStr, 64)
+		}
+	}
+
+	if memAvailData, ok := memMap["MemAvailable"].(map[string]interface{}); ok {
+		if valStr, ok := memAvailData["value"].(string); ok {
+			memAvailable, _ = strconv.ParseFloat(valStr, 64)
+		}
+	}
+
+	// 计算内存使用率
+	if memTotal > 0 {
+		memUsed := memTotal - memAvailable
+		memPercent := int((memUsed / memTotal) * 100)
+		if memPercent < 0 {
+			memPercent = 0
+		}
+		if memPercent > 100 {
+			memPercent = 100
+		}
+		return memPercent
+	}
+
+	return 0
+}
+
+// extractActiveMinions 从 runner manage.status 响应中提取活跃 minion 数量
+// 返回格式: {"return": [{"up": ["minion1", "minion2"], "down": []}]}
+func (h *SaltStackHandler) extractActiveMinions(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if statusMap, ok := ret[0].(map[string]interface{}); ok {
+			if upList, ok := statusMap["up"].([]interface{}); ok {
+				return len(upList)
+			}
+		}
+	}
+	return 0
 }
 
 // getDemoSaltStackStatus 获取演示用的SaltStack状态
@@ -648,45 +1395,149 @@ func (h *SaltStackHandler) getDemoSaltStackStatus() SaltStackStatus {
 		SaltVersion:       "3006.4",
 		ConfigFile:        "/etc/salt/master",
 		LogLevel:          "info",
-		CPUUsage:          12,
+		CPUUsage:          12.5,
 		MemoryUsage:       23,
 		ActiveConnections: 2,
+		NetworkBandwidth:  15.8,
 	}
 }
 
 // GetSaltMinions 获取Salt Minion列表
 func (h *SaltStackHandler) GetSaltMinions(c *gin.Context) {
-	// 尝试从缓存获取
-	if cached, err := h.cache.Get(context.Background(), "saltstack:minions").Result(); err == nil {
-		var minions []SaltMinion
-		if err := json.Unmarshal([]byte(cached), &minions); err == nil {
-			c.JSON(http.StatusOK, gin.H{"data": minions})
-			return
+	ctx := c.Request.Context()
+	cacheKey := "saltstack:minions"
+
+	// 检查是否强制刷新（支持 ?refresh=true 或 ?force=true）
+	forceRefresh := c.Query("refresh") == "true" || c.Query("force") == "true"
+
+	// 尝试从缓存获取（除非强制刷新）
+	if !forceRefresh {
+		if cached, err := h.cache.Get(ctx, cacheKey).Result(); err == nil {
+			var minions []SaltMinion
+			if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+				// 从数据库获取最新的分组信息并更新到缓存的 Minion 数据中
+				groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+				for i := range minions {
+					if group, ok := groupMap[minions[i].ID]; ok {
+						minions[i].Group = group
+					} else {
+						minions[i].Group = "" // 清除旧分组信息
+					}
+				}
+				c.JSON(http.StatusOK, gin.H{"data": minions, "cached": true})
+				return
+			}
 		}
 	}
+
+	// 创建带超时控制的 context
+	timeoutSec := 60 // 默认60秒总超时
+	if t := os.Getenv("SALT_API_REQUEST_TIMEOUT"); t != "" {
+		// 支持带单位的时间值（如 "60s", "2m"）或纯数字（秒）
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			timeoutSec = int(d.Seconds())
+		} else if parsed, err := strconv.Atoi(t); err == nil && parsed > 0 {
+			timeoutSec = parsed
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	defer cancel()
 
 	// 创建API客户端
 	client := h.newSaltAPIClient()
 
-	// 认证
-	if err := client.authenticate(); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+	// 使用 goroutine 执行认证和获取数据，以便可以响应 context 取消
+	type result struct {
+		minions []SaltMinion
+		err     error
+	}
+	resultChan := make(chan result, 1)
+
+	go func() {
+		// 认证
+		if err := client.authenticate(); err != nil {
+			resultChan <- result{err: fmt.Errorf("salt API authentication failed: %v", err)}
+			return
+		}
+
+		// 获取真实数据
+		minions, err := h.getRealMinions(client)
+		if err != nil {
+			resultChan <- result{err: fmt.Errorf("failed to get minions: %v", err)}
+			return
+		}
+		resultChan <- result{minions: minions}
+	}()
+
+	// 等待结果或超时
+	select {
+	case <-ctx.Done():
+		// 超时，尝试返回旧缓存
+		if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+			var minions []SaltMinion
+			if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+				// 从数据库获取最新的分组信息
+				groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+				for i := range minions {
+					if group, ok := groupMap[minions[i].ID]; ok {
+						minions[i].Group = group
+					} else {
+						minions[i].Group = ""
+					}
+				}
+				c.JSON(http.StatusOK, gin.H{
+					"data":    minions,
+					"cached":  true,
+					"warning": "请求超时，返回缓存数据",
+				})
+				return
+			}
+		}
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "获取 Minions 超时，请检查网络连接"})
 		return
-	}
 
-	// 获取真实数据
-	minions, err := h.getRealMinions(client)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取Minions失败: %v", err)})
-		return
-	}
+	case res := <-resultChan:
+		if res.err != nil {
+			// 尝试返回旧缓存
+			if cached, err := h.cache.Get(context.Background(), cacheKey).Result(); err == nil {
+				var minions []SaltMinion
+				if err := json.Unmarshal([]byte(cached), &minions); err == nil {
+					// 从数据库获取最新的分组信息
+					groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+					for i := range minions {
+						if group, ok := groupMap[minions[i].ID]; ok {
+							minions[i].Group = group
+						} else {
+							minions[i].Group = ""
+						}
+					}
+					c.JSON(http.StatusOK, gin.H{
+						"data":    minions,
+						"cached":  true,
+						"warning": res.err.Error(),
+					})
+					return
+				}
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": res.err.Error()})
+			return
+		}
 
-	// 缓存数据
-	if data, err := json.Marshal(minions); err == nil {
-		h.cache.Set(context.Background(), "saltstack:minions", string(data), 120*time.Second)
-	}
+		// 为每个 Minion 添加分组信息
+		groupMap, _ := h.minionGroupService.GetAllMinionGroupMap()
+		for i := range res.minions {
+			if group, ok := groupMap[res.minions[i].ID]; ok {
+				res.minions[i].Group = group
+			}
+		}
 
-	c.JSON(http.StatusOK, gin.H{"data": minions, "demo": false})
+		// 缓存数据（缓存时间延长到 5 分钟）
+		if data, err := json.Marshal(res.minions); err == nil {
+			h.cache.Set(context.Background(), cacheKey, string(data), 300*time.Second)
+		}
+
+		c.JSON(http.StatusOK, gin.H{"data": res.minions, "demo": false})
+	}
 }
 
 // getDemoMinions 获取演示用的Minion数据
@@ -945,43 +1796,287 @@ func (h *SaltStackHandler) extractKeys(resp map[string]interface{}, keyType stri
 	return []string{}
 }
 
+// getRecentlyDeletedMinionIDs 获取最近已完成删除的 Minion ID 列表
+// 返回最近 5 分钟内完成删除的 Minion，用于过滤 Salt Master 可能还返回的残留数据
+func (h *SaltStackHandler) getRecentlyDeletedMinionIDs() map[string]bool {
+	deletedIDs := make(map[string]bool)
+
+	deleteSvc := services.GetMinionDeleteService()
+	if deleteSvc == nil {
+		return deletedIDs
+	}
+
+	// 获取最近完成删除的任务
+	recentlyDeleted, err := deleteSvc.GetRecentlyCompletedMinionIDs(5 * time.Minute)
+	if err != nil {
+		return deletedIDs
+	}
+
+	for _, id := range recentlyDeleted {
+		deletedIDs[id] = true
+	}
+
+	return deletedIDs
+}
+
+// filterDeletedMinions 从 Minion ID 列表中过滤掉已删除的
+func (h *SaltStackHandler) filterDeletedMinions(minionIDs []string, deletedIDs map[string]bool) []string {
+	if len(deletedIDs) == 0 {
+		return minionIDs
+	}
+
+	filtered := make([]string, 0, len(minionIDs))
+	for _, id := range minionIDs {
+		if !deletedIDs[id] {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
+}
+
 func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, error) {
 	// 使用 runner manage.status 获取 up/down 列表
-	statusResp, err := client.makeRunner("manage.status", nil)
+	// 设置较短超时，避免等待离线 minion 过久
+	statusResp, err := client.makeRunner("manage.status", map[string]interface{}{
+		"timeout":            5,
+		"gather_job_timeout": 3,
+	})
 	if err != nil {
 		return nil, err
 	}
 	up, down := h.parseManageStatus(statusResp)
 
-	// 将 up 的节点获取详细 grains
+	// 获取最近已完成删除的 Minion ID 列表（用于过滤）
+	deletedMinionIDs := h.getRecentlyDeletedMinionIDs()
+
+	// 过滤掉已删除的 Minion
+	up = h.filterDeletedMinions(up, deletedMinionIDs)
+	down = h.filterDeletedMinions(down, deletedMinionIDs)
+
+	// 并发获取 up 节点的 grains 信息
 	var minions []SaltMinion
-	for _, id := range up {
-		// GET /minions/{id}
-		r, err := client.makeRequest("/minions/"+id, "GET", nil)
-		if err != nil {
-			// 如果失败，至少添加一个基本项
-			minions = append(minions, SaltMinion{ID: id, Status: "up"})
-			continue
+
+	if len(up) > 0 {
+		// 使用 channel 收集结果
+		type minionResult struct {
+			minion SaltMinion
+			err    error
 		}
-		grains := h.parseMinionGrains(r, id)
-		m := SaltMinion{
-			ID:           id,
-			Status:       "up",
-			OS:           fmt.Sprintf("%v", grains["os"]),
-			OSVersion:    fmt.Sprintf("%v", grains["osrelease"]),
-			Architecture: fmt.Sprintf("%v", grains["osarch"]),
-			Arch:         fmt.Sprintf("%v", grains["osarch"]),
-			SaltVersion:  fmt.Sprintf("%v", grains["saltversion"]),
-			LastSeen:     time.Now(),
-			Grains:       grains,
+		resultChan := make(chan minionResult, len(up))
+
+		// 限制并发数，避免过多请求
+		maxConcurrent := 5
+		if envMax := os.Getenv("SALT_API_MAX_CONCURRENT"); envMax != "" {
+			if parsed, err := strconv.Atoi(envMax); err == nil && parsed > 0 {
+				maxConcurrent = parsed
+			}
 		}
-		minions = append(minions, m)
+		semaphore := make(chan struct{}, maxConcurrent)
+
+		// 为并发请求创建带短超时的客户端
+		concurrentClient := h.newSaltAPIClientWithTimeout(15 * time.Second)
+		concurrentClient.token = client.token // 复用已认证的 token
+
+		for _, id := range up {
+			go func(minionID string) {
+				semaphore <- struct{}{}        // 获取信号量
+				defer func() { <-semaphore }() // 释放信号量
+
+				// 尝试获取 grains
+				r, err := concurrentClient.makeRequest("/minions/"+minionID, "GET", nil)
+				if err != nil {
+					// 如果获取失败，返回基本信息，标记数据来源为不可用
+					resultChan <- minionResult{
+						minion: SaltMinion{ID: minionID, Status: "up", LastSeen: time.Now(), DataSource: "unavailable"},
+						err:    nil, // 不视为致命错误
+					}
+					return
+				}
+
+				grains := h.parseMinionGrains(r, minionID)
+				m := SaltMinion{
+					ID:            minionID,
+					Status:        "up",
+					OS:            fmt.Sprintf("%v", grains["os"]),
+					OSVersion:     fmt.Sprintf("%v", grains["osrelease"]),
+					Architecture:  fmt.Sprintf("%v", grains["osarch"]),
+					Arch:          fmt.Sprintf("%v", grains["osarch"]),
+					SaltVersion:   fmt.Sprintf("%v", grains["saltversion"]),
+					LastSeen:      time.Now(),
+					Grains:        grains,
+					KernelVersion: h.extractKernelVersion(grains),
+					DataSource:    "realtime", // 默认标记为实时数据
+				}
+
+				// 尝试实时获取 GPU 信息（不阻塞主流程）
+				gpuInfo := h.getGPUInfo(concurrentClient, minionID)
+				if gpuInfo.DriverVersion != "" {
+					m.GPUDriverVersion = gpuInfo.DriverVersion
+					m.CUDAVersion = gpuInfo.CUDAVersion
+					m.GPUCount = gpuInfo.GPUCount
+					m.GPUModel = gpuInfo.GPUModel
+				}
+
+				// 尝试实时获取 IB 信息
+				ibInfo := h.getIBInfo(concurrentClient, minionID)
+				m.IBStatus = ibInfo.Status
+				m.IBCount = ibInfo.Count
+				m.IBRate = ibInfo.Rate
+
+				// 尝试实时获取 CPU/内存使用率信息
+				cpuMemInfo := h.getCPUMemoryInfo(concurrentClient, minionID)
+				if cpuMemInfo.CPUUsagePercent > 0 || cpuMemInfo.MemoryUsagePercent > 0 {
+					m.CPUUsagePercent = cpuMemInfo.CPUUsagePercent
+					m.MemoryUsagePercent = cpuMemInfo.MemoryUsagePercent
+					m.MemoryTotalGB = cpuMemInfo.MemoryTotalGB
+					m.MemoryUsedGB = cpuMemInfo.MemoryUsedGB
+				}
+
+				resultChan <- minionResult{minion: m, err: nil}
+			}(id)
+		}
+
+		// 收集所有结果
+		for i := 0; i < len(up); i++ {
+			result := <-resultChan
+			minions = append(minions, result.minion)
+		}
 	}
+
 	// 将 down 的节点也加入列表以便页面展示
 	for _, id := range down {
-		minions = append(minions, SaltMinion{ID: id, Status: "down"})
+		minions = append(minions, SaltMinion{ID: id, Status: "down", DataSource: "unavailable"})
 	}
+
+	// 从数据库读取节点指标数据作为兜底（只在实时数据为空时才使用）
+	h.enrichMinionsWithMetrics(minions)
+
 	return minions, nil
+}
+
+// enrichMinionsWithMetrics 填充节点指标数据
+// 优先级: 1. Redis 实时数据 2. 数据库缓存数据
+// 只有在实时数据为空时才使用数据库数据，并将数据来源标记为 "cached"
+func (h *SaltStackHandler) enrichMinionsWithMetrics(minions []SaltMinion) {
+	if len(minions) == 0 {
+		return
+	}
+
+	// 优先从 Redis 获取实时指标
+	redisMetrics, redisErr := services.GetAllNodeMetricsFromRedis()
+	if redisErr == nil && len(redisMetrics) > 0 {
+		log.Printf("[enrichMinionsWithMetrics] 从 Redis 获取到 %d 个节点的实时指标", len(redisMetrics))
+		for i := range minions {
+			if metrics, ok := redisMetrics[minions[i].ID]; ok {
+				if minions[i].CPUUsagePercent == 0 && metrics.CPUUsagePercent > 0 {
+					minions[i].CPUUsagePercent = metrics.CPUUsagePercent
+				}
+				if minions[i].MemoryUsagePercent == 0 && metrics.MemoryUsagePercent > 0 {
+					minions[i].MemoryUsagePercent = metrics.MemoryUsagePercent
+				}
+				if minions[i].MemoryTotalGB == 0 && metrics.MemoryTotalGB > 0 {
+					minions[i].MemoryTotalGB = metrics.MemoryTotalGB
+				}
+				if minions[i].MemoryUsedGB == 0 && metrics.MemoryUsedGB > 0 {
+					minions[i].MemoryUsedGB = metrics.MemoryUsedGB
+				}
+				// Redis 数据标记为实时
+				if minions[i].DataSource == "" {
+					minions[i].DataSource = "redis"
+				}
+			}
+		}
+	}
+
+	// 从数据库获取所有节点的最新指标（作为 Redis 的兜底）
+	metricsService := services.NewNodeMetricsService()
+	allMetrics, err := metricsService.GetAllLatestMetrics()
+	if err != nil {
+		return // 静默失败，不影响基本 Minion 信息返回
+	}
+
+	// 构建 minionID -> metrics 的映射
+	metricsMap := make(map[string]*models.NodeMetricsLatest)
+	for i := range allMetrics {
+		metricsMap[allMetrics[i].MinionID] = &allMetrics[i]
+	}
+
+	// 填充指标数据到 Minion（仅在实时数据为空时才使用数据库数据作为兜底）
+	for i := range minions {
+		if metrics, ok := metricsMap[minions[i].ID]; ok {
+			usedCachedData := false
+
+			// CPU 使用率兜底
+			if minions[i].CPUUsagePercent == 0 && metrics.CPUUsagePercent > 0 {
+				minions[i].CPUUsagePercent = metrics.CPUUsagePercent
+				usedCachedData = true
+			}
+			// 内存使用率兜底
+			if minions[i].MemoryUsagePercent == 0 && metrics.MemoryUsagePercent > 0 {
+				minions[i].MemoryUsagePercent = metrics.MemoryUsagePercent
+				usedCachedData = true
+			}
+			// 内存总量兜底
+			if minions[i].MemoryTotalGB == 0 && metrics.MemoryTotalGB > 0 {
+				minions[i].MemoryTotalGB = metrics.MemoryTotalGB
+				usedCachedData = true
+			}
+			// 内存已用兜底
+			if minions[i].MemoryUsedGB == 0 && metrics.MemoryUsedGB > 0 {
+				minions[i].MemoryUsedGB = metrics.MemoryUsedGB
+				usedCachedData = true
+			}
+
+			// GPU 驱动版本兜底
+			if minions[i].GPUDriverVersion == "" && metrics.GPUDriverVersion != "" {
+				minions[i].GPUDriverVersion = metrics.GPUDriverVersion
+				usedCachedData = true
+			}
+			// CUDA 版本兜底
+			if minions[i].CUDAVersion == "" && metrics.CUDAVersion != "" {
+				minions[i].CUDAVersion = metrics.CUDAVersion
+				usedCachedData = true
+			}
+			// GPU 数量兜底
+			if minions[i].GPUCount == 0 && metrics.GPUCount > 0 {
+				minions[i].GPUCount = metrics.GPUCount
+				usedCachedData = true
+			}
+			// GPU 型号兜底
+			if minions[i].GPUModel == "" && metrics.GPUModel != "" {
+				minions[i].GPUModel = metrics.GPUModel
+				usedCachedData = true
+			}
+			// IB 状态兜底（根据数据库中的活跃/总数计算状态）
+			if minions[i].IBStatus == "" || minions[i].IBStatus == "not_installed" {
+				if metrics.IBTotalCount > 0 {
+					if metrics.IBActiveCount > 0 {
+						minions[i].IBStatus = "active"
+					} else {
+						minions[i].IBStatus = "inactive"
+					}
+					usedCachedData = true
+				}
+			}
+			// IB 数量兜底
+			if minions[i].IBCount == 0 && metrics.IBTotalCount > 0 {
+				minions[i].IBCount = metrics.IBTotalCount
+				usedCachedData = true
+			}
+			// IB 速率兜底（从 IBPortsInfo 中解析，如果可用）
+			if minions[i].IBRate == "" && metrics.IBPortsInfo != "" {
+				// 尝试从 IBPortsInfo 中提取速率信息
+				// IBPortsInfo 格式通常为 JSON，可能包含 rate 字段
+				// 这里简单处理，如果需要复杂解析可以扩展
+				usedCachedData = true
+			}
+
+			// 如果使用了缓存数据，且当前数据来源不是 realtime，则标记为 cached
+			if usedCachedData && minions[i].DataSource != "realtime" {
+				minions[i].DataSource = "cached"
+			}
+		}
+	}
 }
 
 // parseManageStatus 解析 manage.status 的返回，得到 up/down 列表
@@ -1515,4 +2610,1555 @@ func extractLocalResults(resp map[string]interface{}) map[string]string {
 		}
 	}
 	return out
+}
+
+// ==================== Minion 分组管理 API ====================
+
+// ListMinionGroups 获取所有分组
+func (h *SaltStackHandler) ListMinionGroups(c *gin.Context) {
+	groups, err := h.minionGroupService.ListGroups()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": groups})
+}
+
+// CreateMinionGroup 创建分组
+func (h *SaltStackHandler) CreateMinionGroup(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		DisplayName string `json:"display_name"`
+		Description string `json:"description"`
+		Color       string `json:"color"`
+		Priority    int    `json:"priority"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	group := &models.MinionGroup{
+		Name:        req.Name,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		Color:       req.Color,
+		Priority:    req.Priority,
+	}
+	if group.DisplayName == "" {
+		group.DisplayName = group.Name
+	}
+	if group.Color == "" {
+		group.Color = "blue"
+	}
+
+	if err := h.minionGroupService.CreateGroup(group); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": group})
+}
+
+// UpdateMinionGroup 更新分组
+func (h *SaltStackHandler) UpdateMinionGroup(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid group id"})
+		return
+	}
+
+	var req map[string]interface{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 过滤允许更新的字段
+	updates := make(map[string]interface{})
+	allowedFields := []string{"display_name", "description", "color", "priority", "name"}
+	for _, field := range allowedFields {
+		if val, ok := req[field]; ok {
+			updates[field] = val
+		}
+	}
+
+	if err := h.minionGroupService.UpdateGroup(uint(id), updates); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "updated"})
+}
+
+// DeleteMinionGroup 删除分组
+func (h *SaltStackHandler) DeleteMinionGroup(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid group id"})
+		return
+	}
+
+	if err := h.minionGroupService.DeleteGroup(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "deleted"})
+}
+
+// SetMinionGroup 设置 Minion 的分组
+func (h *SaltStackHandler) SetMinionGroup(c *gin.Context) {
+	var req struct {
+		MinionID  string `json:"minion_id" binding:"required"`
+		GroupName string `json:"group_name"` // 空字符串表示移除分组
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if err := h.minionGroupService.SetMinionGroup(req.MinionID, req.GroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 清除 minions 缓存，使分组更新立即生效
+	h.cache.Del(context.Background(), "saltstack:minions")
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "group set successfully"})
+}
+
+// BatchSetMinionGroups 批量设置 Minion 分组
+func (h *SaltStackHandler) BatchSetMinionGroups(c *gin.Context) {
+	var req struct {
+		MinionGroups map[string]string `json:"minion_groups" binding:"required"` // minionID -> groupName
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if err := h.minionGroupService.BatchSetMinionGroups(req.MinionGroups); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 清除 minions 缓存
+	h.cache.Del(context.Background(), "saltstack:minions")
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "groups set successfully", "count": len(req.MinionGroups)})
+}
+
+// GetGroupMinions 获取分组内的 Minion 列表
+func (h *SaltStackHandler) GetGroupMinions(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid group id"})
+		return
+	}
+
+	minionIDs, err := h.minionGroupService.GetGroupMinions(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": minionIDs})
+}
+
+// GetMinionDetails 获取 Minion 详细信息（包含 GPU/NPU 信息）
+// @Summary 获取Minion详细信息
+// @Description 获取指定 Minion 的详细信息，包括内核版本、GPU/NPU 驱动信息
+// @Tags SaltStack
+// @Produce json
+// @Param minionId path string true "Minion ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minions/{minionId}/details [get]
+func (h *SaltStackHandler) GetMinionDetails(c *gin.Context) {
+	minionID := c.Param("minionId")
+	if minionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "Minion ID is required"})
+		return
+	}
+
+	// 创建 API 客户端
+	client := h.newSaltAPIClient()
+	if err := client.authenticate(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+		return
+	}
+
+	// 获取 grains 信息
+	grainsResp, err := client.makeRequest("/minions/"+minionID, "GET", nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "error": fmt.Sprintf("获取 Minion 信息失败: %v", err)})
+		return
+	}
+	grains := h.parseMinionGrains(grainsResp, minionID)
+
+	// 构建基本 Minion 信息
+	minion := SaltMinion{
+		ID:            minionID,
+		Status:        "up",
+		OS:            fmt.Sprintf("%v", grains["os"]),
+		OSVersion:     fmt.Sprintf("%v", grains["osrelease"]),
+		Architecture:  fmt.Sprintf("%v", grains["osarch"]),
+		Arch:          fmt.Sprintf("%v", grains["osarch"]),
+		SaltVersion:   fmt.Sprintf("%v", grains["saltversion"]),
+		LastSeen:      time.Now(),
+		Grains:        grains,
+		KernelVersion: h.extractKernelVersion(grains),
+	}
+
+	// 并行获取 GPU 和 NPU 信息
+	var wg sync.WaitGroup
+	var gpuInfo GPUInfo
+	var npuInfo NPUInfo
+
+	wg.Add(2)
+
+	// 获取 GPU 信息 (nvidia-smi)
+	go func() {
+		defer wg.Done()
+		gpuInfo = h.getGPUInfo(client, minionID)
+	}()
+
+	// 获取 NPU 信息 (npu-smi)
+	go func() {
+		defer wg.Done()
+		npuInfo = h.getNPUInfo(client, minionID)
+	}()
+
+	wg.Wait()
+
+	// 填充 GPU/NPU 信息
+	if gpuInfo.DriverVersion != "" {
+		minion.GPUDriverVersion = gpuInfo.DriverVersion
+		minion.CUDAVersion = gpuInfo.CUDAVersion
+		minion.GPUCount = gpuInfo.GPUCount
+		minion.GPUModel = gpuInfo.GPUModel
+	}
+
+	if npuInfo.Version != "" {
+		minion.NPUVersion = npuInfo.Version
+		minion.NPUCount = npuInfo.NPUCount
+		minion.NPUModel = npuInfo.NPUModel
+	}
+
+	// 获取分组信息
+	if groupName := h.minionGroupService.GetMinionGroupName(minionID); groupName != "" {
+		minion.Group = groupName
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": minion})
+}
+
+// GPUInfo NVIDIA GPU 信息结构
+type GPUInfo struct {
+	DriverVersion string `json:"driver_version"`
+	CUDAVersion   string `json:"cuda_version"`
+	GPUCount      int    `json:"gpu_count"`
+	GPUModel      string `json:"gpu_model"`
+}
+
+// NPUInfo 华为 NPU 信息结构
+type NPUInfo struct {
+	Version  string `json:"version"`
+	NPUCount int    `json:"npu_count"`
+	NPUModel string `json:"npu_model"`
+}
+
+// extractKernelVersion 从 grains 中提取内核版本
+func (h *SaltStackHandler) extractKernelVersion(grains map[string]interface{}) string {
+	// 优先使用 kernelrelease
+	if kr, ok := grains["kernelrelease"].(string); ok && kr != "" {
+		return kr
+	}
+	// 回退到 kernel
+	if k, ok := grains["kernel"].(string); ok && k != "" {
+		return k
+	}
+	return ""
+}
+
+// getGPUInfo 通过 nvidia-smi 获取 GPU 信息
+func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GPUInfo {
+	info := GPUInfo{}
+
+	// 执行 nvidia-smi 命令获取驱动版本和 CUDA 版本
+	// nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits
+	// nvidia-smi --query-gpu=name,count --format=csv,noheader
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>/dev/null | head -1"},
+		"kwarg": map[string]interface{}{
+			"timeout":      10,
+			"python_shell": true,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		return info
+	}
+
+	// 解析驱动版本
+	if output := h.extractCmdOutput(resp, minionID); output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "error") {
+		info.DriverVersion = strings.TrimSpace(output)
+	}
+
+	// 获取 CUDA 版本
+	// nvidia-smi 的输出头部包含 CUDA Version
+	// 例如: CUDA Version: 13.0
+	cudaPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \\K[0-9.]+' | head -1"},
+		"kwarg": map[string]interface{}{
+			"timeout":      10,
+			"python_shell": true,
+		},
+	}
+	cudaResp, err := client.makeRequest("/", "POST", cudaPayload)
+	if err == nil {
+		if cudaOutput := h.extractCmdOutput(cudaResp, minionID); cudaOutput != "" {
+			info.CUDAVersion = strings.TrimSpace(cudaOutput)
+		}
+	}
+
+	// 获取 GPU 数量和型号
+	countPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi --query-gpu=name,count --format=csv,noheader 2>/dev/null | head -1"},
+		"kwarg": map[string]interface{}{
+			"timeout":      10,
+			"python_shell": true,
+		},
+	}
+	countResp, err := client.makeRequest("/", "POST", countPayload)
+	if err == nil {
+		if countOutput := h.extractCmdOutput(countResp, minionID); countOutput != "" {
+			// 输出格式: "NVIDIA H100 80GB HBM3, 8"
+			parts := strings.Split(countOutput, ",")
+			if len(parts) >= 1 {
+				info.GPUModel = strings.TrimSpace(parts[0])
+			}
+		}
+	}
+
+	// 获取 GPU 数量
+	gpuCountPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"nvidia-smi -L 2>/dev/null | wc -l"},
+		"kwarg": map[string]interface{}{
+			"timeout":      10,
+			"python_shell": true,
+		},
+	}
+	gpuCountResp, err := client.makeRequest("/", "POST", gpuCountPayload)
+	if err == nil {
+		if gpuCountOutput := h.extractCmdOutput(gpuCountResp, minionID); gpuCountOutput != "" {
+			if count, parseErr := strconv.Atoi(strings.TrimSpace(gpuCountOutput)); parseErr == nil {
+				info.GPUCount = count
+			}
+		}
+	}
+
+	return info
+}
+
+// getNPUInfo 通过 npu-smi 获取华为 NPU 信息
+func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NPUInfo {
+	info := NPUInfo{}
+
+	// 执行 npu-smi info 命令
+	// 输出格式:
+	// +------------------------------------------------------------------------------------------------+
+	// | npu-smi 24.1.1                   Version: 24.1.1                                               |
+	// +------------------------------------------------------------------------------------------------+
+	// | NPU   Name      Health          Power(W)   Temp(C)   ...
+	// | 0     910B3     OK              68.9       36        ...
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"npu-smi info 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		return info
+	}
+
+	output := h.extractCmdOutput(resp, minionID)
+	if output == "" || strings.Contains(strings.ToLower(output), "not found") || strings.Contains(strings.ToLower(output), "command not found") {
+		return info
+	}
+
+	// 解析 npu-smi 版本
+	// 格式: | npu-smi 24.1.1                   Version: 24.1.1 |
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		// 解析版本号
+		if strings.Contains(line, "npu-smi") && strings.Contains(line, "Version:") {
+			// 提取 Version: 后的版本号
+			if idx := strings.Index(line, "Version:"); idx != -1 {
+				versionPart := strings.TrimSpace(line[idx+len("Version:"):])
+				// 移除末尾的 | 和空格
+				versionPart = strings.TrimSuffix(strings.TrimSpace(versionPart), "|")
+				info.Version = strings.TrimSpace(versionPart)
+			}
+		}
+
+		// 解析 NPU 型号和数量
+		// 格式: | 0     910B3     OK ...
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "|") && !strings.Contains(line, "NPU") && !strings.Contains(line, "npu-smi") && !strings.Contains(line, "---") {
+			fields := strings.Fields(strings.Trim(line, "|"))
+			if len(fields) >= 2 {
+				// 第一个字段是数字（NPU ID），第二个字段是型号
+				if _, err := strconv.Atoi(fields[0]); err == nil {
+					info.NPUCount++
+					if info.NPUModel == "" {
+						info.NPUModel = fields[1]
+					}
+				}
+			}
+		}
+	}
+
+	return info
+}
+
+// IBInfo InfiniBand 网络信息结构
+type IBInfo struct {
+	Status string `json:"status"` // active, inactive, not_installed
+	Count  int    `json:"count"`
+	Rate   string `json:"rate"` // 如 "200 Gb/sec (4X HDR)"
+}
+
+// getIBInfo 通过 ibstat 获取 InfiniBand 信息
+func (h *SaltStackHandler) getIBInfo(client *saltAPIClient, minionID string) IBInfo {
+	info := IBInfo{Status: "not_installed"}
+
+	// 检查 ibstat 命令是否存在
+	checkPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"which ibstat 2>/dev/null || command -v ibstat 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout":      10,
+			"python_shell": true,
+		},
+	}
+
+	checkResp, err := client.makeRequest("/", "POST", checkPayload)
+	if err != nil {
+		return info
+	}
+
+	checkOutput := h.extractCmdOutput(checkResp, minionID)
+	if checkOutput == "" || strings.Contains(strings.ToLower(checkOutput), "not found") {
+		// ibstat 不存在，表示未安装 InfiniBand
+		return info
+	}
+
+	// 执行 ibstat 获取 IB 状态
+	// 输出格式:
+	// CA 'mlx5_0'
+	//     CA type: MT4123
+	//     Number of ports: 1
+	//     ...
+	//     Port 1:
+	//         State: Active
+	//         Physical state: LinkUp
+	//         Rate: 200
+	//         Base lid: 0
+	//         ...
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"ibstat 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout":      15,
+			"python_shell": true,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		info.Status = "unavailable"
+		return info
+	}
+
+	output := h.extractCmdOutput(resp, minionID)
+	if output == "" || strings.Contains(strings.ToLower(output), "error") {
+		info.Status = "unavailable"
+		return info
+	}
+
+	// 解析 ibstat 输出
+	lines := strings.Split(output, "\n")
+	activeCount := 0
+	totalCount := 0
+	var rate string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// 统计 CA 数量
+		if strings.HasPrefix(line, "CA '") {
+			totalCount++
+		}
+
+		// 检查端口状态
+		if strings.HasPrefix(line, "State:") {
+			state := strings.TrimSpace(strings.TrimPrefix(line, "State:"))
+			if strings.ToLower(state) == "active" {
+				activeCount++
+			}
+		}
+
+		// 获取速率
+		if strings.HasPrefix(line, "Rate:") && rate == "" {
+			rateValue := strings.TrimSpace(strings.TrimPrefix(line, "Rate:"))
+			if rateValue != "" && rateValue != "0" {
+				rate = rateValue + " Gb/sec"
+			}
+		}
+	}
+
+	info.Count = totalCount
+	if totalCount > 0 {
+		if activeCount > 0 {
+			info.Status = "active"
+		} else {
+			info.Status = "inactive"
+		}
+	}
+	info.Rate = rate
+
+	return info
+}
+
+// CPUMemoryInfo CPU和内存使用率信息结构
+type CPUMemoryInfo struct {
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent"`
+	MemoryTotalGB      float64 `json:"memory_total_gb"`
+	MemoryUsedGB       float64 `json:"memory_used_gb"`
+}
+
+// getCPUMemoryInfo 通过 Salt 命令获取 CPU 和内存使用率信息
+func (h *SaltStackHandler) getCPUMemoryInfo(client *saltAPIClient, minionID string) CPUMemoryInfo {
+	info := CPUMemoryInfo{}
+
+	// 从嵌入脚本文件读取，避免硬编码
+	script, err := scripts.GetCPUMemoryScript()
+	if err != nil {
+		log.Printf("[SaltStack] 读取脚本文件失败: %v", err)
+		return info
+	}
+
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{script},
+		"kwarg": map[string]interface{}{
+			"timeout":      10,
+			"python_shell": true, // 必须启用 shell 模式以支持管道和复杂命令
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		return info
+	}
+
+	output := h.extractCmdOutput(resp, minionID)
+	if output == "" || strings.Contains(strings.ToLower(output), "error") {
+		return info
+	}
+
+	// 解析输出: cpu_percent|mem_total_kb|mem_available_kb
+	output = strings.TrimSpace(output)
+	// 处理多行输出（脚本可能有额外输出），只取最后一行
+	lines := strings.Split(output, "\n")
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+
+	parts := strings.Split(lastLine, "|")
+	if len(parts) >= 3 {
+		// CPU 使用率
+		if cpuPercent, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); err == nil {
+			info.CPUUsagePercent = cpuPercent
+		}
+
+		// 内存总量 (KB -> GB)
+		var memTotalKB float64
+		if val, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && val > 0 {
+			memTotalKB = val
+			info.MemoryTotalGB = memTotalKB / 1024 / 1024
+		}
+
+		// 内存可用量 (KB -> GB) 及使用率计算
+		if memAvailKB, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64); err == nil && memTotalKB > 0 {
+			memUsedKB := memTotalKB - memAvailKB
+			info.MemoryUsedGB = memUsedKB / 1024 / 1024
+			info.MemoryUsagePercent = (memUsedKB / memTotalKB) * 100
+		}
+	}
+
+	return info
+}
+
+// extractCmdOutput 从 cmd.run 的响应中提取输出
+func (h *SaltStackHandler) extractCmdOutput(resp map[string]interface{}, minionID string) string {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if output, ok := m[minionID].(string); ok {
+				return output
+			}
+		}
+	}
+	return ""
+}
+
+// ================== 批量为 Minion 安装 Categraf ==================
+
+// categrafInstallTask 存储 Categraf 安装任务信息
+type categrafInstallTask struct {
+	TaskID    string              `json:"task_id"`
+	MinionIDs []string            `json:"minion_ids"`
+	Status    string              `json:"status"` // pending, running, completed, failed
+	Events    []map[string]string `json:"events"`
+	StartTime time.Time           `json:"start_time"`
+}
+
+var categrafInstallTasks = make(map[string]*categrafInstallTask)
+var categrafInstallTasksMutex sync.RWMutex
+
+// InstallCategrafOnMinions 批量为 Minion 安装 Categraf
+// @Summary 批量为 Minion 安装 Categraf
+// @Description 通过 Salt State 在指定的 Minion 上安装 Categraf 监控代理
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param body body object true "安装请求" example({"minion_ids": ["minion1", "minion2"]})
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minions/install-categraf [post]
+func (h *SaltStackHandler) InstallCategrafOnMinions(c *gin.Context) {
+	var req struct {
+		MinionIDs []string `json:"minion_ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	if len(req.MinionIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "minion_ids cannot be empty"})
+		return
+	}
+
+	// 生成任务 ID
+	taskID := fmt.Sprintf("categraf-%d", time.Now().UnixNano())
+
+	// 创建任务记录
+	task := &categrafInstallTask{
+		TaskID:    taskID,
+		MinionIDs: req.MinionIDs,
+		Status:    "pending",
+		Events:    make([]map[string]string, 0),
+		StartTime: time.Now(),
+	}
+
+	categrafInstallTasksMutex.Lock()
+	categrafInstallTasks[taskID] = task
+	categrafInstallTasksMutex.Unlock()
+
+	// 异步执行安装
+	go h.executeCategrafInstall(taskID, req.MinionIDs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Categraf installation task created",
+		"data": gin.H{
+			"task_id":    taskID,
+			"minion_ids": req.MinionIDs,
+		},
+	})
+}
+
+// executeCategrafInstall 异步执行 Categraf 安装
+func (h *SaltStackHandler) executeCategrafInstall(taskID string, minionIDs []string) {
+	categrafInstallTasksMutex.Lock()
+	task := categrafInstallTasks[taskID]
+	if task == nil {
+		categrafInstallTasksMutex.Unlock()
+		return
+	}
+	task.Status = "running"
+	categrafInstallTasksMutex.Unlock()
+
+	defer func() {
+		categrafInstallTasksMutex.Lock()
+		if task.Status == "running" {
+			task.Status = "completed"
+		}
+		categrafInstallTasksMutex.Unlock()
+	}()
+
+	// 添加开始事件
+	h.addCategrafEvent(taskID, map[string]string{
+		"type":      "start",
+		"message":   fmt.Sprintf("Starting Categraf installation on %d minions", len(minionIDs)),
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+
+	for _, minionID := range minionIDs {
+		h.addCategrafEvent(taskID, map[string]string{
+			"type":      "running",
+			"status":    "running",
+			"minion_id": minionID,
+			"message":   fmt.Sprintf("Installing Categraf on %s...", minionID),
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+
+		// 通过 Salt State 安装 Categraf
+		// 使用 state.apply 命令执行 categraf state
+		payload := map[string]interface{}{
+			"client": "local",
+			"tgt":    minionID,
+			"fun":    "state.apply",
+			"arg":    []string{"categraf"},
+		}
+
+		client := h.newSaltAPIClient()
+		resp, err := client.makeRequest("/", "POST", payload)
+		if err != nil {
+			h.addCategrafEvent(taskID, map[string]string{
+				"type":      "error",
+				"status":    "error",
+				"minion_id": minionID,
+				"message":   fmt.Sprintf("Failed to install Categraf on %s: %v", minionID, err),
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+			continue
+		}
+
+		// 解析响应，检查是否成功
+		success, message := h.checkStateApplyResult(resp, minionID)
+		if success {
+			h.addCategrafEvent(taskID, map[string]string{
+				"type":      "success",
+				"status":    "success",
+				"minion_id": minionID,
+				"message":   fmt.Sprintf("Categraf installed successfully on %s: %s", minionID, message),
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+		} else {
+			h.addCategrafEvent(taskID, map[string]string{
+				"type":      "error",
+				"status":    "error",
+				"minion_id": minionID,
+				"message":   fmt.Sprintf("Categraf installation failed on %s: %s", minionID, message),
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+		}
+	}
+
+	// 添加完成事件
+	h.addCategrafEvent(taskID, map[string]string{
+		"type":      "complete",
+		"message":   "Categraf installation completed",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+}
+
+// addCategrafEvent 添加 Categraf 安装事件
+func (h *SaltStackHandler) addCategrafEvent(taskID string, event map[string]string) {
+	categrafInstallTasksMutex.Lock()
+	defer categrafInstallTasksMutex.Unlock()
+
+	if task, ok := categrafInstallTasks[taskID]; ok {
+		task.Events = append(task.Events, event)
+	}
+}
+
+// checkStateApplyResult 检查 state.apply 的结果
+func (h *SaltStackHandler) checkStateApplyResult(resp map[string]interface{}, minionID string) (bool, string) {
+	ret, ok := resp["return"].([]interface{})
+	if !ok || len(ret) == 0 {
+		return false, "empty response"
+	}
+
+	minionResp, ok := ret[0].(map[string]interface{})
+	if !ok {
+		return false, "invalid response format"
+	}
+
+	minionResult, ok := minionResp[minionID]
+	if !ok {
+		return false, "no result for minion"
+	}
+
+	// 检查是否所有 state 都成功
+	switch result := minionResult.(type) {
+	case map[string]interface{}:
+		allSuccess := true
+		var messages []string
+		for _, stateResult := range result {
+			if sr, ok := stateResult.(map[string]interface{}); ok {
+				if success, ok := sr["result"].(bool); ok && !success {
+					allSuccess = false
+					if comment, ok := sr["comment"].(string); ok {
+						messages = append(messages, comment)
+					}
+				}
+			}
+		}
+		if allSuccess {
+			return true, "all states applied successfully"
+		}
+		return false, strings.Join(messages, "; ")
+	case string:
+		// 可能是错误消息
+		return false, result
+	default:
+		return false, "unknown response type"
+	}
+}
+
+// CategrafInstallStream SSE 流式返回 Categraf 安装进度
+// @Summary Categraf 安装进度流
+// @Description 通过 SSE 流式返回 Categraf 安装任务的进度
+// @Tags SaltStack
+// @Produce text/event-stream
+// @Param task_id path string true "任务 ID"
+// @Success 200 {string} string "event-stream"
+// @Router /api/saltstack/minions/install-categraf/{task_id}/stream [get]
+func (h *SaltStackHandler) CategrafInstallStream(c *gin.Context) {
+	taskID := c.Param("task_id")
+
+	categrafInstallTasksMutex.RLock()
+	task := categrafInstallTasks[taskID]
+	categrafInstallTasksMutex.RUnlock()
+
+	if task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "task not found"})
+		return
+	}
+
+	// 设置 SSE 头
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	// 发送已有事件
+	sentIndex := 0
+	for {
+		categrafInstallTasksMutex.RLock()
+		task = categrafInstallTasks[taskID]
+		if task == nil {
+			categrafInstallTasksMutex.RUnlock()
+			break
+		}
+		events := task.Events
+		status := task.Status
+		categrafInstallTasksMutex.RUnlock()
+
+		// 发送新事件
+		for i := sentIndex; i < len(events); i++ {
+			eventData, _ := json.Marshal(events[i])
+			c.SSEvent("message", string(eventData))
+			c.Writer.Flush()
+			sentIndex = i + 1
+		}
+
+		// 任务完成则退出
+		if status == "completed" || status == "failed" {
+			break
+		}
+
+		// 等待新事件
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// 发送关闭事件
+	closeEvent, _ := json.Marshal(map[string]string{
+		"type":      "closed",
+		"message":   "Stream closed",
+		"timestamp": time.Now().Format(time.RFC3339),
+	})
+	c.SSEvent("message", string(closeEvent))
+	c.Writer.Flush()
+}
+
+// ==================== 节点指标采集相关 ====================
+
+// NodeMetricsCallback 接收节点指标回调
+// @Summary 接收节点指标回调
+// @Description 接收从 Salt Minion 定期采集的 CPU/内存/网络/GPU/IB/RoCE 等硬件信息。支持可选的 API Token 认证。
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param X-API-Token header string false "API Token（可选，如配置 NODE_METRICS_API_TOKEN 环境变量则必须提供）"
+// @Param request body models.NodeMetricsCallbackRequest true "节点指标数据"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/callback [post]
+func (h *SaltStackHandler) NodeMetricsCallback(c *gin.Context) {
+	// 可选的 API Token 认证
+	expectedToken := os.Getenv("NODE_METRICS_API_TOKEN")
+	if expectedToken != "" {
+		providedToken := c.GetHeader("X-API-Token")
+		if providedToken != expectedToken {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "Invalid or missing API token",
+			})
+			return
+		}
+	}
+
+	var req models.NodeMetricsCallbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	if req.MinionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "minion_id is required",
+		})
+		return
+	}
+
+	// 解析时间戳
+	var timestamp time.Time
+	if req.Timestamp != "" {
+		parsed, err := time.Parse(time.RFC3339, req.Timestamp)
+		if err != nil {
+			timestamp = time.Now()
+		} else {
+			timestamp = parsed
+		}
+	} else {
+		timestamp = time.Now()
+	}
+
+	// 构建 NodeMetrics 记录
+	metrics := &models.NodeMetrics{
+		MinionID:  req.MinionID,
+		Timestamp: timestamp,
+	}
+
+	// 处理 CPU 信息
+	if req.CPU != nil {
+		metrics.CPUCores = req.CPU.Cores
+		metrics.CPUModel = req.CPU.Model
+		metrics.CPUUsagePercent = req.CPU.UsagePercent
+		metrics.CPULoadAvg = req.CPU.LoadAvg
+	}
+
+	// 处理内存信息
+	if req.Memory != nil {
+		metrics.MemoryTotalGB = req.Memory.TotalGB
+		metrics.MemoryUsedGB = req.Memory.UsedGB
+		metrics.MemoryAvailableGB = req.Memory.AvailableGB
+		metrics.MemoryUsagePercent = req.Memory.UsagePercent
+	}
+
+	// 处理网络信息
+	if req.Network != nil {
+		metrics.ActiveConnections = req.Network.ActiveConnections
+		if req.Network.Interfaces != nil {
+			networkJSON, _ := json.Marshal(req.Network.Interfaces)
+			metrics.NetworkInfo = string(networkJSON)
+		}
+	}
+
+	// 处理 GPU 信息
+	if req.GPU != nil {
+		metrics.GPUDriverVersion = req.GPU.DriverVersion
+		metrics.CUDAVersion = req.GPU.CUDAVersion
+		metrics.GPUCount = req.GPU.Count
+		metrics.GPUModel = req.GPU.Model
+		metrics.GPUMemoryTotal = req.GPU.MemoryTotal
+		metrics.GPUAvgUtilization = req.GPU.AvgUtilization
+		metrics.GPUMemoryUsedMB = req.GPU.MemoryUsedMB
+		metrics.GPUMemoryTotalMB = req.GPU.MemoryTotalMB
+		metrics.GPUMemoryUsagePercent = req.GPU.MemoryUsagePercent
+		if req.GPU.GPUs != nil {
+			gpuInfoJSON, _ := json.Marshal(req.GPU.GPUs)
+			metrics.GPUInfo = string(gpuInfoJSON)
+		}
+	}
+
+	// 处理 IB 信息
+	if req.IB != nil {
+		metrics.IBActiveCount = req.IB.ActiveCount
+		metrics.IBDownCount = req.IB.DownCount
+		metrics.IBTotalCount = req.IB.TotalCount
+		if req.IB.Ports != nil {
+			ibPortsJSON, _ := json.Marshal(req.IB.Ports)
+			metrics.IBPortsInfo = string(ibPortsJSON)
+		}
+	}
+
+	// 处理 RoCE 信息
+	if req.RoCE != nil {
+		roceJSON, _ := json.Marshal(req.RoCE)
+		metrics.RoCEInfo = string(roceJSON)
+	}
+
+	// 处理系统信息
+	if req.System != nil {
+		metrics.KernelVersion = req.System.KernelVersion
+		metrics.OSVersion = req.System.OSVersion
+		metrics.UptimeSeconds = req.System.UptimeSeconds
+	}
+
+	// 保存原始数据
+	rawDataJSON, _ := json.Marshal(req)
+	metrics.RawData = string(rawDataJSON)
+
+	// 调用服务保存指标
+	metricsService := services.NewNodeMetricsService()
+	if err := metricsService.SaveNodeMetrics(metrics); err != nil {
+		log.Printf("[NodeMetricsCallback] Failed to save metrics for minion %s: %v", req.MinionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to save metrics: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[NodeMetricsCallback] Received metrics from minion: %s, CPU: %.1f%%, Mem: %.1f%%, GPU count: %d (util: %.1f%%), IB: %d active, %d down",
+		req.MinionID, metrics.CPUUsagePercent, metrics.MemoryUsagePercent,
+		metrics.GPUCount, metrics.GPUAvgUtilization,
+		metrics.IBActiveCount, metrics.IBDownCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Metrics received and saved",
+		"minion":  req.MinionID,
+	})
+}
+
+// GetNodeMetrics 获取节点指标
+// @Summary 获取节点指标
+// @Description 获取指定节点的最新硬件指标（GPU/IB）
+// @Tags SaltStack
+// @Produce json
+// @Param minion_id query string false "Minion ID，留空获取所有节点"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics [get]
+func (h *SaltStackHandler) GetNodeMetrics(c *gin.Context) {
+	minionID := c.Query("minion_id")
+
+	metricsService := services.NewNodeMetricsService()
+
+	if minionID != "" {
+		// 获取单个节点的最新指标
+		metrics, err := metricsService.GetLatestMetrics(minionID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "Metrics not found for minion: " + minionID,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data":    h.formatNodeMetricsResponse(metrics),
+		})
+		return
+	}
+
+	// 获取所有节点的最新指标
+	allMetrics, err := metricsService.GetAllLatestMetrics()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get metrics: " + err.Error(),
+		})
+		return
+	}
+
+	// 格式化响应
+	var results []models.NodeMetricsResponse
+	for _, m := range allMetrics {
+		results = append(results, h.formatNodeMetricsResponse(&m))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    results,
+		"total":   len(results),
+	})
+}
+
+// formatNodeMetricsResponse 格式化节点指标响应
+func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest) models.NodeMetricsResponse {
+	resp := models.NodeMetricsResponse{
+		MinionID:    m.MinionID,
+		CollectedAt: m.Timestamp,
+	}
+
+	// CPU 信息 - 始终返回，即使值为 0
+	resp.CPU = &models.NodeCPUMetrics{
+		Cores:        m.CPUCores,
+		Model:        m.CPUModel,
+		UsagePercent: m.CPUUsagePercent,
+		Usage:        m.CPUUsagePercent, // 兼容前端期望的 usage 字段
+		LoadAvg:      m.CPULoadAvg,
+	}
+
+	// 内存信息 - 始终返回，即使值为 0
+	resp.Memory = &models.NodeMemoryMetrics{
+		TotalGB:      m.MemoryTotalGB,
+		UsedGB:       m.MemoryUsedGB,
+		AvailableGB:  m.MemoryAvailableGB,
+		UsagePercent: m.MemoryUsagePercent,
+	}
+
+	// 网络信息 - 始终返回
+	resp.Network = &models.NodeNetworkMetrics{
+		ActiveConnections: m.ActiveConnections,
+	}
+	if m.NetworkInfo != "" {
+		var interfaces []models.NodeNetworkInterface
+		if err := json.Unmarshal([]byte(m.NetworkInfo), &interfaces); err == nil {
+			resp.Network.Interfaces = interfaces
+		}
+	}
+
+	// GPU 信息 - 始终返回，即使没有 GPU
+	resp.GPU = &models.NodeGPUMetrics{
+		DriverVersion:      m.GPUDriverVersion,
+		CUDAVersion:        m.CUDAVersion,
+		Count:              m.GPUCount,
+		Model:              m.GPUModel,
+		MemoryTotal:        m.GPUMemoryTotal,
+		AvgUtilization:     m.GPUAvgUtilization,
+		MemoryUsedMB:       m.GPUMemoryUsedMB,
+		MemoryTotalMB:      m.GPUMemoryTotalMB,
+		MemoryUsagePercent: m.GPUMemoryUsagePercent,
+	}
+	// 解析详细 GPU 信息
+	if m.GPUInfo != "" {
+		var gpus []models.NodeGPUDetailInfo
+		if err := json.Unmarshal([]byte(m.GPUInfo), &gpus); err == nil {
+			resp.GPU.GPUs = gpus
+		}
+	}
+
+	// IB 信息 - 始终返回，即使没有 IB 设备
+	resp.IB = &models.NodeIBMetrics{
+		ActiveCount: m.IBActiveCount,
+		DownCount:   m.IBDownCount,
+		TotalCount:  m.IBTotalCount,
+	}
+	// 解析 IB 端口信息
+	if m.IBPortsInfo != "" {
+		var ports []models.NodeIBPortInfo
+		if err := json.Unmarshal([]byte(m.IBPortsInfo), &ports); err == nil {
+			resp.IB.Ports = ports
+		}
+	}
+
+	// RoCE 信息
+	if m.RoCEInfo != "" {
+		var roce models.NodeRoCEMetrics
+		if err := json.Unmarshal([]byte(m.RoCEInfo), &roce); err == nil {
+			resp.RoCE = &roce
+		}
+	}
+
+	// 系统信息
+	if m.KernelVersion != "" || m.OSVersion != "" {
+		resp.System = &models.NodeSystemMetrics{
+			KernelVersion: m.KernelVersion,
+			OSVersion:     m.OSVersion,
+			UptimeSeconds: m.UptimeSeconds,
+		}
+	}
+
+	return resp
+}
+
+// DeployNodeMetricsState 部署节点指标采集 State
+// @Summary 部署节点指标采集
+// @Description 向指定 Minion 部署节点指标采集脚本和定时任务
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "部署请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/deploy [post]
+func (h *SaltStackHandler) DeployNodeMetricsState(c *gin.Context) {
+	var req struct {
+		Target   string `json:"target" binding:"required"` // Minion ID 或通配符
+		Interval int    `json:"interval"`                  // 采集间隔（分钟），默认 3
+		APIToken string `json:"api_token"`                 // 可选的 API Token
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	if req.Interval <= 0 {
+		req.Interval = 3
+	}
+
+	// 获取回调 URL
+	callbackURL := h.getNodeMetricsCallbackURL(c)
+
+	// 获取 API Token（优先使用请求中的，否则使用环境变量）
+	apiToken := req.APIToken
+	if apiToken == "" {
+		apiToken = os.Getenv("NODE_METRICS_API_TOKEN")
+	}
+
+	// 构建 pillar 数据
+	pillarData := map[string]interface{}{
+		"node_metrics": map[string]interface{}{
+			"callback_url":     callbackURL,
+			"collect_interval": req.Interval,
+			"api_token":        apiToken,
+		},
+	}
+
+	// 获取 Salt API 客户端
+	client := h.newSaltAPIClient()
+	if client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get Salt API client",
+		})
+		return
+	}
+
+	// 执行 state.apply
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    req.Target,
+		"fun":    "state.apply",
+		"arg":    []string{"node-metrics"},
+		"pillar": pillarData,
+	}
+
+	result, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		log.Printf("[DeployNodeMetricsState] Salt API error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Salt API error: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[DeployNodeMetricsState] Deployed node-metrics state to target: %s", req.Target)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"message":     "Node metrics state deployed",
+		"target":      req.Target,
+		"interval":    req.Interval,
+		"callbackURL": callbackURL,
+		"result":      result,
+	})
+}
+
+// getNodeMetricsCallbackURL 获取节点指标回调 URL
+func (h *SaltStackHandler) getNodeMetricsCallbackURL(c *gin.Context) string {
+	// 优先从环境变量获取
+	if callbackURL := os.Getenv("NODE_METRICS_CALLBACK_URL"); callbackURL != "" {
+		return callbackURL
+	}
+
+	// 从配置获取后端地址
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+
+	// 尝试获取真实主机地址
+	host := c.Request.Host
+	if forwardedHost := c.GetHeader("X-Forwarded-Host"); forwardedHost != "" {
+		host = forwardedHost
+	}
+
+	return fmt.Sprintf("%s://%s/api/saltstack/node-metrics/callback", scheme, host)
+}
+
+// TriggerMetricsCollection 触发节点指标采集
+// @Summary 触发节点指标采集
+// @Description 通过 Salt API 触发指定节点立即执行指标采集脚本
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "触发请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/trigger [post]
+func (h *SaltStackHandler) TriggerMetricsCollection(c *gin.Context) {
+	var req struct {
+		Target string `json:"target"` // Minion ID 或通配符，默认 "*"
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 如果没有请求体，使用默认值
+		req.Target = "*"
+	}
+
+	if req.Target == "" {
+		req.Target = "*"
+	}
+
+	// 获取 Salt API 客户端
+	client := h.newSaltAPIClient()
+	if client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get Salt API client",
+		})
+		return
+	}
+
+	// 执行采集脚本
+	collectCmd := "/opt/ai-infra/scripts/collect-node-metrics.sh"
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    req.Target,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{collectCmd},
+		"kwarg": map[string]interface{}{
+			"timeout":      30,
+			"shell":        "/bin/bash",
+			"python_shell": true,
+		},
+	}
+
+	result, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		log.Printf("[TriggerMetricsCollection] Salt API error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Salt API error: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[TriggerMetricsCollection] Triggered metrics collection for target: %s", req.Target)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Metrics collection triggered",
+		"target":  req.Target,
+		"result":  result,
+	})
+}
+
+// GetNodeMetricsSummary 获取节点指标汇总统计
+// @Summary 获取节点指标汇总统计
+// @Description 获取所有节点的 GPU/IB 等硬件指标汇总
+// @Tags SaltStack
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/node-metrics/summary [get]
+func (h *SaltStackHandler) GetNodeMetricsSummary(c *gin.Context) {
+	metricsService := services.NewNodeMetricsService()
+	summary, err := metricsService.GetMetricsSummary()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get metrics summary: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    summary,
+	})
+}
+
+// GetIBPortIgnores 获取指定 minion 的 IB 端口忽略列表
+// @Summary 获取 IB 端口忽略列表
+// @Description 获取指定 minion 已忽略的 IB 端口列表
+// @Tags SaltStack
+// @Produce json
+// @Param minion_id query string false "Minion ID（不指定则返回所有）"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-ignores [get]
+func (h *SaltStackHandler) GetIBPortIgnores(c *gin.Context) {
+	minionID := c.Query("minion_id")
+
+	metricsService := services.NewNodeMetricsService()
+	ignores, err := metricsService.GetIBPortIgnores(minionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get IB port ignores: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    ignores,
+	})
+}
+
+// AddIBPortIgnore 添加 IB 端口忽略
+// @Summary 添加 IB 端口忽略
+// @Description 将指定 minion 的 IB 端口加入忽略列表（因物理未接线等原因）
+// @Tags SaltStack
+// @Accept json
+// @Produce json
+// @Param request body map[string]interface{} true "忽略请求"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-ignores [post]
+func (h *SaltStackHandler) AddIBPortIgnore(c *gin.Context) {
+	var req struct {
+		MinionID string `json:"minion_id" binding:"required"`
+		PortName string `json:"port_name" binding:"required"`
+		PortNum  int    `json:"port_num"`
+		Reason   string `json:"reason"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	// 默认端口号为 1
+	if req.PortNum <= 0 {
+		req.PortNum = 1
+	}
+
+	// 获取当前用户
+	createdBy := "system"
+	if user, exists := c.Get("username"); exists {
+		createdBy = user.(string)
+	}
+
+	metricsService := services.NewNodeMetricsService()
+	if err := metricsService.AddIBPortIgnore(req.MinionID, req.PortName, req.PortNum, req.Reason, createdBy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to add IB port ignore: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[AddIBPortIgnore] Added ignore for minion=%s port=%s portNum=%d by=%s reason=%s",
+		req.MinionID, req.PortName, req.PortNum, createdBy, req.Reason)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"message":   "IB port ignore added",
+		"minion_id": req.MinionID,
+		"port_name": req.PortName,
+		"port_num":  req.PortNum,
+		"reason":    req.Reason,
+	})
+}
+
+// RemoveIBPortIgnore 移除 IB 端口忽略
+// @Summary 移除 IB 端口忽略
+// @Description 将指定 minion 的 IB 端口从忽略列表中移除
+// @Tags SaltStack
+// @Produce json
+// @Param minion_id path string true "Minion ID"
+// @Param port_name path string true "Port Name"
+// @Param port_num query int false "Port Number (不指定则删除所有匹配的端口)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-ignores/{minion_id}/{port_name} [delete]
+func (h *SaltStackHandler) RemoveIBPortIgnore(c *gin.Context) {
+	minionID := c.Param("minion_id")
+	portName := c.Param("port_name")
+
+	if minionID == "" || portName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "minion_id and port_name are required",
+		})
+		return
+	}
+
+	// 从查询参数获取 port_num，默认为 0（删除所有匹配的端口号）
+	portNum := 0
+	if portNumStr := c.Query("port_num"); portNumStr != "" {
+		if pn, err := strconv.Atoi(portNumStr); err == nil {
+			portNum = pn
+		}
+	}
+
+	metricsService := services.NewNodeMetricsService()
+	if err := metricsService.RemoveIBPortIgnore(minionID, portName, portNum); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to remove IB port ignore: " + err.Error(),
+		})
+		return
+	}
+
+	log.Printf("[RemoveIBPortIgnore] Removed ignore for minion=%s port=%s portNum=%d", minionID, portName, portNum)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "IB port ignore removed",
+	})
+}
+
+// GetIBPortAlerts 获取 IB 端口告警列表
+// @Summary 获取 IB 端口告警列表
+// @Description 获取所有 Down 状态但未被忽略的 IB 端口告警
+// @Tags SaltStack
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/ib-alerts [get]
+func (h *SaltStackHandler) GetIBPortAlerts(c *gin.Context) {
+	metricsService := services.NewNodeMetricsService()
+	alerts, err := metricsService.GetIBPortAlerts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to get IB port alerts: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    alerts,
+		"total":   len(alerts),
+	})
 }

@@ -165,12 +165,12 @@ openldap:
     size: "5Gi"
     storageClass: "local-path"
 
-# MinIO配置
-minio:
+# SeaweedFS配置
+seaweedfs:
   enabled: true
   auth:
-    rootUser: "minio"
-    rootPassword: "minio123"
+    s3AccessKey: "seaweedfs_admin"
+    s3SecretKey: "seaweedfs_secret_key_change_me"
   persistence:
     enabled: true
     size: "20Gi"

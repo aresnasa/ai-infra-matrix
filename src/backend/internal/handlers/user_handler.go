@@ -717,9 +717,10 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 	}
 
 	var req models.AdminResetPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	// 尝试绑定JSON，如果失败则生成随机密码
+	if err := c.ShouldBindJSON(&req); err != nil || req.NewPassword == "" {
+		// 生成8位随机密码
+		req.NewPassword = generateRandomPassword(8)
 	}
 
 	if err := h.userService.AdminResetPassword(uint(userID), &req); err != nil {
@@ -728,7 +729,10 @@ func (h *UserHandler) AdminResetPassword(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "密码重置成功"})
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "密码重置成功",
+		"password": req.NewPassword,
+	})
 }
 
 // AdminUpdateRoleTemplate 管理员更新用户的角色模板
@@ -1474,4 +1478,20 @@ func (h *UserHandler) GetAllUsers(c *gin.Context) {
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+// generateRandomPassword 生成指定长度的随机密码
+func generateRandomPassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%"
+	password := make([]byte, length)
+	randomBytes := make([]byte, length)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		// 如果随机生成失败，使用固定密码
+		return "Reset123!"
+	}
+	for i := 0; i < length; i++ {
+		password[i] = charset[int(randomBytes[i])%len(charset)]
+	}
+	return string(password)
 }

@@ -44,13 +44,14 @@ env:
   LDAP_GROUP_BASE: "ou=groups,dc=ai-infra,dc=com"
   LDAP_USER_FILTER: "(uid=%s)"
   LDAP_ADMIN_GROUP: "administrators"
-  MINIO_HOST: "minio"
-  MINIO_PORT: "9000"
-  MINIO_ACCESS_KEY: "minioadmin"
-  MINIO_SECRET_KEY: "minioadmin"
-  MINIO_BUCKET_DEFAULT: "ai-infra"
-  MINIO_BUCKET_GITEA: "gitea"
-  MINIO_BUCKET_JUPYTER: "jupyter"
+  SEAWEEDFS_MASTER_URL: "http://seaweedfs-master:9333"
+  SEAWEEDFS_FILER_URL: "http://seaweedfs-filer:8888"
+  SEAWEEDFS_S3_PORT: "8333"
+  SEAWEEDFS_S3_ACCESS_KEY: "seaweedfs_admin"
+  SEAWEEDFS_S3_SECRET_KEY: "seaweedfs_secret_key_change_me"
+  SEAWEEDFS_BUCKET_DEFAULT: "ai-infra"
+  SEAWEEDFS_BUCKET_GITEA: "gitea"
+  SEAWEEDFS_BUCKET_JUPYTER: "jupyter"
   STORAGE_TYPE: "local"
   GITEA_STORAGE: "local"
   JWT_SECRET: "ai-infra-secret-key-change-in-dev"
@@ -277,7 +278,7 @@ secrets:
   ldapAdminPassword: "demo-ldap-admin-password"
   ldapConfigPassword: "demo-ldap-config-password"
   giteaAdminToken: "demo-gitea-admin-token"
-  minioRootPassword: "demo-minio-password"
+  seaweedfsS3SecretKey: "seaweedfs_secret_key_change_me"
   configproxyAuthToken: "demo-proxy-token"
   jupyterhubCryptKey: "demo-jupyterhub-crypt-key"
 
@@ -331,20 +332,22 @@ redis:
       memory: "256Mi"
       cpu: "200m"
 
-# MinIO configuration
-minio:
+# SeaweedFS configuration
+seaweedfs:
   enabled: true
   image:
-    repository: "minio/minio"
+    repository: "chrislusf/seaweedfs"
     tag: "latest"
     pullPolicy: "IfNotPresent"
   auth:
-    rootUser: "minioadmin"
-    rootPassword: "demo-minio-password"
+    s3AccessKey: "seaweedfs_admin"
+    s3SecretKey: "seaweedfs_secret_key_change_me"
   service:
     type: "ClusterIP"
-    port: 9000
-    consolePort: 9001
+    masterPort: 9333
+    volumePort: 8080
+    filerPort: 8888
+    s3Port: 8333
   persistence:
     enabled: true
     size: "20Gi"

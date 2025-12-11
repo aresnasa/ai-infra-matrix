@@ -14,11 +14,13 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { usePagePreload } from '../hooks/usePagePreload';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Paragraph } = Typography;
 
 const AdminCenter = () => {
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   // 针对管理中心页面的智能预加载
   usePagePreload(['admin-users', 'admin-auth', 'admin-test']);
@@ -33,8 +35,8 @@ const AdminCenter = () => {
 
   const adminCards = [
     {
-      title: '用户管理',
-      description: '管理系统用户账户、角色权限和认证源',
+      title: t('admin.userManagement'),
+      description: t('admin.userManagementDesc'),
       icon: <UserOutlined style={{ fontSize: '24px', color: '#1890ff' }} />,
       path: '/admin/users',
       color: '#e6f7ff',
@@ -42,16 +44,16 @@ const AdminCenter = () => {
       priority: 1
     },
     {
-      title: '项目管理',
-      description: '查看和管理所有用户项目',
+      title: t('admin.projectManagement'),
+      description: t('admin.projectManagementDesc'),
       icon: <ProjectOutlined style={{ fontSize: '24px', color: '#52c41a' }} />,
       path: '/admin/projects',
       color: '#f6ffed',
       priority: 2
     },
     {
-      title: 'LDAP认证设置',
-      description: '配置LDAP服务器连接和用户认证',
+      title: t('admin.ldapAuth'),
+      description: t('admin.ldapAuthDesc'),
       icon: <SafetyOutlined style={{ fontSize: '24px', color: '#fa8c16' }} />,
       path: '/admin/auth',
       color: '#fff7e6',
@@ -59,32 +61,32 @@ const AdminCenter = () => {
       priority: 3
     },
     {
-      title: 'LDAP配置',
-      description: '详细的LDAP服务器配置和测试',
+      title: t('admin.ldapConfig'),
+      description: t('admin.ldapConfigDesc'),
       icon: <SettingOutlined style={{ fontSize: '24px', color: '#722ed1' }} />,
       path: '/admin/ldap',
       color: '#f9f0ff',
       priority: 4
     },
     {
-      title: '系统测试',
-      description: '执行系统健康检查和功能测试',
+      title: t('admin.systemTest'),
+      description: t('admin.systemTestDesc'),
       icon: <ExperimentOutlined style={{ fontSize: '24px', color: '#eb2f96' }} />,
       path: '/admin/test',
       color: '#fff0f6',
       priority: 5
     },
     {
-      title: '回收站',
-      description: '查看和恢复已删除的项目和用户',
+      title: t('admin.trash'),
+      description: t('admin.trashDesc'),
       icon: <DeleteOutlined style={{ fontSize: '24px', color: '#fa541c' }} />,
       path: '/admin/trash',
       color: '#fff2e8',
       priority: 6
     },
     {
-      title: '对象存储配置',
-      description: '管理MinIO、S3等对象存储服务配置',
+      title: t('admin.objectStorage'),
+      description: t('admin.objectStorageDesc'),
       icon: <DatabaseOutlined style={{ fontSize: '24px', color: '#13c2c2' }} />,
       path: '/admin/object-storage',
       color: '#e6fffb',
@@ -104,9 +106,9 @@ const AdminCenter = () => {
     if (!badge) return null;
     
     const badgeConfig = {
-      hot: { color: 'red', text: '热门' },
-      new: { color: 'green', text: '新功能' },
-      beta: { color: 'blue', text: '测试版' }
+      hot: { color: 'red', text: t('admin.hot') },
+      new: { color: 'green', text: t('admin.new') },
+      beta: { color: 'blue', text: t('admin.beta') }
     };
 
     const config = badgeConfig[badge];
@@ -118,16 +120,16 @@ const AdminCenter = () => {
       <div style={{ marginBottom: '24px' }}>
         <Title level={2}>
           <DashboardOutlined style={{ marginRight: '8px' }} />
-          管理中心
+          {t('admin.title')}
         </Title>
         <Paragraph style={{ fontSize: '16px', color: '#666' }}>
-          欢迎来到系统管理中心，您可以在这里管理用户、项目和系统配置
+          {t('admin.welcome')}，{t('admin.welcomeDesc')}
         </Paragraph>
       </div>
 
       {/* 快捷操作区域 */}
       <Card 
-        title="快捷操作" 
+        title={t('admin.quickActions')} 
         style={{ marginBottom: '24px' }}
         extra={<TeamOutlined />}
       >
@@ -137,19 +139,19 @@ const AdminCenter = () => {
             icon={<UserOutlined />}
             onClick={() => navigate('/admin/users')}
           >
-            用户管理
+            {t('admin.userManagement')}
           </Button>
           <Button 
             icon={<SafetyOutlined />}
             onClick={() => navigate('/admin/auth')}
           >
-            LDAP设置
+            {t('admin.ldapSettings')}
           </Button>
           <Button 
             icon={<ExperimentOutlined />}
             onClick={() => navigate('/admin/test')}
           >
-            系统测试
+            {t('admin.systemTest')}
           </Button>
         </Space>
       </Card>
@@ -214,7 +216,7 @@ const AdminCenter = () => {
 
       {/* 统计信息卡片 */}
       <Card 
-        title="系统概览" 
+        title={t('admin.systemOverview')} 
         style={{ marginTop: '24px' }}
         extra={<SecurityScanOutlined />}
       >
@@ -224,7 +226,7 @@ const AdminCenter = () => {
               <Title level={3} style={{ color: '#1890ff', margin: '0 0 8px 0' }}>
                 --
               </Title>
-              <Paragraph style={{ margin: 0 }}>在线用户</Paragraph>
+              <Paragraph style={{ margin: 0 }}>{t('admin.onlineUsers')}</Paragraph>
             </div>
           </Col>
           <Col span={6}>
@@ -232,7 +234,7 @@ const AdminCenter = () => {
               <Title level={3} style={{ color: '#52c41a', margin: '0 0 8px 0' }}>
                 --
               </Title>
-              <Paragraph style={{ margin: 0 }}>总项目数</Paragraph>
+              <Paragraph style={{ margin: 0 }}>{t('admin.totalProjects')}</Paragraph>
             </div>
           </Col>
           <Col span={6}>
@@ -240,15 +242,15 @@ const AdminCenter = () => {
               <Title level={3} style={{ color: '#fa8c16', margin: '0 0 8px 0' }}>
                 --
               </Title>
-              <Paragraph style={{ margin: 0 }}>今日任务</Paragraph>
+              <Paragraph style={{ margin: 0 }}>{t('admin.todayTasks')}</Paragraph>
             </div>
           </Col>
           <Col span={6}>
             <div style={{ textAlign: 'center' }}>
               <Title level={3} style={{ color: '#eb2f96', margin: '0 0 8px 0' }}>
-                正常
+                {t('admin.normal')}
               </Title>
-              <Paragraph style={{ margin: 0 }}>系统状态</Paragraph>
+              <Paragraph style={{ margin: 0 }}>{t('admin.systemStatus')}</Paragraph>
             </div>
           </Col>
         </Row>

@@ -1,0 +1,307 @@
+#!/bin/bash
+# =============================================================================
+# Salt Minion Installation Script for RHEL/CentOS/Rocky/AlmaLinux/Fedora
+# =============================================================================
+# This template is used by ScriptLoader to generate installation scripts
+# Template variables (Go text/template syntax):
+#   {{.AppHubURL}}   - AppHub server URL for downloading packages
+#   {{.MasterHost}}  - Salt Master hostname/IP
+#   {{.MinionID}}    - Minion identifier
+#   {{.Version}}     - Salt version to install
+#   {{.RpmArch}}     - RPM architecture (x86_64, aarch64)
+#   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
+# =============================================================================
+
+set -e
+echo "=== Starting Salt Minion Installation ==="
+echo "=== Target: RHEL/CentOS/Rocky/AlmaLinux/Fedora System ==="
+echo "=== AppHub URL: {{.AppHubURL}} ==="
+echo "=== Salt Version: {{.Version}} ==="
+echo "=== Architecture: {{.RpmArch}} ==="
+
+APPHUB_SUCCESS=0
+
+# Create temp directory
+cd /tmp
+rm -rf salt-install && mkdir -p salt-install && cd salt-install
+
+echo "=== Trying to download Salt packages from AppHub ==="
+
+# Strip 'v' prefix from version if present (e.g., v3007.8 -> 3007.8)
+SALT_VERSION="{{.Version}}"
+SALT_VERSION="${SALT_VERSION#v}"
+echo "    Normalized version: $SALT_VERSION"
+
+# Define package URLs (try multiple naming conventions)
+# Format 1: salt-3007.8-0.x86_64.rpm (standard)
+# Format 2: salt-v3007.8-0.x86_64.rpm (with v prefix)
+SALT_PKG_URL_1="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+SALT_MINION_URL_1="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-minion-${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+SALT_PKG_URL_2="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-v${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+SALT_MINION_URL_2="{{.AppHubURL}}/pkgs/saltstack-rpm/salt-minion-v${SALT_VERSION}-0.{{.RpmArch}}.rpm"
+
+download_rpm() {
+    local url="$1"
+    local output="$2"
+    echo "    Trying: $url"
+    if curl -fsSL --connect-timeout 15 "$url" -o "$output" 2>/dev/null && [ -s "$output" ]; then
+        if file "$output" | grep -qE "(RPM|compressed)"; then
+            return 0
+        fi
+        rm -f "$output"
+    fi
+    return 1
+}
+
+SALT_DOWNLOADED=0
+MINION_DOWNLOADED=0
+
+# Try downloading salt package
+for url in "$SALT_PKG_URL_1" "$SALT_PKG_URL_2"; do
+    if download_rpm "$url" "salt.rpm"; then
+        SALT_DOWNLOADED=1
+        echo "    Downloaded salt.rpm successfully"
+        break
+    fi
+done
+
+# Try downloading salt-minion package
+for url in "$SALT_MINION_URL_1" "$SALT_MINION_URL_2"; do
+    if download_rpm "$url" "salt-minion.rpm"; then
+        MINION_DOWNLOADED=1
+        echo "    Downloaded salt-minion.rpm successfully"
+        break
+    fi
+done
+
+if [ "$SALT_DOWNLOADED" -eq 1 ] && [ "$MINION_DOWNLOADED" -eq 1 ]; then
+    echo "=== Downloaded packages from AppHub ==="
+    
+    echo "=== Installing dependencies ==="
+    {{.SudoPrefix}}yum install -y python3 python3-pip 2>/dev/null || {{.SudoPrefix}}dnf install -y python3 python3-pip 2>/dev/null || true
+    
+    echo "=== Installing Salt packages from AppHub ==="
+    {{.SudoPrefix}}rpm -Uvh --replacepkgs --nodeps salt.rpm 2>/dev/null || {{.SudoPrefix}}yum localinstall -y salt.rpm 2>/dev/null || {{.SudoPrefix}}dnf install -y ./salt.rpm 2>/dev/null || true
+    {{.SudoPrefix}}rpm -Uvh --replacepkgs --nodeps salt-minion.rpm 2>/dev/null || {{.SudoPrefix}}yum localinstall -y salt-minion.rpm 2>/dev/null || {{.SudoPrefix}}dnf install -y ./salt-minion.rpm 2>/dev/null || true
+    
+    # Verify installation
+    if command -v salt-minion >/dev/null 2>&1; then
+        echo "=== Salt Minion installed successfully from AppHub ==="
+        APPHUB_SUCCESS=1
+    else
+        echo "=== Salt Minion installation from AppHub failed, trying bootstrap ==="
+    fi
+else
+    echo "=== AppHub download failed ==="
+    # Show what we got (for debugging) - use find instead of glob to avoid zsh errors
+    find . -maxdepth 1 -name "*.rpm" -ls 2>/dev/null || echo "No RPM files downloaded"
+fi
+
+# If AppHub failed, use Salt Bootstrap script
+if [ "$APPHUB_SUCCESS" -eq 0 ]; then
+    echo "=== Using Salt Bootstrap script for online installation ==="
+    cd /tmp
+    rm -f bootstrap-salt.sh
+    
+    # Download Salt Bootstrap script (GitHub raw URL, avoid saltproject.io which returns HTML)
+    BOOTSTRAP_DOWNLOADED=0
+    for url in "https://raw.githubusercontent.com/saltstack/salt-bootstrap/stable/bootstrap-salt.sh" \
+               "https://github.com/saltstack/salt-bootstrap/raw/stable/bootstrap-salt.sh"; do
+        echo "Trying to download from: $url"
+        if curl -fsSL --connect-timeout 15 -o bootstrap-salt.sh "$url" 2>/dev/null; then
+            # Verify it's a shell script, not HTML
+            if head -1 bootstrap-salt.sh | grep -q '^#!'; then
+                echo "Downloaded bootstrap script successfully"
+                BOOTSTRAP_DOWNLOADED=1
+                break
+            else
+                echo "Invalid content (not a shell script), trying next URL..."
+                rm -f bootstrap-salt.sh
+            fi
+        fi
+    done
+    
+    if [ "$BOOTSTRAP_DOWNLOADED" -eq 0 ]; then
+        echo "Failed to download Salt Bootstrap script"
+        exit 1
+    fi
+    
+    # Make executable and run
+    chmod +x bootstrap-salt.sh
+    {{.SudoPrefix}}bash bootstrap-salt.sh -x python3 stable || { echo "Bootstrap failed"; exit 1; }
+    
+    echo "=== Salt Bootstrap installation completed ==="
+fi
+
+echo "=== Configuring Salt Minion ==="
+{{.SudoPrefix}}mkdir -p /etc/salt
+
+# 清理旧的配置文件（minion.d 目录中的配置会覆盖主配置）
+echo "    Cleaning old configuration files..."
+{{.SudoPrefix}}rm -f /etc/salt/minion.d/master.conf 2>/dev/null || true
+{{.SudoPrefix}}rm -f /etc/salt/minion.d/*.conf 2>/dev/null || true
+
+# 清理旧的 PKI 密钥（确保使用新的 master 密钥）
+echo "    Cleaning old PKI keys..."
+{{.SudoPrefix}}rm -rf /etc/salt/pki/minion/* 2>/dev/null || true
+
+# 创建临时配置文件，然后用 sudo 移动（避免管道与 sudo 的兼容性问题）
+TEMP_MINION_CONF=$(mktemp)
+cat > "$TEMP_MINION_CONF" << 'SALTCONF'
+master: {{.MasterHost}}
+id: {{.MinionID}}
+mine_enabled: true
+mine_return_job: true
+mine_interval: 60
+SALTCONF
+
+{{.SudoPrefix}}cp "$TEMP_MINION_CONF" /etc/salt/minion
+{{.SudoPrefix}}chmod 640 /etc/salt/minion
+rm -f "$TEMP_MINION_CONF"
+echo "    Minion configuration written to /etc/salt/minion"
+echo "    Master: {{.MasterHost}}"
+echo "    Minion ID: {{.MinionID}}"
+
+# Sync Master public key if URL is provided
+{{if .MasterPubURL}}
+echo "=== Syncing Salt Master Public Key ==="
+{{.SudoPrefix}}mkdir -p /etc/salt/pki/minion
+{{.SudoPrefix}}chmod 700 /etc/salt/pki/minion
+
+MASTER_PUB_FILE="/etc/salt/pki/minion/minion_master.pub"
+echo "    Downloading from: {{.MasterPubURL}}"
+
+if curl -fsSL --connect-timeout 10 -o "$MASTER_PUB_FILE" "{{.MasterPubURL}}" 2>/dev/null; then
+    if [ -s "$MASTER_PUB_FILE" ] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY" "$MASTER_PUB_FILE" 2>/dev/null; then
+        {{.SudoPrefix}}chmod 644 "$MASTER_PUB_FILE"
+        echo "    Master public key synced successfully"
+    else
+        rm -f "$MASTER_PUB_FILE"
+        echo "    Warning: Downloaded content is not a valid public key"
+    fi
+else
+    echo "    Warning: Failed to download master public key (minion will auto-fetch on first connect)"
+fi
+{{else}}
+echo "=== Skipping Master key sync (no URL provided) ==="
+{{end}}
+
+echo "=== Starting Salt Minion service ==="
+{{.SudoPrefix}}systemctl daemon-reload || true
+{{.SudoPrefix}}systemctl enable salt-minion || true
+
+# Initial start to trigger key exchange with master
+echo "    Initial start to trigger key exchange..."
+{{.SudoPrefix}}systemctl start salt-minion || true
+
+# Wait for key exchange to complete (master needs time to receive the key request)
+echo "=== Waiting for key exchange with Salt Master ==="
+sleep 5
+
+# Restart service to ensure clean connection after key exchange
+echo "    Restarting service for reliable master connection..."
+{{.SudoPrefix}}systemctl restart salt-minion || true
+
+# Wait for service to stabilize after restart
+echo "=== Waiting for Salt Minion service to stabilize ==="
+sleep 3
+
+# Retry starting salt-minion service up to 3 times if needed
+START_RETRIES=3
+START_SUCCESS=0
+for i in $(seq 1 $START_RETRIES); do
+    if {{.SudoPrefix}}systemctl is-active --quiet salt-minion; then
+        START_SUCCESS=1
+        echo "    salt-minion service is running (verified on attempt $i/$START_RETRIES)"
+        break
+    else
+        echo "    Attempting to restart salt-minion (attempt $i/$START_RETRIES)..."
+        {{.SudoPrefix}}systemctl restart salt-minion
+        sleep 3
+    fi
+done
+
+if [ $START_SUCCESS -eq 0 ]; then
+    echo "ERROR: Failed to start salt-minion service after $START_RETRIES attempts"
+    {{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+    {{.SudoPrefix}}journalctl -u salt-minion --no-pager -n 30 || true
+    exit 1
+fi
+
+# Verify service is running
+echo "=== Verifying Salt Minion service status ==="
+MAX_RETRIES=5
+RETRY_COUNT=0
+SERVICE_RUNNING=0
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if {{.SudoPrefix}}systemctl is-active --quiet salt-minion; then
+        echo "    Salt Minion service is running (attempt $((RETRY_COUNT + 1)))"
+        SERVICE_RUNNING=1
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo "    Service not active yet, retrying in 2 seconds... (attempt $RETRY_COUNT/$MAX_RETRIES)"
+            sleep 2
+        fi
+    fi
+done
+
+if [ $SERVICE_RUNNING -eq 0 ]; then
+    echo "ERROR: Salt Minion service failed to start after $MAX_RETRIES attempts"
+    {{.SudoPrefix}}systemctl status salt-minion --no-pager || true
+    {{.SudoPrefix}}journalctl -u salt-minion --no-pager -n 50 || true
+    exit 1
+fi
+
+# Show service status for logging
+echo "=== Salt Minion Service Status ==="
+{{.SudoPrefix}}systemctl status salt-minion --no-pager 2>/dev/null || true
+
+# Verify salt-minion process is running
+echo "=== Verifying salt-minion process ==="
+if pgrep -f "salt-minion" > /dev/null 2>&1; then
+    echo "    salt-minion process is running"
+else
+    echo "ERROR: salt-minion process is not running"
+    exit 1
+fi
+
+# Verify Master connectivity (non-blocking)
+echo "=== Verifying Master Connectivity ==="
+MASTER_HOST="{{.MasterHost}}"
+CONNECT_OK=0
+
+# Try to verify network connectivity to master
+for i in 1 2 3; do
+    if timeout 3 bash -c "echo > /dev/tcp/${MASTER_HOST}/4505" 2>/dev/null || \
+       timeout 3 bash -c "echo > /dev/tcp/${MASTER_HOST}/4506" 2>/dev/null; then
+        echo "    ✓ Salt Master ports (4505/4506) are reachable"
+        CONNECT_OK=1
+        break
+    fi
+    echo "    Waiting for Master connectivity... (attempt $i/3)"
+    sleep 2
+done
+
+if [ $CONNECT_OK -eq 0 ]; then
+    echo "    ⚠ Could not verify Master connectivity (this may be normal if firewall rules are strict)"
+fi
+
+# Verify configuration
+echo "=== Verifying Configuration ==="
+if [ -f /etc/salt/minion ]; then
+    echo "    ✓ Minion configuration file exists"
+    echo "    Configured Master: $(grep '^master:' /etc/salt/minion 2>/dev/null | awk '{print $2}' || echo 'not found')"
+    echo "    Configured ID: $(grep '^id:' /etc/salt/minion 2>/dev/null | awk '{print $2}' || echo 'not found')"
+else
+    echo "    ⚠ Minion configuration file not found"
+fi
+
+echo "=== Cleaning up ==="
+cd /tmp && rm -rf salt-install bootstrap-salt.sh
+
+echo "=== Salt Minion Installation Complete ==="
+echo "SERVICE_STATUS=running"
+echo "INSTALL_SUCCESS=true"

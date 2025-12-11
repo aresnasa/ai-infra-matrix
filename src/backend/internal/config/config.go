@@ -39,6 +39,9 @@ type Config struct {
 	// Gitea 后台同步
 	GiteaSync GiteaSyncRuntime
 
+	// AppHub 包仓库配置
+	AppHub AppHubConfig
+
 	// 日志级别 (trace, debug, info, warn, error, fatal, panic)
 	LogLevel string
 }
@@ -134,6 +137,18 @@ type GiteaConfig struct {
 type GiteaSyncRuntime struct {
 	Enabled         bool `json:"enabled"`
 	IntervalSeconds int  `json:"interval_seconds"`
+}
+
+// AppHubConfig AppHub 包仓库配置
+type AppHubConfig struct {
+	Host   string `json:"host"`   // AppHub 主机地址，默认使用 EXTERNAL_HOST
+	Port   string `json:"port"`   // AppHub 端口，默认 28080
+	Scheme string `json:"scheme"` // 协议，默认 http
+}
+
+// GetAppHubURL 获取 AppHub 完整 URL
+func (c *AppHubConfig) GetAppHubURL() string {
+	return c.Scheme + "://" + c.Host + ":" + c.Port
 }
 
 type AdminUserConfig struct {
@@ -264,6 +279,11 @@ func Load() (*Config, error) {
 		GiteaSync: GiteaSyncRuntime{
 			Enabled:         getEnv("GITEA_SYNC_ENABLED", "false") == "true",
 			IntervalSeconds: getEnvAsInt("GITEA_SYNC_INTERVAL_SECONDS", 600),
+		},
+		AppHub: AppHubConfig{
+			Host:   getEnv("EXTERNAL_HOST", "localhost"),
+			Port:   getEnv("APPHUB_PORT", "28080"),
+			Scheme: getEnv("EXTERNAL_SCHEME", "http"),
 		},
 	}
 

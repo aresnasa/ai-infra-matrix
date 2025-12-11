@@ -1233,11 +1233,13 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		sqlDB.Close()
 	}()
 
-	// Create Nightingale DB if missing
+	// Check if Nightingale DB exists
 	var exists bool
 	if err := systemDB.Raw("SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)", nightingaleDB).Scan(&exists).Error; err != nil {
 		return fmt.Errorf("failed to check Nightingale DB existence: %w", err)
 	}
+
+	var shouldInitSchema bool
 
 	if !exists {
 		log.Printf("Creating Nightingale database: %s", nightingaleDB)
@@ -1247,8 +1249,55 @@ func createNightingaleDatabase(cfg *config.Config) error {
 			return fmt.Errorf("failed to create Nightingale database: %w", err)
 		}
 		log.Printf("✓ Nightingale database '%s' created successfully", nightingaleDB)
+		shouldInitSchema = true
 	} else {
 		log.Printf("✓ Nightingale database '%s' already exists", nightingaleDB)
+
+		// Check if it is in partial state (e.g. missing builtin_payloads table)
+		nightingaleDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+			cfg.Database.Host,
+			cfg.Database.User,
+			cfg.Database.Password,
+			nightingaleDB,
+			cfg.Database.Port,
+			cfg.Database.SSLMode,
+		)
+		tempDB, err := gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
+		if err == nil {
+			var tableExists bool
+			// Check for builtin_payloads which is not created by GORM
+			tempDB.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'builtin_payloads')").Scan(&tableExists)
+
+			sqlDB, _ := tempDB.DB()
+			sqlDB.Close()
+
+			if !tableExists {
+				log.Println("⚠ Database exists but 'builtin_payloads' table is missing. Database might be in partial state.")
+				log.Println("Recreating database to ensure clean state...")
+
+				// Terminate connections
+				terminateQuery := `
+					SELECT pg_terminate_backend(pid)
+					FROM pg_stat_activity
+					WHERE datname = ? AND pid <> pg_backend_pid()
+				`
+				systemDB.Exec(terminateQuery, nightingaleDB)
+
+				// Drop and Recreate
+				dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(nightingaleDB))
+				if err := systemDB.Exec(dropQuery).Error; err != nil {
+					return fmt.Errorf("failed to drop partial database: %w", err)
+				}
+
+				createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(nightingaleDB))
+				if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
+					return fmt.Errorf("failed to recreate Nightingale database: %w", err)
+				}
+				shouldInitSchema = true
+			} else {
+				log.Println("✓ Database schema appears complete")
+			}
+		}
 	}
 
 	// Connect to Nightingale database
@@ -1265,18 +1314,106 @@ func createNightingaleDatabase(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to Nightingale database: %w", err)
 	}
+
+	// Check for schema mismatch
+	if !shouldInitSchema {
+		var recreate bool
+		var mismatchReason string
+
+		// Check notify_rule.enable
+		var notifyRuleEnableType string
+		checkNotifyRuleSQL := "SELECT data_type FROM information_schema.columns WHERE table_name = 'notify_rule' AND column_name = 'enable'"
+		if err := nightingaleDB_conn.Raw(checkNotifyRuleSQL).Scan(&notifyRuleEnableType).Error; err == nil && notifyRuleEnableType != "" {
+			if notifyRuleEnableType != "boolean" {
+				mismatchReason = fmt.Sprintf("notify_rule.enable is '%s', expected 'boolean'", notifyRuleEnableType)
+				recreate = true
+			}
+		}
+
+		// Check alert_mute.tags if not already decided to recreate
+		if !recreate {
+			var alertMuteTagsType string
+			checkAlertMuteSQL := "SELECT data_type FROM information_schema.columns WHERE table_name = 'alert_mute' AND column_name = 'tags'"
+			if err := nightingaleDB_conn.Raw(checkAlertMuteSQL).Scan(&alertMuteTagsType).Error; err == nil && alertMuteTagsType != "" {
+				if alertMuteTagsType != "jsonb" {
+					mismatchReason = fmt.Sprintf("alert_mute.tags is '%s', expected 'jsonb'", alertMuteTagsType)
+					recreate = true
+				}
+			}
+		}
+
+		if recreate {
+			log.Printf("⚠ Detected schema mismatch: %s. Recreating database...", mismatchReason)
+
+			// Close current connection to allow drop
+			sqlDB, _ := nightingaleDB_conn.DB()
+			sqlDB.Close()
+
+			// Terminate other connections
+			terminateQuery := `
+					SELECT pg_terminate_backend(pid)
+					FROM pg_stat_activity
+					WHERE datname = ? AND pid <> pg_backend_pid()
+				`
+			systemDB.Exec(terminateQuery, nightingaleDB)
+
+			// Drop
+			dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(nightingaleDB))
+			if err := systemDB.Exec(dropQuery).Error; err != nil {
+				return fmt.Errorf("failed to drop mismatched database: %w", err)
+			}
+
+			// Create
+			createDatabaseSQL := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(nightingaleDB))
+			if err := systemDB.Exec(createDatabaseSQL).Error; err != nil {
+				return fmt.Errorf("failed to recreate Nightingale database: %w", err)
+			}
+
+			shouldInitSchema = true
+
+			// Reconnect
+			nightingaleDB_conn, err = gorm.Open(postgres.Open(nightingaleDSN), &gorm.Config{})
+			if err != nil {
+				return fmt.Errorf("failed to reconnect to Nightingale database: %w", err)
+			}
+		}
+	}
+
 	defer func() {
 		sqlDB, _ := nightingaleDB_conn.DB()
 		sqlDB.Close()
 	}()
 
-	// Auto migrate Nightingale models using GORM
-	log.Println("Running GORM AutoMigrate for Nightingale tables...")
+	// 修复可能存在的类型不兼容问题（boolean -> int）
+	log.Println("Checking and fixing schema compatibility issues...")
+	fixSchemaCompatibility(nightingaleDB_conn)
+
+	log.Println("Ensuring Nightingale schema is up to date using GORM AutoMigrate...")
 	nightingaleModels := models.InitNightingaleModels()
-	if err := nightingaleDB_conn.AutoMigrate(nightingaleModels...); err != nil {
-		return fmt.Errorf("failed to auto migrate Nightingale models: %w", err)
+	// 逐个迁移模型，跳过已存在的表以避免 PostgreSQL duplicate key 错误
+	for i, model := range nightingaleModels {
+		if nightingaleDB_conn.Migrator().HasTable(model) {
+			log.Printf("[%d/%d] Table already exists, updating columns if needed", i+1, len(nightingaleModels))
+			// 对于已存在的表，只更新列结构，不重新创建表
+			if err := nightingaleDB_conn.Migrator().AutoMigrate(model); err != nil {
+				// 忽略 duplicate key 错误，这通常是因为类型已存在
+				if !strings.Contains(err.Error(), "duplicate key") && !strings.Contains(err.Error(), "already exists") {
+					log.Printf("Warning: Failed to update table: %v", err)
+				}
+			}
+		} else {
+			log.Printf("[%d/%d] Creating new table", i+1, len(nightingaleModels))
+			if err := nightingaleDB_conn.AutoMigrate(model); err != nil {
+				// 忽略 duplicate key 错误
+				if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "already exists") {
+					log.Printf("Table type already exists, skipping")
+				} else {
+					return fmt.Errorf("failed to auto migrate Nightingale model: %w", err)
+				}
+			}
+		}
 	}
-	log.Println("✓ Nightingale tables created/updated successfully")
+	log.Println("✓ Nightingale schema synced")
 
 	// Initialize default roles
 	if err := initializeNightingaleRoles(nightingaleDB_conn); err != nil {
@@ -1293,11 +1430,38 @@ func createNightingaleDatabase(cfg *config.Config) error {
 		log.Printf("Warning: Failed to initialize Nightingale business group: %v", err)
 	}
 
+	// 初始化默认角色操作权限
+	initializeNightingaleRoleOperations(nightingaleDB_conn)
+
+	// 初始化默认指标视图
+	initializeNightingaleMetricViews(nightingaleDB_conn)
+
+	// 初始化默认告警聚合视图
+	initializeNightingaleAlertAggrViews(nightingaleDB_conn)
+
+	// Initialize role operations
+	if err := initializeNightingaleRoleOperations(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale role operations: %v", err)
+	}
+
+	// Initialize metric views
+	if err := initializeNightingaleMetricViews(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale metric views: %v", err)
+	}
+
+	// Initialize alert aggregation views
+	if err := initializeNightingaleAlertAggrViews(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale alert aggregation views: %v", err)
+	}
+
+	// Initialize default Prometheus datasource
+	if err := initializeNightingalePrometheusDatasource(nightingaleDB_conn); err != nil {
+		log.Printf("Warning: Failed to initialize Nightingale Prometheus datasource: %v", err)
+	}
+
 	log.Println("✓ Nightingale database initialization completed!")
 	return nil
-}
-
-// initializeNightingaleRoles initializes default roles in Nightingale using GORM
+} // initializeNightingaleRoles initializes default roles in Nightingale using GORM
 func initializeNightingaleRoles(db *gorm.DB) error {
 	log.Println("Initializing Nightingale roles...")
 
@@ -1516,6 +1680,280 @@ func initializeNightingaleBusiGroup(db *gorm.DB) error {
 			} else {
 				log.Println("✓ Admin group linked to default business group with rw permission")
 			}
+		}
+	}
+
+	return nil
+}
+
+// initializeNightingaleRoleOperations initializes default role operations
+func initializeNightingaleRoleOperations(db *gorm.DB) error {
+	log.Println("Initializing Nightingale role operations...")
+
+	operations := []struct {
+		Role      string
+		Operation string
+	}{
+		// Guest
+		{"Guest", "/metric/explorer"},
+		{"Guest", "/object/explorer"},
+		{"Guest", "/log/explorer"},
+		{"Guest", "/trace/explorer"},
+		{"Guest", "/help/version"},
+		{"Guest", "/help/contact"},
+
+		// Standard
+		{"Standard", "/metric/explorer"},
+		{"Standard", "/object/explorer"},
+		{"Standard", "/log/explorer"},
+		{"Standard", "/trace/explorer"},
+		{"Standard", "/help/version"},
+		{"Standard", "/help/contact"},
+		{"Standard", "/help/servers"},
+		{"Standard", "/help/migrate"},
+		{"Standard", "/alert-rules-built-in"},
+		{"Standard", "/dashboards-built-in"},
+		{"Standard", "/trace/dependencies"},
+		{"Standard", "/users"},
+		{"Standard", "/user-groups"},
+		{"Standard", "/user-groups/add"},
+		{"Standard", "/user-groups/put"},
+		{"Standard", "/user-groups/del"},
+		{"Standard", "/busi-groups"},
+		{"Standard", "/busi-groups/add"},
+		{"Standard", "/busi-groups/put"},
+		{"Standard", "/busi-groups/del"},
+		{"Standard", "/targets"},
+		{"Standard", "/targets/add"},
+		{"Standard", "/targets/put"},
+		{"Standard", "/targets/del"},
+		{"Standard", "/dashboards"},
+		{"Standard", "/dashboards/add"},
+		{"Standard", "/dashboards/put"},
+		{"Standard", "/dashboards/del"},
+		{"Standard", "/alert-rules"},
+		{"Standard", "/alert-rules/add"},
+		{"Standard", "/alert-rules/put"},
+		{"Standard", "/alert-rules/del"},
+		{"Standard", "/alert-mutes"},
+		{"Standard", "/alert-mutes/add"},
+		{"Standard", "/alert-mutes/del"},
+		{"Standard", "/alert-subscribes"},
+		{"Standard", "/alert-subscribes/add"},
+		{"Standard", "/alert-subscribes/put"},
+		{"Standard", "/alert-subscribes/del"},
+		{"Standard", "/alert-cur-events"},
+		{"Standard", "/alert-cur-events/del"},
+		{"Standard", "/alert-his-events"},
+		{"Standard", "/job-tpls"},
+		{"Standard", "/job-tpls/add"},
+		{"Standard", "/job-tpls/put"},
+		{"Standard", "/job-tpls/del"},
+		{"Standard", "/job-tasks"},
+		{"Standard", "/job-tasks/add"},
+		{"Standard", "/job-tasks/put"},
+		{"Standard", "/recording-rules"},
+		{"Standard", "/recording-rules/add"},
+		{"Standard", "/recording-rules/put"},
+		{"Standard", "/recording-rules/del"},
+
+		// Admin
+		{"Admin", "/help/source"},
+		{"Admin", "/help/sso"},
+		{"Admin", "/help/notification-tpls"},
+		{"Admin", "/help/notification-settings"},
+	}
+
+	for _, op := range operations {
+		var count int64
+		db.Model(&models.NightingaleRoleOperation{}).Where("role_name = ? AND operation = ?", op.Role, op.Operation).Count(&count)
+		if count == 0 {
+			db.Create(&models.NightingaleRoleOperation{
+				RoleName:  op.Role,
+				Operation: op.Operation,
+			})
+		}
+	}
+	log.Println("✓ Role operations initialized")
+	return nil
+}
+
+// initializeNightingaleMetricViews initializes default metric views
+func initializeNightingaleMetricViews(db *gorm.DB) error {
+	log.Println("Initializing Nightingale metric views...")
+
+	views := []models.NightingaleMetricView{
+		{
+			Name:    "Host View",
+			Cate:    0,
+			Configs: `{"filters":[{"oper":"=","label":"__name__","value":"cpu_usage_idle"}],"dynamicLabels":[],"dimensionLabels":[{"label":"ident","value":""}]}`,
+		},
+	}
+
+	for _, view := range views {
+		var count int64
+		db.Model(&models.NightingaleMetricView{}).Where("name = ?", view.Name).Count(&count)
+		if count == 0 {
+			db.Create(&view)
+		}
+	}
+
+	log.Println("✓ Metric views initialized")
+	return nil
+}
+
+// initializeNightingaleAlertAggrViews initializes default alert aggregation views
+func initializeNightingaleAlertAggrViews(db *gorm.DB) error {
+	log.Println("Initializing Nightingale alert aggregation views...")
+
+	views := []models.NightingaleAlertAggrView{
+		{Name: "By BusiGroup, Severity", Rule: "field:group_name::field:severity", Cate: 0},
+		{Name: "By RuleName", Rule: "field:rule_name", Cate: 0},
+	}
+
+	for _, view := range views {
+		var count int64
+		db.Model(&models.NightingaleAlertAggrView{}).Where("name = ?", view.Name).Count(&count)
+		if count == 0 {
+			db.Create(&view)
+		}
+	}
+	log.Println("✓ Alert aggregation views initialized")
+	return nil
+}
+
+// fixSchemaCompatibility 修复数据库中可能存在的类型不兼容问题
+// 主要处理从旧版本升级时 boolean -> int 的转换问题
+func fixSchemaCompatibility(db *gorm.DB) {
+	// 首先检查 event_pipeline 表是否存在
+	var tableExists bool
+	err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables 
+			WHERE table_name = 'event_pipeline'
+		)
+	`).Scan(&tableExists).Error
+
+	if err != nil {
+		log.Printf("Could not check if event_pipeline table exists: %v", err)
+		return
+	}
+
+	if !tableExists {
+		log.Println("event_pipeline table does not exist yet, skipping schema fix")
+		return
+	}
+
+	// 检查 event_pipeline 表的 filter_enable 字段类型
+	// PostgreSQL 不能直接 boolean -> bigint，需要先转换
+	var dataType string
+	err = db.Raw(`
+		SELECT data_type 
+		FROM information_schema.columns 
+		WHERE table_name = 'event_pipeline' 
+		AND column_name = 'filter_enable'
+	`).Scan(&dataType).Error
+
+	if err != nil {
+		log.Printf("Could not check filter_enable column type: %v", err)
+		return
+	}
+
+	// 如果列不存在，dataType 会是空字符串
+	if dataType == "" {
+		log.Println("filter_enable column does not exist yet, skipping")
+		return
+	}
+
+	log.Printf("Current filter_enable column type: %s", dataType)
+
+	if dataType == "boolean" {
+		log.Println("Fixing filter_enable column type (boolean -> integer)...")
+		// 使用 CASE 表达式转换 boolean 到 integer
+		err = db.Exec(`
+			ALTER TABLE event_pipeline 
+			ALTER COLUMN filter_enable TYPE integer 
+			USING CASE WHEN filter_enable THEN 1 ELSE 0 END
+		`).Error
+		if err != nil {
+			log.Printf("Warning: Failed to fix filter_enable column: %v", err)
+		} else {
+			log.Println("✓ filter_enable column type fixed")
+		}
+	} else {
+		log.Printf("filter_enable column type is already %s, no fix needed", dataType)
+	}
+}
+
+// initializeNightingalePrometheusDatasource creates default Prometheus datasource in Nightingale
+func initializeNightingalePrometheusDatasource(db *gorm.DB) error {
+	log.Println("Initializing Nightingale Prometheus datasource...")
+
+	// Get Prometheus URL from environment, default to internal service name
+	prometheusURL := getEnvCompat("PROMETHEUS_URL", "http://prometheus:9090")
+
+	currentTime := time.Now().Unix()
+
+	// Check if default Prometheus datasource exists
+	var existingDS models.NightingaleDatasource
+	result := db.Where("name = ?", "Prometheus").First(&existingDS)
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create default Prometheus datasource
+		// Settings JSON for Prometheus datasource
+		settings := `{}`
+
+		// HTTP configuration JSON
+		httpConfig := fmt.Sprintf(`{"url":"%s","timeout":30000}`, prometheusURL)
+
+		// Auth configuration JSON (empty for now, can add basic auth if needed)
+		authConfig := `{}`
+
+		datasource := &models.NightingaleDatasource{
+			Name:           "Prometheus",
+			Identifier:     "prometheus-default",
+			Description:    "Default Prometheus datasource for AI Infra Matrix monitoring",
+			Category:       "prometheus",
+			PluginID:       0,
+			PluginType:     "prometheus",
+			PluginTypeName: "Prometheus",
+			ClusterName:    "default",
+			Settings:       settings,
+			Status:         "enabled",
+			HTTP:           httpConfig,
+			Auth:           authConfig,
+			IsDefault:      true,
+			CreatedAt:      currentTime,
+			CreatedBy:      "system",
+			UpdatedAt:      currentTime,
+			UpdatedBy:      "system",
+		}
+
+		if err := db.Create(datasource).Error; err != nil {
+			return fmt.Errorf("failed to create Prometheus datasource: %w", err)
+		}
+
+		log.Printf("✓ Prometheus datasource created")
+		log.Printf("  URL: %s", prometheusURL)
+		log.Printf("  Name: Prometheus")
+		log.Printf("  Category: prometheus")
+
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query Prometheus datasource: %w", result.Error)
+	} else {
+		// Update existing datasource URL if needed
+		httpConfig := fmt.Sprintf(`{"url":"%s","timeout":30000}`, prometheusURL)
+		if existingDS.HTTP != httpConfig {
+			existingDS.HTTP = httpConfig
+			existingDS.UpdatedAt = currentTime
+			existingDS.UpdatedBy = "system"
+			if err := db.Save(&existingDS).Error; err != nil {
+				log.Printf("Warning: Failed to update Prometheus datasource URL: %v", err)
+			} else {
+				log.Printf("✓ Prometheus datasource URL updated to: %s", prometheusURL)
+			}
+		} else {
+			log.Printf("✓ Prometheus datasource already exists with correct URL")
 		}
 	}
 

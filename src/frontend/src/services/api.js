@@ -134,6 +134,8 @@ export const authAPI = {
   getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
   getProfile: createCachedRequest(() => api.get('/auth/me'), true), 
   refreshToken: () => api.post('/auth/refresh'), // 不缓存token刷新请求
+  changePassword: (data) => api.post('/auth/change-password', data), // 修改密码
+  updateProfile: (data) => api.put('/users/profile', data), // 更新个人信息
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {
@@ -562,7 +564,7 @@ export const slurmAPI = {
 // SaltStack API
 export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
-  getMinions: () => api.get('/saltstack/minions'),
+  getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
@@ -586,6 +588,91 @@ export const saltStackAPI = {
   // SaltStack 批量操作
   batchExecute: (targets, command) => api.post('/saltstack/batch-execute', { targets, command }),
   getMinionDetails: (minionId) => api.get(`/saltstack/minions/${minionId}/details`),
+  
+  // 批量安装 Salt Minion
+  batchInstallMinion: (payload) => api.post('/saltstack/batch-install', payload),
+  getBatchInstallTask: (taskId) => api.get(`/saltstack/batch-install/${taskId}`),
+  listBatchInstallTasks: (params) => api.get('/saltstack/batch-install', { params }),
+  calculateParallel: (hostCount, maxParallel) => api.get('/saltstack/batch-install/calculate-parallel', { 
+    params: { host_count: hostCount, max_parallel: maxParallel } 
+  }),
+  getBatchInstallStreamUrl: (taskId) => {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http';
+    const host = window.location.host;
+    return `${proto}://${host}/api/saltstack/batch-install/${encodeURIComponent(taskId)}/stream`;
+  },
+
+  // SSH 测试（含 sudo 权限检查）
+  testSSH: (config) => api.post('/saltstack/ssh/test', config),
+  batchTestSSH: (payload) => api.post('/saltstack/ssh/test-batch', payload),
+
+  // 主机文件解析
+  parseHostFile: (content, filename) => api.post('/saltstack/hosts/parse', { content, filename }),
+  // 调试解析接口（返回详细解析过程）
+  parseHostFileDebug: (content, filename) => api.post('/saltstack/hosts/parse/debug', { content, filename }),
+
+  // Minion 管理（删除、卸载）
+  removeMinionKey: (minionId, force = false) => api.delete(`/saltstack/minion/${minionId}`, { params: { force } }),
+  /**
+   * 批量删除 Minion 密钥
+   * @param {string[]} minionIds - 要删除的 Minion ID 列表
+   * @param {Object} options - 删除选项
+   * @param {boolean} options.force - 是否强制删除（不等待确认）
+   * @param {boolean} options.uninstall - 是否通过 SSH 卸载 salt-minion 组件
+   * @param {string} options.ssh_username - SSH 用户名
+   * @param {string} options.ssh_password - SSH 密码
+   * @param {string} options.ssh_key_path - SSH 密钥路径
+   * @param {number} options.ssh_port - SSH 端口（默认22）
+   * @param {boolean} options.use_sudo - 是否使用 sudo
+   */
+  batchRemoveMinionKeys: (minionIds, options = {}) => {
+    const { force = false, uninstall = false, ssh_username, ssh_password, ssh_key_path, ssh_port, use_sudo } = options;
+    return api.post('/saltstack/minion/batch-delete', { 
+      minion_ids: minionIds, 
+      force,
+      uninstall,
+      ssh_username,
+      ssh_password,
+      ssh_key_path,
+      ssh_port,
+      use_sudo,
+    });
+  },
+  uninstallMinion: (minionId, sshConfig) => api.post(`/saltstack/minion/${minionId}/uninstall`, sshConfig),
+  
+  // 删除任务管理（软删除 + 异步真实删除）
+  getPendingDeleteMinions: () => api.get('/saltstack/minion/pending-deletes'),
+  getDeleteTaskStatus: (minionId) => api.get(`/saltstack/minion/delete-tasks/${minionId}`),
+  listDeleteTasks: (params) => api.get('/saltstack/minion/delete-tasks', { params }),
+  cancelDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/cancel`),
+  retryDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/retry`),
+
+  // Minion 分组管理
+  listMinionGroups: () => api.get('/saltstack/groups'),
+  createMinionGroup: (groupData) => api.post('/saltstack/groups', groupData),
+  updateMinionGroup: (id, groupData) => api.put(`/saltstack/groups/${id}`, groupData),
+  deleteMinionGroup: (id) => api.delete(`/saltstack/groups/${id}`),
+  getGroupMinions: (id) => api.get(`/saltstack/groups/${id}/minions`),
+  setMinionGroup: (minionId, groupName) => api.post('/saltstack/minions/set-group', { minion_id: minionId, group_name: groupName }),
+  batchSetMinionGroups: (minionGroups) => api.post('/saltstack/minions/batch-set-groups', { minion_groups: minionGroups }),
+
+  // 批量为 Minion 安装 Categraf（通过 Salt State）
+  installCategrafOnMinions: (payload) => api.post('/saltstack/minions/install-categraf', payload),
+  getCategrafInstallStreamUrl: (taskId) => {
+    const proto = window.location.protocol === 'https:' ? 'https' : 'http';
+    const host = window.location.host;
+    return `${proto}://${host}/api/saltstack/minions/install-categraf/${encodeURIComponent(taskId)}/stream`;
+  },
+
+  // 节点指标采集
+  getNodeMetrics: (minionId = '') => api.get('/saltstack/node-metrics', { params: minionId ? { minion_id: minionId } : {} }),
+  deployNodeMetricsState: (target, interval = 3) => api.post('/saltstack/node-metrics/deploy', { target, interval }),
+  
+  // IB 端口忽略管理
+  getIBPortIgnores: (minionId = '') => api.get('/saltstack/ib-ignores', { params: minionId ? { minion_id: minionId } : {} }),
+  addIBPortIgnore: (minionId, portName, portNum = 1, reason = '') => api.post('/saltstack/ib-ignores', { minion_id: minionId, port_name: portName, port_num: portNum, reason }),
+  removeIBPortIgnore: (minionId, portName, portNum = 0) => api.delete(`/saltstack/ib-ignores/${encodeURIComponent(minionId)}/${encodeURIComponent(portName)}`, { params: portNum ? { port_num: portNum } : {} }),
+  getIBPortAlerts: () => api.get('/saltstack/ib-alerts'),
 };
 
 // 增强用户管理API
@@ -743,6 +830,60 @@ export const objectStorageAPI = {
   getPresignedUrl: (id, bucketName, key, expiry = 3600) => api.post(`/object-storage/configs/${id}/buckets/${bucketName}/objects/${key}/presign`, {
     expiry
   })
+};
+
+// 角色模板 API
+export const roleTemplateAPI = {
+  // 获取所有角色模板
+  list: (activeOnly = false) => api.get('/rbac/role-templates', { params: { active_only: activeOnly } }),
+
+  // 获取角色模板详情
+  get: (id) => api.get(`/rbac/role-templates/${id}`),
+
+  // 创建角色模板
+  create: (data) => api.post('/rbac/role-templates', data),
+
+  // 更新角色模板
+  update: (id, data) => api.put(`/rbac/role-templates/${id}`, data),
+
+  // 删除角色模板
+  delete: (id) => api.delete(`/rbac/role-templates/${id}`),
+
+  // 同步角色模板到角色
+  sync: () => api.post('/rbac/role-templates/sync'),
+
+  // 获取可用资源列表
+  getResources: () => api.get('/rbac/resources'),
+
+  // 获取可用操作列表
+  getVerbs: () => api.get('/rbac/verbs'),
+};
+
+// RBAC API
+export const rbacAPI = {
+  // 检查权限
+  checkPermission: (data) => api.post('/rbac/check-permission', data),
+
+  // 角色管理
+  getRoles: () => api.get('/rbac/roles'),
+  getRole: (id) => api.get(`/rbac/roles/${id}`),
+  createRole: (data) => api.post('/rbac/roles', data),
+  updateRole: (id, data) => api.put(`/rbac/roles/${id}`, data),
+  deleteRole: (id) => api.delete(`/rbac/roles/${id}`),
+
+  // 用户组管理
+  getGroups: () => api.get('/rbac/groups'),
+  createGroup: (data) => api.post('/rbac/groups', data),
+  addUserToGroup: (groupId, userId) => api.post(`/rbac/groups/${groupId}/users/${userId}`),
+  removeUserFromGroup: (groupId, userId) => api.delete(`/rbac/groups/${groupId}/users/${userId}`),
+
+  // 权限管理
+  getPermissions: () => api.get('/rbac/permissions'),
+  createPermission: (data) => api.post('/rbac/permissions', data),
+
+  // 角色分配
+  assignRole: (data) => api.post('/rbac/assign-role', data),
+  revokeRole: (data) => api.delete('/rbac/revoke-role', { data }),
 };
 
 export default api;

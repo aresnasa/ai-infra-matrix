@@ -27,6 +27,16 @@ const ObjectStorageConfigPage = () => {
   // 存储类型配置
   const storageTypes = [
     {
+      value: 'seaweedfs',
+      label: 'SeaweedFS',
+      icon: <DatabaseOutlined />,
+      description: '高性能分布式文件系统，支持S3 API和JWT认证',
+      requiresWebUrl: false,
+      hasFilerUrl: true,
+      hasMasterUrl: true,
+      hasJwtSecret: true
+    },
+    {
       value: 'minio',
       label: 'MinIO',
       icon: <DatabaseOutlined />,
@@ -308,7 +318,7 @@ const ObjectStorageConfigPage = () => {
             <DatabaseOutlined style={{ marginRight: '8px', color: '#1890ff' }} />
             对象存储配置
           </Title>
-          <Text type="secondary">管理MinIO、S3等对象存储服务的连接配置</Text>
+          <Text type="secondary">管理SeaweedFS、MinIO、S3等对象存储服务的连接配置</Text>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadConfigs}>
@@ -448,6 +458,48 @@ const ObjectStorageConfigPage = () => {
                       <Input placeholder="Web控制台地址" prefix={<LinkOutlined />} />
                     </Form.Item>
                   ) : null;
+                }}
+              </Form.Item>
+
+              {/* SeaweedFS 特有字段 */}
+              <Form.Item noStyle shouldUpdate={(prevValues, currentValues) => prevValues.type !== currentValues.type}>
+                {({ getFieldValue }) => {
+                  const currentType = getFieldValue('type');
+                  const typeConfig = getStorageTypeConfig(currentType);
+                  
+                  if (currentType !== 'seaweedfs') return null;
+                  
+                  return (
+                    <>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item
+                            name="master_url"
+                            label="Master 地址"
+                            extra="SeaweedFS Master 服务地址，例如: http://seaweedfs-master:9333"
+                          >
+                            <Input placeholder="Master 服务地址" prefix={<LinkOutlined />} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item
+                            name="filer_url"
+                            label="Filer 地址"
+                            extra="SeaweedFS Filer 服务地址，例如: http://seaweedfs-filer:8888"
+                          >
+                            <Input placeholder="Filer 服务地址" prefix={<LinkOutlined />} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item
+                        name="jwt_secret"
+                        label="JWT Secret"
+                        extra="用于 SeaweedFS JWT 认证的密钥（可选）"
+                      >
+                        <Input.Password placeholder="JWT 认证密钥" prefix={<KeyOutlined />} />
+                      </Form.Item>
+                    </>
+                  );
                 }}
               </Form.Item>
 

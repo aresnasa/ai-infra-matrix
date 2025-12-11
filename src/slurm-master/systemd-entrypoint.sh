@@ -87,51 +87,130 @@ ln -sf /etc/systemd/system/slurmctld.service /etc/systemd/system/multi-user.targ
 ln -sf /etc/systemd/system/slurmdbd.service /etc/systemd/system/multi-user.target.wants/slurmdbd.service
 ln -sf /lib/systemd/system/munge.service /etc/systemd/system/multi-user.target.wants/munge.service
 
-# 动态查找 systemd 可执行文件，如缺失则在容器启动时补装
+# 动态查找 systemd 可执行文件
+# 在正确构建的镜像中，systemd 应该已经安装
+# 如果找不到，说明镜像构建有问题，给出明确提示
 ensure_systemd() {
-	local candidate="/sbin/init"
+	# 检查常见的 systemd 路径
+	if [ -x /sbin/init ]; then
+		# 验证 /sbin/init 是否真的是 systemd
+		if /sbin/init --version 2>&1 | grep -q systemd; then
+			SYSTEMD_BIN="/sbin/init"
+			echo "✅ 找到 systemd: $SYSTEMD_BIN"
+			return 0
+		fi
+	fi
 
-	if [ -x "$candidate" ]; then
-		SYSTEMD_BIN="$candidate"
+	if [ -x /lib/systemd/systemd ]; then
+		SYSTEMD_BIN="/lib/systemd/systemd"
+		echo "✅ 找到 systemd: $SYSTEMD_BIN"
 		return 0
 	fi
 
 	if command -v systemd >/dev/null 2>&1; then
 		SYSTEMD_BIN="$(command -v systemd)"
+		echo "✅ 找到 systemd: $SYSTEMD_BIN"
 		return 0
 	fi
 
-	if [ -x /lib/systemd/systemd ]; then
-		SYSTEMD_BIN="/lib/systemd/systemd"
-		return 0
-	fi
-
-	echo "systemd 未找到，尝试在启动阶段安装 (systemd systemd-sysv)..."
+	# systemd 未找到，尝试运行时安装（仅作为后备方案）
+	echo "⚠️  systemd 未找到，这可能表示镜像构建不完整"
+	echo "📦 尝试在启动阶段安装 systemd..."
 	export DEBIAN_FRONTEND=noninteractive
-	if apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv; then
-		if command -v systemd >/dev/null 2>&1; then
-			SYSTEMD_BIN="$(command -v systemd)"
-			return 0
-		elif [ -x /lib/systemd/systemd ]; then
+	
+	# 使用多种方式尝试安装
+	if apt-get update 2>/dev/null && apt-get install -y --no-install-recommends systemd systemd-sysv 2>/dev/null; then
+		echo "✅ systemd 安装成功"
+		if [ -x /lib/systemd/systemd ]; then
 			SYSTEMD_BIN="/lib/systemd/systemd"
 			return 0
 		elif [ -x /sbin/init ]; then
 			SYSTEMD_BIN="/sbin/init"
 			return 0
 		fi
-	else
-		echo "在容器启动时安装 systemd 失败" >&2
 	fi
 
-	echo "无法找到 systemd 可执行文件" >&2
+	# 所有尝试都失败
+	echo "❌ 无法找到或安装 systemd" >&2
+	echo "" >&2
+	echo "可能的原因:" >&2
+	echo "  1. 镜像构建时未能成功安装 systemd" >&2
+	echo "  2. 使用的是旧版本镜像，需要重新构建" >&2
+	echo "  3. 容器内网络无法访问 APT 源" >&2
+	echo "" >&2
+	echo "建议:" >&2
+	echo "  - 重新构建镜像: ./build.sh slurm-master" >&2
+	echo "  - 或从私有仓库拉取最新镜像" >&2
 	return 1
 }
 
 ensure_systemd || exit 1
 
+# 检查 cgroup 挂载情况
+echo "🔍 检查 cgroup 挂载..."
+if [ ! -d /sys/fs/cgroup ]; then
+    echo "❌ /sys/fs/cgroup 不存在！"
+    echo "   请确保 docker-compose.yml 中包含以下挂载:"
+    echo "   volumes:"
+    echo "     - /sys/fs/cgroup:/sys/fs/cgroup:rw"
+    exit 1
+fi
+
+# 检测 cgroup 版本
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    echo "✅ 检测到 cgroup v2"
+    CGROUP_VERSION="v2"
+else
+    echo "ℹ️  使用 cgroup v1 或混合模式"
+    CGROUP_VERSION="v1"
+fi
+
+# 列出 cgroup 内容用于调试
+echo "📋 /sys/fs/cgroup 内容:"
+ls -la /sys/fs/cgroup/ 2>/dev/null | head -10
+
+# 确保 systemd 需要的目录存在
+mkdir -p /run/systemd/system
+
+# 对于 cgroup v2，需要特殊处理
+if [ "$CGROUP_VERSION" = "v2" ]; then
+    # 检查是否可写
+    if [ -w /sys/fs/cgroup ]; then
+        echo "✅ cgroup v2 可写"
+    else
+        echo "⚠️  cgroup v2 不可写，可能影响 systemd 启动"
+    fi
+    
+    # cgroup v2 需要将控制器委托给容器
+    # 检查是否有自己的 cgroup 子树
+    CONTAINER_CGROUP=""
+    if [ -f /proc/1/cgroup ]; then
+        CONTAINER_CGROUP=$(cat /proc/1/cgroup | grep "^0::" | cut -d: -f3)
+        echo "📋 容器 cgroup 路径: ${CONTAINER_CGROUP:-/}"
+    fi
+    
+    # 尝试启用控制器
+    if [ -f /sys/fs/cgroup/cgroup.subtree_control ]; then
+        echo "📋 当前启用的控制器:"
+        cat /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || echo "(无)"
+        
+        # 尝试启用必要的控制器
+        for controller in cpu cpuset io memory pids; do
+            if [ -f /sys/fs/cgroup/cgroup.controllers ] && grep -q "$controller" /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
+                echo "+$controller" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+            fi
+        done
+    fi
+fi
+
+# 设置 systemd 需要的环境变量
+export container=docker
+
 # 如果仍然使用默认的 /sbin/init，则替换为实际存在的 systemd
 if [ "$#" -eq 0 ] || [ "$1" = "/sbin/init" ]; then
-	set -- "$SYSTEMD_BIN"
+    echo "🚀 启动 systemd: $SYSTEMD_BIN"
+    # 直接运行 systemd，不加额外参数（由 systemd 自己判断）
+    set -- "$SYSTEMD_BIN"
 fi
 
 exec "$@"

@@ -351,7 +351,7 @@ func (s *SaltStackClientService) installSaltStackMinion(client *ssh.Client, bina
 		switch binary.Platform {
 		case "ubuntu", "debian":
 			// 从AppHub获取SaltStack deb包
-			// binary.DownloadURL格式: http://192.168.0.200:53434/pkgs/saltstack-deb/salt-minion_3007.8_arm64.deb
+			// binary.DownloadURL格式: http://192.168.0.200:28080/pkgs/saltstack-deb/salt-minion_3007.8_arm64.deb
 			installCmd = fmt.Sprintf(`
 				set -e
 				# Download required SaltStack packages from AppHub

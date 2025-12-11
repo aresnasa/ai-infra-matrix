@@ -2,6 +2,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider, Spin, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import enUS from 'antd/locale/en_US';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoadingFallback, { AdminLoadingFallback, ProjectLoadingFallback } from './components/LoadingFallback';
@@ -11,6 +12,7 @@ import AIAssistantFloat from './components/AIAssistantFloat';
 import { useSmartPreload } from './hooks/usePagePreload';
 import { useAPIHealth } from './hooks/useAPIHealth'; // 使用优化版本
 import { usePerformanceMonitor } from './hooks/usePerformanceMonitor';
+import { I18nProvider, useI18n } from './hooks/useI18n';
 import AuthPage from './pages/AuthPage';
 import { authAPI } from './services/api';
 import { authCache } from './utils/authCache';
@@ -121,8 +123,8 @@ const GiteaEmbed = withLazyLoading(React.lazy(() => import('./pages/GiteaEmbed')
 const ObjectStoragePage = withLazyLoading(React.lazy(() => import('./pages/ObjectStoragePage')), {
   loadingText: '正在加载对象存储管理...'
 });
-const MinIOConsolePage = withLazyLoading(React.lazy(() => import('./pages/MinIOConsolePage')), {
-  loadingText: '正在加载MinIO控制台...'
+const StorageConsolePage = withLazyLoading(React.lazy(() => import('./pages/StorageConsolePage')), {
+  loadingText: '正在加载存储控制台...'
 });
 const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages/admin/ObjectStorageConfigPage')), {
   loadingText: '正在加载对象存储配置...'
@@ -131,6 +133,9 @@ const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages
 // 新增功能页面懒加载
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
+});
+const RoleTemplateManagement = withLazyLoading(React.lazy(() => import('./pages/RoleTemplateManagement')), {
+  loadingText: '正在加载角色模板管理...'
 });
 const FileBrowser = withLazyLoading(React.lazy(() => import('./pages/FileBrowser')),
   { loadingText: '正在加载文件浏览器...' }
@@ -441,7 +446,27 @@ function App() {
   console.log('==================');
 
   return (
-    <ConfigProvider locale={zhCN}>
+    <I18nProvider>
+      <AppContent 
+        user={user}
+        handleLogin={handleLogin}
+        handleLogout={handleLogout}
+        apiHealth={apiHealth}
+        LazyLoadingSpinner={LazyLoadingSpinner}
+      />
+    </I18nProvider>
+  );
+}
+
+// 内部组件：使用 I18n 上下文来切换 Ant Design 语言
+function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpinner }) {
+  const { locale } = useI18n();
+  
+  // Ant Design 语言包映射
+  const antdLocale = locale === 'en-US' ? enUS : zhCN;
+
+  return (
+    <ConfigProvider locale={antdLocale}>
       <ErrorBoundary>
         <Router>
           {!user ? (
@@ -592,13 +617,13 @@ function App() {
                       }
                     />
 
-                    {/* MinIO控制台页面 - 允许数据开发和SRE团队 */}
+                    {/* 存储控制台页面 - 支持 SeaweedFS/MinIO，允许数据开发和SRE团队 */}
                     <Route
-                      path="/object-storage/minio/:configId"
+                      path="/object-storage/console/:configId"
                       element={
                         <TeamProtectedRoute user={user} allowedTeams={['data-developer', 'sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
-                            <MinIOConsolePage />
+                            <StorageConsolePage />
                           </Suspense>
                         </TeamProtectedRoute>
                       }
@@ -701,6 +726,16 @@ function App() {
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <AdminUsers />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/role-templates"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <RoleTemplateManagement />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

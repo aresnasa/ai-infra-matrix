@@ -13,6 +13,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// DefaultAppHubPort 默认 AppHub 端口（与 .env 配置保持一致）
+const DefaultAppHubPort = "28080"
+
 // 继续 slurm_cluster_service.go 的其余实现
 
 // configureSalt 配置SaltStack
@@ -355,7 +358,8 @@ func getAppHubBaseURL() string {
 
 	appHubPort := os.Getenv("APPHUB_PORT")
 	if appHubPort == "" {
-		appHubPort = "53434" // 默认端口
+		// 默认端口（与 .env 中 APPHUB_PORT 配置一致）
+		appHubPort = DefaultAppHubPort
 	}
 
 	scheme := os.Getenv("EXTERNAL_SCHEME")

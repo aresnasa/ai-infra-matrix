@@ -464,6 +464,64 @@ func (s *SaltStackService) RejectMinion(ctx context.Context, minionID string) er
 	return nil
 }
 
+// DeleteMinion 删除Minion密钥（从 Salt Master 中完全移除）
+func (s *SaltStackService) DeleteMinion(ctx context.Context, minionID string) error {
+	return s.DeleteMinionWithForce(ctx, minionID, false)
+}
+
+// DeleteMinionWithForce 删除Minion密钥，支持强制删除在线节点
+func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID string, force bool) error {
+	log.Printf("[SaltStack] Deleting minion: %s (force=%v)", minionID, force)
+
+	// 如果不是强制删除，先检查节点是否在线（通过 test.ping）
+	if !force {
+		pingPayload := map[string]interface{}{
+			"fun":     "test.ping",
+			"tgt":     minionID,
+			"client":  "local",
+			"timeout": 3,
+		}
+		pingResult, err := s.executeSaltCommand(ctx, pingPayload)
+		if err == nil && pingResult != nil {
+			// 检查 ping 结果中是否有该 minion 的响应
+			if _, exists := pingResult[minionID]; exists {
+				return fmt.Errorf("minion %s is online, use force=true to delete online minions", minionID)
+			}
+		}
+	}
+
+	payload := map[string]interface{}{
+		"fun":    "key.delete",
+		"match":  minionID,
+		"client": "wheel",
+	}
+
+	_, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return fmt.Errorf("failed to delete minion %s: %v", minionID, err)
+	}
+
+	log.Printf("[SaltStack] Minion %s deleted successfully (force=%v)", minionID, force)
+	return nil
+}
+
+// DeleteMinionBatch 批量删除 Minion 密钥
+func (s *SaltStackService) DeleteMinionBatch(ctx context.Context, minionIDs []string) (map[string]error, error) {
+	return s.DeleteMinionBatchWithForce(ctx, minionIDs, false)
+}
+
+// DeleteMinionBatchWithForce 批量删除 Minion 密钥，支持强制删除
+func (s *SaltStackService) DeleteMinionBatchWithForce(ctx context.Context, minionIDs []string, force bool) (map[string]error, error) {
+	results := make(map[string]error)
+
+	for _, minionID := range minionIDs {
+		err := s.DeleteMinionWithForce(ctx, minionID, force)
+		results[minionID] = err
+	}
+
+	return results, nil
+}
+
 // GetMinionStatus 获取Minion状态
 func (s *SaltStackService) GetMinionStatus(ctx context.Context, minionID string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{
@@ -653,7 +711,7 @@ func (s *SaltStackService) ConfigureSlurmNode(ctx context.Context, minionID stri
 		"fun":    "cmd.run",
 		"tgt":    minionID,
 		"arg":    []string{getMungeCmd},
-		"kwarg":  map[string]interface{}{"shell": "/bin/bash"},
+		"kwarg":  map[string]interface{}{"shell": "/bin/bash", "python_shell": true},
 		"client": "local",
 	}
 	mungeResult, err := s.executeSaltCommand(ctx, mungeKeyPayload)
@@ -671,7 +729,7 @@ func (s *SaltStackService) ConfigureSlurmNode(ctx context.Context, minionID stri
 		"fun":    "cmd.run",
 		"tgt":    minionID,
 		"arg":    []string{getSlurmConfCmd},
-		"kwarg":  map[string]interface{}{"shell": "/bin/bash"},
+		"kwarg":  map[string]interface{}{"shell": "/bin/bash", "python_shell": true},
 		"client": "local",
 	}
 	slurmConfResult, err := s.executeSaltCommand(ctx, slurmConfPayload)
@@ -754,6 +812,7 @@ func (s *SaltStackService) StartSlurmService(ctx context.Context, minionID strin
 		"fun":    "cmd.run",
 		"tgt":    minionID,
 		"arg":    []string{"pgrep -x slurmd && echo 'running' || echo 'stopped'"},
+		"kwarg":  map[string]interface{}{"python_shell": true},
 		"client": "local",
 	}
 

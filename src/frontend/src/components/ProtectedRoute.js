@@ -94,13 +94,15 @@ export const TeamProtectedRoute = ({ children, user, allowedTeams = [] }) => {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // 获取用户团队角色
+  // 获取用户团队角色 - 优先使用 role_template，其次检查 roles 数组
   const userTeam = user.role_template || user.roleTemplate;
+  const userRoleNames = user.roles?.map(r => r.name) || [];
 
   // 检查是否为管理员 - 管理员拥有所有权限
   const isAdmin = user.role === 'admin' || user.role === 'super-admin' || 
                   userTeam === 'admin' ||
-                  (user.roles && user.roles.some(role => role.name === 'admin' || role.name === 'super-admin'));
+                  userRoleNames.includes('admin') ||
+                  userRoleNames.includes('super-admin');
 
   // 如果是管理员，直接允许访问
   if (isAdmin) {
@@ -112,8 +114,11 @@ export const TeamProtectedRoute = ({ children, user, allowedTeams = [] }) => {
     return children;
   }
 
-  // 检查用户团队是否在允许列表中
-  if (!allowedTeams.includes(userTeam)) {
+  // 检查用户团队是否在允许列表中 - 同时检查 role_template 和 roles 数组
+  const hasTeamAccess = allowedTeams.includes(userTeam) || 
+                        allowedTeams.some(team => userRoleNames.includes(team));
+  
+  if (!hasTeamAccess) {
     const teamNames = {
       'data-developer': '数据开发团队',
       'sre': 'SRE运维团队',

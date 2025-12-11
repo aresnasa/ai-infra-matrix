@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Menu, Button, Modal, Space, Switch, Card, Typography, message, Tooltip } from 'antd';
 import { 
   SettingOutlined, 
@@ -23,15 +23,16 @@ import {
 } from '@ant-design/icons';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { navigationAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
 
-// 默认导航项配置
+// 默认导航项配置 - 使用 labelKey 代替 label
 const DEFAULT_NAV_ITEMS = [
   {
     id: 'projects',
     key: '/projects',
-    label: '项目管理',
+    labelKey: 'nav.projects',
     icon: 'ProjectOutlined',
     visible: true,
     order: 0,
@@ -40,7 +41,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'monitoring',
     key: '/monitoring',
-    label: '监控仪表板',
+    labelKey: 'nav.monitoring',
     icon: 'DashboardOutlined',
     visible: true,
     order: 1,
@@ -49,7 +50,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'gitea',
     key: '/gitea',
-    label: 'Gitea',
+    labelKey: 'nav.gitea',
     icon: 'CodeOutlined',
     visible: true,
     order: 1,
@@ -58,7 +59,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'kubernetes',
     key: '/kubernetes',
-    label: 'Kubernetes',
+    labelKey: 'nav.kubernetes',
     icon: 'CloudServerOutlined',
     visible: true,
     order: 2,
@@ -67,7 +68,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'ansible',
     key: '/ansible',
-    label: 'Ansible',
+    labelKey: 'nav.ansible',
     icon: 'FileTextOutlined',
     visible: true,
     order: 3,
@@ -76,7 +77,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'jupyterhub',
     key: '/jupyterhub',
-    label: 'JupyterHub',
+    labelKey: 'nav.jupyterhub',
     icon: 'ExperimentTwoTone',
     visible: true,
     order: 4,
@@ -85,7 +86,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'slurm',
     key: '/slurm',
-    label: 'SLURM',
+    labelKey: 'nav.slurm',
     icon: 'ClusterOutlined',
     visible: true,
     order: 5,
@@ -94,7 +95,7 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'object-storage',
     key: '/object-storage',
-    label: '对象存储',
+    labelKey: 'nav.objectStorage',
     icon: 'DatabaseOutlined',
     visible: true,
     order: 6,
@@ -103,23 +104,48 @@ const DEFAULT_NAV_ITEMS = [
   {
     id: 'saltstack',
     key: '/saltstack',
-    label: 'SaltStack',
+    labelKey: 'nav.saltstack',
     icon: 'ControlOutlined',
     visible: true,
     order: 7,
+    roles: ['admin', 'super-admin']
+  },
+  {
+    id: 'role-templates',
+    key: '/admin/role-templates',
+    labelKey: 'nav.roleTemplates',
+    icon: 'TeamOutlined',
+    visible: true,
+    order: 8,
     roles: ['admin', 'super-admin']
   }
 ];
 
 const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) => {
+  const { t } = useI18n();
   const [navItems, setNavItems] = useState(DEFAULT_NAV_ITEMS);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  // 检查用户权限
-  const hasRole = (requiredRoles, userRoles = []) => {
+  // 获取导航项的显示标签 - 支持 labelKey 和 label 两种方式
+  const getItemLabel = (item) => {
+    if (item.labelKey) {
+      return t(item.labelKey);
+    }
+    return item.label || item.id;
+  };
+
+  // 检查用户权限 - 支持检查 roles 数组和 role_template 字段
+  const hasRole = (requiredRoles, userRoles = [], roleTemplate = null) => {
     if (!Array.isArray(requiredRoles) || requiredRoles.length === 0) return true;
+    
+    // 检查 role_template 是否匹配
+    if (roleTemplate && requiredRoles.includes(roleTemplate)) {
+      return true;
+    }
+    
+    // 检查 roles 数组是否匹配
     if (!Array.isArray(userRoles) || userRoles.length === 0) return false;
     return requiredRoles.some(role => userRoles.includes(role));
   };  // 加载用户自定义导航配置
@@ -130,12 +156,16 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
       // 添加更安全的数据访问，防止解构失败
       const responseData = response?.data?.data;
       if (responseData && Array.isArray(responseData) && responseData.length > 0) {
-        console.log('加载用户自定义导航配置:', responseData);
-        // 确保每个导航项的roles是数组格式
-        let formattedItems = responseData.map(item => ({
-          ...item,
-          roles: Array.isArray(item.roles) ? item.roles : (item.roles ? [item.roles] : [])
-        }));
+        console.log('Loading user navigation config:', responseData);
+        // 确保每个导航项的roles是数组格式，并转换 label 为 labelKey
+        let formattedItems = responseData.map(item => {
+          const defaultItem = DEFAULT_NAV_ITEMS.find(d => d.id === item.id);
+          return {
+            ...item,
+            labelKey: item.labelKey || defaultItem?.labelKey || `nav.${item.id}`,
+            roles: Array.isArray(item.roles) ? item.roles : (item.roles ? [item.roles] : [])
+          };
+        });
         // 将默认项中新增的导航合并进用户配置（保持用户顺序在前）
         const existingIds = new Set(formattedItems.map(i => i.id));
         const missingDefaults = DEFAULT_NAV_ITEMS.filter(d => !existingIds.has(d.id));
@@ -146,12 +176,12 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
         ];
         setNavItems(formattedItems);
       } else {
-        console.log('使用默认导航配置');
+        console.log(t('nav.usingDefaultConfig'));
         setNavItems(DEFAULT_NAV_ITEMS);
       }
     } catch (error) {
-      console.error('加载导航配置失败:', error);
-      console.log('使用默认导航配置，降级到本地配置');
+      console.error('Failed to load navigation config:', error);
+      console.log(t('nav.usingDefaultConfig'));
       setNavItems(DEFAULT_NAV_ITEMS);
     } finally {
       setLoading(false);
@@ -162,14 +192,14 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   const saveNavigationConfig = async () => {
     try {
       setLoading(true);
-      console.log('保存导航配置:', navItems);
+      console.log('Saving navigation config:', navItems);
       const response = await navigationAPI.saveUserNavigationConfig(navItems);
-      console.log('保存响应:', response);
-      message.success('导航配置已保存');
+      console.log('Save response:', response);
+      message.success(t('nav.configSaved'));
       setConfigModalVisible(false);
     } catch (error) {
-      console.error('保存配置失败:', error);
-      message.error('保存配置失败: ' + (error.response?.data?.error || error.message));
+      console.error('Failed to save config:', error);
+      message.error(t('nav.configSaveFailed') + ': ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
     }
@@ -178,7 +208,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   // 重置为默认配置
   const resetToDefault = () => {
     setNavItems(DEFAULT_NAV_ITEMS);
-    message.info('已重置为默认配置');
+    message.info(t('nav.resetToDefault'));
   };
 
   // 处理拖拽结束
@@ -212,24 +242,25 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
   // 获取可见且有权限的导航项
   const getVisibleNavItems = () => {
     const userRoles = user?.roles?.map(r => r.name) || [];
+    const roleTemplate = user?.role_template || user?.roleTemplate;
     return navItems
-      .filter(item => item.visible && hasRole(item.roles, userRoles))
+      .filter(item => item.visible && hasRole(item.roles, userRoles, roleTemplate))
       .sort((a, b) => a.order - b.order);
   };
 
   // 渲染配置模态框
   const renderConfigModal = () => (
     <Modal
-      title="自定义导航栏"
+      title={t('nav.customizeNav')}
       open={configModalVisible}
       onCancel={() => setConfigModalVisible(false)}
       width={800}
       footer={[
         <Button key="reset" onClick={resetToDefault}>
-          <UndoOutlined /> 重置默认
+          <UndoOutlined /> {t('nav.resetDefault')}
         </Button>,
         <Button key="cancel" onClick={() => setConfigModalVisible(false)}>
-          取消
+          {t('common.cancel')}
         </Button>,
         <Button 
           key="save" 
@@ -237,19 +268,22 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
           loading={loading}
           onClick={saveNavigationConfig}
         >
-          <SaveOutlined /> 保存配置
+          <SaveOutlined /> {t('nav.saveConfig')}
         </Button>
       ]}
     >
       <div style={{ marginBottom: 16 }}>
         <Text type="secondary">
-          拖拽下方卡片可重新排序导航项，点击眼睛图标可显示/隐藏导航项
+          {t('nav.customizeNavDesc')}
         </Text>
       </div>
       
       <DragDropContext onDragEnd={handleDragEnd} onDragStart={() => setIsDragging(true)}>
         <Droppable droppableId="navigation-items">
-          {(provided) => (
+          {(provided) => {
+            const userRoles = user?.roles?.map(r => r.name) || [];
+            const roleTemplate = user?.role_template || user?.roleTemplate;
+            return (
             <div {...provided.droppableProps} ref={provided.innerRef}>
               {navItems.map((item, index) => (
                 <Draggable key={item.id} draggableId={item.id} index={index}>
@@ -260,7 +294,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                       size="small"
                       style={{
                         marginBottom: 8,
-                        opacity: !hasRole(item.roles, user?.roles?.map(r => r.name) || []) ? 0.5 : 1,
+                        opacity: !hasRole(item.roles, userRoles, roleTemplate) ? 0.5 : 1,
                         backgroundColor: snapshot.isDragging ? '#f0f0f0' : '#fff',
                         transform: snapshot.isDragging ? 'rotate(5deg)' : 'none',
                         ...provided.draggableProps.style
@@ -271,19 +305,19 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                           <div {...provided.dragHandleProps} style={{ marginRight: 12, cursor: 'grab' }}>
                             <DragOutlined style={{ color: '#999' }} />
                           </div>
-                          <span>{item.label}</span>
-                          {!hasRole(item.roles, user?.roles?.map(r => r.name) || []) && (
+                          <span>{getItemLabel(item)}</span>
+                          {!hasRole(item.roles, userRoles, roleTemplate) && (
                             <Text type="secondary" style={{ marginLeft: 8 }}>
-                              (无权限)
+                              {t('nav.noPermission')}
                             </Text>
                           )}
                         </div>
                         <div>
-                          <Tooltip title={item.visible ? "点击隐藏" : "点击显示"}>
+                          <Tooltip title={item.visible ? t('nav.clickToHide') : t('nav.clickToShow')}>
                             <Button
                               type="text"
                               size="small"
-                              disabled={!hasRole(item.roles, user?.roles?.map(r => r.name) || [])}
+                              disabled={!hasRole(item.roles, userRoles, roleTemplate)}
                               icon={item.visible ? <EyeOutlined /> : <EyeInvisibleOutlined />}
                               onClick={() => toggleItemVisibility(item.id)}
                             />
@@ -296,7 +330,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
               ))}
               {provided.placeholder}
             </div>
-          )}
+          )}}
         </Droppable>
       </DragDropContext>
     </Modal>
@@ -322,14 +356,26 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
 
   useEffect(() => {
     if (user && user.id) {
-      console.log('用户信息已加载，开始加载导航配置:', user);
+      console.log('User info loaded, loading navigation config:', user);
       loadNavigationConfig();
     } else {
-      console.log('等待用户信息加载...');
+      console.log('Waiting for user info...');
     }
   }, [user]);
 
-  const visibleItems = getVisibleNavItems();
+  // 使用 useMemo 确保导航项标签随语言变化而更新
+  const visibleItems = useMemo(() => {
+    return getVisibleNavItems();
+  }, [navItems, user, t]);
+
+  // 菜单项列表，使用翻译后的标签
+  const menuItems = useMemo(() => {
+    return visibleItems.map(item => ({
+      key: item.key,
+      label: getItemLabel(item),
+      icon: iconMap[item.icon] || <ProjectOutlined />
+    }));
+  }, [visibleItems, t]);
 
   return (
     <>
@@ -343,11 +389,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
           theme="dark"
           mode="horizontal"
           selectedKeys={selectedKeys}
-          items={visibleItems.map(item => ({
-            key: item.key,
-            label: item.label,
-            icon: iconMap[item.icon] || <ProjectOutlined />
-          }))}
+          items={menuItems}
           onClick={onMenuClick}
           style={{ 
             minWidth: 0, // 允许收缩
@@ -358,7 +400,7 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
         />
         
         {/* 导航配置按钮 */}
-        <Tooltip title="自定义导航栏">
+        <Tooltip title={t('nav.customizeNav')}>
           <Button
             type="text"
             size="small"
