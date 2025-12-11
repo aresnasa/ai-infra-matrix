@@ -1954,14 +1954,41 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 	return minions, nil
 }
 
-// enrichMinionsWithMetrics 从数据库读取节点指标并填充到 Minion 信息中（仅作为兜底数据）
+// enrichMinionsWithMetrics 填充节点指标数据
+// 优先级: 1. Redis 实时数据 2. 数据库缓存数据
 // 只有在实时数据为空时才使用数据库数据，并将数据来源标记为 "cached"
 func (h *SaltStackHandler) enrichMinionsWithMetrics(minions []SaltMinion) {
 	if len(minions) == 0 {
 		return
 	}
 
-	// 从数据库获取所有节点的最新指标
+	// 优先从 Redis 获取实时指标
+	redisMetrics, redisErr := services.GetAllNodeMetricsFromRedis()
+	if redisErr == nil && len(redisMetrics) > 0 {
+		log.Printf("[enrichMinionsWithMetrics] 从 Redis 获取到 %d 个节点的实时指标", len(redisMetrics))
+		for i := range minions {
+			if metrics, ok := redisMetrics[minions[i].ID]; ok {
+				if minions[i].CPUUsagePercent == 0 && metrics.CPUUsagePercent > 0 {
+					minions[i].CPUUsagePercent = metrics.CPUUsagePercent
+				}
+				if minions[i].MemoryUsagePercent == 0 && metrics.MemoryUsagePercent > 0 {
+					minions[i].MemoryUsagePercent = metrics.MemoryUsagePercent
+				}
+				if minions[i].MemoryTotalGB == 0 && metrics.MemoryTotalGB > 0 {
+					minions[i].MemoryTotalGB = metrics.MemoryTotalGB
+				}
+				if minions[i].MemoryUsedGB == 0 && metrics.MemoryUsedGB > 0 {
+					minions[i].MemoryUsedGB = metrics.MemoryUsedGB
+				}
+				// Redis 数据标记为实时
+				if minions[i].DataSource == "" {
+					minions[i].DataSource = "redis"
+				}
+			}
+		}
+	}
+
+	// 从数据库获取所有节点的最新指标（作为 Redis 的兜底）
 	metricsService := services.NewNodeMetricsService()
 	allMetrics, err := metricsService.GetAllLatestMetrics()
 	if err != nil {

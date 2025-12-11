@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/cache"
@@ -20,10 +21,15 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/net/context"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // NodeMetricsSyncService 节点指标同步服务
 // 定期使用 Salt 命令获取所有节点的 CPU/内存/GPU/IB 等指标，并同步到 Redis 和数据库
+// 设计原则：
+// 1. 每次采集都异步写入 Redis（实时性）
+// 2. 数据库批量更新，降低写入频率（每 N 次同步周期才写一次数据库）
+// 3. 监控数据允许丢失，不影响核心业务
 type NodeMetricsSyncService struct {
 	db              *gorm.DB
 	redisClient     *redis.Client
@@ -32,9 +38,19 @@ type NodeMetricsSyncService struct {
 	saltAPIPassword string
 	saltAPIEauth    string
 	stopChan        chan struct{}
-	syncInterval    time.Duration // 同步间隔，默认 60 秒
+	syncInterval    time.Duration // Redis 同步间隔，默认 60 秒
+	dbSyncRatio     int           // 数据库同步比率：每 N 次 Redis 同步才写一次数据库
+	syncCounter     int64         // 同步计数器（原子操作）
 	mu              sync.RWMutex
 	running         bool
+
+	// 异步写入缓冲区
+	metricsBuffer     map[string]*NodeMetricsData
+	metricsBufferLock sync.RWMutex
+
+	// 并发控制
+	maxConcurrent int           // 最大并发数
+	semaphore     chan struct{} // 信号量
 }
 
 // syncSaltAPIClient 内部 Salt API 客户端（避免与 handler 中的冲突）
@@ -56,6 +72,22 @@ func NewNodeMetricsSyncService() *NodeMetricsSyncService {
 		}
 	}
 
+	// 数据库同步比率：默认每 5 次 Redis 同步才写一次数据库（即 5 分钟）
+	dbSyncRatio := 5
+	if envRatio := os.Getenv("NODE_METRICS_DB_SYNC_RATIO"); envRatio != "" {
+		if ratio, err := strconv.Atoi(envRatio); err == nil && ratio > 0 {
+			dbSyncRatio = ratio
+		}
+	}
+
+	// 最大并发数
+	maxConcurrent := 10
+	if envConcurrent := os.Getenv("NODE_METRICS_MAX_CONCURRENT"); envConcurrent != "" {
+		if concurrent, err := strconv.Atoi(envConcurrent); err == nil && concurrent > 0 {
+			maxConcurrent = concurrent
+		}
+	}
+
 	return &NodeMetricsSyncService{
 		db:              database.DB,
 		redisClient:     cache.RDB,
@@ -65,6 +97,11 @@ func NewNodeMetricsSyncService() *NodeMetricsSyncService {
 		saltAPIEauth:    getEnvDefaultSync("SALT_API_EAUTH", "file"),
 		stopChan:        make(chan struct{}),
 		syncInterval:    syncInterval,
+		dbSyncRatio:     dbSyncRatio,
+		syncCounter:     0,
+		metricsBuffer:   make(map[string]*NodeMetricsData),
+		maxConcurrent:   maxConcurrent,
+		semaphore:       make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -86,7 +123,8 @@ func (s *NodeMetricsSyncService) Start() {
 	s.running = true
 	s.mu.Unlock()
 
-	log.Printf("[NodeMetricsSyncService] 启动节点指标同步服务，同步间隔: %v", s.syncInterval)
+	log.Printf("[NodeMetricsSyncService] 启动节点指标同步服务，Redis同步间隔: %v, 数据库同步比率: 1/%d",
+		s.syncInterval, s.dbSyncRatio)
 
 	go s.syncWorker()
 }
@@ -126,6 +164,9 @@ func (s *NodeMetricsSyncService) syncWorker() {
 func (s *NodeMetricsSyncService) syncAllNodeMetrics() {
 	log.Printf("[NodeMetricsSyncService] 开始同步所有节点指标...")
 
+	// 递增同步计数器
+	counter := atomic.AddInt64(&s.syncCounter, 1)
+
 	// 创建 Salt API 客户端
 	client := s.newSaltAPIClient()
 	if err := client.authenticate(); err != nil {
@@ -150,17 +191,138 @@ func (s *NodeMetricsSyncService) syncAllNodeMetrics() {
 	// 批量获取所有节点的 CPU/内存指标
 	metricsMap := s.batchGetCPUMemoryMetrics(client, upMinions)
 
-	// 保存到数据库和 Redis
-	savedCount := 0
+	// 异步保存到 Redis（每次都执行）
+	var wg sync.WaitGroup
+	redisSuccessCount := int32(0)
+
 	for minionID, metrics := range metricsMap {
-		if err := s.saveMetrics(minionID, metrics); err != nil {
-			log.Printf("[NodeMetricsSyncService] 保存 %s 的指标失败: %v", minionID, err)
+		wg.Add(1)
+		go func(id string, m *NodeMetricsData) {
+			defer wg.Done()
+
+			// 使用信号量控制并发
+			s.semaphore <- struct{}{}
+			defer func() { <-s.semaphore }()
+
+			// 保存到 Redis（允许失败，不阻塞）
+			if s.redisClient != nil {
+				s.saveMetricsToRedisAsync(id, m)
+				atomic.AddInt32(&redisSuccessCount, 1)
+			}
+
+			// 更新缓冲区（用于后续数据库批量写入）
+			s.metricsBufferLock.Lock()
+			s.metricsBuffer[id] = m
+			s.metricsBufferLock.Unlock()
+		}(minionID, metrics)
+	}
+
+	wg.Wait()
+
+	log.Printf("[NodeMetricsSyncService] Redis 同步完成: %d/%d 成功", redisSuccessCount, len(metricsMap))
+
+	// 判断是否需要写入数据库（按比率控制）
+	if counter%int64(s.dbSyncRatio) == 0 {
+		s.flushMetricsToDatabase()
+	}
+}
+
+// saveMetricsToRedisAsync 异步保存指标到 Redis（允许失败）
+func (s *NodeMetricsSyncService) saveMetricsToRedisAsync(minionID string, data *NodeMetricsData) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	key := fmt.Sprintf("node_metrics:%s", minionID)
+
+	metricsJSON, err := json.Marshal(map[string]interface{}{
+		"minion_id":            minionID,
+		"cpu_usage_percent":    data.CPUUsagePercent,
+		"cpu_load_avg":         data.LoadAvg,
+		"memory_total_gb":      data.MemoryTotalGB,
+		"memory_used_gb":       data.MemoryUsedGB,
+		"memory_available_gb":  data.MemoryAvailableGB,
+		"memory_usage_percent": data.MemoryUsagePercent,
+		"timestamp":            time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		// 序列化失败，静默忽略
+		return
+	}
+
+	// 设置过期时间为同步间隔的 3 倍
+	expiration := s.syncInterval * 3
+	if err := s.redisClient.Set(ctx, key, metricsJSON, expiration).Err(); err != nil {
+		// Redis 写入失败，静默忽略（监控数据允许丢失）
+		log.Printf("[NodeMetricsSyncService] Redis 写入失败 (允许): %v", err)
+	}
+}
+
+// flushMetricsToDatabase 批量刷新指标到数据库
+func (s *NodeMetricsSyncService) flushMetricsToDatabase() {
+	s.metricsBufferLock.Lock()
+	buffer := s.metricsBuffer
+	s.metricsBuffer = make(map[string]*NodeMetricsData) // 重置缓冲区
+	s.metricsBufferLock.Unlock()
+
+	if len(buffer) == 0 {
+		return
+	}
+
+	log.Printf("[NodeMetricsSyncService] 开始批量写入数据库，共 %d 条记录...", len(buffer))
+
+	// 准备批量 upsert 数据
+	records := make([]models.NodeMetricsLatest, 0, len(buffer))
+	now := time.Now()
+
+	for minionID, data := range buffer {
+		records = append(records, models.NodeMetricsLatest{
+			MinionID:           minionID,
+			Timestamp:          now,
+			CPUUsagePercent:    data.CPUUsagePercent,
+			CPULoadAvg:         data.LoadAvg,
+			MemoryTotalGB:      data.MemoryTotalGB,
+			MemoryUsedGB:       data.MemoryUsedGB,
+			MemoryAvailableGB:  data.MemoryAvailableGB,
+			MemoryUsagePercent: data.MemoryUsagePercent,
+		})
+	}
+
+	// 使用批量 upsert（ON CONFLICT DO UPDATE）减少数据库操作次数
+	// 分批处理，每批最多 100 条
+	batchSize := 100
+	successCount := 0
+	failCount := 0
+
+	for i := 0; i < len(records); i += batchSize {
+		end := i + batchSize
+		if end > len(records) {
+			end = len(records)
+		}
+		batch := records[i:end]
+
+		// 使用 GORM 的 Clauses 进行 upsert
+		err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "minion_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"timestamp",
+				"cpu_usage_percent",
+				"cpu_load_avg",
+				"memory_total_gb",
+				"memory_used_gb",
+				"memory_available_gb",
+				"memory_usage_percent",
+			}),
+		}).CreateInBatches(batch, batchSize).Error
+
+		if err != nil {
+			log.Printf("[NodeMetricsSyncService] 批量写入数据库失败 (batch %d-%d): %v", i, end, err)
+			failCount += len(batch)
 		} else {
-			savedCount++
+			successCount += len(batch)
 		}
 	}
 
-	log.Printf("[NodeMetricsSyncService] 同步完成，成功保存 %d/%d 个节点的指标", savedCount, len(upMinions))
+	log.Printf("[NodeMetricsSyncService] 数据库批量写入完成: 成功 %d, 失败 %d", successCount, failCount)
 }
 
 // getUpMinions 获取所有在线的 Minion ID 列表
@@ -290,84 +452,6 @@ func (s *NodeMetricsSyncService) parseCPUMemoryOutput(output string) *NodeMetric
 	return metrics
 }
 
-// saveMetrics 保存指标到数据库和 Redis
-func (s *NodeMetricsSyncService) saveMetrics(minionID string, data *NodeMetricsData) error {
-	if s.db == nil {
-		return fmt.Errorf("数据库连接未初始化")
-	}
-
-	// 更新或创建 NodeMetricsLatest 记录
-	var existing models.NodeMetricsLatest
-	result := s.db.Where("minion_id = ?", minionID).First(&existing)
-
-	if result.Error == gorm.ErrRecordNotFound {
-		// 创建新记录
-		newMetrics := models.NodeMetricsLatest{
-			MinionID:           minionID,
-			Timestamp:          time.Now(),
-			CPUUsagePercent:    data.CPUUsagePercent,
-			CPULoadAvg:         data.LoadAvg,
-			MemoryTotalGB:      data.MemoryTotalGB,
-			MemoryUsedGB:       data.MemoryUsedGB,
-			MemoryAvailableGB:  data.MemoryAvailableGB,
-			MemoryUsagePercent: data.MemoryUsagePercent,
-		}
-		if err := s.db.Create(&newMetrics).Error; err != nil {
-			return fmt.Errorf("创建指标记录失败: %v", err)
-		}
-	} else if result.Error != nil {
-		return fmt.Errorf("查询指标记录失败: %v", result.Error)
-	} else {
-		// 更新现有记录
-		updates := map[string]interface{}{
-			"timestamp":            time.Now(),
-			"cpu_usage_percent":    data.CPUUsagePercent,
-			"cpu_load_avg":         data.LoadAvg,
-			"memory_total_gb":      data.MemoryTotalGB,
-			"memory_used_gb":       data.MemoryUsedGB,
-			"memory_available_gb":  data.MemoryAvailableGB,
-			"memory_usage_percent": data.MemoryUsagePercent,
-		}
-		if err := s.db.Model(&existing).Updates(updates).Error; err != nil {
-			return fmt.Errorf("更新指标记录失败: %v", err)
-		}
-	}
-
-	// 同步到 Redis（如果 Redis 可用）
-	if s.redisClient != nil {
-		s.saveMetricsToRedis(minionID, data)
-	}
-
-	return nil
-}
-
-// saveMetricsToRedis 保存指标到 Redis
-func (s *NodeMetricsSyncService) saveMetricsToRedis(minionID string, data *NodeMetricsData) {
-	ctx := context.Background()
-	key := fmt.Sprintf("node_metrics:%s", minionID)
-
-	metricsJSON, err := json.Marshal(map[string]interface{}{
-		"minion_id":            minionID,
-		"cpu_usage_percent":    data.CPUUsagePercent,
-		"cpu_load_avg":         data.LoadAvg,
-		"memory_total_gb":      data.MemoryTotalGB,
-		"memory_used_gb":       data.MemoryUsedGB,
-		"memory_available_gb":  data.MemoryAvailableGB,
-		"memory_usage_percent": data.MemoryUsagePercent,
-		"timestamp":            time.Now().Format(time.RFC3339),
-	})
-	if err != nil {
-		log.Printf("[NodeMetricsSyncService] 序列化 Redis 数据失败: %v", err)
-		return
-	}
-
-	// 设置过期时间为同步间隔的 3 倍，确保数据不会因为同步延迟而丢失
-	expiration := s.syncInterval * 3
-	if err := s.redisClient.Set(ctx, key, metricsJSON, expiration).Err(); err != nil {
-		log.Printf("[NodeMetricsSyncService] 写入 Redis 失败: %v", err)
-	}
-}
-
 // newSaltAPIClient 创建 Salt API 客户端
 func (s *NodeMetricsSyncService) newSaltAPIClient() *syncSaltAPIClient {
 	return &syncSaltAPIClient{
@@ -465,6 +549,131 @@ func (c *syncSaltAPIClient) makeRunner(fun string, kwarg map[string]interface{})
 	return c.makeRequest("/", "POST", payload)
 }
 
+// ============================================================================
+// Redis 读取接口（供外部调用获取实时指标）
+// ============================================================================
+
+// GetMetricsFromRedis 从 Redis 获取单个节点的指标（优先使用）
+func (s *NodeMetricsSyncService) GetMetricsFromRedis(minionID string) (*NodeMetricsData, error) {
+	if s.redisClient == nil {
+		return nil, fmt.Errorf("Redis 未初始化")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	key := fmt.Sprintf("node_metrics:%s", minionID)
+	data, err := s.redisClient.Get(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(data), &result); err != nil {
+		return nil, err
+	}
+
+	metrics := &NodeMetricsData{}
+	if v, ok := result["cpu_usage_percent"].(float64); ok {
+		metrics.CPUUsagePercent = v
+	}
+	if v, ok := result["memory_total_gb"].(float64); ok {
+		metrics.MemoryTotalGB = v
+	}
+	if v, ok := result["memory_used_gb"].(float64); ok {
+		metrics.MemoryUsedGB = v
+	}
+	if v, ok := result["memory_available_gb"].(float64); ok {
+		metrics.MemoryAvailableGB = v
+	}
+	if v, ok := result["memory_usage_percent"].(float64); ok {
+		metrics.MemoryUsagePercent = v
+	}
+	if v, ok := result["cpu_load_avg"].(string); ok {
+		metrics.LoadAvg = v
+	}
+
+	return metrics, nil
+}
+
+// GetAllMetricsFromRedis 从 Redis 获取所有节点的指标
+func (s *NodeMetricsSyncService) GetAllMetricsFromRedis() (map[string]*NodeMetricsData, error) {
+	if s.redisClient == nil {
+		return nil, fmt.Errorf("Redis 未初始化")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 使用 SCAN 命令获取所有 node_metrics:* 键
+	result := make(map[string]*NodeMetricsData)
+	iter := s.redisClient.Scan(ctx, 0, "node_metrics:*", 1000).Iterator()
+
+	for iter.Next(ctx) {
+		key := iter.Val()
+		minionID := strings.TrimPrefix(key, "node_metrics:")
+
+		data, err := s.redisClient.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+
+		var metricsMap map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &metricsMap); err != nil {
+			continue
+		}
+
+		metrics := &NodeMetricsData{}
+		if v, ok := metricsMap["cpu_usage_percent"].(float64); ok {
+			metrics.CPUUsagePercent = v
+		}
+		if v, ok := metricsMap["memory_total_gb"].(float64); ok {
+			metrics.MemoryTotalGB = v
+		}
+		if v, ok := metricsMap["memory_used_gb"].(float64); ok {
+			metrics.MemoryUsedGB = v
+		}
+		if v, ok := metricsMap["memory_available_gb"].(float64); ok {
+			metrics.MemoryAvailableGB = v
+		}
+		if v, ok := metricsMap["memory_usage_percent"].(float64); ok {
+			metrics.MemoryUsagePercent = v
+		}
+		if v, ok := metricsMap["cpu_load_avg"].(string); ok {
+			metrics.LoadAvg = v
+		}
+
+		result[minionID] = metrics
+	}
+
+	if err := iter.Err(); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+// GetSyncStatus 获取同步服务状态
+func (s *NodeMetricsSyncService) GetSyncStatus() map[string]interface{} {
+	s.mu.RLock()
+	running := s.running
+	s.mu.RUnlock()
+
+	s.metricsBufferLock.RLock()
+	bufferSize := len(s.metricsBuffer)
+	s.metricsBufferLock.RUnlock()
+
+	return map[string]interface{}{
+		"running":         running,
+		"sync_interval":   s.syncInterval.String(),
+		"db_sync_ratio":   s.dbSyncRatio,
+		"sync_counter":    atomic.LoadInt64(&s.syncCounter),
+		"buffer_size":     bufferSize,
+		"max_concurrent":  s.maxConcurrent,
+		"next_db_sync_in": s.dbSyncRatio - int(atomic.LoadInt64(&s.syncCounter)%int64(s.dbSyncRatio)),
+	}
+}
+
 // 全局实例
 var (
 	nodeMetricsSyncService *NodeMetricsSyncService
@@ -489,4 +698,14 @@ func StopNodeMetricsSync() {
 	if nodeMetricsSyncService != nil {
 		nodeMetricsSyncService.Stop()
 	}
+}
+
+// GetNodeMetricsFromRedis 从 Redis 获取节点指标（全局便捷函数）
+func GetNodeMetricsFromRedis(minionID string) (*NodeMetricsData, error) {
+	return GetNodeMetricsSyncService().GetMetricsFromRedis(minionID)
+}
+
+// GetAllNodeMetricsFromRedis 从 Redis 获取所有节点指标（全局便捷函数）
+func GetAllNodeMetricsFromRedis() (map[string]*NodeMetricsData, error) {
+	return GetNodeMetricsSyncService().GetAllMetricsFromRedis()
 }
