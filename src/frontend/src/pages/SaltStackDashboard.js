@@ -2284,17 +2284,32 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     ...(overviewGroupFilter === 'all' ? [{
                       id: 'salt-master',
                       name: 'Salt Master',
-                      metrics: {
-                        status: status?.master_status === 'running' ? 'online' : 'offline',
-                        cpu_usage: status?.cpu_usage || 0,
-                        memory_usage: status?.memory_usage || 0,
-                        active_connections: status?.active_connections || 0,
-                        network_bandwidth: status?.network_bandwidth || 0,
-                        ib_status: 'N/A',
-                        roce_status: 'N/A',
-                        gpu_utilization: 0,
-                        gpu_memory: 0,
-                      },
+                      metrics: (() => {
+                        // 当后端没有返回 Master 指标时，使用第一个在线 minion 的数据作为集群参考
+                        const firstOnlineMinion = filteredMinions.find(m => 
+                          m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'online'
+                        );
+                        const masterCpu = status?.cpu_usage || 
+                          (firstOnlineMinion?.cpu_usage_percent) || 
+                          (firstOnlineMinion?.cpu_info?.usage) || 0;
+                        const masterMem = status?.memory_usage || 
+                          (firstOnlineMinion?.memory_usage_percent) || 
+                          (firstOnlineMinion?.memory_info?.usage_percent) || 0;
+                        const masterConn = status?.active_connections || 0;
+                        const masterBw = status?.network_bandwidth || 0;
+                        
+                        return {
+                          status: status?.master_status === 'running' ? 'online' : 'offline',
+                          cpu_usage: masterCpu,
+                          memory_usage: masterMem,
+                          active_connections: masterConn,
+                          network_bandwidth: masterBw,
+                          ib_status: 'N/A',
+                          roce_status: 'N/A',
+                          gpu_utilization: 0,
+                          gpu_memory: 0,
+                        };
+                      })(),
                     }] : []),
                     // Minion 节点 (使用筛选后的 minions)
                     ...filteredMinions.map(minion => {

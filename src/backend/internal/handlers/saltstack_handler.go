@@ -264,16 +264,17 @@ type SaltStackStatus struct {
 	LastUpdated      time.Time         `json:"last_updated"`
 	Demo             bool              `json:"demo,omitempty"`
 	// 前端兼容字段
-	MasterStatus      string `json:"master_status,omitempty"`
-	APIStatus         string `json:"api_status,omitempty"`
-	MinionsUp         int    `json:"minions_up,omitempty"`
-	MinionsDown       int    `json:"minions_down,omitempty"`
-	SaltVersion       string `json:"salt_version,omitempty"`
-	ConfigFile        string `json:"config_file,omitempty"`
-	LogLevel          string `json:"log_level,omitempty"`
-	CPUUsage          int    `json:"cpu_usage,omitempty"`
-	MemoryUsage       int    `json:"memory_usage,omitempty"`
-	ActiveConnections int    `json:"active_connections,omitempty"`
+	MasterStatus      string  `json:"master_status,omitempty"`
+	APIStatus         string  `json:"api_status,omitempty"`
+	MinionsUp         int     `json:"minions_up,omitempty"`
+	MinionsDown       int     `json:"minions_down,omitempty"`
+	SaltVersion       string  `json:"salt_version,omitempty"`
+	ConfigFile        string  `json:"config_file,omitempty"`
+	LogLevel          string  `json:"log_level,omitempty"`
+	CPUUsage          float64 `json:"cpu_usage,omitempty"`
+	MemoryUsage       int     `json:"memory_usage,omitempty"`
+	ActiveConnections int     `json:"active_connections,omitempty"`
+	NetworkBandwidth  float64 `json:"network_bandwidth,omitempty"` // 网络带宽 (Mbps)
 	// 多 Master 高可用字段
 	ActiveMasterURL  string             `json:"active_master_url,omitempty"`
 	MasterCount      int                `json:"master_count,omitempty"`
@@ -1008,16 +1009,19 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 	cpuUsage, memoryUsage, activeConnections := 0, 0, 0
 	metricsChan := make(chan [3]int, 1)
 	go func() {
+		log.Printf("[SaltStack] 开始获取性能指标...")
 		cpu, mem, conn := h.getPerformanceMetrics(client)
+		log.Printf("[SaltStack] 性能指标获取完成: CPU=%d%%, Memory=%d%%, Connections=%d", cpu, mem, conn)
 		metricsChan <- [3]int{cpu, mem, conn}
 	}()
 
-	// 等待性能指标，最多 5 秒
+	// 等待性能指标，最多 10 秒
 	select {
 	case metrics := <-metricsChan:
 		cpuUsage, memoryUsage, activeConnections = metrics[0], metrics[1], metrics[2]
-	case <-time.After(5 * time.Second):
-		log.Printf("[SaltStack] 获取性能指标超时，使用默认值")
+		log.Printf("[SaltStack] 使用获取到的性能指标: CPU=%d%%, Memory=%d%%, Connections=%d", cpuUsage, memoryUsage, activeConnections)
+	case <-time.After(10 * time.Second):
+		log.Printf("[SaltStack] 获取性能指标超时（10秒），使用默认值")
 	}
 
 	// 构造状态
@@ -1044,9 +1048,10 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		SaltVersion:       h.extractAPISaltVersion(apiInfo),
 		ConfigFile:        "/etc/salt/master",
 		LogLevel:          "info",
-		CPUUsage:          cpuUsage,
+		CPUUsage:          float64(cpuUsage),
 		MemoryUsage:       memoryUsage,
 		ActiveConnections: activeConnections,
+		NetworkBandwidth:  0, // 网络带宽需要实时采集，暂时为0
 		// 多 Master 高可用信息
 		ActiveMasterURL:  client.baseURL,
 		MasterCount:      h.masterPool.GetMasterCount(),
@@ -1080,9 +1085,27 @@ func (h *SaltStackHandler) getMasterHealthInfo() []MasterHealthInfo {
 }
 
 // getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数）
-// 优先从VictoriaMetrics/Nightingale获取聚合监控数据，如无数据则回退到Salt API
+// 优先级：1. 本地系统采集（容器/VM/物理机自适应）2. VictoriaMetrics 3. Salt API
 func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int) {
-	// 首先尝试从VictoriaMetrics获取监控数据
+	// 优先使用统一的系统指标采集服务（自动检测容器/VM/物理机环境）
+	systemMetrics, err := services.CollectSystemMetrics()
+	if err == nil && systemMetrics != nil {
+		cpuUsage := int(systemMetrics.CPUUsagePercent)
+		memoryUsage := int(systemMetrics.MemoryUsagePercent)
+		activeConnections := systemMetrics.ActiveConnections
+
+		// 如果采集到有效数据
+		if cpuUsage > 0 || memoryUsage > 0 || activeConnections > 0 {
+			log.Printf("[MetricsService] 从本地系统采集(%s/%s)获取到指标: CPU=%d%%, Memory=%d%%, Connections=%d",
+				systemMetrics.DeploymentType, systemMetrics.MetricsSource,
+				cpuUsage, memoryUsage, activeConnections)
+			return cpuUsage, memoryUsage, activeConnections
+		}
+	} else if err != nil {
+		log.Printf("[MetricsService] 本地系统采集失败: %v", err)
+	}
+
+	// 回退：从VictoriaMetrics获取监控数据
 	cpuUsage, memoryUsage, activeConnections, err := h.metricsService.GetSaltStackMetrics()
 	if err != nil {
 		log.Printf("[MetricsService] 从VictoriaMetrics获取监控数据失败: %v", err)
@@ -1095,43 +1118,53 @@ func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, in
 		return cpuUsage, memoryUsage, activeConnections
 	}
 
-	// VictoriaMetrics无数据，回退到Salt API方式获取
+	// 最后回退：Salt API方式获取
 	log.Printf("[MetricsService] VictoriaMetrics无数据，回退到Salt API方式获取性能指标")
 	return h.getPerformanceMetricsFromSalt(client)
 }
 
 // getPerformanceMetricsFromSalt 从Salt API获取性能指标（回退方式）
-// 使用 Salt 内置的 status 模块获取系统指标，而不是 cmd.run
+// 使用 Salt 内置的 status 模块获取系统指标
 func (h *SaltStackHandler) getPerformanceMetricsFromSalt(client *saltAPIClient) (int, int, int) {
 	// 默认值
 	cpuUsage := 0
 	memoryUsage := 0
 	activeConnections := 0
 
-	// 首先尝试获取 salt-master-local 的指标（Salt Master 自身）
-	// 如果没有，则尝试获取第一个可用 minion 的指标
-	targetMinion := "salt-master-local"
+	// 获取任意一个在线 minion 的指标作为集群代表
+	// 因为 Salt Master 自身通常不作为 minion 运行
+	targetMinion := "*"
 
-	// 使用 status.cpuload 获取 CPU 负载（1分钟、5分钟、15分钟平均负载）
-	// 这比 cmd.run ps 更可靠
+	log.Printf("[SaltMetrics] 开始从 Salt API 获取性能指标，目标: %s", targetMinion)
+
+	// 使用 status.cpustats 获取更准确的 CPU 使用率
+	// 优先尝试 status.cpustats，它返回详细的 CPU 使用统计
 	cpuPayload := map[string]interface{}{
 		"client": "local",
 		"tgt":    targetMinion,
-		"fun":    "status.cpuload",
+		"fun":    "status.cpustats",
+		"kwarg": map[string]interface{}{
+			"timeout": 5,
+		},
 	}
 	cpuResp, err := client.makeRequest("/", "POST", cpuPayload)
-	if err == nil {
-		if cpuValue := h.extractSaltCPULoad(cpuResp, targetMinion); cpuValue > 0 {
-			cpuUsage = cpuValue
-		}
+	if err != nil {
+		log.Printf("[SaltMetrics] status.cpustats 请求失败: %v", err)
+	} else {
+		cpuUsage = h.extractCPUUsageFromStats(cpuResp)
+		log.Printf("[SaltMetrics] status.cpustats 返回 CPU 使用率: %d%%", cpuUsage)
 	}
 
-	// 如果 salt-master-local 没有返回数据，尝试获取任意一个 minion 的数据
+	// 如果 cpustats 没有数据，回退到 cpuload（负载平均值）
 	if cpuUsage == 0 {
-		cpuPayload["tgt"] = "*"
+		log.Printf("[SaltMetrics] cpustats 无数据，尝试 cpuload...")
+		cpuPayload["fun"] = "status.cpuload"
 		cpuResp, err = client.makeRequest("/", "POST", cpuPayload)
-		if err == nil {
+		if err != nil {
+			log.Printf("[SaltMetrics] status.cpuload 请求失败: %v", err)
+		} else {
 			cpuUsage = h.extractFirstSaltCPULoad(cpuResp)
+			log.Printf("[SaltMetrics] status.cpuload 返回 CPU 负载转换: %d%%", cpuUsage)
 		}
 	}
 
@@ -1140,35 +1173,32 @@ func (h *SaltStackHandler) getPerformanceMetricsFromSalt(client *saltAPIClient) 
 		"client": "local",
 		"tgt":    targetMinion,
 		"fun":    "status.meminfo",
+		"kwarg": map[string]interface{}{
+			"timeout": 5,
+		},
 	}
 	memResp, err := client.makeRequest("/", "POST", memPayload)
-	if err == nil {
-		if memValue := h.extractSaltMemoryUsage(memResp, targetMinion); memValue > 0 {
-			memoryUsage = memValue
-		}
-	}
-
-	// 如果 salt-master-local 没有返回数据，尝试获取任意一个 minion 的数据
-	if memoryUsage == 0 {
-		memPayload["tgt"] = "*"
-		memResp, err = client.makeRequest("/", "POST", memPayload)
-		if err == nil {
-			memoryUsage = h.extractFirstSaltMemoryUsage(memResp)
-		}
+	if err != nil {
+		log.Printf("[SaltMetrics] status.meminfo 请求失败: %v", err)
+	} else {
+		memoryUsage = h.extractFirstSaltMemoryUsage(memResp)
+		log.Printf("[SaltMetrics] status.meminfo 返回内存使用率: %d%%", memoryUsage)
 	}
 
 	// 使用 runner 获取活跃连接数（已连接的 minion 数量）
-	// 这比检查端口更准确
 	connPayload := map[string]interface{}{
 		"client": "runner",
 		"fun":    "manage.status",
 	}
 	connResp, err := client.makeRequest("/", "POST", connPayload)
-	if err == nil {
+	if err != nil {
+		log.Printf("[SaltMetrics] manage.status 请求失败: %v", err)
+	} else {
 		activeConnections = h.extractActiveMinions(connResp)
+		log.Printf("[SaltMetrics] manage.status 返回活跃连接数: %d", activeConnections)
 	}
 
-	log.Printf("[SaltMetrics] 从Salt API获取到指标: CPU=%d%%, Memory=%d%%, Connections=%d",
+	log.Printf("[SaltMetrics] 最终获取到的指标: CPU=%d%%, Memory=%d%%, Connections=%d",
 		cpuUsage, memoryUsage, activeConnections)
 
 	return cpuUsage, memoryUsage, activeConnections
@@ -1211,6 +1241,48 @@ func (h *SaltStackHandler) extractFirstSaltCPULoad(resp map[string]interface{}) 
 							cpuPercent = 100
 						}
 						return cpuPercent
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// extractCPUUsageFromStats 从 status.cpustats 响应中提取真正的 CPU 使用率
+// cpustats 返回格式: {"return": [{"minion_id": {"user": 1.5, "system": 0.8, "idle": 97.7, ...}}]}
+// CPU 使用率 = 100 - idle
+func (h *SaltStackHandler) extractCPUUsageFromStats(resp map[string]interface{}) int {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			for _, minionData := range retMap {
+				if statsMap, ok := minionData.(map[string]interface{}); ok {
+					// 尝试从 idle 计算使用率
+					if idle, ok := statsMap["idle"].(float64); ok {
+						cpuUsage := int(100 - idle)
+						if cpuUsage < 0 {
+							cpuUsage = 0
+						}
+						if cpuUsage > 100 {
+							cpuUsage = 100
+						}
+						return cpuUsage
+					}
+					// 备用：累加 user + system + nice + iowait 等
+					var totalUsage float64
+					for key, value := range statsMap {
+						if key != "idle" && key != "steal" {
+							if v, ok := value.(float64); ok {
+								totalUsage += v
+							}
+						}
+					}
+					if totalUsage > 0 {
+						cpuUsage := int(totalUsage)
+						if cpuUsage > 100 {
+							cpuUsage = 100
+						}
+						return cpuUsage
 					}
 				}
 			}
@@ -1323,9 +1395,10 @@ func (h *SaltStackHandler) getDemoSaltStackStatus() SaltStackStatus {
 		SaltVersion:       "3006.4",
 		ConfigFile:        "/etc/salt/master",
 		LogLevel:          "info",
-		CPUUsage:          12,
+		CPUUsage:          12.5,
 		MemoryUsage:       23,
 		ActiveConnections: 2,
+		NetworkBandwidth:  15.8,
 	}
 }
 

@@ -201,22 +201,39 @@ func (s *MetricsService) GetClusterMetrics() (*ClusterMetrics, error) {
 func (s *MetricsService) GetSaltStackMetrics() (cpuUsage, memoryUsage, activeConnections int, err error) {
 	// 尝试获取 Salt Master 主机的指标
 	// 首先尝试从 VictoriaMetrics 查询
+	// 匹配多种可能的主机标识：salt-master, saltstack, 或包含 salt 的主机名
 
 	// Salt Master CPU 使用率
-	cpuQuery := `avg(100 - cpu_usage_idle{ident=~".*salt.*|saltstack"})`
+	// 使用更宽泛的匹配模式，包括容器名称
+	cpuQuery := `avg(100 - cpu_usage_idle{ident=~".*salt.*|saltstack|salt-master.*"})`
 	if result, queryErr := s.Query(cpuQuery); queryErr == nil {
 		cpuUsage = int(s.extractValue(result))
 	}
 
+	// 如果没有数据，尝试用 host 标签匹配
+	if cpuUsage == 0 {
+		cpuQuery = `avg(100 - cpu_usage_idle{host=~".*salt.*|saltstack|salt-master.*"})`
+		if result, queryErr := s.Query(cpuQuery); queryErr == nil {
+			cpuUsage = int(s.extractValue(result))
+		}
+	}
+
 	// Salt Master 内存使用率
-	memQuery := `avg(100 - mem_available_percent{ident=~".*salt.*|saltstack"})`
+	memQuery := `avg(100 - mem_available_percent{ident=~".*salt.*|saltstack|salt-master.*"})`
 	if result, queryErr := s.Query(memQuery); queryErr == nil {
 		memoryUsage = int(s.extractValue(result))
 	}
 
+	// 如果没有数据，尝试用 host 标签匹配
+	if memoryUsage == 0 {
+		memQuery = `avg(100 - mem_available_percent{host=~".*salt.*|saltstack|salt-master.*"})`
+		if result, queryErr := s.Query(memQuery); queryErr == nil {
+			memoryUsage = int(s.extractValue(result))
+		}
+	}
+
 	// 活跃连接数 - 需要 netstat 类型的指标
-	// 如果没有具体的连接数指标，返回 0
-	connQuery := `sum(netstat_tcp_established{ident=~".*salt.*|saltstack"})`
+	connQuery := `sum(netstat_tcp_established{ident=~".*salt.*|saltstack|salt-master.*"})`
 	if result, queryErr := s.Query(connQuery); queryErr == nil {
 		activeConnections = int(s.extractValue(result))
 	}
