@@ -44,3 +44,13 @@ func GetGPUInfoScript() (string, error) {
 func GetIBInfoScript() (string, error) {
 	return GetSaltScript("get_ib_info")
 }
+
+// GetFullMetricsScript 获取完整系统指标收集脚本（CPU/内存/网络/连接数）
+func GetFullMetricsScript() (string, error) {
+	return GetSaltScript("get_full_metrics")
+}
+
+// GetNPUInfoScript 获取 NPU（华为昇腾/寒武纪等）信息收集脚本
+func GetNPUInfoScript() (string, error) {
+	return GetSaltScript("get_npu_info")
+}
