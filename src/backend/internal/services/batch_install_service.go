@@ -1837,8 +1837,9 @@ func (s *BatchInstallService) triggerImmediateMetricsCollection(minionID string)
 		"fun":    "cmd.run",
 		"arg":    []interface{}{triggerCmd},
 		"kwarg": map[string]interface{}{
-			"timeout": 30,
-			"shell":   "/bin/bash",
+			"timeout":      30,
+			"shell":        "/bin/bash",
+			"python_shell": true,
 		},
 		"username": saltAPIUser,
 		"password": saltAPIPass,
@@ -2017,8 +2018,9 @@ func (s *BatchInstallService) deployNodeMetrics(minionID string, masterHost stri
 		"fun":    "cmd.run",
 		"arg":    []interface{}{deployScript},
 		"kwarg": map[string]interface{}{
-			"timeout": 60,
-			"shell":   "/bin/bash",
+			"timeout":      60,
+			"shell":        "/bin/bash",
+			"python_shell": true,
 		},
 		"username": saltAPIUser,
 		"password": saltAPIPass,

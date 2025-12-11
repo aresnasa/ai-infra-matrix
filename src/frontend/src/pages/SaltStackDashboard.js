@@ -2316,14 +2316,15 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         name: minionId,
                         metrics: {
                           status: displayStatus,
-                          cpu_usage: minion.cpu_usage || 0,
-                          memory_usage: minion.memory_usage || 0,
-                          active_connections: minion.active_connections || 0,
+                          // 从 minion 对象中读取数据（后端返回的是 cpu_usage_percent, memory_usage_percent）
+                          cpu_usage: minion.cpu_usage_percent || minion.cpu_info?.usage || minion.cpu_usage || 0,
+                          memory_usage: minion.memory_usage_percent || minion.memory_info?.usage_percent || minion.memory_usage || 0,
+                          active_connections: minion.network_info?.active_connections || minion.active_connections || 0,
                           network_bandwidth: minion.network_bandwidth || 0,
-                          ib_status: minion.ib_status || 'N/A',
-                          roce_status: minion.roce_status || 'N/A',
-                          gpu_utilization: minion.gpu_utilization || 0,
-                          gpu_memory: minion.gpu_memory || 0,
+                          ib_status: minion.ib_info?.active_count > 0 ? 'active' : (minion.ib_status || 'N/A'),
+                          roce_status: minion.roce_info?.count > 0 ? 'active' : (minion.roce_status || 'N/A'),
+                          gpu_utilization: minion.gpu_info?.utilization || minion.gpu_utilization || 0,
+                          gpu_memory: minion.gpu_info?.memory_used || minion.gpu_memory || 0,
                         },
                       };
                     }),

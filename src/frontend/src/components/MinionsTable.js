@@ -470,6 +470,7 @@ const MinionsTable = ({
       dataIndex: 'gpu_driver_version',
       key: 'gpu_driver_version',
       width: 140,
+      ellipsis: true,
       render: (version, record) => {
         // 优先使用 gpu_info.driver_version（从采集脚本获取）
         const driverVersion = record.gpu_info?.driver_version || version;
@@ -485,9 +486,11 @@ const MinionsTable = ({
                 {gpuCount > 0 && <div>GPU数量: {gpuCount}</div>}
               </div>
             }>
-              <Tag color="purple">
-                {driverVersion}
-              </Tag>
+              <div style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <Tag color="purple" style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {driverVersion}
+                </Tag>
+              </div>
             </Tooltip>
           );
         }

@@ -2794,7 +2794,8 @@ func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GP
 		"fun":    "cmd.run",
 		"arg":    []interface{}{"nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>/dev/null | head -1"},
 		"kwarg": map[string]interface{}{
-			"timeout": 10,
+			"timeout":      10,
+			"python_shell": true,
 		},
 	}
 
@@ -2817,7 +2818,8 @@ func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GP
 		"fun":    "cmd.run",
 		"arg":    []interface{}{"nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \\K[0-9.]+' | head -1"},
 		"kwarg": map[string]interface{}{
-			"timeout": 10,
+			"timeout":      10,
+			"python_shell": true,
 		},
 	}
 	cudaResp, err := client.makeRequest("/", "POST", cudaPayload)
@@ -2834,7 +2836,8 @@ func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GP
 		"fun":    "cmd.run",
 		"arg":    []interface{}{"nvidia-smi --query-gpu=name,count --format=csv,noheader 2>/dev/null | head -1"},
 		"kwarg": map[string]interface{}{
-			"timeout": 10,
+			"timeout":      10,
+			"python_shell": true,
 		},
 	}
 	countResp, err := client.makeRequest("/", "POST", countPayload)
@@ -2855,7 +2858,8 @@ func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GP
 		"fun":    "cmd.run",
 		"arg":    []interface{}{"nvidia-smi -L 2>/dev/null | wc -l"},
 		"kwarg": map[string]interface{}{
-			"timeout": 10,
+			"timeout":      10,
+			"python_shell": true,
 		},
 	}
 	gpuCountResp, err := client.makeRequest("/", "POST", gpuCountPayload)
@@ -2954,7 +2958,8 @@ func (h *SaltStackHandler) getIBInfo(client *saltAPIClient, minionID string) IBI
 		"fun":    "cmd.run",
 		"arg":    []interface{}{"which ibstat 2>/dev/null || command -v ibstat 2>/dev/null"},
 		"kwarg": map[string]interface{}{
-			"timeout": 10,
+			"timeout":      10,
+			"python_shell": true,
 		},
 	}
 
@@ -2987,7 +2992,8 @@ func (h *SaltStackHandler) getIBInfo(client *saltAPIClient, minionID string) IBI
 		"fun":    "cmd.run",
 		"arg":    []interface{}{"ibstat 2>/dev/null"},
 		"kwarg": map[string]interface{}{
-			"timeout": 15,
+			"timeout":      15,
+			"python_shell": true,
 		},
 	}
 
@@ -3072,7 +3078,8 @@ func (h *SaltStackHandler) getCPUMemoryInfo(client *saltAPIClient, minionID stri
 		"fun":    "cmd.run",
 		"arg":    []interface{}{script},
 		"kwarg": map[string]interface{}{
-			"timeout": 10,
+			"timeout":      10,
+			"python_shell": true, // 必须启用 shell 模式以支持管道和复杂命令
 		},
 	}
 
@@ -3100,15 +3107,17 @@ func (h *SaltStackHandler) getCPUMemoryInfo(client *saltAPIClient, minionID stri
 		}
 
 		// 内存总量 (KB -> GB)
-		if memTotalKB, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && memTotalKB > 0 {
+		var memTotalKB float64
+		if val, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && val > 0 {
+			memTotalKB = val
 			info.MemoryTotalGB = memTotalKB / 1024 / 1024
 		}
 
-		// 内存可用量 (KB -> GB)
-		if memAvailKB, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64); err == nil && info.MemoryTotalGB > 0 {
-			memUsedKB := info.MemoryTotalGB*1024*1024 - memAvailKB
+		// 内存可用量 (KB -> GB) 及使用率计算
+		if memAvailKB, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64); err == nil && memTotalKB > 0 {
+			memUsedKB := memTotalKB - memAvailKB
 			info.MemoryUsedGB = memUsedKB / 1024 / 1024
-			info.MemoryUsagePercent = (memUsedKB / (info.MemoryTotalGB * 1024 * 1024)) * 100
+			info.MemoryUsagePercent = (memUsedKB / memTotalKB) * 100
 		}
 	}
 
@@ -3615,37 +3624,31 @@ func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest
 		CollectedAt: m.Timestamp,
 	}
 
-	// CPU 信息
-	if m.CPUCores > 0 || m.CPUModel != "" || m.CPUUsagePercent > 0 {
-		resp.CPU = &models.NodeCPUMetrics{
-			Cores:        m.CPUCores,
-			Model:        m.CPUModel,
-			UsagePercent: m.CPUUsagePercent,
-			Usage:        m.CPUUsagePercent, // 兼容前端期望的 usage 字段
-			LoadAvg:      m.CPULoadAvg,
-		}
+	// CPU 信息 - 始终返回，即使值为 0
+	resp.CPU = &models.NodeCPUMetrics{
+		Cores:        m.CPUCores,
+		Model:        m.CPUModel,
+		UsagePercent: m.CPUUsagePercent,
+		Usage:        m.CPUUsagePercent, // 兼容前端期望的 usage 字段
+		LoadAvg:      m.CPULoadAvg,
 	}
 
-	// 内存信息
-	if m.MemoryTotalGB > 0 {
-		resp.Memory = &models.NodeMemoryMetrics{
-			TotalGB:      m.MemoryTotalGB,
-			UsedGB:       m.MemoryUsedGB,
-			AvailableGB:  m.MemoryAvailableGB,
-			UsagePercent: m.MemoryUsagePercent,
-		}
+	// 内存信息 - 始终返回，即使值为 0
+	resp.Memory = &models.NodeMemoryMetrics{
+		TotalGB:      m.MemoryTotalGB,
+		UsedGB:       m.MemoryUsedGB,
+		AvailableGB:  m.MemoryAvailableGB,
+		UsagePercent: m.MemoryUsagePercent,
 	}
 
-	// 网络信息
-	if m.NetworkInfo != "" || m.ActiveConnections > 0 {
-		resp.Network = &models.NodeNetworkMetrics{
-			ActiveConnections: m.ActiveConnections,
-		}
-		if m.NetworkInfo != "" {
-			var interfaces []models.NodeNetworkInterface
-			if err := json.Unmarshal([]byte(m.NetworkInfo), &interfaces); err == nil {
-				resp.Network.Interfaces = interfaces
-			}
+	// 网络信息 - 始终返回
+	resp.Network = &models.NodeNetworkMetrics{
+		ActiveConnections: m.ActiveConnections,
+	}
+	if m.NetworkInfo != "" {
+		var interfaces []models.NodeNetworkInterface
+		if err := json.Unmarshal([]byte(m.NetworkInfo), &interfaces); err == nil {
+			resp.Network.Interfaces = interfaces
 		}
 	}
 
@@ -3853,8 +3856,9 @@ func (h *SaltStackHandler) TriggerMetricsCollection(c *gin.Context) {
 		"fun":    "cmd.run",
 		"arg":    []interface{}{collectCmd},
 		"kwarg": map[string]interface{}{
-			"timeout": 30,
-			"shell":   "/bin/bash",
+			"timeout":      30,
+			"shell":        "/bin/bash",
+			"python_shell": true,
 		},
 	}
 

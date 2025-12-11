@@ -206,7 +206,8 @@ func (s *NodeMetricsSyncService) batchGetCPUMemoryMetrics(client *syncSaltAPICli
 		"fun":    "cmd.run",
 		"arg":    []interface{}{script},
 		"kwarg": map[string]interface{}{
-			"timeout": 30,
+			"timeout":      30,
+			"python_shell": true, // 必须启用 shell 模式以支持管道和复杂命令
 		},
 	}
 
@@ -267,16 +268,18 @@ func (s *NodeMetricsSyncService) parseCPUMemoryOutput(output string) *NodeMetric
 	}
 
 	// 内存总量 (KB -> GB)
-	if memTotalKB, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && memTotalKB > 0 {
+	var memTotalKB float64
+	if val, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && val > 0 {
+		memTotalKB = val
 		metrics.MemoryTotalGB = memTotalKB / 1024 / 1024
 	}
 
-	// 内存可用量 (KB -> GB)
-	if memAvailKB, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64); err == nil && metrics.MemoryTotalGB > 0 {
+	// 内存可用量 (KB -> GB) 及使用率计算
+	if memAvailKB, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64); err == nil && memTotalKB > 0 {
 		metrics.MemoryAvailableGB = memAvailKB / 1024 / 1024
-		memUsedKB := metrics.MemoryTotalGB*1024*1024 - memAvailKB
+		memUsedKB := memTotalKB - memAvailKB
 		metrics.MemoryUsedGB = memUsedKB / 1024 / 1024
-		metrics.MemoryUsagePercent = (memUsedKB / (metrics.MemoryTotalGB * 1024 * 1024)) * 100
+		metrics.MemoryUsagePercent = (memUsedKB / memTotalKB) * 100
 	}
 
 	// 负载平均值

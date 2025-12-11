@@ -711,7 +711,7 @@ func (s *SaltStackService) ConfigureSlurmNode(ctx context.Context, minionID stri
 		"fun":    "cmd.run",
 		"tgt":    minionID,
 		"arg":    []string{getMungeCmd},
-		"kwarg":  map[string]interface{}{"shell": "/bin/bash"},
+		"kwarg":  map[string]interface{}{"shell": "/bin/bash", "python_shell": true},
 		"client": "local",
 	}
 	mungeResult, err := s.executeSaltCommand(ctx, mungeKeyPayload)
@@ -729,7 +729,7 @@ func (s *SaltStackService) ConfigureSlurmNode(ctx context.Context, minionID stri
 		"fun":    "cmd.run",
 		"tgt":    minionID,
 		"arg":    []string{getSlurmConfCmd},
-		"kwarg":  map[string]interface{}{"shell": "/bin/bash"},
+		"kwarg":  map[string]interface{}{"shell": "/bin/bash", "python_shell": true},
 		"client": "local",
 	}
 	slurmConfResult, err := s.executeSaltCommand(ctx, slurmConfPayload)
@@ -812,6 +812,7 @@ func (s *SaltStackService) StartSlurmService(ctx context.Context, minionID strin
 		"fun":    "cmd.run",
 		"tgt":    minionID,
 		"arg":    []string{"pgrep -x slurmd && echo 'running' || echo 'stopped'"},
+		"kwarg":  map[string]interface{}{"python_shell": true},
 		"client": "local",
 	}
 
