@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/scripts"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
@@ -313,6 +314,11 @@ type SaltMinion struct {
 	IBStatus string `json:"ib_status,omitempty"` // active, inactive, not_installed
 	IBCount  int    `json:"ib_count,omitempty"`
 	IBRate   string `json:"ib_rate,omitempty"` // 如 "200 Gb/sec (4X HDR)"
+	// CPU/内存使用率信息（实时采集）
+	CPUUsagePercent    float64 `json:"cpu_usage_percent,omitempty"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent,omitempty"`
+	MemoryTotalGB      float64 `json:"memory_total_gb,omitempty"`
+	MemoryUsedGB       float64 `json:"memory_used_gb,omitempty"`
 	// 数据来源标识：realtime（实时从Salt获取）, cached（从数据库读取）, unavailable（无法获取）
 	DataSource string `json:"data_source,omitempty"`
 }
@@ -1844,6 +1850,15 @@ func (h *SaltStackHandler) getRealMinions(client *saltAPIClient) ([]SaltMinion, 
 				m.IBCount = ibInfo.Count
 				m.IBRate = ibInfo.Rate
 
+				// 尝试实时获取 CPU/内存使用率信息
+				cpuMemInfo := h.getCPUMemoryInfo(concurrentClient, minionID)
+				if cpuMemInfo.CPUUsagePercent > 0 || cpuMemInfo.MemoryUsagePercent > 0 {
+					m.CPUUsagePercent = cpuMemInfo.CPUUsagePercent
+					m.MemoryUsagePercent = cpuMemInfo.MemoryUsagePercent
+					m.MemoryTotalGB = cpuMemInfo.MemoryTotalGB
+					m.MemoryUsedGB = cpuMemInfo.MemoryUsedGB
+				}
+
 				resultChan <- minionResult{minion: m, err: nil}
 			}(id)
 		}
@@ -1890,6 +1905,27 @@ func (h *SaltStackHandler) enrichMinionsWithMetrics(minions []SaltMinion) {
 	for i := range minions {
 		if metrics, ok := metricsMap[minions[i].ID]; ok {
 			usedCachedData := false
+
+			// CPU 使用率兜底
+			if minions[i].CPUUsagePercent == 0 && metrics.CPUUsagePercent > 0 {
+				minions[i].CPUUsagePercent = metrics.CPUUsagePercent
+				usedCachedData = true
+			}
+			// 内存使用率兜底
+			if minions[i].MemoryUsagePercent == 0 && metrics.MemoryUsagePercent > 0 {
+				minions[i].MemoryUsagePercent = metrics.MemoryUsagePercent
+				usedCachedData = true
+			}
+			// 内存总量兜底
+			if minions[i].MemoryTotalGB == 0 && metrics.MemoryTotalGB > 0 {
+				minions[i].MemoryTotalGB = metrics.MemoryTotalGB
+				usedCachedData = true
+			}
+			// 内存已用兜底
+			if minions[i].MemoryUsedGB == 0 && metrics.MemoryUsedGB > 0 {
+				minions[i].MemoryUsedGB = metrics.MemoryUsedGB
+				usedCachedData = true
+			}
 
 			// GPU 驱动版本兜底
 			if minions[i].GPUDriverVersion == "" && metrics.GPUDriverVersion != "" {
@@ -3011,6 +3047,74 @@ func (h *SaltStackHandler) getIBInfo(client *saltAPIClient, minionID string) IBI
 	return info
 }
 
+// CPUMemoryInfo CPU和内存使用率信息结构
+type CPUMemoryInfo struct {
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent"`
+	MemoryTotalGB      float64 `json:"memory_total_gb"`
+	MemoryUsedGB       float64 `json:"memory_used_gb"`
+}
+
+// getCPUMemoryInfo 通过 Salt 命令获取 CPU 和内存使用率信息
+func (h *SaltStackHandler) getCPUMemoryInfo(client *saltAPIClient, minionID string) CPUMemoryInfo {
+	info := CPUMemoryInfo{}
+
+	// 从嵌入脚本文件读取，避免硬编码
+	script, err := scripts.GetCPUMemoryScript()
+	if err != nil {
+		log.Printf("[SaltStack] 读取脚本文件失败: %v", err)
+		return info
+	}
+
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{script},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	resp, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		return info
+	}
+
+	output := h.extractCmdOutput(resp, minionID)
+	if output == "" || strings.Contains(strings.ToLower(output), "error") {
+		return info
+	}
+
+	// 解析输出: cpu_percent|mem_total_kb|mem_available_kb
+	output = strings.TrimSpace(output)
+	// 处理多行输出（脚本可能有额外输出），只取最后一行
+	lines := strings.Split(output, "\n")
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+
+	parts := strings.Split(lastLine, "|")
+	if len(parts) >= 3 {
+		// CPU 使用率
+		if cpuPercent, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); err == nil {
+			info.CPUUsagePercent = cpuPercent
+		}
+
+		// 内存总量 (KB -> GB)
+		if memTotalKB, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil && memTotalKB > 0 {
+			info.MemoryTotalGB = memTotalKB / 1024 / 1024
+		}
+
+		// 内存可用量 (KB -> GB)
+		if memAvailKB, err := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64); err == nil && info.MemoryTotalGB > 0 {
+			memUsedKB := info.MemoryTotalGB*1024*1024 - memAvailKB
+			info.MemoryUsedGB = memUsedKB / 1024 / 1024
+			info.MemoryUsagePercent = (memUsedKB / (info.MemoryTotalGB * 1024 * 1024)) * 100
+		}
+	}
+
+	return info
+}
+
 // extractCmdOutput 从 cmd.run 的响应中提取输出
 func (h *SaltStackHandler) extractCmdOutput(resp map[string]interface{}, minionID string) string {
 	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
@@ -3512,11 +3616,12 @@ func (h *SaltStackHandler) formatNodeMetricsResponse(m *models.NodeMetricsLatest
 	}
 
 	// CPU 信息
-	if m.CPUCores > 0 || m.CPUModel != "" {
+	if m.CPUCores > 0 || m.CPUModel != "" || m.CPUUsagePercent > 0 {
 		resp.CPU = &models.NodeCPUMetrics{
 			Cores:        m.CPUCores,
 			Model:        m.CPUModel,
 			UsagePercent: m.CPUUsagePercent,
+			Usage:        m.CPUUsagePercent, // 兼容前端期望的 usage 字段
 			LoadAvg:      m.CPULoadAvg,
 		}
 	}

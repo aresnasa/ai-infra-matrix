@@ -173,6 +173,7 @@ type NodeCPUMetrics struct {
 	Cores        int     `json:"cores"`
 	Model        string  `json:"model"`
 	UsagePercent float64 `json:"usage_percent"`
+	Usage        float64 `json:"usage"` // 别名，与 UsagePercent 相同值，兼容前端
 	LoadAvg      string  `json:"load_avg"`
 }
 

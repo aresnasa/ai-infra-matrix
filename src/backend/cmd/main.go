@@ -354,6 +354,10 @@ func main() {
 	// 设置 API 路由
 	setupAPIRoutes(r, cfg, jobService, sshService)
 
+	// 启动节点指标同步服务（定期使用 Salt 命令采集 CPU/内存等指标）
+	services.StartNodeMetricsSync()
+	logrus.Info("NodeMetricsSync service started")
+
 	// 优雅关闭
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -361,6 +365,10 @@ func main() {
 	go func() {
 		<-c
 		logrus.Info("Shutting down server...")
+
+		// 停止节点指标同步服务
+		services.StopNodeMetricsSync()
+		logrus.Info("NodeMetricsSync service stopped")
 
 		// 关闭AI网关服务
 		if err := services.ShutdownAIGateway(); err != nil {
