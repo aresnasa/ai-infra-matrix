@@ -773,6 +773,28 @@ func (s *BatchInstallService) installSingleHost(ctx context.Context, taskID stri
 				Message: "Node metrics collection deployed successfully",
 			})
 			s.logToDatabase(taskID, "info", hostConfig.Host, "Node metrics collection deployed successfully")
+
+			// 触发立即采集一次，同步 minion 数据到数据库
+			s.sendEvent(taskID, SSEEvent{
+				Type:    "log",
+				Host:    hostConfig.Host,
+				Message: "Triggering initial metrics collection...",
+			})
+			if err := s.triggerImmediateMetricsCollection(minionID); err != nil {
+				s.sendEvent(taskID, SSEEvent{
+					Type:    "warning",
+					Host:    hostConfig.Host,
+					Message: fmt.Sprintf("Failed to trigger initial metrics collection: %v", err),
+				})
+				s.logToDatabase(taskID, "warn", hostConfig.Host, fmt.Sprintf("Failed to trigger initial metrics: %v", err))
+			} else {
+				s.sendEvent(taskID, SSEEvent{
+					Type:    "log",
+					Host:    hostConfig.Host,
+					Message: "Initial metrics collection triggered, data will sync shortly",
+				})
+				s.logToDatabase(taskID, "info", hostConfig.Host, "Initial metrics collection triggered")
+			}
 		}
 	}
 
@@ -1766,6 +1788,91 @@ func (s *BatchInstallService) maskBatchInstallRequest(req BatchInstallRequest) B
 	return maskedReq
 }
 
+// triggerImmediateMetricsCollection 触发 minion 立即执行一次指标采集
+// 在安装完成后调用，确保 minion 数据能立即同步到数据库
+func (s *BatchInstallService) triggerImmediateMetricsCollection(minionID string) error {
+	if minionID == "" {
+		return fmt.Errorf("minion ID is required")
+	}
+
+	// 获取 Salt API 配置
+	saltAPIURL := os.Getenv("SALT_API_URL")
+	saltAPIUser := os.Getenv("SALT_API_USERNAME")
+	if saltAPIUser == "" {
+		saltAPIUser = os.Getenv("SALT_API_USER")
+	}
+	if saltAPIUser == "" {
+		saltAPIUser = "saltapi"
+	}
+	saltAPIPass := os.Getenv("SALT_API_PASSWORD")
+	saltAPIEauth := os.Getenv("SALT_API_EAUTH")
+	if saltAPIEauth == "" {
+		saltAPIEauth = "file"
+	}
+
+	if saltAPIURL == "" {
+		return fmt.Errorf("SALT_API_URL not configured")
+	}
+
+	if saltAPIPass == "" {
+		return fmt.Errorf("salt API password not configured")
+	}
+
+	// 创建 HTTP 客户端（跳过 TLS 验证）
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   60 * time.Second,
+	}
+
+	// 构建触发采集的命令 - 直接执行采集脚本
+	triggerCmd := "/opt/ai-infra/node-metrics/collect-node-metrics.sh 2>/dev/null || true"
+
+	// 构建请求 payload
+	payload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{triggerCmd},
+		"kwarg": map[string]interface{}{
+			"timeout": 30,
+			"shell":   "/bin/bash",
+		},
+		"username": saltAPIUser,
+		"password": saltAPIPass,
+		"eauth":    saltAPIEauth,
+	}
+
+	// 发送 HTTP 请求
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", saltAPIURL+"/", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("salt API error: %d %s", resp.StatusCode, string(body))
+	}
+
+	logrus.Infof("[BatchInstall] Triggered immediate metrics collection for minion %s", minionID)
+	return nil
+}
+
 // invalidateMinionsCache 使 minions 缓存失效
 // 在批量安装完成后调用，确保前端能立即获取最新的 minion 列表
 func (s *BatchInstallService) invalidateMinionsCache() {
@@ -1861,7 +1968,7 @@ func (s *BatchInstallService) deployNodeMetrics(minionID string, masterHost stri
 	}
 
 	if saltAPIPass == "" {
-		return fmt.Errorf("Salt API password not configured")
+		return fmt.Errorf("salt API password not configured")
 	}
 
 	// 获取回调 URL

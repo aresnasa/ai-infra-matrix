@@ -1229,7 +1229,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           password: h.password,
           use_sudo: values.global_use_sudo || h.use_sudo,
           sudo_pass: h.password,  // Linux 用户密码即 sudo 密码
-          group: h.group || '',  // 传递分组信息
+          group: h.group || values.global_group || '',  // 单独设置的分组优先，否则使用全局分组
           install_categraf: h.install_categraf || false,  // 传递每个主机的 Categraf 安装设置
         })),
         parallel: values.parallel || 0, // 0 表示自动计算并行度
@@ -1443,27 +1443,31 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
 
   // 快速创建分组（在批量安装弹窗中使用）
   const handleQuickCreateGroup = async () => {
+    // 优先使用 quickGroupName（下拉框中输入的名称）
+    const groupName = quickGroupName?.trim();
+    if (!groupName) {
+      message.warning(t('saltstack.pleaseInputGroupName', '请输入分组名称'));
+      return null;
+    }
+
     try {
-      const values = await quickGroupForm.validateFields();
       setQuickGroupCreating(true);
       
       const resp = await saltStackAPI.createMinionGroup({
-        name: values.name,
-        description: values.description || '',
-        color: values.color || 'blue',
+        name: groupName,
+        description: '',
+        color: 'blue',
       });
       
       if (resp.data?.success) {
-        message.success(t('saltstack.groupCreated', '分组已创建'));
+        message.success(t('saltstack.groupCreated', '分组已创建') + `: ${groupName}`);
         await loadMinionGroups(); // 刷新分组列表
-        setQuickGroupModalVisible(false);
-        quickGroupForm.resetFields();
-        return resp.data?.data?.name || values.name; // 返回创建的分组名
+        setQuickGroupName(''); // 清空输入框
+        return resp.data?.data?.name || groupName; // 返回创建的分组名
       } else {
         message.error(resp.data?.message || t('saltstack.groupCreateFailed', '创建分组失败'));
       }
     } catch (e) {
-      if (e.errorFields) return;
       message.error(t('saltstack.groupCreateFailed', '创建分组失败') + ': ' + (e?.response?.data?.message || e.message));
     } finally {
       setQuickGroupCreating(false);
@@ -3127,6 +3131,65 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     initialValue={false}
                   >
                     <Switch checkedChildren="Yes" unCheckedChildren="No" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item 
+                    name="global_group" 
+                    label={
+                      <Space>
+                        {t('saltstack.globalGroup', '全局分组')}
+                        <Tooltip title={t('saltstack.globalGroupHint', '为所有主机设置统一的分组，单独设置的分组优先')}>
+                          <QuestionCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                    }
+                  >
+                    <Select
+                      placeholder={t('saltstack.selectGroup', '选择分组')}
+                      allowClear
+                      style={{ width: '100%' }}
+                      loading={groupsLoading}
+                      dropdownRender={(menu) => (
+                        <>
+                          <div style={{ padding: '8px', borderBottom: '1px solid #f0f0f0' }}>
+                            <Space.Compact style={{ width: '100%' }}>
+                              <Input
+                                placeholder={t('saltstack.quickCreateGroupPlaceholder', '输入新分组名称')}
+                                value={quickGroupName}
+                                onChange={(e) => setQuickGroupName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  e.stopPropagation();
+                                  if (e.key === 'Enter' && quickGroupName.trim()) {
+                                    handleQuickCreateGroup();
+                                  }
+                                }}
+                                style={{ flex: 1 }}
+                              />
+                              <Button
+                                type="primary"
+                                icon={<PlusOutlined />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleQuickCreateGroup();
+                                }}
+                                loading={quickGroupCreating}
+                                disabled={!quickGroupName.trim()}
+                              >
+                                {t('common.create', '创建')}
+                              </Button>
+                            </Space.Compact>
+                          </div>
+                          {menu}
+                        </>
+                      )}
+                    >
+                      {minionGroups.map(g => (
+                        <Select.Option key={g.id} value={g.name}>
+                          <Tag color={g.color || 'default'}>{g.name}</Tag>
+                        </Select.Option>
+                      ))}
+                    </Select>
                   </Form.Item>
                 </Col>
                 <Col span={8}>
