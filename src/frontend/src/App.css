@@ -196,3 +196,216 @@ body.theme-dark .page-header h1 {
   border-radius: 6px;
   color: #52c41a;
 }
+
+/* 暗黑模式 - Ant Design Typography 组件覆盖 */
+.theme-dark .ant-typography,
+body.theme-dark .ant-typography {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-typography.ant-typography-secondary,
+body.theme-dark .ant-typography.ant-typography-secondary {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.theme-dark .ant-typography h1,
+.theme-dark .ant-typography h2,
+.theme-dark .ant-typography h3,
+.theme-dark .ant-typography h4,
+.theme-dark .ant-typography h5,
+body.theme-dark .ant-typography h1,
+body.theme-dark .ant-typography h2,
+body.theme-dark .ant-typography h3,
+body.theme-dark .ant-typography h4,
+body.theme-dark .ant-typography h5 {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 暗黑模式 - Card 组件覆盖 */
+.theme-dark .ant-card,
+body.theme-dark .ant-card {
+  background: #1f1f1f;
+  border-color: #303030;
+}
+
+.theme-dark .ant-card-head,
+body.theme-dark .ant-card-head {
+  border-bottom-color: #303030;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-card-head-title,
+body.theme-dark .ant-card-head-title {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 暗黑模式 - Statistic 组件覆盖 */
+.theme-dark .ant-statistic-title,
+body.theme-dark .ant-statistic-title {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.theme-dark .ant-statistic-content,
+body.theme-dark .ant-statistic-content {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 暗黑模式 - Table 组件覆盖 */
+.theme-dark .ant-table,
+body.theme-dark .ant-table {
+  background: #1f1f1f;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-table-thead > tr > th,
+body.theme-dark .ant-table-thead > tr > th {
+  background: #1d1d1d;
+  color: rgba(255, 255, 255, 0.85);
+  border-bottom-color: #303030;
+}
+
+.theme-dark .ant-table-tbody > tr > td,
+body.theme-dark .ant-table-tbody > tr > td {
+  border-bottom-color: #303030;
+}
+
+.theme-dark .ant-table-tbody > tr:hover > td,
+body.theme-dark .ant-table-tbody > tr:hover > td {
+  background: #262626;
+}
+
+/* 暗黑模式 - Alert 组件覆盖 */
+.theme-dark .ant-alert,
+body.theme-dark .ant-alert {
+  border-color: #303030;
+}
+
+.theme-dark .ant-alert-info,
+body.theme-dark .ant-alert-info {
+  background-color: #111d2c;
+}
+
+.theme-dark .ant-alert-error,
+body.theme-dark .ant-alert-error {
+  background-color: #2a1215;
+}
+
+.theme-dark .ant-alert-warning,
+body.theme-dark .ant-alert-warning {
+  background-color: #2b2111;
+}
+
+.theme-dark .ant-alert-success,
+body.theme-dark .ant-alert-success {
+  background-color: #162312;
+}
+
+/* 暗黑模式 - Tabs 组件覆盖 */
+.theme-dark .ant-tabs-tab,
+body.theme-dark .ant-tabs-tab {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.theme-dark .ant-tabs-tab-active .ant-tabs-tab-btn,
+body.theme-dark .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1890ff;
+}
+
+/* 暗黑模式 - Input 组件覆盖 */
+.theme-dark .ant-input,
+.theme-dark .ant-input-affix-wrapper,
+body.theme-dark .ant-input,
+body.theme-dark .ant-input-affix-wrapper {
+  background-color: #1f1f1f;
+  border-color: #303030;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-input::placeholder,
+body.theme-dark .ant-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* 暗黑模式 - Select 组件覆盖 */
+.theme-dark .ant-select-selector,
+body.theme-dark .ant-select-selector {
+  background-color: #1f1f1f !important;
+  border-color: #303030 !important;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-select-dropdown,
+body.theme-dark .ant-select-dropdown {
+  background-color: #1f1f1f;
+}
+
+.theme-dark .ant-select-item,
+body.theme-dark .ant-select-item {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-select-item-option-active,
+body.theme-dark .ant-select-item-option-active {
+  background-color: #262626;
+}
+
+/* 暗黑模式 - Modal 组件覆盖 */
+.theme-dark .ant-modal-content,
+body.theme-dark .ant-modal-content {
+  background-color: #1f1f1f;
+}
+
+.theme-dark .ant-modal-header,
+body.theme-dark .ant-modal-header {
+  background-color: #1f1f1f;
+  border-bottom-color: #303030;
+}
+
+.theme-dark .ant-modal-title,
+body.theme-dark .ant-modal-title {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-modal-close-x,
+body.theme-dark .ant-modal-close-x {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* 暗黑模式 - Divider 组件覆盖 */
+.theme-dark .ant-divider,
+body.theme-dark .ant-divider {
+  border-color: #303030;
+}
+
+/* 暗黑模式 - Empty 组件覆盖 */
+.theme-dark .ant-empty-description,
+body.theme-dark .ant-empty-description {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* 暗黑模式 - Menu 组件覆盖 */
+.theme-dark .ant-dropdown-menu,
+body.theme-dark .ant-dropdown-menu {
+  background-color: #1f1f1f;
+}
+
+.theme-dark .ant-dropdown-menu-item,
+body.theme-dark .ant-dropdown-menu-item {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.theme-dark .ant-dropdown-menu-item:hover,
+body.theme-dark .ant-dropdown-menu-item:hover {
+  background-color: #262626;
+}
+
+/* 暗黑模式 - Descriptions 组件覆盖 */
+.theme-dark .ant-descriptions-item-label,
+body.theme-dark .ant-descriptions-item-label {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.theme-dark .ant-descriptions-item-content,
+body.theme-dark .ant-descriptions-item-content {
+  color: rgba(255, 255, 255, 0.85);
+}

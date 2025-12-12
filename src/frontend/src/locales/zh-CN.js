@@ -1588,6 +1588,10 @@ export default {
       deleteConfirm: '此操作将从 Salt Master 删除该 Minion 的密钥，是否继续？',
       setGroup: '设置分组',
       clearGroup: '清除分组',
+      forceDelete: '强制删除',
+      nodeOnline: '节点在线',
+      confirmForceDelete: '确认强制删除',
+      confirmForceDeleteContent: '此操作将强制删除节点 {id}，即使该节点当前在线。删除后需要重新接受密钥才能连接。',
     },
     // 批量操作
     batch: {

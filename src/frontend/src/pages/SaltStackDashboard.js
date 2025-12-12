@@ -35,6 +35,7 @@ import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
 import ResizableMetricsPanel from '../components/ResizableMetricsPanel';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -58,6 +59,7 @@ const StatisticSkeleton = ({ title, icon }) => (
 
 const SaltStackDashboard = () => {
   const { t } = useI18n();
+  const { isDark } = useTheme();
   
   // 页面状态管理
   const [pageLoaded, setPageLoaded] = useState(false);
@@ -1974,15 +1976,15 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
   }
 
   return (
-    <Layout style={{ minHeight: '100vh', background: '#f0f2f5' }}>
+    <Layout style={{ minHeight: '100vh', background: isDark ? '#141414' : '#f0f2f5' }}>
       <Content style={{ padding: 24 }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div>
-            <Title level={2}>
+            <Title level={2} style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
               <ThunderboltOutlined style={{ marginRight: 8, color: '#1890ff' }} />
               {t('saltstack.title')}
             </Title>
-            <Paragraph type="secondary">
+            <Paragraph style={{ color: isDark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(0, 0, 0, 0.45)' }}>
               {t('saltstack.subtitle')}
             </Paragraph>
           </div>

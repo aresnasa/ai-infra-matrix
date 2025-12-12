@@ -1589,6 +1589,10 @@ export default {
       deleteConfirm: 'This will remove the key from Salt Master. Continue?',
       setGroup: 'Set Group',
       clearGroup: 'Clear Group',
+      forceDelete: 'Force Delete',
+      nodeOnline: 'Node Online',
+      confirmForceDelete: 'Confirm Force Delete',
+      confirmForceDeleteContent: 'This will force delete node {id}, even if it is currently online. After deletion, keys need to be re-accepted to reconnect.',
     },
     // Batch operations
     batch: {
