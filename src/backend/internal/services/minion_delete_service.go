@@ -166,9 +166,45 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// 1. 如果设置了 Uninstall 和 SSH 信息，先尝试通过 SSH 卸载远程节点上的 salt-minion
+	// 1. 首先从 Salt Master 删除密钥（强制删除，避免重新安装时出现 "Invalid master key" 错误）
+	deleteKeyStartTime := time.Now()
+	s.addTaskLog(task.ID, "delete_key", "running", fmt.Sprintf("开始从 Salt Master 删除密钥: %s", task.MinionID), "", "")
+	logger.Info("[MinionDeleteService] 步骤1: 从 Salt Master 删除密钥")
+
+	// 始终强制删除密钥，即使节点在线
+	err := s.saltService.DeleteMinionWithForce(ctx, task.MinionID, true)
+	deleteKeyEndTime := time.Now()
+	deleteKeyDuration := deleteKeyEndTime.Sub(deleteKeyStartTime).Milliseconds()
+
+	if err != nil {
+		logger.WithError(err).Warn("[MinionDeleteService] 从 Salt Master 删除密钥失败，继续尝试 SSH 卸载")
+		steps = append(steps, models.DeleteStep{
+			Name:        "delete_key",
+			Description: fmt.Sprintf("从 Salt Master 删除密钥: %s", task.MinionID),
+			Status:      "failed",
+			Error:       err.Error(),
+			StartTime:   deleteKeyStartTime,
+			EndTime:     deleteKeyEndTime,
+			Duration:    deleteKeyDuration,
+		})
+		s.addTaskLog(task.ID, "delete_key", "failed", "从 Salt Master 删除密钥失败，继续尝试 SSH 卸载", "", err.Error())
+	} else {
+		logger.Info("[MinionDeleteService] 从 Salt Master 删除密钥成功")
+		steps = append(steps, models.DeleteStep{
+			Name:        "delete_key",
+			Description: fmt.Sprintf("从 Salt Master 删除密钥: %s", task.MinionID),
+			Status:      "success",
+			Output:      "密钥删除成功",
+			StartTime:   deleteKeyStartTime,
+			EndTime:     deleteKeyEndTime,
+			Duration:    deleteKeyDuration,
+		})
+		s.addTaskLog(task.ID, "delete_key", "success", "从 Salt Master 删除 Minion 密钥成功", "密钥删除成功", "")
+	}
+
+	// 2. 如果设置了 Uninstall 和 SSH 信息，通过 SSH 卸载远程节点上的 salt-minion
 	if task.Uninstall && task.SSHHost != "" && task.SSHUsername != "" {
-		logger.WithField("host", task.SSHHost).Info("[MinionDeleteService] 尝试通过 SSH 卸载远程 salt-minion")
+		logger.WithField("host", task.SSHHost).Info("[MinionDeleteService] 步骤2: 通过 SSH 卸载远程 salt-minion")
 
 		uninstallStartTime := time.Now()
 		s.addTaskLog(task.ID, "ssh_uninstall", "running", fmt.Sprintf("开始通过 SSH 卸载远程 salt-minion (%s)", task.SSHHost), "", "")
@@ -192,7 +228,7 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 		uninstallDuration := uninstallEndTime.Sub(uninstallStartTime).Milliseconds()
 
 		if uninstallErr != nil {
-			logger.WithError(uninstallErr).Warn("[MinionDeleteService] SSH 卸载失败，继续删除 Salt Master 密钥")
+			logger.WithError(uninstallErr).Warn("[MinionDeleteService] SSH 卸载失败")
 			steps = append(steps, models.DeleteStep{
 				Name:        "ssh_uninstall",
 				Description: fmt.Sprintf("通过 SSH 卸载远程 salt-minion (%s)", task.SSHHost),
@@ -202,7 +238,8 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 				EndTime:     uninstallEndTime,
 				Duration:    uninstallDuration,
 			})
-			s.addTaskLog(task.ID, "ssh_uninstall", "failed", "SSH 卸载失败，继续删除 Salt Master 密钥", "", uninstallErr.Error())
+			s.addTaskLog(task.ID, "ssh_uninstall", "failed", "SSH 卸载失败", "", uninstallErr.Error())
+			// SSH 卸载失败不阻止任务完成（密钥已删除）
 		} else {
 			logger.Info("[MinionDeleteService] SSH 卸载 salt-minion 成功")
 			steps = append(steps, models.DeleteStep{
@@ -218,45 +255,7 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 		}
 	}
 
-	// 2. 从 Salt Master 删除密钥
-	deleteKeyStartTime := time.Now()
-	s.addTaskLog(task.ID, "delete_key", "running", fmt.Sprintf("开始从 Salt Master 删除密钥: %s", task.MinionID), "", "")
-
-	err := s.saltService.DeleteMinionWithForce(ctx, task.MinionID, task.Force)
-	deleteKeyEndTime := time.Now()
-	deleteKeyDuration := deleteKeyEndTime.Sub(deleteKeyStartTime).Milliseconds()
-
-	if err != nil {
-		task.MarkAsFailed(err.Error())
-		steps = append(steps, models.DeleteStep{
-			Name:        "delete_key",
-			Description: fmt.Sprintf("从 Salt Master 删除密钥: %s", task.MinionID),
-			Status:      "failed",
-			Error:       err.Error(),
-			StartTime:   deleteKeyStartTime,
-			EndTime:     deleteKeyEndTime,
-			Duration:    deleteKeyDuration,
-		})
-		task.SetSteps(steps)
-		task.Duration = time.Since(startTime).Milliseconds()
-		s.db.Save(task)
-		s.addTaskLog(task.ID, "delete_key", "failed", "从 Salt Master 删除 Minion 密钥失败", "", err.Error())
-		logger.WithError(err).Warn("从 Salt Master 删除 Minion 密钥失败")
-		return
-	}
-
-	steps = append(steps, models.DeleteStep{
-		Name:        "delete_key",
-		Description: fmt.Sprintf("从 Salt Master 删除密钥: %s", task.MinionID),
-		Status:      "success",
-		Output:      "密钥删除成功",
-		StartTime:   deleteKeyStartTime,
-		EndTime:     deleteKeyEndTime,
-		Duration:    deleteKeyDuration,
-	})
-	s.addTaskLog(task.ID, "delete_key", "success", "从 Salt Master 删除 Minion 密钥成功", "密钥删除成功", "")
-
-	// 删除成功
+	// 删除任务完成（即使 SSH 卸载失败，只要密钥已删除就算成功）
 	task.MarkAsCompleted()
 	task.SetSteps(steps)
 	task.Duration = time.Since(startTime).Milliseconds()

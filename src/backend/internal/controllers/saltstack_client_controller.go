@@ -1214,7 +1214,23 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 		req.Port = 22
 	}
 
-	// 通过 SSH 卸载 Salt Minion
+	saltSvc := services.NewSaltStackService()
+
+	// 步骤1: 先从 Salt Master 删除密钥（强制删除，即使节点在线）
+	// 这样可以避免重新安装时出现 "Invalid master key" 错误
+	logrus.WithField("minion_id", minionID).Info("[UninstallMinion] Step 1: Deleting minion key from Salt Master")
+	if err := saltSvc.DeleteMinionWithForce(ctx.Request.Context(), minionID, true); err != nil {
+		logrus.WithError(err).WithField("minion_id", minionID).Warn("[UninstallMinion] Failed to delete minion key from master, continuing with SSH uninstall")
+	} else {
+		logrus.WithField("minion_id", minionID).Info("[UninstallMinion] Minion key deleted from Salt Master successfully")
+	}
+
+	// 步骤2: 通过 SSH 卸载 Salt Minion
+	logrus.WithFields(logrus.Fields{
+		"minion_id": minionID,
+		"host":      req.Host,
+	}).Info("[UninstallMinion] Step 2: Uninstalling Salt Minion via SSH")
+
 	config := services.HostInstallConfig{
 		Host:     req.Host,
 		Port:     req.Port,
@@ -1230,7 +1246,7 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"minion_id": minionID,
 			"host":      req.Host,
-		}).Error("[UninstallMinion] Uninstall failed")
+		}).Error("[UninstallMinion] SSH uninstall failed")
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   fmt.Sprintf("Failed to uninstall minion: %v", err),
@@ -1238,14 +1254,10 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 		return
 	}
 
-	// 同时从 Salt Master 删除密钥
-	saltSvc := services.NewSaltStackService()
-	_ = saltSvc.DeleteMinion(ctx.Request.Context(), minionID)
-
 	logrus.WithFields(logrus.Fields{
 		"minion_id": minionID,
 		"host":      req.Host,
-	}).Info("Minion uninstalled and removed from master")
+	}).Info("[UninstallMinion] Minion uninstalled and removed from master successfully")
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
