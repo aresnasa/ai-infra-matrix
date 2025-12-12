@@ -1030,10 +1030,15 @@ prefetch_base_images() {
             dockerfiles+=("$dockerfile")
         fi
     else
-        # Find all Dockerfiles
+        # Find all Dockerfiles, excluding node_modules and other irrelevant directories
         while IFS= read -r df; do
             dockerfiles+=("$df")
-        done < <(find "$SRC_DIR" -name "Dockerfile" -type f 2>/dev/null)
+        done < <(find "$SRC_DIR" -name "Dockerfile" -type f \
+            -not -path "*/node_modules/*" \
+            -not -path "*/.git/*" \
+            -not -path "*/vendor/*" \
+            -not -path "*/__pycache__/*" \
+            2>/dev/null)
     fi
     
     local all_images=()
