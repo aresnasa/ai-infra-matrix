@@ -9,6 +9,9 @@ import { locales, defaultLocale, languageNames } from '../locales';
 // 语言存储 Key
 const LANGUAGE_STORAGE_KEY = 'ai_infra_language';
 
+// 语言变化事件名
+const LANGUAGE_CHANGE_EVENT = 'ai_infra_language_change';
+
 // 创建上下文
 const I18nContext = createContext(null);
 
@@ -39,6 +42,39 @@ const interpolate = (template, params = {}) => {
 };
 
 /**
+ * 广播语言变化事件
+ * @param {string} newLocale - 新语言
+ * @param {string} oldLocale - 旧语言
+ */
+const broadcastLanguageChange = (newLocale, oldLocale) => {
+  if (typeof window !== 'undefined') {
+    const event = new CustomEvent(LANGUAGE_CHANGE_EVENT, {
+      detail: {
+        newLocale,
+        oldLocale,
+        n9eLang: newLocale === 'en-US' ? 'en' : 'zh',
+        timestamp: Date.now(),
+      },
+    });
+    window.dispatchEvent(event);
+    console.log('[i18n] Language changed:', oldLocale, '->', newLocale);
+  }
+};
+
+/**
+ * 监听语言变化事件
+ * @param {function} callback - 回调函数
+ * @returns {function} 取消监听函数
+ */
+export const onLanguageChange = (callback) => {
+  if (typeof window === 'undefined') return () => {};
+  
+  const handler = (event) => callback(event.detail);
+  window.addEventListener(LANGUAGE_CHANGE_EVENT, handler);
+  return () => window.removeEventListener(LANGUAGE_CHANGE_EVENT, handler);
+};
+
+/**
  * I18n Provider 组件
  */
 export const I18nProvider = ({ children, initialLocale }) => {
@@ -59,14 +95,17 @@ export const I18nProvider = ({ children, initialLocale }) => {
   // 切换语言
   const setLocale = useCallback((newLocale) => {
     if (locales[newLocale]) {
+      const oldLocale = locale;
       setLocaleState(newLocale);
       if (typeof window !== 'undefined') {
         localStorage.setItem(LANGUAGE_STORAGE_KEY, newLocale);
         // 更新 HTML lang 属性
         document.documentElement.lang = newLocale;
+        // 广播语言变化事件（用于触发 Nightingale 等外部服务同步）
+        broadcastLanguageChange(newLocale, oldLocale);
       }
     }
-  }, []);
+  }, [locale]);
 
   // 翻译函数
   const t = useCallback((key, params) => {

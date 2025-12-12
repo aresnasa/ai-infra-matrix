@@ -1,18 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Spin, Alert, Button } from 'antd';
+import React, { useState, useEffect, useRef } from 'react';
+import { Card, Spin, Alert, Button, message } from 'antd';
 import { ReloadOutlined, FullscreenOutlined } from '@ant-design/icons';
-import { useI18n } from '../hooks/useI18n';
+import { useI18n, onLanguageChange } from '../hooks/useI18n';
 import '../App.css';
 
 /**
  * MonitoringPage - 监控仪表板页面
  * 使用 iframe 嵌入 Nightingale 监控系统
+ * 支持语言自动同步
  */
 const MonitoringPage = () => {
   const { t, locale } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [iframeKey, setIframeKey] = useState(0);
+  const iframeRef = useRef(null);
 
   // Nightingale 服务地址 - 使用环境变量或动态构建
   // 默认使用 nginx 代理路径 /nightingale/ 访问，支持 ProxyAuth SSO
@@ -41,7 +43,19 @@ const MonitoringPage = () => {
   
   const nightingaleUrl = getNightingaleUrl();
 
-  // 监听语言变化，刷新 iframe
+  // 监听全局语言变化事件，自动刷新 Nightingale iframe
+  useEffect(() => {
+    const unsubscribe = onLanguageChange(({ newLocale, n9eLang }) => {
+      console.log('[MonitoringPage] Language changed, refreshing Nightingale with lang:', n9eLang);
+      setLoading(true);
+      setIframeKey(prev => prev + 1);
+      message.info(t('monitoring.languageSyncing'));
+    });
+    
+    return unsubscribe;
+  }, [t]);
+
+  // 监听语言变化，刷新 iframe (保留原有逻辑作为备份)
   useEffect(() => {
     setIframeKey(prev => prev + 1);
   }, [locale]);

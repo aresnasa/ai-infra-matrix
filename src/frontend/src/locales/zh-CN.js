@@ -68,6 +68,19 @@ export default {
     autoRefresh: '自动刷新',
   },
 
+  // 主题
+  theme: {
+    light: '浅色',
+    dark: '深色',
+    system: '跟随系统',
+    switchToLight: '切换到浅色模式',
+    switchToDark: '切换到深色模式',
+    switchToSystem: '切换到跟随系统',
+    title: '主题设置',
+    currentTheme: '当前主题',
+    autoSwitch: '自动切换',
+    autoSwitchHint: '根据系统设置自动切换浅色/深色模式',
+  },
   // 导航菜单
   nav: {
     projects: '项目管理',
@@ -480,6 +493,57 @@ export default {
     setGroup: '设置分组',
     groupSetSuccess: '分组设置成功',
     groupSetFailed: '设置分组失败',
+    confirmDeleteGroup: '确定要删除此分组吗？',
+    deleteGroupHint: '删除分组不会影响已分配的 Minion',
+    groupSaveFailed: '保存分组失败',
+    pleaseInputGroupName: '请输入分组名称',
+    selectAtLeastOneMinion: '请至少选择一个 Minion',
+    configCopied: '已复制第一行配置',
+    pasteContentEmpty: '请输入配置内容',
+
+    // 分组概览和统计
+    groupOverview: '分组概览',
+    filterByGroup: '按分组筛选',
+    ungrouped: '未分组',
+    totalMinions: '总节点数',
+    onlineMinions: '在线节点',
+    gpuNodes: 'GPU 节点',
+    ibStatus: 'IB 网络',
+    ibDown: '个离线',
+    groupStatistics: '分组统计',
+    online: '在线',
+    offline: '离线',
+
+    // Categraf 相关
+    categrafInstallFailed: '批量安装 Categraf 失败',
+    deployMetricsSuccess: '指标采集已部署',
+    deployMetricsFailed: '部署指标采集失败',
+    deployNodeMetrics: '部署指标采集',
+    batchInstallCategraf: '批量安装 Categraf',
+    installCategraf: '安装 Categraf',
+    categrafHint: 'Categraf 是轻量级的监控采集代理，用于采集节点的 CPU、内存、磁盘等监控指标',
+    categrafVersion: 'Categraf 版本',
+    categrafVersionHint: '留空使用系统默认版本',
+    categrafVersionPlaceholder: '留空使用默认版本',
+    monitoringSettings: '监控代理设置',
+    n9eHost: 'N9E 服务器地址',
+    n9eHostHint: 'Nightingale 监控系统的服务器地址，留空则使用系统默认配置',
+    n9eHostPlaceholder: '留空使用默认地址',
+    n9ePort: '端口',
+    batchUninstallSuccess: '（含卸载）',
+
+    // 批量安装相关
+    globalGroup: '全局分组',
+    globalGroupHint: '为所有主机设置统一的分组，单独设置的分组优先',
+    quickCreateGroupPlaceholder: '输入新分组名称',
+    pasteImport: '粘贴导入',
+    copyFirstRowConfig: '复制第一行配置',
+    dynamicParallel: '动态并行度',
+    workers: '并发',
+    hosts: '台主机',
+    dynamicParallelHint: '根据主机数量自动计算最优并发数，避免网络/资源过载',
+    pasteImportTitle: '粘贴导入配置',
+    cancel: '取消',
 
     // 删除任务历史
     deleteTasksHistory: '删除任务历史',
@@ -605,6 +669,7 @@ export default {
     loadingSystem: '正在加载监控系统...',
     loadTimeout: '监控系统加载超时，请检查网络连接',
     loadFailed: '无法加载监控系统，请检查 Nightingale 服务是否正常运行',
+    languageSyncing: '正在同步语言设置到监控系统...',
   },
 
   // 登录页面
