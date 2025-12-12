@@ -7,6 +7,7 @@ export default {
     loading: '加载中...',
     confirm: '确定',
     cancel: '取消',
+    create: '创建',
     delete: '删除',
     edit: '编辑',
     save: '保存',

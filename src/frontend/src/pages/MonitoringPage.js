@@ -15,21 +15,22 @@ const MonitoringPage = () => {
   const [iframeKey, setIframeKey] = useState(0);
 
   // Nightingale 服务地址 - 使用环境变量或动态构建
-  // 支持完整URL或仅端口号配置，默认使用 nginx 代理路径
+  // 默认使用 nginx 代理路径 /nightingale/ 访问，支持 ProxyAuth SSO
+  // 注意：Nightingale 根路径会显示 404，需要指定具体页面
   const getNightingaleUrl = () => {
+    // 默认落地页：指标查询页面（metric/explorer）
+    // Nightingale 的根路径 "/" 没有默认页面，会显示 404
+    const defaultPath = process.env.REACT_APP_NIGHTINGALE_DEFAULT_PATH || 'metric/explorer';
+    
     let baseUrl = '';
     
     // 优先使用完整的 URL 配置
     if (process.env.REACT_APP_NIGHTINGALE_URL) {
       baseUrl = process.env.REACT_APP_NIGHTINGALE_URL;
-    } else if (process.env.REACT_APP_NIGHTINGALE_PORT) {
-      // 如果配置了端口，使用直接端口访问
-      const port = process.env.REACT_APP_NIGHTINGALE_PORT;
-      baseUrl = `${window.location.protocol}//${window.location.hostname}:${port}`;
     } else {
-      // 默认使用 nginx 代理路径（推荐，支持 ProxyAuth SSO）
+      // 默认使用 nginx 代理路径（同域，避免跨域问题，支持 SSO）
       const currentPort = window.location.port ? `:${window.location.port}` : '';
-      baseUrl = `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/`;
+      baseUrl = `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/${defaultPath}`;
     }
     
     // 添加语言参数，Nightingale 支持 lang=en 或 lang=zh

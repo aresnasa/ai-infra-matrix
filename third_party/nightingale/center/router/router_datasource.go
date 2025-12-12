@@ -3,17 +3,18 @@ package router
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ccfos/nightingale/v6/datasource/opensearch"
 	"github.com/ccfos/nightingale/v6/dskit/clickhouse"
 	"github.com/ccfos/nightingale/v6/models"
-
 	"github.com/gin-gonic/gin"
 	"github.com/toolkits/pkg/ginx"
 	"github.com/toolkits/pkg/i18n"
@@ -52,7 +53,39 @@ func (rt *Router) datasourceList(c *gin.Context) {
 func (rt *Router) datasourceGetsByService(c *gin.Context) {
 	typ := ginx.QueryStr(c, "typ", "")
 	lst, err := models.GetDatasourcesGetsBy(rt.Ctx, typ, "", "", "")
+
+	openRsa := rt.Center.RSA.OpenRSA
+	for _, item := range lst {
+		if err := item.Encrypt(openRsa, rt.HTTP.RSA.RSAPublicKey); err != nil {
+			logger.Errorf("datasource %+v encrypt failed: %v", item, err)
+			continue
+		}
+	}
 	ginx.NewRender(c).Data(lst, err)
+}
+
+func (rt *Router) datasourceRsaConfigGet(c *gin.Context) {
+	if rt.Center.RSA.OpenRSA {
+		publicKey := ""
+		privateKey := ""
+		if len(rt.HTTP.RSA.RSAPublicKey) > 0 {
+			publicKey = base64.StdEncoding.EncodeToString(rt.HTTP.RSA.RSAPublicKey)
+		}
+		if len(rt.HTTP.RSA.RSAPrivateKey) > 0 {
+			privateKey = base64.StdEncoding.EncodeToString(rt.HTTP.RSA.RSAPrivateKey)
+		}
+		logger.Debugf("OpenRSA=%v", rt.Center.RSA.OpenRSA)
+		ginx.NewRender(c).Data(models.RsaConfig{
+			OpenRSA:       rt.Center.RSA.OpenRSA,
+			RSAPublicKey:  publicKey,
+			RSAPrivateKey: privateKey,
+			RSAPassWord:   rt.HTTP.RSA.RSAPassWord,
+		}, nil)
+	} else {
+		ginx.NewRender(c).Data(models.RsaConfig{
+			OpenRSA: rt.Center.RSA.OpenRSA,
+		}, nil)
+	}
 }
 
 func (rt *Router) datasourceBriefs(c *gin.Context) {
@@ -194,6 +227,37 @@ func (rt *Router) datasourceUpsert(c *gin.Context) {
 			logger.Warningf("clickhouse test query failed: %v", err)
 			Dangerous(c, err)
 			return
+		}
+	}
+
+	if req.PluginType == models.ELASTICSEARCH {
+		skipAuto := false
+		// 若用户输入了version（version字符串存在且不为空），则不自动获取
+		if req.SettingsJson != nil {
+			if v, ok := req.SettingsJson["version"]; ok {
+				switch vv := v.(type) {
+				case string:
+					if strings.TrimSpace(vv) != "" {
+						skipAuto = true
+					}
+				default:
+					if strings.TrimSpace(fmt.Sprint(vv)) != "" {
+						skipAuto = true
+					}
+				}
+			}
+		}
+
+		if !skipAuto {
+			version, err := getElasticsearchVersion(req, 10*time.Second)
+			if err != nil {
+				logger.Warningf("failed to get elasticsearch version: %v", err)
+			} else {
+				if req.SettingsJson == nil {
+					req.SettingsJson = make(map[string]interface{})
+				}
+				req.SettingsJson["version"] = version
+			}
 		}
 	}
 
@@ -390,4 +454,83 @@ func (rt *Router) datasourceQuery(c *gin.Context) {
 		})
 	}
 	ginx.NewRender(c).Data(req, err)
+}
+
+// getElasticsearchVersion 该函数尝试从提供的Elasticsearch数据源中获取版本号，遍历所有URL，
+// 直到成功获取版本号或所有URL均尝试失败为止。
+func getElasticsearchVersion(ds models.Datasource, timeout time.Duration) (string, error) {
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: ds.HTTPJson.TLS.SkipTlsVerify,
+			},
+		},
+	}
+
+	urls := make([]string, 0)
+	if len(ds.HTTPJson.Urls) > 0 {
+		urls = append(urls, ds.HTTPJson.Urls...)
+	}
+	if ds.HTTPJson.Url != "" {
+		urls = append(urls, ds.HTTPJson.Url)
+	}
+	if len(urls) == 0 {
+		return "", fmt.Errorf("no url provided")
+	}
+
+	var lastErr error
+	for _, raw := range urls {
+		baseURL := strings.TrimRight(raw, "/") + "/"
+		req, err := http.NewRequest("GET", baseURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if ds.AuthJson.BasicAuthUser != "" {
+			req.SetBasicAuth(ds.AuthJson.BasicAuthUser, ds.AuthJson.BasicAuthPassword)
+		}
+
+		for k, v := range ds.HTTPJson.Headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			lastErr = fmt.Errorf("request to %s failed with status: %d body:%s", baseURL, resp.StatusCode, string(body))
+			continue
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(body, &result); err != nil {
+			lastErr = err
+			continue
+		}
+
+		if version, ok := result["version"].(map[string]interface{}); ok {
+			if number, ok := version["number"].(string); ok && number != "" {
+				return number, nil
+			}
+		}
+
+		lastErr = fmt.Errorf("version not found in response from %s", baseURL)
+	}
+
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("failed to get elasticsearch version")
 }

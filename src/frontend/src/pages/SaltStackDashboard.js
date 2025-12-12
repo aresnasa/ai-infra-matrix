@@ -3166,6 +3166,11 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       allowClear
                       style={{ width: '100%' }}
                       loading={groupsLoading}
+                      onDropdownVisibleChange={(open) => {
+                        if (open && minionGroups.length === 0) {
+                          loadMinionGroups();
+                        }
+                      }}
                       dropdownRender={(menu) => (
                         <>
                           <div style={{ padding: '8px', borderBottom: '1px solid #f0f0f0' }}>
@@ -3355,6 +3360,11 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         allowClear
                         style={{ width: '100%' }}
                         loading={groupsLoading}
+                        onDropdownVisibleChange={(open) => {
+                          if (open && minionGroups.length === 0) {
+                            loadMinionGroups();
+                          }
+                        }}
                         dropdownRender={(menu) => (
                           <>
                             <div style={{ padding: '8px', borderBottom: '1px solid #f0f0f0' }}>

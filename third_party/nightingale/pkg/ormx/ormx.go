@@ -332,18 +332,20 @@ func New(c DBConfig) (*gorm.DB, error) {
 		if createErr != nil {
 			return nil, fmt.Errorf("failed to create database: %v", createErr)
 		}
+
+		db, err := gorm.Open(dialector, gconfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reopen database after creation: %v", err)
+		}
+		err = DataBaseInit(c, db)
+		if err != nil {
+			return nil, fmt.Errorf("failed to init database: %v", err)
+		}
 	}
 
 	db, err := gorm.Open(dialector, gconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %v", err)
-	}
-
-	// Always run DataBaseInit to ensure table schema is up-to-date
-	// GORM's AutoMigrate will only add missing columns/tables, not delete existing ones
-	err = DataBaseInit(c, db)
-	if err != nil {
-		return nil, fmt.Errorf("failed to init/migrate database: %v", err)
 	}
 
 	if c.Debug {

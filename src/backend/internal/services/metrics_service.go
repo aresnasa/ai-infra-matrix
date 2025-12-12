@@ -253,6 +253,11 @@ func (s *MetricsService) CheckHealth() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+// ExtractValue 从查询结果中提取单个值（导出方法）
+func (s *MetricsService) ExtractValue(result *MetricsQueryResult) float64 {
+	return s.extractValue(result)
+}
+
 // extractValue 从查询结果中提取单个值
 func (s *MetricsService) extractValue(result *MetricsQueryResult) float64 {
 	if result == nil || len(result.Data.Result) == 0 {
