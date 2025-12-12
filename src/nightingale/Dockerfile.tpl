@@ -39,36 +39,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends git make bash c
 # Copy source code
 COPY third_party/nightingale/ .
 
+# Copy local n9e-fe package if exists (优先使用本地文件)
+COPY third_party/n9e-fe/ /tmp/n9e-fe/
+
 # Build
 ENV GOPROXY=${GO_PROXY}
 
-# Step 1: Download front-end release and embed using statik
+# Step 1: Get front-end release and embed using statik
 # This creates the front/statik package required by the build
 # 
-# 支持三种下载模式:
-# 1. 内网环境 (INTERNAL_FILE_SERVER 非空): 从内部文件服务器下载
-#    文件路径: ${INTERNAL_FILE_SERVER}/nightingale/n9e-fe-${VERSION}.tar.gz
-# 2. 互联网环境 + 指定版本 (N9E_FE_VERSION 非空): 使用 GitHub 镜像下载指定版本
-# 3. 互联网环境 + 自动版本: 从 GitHub API 获取最新版本并下载
+# 支持四种下载模式（按优先级）:
+# 1. 本地文件: third_party/n9e-fe/n9e-fe-${VERSION}.tar.gz (优先)
+# 2. 内网环境 (INTERNAL_FILE_SERVER 非默认值): 从内部文件服务器下载
+# 3. 互联网环境 + 指定版本 (N9E_FE_VERSION 非空): 使用 GitHub 镜像下载指定版本
+# 4. 互联网环境 + 自动版本: 从 GitHub API 获取最新版本并下载
 RUN set -eux; \
     # Install statik tool
     go install github.com/rakyll/statik@latest; \
     \
-    # Determine download strategy
-    if [ -n "${INTERNAL_FILE_SERVER}" ] && [ "${INTERNAL_FILE_SERVER}" != "http://files.example.com" ]; then \
+    TAG="${N9E_FE_VERSION:-v8.4.1}"; \
+    \
+    # 优先使用本地文件
+    if [ -f "/tmp/n9e-fe/n9e-fe-${TAG}.tar.gz" ]; then \
+        echo "Local mode: Using local n9e-fe ${TAG} from third_party/n9e-fe/"; \
+        cp /tmp/n9e-fe/n9e-fe-${TAG}.tar.gz .; \
+    # 检查是否配置了真实的内网文件服务器（非默认占位值）
+    elif [ -n "${INTERNAL_FILE_SERVER}" ] && \
+         [ "${INTERNAL_FILE_SERVER}" != "http://files.example.com" ] && \
+         [ "${INTERNAL_FILE_SERVER}" != "" ]; then \
         # 内网模式: 从内部文件服务器下载
-        TAG="${N9E_FE_VERSION:-v7.7.2}"; \
         echo "Intranet mode: Downloading n9e-fe ${TAG} from internal server"; \
         curl -fsSL -o n9e-fe-${TAG}.tar.gz "${INTERNAL_FILE_SERVER}/nightingale/n9e-fe-${TAG}.tar.gz"; \
     elif [ -n "${N9E_FE_VERSION}" ]; then \
         # 指定版本模式: 使用 GitHub 镜像下载
-        TAG="${N9E_FE_VERSION}"; \
         echo "Fixed version mode: Downloading n9e-fe ${TAG}"; \
         curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
     else \
         # 自动版本模式: 从 GitHub API 获取最新版本
         echo "Auto version mode: Fetching latest version from GitHub API"; \
-        TAG=$(curl -sX GET https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+        # 使用 GitHub 镜像代理 API（如果可用）
+        if [ -n "${GITHUB_MIRROR}" ]; then \
+            TAG=$(curl -sX GET "${GITHUB_MIRROR}https://api.github.com/repos/n9e/fe/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+        fi; \
+        # 如果镜像代理失败，尝试直连
+        if [ -z "${TAG}" ]; then \
+            TAG=$(curl -sX GET https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
+        fi; \
         if [ -z "${TAG}" ]; then \
             echo "ERROR: Failed to get version from GitHub API. Please set N9E_FE_VERSION or INTERNAL_FILE_SERVER"; \
             exit 1; \
@@ -82,7 +98,7 @@ RUN set -eux; \
     # Embed front-end files into Go binary using statik
     $(go env GOPATH)/bin/statik -src=./pub -dest=./front; \
     # Cleanup
-    rm -rf n9e-fe-${TAG}.tar.gz
+    rm -rf n9e-fe-${TAG}.tar.gz /tmp/n9e-fe
 
 # Step 2: Download Go dependencies
 RUN go mod download

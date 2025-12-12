@@ -7,6 +7,7 @@ export default {
     loading: 'Loading...',
     confirm: 'Confirm',
     cancel: 'Cancel',
+    create: 'Create',
     delete: 'Delete',
     edit: 'Edit',
     save: 'Save',

@@ -1052,3 +1052,153 @@ func CollectSystemMetricsFresh() (*SystemMetrics, error) {
 func GetDeploymentType() DeploymentType {
 	return NewSystemMetricsCollectorService().GetDeploymentType()
 }
+
+// ============================================================================
+// DockerMetricsClient - 通过 Docker API 获取容器指标
+// ============================================================================
+
+// ContainerMetrics 容器指标
+type ContainerMetrics struct {
+	ContainerID        string  `json:"container_id"`
+	ContainerName      string  `json:"container_name"`
+	CPUPercent         float64 `json:"cpu_percent"`
+	MemoryUsed         int64   `json:"memory_used"`
+	MemoryLimit        int64   `json:"memory_limit"`
+	MemoryPercent      float64 `json:"memory_percent"`
+	NetworkRxBytes     int64   `json:"network_rx_bytes"`
+	NetworkTxBytes     int64   `json:"network_tx_bytes"`
+	NetworkConnections int     `json:"network_connections"`
+}
+
+// DockerMetricsClient Docker 指标采集客户端
+type DockerMetricsClient struct {
+	socketPath string
+}
+
+// NewDockerMetricsClient 创建 Docker 指标客户端
+func NewDockerMetricsClient() (*DockerMetricsClient, error) {
+	socketPath := "/var/run/docker.sock"
+
+	// 检查 Docker socket 是否存在
+	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
+		// 尝试检查 docker 命令是否可用
+		if _, err := exec.LookPath("docker"); err != nil {
+			return nil, fmt.Errorf("Docker not available: socket not found and docker command not in PATH")
+		}
+	}
+
+	return &DockerMetricsClient{
+		socketPath: socketPath,
+	}, nil
+}
+
+// Close 关闭客户端
+func (c *DockerMetricsClient) Close() error {
+	return nil
+}
+
+// GetContainerMetrics 获取指定容器的指标
+func (c *DockerMetricsClient) GetContainerMetrics(containerName string) (*ContainerMetrics, error) {
+	// 使用 docker stats 命令获取容器指标（更可靠的方式）
+	return c.getContainerMetricsViaExec(containerName)
+}
+
+// getContainerMetricsViaExec 通过执行 docker 命令获取容器指标
+func (c *DockerMetricsClient) getContainerMetricsViaExec(containerName string) (*ContainerMetrics, error) {
+	// 使用 docker stats --no-stream 获取一次性的容器指标
+	// 格式: {{.Container}} {{.CPUPerc}} {{.MemUsage}} {{.MemPerc}} {{.NetIO}}
+	cmd := exec.Command("docker", "stats", "--no-stream", "--format",
+		"{{.Container}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}", containerName)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker stats failed for %s: %v", containerName, err)
+	}
+
+	outputStr := strings.TrimSpace(string(output))
+	if outputStr == "" {
+		return nil, fmt.Errorf("container %s not found or not running", containerName)
+	}
+
+	// 解析输出: container_id|5.50%|100MiB / 1GiB|10.00%|1.5MB / 500KB
+	parts := strings.Split(outputStr, "|")
+	if len(parts) < 5 {
+		return nil, fmt.Errorf("unexpected docker stats output format: %s", outputStr)
+	}
+
+	metrics := &ContainerMetrics{
+		ContainerName: containerName,
+	}
+
+	// 解析 CPU 百分比 (去掉 % 符号)
+	cpuStr := strings.TrimSuffix(strings.TrimSpace(parts[1]), "%")
+	if cpu, err := strconv.ParseFloat(cpuStr, 64); err == nil {
+		metrics.CPUPercent = cpu
+	}
+
+	// 解析内存百分比 (去掉 % 符号)
+	memPercStr := strings.TrimSuffix(strings.TrimSpace(parts[3]), "%")
+	if memPerc, err := strconv.ParseFloat(memPercStr, 64); err == nil {
+		metrics.MemoryPercent = memPerc
+	}
+
+	// 解析内存使用量 (格式: "100MiB / 1GiB")
+	memParts := strings.Split(parts[2], "/")
+	if len(memParts) >= 2 {
+		metrics.MemoryUsed = parseMemorySize(strings.TrimSpace(memParts[0]))
+		metrics.MemoryLimit = parseMemorySize(strings.TrimSpace(memParts[1]))
+	}
+
+	// 解析网络 IO (格式: "1.5MB / 500KB")
+	netParts := strings.Split(parts[4], "/")
+	if len(netParts) >= 2 {
+		metrics.NetworkRxBytes = parseMemorySize(strings.TrimSpace(netParts[0]))
+		metrics.NetworkTxBytes = parseMemorySize(strings.TrimSpace(netParts[1]))
+	}
+
+	return metrics, nil
+}
+
+// parseMemorySize 解析内存大小字符串 (如 "100MiB", "1GiB", "500KB")
+func parseMemorySize(sizeStr string) int64 {
+	sizeStr = strings.ToUpper(strings.TrimSpace(sizeStr))
+	if sizeStr == "" {
+		return 0
+	}
+
+	var multiplier int64 = 1
+	var numStr string
+
+	switch {
+	case strings.HasSuffix(sizeStr, "GIB"):
+		multiplier = 1024 * 1024 * 1024
+		numStr = strings.TrimSuffix(sizeStr, "GIB")
+	case strings.HasSuffix(sizeStr, "GB"):
+		multiplier = 1000 * 1000 * 1000
+		numStr = strings.TrimSuffix(sizeStr, "GB")
+	case strings.HasSuffix(sizeStr, "MIB"):
+		multiplier = 1024 * 1024
+		numStr = strings.TrimSuffix(sizeStr, "MIB")
+	case strings.HasSuffix(sizeStr, "MB"):
+		multiplier = 1000 * 1000
+		numStr = strings.TrimSuffix(sizeStr, "MB")
+	case strings.HasSuffix(sizeStr, "KIB"):
+		multiplier = 1024
+		numStr = strings.TrimSuffix(sizeStr, "KIB")
+	case strings.HasSuffix(sizeStr, "KB"):
+		multiplier = 1000
+		numStr = strings.TrimSuffix(sizeStr, "KB")
+	case strings.HasSuffix(sizeStr, "B"):
+		multiplier = 1
+		numStr = strings.TrimSuffix(sizeStr, "B")
+	default:
+		numStr = sizeStr
+	}
+
+	numStr = strings.TrimSpace(numStr)
+	if num, err := strconv.ParseFloat(numStr, 64); err == nil {
+		return int64(num * float64(multiplier))
+	}
+
+	return 0
+}

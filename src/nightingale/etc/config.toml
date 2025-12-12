@@ -20,6 +20,11 @@ Output = "stdout"
 Host = "0.0.0.0"
 # http listening port
 Port = 17000
+# Base path prefix for reverse proxy sub-path deployment
+# If you deploy Nightingale under a sub-path like /n9e/,
+# set BasePath = "/n9e"
+# Leave empty for root path deployment
+BasePath = ""
 # https cert file path
 CertFile = ""
 # https key file path

@@ -2,6 +2,7 @@ package dscache
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -13,9 +14,11 @@ import (
 	_ "github.com/ccfos/nightingale/v6/datasource/mysql"
 	_ "github.com/ccfos/nightingale/v6/datasource/opensearch"
 	_ "github.com/ccfos/nightingale/v6/datasource/postgresql"
+	_ "github.com/ccfos/nightingale/v6/datasource/victorialogs"
 	"github.com/ccfos/nightingale/v6/dskit/tdengine"
 	"github.com/ccfos/nightingale/v6/models"
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
+	"github.com/ccfos/nightingale/v6/pkg/poster"
 
 	"github.com/toolkits/pkg/logger"
 )
@@ -25,6 +28,24 @@ var FromAPIHook func()
 var DatasourceProcessHook func(items []datasource.DatasourceInfo) []datasource.DatasourceInfo
 
 func Init(ctx *ctx.Context, fromAPI bool) {
+	if !ctx.IsCenter {
+		// 从 center 同步密钥
+		var rsaConfig = new(models.RsaConfig)
+		c, err := poster.GetByUrls[*models.RsaConfig](ctx, "/v1/n9e/datasource-rsa-config")
+		if err != nil || c == nil {
+			logger.Fatalf("failed to get datasource rsa-config, error: %v", err)
+		}
+		rsaConfig = c
+		if c.OpenRSA {
+			logger.Infof("datasource rsa is open in n9e-plus")
+			rsaConfig.PrivateKeyBytes, err = base64.StdEncoding.DecodeString(c.RSAPrivateKey)
+			if err != nil {
+				logger.Fatalf("failed to decode rsa-config, error: %v", err)
+			}
+		}
+		models.SetRsaConfig(rsaConfig)
+	}
+
 	go getDatasourcesFromDBLoop(ctx, fromAPI)
 }
 
@@ -63,6 +84,7 @@ func getDatasourcesFromDBLoop(ctx *ctx.Context, fromAPI bool) {
 			}
 			var dss []datasource.DatasourceInfo
 			for _, item := range items {
+
 				if item.PluginType == "prometheus" && item.IsDefault {
 					atomic.StoreInt64(&PromDefaultDatasourceId, item.Id)
 					foundDefaultDatasource = true

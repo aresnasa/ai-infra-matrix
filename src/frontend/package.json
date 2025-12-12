@@ -1,6 +1,7 @@
 {
-  "name": "ansible-playbook-generator-frontend",
+  "name": "ai-infra-matrix-frontend",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "dependencies": {
     "@testing-library/jest-dom": "^5.16.4",
