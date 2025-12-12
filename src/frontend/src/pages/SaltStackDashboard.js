@@ -2199,7 +2199,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   <Row gutter={[16, 16]}>
                     {/* 总体统计 */}
                     <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: '#f6ffed' }}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#162312' : '#f6ffed' }}>
                         <Statistic 
                           title={t('saltstack.totalMinions', '总节点数')} 
                           value={filteredMinions.length}
@@ -2208,7 +2208,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       </Card>
                     </Col>
                     <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: '#e6f7ff' }}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#111d2c' : '#e6f7ff' }}>
                         <Statistic 
                           title={t('saltstack.onlineMinions', '在线节点')} 
                           value={filteredMinions.filter(m => m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'accepted').length}
@@ -2218,7 +2218,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       </Card>
                     </Col>
                     <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: '#fff7e6' }}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#2b1d11' : '#fff7e6' }}>
                         <Statistic 
                           title={t('saltstack.gpuNodes', 'GPU 节点')} 
                           value={groupStats.gpuInfo.withGpu}
@@ -2228,7 +2228,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       </Card>
                     </Col>
                     <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: groupStats.ibInfo.down > 0 ? '#fff1f0' : '#f6ffed' }}>
+                      <Card size="small" style={{ textAlign: 'center', background: groupStats.ibInfo.down > 0 ? (isDark ? '#2a1215' : '#fff1f0') : (isDark ? '#162312' : '#f6ffed') }}>
                         <Statistic 
                           title={t('saltstack.ibStatus', 'IB 网络')} 
                           value={groupStats.ibInfo.active}

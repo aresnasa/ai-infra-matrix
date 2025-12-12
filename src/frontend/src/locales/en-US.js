@@ -1034,7 +1034,9 @@ export default {
   // SLURM Cluster Status
   slurmCluster: {
     loading: 'Loading cluster status...',
+    loadingClusterStatus: 'Loading cluster status...',
     refresh: 'Refresh',
+    refreshStatus: 'Refresh Status',
     clusterHealth: 'Cluster Health',
     healthLevel: {
       excellent: 'Excellent',
@@ -1048,7 +1050,16 @@ export default {
       noAvailableNodes: 'No available nodes',
       cpuUsageAbove90: 'CPU usage above 90%',
       memUsageAbove90: 'Memory usage above 90%',
-      nodesInErrorState: 'Nodes in error state',
+      nodesInErrorState: '{{count}} nodes in error state',
+    },
+    // Compatible with old issues key
+    issues: {
+      onlineRateBelow80: 'Node online rate below 80%',
+      onlineRateBelow90: 'Node online rate below 90%',
+      noAvailableNodes: 'No available nodes',
+      cpuUsageAbove90: 'CPU usage above 90%',
+      memUsageAbove90: 'Memory usage above 90%',
+      nodesInErrorState: '{{count}} nodes in error state',
     },
     totalNodes: 'Total Nodes',
     online: 'Online',
@@ -1076,6 +1087,23 @@ export default {
     partitionCount: 'partitions',
     noPartitionInfo: 'No partition info',
     checkSlurmConfig: 'Please check SLURM configuration or try again later',
+    // Partition table columns
+    columns: {
+      partitionName: 'Partition Name',
+      availability: 'Availability',
+      nodeCount: 'Node Count',
+      nodeList: 'Node List',
+      state: 'State',
+    },
+    // Status labels
+    status: {
+      available: 'Available',
+      unavailable: 'Unavailable',
+      normal: 'Normal',
+      offline: 'Offline',
+      idle: 'Idle',
+      allocated: 'Allocated',
+    },
     partition: {
       name: 'Partition Name',
       availability: 'Availability',
@@ -1099,6 +1127,160 @@ export default {
       recentJobs: 'Recent Jobs',
     },
     unknown: 'Unknown',
+  },
+
+  // SLURM Scaling Management
+  slurmScaling: {
+    // Page title
+    title: 'SLURM Cluster Scaling',
+    subtitle: 'Manage scale-up and scale-down operations for SLURM cluster nodes',
+    
+    // Node table columns
+    nodeColumns: {
+      name: 'Node Name',
+      partition: 'Partition',
+      state: 'State',
+      cpu: 'CPU',
+      memory: 'Memory(MB)',
+      saltStatus: 'SaltStack Status',
+      actions: 'Actions',
+    },
+    
+    // Template table columns
+    templateColumns: {
+      name: 'Template Name',
+      cpus: 'CPU Cores',
+      memoryGb: 'Memory(GB)',
+      diskGb: 'Disk(GB)',
+      os: 'OS',
+      actions: 'Actions',
+    },
+    
+    // Job table columns
+    jobColumns: {
+      id: 'Job ID',
+      name: 'Name',
+      user: 'User',
+      state: 'State',
+      elapsed: 'Elapsed',
+      nodes: 'Nodes',
+    },
+    
+    // Status labels
+    status: {
+      notConfigured: 'Not Configured',
+      unknown: 'Unknown',
+      loading: 'Loading',
+      active: 'Active',
+      idle: 'Idle',
+      online: 'Online',
+      offline: 'Offline',
+    },
+    
+    // Stats cards
+    stats: {
+      totalNodes: 'Total Nodes',
+      idleNodes: 'Idle Nodes',
+      runningNodes: 'Running Nodes',
+      runningJobs: 'Running Jobs',
+      pendingJobs: 'Pending Jobs',
+      activeTasks: 'Active Tasks',
+      successNodes: 'Success Nodes',
+      failedNodes: 'Failed Nodes',
+    },
+    
+    // Scaling
+    scalingStatus: 'Scaling Status',
+    scaleUp: 'Scale Up',
+    scaleDown: 'Scale Down',
+    scaleUpSubmitted: 'Scale-up task submitted',
+    scaleDownSubmitted: 'Scale-down task submitted',
+    scaleUpFailed: 'Scale-up failed',
+    scaleDownFailed: 'Scale-down failed',
+    viewTaskProgress: 'View Task Progress',
+    
+    // Node operations
+    clusterNodes: 'Cluster Nodes',
+    jobStatus: 'Job Status',
+    reinitialize: 'Reinitialize',
+    deleteNode: 'Delete Node',
+    deleteNodes: 'Delete Nodes',
+    confirmDeleteNode: 'Are you sure you want to delete node',
+    confirmDeleteNodeDesc: 'This will stop services on the node and remove the record from database',
+    confirmDeleteNodes: 'Confirm Delete Nodes',
+    confirmDeleteNodesDesc: 'Are you sure you want to delete the selected {{count}} nodes?',
+    deleteWarning: '⚠️ Warning: This action will stop services and remove records from database, it cannot be undone!',
+    confirmDelete: 'Confirm Delete',
+    deleteSuccess: 'Node {{name}} deleted successfully',
+    deleteFailed: 'Failed to delete node',
+    deleteError: 'Error occurred during node deletion, please try again later',
+    batchDeleteSuccess: 'Successfully deleted {{count}} nodes',
+    batchDeletePartial: 'Successfully deleted {{success}} nodes, {{fail}} failed',
+    
+    // Node state operations
+    selectNodesFirst: 'Please select nodes first',
+    selectJobsFirst: 'Please select jobs first',
+    confirmOperation: 'Confirm {{action}} Nodes',
+    confirmOperationDesc: 'Are you sure you want to set the selected {{count}} nodes to {{action}} state?',
+    nodeOperations: {
+      resume: 'Resume (RESUME)',
+      drain: 'Drain (DRAIN)',
+      down: 'Down (DOWN)',
+    },
+    resumeLabel: 'Resume',
+    drainLabel: 'Drain',
+    downLabel: 'Down',
+    
+    // Job operations
+    jobOperations: {
+      cancel: 'Cancel (CANCEL)',
+      hold: 'Hold (HOLD)',
+      release: 'Release (RELEASE)',
+      suspend: 'Suspend (SUSPEND)',
+      resume: 'Resume (RESUME)',
+      requeue: 'Requeue (REQUEUE)',
+    },
+    cancelLabel: 'Cancel',
+    holdLabel: 'Hold',
+    releaseLabel: 'Release',
+    suspendLabel: 'Suspend',
+    resumeLabel2: 'Resume',
+    requeueLabel: 'Requeue',
+    confirmJobOperation: 'Confirm {{action}} Jobs',
+    confirmJobOperationDesc: 'Are you sure you want to {{action}} the selected {{count}} jobs?',
+    
+    // Templates
+    templateCreated: 'Node template created successfully',
+    templateCreateFailed: 'Failed to create template',
+    templateDeleted: 'Template deleted successfully',
+    templateDeleteFailed: 'Failed to delete template',
+    useTemplate: 'Use',
+    deleteTemplate: 'Delete',
+    
+    // SaltStack integration
+    saltStackStatus: 'SaltStack Status',
+    saltMasterStatus: 'Master Status',
+    saltApiStatus: 'API Status',
+    saltCommandExecuted: 'SaltStack command executed',
+    saltCommandFailed: 'Failed to execute command',
+    
+    // Form validation and hints
+    atLeastOneNode: 'Please enter at least one node',
+    configureSSHAuth: 'Please configure SSH authentication (password or key)',
+    unknownError: 'Unknown error',
+    
+    // Loading states
+    dataLoadFailed: 'Data load failed',
+    checkBackendService: 'Please check if backend service is running normally, or try again later',
+    
+    // Common buttons
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    ok: 'OK',
+    refresh: 'Refresh',
+    moreActions: 'More Actions',
+    nodeActions: 'Node Actions',
+    jobActions: 'Job Actions',
   },
 
   // Admin Center

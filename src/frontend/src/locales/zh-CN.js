@@ -1033,7 +1033,9 @@ export default {
   // SLURM 集群状态
   slurmCluster: {
     loading: '正在加载集群状态...',
+    loadingClusterStatus: '正在加载集群状态...',
     refresh: '刷新',
+    refreshStatus: '刷新状态',
     clusterHealth: '集群健康度',
     healthLevel: {
       excellent: '优秀',
@@ -1047,7 +1049,16 @@ export default {
       noAvailableNodes: '无可用节点',
       cpuUsageAbove90: 'CPU使用率超过90%',
       memUsageAbove90: '内存使用率超过90%',
-      nodesInErrorState: '存在节点处于错误状态',
+      nodesInErrorState: '存在 {{count}} 个节点处于错误状态',
+    },
+    // 兼容旧的 issues 键名
+    issues: {
+      onlineRateBelow80: '节点在线率低于80%',
+      onlineRateBelow90: '节点在线率低于90%',
+      noAvailableNodes: '无可用节点',
+      cpuUsageAbove90: 'CPU使用率超过90%',
+      memUsageAbove90: '内存使用率超过90%',
+      nodesInErrorState: '存在 {{count}} 个节点处于错误状态',
     },
     totalNodes: '节点总数',
     online: '在线',
@@ -1075,6 +1086,23 @@ export default {
     partitionCount: '个分区',
     noPartitionInfo: '暂无分区信息',
     checkSlurmConfig: '请检查 SLURM 配置或稍后重试',
+    // 分区表格列
+    columns: {
+      partitionName: '分区名称',
+      availability: '可用性',
+      nodeCount: '节点数量',
+      nodeList: '节点列表',
+      state: '状态',
+    },
+    // 状态标签
+    status: {
+      available: '可用',
+      unavailable: '不可用',
+      normal: '正常',
+      offline: '离线',
+      idle: '空闲',
+      allocated: '已分配',
+    },
     partition: {
       name: '分区名称',
       availability: '可用性',
@@ -1098,6 +1126,160 @@ export default {
       recentJobs: '最近作业',
     },
     unknown: '未知',
+  },
+
+  // SLURM 扩缩容管理
+  slurmScaling: {
+    // 页面标题
+    title: 'SLURM 集群扩缩容',
+    subtitle: '管理 SLURM 集群节点的扩容和缩容操作',
+    
+    // 节点表格列
+    nodeColumns: {
+      name: '节点名称',
+      partition: '分区',
+      state: '状态',
+      cpu: 'CPU',
+      memory: '内存(MB)',
+      saltStatus: 'SaltStack状态',
+      actions: '操作',
+    },
+    
+    // 模板表格列
+    templateColumns: {
+      name: '模板名称',
+      cpus: 'CPU核心数',
+      memoryGb: '内存(GB)',
+      diskGb: '磁盘(GB)',
+      os: '操作系统',
+      actions: '操作',
+    },
+    
+    // 作业表格列
+    jobColumns: {
+      id: '作业ID',
+      name: '名称',
+      user: '用户',
+      state: '状态',
+      elapsed: '耗时',
+      nodes: '节点数',
+    },
+    
+    // 状态标签
+    status: {
+      notConfigured: '未配置',
+      unknown: '未知',
+      loading: '加载中',
+      active: '进行中',
+      idle: '空闲',
+      online: '在线',
+      offline: '离线',
+    },
+    
+    // 统计卡片
+    stats: {
+      totalNodes: '总节点数',
+      idleNodes: '空闲节点',
+      runningNodes: '运行节点',
+      runningJobs: '运行作业',
+      pendingJobs: '等待作业',
+      activeTasks: '活跃任务',
+      successNodes: '成功节点',
+      failedNodes: '失败节点',
+    },
+    
+    // 扩缩容
+    scalingStatus: '扩缩容状态',
+    scaleUp: '扩容',
+    scaleDown: '缩容',
+    scaleUpSubmitted: '扩容任务已提交',
+    scaleDownSubmitted: '缩容任务已提交',
+    scaleUpFailed: '扩容失败',
+    scaleDownFailed: '缩容失败',
+    viewTaskProgress: '查看任务进度',
+    
+    // 节点操作
+    clusterNodes: '集群节点',
+    jobStatus: '作业状态',
+    reinitialize: '重新初始化',
+    deleteNode: '删除节点',
+    deleteNodes: '删除节点',
+    confirmDeleteNode: '确定要删除节点',
+    confirmDeleteNodeDesc: '这将停止节点上的服务并从数据库中移除记录',
+    confirmDeleteNodes: '确认删除节点',
+    confirmDeleteNodesDesc: '您确定要删除选中的 {{count}} 个节点吗？',
+    deleteWarning: '⚠️ 警告：此操作将停止节点上的服务并从数据库中移除记录，无法撤销！',
+    confirmDelete: '确认删除',
+    deleteSuccess: '节点 {{name}} 删除成功',
+    deleteFailed: '删除节点失败',
+    deleteError: '删除节点过程发生异常，请稍后重试',
+    batchDeleteSuccess: '成功删除 {{count}} 个节点',
+    batchDeletePartial: '成功删除 {{success}} 个节点，失败 {{fail}} 个',
+    
+    // 节点状态操作
+    selectNodesFirst: '请先选择要操作的节点',
+    selectJobsFirst: '请先选择要操作的作业',
+    confirmOperation: '确认{{action}}节点',
+    confirmOperationDesc: '您确定要将选中的 {{count}} 个节点设置为 {{action}} 状态吗？',
+    nodeOperations: {
+      resume: '恢复 (RESUME)',
+      drain: '排空 (DRAIN)',
+      down: '下线 (DOWN)',
+    },
+    resumeLabel: '恢复',
+    drainLabel: '排空',
+    downLabel: '下线',
+    
+    // 作业操作
+    jobOperations: {
+      cancel: '取消 (CANCEL)',
+      hold: '暂停 (HOLD)',
+      release: '恢复 (RELEASE)',
+      suspend: '挂起 (SUSPEND)',
+      resume: '继续 (RESUME)',
+      requeue: '重新排队 (REQUEUE)',
+    },
+    cancelLabel: '取消',
+    holdLabel: '暂停',
+    releaseLabel: '恢复',
+    suspendLabel: '挂起',
+    resumeLabel2: '继续',
+    requeueLabel: '重新排队',
+    confirmJobOperation: '确认{{action}}作业',
+    confirmJobOperationDesc: '您确定要{{action}}选中的 {{count}} 个作业吗？',
+    
+    // 模板
+    templateCreated: '节点模板创建成功',
+    templateCreateFailed: '创建模板失败',
+    templateDeleted: '模板删除成功',
+    templateDeleteFailed: '删除模板失败',
+    useTemplate: '使用',
+    deleteTemplate: '删除',
+    
+    // SaltStack 集成
+    saltStackStatus: 'SaltStack 状态',
+    saltMasterStatus: 'Master状态',
+    saltApiStatus: 'API状态',
+    saltCommandExecuted: 'SaltStack 命令已执行',
+    saltCommandFailed: '执行命令失败',
+    
+    // 表单验证和提示
+    atLeastOneNode: '请至少填写一个节点',
+    configureSSHAuth: '请配置SSH认证信息（密码或密钥）',
+    unknownError: '未知错误',
+    
+    // 加载状态
+    dataLoadFailed: '数据加载失败',
+    checkBackendService: '请检查后端服务是否正常运行，或者稍后重试',
+    
+    // 通用按钮
+    confirm: '确认',
+    cancel: '取消',
+    ok: '确定',
+    refresh: '刷新',
+    moreActions: '更多操作',
+    nodeActions: '节点操作',
+    jobActions: '作业操作',
   },
 
   // 管理中心
