@@ -480,6 +480,27 @@ export default {
     setGroup: 'Set Group',
     groupSetSuccess: 'Group set successfully',
     groupSetFailed: 'Failed to set group',
+
+    // Delete Tasks History
+    deleteTasksHistory: 'Delete Tasks History',
+    step: 'Step',
+    message: 'Message',
+    output: 'Output',
+    time: 'Time',
+    noLogs: 'No logs',
+    pending: 'Pending',
+    deleting: 'Deleting',
+    completed: 'Completed',
+    cancelled: 'Cancelled',
+    uninstall: 'Remote Uninstall',
+    force: 'Force Delete',
+    retryCount: 'Retry Count',
+    createdAt: 'Created At',
+    noDeleteTasks: 'No delete task records',
+    retryDelete: 'Retry Delete',
+    cancelDelete: 'Cancel Delete',
+    retrySuccess: 'Retry task submitted',
+    cancelSuccess: 'Cancelled successfully',
   },
 
   // Search Related
@@ -1493,6 +1514,8 @@ export default {
       deleteKey: 'Delete Key',
       deleteTitle: 'Delete Minion Key',
       deleteConfirm: 'This will remove the key from Salt Master. Continue?',
+      setGroup: 'Set Group',
+      clearGroup: 'Clear Group',
     },
     // Batch operations
     batch: {

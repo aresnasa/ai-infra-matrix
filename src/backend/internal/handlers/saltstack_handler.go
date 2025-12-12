@@ -271,10 +271,11 @@ type SaltStackStatus struct {
 	SaltVersion       string  `json:"salt_version,omitempty"`
 	ConfigFile        string  `json:"config_file,omitempty"`
 	LogLevel          string  `json:"log_level,omitempty"`
-	CPUUsage          float64 `json:"cpu_usage,omitempty"`
-	MemoryUsage       int     `json:"memory_usage,omitempty"`
-	ActiveConnections int     `json:"active_connections,omitempty"`
-	NetworkBandwidth  float64 `json:"network_bandwidth,omitempty"` // 网络带宽 (Mbps)
+	CPUUsage          float64 `json:"cpu_usage"`          // 不使用 omitempty，确保返回 0
+	MemoryUsage       int     `json:"memory_usage"`       // 不使用 omitempty，确保返回 0
+	ActiveConnections int     `json:"active_connections"` // 不使用 omitempty，确保返回 0
+	NetworkBandwidth  float64 `json:"network_bandwidth"`  // 不使用 omitempty，确保返回 0 (Mbps)
+	MetricsSource     string  `json:"metrics_source"`     // 监控数据来源：victoriametrics/docker/salt/none
 	// 多 Master 高可用字段
 	ActiveMasterURL  string             `json:"active_master_url,omitempty"`
 	MasterCount      int                `json:"master_count,omitempty"`
@@ -1010,24 +1011,28 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 	type metricsResult struct {
 		cpu, mem, conn int
 		bw             float64
+		source         string
 	}
 	metricsChan := make(chan metricsResult, 1)
 	go func() {
 		log.Printf("[SaltStack] 开始获取性能指标...")
-		cpu, mem, conn, bw := h.getPerformanceMetrics(client)
-		log.Printf("[SaltStack] 性能指标获取完成: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps", cpu, mem, conn, bw)
-		metricsChan <- metricsResult{cpu, mem, conn, bw}
+		cpu, mem, conn, bw, src := h.getPerformanceMetrics(client)
+		log.Printf("[SaltStack] 性能指标获取完成: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps, Source=%s", cpu, mem, conn, bw, src)
+		metricsChan <- metricsResult{cpu, mem, conn, bw, src}
 	}()
 
 	// 等待性能指标，最多 10 秒
 	var networkBandwidth float64
+	var metricsSource string = "none"
 	select {
 	case metrics := <-metricsChan:
 		cpuUsage, memoryUsage, activeConnections = metrics.cpu, metrics.mem, metrics.conn
 		networkBandwidth = metrics.bw
-		log.Printf("[SaltStack] 使用获取到的性能指标: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps", cpuUsage, memoryUsage, activeConnections, networkBandwidth)
+		metricsSource = metrics.source
+		log.Printf("[SaltStack] 使用获取到的性能指标: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps, Source=%s", cpuUsage, memoryUsage, activeConnections, networkBandwidth, metricsSource)
 	case <-time.After(10 * time.Second):
 		log.Printf("[SaltStack] 获取性能指标超时（10秒），使用默认值")
+		metricsSource = "timeout"
 	}
 
 	// 构造状态
@@ -1058,6 +1063,7 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		MemoryUsage:       memoryUsage,
 		ActiveConnections: activeConnections,
 		NetworkBandwidth:  networkBandwidth, // 从 Docker API 或 VictoriaMetrics 获取
+		MetricsSource:     metricsSource,    // 监控数据来源
 		// 多 Master 高可用信息
 		ActiveMasterURL:  client.baseURL,
 		MasterCount:      h.masterPool.GetMasterCount(),
@@ -1093,7 +1099,8 @@ func (h *SaltStackHandler) getMasterHealthInfo() []MasterHealthInfo {
 // getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数、网络带宽）
 // 优先级：1. VictoriaMetrics 2. Docker API (Salt Master容器) 3. Salt API
 // 注意：不使用本地系统采集，因为那会采集到 backend 容器的指标，而不是 Salt Master 的指标
-func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int, float64) {
+// 返回值：cpu%, memory%, connections, bandwidth(Mbps), source(数据来源)
+func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int, float64, string) {
 	// 优先从 VictoriaMetrics 获取 Salt Master 监控数据（需要 Categraf 已部署）
 	cpuUsage, memoryUsage, activeConnections, err := h.metricsService.GetSaltStackMetrics()
 	if err != nil {
@@ -1106,7 +1113,7 @@ func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, in
 			cpuUsage, memoryUsage, activeConnections)
 		// 从 VictoriaMetrics 获取网络带宽
 		networkBw := h.getNetworkBandwidthFromMetrics()
-		return cpuUsage, memoryUsage, activeConnections, networkBw
+		return cpuUsage, memoryUsage, activeConnections, networkBw, "victoriametrics"
 	}
 
 	// 回退：尝试通过 Docker API 获取 Salt Master 容器指标
@@ -1114,13 +1121,16 @@ func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, in
 	if dockerCPU > 0 || dockerMem > 0 {
 		log.Printf("[MetricsService] 从Docker API获取到Salt Master容器指标: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps",
 			dockerCPU, dockerMem, dockerConns, dockerBw)
-		return dockerCPU, dockerMem, dockerConns, dockerBw
+		return dockerCPU, dockerMem, dockerConns, dockerBw, "docker"
 	}
 
 	// 最后回退：Salt API 方式获取
 	log.Printf("[MetricsService] VictoriaMetrics和Docker均无数据，回退到Salt API方式获取性能指标")
 	cpu, mem, conn := h.getPerformanceMetricsFromSalt(client)
-	return cpu, mem, conn, 0
+	if cpu > 0 || mem > 0 {
+		return cpu, mem, conn, 0, "salt"
+	}
+	return cpu, mem, conn, 0, "none"
 }
 
 // getNetworkBandwidthFromMetrics 从 VictoriaMetrics 获取网络带宽

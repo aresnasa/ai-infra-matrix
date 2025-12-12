@@ -136,13 +136,31 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 	})
 
 	logger.Info("[MinionDeleteService] 开始处理删除任务")
+	startTime := time.Now()
+
+	// 初始化步骤列表
+	var steps []models.DeleteStep
+
+	// 记录开始日志
+	s.addTaskLog(task.ID, "start", "running", "开始删除任务", "", "")
 
 	// 更新状态为删除中
 	task.MarkAsDeleting()
 	if err := s.db.Save(task).Error; err != nil {
 		logger.WithError(err).Error("更新任务状态失败")
+		s.addTaskLog(task.ID, "update_status", "failed", "更新任务状态失败", "", err.Error())
 		return
 	}
+
+	// 添加状态更新步骤
+	steps = append(steps, models.DeleteStep{
+		Name:        "update_status",
+		Description: "更新任务状态为删除中",
+		Status:      "success",
+		StartTime:   startTime,
+		EndTime:     time.Now(),
+		Duration:    time.Since(startTime).Milliseconds(),
+	})
 
 	// 执行真实删除
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -151,6 +169,9 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 	// 1. 如果设置了 Uninstall 和 SSH 信息，先尝试通过 SSH 卸载远程节点上的 salt-minion
 	if task.Uninstall && task.SSHHost != "" && task.SSHUsername != "" {
 		logger.WithField("host", task.SSHHost).Info("[MinionDeleteService] 尝试通过 SSH 卸载远程 salt-minion")
+
+		uninstallStartTime := time.Now()
+		s.addTaskLog(task.ID, "ssh_uninstall", "running", fmt.Sprintf("开始通过 SSH 卸载远程 salt-minion (%s)", task.SSHHost), "", "")
 
 		config := HostInstallConfig{
 			Host:     task.SSHHost,
@@ -167,33 +188,105 @@ func (s *MinionDeleteService) processDeleteTask(task *models.MinionDeleteTask, w
 		}
 
 		uninstallErr := s.batchInstallService.UninstallSaltMinion(ctx, config)
+		uninstallEndTime := time.Now()
+		uninstallDuration := uninstallEndTime.Sub(uninstallStartTime).Milliseconds()
+
 		if uninstallErr != nil {
 			logger.WithError(uninstallErr).Warn("[MinionDeleteService] SSH 卸载失败，继续删除 Salt Master 密钥")
+			steps = append(steps, models.DeleteStep{
+				Name:        "ssh_uninstall",
+				Description: fmt.Sprintf("通过 SSH 卸载远程 salt-minion (%s)", task.SSHHost),
+				Status:      "failed",
+				Error:       uninstallErr.Error(),
+				StartTime:   uninstallStartTime,
+				EndTime:     uninstallEndTime,
+				Duration:    uninstallDuration,
+			})
+			s.addTaskLog(task.ID, "ssh_uninstall", "failed", "SSH 卸载失败，继续删除 Salt Master 密钥", "", uninstallErr.Error())
 		} else {
 			logger.Info("[MinionDeleteService] SSH 卸载 salt-minion 成功")
+			steps = append(steps, models.DeleteStep{
+				Name:        "ssh_uninstall",
+				Description: fmt.Sprintf("通过 SSH 卸载远程 salt-minion (%s)", task.SSHHost),
+				Status:      "success",
+				Output:      "salt-minion 卸载成功",
+				StartTime:   uninstallStartTime,
+				EndTime:     uninstallEndTime,
+				Duration:    uninstallDuration,
+			})
+			s.addTaskLog(task.ID, "ssh_uninstall", "success", "SSH 卸载 salt-minion 成功", "salt-minion 卸载成功", "")
 		}
 	}
 
 	// 2. 从 Salt Master 删除密钥
+	deleteKeyStartTime := time.Now()
+	s.addTaskLog(task.ID, "delete_key", "running", fmt.Sprintf("开始从 Salt Master 删除密钥: %s", task.MinionID), "", "")
+
 	err := s.saltService.DeleteMinionWithForce(ctx, task.MinionID, task.Force)
+	deleteKeyEndTime := time.Now()
+	deleteKeyDuration := deleteKeyEndTime.Sub(deleteKeyStartTime).Milliseconds()
+
 	if err != nil {
 		task.MarkAsFailed(err.Error())
+		steps = append(steps, models.DeleteStep{
+			Name:        "delete_key",
+			Description: fmt.Sprintf("从 Salt Master 删除密钥: %s", task.MinionID),
+			Status:      "failed",
+			Error:       err.Error(),
+			StartTime:   deleteKeyStartTime,
+			EndTime:     deleteKeyEndTime,
+			Duration:    deleteKeyDuration,
+		})
+		task.SetSteps(steps)
+		task.Duration = time.Since(startTime).Milliseconds()
 		s.db.Save(task)
+		s.addTaskLog(task.ID, "delete_key", "failed", "从 Salt Master 删除 Minion 密钥失败", "", err.Error())
 		logger.WithError(err).Warn("从 Salt Master 删除 Minion 密钥失败")
 		return
 	}
 
+	steps = append(steps, models.DeleteStep{
+		Name:        "delete_key",
+		Description: fmt.Sprintf("从 Salt Master 删除密钥: %s", task.MinionID),
+		Status:      "success",
+		Output:      "密钥删除成功",
+		StartTime:   deleteKeyStartTime,
+		EndTime:     deleteKeyEndTime,
+		Duration:    deleteKeyDuration,
+	})
+	s.addTaskLog(task.ID, "delete_key", "success", "从 Salt Master 删除 Minion 密钥成功", "密钥删除成功", "")
+
 	// 删除成功
 	task.MarkAsCompleted()
+	task.SetSteps(steps)
+	task.Duration = time.Since(startTime).Milliseconds()
 	if err := s.db.Save(task).Error; err != nil {
 		logger.WithError(err).Error("更新任务完成状态失败")
+		s.addTaskLog(task.ID, "complete", "failed", "更新任务完成状态失败", "", err.Error())
 		return
 	}
+	s.addTaskLog(task.ID, "complete", "success", "删除任务完成", fmt.Sprintf("总耗时: %dms", task.Duration), "")
 
 	// 3. 清除 Minions 缓存，确保前端获取最新列表
 	s.clearMinionsCache()
 
 	logger.Info("[MinionDeleteService] Minion 删除成功")
+}
+
+// addTaskLog 添加任务日志
+func (s *MinionDeleteService) addTaskLog(taskID uint, step, status, message, output, errMsg string) {
+	log := models.MinionDeleteLog{
+		TaskID:    taskID,
+		Step:      step,
+		Status:    status,
+		Message:   message,
+		Output:    output,
+		Error:     errMsg,
+		CreatedAt: time.Now(),
+	}
+	if err := s.db.Create(&log).Error; err != nil {
+		logrus.WithError(err).WithField("task_id", taskID).Error("添加删除任务日志失败")
+	}
 }
 
 // clearMinionsCache 清除 Minions 缓存
@@ -442,6 +535,33 @@ func (s *MinionDeleteService) CleanupCompletedTasks(retentionDays int) (int64, e
 	result := s.db.Where("status = ? AND completed_at < ?", models.MinionDeleteStatusCompleted, cutoff).
 		Delete(&models.MinionDeleteTask{})
 	return result.RowsAffected, result.Error
+}
+
+// GetDeleteTaskLogs 获取删除任务的详细日志
+func (s *MinionDeleteService) GetDeleteTaskLogs(minionID string) ([]models.MinionDeleteLog, error) {
+	// 先找到任务
+	var task models.MinionDeleteTask
+	if err := s.db.Where("minion_id = ?", minionID).Order("created_at DESC").First(&task).Error; err != nil {
+		return nil, fmt.Errorf("未找到删除任务: %w", err)
+	}
+
+	// 获取任务日志
+	var logs []models.MinionDeleteLog
+	if err := s.db.Where("task_id = ?", task.ID).Order("created_at ASC").Find(&logs).Error; err != nil {
+		return nil, fmt.Errorf("获取任务日志失败: %w", err)
+	}
+
+	return logs, nil
+}
+
+// GetDeleteTaskWithLogs 获取删除任务及其详细日志
+func (s *MinionDeleteService) GetDeleteTaskWithLogs(minionID string) (*models.MinionDeleteTask, error) {
+	var task models.MinionDeleteTask
+	if err := s.db.Preload("Logs").Where("minion_id = ?", minionID).
+		Order("created_at DESC").First(&task).Error; err != nil {
+		return nil, fmt.Errorf("未找到删除任务: %w", err)
+	}
+	return &task, nil
 }
 
 // Stop 停止服务

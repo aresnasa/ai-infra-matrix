@@ -258,6 +258,7 @@ func (c *SaltStackClientController) RegisterRoutes(api *gin.RouterGroup) {
 		// 删除任务管理
 		saltstack.GET("/minion/delete-tasks", c.ListDeleteTasks)
 		saltstack.GET("/minion/delete-tasks/:minionId", c.GetDeleteTaskStatus)
+		saltstack.GET("/minion/delete-tasks/:minionId/logs", c.GetDeleteTaskLogs)
 		saltstack.POST("/minion/delete-tasks/:minionId/cancel", c.CancelDeleteTask)
 		saltstack.POST("/minion/delete-tasks/:minionId/retry", c.RetryDeleteTask)
 		saltstack.GET("/minion/pending-deletes", c.GetPendingDeleteMinions)
@@ -1031,6 +1032,41 @@ func (c *SaltStackClientController) GetDeleteTaskStatus(ctx *gin.Context) {
 	})
 }
 
+// GetDeleteTaskLogs 获取删除任务日志
+// @Summary 获取删除任务日志
+// @Description 根据 Minion ID 获取删除任务的详细日志
+// @Tags SaltStack
+// @Produce json
+// @Param minionId path string true "Minion ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/minion/delete-tasks/{minionId}/logs [get]
+func (c *SaltStackClientController) GetDeleteTaskLogs(ctx *gin.Context) {
+	minionID := ctx.Param("minionId")
+	if minionID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Minion ID is required",
+		})
+		return
+	}
+
+	deleteSvc := services.GetMinionDeleteService()
+	logs, err := deleteSvc.GetDeleteTaskLogs(minionID)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("No logs found for minion %s: %v", minionID, err),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    logs,
+		"count":   len(logs),
+	})
+}
+
 // CancelDeleteTask 取消删除任务
 // @Summary 取消删除任务
 // @Description 取消待处理或失败的删除任务
@@ -1155,6 +1191,7 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 
 	var req UninstallMinionRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		logrus.WithError(err).Error("[UninstallMinion] Failed to bind JSON request")
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   "Invalid request format",
@@ -1162,6 +1199,16 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 		})
 		return
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"minion_id": minionID,
+		"host":      req.Host,
+		"port":      req.Port,
+		"username":  req.Username,
+		"use_sudo":  req.UseSudo,
+		"has_pass":  req.Password != "",
+		"key_path":  req.KeyPath,
+	}).Info("[UninstallMinion] Received uninstall request")
 
 	if req.Port == 0 {
 		req.Port = 22
@@ -1180,6 +1227,10 @@ func (c *SaltStackClientController) UninstallMinion(ctx *gin.Context) {
 
 	err := c.batchInstallService.UninstallSaltMinion(ctx.Request.Context(), config)
 	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"minion_id": minionID,
+			"host":      req.Host,
+		}).Error("[UninstallMinion] Uninstall failed")
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   fmt.Sprintf("Failed to uninstall minion: %v", err),

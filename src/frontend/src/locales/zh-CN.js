@@ -480,6 +480,27 @@ export default {
     setGroup: '设置分组',
     groupSetSuccess: '分组设置成功',
     groupSetFailed: '设置分组失败',
+
+    // 删除任务历史
+    deleteTasksHistory: '删除任务历史',
+    step: '步骤',
+    message: '消息',
+    output: '输出',
+    time: '时间',
+    noLogs: '暂无日志',
+    pending: '待处理',
+    deleting: '删除中',
+    completed: '已完成',
+    cancelled: '已取消',
+    uninstall: '远程卸载',
+    force: '强制删除',
+    retryCount: '重试次数',
+    createdAt: '创建时间',
+    noDeleteTasks: '暂无删除任务记录',
+    retryDelete: '重试删除',
+    cancelDelete: '取消删除',
+    retrySuccess: '重试任务已提交',
+    cancelSuccess: '取消成功',
   },
 
   // 搜索相关
@@ -1500,6 +1521,8 @@ export default {
       deleteKey: '删除密钥',
       deleteTitle: '删除 Minion 密钥',
       deleteConfirm: '此操作将从 Salt Master 删除该 Minion 的密钥，是否继续？',
+      setGroup: '设置分组',
+      clearGroup: '清除分组',
     },
     // 批量操作
     batch: {

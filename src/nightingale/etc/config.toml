@@ -24,7 +24,9 @@ Port = 17000
 # If you deploy Nightingale under a sub-path like /n9e/,
 # set BasePath = "/n9e"
 # Leave empty for root path deployment
-BasePath = ""
+# IMPORTANT: When deployed behind Nginx at /nightingale/, set BasePath = "/nightingale"
+# This must match VITE_PREFIX used during frontend build
+BasePath = "/nightingale"
 # https cert file path
 CertFile = ""
 # https key file path

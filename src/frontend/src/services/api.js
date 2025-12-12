@@ -643,6 +643,7 @@ export const saltStackAPI = {
   // 删除任务管理（软删除 + 异步真实删除）
   getPendingDeleteMinions: () => api.get('/saltstack/minion/pending-deletes'),
   getDeleteTaskStatus: (minionId) => api.get(`/saltstack/minion/delete-tasks/${minionId}`),
+  getDeleteTaskLogs: (minionId) => api.get(`/saltstack/minion/delete-tasks/${minionId}/logs`),
   listDeleteTasks: (params) => api.get('/saltstack/minion/delete-tasks', { params }),
   cancelDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/cancel`),
   retryDeleteTask: (minionId) => api.post(`/saltstack/minion/delete-tasks/${minionId}/retry`),

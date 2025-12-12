@@ -826,20 +826,35 @@ func (s *BatchInstallService) connectSSH(config HostInstallConfig) (*ssh.Client,
 	// 密码认证
 	if config.Password != "" {
 		authMethods = append(authMethods, ssh.Password(config.Password))
+		logrus.WithField("host", config.Host).Debug("[connectSSH] Password authentication enabled")
 	}
 
 	// 密钥认证
 	if config.KeyPath != "" {
 		key, err := os.ReadFile(config.KeyPath)
-		if err == nil {
+		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"host":     config.Host,
+				"key_path": config.KeyPath,
+				"error":    err.Error(),
+			}).Warn("[connectSSH] Failed to read key file")
+		} else {
 			signer, err := ssh.ParsePrivateKey(key)
-			if err == nil {
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"host":     config.Host,
+					"key_path": config.KeyPath,
+					"error":    err.Error(),
+				}).Warn("[connectSSH] Failed to parse private key")
+			} else {
 				authMethods = append(authMethods, ssh.PublicKeys(signer))
+				logrus.WithField("host", config.Host).Debug("[connectSSH] Key authentication enabled")
 			}
 		}
 	}
 
 	if len(authMethods) == 0 {
+		logrus.WithField("host", config.Host).Error("[connectSSH] No authentication method available")
 		return nil, fmt.Errorf("no authentication method available")
 	}
 
@@ -851,7 +866,24 @@ func (s *BatchInstallService) connectSSH(config HostInstallConfig) (*ssh.Client,
 	}
 
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-	return ssh.Dial("tcp", addr, sshConfig)
+	logrus.WithFields(logrus.Fields{
+		"host":     config.Host,
+		"port":     config.Port,
+		"username": config.Username,
+		"addr":     addr,
+	}).Debug("[connectSSH] Attempting SSH connection")
+
+	client, err := ssh.Dial("tcp", addr, sshConfig)
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"host":  config.Host,
+			"addr":  addr,
+			"error": err.Error(),
+		}).Error("[connectSSH] SSH dial failed")
+		return nil, err
+	}
+
+	return client, nil
 }
 
 // detectOS 检测操作系统
@@ -1506,18 +1538,33 @@ func (s *BatchInstallService) BatchTestSSHConnections(ctx context.Context, req S
 
 // UninstallSaltMinion 卸载 Salt Minion
 func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config HostInstallConfig) error {
+	logrus.WithFields(logrus.Fields{
+		"host":     config.Host,
+		"port":     config.Port,
+		"username": config.Username,
+		"use_sudo": config.UseSudo,
+	}).Info("[UninstallMinion] Starting uninstall process")
+
 	// 建立 SSH 连接
 	client, err := s.connectSSH(config)
 	if err != nil {
+		logrus.WithError(err).WithField("host", config.Host).Error("[UninstallMinion] SSH connection failed")
 		return fmt.Errorf("SSH connection failed: %v", err)
 	}
 	defer client.Close()
+	logrus.WithField("host", config.Host).Info("[UninstallMinion] SSH connection established")
 
 	// 检测操作系统
 	osInfo, err := s.detectOS(client)
 	if err != nil {
+		logrus.WithError(err).WithField("host", config.Host).Error("[UninstallMinion] OS detection failed")
 		return fmt.Errorf("OS detection failed: %v", err)
 	}
+	logrus.WithFields(logrus.Fields{
+		"host":    config.Host,
+		"os":      osInfo.OS,
+		"version": osInfo.Version,
+	}).Info("[UninstallMinion] OS detected")
 
 	// 确定 sudo 前缀 - 使用标准 sudo 格式
 	sudoPrefix := ""
@@ -1532,12 +1579,15 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 		OS:         osInfo.OS,
 	})
 	if err != nil {
+		logrus.WithError(err).WithField("host", config.Host).Error("[UninstallMinion] Script generation failed")
 		return fmt.Errorf("failed to generate uninstall script: %v", err)
 	}
+	logrus.WithField("host", config.Host).Info("[UninstallMinion] Uninstall script generated")
 
 	// 执行卸载命令
 	session, err := client.NewSession()
 	if err != nil {
+		logrus.WithError(err).WithField("host", config.Host).Error("[UninstallMinion] Failed to create SSH session")
 		return fmt.Errorf("failed to create session: %v", err)
 	}
 	defer session.Close()
@@ -1546,11 +1596,20 @@ func (s *BatchInstallService) UninstallSaltMinion(ctx context.Context, config Ho
 	session.Stdout = &output
 	session.Stderr = &output
 
+	logrus.WithField("host", config.Host).Info("[UninstallMinion] Executing uninstall script...")
 	if err := session.Run(uninstallCmd); err != nil {
+		logrus.WithFields(logrus.Fields{
+			"host":   config.Host,
+			"error":  err.Error(),
+			"output": output.String(),
+		}).Error("[UninstallMinion] Script execution failed")
 		return fmt.Errorf("uninstall failed: %v, output: %s", err, output.String())
 	}
 
-	logrus.WithField("host", config.Host).Info("Salt Minion uninstalled successfully")
+	logrus.WithFields(logrus.Fields{
+		"host":   config.Host,
+		"output": output.String(),
+	}).Info("[UninstallMinion] Salt Minion uninstalled successfully")
 	return nil
 }
 

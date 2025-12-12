@@ -28,7 +28,8 @@ import {
   CopyOutlined,
   TeamOutlined,
   EditOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  CloseCircleOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
@@ -176,6 +177,13 @@ const SaltStackDashboard = () => {
   const [installTasksTotal, setInstallTasksTotal] = useState(0);
   const [installTasksPage, setInstallTasksPage] = useState({ current: 1, pageSize: 10 });
   const [expandedTaskId, setExpandedTaskId] = useState(null);
+
+  // 删除任务历史状态
+  const [deleteTasks, setDeleteTasks] = useState([]);
+  const [deleteTasksLoading, setDeleteTasksLoading] = useState(false);
+  const [deleteTasksTotal, setDeleteTasksTotal] = useState(0);
+  const [expandedDeleteTaskId, setExpandedDeleteTaskId] = useState(null);
+  const [deleteTaskLogs, setDeleteTaskLogs] = useState({});
 
   // 自动刷新状态
   const [autoRefreshMinions, setAutoRefreshMinions] = useState(false);
@@ -328,6 +336,32 @@ const SaltStackDashboard = () => {
       setInstallTasksLoading(false);
     }
   }, [installTasksPage.current, installTasksPage.pageSize]);
+
+  // 加载删除任务历史
+  const loadDeleteTasks = useCallback(async (limit = 100) => {
+    setDeleteTasksLoading(true);
+    try {
+      const response = await saltStackAPI.listDeleteTasks({ limit });
+      const data = response.data?.data || [];
+      setDeleteTasks(data);
+      setDeleteTasksTotal(response.data?.count || data.length);
+    } catch (e) {
+      console.error('加载删除任务历史失败', e);
+    } finally {
+      setDeleteTasksLoading(false);
+    }
+  }, []);
+
+  // 加载删除任务日志
+  const loadDeleteTaskLogs = async (minionId) => {
+    try {
+      const response = await saltStackAPI.getDeleteTaskLogs(minionId);
+      const logs = response.data?.data || [];
+      setDeleteTaskLogs(prev => ({ ...prev, [minionId]: logs }));
+    } catch (e) {
+      console.error('加载删除任务日志失败', e);
+    }
+  };
 
   // 计算按分组筛选后的 minions
   const filteredMinions = useMemo(() => {
@@ -1787,7 +1821,10 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         message.error(resp.data?.error || t('saltstack.uninstallMinionFailed'));
       }
     } catch (e) {
-      message.error(t('saltstack.uninstallFailed') + ': ' + (e?.response?.data?.message || e.message));
+      // 优先显示后端返回的错误信息
+      const errorDetail = e?.response?.data?.error || e?.response?.data?.message || e.message;
+      message.error(t('saltstack.uninstallFailed') + ': ' + errorDetail);
+      console.error('Uninstall error:', e?.response?.data || e);
     }
   };
 
@@ -2051,6 +2088,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               onChange={(key) => {
                 if (key === 'install-tasks' && installTasks.length === 0 && !installTasksLoading) {
                   loadInstallTasks(1);
+                }
+                if (key === 'delete-tasks' && deleteTasks.length === 0 && !deleteTasksLoading) {
+                  loadDeleteTasks(1);
                 }
               }}
             >
@@ -2889,6 +2929,251 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         </div>
                       </div>
                     )}
+                  </>
+                )}
+              </TabPane>
+
+              <TabPane tab={t('saltstack.deleteTasksHistory', '删除任务历史')} key="delete-tasks" icon={<DeleteOutlined />}>
+                {deleteTasksLoading && deleteTasks.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16 }}>{t('common.loading')}...</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text type="secondary">{t('saltstack.total', { count: deleteTasksTotal })}</Text>
+                      <Space>
+                        <Button 
+                          icon={<ReloadOutlined />} 
+                          onClick={() => loadDeleteTasks()} 
+                          loading={deleteTasksLoading}
+                        >
+                          {t('common.refresh')}
+                        </Button>
+                      </Space>
+                    </div>
+                    <Table
+                      dataSource={deleteTasks}
+                      rowKey="id"
+                      loading={deleteTasksLoading}
+                      size="small"
+                      pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        showTotal: (total) => t('saltstack.total', { count: total }),
+                      }}
+                      expandable={{
+                        expandedRowKeys: expandedDeleteTaskId ? [expandedDeleteTaskId] : [],
+                        onExpand: (expanded, record) => {
+                          setExpandedDeleteTaskId(expanded ? record.id : null);
+                          if (expanded && record.minion_id) {
+                            loadDeleteTaskLogs(record.minion_id);
+                          }
+                        },
+                        expandedRowRender: (record) => (
+                          <div style={{ padding: '8px 0' }}>
+                            <Table
+                              dataSource={deleteTaskLogs[record.minion_id] || []}
+                              rowKey="id"
+                              size="small"
+                              pagination={false}
+                              columns={[
+                                {
+                                  title: t('saltstack.step', '步骤'),
+                                  dataIndex: 'step',
+                                  key: 'step',
+                                  width: 120,
+                                },
+                                {
+                                  title: t('saltstack.taskStatus'),
+                                  dataIndex: 'status',
+                                  key: 'status',
+                                  width: 80,
+                                  render: (status) => (
+                                    <Tag 
+                                      color={status === 'success' ? 'green' : status === 'failed' ? 'red' : 'blue'}
+                                      icon={status === 'success' ? <CheckCircleOutlined /> : status === 'failed' ? <ExclamationCircleOutlined /> : <SyncOutlined spin />}
+                                    >
+                                      {status === 'success' ? t('saltstack.success') : status === 'failed' ? t('saltstack.failed') : t('saltstack.inProgress')}
+                                    </Tag>
+                                  ),
+                                },
+                                {
+                                  title: t('saltstack.message', '消息'),
+                                  dataIndex: 'message',
+                                  key: 'message',
+                                },
+                                {
+                                  title: t('saltstack.output', '输出'),
+                                  dataIndex: 'output',
+                                  key: 'output',
+                                  ellipsis: true,
+                                },
+                                {
+                                  title: t('saltstack.error', '错误'),
+                                  dataIndex: 'error',
+                                  key: 'error',
+                                  ellipsis: true,
+                                  render: (error) => error ? <Text type="danger">{error}</Text> : '-',
+                                },
+                                {
+                                  title: t('saltstack.time', '时间'),
+                                  dataIndex: 'created_at',
+                                  key: 'created_at',
+                                  width: 170,
+                                  render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                                },
+                              ]}
+                              locale={{
+                                emptyText: t('saltstack.noLogs', '暂无日志'),
+                              }}
+                            />
+                          </div>
+                        ),
+                      }}
+                      columns={[
+                        {
+                          title: t('saltstack.minionId'),
+                          dataIndex: 'minion_id',
+                          key: 'minion_id',
+                          render: (minionId) => <Text code>{minionId}</Text>,
+                        },
+                        {
+                          title: t('saltstack.taskStatus'),
+                          dataIndex: 'status',
+                          key: 'status',
+                          width: 120,
+                          filters: [
+                            { text: t('saltstack.pending', '待处理'), value: 'pending' },
+                            { text: t('saltstack.deleting', '删除中'), value: 'deleting' },
+                            { text: t('saltstack.completed', '已完成'), value: 'completed' },
+                            { text: t('saltstack.failed'), value: 'failed' },
+                            { text: t('saltstack.cancelled', '已取消'), value: 'cancelled' },
+                          ],
+                          onFilter: (value, record) => record.status === value,
+                          render: (status) => {
+                            const statusConfig = {
+                              pending: { color: 'orange', text: t('saltstack.pending', '待处理') },
+                              deleting: { color: 'processing', text: t('saltstack.deleting', '删除中') },
+                              completed: { color: 'green', text: t('saltstack.completed', '已完成') },
+                              failed: { color: 'red', text: t('saltstack.failed') },
+                              cancelled: { color: 'default', text: t('saltstack.cancelled', '已取消') },
+                            };
+                            const config = statusConfig[status] || { color: 'default', text: status };
+                            return <Tag color={config.color}>{config.text}</Tag>;
+                          },
+                        },
+                        {
+                          title: t('saltstack.uninstall', '远程卸载'),
+                          dataIndex: 'uninstall',
+                          key: 'uninstall',
+                          width: 100,
+                          render: (uninstall) => uninstall ? <Tag color="blue">{t('common.yes', '是')}</Tag> : <Tag>{t('common.no', '否')}</Tag>,
+                        },
+                        {
+                          title: t('saltstack.force', '强制删除'),
+                          dataIndex: 'force',
+                          key: 'force',
+                          width: 100,
+                          render: (force) => force ? <Tag color="orange">{t('common.yes', '是')}</Tag> : <Tag>{t('common.no', '否')}</Tag>,
+                        },
+                        {
+                          title: t('saltstack.retryCount', '重试次数'),
+                          dataIndex: 'retry_count',
+                          key: 'retry_count',
+                          width: 100,
+                          render: (count, record) => `${count} / ${record.max_retries}`,
+                        },
+                        {
+                          title: t('saltstack.createdAt', '创建时间'),
+                          dataIndex: 'created_at',
+                          key: 'created_at',
+                          width: 170,
+                          sorter: (a, b) => new Date(a.created_at) - new Date(b.created_at),
+                          defaultSortOrder: 'descend',
+                          render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                        },
+                        {
+                          title: t('saltstack.duration'),
+                          dataIndex: 'duration',
+                          key: 'duration',
+                          width: 100,
+                          render: (duration, record) => {
+                            if (record.status === 'deleting' || record.status === 'pending') {
+                              return <Tag color="processing">{t('saltstack.inProgress')}</Tag>;
+                            }
+                            if (!duration) return '-';
+                            if (duration < 1000) return `${duration}ms`;
+                            const seconds = Math.floor(duration / 1000);
+                            if (seconds < 60) return `${seconds}s`;
+                            const minutes = Math.floor(seconds / 60);
+                            const secs = seconds % 60;
+                            return `${minutes}m ${secs}s`;
+                          },
+                        },
+                        {
+                          title: t('saltstack.error', '错误'),
+                          dataIndex: 'error_message',
+                          key: 'error_message',
+                          ellipsis: true,
+                          render: (error) => error ? (
+                            <Tooltip title={error}>
+                              <Text type="danger" ellipsis style={{ maxWidth: 200 }}>{error}</Text>
+                            </Tooltip>
+                          ) : '-',
+                        },
+                        {
+                          title: t('common.actions', '操作'),
+                          key: 'actions',
+                          width: 120,
+                          render: (_, record) => (
+                            <Space>
+                              {record.status === 'failed' && record.retry_count < record.max_retries && (
+                                <Tooltip title={t('saltstack.retryDelete', '重试删除')}>
+                                  <Button 
+                                    type="link" 
+                                    size="small" 
+                                    icon={<ReloadOutlined />}
+                                    onClick={async () => {
+                                      try {
+                                        await saltStackAPI.retryDeleteTask(record.minion_id);
+                                        message.success(t('saltstack.retrySuccess', '重试任务已提交'));
+                                        loadDeleteTasks();
+                                      } catch (e) {
+                                        message.error(e.response?.data?.error || t('common.error'));
+                                      }
+                                    }}
+                                  />
+                                </Tooltip>
+                              )}
+                              {(record.status === 'pending' || record.status === 'failed') && (
+                                <Tooltip title={t('saltstack.cancelDelete', '取消删除')}>
+                                  <Button 
+                                    type="link" 
+                                    size="small" 
+                                    danger
+                                    icon={<CloseCircleOutlined />}
+                                    onClick={async () => {
+                                      try {
+                                        await saltStackAPI.cancelDeleteTask(record.minion_id);
+                                        message.success(t('saltstack.cancelSuccess', '取消成功'));
+                                        loadDeleteTasks();
+                                      } catch (e) {
+                                        message.error(e.response?.data?.error || t('common.error'));
+                                      }
+                                    }}
+                                  />
+                                </Tooltip>
+                              )}
+                            </Space>
+                          ),
+                        },
+                      ]}
+                      locale={{
+                        emptyText: t('saltstack.noDeleteTasks', '暂无删除任务记录'),
+                      }}
+                    />
                   </>
                 )}
               </TabPane>
