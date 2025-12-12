@@ -54,9 +54,15 @@ echo "    Cleaning old configuration files..."
 {{.SudoPrefix}}rm -f /etc/salt/minion.d/master.conf 2>/dev/null || true
 {{.SudoPrefix}}rm -f /etc/salt/minion.d/*.conf 2>/dev/null || true
 
-# 清理旧的 PKI 密钥（确保使用新的 master 密钥）
-echo "    Cleaning old PKI keys..."
-{{.SudoPrefix}}rm -rf /etc/salt/pki/minion/* 2>/dev/null || true
+# 彻底清理旧的 PKI 密钥（确保使用新的 master 密钥）
+# 删除整个目录内容，包括 minion_master.pub 等所有文件
+echo "    Cleaning old PKI keys (including master public key)..."
+if [ -d /etc/salt/pki/minion ]; then
+    {{.SudoPrefix}}find /etc/salt/pki/minion -type f -delete 2>/dev/null || true
+    {{.SudoPrefix}}rm -rf /etc/salt/pki/minion/* 2>/dev/null || true
+fi
+{{.SudoPrefix}}mkdir -p /etc/salt/pki/minion
+{{.SudoPrefix}}chmod 700 /etc/salt/pki/minion
 
 # 创建临时配置文件，然后用 sudo 移动（避免管道与 sudo 的兼容性问题）
 TEMP_MINION_CONF=$(mktemp)

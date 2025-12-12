@@ -750,6 +750,20 @@ render_all_templates() {
                 fi
             done < <(find "$includes_dir" -name "*.tpl" -print0 2>/dev/null)
         fi
+        
+        # Render stream.d configs (Salt Master HA)
+        local stream_dir="$nginx_template_dir/stream.d"
+        if [[ -d "$stream_dir" ]]; then
+            mkdir -p "$nginx_output_dir/stream.d"
+            while IFS= read -r -d '' tpl_file; do
+                local out_file="$nginx_output_dir/stream.d/$(basename "${tpl_file%.tpl}")"
+                if render_template "$tpl_file" "$out_file"; then
+                    success_count=$((success_count + 1))
+                else
+                    fail_count=$((fail_count + 1))
+                fi
+            done < <(find "$stream_dir" -name "*.tpl" -print0 2>/dev/null)
+        fi
     fi
     
     # ===========================================

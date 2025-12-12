@@ -27,6 +27,7 @@ import {
   HddOutlined
 } from '@ant-design/icons';
 import { slurmAPI, saltStackAPI } from '../services/api';
+import { useI18n } from '../hooks/useI18n';
 
 const { Text, Title } = Typography;
 
@@ -39,6 +40,7 @@ const { Text, Title } = Typography;
  * 4. 集群操作历史
  */
 const SlurmClusterStatus = () => {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [clusterSummary, setClusterSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -112,14 +114,14 @@ const SlurmClusterStatus = () => {
       const onlineRate = onlineNodes / totalNodes;
       if (onlineRate < 0.8) {
         score -= 20;
-        issues.push('节点在线率低于80%');
+        issues.push(t('slurmCluster.issues.onlineRateBelow80'));
       } else if (onlineRate < 0.9) {
         score -= 10;
-        issues.push('节点在线率低于90%');
+        issues.push(t('slurmCluster.issues.onlineRateBelow90'));
       }
     } else {
       score -= 30;
-      issues.push('没有可用节点');
+      issues.push(t('slurmCluster.issues.noAvailableNodes'));
     }
 
     // 资源使用率
@@ -129,12 +131,12 @@ const SlurmClusterStatus = () => {
       
       if (cpuUsage > 0.9) {
         score -= 15;
-        issues.push('CPU使用率超过90%');
+        issues.push(t('slurmCluster.issues.cpuUsageAbove90'));
       }
       
       if (memUsage > 0.9) {
         score -= 15;
-        issues.push('内存使用率超过90%');
+        issues.push(t('slurmCluster.issues.memUsageAbove90'));
       }
     }
 
@@ -147,7 +149,7 @@ const SlurmClusterStatus = () => {
     
     if (errorNodes > 0) {
       score -= errorNodes * 5;
-      issues.push(`${errorNodes}个节点处于错误状态`);
+      issues.push(t('slurmCluster.issues.nodesInErrorState', { count: errorNodes }));
     }
 
     // 确定健康等级
@@ -200,44 +202,44 @@ const SlurmClusterStatus = () => {
   // 分区表格列
   const partitionColumns = [
     {
-      title: '分区名',
+      title: t('slurmCluster.columns.partitionName'),
       dataIndex: 'name',
       key: 'name',
       render: (name) => <Text strong>{name}</Text>
     },
     {
-      title: '可用性',
+      title: t('slurmCluster.columns.availability'),
       dataIndex: 'available',
       key: 'available',
       render: (available) => (
         <Tag color={available === 'up' ? 'green' : 'red'}>
-          {available === 'up' ? '可用' : '不可用'}
+          {available === 'up' ? t('slurmCluster.status.available') : t('slurmCluster.status.unavailable')}
         </Tag>
       )
     },
     {
-      title: '节点数',
+      title: t('slurmCluster.columns.nodeCount'),
       dataIndex: 'nodes',
       key: 'nodes',
       render: (nodes) => <Text>{nodes || 0}</Text>
     },
     {
-      title: '节点列表',
+      title: t('slurmCluster.columns.nodeList'),
       dataIndex: 'node_list',
       key: 'node_list',
       ellipsis: true,
       render: (list) => list || '-'
     },
     {
-      title: '状态',
+      title: t('slurmCluster.columns.state'),
       dataIndex: 'state',
       key: 'state',
       render: (state) => {
         const stateMap = {
-          'up': { color: 'green', text: '正常' },
-          'down': { color: 'red', text: '下线' },
-          'idle': { color: 'blue', text: '空闲' },
-          'alloc': { color: 'orange', text: '已分配' }
+          'up': { color: 'green', text: t('slurmCluster.status.normal') },
+          'down': { color: 'red', text: t('slurmCluster.status.offline') },
+          'idle': { color: 'blue', text: t('slurmCluster.status.idle') },
+          'alloc': { color: 'orange', text: t('slurmCluster.status.allocated') }
         };
         const info = stateMap[state?.toLowerCase()] || { color: 'default', text: state };
         return <Tag color={info.color}>{info.text}</Tag>;
@@ -248,7 +250,7 @@ const SlurmClusterStatus = () => {
   if (loading) {
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
-        <Spin size="large" tip="加载集群状态..." />
+        <Spin size="large" tip={t('slurmCluster.loadingClusterStatus')} />
       </div>
     );
   }
@@ -265,7 +267,7 @@ const SlurmClusterStatus = () => {
           }}
           loading={loading}
         >
-          刷新状态
+          {t('slurmCluster.refreshStatus')}
         </Button>
       </div>
 
@@ -274,7 +276,7 @@ const SlurmClusterStatus = () => {
         title={
           <Space>
             <ClusterOutlined />
-            <span>集群健康度</span>
+            <span>{t('slurmCluster.clusterHealth')}</span>
           </Space>
         }
       >
@@ -289,10 +291,10 @@ const SlurmClusterStatus = () => {
               />
               <div style={{ marginTop: '16px' }}>
                 <Tag color={clusterHealth.color} style={{ fontSize: '14px', padding: '4px 12px' }}>
-                  {clusterHealth.level === 'excellent' && '优秀'}
-                  {clusterHealth.level === 'good' && '良好'}
-                  {clusterHealth.level === 'warning' && '警告'}
-                  {clusterHealth.level === 'critical' && '严重'}
+                  {clusterHealth.level === 'excellent' && t('slurmCluster.healthLevel.excellent')}
+                  {clusterHealth.level === 'good' && t('slurmCluster.healthLevel.good')}
+                  {clusterHealth.level === 'warning' && t('slurmCluster.healthLevel.warning')}
+                  {clusterHealth.level === 'critical' && t('slurmCluster.healthLevel.critical')}
                 </Tag>
               </div>
             </div>
@@ -304,9 +306,9 @@ const SlurmClusterStatus = () => {
                   color: 'green',
                   children: (
                     <div>
-                      <Text strong>节点总数:</Text> {nodeStats.total}
+                      <Text strong>{t('slurmCluster.totalNodes')}:</Text> {nodeStats.total}
                       <Text type="secondary" style={{ marginLeft: '16px' }}>
-                        在线: {nodeStats.idle + nodeStats.allocated + nodeStats.mixed}
+                        {t('slurmCluster.online')}: {nodeStats.idle + nodeStats.allocated + nodeStats.mixed}
                       </Text>
                     </div>
                   )
@@ -315,7 +317,7 @@ const SlurmClusterStatus = () => {
                   color: nodeStats.down > 0 || nodeStats.drain > 0 ? 'red' : 'green',
                   children: (
                     <div>
-                      <Text strong>异常节点:</Text> {nodeStats.down + nodeStats.drain}
+                      <Text strong>{t('slurmCluster.abnormalNodes')}:</Text> {nodeStats.down + nodeStats.drain}
                       <Text type="secondary" style={{ marginLeft: '16px' }}>
                         Down: {nodeStats.down}, Drain: {nodeStats.drain}
                       </Text>
@@ -326,7 +328,7 @@ const SlurmClusterStatus = () => {
                   color: clusterHealth.issues.length > 0 ? 'orange' : 'green',
                   children: (
                     <div>
-                      <Text strong>问题数量:</Text> {clusterHealth.issues.length}
+                      <Text strong>{t('slurmCluster.issueCount')}:</Text> {clusterHealth.issues.length}
                       {clusterHealth.issues.length > 0 && (
                         <div style={{ marginTop: '8px' }}>
                           {clusterHealth.issues.map((issue, index) => (
@@ -355,14 +357,14 @@ const SlurmClusterStatus = () => {
         title={
           <Space>
             <NodeIndexOutlined />
-            <span>节点状态统计</span>
+            <span>{t('slurmCluster.nodeStatusStats')}</span>
           </Space>
         }
       >
         <Row gutter={16}>
           <Col span={4}>
             <Statistic
-              title="总节点数"
+              title={t('slurmCluster.stats.totalNodes')}
               value={nodeStats.total}
               prefix={<HddOutlined />}
               valueStyle={{ color: '#1890ff' }}
@@ -370,7 +372,7 @@ const SlurmClusterStatus = () => {
           </Col>
           <Col span={4}>
             <Statistic
-              title="空闲节点"
+              title={t('slurmCluster.stats.idleNodes')}
               value={nodeStats.idle}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
@@ -378,7 +380,7 @@ const SlurmClusterStatus = () => {
           </Col>
           <Col span={4}>
             <Statistic
-              title="已分配"
+              title={t('slurmCluster.stats.allocatedNodes')}
               value={nodeStats.allocated}
               prefix={<SyncOutlined />}
               valueStyle={{ color: '#1890ff' }}
@@ -386,7 +388,7 @@ const SlurmClusterStatus = () => {
           </Col>
           <Col span={4}>
             <Statistic
-              title="混合状态"
+              title={t('slurmCluster.stats.mixedNodes')}
               value={nodeStats.mixed}
               prefix={<ClockCircleOutlined />}
               valueStyle={{ color: '#faad14' }}
@@ -394,7 +396,7 @@ const SlurmClusterStatus = () => {
           </Col>
           <Col span={4}>
             <Statistic
-              title="离线节点"
+              title={t('slurmCluster.stats.offlineNodes')}
               value={nodeStats.down}
               prefix={<CloseCircleOutlined />}
               valueStyle={{ color: '#f5222d' }}
@@ -402,7 +404,7 @@ const SlurmClusterStatus = () => {
           </Col>
           <Col span={4}>
             <Statistic
-              title="排空节点"
+              title={t('slurmCluster.stats.drainNodes')}
               value={nodeStats.drain}
               prefix={<WarningOutlined />}
               valueStyle={{ color: '#fa8c16' }}
@@ -417,7 +419,7 @@ const SlurmClusterStatus = () => {
           title={
             <Space>
               <HddOutlined />
-              <span>资源使用情况</span>
+              <span>{t('slurmCluster.resourceUsage')}</span>
             </Space>
           }
         >
@@ -425,7 +427,7 @@ const SlurmClusterStatus = () => {
             <Col span={8}>
               <Card size="small">
                 <Statistic
-                  title="CPU 使用率"
+                  title={t('slurmCluster.resources.cpuUsage')}
                   value={(clusterSummary.resources.cpu_used / (clusterSummary.resources.cpu_total || 1) * 100).toFixed(1)}
                   suffix="%"
                   valueStyle={{
@@ -438,14 +440,14 @@ const SlurmClusterStatus = () => {
                   style={{ marginTop: '12px' }}
                 />
                 <Text type="secondary" style={{ fontSize: '12px' }}>
-                  {clusterSummary.resources.cpu_used} / {clusterSummary.resources.cpu_total} 核
+                  {clusterSummary.resources.cpu_used} / {clusterSummary.resources.cpu_total} {t('slurmCluster.resources.cores')}
                 </Text>
               </Card>
             </Col>
             <Col span={8}>
               <Card size="small">
                 <Statistic
-                  title="内存使用率"
+                  title={t('slurmCluster.resources.memUsage')}
                   value={(clusterSummary.resources.mem_used / (clusterSummary.resources.mem_total || 1) * 100).toFixed(1)}
                   suffix="%"
                   valueStyle={{
@@ -465,7 +467,7 @@ const SlurmClusterStatus = () => {
             <Col span={8}>
               <Card size="small">
                 <Statistic
-                  title="GPU 使用情况"
+                  title={t('slurmCluster.resources.gpuUsage')}
                   value={clusterSummary.resources.gpu_used || 0}
                   suffix={`/ ${clusterSummary.resources.gpu_total || 0}`}
                 />
@@ -477,7 +479,7 @@ const SlurmClusterStatus = () => {
                       style={{ marginTop: '12px' }}
                     />
                     <Text type="secondary" style={{ fontSize: '12px' }}>
-                      可用: {clusterSummary.resources.gpu_total - (clusterSummary.resources.gpu_used || 0)} 张
+                      {t('slurmCluster.resources.available')}: {clusterSummary.resources.gpu_total - (clusterSummary.resources.gpu_used || 0)} {t('slurmCluster.resources.cards')}
                     </Text>
                   </>
                 )}
@@ -492,10 +494,10 @@ const SlurmClusterStatus = () => {
         title={
           <Space>
             <ClusterOutlined />
-            <span>分区信息</span>
+            <span>{t('slurmCluster.partitionInfo')}</span>
           </Space>
         }
-        extra={<Tag color="blue">{partitions.length} 个分区</Tag>}
+        extra={<Tag color="blue">{partitions.length} {t('slurmCluster.partitionCount')}</Tag>}
       >
         {partitions.length > 0 ? (
           <Table
@@ -508,8 +510,8 @@ const SlurmClusterStatus = () => {
         ) : (
           <Alert
             type="info"
-            message="暂无分区信息"
-            description="请检查 SLURM 配置或稍后重试"
+            message={t('slurmCluster.noPartitionInfo')}
+            description={t('slurmCluster.checkSlurmConfig')}
             showIcon
           />
         )}
@@ -521,31 +523,31 @@ const SlurmClusterStatus = () => {
           title={
             <Space>
               <SyncOutlined />
-              <span>SaltStack 集成状态</span>
+              <span>{t('slurmCluster.saltStackIntegration')}</span>
             </Space>
           }
         >
           <Descriptions bordered column={2} size="small">
-            <Descriptions.Item label="Master 状态">
+            <Descriptions.Item label={t('slurmCluster.salt.masterStatus')}>
               <Tag color={saltStackStatus.master_status === 'connected' ? 'green' : 'red'}>
-                {saltStackStatus.master_status || '未知'}
+                {saltStackStatus.master_status || t('slurmCluster.unknown')}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="API 状态">
+            <Descriptions.Item label={t('slurmCluster.salt.apiStatus')}>
               <Tag color={saltStackStatus.api_status === 'available' ? 'green' : 'red'}>
-                {saltStackStatus.api_status || '未知'}
+                {saltStackStatus.api_status || t('slurmCluster.unknown')}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="在线 Minions">
+            <Descriptions.Item label={t('slurmCluster.salt.onlineMinions')}>
               {saltStackStatus.minions?.online || 0}
             </Descriptions.Item>
-            <Descriptions.Item label="离线 Minions">
+            <Descriptions.Item label={t('slurmCluster.salt.offlineMinions')}>
               {saltStackStatus.minions?.offline || 0}
             </Descriptions.Item>
-            <Descriptions.Item label="总 Minions">
+            <Descriptions.Item label={t('slurmCluster.salt.totalMinions')}>
               {saltStackStatus.minions?.total || 0}
             </Descriptions.Item>
-            <Descriptions.Item label="最近作业">
+            <Descriptions.Item label={t('slurmCluster.salt.recentJobs')}>
               {saltStackStatus.recent_jobs || 0}
             </Descriptions.Item>
           </Descriptions>

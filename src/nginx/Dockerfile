@@ -87,7 +87,8 @@ RUN mkdir -p /usr/share/nginx/html/sso \
     && mkdir -p /usr/share/nginx/html/jupyterhub \
     && mkdir -p /usr/share/nginx/html/debug \
     && mkdir -p /var/log/nginx \
-    && mkdir -p /etc/nginx/conf.d
+    && mkdir -p /etc/nginx/conf.d \
+    && mkdir -p /etc/nginx/stream.d
 
 # 复制项目静态文件
 COPY src/shared/sso/ /usr/share/nginx/html/sso/
@@ -132,6 +133,7 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
 # 复制Nginx主配置与片段到容器
 COPY src/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY src/nginx/conf.d/ /etc/nginx/conf.d/
+COPY src/nginx/stream.d/ /etc/nginx/stream.d/
 
 # 创建JupyterHub wrapper页面的符号链接，支持多种访问方式
 RUN ln -sf /usr/share/nginx/html/jupyterhub/jupyterhub_wrapper_upstream.html /usr/share/nginx/html/jupyterhub_wrapper.html
