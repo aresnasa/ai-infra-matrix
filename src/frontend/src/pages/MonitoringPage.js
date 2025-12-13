@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Spin, Alert, Button, message } from 'antd';
 import { ReloadOutlined, FullscreenOutlined } from '@ant-design/icons';
 import { useI18n, onLanguageChange } from '../hooks/useI18n';
@@ -8,7 +8,7 @@ import '../App.css';
 /**
  * MonitoringPage - 监控仪表板页面
  * 使用 iframe 嵌入 Nightingale 监控系统
- * 支持语言自动同步
+ * 支持语言和主题自动同步
  */
 const MonitoringPage = () => {
   const { t, locale } = useI18n();
@@ -16,12 +16,10 @@ const MonitoringPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [iframeKey, setIframeKey] = useState(0);
-  const iframeRef = useRef(null);
 
-  // Nightingale 服务地址 - 使用环境变量或动态构建
-  // 默认使用 nginx 代理路径 /nightingale/ 访问，支持 ProxyAuth SSO
-  // 注意：Nightingale 根路径会显示 404，需要指定具体页面
-  const getNightingaleUrl = () => {
+  // 使用 useMemo 确保 URL 在 locale 或 isDark 变化时更新
+  // 将 URL 生成逻辑直接放入 useMemo 中，避免闭包问题
+  const nightingaleUrl = React.useMemo(() => {
     // 默认落地页：指标查询页面（metric/explorer）
     // Nightingale 的根路径 "/" 没有默认页面，会显示 404
     const defaultPath = process.env.REACT_APP_NIGHTINGALE_DEFAULT_PATH || 'metric/explorer';
@@ -42,29 +40,37 @@ const MonitoringPage = () => {
     const n9eLang = locale === 'en-US' ? 'en' : 'zh';
     const n9eTheme = isDark ? 'dark' : 'light';
     const separator = baseUrl.includes('?') ? '&' : '?';
+    
+    console.log('[MonitoringPage] Generating URL with locale:', locale, 'isDark:', isDark, 'n9eLang:', n9eLang, 'n9eTheme:', n9eTheme);
+    
     return `${baseUrl}${separator}lang=${n9eLang}&themeMode=${n9eTheme}`;
-  };
-
-  // 使用 useMemo 确保 URL 在 locale 或 isDark 变化时更新
-  const nightingaleUrl = React.useMemo(() => {
-    return getNightingaleUrl();
   }, [locale, isDark]);
 
   // 监听全局语言变化事件，自动刷新 Nightingale iframe
   useEffect(() => {
     const unsubscribe = onLanguageChange(({ newLocale, n9eLang }) => {
-      console.log('[MonitoringPage] Language changed, refreshing Nightingale with lang:', n9eLang);
-      setLoading(true);
-      setIframeKey(prev => prev + 1);
-      message.info(t('monitoring.languageSyncing'));
+      console.log('[MonitoringPage] Language change event received:', newLocale, 'n9eLang:', n9eLang);
+      // 使用 setTimeout 确保 locale 状态已更新后再刷新 iframe
+      setTimeout(() => {
+        console.log('[MonitoringPage] Triggering iframe refresh after language change');
+        setLoading(true);
+        setIframeKey(prev => prev + 1);
+        message.info(t('monitoring.languageSyncing'));
+      }, 50);
     });
     
     return unsubscribe;
   }, [t]);
 
-  // 监听语言变化，刷新 iframe (保留原有逻辑作为备份)
+  // 监听语言变化，刷新 iframe - 这是主要的刷新逻辑
   useEffect(() => {
-    setIframeKey(prev => prev + 1);
+    console.log('[MonitoringPage] locale changed to:', locale, '- refreshing iframe');
+    // 使用 setTimeout 确保 useMemo 已重新计算 URL
+    const timer = setTimeout(() => {
+      setLoading(true);
+      setIframeKey(prev => prev + 1);
+    }, 100);
+    return () => clearTimeout(timer);
   }, [locale]);
 
   // 监听主题变化，刷新 iframe 以同步暗色模式
