@@ -472,6 +472,7 @@ func (s *SaltStackService) DeleteMinion(ctx context.Context, minionID string) er
 
 // DeleteMinionWithForce 删除Minion密钥，支持强制删除在线节点
 // 增强版：尝试从所有密钥状态中删除（accepted, rejected, unaccepted/pending）
+// 强制删除模式会尝试所有可能的方法，包括直接删除 PKI 目录中的密钥文件
 func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID string, force bool) error {
 	log.Printf("[SaltStack] Deleting minion: %s (force=%v)", minionID, force)
 
@@ -486,8 +487,12 @@ func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID s
 		pingResult, err := s.executeSaltCommand(ctx, pingPayload)
 		if err == nil && pingResult != nil {
 			// 检查 ping 结果中是否有该 minion 的响应
-			if _, exists := pingResult[minionID]; exists {
-				return fmt.Errorf("minion %s is online, use force=true to delete online minions", minionID)
+			if returnData, ok := pingResult["return"].([]interface{}); ok && len(returnData) > 0 {
+				if minionData, ok := returnData[0].(map[string]interface{}); ok {
+					if _, exists := minionData[minionID]; exists {
+						return fmt.Errorf("minion %s is online, use force=true to delete online minions", minionID)
+					}
+				}
 			}
 		}
 	}
@@ -501,9 +506,9 @@ func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID s
 		"match":  minionID,
 		"client": "wheel",
 	}
-	_, err := s.executeSaltCommand(ctx, deletePayload)
+	result, err := s.executeSaltCommand(ctx, deletePayload)
 	if err == nil {
-		log.Printf("[SaltStack] key.delete succeeded for minion: %s", minionID)
+		log.Printf("[SaltStack] key.delete API call succeeded for minion: %s, result: %+v", minionID, result)
 		deletedAny = true
 	} else {
 		log.Printf("[SaltStack] key.delete failed for minion %s: %v, trying other methods", minionID, err)
@@ -539,17 +544,15 @@ func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID s
 		deletedAny = true
 	}
 
-	// 如果强制删除，尝试执行所有可能的删除命令，忽略错误
+	// 强制删除模式：无论 Salt API 是否成功，都尝试使用 Docker exec 直接操作确保彻底删除
 	if force {
-		// 强制模式下，尝试 key.finger_master 确认连接正常
-		fingerPayload := map[string]interface{}{
-			"fun":    "key.finger",
-			"match":  minionID,
-			"client": "wheel",
-		}
-		result, err := s.executeSaltCommand(ctx, fingerPayload)
-		if err == nil && result != nil {
-			log.Printf("[SaltStack] Minion %s key fingerprint found, proceeding with force delete", minionID)
+		log.Printf("[SaltStack] Force mode: trying Docker exec to ensure complete deletion of minion: %s", minionID)
+		if err := s.deleteMinionKeyViaDocker(ctx, minionID); err == nil {
+			log.Printf("[SaltStack] Docker exec delete succeeded for minion: %s", minionID)
+			return nil // 强制删除模式下，Docker exec 成功即可返回
+		} else {
+			log.Printf("[SaltStack] Docker exec delete failed for minion %s: %v", minionID, err)
+			// 即使 Docker exec 失败，如果 Salt API 成功了也可以
 		}
 	}
 
@@ -559,9 +562,9 @@ func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID s
 		return nil
 	}
 
-	// 强制删除模式：尝试使用 Docker exec 直接执行 salt-key 命令
-	if force {
-		log.Printf("[SaltStack] Trying Docker exec fallback for force delete: %s", minionID)
+	// 非强制删除模式下，所有 Salt API 方法都失败，尝试 Docker exec fallback
+	if !force {
+		log.Printf("[SaltStack] Trying Docker exec fallback for non-force delete: %s", minionID)
 		if err := s.deleteMinionKeyViaDocker(ctx, minionID); err == nil {
 			log.Printf("[SaltStack] Docker exec delete succeeded for minion: %s", minionID)
 			return nil
@@ -578,6 +581,7 @@ func (s *SaltStackService) DeleteMinionWithForce(ctx context.Context, minionID s
 }
 
 // deleteMinionKeyViaDocker 通过 Docker exec 执行 salt-key 命令删除密钥
+// 增强版：尝试删除所有状态的密钥并清理相关的 pubkey 文件
 func (s *SaltStackService) deleteMinionKeyViaDocker(ctx context.Context, minionID string) error {
 	// Salt Master 容器名称模式
 	containerNames := []string{
@@ -594,23 +598,64 @@ func (s *SaltStackService) deleteMinionKeyViaDocker(ctx context.Context, minionI
 			continue // 容器不存在，尝试下一个
 		}
 
-		// 执行 salt-key -d 命令删除密钥（-y 自动确认）
+		log.Printf("[SaltStack] Found container %s, attempting to delete minion %s", containerName, minionID)
+		deletedAny := false
+
+		// 方法1: 执行 salt-key -d 命令删除已接受的密钥（-y 自动确认）
 		cmd := exec.CommandContext(ctx, "docker", "exec", containerName, "salt-key", "-d", minionID, "-y")
 		output, err := cmd.CombinedOutput()
 		if err == nil {
 			log.Printf("[SaltStack] salt-key -d succeeded for %s in container %s: %s", minionID, containerName, string(output))
-			return nil
+			deletedAny = true
+		} else {
+			log.Printf("[SaltStack] salt-key -d failed in container %s: %v, output: %s", containerName, err, string(output))
 		}
-		log.Printf("[SaltStack] salt-key -d failed in container %s: %v, output: %s", containerName, err, string(output))
 
-		// 尝试 salt-key -D (delete all) 命令（会删除所有状态的密钥）
-		cmdAll := exec.CommandContext(ctx, "docker", "exec", containerName, "salt-key", "-D", minionID, "-y")
-		outputAll, errAll := cmdAll.CombinedOutput()
-		if errAll == nil {
-			log.Printf("[SaltStack] salt-key -D succeeded for %s in container %s: %s", minionID, containerName, string(outputAll))
+		// 方法2: 尝试删除被拒绝的密钥 (salt-key -r <minion_id> 先拒绝，然后 -d)
+		// 先拒绝密钥（如果存在于 unaccepted 列表中）
+		rejectCmd := exec.CommandContext(ctx, "docker", "exec", containerName, "salt-key", "-r", minionID, "-y")
+		rejectOutput, rejectErr := rejectCmd.CombinedOutput()
+		if rejectErr == nil {
+			log.Printf("[SaltStack] salt-key -r succeeded for %s: %s", minionID, string(rejectOutput))
+			// 拒绝后再删除
+			delCmd := exec.CommandContext(ctx, "docker", "exec", containerName, "salt-key", "-d", minionID, "-y")
+			delOutput, delErr := delCmd.CombinedOutput()
+			if delErr == nil {
+				log.Printf("[SaltStack] salt-key -d after reject succeeded for %s: %s", minionID, string(delOutput))
+				deletedAny = true
+			}
+		}
+
+		// 方法3: 直接删除 pki 目录中的密钥文件（最彻底的方式）
+		keyPaths := []string{
+			fmt.Sprintf("/etc/salt/pki/master/minions/%s", minionID),
+			fmt.Sprintf("/etc/salt/pki/master/minions_pre/%s", minionID),
+			fmt.Sprintf("/etc/salt/pki/master/minions_denied/%s", minionID),
+			fmt.Sprintf("/etc/salt/pki/master/minions_rejected/%s", minionID),
+		}
+		for _, keyPath := range keyPaths {
+			rmCmd := exec.CommandContext(ctx, "docker", "exec", containerName, "rm", "-f", keyPath)
+			rmOutput, rmErr := rmCmd.CombinedOutput()
+			if rmErr == nil {
+				log.Printf("[SaltStack] Removed key file %s: %s", keyPath, string(rmOutput))
+				deletedAny = true
+			}
+		}
+
+		// 方法4: 验证删除结果
+		listCmd := exec.CommandContext(ctx, "docker", "exec", containerName, "salt-key", "-L")
+		listOutput, listErr := listCmd.CombinedOutput()
+		if listErr == nil {
+			if !strings.Contains(string(listOutput), minionID) {
+				log.Printf("[SaltStack] Verified: minion %s is no longer in salt-key list", minionID)
+				return nil
+			}
+			log.Printf("[SaltStack] Warning: minion %s still appears in salt-key list: %s", minionID, string(listOutput))
+		}
+
+		if deletedAny {
 			return nil
 		}
-		log.Printf("[SaltStack] salt-key -D failed in container %s: %v, output: %s", containerName, errAll, string(outputAll))
 	}
 
 	return fmt.Errorf("docker exec fallback failed for all container names")

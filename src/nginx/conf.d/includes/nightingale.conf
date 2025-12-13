@@ -8,6 +8,22 @@
 ## Doing so breaks the frontend SPA and can cause redirect loops.
 ## Nightingale assets will be served via the /nightingale/ location below.
 
+# Redirect Nightingale assets from root to /nightingale/
+# These are for assets that Nightingale hardcodes without the prefix
+location = /js/widget.js {
+    return 302 /nightingale/js/widget.js;
+}
+
+location ^~ /image/ {
+    # Proxy to Nightingale for image assets
+    rewrite ^/image/(.*)$ /nightingale/image/$1 last;
+}
+
+location ^~ /font/ {
+    # Proxy to Nightingale for font assets
+    rewrite ^/font/(.*)$ /nightingale/font/$1 last;
+}
+
 # Main Nightingale location - must come before regex locations
 # Use ^~ to stop regex matching (prevents static file location from intercepting)
 location ^~ /nightingale/ {

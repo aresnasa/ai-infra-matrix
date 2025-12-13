@@ -288,7 +288,7 @@ func (s *jupyterLabTemplateServiceImpl) CreatePredefinedTemplates() error {
 	predefinedTemplates := []models.JupyterLabTemplate{
 		{
 			Name:            "Python 机器学习模板",
-			Description:     "包含常用机器学习库的Python环境",
+			Description:     "包含常用机器学习库的Python环境 / Python ML environment with common libraries",
 			PythonVersion:   "3.11",
 			CondaVersion:    "23.7.0",
 			BaseImage:       "jupyter/datascience-notebook:latest",
@@ -307,7 +307,7 @@ exec "$@"`,
 		},
 		{
 			Name:            "深度学习GPU模板",
-			Description:     "支持GPU的深度学习环境",
+			Description:     "支持GPU的深度学习环境 / Deep learning environment with GPU support",
 			PythonVersion:   "3.11",
 			CondaVersion:    "23.7.0",
 			BaseImage:       "tensorflow/tensorflow:latest-gpu-jupyter",
@@ -326,7 +326,7 @@ exec "$@"`,
 		},
 		{
 			Name:            "数据科学模板",
-			Description:     "数据分析和可视化环境",
+			Description:     "数据分析和可视化环境 / Data analysis and visualization environment",
 			PythonVersion:   "3.11",
 			CondaVersion:    "23.7.0",
 			BaseImage:       "jupyter/datascience-notebook:latest",
@@ -337,6 +337,136 @@ exec "$@"`,
 			StartupScript: `#!/bin/bash
 # 设置R环境
 R --version
+# 启动JupyterLab
+exec "$@"`,
+			IsActive:  true,
+			IsDefault: false,
+			CreatedBy: 0,
+		},
+		// VERL 分布式强化学习模板
+		{
+			Name:            "VERL 强化学习模板",
+			Description:     "Volcano Engine强化学习框架环境，支持PPO/GRPO算法 / VERL RL framework for PPO/GRPO algorithms",
+			PythonVersion:   "3.10",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "nvcr.io/nvidia/pytorch:24.01-py3",
+			Requirements:    `["verl", "ray[default]", "torch", "transformers", "accelerate", "datasets", "tensorboard", "wandb"]`,
+			CondaPackages:   `["cudatoolkit=12.1", "nccl"]`,
+			SystemPackages:  `["git", "vim", "htop", "openssh-client"]`,
+			EnvironmentVars: `[{"name":"VERL_BACKEND","value":"ray"},{"name":"CUDA_VISIBLE_DEVICES","value":"all"},{"name":"NCCL_DEBUG","value":"INFO"}]`,
+			StartupScript: `#!/bin/bash
+# 检查GPU
+nvidia-smi
+# 检查Ray状态
+ray status || echo "Ray not started yet"
+# 启动JupyterLab
+exec "$@"`,
+			IsActive:  true,
+			IsDefault: false,
+			CreatedBy: 0,
+		},
+		// Ray 分布式计算模板
+		{
+			Name:            "Ray 分布式计算模板",
+			Description:     "Ray分布式框架环境，支持分布式训练和推理 / Ray distributed framework for training and inference",
+			PythonVersion:   "3.10",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "rayproject/ray-ml:latest-gpu",
+			Requirements:    `["ray[default,tune,serve]", "torch", "tensorflow", "numpy", "pandas", "scikit-learn"]`,
+			CondaPackages:   `["cudatoolkit=12.1"]`,
+			SystemPackages:  `["git", "vim", "htop"]`,
+			EnvironmentVars: `[{"name":"RAY_ADDRESS","value":"auto"},{"name":"CUDA_VISIBLE_DEVICES","value":"all"}]`,
+			StartupScript: `#!/bin/bash
+# 检查Ray集群
+ray status || echo "Ray cluster not connected"
+# 启动JupyterLab
+exec "$@"`,
+			IsActive:  true,
+			IsDefault: false,
+			CreatedBy: 0,
+		},
+		// LLaMA 大语言模型模板
+		{
+			Name:            "LLaMA 大模型训练模板",
+			Description:     "Meta LLaMA大语言模型训练环境 / Meta LLaMA LLM training environment",
+			PythonVersion:   "3.10",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "nvcr.io/nvidia/pytorch:24.01-py3",
+			Requirements:    `["torch", "transformers>=4.36.0", "accelerate", "bitsandbytes", "peft", "trl", "datasets", "sentencepiece", "protobuf", "flash-attn"]`,
+			CondaPackages:   `["cudatoolkit=12.1", "nccl"]`,
+			SystemPackages:  `["git", "git-lfs", "vim", "htop"]`,
+			EnvironmentVars: `[{"name":"HF_HOME","value":"/home/jovyan/.cache/huggingface"},{"name":"CUDA_VISIBLE_DEVICES","value":"all"},{"name":"PYTORCH_CUDA_ALLOC_CONF","value":"max_split_size_mb:512"}]`,
+			StartupScript: `#!/bin/bash
+# 检查GPU
+nvidia-smi
+# 配置git-lfs
+git lfs install
+# 启动JupyterLab
+exec "$@"`,
+			IsActive:  true,
+			IsDefault: false,
+			CreatedBy: 0,
+		},
+		// Qwen 大语言模型模板
+		{
+			Name:            "Qwen 大模型训练模板",
+			Description:     "阿里Qwen系列大语言模型训练环境 / Alibaba Qwen LLM training environment",
+			PythonVersion:   "3.10",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "nvcr.io/nvidia/pytorch:24.01-py3",
+			Requirements:    `["torch", "transformers>=4.37.0", "accelerate", "peft", "trl", "datasets", "tiktoken", "einops", "transformers_stream_generator", "flash-attn"]`,
+			CondaPackages:   `["cudatoolkit=12.1", "nccl"]`,
+			SystemPackages:  `["git", "git-lfs", "vim", "htop"]`,
+			EnvironmentVars: `[{"name":"HF_HOME","value":"/home/jovyan/.cache/huggingface"},{"name":"CUDA_VISIBLE_DEVICES","value":"all"},{"name":"PYTORCH_CUDA_ALLOC_CONF","value":"max_split_size_mb:512"}]`,
+			StartupScript: `#!/bin/bash
+# 检查GPU
+nvidia-smi
+# 配置git-lfs
+git lfs install
+# 启动JupyterLab
+exec "$@"`,
+			IsActive:  true,
+			IsDefault: false,
+			CreatedBy: 0,
+		},
+		// Qwen-VL 多模态模型模板
+		{
+			Name:            "Qwen-VL 多模态模型模板",
+			Description:     "阿里Qwen-VL视觉语言模型训练环境 / Alibaba Qwen-VL Vision-Language model training",
+			PythonVersion:   "3.10",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "nvcr.io/nvidia/pytorch:24.01-py3",
+			Requirements:    `["torch", "transformers>=4.37.0", "accelerate", "peft", "datasets", "tiktoken", "einops", "pillow", "torchvision", "flash-attn", "timm"]`,
+			CondaPackages:   `["cudatoolkit=12.1", "nccl"]`,
+			SystemPackages:  `["git", "git-lfs", "vim", "htop", "libgl1-mesa-glx"]`,
+			EnvironmentVars: `[{"name":"HF_HOME","value":"/home/jovyan/.cache/huggingface"},{"name":"CUDA_VISIBLE_DEVICES","value":"all"},{"name":"PYTORCH_CUDA_ALLOC_CONF","value":"max_split_size_mb:512"}]`,
+			StartupScript: `#!/bin/bash
+# 检查GPU
+nvidia-smi
+# 配置git-lfs
+git lfs install
+# 启动JupyterLab
+exec "$@"`,
+			IsActive:  true,
+			IsDefault: false,
+			CreatedBy: 0,
+		},
+		// DeepSpeed 分布式训练模板
+		{
+			Name:            "DeepSpeed 分布式训练模板",
+			Description:     "微软DeepSpeed大模型分布式训练环境 / Microsoft DeepSpeed distributed training",
+			PythonVersion:   "3.10",
+			CondaVersion:    "23.7.0",
+			BaseImage:       "nvcr.io/nvidia/pytorch:24.01-py3",
+			Requirements:    `["torch", "deepspeed>=0.12.0", "transformers", "accelerate", "datasets", "mpi4py", "tensorboard"]`,
+			CondaPackages:   `["cudatoolkit=12.1", "nccl", "openmpi"]`,
+			SystemPackages:  `["git", "vim", "htop", "openssh-client", "pdsh"]`,
+			EnvironmentVars: `[{"name":"CUDA_VISIBLE_DEVICES","value":"all"},{"name":"NCCL_DEBUG","value":"INFO"},{"name":"DS_ACCELERATOR","value":"cuda"}]`,
+			StartupScript: `#!/bin/bash
+# 检查GPU
+nvidia-smi
+# 检查DeepSpeed
+ds_report || echo "DeepSpeed not configured"
 # 启动JupyterLab
 exec "$@"`,
 			IsActive:  true,
@@ -380,6 +510,78 @@ exec "$@"`,
 			GPULimit:      0,
 			MaxReplicas:   1,
 			MaxLifetime:   10800, // 3小时
+		},
+		{
+			TemplateID:    4, // VERL 强化学习模板
+			CPULimit:      "16",
+			CPURequest:    "8",
+			MemoryLimit:   "64Gi",
+			MemoryRequest: "32Gi",
+			DiskLimit:     "100Gi",
+			GPULimit:      4,
+			GPUType:       "nvidia.com/gpu",
+			MaxReplicas:   1,
+			MaxLifetime:   86400, // 24小时
+		},
+		{
+			TemplateID:    5, // Ray 分布式计算模板
+			CPULimit:      "16",
+			CPURequest:    "8",
+			MemoryLimit:   "64Gi",
+			MemoryRequest: "32Gi",
+			DiskLimit:     "100Gi",
+			GPULimit:      4,
+			GPUType:       "nvidia.com/gpu",
+			MaxReplicas:   8,
+			MaxLifetime:   86400, // 24小时
+		},
+		{
+			TemplateID:    6, // LLaMA 大模型训练模板
+			CPULimit:      "32",
+			CPURequest:    "16",
+			MemoryLimit:   "128Gi",
+			MemoryRequest: "64Gi",
+			DiskLimit:     "500Gi",
+			GPULimit:      8,
+			GPUType:       "nvidia.com/gpu",
+			MaxReplicas:   1,
+			MaxLifetime:   172800, // 48小时
+		},
+		{
+			TemplateID:    7, // Qwen 大模型训练模板
+			CPULimit:      "32",
+			CPURequest:    "16",
+			MemoryLimit:   "128Gi",
+			MemoryRequest: "64Gi",
+			DiskLimit:     "500Gi",
+			GPULimit:      8,
+			GPUType:       "nvidia.com/gpu",
+			MaxReplicas:   1,
+			MaxLifetime:   172800, // 48小时
+		},
+		{
+			TemplateID:    8, // Qwen-VL 多模态模型模板
+			CPULimit:      "32",
+			CPURequest:    "16",
+			MemoryLimit:   "128Gi",
+			MemoryRequest: "64Gi",
+			DiskLimit:     "500Gi",
+			GPULimit:      8,
+			GPUType:       "nvidia.com/gpu",
+			MaxReplicas:   1,
+			MaxLifetime:   172800, // 48小时
+		},
+		{
+			TemplateID:    9, // DeepSpeed 分布式训练模板
+			CPULimit:      "32",
+			CPURequest:    "16",
+			MemoryLimit:   "128Gi",
+			MemoryRequest: "64Gi",
+			DiskLimit:     "500Gi",
+			GPULimit:      8,
+			GPUType:       "nvidia.com/gpu",
+			MaxReplicas:   1,
+			MaxLifetime:   172800, // 48小时
 		},
 	}
 

@@ -2232,11 +2232,43 @@ start_all() {
     # Tag private registry images as local if needed
     tag_private_images_as_local
     
-    # Use --no-build to prevent rebuilding when images already exist
-    # Use --pull never to prevent checking remote registry (important for offline/intranet environments)
-    # Use --profile ha to enable SaltStack multi-master high availability
-    $compose_cmd --profile ha up -d --no-build --pull never
-    log_info "All services started (SaltStack HA enabled)."
+    # 先清理可能残留的旧容器（避免 "No such container" 错误）
+    log_info "Cleaning up any stale containers..."
+    docker rm -f ai-infra-salt-master-1 ai-infra-salt-master-2 >/dev/null 2>&1 || true
+    
+    # 使用重试机制启动服务
+    local max_retries=3
+    local retry_count=0
+    local success=false
+    
+    while [[ $retry_count -lt $max_retries ]] && [[ "$success" != "true" ]]; do
+        retry_count=$((retry_count + 1))
+        log_info "Starting services (attempt $retry_count/$max_retries)..."
+        
+        # Use --no-build to prevent rebuilding when images already exist
+        # Use --pull never to prevent checking remote registry (important for offline/intranet environments)
+        # Use --profile ha to enable SaltStack multi-master high availability
+        if $compose_cmd --profile ha up -d --no-build --pull never 2>&1; then
+            success=true
+            log_info "All services started successfully (SaltStack HA enabled)."
+        else
+            if [[ $retry_count -lt $max_retries ]]; then
+                log_warn "Failed to start services, retrying in 5 seconds..."
+                sleep 5
+                # 清理可能的残留容器
+                docker rm -f ai-infra-salt-master-1 ai-infra-salt-master-2 >/dev/null 2>&1 || true
+            else
+                log_error "Failed to start services after $max_retries attempts"
+                return 1
+            fi
+        fi
+    done
+    
+    # 验证关键服务是否运行
+    log_info "Verifying services..."
+    sleep 3
+    local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c "ai-infra" || echo "0")
+    log_info "Running AI-Infra containers: $running_containers"
 }
 
 # ==============================================================================
@@ -2378,7 +2410,18 @@ stop_all() {
         return 1
     fi
     
-    $compose_cmd down
+    # 先尝试使用 --profile ha 停止所有服务（包括 HA 模式的容器）
+    $compose_cmd --profile ha down 2>/dev/null || true
+    
+    # 作为兜底，再执行不带 profile 的 down
+    $compose_cmd down 2>/dev/null || true
+    
+    # 清理可能残留的 HA 容器
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^ai-infra-salt-master-2$'; then
+        log_info "Cleaning up HA container: ai-infra-salt-master-2"
+        docker rm -f ai-infra-salt-master-2 >/dev/null 2>&1 || true
+    fi
+    
     log_info "All services stopped."
 }
 

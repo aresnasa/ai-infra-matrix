@@ -1979,12 +1979,17 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
     <Layout style={{ minHeight: '100vh', background: isDark ? '#141414' : '#f0f2f5' }}>
       <Content style={{ padding: 24 }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div>
-            <Title level={2} style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
+          <div style={{ 
+            background: isDark ? '#1f1f1f' : '#fff', 
+            padding: '16px 24px', 
+            borderRadius: 8,
+            border: isDark ? '1px solid #303030' : '1px solid #f0f0f0'
+          }}>
+            <Title level={2} style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit', marginBottom: 8 }}>
               <ThunderboltOutlined style={{ marginRight: 8, color: '#1890ff' }} />
               {t('saltstack.title')}
             </Title>
-            <Paragraph style={{ color: isDark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(0, 0, 0, 0.45)' }}>
+            <Paragraph style={{ color: isDark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(0, 0, 0, 0.45)', marginBottom: 0 }}>
               {t('saltstack.subtitle')}
             </Paragraph>
           </div>
@@ -2323,35 +2328,23 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   defaultHeight={350}
                   nodes={[
                     // Master 节点（仅在"全部"筛选时显示）
+                    // 注意：Master 监控数据只使用后端返回的 status 中的数据，不回退使用 minion 数据
+                    // Master 是容器运行的，后端通过 Docker API 获取容器指标
                     ...(overviewGroupFilter === 'all' ? [{
                       id: 'salt-master',
                       name: 'Salt Master',
-                      metrics: (() => {
-                        // 当后端没有返回 Master 指标时，使用第一个在线 minion 的数据作为集群参考
-                        const firstOnlineMinion = filteredMinions.find(m => 
-                          m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'online'
-                        );
-                        const masterCpu = status?.cpu_usage || 
-                          (firstOnlineMinion?.cpu_usage_percent) || 
-                          (firstOnlineMinion?.cpu_info?.usage) || 0;
-                        const masterMem = status?.memory_usage || 
-                          (firstOnlineMinion?.memory_usage_percent) || 
-                          (firstOnlineMinion?.memory_info?.usage_percent) || 0;
-                        const masterConn = status?.active_connections || 0;
-                        const masterBw = status?.network_bandwidth || 0;
-                        
-                        return {
-                          status: status?.master_status === 'running' ? 'online' : 'offline',
-                          cpu_usage: masterCpu,
-                          memory_usage: masterMem,
-                          active_connections: masterConn,
-                          network_bandwidth: masterBw,
-                          ib_status: 'N/A',
-                          roce_status: 'N/A',
-                          gpu_utilization: 0,
-                          gpu_memory: 0,
-                        };
-                      })(),
+                      metrics: {
+                        status: status?.master_status === 'running' ? 'online' : 'offline',
+                        // Master 监控数据来自后端 status API（Docker 容器指标）
+                        cpu_usage: status?.cpu_usage || 0,
+                        memory_usage: status?.memory_usage || 0,
+                        active_connections: status?.active_connections || 0,
+                        network_bandwidth: status?.network_bandwidth || 0,
+                        ib_status: 'N/A',
+                        roce_status: 'N/A',
+                        gpu_utilization: 0,
+                        gpu_memory: 0,
+                      },
                     }] : []),
                     // Minion 节点 (使用筛选后的 minions)
                     ...filteredMinions.map(minion => {

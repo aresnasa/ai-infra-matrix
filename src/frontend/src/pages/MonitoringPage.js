@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, Spin, Alert, Button, message } from 'antd';
 import { ReloadOutlined, FullscreenOutlined } from '@ant-design/icons';
 import { useI18n, onLanguageChange } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 import '../App.css';
 
 /**
@@ -11,6 +12,7 @@ import '../App.css';
  */
 const MonitoringPage = () => {
   const { t, locale } = useI18n();
+  const { isDark } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [iframeKey, setIframeKey] = useState(0);
@@ -36,12 +38,17 @@ const MonitoringPage = () => {
     }
     
     // 添加语言参数，Nightingale 支持 lang=en 或 lang=zh
+    // 添加主题参数，Nightingale 支持 themeMode=dark 或 themeMode=light
     const n9eLang = locale === 'en-US' ? 'en' : 'zh';
+    const n9eTheme = isDark ? 'dark' : 'light';
     const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}lang=${n9eLang}`;
+    return `${baseUrl}${separator}lang=${n9eLang}&themeMode=${n9eTheme}`;
   };
-  
-  const nightingaleUrl = getNightingaleUrl();
+
+  // 使用 useMemo 确保 URL 在 locale 或 isDark 变化时更新
+  const nightingaleUrl = React.useMemo(() => {
+    return getNightingaleUrl();
+  }, [locale, isDark]);
 
   // 监听全局语言变化事件，自动刷新 Nightingale iframe
   useEffect(() => {
@@ -59,6 +66,13 @@ const MonitoringPage = () => {
   useEffect(() => {
     setIframeKey(prev => prev + 1);
   }, [locale]);
+
+  // 监听主题变化，刷新 iframe 以同步暗色模式
+  useEffect(() => {
+    console.log('[MonitoringPage] Theme changed, refreshing Nightingale with themeMode:', isDark ? 'dark' : 'light');
+    setLoading(true);
+    setIframeKey(prev => prev + 1);
+  }, [isDark]);
 
   useEffect(() => {
     // 组件挂载时的初始化

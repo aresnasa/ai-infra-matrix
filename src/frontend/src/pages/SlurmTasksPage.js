@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons';
 import { slurmAPI } from '../services/api';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useTheme } from '../hooks/useTheme';
 import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
@@ -66,6 +67,7 @@ const { Option } = Select;
 const SlurmTasksPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { isDark } = useTheme();
   const autoRefreshRef = useRef(null);
   const runningTasksCountRef = useRef(0);  // 新增：使用 ref 跟踪运行任务数
   const [tasks, setTasks] = useState([]);
@@ -682,7 +684,7 @@ const SlurmTasksPage = () => {
               ) : (
                 '自动刷新已关闭，点击上方按钮手动刷新或启用自动刷新'
               )}
-              <span style={{ marginLeft: '16px', color: '#666' }}>
+              <span style={{ marginLeft: '16px', color: isDark ? 'rgba(255, 255, 255, 0.45)' : '#666' }}>
                 上次更新: {dayjs(lastRefresh).format('HH:mm:ss')}
               </span>
             </div>
@@ -788,7 +790,7 @@ const SlurmTasksPage = () => {
               <Col xs={24} sm={24} md={8}>
                 <div style={{ 
                   fontSize: '12px', 
-                  color: '#666',
+                  color: isDark ? 'rgba(255, 255, 255, 0.45)' : '#666',
                   textAlign: 'right',
                   padding: '4px 0',
                   whiteSpace: 'nowrap',
@@ -1113,11 +1115,12 @@ const SlurmTasksPage = () => {
             >
               {selectedTask.parameters ? (
                 <pre style={{ 
-                  background: '#f5f5f5', 
+                  background: isDark ? '#1f1f1f' : '#f5f5f5', 
                   padding: '12px', 
                   borderRadius: '4px',
                   maxHeight: '400px',
-                  overflow: 'auto'
+                  overflow: 'auto',
+                  color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit'
                 }}>
                   {JSON.stringify(selectedTask.parameters, null, 2)}
                 </pre>
