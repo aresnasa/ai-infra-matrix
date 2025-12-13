@@ -942,6 +942,9 @@ export default {
   // SLURM Page
   slurm: {
     title: 'Slurm Cluster Management',
+    nodeManagement: 'Node Management',
+    addNode: 'Add Node',
+    manageTemplates: 'Manage Templates',
     loadFailed: 'Failed to load Slurm data',
     loadFailedDesc: 'Please confirm you are logged in and /api/slurm endpoint is reachable.',
     demoMode: 'Using demo data: Slurm commands (sinfo/squeue) not detected, showing sample statistics',

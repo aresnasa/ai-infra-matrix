@@ -942,6 +942,9 @@ export default {
   // SLURM 页面
   slurm: {
     title: 'Slurm 集群管理',
+    nodeManagement: '节点管理',
+    addNode: '添加节点',
+    manageTemplates: '管理模板',
     loadFailed: '无法加载Slurm数据',
     loadFailedDesc: '请确认已登录且后端 /api/slurm 接口可达。',
     demoMode: '使用演示数据：未检测到Slurm命令(sinfo/squeue)，展示示例统计',
