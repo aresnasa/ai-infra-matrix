@@ -110,7 +110,6 @@ test.describe('SaltStack 执行按钮修复验证', () => {
     expect(sseEvents).toContain('complete');
     console.log('✅ SSE 事件流包含 complete 事件');
   });
-});
 
   test('应该能打开 SaltStack 页面', async ({ page }) => {
     // 访问 SaltStack 页面
