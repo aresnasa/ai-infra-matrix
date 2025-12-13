@@ -66,16 +66,36 @@ location ^~ /nightingale/ {
   try {
     var urlParams = new URLSearchParams(window.location.search);
     var lang = urlParams.get("lang");
+    console.log("[N9E-LangSync] URL lang param:", lang);
+    
     if (lang) {
-      var n9eLang = (lang === "en" || lang === "en-US") ? "en_US" : "zh_CN";
+      // Nightingale 使用 en_US / zh_CN 格式
+      var n9eLang = (lang === "en" || lang === "en-US" || lang === "en_US") ? "en_US" : "zh_CN";
       var currentLang = localStorage.getItem("language");
+      console.log("[N9E-LangSync] Current localStorage language:", currentLang, "Target:", n9eLang);
+      
+      // 强制设置语言，无论当前是什么
       if (currentLang !== n9eLang) {
-        console.log("[N9E-LangSync] Setting language to:", n9eLang, "from URL param:", lang);
+        console.log("[N9E-LangSync] Setting language to:", n9eLang);
         localStorage.setItem("language", n9eLang);
-        if (currentLang) {
+        
+        // 标记需要重新加载（避免无限循环）
+        var reloadFlag = sessionStorage.getItem("n9e_lang_reload");
+        var reloadKey = "reload_" + n9eLang;
+        
+        if (reloadFlag !== reloadKey) {
+          sessionStorage.setItem("n9e_lang_reload", reloadKey);
           console.log("[N9E-LangSync] Language changed, reloading page...");
-          window.location.reload();
+          setTimeout(function() {
+            window.location.reload();
+          }, 100);
+        } else {
+          console.log("[N9E-LangSync] Already reloaded for this language, skipping");
         }
+      } else {
+        console.log("[N9E-LangSync] Language already correct:", n9eLang);
+        // 清除重新加载标记
+        sessionStorage.removeItem("n9e_lang_reload");
       }
     }
     var theme = urlParams.get("themeMode");
