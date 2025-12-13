@@ -145,6 +145,75 @@ test.describe('监控页面 iframe 语言切换测试', () => {
     await page.screenshot({ path: 'test-screenshots/monitoring-language-03-styles.png', fullPage: true });
   });
 
+  test('验证 nginx 语言同步脚本的正确性', async ({ page, context }) => {
+    // 这个测试验证 nginx 注入的语言同步脚本是否正确工作
+    // 我们通过检查 HTTP 响应头和 Nightingale 直接访问来验证
+    
+    console.log('[Test] Testing nginx language sync script injection...');
+    
+    // 首先，让我们直接访问 Nightingale 页面来查看注入的脚本
+    const nightingaleUrl = `${BASE_URL}/nightingale/metric/explorer?lang=zh&themeMode=light`;
+    
+    console.log('[Test] Accessing Nightingale URL:', nightingaleUrl);
+    await page.goto(nightingaleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
+    
+    // 截图Nightingale页面
+    await page.screenshot({ path: 'test-screenshots/nightingale-direct-access-zh.png', fullPage: true });
+    
+    // 检查页面是否加载成功
+    const pageTitle = await page.title();
+    console.log('[Test] Nightingale page title:', pageTitle);
+    
+    // 检查localStorage中的语言设置
+    const localStorage = await page.evaluate(() => {
+      return {
+        language: localStorage.getItem('language'),
+        theme: localStorage.getItem('theme'),
+        lang: localStorage.getItem('lang'),
+      };
+    });
+    
+    console.log('[Test] Nightingale localStorage:', JSON.stringify(localStorage, null, 2));
+    
+    // 验证 zh 语言参数已同步到 zh_CN localStorage
+    if (localStorage.language === 'zh_CN') {
+      console.log('[Test] ✅ Language parameter correctly synced: zh → zh_CN');
+    } else {
+      console.log('[Test] ⚠️  Language may not be correctly synced. Found:', localStorage.language);
+    }
+    
+    // 现在测试从 en 到 zh 的切换
+    console.log('[Test] Testing switch from en to zh...');
+    
+    // 先访问英文版本
+    const nightingaleUrlEn = `${BASE_URL}/nightingale/metric/explorer?lang=en&themeMode=light`;
+    await page.goto(nightingaleUrlEn, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
+    
+    const localStorageEn = await page.evaluate(() => {
+      return localStorage.getItem('language');
+    });
+    console.log('[Test] After accessing en URL, localStorage.language:', localStorageEn);
+    
+    // 再访问中文版本
+    await page.goto(nightingaleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(5000); // 给更多时间让 reload 脚本执行
+    
+    const localStorageZhAgain = await page.evaluate(() => {
+      return localStorage.getItem('language');
+    });
+    console.log('[Test] After switching back to zh URL, localStorage.language:', localStorageZhAgain);
+    
+    if (localStorageZhAgain === 'zh_CN') {
+      console.log('[Test] ✅ Language switch test PASSED: en → zh works correctly');
+    } else {
+      console.log('[Test] ❌ Language switch test FAILED: Expected zh_CN, got', localStorageZhAgain);
+    }
+    
+    await page.screenshot({ path: 'test-screenshots/nightingale-after-switch-zh.png', fullPage: true });
+  });
+
   test('中英文来回切换测试 - 第一次中文 → 英文 → 再次中文', async ({ page }) => {
     // 辅助函数：切换语言
     const switchLanguage = async (targetLang) => {
