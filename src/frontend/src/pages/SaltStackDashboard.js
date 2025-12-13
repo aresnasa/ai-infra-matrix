@@ -1977,7 +1977,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
 
   return (
     <Layout style={{ minHeight: '100vh', background: isDark ? '#141414' : '#f0f2f5' }}>
-      <Content style={{ padding: 24 }}>
+      <Content style={{ padding: 24, background: isDark ? '#141414' : '#f0f2f5' }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div style={{ 
             background: isDark ? '#1f1f1f' : '#fff', 
@@ -2038,7 +2038,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           {/* 状态概览 - 两行布局，每行两个卡片 */}
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.masterStatus')} 
                   value={status?.master_status || (statusLoading ? t('common.loading') : t('saltstack.unknown'))} 
@@ -2051,7 +2051,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Card>
             </Col>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.apiStatus')} 
                   value={status?.api_status || (statusLoading ? t('saltstack.checking') : t('saltstack.unknown'))} 
@@ -2064,7 +2064,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Card>
             </Col>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.onlineMinions')} 
                   value={status?.minions_up || (statusLoading ? '...' : 0)} 
@@ -2075,7 +2075,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Card>
             </Col>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.offlineMinions')} 
                   value={status?.minions_down || (statusLoading ? '...' : 0)} 
@@ -2088,7 +2088,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           </Row>
 
           {/* 详细信息选项卡 */}
-          <Card>
+          <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
             <Tabs 
               defaultActiveKey="overview" 
               size="large"
@@ -2108,7 +2108,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       title={t('saltstack.masterInfo')} 
                       size="small" 
                       loading={statusLoading} 
-                      style={{ marginBottom: 16 }}
+                      style={{ marginBottom: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
                       extra={
                         <Space>
                           <Tooltip title={t('common.autoRefresh', '自动刷新')}>
@@ -2169,7 +2169,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 {/* 分组筛选和聚合统计 */}
                 <Card 
                   size="small" 
-                  style={{ marginBottom: 16 }}
+                  style={{ marginBottom: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
                   title={
                     <Space>
                       <TeamOutlined />
@@ -3176,7 +3176,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           </Card>
 
           {/* 操作按钮 */}
-          <Card>
+          <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
             <Space>
               <Button 
                 type="primary" 
@@ -3244,7 +3244,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Form.Item>
             </Form>
 
-            <Card size="small" title={t('saltstack.executeProgress')} style={{ marginTop: 12 }}>
+            <Card size="small" title={t('saltstack.executeProgress')} style={{ marginTop: 12, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
               <div style={{ maxHeight: 240, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 8, borderRadius: 6 }}>
                 {execEvents.length === 0 ? (
                   <Text type="secondary">{t('saltstack.waitingForExecution')}</Text>
@@ -3759,7 +3759,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             </Form>
 
             {/* 安装进度 */}
-            <Card size="small" title={t('saltstack.installProgress')} style={{ marginTop: 16 }}>
+            <Card size="small" title={t('saltstack.installProgress')} style={{ marginTop: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
               {batchInstallTaskId && (
                 <div style={{ marginBottom: 8 }}>
                   <Text type="secondary">{t('saltstack.taskId')}: </Text>
@@ -3902,24 +3902,24 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
 
             <Row gutter={16}>
               <Col span={12}>
-                <Card size="small" title="CSV 格式" style={{ marginBottom: 8 }}>
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="CSV 格式" style={{ marginBottom: 8, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`host,port,username,password,use_sudo,group
 192.168.1.100,22,root,pass123,false,web`}
                   </pre>
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="JSON 格式" style={{ marginBottom: 8 }}>
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="JSON 格式" style={{ marginBottom: 8, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`[{"host":"192.168.1.100","port":22,
   "username":"root","password":"pass"}]`}
                   </pre>
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="YAML 格式">
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="YAML 格式" style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`hosts:
   - host: 192.168.1.100
     port: 22
@@ -3928,8 +3928,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="Ansible INI 格式">
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="Ansible INI 格式" style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`[web]
 192.168.1.100 ansible_user=root`}
                   </pre>
@@ -4063,7 +4063,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 )}
               </>
             ) : (
-              <Card size="small" title={t('saltstack.installProgress', '安装进度')}>
+              <Card size="small" title={t('saltstack.installProgress', '安装进度')} style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 {batchCategrafTaskId && (
                   <div style={{ marginBottom: 8 }}>
                     <Text type="secondary">{t('saltstack.taskId', '任务ID')}: </Text>
@@ -4276,7 +4276,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
 
             {/* 测试结果 */}
             {sshTestResults.length > 0 && (
-              <Card size="small" title={t('saltstack.result')} style={{ marginTop: 16 }}>
+              <Card size="small" title={t('saltstack.result')} style={{ marginTop: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Table
                   dataSource={sshTestResults}
                   rowKey="host"
