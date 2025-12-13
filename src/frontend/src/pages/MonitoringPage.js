@@ -105,16 +105,15 @@ const MonitoringPage = () => {
       baseUrl = `${window.location.protocol}//${window.location.hostname}${currentPort}/nightingale/${defaultPath}`;
     }
     
+    // Nightingale 使用 en_US/zh_CN 格式的语言代码
     const n9eLang = locale === 'en-US' ? 'en' : 'zh';
     const n9eTheme = isDark ? 'dark' : 'light';
     const separator = baseUrl.includes('?') ? '&' : '?';
     
-    // 添加时间戳确保 URL 唯一，强制刷新
-    const timestamp = Date.now();
-    
     console.log('[MonitoringPage] Generating URL with locale:', locale, 'isDark:', isDark, 'n9eLang:', n9eLang, 'n9eTheme:', n9eTheme);
     
-    return `${baseUrl}${separator}lang=${n9eLang}&themeMode=${n9eTheme}&_t=${timestamp}`;
+    // 注意：nginx 配置中的 sub_filter 会注入脚本来读取这些参数并同步到 localStorage
+    return `${baseUrl}${separator}lang=${n9eLang}&themeMode=${n9eTheme}`;
   }, [locale, isDark]);
 
   // 监听全局语言变化事件，自动刷新 Nightingale iframe

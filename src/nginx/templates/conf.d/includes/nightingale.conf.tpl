@@ -56,10 +56,51 @@ location ^~ /nightingale/ {
     proxy_hide_header X-Frame-Options;
     proxy_hide_header Content-Security-Policy;
     
+    # Inject language sync script for iframe integration
+    # This script reads lang parameter from URL and syncs it to localStorage
+    # Nightingale uses localStorage key 'language' to store language preference
+    sub_filter_once off;
+    sub_filter_types text/html;
+    sub_filter '</head>' '<script>
+(function(){
+  try {
+    var urlParams = new URLSearchParams(window.location.search);
+    var lang = urlParams.get("lang");
+    if (lang) {
+      var n9eLang = (lang === "en" || lang === "en-US") ? "en_US" : "zh_CN";
+      var currentLang = localStorage.getItem("language");
+      if (currentLang !== n9eLang) {
+        console.log("[N9E-LangSync] Setting language to:", n9eLang, "from URL param:", lang);
+        localStorage.setItem("language", n9eLang);
+        if (currentLang) {
+          console.log("[N9E-LangSync] Language changed, reloading page...");
+          window.location.reload();
+        }
+      }
+    }
+    var theme = urlParams.get("themeMode");
+    if (theme) {
+      var n9eTheme = (theme === "dark") ? "dark" : "light";
+      var currentTheme = localStorage.getItem("theme");
+      if (currentTheme !== n9eTheme) {
+        console.log("[N9E-LangSync] Setting theme to:", n9eTheme);
+        localStorage.setItem("theme", n9eTheme);
+      }
+    }
+  } catch(e) { console.error("[N9E-LangSync] Error:", e); }
+})();
+</script></head>';
+    
     # WebSocket support
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
+    
+    # Disable response buffering for sub_filter to work
+    proxy_buffering on;
+    proxy_buffer_size 128k;
+    proxy_buffers 4 256k;
+    proxy_busy_buffers_size 256k;
     
     # Timeouts
     proxy_connect_timeout 60s;
