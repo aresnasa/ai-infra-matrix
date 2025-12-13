@@ -144,4 +144,210 @@ test.describe('监控页面 iframe 语言切换测试', () => {
     // 截图
     await page.screenshot({ path: 'test-screenshots/monitoring-language-03-styles.png', fullPage: true });
   });
+
+  test('中英文来回切换测试 - 第一次中文 → 英文 → 再次中文', async ({ page }) => {
+    // 辅助函数：切换语言
+    const switchLanguage = async (targetLang) => {
+      console.log(`[Test] Switching to ${targetLang}...`);
+      
+      // 找到语言切换按钮（通常是国际化图标）
+      const langBtn = page.locator('[data-testid="language-switch"], .ant-dropdown-trigger:has(.anticon-global), button:has(.anticon-global), .language-switch');
+      
+      // 尝试多种选择器
+      let clicked = false;
+      const selectors = [
+        '[data-testid="language-switch"]',
+        '.ant-dropdown-trigger:has(.anticon-global)',
+        'button:has(.anticon-global)',
+        '.language-switch',
+        '.anticon-global',
+        '[class*="language"]',
+        // Header 中的下拉菜单
+        'header .ant-dropdown-trigger',
+        '.ant-layout-header .ant-dropdown-trigger'
+      ];
+      
+      for (const selector of selectors) {
+        const btn = page.locator(selector);
+        if (await btn.count() > 0 && await btn.first().isVisible()) {
+          await btn.first().click();
+          clicked = true;
+          console.log(`[Test] Clicked language button with selector: ${selector}`);
+          break;
+        }
+      }
+      
+      if (!clicked) {
+        console.log('[Test] Could not find language switch button, trying direct navigation');
+        // 直接通过 URL 参数切换
+        const currentUrl = page.url();
+        const newUrl = targetLang === 'zh' 
+          ? currentUrl.replace(/lang=en/g, 'lang=zh').replace(/([?&])$/, '')
+          : currentUrl.replace(/lang=zh/g, 'lang=en').replace(/([?&])$/, '');
+        
+        if (!newUrl.includes('lang=')) {
+          const separator = newUrl.includes('?') ? '&' : '?';
+          await page.goto(`${newUrl}${separator}lang=${targetLang}`, { waitUntil: 'domcontentloaded' });
+        } else {
+          await page.goto(newUrl, { waitUntil: 'domcontentloaded' });
+        }
+      } else {
+        // 等待下拉菜单出现
+        await page.waitForTimeout(500);
+        
+        // 点击目标语言选项
+        const langOption = targetLang === 'zh' 
+          ? page.locator('text=中文, text=简体中文, text=Chinese').first()
+          : page.locator('text=English, text=英文, text=EN').first();
+        
+        if (await langOption.isVisible()) {
+          await langOption.click();
+        } else {
+          // 通过 localStorage 设置语言并刷新
+          await page.evaluate((lang) => {
+            localStorage.setItem('i18n_lang', lang);
+            localStorage.setItem('language', lang === 'zh' ? 'zh_CN' : 'en_US');
+          }, targetLang);
+          await page.reload();
+        }
+      }
+      
+      await page.waitForTimeout(3000);
+    };
+
+    // 辅助函数：检查 iframe 中 Nightingale 的语言
+    const checkIframeLang = async (expectedLang) => {
+      const iframe = page.locator('iframe[title="Nightingale Monitoring"]');
+      
+      if (await iframe.count() === 0) {
+        console.log('[Test] No iframe found');
+        return null;
+      }
+      
+      const iframeSrc = await iframe.getAttribute('src');
+      console.log(`[Test] iframe src: ${iframeSrc}`);
+      
+      // 获取 iframe 的 frame 对象
+      const frame = page.frameLocator('iframe[title="Nightingale Monitoring"]');
+      
+      // 检查 iframe 内的 localStorage
+      const iframeElement = await iframe.elementHandle();
+      const contentFrame = await iframeElement.contentFrame();
+      
+      if (contentFrame) {
+        const n9eLang = await contentFrame.evaluate(() => {
+          return localStorage.getItem('language');
+        });
+        console.log(`[Test] Nightingale localStorage language: ${n9eLang}`);
+        
+        // 验证语言是否正确
+        const expectedN9eLang = expectedLang === 'zh' ? 'zh_CN' : 'en_US';
+        return n9eLang === expectedN9eLang;
+      }
+      
+      return null;
+    };
+
+    // 步骤1：中文访问监控页面
+    console.log('[Test] Step 1: Visit monitoring page in Chinese');
+    await page.evaluate(() => {
+      localStorage.setItem('i18n_lang', 'zh');
+      localStorage.setItem('language', 'zh_CN');
+    });
+    await page.goto(`${BASE_URL}/monitoring?lang=zh`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(8000);
+    
+    await page.screenshot({ path: 'test-screenshots/monitoring-lang-switch-01-chinese-first.png', fullPage: true });
+    
+    // 检查中文状态
+    let zhResult1 = await checkIframeLang('zh');
+    console.log(`[Test] First Chinese visit - language correct: ${zhResult1}`);
+    
+    // 步骤2：切换到英文
+    console.log('[Test] Step 2: Switch to English');
+    await page.evaluate(() => {
+      localStorage.setItem('i18n_lang', 'en');
+      localStorage.setItem('language', 'en_US');
+    });
+    await page.goto(`${BASE_URL}/monitoring?lang=en`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(8000);
+    
+    await page.screenshot({ path: 'test-screenshots/monitoring-lang-switch-02-english.png', fullPage: true });
+    
+    // 检查英文状态
+    let enResult = await checkIframeLang('en');
+    console.log(`[Test] English visit - language correct: ${enResult}`);
+    
+    // 步骤3：再切回中文（这是问题发生的场景）
+    console.log('[Test] Step 3: Switch back to Chinese (this is where the bug occurs)');
+    await page.evaluate(() => {
+      localStorage.setItem('i18n_lang', 'zh');
+      localStorage.setItem('language', 'zh_CN');
+      // 清除可能的 reload 标记
+      sessionStorage.removeItem('n9e_lang_reload');
+    });
+    await page.goto(`${BASE_URL}/monitoring?lang=zh`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(10000);  // 给更多时间让语言同步脚本执行
+    
+    await page.screenshot({ path: 'test-screenshots/monitoring-lang-switch-03-chinese-again.png', fullPage: true });
+    
+    // 检查第二次中文状态
+    let zhResult2 = await checkIframeLang('zh');
+    console.log(`[Test] Second Chinese visit - language correct: ${zhResult2}`);
+    
+    // 打印 iframe src 用于调试
+    const iframe = page.locator('iframe[title="Nightingale Monitoring"]');
+    if (await iframe.count() > 0) {
+      const finalSrc = await iframe.getAttribute('src');
+      console.log(`[Test] Final iframe src: ${finalSrc}`);
+      
+      // 验证 URL 参数
+      expect(finalSrc).toContain('lang=zh');
+    }
+    
+    // 断言：第二次访问中文时，iframe 应该正确显示中文
+    if (zhResult2 !== null) {
+      expect(zhResult2).toBe(true);
+    }
+  });
+
+  test('监控页面语言同步脚本执行验证', async ({ page }) => {
+    // 这个测试验证 nginx 注入的语言同步脚本是否正确执行
+    
+    // 设置语言为中文
+    await page.evaluate(() => {
+      localStorage.setItem('i18n_lang', 'zh');
+      localStorage.setItem('language', 'zh_CN');
+    });
+    
+    // 访问监控页面
+    await page.goto(`${BASE_URL}/monitoring?lang=zh`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(5000);
+    
+    // 获取 iframe
+    const iframe = page.locator('iframe[title="Nightingale Monitoring"]');
+    
+    if (await iframe.count() > 0) {
+      const iframeElement = await iframe.elementHandle();
+      const contentFrame = await iframeElement.contentFrame();
+      
+      if (contentFrame) {
+        // 检查语言同步结果
+        const langState = await contentFrame.evaluate(() => {
+          return {
+            localStorage_language: localStorage.getItem('language'),
+            localStorage_theme: localStorage.getItem('theme'),
+            sessionStorage_reload: sessionStorage.getItem('n9e_lang_reload')
+          };
+        });
+        
+        console.log('[Test] iframe language state:', JSON.stringify(langState, null, 2));
+        
+        // 验证语言已同步
+        expect(langState.localStorage_language).toBe('zh_CN');
+      }
+    }
+    
+    await page.screenshot({ path: 'test-screenshots/monitoring-lang-switch-04-sync-verify.png', fullPage: true });
+  });
 });
