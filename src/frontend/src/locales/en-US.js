@@ -1072,6 +1072,26 @@ export default {
     jobOperationSuccess: 'Successfully {action} {count} jobs',
     jobOperationFailed: '{action} jobs failed',
     jobOperationFailedRetry: '{action} jobs failed, please retry later',
+    // Tab titles
+    tabs: {
+      overview: 'Cluster Overview',
+      nodeTemplates: 'Node Templates',
+      monitoringDashboard: 'Monitoring Dashboard',
+      externalClusterManagement: 'External Cluster Management',
+      taskMonitoring: 'Task Monitoring',
+    },
+    // Node template card
+    nodeConfigTemplate: 'Node Configuration Template',
+    newTemplate: 'New Template',
+    // Monitoring dashboard
+    clusterMonitoring: 'SLURM Cluster Monitoring',
+    realtime: 'Real-time',
+    monitoringLoaded: 'Nightingale monitoring dashboard loaded',
+    monitoringDesc: 'Real-time monitoring of cluster status and task progress using Nightingale',
+    refresh: 'Refresh',
+    // Task monitoring
+    taskStatus: 'SLURM Task Status',
+    viewAll: 'View All',
   },
 
   // SLURM Cluster Status

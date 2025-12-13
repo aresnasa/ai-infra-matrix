@@ -1,11 +1,36 @@
+/* Auth 页面样式 - 支持暗黑和光明模式 */
 .auth-container {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+/* 暗黑模式下的背景 */
+.theme-dark .auth-container {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
 }
 
 .auth-container .ant-card {
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-  border-radius: 10px;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+  border-radius: 16px;
+  overflow: hidden;
+  max-width: 500px;
+  width: 100%;
+}
+
+/* 暗黑模式下的卡片 */
+.theme-dark .auth-container .ant-card {
+  background: rgba(30, 30, 45, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
+}
+
+.auth-container .ant-card-head {
+  border-bottom: none;
+  padding: 24px 24px 0 24px;
 }
 
 .auth-container .ant-card-head-title {
@@ -16,34 +41,169 @@
   margin: 0;
   color: #333;
   font-weight: 600;
+  font-size: 24px;
+}
+
+/* 暗黑模式下的标题 */
+.theme-dark .auth-container .ant-card-head-title h2 {
+  color: #fff;
+}
+
+.auth-container .ant-card-head-title p {
+  color: #666;
+}
+
+.theme-dark .auth-container .ant-card-head-title p {
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .auth-container .ant-tabs-tab {
   font-weight: 500;
 }
 
+/* 暗黑模式下的Tab */
+.theme-dark .auth-container .ant-tabs-tab {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.theme-dark .auth-container .ant-tabs-tab-active {
+  color: #667eea !important;
+}
+
+.theme-dark .auth-container .ant-tabs-ink-bar {
+  background: #667eea;
+}
+
 .auth-container .ant-btn-primary {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   height: 45px;
   font-weight: 500;
+  font-size: 16px;
 }
 
 .auth-container .ant-btn-primary:hover {
   background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
 }
 
+/* 输入框样式优化 - 修复遮挡问题 */
 .auth-container .ant-input-affix-wrapper {
-  border-radius: 6px;
-  height: 45px;
+  border-radius: 8px;
+  height: 48px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.auth-container .ant-input-affix-wrapper .ant-input {
+  height: auto;
+  line-height: 1.5;
+  background: transparent;
+}
+
+.auth-container .ant-input-affix-wrapper .ant-input-prefix {
+  margin-right: 10px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+/* 暗黑模式下的输入框 */
+.theme-dark .auth-container .ant-input-affix-wrapper {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.theme-dark .auth-container .ant-input-affix-wrapper:hover {
+  border-color: #667eea;
+}
+
+.theme-dark .auth-container .ant-input-affix-wrapper:focus,
+.theme-dark .auth-container .ant-input-affix-wrapper-focused {
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.theme-dark .auth-container .ant-input-affix-wrapper .ant-input {
+  color: #fff;
+}
+
+.theme-dark .auth-container .ant-input-affix-wrapper .ant-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.theme-dark .auth-container .ant-input-affix-wrapper .ant-input-prefix {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* 密码输入框眼睛图标 */
+.theme-dark .auth-container .ant-input-password-icon {
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .auth-container .ant-input {
-  border-radius: 6px;
-  height: 45px;
+  border-radius: 8px;
+  height: 48px;
 }
 
 .auth-container .ant-form-item {
   margin-bottom: 20px;
+}
+
+/* 表单验证错误提示 */
+.auth-container .ant-form-item-explain-error {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.theme-dark .auth-container .ant-form-item-explain-error {
+  color: #ff7875;
+}
+
+/* 底部提示文字 */
+.auth-container .auth-footer {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 12px;
+  color: #888;
+}
+
+.theme-dark .auth-container .auth-footer {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* 选择框样式 */
+.theme-dark .auth-container .ant-select-selector {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  color: #fff;
+}
+
+.theme-dark .auth-container .ant-select-selection-placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Alert样式 */
+.theme-dark .auth-container .ant-alert {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.theme-dark .auth-container .ant-alert-warning {
+  background: rgba(250, 173, 20, 0.1);
+  border-color: rgba(250, 173, 20, 0.3);
+}
+
+/* Checkbox样式 */
+.theme-dark .auth-container .ant-checkbox-wrapper {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 右上角控制栏 */
+.auth-header-controls {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  z-index: 100;
 }

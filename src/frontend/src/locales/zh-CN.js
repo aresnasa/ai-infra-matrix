@@ -1071,6 +1071,26 @@ export default {
     jobOperationSuccess: '成功{action} {count} 个作业',
     jobOperationFailed: '{action}作业失败',
     jobOperationFailedRetry: '{action}作业失败，请稍后重试',
+    // Tab 标题
+    tabs: {
+      overview: '集群概览',
+      nodeTemplates: '节点模板',
+      monitoringDashboard: '监控仪表板',
+      externalClusterManagement: '外部集群管理',
+      taskMonitoring: '任务监控',
+    },
+    // 节点模板卡片
+    nodeConfigTemplate: '节点配置模板',
+    newTemplate: '新建模板',
+    // 监控仪表板
+    clusterMonitoring: 'SLURM 集群监控',
+    realtime: '实时',
+    monitoringLoaded: 'Nightingale 监控仪表板加载完成',
+    monitoringDesc: '使用 Nightingale 实时监控集群状态和任务进度',
+    refresh: '刷新',
+    // 任务监控
+    taskStatus: 'SLURM 任务状态',
+    viewAll: '查看全部',
   },
 
   // SLURM 集群状态

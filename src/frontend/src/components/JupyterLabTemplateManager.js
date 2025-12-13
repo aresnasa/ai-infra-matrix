@@ -261,17 +261,38 @@ const JupyterLabTemplateManager = () => {
     }
   };
 
+  // 安全解析JSON字段
+  const safeParseJSON = (value, defaultValue = []) => {
+    if (!value) return defaultValue;
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : defaultValue;
+      } catch (e) {
+        console.warn('JSON parse failed:', e);
+        return defaultValue;
+      }
+    }
+    return defaultValue;
+  };
+
   // 编辑模板
   const handleEdit = (template) => {
     setEditingTemplate(template);
     
-    // 设置表单值
+    // 设置表单值 - 安全解析JSON字段
+    const requirements = safeParseJSON(template.requirements, []);
+    const conda_packages = safeParseJSON(template.conda_packages, []);
+    const system_packages = safeParseJSON(template.system_packages, []);
+    const environment_vars = safeParseJSON(template.environment_vars, []);
+    
     const formValues = {
       ...template,
-      requirements: template.requirements ? (typeof template.requirements === 'string' ? template.requirements : JSON.parse(template.requirements)).join('\n') : '',
-      conda_packages: template.conda_packages ? (typeof template.conda_packages === 'string' ? template.conda_packages : JSON.parse(template.conda_packages)).join('\n') : '',
-      system_packages: template.system_packages ? (typeof template.system_packages === 'string' ? template.system_packages : JSON.parse(template.system_packages)).join('\n') : '',
-      environment_vars: template.environment_vars ? (typeof template.environment_vars === 'string' ? JSON.parse(template.environment_vars) : template.environment_vars) : []
+      requirements: requirements.join('\n'),
+      conda_packages: conda_packages.join('\n'),
+      system_packages: system_packages.join('\n'),
+      environment_vars: environment_vars
     };
 
     // 如果有资源配额，设置配额字段
