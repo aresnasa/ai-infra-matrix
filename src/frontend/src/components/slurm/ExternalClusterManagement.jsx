@@ -9,11 +9,13 @@ import {
   ExclamationCircleOutlined, ClusterOutlined, UploadOutlined
 } from '@ant-design/icons';
 import { api } from '../../services/api';
+import { useI18n } from '../../hooks/useI18n';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const ExternalClusterManagement = () => {
+  const { t } = useI18n();
   const [clusters, setClusters] = useState([]);
   const [loading, setLoading] = useState(false);
   const [connectModalVisible, setConnectModalVisible] = useState(false);
@@ -30,7 +32,7 @@ const ExternalClusterManagement = () => {
       const response = await api.get('/slurm/clusters');
       setClusters(response.data.clusters || []);
     } catch (error) {
-      message.error('加载集群列表失败: ' + (error.response?.data?.error || error.message));
+      message.error(t('externalCluster.messages.loadFailed') + ': ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
     }
@@ -68,14 +70,14 @@ const ExternalClusterManagement = () => {
         }
       });
       
-      message.success('集群连接成功');
+      message.success(t('externalCluster.messages.connectSuccess'));
       setConnectModalVisible(false);
       form.resetFields();
       setAuthType('password');
       setSshKeyFile(null);
       loadClusters();
     } catch (error) {
-      message.error('连接失败: ' + (error.response?.data?.error || error.message));
+      message.error(t('externalCluster.messages.connectFailed') + ': ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -83,10 +85,10 @@ const ExternalClusterManagement = () => {
   const handleDelete = async (clusterId) => {
     try {
       await api.delete(`/slurm/clusters/${clusterId}`);
-      message.success('集群已删除');
+      message.success(t('externalCluster.messages.deleteSuccess'));
       loadClusters();
     } catch (error) {
-      message.error('删除失败: ' + (error.response?.data?.error || error.message));
+      message.error(t('externalCluster.messages.deleteFailed') + ': ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -98,7 +100,7 @@ const ExternalClusterManagement = () => {
       setSelectedCluster({ ...cluster, details: response.data });
       setDetailsModalVisible(true);
     } catch (error) {
-      message.error('获取集群详情失败: ' + (error.response?.data?.error || error.message));
+      message.error(t('externalCluster.messages.detailFailed') + ': ' + (error.response?.data?.error || error.message));
     } finally {
       setLoading(false);
     }
@@ -107,55 +109,55 @@ const ExternalClusterManagement = () => {
   // 表格列定义
   const columns = [
     {
-      title: '集群名称',
+      title: t('externalCluster.columns.clusterName'),
       dataIndex: 'name',
       key: 'name',
       render: (text) => <Text strong><ClusterOutlined /> {text}</Text>
     },
     {
-      title: '主机地址',
+      title: t('externalCluster.columns.hostAddress'),
       dataIndex: 'master_host',
       key: 'master_host'
     },
     {
-      title: '连接状态',
+      title: t('externalCluster.columns.connectionStatus'),
       dataIndex: 'status',
       key: 'status',
       render: (status) => {
         const statusMap = {
-          'connected': { color: 'success', icon: <CheckCircleOutlined />, text: '已连接' },
-          'disconnected': { color: 'error', icon: <ExclamationCircleOutlined />, text: '断开连接' },
-          'connecting': { color: 'processing', icon: <LinkOutlined />, text: '连接中' }
+          'connected': { color: 'success', icon: <CheckCircleOutlined />, text: t('externalCluster.status.connected') },
+          'disconnected': { color: 'error', icon: <ExclamationCircleOutlined />, text: t('externalCluster.status.disconnected') },
+          'connecting': { color: 'processing', icon: <LinkOutlined />, text: t('externalCluster.status.connecting') }
         };
-        const { color, icon, text } = statusMap[status] || statusMap['disconnected'];
-        return <Badge status={color} text={<>{icon} {text}</>} />;
+        const { color, icon, text: statusText } = statusMap[status] || statusMap['disconnected'];
+        return <Badge status={color} text={<>{icon} {statusText}</>} />;
       }
     },
     {
-      title: '节点数',
+      title: t('externalCluster.columns.nodeCount'),
       dataIndex: 'node_count',
       key: 'node_count',
-      render: (count) => <Tag color="blue">{count || 0} 个节点</Tag>
+      render: (count) => <Tag color="blue">{count || 0} {t('externalCluster.nodes')}</Tag>
     },
     {
-      title: '描述',
+      title: t('externalCluster.columns.description'),
       dataIndex: 'description',
       key: 'description',
       ellipsis: true
     },
     {
-      title: '操作',
+      title: t('externalCluster.columns.actions'),
       key: 'action',
       render: (_, record) => (
         <Space>
-          <Tooltip title="查看详情">
+          <Tooltip title={t('externalCluster.actions.viewDetail')}>
             <Button
               size="small"
               icon={<EyeOutlined />}
               onClick={() => handleViewDetails(record)}
             />
           </Tooltip>
-          <Tooltip title="刷新状态">
+          <Tooltip title={t('externalCluster.actions.refreshStatus')}>
             <Button
               size="small"
               icon={<ReloadOutlined />}
@@ -163,12 +165,12 @@ const ExternalClusterManagement = () => {
             />
           </Tooltip>
           <Popconfirm
-            title="确定要删除这个集群吗？"
+            title={t('externalCluster.messages.confirmDelete')}
             onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
+            okText={t('externalCluster.confirm')}
+            cancelText={t('externalCluster.cancel')}
           >
-            <Tooltip title="删除">
+            <Tooltip title={t('externalCluster.actions.delete')}>
               <Button
                 size="small"
                 danger
@@ -184,7 +186,7 @@ const ExternalClusterManagement = () => {
   return (
     <div style={{ padding: '24px' }}>
       <Card
-        title={<Title level={4}><ClusterOutlined /> 外部 SLURM 集群管理</Title>}
+        title={<Title level={4}><ClusterOutlined /> {t('externalCluster.title')}</Title>}
         extra={
           <Space>
             <Button
@@ -192,14 +194,14 @@ const ExternalClusterManagement = () => {
               onClick={loadClusters}
               loading={loading}
             >
-              刷新
+              {t('externalCluster.actions.refresh')}
             </Button>
             <Button
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => setConnectModalVisible(true)}
             >
-              连接外部集群
+              {t('externalCluster.actions.connectCluster')}
             </Button>
           </Space>
         }
@@ -215,7 +217,7 @@ const ExternalClusterManagement = () => {
 
       {/* 连接集群模态框 */}
       <Modal
-        title="连接外部 SLURM 集群"
+        title={t('externalCluster.connectModal.title')}
         open={connectModalVisible}
         onCancel={() => {
           setConnectModalVisible(false);
@@ -232,65 +234,65 @@ const ExternalClusterManagement = () => {
           onFinish={handleConnect}
         >
           <Form.Item
-            label="集群名称"
+            label={t('externalCluster.connectModal.clusterName')}
             name="name"
-            rules={[{ required: true, message: '请输入集群名称' }]}
+            rules={[{ required: true, message: t('externalCluster.connectModal.clusterNameRequired') }]}
           >
-            <Input placeholder="例如: production-cluster" />
+            <Input placeholder={t('externalCluster.connectModal.clusterNamePlaceholder')} />
           </Form.Item>
 
           <Form.Item
-            label="主节点地址"
+            label={t('externalCluster.connectModal.masterHost')}
             name="master_host"
-            rules={[{ required: true, message: '请输入主节点地址' }]}
+            rules={[{ required: true, message: t('externalCluster.connectModal.masterHostRequired') }]}
           >
-            <Input placeholder="例如: 192.168.1.100" />
+            <Input placeholder={t('externalCluster.connectModal.masterHostPlaceholder')} />
           </Form.Item>
 
           <Form.Item
-            label="SSH 端口"
+            label={t('externalCluster.connectModal.sshPort')}
             name="ssh_port"
             initialValue={22}
-            rules={[{ required: true, message: '请输入 SSH 端口' }]}
+            rules={[{ required: true, message: t('externalCluster.connectModal.sshPortRequired') }]}
           >
             <Input type="number" placeholder="22" />
           </Form.Item>
 
           <Form.Item
-            label="SSH 用户名"
+            label={t('externalCluster.connectModal.sshUser')}
             name="ssh_user"
-            rules={[{ required: true, message: '请输入 SSH 用户名' }]}
+            rules={[{ required: true, message: t('externalCluster.connectModal.sshUserRequired') }]}
           >
-            <Input placeholder="例如: root" />
+            <Input placeholder={t('externalCluster.connectModal.sshUserPlaceholder')} />
           </Form.Item>
 
-          <Form.Item label="认证方式">
+          <Form.Item label={t('externalCluster.connectModal.authType')}>
             <Radio.Group 
               value={authType} 
               onChange={(e) => setAuthType(e.target.value)}
             >
-              <Radio value="password">密码认证</Radio>
-              <Radio value="key">密钥认证</Radio>
+              <Radio value="password">{t('externalCluster.connectModal.passwordAuth')}</Radio>
+              <Radio value="key">{t('externalCluster.connectModal.keyAuth')}</Radio>
             </Radio.Group>
           </Form.Item>
 
           {authType === 'password' ? (
             <Form.Item
-              label="SSH 密码"
+              label={t('externalCluster.connectModal.sshPassword')}
               name="ssh_password"
-              rules={[{ required: true, message: '请输入 SSH 密码' }]}
+              rules={[{ required: true, message: t('externalCluster.connectModal.sshPasswordRequired') }]}
             >
-              <Input.Password placeholder="请输入密码" />
+              <Input.Password placeholder={t('externalCluster.connectModal.sshPasswordPlaceholder')} />
             </Form.Item>
           ) : (
             <Form.Item
-              label="SSH 私钥"
-              rules={[{ required: !sshKeyFile, message: '请上传 SSH 私钥文件' }]}
+              label={t('externalCluster.connectModal.sshKey')}
+              rules={[{ required: !sshKeyFile, message: t('externalCluster.connectModal.sshKeyRequired') }]}
             >
               <Upload
                 beforeUpload={(file) => {
                   setSshKeyFile(file);
-                  message.success(`已选择文件: ${file.name}`);
+                  message.success(`${t('externalCluster.messages.fileSelected')}: ${file.name}`);
                   return false; // 阻止自动上传
                 }}
                 onRemove={() => {
@@ -300,20 +302,20 @@ const ExternalClusterManagement = () => {
                 accept=".pem,.key,id_rsa,id_ed25519"
               >
                 <Button icon={<UploadOutlined />}>
-                  {sshKeyFile ? `已选择: ${sshKeyFile.name}` : '选择私钥文件'}
+                  {sshKeyFile ? `${t('externalCluster.connectModal.keyFileSelected')}: ${sshKeyFile.name}` : t('externalCluster.connectModal.selectKeyFile')}
                 </Button>
               </Upload>
               <div style={{ marginTop: 8, fontSize: 12, color: '#999' }}>
-                支持的文件格式: .pem, .key, id_rsa, id_ed25519
+                {t('externalCluster.connectModal.supportedFormats')}
               </div>
             </Form.Item>
           )}
 
           <Form.Item
-            label="描述"
+            label={t('externalCluster.connectModal.description')}
             name="description"
           >
-            <TextArea rows={3} placeholder="集群描述信息（可选）" />
+            <TextArea rows={3} placeholder={t('externalCluster.connectModal.descriptionPlaceholder')} />
           </Form.Item>
 
           <Form.Item>
@@ -324,10 +326,10 @@ const ExternalClusterManagement = () => {
                 setAuthType('password');
                 setSshKeyFile(null);
               }}>
-                取消
+                {t('externalCluster.cancel')}
               </Button>
               <Button type="primary" htmlType="submit">
-                连接
+                {t('externalCluster.actions.connect')}
               </Button>
             </Space>
           </Form.Item>
@@ -336,7 +338,7 @@ const ExternalClusterManagement = () => {
 
       {/* 集群详情模态框 */}
       <Modal
-        title={`集群详情: ${selectedCluster?.name || ''}`}
+        title={`${t('externalCluster.detailModal.title')}: ${selectedCluster?.name || ''}`}
         open={detailsModalVisible}
         onCancel={() => {
           setDetailsModalVisible(false);
@@ -344,36 +346,36 @@ const ExternalClusterManagement = () => {
         }}
         footer={[
           <Button key="close" onClick={() => setDetailsModalVisible(false)}>
-            关闭
+            {t('externalCluster.close')}
           </Button>
         ]}
         width={800}
       >
         {selectedCluster && (
           <Descriptions bordered column={2}>
-            <Descriptions.Item label="集群名称" span={2}>
+            <Descriptions.Item label={t('externalCluster.detailModal.clusterName')} span={2}>
               {selectedCluster.name}
             </Descriptions.Item>
-            <Descriptions.Item label="主节点地址">
+            <Descriptions.Item label={t('externalCluster.detailModal.masterHost')}>
               {selectedCluster.master_host}
             </Descriptions.Item>
-            <Descriptions.Item label="SSH 端口">
+            <Descriptions.Item label={t('externalCluster.detailModal.sshPort')}>
               {selectedCluster.ssh_port || 22}
             </Descriptions.Item>
-            <Descriptions.Item label="连接状态" span={2}>
+            <Descriptions.Item label={t('externalCluster.detailModal.connectionStatus')} span={2}>
               <Badge
                 status={selectedCluster.status === 'connected' ? 'success' : 'error'}
-                text={selectedCluster.status === 'connected' ? '已连接' : '断开连接'}
+                text={selectedCluster.status === 'connected' ? t('externalCluster.status.connected') : t('externalCluster.status.disconnected')}
               />
             </Descriptions.Item>
-            <Descriptions.Item label="节点数量">
+            <Descriptions.Item label={t('externalCluster.detailModal.nodeCount')}>
               {selectedCluster.node_count || 0}
             </Descriptions.Item>
-            <Descriptions.Item label="SLURM 版本">
+            <Descriptions.Item label={t('externalCluster.detailModal.slurmVersion')}>
               {selectedCluster.details?.version || 'N/A'}
             </Descriptions.Item>
-            <Descriptions.Item label="描述" span={2}>
-              {selectedCluster.description || '无'}
+            <Descriptions.Item label={t('externalCluster.detailModal.description')} span={2}>
+              {selectedCluster.description || t('externalCluster.detailModal.noDescription')}
             </Descriptions.Item>
           </Descriptions>
         )}

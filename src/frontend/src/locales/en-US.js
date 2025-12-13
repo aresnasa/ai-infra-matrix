@@ -568,6 +568,43 @@ export default {
     cancelDelete: 'Cancel Delete',
     retrySuccess: 'Retry task submitted',
     cancelSuccess: 'Cancelled successfully',
+    
+    // Batch Execution
+    batchExecution: 'Batch Execution',
+    batchExecutionDesc: 'Execute commands or scripts on multiple nodes',
+    scriptTemplates: 'Script Templates',
+    selectScriptTemplate: 'Select Script Template',
+    customScript: 'Custom Script',
+    checkDriverVersion: 'Check Driver Version',
+    checkDriverVersionDesc: 'Check NVIDIA driver and CUDA version on all nodes',
+    checkNvidiaXID: 'Check NVIDIA XID Errors',
+    checkNvidiaXIDDesc: 'Check for NVIDIA XID errors in system logs (GPU drop signs)',
+    checkGPUStatus: 'Check GPU Status',
+    checkGPUStatusDesc: 'Check for GPU drop or offline status',
+    checkDmesgErrors: 'Check dmesg Errors',
+    checkDmesgErrorsDesc: 'Check dmesg for critical errors (OOM, panic, hardware failures)',
+    checkIBStatus: 'Check IB NIC Status',
+    checkIBStatusDesc: 'Check InfiniBand NIC status and connections',
+    checkSystemHealth: 'System Health Check',
+    checkSystemHealthDesc: 'Comprehensive system health check (CPU, memory, disk, processes)',
+    batchExecSuccess: 'Batch execution successful',
+    batchExecFailed: 'Batch execution failed',
+    batchExecPartial: 'Partial nodes failed',
+    resultSummary: 'Execution Summary',
+    nodeResults: 'Node Results',
+    scriptName: 'Script Name',
+    scriptDesc: 'Script Description',
+    targetNodes: 'Target Nodes',
+    selectTargets: 'Select target nodes',
+    selectTargetRequired: 'Please select at least one target node',
+    scriptCode: 'Script Code',
+    scriptRequired: 'Please enter script code or select a template',
+    enterScriptOrSelectTemplate: 'Enter script code to execute, or select a preset template above...',
+    executeNow: 'Execute Now',
+    clearAll: 'Clear All',
+    executionResults: 'Execution Results',
+    noOutput: 'No output',
+    copied: 'Copied to clipboard',
   },
 
   // Search Related
@@ -1287,6 +1324,254 @@ export default {
     moreActions: 'More Actions',
     nodeActions: 'Node Actions',
     jobActions: 'Job Actions',
+  },
+
+  // SLURM Task Management
+  slurmTasks: {
+    // Page title
+    title: 'Slurm Task Management',
+    description: 'View and manage Slurm cluster tasks including client installation, node initialization, scaling operations.',
+    
+    // Table column headers
+    columns: {
+      taskName: 'Task Name',
+      status: 'Status',
+      type: 'Type',
+      progress: 'Progress',
+      cluster: 'Cluster',
+      user: 'User',
+      startTime: 'Start Time',
+      duration: 'Duration',
+      actions: 'Actions',
+    },
+    
+    // Task status
+    status: {
+      pending: 'Pending',
+      running: 'Running',
+      completed: 'Completed',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+    },
+    
+    // Task types
+    types: {
+      scaleUp: 'Scale Up',
+      scaleDown: 'Scale Down',
+      nodeInit: 'Node Init',
+      clusterSetup: 'Cluster Setup',
+      runtime: 'Runtime',
+    },
+    
+    // Filters
+    filters: {
+      searchPlaceholder: 'Search task name...',
+      taskStatus: 'Task Status',
+      taskType: 'Task Type',
+      startDate: 'Start Date',
+      endDate: 'End Date',
+      reset: 'Reset',
+      refresh: 'Refresh',
+      autoRefresh: 'Auto',
+    },
+    
+    // Actions
+    actions: {
+      viewDetail: 'View Detail',
+      refreshProgress: 'Refresh Progress',
+      cancelTask: 'Cancel Task',
+      retryTask: 'Retry Task',
+    },
+    
+    // Messages
+    messages: {
+      loadFailed: 'Failed to load task list',
+      loadFailedTitle: 'Load Failed',
+      retry: 'Retry',
+      progressRefreshed: 'Task progress refreshed',
+      progressRefreshFailed: 'Failed to refresh task progress',
+      taskCancelled: 'Task cancelled',
+      taskCancelFailed: 'Failed to cancel task',
+      taskRetryStarted: 'Task retry started, new task ID',
+      taskRetryFailed: 'Failed to retry task',
+      confirmCancel: 'Are you sure you want to cancel this task?',
+      cancelDescription: 'The task will stop executing after cancellation',
+      autoRefreshEnabled: 'Auto refresh enabled, interval',
+      autoRefreshDisabled: 'Auto refresh disabled, click the button above to refresh manually or enable auto refresh',
+      lastUpdate: 'Last update',
+      seconds: 'seconds',
+    },
+    
+    // Task list
+    list: {
+      title: 'Task List',
+      running: 'running',
+      total: 'Items {start}-{end}, Total {total}',
+      loading: 'Loading...',
+      empty: 'No task records',
+    },
+    
+    // Statistics
+    statistics: {
+      title: 'Statistics',
+      loading: 'Loading statistics...',
+      totalTasks: 'Total Tasks',
+      runningTasks: 'Running',
+      completedTasks: 'Completed',
+      failedTasks: 'Failed',
+      successRate: 'Success Rate',
+      avgDuration: 'Avg Duration',
+      activeUsers: 'Active Users',
+      noData: 'No statistics data',
+      refreshStats: 'Refresh Stats',
+      loadStats: 'Load Statistics',
+    },
+    
+    // Task detail modal
+    detail: {
+      title: 'Task Detail',
+      basicInfo: 'Basic Info',
+      parameters: 'Parameters',
+      executionLog: 'Execution Log',
+      statisticsInfo: 'Statistics',
+      // Basic info fields
+      taskId: 'Task ID',
+      taskType: 'Task Type',
+      priority: 'Priority',
+      defaultPriority: 'Default',
+      createdAt: 'Created At',
+      startedAt: 'Started At',
+      completedAt: 'Completed At',
+      duration: 'Duration',
+      cluster: 'Cluster',
+      user: 'User',
+      retryCount: 'Retry Count',
+      maxRetries: 'Max Retries',
+      description: 'Description',
+      errorMessage: 'Error Message',
+      currentProgress: 'Current Progress',
+      noParameters: 'No parameters',
+      noExecutionLog: 'No execution log',
+      // Statistics fields
+      nodesProcessed: 'Nodes Processed',
+      nodesSuccessful: 'Nodes Successful',
+      nodesFailed: 'Nodes Failed',
+      nodeDetails: 'Node Details',
+      success: 'Success',
+      failed: 'Failed',
+    },
+    
+    // Running tasks alert
+    runningAlert: '{count} tasks running',
+    
+    // Time formatting
+    time: {
+      seconds: 'seconds',
+      minutes: 'minutes',
+      hours: 'hours',
+    },
+    
+    // Buttons
+    buttons: {
+      confirm: 'OK',
+      cancel: 'Cancel',
+      close: 'Close',
+      cancelTask: 'Cancel Task',
+      retryTask: 'Retry Task',
+    },
+  },
+
+  // External Cluster Management
+  externalCluster: {
+    // Page title
+    title: 'External SLURM Cluster Management',
+    
+    // Table columns
+    columns: {
+      clusterName: 'Cluster Name',
+      hostAddress: 'Host Address',
+      connectionStatus: 'Connection Status',
+      nodeCount: 'Node Count',
+      description: 'Description',
+      actions: 'Actions',
+    },
+    
+    // Connection status
+    status: {
+      connected: 'Connected',
+      disconnected: 'Disconnected',
+      connecting: 'Connecting',
+    },
+    
+    // Action buttons
+    actions: {
+      viewDetail: 'View Detail',
+      refresh: 'Refresh',
+      refreshStatus: 'Refresh Status',
+      delete: 'Delete',
+      connect: 'Connect',
+      connectCluster: 'Connect External Cluster',
+    },
+    
+    // Messages
+    messages: {
+      loadFailed: 'Failed to load cluster list',
+      connectSuccess: 'Cluster connected successfully',
+      connectFailed: 'Connection failed',
+      deleteSuccess: 'Cluster deleted',
+      deleteFailed: 'Delete failed',
+      detailFailed: 'Failed to get cluster details',
+      confirmDelete: 'Are you sure you want to delete this cluster?',
+      fileSelected: 'File selected',
+    },
+    
+    // Connect modal
+    connectModal: {
+      title: 'Connect External SLURM Cluster',
+      clusterName: 'Cluster Name',
+      clusterNamePlaceholder: 'e.g.: production-cluster',
+      clusterNameRequired: 'Please enter cluster name',
+      masterHost: 'Master Host',
+      masterHostPlaceholder: 'e.g.: 192.168.1.100',
+      masterHostRequired: 'Please enter master host address',
+      sshPort: 'SSH Port',
+      sshPortRequired: 'Please enter SSH port',
+      sshUser: 'SSH User',
+      sshUserPlaceholder: 'e.g.: root',
+      sshUserRequired: 'Please enter SSH username',
+      authType: 'Auth Type',
+      passwordAuth: 'Password',
+      keyAuth: 'Key',
+      sshPassword: 'SSH Password',
+      sshPasswordPlaceholder: 'Enter password',
+      sshPasswordRequired: 'Please enter SSH password',
+      sshKey: 'SSH Private Key',
+      sshKeyRequired: 'Please upload SSH private key file',
+      selectKeyFile: 'Select Key File',
+      keyFileSelected: 'Selected',
+      supportedFormats: 'Supported formats: .pem, .key, id_rsa, id_ed25519',
+      description: 'Description',
+      descriptionPlaceholder: 'Cluster description (optional)',
+    },
+    
+    // Detail modal
+    detailModal: {
+      title: 'Cluster Details',
+      clusterName: 'Cluster Name',
+      masterHost: 'Master Host',
+      sshPort: 'SSH Port',
+      connectionStatus: 'Connection Status',
+      nodeCount: 'Node Count',
+      slurmVersion: 'SLURM Version',
+      description: 'Description',
+      noDescription: 'None',
+    },
+    
+    // Common
+    nodes: 'nodes',
+    confirm: 'OK',
+    cancel: 'Cancel',
+    close: 'Close',
   },
 
   // Admin Center
