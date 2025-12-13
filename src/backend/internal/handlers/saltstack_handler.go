@@ -2931,11 +2931,27 @@ type GPUInfo struct {
 	GPUModel      string `json:"gpu_model"`
 }
 
-// NPUInfo 华为 NPU 信息结构
+// NPUInfo NPU 信息结构 (华为昇腾、寒武纪等)
 type NPUInfo struct {
-	Version  string `json:"version"`
-	NPUCount int    `json:"npu_count"`
-	NPUModel string `json:"npu_model"`
+	Vendor   string `json:"vendor"`    // huawei, cambricon, iluvatar
+	Version  string `json:"version"`   // 驱动/SMI 版本
+	NPUCount int    `json:"npu_count"` // NPU 数量
+	NPUModel string `json:"npu_model"` // NPU 型号
+}
+
+// TPUInfo TPU 或其他 AI 加速器信息结构
+type TPUInfo struct {
+	Vendor   string `json:"vendor"`    // google, 或其他厂商
+	Version  string `json:"version"`   // 驱动版本
+	TPUCount int    `json:"tpu_count"` // TPU 数量
+	TPUModel string `json:"tpu_model"` // TPU 型号
+}
+
+// AcceleratorInfo 综合加速器信息结构
+type AcceleratorInfo struct {
+	GPU *GPUInfo `json:"gpu,omitempty"`
+	NPU *NPUInfo `json:"npu,omitempty"`
+	TPU *TPUInfo `json:"tpu,omitempty"`
 }
 
 // extractKernelVersion 从 grains 中提取内核版本
@@ -3048,13 +3064,7 @@ func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GP
 func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NPUInfo {
 	info := NPUInfo{}
 
-	// 执行 npu-smi info 命令
-	// 输出格式:
-	// +------------------------------------------------------------------------------------------------+
-	// | npu-smi 24.1.1                   Version: 24.1.1                                               |
-	// +------------------------------------------------------------------------------------------------+
-	// | NPU   Name      Health          Power(W)   Temp(C)   ...
-	// | 0     910B3     OK              68.9       36        ...
+	// 先检测华为昇腾 NPU (npu-smi)
 	payload := map[string]interface{}{
 		"client": "local",
 		"tgt":    minionID,
@@ -3066,43 +3076,108 @@ func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NP
 	}
 
 	resp, err := client.makeRequest("/", "POST", payload)
-	if err != nil {
-		return info
-	}
-
-	output := h.extractCmdOutput(resp, minionID)
-	if output == "" || strings.Contains(strings.ToLower(output), "not found") || strings.Contains(strings.ToLower(output), "command not found") {
-		return info
-	}
-
-	// 解析 npu-smi 版本
-	// 格式: | npu-smi 24.1.1                   Version: 24.1.1 |
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		// 解析版本号
-		if strings.Contains(line, "npu-smi") && strings.Contains(line, "Version:") {
-			// 提取 Version: 后的版本号
-			if idx := strings.Index(line, "Version:"); idx != -1 {
-				versionPart := strings.TrimSpace(line[idx+len("Version:"):])
-				// 移除末尾的 | 和空格
-				versionPart = strings.TrimSuffix(strings.TrimSpace(versionPart), "|")
-				info.Version = strings.TrimSpace(versionPart)
-			}
-		}
-
-		// 解析 NPU 型号和数量
-		// 格式: | 0     910B3     OK ...
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "|") && !strings.Contains(line, "NPU") && !strings.Contains(line, "npu-smi") && !strings.Contains(line, "---") {
-			fields := strings.Fields(strings.Trim(line, "|"))
-			if len(fields) >= 2 {
-				// 第一个字段是数字（NPU ID），第二个字段是型号
-				if _, err := strconv.Atoi(fields[0]); err == nil {
-					info.NPUCount++
-					if info.NPUModel == "" {
-						info.NPUModel = fields[1]
+	if err == nil {
+		output := h.extractCmdOutput(resp, minionID)
+		if output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "command not found") {
+			info.Vendor = "huawei"
+			// 解析 npu-smi 输出
+			// 格式: | npu-smi 24.1.1                   Version: 24.1.1 |
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				// 解析版本号
+				if strings.Contains(line, "npu-smi") && strings.Contains(line, "Version:") {
+					if idx := strings.Index(line, "Version:"); idx != -1 {
+						versionPart := strings.TrimSpace(line[idx+len("Version:"):])
+						versionPart = strings.TrimSuffix(strings.TrimSpace(versionPart), "|")
+						info.Version = strings.TrimSpace(versionPart)
 					}
 				}
+				// 解析 NPU 型号和数量
+				// 格式: | 0     910B3     OK ...
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "|") && !strings.Contains(line, "NPU") && !strings.Contains(line, "npu-smi") && !strings.Contains(line, "---") && !strings.Contains(line, "Chip") {
+					fields := strings.Fields(strings.Trim(line, "|"))
+					if len(fields) >= 2 {
+						if _, parseErr := strconv.Atoi(fields[0]); parseErr == nil {
+							info.NPUCount++
+							if info.NPUModel == "" {
+								info.NPUModel = fields[1]
+							}
+						}
+					}
+				}
+			}
+			if info.NPUCount > 0 {
+				return info
+			}
+		}
+	}
+
+	// 检测寒武纪 MLU (cnmon)
+	cnmonPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"cnmon info 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	cnmonResp, err := client.makeRequest("/", "POST", cnmonPayload)
+	if err == nil {
+		output := h.extractCmdOutput(cnmonResp, minionID)
+		if output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "command not found") {
+			info.Vendor = "cambricon"
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				if strings.Contains(strings.ToLower(line), "driver version") {
+					parts := strings.Split(line, ":")
+					if len(parts) >= 2 {
+						info.Version = strings.TrimSpace(parts[1])
+					}
+				}
+				if strings.Contains(line, "MLU") && !strings.Contains(strings.ToLower(line), "driver") {
+					info.NPUCount++
+				}
+				if strings.Contains(strings.ToLower(line), "product name") {
+					parts := strings.Split(line, ":")
+					if len(parts) >= 2 && info.NPUModel == "" {
+						info.NPUModel = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+			if info.NPUCount > 0 {
+				return info
+			}
+		}
+	}
+
+	// 检测天数智芯 GPU (ixsmi)
+	ixsmiPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"ixsmi -L 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	ixsmiResp, err := client.makeRequest("/", "POST", ixsmiPayload)
+	if err == nil {
+		output := h.extractCmdOutput(ixsmiResp, minionID)
+		if output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "command not found") {
+			info.Vendor = "iluvatar"
+			// 统计输出行数作为 GPU 数量
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					info.NPUCount++
+				}
+			}
+			if info.NPUCount > 0 {
+				return info
 			}
 		}
 	}

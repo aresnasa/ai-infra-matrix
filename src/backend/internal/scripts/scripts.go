@@ -54,3 +54,36 @@ func GetFullMetricsScript() (string, error) {
 func GetNPUInfoScript() (string, error) {
 	return GetSaltScript("get_npu_info")
 }
+
+// GetTPUInfoScript 获取 TPU（Google TPU/Habana Gaudi 等）信息收集脚本
+func GetTPUInfoScript() (string, error) {
+	return GetSaltScript("get_tpu_info")
+}
+
+// GetAllAcceleratorInfoScript 获取所有 AI 加速器（GPU/NPU/TPU）信息的综合脚本
+func GetAllAcceleratorInfoScript() (string, error) {
+	gpuScript, err := GetGPUInfoScript()
+	if err != nil {
+		gpuScript = ""
+	}
+	npuScript, err := GetNPUInfoScript()
+	if err != nil {
+		npuScript = ""
+	}
+	tpuScript, err := GetTPUInfoScript()
+	if err != nil {
+		tpuScript = ""
+	}
+
+	// 组合脚本
+	combined := `#!/bin/bash
+# Combined AI Accelerator Info Script
+echo "=== GPU INFO ==="
+` + gpuScript + `
+echo "=== NPU INFO ==="
+` + npuScript + `
+echo "=== TPU INFO ==="
+` + tpuScript
+
+	return combined, nil
+}

@@ -269,6 +269,24 @@ const SaltStackDashboard = () => {
             memory_free: metrics.gpu.memory_free || '',
             gpus: metrics.gpu.gpus || [],
           } : minion.gpu_info,
+          // NPU 信息 (华为昇腾、寒武纪等)
+          npu_info: metrics?.npu ? {
+            vendor: metrics.npu.vendor || '',
+            version: metrics.npu.version || '',
+            npu_count: metrics.npu.count || 0,
+            npu_model: metrics.npu.model || '',
+            utilization: metrics.npu.avg_utilization || 0,
+            memory_used_mb: metrics.npu.memory_used_mb || 0,
+            memory_total_mb: metrics.npu.memory_total_mb || 0,
+            npus: metrics.npu.npus || [],
+          } : minion.npu_info,
+          // TPU 信息
+          tpu_info: metrics?.tpu ? {
+            vendor: metrics.tpu.vendor || '',
+            version: metrics.tpu.version || '',
+            tpu_count: metrics.tpu.count || 0,
+            tpu_model: metrics.tpu.model || '',
+          } : minion.tpu_info,
           ib_info: metrics?.ib ? {
             active_count: metrics.ib.active_count || 0,
             ports: metrics.ib.ports || [],
@@ -384,6 +402,7 @@ const SaltStackDashboard = () => {
       offline: minions.filter(m => m.status?.toLowerCase() !== 'up' && m.status?.toLowerCase() !== 'accepted').length,
       byGroup: {},
       gpuInfo: { total: 0, withGpu: 0, models: {} },
+      npuInfo: { total: 0, withNpu: 0, vendors: {} },
       ibInfo: { total: 0, active: 0, down: 0 },
     };
 
@@ -396,6 +415,7 @@ const SaltStackDashboard = () => {
           online: 0,
           offline: 0,
           gpuCount: 0,
+          npuCount: 0,
           ibActive: 0,
         };
       }
@@ -414,6 +434,15 @@ const SaltStackDashboard = () => {
         const model = m.gpu_info?.gpu_model || m.gpu_model || 'Unknown';
         stats.gpuInfo.models[model] = (stats.gpuInfo.models[model] || 0) + 1;
         stats.byGroup[groupName].gpuCount += m.gpu_info?.gpu_count || 1;
+      }
+
+      // NPU 统计 (华为昇腾、寒武纪等)
+      if (m.npu_info?.npu_count > 0) {
+        stats.npuInfo.withNpu++;
+        stats.npuInfo.total += m.npu_info?.npu_count || 0;
+        const vendor = m.npu_info?.vendor || 'Unknown';
+        stats.npuInfo.vendors[vendor] = (stats.npuInfo.vendors[vendor] || 0) + (m.npu_info?.npu_count || 1);
+        stats.byGroup[groupName].npuCount += m.npu_info?.npu_count || 0;
       }
 
       // IB 统计（优先使用采集到的 ib_info）
@@ -2203,7 +2232,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 >
                   <Row gutter={[16, 16]}>
                     {/* 总体统计 */}
-                    <Col xs={24} sm={12} md={6}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
                       <Card size="small" style={{ textAlign: 'center', background: isDark ? '#162312' : '#f6ffed' }}>
                         <Statistic 
                           title={t('saltstack.totalMinions', '总节点数')} 
@@ -2212,7 +2241,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         />
                       </Card>
                     </Col>
-                    <Col xs={24} sm={12} md={6}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
                       <Card size="small" style={{ textAlign: 'center', background: isDark ? '#111d2c' : '#e6f7ff' }}>
                         <Statistic 
                           title={t('saltstack.onlineMinions', '在线节点')} 
@@ -2222,7 +2251,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         />
                       </Card>
                     </Col>
-                    <Col xs={24} sm={12} md={6}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
                       <Card size="small" style={{ textAlign: 'center', background: isDark ? '#2b1d11' : '#fff7e6' }}>
                         <Statistic 
                           title={t('saltstack.gpuNodes', 'GPU 节点')} 
@@ -2232,7 +2261,26 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         />
                       </Card>
                     </Col>
-                    <Col xs={24} sm={12} md={6}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#1a1f2e' : '#f0f5ff' }}>
+                        <Statistic 
+                          title={t('saltstack.npuNodes', 'NPU 节点')} 
+                          value={groupStats.npuInfo.withNpu}
+                          suffix={`/ ${groupStats.npuInfo.total} NPUs`}
+                          prefix={<ThunderboltOutlined style={{ color: '#722ed1' }} />}
+                        />
+                        {groupStats.npuInfo.withNpu > 0 && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            {Object.entries(groupStats.npuInfo.vendors).map(([vendor, count]) => (
+                              <Tag key={vendor} size="small" style={{ fontSize: 10, marginTop: 4 }}>
+                                {vendor}: {count}
+                              </Tag>
+                            ))}
+                          </Text>
+                        )}
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6} lg={4}>
                       <Card size="small" style={{ textAlign: 'center', background: groupStats.ibInfo.down > 0 ? (isDark ? '#2a1215' : '#fff1f0') : (isDark ? '#162312' : '#f6ffed') }}>
                         <Statistic 
                           title={t('saltstack.ibStatus', 'IB 网络')} 

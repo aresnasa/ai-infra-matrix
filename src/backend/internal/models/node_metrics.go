@@ -40,6 +40,23 @@ type NodeMetrics struct {
 	GPUMemoryUsagePercent float64 `json:"gpu_memory_usage_percent" gorm:"default:0"` // GPU 显存使用率
 	GPUInfo               string  `json:"gpu_info" gorm:"type:text"`                 // GPU 详细信息 JSON
 
+	// NPU 信息 (华为昇腾、寒武纪等)
+	NPUVendor         string  `json:"npu_vendor" gorm:"size:50"`            // NPU 厂商
+	NPUVersion        string  `json:"npu_version" gorm:"size:50"`           // NPU 驱动/SMI 版本
+	NPUCount          int     `json:"npu_count" gorm:"default:0"`           // NPU 数量
+	NPUModel          string  `json:"npu_model" gorm:"size:200"`            // NPU 型号
+	NPUAvgUtilization float64 `json:"npu_avg_utilization" gorm:"default:0"` // NPU 平均利用率
+	NPUMemoryUsedMB   int     `json:"npu_memory_used_mb" gorm:"default:0"`  // NPU 已用显存 (MB)
+	NPUMemoryTotalMB  int     `json:"npu_memory_total_mb" gorm:"default:0"` // NPU 总显存 (MB)
+	NPUInfo           string  `json:"npu_info" gorm:"type:text"`            // NPU 详细信息 JSON
+
+	// TPU 信息
+	TPUVendor  string `json:"tpu_vendor" gorm:"size:50"`  // TPU 厂商
+	TPUVersion string `json:"tpu_version" gorm:"size:50"` // TPU 驱动版本
+	TPUCount   int    `json:"tpu_count" gorm:"default:0"` // TPU 数量
+	TPUModel   string `json:"tpu_model" gorm:"size:200"`  // TPU 型号
+	TPUInfo    string `json:"tpu_info" gorm:"type:text"`  // TPU 详细信息 JSON
+
 	// InfiniBand 信息
 	IBActiveCount int    `json:"ib_active_count" gorm:"default:0"` // 活跃 IB 端口数量
 	IBDownCount   int    `json:"ib_down_count" gorm:"default:0"`   // Down 状态 IB 端口数量
@@ -100,6 +117,23 @@ type NodeMetricsLatest struct {
 	GPUMemoryTotalMB      int     `json:"gpu_memory_total_mb" gorm:"default:0"`
 	GPUMemoryUsagePercent float64 `json:"gpu_memory_usage_percent" gorm:"default:0"`
 	GPUInfo               string  `json:"gpu_info" gorm:"type:text"`
+
+	// NPU 信息 (华为昇腾、寒武纪等)
+	NPUVendor         string  `json:"npu_vendor" gorm:"size:50"`
+	NPUVersion        string  `json:"npu_version" gorm:"size:50"`
+	NPUCount          int     `json:"npu_count" gorm:"default:0"`
+	NPUModel          string  `json:"npu_model" gorm:"size:200"`
+	NPUAvgUtilization float64 `json:"npu_avg_utilization" gorm:"default:0"`
+	NPUMemoryUsedMB   int     `json:"npu_memory_used_mb" gorm:"default:0"`
+	NPUMemoryTotalMB  int     `json:"npu_memory_total_mb" gorm:"default:0"`
+	NPUInfo           string  `json:"npu_info" gorm:"type:text"`
+
+	// TPU 信息
+	TPUVendor  string `json:"tpu_vendor" gorm:"size:50"`
+	TPUVersion string `json:"tpu_version" gorm:"size:50"`
+	TPUCount   int    `json:"tpu_count" gorm:"default:0"`
+	TPUModel   string `json:"tpu_model" gorm:"size:200"`
+	TPUInfo    string `json:"tpu_info" gorm:"type:text"`
 
 	// InfiniBand 信息
 	IBActiveCount int    `json:"ib_active_count" gorm:"default:0"`
@@ -163,6 +197,8 @@ type NodeMetricsCallbackRequest struct {
 	Memory    *NodeMemoryMetrics  `json:"memory,omitempty"`
 	Network   *NodeNetworkMetrics `json:"network,omitempty"`
 	GPU       *NodeGPUMetrics     `json:"gpu,omitempty"`
+	NPU       *NodeNPUMetrics     `json:"npu,omitempty"`
+	TPU       *NodeTPUMetrics     `json:"tpu,omitempty"`
 	IB        *NodeIBMetrics      `json:"ib,omitempty"`
 	RoCE      *NodeRoCEMetrics    `json:"roce,omitempty"`
 	System    *NodeSystemMetrics  `json:"system,omitempty"`
@@ -229,6 +265,48 @@ type NodeGPUDetailInfo struct {
 	Utilization int    `json:"utilization"`
 }
 
+// NodeNPUMetrics NPU 指标 (华为昇腾、寒武纪等)
+type NodeNPUMetrics struct {
+	Vendor         string              `json:"vendor"`          // 厂商: huawei, cambricon, iluvatar
+	Version        string              `json:"version"`         // 驱动/SMI 版本
+	Count          int                 `json:"count"`           // NPU 数量
+	Model          string              `json:"model"`           // NPU 型号
+	AvgUtilization float64             `json:"avg_utilization"` // 平均利用率
+	MemoryUsedMB   int                 `json:"memory_used_mb"`  // 已用显存 (MB)
+	MemoryTotalMB  int                 `json:"memory_total_mb"` // 总显存 (MB)
+	NPUs           []NodeNPUDetailInfo `json:"npus,omitempty"`  // 各 NPU 详细信息
+}
+
+// NodeNPUDetailInfo 单个 NPU 详细信息
+type NodeNPUDetailInfo struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Health      string `json:"health"`       // OK, Warning, Error
+	Power       string `json:"power"`        // 功耗 (W)
+	Temperature int    `json:"temperature"`  // 温度 (C)
+	Utilization int    `json:"utilization"`  // 利用率 %
+	MemoryUsed  string `json:"memory_used"`  // HBM 已用
+	MemoryTotal string `json:"memory_total"` // HBM 总量
+	BusID       string `json:"bus_id"`       // 总线 ID
+}
+
+// NodeTPUMetrics TPU 指标 (Google TPU 或其他 AI 加速器)
+type NodeTPUMetrics struct {
+	Vendor  string              `json:"vendor"`         // 厂商
+	Version string              `json:"version"`        // 驱动版本
+	Count   int                 `json:"count"`          // TPU 数量
+	Model   string              `json:"model"`          // TPU 型号
+	TPUs    []NodeTPUDetailInfo `json:"tpus,omitempty"` // 各 TPU 详细信息
+}
+
+// NodeTPUDetailInfo 单个 TPU 详细信息
+type NodeTPUDetailInfo struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Health      string `json:"health"`
+	Utilization int    `json:"utilization"`
+}
+
 // NodeIBMetrics InfiniBand 指标
 type NodeIBMetrics struct {
 	ActiveCount int              `json:"active_count"`
@@ -280,6 +358,8 @@ type NodeMetricsResponse struct {
 	Memory      *NodeMemoryMetrics  `json:"memory,omitempty"`
 	Network     *NodeNetworkMetrics `json:"network,omitempty"`
 	GPU         *NodeGPUMetrics     `json:"gpu,omitempty"`
+	NPU         *NodeNPUMetrics     `json:"npu,omitempty"`
+	TPU         *NodeTPUMetrics     `json:"tpu,omitempty"`
 	IB          *NodeIBMetrics      `json:"ib,omitempty"`
 	RoCE        *NodeRoCEMetrics    `json:"roce,omitempty"`
 	System      *NodeSystemMetrics  `json:"system,omitempty"`
