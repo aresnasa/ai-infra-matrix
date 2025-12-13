@@ -70,8 +70,10 @@ RUN set -eux; \
         }; \
     fi; \
     # 安装必要的工具 (必须在同一个 RUN 中，确保使用最新的 apt 缓存)
+    # nginx-full 包含 stream 模块，用于 TCP/UDP 负载均衡
     apt-get install -y --no-install-recommends \
-        nginx \
+        nginx-full \
+        libnginx-mod-stream \
         curl \
         bash \
         tzdata \

@@ -28,12 +28,14 @@ import {
   CopyOutlined,
   TeamOutlined,
   EditOutlined,
-  LoadingOutlined
+  LoadingOutlined,
+  CloseCircleOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
 import ResizableMetricsPanel from '../components/ResizableMetricsPanel';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -57,6 +59,7 @@ const StatisticSkeleton = ({ title, icon }) => (
 
 const SaltStackDashboard = () => {
   const { t } = useI18n();
+  const { isDark } = useTheme();
   
   // 页面状态管理
   const [pageLoaded, setPageLoaded] = useState(false);
@@ -177,6 +180,13 @@ const SaltStackDashboard = () => {
   const [installTasksPage, setInstallTasksPage] = useState({ current: 1, pageSize: 10 });
   const [expandedTaskId, setExpandedTaskId] = useState(null);
 
+  // 删除任务历史状态
+  const [deleteTasks, setDeleteTasks] = useState([]);
+  const [deleteTasksLoading, setDeleteTasksLoading] = useState(false);
+  const [deleteTasksTotal, setDeleteTasksTotal] = useState(0);
+  const [expandedDeleteTaskId, setExpandedDeleteTaskId] = useState(null);
+  const [deleteTaskLogs, setDeleteTaskLogs] = useState({});
+
   // 自动刷新状态
   const [autoRefreshMinions, setAutoRefreshMinions] = useState(false);
   const [autoRefreshTasks, setAutoRefreshTasks] = useState(false);
@@ -259,6 +269,24 @@ const SaltStackDashboard = () => {
             memory_free: metrics.gpu.memory_free || '',
             gpus: metrics.gpu.gpus || [],
           } : minion.gpu_info,
+          // NPU 信息 (华为昇腾、寒武纪等)
+          npu_info: metrics?.npu ? {
+            vendor: metrics.npu.vendor || '',
+            version: metrics.npu.version || '',
+            npu_count: metrics.npu.count || 0,
+            npu_model: metrics.npu.model || '',
+            utilization: metrics.npu.avg_utilization || 0,
+            memory_used_mb: metrics.npu.memory_used_mb || 0,
+            memory_total_mb: metrics.npu.memory_total_mb || 0,
+            npus: metrics.npu.npus || [],
+          } : minion.npu_info,
+          // TPU 信息
+          tpu_info: metrics?.tpu ? {
+            vendor: metrics.tpu.vendor || '',
+            version: metrics.tpu.version || '',
+            tpu_count: metrics.tpu.count || 0,
+            tpu_model: metrics.tpu.model || '',
+          } : minion.tpu_info,
           ib_info: metrics?.ib ? {
             active_count: metrics.ib.active_count || 0,
             ports: metrics.ib.ports || [],
@@ -329,6 +357,32 @@ const SaltStackDashboard = () => {
     }
   }, [installTasksPage.current, installTasksPage.pageSize]);
 
+  // 加载删除任务历史
+  const loadDeleteTasks = useCallback(async (limit = 100) => {
+    setDeleteTasksLoading(true);
+    try {
+      const response = await saltStackAPI.listDeleteTasks({ limit });
+      const data = response.data?.data || [];
+      setDeleteTasks(data);
+      setDeleteTasksTotal(response.data?.count || data.length);
+    } catch (e) {
+      console.error('加载删除任务历史失败', e);
+    } finally {
+      setDeleteTasksLoading(false);
+    }
+  }, []);
+
+  // 加载删除任务日志
+  const loadDeleteTaskLogs = async (minionId) => {
+    try {
+      const response = await saltStackAPI.getDeleteTaskLogs(minionId);
+      const logs = response.data?.data || [];
+      setDeleteTaskLogs(prev => ({ ...prev, [minionId]: logs }));
+    } catch (e) {
+      console.error('加载删除任务日志失败', e);
+    }
+  };
+
   // 计算按分组筛选后的 minions
   const filteredMinions = useMemo(() => {
     if (overviewGroupFilter === 'all') {
@@ -348,6 +402,7 @@ const SaltStackDashboard = () => {
       offline: minions.filter(m => m.status?.toLowerCase() !== 'up' && m.status?.toLowerCase() !== 'accepted').length,
       byGroup: {},
       gpuInfo: { total: 0, withGpu: 0, models: {} },
+      npuInfo: { total: 0, withNpu: 0, vendors: {} },
       ibInfo: { total: 0, active: 0, down: 0 },
     };
 
@@ -360,6 +415,7 @@ const SaltStackDashboard = () => {
           online: 0,
           offline: 0,
           gpuCount: 0,
+          npuCount: 0,
           ibActive: 0,
         };
       }
@@ -378,6 +434,15 @@ const SaltStackDashboard = () => {
         const model = m.gpu_info?.gpu_model || m.gpu_model || 'Unknown';
         stats.gpuInfo.models[model] = (stats.gpuInfo.models[model] || 0) + 1;
         stats.byGroup[groupName].gpuCount += m.gpu_info?.gpu_count || 1;
+      }
+
+      // NPU 统计 (华为昇腾、寒武纪等)
+      if (m.npu_info?.npu_count > 0) {
+        stats.npuInfo.withNpu++;
+        stats.npuInfo.total += m.npu_info?.npu_count || 0;
+        const vendor = m.npu_info?.vendor || 'Unknown';
+        stats.npuInfo.vendors[vendor] = (stats.npuInfo.vendors[vendor] || 0) + (m.npu_info?.npu_count || 1);
+        stats.byGroup[groupName].npuCount += m.npu_info?.npu_count || 0;
       }
 
       // IB 统计（优先使用采集到的 ib_info）
@@ -1787,7 +1852,10 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         message.error(resp.data?.error || t('saltstack.uninstallMinionFailed'));
       }
     } catch (e) {
-      message.error(t('saltstack.uninstallFailed') + ': ' + (e?.response?.data?.message || e.message));
+      // 优先显示后端返回的错误信息
+      const errorDetail = e?.response?.data?.error || e?.response?.data?.message || e.message;
+      message.error(t('saltstack.uninstallFailed') + ': ' + errorDetail);
+      console.error('Uninstall error:', e?.response?.data || e);
     }
   };
 
@@ -1937,15 +2005,20 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
   }
 
   return (
-    <Layout style={{ minHeight: '100vh', background: '#f0f2f5' }}>
-      <Content style={{ padding: 24 }}>
+    <Layout style={{ minHeight: '100vh', background: isDark ? '#141414' : '#f0f2f5' }}>
+      <Content style={{ padding: 24, background: isDark ? '#141414' : '#f0f2f5' }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div>
-            <Title level={2}>
+          <div style={{ 
+            background: isDark ? '#1f1f1f' : '#fff', 
+            padding: '16px 24px', 
+            borderRadius: 8,
+            border: isDark ? '1px solid #303030' : '1px solid #f0f0f0'
+          }}>
+            <Title level={2} style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit', marginBottom: 8 }}>
               <ThunderboltOutlined style={{ marginRight: 8, color: '#1890ff' }} />
               {t('saltstack.title')}
             </Title>
-            <Paragraph type="secondary">
+            <Paragraph style={{ color: isDark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(0, 0, 0, 0.45)', marginBottom: 0 }}>
               {t('saltstack.subtitle')}
             </Paragraph>
           </div>
@@ -1994,7 +2067,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           {/* 状态概览 - 两行布局，每行两个卡片 */}
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.masterStatus')} 
                   value={status?.master_status || (statusLoading ? t('common.loading') : t('saltstack.unknown'))} 
@@ -2007,7 +2080,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Card>
             </Col>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.apiStatus')} 
                   value={status?.api_status || (statusLoading ? t('saltstack.checking') : t('saltstack.unknown'))} 
@@ -2020,7 +2093,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Card>
             </Col>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.onlineMinions')} 
                   value={status?.minions_up || (statusLoading ? '...' : 0)} 
@@ -2031,7 +2104,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Card>
             </Col>
             <Col xs={24} sm={12}>
-              <Card>
+              <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Statistic 
                   title={t('saltstack.offlineMinions')} 
                   value={status?.minions_down || (statusLoading ? '...' : 0)} 
@@ -2044,13 +2117,16 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           </Row>
 
           {/* 详细信息选项卡 */}
-          <Card>
+          <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
             <Tabs 
               defaultActiveKey="overview" 
               size="large"
               onChange={(key) => {
                 if (key === 'install-tasks' && installTasks.length === 0 && !installTasksLoading) {
                   loadInstallTasks(1);
+                }
+                if (key === 'delete-tasks' && deleteTasks.length === 0 && !deleteTasksLoading) {
+                  loadDeleteTasks(1);
                 }
               }}
             >
@@ -2061,7 +2137,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       title={t('saltstack.masterInfo')} 
                       size="small" 
                       loading={statusLoading} 
-                      style={{ marginBottom: 16 }}
+                      style={{ marginBottom: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
                       extra={
                         <Space>
                           <Tooltip title={t('common.autoRefresh', '自动刷新')}>
@@ -2122,7 +2198,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 {/* 分组筛选和聚合统计 */}
                 <Card 
                   size="small" 
-                  style={{ marginBottom: 16 }}
+                  style={{ marginBottom: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
                   title={
                     <Space>
                       <TeamOutlined />
@@ -2156,8 +2232,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 >
                   <Row gutter={[16, 16]}>
                     {/* 总体统计 */}
-                    <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: '#f6ffed' }}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#162312' : '#f6ffed' }}>
                         <Statistic 
                           title={t('saltstack.totalMinions', '总节点数')} 
                           value={filteredMinions.length}
@@ -2165,8 +2241,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         />
                       </Card>
                     </Col>
-                    <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: '#e6f7ff' }}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#111d2c' : '#e6f7ff' }}>
                         <Statistic 
                           title={t('saltstack.onlineMinions', '在线节点')} 
                           value={filteredMinions.filter(m => m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'accepted').length}
@@ -2175,8 +2251,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         />
                       </Card>
                     </Col>
-                    <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: '#fff7e6' }}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#2b1d11' : '#fff7e6' }}>
                         <Statistic 
                           title={t('saltstack.gpuNodes', 'GPU 节点')} 
                           value={groupStats.gpuInfo.withGpu}
@@ -2185,8 +2261,27 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         />
                       </Card>
                     </Col>
-                    <Col xs={24} sm={12} md={6}>
-                      <Card size="small" style={{ textAlign: 'center', background: groupStats.ibInfo.down > 0 ? '#fff1f0' : '#f6ffed' }}>
+                    <Col xs={24} sm={12} md={6} lg={4}>
+                      <Card size="small" style={{ textAlign: 'center', background: isDark ? '#1a1f2e' : '#f0f5ff' }}>
+                        <Statistic 
+                          title={t('saltstack.npuNodes', 'NPU 节点')} 
+                          value={groupStats.npuInfo.withNpu}
+                          suffix={`/ ${groupStats.npuInfo.total} NPUs`}
+                          prefix={<ThunderboltOutlined style={{ color: '#722ed1' }} />}
+                        />
+                        {groupStats.npuInfo.withNpu > 0 && (
+                          <Text type="secondary" style={{ fontSize: 11 }}>
+                            {Object.entries(groupStats.npuInfo.vendors).map(([vendor, count]) => (
+                              <Tag key={vendor} size="small" style={{ fontSize: 10, marginTop: 4 }}>
+                                {vendor}: {count}
+                              </Tag>
+                            ))}
+                          </Text>
+                        )}
+                      </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6} lg={4}>
+                      <Card size="small" style={{ textAlign: 'center', background: groupStats.ibInfo.down > 0 ? (isDark ? '#2a1215' : '#fff1f0') : (isDark ? '#162312' : '#f6ffed') }}>
                         <Statistic 
                           title={t('saltstack.ibStatus', 'IB 网络')} 
                           value={groupStats.ibInfo.active}
@@ -2281,35 +2376,23 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   defaultHeight={350}
                   nodes={[
                     // Master 节点（仅在"全部"筛选时显示）
+                    // 注意：Master 监控数据只使用后端返回的 status 中的数据，不回退使用 minion 数据
+                    // Master 是容器运行的，后端通过 Docker API 获取容器指标
                     ...(overviewGroupFilter === 'all' ? [{
                       id: 'salt-master',
                       name: 'Salt Master',
-                      metrics: (() => {
-                        // 当后端没有返回 Master 指标时，使用第一个在线 minion 的数据作为集群参考
-                        const firstOnlineMinion = filteredMinions.find(m => 
-                          m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'online'
-                        );
-                        const masterCpu = status?.cpu_usage || 
-                          (firstOnlineMinion?.cpu_usage_percent) || 
-                          (firstOnlineMinion?.cpu_info?.usage) || 0;
-                        const masterMem = status?.memory_usage || 
-                          (firstOnlineMinion?.memory_usage_percent) || 
-                          (firstOnlineMinion?.memory_info?.usage_percent) || 0;
-                        const masterConn = status?.active_connections || 0;
-                        const masterBw = status?.network_bandwidth || 0;
-                        
-                        return {
-                          status: status?.master_status === 'running' ? 'online' : 'offline',
-                          cpu_usage: masterCpu,
-                          memory_usage: masterMem,
-                          active_connections: masterConn,
-                          network_bandwidth: masterBw,
-                          ib_status: 'N/A',
-                          roce_status: 'N/A',
-                          gpu_utilization: 0,
-                          gpu_memory: 0,
-                        };
-                      })(),
+                      metrics: {
+                        status: status?.master_status === 'running' ? 'online' : 'offline',
+                        // Master 监控数据来自后端 status API（Docker 容器指标）
+                        cpu_usage: status?.cpu_usage || 0,
+                        memory_usage: status?.memory_usage || 0,
+                        active_connections: status?.active_connections || 0,
+                        network_bandwidth: status?.network_bandwidth || 0,
+                        ib_status: 'N/A',
+                        roce_status: 'N/A',
+                        gpu_utilization: 0,
+                        gpu_memory: 0,
+                      },
                     }] : []),
                     // Minion 节点 (使用筛选后的 minions)
                     ...filteredMinions.map(minion => {
@@ -2892,11 +2975,256 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   </>
                 )}
               </TabPane>
+
+              <TabPane tab={t('saltstack.deleteTasksHistory', '删除任务历史')} key="delete-tasks" icon={<DeleteOutlined />}>
+                {deleteTasksLoading && deleteTasks.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 16 }}>{t('common.loading')}...</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text type="secondary">{t('saltstack.total', { count: deleteTasksTotal })}</Text>
+                      <Space>
+                        <Button 
+                          icon={<ReloadOutlined />} 
+                          onClick={() => loadDeleteTasks()} 
+                          loading={deleteTasksLoading}
+                        >
+                          {t('common.refresh')}
+                        </Button>
+                      </Space>
+                    </div>
+                    <Table
+                      dataSource={deleteTasks}
+                      rowKey="id"
+                      loading={deleteTasksLoading}
+                      size="small"
+                      pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        showTotal: (total) => t('saltstack.total', { count: total }),
+                      }}
+                      expandable={{
+                        expandedRowKeys: expandedDeleteTaskId ? [expandedDeleteTaskId] : [],
+                        onExpand: (expanded, record) => {
+                          setExpandedDeleteTaskId(expanded ? record.id : null);
+                          if (expanded && record.minion_id) {
+                            loadDeleteTaskLogs(record.minion_id);
+                          }
+                        },
+                        expandedRowRender: (record) => (
+                          <div style={{ padding: '8px 0' }}>
+                            <Table
+                              dataSource={deleteTaskLogs[record.minion_id] || []}
+                              rowKey="id"
+                              size="small"
+                              pagination={false}
+                              columns={[
+                                {
+                                  title: t('saltstack.step', '步骤'),
+                                  dataIndex: 'step',
+                                  key: 'step',
+                                  width: 120,
+                                },
+                                {
+                                  title: t('saltstack.taskStatus'),
+                                  dataIndex: 'status',
+                                  key: 'status',
+                                  width: 80,
+                                  render: (status) => (
+                                    <Tag 
+                                      color={status === 'success' ? 'green' : status === 'failed' ? 'red' : 'blue'}
+                                      icon={status === 'success' ? <CheckCircleOutlined /> : status === 'failed' ? <ExclamationCircleOutlined /> : <SyncOutlined spin />}
+                                    >
+                                      {status === 'success' ? t('saltstack.success') : status === 'failed' ? t('saltstack.failed') : t('saltstack.inProgress')}
+                                    </Tag>
+                                  ),
+                                },
+                                {
+                                  title: t('saltstack.message', '消息'),
+                                  dataIndex: 'message',
+                                  key: 'message',
+                                },
+                                {
+                                  title: t('saltstack.output', '输出'),
+                                  dataIndex: 'output',
+                                  key: 'output',
+                                  ellipsis: true,
+                                },
+                                {
+                                  title: t('saltstack.error', '错误'),
+                                  dataIndex: 'error',
+                                  key: 'error',
+                                  ellipsis: true,
+                                  render: (error) => error ? <Text type="danger">{error}</Text> : '-',
+                                },
+                                {
+                                  title: t('saltstack.time', '时间'),
+                                  dataIndex: 'created_at',
+                                  key: 'created_at',
+                                  width: 170,
+                                  render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                                },
+                              ]}
+                              locale={{
+                                emptyText: t('saltstack.noLogs', '暂无日志'),
+                              }}
+                            />
+                          </div>
+                        ),
+                      }}
+                      columns={[
+                        {
+                          title: t('saltstack.minionId'),
+                          dataIndex: 'minion_id',
+                          key: 'minion_id',
+                          render: (minionId) => <Text code>{minionId}</Text>,
+                        },
+                        {
+                          title: t('saltstack.taskStatus'),
+                          dataIndex: 'status',
+                          key: 'status',
+                          width: 120,
+                          filters: [
+                            { text: t('saltstack.pending', '待处理'), value: 'pending' },
+                            { text: t('saltstack.deleting', '删除中'), value: 'deleting' },
+                            { text: t('saltstack.completed', '已完成'), value: 'completed' },
+                            { text: t('saltstack.failed'), value: 'failed' },
+                            { text: t('saltstack.cancelled', '已取消'), value: 'cancelled' },
+                          ],
+                          onFilter: (value, record) => record.status === value,
+                          render: (status) => {
+                            const statusConfig = {
+                              pending: { color: 'orange', text: t('saltstack.pending', '待处理') },
+                              deleting: { color: 'processing', text: t('saltstack.deleting', '删除中') },
+                              completed: { color: 'green', text: t('saltstack.completed', '已完成') },
+                              failed: { color: 'red', text: t('saltstack.failed') },
+                              cancelled: { color: 'default', text: t('saltstack.cancelled', '已取消') },
+                            };
+                            const config = statusConfig[status] || { color: 'default', text: status };
+                            return <Tag color={config.color}>{config.text}</Tag>;
+                          },
+                        },
+                        {
+                          title: t('saltstack.uninstall', '远程卸载'),
+                          dataIndex: 'uninstall',
+                          key: 'uninstall',
+                          width: 100,
+                          render: (uninstall) => uninstall ? <Tag color="blue">{t('common.yes', '是')}</Tag> : <Tag>{t('common.no', '否')}</Tag>,
+                        },
+                        {
+                          title: t('saltstack.force', '强制删除'),
+                          dataIndex: 'force',
+                          key: 'force',
+                          width: 100,
+                          render: (force) => force ? <Tag color="orange">{t('common.yes', '是')}</Tag> : <Tag>{t('common.no', '否')}</Tag>,
+                        },
+                        {
+                          title: t('saltstack.retryCount', '重试次数'),
+                          dataIndex: 'retry_count',
+                          key: 'retry_count',
+                          width: 100,
+                          render: (count, record) => `${count} / ${record.max_retries}`,
+                        },
+                        {
+                          title: t('saltstack.createdAt', '创建时间'),
+                          dataIndex: 'created_at',
+                          key: 'created_at',
+                          width: 170,
+                          sorter: (a, b) => new Date(a.created_at) - new Date(b.created_at),
+                          defaultSortOrder: 'descend',
+                          render: (time) => time ? new Date(time).toLocaleString('zh-CN') : '-',
+                        },
+                        {
+                          title: t('saltstack.duration'),
+                          dataIndex: 'duration',
+                          key: 'duration',
+                          width: 100,
+                          render: (duration, record) => {
+                            if (record.status === 'deleting' || record.status === 'pending') {
+                              return <Tag color="processing">{t('saltstack.inProgress')}</Tag>;
+                            }
+                            if (!duration) return '-';
+                            if (duration < 1000) return `${duration}ms`;
+                            const seconds = Math.floor(duration / 1000);
+                            if (seconds < 60) return `${seconds}s`;
+                            const minutes = Math.floor(seconds / 60);
+                            const secs = seconds % 60;
+                            return `${minutes}m ${secs}s`;
+                          },
+                        },
+                        {
+                          title: t('saltstack.error', '错误'),
+                          dataIndex: 'error_message',
+                          key: 'error_message',
+                          ellipsis: true,
+                          render: (error) => error ? (
+                            <Tooltip title={error}>
+                              <Text type="danger" ellipsis style={{ maxWidth: 200 }}>{error}</Text>
+                            </Tooltip>
+                          ) : '-',
+                        },
+                        {
+                          title: t('common.actions', '操作'),
+                          key: 'actions',
+                          width: 120,
+                          render: (_, record) => (
+                            <Space>
+                              {record.status === 'failed' && record.retry_count < record.max_retries && (
+                                <Tooltip title={t('saltstack.retryDelete', '重试删除')}>
+                                  <Button 
+                                    type="link" 
+                                    size="small" 
+                                    icon={<ReloadOutlined />}
+                                    onClick={async () => {
+                                      try {
+                                        await saltStackAPI.retryDeleteTask(record.minion_id);
+                                        message.success(t('saltstack.retrySuccess', '重试任务已提交'));
+                                        loadDeleteTasks();
+                                      } catch (e) {
+                                        message.error(e.response?.data?.error || t('common.error'));
+                                      }
+                                    }}
+                                  />
+                                </Tooltip>
+                              )}
+                              {(record.status === 'pending' || record.status === 'failed') && (
+                                <Tooltip title={t('saltstack.cancelDelete', '取消删除')}>
+                                  <Button 
+                                    type="link" 
+                                    size="small" 
+                                    danger
+                                    icon={<CloseCircleOutlined />}
+                                    onClick={async () => {
+                                      try {
+                                        await saltStackAPI.cancelDeleteTask(record.minion_id);
+                                        message.success(t('saltstack.cancelSuccess', '取消成功'));
+                                        loadDeleteTasks();
+                                      } catch (e) {
+                                        message.error(e.response?.data?.error || t('common.error'));
+                                      }
+                                    }}
+                                  />
+                                </Tooltip>
+                              )}
+                            </Space>
+                          ),
+                        },
+                      ]}
+                      locale={{
+                        emptyText: t('saltstack.noDeleteTasks', '暂无删除任务记录'),
+                      }}
+                    />
+                  </>
+                )}
+              </TabPane>
             </Tabs>
           </Card>
 
           {/* 操作按钮 */}
-          <Card>
+          <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
             <Space>
               <Button 
                 type="primary" 
@@ -2964,7 +3292,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Form.Item>
             </Form>
 
-            <Card size="small" title={t('saltstack.executeProgress')} style={{ marginTop: 12 }}>
+            <Card size="small" title={t('saltstack.executeProgress')} style={{ marginTop: 12, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
               <div style={{ maxHeight: 240, overflow: 'auto', background: '#0b1021', color: '#e6e6e6', padding: 8, borderRadius: 6 }}>
                 {execEvents.length === 0 ? (
                   <Text type="secondary">{t('saltstack.waitingForExecution')}</Text>
@@ -3479,7 +3807,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             </Form>
 
             {/* 安装进度 */}
-            <Card size="small" title={t('saltstack.installProgress')} style={{ marginTop: 16 }}>
+            <Card size="small" title={t('saltstack.installProgress')} style={{ marginTop: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
               {batchInstallTaskId && (
                 <div style={{ marginBottom: 8 }}>
                   <Text type="secondary">{t('saltstack.taskId')}: </Text>
@@ -3622,24 +3950,24 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
 
             <Row gutter={16}>
               <Col span={12}>
-                <Card size="small" title="CSV 格式" style={{ marginBottom: 8 }}>
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="CSV 格式" style={{ marginBottom: 8, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`host,port,username,password,use_sudo,group
 192.168.1.100,22,root,pass123,false,web`}
                   </pre>
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="JSON 格式" style={{ marginBottom: 8 }}>
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="JSON 格式" style={{ marginBottom: 8, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`[{"host":"192.168.1.100","port":22,
   "username":"root","password":"pass"}]`}
                   </pre>
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="YAML 格式">
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="YAML 格式" style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`hosts:
   - host: 192.168.1.100
     port: 22
@@ -3648,8 +3976,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="Ansible INI 格式">
-                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80 }}>
+                <Card size="small" title="Ansible INI 格式" style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                  <pre style={{ fontSize: 10, margin: 0, overflow: 'auto', maxHeight: 80, color: isDark ? 'rgba(255,255,255,0.85)' : 'inherit' }}>
 {`[web]
 192.168.1.100 ansible_user=root`}
                   </pre>
@@ -3783,7 +4111,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 )}
               </>
             ) : (
-              <Card size="small" title={t('saltstack.installProgress', '安装进度')}>
+              <Card size="small" title={t('saltstack.installProgress', '安装进度')} style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 {batchCategrafTaskId && (
                   <div style={{ marginBottom: 8 }}>
                     <Text type="secondary">{t('saltstack.taskId', '任务ID')}: </Text>
@@ -3996,7 +4324,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
 
             {/* 测试结果 */}
             {sshTestResults.length > 0 && (
-              <Card size="small" title={t('saltstack.result')} style={{ marginTop: 16 }}>
+              <Card size="small" title={t('saltstack.result')} style={{ marginTop: 16, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
                 <Table
                   dataSource={sshTestResults}
                   rowKey="host"

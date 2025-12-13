@@ -316,6 +316,7 @@ func migrateTaskSchema() error {
 		&models.SSHLog{},
 		// Minion 软删除任务表
 		&models.MinionDeleteTask{},
+		&models.MinionDeleteLog{},
 		// Minion 分组表
 		&models.MinionGroup{},
 		&models.MinionGroupMembership{},

@@ -89,6 +89,11 @@ func main() {
 	// 创建默认管理员用户
 	createDefaultAdmin()
 
+	// 初始化JupyterLab预定义模板
+	if err := initializeJupyterLabTemplates(); err != nil {
+		log.Printf("Warning: Failed to initialize JupyterLab templates: %v", err)
+	}
+
 	// 初始化默认AI配置
 	initializeDefaultAIConfigs()
 
@@ -185,6 +190,19 @@ func initializeRBAC() error {
 	}
 
 	log.Println("RBAC system initialized successfully!")
+	return nil
+}
+
+// initializeJupyterLabTemplates 初始化JupyterLab预定义模板
+func initializeJupyterLabTemplates() error {
+	log.Println("Initializing JupyterLab templates...")
+
+	templateService := services.NewJupyterLabTemplateService()
+	if err := templateService.CreatePredefinedTemplates(); err != nil {
+		return fmt.Errorf("failed to create predefined templates: %w", err)
+	}
+
+	log.Println("JupyterLab templates initialized successfully!")
 	return nil
 }
 

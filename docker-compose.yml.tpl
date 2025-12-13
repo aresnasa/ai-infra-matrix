@@ -395,6 +395,10 @@ services:
       - ./src/backend/uploads:/app/uploads
       # 外部脚本目录 - 优先加载，可覆盖内置脚本模板
       - ./src/backend/internal/services/scripts:/app/scripts:ro
+      # Docker socket - 用于获取 Salt Master 容器的监控指标
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Salt Master PKI 密钥 - 用于分发 master.pub 给新安装的 minion
+      - salt_keys:/etc/salt/pki:ro
     networks:
       - ai-infra-network
     healthcheck:
@@ -588,9 +592,9 @@ services:
           - saltstack
           - salt-master
     depends_on:
-      backend:
-        condition: service_healthy
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "sh", "-c", "pgrep -f salt-master && pgrep -f salt-api && nc -z 127.0.0.1 8002"]

@@ -547,3 +547,27 @@ func (ctrl *JupyterLabTemplateController) setJSONField(field *string, data inter
 	*field = string(jsonData)
 	return nil
 }
+
+// RegisterRoutes 注册 JupyterLab 模板路由
+func (ctrl *JupyterLabTemplateController) RegisterRoutes(api *gin.RouterGroup) {
+	jupyterlab := api.Group("/jupyterlab")
+	jupyterlab.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 模板管理
+		jupyterlab.GET("/templates", ctrl.ListTemplates)
+		jupyterlab.GET("/templates/:id", ctrl.GetTemplate)
+		jupyterlab.POST("/templates", ctrl.CreateTemplate)
+		jupyterlab.PUT("/templates/:id", ctrl.UpdateTemplate)
+		jupyterlab.DELETE("/templates/:id", ctrl.DeleteTemplate)
+		jupyterlab.POST("/templates/:id/clone", ctrl.CloneTemplate)
+		jupyterlab.POST("/templates/:id/default", ctrl.SetDefaultTemplate)
+		jupyterlab.GET("/templates/:id/export", ctrl.ExportTemplate)
+		jupyterlab.POST("/templates/import", ctrl.ImportTemplate)
+
+		// 实例管理
+		jupyterlab.GET("/instances", ctrl.ListInstances)
+		jupyterlab.GET("/instances/:id", ctrl.GetInstance)
+		jupyterlab.POST("/instances", ctrl.CreateInstance)
+		jupyterlab.DELETE("/instances/:id", ctrl.DeleteInstance)
+	}
+}

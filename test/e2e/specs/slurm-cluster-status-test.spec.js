@@ -329,5 +329,3 @@ test.describe('SLURM Command Execution Tests', () => {
     }
   });
 });
-
-```

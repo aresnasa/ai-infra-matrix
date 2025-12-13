@@ -6,7 +6,8 @@
 #   {{.SudoPrefix}}  - Sudo command prefix (empty or "sudo ")
 # =============================================================================
 
-set -e
+# Note: We don't use 'set -e' because many commands may fail on a clean system
+# and we want the script to continue cleaning up
 echo "=== Uninstalling Salt Minion ==="
 echo "=== Target: Debian/Ubuntu System ==="
 echo "=== Timestamp: $(date '+%Y-%m-%d %H:%M:%S') ==="

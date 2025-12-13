@@ -577,3 +577,52 @@
     box-shadow: -2px 0 16px rgba(24, 144, 255, 0.6);
   }
 }
+
+/* 暗黑模式样式 */
+.ai-assistant-panel-dark {
+  background: #141414 !important;
+  border-left-color: #303030 !important;
+}
+
+.ai-assistant-panel-dark .resize-indicator {
+  background: #434343;
+}
+
+.ai-assistant-panel-dark .resize-handle:hover .resize-indicator {
+  background: #1890ff !important;
+}
+
+/* 暗黑模式下的模型配置弹窗样式 */
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-modal-header {
+  background: #1f1f1f;
+  border-bottom: 1px solid #303030;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-modal-content {
+  background: #1f1f1f;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-modal-body {
+  color: #d9d9d9;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-list-item:hover {
+  background-color: #2a2a2a !important;
+}
+
+:global(.ant-modal-root[data-theme="dark"]) .ai-model-config-modal .ant-collapse-item .ant-collapse-content {
+  background-color: #1f1f1f;
+}
+
+/* 暗黑模式下的滚动条样式 */
+.ai-assistant-panel-dark ::-webkit-scrollbar-track {
+  background: #1f1f1f;
+}
+
+.ai-assistant-panel-dark ::-webkit-scrollbar-thumb {
+  background: #434343;
+}
+
+.ai-assistant-panel-dark ::-webkit-scrollbar-thumb:hover {
+  background: #595959;
+}

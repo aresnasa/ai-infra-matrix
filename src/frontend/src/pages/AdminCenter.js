@@ -15,12 +15,14 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { usePagePreload } from '../hooks/usePagePreload';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 
 const { Title, Paragraph } = Typography;
 
 const AdminCenter = () => {
   const navigate = useNavigate();
   const { t } = useI18n();
+  const { isDark } = useTheme();
 
   // 针对管理中心页面的智能预加载
   usePagePreload(['admin-users', 'admin-auth', 'admin-test']);
@@ -39,7 +41,8 @@ const AdminCenter = () => {
       description: t('admin.userManagementDesc'),
       icon: <UserOutlined style={{ fontSize: '24px', color: '#1890ff' }} />,
       path: '/admin/users',
-      color: '#e6f7ff',
+      color: isDark ? '#111d2c' : '#e6f7ff',
+      darkColor: '#111d2c',
       badge: 'hot', // 标记为热门功能
       priority: 1
     },
@@ -48,7 +51,7 @@ const AdminCenter = () => {
       description: t('admin.projectManagementDesc'),
       icon: <ProjectOutlined style={{ fontSize: '24px', color: '#52c41a' }} />,
       path: '/admin/projects',
-      color: '#f6ffed',
+      color: isDark ? '#162312' : '#f6ffed',
       priority: 2
     },
     {
@@ -56,7 +59,7 @@ const AdminCenter = () => {
       description: t('admin.ldapAuthDesc'),
       icon: <SafetyOutlined style={{ fontSize: '24px', color: '#fa8c16' }} />,
       path: '/admin/auth',
-      color: '#fff7e6',
+      color: isDark ? '#2b1d11' : '#fff7e6',
       badge: 'new', // 标记为新功能
       priority: 3
     },
@@ -65,7 +68,7 @@ const AdminCenter = () => {
       description: t('admin.ldapConfigDesc'),
       icon: <SettingOutlined style={{ fontSize: '24px', color: '#722ed1' }} />,
       path: '/admin/ldap',
-      color: '#f9f0ff',
+      color: isDark ? '#1a1325' : '#f9f0ff',
       priority: 4
     },
     {
@@ -73,7 +76,7 @@ const AdminCenter = () => {
       description: t('admin.systemTestDesc'),
       icon: <ExperimentOutlined style={{ fontSize: '24px', color: '#eb2f96' }} />,
       path: '/admin/test',
-      color: '#fff0f6',
+      color: isDark ? '#291321' : '#fff0f6',
       priority: 5
     },
     {
@@ -81,7 +84,7 @@ const AdminCenter = () => {
       description: t('admin.trashDesc'),
       icon: <DeleteOutlined style={{ fontSize: '24px', color: '#fa541c' }} />,
       path: '/admin/trash',
-      color: '#fff2e8',
+      color: isDark ? '#2b1611' : '#fff2e8',
       priority: 6
     },
     {
@@ -89,7 +92,7 @@ const AdminCenter = () => {
       description: t('admin.objectStorageDesc'),
       icon: <DatabaseOutlined style={{ fontSize: '24px', color: '#13c2c2' }} />,
       path: '/admin/object-storage',
-      color: '#e6fffb',
+      color: isDark ? '#112123' : '#e6fffb',
       badge: 'new',
       priority: 7
     }
@@ -116,13 +119,13 @@ const AdminCenter = () => {
   };
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: '24px', background: isDark ? '#141414' : '#f0f2f5', minHeight: '100vh' }}>
       <div style={{ marginBottom: '24px' }}>
-        <Title level={2}>
+        <Title level={2} style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
           <DashboardOutlined style={{ marginRight: '8px' }} />
           {t('admin.title')}
         </Title>
-        <Paragraph style={{ fontSize: '16px', color: '#666' }}>
+        <Paragraph style={{ fontSize: '16px', color: isDark ? 'rgba(255, 255, 255, 0.45)' : '#666' }}>
           {t('admin.welcome')}，{t('admin.welcomeDesc')}
         </Paragraph>
       </div>
@@ -130,7 +133,7 @@ const AdminCenter = () => {
       {/* 快捷操作区域 */}
       <Card 
         title={t('admin.quickActions')} 
-        style={{ marginBottom: '24px' }}
+        style={{ marginBottom: '24px', background: isDark ? '#1f1f1f' : '#fff' }}
         extra={<TeamOutlined />}
       >
         <Space size="middle">
@@ -166,7 +169,8 @@ const AdminCenter = () => {
                 height: '180px',
                 backgroundColor: card.color,
                 cursor: 'pointer',
-                transition: 'all 0.3s ease'
+                transition: 'all 0.3s ease',
+                borderColor: isDark ? '#303030' : undefined
               }}
               bodyStyle={{ 
                 padding: '24px',
@@ -178,11 +182,11 @@ const AdminCenter = () => {
               onClick={() => handleCardClick(card.path)}
               onMouseEnter={(e) => {
                 e.currentTarget.style.transform = 'translateY(-4px)';
-                e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)';
+                e.currentTarget.style.boxShadow = isDark ? '0 8px 24px rgba(0,0,0,0.45)' : '0 8px 24px rgba(0,0,0,0.12)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
+                e.currentTarget.style.boxShadow = isDark ? '0 2px 8px rgba(0,0,0,0.35)' : '0 2px 8px rgba(0,0,0,0.06)';
               }}
             >
               <div>
@@ -194,14 +198,14 @@ const AdminCenter = () => {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     {card.icon}
-                    <Title level={4} style={{ margin: '0 0 0 12px' }}>
+                    <Title level={4} style={{ margin: '0 0 0 12px', color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>
                       {card.title}
                     </Title>
                   </div>
                   {renderBadge(card.badge)}
                 </div>
                 <Paragraph style={{ 
-                  color: '#666', 
+                  color: isDark ? 'rgba(255, 255, 255, 0.65)' : '#666', 
                   fontSize: '14px',
                   margin: 0,
                   lineHeight: '1.4'

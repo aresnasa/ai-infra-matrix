@@ -271,10 +271,11 @@ type SaltStackStatus struct {
 	SaltVersion       string  `json:"salt_version,omitempty"`
 	ConfigFile        string  `json:"config_file,omitempty"`
 	LogLevel          string  `json:"log_level,omitempty"`
-	CPUUsage          float64 `json:"cpu_usage,omitempty"`
-	MemoryUsage       int     `json:"memory_usage,omitempty"`
-	ActiveConnections int     `json:"active_connections,omitempty"`
-	NetworkBandwidth  float64 `json:"network_bandwidth,omitempty"` // 网络带宽 (Mbps)
+	CPUUsage          float64 `json:"cpu_usage"`          // 不使用 omitempty，确保返回 0
+	MemoryUsage       int     `json:"memory_usage"`       // 不使用 omitempty，确保返回 0
+	ActiveConnections int     `json:"active_connections"` // 不使用 omitempty，确保返回 0
+	NetworkBandwidth  float64 `json:"network_bandwidth"`  // 不使用 omitempty，确保返回 0 (Mbps)
+	MetricsSource     string  `json:"metrics_source"`     // 监控数据来源：victoriametrics/docker/salt/none
 	// 多 Master 高可用字段
 	ActiveMasterURL  string             `json:"active_master_url,omitempty"`
 	MasterCount      int                `json:"master_count,omitempty"`
@@ -1010,24 +1011,28 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 	type metricsResult struct {
 		cpu, mem, conn int
 		bw             float64
+		source         string
 	}
 	metricsChan := make(chan metricsResult, 1)
 	go func() {
 		log.Printf("[SaltStack] 开始获取性能指标...")
-		cpu, mem, conn, bw := h.getPerformanceMetrics(client)
-		log.Printf("[SaltStack] 性能指标获取完成: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps", cpu, mem, conn, bw)
-		metricsChan <- metricsResult{cpu, mem, conn, bw}
+		cpu, mem, conn, bw, src := h.getPerformanceMetrics(client)
+		log.Printf("[SaltStack] 性能指标获取完成: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps, Source=%s", cpu, mem, conn, bw, src)
+		metricsChan <- metricsResult{cpu, mem, conn, bw, src}
 	}()
 
 	// 等待性能指标，最多 10 秒
 	var networkBandwidth float64
+	var metricsSource string = "none"
 	select {
 	case metrics := <-metricsChan:
 		cpuUsage, memoryUsage, activeConnections = metrics.cpu, metrics.mem, metrics.conn
 		networkBandwidth = metrics.bw
-		log.Printf("[SaltStack] 使用获取到的性能指标: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps", cpuUsage, memoryUsage, activeConnections, networkBandwidth)
+		metricsSource = metrics.source
+		log.Printf("[SaltStack] 使用获取到的性能指标: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps, Source=%s", cpuUsage, memoryUsage, activeConnections, networkBandwidth, metricsSource)
 	case <-time.After(10 * time.Second):
 		log.Printf("[SaltStack] 获取性能指标超时（10秒），使用默认值")
+		metricsSource = "timeout"
 	}
 
 	// 构造状态
@@ -1058,6 +1063,7 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		MemoryUsage:       memoryUsage,
 		ActiveConnections: activeConnections,
 		NetworkBandwidth:  networkBandwidth, // 从 Docker API 或 VictoriaMetrics 获取
+		MetricsSource:     metricsSource,    // 监控数据来源
 		// 多 Master 高可用信息
 		ActiveMasterURL:  client.baseURL,
 		MasterCount:      h.masterPool.GetMasterCount(),
@@ -1093,7 +1099,8 @@ func (h *SaltStackHandler) getMasterHealthInfo() []MasterHealthInfo {
 // getPerformanceMetrics 获取Salt Master性能指标（CPU、内存、活跃连接数、网络带宽）
 // 优先级：1. VictoriaMetrics 2. Docker API (Salt Master容器) 3. Salt API
 // 注意：不使用本地系统采集，因为那会采集到 backend 容器的指标，而不是 Salt Master 的指标
-func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int, float64) {
+// 返回值：cpu%, memory%, connections, bandwidth(Mbps), source(数据来源)
+func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, int, int, float64, string) {
 	// 优先从 VictoriaMetrics 获取 Salt Master 监控数据（需要 Categraf 已部署）
 	cpuUsage, memoryUsage, activeConnections, err := h.metricsService.GetSaltStackMetrics()
 	if err != nil {
@@ -1106,7 +1113,7 @@ func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, in
 			cpuUsage, memoryUsage, activeConnections)
 		// 从 VictoriaMetrics 获取网络带宽
 		networkBw := h.getNetworkBandwidthFromMetrics()
-		return cpuUsage, memoryUsage, activeConnections, networkBw
+		return cpuUsage, memoryUsage, activeConnections, networkBw, "victoriametrics"
 	}
 
 	// 回退：尝试通过 Docker API 获取 Salt Master 容器指标
@@ -1114,13 +1121,16 @@ func (h *SaltStackHandler) getPerformanceMetrics(client *saltAPIClient) (int, in
 	if dockerCPU > 0 || dockerMem > 0 {
 		log.Printf("[MetricsService] 从Docker API获取到Salt Master容器指标: CPU=%d%%, Memory=%d%%, Connections=%d, Bandwidth=%.2f Mbps",
 			dockerCPU, dockerMem, dockerConns, dockerBw)
-		return dockerCPU, dockerMem, dockerConns, dockerBw
+		return dockerCPU, dockerMem, dockerConns, dockerBw, "docker"
 	}
 
 	// 最后回退：Salt API 方式获取
 	log.Printf("[MetricsService] VictoriaMetrics和Docker均无数据，回退到Salt API方式获取性能指标")
 	cpu, mem, conn := h.getPerformanceMetricsFromSalt(client)
-	return cpu, mem, conn, 0
+	if cpu > 0 || mem > 0 {
+		return cpu, mem, conn, 0, "salt"
+	}
+	return cpu, mem, conn, 0, "none"
 }
 
 // getNetworkBandwidthFromMetrics 从 VictoriaMetrics 获取网络带宽
@@ -2921,11 +2931,27 @@ type GPUInfo struct {
 	GPUModel      string `json:"gpu_model"`
 }
 
-// NPUInfo 华为 NPU 信息结构
+// NPUInfo NPU 信息结构 (华为昇腾、寒武纪等)
 type NPUInfo struct {
-	Version  string `json:"version"`
-	NPUCount int    `json:"npu_count"`
-	NPUModel string `json:"npu_model"`
+	Vendor   string `json:"vendor"`    // huawei, cambricon, iluvatar
+	Version  string `json:"version"`   // 驱动/SMI 版本
+	NPUCount int    `json:"npu_count"` // NPU 数量
+	NPUModel string `json:"npu_model"` // NPU 型号
+}
+
+// TPUInfo TPU 或其他 AI 加速器信息结构
+type TPUInfo struct {
+	Vendor   string `json:"vendor"`    // google, 或其他厂商
+	Version  string `json:"version"`   // 驱动版本
+	TPUCount int    `json:"tpu_count"` // TPU 数量
+	TPUModel string `json:"tpu_model"` // TPU 型号
+}
+
+// AcceleratorInfo 综合加速器信息结构
+type AcceleratorInfo struct {
+	GPU *GPUInfo `json:"gpu,omitempty"`
+	NPU *NPUInfo `json:"npu,omitempty"`
+	TPU *TPUInfo `json:"tpu,omitempty"`
 }
 
 // extractKernelVersion 从 grains 中提取内核版本
@@ -3038,13 +3064,7 @@ func (h *SaltStackHandler) getGPUInfo(client *saltAPIClient, minionID string) GP
 func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NPUInfo {
 	info := NPUInfo{}
 
-	// 执行 npu-smi info 命令
-	// 输出格式:
-	// +------------------------------------------------------------------------------------------------+
-	// | npu-smi 24.1.1                   Version: 24.1.1                                               |
-	// +------------------------------------------------------------------------------------------------+
-	// | NPU   Name      Health          Power(W)   Temp(C)   ...
-	// | 0     910B3     OK              68.9       36        ...
+	// 先检测华为昇腾 NPU (npu-smi)
 	payload := map[string]interface{}{
 		"client": "local",
 		"tgt":    minionID,
@@ -3056,43 +3076,108 @@ func (h *SaltStackHandler) getNPUInfo(client *saltAPIClient, minionID string) NP
 	}
 
 	resp, err := client.makeRequest("/", "POST", payload)
-	if err != nil {
-		return info
-	}
-
-	output := h.extractCmdOutput(resp, minionID)
-	if output == "" || strings.Contains(strings.ToLower(output), "not found") || strings.Contains(strings.ToLower(output), "command not found") {
-		return info
-	}
-
-	// 解析 npu-smi 版本
-	// 格式: | npu-smi 24.1.1                   Version: 24.1.1 |
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		// 解析版本号
-		if strings.Contains(line, "npu-smi") && strings.Contains(line, "Version:") {
-			// 提取 Version: 后的版本号
-			if idx := strings.Index(line, "Version:"); idx != -1 {
-				versionPart := strings.TrimSpace(line[idx+len("Version:"):])
-				// 移除末尾的 | 和空格
-				versionPart = strings.TrimSuffix(strings.TrimSpace(versionPart), "|")
-				info.Version = strings.TrimSpace(versionPart)
-			}
-		}
-
-		// 解析 NPU 型号和数量
-		// 格式: | 0     910B3     OK ...
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "|") && !strings.Contains(line, "NPU") && !strings.Contains(line, "npu-smi") && !strings.Contains(line, "---") {
-			fields := strings.Fields(strings.Trim(line, "|"))
-			if len(fields) >= 2 {
-				// 第一个字段是数字（NPU ID），第二个字段是型号
-				if _, err := strconv.Atoi(fields[0]); err == nil {
-					info.NPUCount++
-					if info.NPUModel == "" {
-						info.NPUModel = fields[1]
+	if err == nil {
+		output := h.extractCmdOutput(resp, minionID)
+		if output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "command not found") {
+			info.Vendor = "huawei"
+			// 解析 npu-smi 输出
+			// 格式: | npu-smi 24.1.1                   Version: 24.1.1 |
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				// 解析版本号
+				if strings.Contains(line, "npu-smi") && strings.Contains(line, "Version:") {
+					if idx := strings.Index(line, "Version:"); idx != -1 {
+						versionPart := strings.TrimSpace(line[idx+len("Version:"):])
+						versionPart = strings.TrimSuffix(strings.TrimSpace(versionPart), "|")
+						info.Version = strings.TrimSpace(versionPart)
 					}
 				}
+				// 解析 NPU 型号和数量
+				// 格式: | 0     910B3     OK ...
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "|") && !strings.Contains(line, "NPU") && !strings.Contains(line, "npu-smi") && !strings.Contains(line, "---") && !strings.Contains(line, "Chip") {
+					fields := strings.Fields(strings.Trim(line, "|"))
+					if len(fields) >= 2 {
+						if _, parseErr := strconv.Atoi(fields[0]); parseErr == nil {
+							info.NPUCount++
+							if info.NPUModel == "" {
+								info.NPUModel = fields[1]
+							}
+						}
+					}
+				}
+			}
+			if info.NPUCount > 0 {
+				return info
+			}
+		}
+	}
+
+	// 检测寒武纪 MLU (cnmon)
+	cnmonPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"cnmon info 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	cnmonResp, err := client.makeRequest("/", "POST", cnmonPayload)
+	if err == nil {
+		output := h.extractCmdOutput(cnmonResp, minionID)
+		if output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "command not found") {
+			info.Vendor = "cambricon"
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				if strings.Contains(strings.ToLower(line), "driver version") {
+					parts := strings.Split(line, ":")
+					if len(parts) >= 2 {
+						info.Version = strings.TrimSpace(parts[1])
+					}
+				}
+				if strings.Contains(line, "MLU") && !strings.Contains(strings.ToLower(line), "driver") {
+					info.NPUCount++
+				}
+				if strings.Contains(strings.ToLower(line), "product name") {
+					parts := strings.Split(line, ":")
+					if len(parts) >= 2 && info.NPUModel == "" {
+						info.NPUModel = strings.TrimSpace(parts[1])
+					}
+				}
+			}
+			if info.NPUCount > 0 {
+				return info
+			}
+		}
+	}
+
+	// 检测天数智芯 GPU (ixsmi)
+	ixsmiPayload := map[string]interface{}{
+		"client": "local",
+		"tgt":    minionID,
+		"fun":    "cmd.run",
+		"arg":    []interface{}{"ixsmi -L 2>/dev/null"},
+		"kwarg": map[string]interface{}{
+			"timeout": 10,
+		},
+	}
+
+	ixsmiResp, err := client.makeRequest("/", "POST", ixsmiPayload)
+	if err == nil {
+		output := h.extractCmdOutput(ixsmiResp, minionID)
+		if output != "" && !strings.Contains(strings.ToLower(output), "not found") && !strings.Contains(strings.ToLower(output), "command not found") {
+			info.Vendor = "iluvatar"
+			// 统计输出行数作为 GPU 数量
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					info.NPUCount++
+				}
+			}
+			if info.NPUCount > 0 {
+				return info
 			}
 		}
 	}

@@ -43,6 +43,7 @@ import {
 } from '@ant-design/icons';
 import { aiAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '../hooks/useTheme';
 import AIRobotIcon from './AIRobotIcon';
 import './AIAssistantFloat.css';
 
@@ -72,6 +73,7 @@ const isUserAdmin = (user) => {
 
 const AIAssistantFloat = () => {
   const navigate = useNavigate();
+  const { isDark } = useTheme();
   const [visible, setVisible] = useState(false); // 控制面板显示/隐藏
   const [locked, setLocked] = useState(false); // 控制面板锁定状态，锁定后不会自动关闭
   const [conversations, setConversations] = useState([]);
@@ -1278,20 +1280,20 @@ const AIAssistantFloat = () => {
 
       {/* AI助手侧边面板 */}
       <div
-        className={`ai-assistant-panel ${visible ? 'ai-assistant-panel-visible' : ''} ${locked ? 'ai-assistant-panel-locked' : ''} ${isResizing ? 'ai-assistant-panel-resizing' : ''}`}
+        className={`ai-assistant-panel ${visible ? 'ai-assistant-panel-visible' : ''} ${locked ? 'ai-assistant-panel-locked' : ''} ${isResizing ? 'ai-assistant-panel-resizing' : ''} ${isDark ? 'ai-assistant-panel-dark' : ''}`}
         style={{
           position: 'fixed',
           top: 0,
           right: visible ? 0 : -(panelWidth + 20),
           width: isDragging ? dragWidth : panelWidth, // 拖拽时使用dragWidth获得更好的实时反馈
           height: '100vh',
-          background: '#ffffff',
-          boxShadow: '-2px 0 8px rgba(0, 0, 0, 0.15)',
+          background: isDark ? '#141414' : '#ffffff',
+          boxShadow: isDark ? '-2px 0 8px rgba(0, 0, 0, 0.45)' : '-2px 0 8px rgba(0, 0, 0, 0.15)',
           zIndex: 9999,
           display: 'flex',
           flexDirection: 'column',
           transition: isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          borderLeft: '1px solid #e8e8e8',
+          borderLeft: isDark ? '1px solid #303030' : '1px solid #e8e8e8',
         }}
       >
         {/* 拖拽调整大小的手柄 */}
@@ -1312,11 +1314,11 @@ const AIAssistantFloat = () => {
         <div
           style={{
             padding: '16px 20px',
-            borderBottom: '1px solid #f0f0f0',
+            borderBottom: isDark ? '1px solid #303030' : '1px solid #f0f0f0',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            background: '#fafafa',
+            background: isDark ? '#1f1f1f' : '#fafafa',
           }}
         >
           <Space>
@@ -1530,9 +1532,9 @@ const AIAssistantFloat = () => {
         ) : (
           <>
             {/* 对话列表 */}
-            <div style={{ borderBottom: '1px solid #f0f0f0', maxHeight: 200, overflow: 'auto' }}>
+            <div style={{ borderBottom: isDark ? '1px solid #303030' : '1px solid #f0f0f0', maxHeight: 200, overflow: 'auto', background: isDark ? '#1f1f1f' : 'transparent' }}>
               <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text strong>对话历史</Text>
+                <Text strong style={{ color: isDark ? '#fff' : undefined }}>对话历史</Text>
                 <Button
                   type="text"
                   icon={<PlusOutlined />}
@@ -1559,7 +1561,9 @@ const AIAssistantFloat = () => {
                       style={{
                         padding: '8px 16px',
                         cursor: 'pointer',
-                        backgroundColor: currentConversation?.id === conversation.id ? '#f6ffed' : 'transparent',
+                        backgroundColor: currentConversation?.id === conversation.id 
+                          ? (isDark ? '#162312' : '#f6ffed') 
+                          : 'transparent',
                       }}
                       onClick={() => setCurrentConversation(conversation)}
                       actions={[
@@ -1575,12 +1579,12 @@ const AIAssistantFloat = () => {
                       <List.Item.Meta
                         avatar={<Avatar icon={<MessageOutlined />} size="small" />}
                         title={
-                          <Text ellipsis style={{ fontSize: 12 }}>
+                          <Text ellipsis style={{ fontSize: 12, color: isDark ? '#fff' : undefined }}>
                             {conversation.title}
                           </Text>
                         }
                         description={
-                          <Text type="secondary" style={{ fontSize: 11 }}>
+                          <Text type="secondary" style={{ fontSize: 11, color: isDark ? '#8c8c8c' : undefined }}>
                             {new Date(conversation.updated_at).toLocaleDateString()}
                           </Text>
                         }
@@ -1592,7 +1596,7 @@ const AIAssistantFloat = () => {
             </div>
 
             {/* 消息区域 */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: isDark ? '#141414' : 'transparent' }}>
               {currentConversation ? (
                 <>
                   {/* 消息列表 */}
@@ -1604,8 +1608,8 @@ const AIAssistantFloat = () => {
                     ) : messages.length === 0 ? (
                       <div style={{ textAlign: 'center', padding: 20 }}>
                         <BulbOutlined style={{ fontSize: 32, color: '#1890ff', marginBottom: 8 }} />
-                        <div>开始与AI对话吧！</div>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
+                        <div style={{ color: isDark ? '#fff' : undefined }}>开始与AI对话吧！</div>
+                        <Text type="secondary" style={{ fontSize: 12, color: isDark ? '#8c8c8c' : undefined }}>
                           我可以帮您解答关于Ansible、Kubernetes等问题
                         </Text>
                       </div>
@@ -1620,10 +1624,16 @@ const AIAssistantFloat = () => {
                                 width: '100%',
                                 marginLeft: message.role === 'user' ? 20 : 0,
                                 marginRight: message.role === 'assistant' || message.role === 'system' ? 20 : 0,
-                                backgroundColor: message.role === 'user' ? '#e6f7ff' : 
-                                               message.isStatus ? '#f0f2f5' :
-                                               message.isError ? '#fff2f0' : '#f6ffed',
-                                border: message.isError ? '1px solid #ffccc7' : undefined,
+                                backgroundColor: message.role === 'user' 
+                                  ? (isDark ? '#111d2c' : '#e6f7ff')
+                                  : message.isStatus 
+                                    ? (isDark ? '#1f1f1f' : '#f0f2f5')
+                                    : message.isError 
+                                      ? (isDark ? '#2a1215' : '#fff2f0') 
+                                      : (isDark ? '#162312' : '#f6ffed'),
+                                border: message.isError 
+                                  ? (isDark ? '1px solid #58181c' : '1px solid #ffccc7') 
+                                  : (isDark ? '1px solid #303030' : undefined),
                               }}
                               bodyStyle={{ padding: 12 }}
                             >
@@ -1635,7 +1645,7 @@ const AIAssistantFloat = () => {
                                           <AIRobotIcon size={16} animated={message.isProcessing || false} />}
                                     size="small"
                                   />
-                                  <Text strong>
+                                  <Text strong style={{ color: isDark ? '#fff' : undefined }}>
                                     {message.role === 'user' ? '我' : 
                                      message.role === 'system' ? '系统' : 'AI助手'}
                                   </Text>
@@ -1677,7 +1687,8 @@ const AIAssistantFloat = () => {
                                   whiteSpace: 'pre-wrap', 
                                   fontSize: 13,
                                   color: message.isError ? '#ff4d4f' : 
-                                         message.isStatus ? '#1890ff' : 'inherit',
+                                         message.isStatus ? '#1890ff' : 
+                                         isDark ? '#d9d9d9' : 'inherit',
                                   fontStyle: message.isStatus ? 'italic' : 'normal',
                                 }}>
                                   {message.content}
@@ -1700,14 +1711,14 @@ const AIAssistantFloat = () => {
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
                   <div style={{ textAlign: 'center' }}>
                     <AIRobotIcon size={48} animated={true} style={{ marginBottom: 16 }} />
-                    <Title level={4}>欢迎使用AI助手</Title>
-                    <Text type="secondary">选择一个对话开始聊天，或创建新对话</Text>
+                    <Title level={4} style={{ color: isDark ? '#fff' : undefined }}>欢迎使用AI助手</Title>
+                    <Text type="secondary" style={{ color: isDark ? '#8c8c8c' : undefined }}>选择一个对话开始聊天，或创建新对话</Text>
                   </div>
                 </div>
               )}
 
               {/* 输入区域 */}
-              <div style={{ padding: 16, borderTop: '1px solid #f0f0f0' }}>
+              <div style={{ padding: 16, borderTop: isDark ? '1px solid #303030' : '1px solid #f0f0f0', background: isDark ? '#1f1f1f' : 'transparent' }}>
                 <Space.Compact style={{ width: '100%' }}>
                   <TextArea
                     value={inputMessage}
@@ -1747,7 +1758,7 @@ const AIAssistantFloat = () => {
                     />
                   )}
                 </Space.Compact>
-                <div style={{ marginTop: 8, fontSize: 11, color: '#999' }}>
+                <div style={{ marginTop: 8, fontSize: 11, color: isDark ? '#8c8c8c' : '#999' }}>
                   {processingMessageId ? (
                     <Space>
                       <Spin size="small" />
@@ -1756,9 +1767,9 @@ const AIAssistantFloat = () => {
                       </Text>
                     </Space>
                   ) : currentConversation ? (
-                    <Text type="secondary">当前对话：{currentConversation.title}</Text>
+                    <Text type="secondary" style={{ color: isDark ? '#8c8c8c' : undefined }}>当前对话：{currentConversation.title}</Text>
                   ) : (
-                    <Text type="secondary">快速模式：将自动创建新对话</Text>
+                    <Text type="secondary" style={{ color: isDark ? '#8c8c8c' : undefined }}>快速模式：将自动创建新对话</Text>
                   )}
                 </div>
               </div>
@@ -1882,8 +1893,10 @@ const AIAssistantFloat = () => {
                         cursor: 'pointer',
                         borderRadius: 8,
                         marginBottom: 8,
-                        border: '1px solid #f0f0f0',
-                        backgroundColor: config.id === selectedConfig ? '#f6ffed' : '#fafafa',
+                        border: isDark ? '1px solid #303030' : '1px solid #f0f0f0',
+                        backgroundColor: config.id === selectedConfig 
+                          ? (isDark ? '#162312' : '#f6ffed') 
+                          : (isDark ? '#1f1f1f' : '#fafafa'),
                       }}
                       onClick={() => {
                         setSelectedConfig(config.id);

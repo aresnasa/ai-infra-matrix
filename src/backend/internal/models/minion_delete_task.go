@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -40,6 +41,76 @@ type MinionDeleteTask struct {
 	SSHKeyPath  string `json:"ssh_key_path,omitempty" gorm:"size:500"` // SSH 私钥路径
 	UseSudo     bool   `json:"use_sudo" gorm:"default:false"`          // 是否使用 sudo
 	Uninstall   bool   `json:"uninstall" gorm:"default:false"`         // 是否执行远程卸载（不仅仅是删除密钥）
+
+	// 详细步骤日志（JSON 格式存储）
+	StepsJSON string `json:"steps_json,omitempty" gorm:"type:text"` // JSON encoded steps
+	Duration  int64  `json:"duration,omitempty"`                    // 执行时长（毫秒）
+
+	// 关联的详细日志
+	Logs []MinionDeleteLog `json:"logs,omitempty" gorm:"foreignKey:TaskID"`
+}
+
+// MinionDeleteLog 删除任务详细日志
+type MinionDeleteLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	TaskID    uint      `json:"task_id" gorm:"not null;index"`
+	Step      string    `json:"step" gorm:"not null;size:100"`     // 步骤名称
+	Status    string    `json:"status" gorm:"size:50"`             // success, failed, running
+	Message   string    `json:"message" gorm:"type:text"`          // 日志消息
+	Output    string    `json:"output,omitempty" gorm:"type:text"` // 命令输出
+	Error     string    `json:"error,omitempty" gorm:"type:text"`  // 错误信息
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TableName 指定表名
+func (MinionDeleteLog) TableName() string {
+	return "minion_delete_logs"
+}
+
+// DeleteStep 删除步骤记录（嵌套在Task中）
+type DeleteStep struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"` // success, failed, skipped, running
+	Output      string    `json:"output,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	StartTime   time.Time `json:"start_time"`
+	EndTime     time.Time `json:"end_time,omitempty"`
+	Duration    int64     `json:"duration"` // Duration in milliseconds
+}
+
+// SetSteps 设置删除步骤（序列化为JSON）
+func (m *MinionDeleteTask) SetSteps(steps []DeleteStep) error {
+	stepsBytes, err := json.Marshal(steps)
+	if err != nil {
+		return err
+	}
+	m.StepsJSON = string(stepsBytes)
+	return nil
+}
+
+// GetSteps 获取删除步骤（从JSON反序列化）
+func (m *MinionDeleteTask) GetSteps() ([]DeleteStep, error) {
+	if m.StepsJSON == "" {
+		return []DeleteStep{}, nil
+	}
+
+	var steps []DeleteStep
+	err := json.Unmarshal([]byte(m.StepsJSON), &steps)
+	if err != nil {
+		return nil, err
+	}
+	return steps, nil
+}
+
+// AddStep 添加单个步骤到步骤列表
+func (m *MinionDeleteTask) AddStep(step DeleteStep) error {
+	steps, err := m.GetSteps()
+	if err != nil {
+		steps = []DeleteStep{}
+	}
+	steps = append(steps, step)
+	return m.SetSteps(steps)
 }
 
 // TableName 指定表名

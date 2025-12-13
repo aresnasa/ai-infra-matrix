@@ -1,11 +1,44 @@
 # Nightingale Dockerfile for AI Infra Matrix
 # Build from source code in third_party/nightingale
+# Supports custom VITE_PREFIX for sub-path deployment (e.g., /nightingale)
 
 # 全局 ARG 声明 - 必须在所有 FROM 之前声明才能在 FROM 中使用
 ARG GOLANG_IMAGE=golang:1.25-bookworm
 ARG UBUNTU_IMAGE=ubuntu:22.04
+ARG NODE_IMAGE=node:22-bookworm
 
-# Stage 1: Build
+# ============================================================
+# Stage 0: Build Frontend with custom VITE_PREFIX
+# ============================================================
+FROM ${NODE_IMAGE} AS fe-builder
+
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG N9E_FE_VERSION=v8.4.1
+# Set VITE_PREFIX to match Nightingale's BasePath configuration
+# This ensures React Router and all asset paths use the correct prefix
+# Backend config.toml must have: BasePath = "/nightingale"
+# Nginx must NOT strip the /nightingale prefix (no trailing slash in proxy_pass)
+ARG VITE_PREFIX=/nightingale
+
+WORKDIR /fe
+
+# Copy frontend source code
+COPY third_party/n9e-fe-src/ .
+
+# Install dependencies and build with custom prefix
+RUN set -eux; \
+    if [ -n "${NPM_REGISTRY}" ]; then \
+        npm config set registry ${NPM_REGISTRY}; \
+    fi; \
+    npm install --legacy-peer-deps; \
+    echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}"; \
+    VITE_PREFIX=${VITE_PREFIX} npm run build; \
+    # The build output is in /fe/pub directory
+    ls -la pub/
+
+# ============================================================
+# Stage 1: Build Go Backend
+# ============================================================
 FROM ${GOLANG_IMAGE} AS builder
 
 ARG APT_MIRROR=mirrors.aliyun.com
@@ -39,66 +72,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends git make bash c
 # Copy source code
 COPY third_party/nightingale/ .
 
-# Copy local n9e-fe package if exists (优先使用本地文件)
-COPY third_party/n9e-fe/ /tmp/n9e-fe/
+# Copy frontend build output from fe-builder stage
+COPY --from=fe-builder /fe/pub/ ./pub/
 
 # Build
 ENV GOPROXY=${GO_PROXY}
 
-# Step 1: Get front-end release and embed using statik
-# This creates the front/statik package required by the build
-# 
-# 支持四种下载模式（按优先级）:
-# 1. 本地文件: third_party/n9e-fe/n9e-fe-${VERSION}.tar.gz (优先)
-# 2. 内网环境 (INTERNAL_FILE_SERVER 非默认值): 从内部文件服务器下载
-# 3. 互联网环境 + 指定版本 (N9E_FE_VERSION 非空): 使用 GitHub 镜像下载指定版本
-# 4. 互联网环境 + 自动版本: 从 GitHub API 获取最新版本并下载
+# Step 1: Embed front-end files into Go binary using statik
 RUN set -eux; \
     # Install statik tool
     go install github.com/rakyll/statik@latest; \
-    \
-    TAG="${N9E_FE_VERSION:-v8.4.1}"; \
-    \
-    # 优先使用本地文件
-    if [ -f "/tmp/n9e-fe/n9e-fe-${TAG}.tar.gz" ]; then \
-        echo "Local mode: Using local n9e-fe ${TAG} from third_party/n9e-fe/"; \
-        cp /tmp/n9e-fe/n9e-fe-${TAG}.tar.gz .; \
-    # 检查是否配置了真实的内网文件服务器（非默认占位值）
-    elif [ -n "${INTERNAL_FILE_SERVER}" ] && \
-         [ "${INTERNAL_FILE_SERVER}" != "http://files.example.com" ] && \
-         [ "${INTERNAL_FILE_SERVER}" != "" ]; then \
-        # 内网模式: 从内部文件服务器下载
-        echo "Intranet mode: Downloading n9e-fe ${TAG} from internal server"; \
-        curl -fsSL -o n9e-fe-${TAG}.tar.gz "${INTERNAL_FILE_SERVER}/nightingale/n9e-fe-${TAG}.tar.gz"; \
-    elif [ -n "${N9E_FE_VERSION}" ]; then \
-        # 指定版本模式: 使用 GitHub 镜像下载
-        echo "Fixed version mode: Downloading n9e-fe ${TAG}"; \
-        curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
-    else \
-        # 自动版本模式: 从 GitHub API 获取最新版本
-        echo "Auto version mode: Fetching latest version from GitHub API"; \
-        # 使用 GitHub 镜像代理 API（如果可用）
-        if [ -n "${GITHUB_MIRROR}" ]; then \
-            TAG=$(curl -sX GET "${GITHUB_MIRROR}https://api.github.com/repos/n9e/fe/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
-        fi; \
-        # 如果镜像代理失败，尝试直连
-        if [ -z "${TAG}" ]; then \
-            TAG=$(curl -sX GET https://api.github.com/repos/n9e/fe/releases/latest | grep '"tag_name"' | head -1 | awk -F'"' '{print $4}'); \
-        fi; \
-        if [ -z "${TAG}" ]; then \
-            echo "ERROR: Failed to get version from GitHub API. Please set N9E_FE_VERSION or INTERNAL_FILE_SERVER"; \
-            exit 1; \
-        fi; \
-        echo "Downloading n9e-fe version: ${TAG}"; \
-        curl -fsSL -o n9e-fe-${TAG}.tar.gz "${GITHUB_MIRROR}github.com/n9e/fe/releases/download/${TAG}/n9e-fe-${TAG}.tar.gz"; \
-    fi; \
-    \
-    # Extract to pub directory
-    tar zxf n9e-fe-${TAG}.tar.gz; \
-    # Embed front-end files into Go binary using statik
-    $(go env GOPATH)/bin/statik -src=./pub -dest=./front; \
-    # Cleanup
-    rm -rf n9e-fe-${TAG}.tar.gz /tmp/n9e-fe
+    # Embed front-end files
+    $(go env GOPATH)/bin/statik -src=./pub -dest=./front
 
 # Step 2: Download Go dependencies
 RUN go mod download

@@ -5,6 +5,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { slurmAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '../hooks/useTheme';
 
 dayjs.extend(relativeTime);
 
@@ -47,6 +48,7 @@ const SlurmTaskBar = forwardRef(({ refreshInterval = 10000, maxItems = 8, style 
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { isDark } = useTheme();
 
   const load = async () => {
     setLoading(true);
@@ -130,7 +132,13 @@ const SlurmTaskBar = forwardRef(({ refreshInterval = 10000, maxItems = 8, style 
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无任务" />
       ) : (
         items.map((t) => (
-          <div key={t.id} style={{ marginBottom: 8, padding: 8, border: '1px solid #f0f0f0', borderRadius: 4 }}>
+          <div key={t.id} style={{ 
+            marginBottom: 8, 
+            padding: 8, 
+            border: `1px solid ${isDark ? '#303030' : '#f0f0f0'}`, 
+            borderRadius: 4,
+            background: isDark ? '#1f1f1f' : '#fff'
+          }}>
             <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
               <Space>
                 <Badge status={badgeStatus(t.status)} />
@@ -152,7 +160,7 @@ const SlurmTaskBar = forwardRef(({ refreshInterval = 10000, maxItems = 8, style 
                 <div style={{ 
                   width: '100%', 
                   height: '4px', 
-                  backgroundColor: '#f0f0f0', 
+                  backgroundColor: isDark ? '#303030' : '#f0f0f0', 
                   borderRadius: '2px',
                   overflow: 'hidden',
                   marginTop: '2px'
@@ -186,7 +194,7 @@ const SlurmTaskBar = forwardRef(({ refreshInterval = 10000, maxItems = 8, style 
   );
 
   return (
-    <div style={{ padding: 8, background: '#fff', borderRadius: 6, ...style }}>
+    <div style={{ padding: 8, background: isDark ? '#1f1f1f' : '#fff', borderRadius: 6, ...style }}>
       <Space>
         <ThunderboltOutlined />
         <Text strong>任务栏</Text>

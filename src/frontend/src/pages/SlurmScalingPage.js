@@ -19,6 +19,8 @@ import SSHAuthConfig from '../components/SSHAuthConfig';
 import SaltCommandExecutor from '../components/SaltCommandExecutor';
 import SlurmTaskBar from '../components/SlurmTaskBar';
 import ExternalClusterManagement from '../components/slurm/ExternalClusterManagement';
+import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -44,6 +46,8 @@ const extendedSlurmAPI = {
 
 const SlurmScalingPage = () => {
   const navigate = useNavigate();
+  const { t } = useI18n();
+  const { isDark } = useTheme();
   // 基础状态
   const [summary, setSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -85,34 +89,34 @@ const SlurmScalingPage = () => {
 
   // 表格列定义
   const nodeColumns = [
-    { title: '节点名称', dataIndex: 'name', key: 'name' },
-    { title: '分区', dataIndex: 'partition', key: 'partition' },
-    { title: '状态', dataIndex: 'state', key: 'state',
+    { title: t('slurmScaling.nodeColumns.name'), dataIndex: 'name', key: 'name' },
+    { title: t('slurmScaling.nodeColumns.partition'), dataIndex: 'partition', key: 'partition' },
+    { title: t('slurmScaling.nodeColumns.state'), dataIndex: 'state', key: 'state',
       render: (state) => <Tag color={getNodeStateColor(state)}>{state}</Tag> },
-    { title: 'CPU', dataIndex: 'cpus', key: 'cpus' },
-    { title: '内存(MB)', dataIndex: 'memory_mb', key: 'memory_mb' },
-    { title: 'SaltStack状态', dataIndex: 'salt_status', key: 'salt_status',
-      render: (status) => <Badge status={getSaltStatus(status)} text={status || '未配置'} /> },
+    { title: t('slurmScaling.nodeColumns.cpu'), dataIndex: 'cpus', key: 'cpus' },
+    { title: t('slurmScaling.nodeColumns.memory'), dataIndex: 'memory_mb', key: 'memory_mb' },
+    { title: t('slurmScaling.nodeColumns.saltStatus'), dataIndex: 'salt_status', key: 'salt_status',
+      render: (status) => <Badge status={getSaltStatus(status)} text={status || t('slurmScaling.status.notConfigured')} /> },
     {
-      title: '操作',
+      title: t('slurmScaling.nodeColumns.actions'),
       key: 'action',
       render: (_, record) => (
         <Space size="small">
-          <Tooltip title="重新初始化">
+          <Tooltip title={t('slurmScaling.reinitialize')}>
             <Button size="small" icon={<ReloadOutlined />} />
           </Tooltip>
           <Popconfirm
             title={
               <div>
-                <div>确定要删除节点 <strong>{record.name}</strong> 吗？</div>
-                <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
-                  这将停止节点上的服务并从数据库中移除记录
+                <div>{t('slurmScaling.confirmDeleteNode')} <strong>{record.name}</strong>?</div>
+                <div style={{ marginTop: 8, fontSize: '12px', color: isDark ? '#999' : '#666' }}>
+                  {t('slurmScaling.confirmDeleteNodeDesc')}
                 </div>
               </div>
             }
             onConfirm={() => handleDeleteNode(record, false)}
-            okText="确定"
-            cancelText="取消"
+            okText={t('slurmScaling.ok')}
+            cancelText={t('slurmScaling.cancel')}
             okButtonProps={{ danger: true }}
           >
             <Button size="small" danger icon={<MinusOutlined />} />
@@ -123,21 +127,21 @@ const SlurmScalingPage = () => {
   ];
 
   const templateColumns = [
-    { title: '模板名称', dataIndex: 'name', key: 'name' },
-    { title: 'CPU核心数', dataIndex: 'cpus', key: 'cpus' },
-    { title: '内存(GB)', dataIndex: 'memory_gb', key: 'memory_gb' },
-    { title: '磁盘(GB)', dataIndex: 'disk_gb', key: 'disk_gb' },
-    { title: '操作系统', dataIndex: 'os', key: 'os' },
+    { title: t('slurmScaling.templateColumns.name'), dataIndex: 'name', key: 'name' },
+    { title: t('slurmScaling.templateColumns.cpus'), dataIndex: 'cpus', key: 'cpus' },
+    { title: t('slurmScaling.templateColumns.memoryGb'), dataIndex: 'memory_gb', key: 'memory_gb' },
+    { title: t('slurmScaling.templateColumns.diskGb'), dataIndex: 'disk_gb', key: 'disk_gb' },
+    { title: t('slurmScaling.templateColumns.os'), dataIndex: 'os', key: 'os' },
     {
-      title: '操作',
+      title: t('slurmScaling.templateColumns.actions'),
       key: 'action',
       render: (_, record) => (
         <Space size="small">
           <Button size="small" onClick={() => handleUseTemplate(record)}>
-            使用
+            {t('slurmScaling.useTemplate')}
           </Button>
           <Button size="small" danger onClick={() => handleDeleteTemplate(record.id)}>
-            删除
+            {t('slurmScaling.deleteTemplate')}
           </Button>
         </Space>
       ),
@@ -346,7 +350,7 @@ const SlurmScalingPage = () => {
         });
 
       if (!nodes.length) {
-        message.warning('请至少填写一个节点');
+        message.warning(t('slurmScaling.atLeastOneNode'));
         return;
       }
 
@@ -356,7 +360,7 @@ const SlurmScalingPage = () => {
       );
       
       if (!hasValidAuth) {
-        message.error('请配置SSH认证信息（密码或密钥）');
+        message.error(t('slurmScaling.configureSSHAuth'));
         return;
       }
 
@@ -368,28 +372,28 @@ const SlurmScalingPage = () => {
         message.success({
           content: (
             <div>
-              <div>扩容任务已提交（任务ID: {opId}）</div>
+              <div>{t('slurmScaling.scaleUpSubmitted')}（ID: {opId}）</div>
               <Button 
                 size="small" 
                 type="link" 
                 onClick={() => navigate(`/slurm-tasks?taskId=${opId}&status=running`)}
                 style={{ padding: 0, height: 'auto' }}
               >
-                查看任务进度 →
+                {t('slurmScaling.viewTaskProgress')} →
               </Button>
             </div>
           ),
           duration: 6, // 延长显示时间
         });
       } else {
-        message.success('扩容任务已提交');
+        message.success(t('slurmScaling.scaleUpSubmitted'));
       }
       setScaleUpModal(false);
       scaleUpForm.resetFields();
       loadData();
     } catch (e) {
-      const errMsg = e?.response?.data?.error || e.message || '未知错误';
-      message.error('扩容失败: ' + errMsg);
+      const errMsg = e?.response?.data?.error || e.message || t('slurmScaling.unknownError');
+      message.error(t('slurmScaling.scaleUpFailed') + ': ' + errMsg);
     }
   };
 
@@ -403,25 +407,25 @@ const SlurmScalingPage = () => {
         message.success({
           content: (
             <div>
-              <div>缩容任务已提交（任务ID: {opId}）</div>
+              <div>{t('slurmScaling.scaleDownSubmitted')}（ID: {opId}）</div>
               <Button 
                 size="small" 
                 type="link" 
                 onClick={() => navigate(`/slurm-tasks?taskId=${opId}&status=running`)}
                 style={{ padding: 0, height: 'auto' }}
               >
-                查看任务进度 →
+                {t('slurmScaling.viewTaskProgress')} →
               </Button>
             </div>
           ),
           duration: 6,
         });
       } else {
-        message.success('缩容任务已提交');
+        message.success(t('slurmScaling.scaleDownSubmitted'));
       }
       loadData();
     } catch (e) {
-      message.error('缩容失败: ' + e.message);
+      message.error(t('slurmScaling.scaleDownFailed') + ': ' + e.message);
     }
   };
 
@@ -429,32 +433,32 @@ const SlurmScalingPage = () => {
   const handleDeleteNode = async (record, force = false) => {
     try {
       await slurmAPI.deleteNode(record.id, force);
-      message.success(`节点 ${record.name} 删除成功`);
+      message.success(t('slurmScaling.deleteSuccess', { name: record.name }));
       loadData();
     } catch (e) {
-      message.error('删除节点失败: ' + e.message);
+      message.error(t('slurmScaling.deleteFailed') + ': ' + e.message);
     }
   };
 
   // 批量删除节点
   const handleBatchDeleteNodes = async () => {
     if (selectedRowKeys.length === 0) {
-      message.warning('请先选择要删除的节点');
+      message.warning(t('slurmScaling.selectNodesFirst'));
       return;
     }
 
     Modal.confirm({
-      title: '确认删除节点',
+      title: t('slurmScaling.confirmDeleteNodes'),
       content: (
         <div>
-          <p>您确定要删除选中的 <strong>{selectedRowKeys.length}</strong> 个节点吗？</p>
+          <p>{t('slurmScaling.confirmDeleteNodesDesc', { count: selectedRowKeys.length })}</p>
           <p style={{ color: '#ff4d4f', marginTop: 8 }}>
-            ⚠️ 警告：此操作将停止节点上的服务并从数据库中移除记录，无法撤销！
+            {t('slurmScaling.deleteWarning')}
           </p>
         </div>
       ),
-      okText: '确认删除',
-      cancelText: '取消',
+      okText: t('slurmScaling.confirmDelete'),
+      cancelText: t('slurmScaling.cancel'),
       okButtonProps: { danger: true },
       onOk: async () => {
         setOperationLoading(true);
@@ -466,45 +470,44 @@ const SlurmScalingPage = () => {
           // 逐个删除节点并收集结果
           for (const nodeName of selectedRowKeys) {
             try {
-              console.log(`正在删除节点: ${nodeName}`);
+              console.log(`Deleting node: ${nodeName}`);
               
               // 优先尝试通过名称删除（适用于所有节点，包括未在数据库中注册的）
               const response = await slurmAPI.deleteNodeByName(nodeName, false);
-              console.log(`节点 ${nodeName} 删除响应:`, response);
+              console.log(`Node ${nodeName} delete response:`, response);
               
               // 检查响应状态
               if (response.data?.success !== false) {
                 successCount++;
-                console.log(`✓ 节点 ${nodeName} 删除成功`);
+                console.log(`✓ Node ${nodeName} deleted successfully`);
               } else {
                 failCount++;
-                const errorMsg = response.data?.error || '未知错误';
+                const errorMsg = response.data?.error || t('slurmScaling.unknownError');
                 errors.push(`${nodeName}: ${errorMsg}`);
-                console.error(`✗ 节点 ${nodeName} 删除失败:`, errorMsg);
+                console.error(`✗ Node ${nodeName} delete failed:`, errorMsg);
               }
             } catch (error) {
               failCount++;
-              const errorMsg = error.response?.data?.error || error.message || '未知错误';
+              const errorMsg = error.response?.data?.error || error.message || t('slurmScaling.unknownError');
               errors.push(`${nodeName}: ${errorMsg}`);
-              console.error(`✗ 删除节点 ${nodeName} 时发生错误:`, error);
+              console.error(`✗ Error deleting node ${nodeName}:`, error);
             }
           }
 
           // 显示结果消息
           if (successCount > 0 && failCount === 0) {
-            message.success(`成功删除 ${successCount} 个节点`);
+            message.success(t('slurmScaling.batchDeleteSuccess', { count: successCount }));
           } else if (successCount > 0 && failCount > 0) {
             message.warning({
               content: (
                 <div>
-                  <div>成功删除 {successCount} 个节点，失败 {failCount} 个</div>
+                  <div>{t('slurmScaling.batchDeletePartial', { success: successCount, fail: failCount })}</div>
                   {errors.length > 0 && (
-                    <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
-                      失败原因：<br />
+                    <div style={{ marginTop: 8, fontSize: '12px', color: isDark ? '#999' : '#666' }}>
                       {errors.slice(0, 3).map((err, idx) => (
                         <div key={idx}>• {err}</div>
                       ))}
-                      {errors.length > 3 && <div>...还有 {errors.length - 3} 个错误</div>}
+                      {errors.length > 3 && <div>...+{errors.length - 3}</div>}
                     </div>
                   )}
                 </div>
@@ -515,13 +518,13 @@ const SlurmScalingPage = () => {
             message.error({
               content: (
                 <div>
-                  <div>删除节点失败</div>
+                  <div>{t('slurmScaling.deleteFailed')}</div>
                   {errors.length > 0 && (
                     <div style={{ marginTop: 8, fontSize: '12px' }}>
                       {errors.slice(0, 3).map((err, idx) => (
                         <div key={idx}>• {err}</div>
                       ))}
-                      {errors.length > 3 && <div>...还有 {errors.length - 3} 个错误</div>}
+                      {errors.length > 3 && <div>...+{errors.length - 3}</div>}
                     </div>
                   )}
                 </div>
@@ -533,8 +536,8 @@ const SlurmScalingPage = () => {
           setSelectedRowKeys([]);
           await loadData();
         } catch (error) {
-          console.error('批量删除节点过程发生异常:', error);
-          message.error('删除节点过程发生异常，请稍后重试');
+          console.error('Batch delete nodes error:', error);
+          message.error(t('slurmScaling.deleteError'));
         } finally {
           setOperationLoading(false);
         }
@@ -545,15 +548,15 @@ const SlurmScalingPage = () => {
   // 节点操作函数
   const handleNodeOperation = async (action, actionLabel, reason = '') => {
     if (selectedRowKeys.length === 0) {
-      message.warning('请先选择要操作的节点');
+      message.warning(t('slurmScaling.selectNodesFirst'));
       return;
     }
 
     Modal.confirm({
-      title: `确认${actionLabel}节点`,
-      content: `您确定要将选中的 ${selectedRowKeys.length} 个节点设置为 ${actionLabel} 状态吗？`,
-      okText: '确认',
-      cancelText: '取消',
+      title: t('slurmScaling.confirmOperation', { action: actionLabel }),
+      content: t('slurmScaling.confirmOperationDesc', { count: selectedRowKeys.length, action: actionLabel }),
+      okText: t('slurmScaling.confirm'),
+      cancelText: t('slurmScaling.cancel'),
       onOk: async () => {
         setOperationLoading(true);
         try {
@@ -580,28 +583,28 @@ const SlurmScalingPage = () => {
   const nodeOperationMenuItems = [
     {
       key: 'resume',
-      label: '恢复 (RESUME)',
+      label: t('slurmScaling.nodeOperations.resume'),
       icon: <PlayCircleOutlined />,
-      onClick: () => handleNodeOperation('resume', '恢复'),
+      onClick: () => handleNodeOperation('resume', t('slurmScaling.resumeLabel')),
     },
     {
       key: 'drain',
-      label: '排空 (DRAIN)',
+      label: t('slurmScaling.nodeOperations.drain'),
       icon: <PauseCircleOutlined />,
-      onClick: () => handleNodeOperation('drain', '排空'),
+      onClick: () => handleNodeOperation('drain', t('slurmScaling.drainLabel')),
     },
     {
       key: 'down',
-      label: '下线 (DOWN)',
+      label: t('slurmScaling.nodeOperations.down'),
       icon: <StopOutlined />,
-      onClick: () => handleNodeOperation('down', '下线'),
+      onClick: () => handleNodeOperation('down', t('slurmScaling.downLabel')),
     },
     {
       type: 'divider',
     },
     {
       key: 'delete',
-      label: '删除节点',
+      label: t('slurmScaling.deleteNodes'),
       icon: <MinusOutlined />,
       danger: true,
       onClick: () => handleBatchDeleteNodes(),
@@ -611,30 +614,30 @@ const SlurmScalingPage = () => {
   // 作业操作函数
   const handleJobOperation = async (action, actionLabel, signal = '') => {
     if (selectedJobKeys.length === 0) {
-      message.warning('请先选择要操作的作业');
+      message.warning(t('slurmScaling.selectJobsFirst'));
       return;
     }
 
     Modal.confirm({
-      title: `确认${actionLabel}作业`,
-      content: `您确定要对选中的 ${selectedJobKeys.length} 个作业执行 ${actionLabel} 操作吗？`,
-      okText: '确认',
-      cancelText: '取消',
+      title: t('slurmScaling.confirmJobOperation', { action: actionLabel }),
+      content: t('slurmScaling.confirmJobOperationDesc', { count: selectedJobKeys.length, action: actionLabel }),
+      okText: t('slurmScaling.confirm'),
+      cancelText: t('slurmScaling.cancel'),
       onOk: async () => {
         setOperationLoading(true);
         try {
           const response = await slurmAPI.manageJobs(selectedJobKeys, action, signal);
           if (response.data?.success) {
-            message.success(response.data.message || `成功${actionLabel} ${selectedJobKeys.length} 个作业`);
+            message.success(response.data.message || `${actionLabel} ${selectedJobKeys.length} jobs`);
             setSelectedJobKeys([]);
             // 重新加载作业列表
             await loadData();
           } else {
-            message.error(response.data?.error || `${actionLabel}作业失败`);
+            message.error(response.data?.error || `${actionLabel} failed`);
           }
         } catch (error) {
-          console.error(`${actionLabel}作业失败:`, error);
-          message.error(error.response?.data?.error || `${actionLabel}作业失败，请稍后重试`);
+          console.error(`${actionLabel} jobs failed:`, error);
+          message.error(error.response?.data?.error || `${actionLabel} failed`);
         } finally {
           setOperationLoading(false);
         }
@@ -646,61 +649,61 @@ const SlurmScalingPage = () => {
   const jobOperationMenuItems = [
     {
       key: 'cancel',
-      label: '取消 (CANCEL)',
+      label: t('slurmScaling.jobOperations.cancel'),
       icon: <CloseCircleOutlined />,
-      onClick: () => handleJobOperation('cancel', '取消'),
+      onClick: () => handleJobOperation('cancel', t('slurmScaling.cancelLabel')),
     },
     {
       key: 'hold',
-      label: '暂停 (HOLD)',
+      label: t('slurmScaling.jobOperations.hold'),
       icon: <PauseCircleOutlined />,
-      onClick: () => handleJobOperation('hold', '暂停'),
+      onClick: () => handleJobOperation('hold', t('slurmScaling.holdLabel')),
     },
     {
       key: 'release',
-      label: '恢复 (RELEASE)',
+      label: t('slurmScaling.jobOperations.release'),
       icon: <PlayCircleOutlined />,
-      onClick: () => handleJobOperation('release', '恢复'),
+      onClick: () => handleJobOperation('release', t('slurmScaling.releaseLabel')),
     },
     {
       key: 'suspend',
-      label: '挂起 (SUSPEND)',
+      label: t('slurmScaling.jobOperations.suspend'),
       icon: <HourglassOutlined />,
-      onClick: () => handleJobOperation('suspend', '挂起'),
+      onClick: () => handleJobOperation('suspend', t('slurmScaling.suspendLabel')),
     },
     {
       key: 'resume',
-      label: '继续 (RESUME)',
+      label: t('slurmScaling.jobOperations.resume'),
       icon: <SyncOutlined />,
-      onClick: () => handleJobOperation('resume', '继续'),
+      onClick: () => handleJobOperation('resume', t('slurmScaling.resumeLabel2')),
     },
     {
       key: 'requeue',
-      label: '重新排队 (REQUEUE)',
+      label: t('slurmScaling.jobOperations.requeue'),
       icon: <ReloadOutlined />,
-      onClick: () => handleJobOperation('requeue', '重新排队'),
+      onClick: () => handleJobOperation('requeue', t('slurmScaling.requeueLabel')),
     },
   ];
 
   const handleCreateTemplate = async (values) => {
     try {
       await extendedSlurmAPI.createNodeTemplate(values);
-      message.success('节点模板创建成功');
+      message.success(t('slurmScaling.templateCreated'));
       setTemplateModal(false);
       templateForm.resetFields();
       loadData();
     } catch (e) {
-      message.error('创建模板失败: ' + e.message);
+      message.error(t('slurmScaling.templateCreateFailed') + ': ' + e.message);
     }
   };
 
   const handleDeleteTemplate = async (templateId) => {
     try {
       await extendedSlurmAPI.deleteNodeTemplate(templateId);
-      message.success('模板删除成功');
+      message.success(t('slurmScaling.templateDeleted'));
       loadData();
     } catch (e) {
-      message.error('删除模板失败: ' + e.message);
+      message.error(t('slurmScaling.templateDeleteFailed') + ': ' + e.message);
     }
   };
 
@@ -717,12 +720,12 @@ const SlurmScalingPage = () => {
   const handleExecuteSaltCommand = async (values) => {
     try {
       await extendedSlurmAPI.executeSaltCommand(values);
-      message.success('SaltStack 命令已执行');
+      message.success(t('slurmScaling.saltCommandExecuted'));
       setSaltCommandModal(false);
       saltCommandForm.resetFields();
       loadData();
     } catch (e) {
-      message.error('执行命令失败: ' + e.message);
+      message.error(t('slurmScaling.saltCommandFailed') + ': ' + e.message);
     }
   };
 
@@ -800,8 +803,8 @@ const SlurmScalingPage = () => {
           <Alert
             type="error"
             showIcon
-            message="数据加载失败"
-            description="请检查后端服务是否正常运行，或者稍后重试"
+            message={t('slurmScaling.dataLoadFailed')}
+            description={t('slurmScaling.checkBackendService')}
           />
         )}
 
@@ -813,7 +816,7 @@ const SlurmScalingPage = () => {
                 <Skeleton active paragraph={{ rows: 1 }} />
               ) : (
                 <Statistic
-                  title="总节点数"
+                  title={t('slurmScaling.stats.totalNodes')}
                   value={summary?.nodes_total || 0}
                   prefix={<NodeIndexOutlined />}
                 />
@@ -826,7 +829,7 @@ const SlurmScalingPage = () => {
                 <Skeleton active paragraph={{ rows: 1 }} />
               ) : (
                 <Statistic
-                  title="空闲节点"
+                  title={t('slurmScaling.stats.idleNodes')}
                   value={summary?.nodes_idle || 0}
                   valueStyle={{ color: '#3f8600' }}
                 />
@@ -839,7 +842,7 @@ const SlurmScalingPage = () => {
                 <Skeleton active paragraph={{ rows: 1 }} />
               ) : (
                 <Statistic
-                  title="运行节点"
+                  title={t('slurmScaling.stats.runningNodes')}
                   value={summary?.nodes_alloc || 0}
                   valueStyle={{ color: '#1890ff' }}
                 />
@@ -852,7 +855,7 @@ const SlurmScalingPage = () => {
                 <Skeleton active paragraph={{ rows: 1 }} />
               ) : (
                 <Statistic
-                  title="运行作业"
+                  title={t('slurmScaling.stats.runningJobs')}
                   value={summary?.jobs_running || 0}
                   prefix={<PlayCircleOutlined />}
                 />
@@ -865,7 +868,7 @@ const SlurmScalingPage = () => {
                 <Skeleton active paragraph={{ rows: 1 }} />
               ) : (
                 <Statistic
-                  title="等待作业"
+                  title={t('slurmScaling.stats.pendingJobs')}
                   value={summary?.jobs_pending || 0}
                   valueStyle={{ color: '#faad14' }}
                 />
@@ -889,21 +892,21 @@ const SlurmScalingPage = () => {
                   if (total > 0 && online === total && offline === 0) {
                     icon = <LinkOutlined style={{ color: '#52c41a' }} />;
                     valueStyle = { color: '#52c41a' };
-                    suffix = '在线';
+                    suffix = t('slurmScaling.status.online');
                     displayValue = online;
                   }
                   // 部分在线：黄色警告图标
                   else if (total > 0 && online > 0 && offline > 0) {
                     icon = <WarningOutlined style={{ color: '#faad14' }} />;
                     valueStyle = { color: '#faad14' };
-                    suffix = `在线 / ${total} 总数`;
+                    suffix = `${t('slurmScaling.status.online')} / ${total}`;
                     displayValue = online;
                   }
                   // 全部离线或无连接：红色断开图标
                   else {
                     icon = <DisconnectOutlined style={{ color: '#ff4d4f' }} />;
                     valueStyle = { color: '#ff4d4f' };
-                    suffix = total > 0 ? '离线' : '';
+                    suffix = total > 0 ? t('slurmScaling.status.offline') : '';
                     displayValue = total;
                   }
                   
@@ -924,7 +927,7 @@ const SlurmScalingPage = () => {
 
         {/* 扩缩容状态 - 始终显示 */}
         <Card 
-          title="扩缩容状态" 
+          title={t('slurmScaling.scalingStatus')} 
           size="small"
           extra={
             <Badge 
@@ -933,8 +936,8 @@ const SlurmScalingPage = () => {
                 (scalingStatus?.active ? 'processing' : 'default')
               } 
               text={
-                loadingStages.scaling ? '加载中' :
-                (scalingStatus?.active ? '进行中' : '空闲')
+                loadingStages.scaling ? t('slurmScaling.status.loading') :
+                (scalingStatus?.active ? t('slurmScaling.status.active') : t('slurmScaling.status.idle'))
               }
             />
           }
@@ -945,7 +948,7 @@ const SlurmScalingPage = () => {
             <Row gutter={[16, 16]} align="middle">
               <Col xs={24} sm={6}>
                 <Statistic 
-                  title="活跃任务" 
+                  title={t('slurmScaling.stats.activeTasks')} 
                   value={scalingStatus?.active_tasks || 0}
                   prefix={<ThunderboltOutlined />}
                   valueStyle={{ color: scalingStatus?.active_tasks > 0 ? '#1890ff' : undefined }}
@@ -953,7 +956,7 @@ const SlurmScalingPage = () => {
               </Col>
               <Col xs={24} sm={6}>
                 <Statistic 
-                  title="成功节点" 
+                  title={t('slurmScaling.stats.successNodes')} 
                   value={scalingStatus?.success_nodes || 0}
                   prefix={<CheckCircleOutlined />}
                   valueStyle={{ color: scalingStatus?.success_nodes > 0 ? '#52c41a' : undefined }}
@@ -961,7 +964,7 @@ const SlurmScalingPage = () => {
               </Col>
               <Col xs={24} sm={6}>
                 <Statistic 
-                  title="失败节点" 
+                  title={t('slurmScaling.stats.failedNodes')} 
                   value={scalingStatus?.failed_nodes || 0}
                   prefix={<CloseCircleOutlined />}
                   valueStyle={{ color: scalingStatus?.failed_nodes > 0 ? '#ff4d4f' : undefined }}
@@ -969,7 +972,7 @@ const SlurmScalingPage = () => {
               </Col>
               <Col xs={24} sm={6}>
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ marginBottom: 8, color: '#666', fontSize: '14px' }}>进度</div>
+                  <div style={{ marginBottom: 8, color: isDark ? '#999' : '#666', fontSize: '14px' }}>{t('common.progress', 'Progress')}</div>
                   <Progress
                     type="circle"
                     percent={Math.round(scalingStatus?.progress || 0)}
@@ -986,12 +989,12 @@ const SlurmScalingPage = () => {
         </Card>
 
         <Tabs defaultActiveKey="nodes" type="card">
-          <TabPane tab={<span><DesktopOutlined />节点管理</span>} key="nodes">
-            <Card title="集群节点" extra={
+          <TabPane tab={<span><DesktopOutlined />{t('slurm.nodeManagement', 'Node Management')}</span>} key="nodes">
+            <Card title={t('slurmScaling.clusterNodes')} extra={
               <Space>
                 {selectedRowKeys.length > 0 && (
                   <>
-                    <Text type="secondary">已选择 {selectedRowKeys.length} 个节点</Text>
+                    <Text type="secondary">{t('common.selected', { count: selectedRowKeys.length })}</Text>
                     <Dropdown 
                       menu={{ items: nodeOperationMenuItems }}
                       placement="bottomRight"
@@ -1002,16 +1005,16 @@ const SlurmScalingPage = () => {
                         loading={operationLoading}
                         icon={<DownOutlined />}
                       >
-                        节点操作
+                        {t('slurmScaling.nodeActions')}
                       </Button>
                     </Dropdown>
                   </>
                 )}
                 <Button icon={<PlusOutlined />} onClick={() => setScaleUpModal(true)}>
-                  添加节点
+                  {t('slurm.addNode', 'Add Node')}
                 </Button>
                 <Button icon={<SettingOutlined />} onClick={() => setTemplateModal(true)}>
-                  管理模板
+                  {t('slurm.manageTemplates', 'Manage Templates')}
                 </Button>
               </Space>
             }>
@@ -1038,12 +1041,12 @@ const SlurmScalingPage = () => {
             </Card>
           </TabPane>
 
-          <TabPane tab={<span><PlayCircleOutlined />作业队列</span>} key="jobs">
-            <Card title="作业状态" extra={
+          <TabPane tab={<span><PlayCircleOutlined />{t('slurm.jobQueue', 'Job Queue')}</span>} key="jobs">
+            <Card title={t('slurmScaling.jobStatus')} extra={
               <Space>
                 {selectedJobKeys.length > 0 && (
                   <>
-                    <Text type="secondary">已选择 {selectedJobKeys.length} 个作业</Text>
+                    <Text type="secondary">{t('common.selected', { count: selectedJobKeys.length })}</Text>
                     <Dropdown 
                       menu={{ items: jobOperationMenuItems }}
                       placement="bottomRight"
@@ -1054,7 +1057,7 @@ const SlurmScalingPage = () => {
                         loading={operationLoading}
                         icon={<DownOutlined />}
                       >
-                        作业操作
+                        {t('slurmScaling.jobActions')}
                       </Button>
                     </Dropdown>
                   </>
@@ -1068,13 +1071,13 @@ const SlurmScalingPage = () => {
                   rowKey="id"
                   dataSource={jobs}
                   columns={[
-                    { title: '作业ID', dataIndex: 'id', key: 'id' },
-                    { title: '名称', dataIndex: 'name', key: 'name' },
-                    { title: '用户', dataIndex: 'user', key: 'user' },
-                    { title: '状态', dataIndex: 'state', key: 'state',
+                    { title: t('slurmScaling.jobColumns.id'), dataIndex: 'id', key: 'id' },
+                    { title: t('slurmScaling.jobColumns.name'), dataIndex: 'name', key: 'name' },
+                    { title: t('slurmScaling.jobColumns.user'), dataIndex: 'user', key: 'user' },
+                    { title: t('slurmScaling.jobColumns.state'), dataIndex: 'state', key: 'state',
                       render: (state) => <Tag color={state === 'RUNNING' ? 'blue' : state === 'PENDING' ? 'orange' : 'default'}>{state}</Tag> },
-                    { title: '耗时', dataIndex: 'elapsed', key: 'elapsed' },
-                    { title: '节点数', dataIndex: 'nodes', key: 'nodes' },
+                    { title: t('slurmScaling.jobColumns.elapsed'), dataIndex: 'elapsed', key: 'elapsed' },
+                    { title: t('slurmScaling.jobColumns.nodes'), dataIndex: 'nodes', key: 'nodes' },
                   ]}
                   size="small"
                   pagination={{ pageSize: 10 }}
@@ -1092,30 +1095,30 @@ const SlurmScalingPage = () => {
             </Card>
           </TabPane>
 
-          <TabPane tab={<span><ThunderboltOutlined />SaltStack 集成</span>} key="saltstack">
+          <TabPane tab={<span><ThunderboltOutlined />SaltStack</span>} key="saltstack">
             <Row gutter={16}>
               <Col span={12}>
-                <Card title="SaltStack 状态">
+                <Card title={t('slurmScaling.saltStackStatus')}>
                   <Descriptions column={2} size="small">
-                    <Descriptions.Item label="Master状态">
+                    <Descriptions.Item label={t('slurmScaling.saltMasterStatus')}>
                       <span style={{
                         color: ['running', 'available'].includes(saltIntegration?.master_status) ? '#52c41a' : '#ff4d4f',
                         fontSize: '16px',
                         fontWeight: 500
                       }}>
-                        {saltIntegration?.master_status || '未知'}
+                        {saltIntegration?.master_status || t('slurmScaling.status.unknown')}
                       </span>
                     </Descriptions.Item>
-                    <Descriptions.Item label="API状态">
+                    <Descriptions.Item label={t('slurmScaling.saltApiStatus')}>
                       <span style={{
                         color: ['running', 'available', 'connected'].includes(saltIntegration?.api_status) ? '#52c41a' : '#ff4d4f',
                         fontSize: '16px',
                         fontWeight: 500
                       }}>
-                        {saltIntegration?.api_status || '未知'}
+                        {saltIntegration?.api_status || t('slurmScaling.status.unknown')}
                       </span>
                     </Descriptions.Item>
-                    <Descriptions.Item label="连接的Minions">
+                    <Descriptions.Item label={t('slurmCluster.salt.totalMinions')}>
                       <Space>
                         {(() => {
                           const minions = saltIntegration?.minions || {};
@@ -1123,7 +1126,7 @@ const SlurmScalingPage = () => {
                           const online = minions.online || 0;
                           const offline = minions.offline || 0;
                           
-                          console.log('Minions数据:', { total, online, offline, minions });
+                          console.log('Minions data:', { total, online, offline, minions });
                           
                           // 全部在线：绿色链接图标
                           if (total > 0 && online === total && offline === 0) {
@@ -1131,7 +1134,7 @@ const SlurmScalingPage = () => {
                               <>
                                 <LinkOutlined style={{ color: '#52c41a', fontSize: '16px' }} />
                                 <span style={{ fontSize: '16px', fontWeight: 500, color: '#52c41a' }}>
-                                  {online} 在线
+                                  {online} {t('slurmScaling.status.online')}
                                 </span>
                               </>
                             );
@@ -1142,7 +1145,7 @@ const SlurmScalingPage = () => {
                               <>
                                 <WarningOutlined style={{ color: '#faad14', fontSize: '16px' }} />
                                 <span style={{ fontSize: '16px', fontWeight: 500, color: '#faad14' }}>
-                                  {online} 在线 / {total} 总数
+                                  {online} {t('slurmScaling.status.online')} / {total}
                                 </span>
                               </>
                             );
@@ -1153,7 +1156,7 @@ const SlurmScalingPage = () => {
                               <>
                                 <DisconnectOutlined style={{ color: '#ff4d4f', fontSize: '16px' }} />
                                 <span style={{ fontSize: '16px', fontWeight: 500, color: '#ff4d4f' }}>
-                                  {total > 0 ? `${total} 离线` : '无连接'}
+                                  {total > 0 ? `${total} ${t('slurmScaling.status.offline')}` : t('common.noConnection', 'No Connection')}
                                 </span>
                               </>
                             );
@@ -1161,14 +1164,14 @@ const SlurmScalingPage = () => {
                         })()}
                       </Space>
                     </Descriptions.Item>
-                    <Descriptions.Item label="活跃作业">
+                    <Descriptions.Item label={t('slurmCluster.salt.recentJobs')}>
                       {saltJobs?.length || 0}
                     </Descriptions.Item>
                   </Descriptions>
                 </Card>
               </Col>
               <Col span={12}>
-                <Card title="最近 SaltStack 作业">
+                <Card title={t('slurmCluster.salt.recentJobs')}>
                   <List
                     size="small"
                     dataSource={saltJobs?.slice(0, 5) || []}
@@ -1178,7 +1181,7 @@ const SlurmScalingPage = () => {
                       const totalCount = Object.keys(job.results || {}).length;
                       const status = totalCount > 0 && successCount === totalCount ? 'success' : 
                                      totalCount > 0 && successCount > 0 ? 'warning' : 'error';
-                      const statusText = totalCount > 0 ? `${successCount}/${totalCount} 成功` : '无响应';
+                      const statusText = totalCount > 0 ? `${successCount}/${totalCount}` : t('common.noResponse', 'No Response');
                       
                       return (
                         <List.Item>
@@ -1193,7 +1196,7 @@ const SlurmScalingPage = () => {
                                   <>
                                     <Text>•</Text>
                                     <Text type="secondary">
-                                      {new Date(job.start_time).toLocaleString('zh-CN', {
+                                      {new Date(job.start_time).toLocaleString(undefined, {
                                         month: '2-digit',
                                         day: '2-digit',
                                         hour: '2-digit',

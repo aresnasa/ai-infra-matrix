@@ -778,6 +778,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	jupyterHubController := controllers.NewJupyterHubController()
 	jupyterHubController.RegisterRoutes(api)
 
+	// JupyterLab 模板路由（需要认证）
+	jupyterLabTemplateController := controllers.NewJupyterLabTemplateController()
+	jupyterLabTemplateController.RegisterRoutes(api)
+
 	// 添加JupyterHub管理页面的静态路由（需要认证）
 	r.GET("/admin/jupyterhub", middleware.AuthMiddlewareWithSession(), func(c *gin.Context) {
 		c.Header("Content-Type", "text/html; charset=utf-8")

@@ -5,12 +5,14 @@ import { CloudServerOutlined, HddOutlined, CheckCircleOutlined, SyncOutlined, Pl
 import SaltCommandExecutor from '../components/SaltCommandExecutor';
 import SlurmClusterStatus from '../components/SlurmClusterStatus';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
 
 const SlurmDashboard = () => {
   const { t } = useI18n();
+  const { isDark } = useTheme();
   const [summary, setSummary] = useState(null);
   const [nodes, setNodes] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -294,9 +296,9 @@ const SlurmDashboard = () => {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: 24, background: isDark ? '#141414' : '#f0f2f5', minHeight: '100vh' }}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-        <Title level={2}>{t('slurm.title')}</Title>
+        <Title level={2} style={{ color: isDark ? 'rgba(255, 255, 255, 0.85)' : 'inherit' }}>{t('slurm.title')}</Title>
         
         {error && (
           <Alert 

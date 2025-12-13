@@ -1,9 +1,10 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider, Spin, message } from 'antd';
+import { ConfigProvider, Spin, message, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
 import Layout from './components/Layout';
+import { ThemeProvider, useTheme } from './hooks/useTheme';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoadingFallback, { AdminLoadingFallback, ProjectLoadingFallback } from './components/LoadingFallback';
 import EnhancedLoading from './components/EnhancedLoading';
@@ -446,27 +447,39 @@ function App() {
   console.log('==================');
 
   return (
-    <I18nProvider>
-      <AppContent 
-        user={user}
-        handleLogin={handleLogin}
-        handleLogout={handleLogout}
-        apiHealth={apiHealth}
-        LazyLoadingSpinner={LazyLoadingSpinner}
-      />
-    </I18nProvider>
+    <ThemeProvider>
+      <I18nProvider>
+        <AppContent 
+          user={user}
+          handleLogin={handleLogin}
+          handleLogout={handleLogout}
+          apiHealth={apiHealth}
+          LazyLoadingSpinner={LazyLoadingSpinner}
+        />
+      </I18nProvider>
+    </ThemeProvider>
   );
 }
 
-// 内部组件：使用 I18n 上下文来切换 Ant Design 语言
+// 内部组件：使用 I18n 和 Theme 上下文来切换 Ant Design 语言和主题
 function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpinner }) {
   const { locale } = useI18n();
+  const { isDark } = useTheme();
   
   // Ant Design 语言包映射
   const antdLocale = locale === 'en-US' ? enUS : zhCN;
+  
+  // Ant Design 主题配置
+  const themeConfig = {
+    algorithm: isDark ? theme.darkAlgorithm : theme.defaultAlgorithm,
+    token: {
+      colorPrimary: '#1890ff',
+      borderRadius: 6,
+    },
+  };
 
   return (
-    <ConfigProvider locale={antdLocale}>
+    <ConfigProvider locale={antdLocale} theme={themeConfig}>
       <ErrorBoundary>
         <Router>
           {!user ? (

@@ -6,7 +6,9 @@ import CustomizableNavigation from './CustomizableNavigation';
 import { MainLogoSVG, CustomMenuIcons } from './CustomIcons';
 import { getAvailableMenuItems, isAdmin, getUserRoleDisplayName } from '../utils/permissions';
 import LanguageSwitcher from './LanguageSwitcher';
+import ThemeSwitcher from './ThemeSwitcher';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 
 const { Header, Content, Footer } = AntLayout;
 const { Title } = Typography;
@@ -15,6 +17,7 @@ const Layout = ({ children, user, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
+  const { isDark } = useTheme();
 
   // 获取用户权限信息
   const userIsAdmin = isAdmin(user);
@@ -257,10 +260,11 @@ const Layout = ({ children, user, onLogout }) => {
       <Header style={{ 
         display: 'flex', 
         alignItems: 'center', 
-        background: '#001529',
+        background: isDark ? '#141414' : '#001529',
         padding: '0 24px',
         minWidth: '1200px', // 设置最小宽度防止挤压
-        overflow: 'hidden' // 防止内容溢出
+        overflow: 'hidden', // 防止内容溢出
+        transition: 'background 0.3s ease',
       }}>
         {/* 左侧标题区域 - 固定宽度不会被挤压 */}
         <div style={{ 
@@ -327,6 +331,9 @@ const Layout = ({ children, user, onLogout }) => {
           </Dropdown>
         )}
 
+        {/* 主题切换器 */}
+        <ThemeSwitcher size="small" showLabel={false} darkMode={true} />
+
         {/* 语言切换器 */}
         <LanguageSwitcher size="small" showLabel={true} darkMode={true} />
 
@@ -363,14 +370,16 @@ const Layout = ({ children, user, onLogout }) => {
         </Dropdown>
       </Header>
       
-      <Content className="ant-layout-content">
+      <Content className={`ant-layout-content ${isDark ? 'theme-dark' : 'theme-light'}`}>
         {children}
       </Content>
       
       <Footer style={{ 
         textAlign: 'center',
-        background: '#f0f2f5',
-        borderTop: '1px solid #e8e8e8'
+        background: isDark ? '#1f1f1f' : '#f0f2f5',
+        borderTop: isDark ? '1px solid #303030' : '1px solid #e8e8e8',
+        color: isDark ? '#ffffff85' : 'inherit',
+        transition: 'all 0.3s ease',
       }}>
         AI-Infra-Matrix ©2025 Created by DevOps Team
       </Footer>
