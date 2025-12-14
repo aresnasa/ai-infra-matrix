@@ -368,6 +368,8 @@ ARG SALTSTACK_VERSION={{SALTSTACK_VERSION}}
 # 注意：也可以通过 docker build --build-arg HTTP_PROXY=... 使用代理
 RUN set -eux; \
     echo "尝试配置 Rocky Linux 镜像源..."; \
+    # 清理可能损坏的 DNF 模块状态（解决 YAML 解析错误）
+    rm -rf /etc/dnf/modules.d/* 2>/dev/null || true; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
     if [ -n "${YUM_MIRROR:-}" ]; then \
