@@ -458,7 +458,7 @@ TEMPLATE_VARIABLES=(
     # Used in Dockerfile.tpl FROM statements
     # ===========================================
     "UBUNTU_VERSION"              # Ubuntu base image (e.g., 22.04)
-    "ROCKYLINUX_VERSION"          # Rocky Linux version (e.g., 9)
+    "ALMALINUX_VERSION"           # AlmaLinux version (e.g., 9.3-minimal)
     "ALPINE_VERSION"              # Alpine version (e.g., 3.22)
     "NGINX_VERSION"               # Nginx version (e.g., stable-alpine-perl)
     "NGINX_ALPINE_VERSION"        # Nginx Alpine version (e.g., 1.27-alpine)
@@ -481,7 +481,7 @@ TEMPLATE_VARIABLES=(
     # ===========================================
     "GOLANG_IMAGE"                # Full golang image name (e.g., golang:1.25-bookworm)
     "UBUNTU_IMAGE"                # Full ubuntu image name (e.g., ubuntu:22.04)
-    "ROCKYLINUX_IMAGE"            # Full rockylinux image name (e.g., rockylinux:9)
+    "ALMALINUX_IMAGE"             # Full almalinux image name (e.g., almalinux:9.3-minimal)
     "NODE_IMAGE"                  # Full node image name for build (e.g., node:22-bookworm)
     "NODE_ALPINE_IMAGE"           # Full node alpine image name (e.g., node:22-alpine)
     "NODE_BOOKWORM_IMAGE"         # Full node bookworm image name (e.g., node:22-bookworm)
@@ -2885,7 +2885,7 @@ print_help() {
     echo ""
     echo "  === Base Image Versions ==="
     echo "  UBUNTU_VERSION      Ubuntu base image version"
-    echo "  ROCKYLINUX_VERSION  Rocky Linux version"
+    echo "  ALMALINUX_VERSION   AlmaLinux version"
     echo "  GOLANG_VERSION      Go version"
     echo ""
     echo "  === Component Versions ==="

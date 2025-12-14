@@ -12,7 +12,7 @@
 # - 参考：src/slurm-master/config/README.md
 # =============================================================================
 ARG UBUNTU_VERSION={{UBUNTU_VERSION}}
-ARG ROCKYLINUX_VERSION={{ROCKYLINUX_VERSION}}
+ARG ALMALINUX_VERSION={{ALMALINUX_VERSION}}
 ARG APT_MIRROR={{APT_MIRROR}}
 ARG YUM_MIRROR={{YUM_MIRROR}}
 ARG MUNGE_VERSION=0.5.16
