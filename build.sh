@@ -446,7 +446,7 @@ TEMPLATE_VARIABLES=(
     # ===========================================
     "GITHUB_MIRROR"      # GitHub download accelerator (e.g., https://ghfast.top/)
     "APT_MIRROR"         # APT mirror for Debian/Ubuntu (e.g., mirrors.aliyun.com)
-    "YUM_MIRROR"         # YUM mirror for Rocky/CentOS (e.g., mirrors.aliyun.com)
+    "YUM_MIRROR"         # YUM mirror for AlmaLinux/CentOS (e.g., mirrors.aliyun.com)
     "ALPINE_MIRROR"      # Alpine mirror (e.g., mirrors.aliyun.com)
     "GO_PROXY"           # Go module proxy (e.g., https://goproxy.cn,direct)
     "PYPI_INDEX_URL"     # PyPI mirror (e.g., https://mirrors.aliyun.com/pypi/simple/)
@@ -2877,7 +2877,7 @@ print_help() {
     echo "  === Mirror Configuration (Build-time) ==="
     echo "  GITHUB_MIRROR       GitHub mirror URL prefix (e.g., https://ghfast.top/)"
     echo "  APT_MIRROR          APT mirror for Ubuntu/Debian (e.g., mirrors.aliyun.com)"
-    echo "  YUM_MIRROR          YUM mirror for Rocky/CentOS"
+    echo "  YUM_MIRROR          YUM mirror for AlmaLinux/CentOS"
     echo "  ALPINE_MIRROR       Alpine mirror"
     echo "  GO_PROXY            Go module proxy"
     echo "  PYPI_INDEX_URL      PyPI mirror"
