@@ -17,8 +17,9 @@
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
   border-radius: 16px;
   overflow: hidden;
-  max-width: 500px;
+  max-width: 480px;
   width: 100%;
+  min-width: 320px;
 }
 
 /* 暗黑模式下的卡片 */
