@@ -12,7 +12,7 @@
 # - 参考：src/slurm-master/config/README.md
 # =============================================================================
 ARG UBUNTU_VERSION=22.04
-ARG ROCKYLINUX_VERSION=9
+ARG ALMALINUX_VERSION=9.3-minimal
 ARG APT_MIRROR=mirrors.aliyun.com
 ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION=0.5.16
