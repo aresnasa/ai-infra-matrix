@@ -242,6 +242,257 @@ sync_env_with_example() {
     return 0
 }
 
+# ==============================================================================
+# Production Environment Password Generator
+# ==============================================================================
+
+# Generate random password with specified length and type
+generate_random_password() {
+    local length="${1:-24}"
+    local password_type="${2:-standard}"  # standard, hex, alphanumeric
+    
+    case "$password_type" in
+        "hex")
+            # Hex key (for JupyterHub crypt key etc.)
+            openssl rand -hex "$((length/2))"
+            ;;
+        "alphanumeric")
+            # Alphanumeric only, avoid special characters
+            LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$length"
+            ;;
+        "standard"|*)
+            # Standard password: letters, numbers, safe special chars
+            openssl rand -base64 "$((length * 3 / 4))" | tr -d "=+/\n" | cut -c1-"$length"
+            ;;
+    esac
+}
+
+# Generate production environment with strong random passwords
+# Usage: ./build.sh gen-prod-env [output_file] [--force]
+generate_production_env() {
+    local env_file="${1:-.env.prod}"
+    local force="${2:-false}"
+    
+    log_info "======================================================================"
+    log_info "🔧 AI Infrastructure Matrix - Production Environment Generator"
+    log_info "======================================================================"
+    log_warn "⚠️  This will generate new random passwords for all services"
+    log_warn "⚠️  Default admin account (admin/admin123) is NOT changed by this script"
+    log_warn "⚠️  Please change admin password via Web UI after deployment"
+    log_info "======================================================================"
+    
+    # Check if target file exists
+    if [[ -f "$env_file" ]] && [[ "$force" != "true" ]]; then
+        log_warn "Target file already exists: $env_file"
+        log_info "Use --force to overwrite, or specify a different filename"
+        return 1
+    fi
+    
+    # Create from .env.example if template exists
+    if [[ ! -f ".env.example" ]]; then
+        log_error ".env.example template not found!"
+        return 1
+    fi
+    
+    log_info "Creating production environment file: $env_file"
+    
+    # Create backup if overwriting
+    if [[ -f "$env_file" ]] && [[ "$force" == "true" ]]; then
+        local backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        log_info "Creating backup: $backup_file"
+        cp "$env_file" "$backup_file"
+    fi
+    
+    cp ".env.example" "$env_file"
+    
+    log_info "Generating strong random passwords..."
+    
+    # Generate all passwords (organized by category)
+    # Database passwords
+    local postgres_password=$(generate_random_password 24 "alphanumeric")
+    local jupyterhub_db_password=$(generate_random_password 24 "alphanumeric")
+    local mysql_root_password=$(generate_random_password 24 "alphanumeric")
+    local mysql_password=$(generate_random_password 24 "alphanumeric")
+    local redis_password=$(generate_random_password 24 "alphanumeric")
+    local ai_db_password=$(generate_random_password 24 "alphanumeric")
+    local grafana_admin_password=$(generate_random_password 24 "alphanumeric")
+    
+    # Authentication secrets
+    local jwt_secret=$(generate_random_password 48 "standard")
+    local encryption_key=$(generate_random_password 32 "alphanumeric")
+    local session_secret=$(generate_random_password 48 "standard")
+    local configproxy_token=$(generate_random_password 48 "standard")
+    local ai_infra_api_token=$(generate_random_password 48 "standard")
+    
+    # JupyterHub
+    local jupyterhub_crypt_key=$(generate_random_password 64 "hex")
+    
+    # SeaweedFS storage
+    local seaweedfs_access_key=$(generate_random_password 20 "alphanumeric")
+    local seaweedfs_secret_key=$(generate_random_password 40 "standard")
+    local seaweedfs_app_access=$(generate_random_password 20 "alphanumeric")
+    local seaweedfs_app_secret=$(generate_random_password 40 "standard")
+    local seaweedfs_readonly_access=$(generate_random_password 20 "alphanumeric")
+    local seaweedfs_readonly_secret=$(generate_random_password 40 "standard")
+    
+    # Gitea
+    local gitea_admin_password=$(generate_random_password 24 "alphanumeric")
+    local gitea_admin_token=$(generate_random_password 40 "alphanumeric")
+    
+    # LDAP
+    local ldap_admin_password=$(generate_random_password 24 "alphanumeric")
+    local ldap_config_password=$(generate_random_password 24 "alphanumeric")
+    
+    # Slurm HPC
+    local slurm_db_password=$(generate_random_password 24 "alphanumeric")
+    local slurm_munge_key=$(generate_random_password 48 "standard")
+    local slurm_node_ssh_password=$(generate_random_password 24 "alphanumeric")
+    
+    # SaltStack
+    local salt_api_password=$(generate_random_password 24 "alphanumeric")
+    local saltstack_api_token=$(generate_random_password 48 "standard")
+    
+    # Test/SSH passwords
+    local test_ssh_password=$(generate_random_password 20 "alphanumeric")
+    local test_root_password=$(generate_random_password 20 "alphanumeric")
+    
+    # Use awk for safe replacement (handles special characters)
+    local temp_file="${env_file}.updating"
+    
+    awk -v pg_pass="$postgres_password" \
+        -v hub_db_pass="$jupyterhub_db_password" \
+        -v mysql_root="$mysql_root_password" \
+        -v mysql_pass="$mysql_password" \
+        -v redis_pass="$redis_password" \
+        -v ai_db_pass="$ai_db_password" \
+        -v grafana_pass="$grafana_admin_password" \
+        -v jwt_sec="$jwt_secret" \
+        -v enc_key="$encryption_key" \
+        -v sess_sec="$session_secret" \
+        -v config_token="$configproxy_token" \
+        -v api_token="$ai_infra_api_token" \
+        -v hub_key="$jupyterhub_crypt_key" \
+        -v sw_access="$seaweedfs_access_key" \
+        -v sw_secret="$seaweedfs_secret_key" \
+        -v sw_app_access="$seaweedfs_app_access" \
+        -v sw_app_secret="$seaweedfs_app_secret" \
+        -v sw_ro_access="$seaweedfs_readonly_access" \
+        -v sw_ro_secret="$seaweedfs_readonly_secret" \
+        -v gitea_admin="$gitea_admin_password" \
+        -v gitea_token="$gitea_admin_token" \
+        -v ldap_admin="$ldap_admin_password" \
+        -v ldap_config="$ldap_config_password" \
+        -v slurm_db="$slurm_db_password" \
+        -v munge_key="$slurm_munge_key" \
+        -v slurm_ssh="$slurm_node_ssh_password" \
+        -v salt_api="$salt_api_password" \
+        -v salt_token="$saltstack_api_token" \
+        -v test_ssh="$test_ssh_password" \
+        -v test_root="$test_root_password" \
+        '
+        /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
+        /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
+        /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
+        /^MYSQL_PASSWORD=/ { print "MYSQL_PASSWORD=" mysql_pass; next }
+        /^REDIS_PASSWORD=/ { print "REDIS_PASSWORD=" redis_pass; next }
+        /^AI_DB_PASSWORD=/ { print "AI_DB_PASSWORD=" ai_db_pass; next }
+        /^GRAFANA_ADMIN_PASSWORD=/ { print "GRAFANA_ADMIN_PASSWORD=" grafana_pass; next }
+        /^JWT_SECRET=/ { print "JWT_SECRET=" jwt_sec; next }
+        /^ENCRYPTION_KEY=/ { print "ENCRYPTION_KEY=" enc_key; next }
+        /^SESSION_SECRET=/ { print "SESSION_SECRET=" sess_sec; next }
+        /^CONFIGPROXY_AUTH_TOKEN=/ { print "CONFIGPROXY_AUTH_TOKEN=" config_token; next }
+        /^AI_INFRA_API_TOKEN=/ { print "AI_INFRA_API_TOKEN=" api_token; next }
+        /^JUPYTERHUB_CRYPT_KEY=/ { print "JUPYTERHUB_CRYPT_KEY=" hub_key; next }
+        /^SEAWEEDFS_ACCESS_KEY=/ { print "SEAWEEDFS_ACCESS_KEY=" sw_access; next }
+        /^SEAWEEDFS_SECRET_KEY=/ { print "SEAWEEDFS_SECRET_KEY=" sw_secret; next }
+        /^SEAWEEDFS_APP_ACCESS_KEY=/ { print "SEAWEEDFS_APP_ACCESS_KEY=" sw_app_access; next }
+        /^SEAWEEDFS_APP_SECRET_KEY=/ { print "SEAWEEDFS_APP_SECRET_KEY=" sw_app_secret; next }
+        /^SEAWEEDFS_READONLY_ACCESS_KEY=/ { print "SEAWEEDFS_READONLY_ACCESS_KEY=" sw_ro_access; next }
+        /^SEAWEEDFS_READONLY_SECRET_KEY=/ { print "SEAWEEDFS_READONLY_SECRET_KEY=" sw_ro_secret; next }
+        /^GITEA_ADMIN_PASSWORD=/ { print "GITEA_ADMIN_PASSWORD=" gitea_admin; next }
+        /^GITEA_ADMIN_TOKEN=/ { print "GITEA_ADMIN_TOKEN=" gitea_token; next }
+        /^LDAP_ADMIN_PASSWORD=/ { print "LDAP_ADMIN_PASSWORD=" ldap_admin; next }
+        /^LDAP_CONFIG_PASSWORD=/ { print "LDAP_CONFIG_PASSWORD=" ldap_config; next }
+        /^SLURM_DB_PASSWORD=/ { print "SLURM_DB_PASSWORD=" slurm_db; next }
+        /^SLURM_MUNGE_KEY=/ { print "SLURM_MUNGE_KEY=" munge_key; next }
+        /^SLURM_NODE_SSH_PASSWORD=/ { print "SLURM_NODE_SSH_PASSWORD=" slurm_ssh; next }
+        /^SALT_API_PASSWORD=/ { print "SALT_API_PASSWORD=" salt_api; next }
+        /^SALTSTACK_API_TOKEN=/ { print "SALTSTACK_API_TOKEN=" salt_token; next }
+        /^TEST_SSH_PASSWORD=/ { print "TEST_SSH_PASSWORD=" test_ssh; next }
+        /^TEST_ROOT_PASSWORD=/ { print "TEST_ROOT_PASSWORD=" test_root; next }
+        { print }
+        ' "$env_file" > "$temp_file"
+    
+    mv "$temp_file" "$env_file"
+    
+    log_info "======================================================================"
+    log_warn "🔑 IMPORTANT: Default Admin Account"
+    echo ""
+    log_info "  Username: admin"
+    log_error "  Password: admin123"
+    echo ""
+    log_warn "⚠️  Please change admin password after first login!"
+    log_warn "⚠️  Admin password is NOT modified by this script!"
+    log_info "======================================================================"
+    
+    log_info "Generated passwords for services:"
+    echo ""
+    echo "  📦 Database Passwords:"
+    echo "    POSTGRES_PASSWORD=$postgres_password"
+    echo "    JUPYTERHUB_DB_PASSWORD=$jupyterhub_db_password"
+    echo "    MYSQL_ROOT_PASSWORD=$mysql_root_password"
+    echo "    MYSQL_PASSWORD=$mysql_password"
+    echo "    REDIS_PASSWORD=$redis_password"
+    echo "    AI_DB_PASSWORD=$ai_db_password"
+    echo "    GRAFANA_ADMIN_PASSWORD=$grafana_admin_password"
+    echo ""
+    echo "  🔐 Authentication Secrets:"
+    echo "    JWT_SECRET=$jwt_secret"
+    echo "    ENCRYPTION_KEY=$encryption_key"
+    echo "    SESSION_SECRET=$session_secret"
+    echo "    CONFIGPROXY_AUTH_TOKEN=$configproxy_token"
+    echo "    AI_INFRA_API_TOKEN=$ai_infra_api_token"
+    echo "    JUPYTERHUB_CRYPT_KEY=$jupyterhub_crypt_key"
+    echo ""
+    echo "  📁 SeaweedFS Storage:"
+    echo "    SEAWEEDFS_ACCESS_KEY=$seaweedfs_access_key"
+    echo "    SEAWEEDFS_SECRET_KEY=$seaweedfs_secret_key"
+    echo "    SEAWEEDFS_APP_ACCESS_KEY=$seaweedfs_app_access"
+    echo "    SEAWEEDFS_APP_SECRET_KEY=$seaweedfs_app_secret"
+    echo "    SEAWEEDFS_READONLY_ACCESS_KEY=$seaweedfs_readonly_access"
+    echo "    SEAWEEDFS_READONLY_SECRET_KEY=$seaweedfs_readonly_secret"
+    echo ""
+    echo "  🔧 Services:"
+    echo "    GITEA_ADMIN_PASSWORD=$gitea_admin_password"
+    echo "    GITEA_ADMIN_TOKEN=$gitea_admin_token"
+    echo "    LDAP_ADMIN_PASSWORD=$ldap_admin_password"
+    echo "    LDAP_CONFIG_PASSWORD=$ldap_config_password"
+    echo ""
+    echo "  🖥️ HPC & Automation:"
+    echo "    SLURM_DB_PASSWORD=$slurm_db_password"
+    echo "    SLURM_MUNGE_KEY=$slurm_munge_key"
+    echo "    SLURM_NODE_SSH_PASSWORD=$slurm_node_ssh_password"
+    echo "    SALT_API_PASSWORD=$salt_api_password"
+    echo "    SALTSTACK_API_TOKEN=$saltstack_api_token"
+    echo ""
+    echo "  🧪 Test Passwords:"
+    echo "    TEST_SSH_PASSWORD=$test_ssh_password"
+    echo "    TEST_ROOT_PASSWORD=$test_root_password"
+    
+    log_warn ""
+    log_warn "⚠️  Please save these passwords securely!"
+    log_info "Production environment file created: $env_file"
+    
+    log_info ""
+    log_info "Next steps:"
+    log_info "  1. Review and edit $env_file (set EXTERNAL_HOST, DOMAIN, etc.)"
+    log_info "  2. Copy to .env: cp $env_file .env"
+    log_info "  3. Render templates: ./build.sh render"
+    log_info "  4. Build and deploy: ./build.sh build-all && docker compose up -d"
+    
+    return 0
+}
+
 # 初始化或同步 .env 文件
 # 自动检测 EXTERNAL_HOST 等关键变量
 init_env_file() {
@@ -2828,6 +3079,8 @@ print_help() {
     echo "Environment Commands:"
     echo "  init-env [host]     Initialize/sync .env file (auto-detect EXTERNAL_HOST)"
     echo "  init-env --force    Force re-initialize all environment variables"
+    echo "  gen-prod-env [file] Generate production .env with random strong passwords"
+    echo "                      default output: .env.prod"
     echo ""
     echo "Build Commands:"
     echo "  build-all, all           Build all components in the correct order"
@@ -2983,6 +3236,10 @@ case "$COMMAND" in
         echo
         log_info "Current environment configuration:"
         grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
+        ;;
+    gen-prod-env)
+        # 生成生产环境配置文件（使用强随机密码）
+        generate_production_env "${ARG2:-.env.prod}" "$FORCE_BUILD"
         ;;
     build-all|all)
         if [[ "$FORCE_BUILD" == "true" ]]; then
