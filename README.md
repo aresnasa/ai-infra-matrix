@@ -147,7 +147,7 @@ graph TB
 | PHPLDAPAdmin | LDAP web management interface |
 | KeyVault | Secure key distribution service |
 
-## �🚀 Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 
