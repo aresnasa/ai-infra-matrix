@@ -17,9 +17,9 @@
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
   border-radius: 16px;
   overflow: hidden;
-  max-width: 480px;
+  max-width: 560px;
   width: 100%;
-  min-width: 320px;
+  min-width: 360px;
 }
 
 /* 暗黑模式下的卡片 */
@@ -31,7 +31,11 @@
 
 .auth-container .ant-card-head {
   border-bottom: none;
-  padding: 24px 24px 0 24px;
+  padding: 28px 28px 0 28px;
+}
+
+.auth-container .ant-card-body {
+  padding: 24px 28px 28px 28px;
 }
 
 .auth-container .ant-card-head-title {
