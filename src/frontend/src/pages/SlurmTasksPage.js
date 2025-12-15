@@ -15,6 +15,7 @@ import {
 import { slurmAPI } from '../services/api';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
+import { useI18n } from '../hooks/useI18n';
 import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
@@ -48,10 +49,10 @@ const getTaskStatusIcon = (status) => {
 };
 
 // 格式化持续时间
-const formatDuration = (seconds) => {
-  if (seconds < 60) return `${Math.round(seconds)}秒`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}分钟`;
-  return `${Math.round(seconds / 3600)}小时`;
+const formatDuration = (seconds, t) => {
+  if (seconds < 60) return `${Math.round(seconds)}${t ? t('slurmTasks.time.seconds') : '秒'}`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}${t ? t('slurmTasks.time.minutes') : '分钟'}`;
+  return `${Math.round(seconds / 3600)}${t ? t('slurmTasks.time.hours') : '小时'}`;
 };
 
 // 格式化时间戳
@@ -68,6 +69,7 @@ const SlurmTasksPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { isDark } = useTheme();
+  const { t } = useI18n();
   const autoRefreshRef = useRef(null);
   const runningTasksCountRef = useRef(0);  // 新增：使用 ref 跟踪运行任务数
   const [tasks, setTasks] = useState([]);
@@ -104,7 +106,7 @@ const SlurmTasksPage = () => {
   // 表格列定义
   const columns = [
     {
-      title: '任务名称',
+      title: t('slurmTasks.columns.taskName'),
       dataIndex: 'name',
       key: 'name',
       sorter: (a, b) => (a.name || '').localeCompare(b.name || ''),
@@ -122,52 +124,52 @@ const SlurmTasksPage = () => {
       ),
     },
     {
-      title: '状态',
+      title: t('slurmTasks.columns.status'),
       dataIndex: 'status',
       key: 'status',
       filters: [
-        { text: '等待中', value: 'pending' },
-        { text: '运行中', value: 'running' },
-        { text: '已完成', value: 'completed' },
-        { text: '失败', value: 'failed' },
-        { text: '已取消', value: 'cancelled' },
+        { text: t('slurmTasks.status.pending'), value: 'pending' },
+        { text: t('slurmTasks.status.running'), value: 'running' },
+        { text: t('slurmTasks.status.completed'), value: 'completed' },
+        { text: t('slurmTasks.status.failed'), value: 'failed' },
+        { text: t('slurmTasks.status.cancelled'), value: 'cancelled' },
       ],
       onFilter: (value, record) => record.status === value,
       sorter: (a, b) => (a.status || '').localeCompare(b.status || ''),
       render: (status) => (
         <Tag color={getTaskStatusColor(status)}>
-          {status === 'pending' ? '等待中' :
-           status === 'running' ? '运行中' :
-           status === 'completed' ? '已完成' :
-           status === 'failed' ? '失败' :
-           status === 'cancelled' ? '已取消' : status}
+          {status === 'pending' ? t('slurmTasks.status.pending') :
+           status === 'running' ? t('slurmTasks.status.running') :
+           status === 'completed' ? t('slurmTasks.status.completed') :
+           status === 'failed' ? t('slurmTasks.status.failed') :
+           status === 'cancelled' ? t('slurmTasks.status.cancelled') : status}
         </Tag>
       ),
     },
     {
-      title: '类型',
+      title: t('slurmTasks.columns.type'),
       dataIndex: 'type',
       key: 'type',
       filters: [
-        { text: '扩容', value: 'scale_up' },
-        { text: '缩容', value: 'scale_down' },
-        { text: '节点初始化', value: 'node_init' },
-        { text: '集群配置', value: 'cluster_setup' },
-        { text: 'Runtime', value: 'runtime' },
+        { text: t('slurmTasks.types.scaleUp'), value: 'scale_up' },
+        { text: t('slurmTasks.types.scaleDown'), value: 'scale_down' },
+        { text: t('slurmTasks.types.nodeInit'), value: 'node_init' },
+        { text: t('slurmTasks.types.clusterSetup'), value: 'cluster_setup' },
+        { text: t('slurmTasks.types.runtime'), value: 'runtime' },
       ],
       onFilter: (value, record) => record.type === value,
       sorter: (a, b) => (a.type || '').localeCompare(b.type || ''),
       render: (type) => (
         <Tag color="blue">
-          {type === 'scale_up' ? '扩容' :
-           type === 'scale_down' ? '缩容' :
-           type === 'node_init' ? '节点初始化' :
-           type === 'cluster_setup' ? '集群配置' : type}
+          {type === 'scale_up' ? t('slurmTasks.types.scaleUp') :
+           type === 'scale_down' ? t('slurmTasks.types.scaleDown') :
+           type === 'node_init' ? t('slurmTasks.types.nodeInit') :
+           type === 'cluster_setup' ? t('slurmTasks.types.clusterSetup') : type}
         </Tag>
       ),
     },
     {
-      title: '进度',
+      title: t('slurmTasks.columns.progress'),
       dataIndex: 'progress',
       key: 'progress',
       sorter: (a, b) => (a.progress || 0) - (b.progress || 0),
@@ -189,21 +191,21 @@ const SlurmTasksPage = () => {
       },
     },
     {
-      title: '集群',
+      title: t('slurmTasks.columns.cluster'),
       dataIndex: 'cluster_name',
       key: 'cluster_name',
       sorter: (a, b) => (a.cluster_name || '').localeCompare(b.cluster_name || ''),
       render: (name) => name || '-',
     },
     {
-      title: '用户',
+      title: t('slurmTasks.columns.user'),
       dataIndex: 'username',
       key: 'username',
       sorter: (a, b) => (a.username || '').localeCompare(b.username || ''),
       render: (username) => username || '-',
     },
     {
-      title: '开始时间',
+      title: t('slurmTasks.columns.startTime'),
       dataIndex: 'created_at',
       key: 'created_at',
       defaultSortOrder: 'descend',
@@ -220,7 +222,7 @@ const SlurmTasksPage = () => {
       },
     },
     {
-      title: '持续时间',
+      title: t('slurmTasks.columns.duration'),
       dataIndex: 'duration',
       key: 'duration',
       sorter: (a, b) => {
@@ -244,17 +246,17 @@ const SlurmTasksPage = () => {
           const start = dayjs(startTs);
           const end = dayjs(endTs);
           const duration = end.diff(start, 'second');
-          return formatDuration(duration);
+          return formatDuration(duration, t);
         }
         return '-';
       },
     },
     {
-      title: '操作',
+      title: t('slurmTasks.columns.actions'),
       key: 'action',
       render: (_, record) => (
         <Space size="small">
-          <Tooltip title="查看详情">
+          <Tooltip title={t('slurmTasks.actions.viewDetail')}>
             <Button
               size="small"
               icon={<EyeOutlined />}
@@ -263,7 +265,7 @@ const SlurmTasksPage = () => {
           </Tooltip>
           {record.status === 'running' && (
             <>
-              <Tooltip title="刷新进度">
+              <Tooltip title={t('slurmTasks.actions.refreshProgress')}>
                 <Button
                   size="small"
                   icon={<ReloadOutlined />}
@@ -271,13 +273,13 @@ const SlurmTasksPage = () => {
                 />
               </Tooltip>
               <Popconfirm
-                title="确定要取消这个任务吗？"
-                description="取消后任务将停止执行"
+                title={t('slurmTasks.messages.confirmCancel')}
+                description={t('slurmTasks.messages.cancelDescription')}
                 onConfirm={() => handleCancelTask(record.id)}
-                okText="确定"
-                cancelText="取消"
+                okText={t('slurmTasks.buttons.confirm')}
+                cancelText={t('slurmTasks.buttons.cancel')}
               >
-                <Tooltip title="取消任务">
+                <Tooltip title={t('slurmTasks.actions.cancelTask')}>
                   <Button
                     size="small"
                     icon={<StopOutlined />}
@@ -288,7 +290,7 @@ const SlurmTasksPage = () => {
             </>
           )}
           {(record.status === 'failed' || record.status === 'cancelled') && (
-            <Tooltip title="重试任务">
+            <Tooltip title={t('slurmTasks.actions.retryTask')}>
               <Button
                 size="small"
                 icon={<RedoOutlined />}
@@ -343,8 +345,8 @@ const SlurmTasksPage = () => {
       
       setError(null);
     } catch (e) {
-      console.error('加载任务列表失败', e);
-      setError(e.message || '加载任务列表失败');
+      console.error('Failed to load task list', e);
+      setError(e.message || t('slurmTasks.messages.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -360,13 +362,13 @@ const SlurmTasksPage = () => {
         params.end_date = filters.date_range[1].format('YYYY-MM-DD');
       }
 
-      console.log('加载统计信息，参数:', params);
+      console.log('Loading statistics, params:', params);
       const response = await slurmAPI.getTaskStatistics(params);
       const data = response.data?.data || response.data;
-      console.log('统计信息响应:', data);
+      console.log('Statistics response:', data);
       setStatistics(data || null);
     } catch (e) {
-      console.error('加载统计信息失败', e);
+      console.error('Failed to load statistics', e);
       // 设置默认值以避免页面空白
       setStatistics(null);
     } finally {
@@ -386,7 +388,7 @@ const SlurmTasksPage = () => {
         const response = await slurmAPI.getTaskDetail(task.id);
         detailData = response.data?.data || response.data || {};
       } catch (detailError) {
-        console.warn('获取任务详情失败，使用基础信息', detailError);
+        console.warn('Failed to get task detail, using basic info', detailError);
         // 如果获取详情失败，使用传入的基础任务信息
         detailData = task;
       }
@@ -402,12 +404,12 @@ const SlurmTasksPage = () => {
           const progressResponse = await slurmAPI.getProgress(task.id);
           setTaskProgress(progressResponse.data?.data || progressResponse.data);
         } catch (progressError) {
-          console.warn('获取任务进度失败', progressError);
+          console.warn('Failed to get task progress', progressError);
           // 进度获取失败不影响详情显示
         }
       }
     } catch (e) {
-      console.error('查看任务详情失败', e);
+      console.error('Failed to view task detail', e);
       // 即使出错，也显示基础信息
       setSelectedTask(task);
     }
@@ -433,22 +435,22 @@ const SlurmTasksPage = () => {
         )
       );
 
-      message.success('任务进度已刷新');
+      message.success(t('slurmTasks.messages.progressRefreshed'));
     } catch (e) {
-      console.error('刷新任务进度失败', e);
-      message.error('刷新任务进度失败');
+      console.error('Failed to refresh task progress', e);
+      message.error(t('slurmTasks.messages.progressRefreshFailed'));
     }
   };
 
   // 取消任务
-  const handleCancelTask = async (taskId, reason = '用户手动取消') => {
+  const handleCancelTask = async (taskId, reason = t('slurmTasks.messages.cancelDescription')) => {
     try {
       await slurmAPI.cancelTask(taskId, reason);
-      message.success('任务已取消');
+      message.success(t('slurmTasks.messages.taskCancelled'));
       loadTasks();
     } catch (e) {
-      console.error('取消任务失败', e);
-      message.error('取消任务失败: ' + (e.response?.data?.error || e.message));
+      console.error('Failed to cancel task', e);
+      message.error(t('slurmTasks.messages.taskCancelFailed') + ': ' + (e.response?.data?.error || e.message));
     }
   };
 
@@ -456,11 +458,11 @@ const SlurmTasksPage = () => {
   const handleRetryTask = async (taskId) => {
     try {
       const response = await slurmAPI.retryTask(taskId);
-      message.success(`任务重试已启动，新任务ID: ${response.data?.data?.id}`);
+      message.success(`${t('slurmTasks.messages.taskRetryStarted')}: ${response.data?.data?.id}`);
       loadTasks();
     } catch (e) {
-      console.error('重试任务失败', e);
-      message.error('重试任务失败: ' + (e.response?.data?.error || e.message));
+      console.error('Failed to retry task', e);
+      message.error(t('slurmTasks.messages.taskRetryFailed') + ': ' + (e.response?.data?.error || e.message));
     }
   };
 
@@ -523,7 +525,7 @@ const SlurmTasksPage = () => {
 
   // 监听 filters, pagination, activeTab 变化时加载数据
   useEffect(() => {
-    console.log('数据加载触发:', { activeTab, filters, pagination: { current: pagination.current, pageSize: pagination.pageSize } });
+    console.log('Data load triggered:', { activeTab, filters, pagination: { current: pagination.current, pageSize: pagination.pageSize } });
     
     if (activeTab === 'tasks') {
       loadTasks();
@@ -537,7 +539,7 @@ const SlurmTasksPage = () => {
     if (taskDetailId && tasks.length > 0 && activeTab === 'tasks') {
       const targetTask = tasks.find(task => task.id === taskDetailId);
       if (targetTask) {
-        console.log('自动打开任务详情:', taskDetailId);
+      console.log('Auto open task detail:', taskDetailId);
         handleViewTaskDetail(targetTask);
         setTaskDetailId(null); // 清除标记，避免重复打开
       }
@@ -548,7 +550,7 @@ const SlurmTasksPage = () => {
   useEffect(() => {
     if (activeTab === 'statistics') {
       // 切换到统计页面时立即加载统计数据
-      console.log('切换到统计页面，加载统计数据...');
+      console.log('Switched to statistics tab, loading stats...');
       loadStatistics();
     }
   }, [activeTab]);
@@ -580,9 +582,9 @@ const SlurmTasksPage = () => {
       const newInterval = adjustRefreshInterval(runningTasksCount);
       
       // 始终设置定时器，保证自动刷新功能正常工作
-      console.log(`设置自动刷新：${newInterval/1000}秒间隔，${runningTasksCount}个运行中任务`);
+      console.log(`Setting auto refresh: ${newInterval/1000}s interval, ${runningTasksCount} running tasks`);
       autoRefreshRef.current = setInterval(() => {
-        console.log(`自动刷新任务列表... (${runningTasksCountRef.current}个运行中任务)`);
+        console.log(`Auto refresh task list... (${runningTasksCountRef.current} running tasks)`);
         loadTasks();
         setLastRefresh(Date.now());
       }, newInterval);
@@ -597,7 +599,7 @@ const SlurmTasksPage = () => {
           clearTimeout(visibilityTimer);
         }
         visibilityTimer = setTimeout(() => {
-          console.log('页面变为可见，刷新任务列表...');
+          console.log('Page became visible, refreshing task list...');
           loadTasks();
           setLastRefresh(Date.now());
         }, 2000); // 增加到2秒延迟
@@ -625,10 +627,10 @@ const SlurmTasksPage = () => {
 
     // 如果已有定时器且间隔发生变化，重新设置定时器
     if (autoRefreshRef.current && isAutoRefreshEnabled && activeTab === 'tasks') {
-      console.log(`运行任务数变化，调整刷新间隔为：${newInterval/1000}秒`);
+      console.log(`Running tasks changed, adjusting interval to: ${newInterval/1000}s`);
       clearInterval(autoRefreshRef.current);
       autoRefreshRef.current = setInterval(() => {
-        console.log(`自动刷新任务列表... (${runningTasksCountRef.current}个运行中任务)`);
+        console.log(`Auto refresh task list... (${runningTasksCountRef.current} running tasks)`);
         loadTasks();
         setLastRefresh(Date.now());
       }, newInterval);
@@ -640,7 +642,7 @@ const SlurmTasksPage = () => {
       <div style={{ textAlign: 'center', padding: '50px' }}>
         <Spin size="large" />
         <div style={{ marginTop: '16px' }}>
-          <Text>加载任务列表中...</Text>
+          <Text>{t('slurmTasks.list.loading')}</Text>
         </div>
       </div>
     );
@@ -650,25 +652,25 @@ const SlurmTasksPage = () => {
     <div style={{ padding: '24px' }}>
       <Title level={2}>
         <ThunderboltOutlined style={{ marginRight: '8px' }} />
-        Slurm 任务管理
+        {t('slurmTasks.title')}
       </Title>
 
       <Paragraph>
-        查看和管理 Slurm 集群的各项任务进度，包括客户端安装、节点初始化、扩缩容等操作。
+        {t('slurmTasks.description')}
       </Paragraph>
 
       <Divider />
 
       {error && (
         <Alert
-          message="加载失败"
+          message={t('slurmTasks.messages.loadFailedTitle')}
           description={error}
           type="error"
           showIcon
           style={{ marginBottom: '16px' }}
           action={
             <Button size="small" onClick={() => loadTasks()}>
-              重试
+              {t('slurmTasks.messages.retry')}
             </Button>
           }
         />
@@ -676,16 +678,16 @@ const SlurmTasksPage = () => {
 
       {tasks.some(task => task.status === 'running') && (
         <Alert
-          message={`${tasks.filter(task => task.status === 'running').length} 个任务正在运行`}
+          message={t('slurmTasks.runningAlert', { count: tasks.filter(task => task.status === 'running').length })}
           description={
             <div>
               {isAutoRefreshEnabled ? (
-                `自动刷新已启用，间隔 ${refreshInterval/1000} 秒`
+                `${t('slurmTasks.messages.autoRefreshEnabled')} ${refreshInterval/1000} ${t('slurmTasks.messages.seconds')}`
               ) : (
-                '自动刷新已关闭，点击上方按钮手动刷新或启用自动刷新'
+                t('slurmTasks.messages.autoRefreshDisabled')
               )}
               <span style={{ marginLeft: '16px', color: isDark ? 'rgba(255, 255, 255, 0.45)' : '#666' }}>
-                上次更新: {dayjs(lastRefresh).format('HH:mm:ss')}
+                {t('slurmTasks.messages.lastUpdate')}: {dayjs(lastRefresh).format('HH:mm:ss')}
               </span>
             </div>
           }
@@ -700,7 +702,7 @@ const SlurmTasksPage = () => {
           tab={
             <span>
               <DesktopOutlined />
-              任务列表
+              {t('slurmTasks.list.title')}
             </span>
           }
           key="tasks"
@@ -710,7 +712,7 @@ const SlurmTasksPage = () => {
             <Row gutter={[16, 16]} align="middle">
               <Col xs={24} sm={12} md={6}>
                 <Search
-                  placeholder="搜索任务名称..."
+                  placeholder={t('slurmTasks.filters.searchPlaceholder')}
                   value={filters.search}
                   onChange={(e) => handleFilterChange('search', e.target.value)}
                   onSearch={handleSearch}
@@ -720,38 +722,38 @@ const SlurmTasksPage = () => {
               </Col>
               <Col xs={12} sm={6} md={4}>
                 <Select
-                  placeholder="任务状态"
+                  placeholder={t('slurmTasks.filters.taskStatus')}
                   value={filters.status}
                   onChange={(value) => handleFilterChange('status', value)}
                   allowClear
                   style={{ width: '100%' }}
                 >
-                  <Option value="pending">等待中</Option>
-                  <Option value="running">运行中</Option>
-                  <Option value="completed">已完成</Option>
-                  <Option value="failed">失败</Option>
-                  <Option value="cancelled">已取消</Option>
+                  <Option value="pending">{t('slurmTasks.status.pending')}</Option>
+                  <Option value="running">{t('slurmTasks.status.running')}</Option>
+                  <Option value="completed">{t('slurmTasks.status.completed')}</Option>
+                  <Option value="failed">{t('slurmTasks.status.failed')}</Option>
+                  <Option value="cancelled">{t('slurmTasks.status.cancelled')}</Option>
                 </Select>
               </Col>
               <Col xs={12} sm={6} md={4}>
                 <Select
-                  placeholder="任务类型"
+                  placeholder={t('slurmTasks.filters.taskType')}
                   value={filters.type}
                   onChange={(value) => handleFilterChange('type', value)}
                   allowClear
                   style={{ width: '100%' }}
                 >
-                  <Option value="scale_up">扩容</Option>
-                  <Option value="scale_down">缩容</Option>
-                  <Option value="node_init">节点初始化</Option>
-                  <Option value="cluster_setup">集群配置</Option>
+                  <Option value="scale_up">{t('slurmTasks.types.scaleUp')}</Option>
+                  <Option value="scale_down">{t('slurmTasks.types.scaleDown')}</Option>
+                  <Option value="node_init">{t('slurmTasks.types.nodeInit')}</Option>
+                  <Option value="cluster_setup">{t('slurmTasks.types.clusterSetup')}</Option>
                 </Select>
               </Col>
               <Col xs={24} sm={12} md={6}>
                 <RangePicker
                   value={filters.date_range}
                   onChange={(dates) => handleFilterChange('date_range', dates)}
-                  placeholder={['开始日期', '结束日期']}
+                  placeholder={[t('slurmTasks.filters.startDate'), t('slurmTasks.filters.endDate')]}
                   style={{ width: '100%' }}
                 />
               </Col>
@@ -762,7 +764,7 @@ const SlurmTasksPage = () => {
                     onClick={handleResetFilters}
                     size="small"
                   >
-                    重置
+                    {t('slurmTasks.filters.reset')}
                   </Button>
                   <Button
                     icon={<ReloadOutlined />}
@@ -774,7 +776,7 @@ const SlurmTasksPage = () => {
                     type="primary"
                     size="small"
                   >
-                    刷新
+                    {t('slurmTasks.filters.refresh')}
                   </Button>
                   <Button
                     size="small"
@@ -783,7 +785,7 @@ const SlurmTasksPage = () => {
                     ghost={isAutoRefreshEnabled}
                     style={{ minWidth: '88px' }}
                   >
-                    {isAutoRefreshEnabled ? '🔄' : '⏸️'} 自动
+                    {isAutoRefreshEnabled ? '🔄' : '⏸️'} {t('slurmTasks.filters.autoRefresh')}
                   </Button>
                 </Space>
               </Col>
@@ -797,10 +799,10 @@ const SlurmTasksPage = () => {
                   overflow: 'hidden',
                   textOverflow: 'ellipsis'
                 }}>
-                  上次更新: {dayjs(lastRefresh).format('HH:mm:ss')}
+                  {t('slurmTasks.messages.lastUpdate')}: {dayjs(lastRefresh).format('HH:mm:ss')}
                   {refreshInterval > 0 && isAutoRefreshEnabled && (
                     <span style={{ marginLeft: '8px' }}>
-                      (每{refreshInterval/1000}秒)
+                      ({refreshInterval/1000}{t('slurmTasks.messages.seconds')})
                     </span>
                   )}
                 </div>
@@ -813,11 +815,11 @@ const SlurmTasksPage = () => {
             title={
               <Space>
                 <DesktopOutlined />
-                任务列表
+                {t('slurmTasks.list.title')}
                 <Badge count={pagination.total} />
                 {tasks.some(task => task.status === 'running') && (
                   <Tag color="blue" icon={<ClockCircleOutlined />}>
-                    {tasks.filter(task => task.status === 'running').length} 个运行中
+                    {tasks.filter(task => task.status === 'running').length} {t('slurmTasks.list.running')}
                   </Tag>
                 )}
               </Space>
@@ -832,11 +834,11 @@ const SlurmTasksPage = () => {
                 ...pagination,
                 showSizeChanger: true,
                 showQuickJumper: true,
-                showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
+                showTotal: (total, range) => t('slurmTasks.list.total', { start: range[0], end: range[1], total }),
               }}
               onChange={handleTableChange}
               locale={{
-                emptyText: loading ? '加载中...' : '暂无任务记录',
+                emptyText: loading ? t('slurmTasks.list.loading') : t('slurmTasks.list.empty'),
               }}
               scroll={{ x: 1200 }}
               size="small"
@@ -848,7 +850,7 @@ const SlurmTasksPage = () => {
           tab={
             <span>
               <BarChartOutlined />
-              统计信息
+              {t('slurmTasks.statistics.title')}
             </span>
           }
           key="statistics"
@@ -857,7 +859,7 @@ const SlurmTasksPage = () => {
             <div style={{ textAlign: 'center', padding: '50px' }}>
               <Spin size="large" />
               <div style={{ marginTop: '16px' }}>
-                <Text>加载统计信息中...</Text>
+                <Text>{t('slurmTasks.statistics.loading')}</Text>
               </div>
             </div>
           ) : statistics ? (
@@ -866,7 +868,7 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={6}>
                   <Card>
                     <Statistic
-                      title="总任务数"
+                      title={t('slurmTasks.statistics.totalTasks')}
                       value={statistics.total_tasks || 0}
                       prefix={<DesktopOutlined />}
                     />
@@ -875,7 +877,7 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={6}>
                   <Card>
                     <Statistic
-                      title="运行中"
+                      title={t('slurmTasks.statistics.runningTasks')}
                       value={statistics.running_tasks || 0}
                       prefix={<ClockCircleOutlined />}
                       valueStyle={{ color: '#1890ff' }}
@@ -885,7 +887,7 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={6}>
                   <Card>
                     <Statistic
-                      title="已完成"
+                      title={t('slurmTasks.statistics.completedTasks')}
                       value={statistics.completed_tasks || 0}
                       prefix={<CheckCircleOutlined />}
                       valueStyle={{ color: '#52c41a' }}
@@ -895,7 +897,7 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={6}>
                   <Card>
                     <Statistic
-                      title="失败"
+                      title={t('slurmTasks.statistics.failedTasks')}
                       value={statistics.failed_tasks || 0}
                       prefix={<ExclamationCircleOutlined />}
                       valueStyle={{ color: '#ff4d4f' }}
@@ -905,7 +907,7 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={8}>
                   <Card>
                     <Statistic
-                      title="成功率"
+                      title={t('slurmTasks.statistics.successRate')}
                       value={statistics.success_rate || 0}
                       suffix="%"
                       precision={1}
@@ -920,9 +922,9 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={8}>
                   <Card>
                     <Statistic
-                      title="平均执行时间"
+                      title={t('slurmTasks.statistics.avgDuration')}
                       value={statistics.avg_duration || 0}
-                      suffix="秒"
+                      suffix={t('slurmTasks.time.seconds')}
                       prefix={<ClockCircleOutlined />}
                     />
                   </Card>
@@ -930,7 +932,7 @@ const SlurmTasksPage = () => {
                 <Col xs={24} sm={12} md={8}>
                   <Card>
                     <Statistic
-                      title="活跃用户数"
+                      title={t('slurmTasks.statistics.activeUsers')}
                       value={statistics.active_users || 0}
                       prefix={<DesktopOutlined />}
                     />
@@ -943,14 +945,14 @@ const SlurmTasksPage = () => {
                   onClick={loadStatistics}
                   loading={statisticsLoading}
                 >
-                  刷新统计
+                  {t('slurmTasks.statistics.refreshStats')}
                 </Button>
               </div>
             </>
           ) : (
             <Card>
               <Empty 
-                description="暂无统计数据" 
+                description={t('slurmTasks.statistics.noData')} 
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
               >
                 <Button 
@@ -959,7 +961,7 @@ const SlurmTasksPage = () => {
                   onClick={loadStatistics}
                   loading={statisticsLoading}
                 >
-                  加载统计信息
+                  {t('slurmTasks.statistics.loadStats')}
                 </Button>
               </Empty>
             </Card>
@@ -972,7 +974,7 @@ const SlurmTasksPage = () => {
         title={
           <Space>
             {selectedTask && getTaskStatusIcon(selectedTask.status)}
-            {selectedTask?.name} - 任务详情
+            {selectedTask?.name} - {t('slurmTasks.detail.title')}
           </Space>
         }
         open={taskDetailModal}
@@ -981,17 +983,17 @@ const SlurmTasksPage = () => {
           selectedTask?.status === 'running' && (
             <Popconfirm
               key="cancel"
-              title="确定要取消这个任务吗？"
-              description="取消后任务将停止执行"
+              title={t('slurmTasks.messages.confirmCancel')}
+              description={t('slurmTasks.messages.cancelDescription')}
               onConfirm={() => {
                 handleCancelTask(selectedTask.id);
                 handleCloseTaskDetail();
               }}
-              okText="确定"
-              cancelText="取消"
+              okText={t('slurmTasks.buttons.confirm')}
+              cancelText={t('slurmTasks.buttons.cancel')}
             >
               <Button danger icon={<StopOutlined />}>
-                取消任务
+                {t('slurmTasks.buttons.cancelTask')}
               </Button>
             </Popconfirm>
           ),
@@ -1004,11 +1006,11 @@ const SlurmTasksPage = () => {
                 handleCloseTaskDetail();
               }}
             >
-              重试任务
+              {t('slurmTasks.buttons.retryTask')}
             </Button>
           ),
           <Button key="close" onClick={handleCloseTaskDetail}>
-            关闭
+            {t('slurmTasks.buttons.close')}
           </Button>
         ]}
         width={900}
@@ -1019,74 +1021,74 @@ const SlurmTasksPage = () => {
               tab={
                 <span>
                   <InfoCircleOutlined />
-                  基本信息
+                  {t('slurmTasks.detail.basicInfo')}
                 </span>
               }
               key="basic"
             >
               <Descriptions bordered column={2}>
-                <Descriptions.Item label="任务ID">{selectedTask.id}</Descriptions.Item>
-                <Descriptions.Item label="状态">
+                <Descriptions.Item label={t('slurmTasks.detail.taskId')}>{selectedTask.id}</Descriptions.Item>
+                <Descriptions.Item label={t('slurmTasks.columns.status')}>
                   <Tag color={getTaskStatusColor(selectedTask.status)}>
-                    {selectedTask.status === 'pending' ? '等待中' :
-                     selectedTask.status === 'running' ? '运行中' :
-                     selectedTask.status === 'completed' ? '已完成' :
-                     selectedTask.status === 'failed' ? '失败' :
-                     selectedTask.status === 'cancelled' ? '已取消' : selectedTask.status}
+                    {selectedTask.status === 'pending' ? t('slurmTasks.status.pending') :
+                     selectedTask.status === 'running' ? t('slurmTasks.status.running') :
+                     selectedTask.status === 'completed' ? t('slurmTasks.status.completed') :
+                     selectedTask.status === 'failed' ? t('slurmTasks.status.failed') :
+                     selectedTask.status === 'cancelled' ? t('slurmTasks.status.cancelled') : selectedTask.status}
                   </Tag>
                 </Descriptions.Item>
-                <Descriptions.Item label="任务类型">
+                <Descriptions.Item label={t('slurmTasks.detail.taskType')}>
                   <Tag color="blue">
-                    {selectedTask.type === 'scale_up' ? '扩容' :
-                     selectedTask.type === 'scale_down' ? '缩容' :
-                     selectedTask.type === 'node_init' ? '节点初始化' :
-                     selectedTask.type === 'cluster_setup' ? '集群配置' : selectedTask.type}
+                    {selectedTask.type === 'scale_up' ? t('slurmTasks.types.scaleUp') :
+                     selectedTask.type === 'scale_down' ? t('slurmTasks.types.scaleDown') :
+                     selectedTask.type === 'node_init' ? t('slurmTasks.types.nodeInit') :
+                     selectedTask.type === 'cluster_setup' ? t('slurmTasks.types.clusterSetup') : selectedTask.type}
                   </Tag>
                 </Descriptions.Item>
-                <Descriptions.Item label="优先级">
-                  {selectedTask.priority || '默认'}
+                <Descriptions.Item label={t('slurmTasks.detail.priority')}>
+                  {selectedTask.priority || t('slurmTasks.detail.defaultPriority')}
                 </Descriptions.Item>
-                <Descriptions.Item label="创建时间">
+                <Descriptions.Item label={t('slurmTasks.detail.createdAt')}>
                   {selectedTask.created_at ? (() => {
                     const ts = selectedTask.created_at < 10000000000 ? selectedTask.created_at * 1000 : selectedTask.created_at;
                     return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
                   })() : '-'}
                 </Descriptions.Item>
-                <Descriptions.Item label="开始时间">
+                <Descriptions.Item label={t('slurmTasks.detail.startedAt')}>
                   {selectedTask.started_at ? (() => {
                     const ts = selectedTask.started_at < 10000000000 ? selectedTask.started_at * 1000 : selectedTask.started_at;
                     return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
                   })() : '-'}
                 </Descriptions.Item>
-                <Descriptions.Item label="完成时间">
+                <Descriptions.Item label={t('slurmTasks.detail.completedAt')}>
                   {selectedTask.completed_at ? (() => {
                     const ts = selectedTask.completed_at < 10000000000 ? selectedTask.completed_at * 1000 : selectedTask.completed_at;
                     return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
                   })() : '-'}
                 </Descriptions.Item>
-                <Descriptions.Item label="执行时长">
+                <Descriptions.Item label={t('slurmTasks.detail.duration')}>
                   {selectedTask.created_at && selectedTask.completed_at ? (() => {
                     const startTs = (selectedTask.started_at || selectedTask.created_at);
                     const start = startTs < 10000000000 ? startTs * 1000 : startTs;
                     const end = selectedTask.completed_at < 10000000000 ? selectedTask.completed_at * 1000 : selectedTask.completed_at;
-                    return formatDuration(dayjs(end).diff(dayjs(start), 'second'));
+                    return formatDuration(dayjs(end).diff(dayjs(start), 'second'), t);
                   })() : selectedTask.started_at ? (() => {
                     const ts = selectedTask.started_at < 10000000000 ? selectedTask.started_at * 1000 : selectedTask.started_at;
-                    return formatDuration(dayjs().diff(dayjs(ts), 'second'));
+                    return formatDuration(dayjs().diff(dayjs(ts), 'second'), t);
                   })() : '-'
                   }
                 </Descriptions.Item>
-                <Descriptions.Item label="集群">{selectedTask.cluster_name || '-'}</Descriptions.Item>
-                <Descriptions.Item label="用户">{selectedTask.username || '-'}</Descriptions.Item>
-                <Descriptions.Item label="重试次数">{selectedTask.retry_count || 0}</Descriptions.Item>
-                <Descriptions.Item label="最大重试次数">{selectedTask.max_retries || 3}</Descriptions.Item>
+                <Descriptions.Item label={t('slurmTasks.detail.cluster')}>{selectedTask.cluster_name || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('slurmTasks.detail.user')}>{selectedTask.username || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('slurmTasks.detail.retryCount')}>{selectedTask.retry_count || 0}</Descriptions.Item>
+                <Descriptions.Item label={t('slurmTasks.detail.maxRetries')}>{selectedTask.max_retries || 3}</Descriptions.Item>
                 {selectedTask.description && (
-                  <Descriptions.Item label="描述" span={2}>
+                  <Descriptions.Item label={t('slurmTasks.detail.description')} span={2}>
                     {selectedTask.description}
                   </Descriptions.Item>
                 )}
                 {selectedTask.error_message && (
-                  <Descriptions.Item label="错误信息" span={2}>
+                  <Descriptions.Item label={t('slurmTasks.detail.errorMessage')} span={2}>
                     <Text type="danger">{selectedTask.error_message}</Text>
                   </Descriptions.Item>
                 )}
@@ -1094,7 +1096,7 @@ const SlurmTasksPage = () => {
 
               {selectedTask.status === 'running' && selectedTask.progress !== undefined && (
                 <div style={{ marginTop: '16px' }}>
-                  <Text strong>当前进度：</Text>
+                  <Text strong>{t('slurmTasks.detail.currentProgress')}：</Text>
                   <Progress
                     percent={Math.round(selectedTask.progress)}
                     status="active"
@@ -1108,7 +1110,7 @@ const SlurmTasksPage = () => {
               tab={
                 <span>
                   <DesktopOutlined />
-                  参数配置
+                  {t('slurmTasks.detail.parameters')}
                 </span>
               }
               key="parameters"
@@ -1125,7 +1127,7 @@ const SlurmTasksPage = () => {
                   {JSON.stringify(selectedTask.parameters, null, 2)}
                 </pre>
               ) : (
-                <Empty description="无参数配置" />
+                <Empty description={t('slurmTasks.detail.noParameters')} />
               )}
             </TabPane>
 
@@ -1133,7 +1135,7 @@ const SlurmTasksPage = () => {
               tab={
                 <span>
                   <HistoryOutlined />
-                  执行日志
+                  {t('slurmTasks.detail.executionLog')}
                 </span>
               }
               key="events"
@@ -1202,7 +1204,7 @@ const SlurmTasksPage = () => {
                   style={{ maxHeight: '400px', overflow: 'auto' }}
                 />
               ) : (
-                <Empty description="暂无执行日志" />
+                <Empty description={t('slurmTasks.detail.noExecutionLog')} />
               )}
             </TabPane>
 
@@ -1211,7 +1213,7 @@ const SlurmTasksPage = () => {
                 tab={
                   <span>
                     <BarChartOutlined />
-                    统计信息
+                    {t('slurmTasks.detail.statisticsInfo')}
                   </span>
                 }
                 key="statistics"
@@ -1219,26 +1221,26 @@ const SlurmTasksPage = () => {
                 <Row gutter={[16, 16]}>
                   <Col span={8}>
                     <Statistic
-                      title="处理的节点数"
+                      title={t('slurmTasks.detail.nodesProcessed')}
                       value={selectedTask.statistics.nodes_processed || 0}
                     />
                   </Col>
                   <Col span={8}>
                     <Statistic
-                      title="成功的节点数"
+                      title={t('slurmTasks.detail.nodesSuccessful')}
                       value={selectedTask.statistics.nodes_successful || 0}
                     />
                   </Col>
                   <Col span={8}>
                     <Statistic
-                      title="失败的节点数"
+                      title={t('slurmTasks.detail.nodesFailed')}
                       value={selectedTask.statistics.nodes_failed || 0}
                     />
                   </Col>
                 </Row>
                 {selectedTask.statistics.node_results && (
                   <div style={{ marginTop: '16px' }}>
-                    <Title level={5}>节点详情</Title>
+                    <Title level={5}>{t('slurmTasks.detail.nodeDetails')}</Title>
                     <List
                       size="small"
                       bordered
@@ -1248,7 +1250,7 @@ const SlurmTasksPage = () => {
                           <Space>
                             <Text strong>{result.node_name}</Text>
                             <Tag color={result.status === 'success' ? 'green' : 'red'}>
-                              {result.status === 'success' ? '成功' : '失败'}
+                              {result.status === 'success' ? t('slurmTasks.detail.success') : t('slurmTasks.detail.failed')}
                             </Tag>
                             <Text type="secondary">{result.message}</Text>
                           </Space>

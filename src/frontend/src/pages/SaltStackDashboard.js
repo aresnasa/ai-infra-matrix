@@ -29,7 +29,8 @@ import {
   TeamOutlined,
   EditOutlined,
   LoadingOutlined,
-  CloseCircleOutlined
+  CloseCircleOutlined,
+  CodeOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
@@ -195,6 +196,272 @@ const SaltStackDashboard = () => {
   const autoRefreshMinionsRef = useRef(null);
   const autoRefreshTasksRef = useRef(null);
   const autoRefreshOverviewRef = useRef(null);
+
+  // 批量执行命令状态
+  const [batchExecResults, setBatchExecResults] = useState([]);
+  const [batchExecLoading, setBatchExecLoading] = useState(false);
+  const [selectedScriptTemplate, setSelectedScriptTemplate] = useState(null);
+  const [batchExecForm] = Form.useForm();
+  
+  // 脚本模板定义 - 用于批量检查和诊断
+  const scriptTemplates = useMemo(() => [
+    {
+      id: 'check_driver',
+      name: t('saltstack.checkDriverVersion', '检查驱动版本'),
+      desc: t('saltstack.checkDriverVersionDesc', '检查所有节点的 NVIDIA 驱动版本、CUDA 版本'),
+      language: 'bash',
+      code: `#!/bin/bash
+echo "=== NVIDIA Driver & CUDA Version Check ==="
+echo "Hostname: $(hostname)"
+echo "Date: $(date)"
+echo ""
+
+# Check NVIDIA driver
+if command -v nvidia-smi &> /dev/null; then
+    echo "--- nvidia-smi output ---"
+    nvidia-smi --query-gpu=driver_version,cuda_version,name,memory.total --format=csv
+else
+    echo "nvidia-smi not found - No NVIDIA GPU or driver not installed"
+fi
+
+# Check NPU (Ascend)
+if command -v npu-smi &> /dev/null; then
+    echo ""
+    echo "--- npu-smi output ---"
+    npu-smi info | head -20
+fi
+
+echo ""
+echo "=== Check Complete ==="`,
+    },
+    {
+      id: 'check_xid',
+      name: t('saltstack.checkNvidiaXID', '检查 NVIDIA XID 错误'),
+      desc: t('saltstack.checkNvidiaXIDDesc', '检查操作系统中的 NVIDIA XID 错误日志'),
+      language: 'bash',
+      code: `#!/bin/bash
+echo "=== NVIDIA XID Error Check ==="
+echo "Hostname: $(hostname)"
+echo "Date: $(date)"
+echo ""
+
+# Check dmesg for NVIDIA XID errors (last 7 days)
+echo "--- Recent NVIDIA XID Errors (dmesg) ---"
+dmesg -T 2>/dev/null | grep -i "NVRM: Xid" | tail -50 || echo "No XID errors found in dmesg"
+
+echo ""
+# Check journalctl for XID errors
+echo "--- Recent NVIDIA XID Errors (journalctl, 7 days) ---"
+journalctl --since "7 days ago" 2>/dev/null | grep -i "NVRM: Xid" | tail -50 || echo "No XID errors found in journalctl"
+
+echo ""
+# Check kernel log
+echo "--- /var/log/kern.log or messages ---"
+if [ -f /var/log/kern.log ]; then
+    grep -i "NVRM: Xid" /var/log/kern.log 2>/dev/null | tail -20 || echo "No XID in kern.log"
+elif [ -f /var/log/messages ]; then
+    grep -i "NVRM: Xid" /var/log/messages 2>/dev/null | tail -20 || echo "No XID in messages"
+else
+    echo "Kernel log not found"
+fi
+
+echo ""
+echo "=== XID Check Complete ==="`,
+    },
+    {
+      id: 'check_gpu_drop',
+      name: t('saltstack.checkGPUStatus', '检查 GPU 掉卡'),
+      desc: t('saltstack.checkGPUStatusDesc', '检查 GPU 是否存在掉卡情况'),
+      language: 'bash',
+      code: `#!/bin/bash
+echo "=== GPU Status Check ==="
+echo "Hostname: $(hostname)"
+echo "Date: $(date)"
+echo ""
+
+# Check expected vs actual GPU count
+if command -v nvidia-smi &> /dev/null; then
+    EXPECTED_GPUS=\${EXPECTED_GPUS:-8}  # Default expected 8 GPUs
+    ACTUAL_GPUS=$(nvidia-smi -L 2>/dev/null | wc -l)
+    
+    echo "Expected GPUs: $EXPECTED_GPUS"
+    echo "Detected GPUs: $ACTUAL_GPUS"
+    
+    if [ "$ACTUAL_GPUS" -lt "$EXPECTED_GPUS" ]; then
+        echo "⚠️ WARNING: GPU count mismatch! Missing GPUs detected!"
+        echo ""
+        echo "--- Detected GPUs ---"
+        nvidia-smi -L
+    else
+        echo "✅ All expected GPUs are present"
+        echo ""
+        nvidia-smi -L
+    fi
+    
+    echo ""
+    echo "--- GPU Health Status ---"
+    nvidia-smi --query-gpu=index,name,pstate,pcie.link.gen.current,temperature.gpu,utilization.gpu --format=csv
+else
+    echo "nvidia-smi not found"
+fi
+
+# Check for NPU drops
+if command -v npu-smi &> /dev/null; then
+    echo ""
+    echo "--- NPU Status ---"
+    npu-smi info 2>/dev/null | grep -E "NPU|Health|Status" || echo "No NPU detected"
+fi
+
+echo ""
+echo "=== GPU Status Check Complete ==="`,
+    },
+    {
+      id: 'check_dmesg',
+      name: t('saltstack.checkDmesgErrors', '检查 dmesg 错误'),
+      desc: t('saltstack.checkDmesgErrorsDesc', '检查 dmesg 中的重要错误'),
+      language: 'bash',
+      code: `#!/bin/bash
+echo "=== Critical dmesg Errors Check ==="
+echo "Hostname: $(hostname)"
+echo "Date: $(date)"
+echo ""
+
+# Check for OOM (Out of Memory)
+echo "--- OOM Killer Events ---"
+dmesg -T 2>/dev/null | grep -i "out of memory\\|oom\\|killed process" | tail -20 || echo "No OOM events"
+
+echo ""
+# Check for kernel panics
+echo "--- Kernel Panic Events ---"
+dmesg -T 2>/dev/null | grep -i "panic\\|Oops\\|BUG:" | tail -20 || echo "No panic events"
+
+echo ""
+# Check for hardware errors
+echo "--- Hardware Errors (MCE/AER/PCIe) ---"
+dmesg -T 2>/dev/null | grep -iE "hardware error\\|mce:|aer:|pcie.*error" | tail -20 || echo "No hardware errors"
+
+echo ""
+# Check for storage/disk errors
+echo "--- Storage/Disk Errors ---"
+dmesg -T 2>/dev/null | grep -iE "i/o error\\|disk error\\|ext4.*error\\|xfs.*error\\|scsi.*error" | tail -20 || echo "No disk errors"
+
+echo ""
+# Check for memory errors
+echo "--- Memory Errors ---"
+dmesg -T 2>/dev/null | grep -iE "memory.*error\\|edac\\|ecc" | tail -20 || echo "No memory errors"
+
+echo ""
+# Check for network errors
+echo "--- Network Errors ---"
+dmesg -T 2>/dev/null | grep -iE "link.*down\\|carrier.*off\\|timeout\\|drop" | tail -10 || echo "No significant network errors"
+
+echo ""
+echo "=== dmesg Check Complete ==="`,
+    },
+    {
+      id: 'check_ib',
+      name: t('saltstack.checkIBStatus', '检查 IB 网卡状态'),
+      desc: t('saltstack.checkIBStatusDesc', '检查 InfiniBand 网卡状态和连接'),
+      language: 'bash',
+      code: `#!/bin/bash
+echo "=== InfiniBand Status Check ==="
+echo "Hostname: $(hostname)"
+echo "Date: $(date)"
+echo ""
+
+# Check if ibstat is available
+if command -v ibstat &> /dev/null; then
+    echo "--- IB Device Summary ---"
+    ibstat 2>/dev/null | grep -E "^CA|State|Rate|Port" || echo "No IB devices"
+    
+    echo ""
+    echo "--- IB Port Status (detailed) ---"
+    for ca in $(ibstat -l 2>/dev/null); do
+        echo "CA: $ca"
+        ibstat $ca 2>/dev/null | grep -A 10 "Port" | head -15
+        echo ""
+    done
+    
+    # Check for down ports
+    echo "--- Down/Inactive Ports ---"
+    DOWN_PORTS=$(ibstat 2>/dev/null | grep -B5 "State: Down\\|State: Initializing" | grep -E "^CA|Port|State")
+    if [ -n "$DOWN_PORTS" ]; then
+        echo "⚠️ WARNING: Found inactive IB ports:"
+        echo "$DOWN_PORTS"
+    else
+        echo "✅ All IB ports are Active"
+    fi
+else
+    echo "ibstat not found - InfiniBand tools not installed or no IB hardware"
+fi
+
+echo ""
+# Check RDMA devices
+if command -v rdma &> /dev/null; then
+    echo "--- RDMA Devices ---"
+    rdma link show 2>/dev/null || echo "No RDMA devices"
+fi
+
+echo ""
+echo "=== IB Check Complete ==="`,
+    },
+    {
+      id: 'check_system',
+      name: t('saltstack.checkSystemHealth', '系统健康检查'),
+      desc: t('saltstack.checkSystemHealthDesc', '综合检查系统状态'),
+      language: 'bash',
+      code: `#!/bin/bash
+echo "=== System Health Check ==="
+echo "Hostname: $(hostname)"
+echo "Date: $(date)"
+echo "Uptime: $(uptime)"
+echo ""
+
+# CPU
+echo "--- CPU Info ---"
+echo "CPU Cores: $(nproc)"
+echo "Load Average: $(cat /proc/loadavg)"
+top -bn1 | head -5
+
+echo ""
+# Memory
+echo "--- Memory Info ---"
+free -h
+echo ""
+
+# Disk
+echo "--- Disk Usage ---"
+df -h | grep -v "tmpfs\\|loop\\|udev"
+echo ""
+
+# Check high usage
+echo "--- High Resource Usage Warnings ---"
+# CPU load check
+LOAD=$(cat /proc/loadavg | awk '{print $1}')
+CORES=$(nproc)
+if (( $(echo "$LOAD > $CORES" | bc -l) )); then
+    echo "⚠️ High CPU Load: $LOAD (Cores: $CORES)"
+fi
+
+# Memory check
+MEM_USED=$(free | awk '/Mem/{printf("%.0f", $3/$2*100)}')
+if [ "$MEM_USED" -gt 90 ]; then
+    echo "⚠️ High Memory Usage: $MEM_USED%"
+fi
+
+# Disk check
+df -h | awk '$5 ~ /[0-9]+%/ {gsub(/%/,"",$5); if($5 > 90) print "⚠️ High Disk Usage: " $6 " at " $5 "%"}'
+
+echo ""
+# Process count
+echo "--- Process Count ---"
+echo "Total: $(ps aux | wc -l)"
+echo "Zombie: $(ps aux | awk '$8 ~ /Z/' | wc -l)"
+
+echo ""
+echo "=== System Health Check Complete ==="`,
+    },
+  ], [t]);
 
   const loadStatus = async () => {
     setStatusLoading(true);
@@ -1859,6 +2126,66 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
     }
   };
 
+  // 批量执行命令
+  const handleBatchExecution = async () => {
+    try {
+      const values = await batchExecForm.validateFields();
+      const { targets, scriptCode } = values;
+      
+      if (!targets || targets.length === 0) {
+        message.error(t('saltstack.selectTargetRequired'));
+        return;
+      }
+      
+      if (!scriptCode || !scriptCode.trim()) {
+        message.error(t('saltstack.scriptRequired'));
+        return;
+      }
+      
+      setBatchExecLoading(true);
+      setBatchExecResults([]);
+      
+      // 对每个目标节点执行命令
+      const targetList = targets.join(',');
+      const resp = await saltStackAPI.executeCommand({
+        target: targetList,
+        fun: 'cmd.run',
+        arg: [scriptCode],
+        tgt_type: 'list'
+      });
+      
+      if (resp.data?.success) {
+        const results = resp.data.return?.[0] || {};
+        const formattedResults = Object.entries(results).map(([minion, output]) => ({
+          minion,
+          output: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
+          success: !output?.toString()?.includes('ERROR') && !output?.toString()?.includes('error')
+        }));
+        setBatchExecResults(formattedResults);
+        message.success(t('saltstack.executeSuccess'));
+      } else {
+        message.error(resp.data?.error || t('saltstack.executeFailed'));
+      }
+    } catch (e) {
+      const errorDetail = e?.response?.data?.error || e?.response?.data?.message || e.message;
+      message.error(t('saltstack.executeFailed') + ': ' + errorDetail);
+      console.error('Batch execution error:', e?.response?.data || e);
+    } finally {
+      setBatchExecLoading(false);
+    }
+  };
+
+  // 选择脚本模板时填充代码
+  const handleScriptTemplateSelect = (templateKey) => {
+    setSelectedScriptTemplate(templateKey);
+    const template = scriptTemplates.find(t => t.key === templateKey);
+    if (template) {
+      batchExecForm.setFieldsValue({
+        scriptCode: template.script
+      });
+    }
+  };
+
   useEffect(() => {
     return () => {
       closeSSE();
@@ -2429,6 +2756,162 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   ]}
                   onRefresh={loadAllData}
                 />
+              </TabPane>
+
+              {/* 批量执行命令 */}
+              <TabPane tab={t('saltstack.batchExecution')} key="batchExecution" icon={<CodeOutlined />}>
+                <Row gutter={[16, 16]}>
+                  <Col span={24}>
+                    <Card 
+                      title={t('saltstack.batchExecution')} 
+                      size="small"
+                      style={{ background: isDark ? '#1f1f1f' : '#fff' }}
+                    >
+                      <Form form={batchExecForm} layout="vertical">
+                        <Row gutter={16}>
+                          <Col span={12}>
+                            <Form.Item
+                              name="targets"
+                              label={t('saltstack.targetNodes')}
+                              rules={[{ required: true, message: t('saltstack.selectTargetRequired') }]}
+                            >
+                              <Select
+                                mode="multiple"
+                                placeholder={t('saltstack.selectTargets')}
+                                allowClear
+                                showSearch
+                                optionFilterProp="children"
+                                style={{ width: '100%' }}
+                              >
+                                {minions.map(minion => (
+                                  <Select.Option key={minion.id} value={minion.id}>
+                                    {minion.id}
+                                  </Select.Option>
+                                ))}
+                              </Select>
+                            </Form.Item>
+                          </Col>
+                          <Col span={12}>
+                            <Form.Item
+                              name="scriptTemplate"
+                              label={t('saltstack.scriptTemplates')}
+                            >
+                              <Select
+                                placeholder={t('saltstack.selectScriptTemplate')}
+                                allowClear
+                                onChange={handleScriptTemplateSelect}
+                                value={selectedScriptTemplate}
+                              >
+                                {scriptTemplates.map(template => (
+                                  <Select.Option key={template.key} value={template.key}>
+                                    {template.label}
+                                  </Select.Option>
+                                ))}
+                              </Select>
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                        <Form.Item
+                          name="scriptCode"
+                          label={t('saltstack.scriptCode')}
+                          rules={[{ required: true, message: t('saltstack.scriptRequired') }]}
+                        >
+                          <Input.TextArea
+                            rows={12}
+                            placeholder={t('saltstack.enterScriptOrSelectTemplate')}
+                            style={{ 
+                              fontFamily: 'monospace',
+                              fontSize: '12px',
+                              background: isDark ? '#141414' : '#f5f5f5',
+                              color: isDark ? '#d4d4d4' : '#333'
+                            }}
+                          />
+                        </Form.Item>
+                        <Form.Item>
+                          <Space>
+                            <Button
+                              type="primary"
+                              icon={<ThunderboltOutlined />}
+                              onClick={handleBatchExecution}
+                              loading={batchExecLoading}
+                            >
+                              {t('saltstack.executeNow')}
+                            </Button>
+                            <Button
+                              onClick={() => {
+                                batchExecForm.resetFields();
+                                setSelectedScriptTemplate(null);
+                                setBatchExecResults([]);
+                              }}
+                            >
+                              {t('saltstack.clearAll')}
+                            </Button>
+                          </Space>
+                        </Form.Item>
+                      </Form>
+                    </Card>
+                  </Col>
+
+                  {/* 执行结果 */}
+                  {batchExecResults.length > 0 && (
+                    <Col span={24}>
+                      <Card 
+                        title={t('saltstack.executionResults')} 
+                        size="small"
+                        style={{ background: isDark ? '#1f1f1f' : '#fff' }}
+                      >
+                        <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                          {batchExecResults.map((result, index) => (
+                            <Card
+                              key={index}
+                              size="small"
+                              title={
+                                <Space>
+                                  <Tag color={result.success ? 'success' : 'error'}>
+                                    {result.minion}
+                                  </Tag>
+                                  {result.success ? (
+                                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                  ) : (
+                                    <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+                                  )}
+                                </Space>
+                              }
+                              style={{ marginBottom: 8, background: isDark ? '#141414' : '#fafafa' }}
+                              extra={
+                                <Button
+                                  type="text"
+                                  icon={<CopyOutlined />}
+                                  size="small"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(result.output);
+                                    message.success(t('saltstack.copied'));
+                                  }}
+                                />
+                              }
+                            >
+                              <pre style={{ 
+                                margin: 0, 
+                                whiteSpace: 'pre-wrap', 
+                                wordBreak: 'break-all',
+                                fontFamily: 'monospace',
+                                fontSize: '12px',
+                                maxHeight: '200px',
+                                overflowY: 'auto',
+                                background: isDark ? '#0d0d0d' : '#f0f0f0',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                color: isDark ? '#d4d4d4' : '#333'
+                              }}>
+                                {result.output || t('saltstack.noOutput')}
+                              </pre>
+                            </Card>
+                          ))}
+                        </div>
+                      </Card>
+                    </Col>
+                  )}
+                </Row>
               </TabPane>
 
               <TabPane tab={t('saltstack.groupManagement', '分组管理')} key="groups" icon={<TeamOutlined />}>

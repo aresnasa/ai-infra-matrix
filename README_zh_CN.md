@@ -56,26 +56,33 @@ graph TB
     
     subgraph "核心服务层"
         Frontend[前端应用<br/>React SPA]
-        Backend[后端API<br/>Go + FastAPI]
+        Backend[后端API<br/>Go]
         KeyVault[KeyVault<br/>密钥管理服务]
         JupyterHub[JupyterHub<br/>机器学习环境]
+        SingleUser[SingleUser<br/>Jupyter笔记本]
         Gitea[Gitea<br/>Git代码仓库]
-        Nightingale[Nightingale<br/>监控告警平台]
+        Nightingale[Nightingale<br/>监控平台]
+        Prometheus[Prometheus<br/>指标采集]
     end
     
     subgraph "计算调度层"
         SlurmMaster[Slurm Master<br/>作业调度器]
-        SaltStack[SaltStack<br/>配置管理]
+        SaltStack[SaltStack HA<br/>配置管理]
         AppHub[AppHub<br/>应用仓库]
     end
     
     subgraph "数据存储层"
-        Postgres[(PostgreSQL<br/>主数据库)]
-        MySQL[(MySQL<br/>Slurm数据库)]
+        Postgres[(PostgreSQL 15<br/>主数据库)]
+        MySQL[(MySQL 8.0<br/>Slurm数据库)]
         OceanBase[(OceanBase<br/>分布式数据库)]
-        Redis[(Redis<br/>缓存/消息)]
-        Kafka[(“Kafka<br/>消息队列”)]
+        Redis[(Redis 7<br/>缓存/会话)]
+        Kafka[(Kafka<br/>消息队列)]
+        KafkaUI[Kafka UI<br/>队列管理]
         SeaweedFS[SeaweedFS<br/>对象存储]
+    end
+    
+    subgraph "身份认证"
+        OpenLDAP[OpenLDAP<br/>目录服务]
     end
     
     Client --> Nginx
@@ -84,6 +91,7 @@ graph TB
     Nginx --> JupyterHub
     Nginx --> Gitea
     Nginx --> Nightingale
+    Nginx --> KafkaUI
     
     Backend --> KeyVault
     Backend --> SlurmMaster
@@ -91,16 +99,56 @@ graph TB
     Backend --> Postgres
     Backend --> Redis
     Backend --> Kafka
+    Backend --> OpenLDAP
     
     KeyVault --> SaltStack
     JupyterHub --> Postgres
+    JupyterHub --> SingleUser
+    Nightingale --> Prometheus
     Gitea --> Postgres
     Gitea --> SeaweedFS
     SlurmMaster --> MySQL
     AppHub --> SaltStack
 ```
 
-## 🚀 快速开始
+## 📦 组件清单
+
+### 核心服务 (`src/`)
+
+| 组件 | 说明 | 技术栈 |
+|------|------|--------|
+| `backend` | 后端API服务 | Go, Gin, GORM |
+| `frontend` | Web前端 | React, Ant Design |
+| `nginx` | 反向代理 | Nginx Alpine |
+| `saltstack` | 配置管理（高可用） | SaltStack, Salt-API |
+| `apphub` | 应用包仓库 | AlmaLinux, RPM/DEB |
+| `jupyterhub` | 机器学习环境 | JupyterHub, Python |
+| `singleuser` | Jupyter笔记本实例 | Jupyter, CUDA |
+| `gitea` | Git代码仓库 | Gitea 1.25 |
+| `nightingale` | 监控平台 | Nightingale, Go |
+| `prometheus` | 指标采集 | Prometheus |
+| `slurm-master` | HPC作业调度 | Slurm 25.05 |
+
+### 数据服务
+
+| 组件 | 版本 | 说明 |
+|------|------|------|
+| PostgreSQL | 15-alpine | 主数据库 |
+| MySQL | 8.0 | Slurm账户数据库 |
+| OceanBase | 4.3.5-lts | 分布式数据库 |
+| Redis | 7-alpine | 缓存和会话存储 |
+| Kafka | 7.5.0 | 消息队列 |
+| SeaweedFS | latest | S3兼容对象存储 |
+
+### 身份认证与安全
+
+| 组件 | 说明 |
+|------|------|
+| OpenLDAP | 用户认证目录服务 |
+| PHPLDAPAdmin | LDAP Web管理界面 |
+| KeyVault | 安全密钥分发服务 |
+
+## �🚀 快速开始
 
 ### 前置要求
 
@@ -302,7 +350,7 @@ SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
 - 全局 `slurm.conf` 模板现在存放在 `src/backend/config/slurm/slurm.conf.base`，后端服务会在每次下发配置前动态读取该文件并追加节点/分区信息。
 - 如需放置在其他位置，可通过环境变量 `SLURM_BASE_CONFIG_PATH` 显式指定模板路径；该文件会被同步到 `slurm-master` 与所有计算节点容器中。
 - 模板内启用了 `MpiDefault=pmix`，所以需要在自定义镜像或物理节点中提供 `pmix`/`libpmix` 运行时（项目提供的 `slurm-master` 镜像与自动化节点安装脚本已默认安装这些依赖）。
-- 修改模板后可以直接调用“刷新 SLURM 配置”按钮或 `UpdateSlurmConfig` 接口立即同步，无需重新编译后端程序。
+- 修改模板后可以直接调用"刷新 SLURM 配置"按钮或 `UpdateSlurmConfig` 接口立即同步，无需重新编译后端程序。
 
 ## 🎯 主要功能
 

@@ -140,6 +140,17 @@ env:
   DEBUG_PORTS_ENABLED: "true"
   ENABLE_TESTING: "false"
   TEST_DATABASE_URL: "postgresql://test:test@postgres:5432/test_db"
+  
+  # Admin账号IP白名单配置
+  ADMIN_IP_WHITELIST_ENABLED: "true"
+  ADMIN_IP_RESTRICTED: "true"
+  ADMIN_ALLOWED_IPS: "192.168.3.101,192.168.3.1"  # 允许的IP地址列表
+  ADMIN_ALLOWED_CIDRS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8"  # 允许的CIDR网段
+  TRUST_PROXY_HEADER: "true"  # 信任X-Forwarded-For代理头
+  
+  # 登录频率限制配置
+  LOGIN_MAX_ATTEMPTS: "5"  # 最大登录尝试次数
+  LOGIN_BLOCK_DURATION_MINUTES: "15"  # 封锁时间（分钟）
 
 # JupyterHub configuration
 jupyterhub:

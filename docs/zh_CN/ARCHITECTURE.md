@@ -283,7 +283,7 @@ MINIO_BUCKET = gitea
 
 ### AppHub
 
-**技术栈**: Ubuntu/RockyLinux + APK/RPM 构建工具
+**技术栈**: Ubuntu/AlmaLinux + APK/RPM 构建工具
 
 **职责**:
 

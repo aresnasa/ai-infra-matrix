@@ -1222,10 +1222,10 @@ const SlurmScalingPage = () => {
             <SaltCommandExecutor />
           </TabPane>
 
-          <TabPane tab={<span><SettingOutlined />节点模板</span>} key="templates">
-            <Card title="节点配置模板" extra={
+          <TabPane tab={<span><SettingOutlined />{t('slurm.tabs.nodeTemplates')}</span>} key="templates">
+            <Card title={t('slurm.nodeConfigTemplate')} extra={
               <Button icon={<PlusOutlined />} onClick={() => setTemplateModal(true)}>
-                新建模板
+                {t('slurm.newTemplate')}
               </Button>
             }>
               <Table
@@ -1239,13 +1239,13 @@ const SlurmScalingPage = () => {
             </Card>
           </TabPane>
 
-          <TabPane tab={<span><BarChartOutlined />监控仪表板</span>} key="dashboard">
+          <TabPane tab={<span><BarChartOutlined />{t('slurm.tabs.monitoringDashboard')}</span>} key="dashboard">
             <Card 
               title={
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <BarChartOutlined />
-                  <span>SLURM 集群监控</span>
-                  <Badge status="processing" text="实时" />
+                  <span>{t('slurm.clusterMonitoring')}</span>
+                  <Badge status="processing" text={t('slurm.realtime')} />
                 </div>
               } 
               style={{ height: '600px' }}
@@ -1261,45 +1261,45 @@ const SlurmScalingPage = () => {
                     border: 'none',
                     borderRadius: '6px'
                   }}
-                  title="SLURM 集群监控"
+                  title="SLURM Cluster Monitoring"
                   onLoad={(e) => {
-                    console.log('Nightingale 监控仪表板加载完成');
+                    console.log(t('slurm.monitoringLoaded'));
                   }}
                 />
               </div>
               <div style={{ marginTop: '8px', textAlign: 'center' }}>
                 <Space>
-                  <Text type="secondary">使用 Nightingale 实时监控集群状态和任务进度</Text>
+                  <Text type="secondary">{t('slurm.monitoringDesc')}</Text>
                   <Button 
                     size="small" 
                     icon={<ReloadOutlined />}
                     onClick={() => {
-                      const iframe = document.querySelector('iframe[title="SLURM Dashboard"]');
+                      const iframe = document.querySelector('iframe[title="SLURM Cluster Monitoring"]');
                       if (iframe) {
                         iframe.src = iframe.src;
                       }
                     }}
                   >
-                    刷新
+                    {t('slurm.refresh')}
                   </Button>
                 </Space>
               </div>
             </Card>
           </TabPane>
 
-          <TabPane tab={<span><ClusterOutlined />外部集群管理</span>} key="external-clusters">
+          <TabPane tab={<span><ClusterOutlined />{t('slurm.tabs.externalClusterManagement')}</span>} key="external-clusters">
             <ExternalClusterManagement />
           </TabPane>
 
-          <TabPane tab={<span><UnorderedListOutlined />任务监控</span>} key="tasks">
+          <TabPane tab={<span><UnorderedListOutlined />{t('slurm.tabs.taskMonitoring')}</span>} key="tasks">
             <Card 
-              title="SLURM 任务状态" 
+              title={t('slurm.taskStatus')} 
               extra={
                 <Button 
                   type="link" 
                   onClick={() => navigate('/slurm-tasks')}
                 >
-                  查看全部 →
+                  {t('slurm.viewAll')} →
                 </Button>
               }
             >

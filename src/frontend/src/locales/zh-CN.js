@@ -568,6 +568,43 @@ export default {
     cancelDelete: '取消删除',
     retrySuccess: '重试任务已提交',
     cancelSuccess: '取消成功',
+    
+    // 批量执行命令
+    batchExecution: '批量执行',
+    batchExecutionDesc: '在多个节点上批量执行命令或脚本',
+    scriptTemplates: '脚本模板',
+    selectScriptTemplate: '选择脚本模板',
+    customScript: '自定义脚本',
+    checkDriverVersion: '检查驱动版本',
+    checkDriverVersionDesc: '检查所有节点的 NVIDIA 驱动版本、CUDA 版本',
+    checkNvidiaXID: '检查 NVIDIA XID 错误',
+    checkNvidiaXIDDesc: '检查操作系统中的 NVIDIA XID 错误日志（GPU 掉卡征兆）',
+    checkGPUStatus: '检查 GPU 掉卡',
+    checkGPUStatusDesc: '检查 GPU 是否存在掉卡情况',
+    checkDmesgErrors: '检查 dmesg 错误',
+    checkDmesgErrorsDesc: '检查 dmesg 中的重要错误（OOM、panic、硬件故障等）',
+    checkIBStatus: '检查 IB 网卡状态',
+    checkIBStatusDesc: '检查 InfiniBand 网卡状态和连接',
+    checkSystemHealth: '系统健康检查',
+    checkSystemHealthDesc: '综合检查系统状态（CPU、内存、磁盘、进程等）',
+    batchExecSuccess: '批量执行成功',
+    batchExecFailed: '批量执行失败',
+    batchExecPartial: '部分节点执行失败',
+    resultSummary: '执行结果汇总',
+    nodeResults: '节点执行结果',
+    scriptName: '脚本名称',
+    scriptDesc: '脚本描述',
+    targetNodes: '目标节点',
+    selectTargets: '选择目标节点',
+    selectTargetRequired: '请选择至少一个目标节点',
+    scriptCode: '脚本代码',
+    scriptRequired: '请输入脚本代码或选择模板',
+    enterScriptOrSelectTemplate: '请输入要执行的脚本代码，或从上方选择一个预设模板...',
+    executeNow: '立即执行',
+    clearAll: '清空',
+    executionResults: '执行结果',
+    noOutput: '无输出',
+    copied: '已复制到剪贴板',
   },
 
   // 搜索相关
@@ -1034,6 +1071,26 @@ export default {
     jobOperationSuccess: '成功{action} {count} 个作业',
     jobOperationFailed: '{action}作业失败',
     jobOperationFailedRetry: '{action}作业失败，请稍后重试',
+    // Tab 标题
+    tabs: {
+      overview: '集群概览',
+      nodeTemplates: '节点模板',
+      monitoringDashboard: '监控仪表板',
+      externalClusterManagement: '外部集群管理',
+      taskMonitoring: '任务监控',
+    },
+    // 节点模板卡片
+    nodeConfigTemplate: '节点配置模板',
+    newTemplate: '新建模板',
+    // 监控仪表板
+    clusterMonitoring: 'SLURM 集群监控',
+    realtime: '实时',
+    monitoringLoaded: 'Nightingale 监控仪表板加载完成',
+    monitoringDesc: '使用 Nightingale 实时监控集群状态和任务进度',
+    refresh: '刷新',
+    // 任务监控
+    taskStatus: 'SLURM 任务状态',
+    viewAll: '查看全部',
   },
 
   // SLURM 集群状态
@@ -1286,6 +1343,254 @@ export default {
     moreActions: '更多操作',
     nodeActions: '节点操作',
     jobActions: '作业操作',
+  },
+
+  // SLURM 任务管理
+  slurmTasks: {
+    // 页面标题
+    title: 'Slurm 任务管理',
+    description: '查看和管理 Slurm 集群的各项任务进度，包括客户端安装、节点初始化、扩缩容等操作。',
+    
+    // 表格列标题
+    columns: {
+      taskName: '任务名称',
+      status: '状态',
+      type: '类型',
+      progress: '进度',
+      cluster: '集群',
+      user: '用户',
+      startTime: '开始时间',
+      duration: '持续时间',
+      actions: '操作',
+    },
+    
+    // 任务状态
+    status: {
+      pending: '等待中',
+      running: '运行中',
+      completed: '已完成',
+      failed: '失败',
+      cancelled: '已取消',
+    },
+    
+    // 任务类型
+    types: {
+      scaleUp: '扩容',
+      scaleDown: '缩容',
+      nodeInit: '节点初始化',
+      clusterSetup: '集群配置',
+      runtime: 'Runtime',
+    },
+    
+    // 过滤器
+    filters: {
+      searchPlaceholder: '搜索任务名称...',
+      taskStatus: '任务状态',
+      taskType: '任务类型',
+      startDate: '开始日期',
+      endDate: '结束日期',
+      reset: '重置',
+      refresh: '刷新',
+      autoRefresh: '自动',
+    },
+    
+    // 操作
+    actions: {
+      viewDetail: '查看详情',
+      refreshProgress: '刷新进度',
+      cancelTask: '取消任务',
+      retryTask: '重试任务',
+    },
+    
+    // 消息
+    messages: {
+      loadFailed: '加载任务列表失败',
+      loadFailedTitle: '加载失败',
+      retry: '重试',
+      progressRefreshed: '任务进度已刷新',
+      progressRefreshFailed: '刷新任务进度失败',
+      taskCancelled: '任务已取消',
+      taskCancelFailed: '取消任务失败',
+      taskRetryStarted: '任务重试已启动，新任务ID',
+      taskRetryFailed: '重试任务失败',
+      confirmCancel: '确定要取消这个任务吗？',
+      cancelDescription: '取消后任务将停止执行',
+      autoRefreshEnabled: '自动刷新已启用，间隔',
+      autoRefreshDisabled: '自动刷新已关闭，点击上方按钮手动刷新或启用自动刷新',
+      lastUpdate: '上次更新',
+      seconds: '秒',
+    },
+    
+    // 任务列表
+    list: {
+      title: '任务列表',
+      running: '个运行中',
+      total: '第 {start}-{end} 条，共 {total} 条',
+      loading: '加载中...',
+      empty: '暂无任务记录',
+    },
+    
+    // 统计信息
+    statistics: {
+      title: '统计信息',
+      loading: '加载统计信息中...',
+      totalTasks: '总任务数',
+      runningTasks: '运行中',
+      completedTasks: '已完成',
+      failedTasks: '失败',
+      successRate: '成功率',
+      avgDuration: '平均执行时间',
+      activeUsers: '活跃用户数',
+      noData: '暂无统计数据',
+      refreshStats: '刷新统计',
+      loadStats: '加载统计信息',
+    },
+    
+    // 任务详情模态框
+    detail: {
+      title: '任务详情',
+      basicInfo: '基本信息',
+      parameters: '参数配置',
+      executionLog: '执行日志',
+      statisticsInfo: '统计信息',
+      // 基本信息字段
+      taskId: '任务ID',
+      taskType: '任务类型',
+      priority: '优先级',
+      defaultPriority: '默认',
+      createdAt: '创建时间',
+      startedAt: '开始时间',
+      completedAt: '完成时间',
+      duration: '执行时长',
+      cluster: '集群',
+      user: '用户',
+      retryCount: '重试次数',
+      maxRetries: '最大重试次数',
+      description: '描述',
+      errorMessage: '错误信息',
+      currentProgress: '当前进度',
+      noParameters: '无参数配置',
+      noExecutionLog: '暂无执行日志',
+      // 统计字段
+      nodesProcessed: '处理的节点数',
+      nodesSuccessful: '成功的节点数',
+      nodesFailed: '失败的节点数',
+      nodeDetails: '节点详情',
+      success: '成功',
+      failed: '失败',
+    },
+    
+    // 运行中任务提示
+    runningAlert: '{count} 个任务正在运行',
+    
+    // 时间格式化
+    time: {
+      seconds: '秒',
+      minutes: '分钟',
+      hours: '小时',
+    },
+    
+    // 按钮
+    buttons: {
+      confirm: '确定',
+      cancel: '取消',
+      close: '关闭',
+      cancelTask: '取消任务',
+      retryTask: '重试任务',
+    },
+  },
+
+  // 外部集群管理
+  externalCluster: {
+    // 页面标题
+    title: '外部 SLURM 集群管理',
+    
+    // 表格列
+    columns: {
+      clusterName: '集群名称',
+      hostAddress: '主机地址',
+      connectionStatus: '连接状态',
+      nodeCount: '节点数',
+      description: '描述',
+      actions: '操作',
+    },
+    
+    // 连接状态
+    status: {
+      connected: '已连接',
+      disconnected: '断开连接',
+      connecting: '连接中',
+    },
+    
+    // 操作按钮
+    actions: {
+      viewDetail: '查看详情',
+      refresh: '刷新',
+      refreshStatus: '刷新状态',
+      delete: '删除',
+      connect: '连接',
+      connectCluster: '连接外部集群',
+    },
+    
+    // 消息
+    messages: {
+      loadFailed: '加载集群列表失败',
+      connectSuccess: '集群连接成功',
+      connectFailed: '连接失败',
+      deleteSuccess: '集群已删除',
+      deleteFailed: '删除失败',
+      detailFailed: '获取集群详情失败',
+      confirmDelete: '确定要删除这个集群吗？',
+      fileSelected: '已选择文件',
+    },
+    
+    // 连接模态框
+    connectModal: {
+      title: '连接外部 SLURM 集群',
+      clusterName: '集群名称',
+      clusterNamePlaceholder: '例如: production-cluster',
+      clusterNameRequired: '请输入集群名称',
+      masterHost: '主节点地址',
+      masterHostPlaceholder: '例如: 192.168.1.100',
+      masterHostRequired: '请输入主节点地址',
+      sshPort: 'SSH 端口',
+      sshPortRequired: '请输入 SSH 端口',
+      sshUser: 'SSH 用户名',
+      sshUserPlaceholder: '例如: root',
+      sshUserRequired: '请输入 SSH 用户名',
+      authType: '认证方式',
+      passwordAuth: '密码认证',
+      keyAuth: '密钥认证',
+      sshPassword: 'SSH 密码',
+      sshPasswordPlaceholder: '请输入密码',
+      sshPasswordRequired: '请输入 SSH 密码',
+      sshKey: 'SSH 私钥',
+      sshKeyRequired: '请上传 SSH 私钥文件',
+      selectKeyFile: '选择私钥文件',
+      keyFileSelected: '已选择',
+      supportedFormats: '支持的文件格式: .pem, .key, id_rsa, id_ed25519',
+      description: '描述',
+      descriptionPlaceholder: '集群描述信息（可选）',
+    },
+    
+    // 详情模态框
+    detailModal: {
+      title: '集群详情',
+      clusterName: '集群名称',
+      masterHost: '主节点地址',
+      sshPort: 'SSH 端口',
+      connectionStatus: '连接状态',
+      nodeCount: '节点数量',
+      slurmVersion: 'SLURM 版本',
+      description: '描述',
+      noDescription: '无',
+    },
+    
+    // 通用
+    nodes: '个节点',
+    confirm: '确定',
+    cancel: '取消',
+    close: '关闭',
   },
 
   // 管理中心

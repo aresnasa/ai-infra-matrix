@@ -4,7 +4,9 @@ import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutl
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
+import { useTheme } from '../hooks/useTheme';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import ThemeSwitcher from '../components/ThemeSwitcher';
 import './Auth.css';
 
 const { TabPane } = Tabs;
@@ -204,13 +206,14 @@ const AuthPage = ({ onLogin }) => {
 
   return (
     <div className="auth-container">
-      {/* 右上角语言切换 */}
-      <div style={{ position: 'absolute', top: 16, right: 16 }}>
-        <LanguageSwitcher showLabel={true} />
+      {/* 右上角语言切换和主题切换 */}
+      <div className="auth-header-controls">
+        <ThemeSwitcher showLabel={false} size="middle" />
+        <LanguageSwitcher showLabel={false} />
       </div>
       
-      <Row justify="center" align="middle" style={{ minHeight: '100vh' }}>
-        <Col xs={22} sm={20} md={16} lg={12} xl={10}>
+      <Row justify="center" align="middle" style={{ minHeight: '100vh', padding: '20px 0' }}>
+        <Col xs={24} sm={22} md={18} lg={14} xl={10} style={{ display: 'flex', justifyContent: 'center' }}>
           <Card title={
             <div style={{ textAlign: 'center' }}>
               <h2>{t('auth.systemTitle')}</h2>

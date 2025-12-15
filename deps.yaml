@@ -47,7 +47,7 @@ jupyter-base-notebook: "latest"
 
 # 操作系统镜像
 ubuntu: "22.04"
-rockylinux: "9"
+almalinux: "9.3-minimal"
 alpine: "3.22"
 
 # 版本说明:

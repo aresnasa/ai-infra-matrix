@@ -12,7 +12,7 @@
 # - 参考：src/slurm-master/config/README.md
 # =============================================================================
 ARG UBUNTU_VERSION={{UBUNTU_VERSION}}
-ARG ROCKYLINUX_VERSION={{ROCKYLINUX_VERSION}}
+ARG ALMALINUX_VERSION={{ALMALINUX_VERSION}}
 ARG APT_MIRROR={{APT_MIRROR}}
 ARG YUM_MIRROR={{YUM_MIRROR}}
 ARG MUNGE_VERSION=0.5.16
@@ -341,9 +341,10 @@ RUN set -eux; \
     fi
 
 # =============================================================================
-# Stage 2: Build SLURM rpm packages (Rocky Linux 9)
+# Stage 2: Build SLURM rpm packages (AlmaLinux 9)
+# 使用 AlmaLinux 替代 Rocky Linux（Rocky 的 AppStream 模块元数据损坏）
 # =============================================================================
-FROM rockylinux:${ROCKYLINUX_VERSION} AS rpm-builder
+FROM almalinux:9.3-minimal AS rpm-builder
 
 ENV TZ=Asia/Shanghai
 
@@ -364,38 +365,37 @@ ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 # SaltStack version configuration (same as deb builder)
 ARG SALTSTACK_VERSION={{SALTSTACK_VERSION}}
 
-# 配置 Rocky Linux 镜像源（可选，如果网络不好则跳过）
+# 配置 AlmaLinux 镜像源并安装 dnf（minimal 镜像只有 microdnf）
 # 注意：也可以通过 docker build --build-arg HTTP_PROXY=... 使用代理
 RUN set -eux; \
-    echo "尝试配置 Rocky Linux 镜像源..."; \
+    echo "尝试配置 AlmaLinux 镜像源..."; \
+    # 清理可能损坏的 DNF 模块状态（解决 YAML 解析错误）
+    rm -rf /etc/dnf/modules.d/* 2>/dev/null || true; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
     if [ -n "${YUM_MIRROR:-}" ]; then \
         echo "Using custom YUM mirror: ${YUM_MIRROR}"; \
+        # AlmaLinux 使用 repo.almalinux.org 作为默认源
         sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e "s|dl.rockylinux.org/\$contentdir|${YUM_MIRROR}/rockylinux|g" \
+            -e "s|repo.almalinux.org/\$contentdir|${YUM_MIRROR}/almalinux|g" \
+            -e "s|^# baseurl=|baseurl=|g" \
             -e "s|^#baseurl=|baseurl=|g" \
             -i.bak \
-            /etc/yum.repos.d/rocky*.repo; \
-        dnf clean all; \
-        dnf makecache; \
+            /etc/yum.repos.d/almalinux*.repo; \
     else \
         echo "尝试配置阿里云镜像源（可选）..."; \
-        # 尝试配置阿里云镜像源
-        ( \
-            sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-                -e 's|^#baseurl=http://dl.rockylinux.org/\$contentdir|baseurl=http://mirrors.aliyun.com/rockylinux|g' \
-                -i.bak \
-                /etc/yum.repos.d/rocky*.repo 2>/dev/null && \
-            dnf clean all 2>/dev/null && \
-            dnf makecache 2>/dev/null && \
-            echo "✓ 成功配置阿里云镜像源" \
-        ) || { \
-            echo "⚠️ 镜像源配置失败，使用默认配置"; \
-            cp -r /etc/yum.repos.d.backup/* /etc/yum.repos.d/ 2>/dev/null || true; \
-            dnf clean all 2>/dev/null || true; \
-        }; \
-    fi
+        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+            -e 's|repo.almalinux.org/\$contentdir|mirrors.aliyun.com/almalinux|g' \
+            -e "s|^# baseurl=|baseurl=|g" \
+            -e "s|^#baseurl=|baseurl=|g" \
+            -i.bak \
+            /etc/yum.repos.d/almalinux*.repo 2>/dev/null || true; \
+    fi; \
+    # minimal 镜像只有 microdnf，先安装 dnf
+    echo "📦 Installing dnf on minimal image..."; \
+    microdnf install -y dnf; \
+    dnf clean all; \
+    dnf makecache
 
 # Install build prerequisites and enable required repositories
 RUN set -eux; \
