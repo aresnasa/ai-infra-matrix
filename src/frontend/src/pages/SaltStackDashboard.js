@@ -461,6 +461,763 @@ echo "Zombie: $(ps aux | awk '$8 ~ /Z/' | wc -l)"
 echo ""
 echo "=== System Health Check Complete ==="`,
     },
+    {
+      id: 'daily_inspection',
+      name: t('saltstack.dailyInspection', '日常巡检（综合）'),
+      desc: t('saltstack.dailyInspectionDesc', 'GPU 集群和物理机日常巡检脚本'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# 日常巡检脚本 - GPU 集群和物理机
+# =============================================================================
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║               日 常 巡 检 报 告                                ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo "主机名: $(hostname)"
+echo "IP 地址: $(hostname -I 2>/dev/null | awk '{print $1}')"
+echo "巡检时间: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "运行时长: $(uptime -p 2>/dev/null || uptime)"
+echo ""
+
+# ========== 1. 系统基础信息 ==========
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "【1. 系统基础信息】"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "操作系统: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2)"
+echo "内核版本: $(uname -r)"
+echo "CPU 核心: $(nproc) 核"
+echo "负载均值: $(cat /proc/loadavg | awk '{print $1, $2, $3}')"
+echo ""
+
+# ========== 2. 内存状态 ==========
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "【2. 内存状态】"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+free -h
+MEM_USED_PCT=$(free | awk '/Mem/{printf "%.1f", $3/$2*100}')
+if (( $(echo "$MEM_USED_PCT > 90" | bc -l) )); then
+    echo "⚠️ 警告: 内存使用率 $MEM_USED_PCT% 超过 90%"
+else
+    echo "✅ 内存使用率: $MEM_USED_PCT%"
+fi
+echo ""
+
+# ========== 3. 磁盘状态 ==========
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "【3. 磁盘状态】"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+df -h | grep -v "tmpfs\\|loop\\|udev\\|overlay"
+echo ""
+echo "--- 磁盘使用率告警检查 ---"
+DISK_WARN=0
+while read -r line; do
+    usage=$(echo "$line" | awk '{print $5}' | tr -d '%')
+    mount=$(echo "$line" | awk '{print $6}')
+    if [ "$usage" -gt 85 ]; then
+        echo "⚠️ 磁盘 $mount 使用率 $usage% (警告阈值: 85%)"
+        DISK_WARN=1
+    fi
+done < <(df -h | grep -v "tmpfs\\|loop\\|udev\\|overlay\\|Filesystem")
+[ "$DISK_WARN" -eq 0 ] && echo "✅ 所有磁盘使用率正常"
+echo ""
+
+# ========== 4. GPU 状态 (NVIDIA) ==========
+if command -v nvidia-smi &> /dev/null; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "【4. GPU 状态 (NVIDIA)】"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
+    echo "检测到 GPU 数量: $GPU_COUNT"
+    echo ""
+    nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv
+    echo ""
+    # 检查 GPU 温度
+    echo "--- GPU 温度检查 ---"
+    nvidia-smi --query-gpu=index,temperature.gpu --format=csv,noheader | while read line; do
+        idx=$(echo "$line" | cut -d',' -f1)
+        temp=$(echo "$line" | cut -d',' -f2 | tr -d ' ')
+        if [ "$temp" -gt 85 ]; then
+            echo "⚠️ GPU $idx 温度 $temp°C 过高！"
+        elif [ "$temp" -gt 75 ]; then
+            echo "⚠️ GPU $idx 温度 $temp°C 偏高"
+        else
+            echo "✅ GPU $idx 温度 $temp°C 正常"
+        fi
+    done
+    echo ""
+fi
+
+# ========== 5. NPU 状态 (华为昇腾) ==========
+if command -v npu-smi &> /dev/null; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "【5. NPU 状态 (华为昇腾)】"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    npu-smi info 2>/dev/null | head -30
+    echo ""
+fi
+
+# ========== 6. 网络状态 ==========
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "【6. 网络状态】"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+# 显示物理网卡状态
+ip -br link show | grep -v "lo\\|docker\\|veth\\|br-"
+echo ""
+
+# ========== 7. InfiniBand 状态 ==========
+if command -v ibstat &> /dev/null; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "【7. InfiniBand 状态】"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    IB_DOWN=$(ibstat 2>/dev/null | grep -c "State: Down")
+    IB_ACTIVE=$(ibstat 2>/dev/null | grep -c "State: Active")
+    echo "IB 端口状态: Active=$IB_ACTIVE, Down=$IB_DOWN"
+    if [ "$IB_DOWN" -gt 0 ]; then
+        echo "⚠️ 发现 $IB_DOWN 个 IB 端口处于 Down 状态"
+        ibstat 2>/dev/null | grep -B5 "State: Down"
+    else
+        echo "✅ 所有 IB 端口正常"
+    fi
+    echo ""
+fi
+
+# ========== 8. 关键服务状态 ==========
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "【8. 关键服务状态】"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+for svc in docker containerd kubelet slurmd slurmctld salt-minion; do
+    if systemctl is-active "$svc" &>/dev/null; then
+        echo "✅ $svc: active"
+    elif systemctl list-unit-files | grep -q "^$svc"; then
+        echo "❌ $svc: inactive"
+    fi
+done
+echo ""
+
+# ========== 9. 最近错误日志 ==========
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "【9. 最近错误日志 (最近1小时)】"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+journalctl --since "1 hour ago" -p err --no-pager 2>/dev/null | tail -10 || echo "无法读取 journalctl"
+echo ""
+
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║                    巡 检 完 成                                 ║"
+echo "╚════════════════════════════════════════════════════════════════╝"`,
+    },
+    {
+      id: 'gpu_health_check',
+      name: t('saltstack.gpuHealthCheck', 'GPU 健康检查'),
+      desc: t('saltstack.gpuHealthCheckDesc', '深度检查 GPU 健康状态、ECC 错误、温度'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# GPU 健康深度检查脚本
+# =============================================================================
+echo "=== GPU 健康深度检查 ==="
+echo "主机: $(hostname)"
+echo "时间: $(date)"
+echo ""
+
+if ! command -v nvidia-smi &> /dev/null; then
+    echo "❌ 未检测到 nvidia-smi，可能未安装 NVIDIA 驱动"
+    exit 1
+fi
+
+# 1. 驱动和 CUDA 版本
+echo "【1. 驱动信息】"
+nvidia-smi --query-gpu=driver_version,cuda_version --format=csv
+echo ""
+
+# 2. GPU 列表
+echo "【2. GPU 列表】"
+nvidia-smi -L
+GPU_COUNT=$(nvidia-smi -L | wc -l)
+echo "总计: $GPU_COUNT 块 GPU"
+echo ""
+
+# 3. GPU 温度和功耗
+echo "【3. GPU 温度/功耗/风扇】"
+nvidia-smi --query-gpu=index,name,temperature.gpu,power.draw,fan.speed --format=csv
+echo ""
+
+# 4. GPU 利用率和显存
+echo "【4. GPU 利用率/显存】"
+nvidia-smi --query-gpu=index,utilization.gpu,utilization.memory,memory.used,memory.total --format=csv
+echo ""
+
+# 5. ECC 错误检查
+echo "【5. ECC 错误检查】"
+nvidia-smi --query-gpu=index,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total --format=csv 2>/dev/null || echo "ECC 信息不可用"
+echo ""
+
+# 检查 ECC 错误
+ECC_ERRORS=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total --format=csv,noheader 2>/dev/null | awk '{sum+=$1}END{print sum}')
+if [ -n "$ECC_ERRORS" ] && [ "$ECC_ERRORS" -gt 0 ]; then
+    echo "⚠️ 警告: 检测到 $ECC_ERRORS 个不可纠正的 ECC 错误！"
+fi
+
+# 6. PCIe 带宽
+echo "【6. PCIe 信息】"
+nvidia-smi --query-gpu=index,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current --format=csv
+echo ""
+
+# 7. 持久模式和计算模式
+echo "【7. GPU 模式设置】"
+nvidia-smi --query-gpu=index,persistence_mode,compute_mode --format=csv
+echo ""
+
+# 8. 运行中的进程
+echo "【8. GPU 上运行的进程】"
+nvidia-smi --query-compute-apps=pid,name,gpu_bus_id,used_memory --format=csv 2>/dev/null || echo "无运行中的 GPU 进程"
+echo ""
+
+# 9. XID 错误检查
+echo "【9. XID 错误检查 (最近24小时)】"
+XID_COUNT=$(dmesg -T 2>/dev/null | grep -c "NVRM: Xid" || echo "0")
+if [ "$XID_COUNT" -gt 0 ]; then
+    echo "⚠️ 发现 $XID_COUNT 条 XID 错误日志:"
+    dmesg -T 2>/dev/null | grep "NVRM: Xid" | tail -10
+else
+    echo "✅ 无 XID 错误"
+fi
+echo ""
+
+# 10. 健康评估
+echo "【10. 健康评估总结】"
+ISSUES=0
+# 温度检查
+HIGH_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader | awk '$1>85{count++}END{print count+0}')
+if [ "$HIGH_TEMP" -gt 0 ]; then
+    echo "⚠️ $HIGH_TEMP 块 GPU 温度过高 (>85°C)"
+    ISSUES=$((ISSUES+1))
+fi
+# ECC 检查
+if [ -n "$ECC_ERRORS" ] && [ "$ECC_ERRORS" -gt 0 ]; then
+    echo "⚠️ 存在不可纠正的 ECC 错误"
+    ISSUES=$((ISSUES+1))
+fi
+# XID 检查
+if [ "$XID_COUNT" -gt 0 ]; then
+    echo "⚠️ 存在 XID 错误日志"
+    ISSUES=$((ISSUES+1))
+fi
+
+if [ "$ISSUES" -eq 0 ]; then
+    echo "✅ GPU 健康状态良好"
+else
+    echo "❌ 发现 $ISSUES 类问题，请检查"
+fi
+
+echo ""
+echo "=== GPU 健康检查完成 ==="`,
+    },
+    {
+      id: 'network_diagnosis',
+      name: t('saltstack.networkDiagnosis', '网络诊断'),
+      desc: t('saltstack.networkDiagnosisDesc', '检查网络连接、丢包、延迟'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# 网络诊断脚本
+# =============================================================================
+echo "=== 网络诊断 ==="
+echo "主机: $(hostname)"
+echo "时间: $(date)"
+echo ""
+
+# 1. 网卡状态
+echo "【1. 网卡状态】"
+ip -br link show
+echo ""
+
+# 2. IP 地址
+echo "【2. IP 地址配置】"
+ip -br addr show | grep -v "lo"
+echo ""
+
+# 3. 路由表
+echo "【3. 路由表】"
+ip route | head -20
+echo ""
+
+# 4. DNS 配置
+echo "【4. DNS 配置】"
+cat /etc/resolv.conf | grep -v "^#" | head -5
+echo ""
+
+# 5. 网络连接统计
+echo "【5. 网络连接统计】"
+echo "ESTABLISHED: $(ss -t state established | wc -l)"
+echo "TIME_WAIT: $(ss -t state time-wait | wc -l)"
+echo "CLOSE_WAIT: $(ss -t state close-wait | wc -l)"
+echo ""
+
+# 6. 监听端口
+echo "【6. 监听端口 (前20个)】"
+ss -tlnp | head -20
+echo ""
+
+# 7. 网卡错误统计
+echo "【7. 网卡错误统计】"
+for iface in $(ip -br link show | awk '{print $1}' | grep -v "lo\\|docker\\|veth"); do
+    echo "--- $iface ---"
+    ethtool -S $iface 2>/dev/null | grep -E "error|drop|collision|crc" | grep -v ": 0$" | head -10 || echo "无错误"
+done
+echo ""
+
+# 8. InfiniBand 诊断
+if command -v ibstat &> /dev/null; then
+    echo "【8. InfiniBand 诊断】"
+    echo "IB 设备列表:"
+    ibstat -l 2>/dev/null
+    echo ""
+    echo "IB 端口状态:"
+    ibstat 2>/dev/null | grep -E "^CA|State:|Rate:|Physical state:"
+    echo ""
+    
+    # IB 错误计数
+    if command -v perfquery &> /dev/null; then
+        echo "IB 端口错误统计:"
+        for port in $(ibstat -l 2>/dev/null); do
+            perfquery -x 2>/dev/null | grep -E "Error|Drop" | grep -v ": 0$" || echo "无错误"
+        done
+    fi
+fi
+
+# 9. 连通性测试
+echo "【9. 连通性测试】"
+GATEWAY=$(ip route | grep default | awk '{print $3}' | head -1)
+if [ -n "$GATEWAY" ]; then
+    echo "测试网关 $GATEWAY ..."
+    ping -c 3 -W 2 $GATEWAY 2>/dev/null && echo "✅ 网关可达" || echo "❌ 网关不可达"
+fi
+
+# DNS 测试
+echo ""
+echo "测试 DNS 解析..."
+if nslookup baidu.com &>/dev/null || host baidu.com &>/dev/null; then
+    echo "✅ DNS 解析正常"
+else
+    echo "❌ DNS 解析失败"
+fi
+
+echo ""
+echo "=== 网络诊断完成 ==="`,
+    },
+    {
+      id: 'storage_check',
+      name: t('saltstack.storageCheck', '存储检查'),
+      desc: t('saltstack.storageCheckDesc', '检查磁盘、RAID、NFS、分布式存储'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# 存储检查脚本
+# =============================================================================
+echo "=== 存储检查 ==="
+echo "主机: $(hostname)"
+echo "时间: $(date)"
+echo ""
+
+# 1. 磁盘分区
+echo "【1. 磁盘分区】"
+lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+echo ""
+
+# 2. 磁盘使用率
+echo "【2. 磁盘使用率】"
+df -h | grep -v "tmpfs\\|loop\\|udev\\|overlay"
+echo ""
+
+# 3. inode 使用率
+echo "【3. inode 使用率】"
+df -i | grep -v "tmpfs\\|loop\\|udev\\|overlay"
+echo ""
+
+# 4. 磁盘 IO 统计
+echo "【4. 磁盘 IO 统计】"
+if command -v iostat &> /dev/null; then
+    iostat -x 1 2 | tail -20
+else
+    echo "iostat 未安装，使用 vmstat:"
+    vmstat 1 3
+fi
+echo ""
+
+# 5. RAID 状态
+echo "【5. RAID 状态检查】"
+if [ -f /proc/mdstat ]; then
+    echo "--- Software RAID (mdadm) ---"
+    cat /proc/mdstat
+fi
+
+if command -v MegaCli64 &> /dev/null; then
+    echo "--- MegaRAID 状态 ---"
+    MegaCli64 -LDInfo -Lall -aALL 2>/dev/null | grep -E "Name|State|Size" || echo "无 MegaRAID"
+elif command -v storcli64 &> /dev/null; then
+    echo "--- StorCLI RAID 状态 ---"
+    storcli64 /c0 /vall show 2>/dev/null || echo "无 StorCLI"
+else
+    echo "未检测到硬件 RAID 控制器或工具"
+fi
+echo ""
+
+# 6. NVMe 健康
+echo "【6. NVMe 健康状态】"
+if command -v nvme &> /dev/null; then
+    for dev in $(nvme list 2>/dev/null | awk 'NR>2{print $1}'); do
+        echo "--- $dev ---"
+        nvme smart-log $dev 2>/dev/null | grep -E "temperature|percentage_used|available_spare" || echo "无法读取"
+    done
+else
+    echo "nvme-cli 未安装"
+fi
+echo ""
+
+# 7. NFS 挂载检查
+echo "【7. NFS 挂载】"
+if mount | grep -q nfs; then
+    echo "检测到 NFS 挂载:"
+    mount | grep nfs
+    echo ""
+    echo "NFS 挂载点状态:"
+    for nfs_mount in $(mount | grep nfs | awk '{print $3}'); do
+        if timeout 5 ls "$nfs_mount" &>/dev/null; then
+            echo "✅ $nfs_mount 可访问"
+        else
+            echo "❌ $nfs_mount 不可访问或超时"
+        fi
+    done
+else
+    echo "无 NFS 挂载"
+fi
+echo ""
+
+# 8. 分布式存储检查
+echo "【8. 分布式存储】"
+# Ceph
+if command -v ceph &> /dev/null; then
+    echo "--- Ceph 状态 ---"
+    ceph health 2>/dev/null || echo "无法连接 Ceph"
+fi
+# GlusterFS
+if command -v gluster &> /dev/null; then
+    echo "--- GlusterFS 状态 ---"
+    gluster peer status 2>/dev/null || echo "无法连接 GlusterFS"
+fi
+# Lustre
+if lsmod | grep -q lustre; then
+    echo "--- Lustre 挂载 ---"
+    mount | grep lustre || echo "无 Lustre 挂载"
+fi
+echo ""
+
+# 9. 磁盘健康 (SMART)
+echo "【9. 磁盘 SMART 健康】"
+if command -v smartctl &> /dev/null; then
+    for disk in $(lsblk -d -o NAME | grep -E "^sd|^nvme" | head -5); do
+        echo "--- /dev/$disk ---"
+        smartctl -H /dev/$disk 2>/dev/null | grep -E "result|PASSED|FAILED" || echo "无法读取"
+    done
+else
+    echo "smartmontools 未安装"
+fi
+
+echo ""
+echo "=== 存储检查完成 ==="`,
+    },
+    {
+      id: 'process_check',
+      name: t('saltstack.processCheck', '进程检查'),
+      desc: t('saltstack.processCheckDesc', '检查高 CPU/内存进程、僵尸进程'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# 进程检查脚本
+# =============================================================================
+echo "=== 进程检查 ==="
+echo "主机: $(hostname)"
+echo "时间: $(date)"
+echo ""
+
+# 1. 系统负载
+echo "【1. 系统负载】"
+uptime
+echo ""
+
+# 2. CPU 使用 Top 10
+echo "【2. CPU 使用率 Top 10 进程】"
+ps aux --sort=-%cpu | head -11 | awk '{printf "%-10s %-8s %-6s %-6s %s\\n", $1, $2, $3"%", $4"%", $11}'
+echo ""
+
+# 3. 内存使用 Top 10
+echo "【3. 内存使用 Top 10 进程】"
+ps aux --sort=-%mem | head -11 | awk '{printf "%-10s %-8s %-6s %-6s %s\\n", $1, $2, $3"%", $4"%", $11}'
+echo ""
+
+# 4. 僵尸进程
+echo "【4. 僵尸进程检查】"
+ZOMBIE=$(ps aux | awk '$8=="Z"' | wc -l)
+if [ "$ZOMBIE" -gt 0 ]; then
+    echo "⚠️ 发现 $ZOMBIE 个僵尸进程:"
+    ps aux | awk '$8=="Z"' | head -10
+else
+    echo "✅ 无僵尸进程"
+fi
+echo ""
+
+# 5. 高 CPU 进程告警
+echo "【5. 高 CPU 进程告警 (>80%)】"
+HIGH_CPU=$(ps aux | awk 'NR>1 && $3>80 {printf "PID: %-8s CPU: %-6s CMD: %s\\n", $2, $3"%", $11}')
+if [ -n "$HIGH_CPU" ]; then
+    echo "⚠️ 发现高 CPU 进程:"
+    echo "$HIGH_CPU"
+else
+    echo "✅ 无高 CPU 进程"
+fi
+echo ""
+
+# 6. 高内存进程告警
+echo "【6. 高内存进程告警 (>50%)】"
+HIGH_MEM=$(ps aux | awk 'NR>1 && $4>50 {printf "PID: %-8s MEM: %-6s CMD: %s\\n", $2, $4"%", $11}')
+if [ -n "$HIGH_MEM" ]; then
+    echo "⚠️ 发现高内存进程:"
+    echo "$HIGH_MEM"
+else
+    echo "✅ 无高内存进程"
+fi
+echo ""
+
+# 7. 进程数统计
+echo "【7. 进程统计】"
+echo "总进程数: $(ps aux | wc -l)"
+echo "运行中: $(ps aux | awk '$8=="R"' | wc -l)"
+echo "睡眠中: $(ps aux | awk '$8=="S"' | wc -l)"
+echo "僵尸: $ZOMBIE"
+echo ""
+
+# 8. 用户进程统计
+echo "【8. 用户进程统计 (Top 5)】"
+ps aux | awk 'NR>1{a[$1]++}END{for(i in a)print a[i],i}' | sort -rn | head -5
+echo ""
+
+# 9. 长时间运行进程
+echo "【9. 长时间运行进程 (>7天)】"
+ps -eo pid,etime,cmd --sort=-etime | awk 'NR>1{
+    time=$2;
+    if(index(time,"-")>0){
+        split(time,a,"-");
+        days=a[1];
+        if(days>=7) print $0
+    }
+}' | head -10 || echo "无超过7天的进程"
+
+echo ""
+echo "=== 进程检查完成 ==="`,
+    },
+    {
+      id: 'security_check',
+      name: t('saltstack.securityCheck', '安全检查'),
+      desc: t('saltstack.securityCheckDesc', '检查登录日志、异常用户、开放端口'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# 安全检查脚本
+# =============================================================================
+echo "=== 安全检查 ==="
+echo "主机: $(hostname)"
+echo "时间: $(date)"
+echo ""
+
+# 1. 最近登录
+echo "【1. 最近登录 (last 10)】"
+last -10 2>/dev/null || echo "无法读取登录日志"
+echo ""
+
+# 2. 登录失败
+echo "【2. 最近登录失败 (last 10)】"
+lastb -10 2>/dev/null || grep -i "failed\\|failure" /var/log/auth.log 2>/dev/null | tail -10 || echo "无法读取"
+echo ""
+
+# 3. 当前登录用户
+echo "【3. 当前登录用户】"
+who
+echo ""
+
+# 4. sudo 权限用户
+echo "【4. sudo 权限用户】"
+grep -E "^%sudo|^%wheel|^%admin" /etc/sudoers 2>/dev/null
+grep -E "ALL=\\(ALL\\)" /etc/sudoers.d/* 2>/dev/null || echo "无额外 sudoers 配置"
+echo ""
+
+# 5. 空密码账户
+echo "【5. 空密码账户检查】"
+EMPTY_PWD=$(awk -F: '($2==""){print $1}' /etc/shadow 2>/dev/null)
+if [ -n "$EMPTY_PWD" ]; then
+    echo "⚠️ 发现空密码账户:"
+    echo "$EMPTY_PWD"
+else
+    echo "✅ 无空密码账户"
+fi
+echo ""
+
+# 6. UID=0 用户
+echo "【6. UID=0 用户 (root 权限)】"
+awk -F: '$3==0{print $1}' /etc/passwd
+echo ""
+
+# 7. 新增用户 (7天内)
+echo "【7. 最近新增用户 (7天内)】"
+find /home -maxdepth 1 -type d -mtime -7 2>/dev/null | grep -v "^/home$" || echo "无新增用户"
+echo ""
+
+# 8. 监听端口
+echo "【8. 对外监听端口】"
+ss -tlnp | grep -v "127.0.0.1\\|::1" | head -20
+echo ""
+
+# 9. SSH 配置检查
+echo "【9. SSH 安全配置】"
+if [ -f /etc/ssh/sshd_config ]; then
+    echo "PermitRootLogin: $(grep -i "^PermitRootLogin" /etc/ssh/sshd_config 2>/dev/null || echo "默认")"
+    echo "PasswordAuthentication: $(grep -i "^PasswordAuthentication" /etc/ssh/sshd_config 2>/dev/null || echo "默认")"
+    echo "PermitEmptyPasswords: $(grep -i "^PermitEmptyPasswords" /etc/ssh/sshd_config 2>/dev/null || echo "默认")"
+fi
+echo ""
+
+# 10. 防火墙状态
+echo "【10. 防火墙状态】"
+if command -v ufw &> /dev/null; then
+    ufw status 2>/dev/null || echo "ufw 未运行"
+elif command -v firewall-cmd &> /dev/null; then
+    firewall-cmd --state 2>/dev/null || echo "firewalld 未运行"
+elif command -v iptables &> /dev/null; then
+    echo "iptables 规则数: $(iptables -L -n 2>/dev/null | wc -l)"
+fi
+echo ""
+
+# 11. SUID 文件检查
+echo "【11. 异常 SUID 文件检查】"
+find /usr -perm -4000 -type f 2>/dev/null | head -20 || echo "无法检查"
+
+echo ""
+echo "=== 安全检查完成 ==="`,
+    },
+    {
+      id: 'collect_sysinfo',
+      name: t('saltstack.collectSysinfo', '采集系统信息'),
+      desc: t('saltstack.collectSysinfoDesc', '采集完整系统配置信息用于资产管理'),
+      language: 'bash',
+      code: `#!/bin/bash
+# =============================================================================
+# 系统信息采集脚本 - 用于资产管理
+# =============================================================================
+echo "{"
+echo "  \\"hostname\\": \\"$(hostname)\\","
+echo "  \\"collected_at\\": \\"$(date -Iseconds)\\","
+
+# 操作系统信息
+echo "  \\"os\\": {"
+echo "    \\"name\\": \\"$(cat /etc/os-release 2>/dev/null | grep ^ID= | cut -d= -f2 | tr -d '\"')\\","
+echo "    \\"version\\": \\"$(cat /etc/os-release 2>/dev/null | grep VERSION_ID | cut -d= -f2 | tr -d '\"')\\","
+echo "    \\"kernel\\": \\"$(uname -r)\\","
+echo "    \\"arch\\": \\"$(uname -m)\\""
+echo "  },"
+
+# CPU 信息
+CPU_MODEL=$(cat /proc/cpuinfo | grep "model name" | head -1 | cut -d: -f2 | xargs)
+CPU_CORES=$(nproc)
+CPU_SOCKETS=$(cat /proc/cpuinfo | grep "physical id" | sort -u | wc -l)
+[ "$CPU_SOCKETS" -eq 0 ] && CPU_SOCKETS=1
+echo "  \\"cpu\\": {"
+echo "    \\"model\\": \\"$CPU_MODEL\\","
+echo "    \\"cores\\": $CPU_CORES,"
+echo "    \\"sockets\\": $CPU_SOCKETS"
+echo "  },"
+
+# 内存信息
+MEM_TOTAL=$(free -b | awk '/Mem:/{print $2}')
+MEM_TOTAL_GB=$(echo "scale=2; $MEM_TOTAL/1024/1024/1024" | bc)
+echo "  \\"memory\\": {"
+echo "    \\"total_bytes\\": $MEM_TOTAL,"
+echo "    \\"total_gb\\": $MEM_TOTAL_GB"
+echo "  },"
+
+# GPU 信息
+if command -v nvidia-smi &> /dev/null; then
+    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
+    GPU_MODEL=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    GPU_DRIVER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+    GPU_MEM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)
+    echo "  \\"gpu\\": {"
+    echo "    \\"vendor\\": \\"nvidia\\","
+    echo "    \\"count\\": $GPU_COUNT,"
+    echo "    \\"model\\": \\"$GPU_MODEL\\","
+    echo "    \\"driver_version\\": \\"$GPU_DRIVER\\","
+    echo "    \\"memory\\": \\"$GPU_MEM\\""
+    echo "  },"
+else
+    echo "  \\"gpu\\": null,"
+fi
+
+# NPU 信息
+if command -v npu-smi &> /dev/null; then
+    NPU_COUNT=$(npu-smi info -l 2>/dev/null | grep -c "NPU ID")
+    echo "  \\"npu\\": {"
+    echo "    \\"vendor\\": \\"huawei\\","
+    echo "    \\"count\\": $NPU_COUNT"
+    echo "  },"
+else
+    echo "  \\"npu\\": null,"
+fi
+
+# 磁盘信息
+echo "  \\"disks\\": ["
+FIRST_DISK=1
+for disk in $(lsblk -d -o NAME,TYPE | awk '$2=="disk"{print $1}'); do
+    SIZE=$(lsblk -d -b -o SIZE /dev/$disk 2>/dev/null | tail -1)
+    SIZE_GB=$(echo "scale=2; $SIZE/1024/1024/1024" | bc 2>/dev/null || echo "0")
+    MODEL=$(cat /sys/block/$disk/device/model 2>/dev/null | xargs || echo "unknown")
+    [ $FIRST_DISK -eq 0 ] && echo ","
+    echo "    {\\"name\\": \\"/dev/$disk\\", \\"size_gb\\": $SIZE_GB, \\"model\\": \\"$MODEL\\"}"
+    FIRST_DISK=0
+done
+echo "  ],"
+
+# 网卡信息
+echo "  \\"network_interfaces\\": ["
+FIRST_NIC=1
+for nic in $(ip -br link show | awk '$1!="lo"{print $1}' | grep -v "docker\\|veth\\|br-"); do
+    MAC=$(ip link show $nic 2>/dev/null | awk '/link\/ether/{print $2}')
+    IP=$(ip -4 addr show $nic 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)
+    SPEED=$(ethtool $nic 2>/dev/null | grep Speed | awk '{print $2}')
+    [ $FIRST_NIC -eq 0 ] && echo ","
+    echo "    {\\"name\\": \\"$nic\\", \\"mac\\": \\"$MAC\\", \\"ip\\": \\"$IP\\", \\"speed\\": \\"$SPEED\\"}"
+    FIRST_NIC=0
+done
+echo "  ],"
+
+# InfiniBand 信息
+if command -v ibstat &> /dev/null; then
+    IB_COUNT=$(ibstat -l 2>/dev/null | wc -l)
+    echo "  \\"infiniband\\": {"
+    echo "    \\"count\\": $IB_COUNT"
+    echo "  },"
+else
+    echo "  \\"infiniband\\": null,"
+fi
+
+# 服务状态
+echo "  \\"services\\": {"
+for svc in docker kubelet slurmd salt-minion; do
+    STATUS=$(systemctl is-active $svc 2>/dev/null || echo "not-found")
+    echo "    \\"$svc\\": \\"$STATUS\\","
+done
+echo "    \\"_end\\": null"
+echo "  }"
+
+echo "}"`,
+    },
   ], [t]);
 
   const loadStatus = async () => {

@@ -2240,14 +2240,38 @@ func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string
 // ExecuteSaltCommand 执行Salt命令
 func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 	var request struct {
-		Target    string `json:"target" binding:"required"`
-		Function  string `json:"function" binding:"required"`
-		Arguments string `json:"arguments"` // 支持字符串参数
+		Target    string        `json:"target" binding:"required"`
+		Function  string        `json:"function"`  // 支持 function 字段
+		Fun       string        `json:"fun"`       // 兼容 fun 字段（前端常用）
+		Arguments string        `json:"arguments"` // 支持字符串参数
+		Arg       []interface{} `json:"arg"`       // 兼容 arg 数组格式
+		TgtType   string        `json:"tgt_type"`  // 目标类型: glob, list, grain 等
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 兼容处理: fun 和 function 字段，优先使用 function
+	function := request.Function
+	if function == "" {
+		function = request.Fun
+	}
+	if function == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "function 或 fun 字段是必需的"})
+		return
+	}
+
+	// 兼容处理: arguments 和 arg 字段
+	var arguments string
+	if request.Arguments != "" {
+		arguments = request.Arguments
+	} else if len(request.Arg) > 0 {
+		// 如果是字符串数组，取第一个元素
+		if str, ok := request.Arg[0].(string); ok {
+			arguments = str
+		}
 	}
 
 	// 从环境变量获取 Salt API 配置
@@ -2268,16 +2292,20 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 
 	// 解析参数
 	var args []interface{}
-	if request.Arguments != "" {
+	if arguments != "" {
 		// 直接作为单个参数传递（适合 cmd.run 等需要完整命令的场景）
-		args = []interface{}{request.Arguments}
+		args = []interface{}{arguments}
 	}
 
+	// 构建 payload，支持 tgt_type
 	payload := map[string]interface{}{
 		"client": "local",
 		"tgt":    request.Target,
-		"fun":    request.Function,
+		"fun":    function,
 		"arg":    args,
+	}
+	if request.TgtType != "" {
+		payload["tgt_type"] = request.TgtType
 	}
 
 	// 发送请求到 Salt API
