@@ -148,7 +148,7 @@ graph TB
 | PHPLDAPAdmin | LDAP Web管理界面 |
 | KeyVault | 安全密钥分发服务 |
 
-## �🚀 快速开始
+## 🚀 快速开始
 
 ### 前置要求
 
