@@ -55,26 +55,33 @@ graph TB
     
     subgraph "Core Services Layer"
         Frontend[Frontend<br/>React SPA]
-        Backend[Backend API<br/>Go + FastAPI]
+        Backend[Backend API<br/>Go]
         KeyVault[KeyVault<br/>Key Management]
         JupyterHub[JupyterHub<br/>ML Environment]
+        SingleUser[SingleUser<br/>Jupyter Notebooks]
         Gitea[Gitea<br/>Git Repository]
-        Nightingale[Nightingale<br/>Monitoring Platform]
+        Nightingale[Nightingale<br/>Monitoring]
+        Prometheus[Prometheus<br/>Metrics]
     end
     
     subgraph "Compute Scheduling Layer"
         SlurmMaster[Slurm Master<br/>Job Scheduler]
-        SaltStack[SaltStack<br/>Config Management]
+        SaltStack[SaltStack HA<br/>Config Management]
         AppHub[AppHub<br/>App Repository]
     end
     
     subgraph "Data Storage Layer"
-        Postgres[(PostgreSQL<br/>Main Database)]
-        MySQL[(MySQL<br/>Slurm Database)]
+        Postgres[(PostgreSQL 15<br/>Main Database)]
+        MySQL[(MySQL 8.0<br/>Slurm Database)]
         OceanBase[(OceanBase<br/>Distributed DB)]
-        Redis[(Redis<br/>Cache/Messaging)]
-        Kafka[(“Kafka<br/>Message Queue”)]
+        Redis[(Redis 7<br/>Cache/Session)]
+        Kafka[(Kafka<br/>Message Queue)]
+        KafkaUI[Kafka UI<br/>Queue Mgmt]
         SeaweedFS[SeaweedFS<br/>Object Storage]
+    end
+    
+    subgraph "Identity Management"
+        OpenLDAP[OpenLDAP<br/>Directory Service]
     end
     
     Client --> Nginx
@@ -83,6 +90,7 @@ graph TB
     Nginx --> JupyterHub
     Nginx --> Gitea
     Nginx --> Nightingale
+    Nginx --> KafkaUI
     
     Backend --> KeyVault
     Backend --> SlurmMaster
@@ -90,16 +98,56 @@ graph TB
     Backend --> Postgres
     Backend --> Redis
     Backend --> Kafka
+    Backend --> OpenLDAP
     
     KeyVault --> SaltStack
     JupyterHub --> Postgres
+    JupyterHub --> SingleUser
+    Nightingale --> Prometheus
     Gitea --> Postgres
     Gitea --> SeaweedFS
     SlurmMaster --> MySQL
     AppHub --> SaltStack
 ```
 
-## 🚀 Quick Start
+## 📦 Component List
+
+### Core Services (`src/`)
+
+| Component | Description | Technology Stack |
+|-----------|-------------|------------------|
+| `backend` | Backend API Service | Go, Gin, GORM |
+| `frontend` | Web Frontend | React, Ant Design |
+| `nginx` | Reverse Proxy | Nginx Alpine |
+| `saltstack` | Configuration Management (HA) | SaltStack, Salt-API |
+| `apphub` | Application Package Repository | AlmaLinux, RPM/DEB |
+| `jupyterhub` | ML Environment | JupyterHub, Python |
+| `singleuser` | Jupyter Notebook Instance | Jupyter, CUDA |
+| `gitea` | Git Repository | Gitea 1.25 |
+| `nightingale` | Monitoring Platform | Nightingale, Go |
+| `prometheus` | Metrics Collection | Prometheus |
+| `slurm-master` | HPC Job Scheduler | Slurm 25.05 |
+
+### Data Services
+
+| Component | Version | Description |
+|-----------|---------|-------------|
+| PostgreSQL | 15-alpine | Main database |
+| MySQL | 8.0 | Slurm accounting database |
+| OceanBase | 4.3.5-lts | Distributed database |
+| Redis | 7-alpine | Cache and session storage |
+| Kafka | 7.5.0 | Message queue |
+| SeaweedFS | latest | S3-compatible object storage |
+
+### Identity & Security
+
+| Component | Description |
+|-----------|-------------|
+| OpenLDAP | Directory service for user authentication |
+| PHPLDAPAdmin | LDAP web management interface |
+| KeyVault | Secure key distribution service |
+
+## �🚀 Quick Start
 
 ### Prerequisites
 
