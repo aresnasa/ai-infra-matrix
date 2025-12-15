@@ -281,7 +281,7 @@ MINIO_BUCKET = gitea
 
 ### AppHub
 
-**Tech Stack**: Ubuntu/RockyLinux + APK/RPM Build Tools
+**Tech Stack**: Ubuntu/AlmaLinux + APK/RPM Build Tools
 
 **Responsibilities**:
 
