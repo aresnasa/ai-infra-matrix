@@ -229,6 +229,58 @@ English documentation is available in [docs/en/](docs/en/)
 ./build.sh init-env --force
 ```
 
+### 生产环境配置生成
+
+```bash
+# 生成带有安全随机密码的 .env.prod（生产部署推荐）
+./build.sh gen-prod-env
+
+# 指定输出文件
+./build.sh gen-prod-env .env.production
+
+# 强制覆盖现有文件
+./build.sh gen-prod-env --force
+```
+
+**生成的密码变量：**
+- 数据库：`POSTGRES_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`REDIS_PASSWORD`
+- 认证：`JWT_SECRET`、`ENCRYPTION_KEY`、`SESSION_SECRET`、`JUPYTERHUB_CRYPT_KEY`
+- 存储：`SEAWEEDFS_ACCESS_KEY`、`SEAWEEDFS_SECRET_KEY`
+- 服务：`GITEA_ADMIN_PASSWORD`、`GITEA_ADMIN_TOKEN`
+- LDAP：`LDAP_ADMIN_PASSWORD`、`LDAP_CONFIG_PASSWORD`
+- Slurm：`SLURM_DB_PASSWORD`、`SLURM_MUNGE_KEY`
+- 自动化：`SALT_API_PASSWORD`、`SALTSTACK_API_TOKEN`
+
+**使用生成的生产环境配置：**
+
+```bash
+# 步骤 1: 生成生产环境配置文件
+./build.sh gen-prod-env
+
+# 步骤 2: 检查并自定义设置
+vi .env.prod
+# - 设置 EXTERNAL_HOST 为服务器 IP 或域名
+# - 设置 DOMAIN 用于域名访问
+# - 根据需要调整其他设置
+
+# 步骤 3: 应用到部署
+cp .env.prod .env
+
+# 步骤 4: 使用新配置渲染模板
+./build.sh render
+
+# 步骤 5: 构建并部署
+./build.sh build-all
+docker compose up -d
+```
+
+> ⚠️ **重要安全提示：**
+>
+> - 请安全保存生成的密码（推荐使用密码管理器）
+> - 默认管理员账号 `admin/admin123` 不会被此脚本修改
+> - **首次登录后请立即通过 Web 界面修改管理员密码**
+> - 切勿将 `.env.prod` 提交到版本控制系统
+
 ### 模板渲染
 
 ```bash

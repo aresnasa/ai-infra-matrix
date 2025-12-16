@@ -7,17 +7,95 @@
 ```
 scripts/
 ├── README.md                     # 本文件
-├── templates/                    # 模板源文件 (.tpl)
+├── templates/                    # 模板源文件 (.tpl) 和运维脚本
 │   ├── install-categraf.sh.tpl      # Categraf 安装模板
 │   ├── install-node-exporter.sh.tpl # Node Exporter 安装模板
 │   ├── install-prometheus.sh.tpl    # Prometheus 安装模板
-│   └── install-salt-minion.sh.tpl   # Salt Minion 安装模板
+│   ├── install-salt-minion.sh.tpl   # Salt Minion 安装模板
+│   ├── ops-daily-inspection.sh      # 日常巡检脚本
+│   ├── ops-gpu-health-check.sh      # GPU 健康检查脚本
+│   └── ops-collect-sysinfo.sh       # 系统信息采集脚本
 ├── install-categraf.sh           # 渲染后的 Categraf 安装脚本
 ├── install-node-exporter.sh      # 渲染后的 Node Exporter 安装脚本
 ├── install-prometheus.sh         # 渲染后的 Prometheus 安装脚本
 ├── install-salt-minion.sh        # 渲染后的 Salt Minion 安装脚本
 └── keyvault-sync.sh              # KeyVault 密钥同步脚本
 ```
+
+## 运维脚本
+
+### 日常巡检脚本
+
+GPU 集群和物理机日常巡检脚本，包含以下检查项：
+
+```bash
+# 执行日常巡检
+bash scripts/templates/ops-daily-inspection.sh
+
+# 通过 SaltStack 批量执行
+salt '*' cmd.run 'bash /path/to/ops-daily-inspection.sh'
+```
+
+检查项目：
+- 系统基础信息（操作系统、内核、CPU）
+- 内存状态和使用率
+- 磁盘状态和使用率告警
+- GPU 状态 (NVIDIA)、温度、XID 错误
+- NPU 状态 (华为昇腾)
+- 网络状态
+- InfiniBand 状态
+- 关键服务状态 (docker, kubelet, slurmd, salt-minion)
+- 最近错误日志
+
+### GPU 健康检查脚本
+
+深度检查 GPU 健康状态：
+
+```bash
+# 检查 GPU 健康状态，预期 8 块 GPU
+bash scripts/templates/ops-gpu-health-check.sh --expected-gpus 8
+
+# 通过 SaltStack 批量执行
+salt 'gpu*' cmd.run 'EXPECTED_GPUS=8 bash /path/to/ops-gpu-health-check.sh'
+```
+
+检查项目：
+- 驱动版本和 CUDA 版本
+- GPU 列表和数量（掉卡检测）
+- GPU 温度、功耗、风扇
+- GPU 利用率和显存
+- ECC 错误
+- PCIe 带宽
+- 持久模式和计算模式
+- GPU 上运行的进程
+- XID 错误日志和解释
+
+### 系统信息采集脚本
+
+采集完整系统配置信息（JSON 格式），用于资产管理：
+
+```bash
+# 采集系统信息（JSON 格式）
+bash scripts/templates/ops-collect-sysinfo.sh
+
+# 保存到文件
+bash scripts/templates/ops-collect-sysinfo.sh > /tmp/$(hostname)-sysinfo.json
+
+# 通过 SaltStack 批量采集
+salt '*' cmd.run 'bash /path/to/ops-collect-sysinfo.sh' --out=json
+```
+
+输出字段：
+- hostname: 主机名
+- os: 操作系统信息
+- cpu: CPU 信息
+- memory: 内存信息
+- gpu: GPU 信息 (NVIDIA)
+- npu: NPU 信息 (华为昇腾)
+- disks: 磁盘列表
+- network_interfaces: 网卡列表
+- infiniband: InfiniBand 信息
+- services: 服务状态
 
 ## 模板渲染
 
@@ -47,6 +125,7 @@ scripts/
 ```bash
 # 渲染所有模板
 ./build.sh render
+
 
 # 强制重新渲染（忽略缓存）
 ./build.sh sync

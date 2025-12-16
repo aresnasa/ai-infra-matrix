@@ -227,6 +227,58 @@ Chinese versions are available in [docs/zh_CN/](docs/zh_CN/)
 ./build.sh init-env --force
 ```
 
+### Production Environment Generation
+
+```bash
+# Generate .env.prod with secure random passwords (recommended for production)
+./build.sh gen-prod-env
+
+# Specify output file
+./build.sh gen-prod-env .env.production
+
+# Force overwrite existing file
+./build.sh gen-prod-env --force
+```
+
+**Generated Password Variables:**
+- Database: `POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `REDIS_PASSWORD`
+- Authentication: `JWT_SECRET`, `ENCRYPTION_KEY`, `SESSION_SECRET`, `JUPYTERHUB_CRYPT_KEY`
+- Storage: `SEAWEEDFS_ACCESS_KEY`, `SEAWEEDFS_SECRET_KEY`
+- Services: `GITEA_ADMIN_PASSWORD`, `GITEA_ADMIN_TOKEN`
+- LDAP: `LDAP_ADMIN_PASSWORD`, `LDAP_CONFIG_PASSWORD`
+- Slurm: `SLURM_DB_PASSWORD`, `SLURM_MUNGE_KEY`
+- Automation: `SALT_API_PASSWORD`, `SALTSTACK_API_TOKEN`
+
+**Using the Generated Production Config:**
+
+```bash
+# Step 1: Generate production environment file
+./build.sh gen-prod-env
+
+# Step 2: Review and customize settings
+vi .env.prod
+# - Set EXTERNAL_HOST to your server IP or domain
+# - Set DOMAIN for DNS-based access
+# - Adjust other settings as needed
+
+# Step 3: Apply to deployment
+cp .env.prod .env
+
+# Step 4: Render templates with new config
+./build.sh render
+
+# Step 5: Build and deploy
+./build.sh build-all
+docker compose up -d
+```
+
+> ⚠️ **Important Security Notes:**
+>
+> - Save the generated passwords securely (password manager recommended)
+> - The default admin account `admin/admin123` is NOT changed by this script
+> - **Change admin password via Web UI immediately after first login**
+> - Never commit `.env.prod` to version control
+
 ### Template Rendering
 
 ```bash
