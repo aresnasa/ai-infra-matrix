@@ -95,6 +95,12 @@ const SaltCommandExecutor = () => {
           const timeB = new Date(b.start_time || b.StartTime || b.timestamp || b.Timestamp || 0);
           return timeB - timeA; // 降序排列，最新的在前
         });
+        
+        // 关联 TaskID：优先使用后端返回的 task_id
+        jobs = jobs.map(job => {
+          const taskId = job.task_id; // 后端返回的 task_id
+          return taskId ? { ...job, taskId } : job;
+        });
       }
       
       setRecentJobs(jobs);

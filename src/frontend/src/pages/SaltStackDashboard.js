@@ -1459,9 +1459,20 @@ echo "}"`,
       const response = await saltStackAPI.getJobs(10);
       const jobsData = response.data?.data || [];
       
-      // 关联 TaskID：从localStorage持久化的映射中查找
+      // 关联 TaskID：优先使用后端返回的 task_id，如果没有则从 localStorage 查找
       const jobsWithTaskId = jobsData.map(job => {
-        const taskId = getTaskIdByJid(job.jid);
+        // 后端返回的字段是 task_id (snake_case)
+        const backendTaskId = job.task_id;
+        // 从 localStorage 查找作为备用
+        const localTaskId = getTaskIdByJid(job.jid);
+        // 优先使用后端返回的，否则使用本地缓存
+        const taskId = backendTaskId || localTaskId;
+        
+        // 如果后端有 task_id，同步到本地缓存（保持双向一致）
+        if (backendTaskId && !localTaskId) {
+          addJidTaskIdMapping(job.jid, backendTaskId);
+        }
+        
         return taskId ? { ...job, taskId } : job;
       });
       
@@ -3092,23 +3103,30 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             
             // 如果还没有找到对应的 JID，查找最新的 cmd.run 任务
             if (!foundJid) {
-              // TaskID 标记，用于精确匹配
-              const taskIdMarker = `TASK_ID=${taskId}`;
+              // 方式1: 优先查找后端返回的 task_id 字段匹配的作业（最精确）
+              const matchingJobByBackendTaskId = jobsList.find(job => job.task_id === taskId);
               
-              // 查找带有 TaskID 标记的作业
-              const matchingJobByTaskId = jobsList.find(job => {
-                const args = job.arguments || job.args || [];
-                const argStr = Array.isArray(args) ? args.join(' ') : String(args);
-                return argStr.includes(taskIdMarker);
-              });
-              
-              if (matchingJobByTaskId?.jid) {
-                // 通过 TaskID 标记精确匹配到作业
-                foundJid = matchingJobByTaskId.jid;
+              if (matchingJobByBackendTaskId?.jid) {
+                foundJid = matchingJobByBackendTaskId.jid;
                 setBatchExecJid(foundJid);
                 addJidTaskIdMapping(foundJid, taskId);
-                console.log('[BatchExec] Found JID by TaskID marker:', foundJid, '->', taskId);
+                console.log('[BatchExec] Found JID by backend task_id:', foundJid, '->', taskId);
               } else {
+                // 方式2: 查找命令参数中带有 TaskID 标记的作业
+                const taskIdMarker = `TASK_ID=${taskId}`;
+              
+                const matchingJobByTaskId = jobsList.find(job => {
+                  const args = job.arguments || job.args || [];
+                  const argStr = Array.isArray(args) ? args.join(' ') : String(args);
+                  return argStr.includes(taskIdMarker);
+                });
+              
+                if (matchingJobByTaskId?.jid) {
+                  foundJid = matchingJobByTaskId.jid;
+                  setBatchExecJid(foundJid);
+                  addJidTaskIdMapping(foundJid, taskId);
+                  console.log('[BatchExec] Found JID by TaskID marker:', foundJid, '->', taskId);
+                } else {
                 // 备用方案：查找最新的 cmd.run 任务（排除监控脚本任务）
                 const cmdRunJobs = jobsList
                   .filter(job => job.function === 'cmd.run')
@@ -3137,12 +3155,15 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   addJidTaskIdMapping(foundJid, taskId);
                   console.log('[BatchExec] Found JID by fallback:', foundJid, '->', taskId);
                 }
+                }
               }
             }
             
-            // 关联 TaskID（从localStorage持久化的映射中查找）
+            // 关联 TaskID：优先使用后端返回的 task_id
             const jobsWithTaskId = jobsList.map(job => {
-              const jobTaskId = getTaskIdByJid(job.jid);
+              const backendTaskId = job.task_id;
+              const localTaskId = getTaskIdByJid(job.jid);
+              const jobTaskId = backendTaskId || localTaskId;
               return jobTaskId ? { ...job, taskId: jobTaskId } : job;
             });
             

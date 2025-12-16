@@ -1680,6 +1680,12 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 		return
 	}
 
+	// 创建 JID 集合用于快速查找
+	existingJIDs := make(map[string]bool)
+	for _, job := range jobs {
+		existingJIDs[job.JID] = true
+	}
+
 	// 从 Redis 获取每个作业的 TaskID
 	if h.cache != nil {
 		for i := range jobs {
@@ -1688,6 +1694,71 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 				jobs[i].TaskID = taskID
 			}
 		}
+
+		// 从 Redis 获取最近执行的作业（补充 Salt API 没有返回的）
+		recentJIDs, err := h.cache.LRange(context.Background(), "saltstack:recent_jobs", 0, 49).Result()
+		if err == nil && len(recentJIDs) > 0 {
+			for _, jid := range recentJIDs {
+				// 如果这个 JID 已经在 Salt API 结果中，跳过
+				if existingJIDs[jid] {
+					continue
+				}
+
+				// 从 Redis 获取作业详情
+				jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+				jobInfoJSON, err := h.cache.Get(context.Background(), jobDetailKey).Result()
+				if err != nil {
+					continue
+				}
+
+				var jobInfo map[string]interface{}
+				if err := json.Unmarshal([]byte(jobInfoJSON), &jobInfo); err != nil {
+					continue
+				}
+
+				// 构建 SaltJob 对象
+				newJob := SaltJob{
+					JID:      jid,
+					Function: getStringFromMap(jobInfo, "function"),
+					Target:   getStringFromMap(jobInfo, "target"),
+					Status:   getStringFromMap(jobInfo, "status"),
+					User:     getStringFromMap(jobInfo, "user"),
+					TaskID:   getStringFromMap(jobInfo, "task_id"),
+				}
+
+				// 解析参数
+				if args, ok := jobInfo["arguments"].([]interface{}); ok {
+					for _, arg := range args {
+						newJob.Arguments = append(newJob.Arguments, fmt.Sprint(arg))
+					}
+				}
+
+				// 解析开始时间
+				if startTimeStr, ok := jobInfo["start_time"].(string); ok {
+					if t, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+						newJob.StartTime = t
+					} else {
+						newJob.StartTime = time.Now()
+					}
+				} else {
+					newJob.StartTime = time.Now()
+				}
+
+				// 添加到作业列表
+				jobs = append(jobs, newJob)
+				existingJIDs[jid] = true
+			}
+		}
+	}
+
+	// 按时间排序
+	if len(jobs) > 1 {
+		sort.Slice(jobs, func(i, j int) bool { return jobs[i].StartTime.After(jobs[j].StartTime) })
+	}
+
+	// 限制返回数量
+	if limit > 0 && len(jobs) > limit {
+		jobs = jobs[:limit]
 	}
 
 	// 缓存数据
@@ -1697,6 +1768,14 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": jobs, "demo": false})
+}
+
+// getStringFromMap 从 map 中安全获取字符串值
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // GetSaltJobDetail 获取单个Salt作业的详细结果
@@ -2500,22 +2579,54 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 
 	log.Printf("[DEBUG] Salt 异步作业已提交: JID=%s, 目标minions=%v", jid, minions)
 
-	// 如果前端传递了 TaskID，保存 JID-TaskID 映射到 Redis
-	if request.TaskID != "" && h.cache != nil {
-		// 保存 JID -> TaskID 映射（用于通过JID查询TaskID）
-		jidToTaskKey := fmt.Sprintf("saltstack:jid_to_task:%s", jid)
-		if err := h.cache.Set(context.Background(), jidToTaskKey, request.TaskID, 7*24*time.Hour).Err(); err != nil {
-			log.Printf("[WARNING] 保存 JID->TaskID 映射到 Redis 失败: %v", err)
-		} else {
-			log.Printf("[DEBUG] 已保存 JID->TaskID 映射: %s -> %s", jid, request.TaskID)
+	// 保存作业信息到 Redis（无论是否有 TaskID，都保存 JID 到最近作业列表）
+	if h.cache != nil {
+		// 创建作业信息 JSON
+		jobInfo := map[string]interface{}{
+			"jid":        jid,
+			"function":   request.Fun,
+			"target":     request.Target,
+			"arguments":  request.Arg,
+			"start_time": time.Now().Format(time.RFC3339),
+			"status":     "running",
+			"user":       "admin", // TODO: 从认证上下文获取
+		}
+		if request.TaskID != "" {
+			jobInfo["task_id"] = request.TaskID
+		}
+		jobInfoJSON, _ := json.Marshal(jobInfo)
+
+		// 保存作业详情（以 JID 为 key）
+		jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+		if err := h.cache.Set(context.Background(), jobDetailKey, string(jobInfoJSON), 7*24*time.Hour).Err(); err != nil {
+			log.Printf("[WARNING] 保存作业详情到 Redis 失败: %v", err)
 		}
 
-		// 保存 TaskID -> JID 映射（用于通过TaskID查询JID）
-		taskToJidKey := fmt.Sprintf("saltstack:task_to_jid:%s", request.TaskID)
-		if err := h.cache.Set(context.Background(), taskToJidKey, jid, 7*24*time.Hour).Err(); err != nil {
-			log.Printf("[WARNING] 保存 TaskID->JID 映射到 Redis 失败: %v", err)
-		} else {
-			log.Printf("[DEBUG] 已保存 TaskID->JID 映射: %s -> %s", request.TaskID, jid)
+		// 将 JID 添加到最近作业列表（用于补充 Salt API 返回的作业列表）
+		recentJobsKey := "saltstack:recent_jobs"
+		if err := h.cache.LPush(context.Background(), recentJobsKey, jid).Err(); err != nil {
+			log.Printf("[WARNING] 添加 JID 到最近作业列表失败: %v", err)
+		}
+		// 保持最近作业列表不超过 100 条
+		h.cache.LTrim(context.Background(), recentJobsKey, 0, 99)
+
+		// 如果前端传递了 TaskID，保存双向映射
+		if request.TaskID != "" {
+			// 保存 JID -> TaskID 映射（用于通过JID查询TaskID）
+			jidToTaskKey := fmt.Sprintf("saltstack:jid_to_task:%s", jid)
+			if err := h.cache.Set(context.Background(), jidToTaskKey, request.TaskID, 7*24*time.Hour).Err(); err != nil {
+				log.Printf("[WARNING] 保存 JID->TaskID 映射到 Redis 失败: %v", err)
+			} else {
+				log.Printf("[DEBUG] 已保存 JID->TaskID 映射: %s -> %s", jid, request.TaskID)
+			}
+
+			// 保存 TaskID -> JID 映射（用于通过TaskID查询JID）
+			taskToJidKey := fmt.Sprintf("saltstack:task_to_jid:%s", request.TaskID)
+			if err := h.cache.Set(context.Background(), taskToJidKey, jid, 7*24*time.Hour).Err(); err != nil {
+				log.Printf("[WARNING] 保存 TaskID->JID 映射到 Redis 失败: %v", err)
+			} else {
+				log.Printf("[DEBUG] 已保存 TaskID->JID 映射: %s -> %s", request.TaskID, jid)
+			}
 		}
 	}
 
