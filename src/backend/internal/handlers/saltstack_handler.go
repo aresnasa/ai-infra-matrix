@@ -1697,10 +1697,13 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 
 		// 从 Redis 获取最近执行的作业（补充 Salt API 没有返回的）
 		recentJIDs, err := h.cache.LRange(context.Background(), "saltstack:recent_jobs", 0, 49).Result()
+		log.Printf("[GetSaltJobs] Redis recent_jobs 返回 %d 条, err=%v", len(recentJIDs), err)
 		if err == nil && len(recentJIDs) > 0 {
+			addedCount := 0
 			for _, jid := range recentJIDs {
 				// 如果这个 JID 已经在 Salt API 结果中，跳过
 				if existingJIDs[jid] {
+					log.Printf("[GetSaltJobs] JID %s 已在 Salt API 结果中，跳过", jid)
 					continue
 				}
 
@@ -1708,11 +1711,13 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 				jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
 				jobInfoJSON, err := h.cache.Get(context.Background(), jobDetailKey).Result()
 				if err != nil {
+					log.Printf("[GetSaltJobs] 获取作业详情失败 JID=%s: %v", jid, err)
 					continue
 				}
 
 				var jobInfo map[string]interface{}
 				if err := json.Unmarshal([]byte(jobInfoJSON), &jobInfo); err != nil {
+					log.Printf("[GetSaltJobs] 解析作业详情失败 JID=%s: %v", jid, err)
 					continue
 				}
 
@@ -1747,9 +1752,14 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 				// 添加到作业列表
 				jobs = append(jobs, newJob)
 				existingJIDs[jid] = true
+				addedCount++
+				log.Printf("[GetSaltJobs] 添加 Redis 作业: JID=%s, TaskID=%s", jid, newJob.TaskID)
 			}
+			log.Printf("[GetSaltJobs] 从 Redis 补充了 %d 条作业", addedCount)
 		}
 	}
+
+	log.Printf("[GetSaltJobs] 最终返回 %d 条作业 (limit=%d)", len(jobs), limit)
 
 	// 按时间排序
 	if len(jobs) > 1 {
@@ -1776,6 +1786,20 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 		return v
 	}
 	return ""
+}
+
+// parseTimeFromJID 从 Salt JID 解析时间（JID 格式：YYYYMMDDHHMMSSxxxxxx）
+func parseTimeFromJID(jid string) time.Time {
+	if len(jid) < 14 {
+		return time.Now()
+	}
+	// 提取时间部分：YYYYMMDDHHMMSS
+	timeStr := jid[:14]
+	t, err := time.Parse("20060102150405", timeStr)
+	if err != nil {
+		return time.Now()
+	}
+	return t
 }
 
 // GetSaltJobDetail 获取单个Salt作业的详细结果
@@ -1939,10 +1963,12 @@ func (h *SaltStackHandler) getRealJobs(client *saltAPIClient, limit int) ([]Salt
 						if ts, err := time.Parse(time.RFC3339, st); err == nil {
 							j.StartTime = ts
 						} else {
-							j.StartTime = time.Now()
+							// 尝试从 JID 解析时间（格式：YYYYMMDDHHMMSSxxxxxx）
+							j.StartTime = parseTimeFromJID(jid)
 						}
 					} else {
-						j.StartTime = time.Now()
+						// 尝试从 JID 解析时间
+						j.StartTime = parseTimeFromJID(jid)
 					}
 					// 解析作业结果来判断状态
 					if result, ok := info["Result"].(map[string]interface{}); ok && len(result) > 0 {

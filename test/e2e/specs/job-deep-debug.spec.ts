@@ -86,6 +86,12 @@ test.describe('深度调试作业列表和过滤', () => {
     const jobs = jobsResp.data?.data || [];
     console.log(`   返回作业数: ${jobs.length}`);
     
+    // 打印前 3 个作业的完整结构
+    console.log(`   前3个作业结构:`);
+    jobs.slice(0, 3).forEach((j: any, idx: number) => {
+      console.log(`   [${idx}] ${JSON.stringify(j).substring(0, 200)}`);
+    });
+    
     // 检查是否有新执行的作业
     const newJob = jobs.find((j: any) => j.jid === returnedJid);
     console.log(`   找到新作业 (JID=${returnedJid}): ${!!newJob}`);
