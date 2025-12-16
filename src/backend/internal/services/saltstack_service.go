@@ -411,6 +411,9 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 
 	log.Printf("[SaltStack] ExecuteCommand success, result: %+v", result)
 
+	// 等待一小段时间让 Salt Master 记录作业
+	time.Sleep(500 * time.Millisecond)
+
 	// 尝试从作业列表获取最新执行的 JID
 	// Salt 同步执行不直接返回 JID，需要查询作业历史
 	var jid string
@@ -457,22 +460,30 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 				continue
 			}
 
-			// 如果有用户命令前缀，检查是否匹配
+			// 如果有用户命令前缀且作业有参数，检查是否匹配
 			if userCmdPrefix != "" && job.Arguments != "" {
 				if strings.Contains(job.Arguments, userCmdPrefix) {
 					jid = job.JID
 					log.Printf("[SaltStack] Found matching JID by args: %s for command prefix: %s", jid, userCmdPrefix)
 					break
 				}
-			} else {
-				// 没有参数匹配条件时，取第一个非监控任务
-				jid = job.JID
-				log.Printf("[SaltStack] Found matching JID: %s for command: %s", jid, command)
-				break
+				// 参数不匹配，继续查找
+				log.Printf("[SaltStack] Job %s args '%s' does not match prefix '%s', skip", job.JID, job.Arguments, userCmdPrefix)
+				continue
 			}
+
+			// 没有参数匹配条件或作业没有参数时，取第一个非监控任务
+			jid = job.JID
+			log.Printf("[SaltStack] Found matching JID: %s for command: %s (no args match needed)", jid, command)
+			break
 		}
 	} else if err != nil {
 		log.Printf("[SaltStack] Failed to get recent jobs: %v", err)
+	}
+
+	// 如果还是没有找到 JID，记录警告
+	if jid == "" {
+		log.Printf("[SaltStack] Warning: Could not find JID for command: %s with args: %v", command, args)
 	}
 
 	// Salt API 返回格式: {"return": [{"minion1": result1, "minion2": result2}]}
@@ -485,6 +496,102 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 	// 如果找到了 JID，添加到返回结果中
 	if jid != "" {
 		response["jid"] = jid
+	}
+
+	return response, nil
+}
+
+// ExecuteCommandWithTaskID 执行SaltStack命令（带TaskID精确匹配）
+func (s *SaltStackService) ExecuteCommandWithTaskID(ctx context.Context, command string, targets []string, taskID string, args ...string) (map[string]interface{}, error) {
+	// 构建Salt API请求
+	payload := map[string]interface{}{
+		"fun":    command,
+		"tgt":    "*", // 默认目标所有minions
+		"client": "local",
+	}
+
+	// 如果指定了目标，检查是否是通配符或具体的 minion 列表
+	if len(targets) > 0 {
+		if len(targets) == 1 && targets[0] == "*" {
+			payload["tgt"] = "*"
+		} else {
+			payload["tgt"] = targets
+			payload["tgt_type"] = "list"
+		}
+	}
+
+	// 如果有参数，添加到 payload
+	if len(args) > 0 {
+		needsShell := false
+		for _, arg := range args {
+			if containsShellMetaChars(arg) {
+				needsShell = true
+				break
+			}
+		}
+
+		if needsShell && command == "cmd.run" {
+			payload["kwarg"] = map[string]interface{}{
+				"python_shell": true,
+			}
+		}
+
+		payload["arg"] = args
+	}
+
+	log.Printf("[SaltStack] ExecuteCommandWithTaskID - command: %s, targets: %v, taskID: %s", command, targets, taskID)
+
+	// 执行命令
+	result, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		log.Printf("[SaltStack] ExecuteCommandWithTaskID failed: %v", err)
+		return map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Salt API unavailable: %v", err),
+		}, nil
+	}
+
+	log.Printf("[SaltStack] ExecuteCommandWithTaskID success")
+
+	// 等待一小段时间让 Salt Master 记录作业
+	time.Sleep(500 * time.Millisecond)
+
+	// 通过 TaskID 精确匹配作业
+	var jid string
+	if taskID != "" {
+		// TaskID 标记格式: # TASK_ID=EXEC-xxx
+		taskIDMarker := "TASK_ID=" + taskID
+
+		if jobs, err := s.getRecentJobs(ctx, 30); err == nil && len(jobs) > 0 {
+			log.Printf("[SaltStack] Searching for TaskID marker: %s in %d jobs", taskIDMarker, len(jobs))
+
+			for _, job := range jobs {
+				// 精确匹配 TaskID 标记
+				if strings.Contains(job.Arguments, taskIDMarker) {
+					jid = job.JID
+					log.Printf("[SaltStack] Found JID by TaskID: %s -> %s", taskID, jid)
+					break
+				}
+			}
+		}
+
+		if jid == "" {
+			log.Printf("[SaltStack] Warning: Could not find JID for TaskID: %s", taskID)
+		}
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"result":  result,
+	}
+
+	if jid != "" {
+		response["jid"] = jid
+	}
+
+	// 同时返回 taskID，方便前端关联
+	if taskID != "" {
+		response["task_id"] = taskID
 	}
 
 	return response, nil

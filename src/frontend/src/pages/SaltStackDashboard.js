@@ -3039,12 +3039,15 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
       });
       
       // 对每个目标节点执行命令
+      // 在命令前添加 TaskID 标记，方便后端精确匹配作业
+      const taggedScript = `# TASK_ID=${taskId}\n${scriptCode}`;
       const targetList = targets.join(',');
       const resp = await saltStackAPI.executeCommand({
         target: targetList,
         fun: 'cmd.run',
-        arg: [scriptCode],
-        tgt_type: 'list'
+        arg: [taggedScript],
+        tgt_type: 'list',
+        task_id: taskId  // 额外传递 TaskID 给后端
       });
       
       if (resp.data?.success || resp.data?.data?.success) {
@@ -3089,59 +3092,51 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             
             // 如果还没有找到对应的 JID，查找最新的 cmd.run 任务
             if (!foundJid) {
-              // 保存用户执行的脚本代码的前30个字符用于匹配（避免与监控脚本混淆）
-              const userScriptPrefix = scriptCode.trim().substring(0, 30);
+              // TaskID 标记，用于精确匹配
+              const taskIdMarker = `TASK_ID=${taskId}`;
               
-              // 查找最新的 cmd.run 任务（排除监控脚本任务）
-              const cmdRunJobs = jobsList
-                .filter(job => job.function === 'cmd.run')
-                .filter(job => {
-                  // 检查目标是否匹配
-                  const jobTarget = job.target || job.tgt;
-                  if (typeof jobTarget === 'string') {
-                    return targets.includes(jobTarget) || targets.some(t => jobTarget.includes(t));
-                  }
-                  return true;
-                })
-                .filter(job => {
-                  // 排除监控脚本任务（检查参数中是否包含监控脚本特征）
-                  const args = job.arguments || job.args || [];
-                  const argStr = Array.isArray(args) ? args.join(' ') : String(args);
-                  
-                  // 监控脚本特征
-                  const isMonitoringScript = argStr.includes('get_cpu_memory') ||
-                    argStr.includes('/proc/stat') ||
-                    argStr.includes('/proc/meminfo') ||
-                    argStr.includes('cpu_user1') ||
-                    argStr.includes('nvidia-smi') ||
-                    argStr.includes('ibstat');
-                  
-                  if (isMonitoringScript) {
-                    return false; // 排除监控脚本
-                  }
-                  
-                  // 如果能获取到参数，检查是否匹配用户脚本
-                  if (argStr && userScriptPrefix) {
-                    return argStr.includes(userScriptPrefix);
-                  }
-                  
-                  return true;
-                })
-                .filter(job => {
-                  // 排除已经有 TaskID 映射的任务
-                  const existingTaskId = getTaskIdByJid(job.jid);
-                  return !existingTaskId;
-                });
+              // 查找带有 TaskID 标记的作业
+              const matchingJobByTaskId = jobsList.find(job => {
+                const args = job.arguments || job.args || [];
+                const argStr = Array.isArray(args) ? args.join(' ') : String(args);
+                return argStr.includes(taskIdMarker);
+              });
               
-              // 取第一个（最新的）匹配任务
-              const matchingJob = cmdRunJobs[0];
-              
-              if (matchingJob?.jid) {
-                foundJid = matchingJob.jid;
+              if (matchingJobByTaskId?.jid) {
+                // 通过 TaskID 标记精确匹配到作业
+                foundJid = matchingJobByTaskId.jid;
                 setBatchExecJid(foundJid);
-                // 存储 JID 到 TaskID 的映射（持久化到localStorage）
                 addJidTaskIdMapping(foundJid, taskId);
-                console.log('[BatchExec] Found JID mapping:', foundJid, '->', taskId);
+                console.log('[BatchExec] Found JID by TaskID marker:', foundJid, '->', taskId);
+              } else {
+                // 备用方案：查找最新的 cmd.run 任务（排除监控脚本任务）
+                const cmdRunJobs = jobsList
+                  .filter(job => job.function === 'cmd.run')
+                  .filter(job => {
+                    // 排除监控脚本任务
+                    const args = job.arguments || job.args || [];
+                    const argStr = Array.isArray(args) ? args.join(' ') : String(args);
+                    
+                    const isMonitoringScript = argStr.includes('get_cpu_memory') ||
+                      argStr.includes('/proc/stat') ||
+                      argStr.includes('/proc/meminfo') ||
+                      argStr.includes('cpu_user1') ||
+                      argStr.includes('nvidia-smi') ||
+                      argStr.includes('ibstat');
+                    
+                    return !isMonitoringScript;
+                  })
+                  .filter(job => !getTaskIdByJid(job.jid)); // 排除已有映射的
+                
+                console.log('[BatchExec] Fallback: Candidate jobs:', cmdRunJobs.map(j => ({ jid: j.jid, args: j.arguments })));
+                
+                const matchingJob = cmdRunJobs[0];
+                if (matchingJob?.jid) {
+                  foundJid = matchingJob.jid;
+                  setBatchExecJid(foundJid);
+                  addJidTaskIdMapping(foundJid, taskId);
+                  console.log('[BatchExec] Found JID by fallback:', foundJid, '->', taskId);
+                }
               }
             }
             
@@ -3164,9 +3159,18 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               clearInterval(batchExecPollRef.current);
               batchExecPollRef.current = null;
               
-              setJobs(jobsWithTaskId);
+              // 确保 localStorage 映射已保存
+              console.log('[BatchExec] Task found, JID:', foundJid, 'TaskID:', taskId);
+              console.log('[BatchExec] Current localStorage map:', Object.fromEntries(jidToTaskIdMapRef.current));
+              
+              // 先切换到作业历史标签
               setActiveTabKey('jobs');
-              setJobSearchTaskId(taskId); // 自动筛选到当前任务
+              
+              // 重新加载作业列表以确保 TaskID 关联生效
+              await loadJobs();
+              
+              // 设置筛选条件
+              setJobSearchTaskId(taskId);
               
               message.info({ 
                 content: t('saltstack.taskFoundInHistory', '任务已记录到作业历史') + ` [${taskId}]`,
@@ -3177,8 +3181,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               clearInterval(batchExecPollRef.current);
               batchExecPollRef.current = null;
               
-              setJobs(jobsWithTaskId);
+              // 切换标签并重新加载
               setActiveTabKey('jobs');
+              await loadJobs();
               
               const timeoutSeconds = Math.round(elapsedTime / 1000);
               message.warning({ 
@@ -3194,7 +3199,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               clearInterval(batchExecPollRef.current);
               batchExecPollRef.current = null;
               setActiveTabKey('jobs');
-              loadJobs();
+              await loadJobs();
               
               message.warning({ 
                 content: t('saltstack.taskPollFailed', '轮询作业状态失败，请手动刷新查看执行结果'),
