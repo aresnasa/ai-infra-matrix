@@ -3047,13 +3047,16 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         tgt_type: 'list'
       });
       
-      if (resp.data?.success) {
-        const results = resp.data.return?.[0] || {};
-        const jid = resp.data.jid; // Salt 返回的 JID
-        setBatchExecJid(jid);
+      if (resp.data?.success || resp.data?.data?.success) {
+        const results = resp.data.return?.[0] || resp.data.result?.return?.[0] || resp.data.data?.result?.return?.[0] || {};
         
-        // 存储 JID 到 TaskID 的映射（持久化到localStorage）
-        addJidTaskIdMapping(jid, taskId);
+        // 尝试从响应中获取 JID（后端会尝试查询并返回）
+        const returnedJid = resp.data.jid || resp.data.data?.jid;
+        if (returnedJid) {
+          setBatchExecJid(returnedJid);
+          addJidTaskIdMapping(returnedJid, taskId);
+          console.log('[BatchExec] JID from backend:', returnedJid, '->', taskId);
+        }
         
         const formattedResults = Object.entries(results).map(([minion, output]) => ({
           minion,
@@ -3068,12 +3071,13 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         });
         
         // 智能等待并跳转到作业历史
-        // 启动轮询检查作业是否出现在历史列表中
+        // 启动轮询检查作业是否出现在历史列表中，并建立 JID-TaskID 映射
         let pollCount = 0;
         const maxPollCount = 30; // 最多轮询30次
         const pollInterval = 2000; // 每2秒轮询一次
         const maxTimeoutMs = 60000; // 最大超时时间60秒
         const pollStartTime = Date.now();
+        let foundJid = returnedJid || null; // 如果后端已返回 JID，直接使用
         
         const pollJobHistory = async () => {
           pollCount++;
@@ -3083,16 +3087,74 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             const jobsResp = await saltStackAPI.getJobs(20);
             const jobsList = jobsResp.data?.data || [];
             
-            // 检查是否能找到刚执行的任务（通过JID或时间）
-            const foundJob = jid 
-              ? jobsList.find(job => job.jid === jid)
-              : jobsList.length > 0; // 如果没有JID，检查是否有任何作业
+            // 如果还没有找到对应的 JID，查找最新的 cmd.run 任务
+            if (!foundJid) {
+              // 保存用户执行的脚本代码的前30个字符用于匹配（避免与监控脚本混淆）
+              const userScriptPrefix = scriptCode.trim().substring(0, 30);
+              
+              // 查找最新的 cmd.run 任务（排除监控脚本任务）
+              const cmdRunJobs = jobsList
+                .filter(job => job.function === 'cmd.run')
+                .filter(job => {
+                  // 检查目标是否匹配
+                  const jobTarget = job.target || job.tgt;
+                  if (typeof jobTarget === 'string') {
+                    return targets.includes(jobTarget) || targets.some(t => jobTarget.includes(t));
+                  }
+                  return true;
+                })
+                .filter(job => {
+                  // 排除监控脚本任务（检查参数中是否包含监控脚本特征）
+                  const args = job.arguments || job.args || [];
+                  const argStr = Array.isArray(args) ? args.join(' ') : String(args);
+                  
+                  // 监控脚本特征
+                  const isMonitoringScript = argStr.includes('get_cpu_memory') ||
+                    argStr.includes('/proc/stat') ||
+                    argStr.includes('/proc/meminfo') ||
+                    argStr.includes('cpu_user1') ||
+                    argStr.includes('nvidia-smi') ||
+                    argStr.includes('ibstat');
+                  
+                  if (isMonitoringScript) {
+                    return false; // 排除监控脚本
+                  }
+                  
+                  // 如果能获取到参数，检查是否匹配用户脚本
+                  if (argStr && userScriptPrefix) {
+                    return argStr.includes(userScriptPrefix);
+                  }
+                  
+                  return true;
+                })
+                .filter(job => {
+                  // 排除已经有 TaskID 映射的任务
+                  const existingTaskId = getTaskIdByJid(job.jid);
+                  return !existingTaskId;
+                });
+              
+              // 取第一个（最新的）匹配任务
+              const matchingJob = cmdRunJobs[0];
+              
+              if (matchingJob?.jid) {
+                foundJid = matchingJob.jid;
+                setBatchExecJid(foundJid);
+                // 存储 JID 到 TaskID 的映射（持久化到localStorage）
+                addJidTaskIdMapping(foundJid, taskId);
+                console.log('[BatchExec] Found JID mapping:', foundJid, '->', taskId);
+              }
+            }
             
             // 关联 TaskID（从localStorage持久化的映射中查找）
             const jobsWithTaskId = jobsList.map(job => {
               const jobTaskId = getTaskIdByJid(job.jid);
               return jobTaskId ? { ...job, taskId: jobTaskId } : job;
             });
+            
+            // 检查是否能找到刚执行的任务
+            const foundJob = foundJid 
+              ? jobsList.find(job => job.jid === foundJid)
+              : jobsList.length > 0;
             
             // 检查是否超时或达到最大轮询次数
             const isTimeout = elapsedTime >= maxTimeoutMs || pollCount >= maxPollCount;
@@ -4492,8 +4554,13 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     <Table
                       dataSource={jobs.filter(job => {
                         // 如果有任务ID筛选
-                        if (jobSearchTaskId && job.taskId !== jobSearchTaskId && !job.jid?.includes(jobSearchTaskId)) {
-                          return false;
+                        if (jobSearchTaskId) {
+                          // 精确匹配 taskId 或者 jid 包含搜索关键字
+                          const taskIdMatch = job.taskId === jobSearchTaskId;
+                          const jidMatch = job.jid?.includes(jobSearchTaskId);
+                          if (!taskIdMatch && !jidMatch) {
+                            return false;
+                          }
                         }
                         // 通用搜索
                         if (jobSearchText) {
@@ -4608,7 +4675,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           ),
                         },
                         {
-                          title: t('common.action'),
+                          title: t('common.actions', '操作'),
                           key: 'action',
                           width: 100,
                           fixed: 'right',

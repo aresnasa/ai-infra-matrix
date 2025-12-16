@@ -45,6 +45,7 @@ export default {
     details: 'Details',
     status: 'Status',
     actions: 'Actions',
+    action: 'Action',
     name: 'Name',
     type: 'Type',
     time: 'Time',

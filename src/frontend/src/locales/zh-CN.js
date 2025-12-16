@@ -45,6 +45,7 @@ export default {
     details: '详情',
     status: '状态',
     actions: '操作',
+    action: '操作',
     name: '名称',
     type: '类型',
     time: '时间',

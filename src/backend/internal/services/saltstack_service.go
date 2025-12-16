@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -45,6 +46,7 @@ type SaltJob struct {
 	JID       string                 `json:"jid"`
 	Function  string                 `json:"function"`
 	Target    string                 `json:"target"`
+	Arguments string                 `json:"arguments"` // 命令参数
 	StartTime time.Time              `json:"start_time"`
 	Results   map[string]interface{} `json:"results"`
 }
@@ -409,12 +411,152 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 
 	log.Printf("[SaltStack] ExecuteCommand success, result: %+v", result)
 
+	// 尝试从作业列表获取最新执行的 JID
+	// Salt 同步执行不直接返回 JID，需要查询作业历史
+	var jid string
+	if jobs, err := s.getRecentJobs(ctx, 20); err == nil && len(jobs) > 0 {
+		log.Printf("[SaltStack] Got %d recent jobs, searching for matching JID", len(jobs))
+
+		// 提取用户命令的前缀用于匹配
+		userCmdPrefix := ""
+		if len(args) > 0 {
+			argStr := args[0]
+			if len(argStr) > 30 {
+				userCmdPrefix = argStr[:30]
+			} else {
+				userCmdPrefix = argStr
+			}
+		}
+
+		// 监控脚本特征列表
+		monitoringPatterns := []string{
+			"get_cpu_memory",
+			"/proc/stat",
+			"/proc/meminfo",
+			"cpu_user1",
+			"nvidia-smi",
+			"ibstat",
+		}
+
+		// 查找最新的匹配任务（按函数名和参数匹配，排除监控脚本）
+		for _, job := range jobs {
+			if job.Function != command {
+				continue
+			}
+
+			// 检查是否是监控脚本任务
+			isMonitoringJob := false
+			for _, pattern := range monitoringPatterns {
+				if strings.Contains(job.Arguments, pattern) {
+					isMonitoringJob = true
+					log.Printf("[SaltStack] Skipping monitoring job: %s with args: %s", job.JID, job.Arguments)
+					break
+				}
+			}
+			if isMonitoringJob {
+				continue
+			}
+
+			// 如果有用户命令前缀，检查是否匹配
+			if userCmdPrefix != "" && job.Arguments != "" {
+				if strings.Contains(job.Arguments, userCmdPrefix) {
+					jid = job.JID
+					log.Printf("[SaltStack] Found matching JID by args: %s for command prefix: %s", jid, userCmdPrefix)
+					break
+				}
+			} else {
+				// 没有参数匹配条件时，取第一个非监控任务
+				jid = job.JID
+				log.Printf("[SaltStack] Found matching JID: %s for command: %s", jid, command)
+				break
+			}
+		}
+	} else if err != nil {
+		log.Printf("[SaltStack] Failed to get recent jobs: %v", err)
+	}
+
 	// Salt API 返回格式: {"return": [{"minion1": result1, "minion2": result2}]}
 	// 直接返回整个响应，保持 Salt API 的原始格式
-	return map[string]interface{}{
+	response := map[string]interface{}{
 		"success": true,
 		"result":  result, // result 已经包含了 "return" 字段
-	}, nil
+	}
+
+	// 如果找到了 JID，添加到返回结果中
+	if jid != "" {
+		response["jid"] = jid
+	}
+
+	return response, nil
+}
+
+// getRecentJobs 获取最近的作业列表（内部使用，用于获取 JID）
+func (s *SaltStackService) getRecentJobs(ctx context.Context, limit int) ([]SaltJob, error) {
+	// 调用 Salt API 的 runner.jobs.list_jobs 获取最近作业
+	payload := map[string]interface{}{
+		"client": "runner",
+		"fun":    "jobs.list_jobs",
+		"kwarg": map[string]interface{}{
+			"search_function": "*",
+		},
+	}
+
+	result, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent jobs: %v", err)
+	}
+
+	var jobs []SaltJob
+
+	// 解析响应: {"return": [{"jid1": {...}, "jid2": {...}}]}
+	if ret, ok := result["return"].([]interface{}); ok && len(ret) > 0 {
+		if jobsMap, ok := ret[0].(map[string]interface{}); ok {
+			// 将 map 转换为切片并按 JID 排序（JID 是时间戳格式，越大越新）
+			type jobEntry struct {
+				jid  string
+				info map[string]interface{}
+			}
+			var entries []jobEntry
+
+			for jid, v := range jobsMap {
+				if info, ok := v.(map[string]interface{}); ok {
+					entries = append(entries, jobEntry{jid: jid, info: info})
+				}
+			}
+
+			// 按 JID 降序排序（最新的在前）
+			sort.Slice(entries, func(i, j int) bool {
+				return entries[i].jid > entries[j].jid
+			})
+
+			// 取前 limit 个
+			if len(entries) > limit {
+				entries = entries[:limit]
+			}
+
+			for _, e := range entries {
+				job := SaltJob{JID: e.jid}
+				if f, ok := e.info["Function"].(string); ok {
+					job.Function = f
+				}
+				if t, ok := e.info["Target"].(string); ok {
+					job.Target = t
+				}
+				// 提取参数
+				if args, ok := e.info["Arguments"].([]interface{}); ok && len(args) > 0 {
+					// 将参数转换为字符串
+					var argStrs []string
+					for _, arg := range args {
+						argStrs = append(argStrs, fmt.Sprintf("%v", arg))
+					}
+					job.Arguments = strings.Join(argStrs, " ")
+				}
+				jobs = append(jobs, job)
+			}
+		}
+	}
+
+	return jobs, nil
 }
 
 // GetJobs 获取SaltStack作业列表
