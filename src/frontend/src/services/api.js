@@ -566,6 +566,7 @@ export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
   getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
+  getJobDetail: (jid) => api.get(`/saltstack/jobs/${jid}`),
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
   executeCustomAsync: (payload) => api.post('/saltstack/execute-custom/async', payload),
