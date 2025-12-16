@@ -222,6 +222,9 @@ const SaltStackDashboard = () => {
   const [batchExecTaskId, setBatchExecTaskId] = useState(null); // 当前执行任务ID
   const [batchExecJid, setBatchExecJid] = useState(null); // Salt JID
   const batchExecPollRef = useRef(null); // 轮询定时器引用
+  const [jobSearchTaskId, setJobSearchTaskId] = useState(''); // 作业历史任务ID搜索
+  const [jobSearchText, setJobSearchText] = useState(''); // 作业历史通用搜索
+  const jidToTaskIdMapRef = useRef(new Map()); // JID到TaskID的映射
   
   // 简化雪花算法 - 生成时序唯一ID (前端版本，降低计算量)
   const snowflakeIdRef = useRef({
@@ -1411,7 +1414,15 @@ echo "}"`,
     setJobsLoading(true);
     try {
       const response = await saltStackAPI.getJobs(10);
-      setJobs(response.data?.data || []);
+      const jobsData = response.data?.data || [];
+      
+      // 关联 TaskID：从本地映射中查找
+      const jobsWithTaskId = jobsData.map(job => {
+        const taskId = jidToTaskIdMapRef.current.get(job.jid);
+        return taskId ? { ...job, taskId } : job;
+      });
+      
+      setJobs(jobsWithTaskId);
       setDemo(prev => prev || Boolean(response.data?.demo));
     } catch (e) {
       console.error('加载SaltStack Jobs失败', e);
@@ -2998,6 +3009,16 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         const jid = resp.data.jid; // Salt 返回的 JID
         setBatchExecJid(jid);
         
+        // 存储 JID 到 TaskID 的映射
+        if (jid) {
+          jidToTaskIdMapRef.current.set(jid, taskId);
+          // 保持映射表不超过100条记录
+          if (jidToTaskIdMapRef.current.size > 100) {
+            const firstKey = jidToTaskIdMapRef.current.keys().next().value;
+            jidToTaskIdMapRef.current.delete(firstKey);
+          }
+        }
+        
         const formattedResults = Object.entries(results).map(([minion, output]) => ({
           minion,
           output: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
@@ -3031,6 +3052,12 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               ? jobsList.find(job => job.jid === jid)
               : jobsList.length > 0; // 如果没有JID，检查是否有任何作业
             
+            // 关联 TaskID
+            const jobsWithTaskId = jobsList.map(job => {
+              const jobTaskId = jidToTaskIdMapRef.current.get(job.jid);
+              return jobTaskId ? { ...job, taskId: jobTaskId } : job;
+            });
+            
             // 检查是否超时或达到最大轮询次数
             const isTimeout = elapsedTime >= maxTimeoutMs || pollCount >= maxPollCount;
             
@@ -3039,11 +3066,12 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               clearInterval(batchExecPollRef.current);
               batchExecPollRef.current = null;
               
-              setJobs(jobsList);
+              setJobs(jobsWithTaskId);
               setActiveTabKey('jobs');
+              setJobSearchTaskId(taskId); // 自动筛选到当前任务
               
               message.info({ 
-                content: t('saltstack.taskFoundInHistory', '任务已记录到作业历史') + ` [JID: ${jid}]`,
+                content: t('saltstack.taskFoundInHistory', '任务已记录到作业历史') + ` [${taskId}]`,
                 key: 'jobSwitch'
               });
             } else if (isTimeout) {
@@ -3051,7 +3079,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               clearInterval(batchExecPollRef.current);
               batchExecPollRef.current = null;
               
-              setJobs(jobsList);
+              setJobs(jobsWithTaskId);
               setActiveTabKey('jobs');
               
               const timeoutSeconds = Math.round(elapsedTime / 1000);
@@ -3944,6 +3972,38 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           </Space>
                         </Form.Item>
                       </Form>
+                      
+                      {/* 任务ID快速跳转 */}
+                      <Divider style={{ margin: '12px 0' }} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <Text type="secondary">{t('saltstack.quickJumpByTaskId', '按任务ID跳转')}:</Text>
+                        <Input.Search
+                          placeholder={t('saltstack.enterTaskId', '输入任务ID (如: EXEC-20241216-...)') }
+                          allowClear
+                          enterButton={<><SearchOutlined /> {t('saltstack.jumpToTask', '跳转')}</>}
+                          style={{ maxWidth: 400 }}
+                          onSearch={(value) => {
+                            if (value) {
+                              setJobSearchTaskId(value);
+                              setActiveTabKey('jobs');
+                              loadJobs();
+                            }
+                          }}
+                        />
+                        {batchExecTaskId && (
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={() => {
+                              setJobSearchTaskId(batchExecTaskId);
+                              setActiveTabKey('jobs');
+                              loadJobs();
+                            }}
+                          >
+                            {t('saltstack.viewLastTask', '查看上次任务')}: <Text code style={{ fontSize: 11 }}>{batchExecTaskId}</Text>
+                          </Button>
+                        )}
+                      </div>
                     </Card>
                   </Col>
 
@@ -4344,18 +4404,60 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   </div>
                 ) : (
                   <>
-                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text type="secondary">{t('saltstack.total', { count: jobs.length })}</Text>
-                      <Button 
-                        icon={<ReloadOutlined />} 
-                        onClick={loadJobs} 
-                        loading={jobsLoading}
-                      >
-                        {t('common.refresh')}
-                      </Button>
+                    <div style={{ marginBottom: 16 }}>
+                      <Row gutter={[16, 8]} align="middle">
+                        <Col flex="auto">
+                          <Space wrap>
+                            <Text type="secondary">{t('saltstack.total', { count: jobs.length })}</Text>
+                            <Input.Search
+                              placeholder={t('saltstack.searchByTaskIdOrFunction', '搜索任务ID/函数/目标')}
+                              allowClear
+                              value={jobSearchText}
+                              onChange={(e) => setJobSearchText(e.target.value)}
+                              style={{ width: 280 }}
+                              onSearch={(v) => setJobSearchText(v)}
+                            />
+                            {jobSearchTaskId && (
+                              <Tag 
+                                closable 
+                                onClose={() => setJobSearchTaskId('')}
+                                color="blue"
+                              >
+                                {t('saltstack.filteringByTaskId', '筛选任务ID')}: {jobSearchTaskId}
+                              </Tag>
+                            )}
+                          </Space>
+                        </Col>
+                        <Col>
+                          <Button 
+                            icon={<ReloadOutlined />} 
+                            onClick={() => { setJobSearchTaskId(''); setJobSearchText(''); loadJobs(); }} 
+                            loading={jobsLoading}
+                          >
+                            {t('common.refresh')}
+                          </Button>
+                        </Col>
+                      </Row>
                     </div>
                     <Table
-                      dataSource={jobs}
+                      dataSource={jobs.filter(job => {
+                        // 如果有任务ID筛选
+                        if (jobSearchTaskId && job.taskId !== jobSearchTaskId && !job.jid?.includes(jobSearchTaskId)) {
+                          return false;
+                        }
+                        // 通用搜索
+                        if (jobSearchText) {
+                          const searchLower = jobSearchText.toLowerCase();
+                          return (
+                            job.taskId?.toLowerCase()?.includes(searchLower) ||
+                            job.jid?.toLowerCase()?.includes(searchLower) ||
+                            job.function?.toLowerCase()?.includes(searchLower) ||
+                            job.target?.toLowerCase()?.includes(searchLower) ||
+                            job.user?.toLowerCase()?.includes(searchLower)
+                          );
+                        }
+                        return true;
+                      })}
                       rowKey={(record, index) => record.jid || record.id || index}
                       loading={jobsLoading}
                       size="small"
@@ -4367,10 +4469,32 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       }}
                       columns={[
                         {
+                          title: t('saltstack.taskId', '任务ID'),
+                          dataIndex: 'taskId',
+                          key: 'taskId',
+                          width: 220,
+                          ellipsis: true,
+                          render: (taskId, record) => taskId ? (
+                            <Tooltip title={t('saltstack.clickToCopy', '点击复制')}>
+                              <Text 
+                                code 
+                                copyable={{ text: taskId }}
+                                style={{ fontSize: 11, cursor: 'pointer' }}
+                              >
+                                {taskId}
+                              </Text>
+                            </Tooltip>
+                          ) : (
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              JID: {record.jid?.slice(-12) || '-'}
+                            </Text>
+                          ),
+                        },
+                        {
                           title: t('saltstack.function'),
                           dataIndex: 'function',
                           key: 'function',
-                          width: 200,
+                          width: 180,
                           ellipsis: true,
                           render: (func, record) => (
                             <Text strong>{func || record.command || '-'}</Text>
