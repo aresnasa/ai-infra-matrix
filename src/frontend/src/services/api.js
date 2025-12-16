@@ -567,6 +567,7 @@ export const saltStackAPI = {
   getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   getJobDetail: (jid) => api.get(`/saltstack/jobs/${jid}`),
+  getJobByTaskId: (taskId) => api.get(`/saltstack/jobs/by-task/${encodeURIComponent(taskId)}`), // 通过 TaskID 查询作业
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
   executeCustomAsync: (payload) => api.post('/saltstack/execute-custom/async', payload),

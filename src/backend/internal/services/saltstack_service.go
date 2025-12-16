@@ -502,12 +502,13 @@ func (s *SaltStackService) ExecuteCommand(ctx context.Context, command string, t
 }
 
 // ExecuteCommandWithTaskID 执行SaltStack命令（带TaskID精确匹配）
+// 使用 local_async 异步执行模式，直接返回 JID，彻底解决任务竞争问题
 func (s *SaltStackService) ExecuteCommandWithTaskID(ctx context.Context, command string, targets []string, taskID string, args ...string) (map[string]interface{}, error) {
-	// 构建Salt API请求
+	// 构建Salt API请求 - 使用 local_async 异步模式
 	payload := map[string]interface{}{
 		"fun":    command,
-		"tgt":    "*", // 默认目标所有minions
-		"client": "local",
+		"tgt":    "*",           // 默认目标所有minions
+		"client": "local_async", // 使用异步模式，立即返回 JID
 	}
 
 	// 如果指定了目标，检查是否是通配符或具体的 minion 列表
@@ -522,15 +523,9 @@ func (s *SaltStackService) ExecuteCommandWithTaskID(ctx context.Context, command
 
 	// 如果有参数，添加到 payload
 	if len(args) > 0 {
-		needsShell := false
-		for _, arg := range args {
-			if containsShellMetaChars(arg) {
-				needsShell = true
-				break
-			}
-		}
-
-		if needsShell && command == "cmd.run" {
+		// 对于 cmd.run 命令，始终启用 python_shell=true
+		// 这样可以正确处理注释行（如 # TASK_ID=xxx）和 shell 特性
+		if command == "cmd.run" {
 			payload["kwarg"] = map[string]interface{}{
 				"python_shell": true,
 			}
@@ -539,9 +534,9 @@ func (s *SaltStackService) ExecuteCommandWithTaskID(ctx context.Context, command
 		payload["arg"] = args
 	}
 
-	log.Printf("[SaltStack] ExecuteCommandWithTaskID - command: %s, targets: %v, taskID: %s", command, targets, taskID)
+	log.Printf("[SaltStack] ExecuteCommandWithTaskID (async) - command: %s, targets: %v, taskID: %s", command, targets, taskID)
 
-	// 执行命令
+	// 执行异步命令 - 立即返回 JID
 	result, err := s.executeSaltCommand(ctx, payload)
 	if err != nil {
 		log.Printf("[SaltStack] ExecuteCommandWithTaskID failed: %v", err)
@@ -551,42 +546,73 @@ func (s *SaltStackService) ExecuteCommandWithTaskID(ctx context.Context, command
 		}, nil
 	}
 
-	log.Printf("[SaltStack] ExecuteCommandWithTaskID success")
+	log.Printf("[SaltStack] ExecuteCommandWithTaskID async submitted, result: %+v", result)
 
-	// 等待一小段时间让 Salt Master 记录作业
-	time.Sleep(500 * time.Millisecond)
-
-	// 通过 TaskID 精确匹配作业
+	// 从异步响应中提取 JID
+	// local_async 返回格式: {"return": [{"jid": "20231201...", "minions": ["minion1", ...]}]}
 	var jid string
-	if taskID != "" {
-		// TaskID 标记格式: # TASK_ID=EXEC-xxx
-		taskIDMarker := "TASK_ID=" + taskID
-
-		if jobs, err := s.getRecentJobs(ctx, 30); err == nil && len(jobs) > 0 {
-			log.Printf("[SaltStack] Searching for TaskID marker: %s in %d jobs", taskIDMarker, len(jobs))
-
-			for _, job := range jobs {
-				// 精确匹配 TaskID 标记
-				if strings.Contains(job.Arguments, taskIDMarker) {
-					jid = job.JID
-					log.Printf("[SaltStack] Found JID by TaskID: %s -> %s", taskID, jid)
-					break
+	var minions []string
+	if ret, ok := result["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if j, ok := m["jid"].(string); ok {
+				jid = j
+			}
+			if mins, ok := m["minions"].([]interface{}); ok {
+				for _, min := range mins {
+					if s, ok := min.(string); ok {
+						minions = append(minions, s)
+					}
 				}
 			}
 		}
+	}
 
-		if jid == "" {
-			log.Printf("[SaltStack] Warning: Could not find JID for TaskID: %s", taskID)
+	if jid == "" {
+		log.Printf("[SaltStack] Warning: No JID returned from async execution")
+		return map[string]interface{}{
+			"success": false,
+			"error":   "No JID returned from Salt async execution",
+		}, nil
+	}
+
+	log.Printf("[SaltStack] Async job submitted with JID: %s, target minions: %v", jid, minions)
+
+	// 轮询等待结果（最多等待 90 秒）
+	maxWaitTime := 90 * time.Second
+	pollInterval := 2 * time.Second
+	startTime := time.Now()
+
+	var finalResult map[string]interface{}
+	for {
+		if time.Since(startTime) > maxWaitTime {
+			log.Printf("[SaltStack] Timeout waiting for job %s results", jid)
+			break
 		}
+
+		// 查询作业结果
+		jobResult, err := s.lookupJobResult(ctx, jid)
+		if err != nil {
+			log.Printf("[SaltStack] Error looking up job %s: %v", jid, err)
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// 检查是否有结果返回
+		if len(jobResult) > 0 {
+			finalResult = jobResult
+			log.Printf("[SaltStack] Job %s completed with results from %d minions", jid, len(jobResult))
+			break
+		}
+
+		time.Sleep(pollInterval)
 	}
 
 	response := map[string]interface{}{
 		"success": true,
-		"result":  result,
-	}
-
-	if jid != "" {
-		response["jid"] = jid
+		"result": map[string]interface{}{
+			"return": []interface{}{finalResult},
+		},
+		"jid": jid,
 	}
 
 	// 同时返回 taskID，方便前端关联
@@ -595,6 +621,31 @@ func (s *SaltStackService) ExecuteCommandWithTaskID(ctx context.Context, command
 	}
 
 	return response, nil
+}
+
+// lookupJobResult 查询异步作业的结果
+func (s *SaltStackService) lookupJobResult(ctx context.Context, jid string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"client": "runner",
+		"fun":    "jobs.lookup_jid",
+		"kwarg": map[string]interface{}{
+			"jid": jid,
+		},
+	}
+
+	result, err := s.executeSaltCommand(ctx, payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup job %s: %v", jid, err)
+	}
+
+	// 解析响应: {"return": [{"minion1": result1, "minion2": result2}]}
+	if ret, ok := result["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			return m, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // getRecentJobs 获取最近的作业列表（内部使用，用于获取 JID）
