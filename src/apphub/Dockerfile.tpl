@@ -405,23 +405,37 @@ RUN set -eux; \
     dnf config-manager --set-enabled powertools 2>/dev/null || \
     echo "PowerTools/CRB repository not available"; \
     dnf install -y epel-release || echo "EPEL repository not available"; \
-    # 只更新元数据缓存，不更新所有包（避免网络问题）
+    # 更新元数据缓存
     dnf makecache --refresh || dnf makecache || true; \
-    # Install basic build dependencies first
+    # Install basic build dependencies with retry
     echo "📦 Installing RPM build tools..."; \
-    dnf install -y \
-        rpm-build \
-        rpmdevtools \
-        redhat-rpm-config \
-        gcc \
-        make \
-        wget \
-        tar \
-        bzip2 \
-        pam-devel \
-        readline-devel \
-        perl-ExtUtils-MakeMaker \
-        openssl-devel; \
+    for attempt in 1 2 3; do \
+        echo "Attempt ${attempt}/3..."; \
+        if dnf install -y --setopt=timeout=300 --setopt=retries=5 \
+            rpm-build \
+            rpmdevtools \
+            redhat-rpm-config \
+            gcc \
+            make \
+            wget \
+            tar \
+            bzip2 \
+            pam-devel \
+            readline-devel \
+            perl-ExtUtils-MakeMaker \
+            openssl-devel; then \
+            echo "✓ RPM build tools installed successfully"; \
+            break; \
+        else \
+            echo "⚠️ Attempt ${attempt} failed, cleaning cache..."; \
+            dnf clean all; \
+            sleep 5; \
+        fi; \
+        if [ "$attempt" = "3" ]; then \
+            echo "❌ Failed after 3 attempts"; \
+            exit 1; \
+        fi; \
+    done; \
     # Verify rpmdevtools installation (using command -v instead of which)
     echo "✓ Verifying rpmdevtools installation..."; \
     if ! command -v rpmdev-setuptree >/dev/null 2>&1; then \
