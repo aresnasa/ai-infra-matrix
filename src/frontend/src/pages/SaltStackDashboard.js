@@ -224,7 +224,50 @@ const SaltStackDashboard = () => {
   const batchExecPollRef = useRef(null); // 轮询定时器引用
   const [jobSearchTaskId, setJobSearchTaskId] = useState(''); // 作业历史任务ID搜索
   const [jobSearchText, setJobSearchText] = useState(''); // 作业历史通用搜索
-  const jidToTaskIdMapRef = useRef(new Map()); // JID到TaskID的映射
+  
+  // JID到TaskID的映射 - 使用localStorage持久化
+  const TASK_ID_MAP_KEY = 'saltstack_jid_taskid_map';
+  const jidToTaskIdMapRef = useRef((() => {
+    try {
+      const stored = localStorage.getItem(TASK_ID_MAP_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return new Map(Object.entries(parsed));
+      }
+    } catch (e) {
+      console.warn('加载JID-TaskID映射失败', e);
+    }
+    return new Map();
+  })());
+  
+  // 保存JID-TaskID映射到localStorage
+  const saveJidTaskIdMap = useCallback((map) => {
+    try {
+      const obj = Object.fromEntries(map);
+      localStorage.setItem(TASK_ID_MAP_KEY, JSON.stringify(obj));
+    } catch (e) {
+      console.warn('保存JID-TaskID映射失败', e);
+    }
+  }, []);
+  
+  // 添加JID-TaskID映射
+  const addJidTaskIdMapping = useCallback((jid, taskId) => {
+    if (!jid || !taskId) return;
+    const map = jidToTaskIdMapRef.current;
+    map.set(jid, taskId);
+    // 保持映射表不超过100条记录
+    if (map.size > 100) {
+      const firstKey = map.keys().next().value;
+      map.delete(firstKey);
+    }
+    saveJidTaskIdMap(map);
+  }, [saveJidTaskIdMap]);
+  
+  // 获取TaskID
+  const getTaskIdByJid = useCallback((jid) => {
+    if (!jid) return null;
+    return jidToTaskIdMapRef.current.get(jid);
+  }, []);
   
   // 简化雪花算法 - 生成时序唯一ID (前端版本，降低计算量)
   const snowflakeIdRef = useRef({
@@ -1416,9 +1459,9 @@ echo "}"`,
       const response = await saltStackAPI.getJobs(10);
       const jobsData = response.data?.data || [];
       
-      // 关联 TaskID：从本地映射中查找
+      // 关联 TaskID：从localStorage持久化的映射中查找
       const jobsWithTaskId = jobsData.map(job => {
-        const taskId = jidToTaskIdMapRef.current.get(job.jid);
+        const taskId = getTaskIdByJid(job.jid);
         return taskId ? { ...job, taskId } : job;
       });
       
@@ -3009,15 +3052,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         const jid = resp.data.jid; // Salt 返回的 JID
         setBatchExecJid(jid);
         
-        // 存储 JID 到 TaskID 的映射
-        if (jid) {
-          jidToTaskIdMapRef.current.set(jid, taskId);
-          // 保持映射表不超过100条记录
-          if (jidToTaskIdMapRef.current.size > 100) {
-            const firstKey = jidToTaskIdMapRef.current.keys().next().value;
-            jidToTaskIdMapRef.current.delete(firstKey);
-          }
-        }
+        // 存储 JID 到 TaskID 的映射（持久化到localStorage）
+        addJidTaskIdMapping(jid, taskId);
         
         const formattedResults = Object.entries(results).map(([minion, output]) => ({
           minion,
@@ -3052,9 +3088,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               ? jobsList.find(job => job.jid === jid)
               : jobsList.length > 0; // 如果没有JID，检查是否有任何作业
             
-            // 关联 TaskID
+            // 关联 TaskID（从localStorage持久化的映射中查找）
             const jobsWithTaskId = jobsList.map(job => {
-              const jobTaskId = jidToTaskIdMapRef.current.get(job.jid);
+              const jobTaskId = getTaskIdByJid(job.jid);
               return jobTaskId ? { ...job, taskId: jobTaskId } : job;
             });
             
