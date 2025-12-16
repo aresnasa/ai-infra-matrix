@@ -4429,13 +4429,23 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           </Space>
                         </Col>
                         <Col>
-                          <Button 
-                            icon={<ReloadOutlined />} 
-                            onClick={() => { setJobSearchTaskId(''); setJobSearchText(''); loadJobs(); }} 
-                            loading={jobsLoading}
-                          >
-                            {t('common.refresh')}
-                          </Button>
+                          <Space>
+                            {(jobSearchTaskId || jobSearchText) && (
+                              <Button 
+                                size="small"
+                                onClick={() => { setJobSearchTaskId(''); setJobSearchText(''); }}
+                              >
+                                {t('saltstack.clearFilter', '清除过滤')}
+                              </Button>
+                            )}
+                            <Button 
+                              icon={<ReloadOutlined />} 
+                              onClick={loadJobs}
+                              loading={jobsLoading}
+                            >
+                              {t('common.refresh')}
+                            </Button>
+                          </Space>
                         </Col>
                       </Row>
                     </div>

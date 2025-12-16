@@ -650,6 +650,7 @@ export default {
     viewLastTask: 'View Last Task',
     searchByTaskIdOrFunction: 'Search by Task ID/Function/Target',
     filteringByTaskId: 'Filtering Task ID',
+    clearFilter: 'Clear Filter',
     clickToCopy: 'Click to copy',
     expandView: 'Expand View',
     compactView: 'Compact View',

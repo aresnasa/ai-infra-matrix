@@ -650,6 +650,7 @@ export default {
     viewLastTask: '查看上次任务',
     searchByTaskIdOrFunction: '搜索任务ID/函数/目标',
     filteringByTaskId: '筛选任务ID',
+    clearFilter: '清除过滤',
     clickToCopy: '点击复制',
     expandView: '展开视图',
     compactView: '压缩视图',
