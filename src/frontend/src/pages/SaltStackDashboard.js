@@ -3975,8 +3975,12 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       
                       {/* 任务ID快速跳转 */}
                       <Divider style={{ margin: '12px 0' }} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <Text type="secondary">{t('saltstack.quickJumpByTaskId', '按任务ID跳转')}:</Text>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <Tooltip title={t('saltstack.taskIdHelpTip', '任务ID由本页面执行时自动生成，用于快速定位任务。其他渠道执行的任务仅显示Salt原生JID。')}>
+                          <Text type="secondary" style={{ cursor: 'help' }}>
+                            {t('saltstack.quickJumpByTaskId', '按任务ID跳转')}:
+                          </Text>
+                        </Tooltip>
                         <Input.Search
                           placeholder={t('saltstack.enterTaskId', '输入任务ID (如: EXEC-20241216-...)') }
                           allowClear
@@ -4495,9 +4499,11 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                               </Text>
                             </Tooltip>
                           ) : (
-                            <Text type="secondary" style={{ fontSize: 11 }}>
-                              JID: {record.jid?.slice(-12) || '-'}
-                            </Text>
+                            <Tooltip title={t('saltstack.taskIdNotFromBatchExec', '此任务非从“批量执行”页面发起，显示Salt原生JID')}>
+                              <Text type="secondary" style={{ fontSize: 11, cursor: 'help' }}>
+                                JID: {record.jid?.slice(-12) || '-'}
+                              </Text>
+                            </Tooltip>
                           ),
                         },
                         {

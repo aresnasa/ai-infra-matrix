@@ -652,6 +652,8 @@ export default {
     filteringByTaskId: 'Filtering Task ID',
     clearFilter: 'Clear Filter',
     clickToCopy: 'Click to copy',
+    taskIdNotFromBatchExec: 'This task was not initiated from "Batch Execution" page, showing Salt native JID',
+    taskIdHelpTip: 'Task ID is auto-generated when executing from this page for quick task lookup. Tasks from other channels only show Salt native JID.',
     expandView: 'Expand View',
     compactView: 'Compact View',
     viewFullOutput: 'View Full Output',

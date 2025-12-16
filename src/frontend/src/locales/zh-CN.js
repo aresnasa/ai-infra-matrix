@@ -652,6 +652,8 @@ export default {
     filteringByTaskId: '筛选任务ID',
     clearFilter: '清除过滤',
     clickToCopy: '点击复制',
+    taskIdNotFromBatchExec: '此任务非从“批量执行”页面发起，显示Salt原生JID',
+    taskIdHelpTip: '任务ID由本页面执行时自动生成，用于快速定位任务。其他渠道执行的任务仅显示Salt原生JID。',
     expandView: '展开视图',
     compactView: '压缩视图',
     viewFullOutput: '查看完整输出',
