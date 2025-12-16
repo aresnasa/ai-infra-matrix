@@ -373,9 +373,9 @@ RUN set -eux; \
     rm -rf /etc/dnf/modules.d/* 2>/dev/null || true; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
+    # 配置镜像源（microdnf 和 dnf 都会使用）
     if [ -n "${YUM_MIRROR:-}" ]; then \
         echo "Using custom YUM mirror: ${YUM_MIRROR}"; \
-        # AlmaLinux 使用 repo.almalinux.org 作为默认源
         sed -e 's|^mirrorlist=|#mirrorlist=|g' \
             -e "s|repo.almalinux.org/\$contentdir|${YUM_MIRROR}/almalinux|g" \
             -e "s|^# baseurl=|baseurl=|g" \
@@ -383,19 +383,20 @@ RUN set -eux; \
             -i.bak \
             /etc/yum.repos.d/almalinux*.repo; \
     else \
-        echo "尝试配置阿里云镜像源（可选）..."; \
+        echo "尝试配置阿里云镜像源..."; \
         sed -e 's|^mirrorlist=|#mirrorlist=|g' \
             -e 's|repo.almalinux.org/\$contentdir|mirrors.aliyun.com/almalinux|g' \
             -e "s|^# baseurl=|baseurl=|g" \
             -e "s|^#baseurl=|baseurl=|g" \
             -i.bak \
-            /etc/yum.repos.d/almalinux*.repo 2>/dev/null || true; \
+            /etc/yum.repos.d/almalinux*.repo; \
     fi; \
-    # minimal 镜像只有 microdnf，先安装 dnf
+    # minimal 镜像只有 microdnf，先安装 dnf（禁用 extras 避免 SSL 错误）
     echo "📦 Installing dnf on minimal image..."; \
+    microdnf --disablerepo=extras --disablerepo=crb install -y dnf || \
     microdnf install -y dnf; \
     dnf clean all; \
-    dnf makecache
+    dnf makecache || true
 
 # Install build prerequisites and enable required repositories
 RUN set -eux; \
