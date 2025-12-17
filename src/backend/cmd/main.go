@@ -1083,6 +1083,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		jobs.GET("/clusters", jobController.ListClusters)
 	}
 
+	// 初始化 SaltStack 作业持久化服务
+	saltJobService := services.NewSaltJobService(database.DB, cache.RDB)
+	_ = saltJobService // 服务会自动注册为单例，供 handler 使用
+
 	// SaltStack 管理路由（需要认证）
 	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
 
@@ -1126,6 +1130,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.POST("/ib-ignores", saltStackHandler.AddIBPortIgnore)
 		saltstack.DELETE("/ib-ignores/:minion_id/:port_name", saltStackHandler.RemoveIBPortIgnore)
 		saltstack.GET("/ib-alerts", saltStackHandler.GetIBPortAlerts)
+		// 作业历史配置和管理（持久化到数据库）
+		saltstack.GET("/jobs/config", saltStackHandler.GetSaltJobConfig)
+		saltstack.PUT("/jobs/config", saltStackHandler.UpdateSaltJobConfig)
+		saltstack.GET("/jobs/history", saltStackHandler.GetSaltJobHistory)
+		saltstack.GET("/jobs/by-task/:task_id", saltStackHandler.GetSaltJobByTaskID)
+		saltstack.POST("/jobs/cleanup", saltStackHandler.TriggerJobCleanup)
 	}
 
 	// 仪表板统计路由（需要认证）
