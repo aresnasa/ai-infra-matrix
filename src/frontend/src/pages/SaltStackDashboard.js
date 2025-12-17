@@ -241,6 +241,10 @@ const SaltStackDashboard = () => {
   const batchExecPollRef = useRef(null); // 轮询定时器引用
   const [jobSearchTaskId, setJobSearchTaskId] = useState(''); // 作业历史任务ID搜索
   const [jobSearchText, setJobSearchText] = useState(''); // 作业历史通用搜索
+  const [jobFunctionFilter, setJobFunctionFilter] = useState(null); // 函数类型过滤
+  const [jobStatusFilter, setJobStatusFilter] = useState(null); // 状态过滤
+  const [jobUserFilter, setJobUserFilter] = useState(null); // 用户过滤
+  const [jobGroupBy, setJobGroupBy] = useState(null); // 分组方式: null, 'function', 'status', 'user', 'target'
   
   // JID到TaskID的映射 - 使用localStorage持久化
   const TASK_ID_MAP_KEY = 'saltstack_jid_taskid_map';
@@ -4684,38 +4688,84 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   </div>
                 ) : (
                   <>
+                    {/* 搜索和过滤工具栏 */}
                     <div style={{ marginBottom: 16 }}>
                       <Row gutter={[16, 8]} align="middle">
                         <Col flex="auto">
-                          <Space wrap>
+                          <Space wrap size="middle">
                             <Text type="secondary">{t('saltstack.total', { count: jobs.length })}</Text>
                             <Input.Search
                               placeholder={t('saltstack.searchByTaskIdOrFunction', '搜索任务ID/函数/目标')}
                               allowClear
                               value={jobSearchText}
                               onChange={(e) => setJobSearchText(e.target.value)}
-                              style={{ width: 280 }}
+                              style={{ width: 260 }}
                               onSearch={(v) => setJobSearchText(v)}
                             />
-                            {jobSearchTaskId && (
-                              <Tag 
-                                closable 
-                                onClose={() => setJobSearchTaskId('')}
-                                color="blue"
-                              >
-                                {t('saltstack.filteringByTaskId', '筛选任务ID')}: {jobSearchTaskId}
-                              </Tag>
-                            )}
+                            {/* 分组选择 */}
+                            <Select
+                              placeholder={t('saltstack.groupBy', '分组方式')}
+                              allowClear
+                              value={jobGroupBy}
+                              onChange={setJobGroupBy}
+                              style={{ width: 130 }}
+                              options={[
+                                { value: 'function_category', label: t('saltstack.groupByFunctionCategory', '按函数类别') },
+                                { value: 'status', label: t('saltstack.groupByStatus', '按状态') },
+                                { value: 'user', label: t('saltstack.groupByUser', '按用户') },
+                                { value: 'target', label: t('saltstack.groupByTarget', '按目标') },
+                              ]}
+                            />
+                            {/* 函数类型过滤 */}
+                            <Select
+                              placeholder={t('saltstack.filterByFunction', '函数类型')}
+                              allowClear
+                              value={jobFunctionFilter}
+                              onChange={setJobFunctionFilter}
+                              style={{ width: 150 }}
+                              options={[
+                                { value: 'cmd', label: t('saltstack.funcCmd', '命令执行') },
+                                { value: 'state', label: t('saltstack.funcState', '状态管理') },
+                                { value: 'wheel', label: t('saltstack.funcWheel', '管理命令') },
+                                { value: 'runner', label: t('saltstack.funcRunner', '运行器') },
+                                { value: 'status', label: t('saltstack.funcStatus', '状态检查') },
+                                { value: 'other', label: t('saltstack.funcOther', '其他') },
+                              ]}
+                            />
+                            {/* 状态过滤 */}
+                            <Select
+                              placeholder={t('saltstack.filterByStatus', '状态')}
+                              allowClear
+                              value={jobStatusFilter}
+                              onChange={setJobStatusFilter}
+                              style={{ width: 110 }}
+                              options={[
+                                { value: 'completed', label: <Tag color="green">{t('saltstack.completed', '已完成')}</Tag> },
+                                { value: 'running', label: <Tag color="blue">{t('saltstack.running', '运行中')}</Tag> },
+                                { value: 'failed', label: <Tag color="red">{t('saltstack.failed', '失败')}</Tag> },
+                              ]}
+                            />
                           </Space>
                         </Col>
                         <Col>
                           <Space>
-                            {(jobSearchTaskId || jobSearchText) && (
+                            {jobSearchTaskId && (
+                              <Tag closable onClose={() => setJobSearchTaskId('')} color="blue">
+                                {t('saltstack.filteringByTaskId', '筛选任务ID')}: {jobSearchTaskId}
+                              </Tag>
+                            )}
+                            {(jobSearchTaskId || jobSearchText || jobFunctionFilter || jobStatusFilter || jobGroupBy) && (
                               <Button 
                                 size="small"
-                                onClick={() => { setJobSearchTaskId(''); setJobSearchText(''); }}
+                                onClick={() => { 
+                                  setJobSearchTaskId(''); 
+                                  setJobSearchText(''); 
+                                  setJobFunctionFilter(null);
+                                  setJobStatusFilter(null);
+                                  setJobGroupBy(null);
+                                }}
                               >
-                                {t('saltstack.clearFilter', '清除过滤')}
+                                {t('saltstack.clearAllFilters', '清除过滤')}
                               </Button>
                             )}
                             <Button 
@@ -4729,142 +4779,214 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         </Col>
                       </Row>
                     </div>
-                    <Table
-                      dataSource={jobs.filter(job => {
-                        // 如果有任务ID筛选
-                        if (jobSearchTaskId) {
-                          // 精确匹配 taskId 或者 jid 包含搜索关键字
-                          const taskIdMatch = job.taskId === jobSearchTaskId;
-                          const jidMatch = job.jid?.includes(jobSearchTaskId);
-                          if (!taskIdMatch && !jidMatch) {
-                            return false;
+                    
+                    {/* 分组展示或普通表格 */}
+                    {jobGroupBy ? (
+                      // 分组展示模式
+                      (() => {
+                        const getFunctionCategory = (func) => {
+                          if (!func) return 'other';
+                          const prefix = func.split('.')[0];
+                          if (['cmd'].includes(prefix)) return 'cmd';
+                          if (['state'].includes(prefix)) return 'state';
+                          if (['wheel'].includes(prefix)) return 'wheel';
+                          if (['runner'].includes(prefix)) return 'runner';
+                          if (['status'].includes(prefix)) return 'status';
+                          return 'other';
+                        };
+                        const categoryLabels = {
+                          cmd: { label: t('saltstack.funcCmd', '命令执行'), color: 'blue' },
+                          state: { label: t('saltstack.funcState', '状态管理'), color: 'green' },
+                          wheel: { label: t('saltstack.funcWheel', '管理命令'), color: 'volcano' },
+                          runner: { label: t('saltstack.funcRunner', '运行器'), color: 'magenta' },
+                          status: { label: t('saltstack.funcStatus', '状态检查'), color: 'geekblue' },
+                          other: { label: t('saltstack.funcOther', '其他'), color: 'default' },
+                          completed: { label: t('saltstack.completed', '已完成'), color: 'green' },
+                          running: { label: t('saltstack.running', '运行中'), color: 'blue' },
+                          failed: { label: t('saltstack.failed', '失败'), color: 'red' },
+                          unknown: { label: t('saltstack.unknown', '未知'), color: 'default' },
+                        };
+                        const filteredJobs = jobs.filter(job => {
+                          if (jobSearchTaskId && job.taskId !== jobSearchTaskId && !job.jid?.includes(jobSearchTaskId)) return false;
+                          if (jobSearchText) {
+                            const s = jobSearchText.toLowerCase();
+                            if (!(job.taskId?.toLowerCase()?.includes(s) || job.jid?.toLowerCase()?.includes(s) || job.function?.toLowerCase()?.includes(s) || job.target?.toLowerCase()?.includes(s))) return false;
                           }
-                        }
-                        // 通用搜索
-                        if (jobSearchText) {
-                          const searchLower = jobSearchText.toLowerCase();
-                          return (
-                            job.taskId?.toLowerCase()?.includes(searchLower) ||
-                            job.jid?.toLowerCase()?.includes(searchLower) ||
-                            job.function?.toLowerCase()?.includes(searchLower) ||
-                            job.target?.toLowerCase()?.includes(searchLower) ||
-                            job.user?.toLowerCase()?.includes(searchLower)
-                          );
-                        }
-                        return true;
-                      })}
-                      rowKey={(record, index) => record.jid || record.id || index}
-                      loading={jobsLoading}
-                      size="small"
-                      pagination={{
-                        showSizeChanger: true,
-                        showTotal: (total) => t('common.total', { count: total }),
-                        defaultPageSize: 10,
-                        pageSizeOptions: ['10', '20', '50'],
-                      }}
-                      columns={[
-                        {
-                          title: t('saltstack.taskId', '任务ID'),
-                          dataIndex: 'taskId',
-                          key: 'taskId',
-                          width: 220,
-                          ellipsis: true,
-                          render: (taskId, record) => taskId ? (
-                            <Tooltip title={t('saltstack.clickToCopy', '点击复制')}>
-                              <Text 
-                                code 
-                                copyable={{ text: taskId }}
-                                style={{ fontSize: 11, cursor: 'pointer' }}
-                              >
-                                {taskId}
-                              </Text>
-                            </Tooltip>
-                          ) : (
-                            <Tooltip title={t('saltstack.taskIdNotFromBatchExec', '此任务非从“批量执行”页面发起，显示Salt原生JID')}>
-                              <Text type="secondary" style={{ fontSize: 11, cursor: 'help' }}>
-                                JID: {record.jid?.slice(-12) || '-'}
-                              </Text>
-                            </Tooltip>
-                          ),
-                        },
-                        {
-                          title: t('saltstack.function'),
+                          if (jobFunctionFilter && getFunctionCategory(job.function) !== jobFunctionFilter) return false;
+                          if (jobStatusFilter && job.status?.toLowerCase() !== jobStatusFilter) return false;
+                          return true;
+                        });
+                        const groupedJobs = filteredJobs.reduce((acc, job) => {
+                          let key = jobGroupBy === 'function_category' ? getFunctionCategory(job.function) : 
+                                   jobGroupBy === 'status' ? (job.status?.toLowerCase() || 'unknown') : 
+                                   jobGroupBy === 'user' ? (job.user || 'unknown') : (job.target || '*');
+                          if (!acc[key]) acc[key] = [];
+                          acc[key].push(job);
+                          return acc;
+                        }, {});
+                        return (
+                          <div style={{ maxHeight: 'calc(100vh - 400px)', overflow: 'auto' }}>
+                            {Object.entries(groupedJobs).map(([groupKey, groupJobs]) => {
+                              const info = categoryLabels[groupKey] || { label: groupKey, color: 'default' };
+                              return (
+                                <Card key={groupKey} size="small" title={<Space><Tag color={info.color}>{info.label}</Tag><Badge count={groupJobs.length} style={{ backgroundColor: '#1890ff' }} /></Space>}
+                                  style={{ marginBottom: 12, background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }} bodyStyle={{ padding: '8px 12px' }}>
+                                  <Table dataSource={groupJobs} rowKey={(r, i) => r.jid || i} size="small" pagination={groupJobs.length > 5 ? { pageSize: 5, size: 'small' } : false}
+                                    columns={[
+                                      { title: t('saltstack.taskId'), dataIndex: 'taskId', width: 180, ellipsis: true, render: (id, r) => id ? <Text code style={{ fontSize: 10 }}>{id}</Text> : <Text type="secondary" style={{ fontSize: 10 }}>JID: {r.jid?.slice(-12)}</Text> },
+                                      { title: t('saltstack.function'), dataIndex: 'function', width: 150, ellipsis: true, render: (f) => <Text strong style={{ fontSize: 12 }}>{f || '-'}</Text> },
+                                      { title: t('common.status'), dataIndex: 'status', width: 80, render: (s) => <Tag color={getJobStatusColor(s)} style={{ fontSize: 10 }}>{s || '-'}</Tag> },
+                                      { title: t('saltstack.target'), dataIndex: 'target', width: 110, ellipsis: true },
+                                      { title: t('common.time'), dataIndex: 'timestamp', width: 150, render: (tm, r) => <Text type="secondary" style={{ fontSize: 11 }}>{tm || r.start_time || '-'}</Text> },
+                                      { title: t('common.actions'), key: 'action', width: 70, render: (_, r) => <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => viewJobDetail(r.jid)}>{t('saltstack.viewResult', '查看')}</Button> },
+                                    ]} />
+                                </Card>
+                              );
+                            })}
+                            {Object.keys(groupedJobs).length === 0 && <Empty description={t('saltstack.noJobs')} />}
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <Table
+                        dataSource={jobs.filter(job => {
+                          if (jobSearchTaskId && job.taskId !== jobSearchTaskId && !job.jid?.includes(jobSearchTaskId)) return false;
+                          if (jobSearchText) {
+                            const s = jobSearchText.toLowerCase();
+                            if (!(job.taskId?.toLowerCase()?.includes(s) || job.jid?.toLowerCase()?.includes(s) || job.function?.toLowerCase()?.includes(s) || job.target?.toLowerCase()?.includes(s) || job.user?.toLowerCase()?.includes(s))) return false;
+                          }
+                          if (jobFunctionFilter) {
+                            const prefix = job.function?.split('.')[0];
+                            if (jobFunctionFilter === 'other') {
+                              if (['cmd', 'state', 'wheel', 'runner', 'status'].includes(prefix)) return false;
+                            } else if (prefix !== jobFunctionFilter) return false;
+                          }
+                          if (jobStatusFilter && job.status?.toLowerCase() !== jobStatusFilter) return false;
+                          return true;
+                        })}
+                        rowKey={(r, i) => r.jid || r.id || i}
+                        loading={jobsLoading}
+                        size="small"
+                        pagination={{ showSizeChanger: true, showTotal: (total) => t('saltstack.total', { count: total }), defaultPageSize: 10, pageSizeOptions: ['10', '20', '50', '100'] }}
+                        scroll={{ x: 1200 }}
+                        columns={[
+                          {
+                            title: t('saltstack.taskId', '任务ID'),
+                            dataIndex: 'taskId',
+                            key: 'taskId',
+                            width: 200,
+                            ellipsis: true,
+                            sorter: (a, b) => (a.taskId || a.jid || '').localeCompare(b.taskId || b.jid || ''),
+                            render: (id, r) => id ? (
+                              <Tooltip title={t('saltstack.clickToCopy')}>
+                                <Text code copyable={{ text: id }} style={{ fontSize: 11 }}>{id}</Text>
+                              </Tooltip>
+                            ) : (
+                              <Tooltip title={t('saltstack.taskIdNotFromBatchExec')}>
+                                <Text type="secondary" style={{ fontSize: 11 }}>JID: {r.jid?.slice(-12) || '-'}</Text>
+                              </Tooltip>
+                            ),
+                          },
+                          {
+                            title: t('saltstack.function'),
                           dataIndex: 'function',
                           key: 'function',
                           width: 180,
                           ellipsis: true,
-                          render: (func, record) => (
-                            <Text strong>{func || record.command || '-'}</Text>
-                          ),
+                          sorter: (a, b) => (a.function || '').localeCompare(b.function || ''),
+                          filters: [
+                            { text: 'cmd.*', value: 'cmd' },
+                            { text: 'state.*', value: 'state' },
+                            { text: 'wheel.*', value: 'wheel' },
+                            { text: 'runner.*', value: 'runner' },
+                            { text: 'status.*', value: 'status' },
+                          ],
+                          onFilter: (v, r) => r.function?.startsWith(v + '.'),
+                          render: (f, r) => {
+                            const cat = f?.split('.')[0];
+                            const colors = { cmd: 'blue', state: 'green', wheel: 'volcano', runner: 'magenta', status: 'geekblue' };
+                            return (
+                              <Space size={4}>
+                                {cat && <Tag color={colors[cat] || 'default'} style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{cat}</Tag>}
+                                <Text strong style={{ fontSize: 12 }}>{f?.split('.').slice(1).join('.') || f || r.command || '-'}</Text>
+                              </Space>
+                            );
+                          },
                         },
                         {
                           title: t('common.status'),
                           dataIndex: 'status',
                           key: 'status',
                           width: 100,
-                          render: (status) => (
-                            <Tag color={getJobStatusColor(status)}>
-                              {status || t('saltstack.unknown')}
-                            </Tag>
-                          ),
+                          sorter: (a, b) => (a.status || '').localeCompare(b.status || ''),
+                          filters: [
+                            { text: t('saltstack.completed', '已完成'), value: 'completed' },
+                            { text: t('saltstack.running', '运行中'), value: 'running' },
+                            { text: t('saltstack.failed', '失败'), value: 'failed' },
+                          ],
+                          onFilter: (v, r) => r.status?.toLowerCase() === v,
+                          render: (s) => <Tag color={getJobStatusColor(s)}>{s || t('saltstack.unknown')}</Tag>,
                         },
                         {
                           title: t('saltstack.target'),
                           dataIndex: 'target',
                           key: 'target',
-                          width: 150,
+                          width: 140,
                           ellipsis: true,
-                          render: (target) => target || t('saltstack.allNodes'),
+                          sorter: (a, b) => (a.target || '').localeCompare(b.target || ''),
+                          render: (tg) => tg || '- -',
                         },
                         {
                           title: t('saltstack.user'),
                           dataIndex: 'user',
                           key: 'user',
                           width: 100,
-                          render: (user) => user || 'root',
+                          sorter: (a, b) => (a.user || '').localeCompare(b.user || ''),
+                          filters: [...new Set(jobs.map(j => j.user).filter(Boolean))].map(u => ({ text: u, value: u })),
+                          onFilter: (v, r) => r.user === v,
+                          render: (u) => u || 'root',
                         },
                         {
                           title: t('saltstack.duration'),
                           dataIndex: 'duration',
                           key: 'duration',
                           width: 100,
-                          render: (duration) => duration || '-',
+                          sorter: (a, b) => {
+                            const p = d => d ? parseInt(d.match(/(\d+)/)?.[1] || 0) : 0;
+                            return p(a.duration) - p(b.duration);
+                          },
+                          render: (d) => d || '-',
                         },
                         {
                           title: t('saltstack.returnCode'),
                           dataIndex: 'return_code',
                           key: 'return_code',
-                          width: 100,
-                          render: (code) => (
-                            <Tag color={code === 0 ? 'green' : code !== undefined ? 'red' : 'default'}>
-                              {code ?? '-'}
-                            </Tag>
-                          ),
+                          width: 90,
+                          sorter: (a, b) => (a.return_code ?? 999) - (b.return_code ?? 999),
+                          filters: [
+                            { text: t('saltstack.returnSuccess', '成功(0)'), value: 0 },
+                            { text: t('saltstack.returnFailed', '失败(≠0)'), value: 'failed' },
+                          ],
+                          onFilter: (v, r) => v === 0 ? r.return_code === 0 : (r.return_code !== undefined && r.return_code !== 0),
+                          render: (c) => <Tag color={c === 0 ? 'green' : c !== undefined ? 'red' : 'default'}>{c ?? '-'}</Tag>,
                         },
                         {
                           title: t('common.time'),
                           dataIndex: 'timestamp',
                           key: 'timestamp',
-                          width: 180,
-                          render: (time, record) => (
-                            <Text type="secondary" style={{ fontSize: 12 }}>
-                              {time || record.start_time || '-'}
-                            </Text>
-                          ),
+                          width: 170,
+                          sorter: (a, b) => new Date(a.timestamp || a.start_time || 0) - new Date(b.timestamp || b.start_time || 0),
+                          defaultSortOrder: 'descend',
+                          render: (time, r) => <Text type="secondary" style={{ fontSize: 12 }}>{time || r.start_time || '-'}</Text>,
                         },
                         {
-                          title: t('common.actions', '操作'),
+                          title: t('common.actions'),
                           key: 'action',
-                          width: 100,
+                          width: 90,
                           fixed: 'right',
-                          render: (_, record) => (
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<EyeOutlined />}
-                              onClick={() => viewJobDetail(record.jid)}
-                            >
-                              {t('saltstack.viewResult', '查看结果')}
+                          render: (_, r) => (
+                            <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => viewJobDetail(r.jid)}>
+                              {t('saltstack.viewResult', '查看')}
                             </Button>
                           ),
                         },
@@ -4873,25 +4995,16 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         expandedRowRender: (job) => job.result ? (
                           <div style={{ padding: '8px 0' }}>
                             <Text type="secondary">{t('saltstack.result')}:</Text>
-                            <Paragraph 
-                              code 
-                              style={{ 
-                                marginTop: 4, 
-                                marginBottom: 0, 
-                                maxHeight: 200, 
-                                overflow: 'auto' 
-                              }}
-                            >
+                            <Paragraph code style={{ marginTop: 4, marginBottom: 0, maxHeight: 200, overflow: 'auto' }}>
                               {typeof job.result === 'string' ? job.result : JSON.stringify(job.result, null, 2)}
                             </Paragraph>
                           </div>
                         ) : null,
                         rowExpandable: (job) => !!job.result,
                       }}
-                      locale={{
-                        emptyText: t('saltstack.noJobs'),
-                      }}
+                      locale={{ emptyText: t('saltstack.noJobs') }}
                     />
+                    )}
                   </>
                 )}
               </TabPane>

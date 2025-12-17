@@ -71,6 +71,8 @@ export default {
     hours: '小时',
     minutes: '分钟',
     seconds: '秒',
+    enabled: '启用',
+    disabled: '禁用',
   },
 
   // 主题
@@ -688,6 +690,62 @@ export default {
     cleanupPolicy: '清理策略',
     retentionPolicy: '保留策略',
     cleanupSchedule: '清理计划',
+
+    // 危险命令黑名单
+    dangerousCommandBlacklist: '危险命令黑名单',
+    dangerousCommandDesc: '配置危险命令黑名单，匹配的命令将被拦截执行。支持精确匹配和正则表达式。',
+    dangerousCommandHint: '配置的命令模式将在执行 cmd.run 等命令时进行检查，匹配的命令将被拦截。',
+    addCommand: '添加规则',
+    editCommand: '编辑规则',
+    commandPattern: '命令模式',
+    patternPlaceholder: '如: rm -rf / 或正则表达式 rm\\s+-rf\\s+/',
+    pleaseInputPattern: '请输入命令模式',
+    isRegex: '使用正则表达式',
+    description: '描述',
+    descriptionPlaceholder: '如: 删除根目录所有文件',
+    pleaseInputDescription: '请输入描述',
+    severity: '危险等级',
+    severityCritical: '严重',
+    severityHigh: '高',
+    severityMedium: '中',
+    severityLow: '低',
+    pleaseSelectSeverity: '请选择危险等级',
+    enabled: '启用',
+    deleteCommandConfirm: '确定要删除此规则吗？',
+    noRules: '暂无规则',
+    addDangerousCommand: '添加危险命令',
+    editDangerousCommand: '编辑危险命令',
+
+    // 执行结果
+    executeSuccess: '执行成功',
+    executeFailed: '执行失败',
+
+    // Minion 分组
+    minionGroupSet: 'Minion {id} 分组已设置',
+    minionGroupRemoved: 'Minion {id} 分组已移除',
+    minionGroupSetFailed: '设置 Minion 分组失败',
+
+    // 作业历史分组和过滤
+    groupBy: '分组方式',
+    groupByFunctionCategory: '按函数类别',
+    groupByStatus: '按状态',
+    groupByUser: '按用户',
+    groupByTarget: '按目标',
+    filterByFunction: '函数类型',
+    filterByStatus: '状态筛选',
+    funcCmd: '命令执行',
+    funcState: '状态管理',
+    funcWheel: '管理命令',
+    funcRunner: '运行器',
+    funcStatus: '状态检查',
+    funcOther: '其他',
+    clearAllFilters: '清除所有筛选',
+    returnSuccess: '成功(0)',
+    returnFailed: '失败(≠0)',
+    completed: '已完成',
+    running: '运行中',
+    failed: '失败',
+    total: '共 {count} 条',
   },
 
   // 搜索相关

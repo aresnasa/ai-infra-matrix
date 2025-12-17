@@ -71,6 +71,8 @@ export default {
     hours: 'hours',
     minutes: 'minutes',
     seconds: 'seconds',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
   },
 
   // Theme
@@ -688,6 +690,62 @@ export default {
     cleanupPolicy: 'Cleanup Policy',
     retentionPolicy: 'Retention Policy',
     cleanupSchedule: 'Cleanup Schedule',
+
+    // Dangerous Command Blacklist
+    dangerousCommandBlacklist: 'Dangerous Command Blacklist',
+    dangerousCommandDesc: 'Configure dangerous command blacklist. Matched commands will be blocked. Supports exact match and regex.',
+    dangerousCommandHint: 'Configured patterns will be checked when executing cmd.run commands. Matched commands will be blocked.',
+    addCommand: 'Add Rule',
+    editCommand: 'Edit Rule',
+    commandPattern: 'Command Pattern',
+    patternPlaceholder: 'e.g., rm -rf / or regex rm\\s+-rf\\s+/',
+    pleaseInputPattern: 'Please enter command pattern',
+    isRegex: 'Use Regex',
+    description: 'Description',
+    descriptionPlaceholder: 'e.g., Delete all files in root directory',
+    pleaseInputDescription: 'Please enter description',
+    severity: 'Severity',
+    severityCritical: 'Critical',
+    severityHigh: 'High',
+    severityMedium: 'Medium',
+    severityLow: 'Low',
+    pleaseSelectSeverity: 'Please select severity',
+    enabled: 'Enabled',
+    deleteCommandConfirm: 'Are you sure to delete this rule?',
+    noRules: 'No rules',
+    addDangerousCommand: 'Add Dangerous Command',
+    editDangerousCommand: 'Edit Dangerous Command',
+
+    // Execution Results
+    executeSuccess: 'Execution successful',
+    executeFailed: 'Execution failed',
+
+    // Minion Group
+    minionGroupSet: 'Minion {id} group has been set',
+    minionGroupRemoved: 'Minion {id} group has been removed',
+    minionGroupSetFailed: 'Failed to set Minion group',
+
+    // Job History Grouping and Filtering
+    groupBy: 'Group By',
+    groupByFunctionCategory: 'By Function Type',
+    groupByStatus: 'By Status',
+    groupByUser: 'By User',
+    groupByTarget: 'By Target',
+    filterByFunction: 'Function Type',
+    filterByStatus: 'Filter by Status',
+    funcCmd: 'Command Execution',
+    funcState: 'State Management',
+    funcWheel: 'Wheel Commands',
+    funcRunner: 'Runner',
+    funcStatus: 'Status Check',
+    funcOther: 'Other',
+    clearAllFilters: 'Clear All Filters',
+    returnSuccess: 'Success(0)',
+    returnFailed: 'Failed(≠0)',
+    completed: 'Completed',
+    running: 'Running',
+    failed: 'Failed',
+    total: '{count} items in total',
   },
 
   // Search Related
