@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,7 +113,10 @@ func (s *SaltJobService) loadOrCreateConfig() {
 			MaxRecords:          10000,
 			CleanupEnabled:      true,
 			CleanupIntervalHour: 24,
+			BlacklistEnabled:    true,
 		}
+		// 设置默认危险命令
+		config.SetDangerousCommands(models.GetDefaultDangerousCommands())
 		s.db.Create(&config)
 	}
 	s.config = &config
@@ -124,6 +129,29 @@ func (s *SaltJobService) GetConfig() *models.SaltJobConfig {
 	return s.config
 }
 
+// GetConfigWithDangerousCommands 获取配置包含危险命令列表
+func (s *SaltJobService) GetConfigWithDangerousCommands() map[string]interface{} {
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+
+	if s.config == nil {
+		return nil
+	}
+
+	return map[string]interface{}{
+		"id":                    s.config.ID,
+		"max_retention_days":    s.config.MaxRetentionDays,
+		"max_records":           s.config.MaxRecords,
+		"cleanup_enabled":       s.config.CleanupEnabled,
+		"cleanup_interval_hour": s.config.CleanupIntervalHour,
+		"last_cleanup_time":     s.config.LastCleanupTime,
+		"blacklist_enabled":     s.config.BlacklistEnabled,
+		"dangerous_commands":    s.config.GetDangerousCommands(),
+		"created_at":            s.config.CreatedAt,
+		"updated_at":            s.config.UpdatedAt,
+	}
+}
+
 // UpdateConfig 更新配置
 func (s *SaltJobService) UpdateConfig(config *models.SaltJobConfig) error {
 	s.configMu.Lock()
@@ -134,6 +162,63 @@ func (s *SaltJobService) UpdateConfig(config *models.SaltJobConfig) error {
 	}
 	s.config = config
 	return nil
+}
+
+// UpdateDangerousCommands 更新危险命令列表
+func (s *SaltJobService) UpdateDangerousCommands(commands []models.DangerousCommand) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
+	if s.config == nil {
+		return fmt.Errorf("config not initialized")
+	}
+
+	if err := s.config.SetDangerousCommands(commands); err != nil {
+		return err
+	}
+
+	if err := s.db.Save(s.config).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+// CheckDangerousCommand 检查命令是否在黑名单中
+// 返回: (是否危险, 匹配的规则, 错误)
+func (s *SaltJobService) CheckDangerousCommand(command string) (bool, *models.DangerousCommand, error) {
+	s.configMu.RLock()
+	defer s.configMu.RUnlock()
+
+	if s.config == nil || !s.config.BlacklistEnabled {
+		return false, nil, nil
+	}
+
+	commands := s.config.GetDangerousCommands()
+	for _, cmd := range commands {
+		if !cmd.Enabled {
+			continue
+		}
+
+		matched := false
+		if cmd.IsRegex {
+			re, err := regexp.Compile(cmd.Pattern)
+			if err != nil {
+				log.Printf("[SaltJobService] 无效的正则表达式: %s, 错误: %v", cmd.Pattern, err)
+				continue
+			}
+			matched = re.MatchString(command)
+		} else {
+			// 精确匹配或包含匹配
+			matched = strings.Contains(command, cmd.Pattern)
+		}
+
+		if matched {
+			log.Printf("[SaltJobService] 检测到危险命令: %s, 匹配规则: %s", command, cmd.Pattern)
+			return true, &cmd, nil
+		}
+	}
+
+	return false, nil, nil
 }
 
 // CreateJob 创建作业记录

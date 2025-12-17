@@ -209,9 +209,14 @@ const SaltStackDashboard = () => {
     cleanup_enabled: true,
     cleanup_interval_hour: 24,
     last_cleanup_time: null,
+    blacklist_enabled: true,
+    dangerous_commands: [],
   });
   const [jobConfigLoading, setJobConfigLoading] = useState(false);
   const [jobConfigSaving, setJobConfigSaving] = useState(false);
+  const [editingCommand, setEditingCommand] = useState(null); // 编辑中的危险命令
+  const [commandModalVisible, setCommandModalVisible] = useState(false); // 危险命令编辑弹窗
+  const [commandForm] = Form.useForm(); // 危险命令表单
 
   // 自动刷新状态
   const [autoRefreshMinions, setAutoRefreshMinions] = useState(false);
@@ -1589,6 +1594,81 @@ echo "}"`,
       message.error(t('saltstack.configSaveFailed', '保存配置失败') + ': ' + (e.response?.data?.error || e.message));
     } finally {
       setJobConfigSaving(false);
+    }
+  };
+
+  // 添加危险命令
+  const handleAddDangerousCommand = () => {
+    setEditingCommand(null);
+    commandForm.resetFields();
+    commandForm.setFieldsValue({
+      pattern: '',
+      is_regex: false,
+      description: '',
+      severity: 'high',
+      enabled: true,
+    });
+    setCommandModalVisible(true);
+  };
+
+  // 编辑危险命令
+  const handleEditDangerousCommand = (cmd, index) => {
+    setEditingCommand({ ...cmd, _index: index });
+    commandForm.setFieldsValue({
+      pattern: cmd.pattern,
+      is_regex: cmd.is_regex,
+      description: cmd.description,
+      severity: cmd.severity,
+      enabled: cmd.enabled,
+    });
+    setCommandModalVisible(true);
+  };
+
+  // 删除危险命令
+  const handleDeleteDangerousCommand = (index) => {
+    const newCommands = [...(jobConfig.dangerous_commands || [])];
+    newCommands.splice(index, 1);
+    setJobConfig(prev => ({ ...prev, dangerous_commands: newCommands }));
+  };
+
+  // 切换危险命令启用状态
+  const handleToggleDangerousCommand = (index, enabled) => {
+    const newCommands = [...(jobConfig.dangerous_commands || [])];
+    newCommands[index] = { ...newCommands[index], enabled };
+    setJobConfig(prev => ({ ...prev, dangerous_commands: newCommands }));
+  };
+
+  // 保存危险命令
+  const handleSaveDangerousCommand = async () => {
+    try {
+      const values = await commandForm.validateFields();
+      const newCommands = [...(jobConfig.dangerous_commands || [])];
+      
+      if (editingCommand && editingCommand._index !== undefined) {
+        // 编辑现有命令
+        newCommands[editingCommand._index] = {
+          pattern: values.pattern,
+          is_regex: values.is_regex,
+          description: values.description,
+          severity: values.severity,
+          enabled: values.enabled,
+        };
+      } else {
+        // 添加新命令
+        newCommands.push({
+          pattern: values.pattern,
+          is_regex: values.is_regex,
+          description: values.description,
+          severity: values.severity,
+          enabled: values.enabled,
+        });
+      }
+      
+      setJobConfig(prev => ({ ...prev, dangerous_commands: newCommands }));
+      setCommandModalVisible(false);
+      message.success(t('common.success', '操作成功'));
+    } catch (e) {
+      console.error('保存危险命令失败', e);
     }
   };
 

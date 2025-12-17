@@ -2631,6 +2631,40 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 		args = request.Arg
 	}
 
+	// 危险命令检查（仅对 cmd.run 等执行命令进行检查）
+	if function == "cmd.run" || function == "cmd.shell" || function == "cmd.exec_code" {
+		saltJobService := services.GetSaltJobService()
+		if saltJobService != nil {
+			// 拼接完整命令进行检查
+			var fullCommand string
+			for _, arg := range args {
+				if s, ok := arg.(string); ok {
+					fullCommand += s + " "
+				}
+			}
+
+			isDangerous, matchedRule, err := saltJobService.CheckDangerousCommand(fullCommand)
+			if err != nil {
+				log.Printf("[WARNING] 危险命令检查失败: %v", err)
+			}
+			if isDangerous && matchedRule != nil {
+				log.Printf("[SECURITY] 拦截危险命令: User=%s, Target=%s, Command=%s, Rule=%s",
+					c.GetString("username"), request.Target, fullCommand, matchedRule.Pattern)
+
+				c.JSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"error":   fmt.Sprintf("命令被安全策略拦截: %s", matchedRule.Description),
+					"details": gin.H{
+						"pattern":     matchedRule.Pattern,
+						"severity":    matchedRule.Severity,
+						"description": matchedRule.Description,
+					},
+				})
+				return
+			}
+		}
+	}
+
 	// 使用已有的 saltAPIClient 进行认证和请求
 	client := h.newSaltAPIClient()
 	if err := client.authenticate(); err != nil {
@@ -4855,7 +4889,7 @@ func (h *SaltStackHandler) GetIBPortAlerts(c *gin.Context) {
 
 // GetSaltJobConfig 获取作业配置
 // @Summary 获取作业配置
-// @Description 获取 Salt 作业的保存配置（最大保留天数、最大记录数等）
+// @Description 获取 Salt 作业的保存配置（最大保留天数、最大记录数、危险命令黑名单等）
 // @Tags SaltStack
 // @Produce json
 // @Success 200 {object} map[string]interface{}
@@ -4870,7 +4904,8 @@ func (h *SaltStackHandler) GetSaltJobConfig(c *gin.Context) {
 		return
 	}
 
-	config := saltJobService.GetConfig()
+	// 返回包含危险命令列表的完整配置
+	config := saltJobService.GetConfigWithDangerousCommands()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    config,
@@ -4896,8 +4931,17 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 		return
 	}
 
-	var config models.SaltJobConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
+	// 使用通用结构解析，以支持 dangerous_commands 字段
+	var request struct {
+		MaxRetentionDays    int                       `json:"max_retention_days"`
+		MaxRecords          int                       `json:"max_records"`
+		CleanupEnabled      bool                      `json:"cleanup_enabled"`
+		CleanupIntervalHour int                       `json:"cleanup_interval_hour"`
+		BlacklistEnabled    bool                      `json:"blacklist_enabled"`
+		DangerousCommands   []models.DangerousCommand `json:"dangerous_commands"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   err.Error(),
@@ -4906,30 +4950,53 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 	}
 
 	// 参数校验
-	if config.MaxRetentionDays < 1 {
-		config.MaxRetentionDays = 1
-	} else if config.MaxRetentionDays > 365 {
-		config.MaxRetentionDays = 365
+	if request.MaxRetentionDays < 1 {
+		request.MaxRetentionDays = 1
+	} else if request.MaxRetentionDays > 365 {
+		request.MaxRetentionDays = 365
 	}
-	if config.MaxRecords < 100 {
-		config.MaxRecords = 100
-	} else if config.MaxRecords > 100000 {
-		config.MaxRecords = 100000
+	if request.MaxRecords < 100 {
+		request.MaxRecords = 100
+	} else if request.MaxRecords > 100000 {
+		request.MaxRecords = 100000
 	}
-	if config.CleanupIntervalHour < 1 {
-		config.CleanupIntervalHour = 1
-	} else if config.CleanupIntervalHour > 168 {
-		config.CleanupIntervalHour = 168
+	if request.CleanupIntervalHour < 1 {
+		request.CleanupIntervalHour = 1
+	} else if request.CleanupIntervalHour > 168 {
+		request.CleanupIntervalHour = 168
 	}
 
-	// 保留现有配置的 ID
+	// 获取现有配置
 	existingConfig := saltJobService.GetConfig()
+	config := &models.SaltJobConfig{
+		MaxRetentionDays:    request.MaxRetentionDays,
+		MaxRecords:          request.MaxRecords,
+		CleanupEnabled:      request.CleanupEnabled,
+		CleanupIntervalHour: request.CleanupIntervalHour,
+		BlacklistEnabled:    request.BlacklistEnabled,
+	}
+
+	// 保留现有配置的 ID 和上次清理时间
 	if existingConfig != nil {
 		config.ID = existingConfig.ID
 		config.LastCleanupTime = existingConfig.LastCleanupTime
 	}
 
-	if err := saltJobService.UpdateConfig(&config); err != nil {
+	// 更新危险命令列表
+	if len(request.DangerousCommands) > 0 {
+		if err := config.SetDangerousCommands(request.DangerousCommands); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "invalid dangerous_commands: " + err.Error(),
+			})
+			return
+		}
+	} else if existingConfig != nil {
+		// 如果没有传递危险命令，保留现有的
+		config.DangerousCommandsJSON = existingConfig.DangerousCommandsJSON
+	}
+
+	if err := saltJobService.UpdateConfig(config); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   err.Error(),
@@ -4937,10 +5004,11 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 		return
 	}
 
+	// 返回更新后的完整配置
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Configuration updated",
-		"data":    config,
+		"data":    saltJobService.GetConfigWithDangerousCommands(),
 	})
 }
 

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -37,14 +38,76 @@ func (SaltJobHistory) TableName() string {
 
 // SaltJobConfig Salt作业配置（存储清理策略等）
 type SaltJobConfig struct {
-	ID                  uint      `gorm:"primaryKey" json:"id"`
-	MaxRetentionDays    int       `gorm:"default:30" json:"max_retention_days"`    // 最大保留天数
-	MaxRecords          int       `gorm:"default:10000" json:"max_records"`        // 最大记录数
-	CleanupEnabled      bool      `gorm:"default:true" json:"cleanup_enabled"`     // 是否启用自动清理
-	CleanupIntervalHour int       `gorm:"default:24" json:"cleanup_interval_hour"` // 清理间隔（小时）
-	LastCleanupTime     time.Time `json:"last_cleanup_time"`                       // 上次清理时间
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID                    uint      `gorm:"primaryKey" json:"id"`
+	MaxRetentionDays      int       `gorm:"default:30" json:"max_retention_days"`         // 最大保留天数
+	MaxRecords            int       `gorm:"default:10000" json:"max_records"`             // 最大记录数
+	CleanupEnabled        bool      `gorm:"default:true" json:"cleanup_enabled"`          // 是否启用自动清理
+	CleanupIntervalHour   int       `gorm:"default:24" json:"cleanup_interval_hour"`      // 清理间隔（小时）
+	LastCleanupTime       time.Time `json:"last_cleanup_time"`                            // 上次清理时间
+	DangerousCommandsJSON string    `gorm:"type:text;column:dangerous_commands" json:"-"` // 危险命令黑名单（JSON存储）
+	BlacklistEnabled      bool      `gorm:"default:true" json:"blacklist_enabled"`        // 是否启用黑名单检查
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// DangerousCommand 危险命令配置
+type DangerousCommand struct {
+	Pattern     string `json:"pattern"`     // 命令模式（支持正则表达式）
+	IsRegex     bool   `json:"is_regex"`    // 是否为正则表达式
+	Description string `json:"description"` // 描述说明
+	Severity    string `json:"severity"`    // 危险等级: critical, high, medium, low
+	Enabled     bool   `json:"enabled"`     // 是否启用
+}
+
+// GetDangerousCommands 获取危险命令列表
+func (c *SaltJobConfig) GetDangerousCommands() []DangerousCommand {
+	if c.DangerousCommandsJSON == "" {
+		return GetDefaultDangerousCommands()
+	}
+	var commands []DangerousCommand
+	if err := json.Unmarshal([]byte(c.DangerousCommandsJSON), &commands); err != nil {
+		return GetDefaultDangerousCommands()
+	}
+	return commands
+}
+
+// SetDangerousCommands 设置危险命令列表
+func (c *SaltJobConfig) SetDangerousCommands(commands []DangerousCommand) error {
+	data, err := json.Marshal(commands)
+	if err != nil {
+		return err
+	}
+	c.DangerousCommandsJSON = string(data)
+	return nil
+}
+
+// GetDefaultDangerousCommands 获取默认危险命令列表
+func GetDefaultDangerousCommands() []DangerousCommand {
+	return []DangerousCommand{
+		{Pattern: "rm -rf /", IsRegex: false, Description: "删除根目录所有文件", Severity: "critical", Enabled: true},
+		{Pattern: "rm -rf /*", IsRegex: false, Description: "删除根目录所有文件", Severity: "critical", Enabled: true},
+		{Pattern: `rm\s+(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)\s+/\s*$`, IsRegex: true, Description: "递归强制删除根目录", Severity: "critical", Enabled: true},
+		{Pattern: "dd if=/dev/zero of=/dev/sd", IsRegex: false, Description: "清空磁盘数据", Severity: "critical", Enabled: true},
+		{Pattern: "mkfs", IsRegex: false, Description: "格式化文件系统", Severity: "critical", Enabled: true},
+		{Pattern: ":(){:|:&};:", IsRegex: false, Description: "Fork炸弹", Severity: "critical", Enabled: true},
+		{Pattern: "chmod -R 777 /", IsRegex: false, Description: "修改根目录权限", Severity: "high", Enabled: true},
+		{Pattern: "chown -R", IsRegex: false, Description: "递归修改所有者", Severity: "high", Enabled: true},
+		{Pattern: "> /dev/sda", IsRegex: false, Description: "清空磁盘设备", Severity: "critical", Enabled: true},
+		{Pattern: "mv /* /dev/null", IsRegex: false, Description: "移动所有文件到空设备", Severity: "critical", Enabled: true},
+		{Pattern: "wget.*|.*sh", IsRegex: true, Description: "下载并执行脚本（需审核）", Severity: "medium", Enabled: false},
+		{Pattern: "curl.*|.*sh", IsRegex: true, Description: "下载并执行脚本（需审核）", Severity: "medium", Enabled: false},
+		{Pattern: "shutdown", IsRegex: false, Description: "关机命令", Severity: "high", Enabled: true},
+		{Pattern: "reboot", IsRegex: false, Description: "重启命令", Severity: "high", Enabled: true},
+		{Pattern: "halt", IsRegex: false, Description: "停止系统", Severity: "high", Enabled: true},
+		{Pattern: "init 0", IsRegex: false, Description: "关机", Severity: "high", Enabled: true},
+		{Pattern: "init 6", IsRegex: false, Description: "重启", Severity: "high", Enabled: true},
+		{Pattern: "systemctl poweroff", IsRegex: false, Description: "关机", Severity: "high", Enabled: true},
+		{Pattern: "systemctl reboot", IsRegex: false, Description: "重启", Severity: "high", Enabled: true},
+		{Pattern: `echo\s+.*\s*>\s*/etc/passwd`, IsRegex: true, Description: "覆盖密码文件", Severity: "critical", Enabled: true},
+		{Pattern: `echo\s+.*\s*>\s*/etc/shadow`, IsRegex: true, Description: "覆盖密码文件", Severity: "critical", Enabled: true},
+		{Pattern: "userdel root", IsRegex: false, Description: "删除root用户", Severity: "critical", Enabled: true},
+		{Pattern: "passwd -d root", IsRegex: false, Description: "删除root密码", Severity: "critical", Enabled: true},
+	}
 }
 
 // TableName 指定表名
