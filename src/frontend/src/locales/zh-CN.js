@@ -67,6 +67,10 @@ export default {
     copyFailed: '复制失败',
     createdAt: '创建时间',
     autoRefresh: '自动刷新',
+    days: '天',
+    hours: '小时',
+    minutes: '分钟',
+    seconds: '秒',
   },
 
   // 主题

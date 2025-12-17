@@ -67,6 +67,10 @@ export default {
     copyFailed: 'Copy failed',
     createdAt: 'Created At',
     autoRefresh: 'Auto Refresh',
+    days: 'days',
+    hours: 'hours',
+    minutes: 'minutes',
+    seconds: 'seconds',
   },
 
   // Theme
