@@ -989,12 +989,10 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		// 获取 API 根信息（用于APIVersion）- 这个通常很快
 		result.apiInfo, _ = client.makeRequest("/", "GET", nil)
 
-		// 获取 Salt 版本信息 - 尝试多种方式
-		// 方式1: 使用 salt.cmd runner 执行 salt --version
-		result.versionInfo, _ = client.makeRunner("salt.cmd", map[string]interface{}{
-			"fun": "cmd.run",
-			"arg": []string{"salt --version 2>/dev/null | head -1 || salt-master --version 2>/dev/null | head -1"},
-		})
+		// 获取 Salt 版本信息 - 使用 manage.versions runner
+		// 这会返回 Master 和所有 Minion 的版本信息
+		result.versionInfo, _ = client.makeRunner("manage.versions", nil)
+		log.Printf("[SaltVersion] manage.versions 响应: %+v", result.versionInfo)
 
 		// 获取 up/down 状态 - 这是最重要的
 		// 设置较短的超时参数，避免等待离线 minion 过久
@@ -2607,33 +2605,42 @@ func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string
 	return ""
 }
 
-// extractSaltVersion 从 salt.cmd runner 响应中提取 Salt 版本
-// 命令输出格式: "salt 3006.9 (Sulfur)" 或 "salt-master 3006.9"
+// extractSaltVersion 从 manage.versions runner 响应中提取 Salt Master 版本
+// manage.versions 返回格式: {"return": [{"Master": "3006.9", "Minion Versions": {"3006.9": ["minion1"]}}]}
 func (h *SaltStackHandler) extractSaltVersion(resp map[string]interface{}) string {
 	if resp == nil {
 		return ""
 	}
 	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
-		// 格式1: 直接是字符串输出 {"return": ["salt 3006.9 (Sulfur)"]}
+		// manage.versions 格式: {"Master": "3006.9", ...}
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			// 提取 Master 版本
+			if master, ok := m["Master"].(string); ok && master != "" {
+				return master
+			}
+			// 备用：尝试其他字段名
+			if version, ok := m["master"].(string); ok && version != "" {
+				return version
+			}
+			if version, ok := m["version"].(string); ok && version != "" {
+				return version
+			}
+			// 尝试从 "Minion Versions" 获取（所有版本应该相同）
+			if minionVersions, ok := m["Minion Versions"].(map[string]interface{}); ok {
+				for version := range minionVersions {
+					return version
+				}
+			}
+		}
+		// 格式2: 直接是字符串输出
 		if output, ok := ret[0].(string); ok && output != "" {
-			// 解析命令输出，提取版本号
-			// 格式: "salt 3006.9 (Sulfur)" 或 "salt-master 3006.9"
 			output = strings.TrimSpace(output)
+			// 解析 "salt 3006.9 (Sulfur)" 格式
 			parts := strings.Fields(output)
 			if len(parts) >= 2 {
-				// 返回版本号部分
 				return parts[1]
 			}
 			return output
-		}
-		// 格式2: 带结构的响应
-		if m, ok := ret[0].(map[string]interface{}); ok {
-			if v, ok := m["salt"].(string); ok && v != "" {
-				return v
-			}
-			if v, ok := m["version"].(string); ok && v != "" {
-				return v
-			}
 		}
 	}
 	return ""
@@ -2713,7 +2720,12 @@ func (h *SaltStackHandler) getUptimeFromDocker() (int64, string) {
 	}
 
 	// 查找名称包含 "salt" 的容器
-	containerNames := []string{"saltstack", "salt-master", "salt"}
+	// 添加更多可能的容器名称
+	containerNames := []string{
+		"saltstack", "salt-master", "salt", "saltstack-master",
+		"ai-infra-matrix-saltstack-1", "ai-infra-matrix_saltstack_1",
+		"matrix-saltstack", "matrix_saltstack",
+	}
 	for _, name := range containerNames {
 		var reqURL string
 		if strings.HasPrefix(dockerHost, "unix://") {
@@ -2723,10 +2735,12 @@ func (h *SaltStackHandler) getUptimeFromDocker() (int64, string) {
 		}
 
 		resp, err := httpClient.Get(reqURL)
-		if err != nil || resp.StatusCode != 200 {
-			if resp != nil {
-				resp.Body.Close()
-			}
+		if err != nil {
+			log.Printf("[Docker] 获取容器 %s 信息失败: %v", name, err)
+			continue
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
 			continue
 		}
 		defer resp.Body.Close()
@@ -2739,11 +2753,13 @@ func (h *SaltStackHandler) getUptimeFromDocker() (int64, string) {
 		if err := json.NewDecoder(resp.Body).Decode(&containerInfo); err == nil {
 			if startedAt, err := time.Parse(time.RFC3339Nano, containerInfo.State.StartedAt); err == nil {
 				uptimeSeconds := int64(time.Since(startedAt).Seconds())
+				log.Printf("[Docker] 成功获取容器 %s 启动时间: %s, 运行时间: %d秒", name, containerInfo.State.StartedAt, uptimeSeconds)
 				return uptimeSeconds, formatUptime(uptimeSeconds)
 			}
 		}
 	}
 
+	log.Printf("[Docker] 未能找到任何 Salt 容器")
 	return 0, ""
 }
 
