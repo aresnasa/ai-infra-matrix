@@ -1456,7 +1456,7 @@ echo "}"`,
   const loadJobs = async () => {
     setJobsLoading(true);
     try {
-      const response = await saltStackAPI.getJobs(10);
+      const response = await saltStackAPI.getJobs(20);
       const jobsData = response.data?.data || [];
       
       // 关联 TaskID：优先使用后端返回的 task_id，如果没有则从 localStorage 查找
@@ -1480,6 +1480,8 @@ echo "}"`,
       setDemo(prev => prev || Boolean(response.data?.demo));
     } catch (e) {
       console.error('加载SaltStack Jobs失败', e);
+      // 设置空数组避免一直转圈
+      setJobs([]);
     } finally {
       setJobsLoading(false);
     }
@@ -2896,6 +2898,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           setTimeout(() => {
             setBatchCategrafRunning(false);
             closeCategrafSSE();
+            // 任务完成后刷新 minion 列表，确保节点数据同步
+            loadMinions();
+            loadInstallTasks(1);
           }, 500);
         }
       } catch (err) {

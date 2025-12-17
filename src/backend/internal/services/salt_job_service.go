@@ -246,6 +246,20 @@ func (s *SaltJobService) GetJobByTaskID(ctx context.Context, taskID string) (*mo
 func (s *SaltJobService) ListJobs(ctx context.Context, params *models.SaltJobQueryParams) (*models.SaltJobListResponse, error) {
 	query := s.db.Model(&models.SaltJobHistory{})
 
+	// 默认过滤掉监控相关的任务，只展示用户发起的作业
+	// 监控任务包括: status.*, runner.*, test.ping, grains.items 等
+	monitoringFunctions := []string{
+		"status.cpuload", "status.meminfo", "status.cpuinfo", "status.diskusage",
+		"status.netstats", "status.uptime", "status.loadavg",
+		"runner.manage.status",
+		"test.ping",
+		"grains.items",
+		"saltutil.sync_all", "saltutil.sync_grains", "saltutil.sync_modules",
+	}
+	query = query.Where("function NOT IN ?", monitoringFunctions)
+	query = query.Where("function NOT LIKE 'status.%'")
+	query = query.Where("function NOT LIKE 'runner.%'")
+
 	// 应用过滤条件
 	if params.TaskID != "" {
 		query = query.Where("task_id = ?", params.TaskID)
