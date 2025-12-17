@@ -1485,6 +1485,41 @@ echo "}"`,
       
       setJobs(jobsWithTaskId);
       setDemo(prev => prev || Boolean(response.data?.demo));
+      
+      // 自动刷新运行中作业的状态（触发后端状态机同步）
+      const runningJobs = jobsWithTaskId.filter(job => job.status === 'running');
+      if (runningJobs.length > 0) {
+        console.log('[JobStatus] Found running jobs, triggering status refresh:', runningJobs.map(j => j.jid));
+        // 并行刷新所有运行中作业的状态
+        const refreshPromises = runningJobs.map(job => 
+          saltStackAPI.refreshJobStatus(job.jid).catch(err => {
+            console.warn(`[JobStatus] Failed to refresh job ${job.jid}:`, err.message);
+            return null;
+          })
+        );
+        const results = await Promise.all(refreshPromises);
+        
+        // 检查是否有状态变更，如果有则重新加载作业列表
+        const hasStatusChange = results.some(r => r?.data?.status && r.data.status !== 'running');
+        if (hasStatusChange) {
+          console.log('[JobStatus] Status changed, reloading job list');
+          // 延迟 500ms 后重新加载，确保数据库已更新
+          setTimeout(async () => {
+            const refreshResponse = await saltStackAPI.getJobs(10);
+            const refreshedJobsData = refreshResponse.data?.data || [];
+            const refreshedJobsWithTaskId = refreshedJobsData.map(job => {
+              const backendTaskId = job.task_id;
+              const localTaskId = getTaskIdByJid(job.jid);
+              const taskId = backendTaskId || localTaskId;
+              if (backendTaskId && !localTaskId) {
+                addJidTaskIdMapping(job.jid, backendTaskId);
+              }
+              return taskId ? { ...job, taskId } : job;
+            });
+            setJobs(refreshedJobsWithTaskId);
+          }, 500);
+        }
+      }
     } catch (e) {
       console.error('加载SaltStack Jobs失败', e);
     } finally {
@@ -3566,6 +3601,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
       case 'failed': case 'error': return 'red';
       case 'running': case 'in_progress': return 'blue';
       case 'pending': case 'queued': return 'orange';
+      case 'timeout': return 'volcano'; // 超时状态用火山红
+      case 'partial': return 'gold'; // 部分成功用金色
       default: return 'default';
     }
   };

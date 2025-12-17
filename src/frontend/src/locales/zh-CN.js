@@ -279,6 +279,8 @@ export default {
     taskRunning: '运行中',
     taskCompleted: '已完成',
     taskFailed: '失败',
+    taskTimeout: '超时',
+    taskPartial: '部分成功',
     noInstallTasks: '暂无安装任务历史',
     startBatchInstall: '开始批量安装',
 

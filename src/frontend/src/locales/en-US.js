@@ -279,6 +279,8 @@ export default {
     taskRunning: 'Running',
     taskCompleted: 'Completed',
     taskFailed: 'Failed',
+    taskTimeout: 'Timeout',
+    taskPartial: 'Partial Success',
     noInstallTasks: 'No install task history',
     startBatchInstall: 'Start Batch Install',
 
