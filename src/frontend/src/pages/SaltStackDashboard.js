@@ -35,7 +35,8 @@ import {
   SearchOutlined,
   FilterOutlined,
   ExpandOutlined,
-  CompressOutlined
+  CompressOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
