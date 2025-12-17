@@ -198,6 +198,13 @@ const SaltStackDashboard = () => {
   // 删除任务历史状态
   const [deleteTasks, setDeleteTasks] = useState([]);
   const [deleteTasksLoading, setDeleteTasksLoading] = useState(false);
+
+  // 作业持久化配置状态
+  const [jobConfig, setJobConfig] = useState(null);
+  const [jobStats, setJobStats] = useState(null);
+  const [jobConfigLoading, setJobConfigLoading] = useState(false);
+  const [jobConfigForm] = Form.useForm();
+  const [cleanupLoading, setCleanupLoading] = useState(false);
   const [deleteTasksTotal, setDeleteTasksTotal] = useState(0);
   const [expandedDeleteTaskId, setExpandedDeleteTaskId] = useState(null);
   const [deleteTaskLogs, setDeleteTaskLogs] = useState({});
@@ -1630,6 +1637,69 @@ echo "}"`,
     await loadStatus();
     // 然后并行加载 minion 列表、jobs 和分组
     await Promise.all([loadMinions(), loadJobs(), loadMinionGroups()]);
+  };
+
+  // 加载作业配置
+  const loadJobConfig = useCallback(async () => {
+    setJobConfigLoading(true);
+    try {
+      const response = await saltStackAPI.getJobConfig();
+      if (response.success) {
+        setJobConfig(response.config);
+        setJobStats(response.stats);
+        // 设置表单值
+        if (response.config) {
+          jobConfigForm.setFieldsValue({
+            retention_days: response.config.retention_days,
+            auto_cleanup_enabled: response.config.auto_cleanup_enabled,
+            cleanup_interval_hours: response.config.cleanup_interval_hours,
+            max_jobs_count: response.config.max_jobs_count,
+            redis_cache_days: response.config.redis_cache_days,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('加载作业配置失败:', error);
+      message.error(t('saltstack.loadJobConfigFailed', '加载作业配置失败'));
+    } finally {
+      setJobConfigLoading(false);
+    }
+  }, [jobConfigForm, t]);
+
+  // 保存作业配置
+  const saveJobConfig = async (values) => {
+    try {
+      const response = await saltStackAPI.updateJobConfig(values);
+      if (response.success) {
+        message.success(t('saltstack.saveJobConfigSuccess', '配置保存成功'));
+        setJobConfig(response.config);
+      } else {
+        message.error(response.error || t('saltstack.saveJobConfigFailed', '保存配置失败'));
+      }
+    } catch (error) {
+      console.error('保存作业配置失败:', error);
+      message.error(t('saltstack.saveJobConfigFailed', '保存配置失败'));
+    }
+  };
+
+  // 手动触发清理
+  const triggerCleanup = async () => {
+    setCleanupLoading(true);
+    try {
+      const response = await saltStackAPI.triggerJobCleanup();
+      if (response.success) {
+        message.success(t('saltstack.cleanupSuccess', `已清理 ${response.cleaned_count} 条记录`));
+        // 刷新统计信息
+        loadJobConfig();
+      } else {
+        message.error(response.error || t('saltstack.cleanupFailed', '清理失败'));
+      }
+    } catch (error) {
+      console.error('触发清理失败:', error);
+      message.error(t('saltstack.cleanupFailed', '清理失败'));
+    } finally {
+      setCleanupLoading(false);
+    }
   };
 
   // 仅加载 Minion 数据（不包含 Master 状态）
@@ -3637,6 +3707,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 if (key === 'jobs') {
                   loadJobs();
                 }
+                if (key === 'settings' && !jobConfig && !jobConfigLoading) {
+                  loadJobConfig();
+                }
               }}
               size="large"
             >
@@ -5218,6 +5291,216 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     />
                   </>
                 )}
+              </TabPane>
+
+              {/* 设置 Tab */}
+              <TabPane tab={t('saltstack.settings', '设置')} key="settings" icon={<SettingOutlined />}>
+                <Spin spinning={jobConfigLoading}>
+                  <Row gutter={[16, 16]}>
+                    {/* 作业统计 */}
+                    <Col span={24}>
+                      <Card title={t('saltstack.jobStatistics', '作业统计')} size="small">
+                        {jobStats ? (
+                          <Row gutter={16}>
+                            <Col span={6}>
+                              <Statistic title={t('saltstack.totalJobs', '总作业数')} value={jobStats.total_jobs || 0} />
+                            </Col>
+                            <Col span={6}>
+                              <Statistic 
+                                title={t('saltstack.runningJobs', '运行中')} 
+                                value={jobStats.running_jobs || 0}
+                                valueStyle={{ color: '#1890ff' }}
+                              />
+                            </Col>
+                            <Col span={6}>
+                              <Statistic 
+                                title={t('saltstack.completedJobs', '已完成')} 
+                                value={jobStats.completed_jobs || 0}
+                                valueStyle={{ color: '#52c41a' }}
+                              />
+                            </Col>
+                            <Col span={6}>
+                              <Statistic 
+                                title={t('saltstack.failedJobsCount', '失败')} 
+                                value={jobStats.failed_jobs || 0}
+                                valueStyle={{ color: '#ff4d4f' }}
+                              />
+                            </Col>
+                          </Row>
+                        ) : (
+                          <Empty description={t('saltstack.noStats', '暂无统计数据')} />
+                        )}
+                        {jobStats && (
+                          <Row gutter={16} style={{ marginTop: 16 }}>
+                            <Col span={8}>
+                              <Text type="secondary">{t('saltstack.oldestJob', '最早作业')}: </Text>
+                              <Text>{jobStats.oldest_job_time ? new Date(jobStats.oldest_job_time).toLocaleString() : '-'}</Text>
+                            </Col>
+                            <Col span={8}>
+                              <Text type="secondary">{t('saltstack.newestJob', '最新作业')}: </Text>
+                              <Text>{jobStats.newest_job_time ? new Date(jobStats.newest_job_time).toLocaleString() : '-'}</Text>
+                            </Col>
+                            <Col span={8}>
+                              <Text type="secondary">{t('saltstack.storageEstimate', '预估存储')}: </Text>
+                              <Text>{jobStats.storage_estimate || '-'}</Text>
+                            </Col>
+                          </Row>
+                        )}
+                      </Card>
+                    </Col>
+
+                    {/* 作业保留配置 */}
+                    <Col span={24}>
+                      <Card 
+                        title={t('saltstack.jobRetentionConfig', '作业保留配置')} 
+                        size="small"
+                        extra={
+                          <Space>
+                            <Button 
+                              icon={<ReloadOutlined />} 
+                              onClick={loadJobConfig}
+                              loading={jobConfigLoading}
+                            >
+                              {t('common.refresh', '刷新')}
+                            </Button>
+                            <Popconfirm
+                              title={t('saltstack.confirmCleanup', '确定要立即执行清理吗？')}
+                              description={t('saltstack.cleanupDescription', '将删除超过保留天数的旧作业记录')}
+                              onConfirm={triggerCleanup}
+                              okText={t('common.confirm', '确定')}
+                              cancelText={t('common.cancel', '取消')}
+                            >
+                              <Button 
+                                icon={<DeleteOutlined />}
+                                loading={cleanupLoading}
+                                danger
+                              >
+                                {t('saltstack.manualCleanup', '手动清理')}
+                              </Button>
+                            </Popconfirm>
+                          </Space>
+                        }
+                      >
+                        <Form
+                          form={jobConfigForm}
+                          layout="vertical"
+                          onFinish={saveJobConfig}
+                          initialValues={{
+                            retention_days: 30,
+                            auto_cleanup_enabled: true,
+                            cleanup_interval_hours: 24,
+                            max_jobs_count: 10000,
+                            redis_cache_days: 7,
+                          }}
+                        >
+                          <Row gutter={16}>
+                            <Col span={8}>
+                              <Form.Item
+                                name="retention_days"
+                                label={t('saltstack.retentionDays', '作业保留天数')}
+                                tooltip={t('saltstack.retentionDaysTooltip', '超过此天数的作业记录将被自动清理')}
+                                rules={[{ required: true, message: t('common.required', '请输入') }]}
+                              >
+                                <InputNumber 
+                                  min={1} 
+                                  max={365} 
+                                  style={{ width: '100%' }}
+                                  addonAfter={t('common.days', '天')}
+                                />
+                              </Form.Item>
+                            </Col>
+                            <Col span={8}>
+                              <Form.Item
+                                name="cleanup_interval_hours"
+                                label={t('saltstack.cleanupInterval', '清理检查间隔')}
+                                tooltip={t('saltstack.cleanupIntervalTooltip', '系统自动检查并清理旧作业的时间间隔')}
+                                rules={[{ required: true, message: t('common.required', '请输入') }]}
+                              >
+                                <InputNumber 
+                                  min={1} 
+                                  max={168} 
+                                  style={{ width: '100%' }}
+                                  addonAfter={t('common.hours', '小时')}
+                                />
+                              </Form.Item>
+                            </Col>
+                            <Col span={8}>
+                              <Form.Item
+                                name="max_jobs_count"
+                                label={t('saltstack.maxJobsCount', '最大作业数量')}
+                                tooltip={t('saltstack.maxJobsCountTooltip', '当作业数量超过此值时将触发清理')}
+                                rules={[{ required: true, message: t('common.required', '请输入') }]}
+                              >
+                                <InputNumber 
+                                  min={100} 
+                                  max={1000000} 
+                                  style={{ width: '100%' }}
+                                  formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                  parser={value => value.replace(/,/g, '')}
+                                />
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                          <Row gutter={16}>
+                            <Col span={8}>
+                              <Form.Item
+                                name="redis_cache_days"
+                                label={t('saltstack.redisCacheDays', 'Redis缓存天数')}
+                                tooltip={t('saltstack.redisCacheDaysTooltip', 'Redis中作业缓存的过期时间')}
+                                rules={[{ required: true, message: t('common.required', '请输入') }]}
+                              >
+                                <InputNumber 
+                                  min={1} 
+                                  max={30} 
+                                  style={{ width: '100%' }}
+                                  addonAfter={t('common.days', '天')}
+                                />
+                              </Form.Item>
+                            </Col>
+                            <Col span={8}>
+                              <Form.Item
+                                name="auto_cleanup_enabled"
+                                label={t('saltstack.autoCleanup', '自动清理')}
+                                valuePropName="checked"
+                                tooltip={t('saltstack.autoCleanupTooltip', '是否启用自动清理功能')}
+                              >
+                                <Switch 
+                                  checkedChildren={t('common.enabled', '启用')} 
+                                  unCheckedChildren={t('common.disabled', '禁用')}
+                                />
+                              </Form.Item>
+                            </Col>
+                            <Col span={8}>
+                              <Form.Item label=" " colon={false}>
+                                <Button type="primary" htmlType="submit" icon={<SafetyCertificateOutlined />}>
+                                  {t('common.save', '保存配置')}
+                                </Button>
+                              </Form.Item>
+                            </Col>
+                          </Row>
+                        </Form>
+
+                        {/* 上次清理信息 */}
+                        {jobConfig && (
+                          <Divider />
+                        )}
+                        {jobConfig && (
+                          <Descriptions size="small" column={3}>
+                            <Descriptions.Item label={t('saltstack.lastCleanup', '上次清理时间')}>
+                              {jobConfig.last_cleanup_at ? new Date(jobConfig.last_cleanup_at).toLocaleString() : t('common.never', '从未')}
+                            </Descriptions.Item>
+                            <Descriptions.Item label={t('saltstack.totalCleaned', '累计清理数量')}>
+                              {jobConfig.cleaned_count || 0}
+                            </Descriptions.Item>
+                            <Descriptions.Item label={t('saltstack.configUpdated', '配置更新时间')}>
+                              {jobConfig.updated_at ? new Date(jobConfig.updated_at).toLocaleString() : '-'}
+                            </Descriptions.Item>
+                          </Descriptions>
+                        )}
+                      </Card>
+                    </Col>
+                  </Row>
+                </Spin>
               </TabPane>
             </Tabs>
           </Card>

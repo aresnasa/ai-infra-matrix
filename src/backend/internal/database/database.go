@@ -331,6 +331,7 @@ func migrateTaskSchema() error {
 		&models.SlurmTaskStatistics{},
 		// Salt作业持久化表
 		&models.SaltJob{},
+		&models.SaltJobConfig{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
 		return fmt.Errorf("task store migration failed: %w", err)

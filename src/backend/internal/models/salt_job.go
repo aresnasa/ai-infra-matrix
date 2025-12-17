@@ -63,3 +63,42 @@ type SaltJobListResponse struct {
 	Size  int       `json:"size"`
 	Data  []SaltJob `json:"data"`
 }
+
+// SaltJobConfig Salt作业配置（系统设置）
+type SaltJobConfig struct {
+	ID                   uint       `json:"id" gorm:"primaryKey"`
+	RetentionDays        int        `json:"retention_days" gorm:"default:30"`         // 作业保留天数
+	AutoCleanupEnabled   bool       `json:"auto_cleanup_enabled" gorm:"default:true"` // 是否启用自动清理
+	CleanupIntervalHours int        `json:"cleanup_interval_hours" gorm:"default:24"` // 清理检查间隔（小时）
+	MaxJobsCount         int        `json:"max_jobs_count" gorm:"default:10000"`      // 最大作业数量（超过时触发清理）
+	RedisCacheDays       int        `json:"redis_cache_days" gorm:"default:7"`        // Redis缓存天数
+	LastCleanupAt        *time.Time `json:"last_cleanup_at"`                          // 上次清理时间
+	CleanedCount         int64      `json:"cleaned_count" gorm:"default:0"`           // 累计清理数量
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+// TableName 指定表名
+func (SaltJobConfig) TableName() string {
+	return "salt_job_config"
+}
+
+// SaltJobConfigRequest 配置更新请求
+type SaltJobConfigRequest struct {
+	RetentionDays        *int  `json:"retention_days"`
+	AutoCleanupEnabled   *bool `json:"auto_cleanup_enabled"`
+	CleanupIntervalHours *int  `json:"cleanup_interval_hours"`
+	MaxJobsCount         *int  `json:"max_jobs_count"`
+	RedisCacheDays       *int  `json:"redis_cache_days"`
+}
+
+// SaltJobStats 作业统计信息
+type SaltJobStats struct {
+	TotalJobs       int64      `json:"total_jobs"`
+	RunningJobs     int64      `json:"running_jobs"`
+	CompletedJobs   int64      `json:"completed_jobs"`
+	FailedJobs      int64      `json:"failed_jobs"`
+	OldestJobTime   *time.Time `json:"oldest_job_time"`
+	NewestJobTime   *time.Time `json:"newest_job_time"`
+	StorageEstimate string     `json:"storage_estimate"` // 预估存储大小
+}

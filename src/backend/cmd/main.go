@@ -1086,6 +1086,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	// SaltStack 管理路由（需要认证）
 	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
 
+	// 注入 Salt 作业持久化服务
+	saltJobService := services.NewSaltJobService(database.DB, cache.RDB)
+	saltStackHandler.SetSaltJobService(saltJobService)
+
 	// 节点指标回调 API（使用 API Token 认证，允许节点直接上报）
 	// 这个路由不使用 session 认证，而是使用 X-API-Token 头进行认证
 	api.POST("/saltstack/node-metrics/callback", saltStackHandler.NodeMetricsCallback)
@@ -1128,6 +1132,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.POST("/ib-ignores", saltStackHandler.AddIBPortIgnore)
 		saltstack.DELETE("/ib-ignores/:minion_id/:port_name", saltStackHandler.RemoveIBPortIgnore)
 		saltstack.GET("/ib-alerts", saltStackHandler.GetIBPortAlerts)
+		// 作业持久化配置管理
+		saltstack.GET("/jobs/config", saltStackHandler.GetSaltJobConfig)
+		saltstack.PUT("/jobs/config", saltStackHandler.UpdateSaltJobConfig)
+		saltstack.POST("/jobs/cleanup", saltStackHandler.TriggerSaltJobCleanup)
+		saltstack.GET("/jobs/stats", saltStackHandler.GetSaltJobStats)
 	}
 
 	// 仪表板统计路由（需要认证）
