@@ -607,6 +607,10 @@ export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
   getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
+  // 获取单个作业详情（优先从数据库查询，确保持久化）
+  getJobDetail: (jid) => api.get(`/saltstack/jobs/${jid}`),
+  // 通过 TaskID 获取作业详情
+  getJobByTaskId: (taskId) => api.get(`/saltstack/jobs/by-task/${taskId}`),
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
   executeCustomAsync: (payload) => api.post('/saltstack/execute-custom/async', payload),

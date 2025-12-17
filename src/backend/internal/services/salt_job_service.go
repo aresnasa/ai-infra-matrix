@@ -59,7 +59,9 @@ type SaltJobService struct {
 	config      *models.SaltJobConfig
 	configMu    sync.RWMutex
 	cleanupOnce sync.Once
+	syncOnce    sync.Once // 状态同步后台任务
 	cleanupDone chan struct{}
+	syncDone    chan struct{} // 同步任务停止信号
 }
 
 var (
@@ -74,6 +76,7 @@ func NewSaltJobService(db *gorm.DB, redisClient *redis.Client) *SaltJobService {
 			db:          db,
 			redis:       redisClient,
 			cleanupDone: make(chan struct{}),
+			syncDone:    make(chan struct{}),
 		}
 		// 自动迁移数据库表
 		if err := db.AutoMigrate(&models.SaltJobHistory{}, &models.SaltJobConfig{}); err != nil {
@@ -83,6 +86,8 @@ func NewSaltJobService(db *gorm.DB, redisClient *redis.Client) *SaltJobService {
 		saltJobServiceInstance.loadOrCreateConfig()
 		// 启动后台清理任务
 		saltJobServiceInstance.startCleanupWorker()
+		// 启动后台状态同步任务
+		saltJobServiceInstance.startJobStatusSyncWorker()
 	})
 	return saltJobServiceInstance
 }
@@ -507,4 +512,209 @@ func (s *SaltJobService) CheckAndUpdateStaleJobs(ctx context.Context, maxRunning
 // Stop 停止服务
 func (s *SaltJobService) Stop() {
 	close(s.cleanupDone)
+	close(s.syncDone)
+}
+
+// startJobStatusSyncWorker 启动后台状态同步任务
+// 定期检查 running 状态的作业，并从 Redis 同步最新状态到数据库
+func (s *SaltJobService) startJobStatusSyncWorker() {
+	s.syncOnce.Do(func() {
+		go func() {
+			// 启动时先执行一次同步
+			s.syncRunningJobs()
+
+			ticker := time.NewTicker(30 * time.Second) // 每30秒检查一次
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					s.syncRunningJobs()
+				case <-s.syncDone:
+					log.Printf("[SaltJobService] 状态同步任务已停止")
+					return
+				}
+			}
+		}()
+	})
+}
+
+// syncRunningJobs 同步 running 状态的作业
+func (s *SaltJobService) syncRunningJobs() {
+	ctx := context.Background()
+
+	// 查找所有 running 状态的作业
+	var runningJobs []models.SaltJobHistory
+	if err := s.db.Where("status = 'running'").Find(&runningJobs).Error; err != nil {
+		log.Printf("[SaltJobService] 查询运行中作业失败: %v", err)
+		return
+	}
+
+	if len(runningJobs) == 0 {
+		return
+	}
+
+	log.Printf("[SaltJobService] 检查 %d 个运行中的作业状态", len(runningJobs))
+
+	for _, job := range runningJobs {
+		// 检查作业是否已超时（超过30分钟）
+		if time.Since(job.StartTime) > 30*time.Minute {
+			log.Printf("[SaltJobService] 作业超时，标记为 timeout: JID=%s, StartTime=%s", job.JID, job.StartTime)
+			s.TimeoutJob(ctx, job.JID)
+			continue
+		}
+
+		// 尝试从 Redis 获取最新状态
+		if s.redis != nil {
+			jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", job.JID)
+			jobInfoJSON, err := s.redis.Get(ctx, jobDetailKey).Result()
+			if err == nil && jobInfoJSON != "" {
+				var cachedJob map[string]interface{}
+				if err := json.Unmarshal([]byte(jobInfoJSON), &cachedJob); err == nil {
+					status, _ := cachedJob["status"].(string)
+					if status != "" && status != "running" {
+						// Redis 中状态已更新，同步到数据库
+						log.Printf("[SaltJobService] 从 Redis 同步作业状态: JID=%s, 新状态=%s", job.JID, status)
+
+						update := &models.SaltJobUpdateRequest{
+							Status: status,
+						}
+
+						// 解析成功/失败数量
+						if sc, ok := cachedJob["success_count"].(float64); ok {
+							update.SuccessCount = int(sc)
+						}
+						if fc, ok := cachedJob["failed_count"].(float64); ok {
+							update.FailedCount = int(fc)
+						}
+
+						// 解析结果
+						if result, ok := cachedJob["result"].(map[string]interface{}); ok {
+							update.Result = result
+						}
+
+						// 解析返回码
+						if rc, ok := cachedJob["return_code"].(float64); ok {
+							update.ReturnCode = int(rc)
+						}
+
+						s.UpdateJobStatus(ctx, job.JID, update)
+					}
+				}
+			}
+		}
+	}
+}
+
+// SyncJobFromRedis 从 Redis 同步单个作业到数据库（用于命令执行后立即同步）
+func (s *SaltJobService) SyncJobFromRedis(ctx context.Context, jid string) error {
+	if s.redis == nil {
+		return fmt.Errorf("redis not available")
+	}
+
+	// 先检查数据库是否已存在
+	var existingJob models.SaltJobHistory
+	if err := s.db.Where("jid = ?", jid).First(&existingJob).Error; err == nil {
+		// 作业已存在，更新状态
+		jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+		jobInfoJSON, err := s.redis.Get(ctx, jobDetailKey).Result()
+		if err != nil {
+			return fmt.Errorf("redis get failed: %v", err)
+		}
+
+		var cachedJob map[string]interface{}
+		if err := json.Unmarshal([]byte(jobInfoJSON), &cachedJob); err != nil {
+			return fmt.Errorf("json unmarshal failed: %v", err)
+		}
+
+		status, _ := cachedJob["status"].(string)
+		if status != "" && status != existingJob.Status {
+			update := &models.SaltJobUpdateRequest{Status: status}
+			if sc, ok := cachedJob["success_count"].(float64); ok {
+				update.SuccessCount = int(sc)
+			}
+			if fc, ok := cachedJob["failed_count"].(float64); ok {
+				update.FailedCount = int(fc)
+			}
+			if result, ok := cachedJob["result"].(map[string]interface{}); ok {
+				update.Result = result
+			}
+			return s.UpdateJobStatus(ctx, jid, update)
+		}
+		return nil
+	}
+
+	// 数据库不存在，从 Redis 创建
+	return s.createJobFromRedis(ctx, jid)
+}
+
+// createJobFromRedis 从 Redis 创建作业记录
+func (s *SaltJobService) createJobFromRedis(ctx context.Context, jid string) error {
+	if s.redis == nil {
+		return fmt.Errorf("redis not available")
+	}
+
+	jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+	jobInfoJSON, err := s.redis.Get(ctx, jobDetailKey).Result()
+	if err != nil {
+		return fmt.Errorf("redis get failed: %v", err)
+	}
+
+	var cachedJob map[string]interface{}
+	if err := json.Unmarshal([]byte(jobInfoJSON), &cachedJob); err != nil {
+		return fmt.Errorf("json unmarshal failed: %v", err)
+	}
+
+	function, _ := cachedJob["function"].(string)
+	target, _ := cachedJob["target"].(string)
+	user, _ := cachedJob["user"].(string)
+	taskID, _ := cachedJob["task_id"].(string)
+	status, _ := cachedJob["status"].(string)
+	if status == "" {
+		status = "running"
+	}
+
+	// 解析参数
+	var argsStr string
+	if args, ok := cachedJob["arguments"]; ok {
+		argsJSON, _ := json.Marshal(args)
+		argsStr = string(argsJSON)
+	}
+
+	// 解析结果
+	var resultStr string
+	if result, ok := cachedJob["result"]; ok && result != nil {
+		resultJSON, _ := json.Marshal(result)
+		resultStr = string(resultJSON)
+	}
+
+	// 解析开始时间
+	startTime := time.Now()
+	if startTimeStr, ok := cachedJob["start_time"].(string); ok && startTimeStr != "" {
+		if t, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+			startTime = t
+		}
+	}
+
+	job := &models.SaltJobHistory{
+		JID:       jid,
+		TaskID:    taskID,
+		Function:  function,
+		Target:    target,
+		Arguments: argsStr,
+		Result:    resultStr,
+		User:      user,
+		Status:    status,
+		StartTime: startTime,
+	}
+
+	// 解析成功/失败数量
+	if sc, ok := cachedJob["success_count"].(float64); ok {
+		job.SuccessCount = int(sc)
+	}
+	if fc, ok := cachedJob["failed_count"].(float64); ok {
+		job.FailedCount = int(fc)
+	}
+
+	return s.CreateJob(ctx, job)
 }

@@ -1834,6 +1834,8 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 }
 
 // GetSaltJobDetail 获取单个Salt作业的详细结果
+// 优先从数据库查询已持久化的作业，只有数据库没有时才从 Salt API 查询
+// 如果从 Salt API 获取到数据，会自动同步到数据库
 func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
 	jid := c.Param("jid")
 	if jid == "" {
@@ -1841,22 +1843,96 @@ func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
 		return
 	}
 
-	// 创建API客户端并认证
+	ctx := context.Background()
+
+	// Step 1: 优先从数据库查询（最可靠的数据源）
+	saltJobService := services.GetSaltJobService()
+	if saltJobService != nil {
+		dbJob, err := saltJobService.GetJobByJID(ctx, jid)
+		if err == nil && dbJob != nil {
+			log.Printf("[GetSaltJobDetail] 从数据库获取作业: JID=%s", jid)
+
+			// 解析结果 JSON
+			var resultData map[string]interface{}
+			if dbJob.Result != "" {
+				json.Unmarshal([]byte(dbJob.Result), &resultData)
+			}
+
+			// 解析参数
+			var args []string
+			if dbJob.Arguments != "" {
+				json.Unmarshal([]byte(dbJob.Arguments), &args)
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"jid":    jid,
+				"source": "database",
+				"info": map[string]interface{}{
+					"Function":    dbJob.Function,
+					"Target":      dbJob.Target,
+					"Arguments":   args,
+					"User":        dbJob.User,
+					"StartTime":   dbJob.StartTime.Format(time.RFC3339),
+					"Status":      dbJob.Status,
+					"task_id":     dbJob.TaskID,
+					"return_code": dbJob.ReturnCode,
+				},
+				"result":        resultData,
+				"status":        dbJob.Status,
+				"task_id":       dbJob.TaskID,
+				"user":          dbJob.User,
+				"start_time":    dbJob.StartTime,
+				"end_time":      dbJob.EndTime,
+				"duration":      dbJob.Duration,
+				"success_count": dbJob.SuccessCount,
+				"failed_count":  dbJob.FailedCount,
+				"error_message": dbJob.ErrorMessage,
+			})
+			return
+		}
+	}
+
+	// Step 2: 数据库没有，尝试从 Redis 缓存获取
+	if h.cache != nil {
+		jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+		jobInfoJSON, err := h.cache.Get(ctx, jobDetailKey).Result()
+		if err == nil && jobInfoJSON != "" {
+			log.Printf("[GetSaltJobDetail] 从 Redis 获取作业: JID=%s", jid)
+
+			var cachedJob map[string]interface{}
+			if err := json.Unmarshal([]byte(jobInfoJSON), &cachedJob); err == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"jid":    jid,
+					"source": "redis",
+					"info":   cachedJob,
+					"result": cachedJob["result"],
+				})
+				return
+			}
+		}
+	}
+
+	// Step 3: 都没有，从 Salt API 查询
+	log.Printf("[GetSaltJobDetail] 从 Salt API 查询作业: JID=%s", jid)
+
 	client := h.newSaltAPIClient()
 	if err := client.authenticate(); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
 		return
 	}
 
-	// 调用 Salt API 获取作业详情: GET /jobs/<jid>
 	resp, err := client.makeRequest("/jobs/"+jid, "GET", nil)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取作业详情失败: %v", err)})
+		// Salt API 也查不到，返回未找到
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "作业不存在或已过期",
+			"jid":     jid,
+			"message": "该作业可能已被 Salt Master 清理，建议检查作业历史配置中的保留时间",
+		})
 		return
 	}
 
-	// 解析返回结果
-	// 典型响应格式: {"info": [{"Function": "cmd.run", "Target": "*", ...}], "return": [{"minion1": "output1", "minion2": "output2"}]}
+	// 解析 Salt API 返回结果
 	var jobInfo map[string]interface{}
 	var jobResult map[string]interface{}
 
@@ -1872,8 +1948,54 @@ func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
 		}
 	}
 
+	// Step 4: 从 Salt API 获取成功，同步到数据库（兜底记录）
+	if saltJobService != nil && jobInfo != nil {
+		function := getStringFromMap(jobInfo, "Function")
+		target := getStringFromMap(jobInfo, "Target")
+		user := getStringFromMap(jobInfo, "User")
+
+		// 解析参数
+		var argsStr string
+		if args, ok := jobInfo["Arguments"].([]interface{}); ok {
+			argsJSON, _ := json.Marshal(args)
+			argsStr = string(argsJSON)
+		}
+
+		// 解析结果
+		var resultStr string
+		if jobResult != nil {
+			resultJSON, _ := json.Marshal(jobResult)
+			resultStr = string(resultJSON)
+		}
+
+		// 确定状态
+		status := "completed"
+		if len(jobResult) == 0 {
+			status = "unknown"
+		}
+
+		// 创建或更新数据库记录
+		dbJob := &models.SaltJobHistory{
+			JID:       jid,
+			Function:  function,
+			Target:    target,
+			Arguments: argsStr,
+			Result:    resultStr,
+			User:      user,
+			Status:    status,
+			StartTime: time.Now(), // Salt API 可能不返回精确时间
+		}
+
+		if err := saltJobService.CreateJob(ctx, dbJob); err != nil {
+			log.Printf("[GetSaltJobDetail] 同步作业到数据库失败: %v", err)
+		} else {
+			log.Printf("[GetSaltJobDetail] 已同步作业到数据库: JID=%s", jid)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"jid":    jid,
+		"source": "salt_api",
 		"info":   jobInfo,
 		"result": jobResult,
 		"raw":    resp,
@@ -2589,6 +2711,15 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 
 	log.Printf("[DEBUG] Salt 异步作业已提交: JID=%s, 目标minions=%v", jid, minions)
 
+	// 从认证上下文获取用户名（安全审计关键字段）
+	username := "unknown"
+	if u, exists := c.Get("username"); exists {
+		if s, ok := u.(string); ok && s != "" {
+			username = s
+		}
+	}
+	log.Printf("[AUDIT] Salt 命令执行: User=%s, JID=%s, Function=%s, Target=%s", username, jid, function, request.Target)
+
 	// 保存作业信息到数据库和 Redis
 	ctx := context.Background()
 	argsJSON, _ := json.Marshal(args)
@@ -2603,7 +2734,7 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 			Arguments: string(argsJSON),
 			Target:    request.Target,
 			Status:    "running",
-			User:      "admin", // TODO: 从认证上下文获取
+			User:      username, // 从认证上下文获取
 			StartTime: time.Now(),
 		}
 		if err := saltJobService.CreateJob(ctx, jobHistory); err != nil {
@@ -2621,7 +2752,7 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 			"arguments":  args,
 			"start_time": time.Now().Format(time.RFC3339),
 			"status":     "running",
-			"user":       "admin", // TODO: 从认证上下文获取
+			"user":       username, // 从认证上下文获取
 		}
 		if request.TaskID != "" {
 			jobInfo["task_id"] = request.TaskID
