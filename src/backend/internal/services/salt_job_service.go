@@ -129,6 +129,11 @@ func (s *SaltJobService) GetConfig() *models.SaltJobConfig {
 	return s.config
 }
 
+// GetDB 获取数据库连接（用于直接查询）
+func (s *SaltJobService) GetDB() *gorm.DB {
+	return s.db
+}
+
 // GetConfigWithDangerousCommands 获取配置包含危险命令列表
 func (s *SaltJobService) GetConfigWithDangerousCommands() map[string]interface{} {
 	s.configMu.RLock()
@@ -223,7 +228,7 @@ func (s *SaltJobService) CheckDangerousCommand(command string) (bool, *models.Da
 	return false, nil, nil
 }
 
-// CreateJob 创建作业记录
+// CreateJob 创建或更新作业记录（使用 Upsert 避免重复问题）
 func (s *SaltJobService) CreateJob(ctx context.Context, job *models.SaltJobHistory) error {
 	// 设置默认状态
 	if job.Status == "" {
@@ -233,16 +238,60 @@ func (s *SaltJobService) CreateJob(ctx context.Context, job *models.SaltJobHisto
 		job.StartTime = time.Now()
 	}
 
-	// 保存到数据库
-	if err := s.db.Create(job).Error; err != nil {
-		log.Printf("[SaltJobService] 创建作业记录失败: %v", err)
-		return err
+	// 使用 Upsert (FirstOrCreate + Updates) 处理重复 JID
+	// 这样即使 JID 重复出现，也会正确更新而不是报错
+	var existingJob models.SaltJobHistory
+	result := s.db.Where("jid = ?", job.JID).First(&existingJob)
+
+	if result.Error == nil {
+		// JID 已存在，执行更新（但保留原有的某些字段如 StartTime）
+		// 只更新状态、结果和其他执行后的信息
+		updateFields := map[string]interface{}{
+			"status":        job.Status,
+			"result":        job.Result,
+			"error_message": job.ErrorMessage,
+			"return_code":   job.ReturnCode,
+			"success_count": job.SuccessCount,
+			"failed_count":  job.FailedCount,
+			"end_time":      job.EndTime,
+			"duration":      job.Duration,
+			"task_id":       job.TaskID,
+		}
+
+		// 如果新的字段有值，才更新
+		if job.Function != "" {
+			updateFields["function"] = job.Function
+		}
+		if job.Target != "" {
+			updateFields["target"] = job.Target
+		}
+		if job.Arguments != "" {
+			updateFields["arguments"] = job.Arguments
+		}
+
+		if err := s.db.Model(&existingJob).Updates(updateFields).Error; err != nil {
+			log.Printf("[SaltJobService] 更新作业记录失败: %v", err)
+			return err
+		}
+
+		*job = existingJob
+		log.Printf("[SaltJobService] 作业记录已更新: JID=%s, TaskID=%s", job.JID, job.TaskID)
+	} else if result.Error.Error() == "record not found" {
+		// JID 不存在，创建新记录
+		if err := s.db.Create(job).Error; err != nil {
+			log.Printf("[SaltJobService] 创建作业记录失败: %v", err)
+			return err
+		}
+		log.Printf("[SaltJobService] 作业记录已创建: JID=%s, TaskID=%s", job.JID, job.TaskID)
+	} else {
+		// 其他数据库错误
+		log.Printf("[SaltJobService] 查询作业记录出错: %v", result.Error)
+		return result.Error
 	}
 
 	// 同时更新 Redis 缓存（用于快速查询）
 	s.cacheJobToRedis(ctx, job)
 
-	log.Printf("[SaltJobService] 作业记录已创建: JID=%s, TaskID=%s", job.JID, job.TaskID)
 	return nil
 }
 

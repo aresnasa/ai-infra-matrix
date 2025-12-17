@@ -1846,10 +1846,11 @@ func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
 	ctx := context.Background()
 
 	// Step 1: 优先从数据库查询（最可靠的数据源）
+	// 注意：不使用缓存的 GetJobByJID，直接查询数据库以确保获取最新数据
 	saltJobService := services.GetSaltJobService()
 	if saltJobService != nil {
-		dbJob, err := saltJobService.GetJobByJID(ctx, jid)
-		if err == nil && dbJob != nil {
+		var dbJob models.SaltJobHistory
+		if err := saltJobService.GetDB().Where("jid = ?", jid).First(&dbJob).Error; err == nil {
 			log.Printf("[GetSaltJobDetail] 从数据库获取作业: JID=%s", jid)
 
 			// 解析结果 JSON
@@ -1974,6 +1975,13 @@ func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
 			status = "unknown"
 		}
 
+		// 获取原有的 StartTime（如果存在）
+		var existingJob models.SaltJobHistory
+		startTime := time.Now()
+		if err := saltJobService.GetDB().Where("jid = ?", jid).First(&existingJob).Error; err == nil {
+			startTime = existingJob.StartTime
+		}
+
 		// 创建或更新数据库记录
 		dbJob := &models.SaltJobHistory{
 			JID:       jid,
@@ -1983,7 +1991,7 @@ func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
 			Result:    resultStr,
 			User:      user,
 			Status:    status,
-			StartTime: time.Now(), // Salt API 可能不返回精确时间
+			StartTime: startTime, // 保留原有的 StartTime
 		}
 
 		if err := saltJobService.CreateJob(ctx, dbJob); err != nil {
