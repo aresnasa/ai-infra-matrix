@@ -224,6 +224,47 @@ export const kubernetesAPI = {
       params: { ...params, kinds: kindsParam },
     });
   },
+
+  // ---- Helm 相关 API ----
+  // 获取 Helm releases 列表
+  getHelmReleases: (id, namespace) => api.get(`/kubernetes/clusters/${id}/helm/releases`, { params: { namespace } }),
+  
+  // 获取单个 release 详情
+  getHelmRelease: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/releases/${releaseName}`, { params: { namespace } }),
+  
+  // 安装 Helm chart
+  installHelmChart: (id, data) => api.post(`/kubernetes/clusters/${id}/helm/releases`, data),
+  
+  // 升级 Helm release
+  upgradeHelmRelease: (id, namespace, releaseName, data) => api.put(`/kubernetes/clusters/${id}/helm/releases/${releaseName}`, { ...data, namespace }),
+  
+  // 卸载 Helm release
+  uninstallHelmRelease: (id, namespace, releaseName) => api.delete(`/kubernetes/clusters/${id}/helm/releases/${releaseName}`, { params: { namespace } }),
+  
+  // 回滚 Helm release
+  rollbackHelmRelease: (id, namespace, releaseName, revision) => api.post(`/kubernetes/clusters/${id}/helm/releases/${releaseName}/rollback`, { namespace, revision }),
+  
+  // 获取 Helm release 历史
+  getHelmReleaseHistory: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/releases/${releaseName}/history`, { params: { namespace } }),
+  
+  // 获取 Helm release values
+  getHelmReleaseValues: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/releases/${releaseName}/values`, { params: { namespace } }),
+  
+  // Helm 仓库管理
+  getHelmRepositories: (id) => api.get(`/kubernetes/clusters/${id}/helm/repositories`),
+  addHelmRepository: (id, data) => api.post(`/kubernetes/clusters/${id}/helm/repositories`, data),
+  updateHelmRepository: (id, repoName) => api.put(`/kubernetes/clusters/${id}/helm/repositories/${repoName}`),
+  removeHelmRepository: (id, repoName) => api.delete(`/kubernetes/clusters/${id}/helm/repositories/${repoName}`),
+  
+  // 搜索 Helm charts
+  searchHelmCharts: (id, keyword) => api.get(`/kubernetes/clusters/${id}/helm/charts/search`, { params: { keyword } }),
+  
+  // 获取 chart 详情
+  getHelmChartInfo: (id, repoName, chartName, version) => api.get(`/kubernetes/clusters/${id}/helm/charts/${repoName}/${chartName}`, { params: { version } }),
+  
+  // 导入/导出 Helm 配置
+  importHelmConfig: (id, config) => api.post(`/kubernetes/clusters/${id}/helm/import`, config),
+  exportHelmConfig: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/export/${releaseName}`, { params: { namespace } }),
 };
 
 // Ansible管理API
