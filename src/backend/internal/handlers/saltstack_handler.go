@@ -1726,6 +1726,19 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 					TaskID:   getStringFromMap(jobInfo, "task_id"),
 				}
 
+				// 解析成功/失败数量
+				if sc, ok := jobInfo["success_count"].(float64); ok {
+					newJob.SuccessCount = int(sc)
+				}
+				if fc, ok := jobInfo["failed_count"].(float64); ok {
+					newJob.FailedCount = int(fc)
+				}
+
+				// 解析结果
+				if result, ok := jobInfo["result"].(map[string]interface{}); ok {
+					newJob.Result = result
+				}
+
 				// 解析参数
 				if args, ok := jobInfo["arguments"].([]interface{}); ok {
 					for _, arg := range args {
@@ -1742,6 +1755,13 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 					}
 				} else {
 					newJob.StartTime = time.Now()
+				}
+
+				// 解析结束时间
+				if endTimeStr, ok := jobInfo["end_time"].(string); ok {
+					if t, err := time.Parse(time.RFC3339, endTimeStr); err == nil {
+						newJob.EndTime = &t
+					}
 				}
 
 				// 添加到作业列表
@@ -2663,11 +2683,63 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 			if m, ok := ret[0].(map[string]interface{}); ok && len(m) > 0 {
 				finalResult = m
 				log.Printf("[DEBUG] 作业 %s 完成，收到 %d 个节点的结果", jid, len(m))
+
+				// 更新 Redis 中的作业状态为 completed
+				if h.cache != nil {
+					jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+					jobInfoJSON, err := h.cache.Get(context.Background(), jobDetailKey).Result()
+					if err == nil {
+						var jobInfo map[string]interface{}
+						if json.Unmarshal([]byte(jobInfoJSON), &jobInfo) == nil {
+							jobInfo["status"] = "completed"
+							jobInfo["end_time"] = time.Now().Format(time.RFC3339)
+							jobInfo["result"] = m
+							// 统计成功和失败数量
+							successCount := 0
+							failedCount := 0
+							for _, v := range m {
+								if vMap, ok := v.(map[string]interface{}); ok {
+									if retcode, ok := vMap["retcode"].(float64); ok && retcode != 0 {
+										failedCount++
+									} else {
+										successCount++
+									}
+								} else {
+									successCount++ // 简单结果视为成功
+								}
+							}
+							jobInfo["success_count"] = successCount
+							jobInfo["failed_count"] = failedCount
+							if updatedJSON, err := json.Marshal(jobInfo); err == nil {
+								h.cache.Set(context.Background(), jobDetailKey, string(updatedJSON), 7*24*time.Hour)
+								log.Printf("[DEBUG] 已更新作业 %s 状态为 completed", jid)
+							}
+						}
+					}
+				}
+
 				break
 			}
 		}
 
 		time.Sleep(pollInterval)
+	}
+
+	// 如果轮询超时，更新状态为 timeout
+	if finalResult == nil && h.cache != nil {
+		jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+		jobInfoJSON, err := h.cache.Get(context.Background(), jobDetailKey).Result()
+		if err == nil {
+			var jobInfo map[string]interface{}
+			if json.Unmarshal([]byte(jobInfoJSON), &jobInfo) == nil {
+				jobInfo["status"] = "timeout"
+				jobInfo["end_time"] = time.Now().Format(time.RFC3339)
+				if updatedJSON, err := json.Marshal(jobInfo); err == nil {
+					h.cache.Set(context.Background(), jobDetailKey, string(updatedJSON), 7*24*time.Hour)
+					log.Printf("[DEBUG] 已更新作业 %s 状态为 timeout", jid)
+				}
+			}
+		}
 	}
 
 	// 返回执行结果，包含 JID 和 TaskID 用于前端追踪
