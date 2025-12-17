@@ -336,6 +336,7 @@ type SaltJob struct {
 	Status    string                 `json:"status"`
 	Result    map[string]interface{} `json:"result,omitempty"`
 	User      string                 `json:"user"`
+	TaskID    string                 `json:"task_id,omitempty"` // 前端生成的任务ID，用于用户追踪
 }
 
 // saltAPIClient SaltStack API客户端
@@ -1679,6 +1680,87 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 		return
 	}
 
+	// 创建 JID 集合用于快速查找
+	existingJIDs := make(map[string]bool)
+	for _, job := range jobs {
+		existingJIDs[job.JID] = true
+	}
+
+	// 从 Redis 获取每个作业的 TaskID
+	if h.cache != nil {
+		for i := range jobs {
+			jidToTaskKey := fmt.Sprintf("saltstack:jid_to_task:%s", jobs[i].JID)
+			if taskID, err := h.cache.Get(context.Background(), jidToTaskKey).Result(); err == nil && taskID != "" {
+				jobs[i].TaskID = taskID
+			}
+		}
+
+		// 从 Redis 获取最近执行的作业（补充 Salt API 没有返回的）
+		recentJIDs, err := h.cache.LRange(context.Background(), "saltstack:recent_jobs", 0, 49).Result()
+		if err == nil && len(recentJIDs) > 0 {
+			for _, jid := range recentJIDs {
+				// 如果这个 JID 已经在 Salt API 结果中，跳过
+				if existingJIDs[jid] {
+					continue
+				}
+
+				// 从 Redis 获取作业详情
+				jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+				jobInfoJSON, err := h.cache.Get(context.Background(), jobDetailKey).Result()
+				if err != nil {
+					continue
+				}
+
+				var jobInfo map[string]interface{}
+				if err := json.Unmarshal([]byte(jobInfoJSON), &jobInfo); err != nil {
+					continue
+				}
+
+				// 构建 SaltJob 对象
+				newJob := SaltJob{
+					JID:      jid,
+					Function: getStringFromMap(jobInfo, "function"),
+					Target:   getStringFromMap(jobInfo, "target"),
+					Status:   getStringFromMap(jobInfo, "status"),
+					User:     getStringFromMap(jobInfo, "user"),
+					TaskID:   getStringFromMap(jobInfo, "task_id"),
+				}
+
+				// 解析参数
+				if args, ok := jobInfo["arguments"].([]interface{}); ok {
+					for _, arg := range args {
+						newJob.Arguments = append(newJob.Arguments, fmt.Sprint(arg))
+					}
+				}
+
+				// 解析开始时间
+				if startTimeStr, ok := jobInfo["start_time"].(string); ok {
+					if t, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+						newJob.StartTime = t
+					} else {
+						newJob.StartTime = time.Now()
+					}
+				} else {
+					newJob.StartTime = time.Now()
+				}
+
+				// 添加到作业列表
+				jobs = append(jobs, newJob)
+				existingJIDs[jid] = true
+			}
+		}
+	}
+
+	// 按时间排序
+	if len(jobs) > 1 {
+		sort.Slice(jobs, func(i, j int) bool { return jobs[i].StartTime.After(jobs[j].StartTime) })
+	}
+
+	// 限制返回数量
+	if limit > 0 && len(jobs) > limit {
+		jobs = jobs[:limit]
+	}
+
 	// 缓存数据
 	cacheKey := fmt.Sprintf("saltstack:jobs:%d", limit)
 	if data, err := json.Marshal(jobs); err == nil {
@@ -1686,6 +1768,134 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": jobs, "demo": false})
+}
+
+// getStringFromMap 从 map 中安全获取字符串值
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// GetSaltJobDetail 获取单个Salt作业的详细结果
+func (h *SaltStackHandler) GetSaltJobDetail(c *gin.Context) {
+	jid := c.Param("jid")
+	if jid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少作业ID (jid)"})
+		return
+	}
+
+	// 创建API客户端并认证
+	client := h.newSaltAPIClient()
+	if err := client.authenticate(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+		return
+	}
+
+	// 调用 Salt API 获取作业详情: GET /jobs/<jid>
+	resp, err := client.makeRequest("/jobs/"+jid, "GET", nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取作业详情失败: %v", err)})
+		return
+	}
+
+	// 解析返回结果
+	// 典型响应格式: {"info": [{"Function": "cmd.run", "Target": "*", ...}], "return": [{"minion1": "output1", "minion2": "output2"}]}
+	var jobInfo map[string]interface{}
+	var jobResult map[string]interface{}
+
+	if info, ok := resp["info"].([]interface{}); ok && len(info) > 0 {
+		if infoMap, ok := info[0].(map[string]interface{}); ok {
+			jobInfo = infoMap
+		}
+	}
+
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			jobResult = retMap
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"jid":    jid,
+		"info":   jobInfo,
+		"result": jobResult,
+		"raw":    resp,
+	})
+}
+
+// GetSaltJobByTaskID 通过 TaskID 查询作业详情
+// @Summary 通过 TaskID 查询作业
+// @Description 使用前端生成的 TaskID 查询对应的 Salt 作业详情
+// @Tags saltstack
+// @Produce json
+// @Param task_id path string true "任务ID (如: EXEC-20251216-...)"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/saltstack/jobs/by-task/{task_id} [get]
+func (h *SaltStackHandler) GetSaltJobByTaskID(c *gin.Context) {
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少任务ID (task_id)"})
+		return
+	}
+
+	// 从 Redis 获取 TaskID 对应的 JID
+	if h.cache == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Redis 缓存不可用"})
+		return
+	}
+
+	taskToJidKey := fmt.Sprintf("saltstack:task_to_jid:%s", taskID)
+	jid, err := h.cache.Get(context.Background(), taskToJidKey).Result()
+	if err != nil || jid == "" {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "未找到对应的作业",
+			"task_id": taskID,
+			"message": "该任务ID没有对应的作业记录，可能是任务尚未完成或映射已过期",
+		})
+		return
+	}
+
+	log.Printf("[DEBUG] 通过 TaskID 查询作业: TaskID=%s -> JID=%s", taskID, jid)
+
+	// 创建API客户端并认证
+	client := h.newSaltAPIClient()
+	if err := client.authenticate(); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Salt API 认证失败: %v", err)})
+		return
+	}
+
+	// 调用 Salt API 获取作业详情: GET /jobs/<jid>
+	resp, err := client.makeRequest("/jobs/"+jid, "GET", nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("获取作业详情失败: %v", err)})
+		return
+	}
+
+	// 解析返回结果
+	var jobInfo map[string]interface{}
+	var jobResult map[string]interface{}
+
+	if info, ok := resp["info"].([]interface{}); ok && len(info) > 0 {
+		if infoMap, ok := info[0].(map[string]interface{}); ok {
+			jobInfo = infoMap
+		}
+	}
+
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		if retMap, ok := ret[0].(map[string]interface{}); ok {
+			jobResult = retMap
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task_id": taskID,
+		"jid":     jid,
+		"info":    jobInfo,
+		"result":  jobResult,
+		"raw":     resp,
+	})
 }
 
 // getRealJobs 通过Salt NetAPI获取真实作业列表
@@ -1733,6 +1943,23 @@ func (h *SaltStackHandler) getRealJobs(client *saltAPIClient, limit int) ([]Salt
 						}
 					} else {
 						j.StartTime = time.Now()
+					}
+					// 解析作业结果来判断状态
+					if result, ok := info["Result"].(map[string]interface{}); ok && len(result) > 0 {
+						j.Result = result
+						j.Status = "completed"
+						// 设置结束时间为开始时间后几秒（估计值）
+						endTime := j.StartTime.Add(time.Second * 5)
+						j.EndTime = &endTime
+					} else {
+						// 没有结果，根据时间判断状态
+						// 如果作业开始超过5分钟还没结果，可能是失败或超时
+						if time.Since(j.StartTime) > 5*time.Minute {
+							j.Status = "timeout"
+						} else {
+							// 默认已完成（Salt的/jobs接口只返回已完成的作业）
+							j.Status = "completed"
+						}
 					}
 					jobs = append(jobs, j)
 				}
@@ -2246,6 +2473,7 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 		Arguments string        `json:"arguments"` // 支持字符串参数
 		Arg       []interface{} `json:"arg"`       // 兼容 arg 数组格式
 		TgtType   string        `json:"tgt_type"`  // 目标类型: glob, list, grain 等
+		TaskID    string        `json:"task_id"`   // 前端传递的任务ID，用于关联作业历史
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -2264,42 +2492,28 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 	}
 
 	// 兼容处理: arguments 和 arg 字段
-	var arguments string
-	if request.Arguments != "" {
-		arguments = request.Arguments
-	} else if len(request.Arg) > 0 {
-		// 如果是字符串数组，取第一个元素
-		if str, ok := request.Arg[0].(string); ok {
-			arguments = str
-		}
-	}
-
-	// 从环境变量获取 Salt API 配置
-	saltMaster := os.Getenv("SALTSTACK_MASTER_HOST")
-	if saltMaster == "" {
-		saltMaster = "saltstack"
-	}
-	saltAPIPort := os.Getenv("SALT_API_PORT")
-	if saltAPIPort == "" {
-		saltAPIPort = "8002"
-	}
-	saltAPIScheme := os.Getenv("SALT_API_SCHEME")
-	if saltAPIScheme == "" {
-		saltAPIScheme = "http"
-	}
-
-	saltAPIURL := fmt.Sprintf("%s://%s:%s/", saltAPIScheme, saltMaster, saltAPIPort)
-
-	// 解析参数
 	var args []interface{}
-	if arguments != "" {
-		// 直接作为单个参数传递（适合 cmd.run 等需要完整命令的场景）
-		args = []interface{}{arguments}
+	if request.Arguments != "" {
+		args = []interface{}{request.Arguments}
+	} else if len(request.Arg) > 0 {
+		args = request.Arg
 	}
 
-	// 构建 payload，支持 tgt_type
+	// 使用已有的 saltAPIClient 进行认证和请求
+	client := h.newSaltAPIClient()
+	if err := client.authenticate(); err != nil {
+		log.Printf("[ERROR] Salt API 认证失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("Salt API 认证失败: %v", err),
+		})
+		return
+	}
+
+	// 构建 payload，使用 local_async 模式获取 JID
+	// 这样前端可以通过 JID 追踪作业历史
 	payload := map[string]interface{}{
-		"client": "local",
+		"client": "local_async",
 		"tgt":    request.Target,
 		"fun":    function,
 		"arg":    args,
@@ -2308,98 +2522,168 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 		payload["tgt_type"] = request.TgtType
 	}
 
-	// 发送请求到 Salt API
-	payloadBytes, err := json.Marshal([]interface{}{payload})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("序列化请求失败: %v", err),
-		})
-		return
-	}
-
-	req, err := http.NewRequest("POST", saltAPIURL, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("创建请求失败: %v", err),
-		})
-		return
-	}
-
-	// 设置请求头
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// 使用 eauth 认证
-	token := h.getSaltAuthToken(c.Request.Context())
-	if token == "" {
-		// 如果无法获取 token，记录警告
-		log.Printf("[WARN] 无法获取 Salt API token，尝试无认证请求")
-	} else {
-		req.Header.Set("X-Auth-Token", token)
-		log.Printf("[DEBUG] 使用 token: %s", token[:min(len(token), 10)]+"...")
+	// 对 cmd.run 命令始终启用 python_shell
+	if function == "cmd.run" {
+		payload["kwarg"] = map[string]interface{}{
+			"python_shell": true,
+		}
 	}
 
 	// 调试：打印请求信息
-	log.Printf("[DEBUG] Salt API 请求: URL=%s, Payload=%s", saltAPIURL, string(payloadBytes))
+	log.Printf("[DEBUG] Salt API 请求 (async): Payload=%+v", payload)
 
-	// 发送请求
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	// 使用 client 发送请求
+	result, err := client.makeRequest("/", "POST", payload)
+	if err != nil {
+		// 回退到 /run 端点
+		if strings.Contains(strings.ToLower(err.Error()), "404") || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			result, err = client.makeRequest("/run", "POST", payload)
+		}
+	}
 	if err != nil {
 		log.Printf("[ERROR] Salt API 请求失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   fmt.Sprintf("请求 Salt API 失败: %v", err),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("[ERROR] 读取响应失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("读取响应失败: %v", err),
+			"error":   fmt.Sprintf("Salt API 请求失败: %v", err),
 		})
 		return
 	}
 
-	// 调试：打印响应
-	log.Printf("[DEBUG] Salt API 响应: Status=%d, Body=%s", resp.StatusCode, string(body))
+	// 从异步响应中提取 JID
+	// local_async 返回格式: {"return": [{"jid": "20231201...", "minions": ["minion1", ...]}]}
+	var jid string
+	var minions []string
+	if ret, ok := result["return"].([]interface{}); ok && len(ret) > 0 {
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if j, ok := m["jid"].(string); ok {
+				jid = j
+			}
+			if mins, ok := m["minions"].([]interface{}); ok {
+				for _, min := range mins {
+					if s, ok := min.(string); ok {
+						minions = append(minions, s)
+					}
+				}
+			}
+		}
+	}
 
-	// 检查 HTTP 状态码
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[ERROR] Salt API 返回错误状态: %d, Body: %s", resp.StatusCode, string(body))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("Salt API 返回错误状态: %d", resp.StatusCode),
-			"raw":     string(body),
+	if jid == "" {
+		log.Printf("[WARNING] Salt API 异步执行未返回 JID")
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"result":  result,
 		})
 		return
 	}
 
-	// 解析响应
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("[ERROR] 解析响应失败: %v, Body: %s", err, string(body))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   fmt.Sprintf("解析响应失败: %v", err),
-			"raw":     string(body),
-		})
-		return
+	log.Printf("[DEBUG] Salt 异步作业已提交: JID=%s, 目标minions=%v", jid, minions)
+
+	// 保存作业信息到 Redis（无论是否有 TaskID，都保存 JID 到最近作业列表）
+	if h.cache != nil {
+		// 创建作业信息 JSON
+		jobInfo := map[string]interface{}{
+			"jid":        jid,
+			"function":   request.Fun,
+			"target":     request.Target,
+			"arguments":  request.Arg,
+			"start_time": time.Now().Format(time.RFC3339),
+			"status":     "running",
+			"user":       "admin", // TODO: 从认证上下文获取
+		}
+		if request.TaskID != "" {
+			jobInfo["task_id"] = request.TaskID
+		}
+		jobInfoJSON, _ := json.Marshal(jobInfo)
+
+		// 保存作业详情（以 JID 为 key）
+		jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
+		if err := h.cache.Set(context.Background(), jobDetailKey, string(jobInfoJSON), 7*24*time.Hour).Err(); err != nil {
+			log.Printf("[WARNING] 保存作业详情到 Redis 失败: %v", err)
+		}
+
+		// 将 JID 添加到最近作业列表（用于补充 Salt API 返回的作业列表）
+		recentJobsKey := "saltstack:recent_jobs"
+		if err := h.cache.LPush(context.Background(), recentJobsKey, jid).Err(); err != nil {
+			log.Printf("[WARNING] 添加 JID 到最近作业列表失败: %v", err)
+		}
+		// 保持最近作业列表不超过 100 条
+		h.cache.LTrim(context.Background(), recentJobsKey, 0, 99)
+
+		// 如果前端传递了 TaskID，保存双向映射
+		if request.TaskID != "" {
+			// 保存 JID -> TaskID 映射（用于通过JID查询TaskID）
+			jidToTaskKey := fmt.Sprintf("saltstack:jid_to_task:%s", jid)
+			if err := h.cache.Set(context.Background(), jidToTaskKey, request.TaskID, 7*24*time.Hour).Err(); err != nil {
+				log.Printf("[WARNING] 保存 JID->TaskID 映射到 Redis 失败: %v", err)
+			} else {
+				log.Printf("[DEBUG] 已保存 JID->TaskID 映射: %s -> %s", jid, request.TaskID)
+			}
+
+			// 保存 TaskID -> JID 映射（用于通过TaskID查询JID）
+			taskToJidKey := fmt.Sprintf("saltstack:task_to_jid:%s", request.TaskID)
+			if err := h.cache.Set(context.Background(), taskToJidKey, jid, 7*24*time.Hour).Err(); err != nil {
+				log.Printf("[WARNING] 保存 TaskID->JID 映射到 Redis 失败: %v", err)
+			} else {
+				log.Printf("[DEBUG] 已保存 TaskID->JID 映射: %s -> %s", request.TaskID, jid)
+			}
+		}
 	}
 
-	// 返回实际执行结果
-	log.Printf("[DEBUG] 成功返回 Salt 执行结果")
-	c.JSON(http.StatusOK, gin.H{
+	// 轮询等待结果（最多等待 90 秒）
+	maxWaitTime := 90 * time.Second
+	pollInterval := 2 * time.Second
+	startTime := time.Now()
+
+	var finalResult map[string]interface{}
+	for {
+		if time.Since(startTime) > maxWaitTime {
+			log.Printf("[WARNING] 等待作业 %s 结果超时", jid)
+			break
+		}
+
+		// 查询作业结果
+		lookupPayload := map[string]interface{}{
+			"client": "runner",
+			"fun":    "jobs.lookup_jid",
+			"kwarg": map[string]interface{}{
+				"jid": jid,
+			},
+		}
+
+		jobResult, err := client.makeRequest("/", "POST", lookupPayload)
+		if err != nil {
+			log.Printf("[ERROR] 查询作业 %s 失败: %v", jid, err)
+			time.Sleep(pollInterval)
+			continue
+		}
+
+		// 解析结果: {"return": [{"minion1": result1, "minion2": result2}]}
+		if ret, ok := jobResult["return"].([]interface{}); ok && len(ret) > 0 {
+			if m, ok := ret[0].(map[string]interface{}); ok && len(m) > 0 {
+				finalResult = m
+				log.Printf("[DEBUG] 作业 %s 完成，收到 %d 个节点的结果", jid, len(m))
+				break
+			}
+		}
+
+		time.Sleep(pollInterval)
+	}
+
+	// 返回执行结果，包含 JID 和 TaskID 用于前端追踪
+	log.Printf("[DEBUG] 成功返回 Salt 执行结果，JID=%s, TaskID=%s", jid, request.TaskID)
+	response := gin.H{
 		"success": true,
-		"result":  result,
-	})
+		"jid":     jid,
+		"result": map[string]interface{}{
+			"return": []interface{}{finalResult},
+		},
+	}
+	// 如果有 TaskID，也返回给前端
+	if request.TaskID != "" {
+		response["task_id"] = request.TaskID
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 // getSaltAuthToken 获取 Salt API 认证 token
@@ -2435,7 +2719,7 @@ func (h *SaltStackHandler) getSaltAuthToken(ctx context.Context) string {
 	}
 	eauth := os.Getenv("SALT_API_EAUTH")
 	if eauth == "" {
-		eauth = "pam"
+		eauth = "file"
 	}
 
 	// 登录获取新 token
