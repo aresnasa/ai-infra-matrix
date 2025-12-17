@@ -10,15 +10,32 @@ ENV_FILE="$SCRIPT_DIR/.env"
 ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 SRC_DIR="$SCRIPT_DIR/src"
 
+# ==============================================================================
+# Build Cache Configuration
+# ==============================================================================
+BUILD_CACHE_DIR="$SCRIPT_DIR/.build-cache"
+BUILD_ID_FILE="$BUILD_CACHE_DIR/build-id.txt"
+BUILD_HISTORY_FILE="$BUILD_CACHE_DIR/build-history.log"
+SKIP_CACHE_CHECK=false
+FORCE_REBUILD=false
+
+# Parallel Build Configuration
+PARALLEL_JOBS=${PARALLEL_JOBS:-4}  # Default 4 parallel jobs
+ENABLE_PARALLEL=false              # Disabled by default
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_cache() { echo -e "${CYAN}[CACHE]${NC} $1"; }
+log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
 
 # ==============================================================================
 # 1. Configuration & Environment
@@ -240,6 +257,324 @@ sync_env_with_example() {
     fi
     
     return 0
+}
+
+# ==============================================================================
+# Build Cache Functions (Smart Incremental Build)
+# ==============================================================================
+
+# Initialize build cache directory and files
+init_build_cache() {
+    mkdir -p "$BUILD_CACHE_DIR"
+    
+    # Initialize build ID file
+    if [[ ! -f "$BUILD_ID_FILE" ]]; then
+        echo "0" > "$BUILD_ID_FILE"
+    fi
+    
+    # Initialize build history file
+    if [[ ! -f "$BUILD_HISTORY_FILE" ]]; then
+        touch "$BUILD_HISTORY_FILE"
+    fi
+}
+
+# Generate new build ID
+generate_build_id() {
+    init_build_cache
+    
+    local last_id=$(cat "$BUILD_ID_FILE" 2>/dev/null || echo "0")
+    local new_id=$((last_id + 1))
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    echo "${new_id}_${timestamp}"
+}
+
+# Save build ID
+save_build_id() {
+    local build_id="$1"
+    init_build_cache
+    
+    # Extract numeric ID part
+    local numeric_id=$(echo "$build_id" | cut -d'_' -f1)
+    echo "$numeric_id" > "$BUILD_ID_FILE"
+}
+
+# Calculate hash for file or directory
+calculate_hash() {
+    local path="$1"
+    
+    if [[ ! -e "$path" ]]; then
+        echo "NOT_EXIST"
+        return 1
+    fi
+    
+    if [[ -d "$path" ]]; then
+        # Directory: Calculate combined hash of all relevant files
+        # Exclude common dependency and build directories for performance
+        find "$path" -type f \
+            \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.tsx" -o -name "*.go" \
+               -o -name "*.conf" -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" \
+               -o -name "Dockerfile" -o -name "Dockerfile.tpl" -o -name "*.sh" \
+               -o -name "*.html" -o -name "*.css" -o -name "*.scss" \) \
+            ! -path "*/node_modules/*" \
+            ! -path "*/build/*" \
+            ! -path "*/dist/*" \
+            ! -path "*/.next/*" \
+            ! -path "*/vendor/*" \
+            ! -path "*/__pycache__/*" \
+            ! -path "*/.git/*" \
+            ! -path "*/test-results/*" \
+            ! -path "*/playwright-report/*" \
+            -print0 2>/dev/null | xargs -0 shasum -a 256 2>/dev/null | sort | shasum -a 256 | awk '{print $1}'
+    else
+        # File: Calculate hash directly
+        shasum -a 256 "$path" 2>/dev/null | awk '{print $1}'
+    fi
+}
+
+# Calculate combined hash for a service (source code + config + Dockerfile)
+calculate_service_hash() {
+    local service="$1"
+    local service_path="$SRC_DIR/$service"
+    
+    if [[ ! -d "$service_path" ]]; then
+        echo "INVALID_SERVICE"
+        return 1
+    fi
+    
+    local hash_data=""
+    
+    # 1. Dockerfile hash
+    local dockerfile="$service_path/Dockerfile"
+    local dockerfile_tpl="$service_path/Dockerfile.tpl"
+    if [[ -f "$dockerfile" ]]; then
+        hash_data+="$(calculate_hash "$dockerfile")\n"
+    fi
+    if [[ -f "$dockerfile_tpl" ]]; then
+        hash_data+="$(calculate_hash "$dockerfile_tpl")\n"
+    fi
+    
+    # 2. Source code directory hash
+    if [[ -d "$service_path" ]]; then
+        hash_data+="$(calculate_hash "$service_path")\n"
+    fi
+    
+    # 3. Configuration file hashes (service-specific)
+    case "$service" in
+        "nginx")
+            if [[ -d "$SCRIPT_DIR/config/nginx" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/config/nginx")\n"
+            fi
+            ;;
+        "jupyterhub")
+            if [[ -f "$SCRIPT_DIR/config/jupyterhub_config.py" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/config/jupyterhub_config.py")\n"
+            fi
+            ;;
+        "backend"|"backend-init")
+            # Backend shares src/backend code
+            if [[ -d "$SCRIPT_DIR/src/backend" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/src/backend")\n"
+            fi
+            ;;
+        "saltstack")
+            if [[ -d "$SCRIPT_DIR/config/salt" ]]; then
+                hash_data+="$(calculate_hash "$SCRIPT_DIR/config/salt")\n"
+            fi
+            ;;
+    esac
+    
+    # Calculate combined hash
+    echo -e "$hash_data" | shasum -a 256 | awk '{print $1}'
+}
+
+# Check if service needs to be rebuilt
+# Returns: FORCE_REBUILD, SKIP_CACHE_CHECK, IMAGE_NOT_EXIST, NO_HASH_LABEL, HASH_CHANGED, NO_CHANGE
+need_rebuild() {
+    local service="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local image="ai-infra-${service}:${tag}"
+    
+    # Force rebuild mode
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        echo "FORCE_REBUILD"
+        return 0
+    fi
+    
+    # Skip cache check mode
+    if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
+        echo "SKIP_CACHE_CHECK"
+        return 0
+    fi
+    
+    # Check if it's a dependency service (external image)
+    local dep_conf="$SRC_DIR/$service/dependency.conf"
+    if [[ -f "$dep_conf" ]]; then
+        # For dependencies, just check if local image exists
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            echo "NO_CHANGE"
+            return 1
+        else
+            echo "IMAGE_NOT_EXIST"
+            return 0
+        fi
+    fi
+    
+    # Image doesn't exist, need to build
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        echo "IMAGE_NOT_EXIST"
+        return 0
+    fi
+    
+    # Calculate current file hash
+    local current_hash=$(calculate_service_hash "$service")
+    
+    # Get hash stored in image label
+    local image_hash=$(docker image inspect "$image" --format '{{index .Config.Labels "build.hash"}}' 2>/dev/null || echo "")
+    
+    # No hash label in image, need to rebuild
+    if [[ -z "$image_hash" ]]; then
+        echo "NO_HASH_LABEL"
+        return 0
+    fi
+    
+    # Compare hashes
+    if [[ "$current_hash" != "$image_hash" ]]; then
+        echo "HASH_CHANGED|old:${image_hash:0:8}|new:${current_hash:0:8}"
+        return 0
+    fi
+    
+    # No need to rebuild
+    echo "NO_CHANGE"
+    return 1
+}
+
+# Log build history
+log_build_history() {
+    local build_id="$1"
+    local service="$2"
+    local tag="$3"
+    local status="$4"  # SUCCESS/FAILED/SKIPPED
+    local reason="${5:-}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    init_build_cache
+    
+    local log_entry="[$timestamp] BUILD_ID=$build_id SERVICE=$service TAG=$tag STATUS=$status"
+    if [[ -n "$reason" ]]; then
+        log_entry+=" REASON=$reason"
+    fi
+    
+    echo "$log_entry" >> "$BUILD_HISTORY_FILE"
+}
+
+# Save service build info to cache
+save_service_build_info() {
+    local service="$1"
+    local tag="$2"
+    local build_id="$3"
+    local service_hash="$4"
+    
+    local cache_dir="$BUILD_CACHE_DIR/$service"
+    mkdir -p "$cache_dir"
+    
+    local build_info_file="$cache_dir/last-build.json"
+    
+    cat > "$build_info_file" <<EOF
+{
+  "service": "$service",
+  "tag": "$tag",
+  "build_id": "$build_id",
+  "hash": "$service_hash",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "image": "ai-infra-${service}:${tag}"
+}
+EOF
+}
+
+# Show build history
+show_build_history() {
+    local filter_service="$1"
+    local count="${2:-20}"
+    
+    init_build_cache
+    
+    if [[ ! -f "$BUILD_HISTORY_FILE" ]] || [[ ! -s "$BUILD_HISTORY_FILE" ]]; then
+        log_info "📋 Build history is empty"
+        log_info "Tip: History will be recorded after builds"
+        return 0
+    fi
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📋 Build History (last $count entries)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ -n "$filter_service" ]]; then
+        grep "SERVICE=$filter_service" "$BUILD_HISTORY_FILE" | tail -n "$count"
+    else
+        tail -n "$count" "$BUILD_HISTORY_FILE"
+    fi
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+# Show cache status for all services
+show_cache_status() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📊 Build Cache Status"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local tag="${IMAGE_TAG:-latest}"
+    local need_build=0
+    local skip_build=0
+    
+    # Discover services
+    discover_services 2>/dev/null
+    
+    local all_services=("${DEPENDENCY_SERVICES[@]}" "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
+    
+    printf "%-25s %-15s %-50s\n" "SERVICE" "STATUS" "REASON"
+    printf "%-25s %-15s %-50s\n" "-------" "------" "------"
+    
+    for service in "${all_services[@]}"; do
+        local result=$(need_rebuild "$service" "$tag")
+        local status
+        
+        if [[ "$result" == "NO_CHANGE" ]]; then
+            status="${GREEN}✓ CACHED${NC}"
+            skip_build=$((skip_build + 1))
+        else
+            status="${YELLOW}○ REBUILD${NC}"
+            need_build=$((need_build + 1))
+        fi
+        
+        printf "%-25s %-15b %-50s\n" "$service" "$status" "$result"
+    done
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Summary: $skip_build cached, $need_build need rebuild"
+}
+
+# Clear build cache
+clear_build_cache() {
+    local service="$1"
+    
+    if [[ -n "$service" ]]; then
+        local cache_dir="$BUILD_CACHE_DIR/$service"
+        if [[ -d "$cache_dir" ]]; then
+            rm -rf "$cache_dir"
+            log_info "✓ Cleared cache for: $service"
+        else
+            log_warn "No cache found for: $service"
+        fi
+    else
+        if [[ -d "$BUILD_CACHE_DIR" ]]; then
+            rm -rf "$BUILD_CACHE_DIR"
+            log_info "✓ Cleared all build cache"
+        else
+            log_warn "No build cache found"
+        fi
+    fi
 }
 
 # ==============================================================================
@@ -2103,11 +2438,23 @@ build_component() {
     local component="$1"
     local extra_args=("${@:2}") # Capture all remaining arguments
     local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
     
     if [ ! -d "$component_dir" ]; then
         log_error "Component directory not found: $component_dir"
         return 1
     fi
+
+    # ===== Build Cache Check =====
+    local rebuild_reason=$(need_rebuild "$component" "$tag")
+    if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+        log_cache "⏭️  Skipping $component (no changes detected)"
+        log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE"
+        return 0
+    fi
+    
+    log_cache "🔄 Rebuilding $component: $rebuild_reason"
 
     # Check if template exists and render it
     local template_file="$component_dir/Dockerfile.tpl"
@@ -2115,6 +2462,7 @@ build_component() {
         log_info "Rendering template for $component..."
         if ! render_template "$template_file"; then
             log_error "Failed to render template for $component"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "TEMPLATE_ERROR"
             return 1
         fi
     fi
@@ -2128,7 +2476,7 @@ build_component() {
             return 1
         fi
         
-        local target_image="ai-infra-$component:${IMAGE_TAG:-latest}"
+        local target_image="ai-infra-$component:${tag}"
         if [ -n "$PRIVATE_REGISTRY" ]; then
             target_image="$PRIVATE_REGISTRY/$target_image"
         fi
@@ -2138,13 +2486,16 @@ build_component() {
         if pull_image_with_retry "$upstream_image" 3 5; then
             if docker tag "$upstream_image" "$target_image"; then
                 log_info "✓ Dependency ready: $target_image"
+                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED"
                 return 0
             else
                 log_error "✗ Failed to tag $upstream_image"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR"
                 return 1
             fi
         else
             log_error "✗ Failed to pull $upstream_image after retries"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR"
             return 1
         fi
     fi
@@ -2153,6 +2504,9 @@ build_component() {
         log_warn "No Dockerfile or dependency.conf in $component, skipping..."
         return 0
     fi
+
+    # Calculate service hash for build label
+    local service_hash=$(calculate_service_hash "$component")
 
     # Check for build-targets.conf
     local targets_file="$component_dir/build-targets.conf"
@@ -2174,7 +2528,7 @@ build_component() {
     for i in "${!targets[@]}"; do
         local target="${targets[$i]}"
         local image_name="${images[$i]}"
-        local full_image_name="${image_name}:${IMAGE_TAG:-latest}"
+        local full_image_name="${image_name}:${tag}"
         
         if [ -n "$PRIVATE_REGISTRY" ]; then
             full_image_name="$PRIVATE_REGISTRY/$full_image_name"
@@ -2189,6 +2543,12 @@ build_component() {
             cmd+=("--no-cache")
         fi
         
+        # Add build cache labels for incremental builds
+        cmd+=("--label" "build.hash=$service_hash")
+        cmd+=("--label" "build.id=$build_id")
+        cmd+=("--label" "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+        cmd+=("--label" "build.component=$component")
+        
         cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
         
         if [ "$target" != "default" ]; then
@@ -2200,8 +2560,11 @@ build_component() {
         
         if "${cmd[@]}"; then
             log_info "✓ Build success: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "$rebuild_reason"
+            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
         else
             log_error "✗ Build failed: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR"
             return 1
         fi
     done
@@ -2248,12 +2611,137 @@ discover_services() {
     log_info "Found ${#DEPENDENT_SERVICES[@]} dependent services: ${DEPENDENT_SERVICES[*]}"
 }
 
+# Build services in parallel with controlled concurrency
+# Usage: build_parallel <service1> <service2> ... [-- extra_build_args]
+build_parallel() {
+    local services=()
+    local extra_args=()
+    local found_separator=false
+    
+    # Parse arguments: services before --, extra args after --
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            found_separator=true
+            continue
+        fi
+        if [[ "$found_separator" == "true" ]]; then
+            extra_args+=("$arg")
+        else
+            services+=("$arg")
+        fi
+    done
+    
+    if [[ ${#services[@]} -eq 0 ]]; then
+        log_warn "No services to build in parallel"
+        return 0
+    fi
+    
+    local max_jobs="${PARALLEL_JOBS:-4}"
+    local total=${#services[@]}
+    local completed=0
+    local failed=0
+    local pids=()
+    local service_map=()
+    
+    log_parallel "🚀 Starting parallel build: $total services, max $max_jobs concurrent jobs"
+    log_parallel "Services: ${services[*]}"
+    
+    # Build services in batches
+    for service in "${services[@]}"; do
+        # Wait if we've reached max concurrent jobs
+        while [[ ${#pids[@]} -ge $max_jobs ]]; do
+            # Wait for any job to complete
+            local new_pids=()
+            for i in "${!pids[@]}"; do
+                if kill -0 "${pids[$i]}" 2>/dev/null; then
+                    new_pids+=("${pids[$i]}")
+                else
+                    wait "${pids[$i]}" 2>/dev/null
+                    local exit_code=$?
+                    local svc="${service_map[$i]}"
+                    if [[ $exit_code -eq 0 ]]; then
+                        completed=$((completed + 1))
+                        log_parallel "✓ Completed: $svc ($completed/$total)"
+                    else
+                        failed=$((failed + 1))
+                        log_error "✗ Failed: $svc (exit code: $exit_code)"
+                    fi
+                fi
+            done
+            pids=("${new_pids[@]}")
+            
+            # Update service_map to match pids
+            local new_map=()
+            for i in "${!pids[@]}"; do
+                # Find corresponding service
+                for j in "${!service_map[@]}"; do
+                    if kill -0 "${pids[$i]}" 2>/dev/null && [[ "${pids[$i]}" == "$(jobs -p | head -n $((i+1)) | tail -1)" ]]; then
+                        new_map+=("${service_map[$j]}")
+                        break
+                    fi
+                done
+            done
+            service_map=("${new_map[@]}")
+            
+            sleep 0.5
+        done
+        
+        # Start new build job in background
+        log_parallel "🔨 Starting: $service"
+        (
+            if [[ ${#extra_args[@]} -gt 0 ]]; then
+                build_component "$service" "${extra_args[@]}"
+            else
+                build_component "$service"
+            fi
+        ) &
+        pids+=($!)
+        service_map+=("$service")
+    done
+    
+    # Wait for remaining jobs
+    log_parallel "⏳ Waiting for remaining builds to complete..."
+    for i in "${!pids[@]}"; do
+        wait "${pids[$i]}" 2>/dev/null
+        local exit_code=$?
+        local svc="${service_map[$i]}"
+        if [[ $exit_code -eq 0 ]]; then
+            completed=$((completed + 1))
+            log_parallel "✓ Completed: $svc ($completed/$total)"
+        else
+            failed=$((failed + 1))
+            log_error "✗ Failed: $svc (exit code: $exit_code)"
+        fi
+    done
+    
+    log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_parallel "📊 Parallel Build Summary: $completed succeeded, $failed failed, $total total"
+    log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ $failed -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 build_all() {
     local force="${1:-false}"
+    
+    # Initialize build cache
+    init_build_cache
+    
+    # Generate build ID for this build session
+    CURRENT_BUILD_ID=$(generate_build_id)
+    save_build_id "$CURRENT_BUILD_ID"
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🏗️  Build Session: $CURRENT_BUILD_ID"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     if [[ "$force" == "true" ]]; then
         log_info "Starting coordinated build process (FORCE MODE - no cache)..."
         FORCE_BUILD=true
+        FORCE_REBUILD=true
         
         # In force mode, auto-detect and update EXTERNAL_HOST if needed
         log_info "=== Phase -1: Verifying Network Configuration ==="
@@ -2298,9 +2786,14 @@ build_all() {
     
     # 2. Build Foundation Services
     log_info "=== Phase 2: Building Foundation Services ==="
-    for service in "${FOUNDATION_SERVICES[@]}"; do
-        build_component "$service"
-    done
+    if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
+        log_parallel "🚀 Parallel build enabled for foundation services"
+        build_parallel "${FOUNDATION_SERVICES[@]}"
+    else
+        for service in "${FOUNDATION_SERVICES[@]}"; do
+            build_component "$service"
+        done
+    fi
     
     # 3. Start AppHub Service
     log_info "=== Phase 3: Starting AppHub Service ==="
@@ -2328,12 +2821,24 @@ build_all() {
     
     log_info "Using AppHub URL for builds: $apphub_url"
     
-    for service in "${DEPENDENT_SERVICES[@]}"; do
-        # Pass APPHUB_URL to dependent services
-        build_component "$service" "--build-arg" "APPHUB_URL=$apphub_url"
-    done
+    # Check if parallel build is enabled
+    if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
+        log_parallel "🚀 Parallel build enabled (max $PARALLEL_JOBS concurrent jobs)"
+        build_parallel "${DEPENDENT_SERVICES[@]}" -- "--build-arg" "APPHUB_URL=$apphub_url"
+    else
+        for service in "${DEPENDENT_SERVICES[@]}"; do
+            # Pass APPHUB_URL to dependent services
+            build_component "$service" "--build-arg" "APPHUB_URL=$apphub_url"
+        done
+    fi
     
-    log_info "=== Build Process Completed Successfully ==="
+    # Build summary
+    local build_end_time=$(date +%s)
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🎉 Build Session $CURRENT_BUILD_ID Completed Successfully"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "View build history: ./build.sh build-history"
+    log_info "Check cache status: ./build.sh cache-status"
 }
 
 # Tag private registry images as local images
@@ -3075,6 +3580,9 @@ print_help() {
     echo ""
     echo "Global Options (can be used with any command):"
     echo "  --force, -f, --no-cache    Force rebuild without Docker cache"
+    echo "  --parallel, -p             Enable parallel builds (default: $PARALLEL_JOBS jobs)"
+    echo "  --parallel=N, -pN          Enable parallel builds with N concurrent jobs"
+    echo "  --skip-cache               Skip build cache check (always rebuild)"
     echo ""
     echo "Environment Commands:"
     echo "  init-env [host]     Initialize/sync .env file (auto-detect EXTERNAL_HOST)"
@@ -3085,8 +3593,14 @@ print_help() {
     echo "Build Commands:"
     echo "  build-all, all           Build all components in the correct order"
     echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
+    echo "  build-all --parallel     Parallel build with smart caching"
     echo "  [component]              Build a specific component (e.g., backend, frontend)"
     echo "  [component] --force      Force rebuild a component without cache"
+    echo ""
+    echo "Build Cache Commands:"
+    echo "  cache-status        Show build cache status for all services"
+    echo "  build-history [N]   Show last N build history entries (default: 20)"
+    echo "  clear-cache [svc]   Clear build cache (all or specific service)"
     echo ""
     echo "Template Commands:"
     echo "  render, sync        Render all Dockerfile.tpl templates from .env config"
@@ -3157,9 +3671,19 @@ print_help() {
     echo "  $0 render                          # Render templates from .env"
     echo "  $0 render --force                  # Force re-render all templates"
     echo ""
-    echo "  # Building"
-    echo "  $0 build-all                       # Build all services"
+    echo "  # Building (with smart caching)"
+    echo "  $0 build-all                       # Build only changed services"
+    echo "  $0 build-all --parallel            # Parallel build (default 4 jobs)"
+    echo "  $0 build-all --parallel=8          # Parallel build with 8 jobs"
+    echo "  $0 build-all --force               # Force rebuild all (ignore cache)"
     echo "  $0 backend                         # Build single service"
+    echo "  $0 backend --force                 # Force rebuild single service"
+    echo ""
+    echo "  # Build cache management"
+    echo "  $0 cache-status                    # Show which services need rebuild"
+    echo "  $0 build-history                   # Show recent build history"
+    echo "  $0 clear-cache                     # Clear all build cache"
+    echo "  $0 clear-cache backend             # Clear cache for specific service"
     echo ""
     echo "  # Internet mode (Docker Hub)"
     echo "  $0 prefetch                        # Prefetch base images"
@@ -3189,10 +3713,13 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Parse global options first (--force, --no-cache, -f)
+# Parse global options first (--force, --no-cache, -f, --parallel, etc.)
 # These can appear anywhere in the command line
 FORCE_BUILD=false
 FORCE_RENDER=false
+FORCE_REBUILD=false
+ENABLE_PARALLEL=false
+SKIP_CACHE_CHECK=false
 REMAINING_ARGS=()
 
 for arg in "$@"; do
@@ -3200,6 +3727,21 @@ for arg in "$@"; do
         --force|-f|--no-cache)
             FORCE_BUILD=true
             FORCE_RENDER=true
+            FORCE_REBUILD=true
+            ;;
+        --parallel|-p)
+            ENABLE_PARALLEL=true
+            ;;
+        --parallel=*|-p=*)
+            ENABLE_PARALLEL=true
+            PARALLEL_JOBS="${arg#*=}"
+            ;;
+        -p[0-9]*)
+            ENABLE_PARALLEL=true
+            PARALLEL_JOBS="${arg#-p}"
+            ;;
+        --skip-cache)
+            SKIP_CACHE_CHECK=true
             ;;
         *)
             REMAINING_ARGS+=("$arg")
@@ -3207,9 +3749,15 @@ for arg in "$@"; do
     esac
 done
 
-# Show force mode message after parsing
+# Show mode messages after parsing
 if [[ "$FORCE_BUILD" == "true" ]]; then
     log_info "🔧 Force mode enabled (--no-cache for Docker builds)"
+fi
+if [[ "$ENABLE_PARALLEL" == "true" ]]; then
+    log_parallel "🚀 Parallel mode enabled (max $PARALLEL_JOBS concurrent jobs)"
+fi
+if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
+    log_cache "⏭️  Cache check skipped (--skip-cache)"
 fi
 
 COMMAND="${REMAINING_ARGS[0]:-}"
@@ -3247,6 +3795,18 @@ case "$COMMAND" in
         else
             build_all
         fi
+        ;;
+    cache-status)
+        # Show build cache status
+        show_cache_status
+        ;;
+    build-history)
+        # Show build history
+        show_build_history "$ARG2" "${ARG3:-20}"
+        ;;
+    clear-cache)
+        # Clear build cache
+        clear_build_cache "$ARG2"
         ;;
     render|sync|sync-templates)
         if [[ "$FORCE_BUILD" == "true" ]] || [[ "$FORCE_RENDER" == "true" ]]; then
