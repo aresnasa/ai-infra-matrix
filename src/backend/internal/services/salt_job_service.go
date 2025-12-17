@@ -13,6 +13,45 @@ import (
 	"gorm.io/gorm"
 )
 
+// 监控系统任务的黑名单 - 这些任务自动被过滤
+var MonitoringFunctionBlacklist = map[string]bool{
+	"status.cpuload":        true,
+	"status.meminfo":        true,
+	"status.cpuinfo":        true,
+	"status.diskusage":      true,
+	"status.netstats":       true,
+	"status.uptime":         true,
+	"status.loadavg":        true,
+	"status.loadavg5":       true,
+	"status.loadavg15":      true,
+	"runner.manage.status":  true,
+	"test.ping":             true,
+	"grains.items":          true,
+	"saltutil.sync_all":     true,
+	"saltutil.sync_grains":  true,
+	"saltutil.sync_modules": true,
+	"saltutil.refresh":      true,
+	"cmd.run_all":           true,
+	"test.echo":             true,
+}
+
+// IsMonitoringTask 判断是否是监控系统的任务
+func IsMonitoringTask(function string) bool {
+	if MonitoringFunctionBlacklist[function] {
+		return true
+	}
+	// 检查前缀
+	if len(function) > 0 {
+		if function[0:len("status.")] == "status." {
+			return true
+		}
+		if function[0:len("runner.")] == "runner." {
+			return true
+		}
+	}
+	return false
+}
+
 // SaltJobService Salt作业持久化服务
 type SaltJobService struct {
 	db          *gorm.DB
@@ -247,14 +286,17 @@ func (s *SaltJobService) ListJobs(ctx context.Context, params *models.SaltJobQue
 	query := s.db.Model(&models.SaltJobHistory{})
 
 	// 默认过滤掉监控相关的任务，只展示用户发起的作业
-	// 监控任务包括: status.*, runner.*, test.ping, grains.items 等
+	query = query.Where("status NOT IN ('monitoring', 'system')")
+
+	// 使用黑名单过滤监控函数
 	monitoringFunctions := []string{
 		"status.cpuload", "status.meminfo", "status.cpuinfo", "status.diskusage",
-		"status.netstats", "status.uptime", "status.loadavg",
+		"status.netstats", "status.uptime", "status.loadavg", "status.loadavg5", "status.loadavg15",
 		"runner.manage.status",
 		"test.ping",
 		"grains.items",
-		"saltutil.sync_all", "saltutil.sync_grains", "saltutil.sync_modules",
+		"saltutil.sync_all", "saltutil.sync_grains", "saltutil.sync_modules", "saltutil.refresh",
+		"cmd.run_all", "test.echo",
 	}
 	query = query.Where("function NOT IN ?", monitoringFunctions)
 	query = query.Where("function NOT LIKE 'status.%'")

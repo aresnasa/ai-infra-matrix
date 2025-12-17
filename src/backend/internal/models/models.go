@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -26,20 +27,22 @@ const (
 
 // User 用户表
 type User struct {
-	ID            uint           `json:"id" gorm:"primaryKey"`
-	Username      string         `json:"username" gorm:"uniqueIndex;not null;size:100"`
-	Email         string         `json:"email" gorm:"uniqueIndex;not null;size:255"`
-	Name          string         `json:"name" gorm:"size:255"` // 显示名称
-	Password      string         `json:"-" gorm:"not null;size:255"`
-	IsActive      bool           `json:"is_active" gorm:"default:true"`
-	AuthSource    string         `json:"auth_source" gorm:"default:'local';size:50"` // 认证来源: local, ldap
-	LDAPDn        string         `json:"ldap_dn,omitempty" gorm:"size:500"`          // LDAP用户的DN
-	DashboardRole string         `json:"dashboard_role" gorm:"size:50"`              // 仪表板角色
-	RoleTemplate  string         `json:"role_template" gorm:"size:50"`               // 角色模板
-	LastLogin     *time.Time     `json:"last_login,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
+	ID            uint            `json:"id" gorm:"primaryKey"`
+	Username      string          `json:"username" gorm:"uniqueIndex;not null;size:100"`
+	Email         string          `json:"email" gorm:"uniqueIndex;not null;size:255"`
+	Name          string          `json:"name" gorm:"size:255"` // 显示名称
+	Password      string          `json:"-" gorm:"not null;size:255"`
+	IsActive      bool            `json:"is_active" gorm:"default:true"`
+	AuthSource    string          `json:"auth_source" gorm:"default:'local';size:50"`           // 认证来源: local, ldap
+	LDAPDn        string          `json:"ldap_dn,omitempty" gorm:"size:500"`                    // LDAP用户的DN
+	DashboardRole string          `json:"dashboard_role" gorm:"size:50"`                        // 仪表板角色
+	RoleTemplate  string          `json:"role_template" gorm:"size:50"`                         // 角色模板
+	AllowedIPs    json.RawMessage `json:"allowed_ips,omitempty" gorm:"type:jsonb;default:'[]'"` // IP 白名单 (JSON 数组)
+	LastLogin     *time.Time      `json:"last_login,omitempty"`
+	LastLoginIP   string          `json:"last_login_ip,omitempty" gorm:"size:45"` // 上次登录的 IP 地址
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt  `json:"-" gorm:"index"`
 
 	// 关联关系 - 用户拥有的项目
 	Projects []Project `json:"projects,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
@@ -1153,6 +1156,43 @@ type MinionGroupMembership struct {
 
 func (MinionGroupMembership) TableName() string {
 	return "minion_group_memberships"
+}
+
+// AccessControlPolicy 全局访问控制策略
+type AccessControlPolicy struct {
+	ID                    uint            `json:"id" gorm:"primaryKey"`
+	PolicyName            string          `json:"policy_name" gorm:"uniqueIndex;not null;size:100"`
+	Description           string          `json:"description" gorm:"type:text"`
+	Enabled               bool            `json:"enabled" gorm:"default:true"`
+	PolicyType            string          `json:"policy_type" gorm:"default:'whitelist';size:20"` // whitelist 或 blacklist
+	IPList                json.RawMessage `json:"ip_list" gorm:"type:jsonb;default:'[]'"`         // IP 地址列表或 CIDR 范围
+	IncludeAuthentication bool            `json:"include_authentication" gorm:"default:true"`     // 是否对认证请求启用策略
+	Priority              int             `json:"priority" gorm:"default:0"`                      // 策略优先级
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+	CreatedBy             string          `json:"created_by" gorm:"size:100"` // 创建人
+	UpdatedBy             string          `json:"updated_by" gorm:"size:100"` // 更新人
+}
+
+func (AccessControlPolicy) TableName() string {
+	return "access_control_policies"
+}
+
+// AccessControlLog 访问控制日志
+type AccessControlLog struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Username  string    `json:"username" gorm:"index;size:100"`
+	IPAddress string    `json:"ip_address" gorm:"index;size:45"`
+	Action    string    `json:"action" gorm:"size:50"`       // login, api_call, deny 等
+	Result    string    `json:"result" gorm:"size:20"`       // allowed, denied
+	Reason    string    `json:"reason" gorm:"type:text"`     // 拒绝原因
+	Endpoint  string    `json:"endpoint" gorm:"size:255"`    // 访问的端点
+	UserAgent string    `json:"user_agent" gorm:"type:text"` // User Agent
+	CreatedAt time.Time `json:"created_at" gorm:"index"`
+}
+
+func (AccessControlLog) TableName() string {
+	return "access_control_logs"
 }
 
 // OSInfo 操作系统信息
