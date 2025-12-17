@@ -1789,7 +1789,7 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 		h.cache.Set(context.Background(), cacheKey, string(data), 300*time.Second)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": jobs, "demo": false})
+	c.JSON(http.StatusOK, gin.H{"data": jobs, "demo": false, "total": len(jobs)})
 }
 
 // getStringFromMap 从 map 中安全获取字符串值
