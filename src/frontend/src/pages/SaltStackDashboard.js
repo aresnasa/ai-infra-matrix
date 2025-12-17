@@ -5509,6 +5509,148 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         </Form>
                       </Card>
                     </Col>
+
+                    {/* 危险命令黑名单卡片 */}
+                    <Col span={24}>
+                      <Card 
+                        title={
+                          <Space>
+                            <StopOutlined style={{ color: '#ff4d4f' }} />
+                            {t('saltstack.dangerousCommandBlacklist', '危险命令黑名单')}
+                          </Space>
+                        }
+                        extra={
+                          <Space>
+                            <Switch
+                              checked={jobConfig.blacklist_enabled}
+                              onChange={(checked) => setJobConfig(prev => ({ ...prev, blacklist_enabled: checked }))}
+                              checkedChildren={t('common.enabled', '启用')}
+                              unCheckedChildren={t('common.disabled', '禁用')}
+                            />
+                            <Button
+                              type="primary"
+                              icon={<PlusOutlined />}
+                              onClick={handleAddDangerousCommand}
+                              disabled={!jobConfig.blacklist_enabled}
+                            >
+                              {t('saltstack.addCommand', '添加规则')}
+                            </Button>
+                          </Space>
+                        }
+                        style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
+                      >
+                        <Alert
+                          message={t('saltstack.dangerousCommandDesc', '配置危险命令黑名单，匹配的命令将被拦截执行。支持精确匹配和正则表达式。')}
+                          type="warning"
+                          showIcon
+                          style={{ marginBottom: 16 }}
+                        />
+                        
+                        <Table
+                          dataSource={(jobConfig.dangerous_commands || []).map((cmd, index) => ({ ...cmd, key: index }))}
+                          columns={[
+                            {
+                              title: t('saltstack.commandPattern', '命令模式'),
+                              dataIndex: 'pattern',
+                              key: 'pattern',
+                              width: '30%',
+                              render: (text, record) => (
+                                <Space>
+                                  <Text code style={{ 
+                                    color: record.enabled ? (isDark ? '#ff7875' : '#cf1322') : '#999',
+                                    textDecoration: record.enabled ? 'none' : 'line-through'
+                                  }}>
+                                    {text}
+                                  </Text>
+                                  {record.is_regex && (
+                                    <Tag color="blue" style={{ fontSize: '10px' }}>Regex</Tag>
+                                  )}
+                                </Space>
+                              ),
+                            },
+                            {
+                              title: t('saltstack.description', '描述'),
+                              dataIndex: 'description',
+                              key: 'description',
+                              width: '25%',
+                            },
+                            {
+                              title: t('saltstack.severity', '危险等级'),
+                              dataIndex: 'severity',
+                              key: 'severity',
+                              width: '12%',
+                              render: (severity) => {
+                                const colors = {
+                                  critical: 'red',
+                                  high: 'orange',
+                                  medium: 'gold',
+                                  low: 'green',
+                                };
+                                const labels = {
+                                  critical: t('saltstack.severityCritical', '严重'),
+                                  high: t('saltstack.severityHigh', '高'),
+                                  medium: t('saltstack.severityMedium', '中'),
+                                  low: t('saltstack.severityLow', '低'),
+                                };
+                                return <Tag color={colors[severity] || 'default'}>{labels[severity] || severity}</Tag>;
+                              },
+                            },
+                            {
+                              title: t('saltstack.enabled', '状态'),
+                              dataIndex: 'enabled',
+                              key: 'enabled',
+                              width: '10%',
+                              render: (enabled, record, index) => (
+                                <Switch
+                                  size="small"
+                                  checked={enabled}
+                                  onChange={(checked) => handleToggleDangerousCommand(index, checked)}
+                                  disabled={!jobConfig.blacklist_enabled}
+                                />
+                              ),
+                            },
+                            {
+                              title: t('common.actions', '操作'),
+                              key: 'actions',
+                              width: '15%',
+                              render: (_, record, index) => (
+                                <Space size="small">
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    icon={<EditOutlined />}
+                                    onClick={() => handleEditDangerousCommand(record, index)}
+                                    disabled={!jobConfig.blacklist_enabled}
+                                  >
+                                    {t('common.edit', '编辑')}
+                                  </Button>
+                                  <Popconfirm
+                                    title={t('saltstack.deleteCommandConfirm', '确定要删除此规则吗？')}
+                                    onConfirm={() => handleDeleteDangerousCommand(index)}
+                                    okText={t('common.confirm', '确定')}
+                                    cancelText={t('common.cancel', '取消')}
+                                  >
+                                    <Button
+                                      type="link"
+                                      size="small"
+                                      danger
+                                      icon={<DeleteOutlined />}
+                                      disabled={!jobConfig.blacklist_enabled}
+                                    >
+                                      {t('common.delete', '删除')}
+                                    </Button>
+                                  </Popconfirm>
+                                </Space>
+                              ),
+                            },
+                          ]}
+                          pagination={false}
+                          size="small"
+                          scroll={{ y: 300 }}
+                          locale={{ emptyText: t('saltstack.noRules', '暂无规则') }}
+                        />
+                      </Card>
+                    </Col>
                     
                     {/* 操作按钮 */}
                     <Col span={24}>
@@ -7088,6 +7230,79 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   <Select.Option value="geekblue"><Tag color="geekblue">geekblue</Tag></Select.Option>
                   <Select.Option value="lime"><Tag color="lime">lime</Tag></Select.Option>
                 </Select>
+              </Form.Item>
+            </Form>
+          </Modal>
+
+          {/* 危险命令编辑弹窗 */}
+          <Modal
+            title={editingCommand ? t('saltstack.editDangerousCommand', '编辑危险命令') : t('saltstack.addDangerousCommand', '添加危险命令')}
+            open={commandModalVisible}
+            onOk={handleSaveDangerousCommand}
+            onCancel={() => setCommandModalVisible(false)}
+            okText={t('common.save', '保存')}
+            cancelText={t('common.cancel', '取消')}
+            width={600}
+          >
+            <Alert
+              message={t('saltstack.dangerousCommandHint', '配置的命令模式将在执行 cmd.run 等命令时进行检查，匹配的命令将被拦截。')}
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            <Form form={commandForm} layout="vertical">
+              <Form.Item
+                name="pattern"
+                label={t('saltstack.commandPattern', '命令模式')}
+                rules={[{ required: true, message: t('saltstack.pleaseInputPattern', '请输入命令模式') }]}
+              >
+                <Input.TextArea
+                  placeholder={t('saltstack.patternPlaceholder', '如: rm -rf / 或正则表达式 rm\\s+-rf\\s+/')}
+                  rows={2}
+                />
+              </Form.Item>
+              
+              <Form.Item
+                name="is_regex"
+                label={t('saltstack.isRegex', '使用正则表达式')}
+                valuePropName="checked"
+              >
+                <Switch
+                  checkedChildren={t('common.yes', '是')}
+                  unCheckedChildren={t('common.no', '否')}
+                />
+              </Form.Item>
+              
+              <Form.Item
+                name="description"
+                label={t('saltstack.description', '描述')}
+                rules={[{ required: true, message: t('saltstack.pleaseInputDescription', '请输入描述') }]}
+              >
+                <Input placeholder={t('saltstack.descriptionPlaceholder', '如: 删除根目录所有文件')} />
+              </Form.Item>
+              
+              <Form.Item
+                name="severity"
+                label={t('saltstack.severity', '危险等级')}
+                rules={[{ required: true, message: t('saltstack.pleaseSelectSeverity', '请选择危险等级') }]}
+              >
+                <Select>
+                  <Option value="critical"><Tag color="red">{t('saltstack.severityCritical', '严重')}</Tag></Option>
+                  <Option value="high"><Tag color="orange">{t('saltstack.severityHigh', '高')}</Tag></Option>
+                  <Option value="medium"><Tag color="gold">{t('saltstack.severityMedium', '中')}</Tag></Option>
+                  <Option value="low"><Tag color="green">{t('saltstack.severityLow', '低')}</Tag></Option>
+                </Select>
+              </Form.Item>
+              
+              <Form.Item
+                name="enabled"
+                label={t('saltstack.enabled', '启用')}
+                valuePropName="checked"
+              >
+                <Switch
+                  checkedChildren={t('common.enabled', '启用')}
+                  unCheckedChildren={t('common.disabled', '禁用')}
+                />
               </Form.Item>
             </Form>
           </Modal>
