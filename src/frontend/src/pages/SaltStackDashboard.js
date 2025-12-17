@@ -209,6 +209,8 @@ const SaltStackDashboard = () => {
     max_records: 10000,
     cleanup_enabled: true,
     cleanup_interval_hour: 24,
+    cleanup_interval_value: 1,
+    cleanup_interval_unit: 'day',
     last_cleanup_time: null,
     blacklist_enabled: true,
     dangerous_commands: [],
@@ -5588,26 +5590,68 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                             label={
                               <Space>
                                 {t('saltstack.cleanupInterval', '清理间隔')}
-                                <Tooltip title={t('saltstack.cleanupIntervalHint', '自动清理任务的执行间隔')}>
+                                <Tooltip title={t('saltstack.cleanupIntervalHint', '自动清理任务的执行间隔，支持小时/天/月/年为单位')}>
                                   <QuestionCircleOutlined />
                                 </Tooltip>
                               </Space>
                             }
                           >
-                            <Select
-                              style={{ width: '100%' }}
-                              value={jobConfig.cleanup_interval_hour}
-                              onChange={(value) => setJobConfig(prev => ({ ...prev, cleanup_interval_hour: value }))}
-                              disabled={!jobConfig.cleanup_enabled}
-                            >
-                              <Option value={1}>1 {t('saltstack.hours', '小时')}</Option>
-                              <Option value={6}>6 {t('saltstack.hours', '小时')}</Option>
-                              <Option value={12}>12 {t('saltstack.hours', '小时')}</Option>
-                              <Option value={24}>24 {t('saltstack.hours', '小时')}</Option>
-                              <Option value={48}>48 {t('saltstack.hours', '小时')}</Option>
-                              <Option value={72}>72 {t('saltstack.hours', '小时')}</Option>
-                              <Option value={168}>168 {t('saltstack.hours', '小时')} (7 {t('common.days', '天')})</Option>
-                            </Select>
+                            <Space.Compact style={{ width: '100%' }}>
+                              <InputNumber
+                                style={{ width: '50%' }}
+                                min={1}
+                                max={jobConfig.cleanup_interval_unit === 'hour' ? 8760 : 
+                                     jobConfig.cleanup_interval_unit === 'day' ? 365 :
+                                     jobConfig.cleanup_interval_unit === 'month' ? 12 : 5}
+                                value={jobConfig.cleanup_interval_value || 1}
+                                onChange={(value) => {
+                                  const newValue = value || 1;
+                                  // 计算小时数
+                                  let hours = newValue;
+                                  switch(jobConfig.cleanup_interval_unit) {
+                                    case 'day': hours = newValue * 24; break;
+                                    case 'month': hours = newValue * 24 * 30; break;
+                                    case 'year': hours = newValue * 24 * 365; break;
+                                    default: hours = newValue;
+                                  }
+                                  setJobConfig(prev => ({ 
+                                    ...prev, 
+                                    cleanup_interval_value: newValue,
+                                    cleanup_interval_hour: hours
+                                  }));
+                                }}
+                                disabled={!jobConfig.cleanup_enabled}
+                              />
+                              <Select
+                                style={{ width: '50%' }}
+                                value={jobConfig.cleanup_interval_unit || 'day'}
+                                onChange={(unit) => {
+                                  const value = jobConfig.cleanup_interval_value || 1;
+                                  // 计算小时数
+                                  let hours = value;
+                                  switch(unit) {
+                                    case 'day': hours = value * 24; break;
+                                    case 'month': hours = value * 24 * 30; break;
+                                    case 'year': hours = value * 24 * 365; break;
+                                    default: hours = value;
+                                  }
+                                  setJobConfig(prev => ({ 
+                                    ...prev, 
+                                    cleanup_interval_unit: unit,
+                                    cleanup_interval_hour: hours
+                                  }));
+                                }}
+                                disabled={!jobConfig.cleanup_enabled}
+                              >
+                                <Option value="hour">{t('saltstack.hours', '小时')}</Option>
+                                <Option value="day">{t('common.days', '天')}</Option>
+                                <Option value="month">{t('saltstack.months', '月')}</Option>
+                                <Option value="year">{t('saltstack.years', '年')}</Option>
+                              </Select>
+                            </Space.Compact>
+                            <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                              {t('saltstack.cleanupIntervalCalculated', '= {hours} 小时', { hours: jobConfig.cleanup_interval_hour || 24 })}
+                            </Text>
                           </Form.Item>
                           
                           <Form.Item 

@@ -2883,6 +2883,18 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 					}
 				}
 
+				// 提取返回码：遍历所有节点结果，获取最大的非零返回码
+				returnCode := 0
+				for _, v := range m {
+					if vMap, ok := v.(map[string]interface{}); ok {
+						if retcode, ok := vMap["retcode"].(float64); ok {
+							if int(retcode) != 0 && (returnCode == 0 || int(retcode) > returnCode) {
+								returnCode = int(retcode)
+							}
+						}
+					}
+				}
+
 				// 更新 Redis 中的作业状态为 completed
 				if h.cache != nil {
 					jobDetailKey := fmt.Sprintf("saltstack:job_detail:%s", jid)
@@ -2890,14 +2902,26 @@ func (h *SaltStackHandler) ExecuteSaltCommand(c *gin.Context) {
 					if err == nil {
 						var jobInfo map[string]interface{}
 						if json.Unmarshal([]byte(jobInfoJSON), &jobInfo) == nil {
+							endTime := time.Now()
 							jobInfo["status"] = "completed"
-							jobInfo["end_time"] = time.Now().Format(time.RFC3339)
+							jobInfo["end_time"] = endTime.Format(time.RFC3339)
 							jobInfo["result"] = m
 							jobInfo["success_count"] = successCount
 							jobInfo["failed_count"] = failedCount
+							jobInfo["return_code"] = returnCode
+							// 计算持续时间（毫秒），最小1秒
+							if startTimeStr, ok := jobInfo["start_time"].(string); ok {
+								if startTimeParsed, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+									durationMs := endTime.Sub(startTimeParsed).Milliseconds()
+									if durationMs < 1000 {
+										durationMs = 1000
+									}
+									jobInfo["duration"] = durationMs
+								}
+							}
 							if updatedJSON, err := json.Marshal(jobInfo); err == nil {
 								h.cache.Set(ctx, jobDetailKey, string(updatedJSON), 7*24*time.Hour)
-								log.Printf("[DEBUG] 已更新作业 %s 状态为 completed", jid)
+								log.Printf("[DEBUG] 已更新作业 %s 状态为 completed, 返回码=%d", jid, returnCode)
 							}
 						}
 					}
@@ -4931,14 +4955,16 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 		return
 	}
 
-	// 使用通用结构解析，以支持 dangerous_commands 字段
+	// 使用通用结构解析，以支持 dangerous_commands 字段和新的清理间隔配置
 	var request struct {
-		MaxRetentionDays    int                       `json:"max_retention_days"`
-		MaxRecords          int                       `json:"max_records"`
-		CleanupEnabled      bool                      `json:"cleanup_enabled"`
-		CleanupIntervalHour int                       `json:"cleanup_interval_hour"`
-		BlacklistEnabled    bool                      `json:"blacklist_enabled"`
-		DangerousCommands   []models.DangerousCommand `json:"dangerous_commands"`
+		MaxRetentionDays     int                       `json:"max_retention_days"`
+		MaxRecords           int                       `json:"max_records"`
+		CleanupEnabled       bool                      `json:"cleanup_enabled"`
+		CleanupIntervalHour  int                       `json:"cleanup_interval_hour"`  // 兼容旧版本
+		CleanupIntervalValue int                       `json:"cleanup_interval_value"` // 新版本：间隔值
+		CleanupIntervalUnit  string                    `json:"cleanup_interval_unit"`  // 新版本：单位 hour/day/month/year
+		BlacklistEnabled     bool                      `json:"blacklist_enabled"`
+		DangerousCommands    []models.DangerousCommand `json:"dangerous_commands"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -4960,20 +4986,77 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 	} else if request.MaxRecords > 100000 {
 		request.MaxRecords = 100000
 	}
-	if request.CleanupIntervalHour < 1 {
-		request.CleanupIntervalHour = 1
-	} else if request.CleanupIntervalHour > 168 {
-		request.CleanupIntervalHour = 168
+
+	// 处理清理间隔配置
+	cleanupIntervalValue := request.CleanupIntervalValue
+	cleanupIntervalUnit := request.CleanupIntervalUnit
+	cleanupIntervalHour := request.CleanupIntervalHour
+
+	// 如果使用新版本配置（有 value 和 unit），计算小时数
+	if cleanupIntervalValue > 0 && cleanupIntervalUnit != "" {
+		// 校验单位
+		validUnits := map[string]bool{"hour": true, "day": true, "month": true, "year": true}
+		if !validUnits[cleanupIntervalUnit] {
+			cleanupIntervalUnit = "day" // 默认单位为天
+		}
+		// 校验值范围
+		switch cleanupIntervalUnit {
+		case "hour":
+			if cleanupIntervalValue > 8760 { // 最大1年的小时数
+				cleanupIntervalValue = 8760
+			}
+		case "day":
+			if cleanupIntervalValue > 365 {
+				cleanupIntervalValue = 365
+			}
+		case "month":
+			if cleanupIntervalValue > 12 {
+				cleanupIntervalValue = 12
+			}
+		case "year":
+			if cleanupIntervalValue > 5 {
+				cleanupIntervalValue = 5
+			}
+		}
+		// 计算小时数
+		tempConfig := &models.SaltJobConfig{
+			CleanupIntervalValue: cleanupIntervalValue,
+			CleanupIntervalUnit:  cleanupIntervalUnit,
+		}
+		cleanupIntervalHour = tempConfig.CalculateCleanupIntervalHour()
+	} else {
+		// 兼容旧版本：只有 cleanup_interval_hour
+		if cleanupIntervalHour < 1 {
+			cleanupIntervalHour = 1
+		} else if cleanupIntervalHour > 8760 { // 最大1年
+			cleanupIntervalHour = 8760
+		}
+		// 尝试推断 value 和 unit
+		if cleanupIntervalHour >= 8760 {
+			cleanupIntervalValue = cleanupIntervalHour / 8760
+			cleanupIntervalUnit = "year"
+		} else if cleanupIntervalHour >= 720 {
+			cleanupIntervalValue = cleanupIntervalHour / 720
+			cleanupIntervalUnit = "month"
+		} else if cleanupIntervalHour >= 24 {
+			cleanupIntervalValue = cleanupIntervalHour / 24
+			cleanupIntervalUnit = "day"
+		} else {
+			cleanupIntervalValue = cleanupIntervalHour
+			cleanupIntervalUnit = "hour"
+		}
 	}
 
 	// 获取现有配置
 	existingConfig := saltJobService.GetConfig()
 	config := &models.SaltJobConfig{
-		MaxRetentionDays:    request.MaxRetentionDays,
-		MaxRecords:          request.MaxRecords,
-		CleanupEnabled:      request.CleanupEnabled,
-		CleanupIntervalHour: request.CleanupIntervalHour,
-		BlacklistEnabled:    request.BlacklistEnabled,
+		MaxRetentionDays:     request.MaxRetentionDays,
+		MaxRecords:           request.MaxRecords,
+		CleanupEnabled:       request.CleanupEnabled,
+		CleanupIntervalHour:  cleanupIntervalHour,
+		CleanupIntervalValue: cleanupIntervalValue,
+		CleanupIntervalUnit:  cleanupIntervalUnit,
+		BlacklistEnabled:     request.BlacklistEnabled,
 	}
 
 	// 保留现有配置的 ID 和上次清理时间

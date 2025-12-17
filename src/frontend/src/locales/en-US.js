@@ -746,6 +746,11 @@ export default {
     running: 'Running',
     failed: 'Failed',
     total: '{count} items in total',
+
+    // Cleanup Interval Configuration
+    months: 'Months',
+    years: 'Years',
+    cleanupIntervalCalculated: '= {hours} hours',
   },
 
   // Search Related

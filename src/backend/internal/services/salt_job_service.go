@@ -139,16 +139,18 @@ func (s *SaltJobService) GetConfigWithDangerousCommands() map[string]interface{}
 	}
 
 	return map[string]interface{}{
-		"id":                    s.config.ID,
-		"max_retention_days":    s.config.MaxRetentionDays,
-		"max_records":           s.config.MaxRecords,
-		"cleanup_enabled":       s.config.CleanupEnabled,
-		"cleanup_interval_hour": s.config.CleanupIntervalHour,
-		"last_cleanup_time":     s.config.LastCleanupTime,
-		"blacklist_enabled":     s.config.BlacklistEnabled,
-		"dangerous_commands":    s.config.GetDangerousCommands(),
-		"created_at":            s.config.CreatedAt,
-		"updated_at":            s.config.UpdatedAt,
+		"id":                     s.config.ID,
+		"max_retention_days":     s.config.MaxRetentionDays,
+		"max_records":            s.config.MaxRecords,
+		"cleanup_enabled":        s.config.CleanupEnabled,
+		"cleanup_interval_hour":  s.config.CleanupIntervalHour,
+		"cleanup_interval_value": s.config.CleanupIntervalValue,
+		"cleanup_interval_unit":  s.config.CleanupIntervalUnit,
+		"last_cleanup_time":      s.config.LastCleanupTime,
+		"blacklist_enabled":      s.config.BlacklistEnabled,
+		"dangerous_commands":     s.config.GetDangerousCommands(),
+		"created_at":             s.config.CreatedAt,
+		"updated_at":             s.config.UpdatedAt,
 	}
 }
 
@@ -273,7 +275,9 @@ func (s *SaltJobService) UpdateJobStatus(ctx context.Context, jid string, update
 	if update.Status != "" {
 		updates["status"] = update.Status
 	}
-	if update.ReturnCode != 0 {
+	// 返回码需要记录，包括 0 值（表示成功）
+	// 只有在状态为 completed/failed 时才更新返回码
+	if update.Status == "completed" || update.Status == "failed" {
 		updates["return_code"] = update.ReturnCode
 	}
 	if update.SuccessCount > 0 {
@@ -290,11 +294,16 @@ func (s *SaltJobService) UpdateJobStatus(ctx context.Context, jid string, update
 		updates["result"] = string(resultJSON)
 	}
 
-	// 如果状态变为终态，设置结束时间和持续时间
+	// 如果状态变为终态，设置结束时间和持续时间（毫秒，最小1000ms即1秒）
 	if update.Status == "completed" || update.Status == "failed" || update.Status == "timeout" {
 		now := time.Now()
 		updates["end_time"] = now
-		updates["duration"] = now.Sub(job.StartTime).Milliseconds()
+		durationMs := now.Sub(job.StartTime).Milliseconds()
+		// 简单命令最小记录 1 秒
+		if durationMs < 1000 {
+			durationMs = 1000
+		}
+		updates["duration"] = durationMs
 	}
 
 	if err := s.db.Model(&job).Updates(updates).Error; err != nil {
@@ -316,12 +325,27 @@ func (s *SaltJobService) UpdateJobStatus(ctx context.Context, jid string, update
 }
 
 // CompleteJob 完成作业（便捷方法）
+// 从执行结果中提取返回码，返回码取所有节点中最大的非零返回码
 func (s *SaltJobService) CompleteJob(ctx context.Context, jid string, result map[string]interface{}, successCount, failedCount int) error {
+	// 提取返回码：遍历所有节点结果，获取最大的非零返回码
+	returnCode := 0
+	for _, v := range result {
+		if vMap, ok := v.(map[string]interface{}); ok {
+			// 尝试从结果中提取 retcode
+			if retcode, ok := vMap["retcode"].(float64); ok {
+				if int(retcode) != 0 && (returnCode == 0 || int(retcode) > returnCode) {
+					returnCode = int(retcode)
+				}
+			}
+		}
+	}
+
 	return s.UpdateJobStatus(ctx, jid, &models.SaltJobUpdateRequest{
 		Status:       "completed",
 		Result:       result,
 		SuccessCount: successCount,
 		FailedCount:  failedCount,
+		ReturnCode:   returnCode,
 	})
 }
 

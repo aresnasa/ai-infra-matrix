@@ -746,6 +746,11 @@ export default {
     running: '运行中',
     failed: '失败',
     total: '共 {count} 条',
+
+    // 清理间隔配置
+    months: '月',
+    years: '年',
+    cleanupIntervalCalculated: '= {hours} 小时',
   },
 
   // 搜索相关
