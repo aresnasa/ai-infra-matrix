@@ -3100,9 +3100,12 @@ func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
 	pm := services.GetProgressManager()
 	op := pm.Start("salt:execute-custom", "开始下发自定义命令")
 
+	// 生成 TaskID 供前端追踪
+	taskID := fmt.Sprintf("EXEC-%s-%04d", time.Now().Format("20060102-150405"), time.Now().Nanosecond()/1000000%10000)
+
 	// Avoid anonymous-struct type mismatch by capturing the bound request
 	r := req
-	go func(opID string) {
+	go func(opID, tID string) {
 		failed := false
 		defer func() { pm.Complete(opID, failed, "命令执行完成") }()
 
@@ -3171,9 +3174,72 @@ func (h *SaltStackHandler) ExecuteCustomCommandAsync(c *gin.Context) {
 			}
 		}
 		pm.Emit(opID, services.ProgressEvent{Type: "step-done", Step: "dispatch", Message: fmt.Sprintf("执行完成，用时 %dms", duration.Milliseconds()), Data: res})
-	}(op.ID)
 
-	c.JSON(http.StatusAccepted, gin.H{"opId": op.ID})
+		// === 保存作业到数据库 ===
+		saltJobService := services.GetSaltJobService()
+		if saltJobService != nil {
+			// 提取 JID（如果 Salt API 返回了）
+			jid := ""
+			if res != nil {
+				if returnArr, ok := res["return"].([]interface{}); ok && len(returnArr) > 0 {
+					// 尝试从 jid 字段获取
+					if j, ok := res["jid"].(string); ok {
+						jid = j
+					}
+				}
+			}
+			// 如果没有 JID，使用 TaskID 作为 JID
+			if jid == "" {
+				jid = tID
+			}
+
+			// 序列化参数和结果
+			argsJSON, _ := json.Marshal([]interface{}{cmd, kwarg})
+			resultJSON, _ := json.Marshal(res)
+
+			// 计算成功/失败数量
+			successCount := 0
+			failedCount := 0
+			for _, output := range results {
+				if output != "" && !strings.Contains(strings.ToLower(output), "error") && !strings.Contains(strings.ToLower(output), "failed") {
+					successCount++
+				} else {
+					failedCount++
+				}
+			}
+
+			endTime := time.Now()
+			status := "completed"
+			if failed {
+				status = "failed"
+			}
+
+			dbJob := &models.SaltJobHistory{
+				JID:          jid,
+				TaskID:       tID,
+				Function:     "cmd.run",
+				Arguments:    string(argsJSON),
+				Target:       r.Target,
+				TgtType:      "glob",
+				User:         r.User,
+				Status:       status,
+				SuccessCount: successCount,
+				FailedCount:  failedCount,
+				Result:       string(resultJSON),
+				StartTime:    start,
+				EndTime:      &endTime,
+				Duration:     duration.Milliseconds(),
+			}
+
+			if err := saltJobService.CreateJob(context.Background(), dbJob); err != nil {
+				log.Printf("[ExecuteCustomCommandAsync] 保存作业到数据库失败: %v", err)
+			} else {
+				log.Printf("[ExecuteCustomCommandAsync] 作业已保存到数据库: JID=%s, TaskID=%s", jid, tID)
+			}
+		}
+	}(op.ID, taskID)
+
+	c.JSON(http.StatusAccepted, gin.H{"opId": op.ID, "taskId": taskID})
 }
 
 // GetProgress 返回异步操作的快照
