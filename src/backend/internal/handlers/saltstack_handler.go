@@ -327,16 +327,18 @@ type SaltMinion struct {
 
 // SaltJob Salt作业信息
 type SaltJob struct {
-	JID       string                 `json:"jid"`
-	Function  string                 `json:"function"`
-	Arguments []string               `json:"arguments"`
-	Target    string                 `json:"target"`
-	StartTime time.Time              `json:"start_time"`
-	EndTime   *time.Time             `json:"end_time,omitempty"`
-	Status    string                 `json:"status"`
-	Result    map[string]interface{} `json:"result,omitempty"`
-	User      string                 `json:"user"`
-	TaskID    string                 `json:"task_id,omitempty"` // 前端生成的任务ID，用于用户追踪
+	JID          string                 `json:"jid"`
+	Function     string                 `json:"function"`
+	Arguments    []string               `json:"arguments"`
+	Target       string                 `json:"target"`
+	StartTime    time.Time              `json:"start_time"`
+	EndTime      *time.Time             `json:"end_time,omitempty"`
+	Status       string                 `json:"status"`
+	Result       map[string]interface{} `json:"result,omitempty"`
+	User         string                 `json:"user"`
+	TaskID       string                 `json:"task_id,omitempty"` // 前端生成的任务ID，用于用户追踪
+	SuccessCount int                    `json:"success_count"`     // 成功节点数量
+	FailedCount  int                    `json:"failed_count"`      // 失败节点数量
 }
 
 // saltAPIClient SaltStack API客户端
