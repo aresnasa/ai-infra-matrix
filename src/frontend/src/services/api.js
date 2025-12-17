@@ -606,7 +606,10 @@ export const slurmAPI = {
 export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
   getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
-  getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
+  // 从数据库获取作业历史（持久化数据，支持筛选和搜索）
+  getJobs: (limit) => api.get('/saltstack/jobs/history', { params: { page_size: limit } }),
+  // 从 Salt API 实时获取作业（仅用于特殊场景）
+  getJobsFromSaltAPI: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
   // 获取单个作业详情（优先从数据库查询，确保持久化）
   getJobDetail: (jid) => api.get(`/saltstack/jobs/${jid}`),
   // 通过 TaskID 获取作业详情
