@@ -3765,7 +3765,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           {status?.salt_version || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
                         </Descriptions.Item>
                         <Descriptions.Item label={t('saltstack.uptime')}>
-                          {status?.uptime || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
+                          {status?.uptime_str || status?.uptime || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
                         </Descriptions.Item>
                         <Descriptions.Item label={t('saltstack.configFile')}>
                           {status?.config_file || '/etc/salt/master'}

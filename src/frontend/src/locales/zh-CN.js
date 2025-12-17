@@ -256,6 +256,7 @@ export default {
     noResult: '暂无执行结果',
     noJobData: '无法获取作业数据',
     getJobDetailFailed: '获取作业详情失败',
+    executeFailed: '执行失败',
 
     // 安装任务
     installTasksHistory: '安装任务',

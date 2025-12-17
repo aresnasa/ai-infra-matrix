@@ -256,6 +256,7 @@ export default {
     noResult: 'No execution result',
     noJobData: 'Unable to retrieve job data',
     getJobDetailFailed: 'Failed to get job detail',
+    executeFailed: 'Execution failed',
 
     // Install Tasks
     installTasksHistory: 'Install Tasks',

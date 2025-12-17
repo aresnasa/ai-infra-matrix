@@ -268,6 +268,7 @@ type SaltStackStatus struct {
 	MasterVersion    string            `json:"master_version"`
 	APIVersion       string            `json:"api_version"`
 	Uptime           int64             `json:"uptime"`
+	UptimeStr        string            `json:"uptime_str,omitempty"` // 人类可读的运行时间，如 "3天 5小时"
 	ConnectedMinions int               `json:"connected_minions"`
 	AcceptedKeys     []string          `json:"accepted_keys"`
 	UnacceptedKeys   []string          `json:"unaccepted_keys"`
@@ -973,6 +974,7 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		apiInfo      map[string]interface{}
 		manageStatus map[string]interface{}
 		keysResp     map[string]interface{}
+		versionInfo  map[string]interface{} // Salt 版本信息
 		err          error
 	}
 
@@ -983,6 +985,9 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 
 		// 获取 API 根信息（用于APIVersion）- 这个通常很快
 		result.apiInfo, _ = client.makeRequest("/", "GET", nil)
+
+		// 获取 Salt 版本信息 - 通过 test.version runner
+		result.versionInfo, _ = client.makeRunner("test.version", nil)
 
 		// 获取 up/down 状态 - 这是最重要的
 		// 设置较短的超时参数，避免等待离线 minion 过久
@@ -1003,7 +1008,7 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 	}()
 
 	// 等待基础状态获取完成（最多 30 秒）
-	var apiInfo, manageStatus, keysResp map[string]interface{}
+	var apiInfo, manageStatus, keysResp, versionInfo map[string]interface{}
 	select {
 	case result := <-resultChan:
 		if result.err != nil {
@@ -1012,12 +1017,20 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		apiInfo = result.apiInfo
 		manageStatus = result.manageStatus
 		keysResp = result.keysResp
+		versionInfo = result.versionInfo
 	case <-time.After(30 * time.Second):
 		return SaltStackStatus{}, fmt.Errorf("获取 Salt 基础状态超时")
 	}
 
 	up, down := h.parseManageStatus(manageStatus)
 	minions, pre, rejected := h.parseWheelKeys(keysResp)
+
+	// 提取 Salt 版本信息
+	saltVersion := h.extractSaltVersion(versionInfo)
+	if saltVersion == "" {
+		// 如果 test.version 没有返回，尝试从 API 根端点获取
+		saltVersion = h.extractAPISaltVersion(apiInfo)
+	}
 
 	// 性能指标在单独的 goroutine 中获取，设置较短超时，失败不影响主要状态
 	cpuUsage, memoryUsage, activeConnections := 0, 0, 0
@@ -1048,12 +1061,16 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		metricsSource = "timeout"
 	}
 
+	// 获取 Salt Master 容器/进程运行时间
+	uptime, uptimeStr := h.getSaltMasterUptime(client)
+
 	// 构造状态
 	status := SaltStackStatus{
 		Status:           "connected",
-		MasterVersion:    h.extractAPISaltVersion(apiInfo),
+		MasterVersion:    saltVersion,
 		APIVersion:       h.extractAPIVersion(apiInfo),
-		Uptime:           0,
+		Uptime:           uptime,
+		UptimeStr:        uptimeStr,
 		ConnectedMinions: len(up),
 		AcceptedKeys:     minions,
 		UnacceptedKeys:   pre,
@@ -1069,7 +1086,7 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		APIStatus:         "running",
 		MinionsUp:         len(up),
 		MinionsDown:       len(down),
-		SaltVersion:       h.extractAPISaltVersion(apiInfo),
+		SaltVersion:       saltVersion,
 		ConfigFile:        "/etc/salt/master",
 		LogLevel:          "info",
 		CPUUsage:          float64(cpuUsage),
@@ -2567,6 +2584,142 @@ func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string
 		}
 	}
 	return ""
+}
+
+// extractSaltVersion 从 test.version runner 响应中提取 Salt 版本
+// test.version 返回格式: {"return": ["3006.9"]} 或 {"return": [{"salt": "3006.9"}]}
+func (h *SaltStackHandler) extractSaltVersion(resp map[string]interface{}) string {
+	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+		// 格式1: 直接是版本字符串 {"return": ["3006.9"]}
+		if version, ok := ret[0].(string); ok && version != "" {
+			return version
+		}
+		// 格式2: 带结构的响应 {"return": [{"salt": "3006.9"}]}
+		if m, ok := ret[0].(map[string]interface{}); ok {
+			if v, ok := m["salt"].(string); ok && v != "" {
+				return v
+			}
+			if v, ok := m["version"].(string); ok && v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// getSaltMasterUptime 获取 Salt Master 容器/服务的运行时间
+// 返回值：秒数，人类可读字符串
+func (h *SaltStackHandler) getSaltMasterUptime(client *saltAPIClient) (int64, string) {
+	// 尝试通过 Docker API 获取容器运行时间
+	uptime, uptimeStr := h.getUptimeFromDocker()
+	if uptime > 0 {
+		return uptime, uptimeStr
+	}
+
+	// 如果无法从 Docker 获取，尝试通过 Salt 执行命令获取
+	// 使用 salt-run 执行本地命令获取 salt-master 进程运行时间
+	resp, err := client.makeRunner("salt.cmd", map[string]interface{}{
+		"fun": "cmd.run",
+		"arg": []string{"ps -o etimes= -p $(pgrep -f 'salt-master' | head -1) 2>/dev/null || echo 0"},
+	})
+	if err == nil {
+		if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+			if output, ok := ret[0].(string); ok {
+				output = strings.TrimSpace(output)
+				if seconds, err := strconv.ParseInt(output, 10, 64); err == nil && seconds > 0 {
+					return seconds, formatUptime(seconds)
+				}
+			}
+		}
+	}
+
+	return 0, ""
+}
+
+// getUptimeFromDocker 从 Docker API 获取 Salt Master 容器的运行时间
+func (h *SaltStackHandler) getUptimeFromDocker() (int64, string) {
+	// 尝试连接到 Docker 守护进程
+	dockerHost := os.Getenv("DOCKER_HOST")
+	if dockerHost == "" {
+		dockerHost = "unix:///var/run/docker.sock"
+	}
+
+	// 创建 HTTP 客户端
+	var httpClient *http.Client
+	if strings.HasPrefix(dockerHost, "unix://") {
+		socketPath := strings.TrimPrefix(dockerHost, "unix://")
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", socketPath)
+				},
+			},
+			Timeout: 5 * time.Second,
+		}
+	} else {
+		httpClient = &http.Client{Timeout: 5 * time.Second}
+	}
+
+	// 查找名称包含 "salt" 的容器
+	containerNames := []string{"saltstack", "salt-master", "salt"}
+	for _, name := range containerNames {
+		var reqURL string
+		if strings.HasPrefix(dockerHost, "unix://") {
+			reqURL = fmt.Sprintf("http://localhost/containers/%s/json", name)
+		} else {
+			reqURL = fmt.Sprintf("%s/containers/%s/json", strings.TrimPrefix(dockerHost, "tcp://"), name)
+		}
+
+		resp, err := httpClient.Get(reqURL)
+		if err != nil || resp.StatusCode != 200 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			continue
+		}
+		defer resp.Body.Close()
+
+		var containerInfo struct {
+			State struct {
+				StartedAt string `json:"StartedAt"`
+			} `json:"State"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&containerInfo); err == nil {
+			if startedAt, err := time.Parse(time.RFC3339Nano, containerInfo.State.StartedAt); err == nil {
+				uptimeSeconds := int64(time.Since(startedAt).Seconds())
+				return uptimeSeconds, formatUptime(uptimeSeconds)
+			}
+		}
+	}
+
+	return 0, ""
+}
+
+// formatUptime 将秒数格式化为人类可读的字符串
+func formatUptime(seconds int64) string {
+	if seconds <= 0 {
+		return ""
+	}
+
+	days := seconds / 86400
+	hours := (seconds % 86400) / 3600
+	minutes := (seconds % 3600) / 60
+
+	var parts []string
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%d天", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%d小时", hours))
+	}
+	if minutes > 0 && days == 0 { // 如果超过1天，不显示分钟
+		parts = append(parts, fmt.Sprintf("%d分钟", minutes))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "刚刚启动")
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // ExecuteSaltCommand 执行Salt命令
