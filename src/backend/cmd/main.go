@@ -1086,16 +1086,6 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	// SaltStack 管理路由（需要认证）
 	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
 
-	// 注入 Salt 作业持久化服务
-	saltJobService := services.NewSaltJobService(database.DB, cache.RDB)
-	saltStackHandler.SetSaltJobService(saltJobService)
-
-	// 启动 Salt 作业状态监控器（后台检查 running 状态的作业并更新）
-	saltJobWatcher := services.NewSaltJobWatcher(database.DB, cache.RDB)
-	saltJobWatcher.Start()
-	// 注入监控器到 handler（用于手动触发检查）
-	saltStackHandler.SetSaltJobWatcher(saltJobWatcher)
-
 	// 节点指标回调 API（使用 API Token 认证，允许节点直接上报）
 	// 这个路由不使用 session 认证，而是使用 X-API-Token 头进行认证
 	api.POST("/saltstack/node-metrics/callback", saltStackHandler.NodeMetricsCallback)
@@ -1107,8 +1097,6 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
 		saltstack.GET("/minions/:minionId/details", saltStackHandler.GetMinionDetails)
 		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
-		saltstack.GET("/jobs/:jid", saltStackHandler.GetSaltJobDetail)
-		saltstack.GET("/jobs/by-task/:task_id", saltStackHandler.GetSaltJobByTaskID) // 通过 TaskID 查询作业
 		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
 		// 自定义脚本执行（异步）+ 进度
 		saltstack.POST("/execute-custom/async", saltStackHandler.ExecuteCustomCommandAsync)
@@ -1138,14 +1126,6 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.POST("/ib-ignores", saltStackHandler.AddIBPortIgnore)
 		saltstack.DELETE("/ib-ignores/:minion_id/:port_name", saltStackHandler.RemoveIBPortIgnore)
 		saltstack.GET("/ib-alerts", saltStackHandler.GetIBPortAlerts)
-		// 作业持久化配置管理
-		saltstack.GET("/jobs/config", saltStackHandler.GetSaltJobConfig)
-		saltstack.PUT("/jobs/config", saltStackHandler.UpdateSaltJobConfig)
-		saltstack.POST("/jobs/cleanup", saltStackHandler.TriggerSaltJobCleanup)
-		saltstack.GET("/jobs/stats", saltStackHandler.GetSaltJobStats)
-		// 作业状态检查（手动触发，用于调试或强制刷新）
-		saltstack.POST("/jobs/:jid/refresh", saltStackHandler.RefreshJobStatus)
-		saltstack.GET("/jobs/:jid/status", saltStackHandler.GetJobStatusByJID)
 	}
 
 	// 仪表板统计路由（需要认证）

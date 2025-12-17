@@ -30,12 +30,7 @@ import {
   EditOutlined,
   LoadingOutlined,
   CloseCircleOutlined,
-  CodeOutlined,
-  EyeOutlined,
-  SearchOutlined,
-  FilterOutlined,
-  ExpandOutlined,
-  CompressOutlined
+  CodeOutlined
 } from '@ant-design/icons';
 import { saltStackAPI, aiAPI } from '../services/api';
 import MinionsTable from '../components/MinionsTable';
@@ -69,7 +64,6 @@ const SaltStackDashboard = () => {
   
   // 页面状态管理
   const [pageLoaded, setPageLoaded] = useState(false);
-  const [activeTabKey, setActiveTabKey] = useState('overview'); // Tab 切换状态
   
   // 数据状态 - 分别管理loading状态
   const [status, setStatus] = useState(null);
@@ -187,24 +181,9 @@ const SaltStackDashboard = () => {
   const [installTasksPage, setInstallTasksPage] = useState({ current: 1, pageSize: 10 });
   const [expandedTaskId, setExpandedTaskId] = useState(null);
 
-  // 作业详情弹窗状态
-  const [jobDetailVisible, setJobDetailVisible] = useState(false);
-  const [jobDetailLoading, setJobDetailLoading] = useState(false);
-  const [jobDetail, setJobDetail] = useState(null);
-  const [jobDetailSearchVisible, setJobDetailSearchVisible] = useState(false);
-  const [jobDetailSearchText, setJobDetailSearchText] = useState('');
-  const [jobDetailSearchRegex, setJobDetailSearchRegex] = useState(false);
-
   // 删除任务历史状态
   const [deleteTasks, setDeleteTasks] = useState([]);
   const [deleteTasksLoading, setDeleteTasksLoading] = useState(false);
-
-  // 作业持久化配置状态
-  const [jobConfig, setJobConfig] = useState(null);
-  const [jobStats, setJobStats] = useState(null);
-  const [jobConfigLoading, setJobConfigLoading] = useState(false);
-  const [jobConfigForm] = Form.useForm();
-  const [cleanupLoading, setCleanupLoading] = useState(false);
   const [deleteTasksTotal, setDeleteTasksTotal] = useState(0);
   const [expandedDeleteTaskId, setExpandedDeleteTaskId] = useState(null);
   const [deleteTaskLogs, setDeleteTaskLogs] = useState({});
@@ -223,94 +202,6 @@ const SaltStackDashboard = () => {
   const [batchExecLoading, setBatchExecLoading] = useState(false);
   const [selectedScriptTemplate, setSelectedScriptTemplate] = useState(null);
   const [batchExecForm] = Form.useForm();
-  const [batchExecResultSearchVisible, setBatchExecResultSearchVisible] = useState(false);
-  const [batchExecResultSearchText, setBatchExecResultSearchText] = useState('');
-  const [batchExecResultSearchRegex, setBatchExecResultSearchRegex] = useState(false);
-  const [batchExecTaskId, setBatchExecTaskId] = useState(null); // 当前执行任务ID
-  const [batchExecJid, setBatchExecJid] = useState(null); // Salt JID
-  const batchExecPollRef = useRef(null); // 轮询定时器引用
-  const [jobSearchTaskId, setJobSearchTaskId] = useState(''); // 作业历史任务ID搜索
-  const [jobSearchText, setJobSearchText] = useState(''); // 作业历史通用搜索
-  
-  // JID到TaskID的映射 - 使用localStorage持久化
-  const TASK_ID_MAP_KEY = 'saltstack_jid_taskid_map';
-  const jidToTaskIdMapRef = useRef((() => {
-    try {
-      const stored = localStorage.getItem(TASK_ID_MAP_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return new Map(Object.entries(parsed));
-      }
-    } catch (e) {
-      console.warn('加载JID-TaskID映射失败', e);
-    }
-    return new Map();
-  })());
-  
-  // 保存JID-TaskID映射到localStorage
-  const saveJidTaskIdMap = useCallback((map) => {
-    try {
-      const obj = Object.fromEntries(map);
-      localStorage.setItem(TASK_ID_MAP_KEY, JSON.stringify(obj));
-    } catch (e) {
-      console.warn('保存JID-TaskID映射失败', e);
-    }
-  }, []);
-  
-  // 添加JID-TaskID映射
-  const addJidTaskIdMapping = useCallback((jid, taskId) => {
-    if (!jid || !taskId) return;
-    const map = jidToTaskIdMapRef.current;
-    map.set(jid, taskId);
-    // 保持映射表不超过100条记录
-    if (map.size > 100) {
-      const firstKey = map.keys().next().value;
-      map.delete(firstKey);
-    }
-    saveJidTaskIdMap(map);
-  }, [saveJidTaskIdMap]);
-  
-  // 获取TaskID
-  const getTaskIdByJid = useCallback((jid) => {
-    if (!jid) return null;
-    return jidToTaskIdMapRef.current.get(jid);
-  }, []);
-  
-  // 简化雪花算法 - 生成时序唯一ID (前端版本，降低计算量)
-  const snowflakeIdRef = useRef({
-    epoch: 1700000000000, // 自定义起始时间 2023-11-14
-    sequence: 0,
-    lastTimestamp: -1,
-  });
-  
-  const generateTaskId = useCallback(() => {
-    const sf = snowflakeIdRef.current;
-    let timestamp = Date.now();
-    
-    if (timestamp === sf.lastTimestamp) {
-      sf.sequence = (sf.sequence + 1) & 0xFFF; // 12位序列号，最大4095
-      if (sf.sequence === 0) {
-        // 序列号溢出，等待下一毫秒
-        while (timestamp <= sf.lastTimestamp) {
-          timestamp = Date.now();
-        }
-      }
-    } else {
-      sf.sequence = 0;
-    }
-    sf.lastTimestamp = timestamp;
-    
-    // 简化的雪花ID: 41位时间戳 + 12位序列号 + 10位随机数
-    const timePart = timestamp - sf.epoch;
-    const randomPart = Math.floor(Math.random() * 1024); // 10位随机数
-    
-    // 转换为字符串格式: YYYYMMDD-HHmmss-序列号-随机数
-    const date = new Date(timestamp);
-    const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
-    const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}${String(date.getSeconds()).padStart(2, '0')}`;
-    
-    return `EXEC-${dateStr}-${timeStr}-${String(sf.sequence).padStart(4, '0')}-${String(randomPart).padStart(4, '0')}`;
-  }, []);
   
   // 脚本模板定义 - 用于批量检查和诊断
   const scriptTemplates = useMemo(() => [
@@ -1464,82 +1355,12 @@ echo "}"`,
     setJobsLoading(true);
     try {
       const response = await saltStackAPI.getJobs(10);
-      const jobsData = response.data?.data || [];
-      
-      // 关联 TaskID：优先使用后端返回的 task_id，如果没有则从 localStorage 查找
-      const jobsWithTaskId = jobsData.map(job => {
-        // 后端返回的字段是 task_id (snake_case)
-        const backendTaskId = job.task_id;
-        // 从 localStorage 查找作为备用
-        const localTaskId = getTaskIdByJid(job.jid);
-        // 优先使用后端返回的，否则使用本地缓存
-        const taskId = backendTaskId || localTaskId;
-        
-        // 如果后端有 task_id，同步到本地缓存（保持双向一致）
-        if (backendTaskId && !localTaskId) {
-          addJidTaskIdMapping(job.jid, backendTaskId);
-        }
-        
-        return taskId ? { ...job, taskId } : job;
-      });
-      
-      setJobs(jobsWithTaskId);
+      setJobs(response.data?.data || []);
       setDemo(prev => prev || Boolean(response.data?.demo));
-      
-      // 自动刷新运行中作业的状态（触发后端状态机同步）
-      const runningJobs = jobsWithTaskId.filter(job => job.status === 'running');
-      if (runningJobs.length > 0) {
-        console.log('[JobStatus] Found running jobs, triggering status refresh:', runningJobs.map(j => j.jid));
-        // 并行刷新所有运行中作业的状态
-        const refreshPromises = runningJobs.map(job => 
-          saltStackAPI.refreshJobStatus(job.jid).catch(err => {
-            console.warn(`[JobStatus] Failed to refresh job ${job.jid}:`, err.message);
-            return null;
-          })
-        );
-        const results = await Promise.all(refreshPromises);
-        
-        // 检查是否有状态变更，如果有则重新加载作业列表
-        const hasStatusChange = results.some(r => r?.data?.status && r.data.status !== 'running');
-        if (hasStatusChange) {
-          console.log('[JobStatus] Status changed, reloading job list');
-          // 延迟 500ms 后重新加载，确保数据库已更新
-          setTimeout(async () => {
-            const refreshResponse = await saltStackAPI.getJobs(10);
-            const refreshedJobsData = refreshResponse.data?.data || [];
-            const refreshedJobsWithTaskId = refreshedJobsData.map(job => {
-              const backendTaskId = job.task_id;
-              const localTaskId = getTaskIdByJid(job.jid);
-              const taskId = backendTaskId || localTaskId;
-              if (backendTaskId && !localTaskId) {
-                addJidTaskIdMapping(job.jid, backendTaskId);
-              }
-              return taskId ? { ...job, taskId } : job;
-            });
-            setJobs(refreshedJobsWithTaskId);
-          }, 500);
-        }
-      }
     } catch (e) {
       console.error('加载SaltStack Jobs失败', e);
     } finally {
       setJobsLoading(false);
-    }
-  };
-
-  // 查看作业详情
-  const viewJobDetail = async (jid) => {
-    setJobDetailLoading(true);
-    setJobDetailVisible(true);
-    try {
-      const response = await saltStackAPI.getJobDetail(jid);
-      setJobDetail(response.data);
-    } catch (e) {
-      console.error('获取作业详情失败', e);
-      message.error(t('saltstack.getJobDetailFailed', '获取作业详情失败'));
-      setJobDetail(null);
-    } finally {
-      setJobDetailLoading(false);
     }
   };
 
@@ -1672,69 +1493,6 @@ echo "}"`,
     await loadStatus();
     // 然后并行加载 minion 列表、jobs 和分组
     await Promise.all([loadMinions(), loadJobs(), loadMinionGroups()]);
-  };
-
-  // 加载作业配置
-  const loadJobConfig = useCallback(async () => {
-    setJobConfigLoading(true);
-    try {
-      const response = await saltStackAPI.getJobConfig();
-      if (response.success) {
-        setJobConfig(response.config);
-        setJobStats(response.stats);
-        // 设置表单值
-        if (response.config) {
-          jobConfigForm.setFieldsValue({
-            retention_days: response.config.retention_days,
-            auto_cleanup_enabled: response.config.auto_cleanup_enabled,
-            cleanup_interval_hours: response.config.cleanup_interval_hours,
-            max_jobs_count: response.config.max_jobs_count,
-            redis_cache_days: response.config.redis_cache_days,
-          });
-        }
-      }
-    } catch (error) {
-      console.error('加载作业配置失败:', error);
-      message.error(t('saltstack.loadJobConfigFailed', '加载作业配置失败'));
-    } finally {
-      setJobConfigLoading(false);
-    }
-  }, [jobConfigForm, t]);
-
-  // 保存作业配置
-  const saveJobConfig = async (values) => {
-    try {
-      const response = await saltStackAPI.updateJobConfig(values);
-      if (response.success) {
-        message.success(t('saltstack.saveJobConfigSuccess', '配置保存成功'));
-        setJobConfig(response.config);
-      } else {
-        message.error(response.error || t('saltstack.saveJobConfigFailed', '保存配置失败'));
-      }
-    } catch (error) {
-      console.error('保存作业配置失败:', error);
-      message.error(t('saltstack.saveJobConfigFailed', '保存配置失败'));
-    }
-  };
-
-  // 手动触发清理
-  const triggerCleanup = async () => {
-    setCleanupLoading(true);
-    try {
-      const response = await saltStackAPI.triggerJobCleanup();
-      if (response.success) {
-        message.success(t('saltstack.cleanupSuccess', `已清理 ${response.cleaned_count} 条记录`));
-        // 刷新统计信息
-        loadJobConfig();
-      } else {
-        message.error(response.error || t('saltstack.cleanupFailed', '清理失败'));
-      }
-    } catch (error) {
-      console.error('触发清理失败:', error);
-      message.error(t('saltstack.cleanupFailed', '清理失败'));
-    } finally {
-      setCleanupLoading(false);
-    }
   };
 
   // 仅加载 Minion 数据（不包含 Master 状态）
@@ -3141,333 +2899,48 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
         return;
       }
       
-      // 生成任务ID
-      const taskId = generateTaskId();
-      setBatchExecTaskId(taskId);
-      setBatchExecJid(null);
       setBatchExecLoading(true);
       setBatchExecResults([]);
       
-      message.loading({ 
-        content: t('saltstack.executingTask', '正在执行任务...') + ` [${taskId}]`, 
-        key: 'batchExec',
-        duration: 0 
-      });
-      
       // 对每个目标节点执行命令
-      // 在命令前添加 TaskID 标记，方便后端精确匹配作业
-      const taggedScript = `# TASK_ID=${taskId}\n${scriptCode}`;
       const targetList = targets.join(',');
       const resp = await saltStackAPI.executeCommand({
         target: targetList,
         fun: 'cmd.run',
-        arg: [taggedScript],
-        tgt_type: 'list',
-        task_id: taskId  // 额外传递 TaskID 给后端
+        arg: [scriptCode],
+        tgt_type: 'list'
       });
       
-      if (resp.data?.success || resp.data?.data?.success) {
-        const results = resp.data.return?.[0] || resp.data.result?.return?.[0] || resp.data.data?.result?.return?.[0] || {};
-        
-        // 尝试从响应中获取 JID（后端会尝试查询并返回）
-        const returnedJid = resp.data.jid || resp.data.data?.jid;
-        if (returnedJid) {
-          setBatchExecJid(returnedJid);
-          addJidTaskIdMapping(returnedJid, taskId);
-          console.log('[BatchExec] JID from backend:', returnedJid, '->', taskId);
-        }
-        
+      if (resp.data?.success) {
+        const results = resp.data.return?.[0] || {};
         const formattedResults = Object.entries(results).map(([minion, output]) => ({
           minion,
           output: typeof output === 'string' ? output : JSON.stringify(output, null, 2),
           success: !output?.toString()?.includes('ERROR') && !output?.toString()?.includes('error')
         }));
         setBatchExecResults(formattedResults);
-        
-        message.success({ 
-          content: t('saltstack.executeSuccess') + ` [${taskId}]`, 
-          key: 'batchExec' 
-        });
-        
-        // 智能等待并跳转到作业历史
-        // 启动轮询检查作业是否出现在历史列表中，并建立 JID-TaskID 映射
-        let pollCount = 0;
-        const maxPollCount = 30; // 最多轮询30次
-        const pollInterval = 2000; // 每2秒轮询一次
-        const maxTimeoutMs = 60000; // 最大超时时间60秒
-        const pollStartTime = Date.now();
-        let foundJid = returnedJid || null; // 如果后端已返回 JID，直接使用
-        
-        const pollJobHistory = async () => {
-          pollCount++;
-          const elapsedTime = Date.now() - pollStartTime;
-          
-          try {
-            const jobsResp = await saltStackAPI.getJobs(20);
-            const jobsList = jobsResp.data?.data || [];
-            
-            // 如果还没有找到对应的 JID，查找最新的 cmd.run 任务
-            if (!foundJid) {
-              // 方式1: 优先查找后端返回的 task_id 字段匹配的作业（最精确）
-              const matchingJobByBackendTaskId = jobsList.find(job => job.task_id === taskId);
-              
-              if (matchingJobByBackendTaskId?.jid) {
-                foundJid = matchingJobByBackendTaskId.jid;
-                setBatchExecJid(foundJid);
-                addJidTaskIdMapping(foundJid, taskId);
-                console.log('[BatchExec] Found JID by backend task_id:', foundJid, '->', taskId);
-              } else {
-                // 方式2: 查找命令参数中带有 TaskID 标记的作业
-                const taskIdMarker = `TASK_ID=${taskId}`;
-              
-                const matchingJobByTaskId = jobsList.find(job => {
-                  const args = job.arguments || job.args || [];
-                  const argStr = Array.isArray(args) ? args.join(' ') : String(args);
-                  return argStr.includes(taskIdMarker);
-                });
-              
-                if (matchingJobByTaskId?.jid) {
-                  foundJid = matchingJobByTaskId.jid;
-                  setBatchExecJid(foundJid);
-                  addJidTaskIdMapping(foundJid, taskId);
-                  console.log('[BatchExec] Found JID by TaskID marker:', foundJid, '->', taskId);
-                } else {
-                // 备用方案：查找最新的 cmd.run 任务（排除监控脚本任务）
-                const cmdRunJobs = jobsList
-                  .filter(job => job.function === 'cmd.run')
-                  .filter(job => {
-                    // 排除监控脚本任务
-                    const args = job.arguments || job.args || [];
-                    const argStr = Array.isArray(args) ? args.join(' ') : String(args);
-                    
-                    const isMonitoringScript = argStr.includes('get_cpu_memory') ||
-                      argStr.includes('/proc/stat') ||
-                      argStr.includes('/proc/meminfo') ||
-                      argStr.includes('cpu_user1') ||
-                      argStr.includes('nvidia-smi') ||
-                      argStr.includes('ibstat');
-                    
-                    return !isMonitoringScript;
-                  })
-                  .filter(job => !getTaskIdByJid(job.jid)); // 排除已有映射的
-                
-                console.log('[BatchExec] Fallback: Candidate jobs:', cmdRunJobs.map(j => ({ jid: j.jid, args: j.arguments })));
-                
-                const matchingJob = cmdRunJobs[0];
-                if (matchingJob?.jid) {
-                  foundJid = matchingJob.jid;
-                  setBatchExecJid(foundJid);
-                  addJidTaskIdMapping(foundJid, taskId);
-                  console.log('[BatchExec] Found JID by fallback:', foundJid, '->', taskId);
-                }
-                }
-              }
-            }
-            
-            // 关联 TaskID：优先使用后端返回的 task_id
-            const jobsWithTaskId = jobsList.map(job => {
-              const backendTaskId = job.task_id;
-              const localTaskId = getTaskIdByJid(job.jid);
-              const jobTaskId = backendTaskId || localTaskId;
-              return jobTaskId ? { ...job, taskId: jobTaskId } : job;
-            });
-            
-            // 检查是否能找到刚执行的任务
-            const foundJob = foundJid 
-              ? jobsList.find(job => job.jid === foundJid)
-              : jobsList.length > 0;
-            
-            // 检查是否超时或达到最大轮询次数
-            const isTimeout = elapsedTime >= maxTimeoutMs || pollCount >= maxPollCount;
-            
-            if (foundJob) {
-              // 找到任务，跳转
-              clearInterval(batchExecPollRef.current);
-              batchExecPollRef.current = null;
-              
-              // 确保 localStorage 映射已保存
-              console.log('[BatchExec] Task found, JID:', foundJid, 'TaskID:', taskId);
-              console.log('[BatchExec] Current localStorage map:', Object.fromEntries(jidToTaskIdMapRef.current));
-              
-              // 先切换到作业历史标签
-              setActiveTabKey('jobs');
-              
-              // 重新加载作业列表以确保 TaskID 关联生效
-              await loadJobs();
-              
-              // 设置筛选条件
-              setJobSearchTaskId(taskId);
-              
-              message.info({ 
-                content: t('saltstack.taskFoundInHistory', '任务已记录到作业历史') + ` [${taskId}]`,
-                key: 'jobSwitch'
-              });
-            } else if (isTimeout) {
-              // 超时未获取到回调数据，通知用户
-              clearInterval(batchExecPollRef.current);
-              batchExecPollRef.current = null;
-              
-              // 切换标签并重新加载
-              setActiveTabKey('jobs');
-              await loadJobs();
-              
-              const timeoutSeconds = Math.round(elapsedTime / 1000);
-              message.warning({ 
-                content: t('saltstack.taskTimeoutWarning', '任务执行超时（{seconds}秒），未获取到回调数据。请在作业历史中手动查看执行结果').replace('{seconds}', timeoutSeconds) + ` [Task: ${taskId}]`,
-                key: 'jobSwitch',
-                duration: 8
-              });
-            }
-          } catch (e) {
-            console.error('轮询作业历史失败', e);
-            const elapsedTimeOnError = Date.now() - pollStartTime;
-            if (elapsedTimeOnError >= maxTimeoutMs || pollCount >= maxPollCount) {
-              clearInterval(batchExecPollRef.current);
-              batchExecPollRef.current = null;
-              setActiveTabKey('jobs');
-              await loadJobs();
-              
-              message.warning({ 
-                content: t('saltstack.taskPollFailed', '轮询作业状态失败，请手动刷新查看执行结果'),
-                key: 'jobSwitch',
-                duration: 6
-              });
-            }
-          }
-        };
-        
-        // 启动轮询
-        batchExecPollRef.current = setInterval(pollJobHistory, pollInterval);
-        // 立即执行一次
-        setTimeout(pollJobHistory, 500);
-        
+        message.success(t('saltstack.executeSuccess'));
       } else {
-        message.error({ 
-          content: resp.data?.error || t('saltstack.executeFailed'), 
-          key: 'batchExec' 
-        });
+        message.error(resp.data?.error || t('saltstack.executeFailed'));
       }
     } catch (e) {
       const errorDetail = e?.response?.data?.error || e?.response?.data?.message || e.message;
-      message.error({ 
-        content: t('saltstack.executeFailed') + ': ' + errorDetail, 
-        key: 'batchExec' 
-      });
+      message.error(t('saltstack.executeFailed') + ': ' + errorDetail);
       console.error('Batch execution error:', e?.response?.data || e);
     } finally {
       setBatchExecLoading(false);
     }
   };
-  
-  // 清理轮询定时器
-  useEffect(() => {
-    return () => {
-      if (batchExecPollRef.current) {
-        clearInterval(batchExecPollRef.current);
-        batchExecPollRef.current = null;
-      }
-    };
-  }, []);
 
   // 选择脚本模板时填充代码
-  const handleScriptTemplateSelect = (templateId) => {
-    setSelectedScriptTemplate(templateId);
-    const template = scriptTemplates.find(t => t.id === templateId);
+  const handleScriptTemplateSelect = (templateKey) => {
+    setSelectedScriptTemplate(templateKey);
+    const template = scriptTemplates.find(t => t.key === templateKey);
     if (template) {
       batchExecForm.setFieldsValue({
-        scriptCode: template.code
+        scriptCode: template.script
       });
     }
-  };
-
-  // 格式化输出结果 - 智能压缩 JSON，突出重点
-  const formatOutput = (output, compact = true) => {
-    if (!output) return '';
-    
-    // 如果是字符串，尝试解析为 JSON
-    let data = output;
-    if (typeof output === 'string') {
-      try {
-        data = JSON.parse(output);
-      } catch {
-        // 不是 JSON，返回原始字符串
-        return output;
-      }
-    }
-    
-    // 如果不需要压缩，返回格式化的 JSON
-    if (!compact) {
-      return typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-    }
-    
-    // 智能压缩 JSON
-    const compressValue = (val, depth = 0) => {
-      if (val === null || val === undefined) return String(val);
-      if (typeof val === 'boolean' || typeof val === 'number') return String(val);
-      if (typeof val === 'string') {
-        // 长字符串截断
-        if (val.length > 100 && depth > 0) {
-          return `"${val.substring(0, 100)}..." (${val.length} chars)`;
-        }
-        return val;
-      }
-      if (Array.isArray(val)) {
-        if (val.length === 0) return '[]';
-        if (val.length > 5 && depth > 0) {
-          const preview = val.slice(0, 3).map(v => compressValue(v, depth + 1));
-          return `[${preview.join(', ')}, ... +${val.length - 3} more]`;
-        }
-        return val.map(v => compressValue(v, depth + 1));
-      }
-      if (typeof val === 'object') {
-        const keys = Object.keys(val);
-        if (keys.length === 0) return '{}';
-        
-        // Salt 特殊结构处理 - 提取关键信息
-        // 处理 state 模块返回格式 (如 pkg.installed)
-        if (val.__run_num__ !== undefined || val.result !== undefined || val.changes !== undefined) {
-          const parts = [];
-          if (val.result !== undefined) parts.push(`result: ${val.result ? '✓' : '✗'}`);
-          if (val.comment) parts.push(`comment: ${val.comment.substring(0, 80)}${val.comment.length > 80 ? '...' : ''}`);
-          if (val.changes && Object.keys(val.changes).length > 0) {
-            const changeCount = Object.keys(val.changes).length;
-            parts.push(`changes: ${changeCount} item${changeCount > 1 ? 's' : ''}`);
-          }
-          return parts.join(' | ');
-        }
-        
-        // 处理 cmd.run 返回的复杂对象
-        if (val.stdout !== undefined || val.stderr !== undefined || val.retcode !== undefined) {
-          const parts = [];
-          if (val.retcode !== undefined) parts.push(`retcode: ${val.retcode}`);
-          if (val.stdout) parts.push(`stdout: ${val.stdout.substring(0, 150)}${val.stdout.length > 150 ? '...' : ''}`);
-          if (val.stderr) parts.push(`stderr: ${val.stderr.substring(0, 100)}${val.stderr.length > 100 ? '...' : ''}`);
-          return parts.join('\n');
-        }
-        
-        // 深度超过 2 层时压缩显示
-        if (depth > 2) {
-          return `{${keys.length} keys: ${keys.slice(0, 3).join(', ')}${keys.length > 3 ? '...' : ''}}`;
-        }
-        
-        // 递归处理
-        const result = {};
-        keys.forEach(k => {
-          result[k] = compressValue(val[k], depth + 1);
-        });
-        return result;
-      }
-      return String(val);
-    };
-    
-    const compressed = compressValue(data);
-    return typeof compressed === 'string' ? compressed : JSON.stringify(compressed, null, 2);
-  };
-
-  // 展开/收起状态管理
-  const [expandedOutputs, setExpandedOutputs] = useState({});
-  const toggleOutputExpand = (key) => {
-    setExpandedOutputs(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   useEffect(() => {
@@ -3601,8 +3074,6 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
       case 'failed': case 'error': return 'red';
       case 'running': case 'in_progress': return 'blue';
       case 'pending': case 'queued': return 'orange';
-      case 'timeout': return 'volcano'; // 超时状态用火山红
-      case 'partial': return 'gold'; // 部分成功用金色
       default: return 'default';
     }
   };
@@ -3732,23 +3203,16 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
           {/* 详细信息选项卡 */}
           <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
             <Tabs 
-              activeKey={activeTabKey}
+              defaultActiveKey="overview" 
+              size="large"
               onChange={(key) => {
-                setActiveTabKey(key);
                 if (key === 'install-tasks' && installTasks.length === 0 && !installTasksLoading) {
                   loadInstallTasks(1);
                 }
                 if (key === 'delete-tasks' && deleteTasks.length === 0 && !deleteTasksLoading) {
                   loadDeleteTasks(1);
                 }
-                if (key === 'jobs') {
-                  loadJobs();
-                }
-                if (key === 'settings' && !jobConfig && !jobConfigLoading) {
-                  loadJobConfig();
-                }
               }}
-              size="large"
             >
               <TabPane tab={t('saltstack.systemOverview')} key="overview" icon={<DatabaseOutlined />}>
                 <Row gutter={16}>
@@ -3799,10 +3263,10 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     >
                       <Descriptions size="small" column={4}>
                         <Descriptions.Item label={t('saltstack.saltVersion')}>
-                          {status?.salt_version || (statusLoading ? t('common.loading') : t('common.unknown'))}
+                          {status?.salt_version || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
                         </Descriptions.Item>
                         <Descriptions.Item label={t('saltstack.uptime')}>
-                          {status?.uptime_str || status?.uptime || (statusLoading ? t('common.loading') : t('common.unknown'))}
+                          {status?.uptime || (statusLoading ? t('common.loading') : t('minions.status.unknown'))}
                         </Descriptions.Item>
                         <Descriptions.Item label={t('saltstack.configFile')}>
                           {status?.config_file || '/etc/salt/master'}
@@ -4062,58 +3526,10 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     >
                       <Form form={batchExecForm} layout="vertical">
                         <Row gutter={16}>
-                          <Col span={8}>
-                            <Form.Item
-                              name="targetGroup"
-                              label={t('saltstack.selectGroup', '选择分组')}
-                            >
-                              <Select
-                                placeholder={t('saltstack.selectGroupPlaceholder', '按分组选择节点')}
-                                allowClear
-                                onChange={(groupName) => {
-                                  if (groupName) {
-                                    const group = minionGroups.find(g => g.name === groupName);
-                                    if (group && group.minions) {
-                                      batchExecForm.setFieldsValue({ targets: group.minions });
-                                    }
-                                  }
-                                }}
-                              >
-                                {minionGroups.map(group => (
-                                  <Select.Option key={group.name} value={group.name}>
-                                    <Space>
-                                      <Tag color={group.color || 'blue'} style={{ marginRight: 4 }}>
-                                        {group.minions?.length || 0}
-                                      </Tag>
-                                      {group.name}
-                                    </Space>
-                                  </Select.Option>
-                                ))}
-                              </Select>
-                            </Form.Item>
-                          </Col>
-                          <Col span={8}>
+                          <Col span={12}>
                             <Form.Item
                               name="targets"
-                              label={
-                                <Space>
-                                  {t('saltstack.targetNodes')}
-                                  <Button 
-                                    type="link" 
-                                    size="small" 
-                                    onClick={() => {
-                                      // 选择所有在线节点
-                                      const onlineMinions = minions
-                                        .filter(m => m.status?.toLowerCase() === 'up' || m.status?.toLowerCase() === 'online')
-                                        .map(m => m.id);
-                                      batchExecForm.setFieldsValue({ targets: onlineMinions, targetGroup: undefined });
-                                    }}
-                                    style={{ padding: 0 }}
-                                  >
-                                    {t('saltstack.selectAllOnline', '全选在线')}
-                                  </Button>
-                                </Space>
-                              }
+                              label={t('saltstack.targetNodes')}
                               rules={[{ required: true, message: t('saltstack.selectTargetRequired') }]}
                             >
                               <Select
@@ -4123,23 +3539,16 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                                 showSearch
                                 optionFilterProp="children"
                                 style={{ width: '100%' }}
-                                maxTagCount={5}
-                                maxTagPlaceholder={(omittedValues) => `+${omittedValues.length} ${t('saltstack.moreNodes', '个节点')}`}
                               >
                                 {minions.map(minion => (
                                   <Select.Option key={minion.id} value={minion.id}>
-                                    <Space>
-                                      <Badge 
-                                        status={minion.status?.toLowerCase() === 'up' || minion.status?.toLowerCase() === 'online' ? 'success' : 'default'} 
-                                      />
-                                      {minion.id}
-                                    </Space>
+                                    {minion.id}
                                   </Select.Option>
                                 ))}
                               </Select>
                             </Form.Item>
                           </Col>
-                          <Col span={8}>
+                          <Col span={12}>
                             <Form.Item
                               name="scriptTemplate"
                               label={t('saltstack.scriptTemplates')}
@@ -4151,8 +3560,8 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                                 value={selectedScriptTemplate}
                               >
                                 {scriptTemplates.map(template => (
-                                  <Select.Option key={template.id} value={template.id}>
-                                    {template.name}
+                                  <Select.Option key={template.key} value={template.key}>
+                                    {template.label}
                                   </Select.Option>
                                 ))}
                               </Select>
@@ -4194,54 +3603,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                             >
                               {t('saltstack.clearAll')}
                             </Button>
-                            <Button
-                              icon={<HistoryOutlined />}
-                              onClick={() => {
-                                setActiveTabKey('jobs');
-                                loadJobs();
-                              }}
-                            >
-                              {t('saltstack.viewJobHistory', '查看执行历史')}
-                            </Button>
                           </Space>
                         </Form.Item>
                       </Form>
-                      
-                      {/* 任务ID快速跳转 */}
-                      <Divider style={{ margin: '12px 0' }} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                        <Tooltip title={t('saltstack.taskIdHelpTip', '任务ID由本页面执行时自动生成，用于快速定位任务。其他渠道执行的任务仅显示Salt原生JID。')}>
-                          <Text type="secondary" style={{ cursor: 'help' }}>
-                            {t('saltstack.quickJumpByTaskId', '按任务ID跳转')}:
-                          </Text>
-                        </Tooltip>
-                        <Input.Search
-                          placeholder={t('saltstack.enterTaskId', '输入任务ID (如: EXEC-20241216-...)') }
-                          allowClear
-                          enterButton={<><SearchOutlined /> {t('saltstack.jumpToTask', '跳转')}</>}
-                          style={{ maxWidth: 400 }}
-                          onSearch={(value) => {
-                            if (value) {
-                              setJobSearchTaskId(value);
-                              setActiveTabKey('jobs');
-                              loadJobs();
-                            }
-                          }}
-                        />
-                        {batchExecTaskId && (
-                          <Button
-                            type="link"
-                            size="small"
-                            onClick={() => {
-                              setJobSearchTaskId(batchExecTaskId);
-                              setActiveTabKey('jobs');
-                              loadJobs();
-                            }}
-                          >
-                            {t('saltstack.viewLastTask', '查看上次任务')}: <Text code style={{ fontSize: 11 }}>{batchExecTaskId}</Text>
-                          </Button>
-                        )}
-                      </div>
                     </Card>
                   </Col>
 
@@ -4249,193 +3613,57 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   {batchExecResults.length > 0 && (
                     <Col span={24}>
                       <Card 
-                        title={
-                          <Space>
-                            {t('saltstack.executionResults')}
-                            <Tag color="blue">{batchExecResults.length} {t('saltstack.moreNodes', '个节点')}</Tag>
-                          </Space>
-                        }
+                        title={t('saltstack.executionResults')} 
                         size="small"
                         style={{ background: isDark ? '#1f1f1f' : '#fff' }}
-                        extra={
-                          <Button 
-                            type={batchExecResultSearchVisible ? 'primary' : 'default'}
-                            icon={<SearchOutlined />}
-                            size="small"
-                            onClick={() => setBatchExecResultSearchVisible(!batchExecResultSearchVisible)}
-                          >
-                            {t('saltstack.search', '搜索')}
-                          </Button>
-                        }
                       >
-                        {/* 搜索面板 */}
-                        {batchExecResultSearchVisible && (
-                          <div style={{ marginBottom: 12, padding: 12, background: isDark ? '#262626' : '#fafafa', borderRadius: 4 }}>
-                            <Space wrap>
-                              <Input
-                                prefix={<SearchOutlined />}
-                                placeholder={t('saltstack.searchResultPlaceholder', '搜索节点名或输出内容...')}
-                                value={batchExecResultSearchText}
-                                onChange={(e) => setBatchExecResultSearchText(e.target.value)}
-                                style={{ width: 300 }}
-                                allowClear
-                              />
-                              <Checkbox 
-                                checked={batchExecResultSearchRegex} 
-                                onChange={(e) => setBatchExecResultSearchRegex(e.target.checked)}
-                              >
-                                {t('saltstack.useRegex', '正则表达式')}
-                              </Checkbox>
-                              <Button 
-                                size="small" 
-                                onClick={() => { setBatchExecResultSearchText(''); setBatchExecResultSearchRegex(false); }}
-                              >
-                                {t('saltstack.clearSearch', '清除')}
-                              </Button>
-                            </Space>
-                          </div>
-                        )}
-
                         <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-                          {batchExecResults
-                            .filter((result) => {
-                              if (!batchExecResultSearchText) return true;
-                              const outputStr = result.output || '';
-                              if (batchExecResultSearchRegex) {
-                                try {
-                                  const regex = new RegExp(batchExecResultSearchText, 'i');
-                                  return regex.test(result.minion) || regex.test(outputStr);
-                                } catch (e) {
-                                  return result.minion.toLowerCase().includes(batchExecResultSearchText.toLowerCase()) ||
-                                         outputStr.toLowerCase().includes(batchExecResultSearchText.toLowerCase());
-                                }
-                              }
-                              return result.minion.toLowerCase().includes(batchExecResultSearchText.toLowerCase()) ||
-                                     outputStr.toLowerCase().includes(batchExecResultSearchText.toLowerCase());
-                            })
-                            .map((result, index) => {
-                              // 高亮搜索文本
-                              const highlightText = (text) => {
-                                if (!batchExecResultSearchText || !text) return text;
-                                try {
-                                  const regex = batchExecResultSearchRegex 
-                                    ? new RegExp(`(${batchExecResultSearchText})`, 'gi')
-                                    : new RegExp(`(${batchExecResultSearchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-                                  return text.split(regex).map((part, i) => 
-                                    regex.test(part) ? <mark key={i} style={{ background: '#ffe58f', padding: 0 }}>{part}</mark> : part
-                                  );
-                                } catch (e) {
-                                  return text;
-                                }
-                              };
-                              
-                              const outputKey = `batch-${index}`;
-                              const isExpanded = expandedOutputs[outputKey];
-                              const displayOutput = isExpanded 
-                                ? (result.output || t('saltstack.noOutput'))
-                                : formatOutput(result.output, true);
-                              
-                              return (
-                                <Card
-                                  key={index}
-                                  size="small"
-                                  title={
-                                    <Space>
-                                      <Tag color={result.success ? 'success' : 'error'}>
-                                        {highlightText(result.minion)}
-                                      </Tag>
-                                      {result.success ? (
-                                        <CheckCircleOutlined style={{ color: '#52c41a' }} />
-                                      ) : (
-                                        <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
-                                      )}
-                                    </Space>
-                                  }
-                                  style={{ marginBottom: 8, background: isDark ? '#141414' : '#fafafa' }}
-                                  extra={
-                                    <Space size="small">
-                                      <Tooltip title={isExpanded ? t('saltstack.compactView', '压缩视图') : t('saltstack.expandView', '展开视图')}>
-                                        <Button
-                                          type="text"
-                                          icon={isExpanded ? <CompressOutlined /> : <ExpandOutlined />}
-                                          size="small"
-                                          onClick={() => toggleOutputExpand(outputKey)}
-                                        />
-                                      </Tooltip>
-                                      <Tooltip title={t('saltstack.copy', '复制')}>
-                                        <Button
-                                          type="text"
-                                          icon={<CopyOutlined />}
-                                          size="small"
-                                          onClick={() => {
-                                            navigator.clipboard.writeText(result.output);
-                                            message.success(t('saltstack.copied'));
-                                          }}
-                                        />
-                                      </Tooltip>
-                                    </Space>
-                                  }
-                                >
-                                  <div
-                                    tabIndex={0}
-                                    style={{ 
-                                      margin: 0, 
-                                      whiteSpace: 'pre-wrap', 
-                                      wordBreak: 'break-all',
-                                      fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                                      fontSize: '12px',
-                                      lineHeight: '1.5',
-                                      maxHeight: isExpanded ? '400px' : '150px',
-                                      overflowY: 'auto',
-                                      background: isDark ? '#0d0d0d' : '#f5f5f5',
-                                      padding: '10px 12px',
-                                      borderRadius: '4px',
-                                      color: isDark ? '#d4d4d4' : '#333',
-                                      userSelect: 'text',
-                                      cursor: 'text',
-                                      outline: 'none',
-                                      border: `1px solid ${isDark ? '#303030' : '#e8e8e8'}`,
-                                    }}
-                                    onFocus={(e) => {
-                                      e.target.style.borderColor = isDark ? '#177ddc' : '#40a9ff';
-                                    }}
-                                    onBlur={(e) => {
-                                      e.target.style.borderColor = isDark ? '#303030' : '#e8e8e8';
-                                    }}
-                                  >
-                                    {highlightText(displayOutput)}
-                                  </div>
-                                  {!isExpanded && result.output && result.output.length > 200 && (
-                                    <div style={{ marginTop: 4, textAlign: 'right' }}>
-                                      <Button 
-                                        type="link" 
-                                        size="small" 
-                                        onClick={() => toggleOutputExpand(outputKey)}
-                                        style={{ padding: 0, height: 'auto' }}
-                                      >
-                                        {t('saltstack.viewFullOutput', '查看完整输出')} ({result.output.length} {t('saltstack.chars', '字符')})
-                                      </Button>
-                                    </div>
+                          {batchExecResults.map((result, index) => (
+                            <Card
+                              key={index}
+                              size="small"
+                              title={
+                                <Space>
+                                  <Tag color={result.success ? 'success' : 'error'}>
+                                    {result.minion}
+                                  </Tag>
+                                  {result.success ? (
+                                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                  ) : (
+                                    <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
                                   )}
-                                </Card>
-                              );
-                            })}
-                          {batchExecResultSearchText && batchExecResults.filter((result) => {
-                            const outputStr = result.output || '';
-                            if (batchExecResultSearchRegex) {
-                              try {
-                                const regex = new RegExp(batchExecResultSearchText, 'i');
-                                return regex.test(result.minion) || regex.test(outputStr);
-                              } catch (e) {
-                                return result.minion.toLowerCase().includes(batchExecResultSearchText.toLowerCase()) ||
-                                       outputStr.toLowerCase().includes(batchExecResultSearchText.toLowerCase());
+                                </Space>
                               }
-                            }
-                            return result.minion.toLowerCase().includes(batchExecResultSearchText.toLowerCase()) ||
-                                   outputStr.toLowerCase().includes(batchExecResultSearchText.toLowerCase());
-                          }).length === 0 && (
-                            <Empty description={t('saltstack.noMatchingResults', '未找到匹配结果')} />
-                          )}
+                              style={{ marginBottom: 8, background: isDark ? '#141414' : '#fafafa' }}
+                              extra={
+                                <Button
+                                  type="text"
+                                  icon={<CopyOutlined />}
+                                  size="small"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(result.output);
+                                    message.success(t('saltstack.copied'));
+                                  }}
+                                />
+                              }
+                            >
+                              <pre style={{ 
+                                margin: 0, 
+                                whiteSpace: 'pre-wrap', 
+                                wordBreak: 'break-all',
+                                fontFamily: 'monospace',
+                                fontSize: '12px',
+                                maxHeight: '200px',
+                                overflowY: 'auto',
+                                background: isDark ? '#0d0d0d' : '#f0f0f0',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                color: isDark ? '#d4d4d4' : '#333'
+                              }}>
+                                {result.output || t('saltstack.noOutput')}
+                              </pre>
+                            </Card>
+                          ))}
                         </div>
                       </Card>
                     </Col>
@@ -4642,75 +3870,18 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   </div>
                 ) : (
                   <>
-                    <div style={{ marginBottom: 16 }}>
-                      <Row gutter={[16, 8]} align="middle">
-                        <Col flex="auto">
-                          <Space wrap>
-                            <Text type="secondary">{t('saltstack.total', { count: jobs.length })}</Text>
-                            <Input.Search
-                              placeholder={t('saltstack.searchByTaskIdOrFunction', '搜索任务ID/函数/目标')}
-                              allowClear
-                              value={jobSearchText}
-                              onChange={(e) => setJobSearchText(e.target.value)}
-                              style={{ width: 280 }}
-                              onSearch={(v) => setJobSearchText(v)}
-                            />
-                            {jobSearchTaskId && (
-                              <Tag 
-                                closable 
-                                onClose={() => setJobSearchTaskId('')}
-                                color="blue"
-                              >
-                                {t('saltstack.filteringByTaskId', '筛选任务ID')}: {jobSearchTaskId}
-                              </Tag>
-                            )}
-                          </Space>
-                        </Col>
-                        <Col>
-                          <Space>
-                            {(jobSearchTaskId || jobSearchText) && (
-                              <Button 
-                                size="small"
-                                onClick={() => { setJobSearchTaskId(''); setJobSearchText(''); }}
-                              >
-                                {t('saltstack.clearFilter', '清除过滤')}
-                              </Button>
-                            )}
-                            <Button 
-                              icon={<ReloadOutlined />} 
-                              onClick={loadJobs}
-                              loading={jobsLoading}
-                            >
-                              {t('common.refresh')}
-                            </Button>
-                          </Space>
-                        </Col>
-                      </Row>
+                    <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text type="secondary">{t('saltstack.total', { count: jobs.length })}</Text>
+                      <Button 
+                        icon={<ReloadOutlined />} 
+                        onClick={loadJobs} 
+                        loading={jobsLoading}
+                      >
+                        {t('common.refresh')}
+                      </Button>
                     </div>
                     <Table
-                      dataSource={jobs.filter(job => {
-                        // 如果有任务ID筛选
-                        if (jobSearchTaskId) {
-                          // 精确匹配 taskId 或者 jid 包含搜索关键字
-                          const taskIdMatch = job.taskId === jobSearchTaskId;
-                          const jidMatch = job.jid?.includes(jobSearchTaskId);
-                          if (!taskIdMatch && !jidMatch) {
-                            return false;
-                          }
-                        }
-                        // 通用搜索
-                        if (jobSearchText) {
-                          const searchLower = jobSearchText.toLowerCase();
-                          return (
-                            job.taskId?.toLowerCase()?.includes(searchLower) ||
-                            job.jid?.toLowerCase()?.includes(searchLower) ||
-                            job.function?.toLowerCase()?.includes(searchLower) ||
-                            job.target?.toLowerCase()?.includes(searchLower) ||
-                            job.user?.toLowerCase()?.includes(searchLower)
-                          );
-                        }
-                        return true;
-                      })}
+                      dataSource={jobs}
                       rowKey={(record, index) => record.jid || record.id || index}
                       loading={jobsLoading}
                       size="small"
@@ -4722,34 +3893,10 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                       }}
                       columns={[
                         {
-                          title: t('saltstack.taskId', '任务ID'),
-                          dataIndex: 'taskId',
-                          key: 'taskId',
-                          width: 220,
-                          ellipsis: true,
-                          render: (taskId, record) => taskId ? (
-                            <Tooltip title={t('saltstack.clickToCopy', '点击复制')}>
-                              <Text 
-                                code 
-                                copyable={{ text: taskId }}
-                                style={{ fontSize: 11, cursor: 'pointer' }}
-                              >
-                                {taskId}
-                              </Text>
-                            </Tooltip>
-                          ) : (
-                            <Tooltip title={t('saltstack.taskIdNotFromBatchExec', '此任务非从“批量执行”页面发起，显示Salt原生JID')}>
-                              <Text type="secondary" style={{ fontSize: 11, cursor: 'help' }}>
-                                JID: {record.jid?.slice(-12) || '-'}
-                              </Text>
-                            </Tooltip>
-                          ),
-                        },
-                        {
                           title: t('saltstack.function'),
                           dataIndex: 'function',
                           key: 'function',
-                          width: 180,
+                          width: 200,
                           ellipsis: true,
                           render: (func, record) => (
                             <Text strong>{func || record.command || '-'}</Text>
@@ -4808,22 +3955,6 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                             <Text type="secondary" style={{ fontSize: 12 }}>
                               {time || record.start_time || '-'}
                             </Text>
-                          ),
-                        },
-                        {
-                          title: t('common.actions', '操作'),
-                          key: 'action',
-                          width: 100,
-                          fixed: 'right',
-                          render: (_, record) => (
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<EyeOutlined />}
-                              onClick={() => viewJobDetail(record.jid)}
-                            >
-                              {t('saltstack.viewResult', '查看结果')}
-                            </Button>
                           ),
                         },
                       ]}
@@ -5329,216 +4460,6 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                   </>
                 )}
               </TabPane>
-
-              {/* 设置 Tab */}
-              <TabPane tab={t('saltstack.settings', '设置')} key="settings" icon={<SettingOutlined />}>
-                <Spin spinning={jobConfigLoading}>
-                  <Row gutter={[16, 16]}>
-                    {/* 作业统计 */}
-                    <Col span={24}>
-                      <Card title={t('saltstack.jobStatistics', '作业统计')} size="small">
-                        {jobStats ? (
-                          <Row gutter={16}>
-                            <Col span={6}>
-                              <Statistic title={t('saltstack.totalJobs', '总作业数')} value={jobStats.total_jobs || 0} />
-                            </Col>
-                            <Col span={6}>
-                              <Statistic 
-                                title={t('saltstack.runningJobs', '运行中')} 
-                                value={jobStats.running_jobs || 0}
-                                valueStyle={{ color: '#1890ff' }}
-                              />
-                            </Col>
-                            <Col span={6}>
-                              <Statistic 
-                                title={t('saltstack.completedJobs', '已完成')} 
-                                value={jobStats.completed_jobs || 0}
-                                valueStyle={{ color: '#52c41a' }}
-                              />
-                            </Col>
-                            <Col span={6}>
-                              <Statistic 
-                                title={t('saltstack.failedJobsCount', '失败')} 
-                                value={jobStats.failed_jobs || 0}
-                                valueStyle={{ color: '#ff4d4f' }}
-                              />
-                            </Col>
-                          </Row>
-                        ) : (
-                          <Empty description={t('saltstack.noStats', '暂无统计数据')} />
-                        )}
-                        {jobStats && (
-                          <Row gutter={16} style={{ marginTop: 16 }}>
-                            <Col span={8}>
-                              <Text type="secondary">{t('saltstack.oldestJob', '最早作业')}: </Text>
-                              <Text>{jobStats.oldest_job_time ? new Date(jobStats.oldest_job_time).toLocaleString() : '-'}</Text>
-                            </Col>
-                            <Col span={8}>
-                              <Text type="secondary">{t('saltstack.newestJob', '最新作业')}: </Text>
-                              <Text>{jobStats.newest_job_time ? new Date(jobStats.newest_job_time).toLocaleString() : '-'}</Text>
-                            </Col>
-                            <Col span={8}>
-                              <Text type="secondary">{t('saltstack.storageEstimate', '预估存储')}: </Text>
-                              <Text>{jobStats.storage_estimate || '-'}</Text>
-                            </Col>
-                          </Row>
-                        )}
-                      </Card>
-                    </Col>
-
-                    {/* 作业保留配置 */}
-                    <Col span={24}>
-                      <Card 
-                        title={t('saltstack.jobRetentionConfig', '作业保留配置')} 
-                        size="small"
-                        extra={
-                          <Space>
-                            <Button 
-                              icon={<ReloadOutlined />} 
-                              onClick={loadJobConfig}
-                              loading={jobConfigLoading}
-                            >
-                              {t('common.refresh', '刷新')}
-                            </Button>
-                            <Popconfirm
-                              title={t('saltstack.confirmCleanup', '确定要立即执行清理吗？')}
-                              description={t('saltstack.cleanupDescription', '将删除超过保留天数的旧作业记录')}
-                              onConfirm={triggerCleanup}
-                              okText={t('common.confirm', '确定')}
-                              cancelText={t('common.cancel', '取消')}
-                            >
-                              <Button 
-                                icon={<DeleteOutlined />}
-                                loading={cleanupLoading}
-                                danger
-                              >
-                                {t('saltstack.manualCleanup', '手动清理')}
-                              </Button>
-                            </Popconfirm>
-                          </Space>
-                        }
-                      >
-                        <Form
-                          form={jobConfigForm}
-                          layout="vertical"
-                          onFinish={saveJobConfig}
-                          initialValues={{
-                            retention_days: 30,
-                            auto_cleanup_enabled: true,
-                            cleanup_interval_hours: 24,
-                            max_jobs_count: 10000,
-                            redis_cache_days: 7,
-                          }}
-                        >
-                          <Row gutter={16}>
-                            <Col span={8}>
-                              <Form.Item
-                                name="retention_days"
-                                label={t('saltstack.retentionDays', '作业保留天数')}
-                                tooltip={t('saltstack.retentionDaysTooltip', '超过此天数的作业记录将被自动清理')}
-                                rules={[{ required: true, message: t('common.required', '请输入') }]}
-                              >
-                                <InputNumber 
-                                  min={1} 
-                                  max={365} 
-                                  style={{ width: '100%' }}
-                                  addonAfter={t('common.days', '天')}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                              <Form.Item
-                                name="cleanup_interval_hours"
-                                label={t('saltstack.cleanupInterval', '清理检查间隔')}
-                                tooltip={t('saltstack.cleanupIntervalTooltip', '系统自动检查并清理旧作业的时间间隔')}
-                                rules={[{ required: true, message: t('common.required', '请输入') }]}
-                              >
-                                <InputNumber 
-                                  min={1} 
-                                  max={168} 
-                                  style={{ width: '100%' }}
-                                  addonAfter={t('common.hours', '小时')}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                              <Form.Item
-                                name="max_jobs_count"
-                                label={t('saltstack.maxJobsCount', '最大作业数量')}
-                                tooltip={t('saltstack.maxJobsCountTooltip', '当作业数量超过此值时将触发清理')}
-                                rules={[{ required: true, message: t('common.required', '请输入') }]}
-                              >
-                                <InputNumber 
-                                  min={100} 
-                                  max={1000000} 
-                                  style={{ width: '100%' }}
-                                  formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                                  parser={value => value.replace(/,/g, '')}
-                                />
-                              </Form.Item>
-                            </Col>
-                          </Row>
-                          <Row gutter={16}>
-                            <Col span={8}>
-                              <Form.Item
-                                name="redis_cache_days"
-                                label={t('saltstack.redisCacheDays', 'Redis缓存天数')}
-                                tooltip={t('saltstack.redisCacheDaysTooltip', 'Redis中作业缓存的过期时间')}
-                                rules={[{ required: true, message: t('common.required', '请输入') }]}
-                              >
-                                <InputNumber 
-                                  min={1} 
-                                  max={30} 
-                                  style={{ width: '100%' }}
-                                  addonAfter={t('common.days', '天')}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                              <Form.Item
-                                name="auto_cleanup_enabled"
-                                label={t('saltstack.autoCleanup', '自动清理')}
-                                valuePropName="checked"
-                                tooltip={t('saltstack.autoCleanupTooltip', '是否启用自动清理功能')}
-                              >
-                                <Switch 
-                                  checkedChildren={t('common.enabled', '启用')} 
-                                  unCheckedChildren={t('common.disabled', '禁用')}
-                                />
-                              </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                              <Form.Item label=" " colon={false}>
-                                <Button type="primary" htmlType="submit" icon={<SafetyCertificateOutlined />}>
-                                  {t('common.save', '保存配置')}
-                                </Button>
-                              </Form.Item>
-                            </Col>
-                          </Row>
-                        </Form>
-
-                        {/* 上次清理信息 */}
-                        {jobConfig && (
-                          <Divider />
-                        )}
-                        {jobConfig && (
-                          <Descriptions size="small" column={3}>
-                            <Descriptions.Item label={t('saltstack.lastCleanup', '上次清理时间')}>
-                              {jobConfig.last_cleanup_at ? new Date(jobConfig.last_cleanup_at).toLocaleString() : t('common.never', '从未')}
-                            </Descriptions.Item>
-                            <Descriptions.Item label={t('saltstack.totalCleaned', '累计清理数量')}>
-                              {jobConfig.cleaned_count || 0}
-                            </Descriptions.Item>
-                            <Descriptions.Item label={t('saltstack.configUpdated', '配置更新时间')}>
-                              {jobConfig.updated_at ? new Date(jobConfig.updated_at).toLocaleString() : '-'}
-                            </Descriptions.Item>
-                          </Descriptions>
-                        )}
-                      </Card>
-                    </Col>
-                  </Row>
-                </Spin>
-              </TabPane>
             </Tabs>
           </Card>
 
@@ -5584,241 +4505,6 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
               </Button>
             </Space>
           </Card>
-
-          {/* 作业详情弹窗 */}
-          <Modal
-            title={t('saltstack.jobDetail', '作业详情')}
-            open={jobDetailVisible}
-            onCancel={() => { 
-              setJobDetailVisible(false); 
-              setJobDetail(null); 
-              setJobDetailSearchText('');
-              setJobDetailSearchVisible(false);
-            }}
-            footer={[
-              <Button key="close" onClick={() => { 
-                setJobDetailVisible(false); 
-                setJobDetail(null);
-                setJobDetailSearchText('');
-                setJobDetailSearchVisible(false);
-              }}>
-                {t('common.close', '关闭')}
-              </Button>
-            ]}
-            width={1000}
-          >
-            {jobDetailLoading ? (
-              <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                <Spin size="large" />
-                <div style={{ marginTop: 16 }}>{t('common.loading')}...</div>
-              </div>
-            ) : jobDetail ? (
-              <div>
-                {/* 作业基本信息 */}
-                <Descriptions title={t('saltstack.jobInfo', '作业信息')} bordered size="small" column={2}>
-                  <Descriptions.Item label="JID">{jobDetail.jid}</Descriptions.Item>
-                  <Descriptions.Item label={t('saltstack.function', '函数')}>
-                    {jobDetail.info?.Function || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('saltstack.target', '目标')}>
-                    {jobDetail.info?.Target || '*'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('saltstack.user', '用户')}>
-                    {jobDetail.info?.User || '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('saltstack.arguments', '参数')} span={2}>
-                    <Text code style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                      {jobDetail.info?.Arguments ? JSON.stringify(jobDetail.info.Arguments, null, 2) : '-'}
-                    </Text>
-                  </Descriptions.Item>
-                </Descriptions>
-
-                {/* 执行结果 */}
-                <Divider />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <Title level={5} style={{ margin: 0 }}>{t('saltstack.executionResult', '执行结果')}</Title>
-                  <Space>
-                    <Button 
-                      type={jobDetailSearchVisible ? 'primary' : 'default'}
-                      icon={<SearchOutlined />}
-                      size="small"
-                      onClick={() => setJobDetailSearchVisible(!jobDetailSearchVisible)}
-                    >
-                      {t('saltstack.search', '搜索')}
-                    </Button>
-                  </Space>
-                </div>
-                
-                {/* 搜索面板 */}
-                {jobDetailSearchVisible && (
-                  <Card size="small" style={{ marginBottom: 12, background: isDark ? '#262626' : '#fafafa' }}>
-                    <Space wrap>
-                      <Input
-                        prefix={<SearchOutlined />}
-                        placeholder={t('saltstack.searchResultPlaceholder', '搜索节点名或输出内容...')}
-                        value={jobDetailSearchText}
-                        onChange={(e) => setJobDetailSearchText(e.target.value)}
-                        style={{ width: 300 }}
-                        allowClear
-                      />
-                      <Checkbox 
-                        checked={jobDetailSearchRegex} 
-                        onChange={(e) => setJobDetailSearchRegex(e.target.checked)}
-                      >
-                        {t('saltstack.useRegex', '正则表达式')}
-                      </Checkbox>
-                      <Button 
-                        size="small" 
-                        onClick={() => { setJobDetailSearchText(''); setJobDetailSearchRegex(false); }}
-                      >
-                        {t('saltstack.clearSearch', '清除')}
-                      </Button>
-                    </Space>
-                  </Card>
-                )}
-
-                {jobDetail.result && Object.keys(jobDetail.result).length > 0 ? (
-                  <div style={{ maxHeight: 450, overflow: 'auto' }}>
-                    {Object.entries(jobDetail.result)
-                      .filter(([minion, output]) => {
-                        if (!jobDetailSearchText) return true;
-                        const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-                        if (jobDetailSearchRegex) {
-                          try {
-                            const regex = new RegExp(jobDetailSearchText, 'i');
-                            return regex.test(minion) || regex.test(outputStr);
-                          } catch (e) {
-                            return minion.toLowerCase().includes(jobDetailSearchText.toLowerCase()) ||
-                                   outputStr.toLowerCase().includes(jobDetailSearchText.toLowerCase());
-                          }
-                        }
-                        return minion.toLowerCase().includes(jobDetailSearchText.toLowerCase()) ||
-                               outputStr.toLowerCase().includes(jobDetailSearchText.toLowerCase());
-                      })
-                      .map(([minion, output]) => {
-                        const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-                        // 高亮搜索文本
-                        const highlightText = (text) => {
-                          if (!jobDetailSearchText) return text;
-                          try {
-                            const regex = jobDetailSearchRegex 
-                              ? new RegExp(`(${jobDetailSearchText})`, 'gi')
-                              : new RegExp(`(${jobDetailSearchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-                            return text.split(regex).map((part, i) => 
-                              regex.test(part) ? <mark key={i} style={{ background: '#ffe58f', padding: 0 }}>{part}</mark> : part
-                            );
-                          } catch (e) {
-                            return text;
-                          }
-                        };
-                        
-                        const outputKey = `job-${minion}`;
-                        const isExpanded = expandedOutputs[outputKey];
-                        const displayOutput = isExpanded ? outputStr : formatOutput(output, true);
-                        
-                        return (
-                          <Card 
-                            key={minion} 
-                            size="small" 
-                            title={
-                              <Space>
-                                <DesktopOutlined />
-                                <Text strong>{highlightText(minion)}</Text>
-                              </Space>
-                            }
-                            style={{ marginBottom: 8 }}
-                            extra={
-                              <Space size="small">
-                                <Tooltip title={isExpanded ? t('saltstack.compactView', '压缩视图') : t('saltstack.expandView', '展开视图')}>
-                                  <Button
-                                    type="text"
-                                    icon={isExpanded ? <CompressOutlined /> : <ExpandOutlined />}
-                                    size="small"
-                                    onClick={() => toggleOutputExpand(outputKey)}
-                                  />
-                                </Tooltip>
-                                <Tooltip title={t('saltstack.copy', '复制')}>
-                                  <Button
-                                    type="text"
-                                    icon={<CopyOutlined />}
-                                    size="small"
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(outputStr);
-                                      message.success(t('saltstack.copied'));
-                                    }}
-                                  />
-                                </Tooltip>
-                              </Space>
-                            }
-                          >
-                            <div
-                              tabIndex={0}
-                              style={{ 
-                                marginBottom: 0, 
-                                maxHeight: isExpanded ? '350px' : '150px', 
-                                overflow: 'auto',
-                                whiteSpace: 'pre-wrap',
-                                wordBreak: 'break-all',
-                                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                                fontSize: 12,
-                                lineHeight: '1.5',
-                                background: isDark ? '#1f1f1f' : '#f5f5f5',
-                                padding: '10px 12px',
-                                borderRadius: 4,
-                                userSelect: 'text',
-                                cursor: 'text',
-                                outline: 'none',
-                                border: `1px solid ${isDark ? '#303030' : '#e8e8e8'}`,
-                              }}
-                              onFocus={(e) => {
-                                e.target.style.borderColor = isDark ? '#177ddc' : '#40a9ff';
-                              }}
-                              onBlur={(e) => {
-                                e.target.style.borderColor = isDark ? '#303030' : '#e8e8e8';
-                              }}
-                            >
-                              {highlightText(displayOutput)}
-                            </div>
-                            {!isExpanded && outputStr && outputStr.length > 200 && (
-                              <div style={{ marginTop: 4, textAlign: 'right' }}>
-                                <Button 
-                                  type="link" 
-                                  size="small" 
-                                  onClick={() => toggleOutputExpand(outputKey)}
-                                  style={{ padding: 0, height: 'auto' }}
-                                >
-                                  {t('saltstack.viewFullOutput', '查看完整输出')} ({outputStr.length} {t('saltstack.chars', '字符')})
-                                </Button>
-                              </div>
-                            )}
-                          </Card>
-                        );
-                      })}
-                    {jobDetailSearchText && Object.entries(jobDetail.result).filter(([minion, output]) => {
-                      const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-                      if (jobDetailSearchRegex) {
-                        try {
-                          const regex = new RegExp(jobDetailSearchText, 'i');
-                          return regex.test(minion) || regex.test(outputStr);
-                        } catch (e) {
-                          return minion.toLowerCase().includes(jobDetailSearchText.toLowerCase()) ||
-                                 outputStr.toLowerCase().includes(jobDetailSearchText.toLowerCase());
-                        }
-                      }
-                      return minion.toLowerCase().includes(jobDetailSearchText.toLowerCase()) ||
-                             outputStr.toLowerCase().includes(jobDetailSearchText.toLowerCase());
-                    }).length === 0 && (
-                      <Empty description={t('saltstack.noMatchingResults', '未找到匹配结果')} />
-                    )}
-                  </div>
-                ) : (
-                  <Empty description={t('saltstack.noResult', '暂无执行结果')} />
-                )}
-              </div>
-            ) : (
-              <Empty description={t('saltstack.noJobData', '无法获取作业数据')} />
-            )}
-          </Modal>
 
           {/* 执行命令弹窗 */}
           <Modal

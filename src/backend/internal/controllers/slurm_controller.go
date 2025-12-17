@@ -1517,7 +1517,6 @@ func (c *SlurmController) ExecuteSaltCommand(ctx *gin.Context) {
 		Target    string   `json:"target"`
 		Function  string   `json:"function"`
 		Arguments string   `json:"arguments"`
-		TaskID    string   `json:"task_id"` // 前端传递的任务ID，用于精确匹配作业
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "请求参数解析失败: " + err.Error()})
@@ -1551,7 +1550,7 @@ func (c *SlurmController) ExecuteSaltCommand(ctx *gin.Context) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx.Request.Context(), 60*time.Second)
 	defer cancel()
 
-	result, err := c.saltSvc.ExecuteCommandWithTaskID(ctxWithTimeout, command, targets, req.TaskID, args...)
+	result, err := c.saltSvc.ExecuteCommand(ctxWithTimeout, command, targets, args...)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "执行命令失败: " + err.Error()})
 		return

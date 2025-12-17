@@ -566,10 +566,6 @@ export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
   getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
   getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
-  getJobDetail: (jid) => api.get(`/saltstack/jobs/${jid}`),
-  getJobByTaskId: (taskId) => api.get(`/saltstack/jobs/by-task/${encodeURIComponent(taskId)}`), // 通过 TaskID 查询作业
-  refreshJobStatus: (jid) => api.post(`/saltstack/jobs/${jid}/refresh`), // 强制刷新作业状态
-  getJobStatusByJid: (jid) => api.get(`/saltstack/jobs/${jid}/status`), // 获取作业最新状态
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
   executeCustomAsync: (payload) => api.post('/saltstack/execute-custom/async', payload),
@@ -678,12 +674,6 @@ export const saltStackAPI = {
   addIBPortIgnore: (minionId, portName, portNum = 1, reason = '') => api.post('/saltstack/ib-ignores', { minion_id: minionId, port_name: portName, port_num: portNum, reason }),
   removeIBPortIgnore: (minionId, portName, portNum = 0) => api.delete(`/saltstack/ib-ignores/${encodeURIComponent(minionId)}/${encodeURIComponent(portName)}`, { params: portNum ? { port_num: portNum } : {} }),
   getIBPortAlerts: () => api.get('/saltstack/ib-alerts'),
-
-  // 作业持久化配置管理
-  getJobConfig: () => api.get('/saltstack/jobs/config'),
-  updateJobConfig: (config) => api.put('/saltstack/jobs/config', config),
-  triggerJobCleanup: () => api.post('/saltstack/jobs/cleanup'),
-  getJobStats: () => api.get('/saltstack/jobs/stats'),
 };
 
 // 增强用户管理API
