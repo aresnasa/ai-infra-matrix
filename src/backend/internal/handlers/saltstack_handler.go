@@ -340,16 +340,19 @@ type SaltMinion struct {
 
 // SaltJob Salt作业信息
 type SaltJob struct {
-	JID       string                 `json:"jid"`
-	Function  string                 `json:"function"`
-	Arguments []string               `json:"arguments"`
-	Target    string                 `json:"target"`
-	StartTime time.Time              `json:"start_time"`
-	EndTime   *time.Time             `json:"end_time,omitempty"`
-	Status    string                 `json:"status"`
-	Result    map[string]interface{} `json:"result,omitempty"`
-	User      string                 `json:"user"`
-	TaskID    string                 `json:"task_id,omitempty"` // 前端生成的任务ID，用于用户追踪
+	JID          string                 `json:"jid"`
+	Function     string                 `json:"function"`
+	Arguments    []string               `json:"arguments"`
+	Target       string                 `json:"target"`
+	StartTime    time.Time              `json:"start_time"`
+	EndTime      *time.Time             `json:"end_time,omitempty"`
+	Status       string                 `json:"status"`
+	Result       map[string]interface{} `json:"result,omitempty"`
+	User         string                 `json:"user"`
+	TaskID       string                 `json:"task_id,omitempty"`  // 前端生成的任务ID，用于用户追踪
+	SuccessCount int                    `json:"success_count"`      // 成功节点数
+	FailedCount  int                    `json:"failed_count"`       // 失败节点数
+	Duration     int64                  `json:"duration,omitempty"` // 执行时长（毫秒）
 }
 
 // saltAPIClient SaltStack API客户端
@@ -986,8 +989,12 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		// 获取 API 根信息（用于APIVersion）- 这个通常很快
 		result.apiInfo, _ = client.makeRequest("/", "GET", nil)
 
-		// 获取 Salt 版本信息 - 通过 test.version runner
-		result.versionInfo, _ = client.makeRunner("test.version", nil)
+		// 获取 Salt 版本信息 - 尝试多种方式
+		// 方式1: 使用 salt.cmd runner 执行 salt --version
+		result.versionInfo, _ = client.makeRunner("salt.cmd", map[string]interface{}{
+			"fun": "cmd.run",
+			"arg": []string{"salt --version 2>/dev/null | head -1 || salt-master --version 2>/dev/null | head -1"},
+		})
 
 		// 获取 up/down 状态 - 这是最重要的
 		// 设置较短的超时参数，避免等待离线 minion 过久
@@ -1031,6 +1038,12 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 		// 如果 test.version 没有返回，尝试从 API 根端点获取
 		saltVersion = h.extractAPISaltVersion(apiInfo)
 	}
+	// 添加日志记录版本信息提取情况
+	log.Printf("[SaltStackStatus] 版本提取结果: versionInfo=%v, saltVersion=%s", versionInfo, saltVersion)
+	if saltVersion == "" {
+		// 提供默认版本提示
+		saltVersion = "未知（无法获取）"
+	}
 
 	// 性能指标在单独的 goroutine 中获取，设置较短超时，失败不影响主要状态
 	cpuUsage, memoryUsage, activeConnections := 0, 0, 0
@@ -1063,6 +1076,10 @@ func (h *SaltStackHandler) getRealSaltStackStatus(client *saltAPIClient) (SaltSt
 
 	// 获取 Salt Master 容器/进程运行时间
 	uptime, uptimeStr := h.getSaltMasterUptime(client)
+	log.Printf("[SaltStackStatus] 运行时间提取结果: uptime=%d秒, uptimeStr=%s", uptime, uptimeStr)
+	if uptimeStr == "" {
+		uptimeStr = "未知（无法获取）"
+	}
 
 	// 构造状态
 	status := SaltStackStatus{
@@ -1711,13 +1728,17 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 			jobs := make([]SaltJob, 0, len(resp.Data))
 			for _, dbJob := range resp.Data {
 				job := SaltJob{
-					JID:       dbJob.JID,
-					TaskID:    dbJob.TaskID,
-					Function:  dbJob.Function,
-					Target:    dbJob.Target,
-					Status:    dbJob.Status,
-					User:      dbJob.User,
-					StartTime: dbJob.StartTime,
+					JID:          dbJob.JID,
+					TaskID:       dbJob.TaskID,
+					Function:     dbJob.Function,
+					Target:       dbJob.Target,
+					Status:       dbJob.Status,
+					User:         dbJob.User,
+					StartTime:    dbJob.StartTime,
+					EndTime:      dbJob.EndTime,
+					SuccessCount: dbJob.SuccessCount,
+					FailedCount:  dbJob.FailedCount,
+					Duration:     dbJob.Duration,
 				}
 				// 解析参数
 				if dbJob.Arguments != "" {
@@ -2586,15 +2607,26 @@ func (h *SaltStackHandler) extractAPIVersion(resp map[string]interface{}) string
 	return ""
 }
 
-// extractSaltVersion 从 test.version runner 响应中提取 Salt 版本
-// test.version 返回格式: {"return": ["3006.9"]} 或 {"return": [{"salt": "3006.9"}]}
+// extractSaltVersion 从 salt.cmd runner 响应中提取 Salt 版本
+// 命令输出格式: "salt 3006.9 (Sulfur)" 或 "salt-master 3006.9"
 func (h *SaltStackHandler) extractSaltVersion(resp map[string]interface{}) string {
+	if resp == nil {
+		return ""
+	}
 	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
-		// 格式1: 直接是版本字符串 {"return": ["3006.9"]}
-		if version, ok := ret[0].(string); ok && version != "" {
-			return version
+		// 格式1: 直接是字符串输出 {"return": ["salt 3006.9 (Sulfur)"]}
+		if output, ok := ret[0].(string); ok && output != "" {
+			// 解析命令输出，提取版本号
+			// 格式: "salt 3006.9 (Sulfur)" 或 "salt-master 3006.9"
+			output = strings.TrimSpace(output)
+			parts := strings.Fields(output)
+			if len(parts) >= 2 {
+				// 返回版本号部分
+				return parts[1]
+			}
+			return output
 		}
-		// 格式2: 带结构的响应 {"return": [{"salt": "3006.9"}]}
+		// 格式2: 带结构的响应
 		if m, ok := ret[0].(map[string]interface{}); ok {
 			if v, ok := m["salt"].(string); ok && v != "" {
 				return v
@@ -2613,26 +2645,46 @@ func (h *SaltStackHandler) getSaltMasterUptime(client *saltAPIClient) (int64, st
 	// 尝试通过 Docker API 获取容器运行时间
 	uptime, uptimeStr := h.getUptimeFromDocker()
 	if uptime > 0 {
+		log.Printf("[SaltMasterUptime] 从 Docker API 获取到运行时间: %d秒 (%s)", uptime, uptimeStr)
 		return uptime, uptimeStr
 	}
 
 	// 如果无法从 Docker 获取，尝试通过 Salt 执行命令获取
-	// 使用 salt-run 执行本地命令获取 salt-master 进程运行时间
+	// 方法1: 获取 salt-master 进程运行时间
 	resp, err := client.makeRunner("salt.cmd", map[string]interface{}{
 		"fun": "cmd.run",
-		"arg": []string{"ps -o etimes= -p $(pgrep -f 'salt-master' | head -1) 2>/dev/null || echo 0"},
+		"arg": []string{"ps -o etimes= -p $(pgrep -f 'salt-master' | head -1) 2>/dev/null || cat /proc/1/stat 2>/dev/null | awk '{print int($(NF-1)/100)}' || echo 0"},
 	})
 	if err == nil {
 		if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
 			if output, ok := ret[0].(string); ok {
 				output = strings.TrimSpace(output)
 				if seconds, err := strconv.ParseInt(output, 10, 64); err == nil && seconds > 0 {
+					log.Printf("[SaltMasterUptime] 从 Salt 命令获取到运行时间: %d秒", seconds)
 					return seconds, formatUptime(seconds)
 				}
 			}
 		}
 	}
 
+	// 方法2: 获取系统运行时间作为备用
+	resp, err = client.makeRunner("salt.cmd", map[string]interface{}{
+		"fun": "cmd.run",
+		"arg": []string{"cat /proc/uptime 2>/dev/null | awk '{print int($1)}'"},
+	})
+	if err == nil {
+		if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
+			if output, ok := ret[0].(string); ok {
+				output = strings.TrimSpace(output)
+				if seconds, err := strconv.ParseInt(output, 10, 64); err == nil && seconds > 0 {
+					log.Printf("[SaltMasterUptime] 从系统 uptime 获取到运行时间: %d秒", seconds)
+					return seconds, formatUptime(seconds)
+				}
+			}
+		}
+	}
+
+	log.Printf("[SaltMasterUptime] 无法获取运行时间")
 	return 0, ""
 }
 

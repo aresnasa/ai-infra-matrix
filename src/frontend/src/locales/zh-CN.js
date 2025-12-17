@@ -660,6 +660,21 @@ export default {
     compactView: '压缩视图',
     viewFullOutput: '查看完整输出',
     chars: '字符',
+    
+    // 设置相关
+    settings: '设置',
+    jobRetentionSettings: '作业保留设置',
+    retentionDays: '保留天数',
+    autoCleanupEnabled: '自动清理',
+    cleanupIntervalHours: '清理间隔（小时）',
+    maxJobsCount: '最大作业数',
+    redisCacheDays: 'Redis缓存天数',
+    saveSuccess: '保存成功',
+    saveFailed: '保存失败',
+    manualCleanup: '手动清理',
+    triggerCleanup: '触发清理',
+    cleanupSuccess: '清理成功',
+    cleanupFailed: '清理失败',
   },
 
   // 搜索相关

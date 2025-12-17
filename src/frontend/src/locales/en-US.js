@@ -660,6 +660,21 @@ export default {
     compactView: 'Compact View',
     viewFullOutput: 'View Full Output',
     chars: 'chars',
+    
+    // Settings
+    settings: 'Settings',
+    jobRetentionSettings: 'Job Retention Settings',
+    retentionDays: 'Retention Days',
+    autoCleanupEnabled: 'Auto Cleanup',
+    cleanupIntervalHours: 'Cleanup Interval (Hours)',
+    maxJobsCount: 'Max Jobs Count',
+    redisCacheDays: 'Redis Cache Days',
+    saveSuccess: 'Saved successfully',
+    saveFailed: 'Save failed',
+    manualCleanup: 'Manual Cleanup',
+    triggerCleanup: 'Trigger Cleanup',
+    cleanupSuccess: 'Cleanup successful',
+    cleanupFailed: 'Cleanup failed',
   },
 
   // Search Related
