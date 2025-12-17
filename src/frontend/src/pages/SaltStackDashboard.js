@@ -202,6 +202,17 @@ const SaltStackDashboard = () => {
   const [expandedDeleteTaskId, setExpandedDeleteTaskId] = useState(null);
   const [deleteTaskLogs, setDeleteTaskLogs] = useState({});
 
+  // 作业设置状态
+  const [jobConfig, setJobConfig] = useState({
+    max_retention_days: 30,
+    max_records: 10000,
+    cleanup_enabled: true,
+    cleanup_interval_hour: 24,
+    last_cleanup_time: null,
+  });
+  const [jobConfigLoading, setJobConfigLoading] = useState(false);
+  const [jobConfigSaving, setJobConfigSaving] = useState(false);
+
   // 自动刷新状态
   const [autoRefreshMinions, setAutoRefreshMinions] = useState(false);
   const [autoRefreshTasks, setAutoRefreshTasks] = useState(false);
@@ -1543,6 +1554,58 @@ echo "}"`,
       setDeleteTaskLogs(prev => ({ ...prev, [minionId]: logs }));
     } catch (e) {
       console.error('加载删除任务日志失败', e);
+    }
+  };
+
+  // 加载作业配置
+  const loadJobConfig = useCallback(async () => {
+    setJobConfigLoading(true);
+    try {
+      const response = await saltStackAPI.getJobConfig();
+      if (response.data?.success && response.data?.data) {
+        setJobConfig(response.data.data);
+      }
+    } catch (e) {
+      console.error('加载作业配置失败', e);
+      message.error(t('saltstack.loadConfigFailed', '加载配置失败'));
+    } finally {
+      setJobConfigLoading(false);
+    }
+  }, [t]);
+
+  // 保存作业配置
+  const saveJobConfig = async (values) => {
+    setJobConfigSaving(true);
+    try {
+      const response = await saltStackAPI.updateJobConfig(values);
+      if (response.data?.success) {
+        setJobConfig(response.data.data || values);
+        message.success(t('saltstack.configSaved', '配置已保存'));
+      } else {
+        throw new Error(response.data?.error || 'Unknown error');
+      }
+    } catch (e) {
+      console.error('保存作业配置失败', e);
+      message.error(t('saltstack.configSaveFailed', '保存配置失败') + ': ' + (e.response?.data?.error || e.message));
+    } finally {
+      setJobConfigSaving(false);
+    }
+  };
+
+  // 触发立即清理
+  const triggerJobCleanup = async () => {
+    try {
+      const response = await saltStackAPI.triggerJobCleanup();
+      if (response.data?.success) {
+        message.success(t('saltstack.cleanupTriggered', '清理任务已触发'));
+        // 刷新配置以获取最新的清理时间
+        loadJobConfig();
+      } else {
+        throw new Error(response.data?.error || 'Unknown error');
+      }
+    } catch (e) {
+      console.error('触发清理失败', e);
+      message.error(t('saltstack.cleanupFailed', '触发清理失败') + ': ' + (e.response?.data?.error || e.message));
     }
   };
 
@@ -3642,6 +3705,9 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 if (key === 'jobs') {
                   loadJobs();
                 }
+                if (key === 'job-settings' && !jobConfig.id && !jobConfigLoading) {
+                  loadJobConfig();
+                }
               }}
               size="large"
             >
@@ -5223,6 +5289,185 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                     />
                   </>
                 )}
+              </TabPane>
+
+              {/* 作业设置 Tab */}
+              <TabPane tab={t('saltstack.jobSettings', '作业设置')} key="job-settings" icon={<SettingOutlined />}>
+                <Spin spinning={jobConfigLoading}>
+                  <Row gutter={[24, 24]}>
+                    <Col span={24}>
+                      <Alert
+                        message={t('saltstack.jobSettingsDesc', '配置作业历史的保留策略和自动清理规则')}
+                        type="info"
+                        showIcon
+                        style={{ marginBottom: 16 }}
+                      />
+                    </Col>
+                    
+                    {/* 保留策略卡片 */}
+                    <Col xs={24} lg={12}>
+                      <Card 
+                        title={
+                          <Space>
+                            <DatabaseOutlined />
+                            {t('saltstack.retentionPolicy', '保留策略')}
+                          </Space>
+                        }
+                        style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
+                      >
+                        <Form layout="vertical">
+                          <Form.Item 
+                            label={
+                              <Space>
+                                {t('saltstack.maxRetentionDays', '最大保留天数')}
+                                <Tooltip title={t('saltstack.maxRetentionDaysHint', '超过此天数的作业记录将被自动清理（1-365天）')}>
+                                  <QuestionCircleOutlined />
+                                </Tooltip>
+                              </Space>
+                            }
+                          >
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              min={1}
+                              max={365}
+                              value={jobConfig.max_retention_days}
+                              onChange={(value) => setJobConfig(prev => ({ ...prev, max_retention_days: value }))}
+                              addonAfter={t('common.days', '天')}
+                            />
+                          </Form.Item>
+                          
+                          <Form.Item 
+                            label={
+                              <Space>
+                                {t('saltstack.maxRecords', '最大记录数')}
+                                <Tooltip title={t('saltstack.maxRecordsHint', '超过此数量的最早记录将被清理（100-100000条）')}>
+                                  <QuestionCircleOutlined />
+                                </Tooltip>
+                              </Space>
+                            }
+                          >
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              min={100}
+                              max={100000}
+                              step={100}
+                              value={jobConfig.max_records}
+                              onChange={(value) => setJobConfig(prev => ({ ...prev, max_records: value }))}
+                              addonAfter={t('common.items', '条')}
+                            />
+                          </Form.Item>
+                        </Form>
+                      </Card>
+                    </Col>
+                    
+                    {/* 清理计划卡片 */}
+                    <Col xs={24} lg={12}>
+                      <Card 
+                        title={
+                          <Space>
+                            <ClockCircleOutlined />
+                            {t('saltstack.cleanupSchedule', '清理计划')}
+                          </Space>
+                        }
+                        style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}
+                      >
+                        <Form layout="vertical">
+                          <Form.Item 
+                            label={
+                              <Space>
+                                {t('saltstack.cleanupEnabled', '启用自动清理')}
+                                <Tooltip title={t('saltstack.cleanupEnabledHint', '开启后系统将定期自动清理过期的作业记录')}>
+                                  <QuestionCircleOutlined />
+                                </Tooltip>
+                              </Space>
+                            }
+                          >
+                            <Switch
+                              checked={jobConfig.cleanup_enabled}
+                              onChange={(checked) => setJobConfig(prev => ({ ...prev, cleanup_enabled: checked }))}
+                              checkedChildren={t('common.yes', '是')}
+                              unCheckedChildren={t('common.no', '否')}
+                            />
+                          </Form.Item>
+                          
+                          <Form.Item 
+                            label={
+                              <Space>
+                                {t('saltstack.cleanupInterval', '清理间隔')}
+                                <Tooltip title={t('saltstack.cleanupIntervalHint', '自动清理任务的执行间隔')}>
+                                  <QuestionCircleOutlined />
+                                </Tooltip>
+                              </Space>
+                            }
+                          >
+                            <Select
+                              style={{ width: '100%' }}
+                              value={jobConfig.cleanup_interval_hour}
+                              onChange={(value) => setJobConfig(prev => ({ ...prev, cleanup_interval_hour: value }))}
+                              disabled={!jobConfig.cleanup_enabled}
+                            >
+                              <Option value={1}>1 {t('saltstack.hours', '小时')}</Option>
+                              <Option value={6}>6 {t('saltstack.hours', '小时')}</Option>
+                              <Option value={12}>12 {t('saltstack.hours', '小时')}</Option>
+                              <Option value={24}>24 {t('saltstack.hours', '小时')}</Option>
+                              <Option value={48}>48 {t('saltstack.hours', '小时')}</Option>
+                              <Option value={72}>72 {t('saltstack.hours', '小时')}</Option>
+                              <Option value={168}>168 {t('saltstack.hours', '小时')} (7 {t('common.days', '天')})</Option>
+                            </Select>
+                          </Form.Item>
+                          
+                          <Form.Item 
+                            label={t('saltstack.lastCleanupTime', '上次清理时间')}
+                          >
+                            <Text type="secondary">
+                              {jobConfig.last_cleanup_time 
+                                ? new Date(jobConfig.last_cleanup_time).toLocaleString()
+                                : t('saltstack.neverCleaned', '从未清理')
+                              }
+                            </Text>
+                          </Form.Item>
+                        </Form>
+                      </Card>
+                    </Col>
+                    
+                    {/* 操作按钮 */}
+                    <Col span={24}>
+                      <Card style={{ background: isDark ? '#1f1f1f' : '#fff', borderColor: isDark ? '#303030' : '#f0f0f0' }}>
+                        <Space size="middle">
+                          <Button
+                            type="primary"
+                            icon={<SafetyCertificateOutlined />}
+                            loading={jobConfigSaving}
+                            onClick={() => saveJobConfig(jobConfig)}
+                          >
+                            {t('common.save', '保存')}
+                          </Button>
+                          
+                          <Popconfirm
+                            title={t('saltstack.triggerCleanupConfirm', '确定要立即执行作业清理吗？这将删除所有过期的作业记录。')}
+                            onConfirm={triggerJobCleanup}
+                            okText={t('common.confirm', '确定')}
+                            cancelText={t('common.cancel', '取消')}
+                          >
+                            <Button
+                              icon={<DeleteOutlined />}
+                              danger
+                            >
+                              {t('saltstack.triggerCleanup', '立即清理')}
+                            </Button>
+                          </Popconfirm>
+                          
+                          <Button
+                            icon={<ReloadOutlined />}
+                            onClick={loadJobConfig}
+                          >
+                            {t('common.refresh', '刷新')}
+                          </Button>
+                        </Space>
+                      </Card>
+                    </Col>
+                  </Row>
+                </Spin>
               </TabPane>
             </Tabs>
           </Card>

@@ -715,6 +715,11 @@ export const saltStackAPI = {
   addIBPortIgnore: (minionId, portName, portNum = 1, reason = '') => api.post('/saltstack/ib-ignores', { minion_id: minionId, port_name: portName, port_num: portNum, reason }),
   removeIBPortIgnore: (minionId, portName, portNum = 0) => api.delete(`/saltstack/ib-ignores/${encodeURIComponent(minionId)}/${encodeURIComponent(portName)}`, { params: portNum ? { port_num: portNum } : {} }),
   getIBPortAlerts: () => api.get('/saltstack/ib-alerts'),
+
+  // 作业配置管理（清理策略）
+  getJobConfig: () => api.get('/saltstack/jobs/config'),
+  updateJobConfig: (config) => api.put('/saltstack/jobs/config', config),
+  triggerJobCleanup: () => api.post('/saltstack/jobs/cleanup'),
 };
 
 // 增强用户管理API
