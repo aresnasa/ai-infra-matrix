@@ -328,7 +328,9 @@ const SecuritySettings = () => {
     setTwoFALoading(true);
     try {
       const res = await securityAPI.get2FAStatus();
-      setTwoFAStatus(res.data);
+      // 后端返回 {success: true, data: {...}} 或直接返回数据
+      const data = res.data?.data || res.data;
+      setTwoFAStatus(data);
     } catch (error) {
       // 如果用户没有设置2FA，返回默认状态
       setTwoFAStatus({ enabled: false });
@@ -341,7 +343,13 @@ const SecuritySettings = () => {
     try {
       setTwoFALoading(true);
       const res = await securityAPI.setup2FA();
-      setTwoFASetupData(res.data);
+      // 后端返回 {success: true, data: {...}}，需要提取 data
+      const data = res.data?.data || res.data;
+      // 后端返回 qr_code，前端使用 url
+      setTwoFASetupData({
+        ...data,
+        url: data.qr_code || data.url,
+      });
       setTwoFASetupVisible(true);
     } catch (error) {
       message.error(t('security.setup2FAFailed') || '设置 2FA 失败');
@@ -379,7 +387,8 @@ const SecuritySettings = () => {
   const handleRegenerateRecoveryCodes = async () => {
     try {
       const res = await securityAPI.regenerateRecoveryCodes();
-      setRecoveryCodes(res.data?.recovery_codes || []);
+      const data = res.data?.data || res.data;
+      setRecoveryCodes(data?.recovery_codes || []);
       setRecoveryCodesVisible(true);
     } catch (error) {
       message.error(t('security.regenerateFailed') || '重新生成恢复码失败');
