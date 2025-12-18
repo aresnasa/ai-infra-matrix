@@ -1,0 +1,154 @@
+# Kafka Configuration with KRaft mode
+# No Zookeeper dependency - uses Kafka Raft (KRaft) for metadata management
+
+# Number of Kafka brokers (combined controller + broker in KRaft mode)
+replicaCount: 3
+
+image:
+  repository: confluentinc/cp-kafka
+  tag: "7.5.0"
+  pullPolicy: IfNotPresent
+
+# KRaft Configuration
+kraft:
+  enabled: true
+  # Cluster ID - must be base64 encoded 16-byte UUID
+  # Generate with: kafka-storage random-uuid | base64
+  clusterId: "Z1lmX191NF9UZ1NvUkVCVW5QLVZ6UQ=="
+
+# Kafka Configuration
+kafka:
+  # Each node acts as both broker and controller
+  processRoles: "broker,controller"
+  
+  # Listener configuration
+  listeners:
+    internal:
+      port: 9092
+      protocol: PLAINTEXT
+    controller:
+      port: 9093
+      protocol: PLAINTEXT
+    external:
+      port: 9094
+      protocol: PLAINTEXT
+      
+  # Replication factors
+  offsetsTopicReplicationFactor: 3
+  transactionStateLogReplicationFactor: 3
+  transactionStateLogMinIsr: 2
+  defaultReplicationFactor: 3
+  minInsyncReplicas: 2
+  
+  # Topic settings
+  autoCreateTopicsEnable: true
+  numPartitions: 3
+  
+  # Log retention
+  logRetentionHours: 168  # 7 days
+  logRetentionBytes: 10737418240  # 10GB
+  logSegmentBytes: 1073741824  # 1GB
+  
+  # Performance
+  numNetworkThreads: 8
+  numIoThreads: 8
+  socketSendBufferBytes: 102400
+  socketReceiveBufferBytes: 102400
+  socketRequestMaxBytes: 104857600
+  
+  # JVM settings
+  heapOpts: "-Xmx1G -Xms1G"
+
+# Service Configuration
+service:
+  type: ClusterIP
+  port: 9092
+  
+  # Headless service for StatefulSet
+  headless:
+    enabled: true
+    
+  # External access (NodePort or LoadBalancer)
+  external:
+    enabled: false
+    type: NodePort
+    port: 9094
+
+# Resources
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Affinity
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: kafka
+          topologyKey: kubernetes.io/hostname
+
+nodeSelector: {}
+tolerations: []
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  name: ""
+
+# Kafka UI
+kafkaUi:
+  enabled: true
+  image:
+    repository: provectuslabs/kafka-ui
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Metrics (JMX Exporter)
+metrics:
+  enabled: true
+  jmxExporter:
+    image:
+      repository: bitnami/jmx-exporter
+      tag: "0.19.0"
+      pullPolicy: IfNotPresent
+    port: 5556
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+# Autoscaling (experimental)
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 9
+  targetCPUUtilizationPercentage: 70

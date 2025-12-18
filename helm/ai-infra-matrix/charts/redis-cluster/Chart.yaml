@@ -1,0 +1,16 @@
+apiVersion: v2
+name: redis-cluster
+description: Redis Cluster for High Availability
+type: application
+version: 0.1.0
+appVersion: "7.2"
+
+keywords:
+  - redis
+  - cluster
+  - high-availability
+  - cache
+
+maintainers:
+  - name: aresnasa
+    email: dev@ai-infra.local

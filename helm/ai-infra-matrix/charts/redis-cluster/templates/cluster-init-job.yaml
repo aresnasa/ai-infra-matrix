@@ -1,0 +1,87 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "redis-cluster.fullname" . }}-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "redis-cluster.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "redis-cluster.selectorLabels" . | nindent 8 }}
+        job: cluster-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: cluster-init
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redis-cluster.fullname" . }}
+                  key: redis-password
+            - name: MASTER_COUNT
+              value: "{{ .Values.masterCount }}"
+            - name: REPLICAS_PER_MASTER
+              value: "{{ .Values.replicasPerMaster }}"
+            - name: RELEASE_NAME
+              value: "{{ include "redis-cluster.fullname" . }}"
+            - name: NAMESPACE
+              value: "{{ .Release.Namespace }}"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              echo "Waiting for all Redis nodes to be ready..."
+              TOTAL_NODES=$((MASTER_COUNT + MASTER_COUNT * REPLICAS_PER_MASTER))
+              
+              # Wait for all pods to be ready
+              for i in $(seq 0 $((TOTAL_NODES - 1))); do
+                NODE="${RELEASE_NAME}-${i}.${RELEASE_NAME}-headless.${NAMESPACE}.svc.cluster.local"
+                echo "Waiting for $NODE..."
+                until redis-cli -h $NODE -a "$REDIS_PASSWORD" ping 2>/dev/null | grep -q PONG; do
+                  echo "Node $NODE not ready, waiting..."
+                  sleep 2
+                done
+                echo "Node $NODE is ready"
+              done
+              
+              # Check if cluster already exists
+              FIRST_NODE="${RELEASE_NAME}-0.${RELEASE_NAME}-headless.${NAMESPACE}.svc.cluster.local"
+              CLUSTER_INFO=$(redis-cli -h $FIRST_NODE -a "$REDIS_PASSWORD" cluster info 2>/dev/null || echo "")
+              
+              if echo "$CLUSTER_INFO" | grep -q "cluster_state:ok"; then
+                echo "Cluster already initialized, skipping..."
+                exit 0
+              fi
+              
+              echo "Initializing Redis Cluster..."
+              
+              # Build node list
+              NODES=""
+              for i in $(seq 0 $((TOTAL_NODES - 1))); do
+                NODE="${RELEASE_NAME}-${i}.${RELEASE_NAME}-headless.${NAMESPACE}.svc.cluster.local"
+                NODE_IP=$(getent hosts $NODE | awk '{ print $1 }')
+                NODES="$NODES $NODE_IP:6379"
+              done
+              
+              echo "Creating cluster with nodes: $NODES"
+              
+              # Create cluster
+              echo "yes" | redis-cli -a "$REDIS_PASSWORD" --cluster create $NODES \
+                --cluster-replicas $REPLICAS_PER_MASTER
+              
+              echo "Cluster initialization complete!"
+              
+              # Verify cluster
+              redis-cli -h $FIRST_NODE -a "$REDIS_PASSWORD" cluster info
+              redis-cli -h $FIRST_NODE -a "$REDIS_PASSWORD" cluster nodes

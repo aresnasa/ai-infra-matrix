@@ -1,0 +1,115 @@
+# Redis Cluster Configuration
+# Supports horizontal scaling with minimum 3 master nodes
+
+# Number of master nodes (minimum 3)
+masterCount: 3
+
+# Number of replicas per master (0 for no replicas, 1 recommended for HA)
+replicasPerMaster: 1
+
+image:
+  repository: redis
+  tag: "7-alpine"
+  pullPolicy: IfNotPresent
+
+# Redis Configuration
+redis:
+  password: ""  # Set via secret
+  
+  # Redis configuration parameters
+  config:
+    maxmemory: "256mb"
+    maxmemory-policy: "allkeys-lru"
+    appendonly: "yes"
+    appendfsync: "everysec"
+    cluster-enabled: "yes"
+    cluster-require-full-coverage: "no"
+    cluster-node-timeout: "15000"
+    cluster-migration-barrier: "1"
+    cluster-replica-validity-factor: "10"
+    tcp-keepalive: "300"
+    timeout: "0"
+    save: "900 1 300 10 60 10000"
+
+# Service Configuration
+service:
+  type: ClusterIP
+  port: 6379
+  
+  # Headless service for StatefulSet
+  headless:
+    enabled: true
+
+# Resources per node
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: ""  # Use default storage class
+  accessModes:
+    - ReadWriteOnce
+  size: 5Gi
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2  # At least 2 nodes must be available
+
+# Affinity - spread pods across nodes
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: redis-cluster
+          topologyKey: kubernetes.io/hostname
+
+# Node Selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Cluster initialization settings
+cluster:
+  # Enable cluster mode
+  enabled: true
+  # Cluster creation timeout
+  timeout: 120
+  # Slot migration timeout
+  migrationTimeout: 30000
+
+# Metrics
+metrics:
+  enabled: true
+  image:
+    repository: oliver006/redis_exporter
+    tag: "v1.55.0-alpine"
+    pullPolicy: IfNotPresent
+  port: 9121
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+# Autoscaling (HPA for Redis is experimental - use with caution)
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 9
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80

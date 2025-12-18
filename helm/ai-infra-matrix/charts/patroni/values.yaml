@@ -1,0 +1,149 @@
+# Patroni PostgreSQL High Availability Configuration
+# GitHub: https://github.com/patroni/patroni
+
+replicaCount: 3
+
+image:
+  repository: patroni/patroni
+  tag: "3.2.2-p1"
+  pullPolicy: IfNotPresent
+
+# PostgreSQL Configuration
+postgresql:
+  version: "15"
+  database: ai_infra_matrix
+  username: postgres
+  password: ""  # Set via secret
+  replicationUsername: replicator
+  replicationPassword: ""  # Set via secret
+  
+  # PostgreSQL parameters
+  parameters:
+    max_connections: "200"
+    shared_buffers: "256MB"
+    effective_cache_size: "1GB"
+    maintenance_work_mem: "128MB"
+    checkpoint_completion_target: "0.9"
+    wal_buffers: "16MB"
+    default_statistics_target: "100"
+    random_page_cost: "1.1"
+    effective_io_concurrency: "200"
+    work_mem: "4MB"
+    min_wal_size: "1GB"
+    max_wal_size: "4GB"
+    max_worker_processes: "8"
+    max_parallel_workers_per_gather: "4"
+    max_parallel_workers: "8"
+    max_parallel_maintenance_workers: "4"
+
+# Patroni Configuration
+patroni:
+  # Scope is the cluster name
+  scope: ai-infra-postgres
+  
+  # DCS (Distributed Configuration Store) - using Kubernetes
+  kubernetes:
+    namespace: ""  # Will use release namespace
+    labels:
+      application: patroni
+    use_endpoints: true
+    
+  # Bootstrap configuration
+  bootstrap:
+    dcs:
+      ttl: 30
+      loop_wait: 10
+      retry_timeout: 10
+      maximum_lag_on_failover: 1048576
+      postgresql:
+        use_pg_rewind: true
+        use_slots: true
+        parameters:
+          wal_level: replica
+          hot_standby: "on"
+          max_wal_senders: 10
+          max_replication_slots: 10
+          wal_log_hints: "on"
+    
+    initdb:
+      - encoding: UTF8
+      - data-checksums
+      
+  # Restapi settings
+  restapi:
+    connect_address: ""  # Will be set by template
+    port: 8008
+
+# Service Configuration
+service:
+  type: ClusterIP
+  port: 5432
+  
+  # Headless service for StatefulSet
+  headless:
+    enabled: true
+    
+  # Primary/Replica endpoints
+  primary:
+    enabled: true
+    port: 5432
+  replica:
+    enabled: true
+    port: 5432
+
+# Resources
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: ""  # Use default storage class
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Affinity - spread pods across nodes
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: patroni
+          topologyKey: kubernetes.io/hostname
+
+# Node Selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# RBAC
+rbac:
+  create: true
+
+# Metrics
+metrics:
+  enabled: true
+  port: 9187
+  serviceMonitor:
+    enabled: false
+    interval: 30s
