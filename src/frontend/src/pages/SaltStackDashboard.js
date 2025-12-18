@@ -4952,12 +4952,23 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           title: t('saltstack.duration'),
                           dataIndex: 'duration',
                           key: 'duration',
-                          width: 100,
+                          width: 120,
                           sorter: (a, b) => {
-                            const p = d => d ? parseInt(d.match(/(\d+)/)?.[1] || 0) : 0;
+                            const p = d => d ? parseFloat(d.match(/([\d.]+)/)?.[1] || 0) : 0;
                             return p(a.duration) - p(b.duration);
                           },
-                          render: (d) => d || '-',
+                          render: (d) => {
+                            if (!d) return '-';
+                            const match = d.match(/([\d.]+)/);
+                            if (!match) return d;
+                            const ms = parseFloat(match[1]);
+                            const seconds = (ms / 1000).toFixed(3);
+                            return (
+                              <Tooltip title={`${seconds} 秒`}>
+                                <span style={{ cursor: 'help' }}>{ms} ms</span>
+                              </Tooltip>
+                            );
+                          },
                         },
                         {
                           title: t('saltstack.returnCode'),
@@ -5099,15 +5110,25 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                                   title: t('saltstack.duration'),
                                   dataIndex: 'duration',
                                   key: 'duration',
-                                  width: 100,
+                                  width: 120,
                                   render: (duration) => {
                                     if (!duration) return '-';
-                                    if (duration < 1000) return `${duration}ms`;
-                                    const seconds = Math.floor(duration / 1000);
-                                    if (seconds < 60) return `${seconds}s`;
-                                    const minutes = Math.floor(seconds / 60);
-                                    const remainingSeconds = seconds % 60;
-                                    return `${minutes}m ${remainingSeconds}s`;
+                                    const seconds = (duration / 1000).toFixed(3);
+                                    let displayText;
+                                    if (duration < 1000) {
+                                      displayText = `${duration} ms`;
+                                    } else if (duration < 60000) {
+                                      displayText = `${(duration / 1000).toFixed(2)} s`;
+                                    } else {
+                                      const mins = Math.floor(duration / 60000);
+                                      const secs = ((duration % 60000) / 1000).toFixed(1);
+                                      displayText = `${mins}m ${secs}s`;
+                                    }
+                                    return (
+                                      <Tooltip title={`${duration} ms = ${seconds} 秒`}>
+                                        <span style={{ cursor: 'help' }}>{displayText}</span>
+                                      </Tooltip>
+                                    );
                                   },
                                 },
                                 {
@@ -5210,16 +5231,26 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           title: t('saltstack.duration'),
                           dataIndex: 'duration',
                           key: 'duration',
-                          width: 100,
+                          width: 120,
                           render: (duration, record) => {
                             if (record.status === 'running') {
                               return <Tag color="processing">{t('saltstack.inProgress')}</Tag>;
                             }
                             if (!duration) return '-';
-                            if (duration < 60) return `${duration}s`;
-                            const minutes = Math.floor(duration / 60);
-                            const seconds = duration % 60;
-                            return `${minutes}m ${seconds}s`;
+                            const ms = duration * 1000;
+                            let displayText;
+                            if (duration < 60) {
+                              displayText = `${duration} s`;
+                            } else {
+                              const minutes = Math.floor(duration / 60);
+                              const seconds = duration % 60;
+                              displayText = `${minutes}m ${seconds}s`;
+                            }
+                            return (
+                              <Tooltip title={`${ms} ms = ${duration} 秒`}>
+                                <span style={{ cursor: 'help' }}>{displayText}</span>
+                              </Tooltip>
+                            );
                           },
                         },
                       ]}

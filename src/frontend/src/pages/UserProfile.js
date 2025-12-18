@@ -80,8 +80,10 @@ const UserProfile = () => {
     try {
       setTwoFAStatus(prev => ({ ...prev, loading: true }));
       const response = await securityAPI.get2FAStatus();
+      // 后端返回格式: { success: true, data: { enabled: boolean, ... } }
+      const data = response.data?.data || response.data;
       setTwoFAStatus({
-        enabled: response.data.enabled,
+        enabled: data?.enabled || false,
         loading: false,
       });
     } catch (error) {
@@ -95,7 +97,16 @@ const UserProfile = () => {
     try {
       setTwoFAStatus(prev => ({ ...prev, loading: true }));
       const response = await securityAPI.setup2FA();
-      setTwoFASetupData(response.data);
+      // 后端返回格式: { success: true, data: { secret, qr_code, recovery_codes, ... } }
+      const data = response.data?.data || response.data;
+      setTwoFASetupData({
+        secret: data.secret,
+        otpauth_url: data.qr_code,
+        qr_code_url: data.qr_code,
+        recovery_codes: data.recovery_codes || [],
+        issuer: data.issuer,
+        account: data.account,
+      });
       setSetupModalVisible(true);
       setVerifyCode('');
     } catch (error) {
@@ -150,7 +161,10 @@ const UserProfile = () => {
   const handleRegenerateRecoveryCodes = async () => {
     try {
       const response = await securityAPI.regenerateRecoveryCodes();
-      if (response.data?.recovery_codes) {
+      // 后端返回格式: { success: true, data: { recovery_codes: [...] } }
+      const data = response.data?.data || response.data;
+      if (data?.recovery_codes) {
+        const recoveryCodes = data.recovery_codes;
         Modal.info({
           title: '新的恢复码',
           width: 500,
@@ -169,7 +183,7 @@ const UserProfile = () => {
                 borderRadius: 8,
                 fontFamily: 'monospace' 
               }}>
-                {response.data.recovery_codes.map((code, index) => (
+                {recoveryCodes.map((code, index) => (
                   <div key={index} style={{ marginBottom: 4 }}>{code}</div>
                 ))}
               </div>

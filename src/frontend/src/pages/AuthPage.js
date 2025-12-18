@@ -55,6 +55,7 @@ const AuthPage = ({ onLogin }) => {
   const [twoFACode, setTwoFACode] = useState('');
   const [pendingLoginData, setPendingLoginData] = useState(null);
   const [verifying2FA, setVerifying2FA] = useState(false);
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
 
   // 获取角色模板名称
   const getRoleTemplateName = (key) => {
@@ -143,8 +144,12 @@ const AuthPage = ({ onLogin }) => {
 
   // 处理2FA验证
   const handle2FAVerify = async () => {
-    if (!twoFACode || twoFACode.length !== 6) {
+    if (!useRecoveryCode && (!twoFACode || twoFACode.length !== 6)) {
       message.error('请输入6位验证码');
+      return;
+    }
+    if (useRecoveryCode && !twoFACode) {
+      message.error('请输入恢复码');
       return;
     }
 
@@ -191,6 +196,13 @@ const AuthPage = ({ onLogin }) => {
     setShow2FAModal(false);
     setTwoFACode('');
     setPendingLoginData(null);
+    setUseRecoveryCode(false);
+  };
+
+  // 切换恢复码模式
+  const toggleRecoveryMode = () => {
+    setUseRecoveryCode(!useRecoveryCode);
+    setTwoFACode('');
   };
 
   const handleRegister = async (values) => {
@@ -529,7 +541,9 @@ const AuthPage = ({ onLogin }) => {
         <div style={{ padding: '20px 0' }}>
           <Alert
             message="此账户已启用双因素认证"
-            description="请打开您的身份验证器应用（如 Google Authenticator），输入6位验证码完成登录。"
+            description={useRecoveryCode 
+              ? "请输入您保存的恢复码。每个恢复码只能使用一次。" 
+              : "请打开您的身份验证器应用（如 Google Authenticator），输入6位验证码完成登录。"}
             type="info"
             showIcon
             style={{ marginBottom: '24px' }}
@@ -537,20 +551,35 @@ const AuthPage = ({ onLogin }) => {
           
           <Form onFinish={handle2FAVerify}>
             <Form.Item>
-              <Input
-                size="large"
-                placeholder="请输入6位验证码"
-                value={twoFACode}
-                onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                maxLength={6}
-                style={{ 
-                  textAlign: 'center', 
-                  fontSize: '24px', 
-                  letterSpacing: '8px',
-                  fontFamily: 'monospace'
-                }}
-                autoFocus
-              />
+              {useRecoveryCode ? (
+                <Input
+                  size="large"
+                  placeholder="请输入恢复码"
+                  value={twoFACode}
+                  onChange={(e) => setTwoFACode(e.target.value)}
+                  style={{ 
+                    textAlign: 'center', 
+                    fontSize: '16px', 
+                    fontFamily: 'monospace'
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <Input
+                  size="large"
+                  placeholder="请输入6位验证码"
+                  value={twoFACode}
+                  onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  maxLength={6}
+                  style={{ 
+                    textAlign: 'center', 
+                    fontSize: '24px', 
+                    letterSpacing: '8px',
+                    fontFamily: 'monospace'
+                  }}
+                  autoFocus
+                />
+              )}
             </Form.Item>
             
             <Form.Item style={{ marginBottom: 0 }}>
@@ -562,7 +591,7 @@ const AuthPage = ({ onLogin }) => {
                   type="primary" 
                   htmlType="submit"
                   loading={verifying2FA}
-                  disabled={twoFACode.length !== 6}
+                  disabled={useRecoveryCode ? !twoFACode : twoFACode.length !== 6}
                 >
                   验证并登录
                 </Button>
@@ -573,8 +602,8 @@ const AuthPage = ({ onLogin }) => {
           <Divider />
           
           <div style={{ textAlign: 'center' }}>
-            <Button type="link" size="small">
-              无法访问验证器？使用恢复码
+            <Button type="link" size="small" onClick={toggleRecoveryMode}>
+              {useRecoveryCode ? '使用验证码登录' : '无法访问验证器？使用恢复码'}
             </Button>
           </div>
         </div>
