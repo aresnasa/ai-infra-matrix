@@ -95,6 +95,15 @@ const AdminCenter = () => {
       color: isDark ? '#112123' : '#e6fffb',
       badge: 'new',
       priority: 7
+    },
+    {
+      title: t('admin.securitySettings'),
+      description: t('admin.securitySettingsDesc'),
+      icon: <SecurityScanOutlined style={{ fontSize: '24px', color: '#f5222d' }} />,
+      path: '/admin/security',
+      color: isDark ? '#2a1215' : '#fff1f0',
+      badge: 'new',
+      priority: 8
     }
   ];
 

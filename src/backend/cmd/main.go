@@ -1273,4 +1273,47 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			keyvaultAuth.GET("/logs", keyVaultHandler.GetAccessLogs)
 		}
 	}
+
+	// 安全管理路由（需要认证）
+	securityHandler := handlers.NewSecurityHandler()
+	// 自动迁移安全相关数据库表
+	if err := securityHandler.AutoMigrate(); err != nil {
+		log.Printf("Warning: Failed to migrate security tables: %v", err)
+	}
+
+	security := api.Group("/security")
+	security.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// IP 黑名单管理
+		security.GET("/ip-blacklist", securityHandler.ListIPBlacklist)
+		security.POST("/ip-blacklist", securityHandler.AddIPBlacklist)
+		security.PUT("/ip-blacklist/:id", securityHandler.UpdateIPBlacklist)
+		security.DELETE("/ip-blacklist/:id", securityHandler.DeleteIPBlacklist)
+		security.POST("/ip-blacklist/batch-delete", securityHandler.BatchDeleteIPBlacklist)
+
+		// IP 白名单管理
+		security.GET("/ip-whitelist", securityHandler.ListIPWhitelist)
+		security.POST("/ip-whitelist", securityHandler.AddIPWhitelist)
+		security.DELETE("/ip-whitelist/:id", securityHandler.DeleteIPWhitelist)
+
+		// 二次认证（2FA）管理
+		security.GET("/2fa/status", securityHandler.Get2FAStatus)
+		security.POST("/2fa/setup", securityHandler.Setup2FA)
+		security.POST("/2fa/enable", securityHandler.Enable2FA)
+		security.POST("/2fa/disable", securityHandler.Disable2FA)
+		security.POST("/2fa/verify", securityHandler.Verify2FA)
+		security.POST("/2fa/recovery-codes", securityHandler.RegenerateRecoveryCodes)
+
+		// OAuth 第三方登录配置
+		security.GET("/oauth/providers", securityHandler.ListOAuthProviders)
+		security.GET("/oauth/providers/:id", securityHandler.GetOAuthProvider)
+		security.PUT("/oauth/providers/:id", securityHandler.UpdateOAuthProvider)
+
+		// 全局安全配置
+		security.GET("/config", securityHandler.GetSecurityConfig)
+		security.PUT("/config", securityHandler.UpdateSecurityConfig)
+
+		// 安全审计日志
+		security.GET("/audit-logs", securityHandler.ListAuditLogs)
+	}
 }

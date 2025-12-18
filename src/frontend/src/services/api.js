@@ -940,4 +940,39 @@ export const rbacAPI = {
   revokeRole: (data) => api.delete('/rbac/revoke-role', { data }),
 };
 
+// 安全管理 API
+export const securityAPI = {
+  // IP 黑名单管理
+  getIPBlacklist: (params) => api.get('/security/ip-blacklist', { params }),
+  addIPBlacklist: (data) => api.post('/security/ip-blacklist', data),
+  updateIPBlacklist: (id, data) => api.put(`/security/ip-blacklist/${id}`, data),
+  deleteIPBlacklist: (id) => api.delete(`/security/ip-blacklist/${id}`),
+  batchDeleteIPBlacklist: (ids) => api.post('/security/ip-blacklist/batch-delete', { ids }),
+
+  // IP 白名单管理
+  getIPWhitelist: (params) => api.get('/security/ip-whitelist', { params }),
+  addIPWhitelist: (data) => api.post('/security/ip-whitelist', data),
+  deleteIPWhitelist: (id) => api.delete(`/security/ip-whitelist/${id}`),
+
+  // 二次认证 (2FA) 管理
+  get2FAStatus: () => api.get('/security/2fa/status'),
+  setup2FA: () => api.post('/security/2fa/setup'),
+  enable2FA: (data) => api.post('/security/2fa/enable', data),
+  disable2FA: (data) => api.post('/security/2fa/disable', data),
+  verify2FA: (data) => api.post('/security/2fa/verify', data),
+  regenerateRecoveryCodes: () => api.post('/security/2fa/recovery-codes'),
+
+  // OAuth 第三方登录配置
+  getOAuthProviders: () => api.get('/security/oauth/providers'),
+  getOAuthProvider: (id) => api.get(`/security/oauth/providers/${id}`),
+  updateOAuthProvider: (id, data) => api.put(`/security/oauth/providers/${id}`, data),
+
+  // 全局安全配置
+  getSecurityConfig: () => api.get('/security/config'),
+  updateSecurityConfig: (data) => api.put('/security/config', data),
+
+  // 安全审计日志
+  getAuditLogs: (params) => api.get('/security/audit-logs', { params }),
+};
+
 export default api;

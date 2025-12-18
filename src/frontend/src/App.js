@@ -131,6 +131,11 @@ const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages
   loadingText: '正在加载对象存储配置...'
 });
 
+// 安全管理页面
+const SecuritySettings = withLazyLoading(React.lazy(() => import('./pages/admin/SecuritySettings')), {
+  loadingText: '正在加载安全管理...'
+});
+
 // 新增功能页面懒加载
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
@@ -829,6 +834,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <ObjectStorageConfigPage />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/security"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <SecuritySettings />
                           </Suspense>
                         </AdminProtectedRoute>
                       }
