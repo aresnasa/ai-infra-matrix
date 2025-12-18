@@ -1707,23 +1707,6 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 		// 从 Redis 获取最近执行的作业（补充 Salt API 没有返回的）
 		recentJIDs, err := h.cache.LRange(context.Background(), "saltstack:recent_jobs", 0, 49).Result()
 		if err == nil && len(recentJIDs) > 0 {
-			// 监控相关函数的黑名单 - 这些任务不应该展示给用户
-			monitoringFunctions := map[string]bool{
-				"status.cpuload":        true,
-				"runner.manage.status":  true,
-				"test.ping":             true,
-				"grains.items":          true,
-				"saltutil.sync_all":     true,
-				"saltutil.sync_grains":  true,
-				"saltutil.sync_modules": true,
-				"status.meminfo":        true,
-				"status.cpuinfo":        true,
-				"status.diskusage":      true,
-				"status.netstats":       true,
-				"status.uptime":         true,
-				"status.loadavg":        true,
-			}
-
 			for _, jid := range recentJIDs {
 				// 如果这个 JID 已经在 Salt API 结果中，跳过
 				if existingJIDs[jid] {
@@ -1752,12 +1735,8 @@ func (h *SaltStackHandler) GetSaltJobs(c *gin.Context) {
 					TaskID:   getStringFromMap(jobInfo, "task_id"),
 				}
 
-				// 过滤监控相关的任务
-				if monitoringFunctions[newJob.Function] {
-					continue
-				}
-				// 过滤以 "status." 或 "runner." 开头的任务
-				if strings.HasPrefix(newJob.Function, "status.") || strings.HasPrefix(newJob.Function, "runner.") {
+				// 使用共享的监控任务过滤逻辑
+				if services.IsMonitoringTask(newJob.Function) {
 					continue
 				}
 
@@ -2019,23 +1998,6 @@ func (h *SaltStackHandler) getRealJobs(client *saltAPIClient, limit int) ([]Salt
 	}
 	var jobs []SaltJob
 
-	// 监控相关函数的黑名单 - 这些任务不应该展示给用户
-	monitoringFunctions := map[string]bool{
-		"status.cpuload":        true, // CPU 负载监控
-		"runner.manage.status":  true, // Salt Master 状态
-		"test.ping":             true, // 心跳检测
-		"grains.items":          true, // 节点信息采集
-		"saltutil.sync_all":     true, // 模块同步
-		"saltutil.sync_grains":  true, // Grains 同步
-		"saltutil.sync_modules": true, // 模块同步
-		"status.meminfo":        true, // 内存信息
-		"status.cpuinfo":        true, // CPU 信息
-		"status.diskusage":      true, // 磁盘使用
-		"status.netstats":       true, // 网络统计
-		"status.uptime":         true, // 系统运行时间
-		"status.loadavg":        true, // 系统负载
-	}
-
 	// 解析常见结构: {"return":[{"jobs": {"<jid>": {..}, ...}}]}
 	if ret, ok := resp["return"].([]interface{}); ok && len(ret) > 0 {
 		if m, ok := ret[0].(map[string]interface{}); ok {
@@ -2054,12 +2016,8 @@ func (h *SaltStackHandler) getRealJobs(client *saltAPIClient, limit int) ([]Salt
 						j.Function = f
 					}
 
-					// 过滤监控相关的任务
-					if monitoringFunctions[j.Function] {
-						continue
-					}
-					// 过滤以 "status." 或 "runner." 开头的任务（监控类）
-					if strings.HasPrefix(j.Function, "status.") || strings.HasPrefix(j.Function, "runner.") {
+					// 使用共享的监控任务过滤逻辑
+					if services.IsMonitoringTask(j.Function) {
 						continue
 					}
 
