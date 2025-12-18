@@ -4994,13 +4994,30 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                           key: 'duration',
                           width: 120,
                           sorter: (a, b) => {
-                            const p = d => d ? parseFloat(d.match(/([\d.]+)/)?.[1] || 0) : 0;
+                            const p = d => {
+                              if (!d) return 0;
+                              if (typeof d === 'number') return d;
+                              const str = String(d);
+                              const match = str.match(/([\d.]+)/);
+                              return match ? parseFloat(match[1]) : 0;
+                            };
                             return p(a.duration) - p(b.duration);
                           },
                           render: (d) => {
-                            if (!d) return '-';
-                            const match = d.match(/([\d.]+)/);
-                            if (!match) return d;
+                            if (d === null || d === undefined) return '-';
+                            // Handle number type directly
+                            if (typeof d === 'number') {
+                              const seconds = (d / 1000).toFixed(3);
+                              return (
+                                <Tooltip title={`${seconds} 秒`}>
+                                  <span style={{ cursor: 'help' }}>{d} ms</span>
+                                </Tooltip>
+                              );
+                            }
+                            // Handle string type
+                            const str = String(d);
+                            const match = str.match(/([\d.]+)/);
+                            if (!match) return str;
                             const ms = parseFloat(match[1]);
                             const seconds = (ms / 1000).toFixed(3);
                             return (
