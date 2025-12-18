@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, message, Tabs, Row, Col, Select, Checkbox, Alert, Descriptions, Divider } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, message, Tabs, Row, Col, Select, Checkbox, Alert, Descriptions, Divider, Modal, Space } from 'antd';
+import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { authAPI } from '../services/api';
+import { authAPI, securityAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
 import { useTheme } from '../hooks/useTheme';
 import LanguageSwitcher from '../components/LanguageSwitcher';
@@ -49,6 +49,12 @@ const AuthPage = ({ onLogin }) => {
   const [selectedRoleTemplate, setSelectedRoleTemplate] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(true);
   const [ldapValidationStatus, setLdapValidationStatus] = useState(null); // null, 'validating', 'success', 'error'
+  
+  // 2FA 相关状态
+  const [show2FAModal, setShow2FAModal] = useState(false);
+  const [twoFACode, setTwoFACode] = useState('');
+  const [pendingLoginData, setPendingLoginData] = useState(null);
+  const [verifying2FA, setVerifying2FA] = useState(false);
 
   // 获取角色模板名称
   const getRoleTemplateName = (key) => {
@@ -83,7 +89,23 @@ const AuthPage = ({ onLogin }) => {
     setLoading(true);
     try {
       const response = await authAPI.login(values);
-      const { token, user, expires_at } = response.data;
+      const data = response.data;
+
+      // 检查是否需要2FA验证
+      if (data.requires_2fa) {
+        console.log('2FA required for user:', values.username);
+        setPendingLoginData({
+          ...values,
+          tempToken: data.temp_token,
+          userId: data.user_id
+        });
+        setShow2FAModal(true);
+        setLoading(false);
+        return;
+      }
+
+      // 正常登录流程
+      const { token, user, expires_at } = data;
 
       console.log('=== Login API Success ===');
       console.log('Got token:', token ? 'yes' : 'no');
@@ -117,6 +139,58 @@ const AuthPage = ({ onLogin }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 处理2FA验证
+  const handle2FAVerify = async () => {
+    if (!twoFACode || twoFACode.length !== 6) {
+      message.error('请输入6位验证码');
+      return;
+    }
+
+    setVerifying2FA(true);
+    try {
+      const response = await authAPI.verify2FALogin({
+        temp_token: pendingLoginData.tempToken,
+        code: twoFACode,
+        username: pendingLoginData.username
+      });
+
+      const { token, user, expires_at } = response.data;
+
+      // 保存token
+      localStorage.setItem('token', token);
+      localStorage.setItem('token_expires', expires_at);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      message.success(t('auth.loginSuccess'));
+      setShow2FAModal(false);
+      setTwoFACode('');
+      setPendingLoginData(null);
+
+      await onLogin({
+        token,
+        expires_at,
+        user
+      });
+
+      const from = location.state?.from?.pathname || '/projects';
+      navigate(from, { replace: true });
+
+    } catch (error) {
+      console.error('2FA verification failed:', error);
+      message.error(error.response?.data?.error || '验证码错误或已过期');
+    } finally {
+      setVerifying2FA(false);
+    }
+  };
+
+  // 取消2FA验证
+  const cancel2FA = () => {
+    setShow2FAModal(false);
+    setTwoFACode('');
+    setPendingLoginData(null);
   };
 
   const handleRegister = async (values) => {
@@ -436,6 +510,75 @@ const AuthPage = ({ onLogin }) => {
           </Card>
         </Col>
       </Row>
+
+      {/* 2FA验证弹窗 */}
+      <Modal
+        title={
+          <Space>
+            <SafetyOutlined />
+            双因素认证验证
+          </Space>
+        }
+        open={show2FAModal}
+        onCancel={cancel2FA}
+        footer={null}
+        centered
+        maskClosable={false}
+        width={400}
+      >
+        <div style={{ padding: '20px 0' }}>
+          <Alert
+            message="此账户已启用双因素认证"
+            description="请打开您的身份验证器应用（如 Google Authenticator），输入6位验证码完成登录。"
+            type="info"
+            showIcon
+            style={{ marginBottom: '24px' }}
+          />
+          
+          <Form onFinish={handle2FAVerify}>
+            <Form.Item>
+              <Input
+                size="large"
+                placeholder="请输入6位验证码"
+                value={twoFACode}
+                onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                maxLength={6}
+                style={{ 
+                  textAlign: 'center', 
+                  fontSize: '24px', 
+                  letterSpacing: '8px',
+                  fontFamily: 'monospace'
+                }}
+                autoFocus
+              />
+            </Form.Item>
+            
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Button onClick={cancel2FA}>
+                  取消
+                </Button>
+                <Button 
+                  type="primary" 
+                  htmlType="submit"
+                  loading={verifying2FA}
+                  disabled={twoFACode.length !== 6}
+                >
+                  验证并登录
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+          
+          <Divider />
+          
+          <div style={{ textAlign: 'center' }}>
+            <Button type="link" size="small">
+              无法访问验证器？使用恢复码
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

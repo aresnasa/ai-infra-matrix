@@ -452,6 +452,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/validate-ldap", userHandler.ValidateLDAP)
 		auth.POST("/login", userHandler.Login)
+		auth.POST("/verify-2fa", userHandler.Verify2FALogin) // 2FA验证登录
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
 		auth.POST("/refresh", userHandler.RefreshToken)
 		// 兼容前端/SSO刷新端点

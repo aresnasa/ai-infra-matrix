@@ -136,6 +136,8 @@ export const authAPI = {
   refreshToken: () => api.post('/auth/refresh'), // 不缓存token刷新请求
   changePassword: (data) => api.post('/auth/change-password', data), // 修改密码
   updateProfile: (data) => api.put('/users/profile', data), // 更新个人信息
+  // 2FA 登录验证
+  verify2FALogin: (data) => api.post('/auth/verify-2fa', data),
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Tooltip, Popconfirm } from 'antd';
-import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Popconfirm, Input, Divider } from 'antd';
+import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined, QrcodeOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { QRCodeSVG } from 'qrcode.react';
 import { userAPI, securityAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
 
@@ -17,6 +18,8 @@ const AdminUsers = () => {
   const [twoFAModalVisible, setTwoFAModalVisible] = useState(false);
   const [twoFAUser, setTwoFAUser] = useState(null);
   const [twoFAStatus, setTwoFAStatus] = useState({});
+  const [twoFASetupData, setTwoFASetupData] = useState(null);
+  const [twoFALoading, setTwoFALoading] = useState(false);
 
   // 获取用户列表
   const fetchUsers = async () => {
@@ -80,16 +83,47 @@ const AdminUsers = () => {
     setTwoFAStatus(statusMap);
   };
 
-  // 管理员为用户启用2FA
+  // 管理员为用户启用2FA - 显示二维码弹窗
   const handleEnable2FA = async (user) => {
+    setTwoFAUser(user);
+    setTwoFALoading(true);
+    setTwoFAModalVisible(true);
+    
     try {
-      await securityAPI.adminEnable2FA(user.id);
-      message.success(`已为用户 ${user.username} 启用2FA`);
+      const res = await securityAPI.adminEnable2FA(user.id);
+      const data = res.data?.data || res.data;
+      setTwoFASetupData({
+        secret: data.secret,
+        qrCode: data.qr_code,
+        issuer: data.issuer || 'AI-Infra-Matrix',
+        account: data.account || user.username,
+        recoveryCodes: data.recovery_codes || []
+      });
       setTwoFAStatus(prev => ({ ...prev, [user.id]: true }));
+      message.success(`已为用户 ${user.username} 启用2FA`);
     } catch (error) {
       console.error('启用2FA失败:', error);
       message.error('启用2FA失败: ' + (error.response?.data?.error || error.message));
+      setTwoFAModalVisible(false);
+    } finally {
+      setTwoFALoading(false);
     }
+  };
+
+  // 关闭2FA设置弹窗
+  const close2FAModal = () => {
+    setTwoFAModalVisible(false);
+    setTwoFAUser(null);
+    setTwoFASetupData(null);
+  };
+
+  // 复制到剪贴板
+  const copyToClipboard = (text, label) => {
+    navigator.clipboard.writeText(text).then(() => {
+      message.success(`${label} 已复制到剪贴板`);
+    }).catch(() => {
+      message.error('复制失败');
+    });
   };
 
   // 管理员为用户禁用2FA
@@ -366,6 +400,147 @@ const AdminUsers = () => {
                 </div>
               )}
             </Space>
+          </div>
+        )}
+      </Modal>
+
+      {/* 2FA设置弹窗 - 显示二维码和恢复码 */}
+      <Modal
+        title={
+          <Space>
+            <QrcodeOutlined />
+            为用户 {twoFAUser?.username} 设置双因素认证
+          </Space>
+        }
+        open={twoFAModalVisible}
+        onCancel={close2FAModal}
+        footer={[
+          <Button key="close" type="primary" onClick={close2FAModal}>
+            我已保存，关闭
+          </Button>
+        ]}
+        width={600}
+        centered
+      >
+        {twoFALoading ? (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Spin size="large" />
+            <div style={{ marginTop: '16px' }}>
+              <Text>正在生成2FA密钥...</Text>
+            </div>
+          </div>
+        ) : twoFASetupData ? (
+          <div>
+            <Alert
+              message="重要提示"
+              description="请让用户使用 Google Authenticator、Microsoft Authenticator 或其他 TOTP 应用扫描下方二维码。恢复码需要安全保存，丢失后将无法恢复账户。"
+              type="warning"
+              showIcon
+              style={{ marginBottom: '24px' }}
+            />
+
+            {/* 二维码区域 */}
+            <Card size="small" title="扫描二维码" style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+                <div style={{ 
+                  padding: '16px', 
+                  background: '#fff', 
+                  borderRadius: '8px',
+                  border: '1px solid #d9d9d9'
+                }}>
+                  <QRCodeSVG 
+                    value={twoFASetupData.qrCode} 
+                    size={180}
+                    level="M"
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: '12px' }}>
+                    <Text strong>账户: </Text>
+                    <Text>{twoFASetupData.account}</Text>
+                  </div>
+                  <div style={{ marginBottom: '12px' }}>
+                    <Text strong>发行者: </Text>
+                    <Text>{twoFASetupData.issuer}</Text>
+                  </div>
+                  <Divider style={{ margin: '12px 0' }} />
+                  <div>
+                    <Text strong>手动输入密钥: </Text>
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px',
+                      marginTop: '8px'
+                    }}>
+                      <Input.Password 
+                        value={twoFASetupData.secret} 
+                        readOnly
+                        style={{ fontFamily: 'monospace' }}
+                      />
+                      <Button 
+                        icon={<CopyOutlined />}
+                        onClick={() => copyToClipboard(twoFASetupData.secret, '密钥')}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* 恢复码区域 */}
+            {twoFASetupData.recoveryCodes?.length > 0 && (
+              <Card 
+                size="small" 
+                title={
+                  <Space>
+                    <KeyOutlined />
+                    恢复码（请妥善保存）
+                  </Space>
+                }
+                extra={
+                  <Button 
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={() => copyToClipboard(twoFASetupData.recoveryCodes.join('\n'), '恢复码')}
+                  >
+                    复制全部
+                  </Button>
+                }
+              >
+                <Alert
+                  message="恢复码用于在无法访问认证器应用时登录账户"
+                  description="每个恢复码只能使用一次，请打印或安全保存"
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: '12px' }}
+                />
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(2, 1fr)', 
+                  gap: '8px',
+                  padding: '12px',
+                  background: '#fafafa',
+                  borderRadius: '4px',
+                  fontFamily: 'monospace'
+                }}>
+                  {twoFASetupData.recoveryCodes.map((code, index) => (
+                    <div key={index} style={{ 
+                      padding: '4px 8px',
+                      background: '#fff',
+                      border: '1px solid #d9d9d9',
+                      borderRadius: '4px',
+                      textAlign: 'center'
+                    }}>
+                      {code}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Text type="secondary">无数据</Text>
           </div>
         )}
       </Modal>
