@@ -49,7 +49,7 @@ import {
   DingdingOutlined,
   GithubOutlined,
   GoogleOutlined,
-  MicrosoftOutlined,
+  WindowsOutlined,
   GitlabOutlined,
   ArrowLeftOutlined,
 } from '@ant-design/icons';
@@ -430,7 +430,7 @@ const SecuritySettings = () => {
       wechat_work: <WechatOutlined style={{ color: '#2C87F7' }} />,
       dingtalk: <DingdingOutlined style={{ color: '#0076FF' }} />,
       feishu: <CloudOutlined style={{ color: '#3370FF' }} />,
-      teams: <MicrosoftOutlined style={{ color: '#6264A7' }} />,
+      teams: <WindowsOutlined style={{ color: '#6264A7' }} />,
       gitlab: <GitlabOutlined style={{ color: '#FC6D26' }} />,
     };
     return iconMap[name] || <CloudOutlined />;
