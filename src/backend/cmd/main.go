@@ -1304,6 +1304,11 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		security.POST("/2fa/verify", securityHandler.Verify2FA)
 		security.POST("/2fa/recovery-codes", securityHandler.RegenerateRecoveryCodes)
 
+		// 管理员2FA管理（为其他用户管理2FA）
+		security.GET("/admin/2fa/:user_id/status", securityHandler.AdminGet2FAStatus)
+		security.POST("/admin/2fa/:user_id/enable", securityHandler.AdminEnable2FA)
+		security.POST("/admin/2fa/:user_id/disable", securityHandler.AdminDisable2FA)
+
 		// OAuth 第三方登录配置
 		security.GET("/oauth/providers", securityHandler.ListOAuthProviders)
 		security.GET("/oauth/providers/:id", securityHandler.GetOAuthProvider)

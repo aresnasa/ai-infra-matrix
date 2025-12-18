@@ -320,6 +320,9 @@ export const userAPI = {
   deleteUser: (id) => api.delete(`/users/${id}`),
   resetPassword: (id) => api.post(`/users/${id}/reset-password`),
   
+  // 用户角色模板管理（管理员）
+  updateUserRoleTemplate: (id, data) => api.put(`/users/${id}/role-template`, data),
+  
   // 用户个人信息
   getUserProfile: () => api.get('/users/profile'),
   updateUserProfile: (profileData) => api.put('/users/profile', profileData),
@@ -961,6 +964,11 @@ export const securityAPI = {
   disable2FA: (data) => api.post('/security/2fa/disable', data),
   verify2FA: (data) => api.post('/security/2fa/verify', data),
   regenerateRecoveryCodes: () => api.post('/security/2fa/recovery-codes'),
+
+  // 管理员2FA管理（为其他用户管理2FA）
+  admin2FAStatus: (userId) => api.get(`/security/admin/2fa/${userId}/status`),
+  adminEnable2FA: (userId) => api.post(`/security/admin/2fa/${userId}/enable`),
+  adminDisable2FA: (userId) => api.post(`/security/admin/2fa/${userId}/disable`),
 
   // OAuth 第三方登录配置
   getOAuthProviders: () => api.get('/security/oauth/providers'),

@@ -1039,3 +1039,172 @@ func generateRecoveryCode() string {
 	code := base32.StdEncoding.EncodeToString(bytes)
 	return code[:8] // 8字符的恢复码
 }
+
+// === 管理员2FA管理 ===
+
+// AdminGet2FAStatus 管理员获取指定用户的2FA状态
+func (h *SecurityHandler) AdminGet2FAStatus(c *gin.Context) {
+	userIDParam := c.Param("user_id")
+	userID, err := strconv.ParseUint(userIDParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的用户ID"})
+		return
+	}
+
+	var config models.TwoFactorConfig
+	err = h.db.Where("user_id = ?", userID).First(&config).Error
+
+	if err == gorm.ErrRecordNotFound {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data": map[string]interface{}{
+				"enabled":     false,
+				"type":        "",
+				"setup_at":    nil,
+				"user_id":     userID,
+				"can_disable": false,
+			},
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": map[string]interface{}{
+			"enabled":          config.Enabled,
+			"type":             config.Type,
+			"setup_at":         config.CreatedAt,
+			"last_verified_at": config.LastVerifiedAt,
+			"user_id":          userID,
+			"can_disable":      true,
+		},
+	})
+}
+
+// AdminEnable2FA 管理员为指定用户强制启用2FA
+func (h *SecurityHandler) AdminEnable2FA(c *gin.Context) {
+	userIDParam := c.Param("user_id")
+	targetUserID, err := strconv.ParseUint(userIDParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的用户ID"})
+		return
+	}
+
+	// 获取目标用户信息
+	var targetUser models.User
+	if err := h.db.First(&targetUser, targetUserID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "用户不存在"})
+		return
+	}
+
+	// 检查是否已有2FA配置
+	var existingConfig models.TwoFactorConfig
+	err = h.db.Where("user_id = ?", targetUserID).First(&existingConfig).Error
+	if err == nil && existingConfig.Enabled {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "该用户已启用2FA"})
+		return
+	}
+
+	// 生成TOTP密钥
+	globalConfig := h.get2FAGlobalConfig()
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      globalConfig.TOTPIssuer,
+		AccountName: targetUser.Username,
+		Period:      uint(globalConfig.TOTPPeriod),
+		Digits:      6,
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "生成密钥失败"})
+		return
+	}
+
+	// 生成恢复码
+	recoveryCodes := generateRecoveryCodes(globalConfig.RecoveryCodeCount)
+	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
+
+	// 创建或更新配置
+	config := models.TwoFactorConfig{
+		UserID:        uint(targetUserID),
+		Enabled:       true, // 管理员强制启用
+		Type:          "totp",
+		Secret:        key.Secret(),
+		RecoveryCodes: string(recoveryCodesJSON),
+	}
+
+	if err := h.db.Where("user_id = ?", targetUserID).Assign(config).FirstOrCreate(&config).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 获取管理员信息
+	adminUserID, _ := c.Get("user_id")
+	h.logSecurityAudit(c, "admin_2fa_enable", "user", userIDParam, "success", map[string]interface{}{
+		"target_user":   targetUser.Username,
+		"admin_user_id": adminUserID,
+		"type":          "totp",
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("已为用户 %s 启用2FA", targetUser.Username),
+		"data": map[string]interface{}{
+			"secret":         key.Secret(),
+			"qr_code":        key.URL(),
+			"issuer":         globalConfig.TOTPIssuer,
+			"account":        targetUser.Username,
+			"recovery_codes": recoveryCodes,
+		},
+	})
+}
+
+// AdminDisable2FA 管理员为指定用户禁用2FA
+func (h *SecurityHandler) AdminDisable2FA(c *gin.Context) {
+	userIDParam := c.Param("user_id")
+	targetUserID, err := strconv.ParseUint(userIDParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的用户ID"})
+		return
+	}
+
+	// 获取目标用户信息
+	var targetUser models.User
+	if err := h.db.First(&targetUser, targetUserID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "用户不存在"})
+		return
+	}
+
+	// 检查2FA状态
+	var config models.TwoFactorConfig
+	if err := h.db.Where("user_id = ?", targetUserID).First(&config).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "该用户未启用2FA"})
+		return
+	}
+
+	// 禁用2FA
+	if err := h.db.Model(&config).Updates(map[string]interface{}{
+		"enabled":        false,
+		"secret":         "",
+		"recovery_codes": "",
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+
+	// 获取管理员信息
+	adminUserID, _ := c.Get("user_id")
+	h.logSecurityAudit(c, "admin_2fa_disable", "user", userIDParam, "success", map[string]interface{}{
+		"target_user":   targetUser.Username,
+		"admin_user_id": adminUserID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("已为用户 %s 禁用2FA", targetUser.Username),
+	})
+}

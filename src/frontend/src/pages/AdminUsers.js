@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin } from 'antd';
-import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
-import { userAPI } from '../services/api';
+import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Tooltip, Popconfirm } from 'antd';
+import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined } from '@ant-design/icons';
+import { userAPI, securityAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
@@ -14,6 +14,9 @@ const AdminUsers = () => {
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [updatingUser, setUpdatingUser] = useState(false);
+  const [twoFAModalVisible, setTwoFAModalVisible] = useState(false);
+  const [twoFAUser, setTwoFAUser] = useState(null);
+  const [twoFAStatus, setTwoFAStatus] = useState({});
 
   // 获取用户列表
   const fetchUsers = async () => {
@@ -37,14 +40,13 @@ const AdminUsers = () => {
     }
   };
 
-  // 更新用户权限
-  const updateUserRole = async (userId, newRole) => {
+  // 更新用户权限 - 使用正确的API端点
+  const updateUserRole = async (userId, newRoleTemplate) => {
     setUpdatingUser(true);
     try {
-      // 使用用户API更新用户信息，包含角色信息
-      const userData = { role: newRole };
-      await userAPI.updateUser(userId, userData);
-      const roleText = newRole === 'admin' ? t('admin.admin') : t('admin.regularUser');
+      // 使用正确的 role-template API
+      await userAPI.updateUserRoleTemplate(userId, { role_template: newRoleTemplate });
+      const roleText = newRoleTemplate === 'admin' ? t('admin.admin') : t('admin.regularUser');
       message.success(t('admin.permissionUpdated').replace('{role}', roleText));
       fetchUsers(); // 重新获取用户列表
       setPermissionModalVisible(false);
@@ -54,6 +56,51 @@ const AdminUsers = () => {
       message.error(t('admin.updatePermissionFailed'));
     } finally {
       setUpdatingUser(false);
+    }
+  };
+
+  // 获取用户2FA状态
+  const fetchUser2FAStatus = async (userId) => {
+    try {
+      const res = await securityAPI.admin2FAStatus(userId);
+      const data = res.data?.data || res.data;
+      return data?.enabled || false;
+    } catch (error) {
+      console.error('获取用户2FA状态失败:', error);
+      return false;
+    }
+  };
+
+  // 批量获取用户2FA状态
+  const fetchAll2FAStatus = async (userList) => {
+    const statusMap = {};
+    for (const user of userList) {
+      statusMap[user.id] = await fetchUser2FAStatus(user.id);
+    }
+    setTwoFAStatus(statusMap);
+  };
+
+  // 管理员为用户启用2FA
+  const handleEnable2FA = async (user) => {
+    try {
+      await securityAPI.adminEnable2FA(user.id);
+      message.success(`已为用户 ${user.username} 启用2FA`);
+      setTwoFAStatus(prev => ({ ...prev, [user.id]: true }));
+    } catch (error) {
+      console.error('启用2FA失败:', error);
+      message.error('启用2FA失败: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  // 管理员为用户禁用2FA
+  const handleDisable2FA = async (user) => {
+    try {
+      await securityAPI.adminDisable2FA(user.id);
+      message.success(`已为用户 ${user.username} 禁用2FA`);
+      setTwoFAStatus(prev => ({ ...prev, [user.id]: false }));
+    } catch (error) {
+      console.error('禁用2FA失败:', error);
+      message.error('禁用2FA失败: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -69,19 +116,34 @@ const AdminUsers = () => {
     setSelectedUser(null);
   };
 
-  // 处理权限变更
+  // 处理权限变更 - 映射前端值到后端role_template
   const handleRoleChange = (newRole) => {
     if (selectedUser) {
-      updateUserRole(selectedUser.id, newRole);
+      // 前端 'admin' -> 后端 'admin', 前端 'user' -> 后端 'engineer' (普通用户)
+      const roleTemplateMap = {
+        'admin': 'admin',
+        'user': 'engineer'  // 普通用户对应 engineer 角色模板
+      };
+      const roleTemplate = roleTemplateMap[newRole] || newRole;
+      updateUserRole(selectedUser.id, roleTemplate);
     }
   };
 
-  // 获取用户角色标签
-  const getRoleTag = (role) => {
-    if (role === 'admin') {
+  // 获取用户角色标签 - 使用 role_template 字段
+  const getRoleTag = (roleTemplate) => {
+    if (roleTemplate === 'admin') {
       return <Tag color="red" icon={<CrownOutlined />}>{t('admin.admin')}</Tag>;
     }
     return <Tag color="blue" icon={<UserOutlined />}>{t('admin.regularUser')}</Tag>;
+  };
+
+  // 获取2FA状态标签
+  const get2FATag = (userId) => {
+    const enabled = twoFAStatus[userId];
+    if (enabled) {
+      return <Tag color="green" icon={<SafetyOutlined />}>2FA已启用</Tag>;
+    }
+    return <Tag color="default">2FA未启用</Tag>;
   };
 
   // 表格列配置
@@ -92,7 +154,7 @@ const AdminUsers = () => {
       key: 'username',
       render: (username, record) => (
         <Space>
-          {record.role === 'admin' ? <CrownOutlined style={{ color: '#f5222d' }} /> : <UserOutlined />}
+          {record.role_template === 'admin' ? <CrownOutlined style={{ color: '#f5222d' }} /> : <UserOutlined />}
           <Text strong>{username}</Text>
         </Space>
       ),
@@ -105,9 +167,14 @@ const AdminUsers = () => {
     },
     {
       title: t('admin.role'),
-      dataIndex: 'role',
-      key: 'role',
-      render: (role) => getRoleTag(role),
+      dataIndex: 'role_template',
+      key: 'role_template',
+      render: (roleTemplate) => getRoleTag(roleTemplate),
+    },
+    {
+      title: '2FA状态',
+      key: '2fa_status',
+      render: (_, record) => get2FATag(record.id),
     },
     {
       title: t('admin.status'),
@@ -146,6 +213,39 @@ const AdminUsers = () => {
           >
             {t('admin.modifyPermission')}
           </Button>
+          {twoFAStatus[record.id] ? (
+            <Popconfirm
+              title="确认禁用2FA？"
+              description={`这将禁用用户 ${record.username} 的双因素认证`}
+              onConfirm={() => handleDisable2FA(record)}
+              okText="确认"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                danger
+                icon={<KeyOutlined />}
+              >
+                禁用2FA
+              </Button>
+            </Popconfirm>
+          ) : (
+            <Popconfirm
+              title="确认启用2FA？"
+              description={`这将为用户 ${record.username} 强制启用双因素认证`}
+              onConfirm={() => handleEnable2FA(record)}
+              okText="确认"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                type="default"
+                icon={<SafetyOutlined />}
+              >
+                启用2FA
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -155,6 +255,13 @@ const AdminUsers = () => {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  // 用户列表更新后获取2FA状态
+  useEffect(() => {
+    if (users.length > 0) {
+      fetchAll2FAStatus(users);
+    }
+  }, [users]);
 
   return (
     <div style={{ padding: '24px' }}>
@@ -221,7 +328,7 @@ const AdminUsers = () => {
               </div>
               <div>
                 <Text strong>{t('admin.currentRole')}：</Text>
-                {getRoleTag(selectedUser.role)}
+                {getRoleTag(selectedUser.role_template)}
               </div>
 
               <div>
