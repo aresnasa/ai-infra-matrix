@@ -10,22 +10,22 @@ import (
 // SaltJobHistory Salt作业历史记录（持久化到数据库）
 type SaltJobHistory struct {
 	ID           uint           `gorm:"primaryKey" json:"id"`
-	JID          string         `gorm:"uniqueIndex;size:64;not null" json:"jid"`       // Salt Job ID
-	TaskID       string         `gorm:"index;size:64" json:"task_id,omitempty"`        // 前端生成的任务ID
-	Function     string         `gorm:"size:128" json:"function"`                      // 执行的函数如 cmd.run
-	Arguments    string         `gorm:"type:text" json:"arguments"`                    // 参数（JSON格式）
-	Target       string         `gorm:"size:256" json:"target"`                        // 目标节点
-	TgtType      string         `gorm:"size:32;default:'glob'" json:"tgt_type"`        // 目标类型
-	User         string         `gorm:"size:64" json:"user"`                           // 执行用户
-	Status       string         `gorm:"size:32;index;default:'running'" json:"status"` // 状态：running, completed, failed, timeout
-	ReturnCode   int            `gorm:"default:0" json:"return_code"`                  // 返回码
-	SuccessCount int            `gorm:"default:0" json:"success_count"`                // 成功节点数
-	FailedCount  int            `gorm:"default:0" json:"failed_count"`                 // 失败节点数
-	Result       string         `gorm:"type:text" json:"result,omitempty"`             // 执行结果（JSON格式）
-	ErrorMessage string         `gorm:"type:text" json:"error_message,omitempty"`      // 错误信息
-	StartTime    time.Time      `gorm:"index" json:"start_time"`                       // 开始时间
-	EndTime      *time.Time     `json:"end_time,omitempty"`                            // 结束时间
-	Duration     int64          `json:"duration,omitempty"`                            // 持续时间（毫秒）
+	JID          string         `gorm:"column:jid;uniqueIndex;size:64;not null" json:"jid"` // Salt Job ID - 显式指定列名
+	TaskID       string         `gorm:"index;size:64" json:"task_id,omitempty"`             // 前端生成的任务ID
+	Function     string         `gorm:"size:128" json:"function"`                           // 执行的函数如 cmd.run
+	Arguments    string         `gorm:"type:text" json:"arguments"`                         // 参数（JSON格式）
+	Target       string         `gorm:"size:256" json:"target"`                             // 目标节点
+	TgtType      string         `gorm:"size:32;default:'glob'" json:"tgt_type"`             // 目标类型
+	User         string         `gorm:"size:64" json:"user"`                                // 执行用户
+	Status       string         `gorm:"size:32;index;default:'running'" json:"status"`      // 状态：running, completed, failed, timeout
+	ReturnCode   int            `gorm:"default:0" json:"return_code"`                       // 返回码
+	SuccessCount int            `gorm:"default:0" json:"success_count"`                     // 成功节点数
+	FailedCount  int            `gorm:"default:0" json:"failed_count"`                      // 失败节点数
+	Result       string         `gorm:"type:text" json:"result,omitempty"`                  // 执行结果（JSON格式）
+	ErrorMessage string         `gorm:"type:text" json:"error_message,omitempty"`           // 错误信息
+	StartTime    time.Time      `gorm:"index" json:"start_time"`                            // 开始时间
+	EndTime      *time.Time     `json:"end_time,omitempty"`                                 // 结束时间
+	Duration     int64          `json:"duration,omitempty"`                                 // 持续时间（毫秒）
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
