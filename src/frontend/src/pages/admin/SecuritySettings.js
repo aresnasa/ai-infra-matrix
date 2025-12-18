@@ -395,9 +395,46 @@ const SecuritySettings = () => {
     }
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    message.success(t('common.copied') || '已复制');
+  // 复制到剪贴板（兼容 HTTP 和 HTTPS 环境）
+  const copyToClipboard = async (text) => {
+    // 首先尝试现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        message.success(t('common.copied') || '已复制');
+        return;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+    
+    // 备用方案：使用传统的 execCommand 方式
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    
+    // 避免滚动到底部
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        message.success(t('common.copied') || '已复制');
+      } else {
+        message.error(t('common.copyFailed') || '复制失败，请手动复制');
+      }
+    } catch (err) {
+      console.error('execCommand copy failed:', err);
+      message.error(t('common.copyFailed') || '复制失败，请手动复制');
+    } finally {
+      document.body.removeChild(textArea);
+    }
   };
 
   // ==================== OAuth 配置 ====================

@@ -285,9 +285,45 @@ volumeClaimTemplate:
     setPreviewVisible(true);
   };
 
-  const handleCopyTemplate = (template) => {
-    navigator.clipboard.writeText(template.values);
-    message.success('已复制到剪贴板');
+  // 复制模板内容（兼容 HTTP 和 HTTPS 环境）
+  const handleCopyTemplate = async (template) => {
+    const text = template.values;
+    // 首先尝试现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        message.success('已复制到剪贴板');
+        return;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+    
+    // 备用方案：使用传统的 execCommand 方式
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        message.success('已复制到剪贴板');
+      } else {
+        message.error('复制失败，请手动复制');
+      }
+    } catch (err) {
+      console.error('execCommand copy failed:', err);
+      message.error('复制失败，请手动复制');
+    } finally {
+      document.body.removeChild(textArea);
+    }
   };
 
   const columns = [

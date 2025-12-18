@@ -394,10 +394,44 @@ const KubernetesManagement = () => {
     setModalVisible(true);
   };
 
-  // 复制kubeconfig
-  const handleCopyConfig = (config) => {
-    navigator.clipboard.writeText(config);
-    message.success(t('kubernetes.copiedToClipboard'));
+  // 复制kubeconfig（兼容 HTTP 和 HTTPS 环境）
+  const handleCopyConfig = async (config) => {
+    // 首先尝试现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(config);
+        message.success(t('kubernetes.copiedToClipboard'));
+        return;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+    
+    // 备用方案：使用传统的 execCommand 方式
+    const textArea = document.createElement('textarea');
+    textArea.value = config;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        message.success(t('kubernetes.copiedToClipboard'));
+      } else {
+        message.error('复制失败，请手动复制');
+      }
+    } catch (err) {
+      console.error('execCommand copy failed:', err);
+      message.error('复制失败，请手动复制');
+    } finally {
+      document.body.removeChild(textArea);
+    }
   };
 
   // 状态标签

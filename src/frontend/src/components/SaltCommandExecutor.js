@@ -373,15 +373,46 @@ const SaltCommandExecutor = () => {
               </Text>
               <Button
                 size="small"
-                onClick={() => {
+                onClick={async () => {
                   const output = lastExecutionResult.result || lastExecutionResult.error;
                   const outputText = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-                  navigator.clipboard.writeText(outputText).then(() => {
-                    message.success('已复制到剪贴板');
-                  }).catch(err => {
-                    console.error('复制失败:', err);
+                  
+                  // 首先尝试现代 Clipboard API
+                  if (navigator.clipboard && window.isSecureContext) {
+                    try {
+                      await navigator.clipboard.writeText(outputText);
+                      message.success('已复制到剪贴板');
+                      return;
+                    } catch (err) {
+                      console.warn('Clipboard API failed, falling back to execCommand:', err);
+                    }
+                  }
+                  
+                  // 备用方案：使用传统的 execCommand 方式
+                  const textArea = document.createElement('textarea');
+                  textArea.value = outputText;
+                  textArea.style.position = 'fixed';
+                  textArea.style.left = '-9999px';
+                  textArea.style.top = '-9999px';
+                  textArea.style.opacity = '0';
+                  
+                  document.body.appendChild(textArea);
+                  textArea.focus();
+                  textArea.select();
+                  
+                  try {
+                    const successful = document.execCommand('copy');
+                    if (successful) {
+                      message.success('已复制到剪贴板');
+                    } else {
+                      message.error('复制失败，请手动复制');
+                    }
+                  } catch (err) {
+                    console.error('execCommand copy failed:', err);
                     message.error('复制失败，请手动复制');
-                  });
+                  } finally {
+                    document.body.removeChild(textArea);
+                  }
                 }}
               >
                 复制输出

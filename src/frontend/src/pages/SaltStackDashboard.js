@@ -248,6 +248,49 @@ const SaltStackDashboard = () => {
   const [jobUserFilter, setJobUserFilter] = useState(null); // 用户过滤
   const [jobGroupBy, setJobGroupBy] = useState(null); // 分组方式: null, 'function', 'status', 'user', 'target'
   
+  // 通用复制到剪贴板函数（兼容 HTTP 和 HTTPS 环境）
+  const handleCopyToClipboard = useCallback(async (text) => {
+    // 首先尝试现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        message.success(t('saltstack.copied'));
+        return true;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+    
+    // 备用方案：使用传统的 execCommand 方式
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        message.success(t('saltstack.copied'));
+        return true;
+      } else {
+        message.error('复制失败，请手动复制');
+        return false;
+      }
+    } catch (err) {
+      console.error('execCommand copy failed:', err);
+      message.error('复制失败，请手动复制');
+      return false;
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  }, [t]);
+  
   // JID到TaskID的映射 - 使用localStorage持久化
   const TASK_ID_MAP_KEY = 'saltstack_jid_taskid_map';
   const jidToTaskIdMapRef = useRef((() => {
@@ -4415,10 +4458,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                                           type="text"
                                           icon={<CopyOutlined />}
                                           size="small"
-                                          onClick={() => {
-                                            navigator.clipboard.writeText(result.output);
-                                            message.success(t('saltstack.copied'));
-                                          }}
+                                          onClick={() => handleCopyToClipboard(result.output)}
                                         />
                                       </Tooltip>
                                     </Space>
@@ -6083,10 +6123,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                                     type="text"
                                     icon={<CopyOutlined />}
                                     size="small"
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(outputStr);
-                                      message.success(t('saltstack.copied'));
-                                    }}
+                                    onClick={() => handleCopyToClipboard(outputStr)}
                                   />
                                 </Tooltip>
                               </Space>
