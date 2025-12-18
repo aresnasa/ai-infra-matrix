@@ -42,16 +42,28 @@ func IsMonitoringTask(function string) bool {
 	if MonitoringFunctionBlacklist[function] {
 		return true
 	}
-	// 检查前缀
-	if len(function) > 0 {
-		if function[0:len("status.")] == "status." {
-			return true
-		}
-		if function[0:len("runner.")] == "runner." {
-			return true
-		}
+	// 检查前缀 - 使用 strings.HasPrefix 避免越界问题
+	if strings.HasPrefix(function, "status.") ||
+		strings.HasPrefix(function, "runner.") ||
+		strings.HasPrefix(function, "saltutil.") ||
+		strings.HasPrefix(function, "grains.") {
+		return true
 	}
 	return false
+}
+
+// IsUserTask 判断是否是用户发起的任务
+// 用户任务必须有 task_id，且不是监控系统任务
+func IsUserTask(function string, taskID string) bool {
+	// 必须有 task_id
+	if taskID == "" {
+		return false
+	}
+	// 不能是监控任务
+	if IsMonitoringTask(function) {
+		return false
+	}
+	return true
 }
 
 // SaltJobService Salt作业持久化服务
@@ -228,7 +240,10 @@ func (s *SaltJobService) CheckDangerousCommand(command string) (bool, *models.Da
 	return false, nil, nil
 }
 
-// CreateJob 创建或更新作业记录（使用 Upsert 避免重复问题）
+// CreateJob 创建或更新作业记录
+// 存储策略：
+// - 用户任务（有 task_id 且不是监控函数）：存入数据库 + Redis
+// - 监控任务（无 task_id 或是监控函数）：只存入 Redis 用于临时缓存
 func (s *SaltJobService) CreateJob(ctx context.Context, job *models.SaltJobHistory) error {
 	// 设置默认状态
 	if job.Status == "" {
@@ -238,8 +253,18 @@ func (s *SaltJobService) CreateJob(ctx context.Context, job *models.SaltJobHisto
 		job.StartTime = time.Now()
 	}
 
+	// 判断是否是用户任务
+	isUserTask := IsUserTask(job.Function, job.TaskID)
+
+	// 监控任务只存入 Redis，不污染数据库
+	if !isUserTask {
+		log.Printf("[SaltJobService] 监控任务只存入 Redis: JID=%s, Function=%s", job.JID, job.Function)
+		s.cacheJobToRedis(ctx, job)
+		return nil
+	}
+
+	// 以下是用户任务的处理逻辑
 	// 使用 Upsert (FirstOrCreate + Updates) 处理重复 JID
-	// 这样即使 JID 重复出现，也会正确更新而不是报错
 	var existingJob models.SaltJobHistory
 	result := s.db.Where("jid = ?", job.JID).First(&existingJob)
 
@@ -445,13 +470,21 @@ func (s *SaltJobService) GetJobByTaskID(ctx context.Context, taskID string) (*mo
 }
 
 // ListJobs 分页查询作业列表
+// 默认只返回用户任务（有 task_id 的），可通过 user_only=false 参数查看所有任务
 func (s *SaltJobService) ListJobs(ctx context.Context, params *models.SaltJobQueryParams) (*models.SaltJobListResponse, error) {
 	query := s.db.Model(&models.SaltJobHistory{})
 
-	// 默认过滤掉监控相关的任务，只展示用户发起的作业
+	// 默认只返回用户任务（有 task_id 的）
+	// 用户任务的定义：1. 有 task_id  2. 不是监控函数
+	if params.UserOnly {
+		// 必须有 task_id（用户提交的任务都有 task_id）
+		query = query.Where("task_id IS NOT NULL AND task_id != ''")
+	}
+
+	// 始终过滤监控系统的状态
 	query = query.Where("status NOT IN ('monitoring', 'system')")
 
-	// 使用黑名单过滤监控函数
+	// 始终使用黑名单过滤监控函数（即使 user_only=false 也过滤）
 	monitoringFunctions := []string{
 		"status.cpuload", "status.meminfo", "status.cpuinfo", "status.diskusage",
 		"status.netstats", "status.uptime", "status.loadavg", "status.loadavg5", "status.loadavg15",
@@ -459,11 +492,14 @@ func (s *SaltJobService) ListJobs(ctx context.Context, params *models.SaltJobQue
 		"test.ping",
 		"grains.items",
 		"saltutil.sync_all", "saltutil.sync_grains", "saltutil.sync_modules", "saltutil.refresh",
+		"saltutil.find_job", // Salt 内部用于查询任务状态
 		"cmd.run_all", "test.echo",
 	}
 	query = query.Where("function NOT IN ?", monitoringFunctions)
 	query = query.Where("function NOT LIKE 'status.%'")
 	query = query.Where("function NOT LIKE 'runner.%'")
+	query = query.Where("function NOT LIKE 'saltutil.%'")
+	query = query.Where("function NOT LIKE 'grains.%'")
 
 	// 应用过滤条件
 	if params.TaskID != "" {

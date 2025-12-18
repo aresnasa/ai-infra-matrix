@@ -170,6 +170,7 @@ type SaltJobQueryParams struct {
 	PageSize int    `form:"page_size,default=20"`
 	SortBy   string `form:"sort_by,default=start_time"`
 	SortDesc bool   `form:"sort_desc,default=true"`
+	UserOnly bool   `form:"user_only,default=true"` // 默认只返回用户任务（有 task_id 的）
 }
 
 // SaltJobListResponse 作业列表响应

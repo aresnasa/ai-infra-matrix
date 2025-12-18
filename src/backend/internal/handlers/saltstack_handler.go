@@ -5171,7 +5171,7 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 
 // GetSaltJobHistory 获取作业历史列表（从数据库）
 // @Summary 获取作业历史列表
-// @Description 从数据库获取分页的 Salt 作业历史列表
+// @Description 从数据库获取分页的 Salt 作业历史列表，默认只返回用户任务
 // @Tags SaltStack
 // @Produce json
 // @Param page query int false "页码" default(1)
@@ -5182,6 +5182,7 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 // @Param target query string false "目标过滤"
 // @Param status query string false "状态过滤"
 // @Param user query string false "用户过滤"
+// @Param user_only query bool false "只返回用户任务" default(true)
 // @Success 200 {object} map[string]interface{}
 // @Router /api/saltstack/jobs/history [get]
 func (h *SaltStackHandler) GetSaltJobHistory(c *gin.Context) {
@@ -5199,6 +5200,8 @@ func (h *SaltStackHandler) GetSaltJobHistory(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	sortBy := c.DefaultQuery("sort_by", "start_time")
 	sortDesc := c.DefaultQuery("sort_desc", "true") == "true"
+	// 默认只返回用户任务（有 task_id 的），设置 user_only=false 可以查看所有任务
+	userOnly := c.DefaultQuery("user_only", "true") != "false"
 
 	params := &models.SaltJobQueryParams{
 		TaskID:   c.Query("task_id"),
@@ -5211,6 +5214,7 @@ func (h *SaltStackHandler) GetSaltJobHistory(c *gin.Context) {
 		PageSize: pageSize,
 		SortBy:   sortBy,
 		SortDesc: sortDesc,
+		UserOnly: userOnly,
 	}
 
 	result, err := saltJobService.ListJobs(c.Request.Context(), params)
