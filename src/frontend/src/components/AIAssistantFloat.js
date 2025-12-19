@@ -112,6 +112,24 @@ const AIAssistantFloat = () => {
     rafId: null
   });
 
+  // 通知布局组件 AI 助手面板状态变化
+  useEffect(() => {
+    // 派发自定义事件，通知布局组件面板状态变化
+    const event = new CustomEvent('ai-assistant-panel-change', {
+      detail: {
+        visible,
+        width: visible ? panelWidth : 0
+      }
+    });
+    window.dispatchEvent(event);
+    
+    // 更新 CSS 变量，用于布局偏移
+    document.documentElement.style.setProperty(
+      '--ai-panel-width',
+      visible ? `${panelWidth}px` : '0px'
+    );
+  }, [visible, panelWidth]);
+
   // 获取模型图标
   const getModelIcon = (model) => {
     if (!model) return <RobotOutlined />;
@@ -1264,20 +1282,22 @@ const AIAssistantFloat = () => {
 
   return (
     <>
-      {/* 悬浮按钮 - 左下角 */}
-      <FloatButton
-        icon={<AIRobotIcon size={28} animated={true} />}
-        tooltip="AI助手"
-        onClick={() => {
-          console.log('🔄 打开AI助手，刷新配置列表...');
-          setVisible(true);
-          fetchConfigs(); // 每次打开时刷新配置以确保数据同步
-        }}
-        style={{
-          left: 24,
-          bottom: 24,
-        }}
-      />
+      {/* 悬浮按钮 - 左下角，面板打开时隐藏 */}
+      {!visible && (
+        <FloatButton
+          icon={<AIRobotIcon size={28} animated={true} />}
+          tooltip="AI助手"
+          onClick={() => {
+            console.log('🔄 打开AI助手，刷新配置列表...');
+            setVisible(true);
+            fetchConfigs(); // 每次打开时刷新配置以确保数据同步
+          }}
+          style={{
+            left: 24,
+            bottom: 24,
+          }}
+        />
+      )}
 
       {/* AI助手侧边面板 - 左侧 */}
       <div
@@ -1487,15 +1507,15 @@ const AIAssistantFloat = () => {
                 size="small"
               />
             </Tooltip>
-            {!locked && (
-              <Button
-                type="text"
-                onClick={() => setVisible(false)}
-                style={{ fontSize: 18 }}
-              >
-                ×
-              </Button>
-            )}
+            {/* 关闭按钮 - 始终显示 */}
+            <Button
+              type="text"
+              onClick={() => setVisible(false)}
+              style={{ fontSize: 18 }}
+              title={locked ? '关闭面板（锁定状态）' : '关闭面板'}
+            >
+              ×
+            </Button>
           </Space>
         </div>
         {configs.length === 0 ? (
