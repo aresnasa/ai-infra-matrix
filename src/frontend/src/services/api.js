@@ -523,6 +523,7 @@ export const aiAPI = {
   getConversations: () => api.get('/ai/conversations'),
   getConversation: (id) => api.get(`/ai/conversations/${id}`),
   createConversation: (data) => api.post('/ai/conversations', data),
+  updateConversation: (id, data) => api.put(`/ai/conversations/${id}`, data),
   deleteConversation: (id) => api.delete(`/ai/conversations/${id}`),
   clearConversations: () => api.delete('/ai/conversations'),
 

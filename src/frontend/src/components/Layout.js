@@ -116,6 +116,11 @@ const Layout = ({ children, user, onLogout }) => {
       icon: <CloudServerOutlined />,
       label: 'Kafka UI',
     },
+    {
+      key: '/ai-chat',
+      icon: <RobotOutlined />,
+      label: 'AI 助手',
+    },
   ];
 
   // 根据用户权限过滤菜单项

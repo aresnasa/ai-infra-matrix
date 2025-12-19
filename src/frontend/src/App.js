@@ -78,6 +78,11 @@ const AIAssistantManagement = withLazyLoading(React.lazy(() => import('./pages/A
   loadingText: '正在加载AI助手管理...'
 });
 
+// AI助手聊天页面懒加载 (OpenAI风格)
+const AIAssistantChat = withLazyLoading(React.lazy(() => import('./pages/AIAssistantChat')), {
+  loadingText: '正在加载AI助手...'
+});
+
 // 调试页面懒加载
 const DebugPage = withLazyLoading(React.lazy(() => import('./pages/DebugPage')), {
   loadingText: '正在加载调试页面...'
@@ -524,6 +529,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                       } 
                     />
                     <Route path="/profile" element={<UserProfile />} />
+                    
+                    {/* AI助手聊天页面 (OpenAI风格) - 允许所有登录用户 */}
+                    <Route
+                      path="/ai-chat"
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <AIAssistantChat />
+                        </Suspense>
+                      }
+                    />
                     
                     {/* Kubernetes和Ansible管理页面 - 只允许SRE团队 */}
                     <Route

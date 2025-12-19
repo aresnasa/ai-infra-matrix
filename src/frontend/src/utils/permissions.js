@@ -33,7 +33,8 @@ export const ROLE_PERMISSIONS = {
       'jobs',
       'job-templates',
       'ssh-test',
-      'files'
+      'files',
+      'ai-chat'
     ]
   },
   'sre': {
@@ -69,6 +70,7 @@ export const ROLE_PERMISSIONS = {
       'files',
       'saltstack',
       'kafka-ui',
+      'ai-chat',
       'admin'
     ]
   },
@@ -96,7 +98,8 @@ export const ROLE_PERMISSIONS = {
       'enhanced-dashboard',
       'projects',
       'kafka-ui',
-      'audit-logs'
+      'audit-logs',
+      'ai-chat'
     ]
   },
   'admin': {
@@ -138,6 +141,7 @@ export const ROLE_PERMISSIONS = {
       'files',
       'saltstack',
       'kafka-ui',
+      'ai-chat',
       'admin',
       'users',
       'settings',
@@ -219,6 +223,7 @@ export const getAvailableMenuItems = (user) => {
       'files',
       'saltstack',
       'kafka-ui',
+      'ai-chat',
       'admin'
     ];
   }
@@ -226,8 +231,8 @@ export const getAvailableMenuItems = (user) => {
   // 获取用户角色模板
   const roleTemplate = user.role_template || user.roleTemplate;
   if (!roleTemplate || !ROLE_PERMISSIONS[roleTemplate]) {
-    // 默认菜单项
-    return ['dashboard', 'enhanced-dashboard', 'projects'];
+    // 默认菜单项 - 所有用户都可以访问AI助手
+    return ['dashboard', 'enhanced-dashboard', 'projects', 'ai-chat'];
   }
 
   return ROLE_PERMISSIONS[roleTemplate].menuItems;
