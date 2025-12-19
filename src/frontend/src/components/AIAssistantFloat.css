@@ -1,7 +1,7 @@
-/* AI助手悬浮组件样式 */
+/* AI助手悬浮组件样式 - 左下角 */
 .ai-assistant-float {
   position: fixed;
-  right: 24px;
+  left: 24px;
   bottom: 24px;
   z-index: 1000;
 }
@@ -31,36 +31,36 @@
   transform: scale(1.05) translateY(0px);
 }
 
-/* AI助手侧边面板样式 */
+/* AI助手侧边面板样式 - 左侧 */
 .ai-assistant-panel {
   position: fixed;
   top: 0;
-  right: -500px;
+  left: -500px;
   width: 400px;
   height: 100vh;
   background: #ffffff;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
   z-index: 9999;
   display: flex;
   flex-direction: column;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-left: 1px solid #e8e8e8;
+  border-right: 1px solid #e8e8e8;
 }
 
 .ai-assistant-panel-visible {
-  right: 0;
+  left: 0;
 }
 
 .ai-assistant-panel-locked {
   width: 450px;
-  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
-  border-left: 2px solid #52c41a;
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.2);
+  border-right: 2px solid #52c41a;
 }
 
 .ai-assistant-panel-locked::before {
   content: '';
   position: absolute;
-  left: -2px;
+  right: -2px;
   top: 0;
   width: 2px;
   height: 100%;
@@ -79,7 +79,7 @@
 
 @keyframes slideIn {
   from {
-    transform: translateX(100%);
+    transform: translateX(-100%);
     opacity: 0;
   }
   to {
@@ -94,7 +94,7 @@
     opacity: 1;
   }
   to {
-    transform: translateX(100%);
+    transform: translateX(-100%);
     opacity: 0;
   }
 }
@@ -171,15 +171,21 @@
   pointer-events: none;
 }
 
+/* 拖拽手柄 - 右侧 */
 .resize-handle {
   position: absolute;
-  left: -5px;
+  right: -5px;
   top: 0;
   width: 10px;
   height: 100%;
   cursor: ew-resize;
   z-index: 10000;
   background: transparent;
+}
+
+.resize-handle-right {
+  right: -5px;
+  left: auto;
 }
 
 .resize-handle:hover .resize-indicator {
@@ -189,7 +195,8 @@
 
 .resize-indicator {
   position: absolute;
-  left: 4px;
+  right: 4px;
+  left: auto;
   top: 50%;
   transform: translateY(-50%);
   width: 2px;
@@ -554,12 +561,12 @@
   transform: scale(1.05);
 }
 
-/* 锁定状态的额外视觉提示 */
+/* 锁定状态的额外视觉提示 - 左侧面板 */
 .ai-assistant-drawer.locked::before {
   content: '';
   position: absolute;
   top: 0;
-  left: -8px;
+  right: -8px;
   width: 4px;
   height: 100%;
   background: linear-gradient(180deg, #1890ff 0%, #40a9ff 50%, #1890ff 100%);
@@ -570,18 +577,18 @@
 @keyframes lockedPulse {
   0% {
     opacity: 0.8;
-    box-shadow: -2px 0 8px rgba(24, 144, 255, 0.3);
+    box-shadow: 2px 0 8px rgba(24, 144, 255, 0.3);
   }
   100% {
     opacity: 1;
-    box-shadow: -2px 0 16px rgba(24, 144, 255, 0.6);
+    box-shadow: 2px 0 16px rgba(24, 144, 255, 0.6);
   }
 }
 
-/* 暗黑模式样式 */
+/* 暗黑模式样式 - 左侧面板 */
 .ai-assistant-panel-dark {
   background: #141414 !important;
-  border-left-color: #303030 !important;
+  border-right-color: #303030 !important;
 }
 
 .ai-assistant-panel-dark .resize-indicator {

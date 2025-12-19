@@ -183,7 +183,8 @@ const AIAssistantFloat = () => {
     
     // 使用 RAF 优化性能
     dragStateRef.current.rafId = requestAnimationFrame(() => {
-      const deltaX = dragStateRef.current.startX - e.clientX;
+      // 面板在左侧，向右拖拽增加宽度
+      const deltaX = e.clientX - dragStateRef.current.startX;
       const newWidth = Math.max(320, Math.min(800, dragStateRef.current.startWidth + deltaX));
       
       // 使用临时宽度避免频繁更新状态
@@ -211,8 +212,8 @@ const AIAssistantFloat = () => {
       dragStateRef.current.rafId = null;
     }
     
-    // 计算最终宽度
-    const finalDelta = dragStateRef.current.startX - e.clientX;
+    // 计算最终宽度 - 面板在左侧，向右拖拽增加宽度
+    const finalDelta = e.clientX - dragStateRef.current.startX;
     const finalWidth = Math.max(320, Math.min(800, dragStateRef.current.startWidth + finalDelta));
     
     // 设置最终宽度
@@ -1263,7 +1264,7 @@ const AIAssistantFloat = () => {
 
   return (
     <>
-      {/* 悬浮按钮 */}
+      {/* 悬浮按钮 - 左下角 */}
       <FloatButton
         icon={<AIRobotIcon size={28} animated={true} />}
         tooltip="AI助手"
@@ -1273,38 +1274,54 @@ const AIAssistantFloat = () => {
           fetchConfigs(); // 每次打开时刷新配置以确保数据同步
         }}
         style={{
-          right: 24,
+          left: 24,
           bottom: 24,
         }}
       />
 
-      {/* AI助手侧边面板 */}
+      {/* AI助手侧边面板 - 左侧 */}
       <div
         className={`ai-assistant-panel ${visible ? 'ai-assistant-panel-visible' : ''} ${locked ? 'ai-assistant-panel-locked' : ''} ${isResizing ? 'ai-assistant-panel-resizing' : ''} ${isDark ? 'ai-assistant-panel-dark' : ''}`}
         style={{
           position: 'fixed',
           top: 0,
-          right: visible ? 0 : -(panelWidth + 20),
+          left: visible ? 0 : -(panelWidth + 20),
           width: isDragging ? dragWidth : panelWidth, // 拖拽时使用dragWidth获得更好的实时反馈
           height: '100vh',
           background: isDark ? '#141414' : '#ffffff',
-          boxShadow: isDark ? '-2px 0 8px rgba(0, 0, 0, 0.45)' : '-2px 0 8px rgba(0, 0, 0, 0.15)',
+          boxShadow: isDark ? '2px 0 8px rgba(0, 0, 0, 0.45)' : '2px 0 8px rgba(0, 0, 0, 0.15)',
           zIndex: 9999,
           display: 'flex',
           flexDirection: 'column',
           transition: isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          borderLeft: isDark ? '1px solid #303030' : '1px solid #e8e8e8',
+          borderRight: isDark ? '1px solid #303030' : '1px solid #e8e8e8',
         }}
       >
-        {/* 拖拽调整大小的手柄 */}
+        {/* 拖拽调整大小的手柄 - 右侧 */}
         <div
-          className="resize-handle"
+          className="resize-handle resize-handle-right"
           onMouseDown={handleResizeMouseDown}
           title={`点击并拖拽调整面板宽度 (当前: ${isDragging ? dragWidth : panelWidth}px)`}
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            width: 6,
+            height: '100%',
+            cursor: 'ew-resize',
+            zIndex: 10000,
+          }}
         >
           <div
             className="resize-indicator"
             style={{
+              position: 'absolute',
+              right: 0,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 3,
+              height: 50,
+              borderRadius: 2,
               background: isResizing ? '#1890ff' : '#d9d9d9',
               opacity: isResizing ? 1 : 0.6,
             }}
