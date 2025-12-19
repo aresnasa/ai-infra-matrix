@@ -1,4 +1,19 @@
-/* AI助手悬浮组件样式 - 左下角 */
+/* AI助手可拖拽悬浮按钮样式 */
+.ai-float-button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ai-float-button:hover {
+  transform: scale(1.05) !important;
+  box-shadow: 0 6px 20px rgba(24, 144, 255, 0.35) !important;
+}
+
+.ai-float-button.dragging {
+  opacity: 0.9;
+}
+
+/* 旧的 FloatButton 样式保留用于兼容 */
 .ai-assistant-float {
   position: fixed;
   left: 24px;
