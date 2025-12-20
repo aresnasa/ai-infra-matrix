@@ -396,7 +396,10 @@ RUN set -eux; \
     microdnf --disablerepo=extras --disablerepo=crb install -y dnf || \
     microdnf install -y dnf; \
     dnf clean all; \
-    dnf makecache || true
+    dnf makecache || true; \
+    # 更新系统以确保基础包是最新的（镜像源已配置为阿里云）
+    echo "📦 Updating system packages..."; \
+    dnf update -y --setopt=timeout=300 || echo "⚠️ dnf update failed, continuing anyway"
 
 # Install build prerequisites and enable required repositories
 RUN set -eux; \
