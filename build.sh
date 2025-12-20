@@ -616,6 +616,16 @@ generate_production_env() {
     log_warn "⚠️  Please change admin password via Web UI after deployment"
     log_info "======================================================================"
     
+    # Detect external IP address
+    log_info "Detecting external IP address..."
+    local detected_external_host=$(detect_external_host)
+    if [[ "$detected_external_host" == "localhost" ]]; then
+        log_warn "⚠️  Could not detect external IP, using 'localhost'"
+        log_warn "⚠️  Please manually set EXTERNAL_HOST in $env_file if needed"
+    else
+        log_info "✅ Detected external IP: $detected_external_host"
+    fi
+    
     # Check if target file exists
     if [[ -f "$env_file" ]] && [[ "$force" != "true" ]]; then
         log_warn "Target file already exists: $env_file"
@@ -724,7 +734,9 @@ generate_production_env() {
         -v salt_token="$saltstack_api_token" \
         -v test_ssh="$test_ssh_password" \
         -v test_root="$test_root_password" \
+        -v ext_host="$detected_external_host" \
         '
+        /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
         /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
@@ -818,12 +830,27 @@ generate_production_env() {
     log_warn "⚠️  Please save these passwords securely!"
     log_info "Production environment file created: $env_file"
     
+    # Display detected external host
+    log_info ""
+    log_info "🌐 Network Configuration:"
+    echo "    EXTERNAL_HOST=$detected_external_host"
+    
+    # Auto copy .env.prod to .env
+    log_info ""
+    log_info "Automatically copying $env_file to .env..."
+    cp "$env_file" .env
+    if [[ $? -eq 0 ]]; then
+        log_info "✅ Copied $env_file to .env successfully"
+    else
+        log_error "❌ Failed to copy $env_file to .env"
+        log_info "  Please manually run: cp $env_file .env"
+    fi
+    
     log_info ""
     log_info "Next steps:"
-    log_info "  1. Review and edit $env_file (set EXTERNAL_HOST, DOMAIN, etc.)"
-    log_info "  2. Copy to .env: cp $env_file .env"
-    log_info "  3. Render templates: ./build.sh render"
-    log_info "  4. Build and deploy: ./build.sh build-all && docker compose up -d"
+    log_info "  1. Review and edit .env if needed (adjust DOMAIN, ports, etc.)"
+    log_info "  2. Render templates: ./build.sh render"
+    log_info "  3. Build and deploy: ./build.sh build-all && docker compose up -d"
     
     return 0
 }
