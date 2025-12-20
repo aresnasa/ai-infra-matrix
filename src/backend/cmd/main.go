@@ -1236,6 +1236,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	{
 		navigation.GET("/config", navigationController.GetNavigationConfig)
 		navigation.POST("/config", navigationController.SaveNavigationConfig)
+		navigation.PUT("/config", navigationController.SaveNavigationConfig) // 支持 PUT 方法保存配置
 		navigation.DELETE("/config", navigationController.ResetNavigationConfig)
 		navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
 	}
