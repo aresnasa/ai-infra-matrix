@@ -20,6 +20,7 @@ import {
   Upload,
   Tabs,
   Alert,
+  Spin,
 } from 'antd';
 import {
   PlusOutlined,
@@ -33,6 +34,9 @@ import {
   InfoCircleOutlined,
   UploadOutlined,
   CopyOutlined,
+  RocketOutlined,
+  DownloadOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons';
 import { kubernetesAPI, ansibleAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
@@ -65,6 +69,14 @@ const KubernetesManagement = () => {
   const [resourceLoading, setResourceLoading] = useState(false);
   const [execModalOpen, setExecModalOpen] = useState(false);
   const [execTarget, setExecTarget] = useState(null);
+  
+  // Helm 相关状态
+  const [helmReleases, setHelmReleases] = useState([]);
+  const [helmLoading, setHelmLoading] = useState(false);
+  const [helmInstallModalVisible, setHelmInstallModalVisible] = useState(false);
+  const [helmImportModalVisible, setHelmImportModalVisible] = useState(false);
+  const [helmForm] = Form.useForm();
+  const [helmImportContent, setHelmImportContent] = useState('');
 
   // 获取集群列表
   const fetchClusters = async () => {
@@ -108,7 +120,11 @@ const KubernetesManagement = () => {
     setSelectedCluster(cluster);
     setDetailOpen(true);
     setNamespace(cluster.namespace || 'default');
-    await Promise.all([loadNamespaces(cluster.id), loadResources(cluster.id, cluster.namespace || 'default')]);
+    await Promise.all([
+      loadNamespaces(cluster.id), 
+      loadResources(cluster.id, cluster.namespace || 'default'),
+      loadHelmReleases(cluster.id, cluster.namespace || 'default'),
+    ]);
   };
 
   const loadNamespaces = async (clusterId) => {
@@ -143,7 +159,12 @@ const KubernetesManagement = () => {
 
   const onNamespaceChange = async (ns) => {
     setNamespace(ns);
-    if (selectedCluster) await loadResources(selectedCluster.id, ns);
+    if (selectedCluster) {
+      await Promise.all([
+        loadResources(selectedCluster.id, ns),
+        loadHelmReleases(selectedCluster.id, ns),
+      ]);
+    }
   };
 
   // 操作：伸缩Deployment
@@ -174,6 +195,114 @@ const KubernetesManagement = () => {
   const openExec = (pod) => {
     setExecTarget({ pod: pod.metadata.name, containers: pod.spec?.containers?.map(c => c.name) || [] });
     setExecModalOpen(true);
+  };
+
+  // ---- Helm 相关函数 ----
+  // 加载 Helm releases
+  const loadHelmReleases = async (clusterId, ns) => {
+    setHelmLoading(true);
+    try {
+      const res = await kubernetesAPI.getHelmReleases(clusterId, ns);
+      setHelmReleases(res.data?.releases || res.data || []);
+    } catch (e) {
+      console.error('Failed to load Helm releases:', e);
+      setHelmReleases([]);
+    } finally {
+      setHelmLoading(false);
+    }
+  };
+
+  // 安装 Helm chart
+  const handleInstallHelmChart = async (values) => {
+    try {
+      await kubernetesAPI.installHelmChart(selectedCluster.id, {
+        ...values,
+        namespace: namespace,
+      });
+      message.success(t('kubernetes.installSuccess') || 'Install successful');
+      setHelmInstallModalVisible(false);
+      helmForm.resetFields();
+      await loadHelmReleases(selectedCluster.id, namespace);
+    } catch (e) {
+      message.error(t('kubernetes.installFailed') + ': ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  // 卸载 Helm release
+  const handleUninstallHelmRelease = async (releaseName) => {
+    try {
+      await kubernetesAPI.uninstallHelmRelease(selectedCluster.id, namespace, releaseName);
+      message.success(t('kubernetes.uninstallSuccess') || 'Uninstall successful');
+      await loadHelmReleases(selectedCluster.id, namespace);
+    } catch (e) {
+      message.error(t('kubernetes.uninstallFailed') + ': ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  // 回滚 Helm release
+  const handleRollbackHelmRelease = async (releaseName) => {
+    const revision = prompt(t('kubernetes.inputRevision') || 'Enter revision number', '1');
+    if (!revision) return;
+    try {
+      await kubernetesAPI.rollbackHelmRelease(selectedCluster.id, namespace, releaseName, parseInt(revision));
+      message.success(t('kubernetes.rollbackSuccess') || 'Rollback successful');
+      await loadHelmReleases(selectedCluster.id, namespace);
+    } catch (e) {
+      message.error(t('kubernetes.rollbackFailed') + ': ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  // 导入 Helm 配置
+  const handleImportHelmConfig = async () => {
+    try {
+      let config;
+      try {
+        config = JSON.parse(helmImportContent);
+      } catch {
+        // 尝试解析为 YAML
+        message.error(t('kubernetes.invalidConfig') || 'Invalid config format');
+        return;
+      }
+      await kubernetesAPI.importHelmConfig(selectedCluster.id, config);
+      message.success(t('kubernetes.helmConfigImported'));
+      setHelmImportModalVisible(false);
+      setHelmImportContent('');
+      await loadHelmReleases(selectedCluster.id, namespace);
+    } catch (e) {
+      message.error(t('kubernetes.importFailed') + ': ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  // 导出 Helm 配置
+  const handleExportHelmConfig = async (releaseName) => {
+    try {
+      const res = await kubernetesAPI.exportHelmConfig(selectedCluster.id, namespace, releaseName);
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${releaseName}-helm-config.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success(t('kubernetes.helmConfigExported'));
+    } catch (e) {
+      message.error(t('kubernetes.exportFailed') + ': ' + (e.response?.data?.message || e.message));
+    }
+  };
+
+  // Helm release 状态颜色
+  const getHelmStatusColor = (status) => {
+    const colors = {
+      deployed: 'green',
+      failed: 'red',
+      'pending-install': 'orange',
+      'pending-upgrade': 'orange',
+      'pending-rollback': 'orange',
+      superseded: 'default',
+      uninstalling: 'processing',
+      uninstalled: 'default',
+    };
+    return colors[status?.toLowerCase()] || 'default';
   };
 
   // 添加/编辑集群
@@ -265,10 +394,44 @@ const KubernetesManagement = () => {
     setModalVisible(true);
   };
 
-  // 复制kubeconfig
-  const handleCopyConfig = (config) => {
-    navigator.clipboard.writeText(config);
-    message.success(t('kubernetes.copiedToClipboard'));
+  // 复制kubeconfig（兼容 HTTP 和 HTTPS 环境）
+  const handleCopyConfig = async (config) => {
+    // 首先尝试现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(config);
+        message.success(t('kubernetes.copiedToClipboard'));
+        return;
+      } catch (err) {
+        console.warn('Clipboard API failed, falling back to execCommand:', err);
+      }
+    }
+    
+    // 备用方案：使用传统的 execCommand 方式
+    const textArea = document.createElement('textarea');
+    textArea.value = config;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '-9999px';
+    textArea.style.opacity = '0';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+      const successful = document.execCommand('copy');
+      if (successful) {
+        message.success(t('kubernetes.copiedToClipboard'));
+      } else {
+        message.error('复制失败，请手动复制');
+      }
+    } catch (err) {
+      console.error('execCommand copy failed:', err);
+      message.error('复制失败，请手动复制');
+    } finally {
+      document.body.removeChild(textArea);
+    }
   };
 
   // 状态标签
@@ -689,6 +852,124 @@ const KubernetesManagement = () => {
                   />
                 </Card>
               </Tabs.TabPane>
+
+              {/* Helm Tab */}
+              <Tabs.TabPane tab={<span><RocketOutlined /> {t('kubernetes.helm')}</span>} key="helm">
+                <Card 
+                  size="small" 
+                  title={t('kubernetes.helmReleases')}
+                  extra={
+                    <Space>
+                      <Button 
+                        size="small" 
+                        icon={<UploadOutlined />}
+                        onClick={() => setHelmImportModalVisible(true)}
+                      >
+                        {t('kubernetes.importHelmConfig')}
+                      </Button>
+                      <Button 
+                        size="small" 
+                        type="primary" 
+                        icon={<PlusOutlined />}
+                        onClick={() => setHelmInstallModalVisible(true)}
+                      >
+                        {t('kubernetes.installChart')}
+                      </Button>
+                      <Button 
+                        size="small" 
+                        icon={<ReloadOutlined />} 
+                        onClick={() => loadHelmReleases(selectedCluster.id, namespace)}
+                        loading={helmLoading}
+                      >
+                        {t('common.refresh')}
+                      </Button>
+                    </Space>
+                  }
+                >
+                  <Spin spinning={helmLoading}>
+                    <Table
+                      rowKey={(r) => r.name || r.release_name}
+                      size="small"
+                      dataSource={helmReleases}
+                      pagination={{ pageSize: 10 }}
+                      locale={{
+                        emptyText: t('kubernetes.noReleases'),
+                      }}
+                      columns={[
+                        { 
+                          title: t('kubernetes.releaseName'), 
+                          dataIndex: 'name',
+                          key: 'name',
+                          render: (name, r) => name || r.release_name,
+                        },
+                        { 
+                          title: t('kubernetes.chartName'), 
+                          dataIndex: 'chart',
+                          key: 'chart',
+                          render: (chart, r) => chart || r.chart_name || '-',
+                        },
+                        { 
+                          title: t('kubernetes.chartVersion'), 
+                          dataIndex: 'chart_version',
+                          key: 'version',
+                          render: (v, r) => v || r.app_version || r.version || '-',
+                        },
+                        { 
+                          title: t('kubernetes.releaseStatus'), 
+                          dataIndex: 'status',
+                          key: 'status',
+                          render: (status) => (
+                            <Tag color={getHelmStatusColor(status)}>
+                              {status || 'unknown'}
+                            </Tag>
+                          ),
+                        },
+                        { 
+                          title: t('kubernetes.releaseRevision'), 
+                          dataIndex: 'revision',
+                          key: 'revision',
+                          render: (v) => v || '-',
+                        },
+                        { 
+                          title: t('kubernetes.releaseNamespace'), 
+                          dataIndex: 'namespace',
+                          key: 'namespace',
+                          render: (ns) => ns || namespace,
+                        },
+                        {
+                          title: t('common.actions'),
+                          key: 'actions',
+                          width: 200,
+                          render: (_, r) => (
+                            <Space>
+                              <Tooltip title={t('kubernetes.exportHelmConfig')}>
+                                <Button 
+                                  size="small" 
+                                  icon={<DownloadOutlined />}
+                                  onClick={() => handleExportHelmConfig(r.name || r.release_name)}
+                                />
+                              </Tooltip>
+                              <Tooltip title={t('kubernetes.rollbackRelease')}>
+                                <Button 
+                                  size="small" 
+                                  icon={<RollbackOutlined />}
+                                  onClick={() => handleRollbackHelmRelease(r.name || r.release_name)}
+                                />
+                              </Tooltip>
+                              <Popconfirm 
+                                title={t('kubernetes.confirmDelete')}
+                                onConfirm={() => handleUninstallHelmRelease(r.name || r.release_name)}
+                              >
+                                <Button size="small" danger icon={<DeleteOutlined />} />
+                              </Popconfirm>
+                            </Space>
+                          ),
+                        },
+                      ]}
+                    />
+                  </Spin>
+                </Card>
+              </Tabs.TabPane>
             </Tabs>
           </>
         )}
@@ -780,6 +1061,94 @@ const KubernetesManagement = () => {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* Helm Install Modal */}
+      <Modal
+        title={t('kubernetes.installChart')}
+        open={helmInstallModalVisible}
+        onCancel={() => {
+          setHelmInstallModalVisible(false);
+          helmForm.resetFields();
+        }}
+        onOk={() => helmForm.submit()}
+        confirmLoading={helmLoading}
+        width={600}
+      >
+        <Form
+          form={helmForm}
+          layout="vertical"
+          onFinish={handleInstallHelmChart}
+        >
+          <Form.Item
+            name="releaseName"
+            label={t('kubernetes.releaseName')}
+            rules={[{ required: true, message: t('kubernetes.pleaseInputReleaseName') }]}
+          >
+            <Input placeholder={t('kubernetes.pleaseInputReleaseName')} />
+          </Form.Item>
+          <Form.Item
+            name="chartName"
+            label={t('kubernetes.chartName')}
+            rules={[{ required: true, message: t('kubernetes.pleaseInputChartName') }]}
+          >
+            <Input placeholder="repo/chart-name" />
+          </Form.Item>
+          <Form.Item
+            name="chartVersion"
+            label={t('kubernetes.chartVersion')}
+          >
+            <Input placeholder={t('kubernetes.latestVersion')} />
+          </Form.Item>
+          <Form.Item
+            name="values"
+            label={t('kubernetes.valuesYaml')}
+          >
+            <Input.TextArea 
+              rows={10} 
+              placeholder={`# ${t('kubernetes.valuesYamlPlaceholder')}\n# replicaCount: 1\n# image:\n#   repository: nginx\n#   tag: latest`}
+              style={{ fontFamily: 'monospace' }}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Helm Import Modal */}
+      <Modal
+        title={t('kubernetes.importHelmConfig')}
+        open={helmImportModalVisible}
+        onCancel={() => {
+          setHelmImportModalVisible(false);
+          setHelmImportContent('');
+        }}
+        onOk={handleImportHelmConfig}
+        confirmLoading={helmLoading}
+        width={700}
+      >
+        <Alert 
+          message={t('kubernetes.importHelmConfigTip')} 
+          type="info" 
+          showIcon 
+          style={{ marginBottom: 16 }}
+        />
+        <Input.TextArea
+          rows={15}
+          value={helmImportContent}
+          onChange={(e) => setHelmImportContent(e.target.value)}
+          placeholder={`{
+  "releases": [
+    {
+      "name": "my-release",
+      "chart": "bitnami/nginx",
+      "version": "1.0.0",
+      "values": {
+        "replicaCount": 2
+      }
+    }
+  ]
+}`}
+          style={{ fontFamily: 'monospace' }}
+        />
       </Modal>
     </div>
   );

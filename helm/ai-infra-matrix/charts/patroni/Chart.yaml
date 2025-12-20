@@ -1,0 +1,16 @@
+apiVersion: v2
+name: patroni
+description: PostgreSQL High Availability with Patroni
+type: application
+version: 0.1.0
+appVersion: "15"
+
+keywords:
+  - postgresql
+  - patroni
+  - high-availability
+  - database
+
+maintainers:
+  - name: aresnasa
+    email: dev@ai-infra.local

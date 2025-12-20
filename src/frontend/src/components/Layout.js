@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout as AntLayout, Menu, Typography, Dropdown, Avatar, Space, Button } from 'antd';
 import { ProjectOutlined, CodeOutlined, UserOutlined, LogoutOutlined, TeamOutlined, SafetyOutlined, DeleteOutlined, SecurityScanOutlined, ExperimentOutlined, DownOutlined, CloudServerOutlined, FileTextOutlined, RobotOutlined, ExperimentTwoTone, ClusterOutlined, KeyOutlined, DatabaseOutlined, DashboardOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -18,6 +18,22 @@ const Layout = ({ children, user, onLogout }) => {
   const location = useLocation();
   const { t } = useI18n();
   const { isDark } = useTheme();
+  
+  // AI 助手面板状态
+  const [aiPanelWidth, setAiPanelWidth] = useState(0);
+
+  // 监听 AI 助手面板状态变化
+  useEffect(() => {
+    const handleAiPanelChange = (event) => {
+      const { visible, width } = event.detail;
+      setAiPanelWidth(visible ? width : 0);
+    };
+
+    window.addEventListener('ai-assistant-panel-change', handleAiPanelChange);
+    return () => {
+      window.removeEventListener('ai-assistant-panel-change', handleAiPanelChange);
+    };
+  }, []);
 
   // 获取用户权限信息
   const userIsAdmin = isAdmin(user);
@@ -115,6 +131,11 @@ const Layout = ({ children, user, onLogout }) => {
       key: '/kafka-ui',
       icon: <CloudServerOutlined />,
       label: 'Kafka UI',
+    },
+    {
+      key: '/ai-chat',
+      icon: <RobotOutlined />,
+      label: 'AI 助手',
     },
   ];
 
@@ -256,7 +277,11 @@ const Layout = ({ children, user, onLogout }) => {
   ];
 
   return (
-    <AntLayout>
+    <AntLayout style={{
+      marginLeft: aiPanelWidth,
+      transition: 'margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      minHeight: '100vh',
+    }}>
       <Header style={{ 
         display: 'flex', 
         alignItems: 'center', 

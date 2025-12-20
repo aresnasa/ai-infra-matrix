@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "patroni.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patroni.labels" . | nindent 4 }}
+data:
+  patroni.yaml: |
+    scope: {{ .Values.patroni.scope }}
+    namespace: {{ .Release.Namespace }}
+    name: ${HOSTNAME}
+    
+    restapi:
+      listen: 0.0.0.0:8008
+      connect_address: ${HOSTNAME}.{{ include "patroni.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local:8008
+    
+    kubernetes:
+      namespace: {{ .Release.Namespace }}
+      labels:
+        application: patroni
+        cluster-name: {{ .Values.patroni.scope }}
+      use_endpoints: true
+      pod_ip: ${POD_IP}
+      ports:
+        - name: postgresql
+          port: 5432
+    
+    bootstrap:
+      dcs:
+        ttl: {{ .Values.patroni.bootstrap.dcs.ttl }}
+        loop_wait: {{ .Values.patroni.bootstrap.dcs.loop_wait }}
+        retry_timeout: {{ .Values.patroni.bootstrap.dcs.retry_timeout }}
+        maximum_lag_on_failover: {{ .Values.patroni.bootstrap.dcs.maximum_lag_on_failover }}
+        postgresql:
+          use_pg_rewind: {{ .Values.patroni.bootstrap.dcs.postgresql.use_pg_rewind }}
+          use_slots: {{ .Values.patroni.bootstrap.dcs.postgresql.use_slots }}
+          parameters:
+            wal_level: replica
+            hot_standby: "on"
+            max_wal_senders: 10
+            max_replication_slots: 10
+            wal_log_hints: "on"
+            {{- range $key, $value := .Values.postgresql.parameters }}
+            {{ $key }}: {{ $value | quote }}
+            {{- end }}
+      
+      initdb:
+        {{- range .Values.patroni.bootstrap.initdb }}
+        - {{ . }}
+        {{- end }}
+      
+      pg_hba:
+        - host replication replicator 0.0.0.0/0 md5
+        - host all all 0.0.0.0/0 md5
+    
+    postgresql:
+      listen: 0.0.0.0:5432
+      connect_address: ${HOSTNAME}.{{ include "patroni.fullname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local:5432
+      data_dir: /var/lib/postgresql/data/pgdata
+      bin_dir: /usr/lib/postgresql/{{ .Values.postgresql.version }}/bin
+      authentication:
+        superuser:
+          username: ${PATRONI_SUPERUSER_USERNAME}
+          password: ${PATRONI_SUPERUSER_PASSWORD}
+        replication:
+          username: ${PATRONI_REPLICATION_USERNAME}
+          password: ${PATRONI_REPLICATION_PASSWORD}
+      parameters:
+        unix_socket_directories: '/var/run/postgresql'
+    
+    tags:
+      nofailover: false
+      noloadbalance: false
+      clonefrom: false
+      nosync: false

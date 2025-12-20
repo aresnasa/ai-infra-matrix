@@ -452,6 +452,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/validate-ldap", userHandler.ValidateLDAP)
 		auth.POST("/login", userHandler.Login)
+		auth.POST("/verify-2fa", userHandler.Verify2FALogin) // 2FA验证登录
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
 		auth.POST("/refresh", userHandler.RefreshToken)
 		// 兼容前端/SSO刷新端点
@@ -1083,6 +1084,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		jobs.GET("/clusters", jobController.ListClusters)
 	}
 
+	// 初始化 SaltStack 作业持久化服务
+	saltJobService := services.NewSaltJobService(database.DB, cache.RDB)
+	_ = saltJobService // 服务会自动注册为单例，供 handler 使用
+
 	// SaltStack 管理路由（需要认证）
 	saltStackHandler := handlers.NewSaltStackHandler(cfg, cache.RDB)
 
@@ -1097,6 +1102,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.GET("/minions", saltStackHandler.GetSaltMinions)
 		saltstack.GET("/minions/:minionId/details", saltStackHandler.GetMinionDetails)
 		saltstack.GET("/jobs", saltStackHandler.GetSaltJobs)
+		saltstack.GET("/jobs/:jid", saltStackHandler.GetSaltJobDetail) // 获取单个作业详情（优先数据库，回退Salt API）
 		saltstack.POST("/execute", saltStackHandler.ExecuteSaltCommand)
 		// 自定义脚本执行（异步）+ 进度
 		saltstack.POST("/execute-custom/async", saltStackHandler.ExecuteCustomCommandAsync)
@@ -1126,6 +1132,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		saltstack.POST("/ib-ignores", saltStackHandler.AddIBPortIgnore)
 		saltstack.DELETE("/ib-ignores/:minion_id/:port_name", saltStackHandler.RemoveIBPortIgnore)
 		saltstack.GET("/ib-alerts", saltStackHandler.GetIBPortAlerts)
+		// 作业历史配置和管理（持久化到数据库）
+		saltstack.GET("/jobs/config", saltStackHandler.GetSaltJobConfig)
+		saltstack.PUT("/jobs/config", saltStackHandler.UpdateSaltJobConfig)
+		saltstack.GET("/jobs/history", saltStackHandler.GetSaltJobHistory)
+		saltstack.GET("/jobs/by-task/:task_id", saltStackHandler.GetSaltJobByTaskID)
+		saltstack.POST("/jobs/cleanup", saltStackHandler.TriggerJobCleanup)
 	}
 
 	// 仪表板统计路由（需要认证）
@@ -1224,6 +1236,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	{
 		navigation.GET("/config", navigationController.GetNavigationConfig)
 		navigation.POST("/config", navigationController.SaveNavigationConfig)
+		navigation.PUT("/config", navigationController.SaveNavigationConfig) // 支持 PUT 方法保存配置
 		navigation.DELETE("/config", navigationController.ResetNavigationConfig)
 		navigation.GET("/default", navigationController.GetDefaultNavigationConfig)
 	}
@@ -1261,5 +1274,53 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			// 访问日志（需要认证）
 			keyvaultAuth.GET("/logs", keyVaultHandler.GetAccessLogs)
 		}
+	}
+
+	// 安全管理路由（需要认证）
+	securityHandler := handlers.NewSecurityHandler()
+	// 自动迁移安全相关数据库表
+	if err := securityHandler.AutoMigrate(); err != nil {
+		log.Printf("Warning: Failed to migrate security tables: %v", err)
+	}
+
+	security := api.Group("/security")
+	security.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// IP 黑名单管理
+		security.GET("/ip-blacklist", securityHandler.ListIPBlacklist)
+		security.POST("/ip-blacklist", securityHandler.AddIPBlacklist)
+		security.PUT("/ip-blacklist/:id", securityHandler.UpdateIPBlacklist)
+		security.DELETE("/ip-blacklist/:id", securityHandler.DeleteIPBlacklist)
+		security.POST("/ip-blacklist/batch-delete", securityHandler.BatchDeleteIPBlacklist)
+
+		// IP 白名单管理
+		security.GET("/ip-whitelist", securityHandler.ListIPWhitelist)
+		security.POST("/ip-whitelist", securityHandler.AddIPWhitelist)
+		security.DELETE("/ip-whitelist/:id", securityHandler.DeleteIPWhitelist)
+
+		// 二次认证（2FA）管理
+		security.GET("/2fa/status", securityHandler.Get2FAStatus)
+		security.POST("/2fa/setup", securityHandler.Setup2FA)
+		security.POST("/2fa/enable", securityHandler.Enable2FA)
+		security.POST("/2fa/disable", securityHandler.Disable2FA)
+		security.POST("/2fa/verify", securityHandler.Verify2FA)
+		security.POST("/2fa/recovery-codes", securityHandler.RegenerateRecoveryCodes)
+
+		// 管理员2FA管理（为其他用户管理2FA）
+		security.GET("/admin/2fa/:user_id/status", securityHandler.AdminGet2FAStatus)
+		security.POST("/admin/2fa/:user_id/enable", securityHandler.AdminEnable2FA)
+		security.POST("/admin/2fa/:user_id/disable", securityHandler.AdminDisable2FA)
+
+		// OAuth 第三方登录配置
+		security.GET("/oauth/providers", securityHandler.ListOAuthProviders)
+		security.GET("/oauth/providers/:id", securityHandler.GetOAuthProvider)
+		security.PUT("/oauth/providers/:id", securityHandler.UpdateOAuthProvider)
+
+		// 全局安全配置
+		security.GET("/config", securityHandler.GetSecurityConfig)
+		security.PUT("/config", securityHandler.UpdateSecurityConfig)
+
+		// 安全审计日志
+		security.GET("/audit-logs", securityHandler.ListAuditLogs)
 	}
 }

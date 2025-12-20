@@ -1,0 +1,448 @@
+# Production values for ai-infra-matrix Helm chart
+# This file enables HA features including Patroni, Redis Cluster, and Kafka
+# Usage: helm install ai-infra-matrix ./helm/ai-infra-matrix -f ./helm/ai-infra-matrix/values-prod.yaml
+
+# Global settings for production
+global:
+  productionMode: true
+  storageClass: "standard"  # Change to your production storage class
+  imagePullSecrets: []
+  # - name: "my-registry-secret"
+
+# =============================================================================
+# HIGH AVAILABILITY COMPONENTS
+# =============================================================================
+
+# PostgreSQL HA with Patroni
+# Provides automatic failover and high availability for PostgreSQL
+patroni:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: patroni/patroni
+    tag: "3.2.2-p1"
+    pullPolicy: IfNotPresent
+  postgresql:
+    database: "ai_infra_db"
+    username: "postgres"
+    password: "your-strong-password-here"  # CHANGE THIS!
+    replicationUsername: "replicator"
+    replicationPassword: "your-replication-password"  # CHANGE THIS!
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  persistence:
+    enabled: true
+    size: "20Gi"
+    storageClass: ""  # Use global.storageClass if empty
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: patroni
+            topologyKey: "kubernetes.io/hostname"
+
+# Redis Cluster - 3 masters with 1 replica each (6 nodes total)
+# Provides automatic sharding and high availability for Redis
+redisCluster:
+  enabled: true
+  masterCount: 3
+  replicasPerMaster: 1  # Total nodes = 3 + (3 * 1) = 6
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  port: 6379
+  password: "your-redis-password-here"  # CHANGE THIS!
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  persistence:
+    enabled: true
+    size: "5Gi"
+    storageClass: ""
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 4  # At least 4 nodes must be available
+
+# Kafka with KRaft mode (no Zookeeper)
+# Provides message streaming for async processing
+kafka:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: confluentinc/cp-kafka
+    tag: "7.5.0"
+    pullPolicy: IfNotPresent
+  config:
+    autoCreateTopicsEnable: true
+    numPartitions: 3
+    defaultReplicationFactor: 3
+    minInsyncReplicas: 2
+    logRetentionHours: 168  # 7 days
+    logRetentionBytes: 10737418240  # 10GB
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  persistence:
+    enabled: true
+    size: "50Gi"
+    storageClass: ""
+  ui:
+    enabled: true
+    image:
+      repository: provectuslabs/kafka-ui
+      tag: "latest"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+# Disable standalone PostgreSQL and Redis when using HA versions
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+# =============================================================================
+# APPLICATION COMPONENTS WITH AUTOSCALING
+# =============================================================================
+
+# Backend service with autoscaling
+backend:
+  enabled: true
+  replicaCount: 2  # Start with 2 replicas in production
+  image:
+    repository: "ai-infra-backend"
+    tag: "v0.3.8"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 8082
+    targetPort: 8082
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Pods
+            value: 4
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8082
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8082
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  env:
+    JWT_SECRET: "your-jwt-secret-change-in-production"  # CHANGE THIS!
+    JWT_EXPIRY: "24h"
+    JWT_REFRESH_EXPIRY: "168h"
+    SESSION_SECRET: "your-session-secret-change-in-production"  # CHANGE THIS!
+    SESSION_TIMEOUT: "86400"
+    LOG_LEVEL: "info"
+    GITEA_ENABLED: "true"
+    GITEA_AUTO_CREATE: "true"
+    GITEA_AUTO_UPDATE: "true"
+    GITEA_SYNC_ENABLED: "true"
+    GITEA_SYNC_INTERVAL_SECONDS: "300"
+    GITEA_ALIAS_ADMIN_TO: "gitea_admin"
+
+# Frontend service with autoscaling
+frontend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "ai-infra-frontend"
+    tag: "v0.3.8"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 80
+    targetPort: 80
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Nginx reverse proxy with autoscaling
+nginx:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: "ai-infra-nginx"
+    tag: "v0.3.8"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "LoadBalancer"  # Use LoadBalancer in production
+    port: 80
+    targetPort: 80
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "300m"
+
+# =============================================================================
+# OTHER SERVICES
+# =============================================================================
+
+# JupyterHub with increased resources
+jupyterhub:
+  enabled: true
+  image:
+    repository: "ai-infra-jupyterhub"
+    tag: "v0.3.8"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 8000
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  persistence:
+    enabled: true
+    size: "20Gi"
+  env:
+    JUPYTERHUB_SPAWNER: "kubernetes"
+    JUPYTERHUB_STORAGE_CLASS: ""
+    SHARED_STORAGE_CLASS: ""
+    SHARED_STORAGE_ENABLED: "true"
+    KUBERNETES_NAMESPACE: ""  # Will use release namespace
+    KUBERNETES_SERVICE_ACCOUNT: ""
+
+# Gitea with increased resources
+gitea:
+  enabled: true
+  image:
+    repository: "ai-infra-gitea"
+    tag: "v0.3.8"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 3000
+  persistence:
+    enabled: true
+    size: "20Gi"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  auth:
+    adminUsername: "admin"
+    adminPassword: "change-in-production"  # CHANGE THIS!
+    adminToken: "change-in-production"  # CHANGE THIS!
+  database:
+    type: "postgres"
+    # Will use Patroni if enabled
+    host: ""  # Auto-configured
+    port: 5432
+    name: "gitea"
+    user: "gitea"
+    password: "gitea-password-change-in-production"  # CHANGE THIS!
+
+# OpenLDAP
+openldap:
+  enabled: true
+  image:
+    repository: "osixia/openldap"
+    tag: "1.5.0"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    port: 389
+  persistence:
+    enabled: true
+    size: "5Gi"
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
+  admin:
+    password: "change-in-production"  # CHANGE THIS!
+
+# SaltStack
+saltstack:
+  enabled: true
+  image:
+    repository: "ai-infra-saltstack"
+    tag: "v0.3.8"
+    pullPolicy: "IfNotPresent"
+  service:
+    type: "ClusterIP"
+    masterPort: 4505
+    returnPort: 4506
+    apiPort: 8000
+  persistence:
+    enabled: true
+    size: "10Gi"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# =============================================================================
+# INGRESS CONFIGURATION
+# =============================================================================
+
+ingress:
+  enabled: true
+  className: "nginx"  # Change to your ingress controller class
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "jupyterhub"
+    # Enable TLS if using cert-manager
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: "ai-infra.example.com"  # CHANGE THIS!
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: ai-infra-tls
+  #   hosts:
+  #     - ai-infra.example.com
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+  grafana:
+    enabled: true
+    adminPassword: "change-in-production"  # CHANGE THIS!
+
+# =============================================================================
+# SECURITY CONTEXT
+# =============================================================================
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# =============================================================================
+# NODE SCHEDULING
+# =============================================================================
+
+nodeSelector: {}
+  # kubernetes.io/arch: amd64
+  # node-type: app
+
+tolerations: []
+
+affinity: {}

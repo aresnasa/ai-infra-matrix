@@ -1,5 +1,6 @@
 # Third-party 排除规则
 # 以下目录由于体积过大或不需要版本控制而排除
+.ssh/
 third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/

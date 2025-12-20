@@ -78,6 +78,11 @@ const AIAssistantManagement = withLazyLoading(React.lazy(() => import('./pages/A
   loadingText: '正在加载AI助手管理...'
 });
 
+// AI助手聊天页面懒加载 (OpenAI风格)
+const AIAssistantChat = withLazyLoading(React.lazy(() => import('./pages/AIAssistantChat')), {
+  loadingText: '正在加载AI助手...'
+});
+
 // 调试页面懒加载
 const DebugPage = withLazyLoading(React.lazy(() => import('./pages/DebugPage')), {
   loadingText: '正在加载调试页面...'
@@ -129,6 +134,11 @@ const StorageConsolePage = withLazyLoading(React.lazy(() => import('./pages/Stor
 });
 const ObjectStorageConfigPage = withLazyLoading(React.lazy(() => import('./pages/admin/ObjectStorageConfigPage')), {
   loadingText: '正在加载对象存储配置...'
+});
+
+// 安全管理页面
+const SecuritySettings = withLazyLoading(React.lazy(() => import('./pages/admin/SecuritySettings')), {
+  loadingText: '正在加载安全管理...'
 });
 
 // 新增功能页面懒加载
@@ -520,6 +530,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                     />
                     <Route path="/profile" element={<UserProfile />} />
                     
+                    {/* AI助手聊天页面 (OpenAI风格) - 允许所有登录用户 */}
+                    <Route
+                      path="/ai-chat"
+                      element={
+                        <Suspense fallback={<LazyLoadingSpinner />}>
+                          <AIAssistantChat />
+                        </Suspense>
+                      }
+                    />
+                    
                     {/* Kubernetes和Ansible管理页面 - 只允许SRE团队 */}
                     <Route
                       path="/kubernetes"
@@ -829,6 +849,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <ObjectStorageConfigPage />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/security"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <SecuritySettings />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

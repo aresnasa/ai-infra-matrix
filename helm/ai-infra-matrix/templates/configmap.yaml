@@ -6,23 +6,58 @@ metadata:
   labels:
     {{- include "ai-infra-matrix.labels" . | nindent 4 }}
 data:
-  # Database Configuration
-  {{- if .Values.postgresql.enabled }}
+  # Database Configuration - Supports Patroni HA or standalone PostgreSQL
+  {{- if .Values.patroni.enabled }}
+  # Patroni PostgreSQL HA Mode
+  POSTGRES_HOST: {{ printf "%s-patroni" (include "ai-infra-matrix.fullname" .) | quote }}
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: {{ .Values.patroni.postgresql.database | quote }}
+  POSTGRES_USER: {{ .Values.patroni.postgresql.username | quote }}
+  POSTGRES_HA_ENABLED: "true"
+  POSTGRES_REPLICA_HOST: {{ printf "%s-patroni-replica" (include "ai-infra-matrix.fullname" .) | quote }}
+  {{- else if .Values.postgresql.enabled }}
+  # Standalone PostgreSQL Mode
   POSTGRES_HOST: {{ printf "%s-postgresql" (include "ai-infra-matrix.fullname" .) | quote }}
   POSTGRES_PORT: "5432"
   POSTGRES_DB: {{ .Values.postgresql.auth.database | quote }}
   POSTGRES_USER: {{ .Values.postgresql.auth.username | quote }}
+  POSTGRES_HA_ENABLED: "false"
   {{- else }}
+  # External PostgreSQL
   POSTGRES_HOST: "postgres-service"
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "ai_infra_db"
   POSTGRES_USER: "postgres"
+  POSTGRES_HA_ENABLED: "false"
   {{- end }}
   
-  # Redis Configuration
+  # Redis Configuration - Supports Redis Cluster or standalone Redis
+  {{- if .Values.redisCluster.enabled }}
+  # Redis Cluster Mode
+  REDIS_MODE: "cluster"
+  REDIS_HOST: {{ printf "%s-redis-cluster" (include "ai-infra-matrix.fullname" .) | quote }}
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  # Redis Cluster nodes for client connection
+  REDIS_CLUSTER_NODES: {{ printf "%s-redis-cluster-0.%s-redis-cluster-headless:%d,%s-redis-cluster-1.%s-redis-cluster-headless:%d,%s-redis-cluster-2.%s-redis-cluster-headless:%d" (include "ai-infra-matrix.fullname" .) (include "ai-infra-matrix.fullname" .) (.Values.redisCluster.port | int) (include "ai-infra-matrix.fullname" .) (include "ai-infra-matrix.fullname" .) (.Values.redisCluster.port | int) (include "ai-infra-matrix.fullname" .) (include "ai-infra-matrix.fullname" .) (.Values.redisCluster.port | int) | quote }}
+  {{- else }}
+  # Standalone Redis Mode
+  REDIS_MODE: "standalone"
   REDIS_HOST: {{ printf "%s-redis-master" (include "ai-infra-matrix.fullname" .) | quote }}
   REDIS_PORT: "6379"
   REDIS_DB: "1"
+  {{- end }}
+  
+  # Kafka Configuration
+  {{- if .Values.kafka.enabled }}
+  KAFKA_ENABLED: "true"
+  KAFKA_BOOTSTRAP_SERVERS: {{ printf "%s-kafka-headless:9092" (include "ai-infra-matrix.fullname" .) | quote }}
+  KAFKA_KRAFT_MODE: "true"
+  {{- else }}
+  KAFKA_ENABLED: "false"
+  KAFKA_BOOTSTRAP_SERVERS: ""
+  KAFKA_KRAFT_MODE: "false"
+  {{- end }}
   
   # Backend Configuration
   BACKEND_HOST: {{ printf "%s-backend" (include "ai-infra-matrix.fullname" .) | quote }}

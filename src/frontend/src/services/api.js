@@ -136,6 +136,8 @@ export const authAPI = {
   refreshToken: () => api.post('/auth/refresh'), // 不缓存token刷新请求
   changePassword: (data) => api.post('/auth/change-password', data), // 修改密码
   updateProfile: (data) => api.put('/users/profile', data), // 更新个人信息
+  // 2FA 登录验证
+  verify2FALogin: (data) => api.post('/auth/verify-2fa', data),
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {
@@ -224,6 +226,47 @@ export const kubernetesAPI = {
       params: { ...params, kinds: kindsParam },
     });
   },
+
+  // ---- Helm 相关 API ----
+  // 获取 Helm releases 列表
+  getHelmReleases: (id, namespace) => api.get(`/kubernetes/clusters/${id}/helm/releases`, { params: { namespace } }),
+  
+  // 获取单个 release 详情
+  getHelmRelease: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/releases/${releaseName}`, { params: { namespace } }),
+  
+  // 安装 Helm chart
+  installHelmChart: (id, data) => api.post(`/kubernetes/clusters/${id}/helm/releases`, data),
+  
+  // 升级 Helm release
+  upgradeHelmRelease: (id, namespace, releaseName, data) => api.put(`/kubernetes/clusters/${id}/helm/releases/${releaseName}`, { ...data, namespace }),
+  
+  // 卸载 Helm release
+  uninstallHelmRelease: (id, namespace, releaseName) => api.delete(`/kubernetes/clusters/${id}/helm/releases/${releaseName}`, { params: { namespace } }),
+  
+  // 回滚 Helm release
+  rollbackHelmRelease: (id, namespace, releaseName, revision) => api.post(`/kubernetes/clusters/${id}/helm/releases/${releaseName}/rollback`, { namespace, revision }),
+  
+  // 获取 Helm release 历史
+  getHelmReleaseHistory: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/releases/${releaseName}/history`, { params: { namespace } }),
+  
+  // 获取 Helm release values
+  getHelmReleaseValues: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/releases/${releaseName}/values`, { params: { namespace } }),
+  
+  // Helm 仓库管理
+  getHelmRepositories: (id) => api.get(`/kubernetes/clusters/${id}/helm/repositories`),
+  addHelmRepository: (id, data) => api.post(`/kubernetes/clusters/${id}/helm/repositories`, data),
+  updateHelmRepository: (id, repoName) => api.put(`/kubernetes/clusters/${id}/helm/repositories/${repoName}`),
+  removeHelmRepository: (id, repoName) => api.delete(`/kubernetes/clusters/${id}/helm/repositories/${repoName}`),
+  
+  // 搜索 Helm charts
+  searchHelmCharts: (id, keyword) => api.get(`/kubernetes/clusters/${id}/helm/charts/search`, { params: { keyword } }),
+  
+  // 获取 chart 详情
+  getHelmChartInfo: (id, repoName, chartName, version) => api.get(`/kubernetes/clusters/${id}/helm/charts/${repoName}/${chartName}`, { params: { version } }),
+  
+  // 导入/导出 Helm 配置
+  importHelmConfig: (id, config) => api.post(`/kubernetes/clusters/${id}/helm/import`, config),
+  exportHelmConfig: (id, namespace, releaseName) => api.get(`/kubernetes/clusters/${id}/helm/export/${releaseName}`, { params: { namespace } }),
 };
 
 // Ansible管理API
@@ -278,6 +321,9 @@ export const userAPI = {
   updateUser: (id, userData) => api.put(`/users/${id}`, userData),
   deleteUser: (id) => api.delete(`/users/${id}`),
   resetPassword: (id) => api.post(`/users/${id}/reset-password`),
+  
+  // 用户角色模板管理（管理员）
+  updateUserRoleTemplate: (id, data) => api.put(`/users/${id}/role-template`, data),
   
   // 用户个人信息
   getUserProfile: () => api.get('/users/profile'),
@@ -477,6 +523,7 @@ export const aiAPI = {
   getConversations: () => api.get('/ai/conversations'),
   getConversation: (id) => api.get(`/ai/conversations/${id}`),
   createConversation: (data) => api.post('/ai/conversations', data),
+  updateConversation: (id, data) => api.put(`/ai/conversations/${id}`, data),
   deleteConversation: (id) => api.delete(`/ai/conversations/${id}`),
   clearConversations: () => api.delete('/ai/conversations'),
 
@@ -565,7 +612,14 @@ export const slurmAPI = {
 export const saltStackAPI = {
   getStatus: () => api.get('/saltstack/status'),
   getMinions: (refresh = false) => api.get('/saltstack/minions', { params: refresh ? { refresh: 'true' } : {} }),
-  getJobs: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
+  // 从数据库获取作业历史（持久化数据，支持筛选和搜索）
+  getJobs: (limit) => api.get('/saltstack/jobs/history', { params: { page_size: limit } }),
+  // 从 Salt API 实时获取作业（仅用于特殊场景）
+  getJobsFromSaltAPI: (limit) => api.get('/saltstack/jobs', { params: { limit } }),
+  // 获取单个作业详情（优先从数据库查询，确保持久化）
+  getJobDetail: (jid) => api.get(`/saltstack/jobs/${jid}`),
+  // 通过 TaskID 获取作业详情
+  getJobByTaskId: (taskId) => api.get(`/saltstack/jobs/by-task/${taskId}`),
   executeCommand: (command) => api.post('/saltstack/execute', command),
   // 自定义命令（Bash/Python）异步执行与进度
   executeCustomAsync: (payload) => api.post('/saltstack/execute-custom/async', payload),
@@ -674,6 +728,11 @@ export const saltStackAPI = {
   addIBPortIgnore: (minionId, portName, portNum = 1, reason = '') => api.post('/saltstack/ib-ignores', { minion_id: minionId, port_name: portName, port_num: portNum, reason }),
   removeIBPortIgnore: (minionId, portName, portNum = 0) => api.delete(`/saltstack/ib-ignores/${encodeURIComponent(minionId)}/${encodeURIComponent(portName)}`, { params: portNum ? { port_num: portNum } : {} }),
   getIBPortAlerts: () => api.get('/saltstack/ib-alerts'),
+
+  // 作业配置管理（清理策略）
+  getJobConfig: () => api.get('/saltstack/jobs/config'),
+  updateJobConfig: (config) => api.put('/saltstack/jobs/config', config),
+  triggerJobCleanup: () => api.post('/saltstack/jobs/cleanup'),
 };
 
 // 增强用户管理API
@@ -885,6 +944,46 @@ export const rbacAPI = {
   // 角色分配
   assignRole: (data) => api.post('/rbac/assign-role', data),
   revokeRole: (data) => api.delete('/rbac/revoke-role', { data }),
+};
+
+// 安全管理 API
+export const securityAPI = {
+  // IP 黑名单管理
+  getIPBlacklist: (params) => api.get('/security/ip-blacklist', { params }),
+  addIPBlacklist: (data) => api.post('/security/ip-blacklist', data),
+  updateIPBlacklist: (id, data) => api.put(`/security/ip-blacklist/${id}`, data),
+  deleteIPBlacklist: (id) => api.delete(`/security/ip-blacklist/${id}`),
+  batchDeleteIPBlacklist: (ids) => api.post('/security/ip-blacklist/batch-delete', { ids }),
+
+  // IP 白名单管理
+  getIPWhitelist: (params) => api.get('/security/ip-whitelist', { params }),
+  addIPWhitelist: (data) => api.post('/security/ip-whitelist', data),
+  deleteIPWhitelist: (id) => api.delete(`/security/ip-whitelist/${id}`),
+
+  // 二次认证 (2FA) 管理
+  get2FAStatus: () => api.get('/security/2fa/status'),
+  setup2FA: () => api.post('/security/2fa/setup'),
+  enable2FA: (data) => api.post('/security/2fa/enable', data),
+  disable2FA: (data) => api.post('/security/2fa/disable', data),
+  verify2FA: (data) => api.post('/security/2fa/verify', data),
+  regenerateRecoveryCodes: () => api.post('/security/2fa/recovery-codes'),
+
+  // 管理员2FA管理（为其他用户管理2FA）
+  admin2FAStatus: (userId) => api.get(`/security/admin/2fa/${userId}/status`),
+  adminEnable2FA: (userId) => api.post(`/security/admin/2fa/${userId}/enable`),
+  adminDisable2FA: (userId) => api.post(`/security/admin/2fa/${userId}/disable`),
+
+  // OAuth 第三方登录配置
+  getOAuthProviders: () => api.get('/security/oauth/providers'),
+  getOAuthProvider: (id) => api.get(`/security/oauth/providers/${id}`),
+  updateOAuthProvider: (id, data) => api.put(`/security/oauth/providers/${id}`, data),
+
+  // 全局安全配置
+  getSecurityConfig: () => api.get('/security/config'),
+  updateSecurityConfig: (data) => api.put('/security/config', data),
+
+  // 安全审计日志
+  getAuditLogs: (params) => api.get('/security/audit-logs', { params }),
 };
 
 export default api;

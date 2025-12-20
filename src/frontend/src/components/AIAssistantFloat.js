@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  FloatButton,
   Card,
   Input,
   Button,
@@ -102,6 +101,23 @@ const AIAssistantFloat = () => {
   const [isResizing, setIsResizing] = useState(false); // 是否正在调整大小
   const [isDragging, setIsDragging] = useState(false); // 是否正在拖拽状态
   const [dragStarted, setDragStarted] = useState(false); // 是否已开始拖拽
+  
+  // 悬浮按钮位置状态
+  const [floatButtonPos, setFloatButtonPos] = useState(() => {
+    // 从 localStorage 读取保存的位置
+    const saved = localStorage.getItem('ai-float-button-pos');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.warn('Failed to parse float button position');
+      }
+    }
+    return { left: 24, bottom: 24 };
+  });
+  const [isButtonDragging, setIsButtonDragging] = useState(false);
+  const buttonDragRef = useRef({ startX: 0, startY: 0, startLeft: 0, startBottom: 0 });
+  
   const messagesEndRef = useRef(null);
   const resizeRef = useRef(null);
   const dragTimeoutRef = useRef(null);
@@ -111,6 +127,102 @@ const AIAssistantFloat = () => {
     startWidth: 0,
     rafId: null
   });
+
+  // 悬浮按钮拖拽处理
+  const handleButtonMouseDown = useCallback((e) => {
+    if (e.button !== 0) return; // 只处理左键
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    buttonDragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: floatButtonPos.left,
+      startBottom: floatButtonPos.bottom,
+      hasMoved: false
+    };
+    
+    setIsButtonDragging(true);
+    document.body.style.cursor = 'grabbing';
+    document.body.style.userSelect = 'none';
+  }, [floatButtonPos]);
+
+  const handleButtonMouseMove = useCallback((e) => {
+    if (!isButtonDragging) return;
+    
+    const deltaX = e.clientX - buttonDragRef.current.startX;
+    const deltaY = buttonDragRef.current.startY - e.clientY; // 注意：bottom 是从下往上计算的
+    
+    // 检测是否真正移动了
+    if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+      buttonDragRef.current.hasMoved = true;
+    }
+    
+    const newLeft = Math.max(10, Math.min(window.innerWidth - 74, buttonDragRef.current.startLeft + deltaX));
+    const newBottom = Math.max(10, Math.min(window.innerHeight - 74, buttonDragRef.current.startBottom + deltaY));
+    
+    setFloatButtonPos({ left: newLeft, bottom: newBottom });
+  }, [isButtonDragging]);
+
+  const handleButtonMouseUp = useCallback((e) => {
+    if (!isButtonDragging) return;
+    
+    setIsButtonDragging(false);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    
+    // 保存位置到 localStorage
+    const currentPos = { 
+      left: buttonDragRef.current.startLeft + (e.clientX - buttonDragRef.current.startX),
+      bottom: buttonDragRef.current.startBottom + (buttonDragRef.current.startY - e.clientY)
+    };
+    localStorage.setItem('ai-float-button-pos', JSON.stringify(currentPos));
+    
+    // 如果没有移动，则视为点击，标记需要打开面板
+    if (!buttonDragRef.current.hasMoved) {
+      buttonDragRef.current.shouldOpen = true;
+    }
+  }, [isButtonDragging]);
+
+  // 处理点击打开面板（在拖拽结束后）
+  useEffect(() => {
+    if (!isButtonDragging && buttonDragRef.current.shouldOpen) {
+      buttonDragRef.current.shouldOpen = false;
+      console.log('🔄 打开AI助手，刷新配置列表...');
+      setVisible(true);
+    }
+  }, [isButtonDragging]);
+
+  // 监听悬浮按钮拖拽的全局事件
+  useEffect(() => {
+    if (isButtonDragging) {
+      window.addEventListener('mousemove', handleButtonMouseMove);
+      window.addEventListener('mouseup', handleButtonMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handleButtonMouseMove);
+        window.removeEventListener('mouseup', handleButtonMouseUp);
+      };
+    }
+  }, [isButtonDragging, handleButtonMouseMove, handleButtonMouseUp]);
+
+  // 通知布局组件 AI 助手面板状态变化
+  useEffect(() => {
+    // 派发自定义事件，通知布局组件面板状态变化
+    const event = new CustomEvent('ai-assistant-panel-change', {
+      detail: {
+        visible,
+        width: visible ? panelWidth : 0
+      }
+    });
+    window.dispatchEvent(event);
+    
+    // 更新 CSS 变量，用于布局偏移
+    document.documentElement.style.setProperty(
+      '--ai-panel-width',
+      visible ? `${panelWidth}px` : '0px'
+    );
+  }, [visible, panelWidth]);
 
   // 获取模型图标
   const getModelIcon = (model) => {
@@ -183,7 +295,8 @@ const AIAssistantFloat = () => {
     
     // 使用 RAF 优化性能
     dragStateRef.current.rafId = requestAnimationFrame(() => {
-      const deltaX = dragStateRef.current.startX - e.clientX;
+      // 面板在左侧，向右拖拽增加宽度
+      const deltaX = e.clientX - dragStateRef.current.startX;
       const newWidth = Math.max(320, Math.min(800, dragStateRef.current.startWidth + deltaX));
       
       // 使用临时宽度避免频繁更新状态
@@ -211,8 +324,8 @@ const AIAssistantFloat = () => {
       dragStateRef.current.rafId = null;
     }
     
-    // 计算最终宽度
-    const finalDelta = dragStateRef.current.startX - e.clientX;
+    // 计算最终宽度 - 面板在左侧，向右拖拽增加宽度
+    const finalDelta = e.clientX - dragStateRef.current.startX;
     const finalWidth = Math.max(320, Math.min(800, dragStateRef.current.startWidth + finalDelta));
     
     // 设置最终宽度
@@ -1263,48 +1376,82 @@ const AIAssistantFloat = () => {
 
   return (
     <>
-      {/* 悬浮按钮 */}
-      <FloatButton
-        icon={<AIRobotIcon size={28} animated={true} />}
-        tooltip="AI助手"
-        onClick={() => {
-          console.log('🔄 打开AI助手，刷新配置列表...');
-          setVisible(true);
-          fetchConfigs(); // 每次打开时刷新配置以确保数据同步
-        }}
-        style={{
-          right: 24,
-          bottom: 24,
-        }}
-      />
+      {/* 可拖拽悬浮按钮 - 面板打开时隐藏 */}
+      {!visible && (
+        <div
+          className={`ai-float-button ${isButtonDragging ? 'dragging' : ''}`}
+          onMouseDown={handleButtonMouseDown}
+          style={{
+            position: 'fixed',
+            left: floatButtonPos.left,
+            bottom: floatButtonPos.bottom,
+            width: 56,
+            height: 56,
+            borderRadius: '50%',
+            background: isDark 
+              ? 'linear-gradient(135deg, #1f1f1f 0%, #2d2d2d 100%)' 
+              : 'linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%)',
+            border: isDark ? '2px solid #177ddc' : '2px solid #1890ff',
+            boxShadow: isButtonDragging 
+              ? '0 8px 24px rgba(24, 144, 255, 0.4)' 
+              : '0 4px 16px rgba(24, 144, 255, 0.25)',
+            cursor: isButtonDragging ? 'grabbing' : 'grab',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9998,
+            transition: isButtonDragging ? 'none' : 'box-shadow 0.3s, transform 0.2s',
+            transform: isButtonDragging ? 'scale(1.1)' : 'scale(1)',
+          }}
+          title="AI助手 (可拖动)"
+        >
+          <AIRobotIcon size={28} animated={!isButtonDragging} />
+        </div>
+      )}
 
-      {/* AI助手侧边面板 */}
+      {/* AI助手侧边面板 - 左侧 */}
       <div
         className={`ai-assistant-panel ${visible ? 'ai-assistant-panel-visible' : ''} ${locked ? 'ai-assistant-panel-locked' : ''} ${isResizing ? 'ai-assistant-panel-resizing' : ''} ${isDark ? 'ai-assistant-panel-dark' : ''}`}
         style={{
           position: 'fixed',
           top: 0,
-          right: visible ? 0 : -(panelWidth + 20),
+          left: visible ? 0 : -(panelWidth + 20),
           width: isDragging ? dragWidth : panelWidth, // 拖拽时使用dragWidth获得更好的实时反馈
           height: '100vh',
           background: isDark ? '#141414' : '#ffffff',
-          boxShadow: isDark ? '-2px 0 8px rgba(0, 0, 0, 0.45)' : '-2px 0 8px rgba(0, 0, 0, 0.15)',
+          boxShadow: isDark ? '2px 0 8px rgba(0, 0, 0, 0.45)' : '2px 0 8px rgba(0, 0, 0, 0.15)',
           zIndex: 9999,
           display: 'flex',
           flexDirection: 'column',
           transition: isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          borderLeft: isDark ? '1px solid #303030' : '1px solid #e8e8e8',
+          borderRight: isDark ? '1px solid #303030' : '1px solid #e8e8e8',
         }}
       >
-        {/* 拖拽调整大小的手柄 */}
+        {/* 拖拽调整大小的手柄 - 右侧 */}
         <div
-          className="resize-handle"
+          className="resize-handle resize-handle-right"
           onMouseDown={handleResizeMouseDown}
           title={`点击并拖拽调整面板宽度 (当前: ${isDragging ? dragWidth : panelWidth}px)`}
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            width: 6,
+            height: '100%',
+            cursor: 'ew-resize',
+            zIndex: 10000,
+          }}
         >
           <div
             className="resize-indicator"
             style={{
+              position: 'absolute',
+              right: 0,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 3,
+              height: 50,
+              borderRadius: 2,
               background: isResizing ? '#1890ff' : '#d9d9d9',
               opacity: isResizing ? 1 : 0.6,
             }}
@@ -1470,15 +1617,15 @@ const AIAssistantFloat = () => {
                 size="small"
               />
             </Tooltip>
-            {!locked && (
-              <Button
-                type="text"
-                onClick={() => setVisible(false)}
-                style={{ fontSize: 18 }}
-              >
-                ×
-              </Button>
-            )}
+            {/* 关闭按钮 - 始终显示 */}
+            <Button
+              type="text"
+              onClick={() => setVisible(false)}
+              style={{ fontSize: 18 }}
+              title={locked ? '关闭面板（锁定状态）' : '关闭面板'}
+            >
+              ×
+            </Button>
           </Space>
         </div>
         {configs.length === 0 ? (

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: kafka
+description: Apache Kafka with KRaft mode (no Zookeeper)
+type: application
+version: 0.1.0
+appVersion: "3.6"
+
+keywords:
+  - kafka
+  - kraft
+  - message-queue
+  - streaming
+
+maintainers:
+  - name: aresnasa
+    email: dev@ai-infra.local

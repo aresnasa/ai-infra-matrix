@@ -20,6 +20,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pquerna/otp/totp"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -251,6 +252,33 @@ func (h *UserHandler) Login(c *gin.Context) {
 		return
 	}
 
+	// 检查用户是否启用了2FA
+	var twoFAConfig models.TwoFactorConfig
+	if err := h.db.Where("user_id = ? AND enabled = ?", user.ID, true).First(&twoFAConfig).Error; err == nil {
+		// 用户启用了2FA，需要进行二次验证
+		logrus.WithField("user_id", user.ID).Info("User has 2FA enabled, requiring verification")
+
+		// 生成临时token用于2FA验证
+		tempToken := generateTempToken()
+
+		// 存储临时认证信息到Redis或内存（这里简化为存储在内存map中）
+		store2FAPendingAuth(tempToken, user.ID, time.Now().Add(5*time.Minute))
+
+		c.JSON(http.StatusOK, gin.H{
+			"requires_2fa": true,
+			"temp_token":   tempToken,
+			"user_id":      user.ID,
+			"message":      "Please provide 2FA verification code",
+		})
+		return
+	}
+
+	// 没有启用2FA，直接完成登录
+	h.completeLogin(c, user)
+}
+
+// completeLogin 完成登录流程（生成token等）
+func (h *UserHandler) completeLogin(c *gin.Context, user *models.User) {
 	// 获取用户角色
 	roles, err := h.rbacService.GetUserRoles(user.ID)
 	if err != nil {
@@ -316,6 +344,144 @@ func (h *UserHandler) Login(c *gin.Context) {
 	c.SetCookie("auth_token", token, maxAge, "/", "", false, true)
 
 	c.JSON(http.StatusOK, response)
+}
+
+// 2FA临时认证存储（简化实现，生产环境应使用Redis）
+var pending2FAAuth = make(map[string]pending2FAData)
+
+type pending2FAData struct {
+	UserID    uint
+	ExpiresAt time.Time
+}
+
+func store2FAPendingAuth(token string, userID uint, expiresAt time.Time) {
+	pending2FAAuth[token] = pending2FAData{
+		UserID:    userID,
+		ExpiresAt: expiresAt,
+	}
+}
+
+func get2FAPendingAuth(token string) (uint, bool) {
+	data, exists := pending2FAAuth[token]
+	if !exists {
+		return 0, false
+	}
+	if time.Now().After(data.ExpiresAt) {
+		delete(pending2FAAuth, token)
+		return 0, false
+	}
+	return data.UserID, true
+}
+
+func delete2FAPendingAuth(token string) {
+	delete(pending2FAAuth, token)
+}
+
+func generateTempToken() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
+// Verify2FALogin 验证2FA并完成登录
+// @Summary 2FA验证登录
+// @Description 验证双因素认证码并完成登录
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Param request body map[string]string true "2FA验证信息"
+// @Success 200 {object} models.LoginResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/verify-2fa [post]
+func (h *UserHandler) Verify2FALogin(c *gin.Context) {
+	var req struct {
+		TempToken string `json:"temp_token" binding:"required"`
+		Code      string `json:"code" binding:"required"`
+		Username  string `json:"username"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供临时token和验证码"})
+		return
+	}
+
+	// 验证临时token
+	userID, valid := get2FAPendingAuth(req.TempToken)
+	if !valid {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "验证已过期，请重新登录"})
+		return
+	}
+
+	// 获取用户的2FA配置
+	var twoFAConfig models.TwoFactorConfig
+	if err := h.db.Where("user_id = ? AND enabled = ?", userID, true).First(&twoFAConfig).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "2FA配置不存在"})
+		return
+	}
+
+	// 验证TOTP码
+	valid = verifyTOTPCode(twoFAConfig.Secret, req.Code)
+	if !valid {
+		// 尝试恢复码验证
+		valid = h.verifyRecoveryCode(&twoFAConfig, req.Code)
+	}
+
+	if !valid {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "验证码无效"})
+		return
+	}
+
+	// 删除临时token
+	delete2FAPendingAuth(req.TempToken)
+
+	// 更新2FA验证统计
+	h.db.Model(&twoFAConfig).Updates(map[string]interface{}{
+		"last_verified_at": time.Now(),
+		"verify_count":     gorm.Expr("verify_count + 1"),
+	})
+
+	// 获取用户信息
+	user, err := h.userService.GetUserByID(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取用户信息失败"})
+		return
+	}
+
+	// 完成登录
+	h.completeLogin(c, user)
+}
+
+// verifyTOTPCode 验证TOTP码
+func verifyTOTPCode(secret, code string) bool {
+	// 使用totp库验证
+	return totp.Validate(code, secret)
+}
+
+// verifyRecoveryCode 验证恢复码
+func (h *UserHandler) verifyRecoveryCode(config *models.TwoFactorConfig, code string) bool {
+	if config.RecoveryCodes == "" {
+		return false
+	}
+
+	var codes []string
+	if err := json.Unmarshal([]byte(config.RecoveryCodes), &codes); err != nil {
+		return false
+	}
+
+	for i, c := range codes {
+		if c == code {
+			// 移除已使用的恢复码
+			codes = append(codes[:i], codes[i+1:]...)
+			newCodesJSON, _ := json.Marshal(codes)
+			h.db.Model(config).Updates(map[string]interface{}{
+				"recovery_codes":      string(newCodesJSON),
+				"recovery_used_count": gorm.Expr("recovery_used_count + 1"),
+			})
+			return true
+		}
+	}
+	return false
 }
 
 // handleLDAPUser 处理LDAP认证用户，创建或更新本地用户账户

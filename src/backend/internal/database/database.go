@@ -325,6 +325,19 @@ func migrateTaskSchema() error {
 		&models.NodeMetricsLatest{},
 		// IB 端口忽略表
 		&models.IBPortIgnore{},
+		// Salt 作业历史表（持久化用户任务）
+		&models.SaltJobHistory{},
+		&models.SaltJobConfig{},
+		// 安全管理表
+		&models.IPBlacklist{},
+		&models.IPWhitelist{},
+		&models.LoginAttempt{},
+		&models.TwoFactorConfig{},
+		&models.TwoFactorGlobalConfig{},
+		&models.OAuthProvider{},
+		&models.UserOAuthBinding{},
+		&models.SecurityAuditLog{},
+		&models.SecurityConfig{},
 		// SLURM task tracking tables live in PostgreSQL for consistency with global task store
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},

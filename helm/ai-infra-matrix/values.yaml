@@ -1,10 +1,73 @@
 # AI Infrastructure Matrix Helm Chart Values
 # Generated from environment variables
+# Version: 0.1.0 - K8s Native with HA Support
 
 global:
   imageRegistry: ""
-  imageTag: ""
+  imageTag: "v0.3.8"
+  # Production mode enables HA components
+  productionMode: false
+  # Storage class for persistent volumes
+  storageClass: ""
   
+# =============================================================================
+# High Availability Configuration
+# =============================================================================
+
+# Patroni PostgreSQL HA (Production)
+patroni:
+  enabled: false  # Set to true for production HA
+  replicaCount: 3
+  postgresql:
+    database: ai_infra_matrix
+    username: postgres
+    password: ""  # Will be generated if empty
+  persistence:
+    enabled: true
+    size: 20Gi
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+# Redis Cluster HA (Production)
+redisCluster:
+  enabled: false  # Set to true for production HA
+  masterCount: 3
+  replicasPerMaster: 1
+  redis:
+    password: ""  # Will be generated if empty
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Kafka Cluster (Production)
+kafka:
+  enabled: false  # Set to true to enable Kafka
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 20Gi
+  kafkaUi:
+    enabled: true
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
 env:
   # This section will be populated from .env file
   COMPOSE_PROJECT_NAME: "ai-infra-matrix"
@@ -446,6 +509,7 @@ phpldapadmin:
 # Nginx configuration
 nginx:
   enabled: true  # 启用nginx服务
+  replicaCount: 1
   image:
     repository: "ai-infra-nginx"
     tag: "v0.3.8"
@@ -454,6 +518,33 @@ nginx:
     type: "ClusterIP"
     port: 80
     targetPort: 80
+  # Autoscaling configuration for nginx
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
 
 # Additional service configurations
 gitea:
@@ -538,6 +629,7 @@ monitoring:
 # Frontend configuration
 frontend:
   enabled: true
+  replicaCount: 1
   image:
     repository: "ai-infra-frontend"
     tag: "v0.3.8"
@@ -546,10 +638,39 @@ frontend:
     type: "ClusterIP"
     port: 80
     targetPort: 80
+  # Autoscaling configuration for frontend
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    # Scale behavior (optional)
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
 
 # Backend configuration
 backend:
   enabled: true
+  replicaCount: 1
   image:
     repository: "ai-infra-backend"
     tag: "v0.3.8"
@@ -558,6 +679,34 @@ backend:
     type: "ClusterIP"
     port: 8082
     targetPort: 8082
+  # Autoscaling configuration for backend
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    # Scale behavior (optional)
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Pods
+            value: 4
+            periodSeconds: 60
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
   env:
     JWT_SECRET: "ai-infra-secret-key-change-in-dev"
     JWT_EXPIRY: "24h"

@@ -2,8 +2,8 @@ apiVersion: v2
 name: ai-infra-matrix
 description: A comprehensive AI infrastructure platform with JupyterHub, backend services, and unified authentication
 type: application
-version: 0.0.4
-appVersion: "0.0.3.2"
+version: 0.1.0
+appVersion: "0.3.8"
 
 keywords:
   - ai
@@ -11,6 +11,9 @@ keywords:
   - kubernetes
   - machine-learning
   - infrastructure
+  - patroni
+  - redis-cluster
+  - high-availability
 
 home: https://github.com/aresnasa/ai-infra-matrix
 sources:
@@ -21,10 +24,31 @@ maintainers:
     email: dev@ai-infra.local
 
 dependencies:
+  # Patroni for PostgreSQL High Availability (replaces standalone postgresql)
+  - name: patroni
+    version: "0.1.0"
+    repository: "file://charts/patroni"
+    condition: patroni.enabled
+    
+  # Redis Cluster for high availability (replaces standalone redis)
+  - name: redis-cluster
+    version: "0.1.0"
+    repository: "file://charts/redis-cluster"
+    condition: redisCluster.enabled
+    
+  # Kafka Cluster with KRaft mode
+  - name: kafka
+    version: "0.1.0"
+    repository: "file://charts/kafka"
+    condition: kafka.enabled
+    
+  # Legacy standalone PostgreSQL (for development/testing)
   - name: postgresql
     version: "15.5.2"
     repository: "https://charts.bitnami.com/bitnami"
     condition: postgresql.enabled
+    
+  # Legacy standalone Redis (for development/testing)
   - name: redis
     version: "19.6.4"
     repository: "https://charts.bitnami.com/bitnami"

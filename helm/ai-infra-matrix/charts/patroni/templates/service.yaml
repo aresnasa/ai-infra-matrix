@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "patroni.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patroni.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 5432
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "patroni.selectorLabels" . | nindent 4 }}
+    role: master
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "patroni.fullname" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patroni.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgresql
+    - port: 8008
+      targetPort: 8008
+      protocol: TCP
+      name: patroni
+  selector:
+    {{- include "patroni.selectorLabels" . | nindent 4 }}
+---
+{{- if .Values.service.replica.enabled }}
+# Read replica service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "patroni.fullname" . }}-replica
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patroni.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.replica.port }}
+      targetPort: 5432
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "patroni.selectorLabels" . | nindent 4 }}
+    role: replica
+{{- end }}
