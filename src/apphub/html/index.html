@@ -610,7 +610,7 @@
         };
 
         let currentLang = localStorage.getItem('apphub-lang') || 'zh';
-        let currentTheme = localStorage.getItem('apphub-theme') || 'light';
+        let currentTheme = localStorage.getItem('apphub-theme') || 'auto';
 
         // 初始化
         function init() {
@@ -618,10 +618,14 @@
             document.getElementById('host').textContent = window.location.host;
 
             // 应用保存的主题
-            if (currentTheme === 'dark') {
-                document.documentElement.setAttribute('data-theme', 'dark');
-                document.getElementById('theme-icon').textContent = '☀️';
-            }
+            applyTheme(currentTheme);
+
+            // 监听系统主题变化
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+                if (currentTheme === 'auto') {
+                    applyTheme('auto');
+                }
+            });
 
             // 应用保存的语言
             applyLanguage(currentLang);
@@ -673,18 +677,41 @@
             });
         }
 
-        // 切换主题
+        // 切换主题 (light -> dark -> auto -> light)
         function toggleTheme() {
-            currentTheme = currentTheme === 'light' ? 'dark' : 'light';
+            if (currentTheme === 'light') {
+                currentTheme = 'dark';
+            } else if (currentTheme === 'dark') {
+                currentTheme = 'auto';
+            } else {
+                currentTheme = 'light';
+            }
             localStorage.setItem('apphub-theme', currentTheme);
+            applyTheme(currentTheme);
+        }
+
+        // 应用主题
+        function applyTheme(theme) {
+            let isDark = false;
+            let icon = '🌙';
             
-            if (currentTheme === 'dark') {
+            if (theme === 'dark') {
+                isDark = true;
+                icon = '☀️';
+            } else if (theme === 'auto') {
+                isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                icon = '🔄';
+            } else {
+                isDark = false;
+                icon = '🌙';
+            }
+            
+            if (isDark) {
                 document.documentElement.setAttribute('data-theme', 'dark');
-                document.getElementById('theme-icon').textContent = '☀️';
             } else {
                 document.documentElement.removeAttribute('data-theme');
-                document.getElementById('theme-icon').textContent = '🌙';
             }
+            document.getElementById('theme-icon').textContent = icon;
         }
 
         // 检查服务状态
