@@ -373,28 +373,56 @@ RUN set -eux; \
     rm -rf /etc/dnf/modules.d/* 2>/dev/null || true; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
-    # 配置镜像源（microdnf 和 dnf 都会使用）
-    if [ -n "${YUM_MIRROR:-}" ]; then \
-        echo "Using custom YUM mirror: ${YUM_MIRROR}"; \
-        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e "s|repo.almalinux.org/\$contentdir|${YUM_MIRROR}/almalinux|g" \
-            -e "s|^# baseurl=|baseurl=|g" \
-            -e "s|^#baseurl=|baseurl=|g" \
-            -i.bak \
-            /etc/yum.repos.d/almalinux*.repo; \
-    else \
-        echo "尝试配置阿里云镜像源..."; \
-        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e 's|repo.almalinux.org/\$contentdir|mirrors.aliyun.com/almalinux|g' \
-            -e "s|^# baseurl=|baseurl=|g" \
-            -e "s|^#baseurl=|baseurl=|g" \
-            -i.bak \
-            /etc/yum.repos.d/almalinux*.repo; \
-    fi; \
-    # minimal 镜像只有 microdnf，先安装 dnf（禁用 extras 避免 SSL 错误）
+    # 直接写入阿里云镜像源配置（更可靠，避免 sed 替换问题）
+    MIRROR_HOST="${YUM_MIRROR:-mirrors.aliyun.com}"; \
+    echo "Using mirror: ${MIRROR_HOST}"; \
+    cat > /etc/yum.repos.d/almalinux-baseos.repo << EOF
+[baseos]
+name=AlmaLinux \$releasever - BaseOS
+baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/BaseOS/\$basearch/os/
+enabled=1
+gpgcheck=1
+countme=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
+EOF
+    cat > /etc/yum.repos.d/almalinux-appstream.repo << EOF
+[appstream]
+name=AlmaLinux \$releasever - AppStream
+baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/AppStream/\$basearch/os/
+enabled=1
+gpgcheck=1
+countme=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
+EOF
+    cat > /etc/yum.repos.d/almalinux-crb.repo << EOF
+[crb]
+name=AlmaLinux \$releasever - CRB
+baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/CRB/\$basearch/os/
+enabled=0
+gpgcheck=1
+countme=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
+EOF
+    cat > /etc/yum.repos.d/almalinux-extras.repo << EOF
+[extras]
+name=AlmaLinux \$releasever - Extras
+baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/extras/\$basearch/os/
+enabled=0
+gpgcheck=1
+countme=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
+EOF
+    # 删除原始 repo 文件中可能残留的 mirrorlist 配置
+    rm -f /etc/yum.repos.d/almalinux*.repo.bak 2>/dev/null || true; \
+    rm -f /etc/yum.repos.d/almalinux-*source*.repo 2>/dev/null || true; \
+    rm -f /etc/yum.repos.d/almalinux-*debug*.repo 2>/dev/null || true; \
+    # 显示配置的 repo 文件以便调试
+    echo "=== Configured repositories ==="; \
+    cat /etc/yum.repos.d/almalinux-baseos.repo; \
+    # minimal 镜像只有 microdnf，先安装 dnf
     echo "📦 Installing dnf on minimal image..."; \
-    microdnf --disablerepo=extras --disablerepo=crb install -y dnf || \
-    microdnf install -y dnf; \
+    microdnf clean all; \
+    microdnf install -y dnf || { echo "❌ Failed to install dnf"; exit 1; }; \
     dnf clean all; \
     dnf makecache || true; \
     # 更新系统以确保基础包是最新的（镜像源已配置为阿里云）
