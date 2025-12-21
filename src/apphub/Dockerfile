@@ -193,6 +193,7 @@ USER root
 ARG BUILD_SALTSTACK
 ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 
 # Use BuildKit cache mount for package caching
 # This allows packages to be reused across builds without re-downloading
@@ -238,7 +239,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-deb,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://ghfast.top/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="${GITHUB_MIRROR}github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -504,7 +505,7 @@ RUN set -eux; \
             cp "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" munge.tar.xz; \
         else \
             echo "Downloading Munge..."; \
-            wget "https://ghfast.top/github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+            wget "${GITHUB_MIRROR}github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
         fi; \
         tar xf munge.tar.xz; \
         cd "munge-${MUNGE_VERSION}"; \
@@ -599,6 +600,7 @@ USER root
 ARG BUILD_SALTSTACK
 ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 
 # Use BuildKit cache mount for package caching
 # This allows packages to be reused across builds without re-downloading
@@ -644,7 +646,7 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
         if [[ ! "$RELEASE_TAG" =~ ^v ]]; then \
             RELEASE_TAG="v${RELEASE_TAG}"; \
         fi; \
-        BASE_URL="https://ghfast.top/github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
+        BASE_URL="${GITHUB_MIRROR}github.com/saltstack/salt/releases/download/${RELEASE_TAG}"; \
         echo "Version: ${VERSION_NUM}"; \
         echo "Release Tag: ${RELEASE_TAG}"; \
         echo "Base URL: ${BASE_URL}"; \
@@ -967,7 +969,8 @@ ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
 ARG CATEGRAF_VERSION=v0.4.25
-ARG CATEGRAF_REPO=https://ghfast.top/github.com/flashcatcloud/categraf.git
+ARG GITHUB_MIRROR=https://ghfast.top/
+ARG CATEGRAF_REPO=${GITHUB_MIRROR}github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）- 仅用于 fallback 源码构建
 ARG GO_PROXY=https://goproxy.cn,direct
@@ -1105,7 +1108,7 @@ RUN set -eux; \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
         mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
-        RELEASE_URL="https://ghfast.top/github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
+        RELEASE_URL="${GITHUB_MIRROR}github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
         CURL_OPTS=""; \
         if [ -n "${GITHUB_PROXY:-}" ]; then \
             echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
