@@ -376,42 +376,42 @@ RUN set -eux; \
     # 直接写入阿里云镜像源配置（更可靠，避免 sed 替换问题）
     MIRROR_HOST="${YUM_MIRROR:-mirrors.aliyun.com}"; \
     echo "Using mirror: ${MIRROR_HOST}"; \
-    cat > /etc/yum.repos.d/almalinux-baseos.repo << EOF
-[baseos]
-name=AlmaLinux \$releasever - BaseOS
-baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/BaseOS/\$basearch/os/
-enabled=1
-gpgcheck=1
-countme=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
-EOF
-    cat > /etc/yum.repos.d/almalinux-appstream.repo << EOF
-[appstream]
-name=AlmaLinux \$releasever - AppStream
-baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/AppStream/\$basearch/os/
-enabled=1
-gpgcheck=1
-countme=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
-EOF
-    cat > /etc/yum.repos.d/almalinux-crb.repo << EOF
-[crb]
-name=AlmaLinux \$releasever - CRB
-baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/CRB/\$basearch/os/
-enabled=0
-gpgcheck=1
-countme=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
-EOF
-    cat > /etc/yum.repos.d/almalinux-extras.repo << EOF
-[extras]
-name=AlmaLinux \$releasever - Extras
-baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/extras/\$basearch/os/
-enabled=0
-gpgcheck=1
-countme=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9
-EOF
+    printf '%s\n' \
+        '[baseos]' \
+        'name=AlmaLinux $releasever - BaseOS' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/BaseOS/\$basearch/os/" \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-baseos.repo; \
+    printf '%s\n' \
+        '[appstream]' \
+        'name=AlmaLinux $releasever - AppStream' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/AppStream/\$basearch/os/" \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-appstream.repo; \
+    printf '%s\n' \
+        '[crb]' \
+        'name=AlmaLinux $releasever - CRB' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/CRB/\$basearch/os/" \
+        'enabled=0' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-crb.repo; \
+    printf '%s\n' \
+        '[extras]' \
+        'name=AlmaLinux $releasever - Extras' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/extras/\$basearch/os/" \
+        'enabled=0' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-extras.repo; \
     # 删除原始 repo 文件中可能残留的 mirrorlist 配置
     rm -f /etc/yum.repos.d/almalinux*.repo.bak 2>/dev/null || true; \
     rm -f /etc/yum.repos.d/almalinux-*source*.repo 2>/dev/null || true; \
