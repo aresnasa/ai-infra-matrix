@@ -998,7 +998,8 @@ RUN set -eux; \
         apt-get update; \
     fi; \
     # 安装下载工具（不再需要 golang，直接下载预编译二进制）
-    apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
+    # 注意: 需要 git 用于 fallback 源码构建时的代理配置
+    apt-get install -y --no-install-recommends curl tar gzip ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
