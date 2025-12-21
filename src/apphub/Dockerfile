@@ -354,6 +354,8 @@ ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
 ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
+ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
@@ -500,12 +502,50 @@ RUN set -eux; \
         2>/dev/null && echo "✓ munge packages installed from repository" || { \
         echo "⚠️  munge not available in repos, will build from source..."; \
         cd /tmp; \
-        if [ -f "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" ]; then \
-            echo "📦 Using local Munge tarball..."; \
-            cp "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" munge.tar.xz; \
-        else \
-            echo "Downloading Munge..."; \
-            wget "${GITHUB_MIRROR}github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+        MUNGE_TARBALL="munge-${MUNGE_VERSION}.tar.xz"; \
+        MUNGE_DIRECT_URL="https://github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/${MUNGE_TARBALL}"; \
+        DOWNLOAD_SUCCESS=false; \
+        # 方式0: 检查本地文件
+        if [ -f "/third_party/munge/${MUNGE_TARBALL}" ]; then \
+            echo "📦 [本地] Using local Munge tarball..."; \
+            cp "/third_party/munge/${MUNGE_TARBALL}" munge.tar.xz; \
+            DOWNLOAD_SUCCESS=true; \
+        fi; \
+        # 方式1: GITHUB_MIRROR
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_MIRROR:-}" ]; then \
+            MIRROR_URL="${GITHUB_MIRROR}github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/${MUNGE_TARBALL}"; \
+            echo "📥 [方式1] GITHUB_MIRROR: ${MIRROR_URL}"; \
+            if wget --timeout=60 --tries=3 -nv "${MIRROR_URL}" -O munge.tar.xz 2>/dev/null; then \
+                echo "✓ Downloaded Munge via GITHUB_MIRROR"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  GITHUB_MIRROR failed"; \
+            fi; \
+        fi; \
+        # 方式2: GITHUB_PROXY
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "📥 [方式2] GITHUB_PROXY: ${MUNGE_DIRECT_URL}"; \
+            export http_proxy="${GITHUB_PROXY}"; \
+            export https_proxy="${GITHUB_PROXY}"; \
+            if wget --timeout=60 --tries=3 -nv "${MUNGE_DIRECT_URL}" -O munge.tar.xz 2>/dev/null; then \
+                echo "✓ Downloaded Munge via GITHUB_PROXY"; \
+                DOWNLOAD_SUCCESS=true; \
+            fi; \
+            unset http_proxy https_proxy; \
+            if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+                echo "⚠️  GITHUB_PROXY failed"; \
+            fi; \
+        fi; \
+        # 方式3: 直接下载
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+            echo "📥 [方式3] Direct: ${MUNGE_DIRECT_URL}"; \
+            if wget --timeout=60 --tries=3 -nv "${MUNGE_DIRECT_URL}" -O munge.tar.xz; then \
+                echo "✓ Downloaded Munge directly"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "❌ All download methods failed for Munge"; \
+                exit 1; \
+            fi; \
         fi; \
         tar xf munge.tar.xz; \
         cd "munge-${MUNGE_VERSION}"; \
@@ -1094,6 +1134,7 @@ ARG BUILD_SINGULARITY=true
 # Singularity version configuration
 ARG SINGULARITY_VERSION=v4.3.4
 ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
@@ -1121,45 +1162,70 @@ COPY third_party/ /third_party/
 # 创建输出目录
 RUN mkdir -p /out /build
 
+# 下载函数：支持 GITHUB_MIRROR、GITHUB_PROXY 和直接下载
 # 下载并重新打包预编译的 Singularity
 RUN set -eux; \
     if [ "${BUILD_SINGULARITY}" = "true" ]; then \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
+        echo "   GITHUB_MIRROR: ${GITHUB_MIRROR:-<disabled>}"; \
+        echo "   GITHUB_PROXY:  ${GITHUB_PROXY:-<disabled>}"; \
         mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
-        RELEASE_URL="${GITHUB_MIRROR}github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
-        CURL_OPTS=""; \
-        if [ -n "${GITHUB_PROXY:-}" ]; then \
-            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
-            CURL_OPTS="--proxy ${GITHUB_PROXY}"; \
-        fi; \
+        GITHUB_DIRECT_URL="https://github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
+        # 通用下载函数
+        download_file() { \
+            local filename=$1; \
+            local output_path="/out/${filename}"; \
+            local direct_url="${GITHUB_DIRECT_URL}/${filename}"; \
+            local download_success=false; \
+            # 方式0: 检查本地文件
+            if [ -f "/third_party/singularity/${filename}" ]; then \
+                echo "  📦 [本地] Using local file: ${filename}"; \
+                cp "/third_party/singularity/${filename}" "${output_path}"; \
+                return 0; \
+            fi; \
+            # 方式1: GITHUB_MIRROR
+            if [ -n "${GITHUB_MIRROR:-}" ]; then \
+                local mirror_url="${GITHUB_MIRROR}github.com/sylabs/singularity/releases/download/v${VERSION_NUM}/${filename}"; \
+                echo "  📥 [方式1] GITHUB_MIRROR: ${mirror_url}"; \
+                if curl -fsSL --connect-timeout 30 --max-time 300 -o "${output_path}" "${mirror_url}" 2>/dev/null; then \
+                    echo "  ✓ Downloaded ${filename} via GITHUB_MIRROR"; \
+                    return 0; \
+                fi; \
+                echo "  ⚠️  GITHUB_MIRROR failed"; \
+            fi; \
+            # 方式2: GITHUB_PROXY
+            if [ -n "${GITHUB_PROXY:-}" ]; then \
+                echo "  📥 [方式2] GITHUB_PROXY: ${direct_url}"; \
+                if curl --proxy "${GITHUB_PROXY}" -fsSL --connect-timeout 30 --max-time 300 -o "${output_path}" "${direct_url}" 2>/dev/null; then \
+                    echo "  ✓ Downloaded ${filename} via GITHUB_PROXY"; \
+                    return 0; \
+                fi; \
+                echo "  ⚠️  GITHUB_PROXY failed"; \
+            fi; \
+            # 方式3: 直接下载
+            echo "  📥 [方式3] Direct: ${direct_url}"; \
+            if curl -fsSL --connect-timeout 30 --max-time 300 -o "${output_path}" "${direct_url}"; then \
+                echo "  ✓ Downloaded ${filename} directly"; \
+                return 0; \
+            fi; \
+            echo "  ❌ All download methods failed for ${filename}"; \
+            rm -f "${output_path}"; \
+            return 1; \
+        }; \
         # Download Ubuntu 22.04 DEB packages (amd64 & arm64)
         for ARCH in amd64 arm64; do \
             DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_${ARCH}.deb"; \
             echo "Processing ${DEB_FILE}..."; \
-            if curl ${CURL_OPTS} -fsSL -o "/out/${DEB_FILE}" "${RELEASE_URL}/${DEB_FILE}"; then \
-                echo "✓ Downloaded ${DEB_FILE} from GitHub"; \
-            elif [ -f "/third_party/singularity/${DEB_FILE}" ]; then \
-                echo "⚠️ GitHub download failed, using local file: ${DEB_FILE}"; \
-                cp "/third_party/singularity/${DEB_FILE}" "/out/${DEB_FILE}"; \
-            else \
-                echo "❌ Failed to download ${DEB_FILE} and not found in third_party"; \
-            fi; \
+            download_file "${DEB_FILE}" || echo "⚠️  Skipping ${DEB_FILE}"; \
         done; \
         # Download EL9 RPM packages (x86_64 & aarch64)
         for ARCH in x86_64 aarch64; do \
             RPM_FILE="singularity-ce-${VERSION_NUM}-1.el9.${ARCH}.rpm"; \
             echo "Processing ${RPM_FILE}..."; \
-            if curl ${CURL_OPTS} -fsSL -o "/out/${RPM_FILE}" "${RELEASE_URL}/${RPM_FILE}"; then \
-                echo "✓ Downloaded ${RPM_FILE} from GitHub"; \
-            elif [ -f "/third_party/singularity/${RPM_FILE}" ]; then \
-                echo "⚠️ GitHub download failed, using local file: ${RPM_FILE}"; \
-                cp "/third_party/singularity/${RPM_FILE}" "/out/${RPM_FILE}"; \
-            else \
-                echo "❌ Failed to download ${RPM_FILE} and not found in third_party"; \
-            fi; \
+            download_file "${RPM_FILE}" || echo "⚠️  Skipping ${RPM_FILE}"; \
         done; \
-        echo "✅ Singularity packages downloaded"; \
+        echo "✅ Singularity packages processed"; \
         ls -lh /out/; \
     else \
         echo "⏭️  Skipping Singularity (BUILD_SINGULARITY=${BUILD_SINGULARITY})"; \
@@ -1324,6 +1390,7 @@ ARG PROMETHEUS_VERSION=v3.4.1
 ARG NODE_EXPORTER_VERSION=v1.8.2
 ARG ALERTMANAGER_VERSION=v0.28.1
 ARG CATEGRAF_VERSION=v0.4.25
+ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
@@ -1368,6 +1435,7 @@ RUN set -eux; \
         echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
+        GITHUB_PROXY=${GITHUB_PROXY:-} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
         /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
     fi; \
@@ -1388,6 +1456,7 @@ RUN set -eux; \
         echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
+        GITHUB_PROXY=${GITHUB_PROXY:-} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
         /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
     fi; \
@@ -1424,6 +1493,7 @@ RUN set -eux; \
         echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         CATEGRAF_VERSION=${CATEGRAF_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
+        GITHUB_PROXY=${GITHUB_PROXY:-} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
         /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
     fi; \

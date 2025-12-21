@@ -16,8 +16,11 @@ NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-1.8.2}"
 NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION#v}"
 OUTPUT_DIR="${OUTPUT_DIR:-/usr/share/nginx/html/pkgs/node_exporter}"
 GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
+GITHUB_PROXY="${GITHUB_PROXY:-}"
 
 echo "📦 Downloading Node Exporter ${NODE_EXPORTER_VERSION}..."
+echo "   GITHUB_MIRROR: ${GITHUB_MIRROR:-<disabled>}"
+echo "   GITHUB_PROXY:  ${GITHUB_PROXY:-<disabled>}"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -36,23 +39,34 @@ download_node_exporter() {
     
     echo "  📥 Downloading ${arch}..."
     
-    # 首先尝试镜像
+    # 方式1: 尝试镜像
     if [[ -n "$GITHUB_MIRROR" ]]; then
-        echo "     Trying mirror: ${mirror_url}"
-        if curl -fsSL -m 30 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$mirror_url" 2>/dev/null; then
-            echo "  ✓ Downloaded ${filename} (via mirror)"
+        echo "     [方式1] GITHUB_MIRROR: ${mirror_url}"
+        if curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$mirror_url" 2>/dev/null; then
+            echo "  ✓ Downloaded ${filename} via GITHUB_MIRROR"
             return 0
         fi
-        echo "  ⚠️  Mirror failed, trying direct download..."
+        echo "  ⚠️  GITHUB_MIRROR failed, trying next method..."
     fi
     
-    # 直接下载
-    echo "     URL: $base_url"
-    if curl -fsSL -m 60 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$base_url"; then
-        echo "  ✓ Downloaded ${filename}"
+    # 方式2: 尝试代理
+    if [[ -n "$GITHUB_PROXY" ]]; then
+        echo "     [方式2] GITHUB_PROXY: ${base_url}"
+        echo "     Using proxy: ${GITHUB_PROXY}"
+        if curl --proxy "$GITHUB_PROXY" -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$base_url" 2>/dev/null; then
+            echo "  ✓ Downloaded ${filename} via GITHUB_PROXY"
+            return 0
+        fi
+        echo "  ⚠️  GITHUB_PROXY failed, trying direct download..."
+    fi
+    
+    # 方式3: 直接下载
+    echo "     [方式3] Direct: $base_url"
+    if curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "${OUTPUT_DIR}/${filename}" "$base_url"; then
+        echo "  ✓ Downloaded ${filename} directly"
         return 0
     else
-        echo "  ❌ Download failed: ${filename}"
+        echo "  ❌ All download methods failed: ${filename}"
         rm -f "${OUTPUT_DIR}/${filename}"
         return 1
     fi
