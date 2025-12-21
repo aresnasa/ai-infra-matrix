@@ -14,6 +14,8 @@ FROM ${NODE_IMAGE} AS fe-builder
 
 ARG NPM_REGISTRY={{NPM_REGISTRY}}
 ARG N9E_FE_VERSION={{N9E_FE_VERSION}}
+ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
+ARG GITHUB_PROXY={{GITHUB_PROXY}}
 # Set VITE_PREFIX to match Nightingale's BasePath configuration
 # This ensures React Router and all asset paths use the correct prefix
 # Backend config.toml must have: BasePath = "/nightingale"
@@ -22,8 +24,53 @@ ARG VITE_PREFIX=/nightingale
 
 WORKDIR /fe
 
-# Copy frontend source code
-COPY third_party/n9e-fe-src/ .
+# Download frontend source code from GitHub
+# The n9e-fe-src directory may not be included in Docker build context
+# because it's a nested git repository (not a submodule)
+# Uses 3-way fallback: GITHUB_MIRROR → GITHUB_PROXY → Direct
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*; \
+    echo "Downloading n9e-fe ${N9E_FE_VERSION}..."; \
+    GITHUB_URL="https://github.com/n9e/fe.git"; \
+    DOWNLOADED=false; \
+    # Method 1: Try GITHUB_MIRROR (URL prefix acceleration)
+    if [ "$DOWNLOADED" = "false" ] && [ -n "${GITHUB_MIRROR}" ]; then \
+        echo "  → Trying GITHUB_MIRROR: ${GITHUB_MIRROR}${GITHUB_URL}"; \
+        if git clone --depth 1 --branch "${N9E_FE_VERSION}" "${GITHUB_MIRROR}${GITHUB_URL}" . 2>/dev/null; then \
+            echo "  ✓ Downloaded via GITHUB_MIRROR"; \
+            DOWNLOADED=true; \
+        else \
+            echo "  ✗ GITHUB_MIRROR failed"; \
+        fi; \
+    fi; \
+    # Method 2: Try GITHUB_PROXY (HTTP proxy)
+    if [ "$DOWNLOADED" = "false" ] && [ -n "${GITHUB_PROXY}" ]; then \
+        echo "  → Trying GITHUB_PROXY: ${GITHUB_PROXY}"; \
+        export http_proxy="${GITHUB_PROXY}"; \
+        export https_proxy="${GITHUB_PROXY}"; \
+        if git clone --depth 1 --branch "${N9E_FE_VERSION}" "${GITHUB_URL}" . 2>/dev/null; then \
+            echo "  ✓ Downloaded via GITHUB_PROXY"; \
+            DOWNLOADED=true; \
+        else \
+            echo "  ✗ GITHUB_PROXY failed"; \
+        fi; \
+        unset http_proxy https_proxy; \
+    fi; \
+    # Method 3: Direct download (fallback)
+    if [ "$DOWNLOADED" = "false" ]; then \
+        echo "  → Trying direct download: ${GITHUB_URL}"; \
+        if git clone --depth 1 --branch "${N9E_FE_VERSION}" "${GITHUB_URL}" .; then \
+            echo "  ✓ Downloaded directly"; \
+            DOWNLOADED=true; \
+        else \
+            echo "  ✗ Direct download failed"; \
+        fi; \
+    fi; \
+    if [ "$DOWNLOADED" = "false" ]; then \
+        echo "ERROR: Failed to download n9e-fe ${N9E_FE_VERSION}"; \
+        exit 1; \
+    fi; \
+    ls -la
 
 # Install dependencies and build with custom prefix
 RUN set -eux; \
