@@ -10,11 +10,17 @@ ARG NPM_REGISTRY={{NPM_REGISTRY}}
 ARG APT_MIRROR={{APT_MIRROR}}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置 APT 镜像源（Debian bookworm）
+# 配置 APT 镜像源（Debian bookworm）- 直接使用阿里云镜像源
 RUN set -eux; \
-    apt-get update || \
-    (sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-     apt-get update)
+    echo "配置 Debian 阿里云镜像源..."; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+        sed -i 's|security.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+        sed -i 's|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list; \
+    fi; \
+    apt-get update
 
 # 安装时区工具
 RUN apt-get install -y --no-install-recommends tzdata && \
