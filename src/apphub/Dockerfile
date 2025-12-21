@@ -1032,34 +1032,52 @@ RUN set -eux; \
             ARCH_SUFFIX="${ARCH}"; \
         fi; \
         TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
+        GITHUB_DIRECT_URL="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
+        DOWNLOAD_SUCCESS=false; \
         # 优先检查本地预下载的包
         if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
             echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
             cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
-        else \
-            # 直接从 GitHub releases 下载预编译二进制（推荐，避免 Go 版本兼容问题）
-            echo "📥 Downloading pre-built Categraf ${CATEGRAF_VERSION} for ${ARCH_SUFFIX}..."; \
-            DOWNLOAD_URL="${GITHUB_MIRROR}github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
-            echo "Download URL: ${DOWNLOAD_URL}"; \
-            curl -fsSL -o "/out/${TARBALL_NAME}" "${DOWNLOAD_URL}" || { \
-                echo "❌ Failed to download Categraf binary"; \
-                echo "⚠️  Falling back to source build (requires Go 1.24+)..."; \
-                # Fallback: 从源码构建（可能因 Go 版本问题失败）
-                if [ -n "${GITHUB_PROXY:-}" ]; then \
-                    echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
-                    export ALL_PROXY="${GITHUB_PROXY}"; \
-                    export HTTP_PROXY="${GITHUB_PROXY}"; \
-                    export HTTPS_PROXY="${GITHUB_PROXY}"; \
-                    git config --global http.proxy "${GITHUB_PROXY}"; \
-                    git config --global https.proxy "${GITHUB_PROXY}"; \
-                fi; \
-                CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-                CATEGRAF_REPO=${CATEGRAF_REPO} \
-                BUILD_DIR=/build \
-                OUTPUT_DIR=/out \
-                /scripts/build-app.sh categraf; \
-            }; \
-            echo "✓ Categraf ${CATEGRAF_VERSION} downloaded successfully"; \
+            DOWNLOAD_SUCCESS=true; \
+        fi; \
+        # 方式1: 尝试使用 GITHUB_MIRROR 加速下载
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_MIRROR:-}" ]; then \
+            MIRROR_URL="${GITHUB_MIRROR}github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
+            echo "📥 [方式1] 尝试通过 GITHUB_MIRROR 下载: ${MIRROR_URL}"; \
+            if curl -fsSL --connect-timeout 30 --max-time 300 -o "/out/${TARBALL_NAME}" "${MIRROR_URL}"; then \
+                echo "✓ Categraf ${CATEGRAF_VERSION} downloaded via GITHUB_MIRROR"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  GITHUB_MIRROR 下载失败，尝试其他方式..."; \
+            fi; \
+        fi; \
+        # 方式2: 尝试使用 GITHUB_PROXY 代理直接从 GitHub 下载
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "📥 [方式2] 尝试通过 GITHUB_PROXY 代理下载: ${GITHUB_DIRECT_URL}"; \
+            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+            if curl --proxy "${GITHUB_PROXY}" -fsSL --connect-timeout 30 --max-time 300 -o "/out/${TARBALL_NAME}" "${GITHUB_DIRECT_URL}"; then \
+                echo "✓ Categraf ${CATEGRAF_VERSION} downloaded via GITHUB_PROXY"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  GITHUB_PROXY 代理下载失败..."; \
+            fi; \
+        fi; \
+        # 方式3: 直接从 GitHub 下载（无代理）
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+            echo "📥 [方式3] 尝试直接从 GitHub 下载: ${GITHUB_DIRECT_URL}"; \
+            if curl -fsSL --connect-timeout 30 --max-time 300 -o "/out/${TARBALL_NAME}" "${GITHUB_DIRECT_URL}"; then \
+                echo "✓ Categraf ${CATEGRAF_VERSION} downloaded directly from GitHub"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  直接下载也失败了..."; \
+            fi; \
+        fi; \
+        # 所有方式都失败，创建占位文件
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+            echo "❌ 所有下载方式均失败"; \
+            echo "⚠️  Creating placeholder - Categraf will need to be installed manually or via apphub"; \
+            echo "DOWNLOAD_FAILED" > "/out/${TARBALL_NAME}.failed"; \
+            touch "/out/${TARBALL_NAME}"; \
         fi; \
     else \
         echo "⏭️  Skipping Categraf (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
