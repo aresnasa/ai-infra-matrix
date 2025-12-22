@@ -1082,7 +1082,7 @@ services:
       backend-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/api/v1/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/nightingale/"]
       interval: 30s
       timeout: 10s
       retries: 3
