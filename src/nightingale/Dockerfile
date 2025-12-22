@@ -15,7 +15,7 @@ FROM ${NODE_IMAGE} AS fe-builder
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG N9E_FE_VERSION=v8.4.1
 ARG GITHUB_MIRROR=https://ghfast.top/
-ARG GITHUB_PROXY
+ARG GITHUB_PROXY={{GITHUB_PROXY}}
 # Set VITE_PREFIX to match Nightingale's BasePath configuration
 # This ensures React Router and all asset paths use the correct prefix
 # Backend config.toml must have: BasePath = "/nightingale"
