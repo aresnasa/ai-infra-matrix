@@ -101,6 +101,23 @@
       "filename_version_prefix": "",
       "architectures": [""],
       "filename_pattern": "slurm-{VERSION}.tar.bz2"
+    },
+    "code_server": {
+      "name": "code-server",
+      "description": "VS Code Server for browser-based development",
+      "source": "github-release",
+      "github_repo": "coder/code-server",
+      "version_env": "CODE_SERVER_VERSION",
+      "default_version": "4.96.4",
+      "version_prefix": "v",
+      "filename_version_prefix": "",
+      "architectures": ["amd64", "arm64"],
+      "filename_pattern_deb": "code-server_{VERSION}_{ARCH}.deb",
+      "filename_pattern_rpm": "code-server-{VERSION}-1.{ARCH}.rpm",
+      "rpm_arch_map": {
+        "amd64": "x86_64",
+        "arm64": "aarch64"
+      }
     }
   }
 }

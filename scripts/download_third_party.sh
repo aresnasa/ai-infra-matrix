@@ -298,6 +298,9 @@ download_component() {
     # 特殊处理: SaltStack 有多个包和格式
     if [ "$component" = "saltstack" ]; then
         download_saltstack "$tag_version" "$file_version" "$output_dir"
+    # 特殊处理: code-server (DEB + RPM)
+    elif [ "$component" = "code_server" ]; then
+        download_code_server "$tag_version" "$file_version" "$output_dir"
     else
         # 通用下载逻辑
         for arch in "${archs[@]}"; do
@@ -354,6 +357,41 @@ download_saltstack() {
             local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
             download_file "$url" "${output_dir}/${filename}" true || true
         done
+    done
+}
+
+# code-server 特殊下载 (DEB + RPM)
+download_code_server() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="coder/code-server"
+    
+    # DEB packages
+    echo ""
+    echo "  📦 下载 DEB 包..."
+    for arch in amd64 arm64; do
+        if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+            continue
+        fi
+        local filename="code-server_${file_version}_${arch}.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages
+    echo ""
+    echo "  📦 下载 RPM 包..."
+    for arch in amd64 arm64; do
+        if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+            continue
+        fi
+        local rpm_arch="x86_64"
+        [ "$arch" = "arm64" ] && rpm_arch="aarch64"
+        
+        local filename="code-server-${file_version}-1.${rpm_arch}.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
     done
 }
 
