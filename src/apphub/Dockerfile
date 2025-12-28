@@ -49,7 +49,7 @@ ARG SALTSTACK_VERSION=v3007.8
 ARG CATEGRAF_VERSION=v0.4.25
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4.3.4
+ARG SINGULARITY_VERSION=v4.3.6
 
 # Accept optional tarball path relative to build context root
 # 默认在 src/apphub/ 目录查找 tarball（因为构建上下文是项目根目录）
@@ -1129,7 +1129,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS singularity-builder
 ARG BUILD_SINGULARITY=true
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4.3.4
+ARG SINGULARITY_VERSION=v4.3.6
 ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
 ARG APT_MIRROR=mirrors.aliyun.com

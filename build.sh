@@ -184,7 +184,10 @@ update_env_variable() {
     fi
 }
 
-# 同步 .env 与 .env.example 中的缺失变量
+# 同步 .env 与 .env.example
+# 功能：
+#   1. 添加 .env.example 中新增的变量
+#   2. 用 .env.example 的值覆盖 .env 中不同的值
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
@@ -204,7 +207,7 @@ sync_env_with_example() {
     local missing_vars=()
     local updated_vars=()
     
-    # 读取 .env.example 中的所有变量，同步缺失的变量到 .env
+    # 读取 .env.example 中的所有变量，同步到 .env
     while IFS= read -r line || [[ -n "$line" ]]; do
         # 跳过注释和空行
         if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
@@ -222,14 +225,14 @@ sync_env_with_example() {
                 echo "${var_name}=${example_value}" >> "$env_file"
                 missing_vars+=("$var_name")
             else
-                # 变量存在，检查是否为空值
+                # 变量存在，检查值是否不同
                 local current_value
                 current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
                 
-                # 如果当前值为空且 example 有默认值，则更新
-                if [[ -z "$current_value" ]] && [[ -n "$example_value" ]]; then
+                # 如果值不同，用 example 的值更新
+                if [[ "$current_value" != "$example_value" ]]; then
                     update_env_variable "$var_name" "$example_value"
-                    updated_vars+=("$var_name")
+                    updated_vars+=("$var_name: $current_value → $example_value")
                 fi
             fi
         fi
@@ -244,7 +247,7 @@ sync_env_with_example() {
     fi
     
     if [[ ${#updated_vars[@]} -gt 0 ]]; then
-        log_info "Updated ${#updated_vars[@]} empty variables with defaults:"
+        log_info "Updated ${#updated_vars[@]} variables from .env.example:"
         for var in "${updated_vars[@]}"; do
             log_info "  ↻ $var"
         done

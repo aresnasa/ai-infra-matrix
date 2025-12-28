@@ -106,3 +106,4 @@ src/nginx/conf.d
 build.sh.backup
 # Generated dependency config files (from .tpl templates)
 src/*/dependency.conf
+third_party/singularity
