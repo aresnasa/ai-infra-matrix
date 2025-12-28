@@ -38,18 +38,19 @@ func (SaltJobHistory) TableName() string {
 
 // SaltJobConfig Salt作业配置（存储清理策略等）
 type SaltJobConfig struct {
-	ID                    uint      `gorm:"primaryKey" json:"id"`
-	MaxRetentionDays      int       `gorm:"default:30" json:"max_retention_days"`               // 最大保留天数
-	MaxRecords            int       `gorm:"default:10000" json:"max_records"`                   // 最大记录数
-	CleanupEnabled        bool      `gorm:"default:true" json:"cleanup_enabled"`                // 是否启用自动清理
-	CleanupIntervalHour   int       `gorm:"default:24" json:"cleanup_interval_hour"`            // 清理间隔（转换后的小时数）
-	CleanupIntervalValue  int       `gorm:"default:1" json:"cleanup_interval_value"`            // 清理间隔值
-	CleanupIntervalUnit   string    `gorm:"size:16;default:'day'" json:"cleanup_interval_unit"` // 清理间隔单位: hour, day, month, year
-	LastCleanupTime       time.Time `json:"last_cleanup_time"`                                  // 上次清理时间
-	DangerousCommandsJSON string    `gorm:"type:text;column:dangerous_commands" json:"-"`       // 危险命令黑名单（JSON存储）
-	BlacklistEnabled      bool      `gorm:"default:true" json:"blacklist_enabled"`              // 是否启用黑名单检查
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	ID                         uint      `gorm:"primaryKey" json:"id"`
+	MaxRetentionDays           int       `gorm:"default:30" json:"max_retention_days"`               // 最大保留天数
+	MaxRecords                 int       `gorm:"default:10000" json:"max_records"`                   // 最大记录数
+	CleanupEnabled             bool      `gorm:"default:true" json:"cleanup_enabled"`                // 是否启用自动清理
+	CleanupIntervalHour        int       `gorm:"default:24" json:"cleanup_interval_hour"`            // 清理间隔（转换后的小时数）
+	CleanupIntervalValue       int       `gorm:"default:1" json:"cleanup_interval_value"`            // 清理间隔值
+	CleanupIntervalUnit        string    `gorm:"size:16;default:'day'" json:"cleanup_interval_unit"` // 清理间隔单位: hour, day, month, year
+	LastCleanupTime            time.Time `json:"last_cleanup_time"`                                  // 上次清理时间
+	DangerousCommandsJSON      string    `gorm:"type:text;column:dangerous_commands" json:"-"`       // 危险命令黑名单（JSON存储）
+	BlacklistEnabled           bool      `gorm:"default:true" json:"blacklist_enabled"`              // 是否启用黑名单检查
+	RequireAuthForDangerousCmd bool      `gorm:"default:true" json:"require_auth_for_dangerous_cmd"` // 编辑/删除危险命令是否需要二次认证
+	CreatedAt                  time.Time `json:"created_at"`
+	UpdatedAt                  time.Time `json:"updated_at"`
 }
 
 // CalculateCleanupIntervalHour 根据值和单位计算小时数

@@ -150,6 +150,10 @@ func main() {
 		logrus.Fatal("Failed to connect to database:", err)
 	}
 
+	// 初始化二次认证模块
+	utils.InitSecondaryAuth(database.DB)
+	logrus.Info("Secondary authentication module initialized")
+
 	// 运行数据库迁移
 	if err := database.Migrate(); err != nil {
 		logrus.Fatal("Failed to migrate database:", err)
@@ -350,6 +354,9 @@ func main() {
 
 	// Swagger文档
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// 添加审计中间件（在所有API路由之前，用于记录基础设施操作）
+	r.Use(middleware.AuditMiddleware(middleware.GetDefaultAuditConfig()))
 
 	// 设置 API 路由
 	setupAPIRoutes(r, cfg, jobService, sshService)
@@ -1322,5 +1329,43 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// 安全审计日志
 		security.GET("/audit-logs", securityHandler.ListAuditLogs)
+	}
+
+	// 基础设施审计日志路由（需要认证）
+	auditHandler := handlers.NewAuditHandler()
+	// 初始化审计配置
+	services.GetAuditService().InitializeDefaultConfigs()
+
+	audit := api.Group("/audit")
+	audit.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 审计日志查询
+		audit.GET("/logs", auditHandler.ListAuditLogs)
+		audit.GET("/logs/:id", auditHandler.GetAuditLog)
+		audit.GET("/my-logs", auditHandler.GetUserAuditLogs)
+		audit.GET("/resources/:resource_type/:resource_id", auditHandler.GetResourceAuditLogs)
+
+		// 审计统计
+		audit.GET("/statistics", auditHandler.GetAuditStatistics)
+
+		// 审计元数据
+		audit.GET("/categories", auditHandler.GetAuditCategories)
+		audit.GET("/actions", auditHandler.GetAuditActions)
+
+		// 审计配置管理（仅管理员）
+		auditAdmin := audit.Group("/configs")
+		auditAdmin.Use(middleware.AdminMiddleware())
+		{
+			auditAdmin.GET("", auditHandler.ListAuditConfigs)
+			auditAdmin.GET("/:category", auditHandler.GetAuditConfig)
+			auditAdmin.PUT("/:category", auditHandler.UpdateAuditConfig)
+			auditAdmin.POST("/init", auditHandler.InitializeAuditConfigs)
+		}
+
+		// 审计日志导出（仅管理员）
+		audit.POST("/export", middleware.AdminMiddleware(), auditHandler.ExportAuditLogs)
+
+		// 审计日志清理（仅管理员）
+		audit.POST("/cleanup", middleware.AdminMiddleware(), auditHandler.CleanupAuditLogs)
 	}
 }

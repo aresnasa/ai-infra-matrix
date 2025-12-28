@@ -7,6 +7,7 @@ import (
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -154,6 +155,13 @@ func (s *UserService) Login(req *models.LoginRequest) (*models.User, error) {
 	db.Save(&user)
 
 	return &user, nil
+}
+
+// VerifyPassword 验证用户密码（用于二次认证）
+// 注意：推荐使用 utils.VerifyUserPassword 公共函数
+func (s *UserService) VerifyPassword(username, password string) bool {
+	verified, _ := utils.VerifyUserPassword(username, password)
+	return verified
 }
 
 // GetUserByID 根据ID获取用户

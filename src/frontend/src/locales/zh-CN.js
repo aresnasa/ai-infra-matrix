@@ -73,6 +73,11 @@ export default {
     seconds: '秒',
     enabled: '启用',
     disabled: '禁用',
+    // 二次认证
+    secondaryAuth: '二次认证',
+    password: '密码',
+    pleaseInputPassword: '请输入密码',
+    inputPassword: '请输入您的账户密码',
   },
 
   // 主题
@@ -695,6 +700,8 @@ export default {
     dangerousCommandBlacklist: '危险命令黑名单',
     dangerousCommandDesc: '配置危险命令黑名单，匹配的命令将被拦截执行。支持精确匹配和正则表达式。',
     dangerousCommandHint: '配置的命令模式将在执行 cmd.run 等命令时进行检查，匹配的命令将被拦截。',
+    requireAuthTip: '启用后，编辑或删除危险命令规则需要输入密码确认',
+    authRequired: '此操作需要验证您的身份，请输入当前账户密码确认。',
     addCommand: '添加规则',
     editCommand: '编辑规则',
     commandPattern: '命令模式',

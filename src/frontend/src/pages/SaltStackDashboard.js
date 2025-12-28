@@ -213,6 +213,7 @@ const SaltStackDashboard = () => {
     cleanup_interval_unit: 'day',
     last_cleanup_time: null,
     blacklist_enabled: true,
+    require_auth_for_dangerous_cmd: true,
     dangerous_commands: [],
   });
   const [jobConfigLoading, setJobConfigLoading] = useState(false);
@@ -220,6 +221,9 @@ const SaltStackDashboard = () => {
   const [editingCommand, setEditingCommand] = useState(null); // 编辑中的危险命令
   const [commandModalVisible, setCommandModalVisible] = useState(false); // 危险命令编辑弹窗
   const [commandForm] = Form.useForm(); // 危险命令表单
+  const [authModalVisible, setAuthModalVisible] = useState(false); // 二次认证弹窗
+  const [authForm] = Form.useForm(); // 二次认证表单
+  const [pendingConfigSave, setPendingConfigSave] = useState(null); // 待保存的配置（需要认证）
 
   // 自动刷新状态
   const [autoRefreshMinions, setAutoRefreshMinions] = useState(false);
@@ -1629,21 +1633,47 @@ echo "}"`,
   }, [t]);
 
   // 保存作业配置
-  const saveJobConfig = async (values) => {
+  const saveJobConfig = async (values, authPassword = null) => {
     setJobConfigSaving(true);
     try {
-      const response = await saltStackAPI.updateJobConfig(values);
+      const payload = authPassword ? { ...values, auth_password: authPassword } : values;
+      const response = await saltStackAPI.updateJobConfig(payload);
       if (response.data?.success) {
         setJobConfig(response.data.data || values);
         message.success(t('saltstack.configSaved', '配置已保存'));
+        setPendingConfigSave(null);
+        setAuthModalVisible(false);
+        authForm.resetFields();
+      } else if (response.data?.require_auth) {
+        // 需要二次认证
+        setPendingConfigSave(values);
+        setAuthModalVisible(true);
       } else {
         throw new Error(response.data?.error || 'Unknown error');
       }
     } catch (e) {
       console.error('保存作业配置失败', e);
-      message.error(t('saltstack.configSaveFailed', '保存配置失败') + ': ' + (e.response?.data?.error || e.message));
+      // 检查是否需要二次认证
+      if (e.response?.data?.require_auth) {
+        setPendingConfigSave(values);
+        setAuthModalVisible(true);
+      } else {
+        message.error(t('saltstack.configSaveFailed', '保存配置失败') + ': ' + (e.response?.data?.error || e.message));
+      }
     } finally {
       setJobConfigSaving(false);
+    }
+  };
+
+  // 处理二次认证确认
+  const handleAuthConfirm = async () => {
+    try {
+      const values = await authForm.validateFields();
+      if (pendingConfigSave) {
+        await saveJobConfig(pendingConfigSave, values.password);
+      }
+    } catch (e) {
+      console.error('二次认证失败', e);
     }
   };
 
@@ -5767,6 +5797,17 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                         }
                         extra={
                           <Space>
+                            <Tooltip title={t('saltstack.requireAuthTip', '启用后，编辑或删除危险命令规则需要输入密码确认')}>
+                              <Space size="small">
+                                <LockOutlined style={{ color: jobConfig.require_auth_for_dangerous_cmd ? '#1890ff' : '#999' }} />
+                                <Switch
+                                  size="small"
+                                  checked={jobConfig.require_auth_for_dangerous_cmd}
+                                  onChange={(checked) => setJobConfig(prev => ({ ...prev, require_auth_for_dangerous_cmd: checked }))}
+                                />
+                              </Space>
+                            </Tooltip>
+                            <Divider type="vertical" />
                             <Switch
                               checked={jobConfig.blacklist_enabled}
                               onChange={(checked) => setJobConfig(prev => ({ ...prev, blacklist_enabled: checked }))}
@@ -7545,6 +7586,46 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
                 <Switch
                   checkedChildren={t('common.enabled', '启用')}
                   unCheckedChildren={t('common.disabled', '禁用')}
+                />
+              </Form.Item>
+            </Form>
+          </Modal>
+
+          {/* 二次认证弹窗 */}
+          <Modal
+            title={
+              <Space>
+                <LockOutlined style={{ color: '#faad14' }} />
+                {t('common.secondaryAuth', '二次认证')}
+              </Space>
+            }
+            open={authModalVisible}
+            onOk={handleAuthConfirm}
+            onCancel={() => {
+              setAuthModalVisible(false);
+              setPendingConfigSave(null);
+              authForm.resetFields();
+            }}
+            okText={t('common.confirm', '确认')}
+            cancelText={t('common.cancel', '取消')}
+            width={400}
+            okButtonProps={{ loading: jobConfigSaving }}
+          >
+            <Alert
+              message={t('saltstack.authRequired', '此操作需要验证您的身份，请输入当前账户密码确认。')}
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            <Form form={authForm} layout="vertical">
+              <Form.Item
+                name="password"
+                label={t('common.password', '密码')}
+                rules={[{ required: true, message: t('common.pleaseInputPassword', '请输入密码') }]}
+              >
+                <Input.Password
+                  placeholder={t('common.inputPassword', '请输入您的账户密码')}
+                  prefix={<LockOutlined />}
                 />
               </Form.Item>
             </Form>

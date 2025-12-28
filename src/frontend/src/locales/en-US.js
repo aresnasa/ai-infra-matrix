@@ -73,6 +73,11 @@ export default {
     seconds: 'seconds',
     enabled: 'Enabled',
     disabled: 'Disabled',
+    // Secondary Authentication
+    secondaryAuth: 'Secondary Authentication',
+    password: 'Password',
+    pleaseInputPassword: 'Please enter password',
+    inputPassword: 'Please enter your account password',
   },
 
   // Theme
@@ -751,6 +756,10 @@ export default {
     months: 'Months',
     years: 'Years',
     cleanupIntervalCalculated: '= {hours} hours',
+
+    // Secondary Authentication
+    requireAuthTip: 'When enabled, editing or deleting dangerous command rules requires password confirmation',
+    authRequired: 'This operation requires identity verification. Please enter your account password to confirm.',
   },
 
   // Search Related

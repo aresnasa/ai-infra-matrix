@@ -21,6 +21,7 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/scripts"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
+	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/config"
 	"github.com/gin-gonic/gin"
@@ -4989,14 +4990,16 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 
 	// 使用通用结构解析，以支持 dangerous_commands 字段和新的清理间隔配置
 	var request struct {
-		MaxRetentionDays     int                       `json:"max_retention_days"`
-		MaxRecords           int                       `json:"max_records"`
-		CleanupEnabled       bool                      `json:"cleanup_enabled"`
-		CleanupIntervalHour  int                       `json:"cleanup_interval_hour"`  // 兼容旧版本
-		CleanupIntervalValue int                       `json:"cleanup_interval_value"` // 新版本：间隔值
-		CleanupIntervalUnit  string                    `json:"cleanup_interval_unit"`  // 新版本：单位 hour/day/month/year
-		BlacklistEnabled     bool                      `json:"blacklist_enabled"`
-		DangerousCommands    []models.DangerousCommand `json:"dangerous_commands"`
+		MaxRetentionDays           int                       `json:"max_retention_days"`
+		MaxRecords                 int                       `json:"max_records"`
+		CleanupEnabled             bool                      `json:"cleanup_enabled"`
+		CleanupIntervalHour        int                       `json:"cleanup_interval_hour"`  // 兼容旧版本
+		CleanupIntervalValue       int                       `json:"cleanup_interval_value"` // 新版本：间隔值
+		CleanupIntervalUnit        string                    `json:"cleanup_interval_unit"`  // 新版本：单位 hour/day/month/year
+		BlacklistEnabled           bool                      `json:"blacklist_enabled"`
+		RequireAuthForDangerousCmd bool                      `json:"require_auth_for_dangerous_cmd"` // 编辑/删除危险命令需要二次认证
+		DangerousCommands          []models.DangerousCommand `json:"dangerous_commands"`
+		AuthPassword               string                    `json:"auth_password,omitempty"` // 二次认证密码
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -5081,14 +5084,34 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 
 	// 获取现有配置
 	existingConfig := saltJobService.GetConfig()
+
+	// 检查是否需要二次认证（当修改危险命令列表时）
+	if existingConfig != nil && existingConfig.RequireAuthForDangerousCmd {
+		// 检查危险命令是否有变化
+		commandsChanged := checkDangerousCommandsChanged(request.DangerousCommands, existingConfig.GetDangerousCommands())
+
+		// 如果危险命令有变化，需要验证密码
+		if commandsChanged {
+			authConfig := utils.SecondaryAuthConfig{
+				Enabled:      true,
+				AuthType:     "dangerous_commands",
+				ErrorMessage: "修改危险命令黑名单需要二次认证",
+			}
+			if !utils.RequireSecondaryAuth(c, authConfig, request.AuthPassword) {
+				return
+			}
+		}
+	}
+
 	config := &models.SaltJobConfig{
-		MaxRetentionDays:     request.MaxRetentionDays,
-		MaxRecords:           request.MaxRecords,
-		CleanupEnabled:       request.CleanupEnabled,
-		CleanupIntervalHour:  cleanupIntervalHour,
-		CleanupIntervalValue: cleanupIntervalValue,
-		CleanupIntervalUnit:  cleanupIntervalUnit,
-		BlacklistEnabled:     request.BlacklistEnabled,
+		MaxRetentionDays:           request.MaxRetentionDays,
+		MaxRecords:                 request.MaxRecords,
+		CleanupEnabled:             request.CleanupEnabled,
+		CleanupIntervalHour:        cleanupIntervalHour,
+		CleanupIntervalValue:       cleanupIntervalValue,
+		CleanupIntervalUnit:        cleanupIntervalUnit,
+		BlacklistEnabled:           request.BlacklistEnabled,
+		RequireAuthForDangerousCmd: request.RequireAuthForDangerousCmd,
 	}
 
 	// 保留现有配置的 ID 和上次清理时间
@@ -5261,4 +5284,34 @@ func (h *SaltStackHandler) TriggerJobCleanup(c *gin.Context) {
 		"success": true,
 		"message": "Cleanup triggered",
 	})
+}
+
+// checkDangerousCommandsChanged 检查危险命令列表是否有变化
+func checkDangerousCommandsChanged(newCommands, existingCommands []models.DangerousCommand) bool {
+	// 数量不同，肯定有变化
+	if len(newCommands) != len(existingCommands) {
+		return true
+	}
+
+	// 如果都为空，没有变化
+	if len(newCommands) == 0 {
+		return false
+	}
+
+	// 深度比较每个命令
+	for i, cmd := range newCommands {
+		if i >= len(existingCommands) {
+			return true
+		}
+		existing := existingCommands[i]
+		if cmd.Pattern != existing.Pattern ||
+			cmd.IsRegex != existing.IsRegex ||
+			cmd.Enabled != existing.Enabled ||
+			cmd.Description != existing.Description ||
+			cmd.Severity != existing.Severity {
+			return true
+		}
+	}
+
+	return false
 }
