@@ -5,7 +5,7 @@ third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
 third_party/proxy/
-third_party/code_server/*.deb
+third_party/code_server/
 scripts/ai_cd.sh
 ci_cd.sh
 ai_cd.sh
@@ -104,3 +104,5 @@ docker-compose.yml.backup
 build.sh.old
 src/nginx/conf.d
 build.sh.backup
+# Generated dependency config files (from .tpl templates)
+src/*/dependency.conf

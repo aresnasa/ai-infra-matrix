@@ -99,11 +99,20 @@ get_component_array() {
     fi
 }
 
-# 从 .env 文件获取版本
+# 从环境变量或 .env 文件获取版本
+# 优先级: 已加载的环境变量 > .env 文件 > 默认值
 get_env_version() {
     local var_name=$1
     local default=$2
     
+    # 优先使用已加载的环境变量
+    local env_val="${!var_name:-}"
+    if [ -n "$env_val" ]; then
+        echo "$env_val"
+        return
+    fi
+    
+    # 其次从 .env 文件读取
     if [ -f "$ENV_FILE" ]; then
         local val=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
         echo "${val:-$default}"

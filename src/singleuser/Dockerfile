@@ -6,7 +6,7 @@ FROM jupyter/base-notebook:latest
 # Version metadata
 ARG VERSION="dev"
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ARG CODE_SERVER_VERSION={{CODE_SERVER_VERSION}}
+ARG CODE_SERVER_VERSION=v4.107.0
 ENV APP_VERSION=${VERSION}
 ENV CODE_SERVER_VERSION=${CODE_SERVER_VERSION}
 

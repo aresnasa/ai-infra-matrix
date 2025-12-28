@@ -978,6 +978,33 @@ COMMON_IMAGES=(
     "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
 )
 
+# Initialize SAFELINE_IMAGES array for SafeLine WAF
+# Architecture suffix is auto-detected: -arm for ARM/aarch64, empty for x86_64
+# Configuration is defined in config/images.yaml
+_detect_safeline_arch_suffix() {
+    local arch=$(uname -m)
+    if [[ "$arch" =~ "aarch" || "$arch" =~ "arm" ]]; then
+        echo "-arm"
+    else
+        echo ""
+    fi
+}
+
+SAFELINE_ARCH_SUFFIX="${SAFELINE_ARCH_SUFFIX:-$(_detect_safeline_arch_suffix)}"
+SAFELINE_IMAGE_PREFIX="${SAFELINE_IMAGE_PREFIX:-chaitin}"
+SAFELINE_IMAGE_TAG="${SAFELINE_IMAGE_TAG:-9.3.0}"
+SAFELINE_REGION="${SAFELINE_REGION:-}"
+
+SAFELINE_IMAGES=(
+    "${SAFELINE_IMAGE_PREFIX}/safeline-postgres${SAFELINE_ARCH_SUFFIX}:15.2"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-mgt${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-detector${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-tengine${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-luigi${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-fvm${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-chaos${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+)
+
 # Ensure SSH Keys
 SSH_KEY_DIR="$SCRIPT_DIR/ssh-key"
 if [ ! -f "$SSH_KEY_DIR/id_rsa" ]; then
@@ -1037,6 +1064,98 @@ wait_for_apphub_ready() {
     
     log_error "❌ AppHub failed to become ready."
     return 1
+}
+
+# ==============================================================================
+# Third Party Version Sync - 同步第三方组件版本
+# ==============================================================================
+
+# Sync third_party version files with .env variables
+# Updates version.json files and components.json based on current .env settings
+sync_third_party_versions() {
+    local third_party_dir="$SCRIPT_DIR/third_party"
+    local components_json="$third_party_dir/components.json"
+    local updated_count=0
+    
+    log_info "Syncing third_party versions with .env..."
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        log_warn "jq not found, skipping third_party version sync"
+        return 0
+    fi
+    
+    # Check if components.json exists
+    if [[ ! -f "$components_json" ]]; then
+        log_warn "components.json not found at $components_json"
+        return 0
+    fi
+    
+    # Get list of components from components.json
+    local components=$(jq -r '.components | keys[]' "$components_json" 2>/dev/null)
+    
+    for component in $components; do
+        # Get version_env variable name from components.json
+        local version_env=$(jq -r ".components.${component}.version_env // empty" "$components_json")
+        local version_prefix=$(jq -r ".components.${component}.version_prefix // \"v\"" "$components_json")
+        local default_version=$(jq -r ".components.${component}.default_version // empty" "$components_json")
+        
+        if [[ -z "$version_env" ]]; then
+            continue
+        fi
+        
+        # Get current version from environment (loaded from .env)
+        local env_version="${!version_env:-}"
+        
+        if [[ -z "$env_version" ]]; then
+            continue
+        fi
+        
+        # Strip prefix for comparison if present in env_version
+        local clean_env_version="${env_version#v}"
+        clean_env_version="${clean_env_version#V}"
+        
+        # Check if version differs from default in components.json
+        if [[ "$clean_env_version" != "$default_version" ]]; then
+            log_info "  Updating $component: $default_version -> $clean_env_version"
+            
+            # Update components.json default_version
+            local tmp_file=$(mktemp)
+            jq ".components.${component}.default_version = \"$clean_env_version\"" "$components_json" > "$tmp_file" && \
+                mv "$tmp_file" "$components_json"
+            updated_count=$((updated_count + 1))
+        fi
+        
+        # Update version.json if component directory exists
+        local component_dir="$third_party_dir/$component"
+        local version_json="$component_dir/version.json"
+        
+        if [[ -d "$component_dir" ]] && [[ -f "$version_json" ]]; then
+            local current_version=$(jq -r '.version // empty' "$version_json" 2>/dev/null)
+            local current_clean="${current_version#v}"
+            current_clean="${current_clean#V}"
+            
+            if [[ "$current_clean" != "$clean_env_version" ]]; then
+                log_info "  Updating $component/version.json: $current_version -> ${version_prefix}${clean_env_version}"
+                
+                # Update version.json
+                cat > "$version_json" << EOF
+{
+    "component": "${component}",
+    "version": "${version_prefix}${clean_env_version}",
+    "downloaded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+                updated_count=$((updated_count + 1))
+            fi
+        fi
+    done
+    
+    if [[ $updated_count -gt 0 ]]; then
+        log_info "  ✓ Updated $updated_count third_party version entries"
+    else
+        log_info "  ✓ All third_party versions are in sync"
+    fi
 }
 
 # ==============================================================================
@@ -1114,6 +1233,8 @@ TEMPLATE_VARIABLES=(
     "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)
     "PIP_VERSION"         # pip version (e.g., 24.2)
     "N9E_FE_VERSION"      # Nightingale frontend version (e.g., v7.7.2, empty for auto-detect)
+    "CODE_SERVER_VERSION" # Code Server version (e.g., 4.96.4)
+    "GITHUB_PROXY"        # GitHub proxy for downloading packages (e.g., http://192.168.0.200:7890)
     
     # ===========================================
     # Project settings (Build-time & Runtime)
@@ -1182,6 +1303,10 @@ TEMPLATE_VARIABLES=(
     # ===========================================
     "CGROUP_VERSION"      # Cgroup version: v1 or v2 (auto-detected)
     "CGROUP_MOUNT"        # Cgroup mount path for docker-compose volumes
+    "SAFELINE_IMAGE_PREFIX" # SafeLine image prefix (e.g., chaitin)
+    "SAFELINE_IMAGE_TAG"    # SafeLine image tag (e.g., latest)
+    "SAFELINE_ARCH_SUFFIX"  # SafeLine architecture suffix (-arm for ARM, empty for x86_64)
+    "SAFELINE_REGION"       # SafeLine region suffix (optional)
 )
 
 # Render a single template file
@@ -1259,6 +1384,18 @@ render_all_templates() {
     log_info "  CGROUP_VERSION=$CGROUP_VERSION"
     log_info "  CGROUP_MOUNT=$CGROUP_MOUNT"
     
+    # Step 1.6: Auto-detect CPU architecture for SafeLine
+    log_info ""
+    log_info "Step 1.6: Detecting CPU architecture for SafeLine..."
+    local arch=$(uname -m)
+    if [[ "$arch" =~ "aarch" || "$arch" =~ "arm" ]]; then
+        export SAFELINE_ARCH_SUFFIX="-arm"
+    else
+        export SAFELINE_ARCH_SUFFIX=""
+    fi
+    log_info "  CPU Architecture: $arch"
+    log_info "  SAFELINE_ARCH_SUFFIX=${SAFELINE_ARCH_SUFFIX:-<empty>}"
+    
     log_info ""
     log_info "Step 2: Rendering template files..."
     log_info "Source: .env / .env.example"
@@ -1328,6 +1465,30 @@ render_all_templates() {
             fail_count=$((fail_count + 1))
         fi
     done < <(find "$SRC_DIR" -name "Dockerfile.tpl" -print0 2>/dev/null)
+    
+    # ===========================================
+    # Render dependency.conf.tpl files (external image versions)
+    # ===========================================
+    log_info "Rendering dependency configuration templates..."
+    while IFS= read -r -d '' template_file; do
+        local output_file="${template_file%.tpl}"
+        local component_name=$(basename "$(dirname "$template_file")")
+        
+        # Check if output file exists and is newer than template
+        if [[ "$force" != "true" ]] && [[ -f "$output_file" ]]; then
+            if [[ "$output_file" -nt "$template_file" ]] && [[ "$output_file" -nt "$ENV_FILE" ]]; then
+                log_info "Skipping $component_name/dependency.conf (up to date)"
+                skip_count=$((skip_count + 1))
+                continue
+            fi
+        fi
+        
+        if render_template "$template_file" "$output_file"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    done < <(find "$SRC_DIR" -name "dependency.conf.tpl" -print0 2>/dev/null)
     
     # ===========================================
     # Render Nginx configuration templates
@@ -1520,12 +1681,125 @@ render_all_templates() {
         fi
     fi
     
+    # ===========================================
+    # Sync third_party version files with .env
+    # Update version.json and components.json based on .env variables
+    # ===========================================
+    sync_third_party_versions
+    
     echo
     log_info "=========================================="
     log_info "Template rendering complete:"
     log_info "  ✓ Success: $success_count"
     [[ $skip_count -gt 0 ]] && log_info "  ⏭️  Skipped: $skip_count"
     [[ $fail_count -gt 0 ]] && log_warn "  ✗ Failed: $fail_count"
+    log_info "=========================================="
+    
+    # ===========================================
+    # Print component versions summary (dynamically discovered)
+    # ===========================================
+    echo
+    log_info "=========================================="
+    log_info "📦 Component Versions Summary"
+    log_info "=========================================="
+    echo
+    printf "%-30s %-15s %s\n" "Component" "Type" "Version/Image"
+    printf "%-30s %-15s %s\n" "------------------------------" "---------------" "--------------------"
+    
+    # Project version
+    printf "%-30s %-15s %s\n" "AI-Infra-Matrix" "project" "${IMAGE_TAG:-N/A}"
+    echo
+    
+    # Discover components from src/ directory
+    local build_components=()
+    local dependency_components=()
+    
+    for component_dir in "$SRC_DIR"/*/; do
+        local component_name=$(basename "$component_dir")
+        
+        # Skip hidden directories and special dirs
+        [[ "$component_name" == "shared" ]] && continue
+        [[ "$component_name" =~ ^\. ]] && continue
+        
+        local has_dockerfile=false
+        local has_dependency=false
+        local version_info=""
+        local component_type=""
+        
+        # Check for Dockerfile (build component)
+        if [[ -f "${component_dir}Dockerfile" ]] || [[ -f "${component_dir}Dockerfile.tpl" ]]; then
+            has_dockerfile=true
+        fi
+        
+        # Check for dependency.conf (external image)
+        if [[ -f "${component_dir}dependency.conf" ]]; then
+            has_dependency=true
+            # Read first non-comment, non-empty line as version info
+            version_info=$(grep -v '^#' "${component_dir}dependency.conf" | grep -v '^[[:space:]]*$' | head -n 1)
+        fi
+        
+        # Determine component type and version
+        if [[ "$has_dockerfile" == "true" ]] && [[ "$has_dependency" == "true" ]]; then
+            component_type="build+dep"
+            build_components+=("$component_name|$component_type|${IMAGE_TAG:-latest} (dep: $version_info)")
+        elif [[ "$has_dockerfile" == "true" ]]; then
+            component_type="build"
+            build_components+=("$component_name|$component_type|${IMAGE_TAG:-latest}")
+        elif [[ "$has_dependency" == "true" ]]; then
+            component_type="dependency"
+            dependency_components+=("$component_name|$component_type|$version_info")
+        fi
+    done
+    
+    # Print build components
+    if [[ ${#build_components[@]} -gt 0 ]]; then
+        echo "--- Build Components (Dockerfile) ---"
+        for item in "${build_components[@]}"; do
+            IFS='|' read -r name type version <<< "$item"
+            printf "%-30s %-15s %s\n" "$name" "$type" "$version"
+        done
+        echo
+    fi
+    
+    # Print dependency components
+    if [[ ${#dependency_components[@]} -gt 0 ]]; then
+        echo "--- External Dependencies (dependency.conf) ---"
+        for item in "${dependency_components[@]}"; do
+            IFS='|' read -r name type version <<< "$item"
+            printf "%-30s %-15s %s\n" "$name" "$type" "$version"
+        done
+        echo
+    fi
+    
+    # Print key environment versions from .env
+    echo "--- Key Environment Versions (.env) ---"
+    local env_versions=(
+        "GOLANG_IMAGE_VERSION:Golang"
+        "UBUNTU_VERSION:Ubuntu"
+        "NODE_VERSION:Node.js"
+        "PYTHON_VERSION:Python"
+        "ALPINE_VERSION:Alpine"
+        "SALTSTACK_VERSION:SaltStack"
+        "SLURM_VERSION:SLURM"
+        "CATEGRAF_VERSION:Categraf"
+        "SINGULARITY_VERSION:Singularity"
+        "CODE_SERVER_VERSION:Code Server"
+        "PROMETHEUS_VERSION:Prometheus"
+        "GRAFANA_VERSION:Grafana"
+        "VICTORIAMETRICS_VERSION:VictoriaMetrics"
+        "N9E_FE_VERSION:Nightingale FE"
+        "SAFELINE_IMAGE_TAG:SafeLine WAF"
+    )
+    
+    for item in "${env_versions[@]}"; do
+        IFS=':' read -r var_name display_name <<< "$item"
+        local var_value="${!var_name:-N/A}"
+        printf "%-30s %-15s %s\n" "$display_name" "env" "$var_value"
+    done
+    echo
+    
+    log_info "=========================================="
+    log_info "Total: ${#build_components[@]} build + ${#dependency_components[@]} dependency components"
     log_info "=========================================="
     
     if [[ $fail_count -gt 0 ]]; then
@@ -1773,6 +2047,31 @@ pull_all_services() {
         done
         echo
         
+        # Phase 1.5: Pull SafeLine WAF images from Docker Hub
+        log_info "=== Phase 1.5: SafeLine WAF images ==="
+        log_info "Architecture suffix: ${SAFELINE_ARCH_SUFFIX:-<none>}"
+        local safeline_count=0
+        for image in "${SAFELINE_IMAGES[@]}"; do
+            safeline_count=$((safeline_count + 1))
+            total_count=$((total_count + 1))
+            log_info "[$safeline_count/${#SAFELINE_IMAGES[@]}] $image"
+            
+            if docker image inspect "$image" &>/dev/null; then
+                log_info "  ✓ Already exists"
+                success_count=$((success_count + 1))
+                continue
+            fi
+            
+            if pull_image_with_retry "$image" "$max_retries"; then
+                log_info "  ✓ Pulled"
+                success_count=$((success_count + 1))
+            else
+                log_warn "  ✗ Failed"
+                failed_services+=("safeline:$image")
+            fi
+        done
+        echo
+        
         log_info "=== Phase 2: Project services (skipped - need registry) ==="
         log_info "ℹ️  Project images require registry to pull"
         log_info "💡 Usage: $0 pull-all <registry> [tag]"
@@ -1951,6 +2250,34 @@ pull_common_images() {
     for image in "${COMMON_IMAGES[@]}"; do
         total_count=$((total_count + 1))
         log_info "[$total_count/${#COMMON_IMAGES[@]}] Pulling: $image"
+        
+        # Check if image already exists locally
+        if docker image inspect "$image" &>/dev/null; then
+            log_info "  ✓ Already exists: $image"
+            success_count=$((success_count + 1))
+            continue
+        fi
+        
+        if pull_image_with_retry "$image" "$max_retries"; then
+            log_info "  ✓ Pulled: $image"
+            success_count=$((success_count + 1))
+        else
+            log_warn "  ✗ Failed: $image"
+            failed_images+=("$image")
+        fi
+    done
+    
+    echo
+    log_info "=========================================="
+    log_info "Pulling SafeLine WAF images"
+    log_info "=========================================="
+    log_info "Images to pull: ${#SAFELINE_IMAGES[@]}"
+    log_info "Architecture suffix: ${SAFELINE_ARCH_SUFFIX:-<none>}"
+    echo
+    
+    for image in "${SAFELINE_IMAGES[@]}"; do
+        total_count=$((total_count + 1))
+        log_info "[SafeLine] Pulling: $image"
         
         # Check if image already exists locally
         if docker image inspect "$image" &>/dev/null; then
@@ -2497,7 +2824,8 @@ build_component() {
     # Check for dependency configuration (External Image)
     local dep_conf="$component_dir/dependency.conf"
     if [ -f "$dep_conf" ]; then
-        local upstream_image=$(grep -v '^#' "$dep_conf" | head -n 1 | tr -d '[:space:]')
+        # Get first non-comment, non-empty line
+        local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
         if [ -z "$upstream_image" ]; then
             log_error "Empty dependency config for $component"
             return 1
@@ -2603,9 +2931,19 @@ discover_services() {
     FOUNDATION_SERVICES=()
     DEPENDENT_SERVICES=()
 
+    # Optional components that are disabled by default
+    # These require separate initialization (e.g., ./build.sh init-safeline)
+    local safeline_enabled="${SAFELINE_ENABLED:-false}"
+
     # Use find to avoid issues if directory is empty and sort for deterministic order
     while IFS= read -r dir; do
         local component=$(basename "$dir")
+        
+        # Skip optional components when disabled
+        if [[ "$component" == "safeline" ]] && [[ "$safeline_enabled" != "true" ]]; then
+            log_info "Skipping optional component: $component (SAFELINE_ENABLED=false)"
+            continue
+        fi
         
         # 1. Check for dependency.conf (External Image)
         if [ -f "$dir/dependency.conf" ]; then
@@ -3617,6 +3955,11 @@ print_help() {
     echo "  gen-prod-env [file] Generate production .env with random strong passwords"
     echo "                      default output: .env.prod"
     echo ""
+    echo "Optional Components:"
+    echo "  init-safeline       Initialize SafeLine WAF (optional sidecar component)"
+    echo "                      SafeLine is NOT included in 'build.sh all'"
+    echo "                      After init, start with: docker-compose up -d safeline-*"
+    echo ""
     echo "Build Commands:"
     echo "  build-all, all           Build all components in the correct order"
     echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
@@ -3812,6 +4155,64 @@ case "$COMMAND" in
         log_info "Current environment configuration:"
         grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
         ;;
+    init-safeline)
+        # 初始化 SafeLine WAF 数据目录
+        log_info "📦 Initializing SafeLine WAF data directories..."
+        
+        # 从 .env 获取 SAFELINE_DIR，默认 ./data/safeline
+        safeline_dir="${SAFELINE_DIR:-./data/safeline}"
+        
+        # 创建必要的目录
+        mkdir -p "$safeline_dir"/{resources,logs,run}
+        mkdir -p "$safeline_dir"/resources/{postgres/data,mgt,sock,nginx,detector,chaos,cache,luigi}
+        mkdir -p "$safeline_dir"/logs/{nginx,detector}
+        
+        # 设置安全的目录权限
+        # - 数据目录: 755 (所有者读写执行，其他人只读执行)
+        # - run/sock 目录需要被容器内进程访问: 750
+        # - postgres 数据目录: 700 (仅所有者访问，数据库安全要求)
+        # - logs 目录: 755 (允许读取日志)
+        
+        # 设置基础目录权限
+        chmod 755 "$safeline_dir"
+        chmod 755 "$safeline_dir"/resources
+        chmod 755 "$safeline_dir"/logs
+        chmod 750 "$safeline_dir"/run
+        
+        # 资源子目录权限
+        chmod 700 "$safeline_dir"/resources/postgres      # PostgreSQL 数据需要严格权限
+        chmod 700 "$safeline_dir"/resources/postgres/data
+        chmod 755 "$safeline_dir"/resources/mgt
+        chmod 750 "$safeline_dir"/resources/sock          # Socket 目录
+        chmod 755 "$safeline_dir"/resources/nginx
+        chmod 755 "$safeline_dir"/resources/detector
+        chmod 755 "$safeline_dir"/resources/chaos
+        chmod 755 "$safeline_dir"/resources/cache
+        chmod 755 "$safeline_dir"/resources/luigi
+        
+        # 日志目录权限
+        chmod 755 "$safeline_dir"/logs/nginx
+        chmod 755 "$safeline_dir"/logs/detector
+        
+        log_info "✅ SafeLine directories created at: $safeline_dir"
+        log_info ""
+        log_info "Directory structure (with permissions):"
+        find "$safeline_dir" -type d -exec ls -ld {} \; 2>/dev/null | head -20 | sed 's/^/  /'
+        log_info ""
+        log_info "⚠️  Note: SafeLine containers run as root inside, so directory ownership"
+        log_info "   is managed by the containers themselves. If you encounter permission"
+        log_info "   issues, run: sudo chown -R \$(id -u):\$(id -g) $safeline_dir"
+        log_info ""
+        log_info "💡 SafeLine is an optional sidecar component (not included in 'build.sh all')"
+        log_info ""
+        log_info "📋 To start SafeLine services:"
+        log_info "   docker-compose up -d safeline-postgres safeline-mgt safeline-detector safeline-tengine safeline-luigi safeline-fvm safeline-chaos"
+        log_info ""
+        log_info "🔐 To get/reset admin password:"
+        log_info "   docker exec safeline-mgt /app/mgt-cli reset-admin"
+        log_info ""
+        log_info "🌐 Access SafeLine management console at: https://<host>:${SAFELINE_MGT_PORT:-9443}"
+        ;;
     gen-prod-env)
         # 生成生产环境配置文件（使用强随机密码）
         generate_production_env "${ARG2:-.env.prod}" "$FORCE_BUILD"
@@ -3914,8 +4315,17 @@ case "$COMMAND" in
     download-deps)
         # Download third-party dependencies to third_party/
         log_info "📦 Downloading third-party dependencies..."
+        
+        # 加载 .env 文件中的环境变量，供下载脚本使用
+        if [[ -f "$ENV_FILE" ]]; then
+            log_info "Loading environment from $ENV_FILE..."
+            set -a  # 自动导出所有变量
+            source "$ENV_FILE"
+            set +a
+        fi
+        
         if [[ -x "$SCRIPT_DIR/scripts/download_third_party.sh" ]]; then
-            "$SCRIPT_DIR/scripts/download_third_party.sh"
+            "$SCRIPT_DIR/scripts/download_third_party.sh" "${REMAINING_ARGS[@]}"
             log_info "✅ Third-party dependencies downloaded to third_party/"
             log_info "💡 These files will be used during AppHub build for faster builds"
         else

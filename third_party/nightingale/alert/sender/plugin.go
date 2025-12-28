@@ -61,7 +61,8 @@ func alertingCallScript(ctx *ctx.Context, stdinBytes []byte, notifyScript models
 				return
 			}
 
-			err = os.Chmod(fpath, 0777)
+			// 0755: owner rwx, group rx, others rx - 安全的可执行脚本权限
+			err = os.Chmod(fpath, 0755)
 			if err != nil {
 				logger.Errorf("event_script_notify_fail: chmod script file err: %v", err)
 				stats.AlertNotifyErrorTotal.WithLabelValues(channel).Inc()

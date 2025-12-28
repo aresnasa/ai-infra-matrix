@@ -9,7 +9,10 @@
       "default_version": "3.4.1",
       "version_prefix": "v",
       "filename_version_prefix": "",
-      "architectures": ["amd64", "arm64"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
       "filename_pattern": "prometheus-{VERSION}.linux-{ARCH}.tar.gz"
     },
     "node_exporter": {
@@ -21,7 +24,10 @@
       "default_version": "1.8.2",
       "version_prefix": "v",
       "filename_version_prefix": "",
-      "architectures": ["amd64", "arm64"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
       "filename_pattern": "node_exporter-{VERSION}.linux-{ARCH}.tar.gz"
     },
     "alertmanager": {
@@ -33,7 +39,10 @@
       "default_version": "0.28.1",
       "version_prefix": "v",
       "filename_version_prefix": "",
-      "architectures": ["amd64", "arm64"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
       "filename_pattern": "alertmanager-{VERSION}.linux-{ARCH}.tar.gz"
     },
     "categraf": {
@@ -45,7 +54,10 @@
       "default_version": "0.4.25",
       "version_prefix": "v",
       "filename_version_prefix": "v",
-      "architectures": ["amd64", "arm64"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
       "filename_pattern": "categraf-{VERSION}-linux-{ARCH}.tar.gz"
     },
     "munge": {
@@ -57,7 +69,9 @@
       "default_version": "0.5.16",
       "version_prefix": "munge-",
       "filename_version_prefix": "",
-      "architectures": [""],
+      "architectures": [
+        ""
+      ],
       "filename_pattern": "munge-{VERSION}.tar.xz"
     },
     "singularity": {
@@ -66,10 +80,13 @@
       "source": "github-release",
       "github_repo": "sylabs/singularity",
       "version_env": "SINGULARITY_VERSION",
-      "default_version": "4.2.1",
+      "default_version": "4.3.4",
       "version_prefix": "v",
       "filename_version_prefix": "",
-      "architectures": ["amd64", "arm64"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
       "filename_pattern": "singularity-ce_{VERSION}-1~ubuntu22.04_{ARCH}.deb"
     },
     "saltstack": {
@@ -78,11 +95,22 @@
       "source": "github-release",
       "github_repo": "saltstack/salt",
       "version_env": "SALTSTACK_VERSION",
-      "default_version": "3006.10",
+      "default_version": "3007.8",
       "version_prefix": "v",
       "filename_version_prefix": "",
-      "architectures": ["amd64", "arm64"],
-      "packages": ["salt-common", "salt-master", "salt-minion", "salt-api", "salt-ssh", "salt-syndic", "salt-cloud"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "packages": [
+        "salt-common",
+        "salt-master",
+        "salt-minion",
+        "salt-api",
+        "salt-ssh",
+        "salt-syndic",
+        "salt-cloud"
+      ],
       "filename_pattern_deb": "{PACKAGE}_{VERSION}_{ARCH}.deb",
       "filename_pattern_rpm": "{PACKAGE}-{VERSION}-0.{ARCH}.rpm",
       "rpm_arch_map": {
@@ -99,7 +127,9 @@
       "default_version": "25.05.4",
       "version_prefix": "slurm-",
       "filename_version_prefix": "",
-      "architectures": [""],
+      "architectures": [
+        ""
+      ],
       "filename_pattern": "slurm-{VERSION}.tar.bz2"
     },
     "code_server": {
@@ -108,10 +138,13 @@
       "source": "github-release",
       "github_repo": "coder/code-server",
       "version_env": "CODE_SERVER_VERSION",
-      "default_version": "4.96.4",
+      "default_version": "4.107.0",
       "version_prefix": "v",
       "filename_version_prefix": "",
-      "architectures": ["amd64", "arm64"],
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
       "filename_pattern_deb": "code-server_{VERSION}_{ARCH}.deb",
       "filename_pattern_rpm": "code-server-{VERSION}-1.{ARCH}.rpm",
       "rpm_arch_map": {

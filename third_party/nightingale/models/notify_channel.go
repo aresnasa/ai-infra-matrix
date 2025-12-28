@@ -190,7 +190,8 @@ func (ncc *NotifyChannelConfig) SendScript(events []*AlertCurEvent, tpl map[stri
 				return "", "", fmt.Errorf("failed to write script file: %v", err)
 			}
 
-			err = os.Chmod(fpath, 0777)
+			// 0755: owner rwx, group rx, others rx - 安全的可执行脚本权限
+			err = os.Chmod(fpath, 0755)
 			if err != nil {
 				return "", "", fmt.Errorf("failed to chmod script file: %v", err)
 			}
