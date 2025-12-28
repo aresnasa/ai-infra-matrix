@@ -80,14 +80,21 @@
       "source": "github-release",
       "github_repo": "sylabs/singularity",
       "version_env": "SINGULARITY_VERSION",
-      "default_version": "4.3.4",
+      "default_version": "4.3.6",
       "version_prefix": "v",
       "filename_version_prefix": "",
       "architectures": [
         "amd64",
         "arm64"
       ],
-      "filename_pattern": "singularity-ce_{VERSION}-1~ubuntu22.04_{ARCH}.deb"
+      "ubuntu_codenames": ["noble", "jammy"],
+      "el_versions": ["el8", "el9", "el10"],
+      "filename_pattern_deb": "singularity-ce_{VERSION}-{CODENAME}_{ARCH}.deb",
+      "filename_pattern_rpm": "singularity-ce-{VERSION}-1.{EL_VER}.{RPM_ARCH}.rpm",
+      "rpm_arch_map": {
+        "amd64": "x86_64",
+        "arm64": "aarch64"
+      }
     },
     "saltstack": {
       "name": "SaltStack",

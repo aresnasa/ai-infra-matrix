@@ -310,6 +310,9 @@ download_component() {
     # 特殊处理: code-server (DEB + RPM)
     elif [ "$component" = "code_server" ]; then
         download_code_server "$tag_version" "$file_version" "$output_dir"
+    # 特殊处理: singularity (DEB + RPM, 多发行版)
+    elif [ "$component" = "singularity" ]; then
+        download_singularity "$tag_version" "$file_version" "$output_dir"
     else
         # 通用下载逻辑
         for arch in "${archs[@]}"; do
@@ -399,6 +402,50 @@ download_code_server() {
         local filename="code-server-${file_version}-${arch}.rpm"
         local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
         download_file "$url" "${output_dir}/${filename}" true || true
+    done
+}
+
+# singularity 特殊下载 (DEB + RPM, 多发行版支持)
+download_singularity() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="sylabs/singularity"
+    
+    # DEB packages (Ubuntu)
+    # 格式: singularity-ce_4.3.6-noble_amd64.deb
+    echo ""
+    echo "  📦 下载 DEB 包 (Ubuntu)..."
+    local ubuntu_codenames=("noble" "jammy")
+    for codename in "${ubuntu_codenames[@]}"; do
+        for arch in amd64 arm64; do
+            if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+                continue
+            fi
+            local filename="singularity-ce_${file_version}-${codename}_${arch}.deb"
+            local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+            download_file "$url" "${output_dir}/${filename}" true || true
+        done
+    done
+    
+    # RPM packages (RHEL/CentOS/Rocky)
+    # 格式: singularity-ce-4.3.6-1.el9.x86_64.rpm
+    echo ""
+    echo "  📦 下载 RPM 包 (RHEL/CentOS)..."
+    local el_versions=("el8" "el9" "el10")
+    for el_ver in "${el_versions[@]}"; do
+        for arch in amd64 arm64; do
+            if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+                continue
+            fi
+            # RPM 使用 x86_64 和 aarch64
+            local rpm_arch="x86_64"
+            [ "$arch" = "arm64" ] && rpm_arch="aarch64"
+            
+            local filename="singularity-ce-${file_version}-1.${el_ver}.${rpm_arch}.rpm"
+            local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+            download_file "$url" "${output_dir}/${filename}" true || true
+        done
     done
 }
 
