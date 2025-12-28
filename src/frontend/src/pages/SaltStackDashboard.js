@@ -1653,8 +1653,13 @@ echo "}"`,
       }
     } catch (e) {
       console.error('保存作业配置失败', e);
-      // 检查是否需要二次认证
-      if (e.response?.data?.require_auth) {
+      const authRequired = e.response?.data?.auth_required;
+      
+      // 检查是否需要设置二次密码
+      if (authRequired === 'setup_secondary_password') {
+        message.warning(t('security.pleaseSetupSecondaryPassword', '请先在"安全设置"中设置二次密码，然后再执行此操作'));
+      } else if (e.response?.data?.require_auth) {
+        // 需要二次认证
         setPendingConfigSave(values);
         setAuthModalVisible(true);
       } else {
@@ -1665,15 +1670,56 @@ echo "}"`,
     }
   };
 
-  // 处理二次认证确认
+  // 处理2FA认证确认
   const handleAuthConfirm = async () => {
     try {
       const values = await authForm.validateFields();
+      console.log('[DEBUG] handleAuthConfirm: 表单值', values);
       if (pendingConfigSave) {
-        await saveJobConfig(pendingConfigSave, values.password);
+        setJobConfigSaving(true);
+        try {
+          const payload = { ...pendingConfigSave, auth_code: values.authCode };
+          console.log('[DEBUG] handleAuthConfirm: 发送请求', { 
+            hasAuthCode: !!values.authCode, 
+            authCodeLength: values.authCode?.length,
+            payload: { ...payload, auth_code: payload.auth_code ? '***' : undefined }
+          });
+          const response = await saltStackAPI.updateJobConfig(payload);
+          console.log('[DEBUG] handleAuthConfirm: 响应', response.data);
+          if (response.data?.success) {
+            setJobConfig(response.data.data || pendingConfigSave);
+            message.success(t('saltstack.configSaved', '配置已保存'));
+            setPendingConfigSave(null);
+            setAuthModalVisible(false);
+            authForm.resetFields();
+          } else {
+            message.error(response.data?.error || t('saltstack.configSaveFailed', '保存配置失败'));
+          }
+        } catch (e) {
+          // 显示错误消息
+          console.log('[DEBUG] handleAuthConfirm: 错误', e.response?.data);
+          const errorMsg = e.response?.data?.error || e.message;
+          const authRequired = e.response?.data?.auth_required;
+          const authMethod = e.response?.data?.auth_method;
+          
+          // 如果是需要启用2FA，关闭对话框并提示用户
+          if (authMethod === 'totp' && errorMsg.includes('启用2FA')) {
+            setAuthModalVisible(false);
+            setPendingConfigSave(null);
+            authForm.resetFields();
+            message.warning(t('security.pleaseEnable2FA', '此操作需要启用2FA（两步验证），请先在"安全设置"中启用2FA'));
+          } else {
+            message.error(errorMsg);
+            // 清空验证码字段以便重新输入
+            authForm.setFieldValue('authCode', '');
+          }
+        } finally {
+          setJobConfigSaving(false);
+        }
       }
     } catch (e) {
-      console.error('二次认证失败', e);
+      // 表单验证失败
+      console.error('表单验证失败', e);
     }
   };
 
@@ -7596,7 +7642,7 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             title={
               <Space>
                 <LockOutlined style={{ color: '#faad14' }} />
-                {t('common.secondaryAuth', '二次认证')}
+                {t('common.twoFactorAuth', '2FA验证')}
               </Space>
             }
             open={authModalVisible}
@@ -7612,20 +7658,26 @@ node1.example.com ansible_port=2222 ansible_user=deploy ansible_password=secretp
             okButtonProps={{ loading: jobConfigSaving }}
           >
             <Alert
-              message={t('saltstack.authRequired', '此操作需要验证您的身份，请输入当前账户密码确认。')}
+              message={t('saltstack.twoFARequired', '此操作需要2FA验证，请输入您的动态验证码。如未启用2FA，请先在"安全设置"中启用。')}
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
             />
             <Form form={authForm} layout="vertical">
               <Form.Item
-                name="password"
-                label={t('common.password', '密码')}
-                rules={[{ required: true, message: t('common.pleaseInputPassword', '请输入密码') }]}
+                name="authCode"
+                label={t('common.twoFACode', '2FA验证码')}
+                rules={[
+                  { required: true, message: t('common.pleaseInputTwoFACode', '请输入2FA验证码') },
+                  { len: 6, message: t('common.twoFACodeLength', '验证码应为6位数字') },
+                  { pattern: /^\d{6}$/, message: t('common.twoFACodeFormat', '验证码应为6位数字') }
+                ]}
               >
-                <Input.Password
-                  placeholder={t('common.inputPassword', '请输入您的账户密码')}
+                <Input
+                  placeholder={t('common.inputTwoFACode', '请输入6位验证码')}
                   prefix={<LockOutlined />}
+                  maxLength={6}
+                  style={{ letterSpacing: '0.5em', textAlign: 'center', fontSize: '18px' }}
                 />
               </Form.Item>
             </Form>

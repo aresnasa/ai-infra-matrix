@@ -55,10 +55,9 @@ func initializeDefaultAdmin(userService *services.UserService, rbacService *serv
 			logrus.Info("Admin role assigned to existing admin user")
 		}
 
-		// 设置role_template字段
+		// 设置role_template字段（只更新该字段，避免覆盖其他字段如SecondaryPassword）
 		if existingAdmin.RoleTemplate == "" {
-			existingAdmin.RoleTemplate = "admin"
-			if err := db.Save(&existingAdmin).Error; err != nil {
+			if err := db.Model(&existingAdmin).Update("role_template", "admin").Error; err != nil {
 				logrus.WithError(err).Error("Failed to update admin user role_template")
 			}
 		}
@@ -468,6 +467,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		auth.GET("/me", middleware.AuthMiddlewareWithSession(), userHandler.GetProfile)
 		auth.PUT("/profile", middleware.AuthMiddlewareWithSession(), userHandler.UpdateProfile)
 		auth.POST("/change-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangePassword)
+		// 二次密码管理
+		auth.POST("/secondary-password", middleware.AuthMiddlewareWithSession(), userHandler.SetSecondaryPassword)
+		auth.PUT("/secondary-password", middleware.AuthMiddlewareWithSession(), userHandler.ChangeSecondaryPassword)
+		auth.GET("/secondary-password/status", middleware.AuthMiddlewareWithSession(), userHandler.GetSecondaryPasswordStatus)
 		// JupyterHub单点登录令牌生成
 		auth.POST("/jupyterhub-token", middleware.AuthMiddlewareWithSession(), userHandler.GenerateJupyterHubToken)
 		// JWT令牌验证（用于JupyterHub认证器）

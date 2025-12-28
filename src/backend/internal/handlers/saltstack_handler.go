@@ -4999,7 +4999,7 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 		BlacklistEnabled           bool                      `json:"blacklist_enabled"`
 		RequireAuthForDangerousCmd bool                      `json:"require_auth_for_dangerous_cmd"` // 编辑/删除危险命令需要二次认证
 		DangerousCommands          []models.DangerousCommand `json:"dangerous_commands"`
-		AuthPassword               string                    `json:"auth_password,omitempty"` // 二次认证密码
+		AuthCode                   string                    `json:"auth_code,omitempty"` // 2FA验证码（用于高危操作验证）
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -5085,19 +5085,39 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 	// 获取现有配置
 	existingConfig := saltJobService.GetConfig()
 
-	// 检查是否需要二次认证（当修改危险命令列表时）
+	// 检查是否需要二次认证（当启用或禁用危险命令黑名单时）
+	if existingConfig != nil {
+		// 检查BlacklistEnabled是否有变化
+		blacklistEnabledChanged := request.BlacklistEnabled != existingConfig.BlacklistEnabled
+
+		// 如果黑名单启用状态有变化，需要2FA验证
+		if blacklistEnabledChanged {
+			authConfig := utils.SecondaryAuthConfig{
+				Enabled:      true,
+				AuthType:     "blacklist_toggle",
+				AuthMethod:   utils.AuthMethodTOTP,
+				ErrorMessage: "启用或禁用危险命令黑名单需要2FA验证",
+			}
+			if !utils.RequireSecondaryAuthWith2FA(c, authConfig, "", request.AuthCode) {
+				return
+			}
+		}
+	}
+
+	// 检查是否需要密码认证（当修改危险命令列表时）
 	if existingConfig != nil && existingConfig.RequireAuthForDangerousCmd {
 		// 检查危险命令是否有变化
 		commandsChanged := checkDangerousCommandsChanged(request.DangerousCommands, existingConfig.GetDangerousCommands())
 
-		// 如果危险命令有变化，需要验证密码
+		// 如果危险命令有变化，需要2FA验证
 		if commandsChanged {
 			authConfig := utils.SecondaryAuthConfig{
 				Enabled:      true,
 				AuthType:     "dangerous_commands",
-				ErrorMessage: "修改危险命令黑名单需要二次认证",
+				AuthMethod:   utils.AuthMethodTOTP,
+				ErrorMessage: "修改危险命令黑名单需要2FA验证",
 			}
-			if !utils.RequireSecondaryAuth(c, authConfig, request.AuthPassword) {
+			if !utils.RequireSecondaryAuthWith2FA(c, authConfig, "", request.AuthCode) {
 				return
 			}
 		}

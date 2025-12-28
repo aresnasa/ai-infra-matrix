@@ -780,6 +780,165 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "密码修改成功"})
 }
 
+// SetSecondaryPassword 设置二次密码
+// @Summary 设置二次密码
+// @Description 用户设置用于敏感操作验证的二次密码
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body SetSecondaryPasswordRequest true "二次密码设置信息"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/secondary-password [post]
+func (h *UserHandler) SetSecondaryPassword(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req struct {
+		CurrentPassword      string `json:"current_password" binding:"required"`             // 当前登录密码（用于验证身份）
+		NewSecondaryPassword string `json:"new_secondary_password" binding:"required,min=6"` // 新二次密码
+		ConfirmPassword      string `json:"confirm_password" binding:"required"`             // 确认二次密码
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 检查两次输入的密码是否一致
+	if req.NewSecondaryPassword != req.ConfirmPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "两次输入的密码不一致"})
+		return
+	}
+
+	// 验证当前登录密码
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "当前密码验证失败"})
+		return
+	}
+
+	// 加密并保存二次密码
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewSecondaryPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "密码加密失败"})
+		return
+	}
+
+	if err := h.db.Model(&user).Update("secondary_password", string(hashedPassword)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存二次密码失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "二次密码设置成功"})
+}
+
+// ChangeSecondaryPassword 修改二次密码
+// @Summary 修改二次密码
+// @Description 用户修改二次密码
+// @Tags 用户管理
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body ChangeSecondaryPasswordRequest true "二次密码修改信息"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/secondary-password [put]
+func (h *UserHandler) ChangeSecondaryPassword(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req struct {
+		OldSecondaryPassword string `json:"old_secondary_password" binding:"required"`       // 旧二次密码
+		NewSecondaryPassword string `json:"new_secondary_password" binding:"required,min=6"` // 新二次密码
+		ConfirmPassword      string `json:"confirm_password" binding:"required"`             // 确认二次密码
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 检查两次输入的密码是否一致
+	if req.NewSecondaryPassword != req.ConfirmPassword {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "两次输入的密码不一致"})
+		return
+	}
+
+	// 获取用户
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 检查是否已设置二次密码
+	if user.SecondaryPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "您还未设置二次密码，请先设置"})
+		return
+	}
+
+	// 验证旧二次密码
+	if err := bcrypt.CompareHashAndPassword([]byte(user.SecondaryPassword), []byte(req.OldSecondaryPassword)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "旧二次密码验证失败"})
+		return
+	}
+
+	// 加密并保存新二次密码
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewSecondaryPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "密码加密失败"})
+		return
+	}
+
+	if err := h.db.Model(&user).Update("secondary_password", string(hashedPassword)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存二次密码失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "二次密码修改成功"})
+}
+
+// GetSecondaryPasswordStatus 获取二次密码状态
+// @Summary 获取二次密码状态
+// @Description 检查当前用户是否已设置二次密码
+// @Tags 用户管理
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Router /auth/secondary-password/status [get]
+func (h *UserHandler) GetSecondaryPasswordStatus(c *gin.Context) {
+	userID, exists := middleware.GetCurrentUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var user models.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":                true,
+		"has_secondary_password": user.SecondaryPassword != "",
+	})
+}
+
 // UpdateProfile 更新用户个人信息
 // @Summary 更新用户个人信息
 // @Description 用户更新自己的个人信息
