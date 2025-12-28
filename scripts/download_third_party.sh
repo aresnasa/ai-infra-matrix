@@ -389,16 +389,14 @@ download_code_server() {
     done
     
     # RPM packages
+    # 正确格式: code-server-4.107.0-arm64.rpm (不需要 -1. 和架构映射)
     echo ""
     echo "  📦 下载 RPM 包..."
     for arch in amd64 arm64; do
         if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
             continue
         fi
-        local rpm_arch="x86_64"
-        [ "$arch" = "arm64" ] && rpm_arch="aarch64"
-        
-        local filename="code-server-${file_version}-1.${rpm_arch}.rpm"
+        local filename="code-server-${file_version}-${arch}.rpm"
         local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
         download_file "$url" "${output_dir}/${filename}" true || true
     done

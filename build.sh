@@ -4324,8 +4324,12 @@ case "$COMMAND" in
             set +a
         fi
         
+        # 构建传递给下载脚本的参数（排除命令本身）
+        # 使用 shift 方式获取命令后的参数
+        _download_args=("${REMAINING_ARGS[@]:1}")
+        
         if [[ -x "$SCRIPT_DIR/scripts/download_third_party.sh" ]]; then
-            "$SCRIPT_DIR/scripts/download_third_party.sh" "${REMAINING_ARGS[@]}"
+            "$SCRIPT_DIR/scripts/download_third_party.sh" "${_download_args[@]}"
             log_info "✅ Third-party dependencies downloaded to third_party/"
             log_info "💡 These files will be used during AppHub build for faster builds"
         else

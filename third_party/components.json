@@ -146,11 +146,7 @@
         "arm64"
       ],
       "filename_pattern_deb": "code-server_{VERSION}_{ARCH}.deb",
-      "filename_pattern_rpm": "code-server-{VERSION}-1.{ARCH}.rpm",
-      "rpm_arch_map": {
-        "amd64": "x86_64",
-        "arm64": "aarch64"
-      }
+      "filename_pattern_rpm": "code-server-{VERSION}-{ARCH}.rpm"
     }
   }
 }
