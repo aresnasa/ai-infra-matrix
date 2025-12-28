@@ -412,41 +412,49 @@ download_singularity() {
     local output_dir=$3
     local github_repo="sylabs/singularity"
     
-    # DEB packages (Ubuntu)
+    # 注意: Singularity CE 4.3.x 官方只提供 amd64/x86_64 预编译包
+    # ARM64 用户需要从源码编译: singularity-ce-${file_version}.tar.gz
+    # 参考: https://github.com/sylabs/singularity/releases
+    
+    # DEB packages (Ubuntu) - 仅 amd64
     # 格式: singularity-ce_4.3.6-noble_amd64.deb
     echo ""
     echo "  📦 下载 DEB 包 (Ubuntu)..."
+    echo "  ⚠️  注意: Singularity 官方仅提供 amd64 预编译包，ARM64 需从源码编译"
     local ubuntu_codenames=("noble" "jammy")
     for codename in "${ubuntu_codenames[@]}"; do
-        for arch in amd64 arm64; do
-            if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
-                continue
-            fi
-            local filename="singularity-ce_${file_version}-${codename}_${arch}.deb"
-            local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
-            download_file "$url" "${output_dir}/${filename}" true || true
-        done
+        # Singularity 仅提供 amd64 预编译包
+        if [ "$TARGET_ARCH" = "arm64" ]; then
+            echo "  ⏭️  跳过 DEB (arm64): Singularity 官方不提供 ARM64 预编译包"
+            continue
+        fi
+        local filename="singularity-ce_${file_version}-${codename}_amd64.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
     done
     
-    # RPM packages (RHEL/CentOS/Rocky)
+    # RPM packages (RHEL/CentOS/Rocky) - 仅 x86_64
     # 格式: singularity-ce-4.3.6-1.el9.x86_64.rpm
     echo ""
     echo "  📦 下载 RPM 包 (RHEL/CentOS)..."
     local el_versions=("el8" "el9" "el10")
     for el_ver in "${el_versions[@]}"; do
-        for arch in amd64 arm64; do
-            if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
-                continue
-            fi
-            # RPM 使用 x86_64 和 aarch64
-            local rpm_arch="x86_64"
-            [ "$arch" = "arm64" ] && rpm_arch="aarch64"
-            
-            local filename="singularity-ce-${file_version}-1.${el_ver}.${rpm_arch}.rpm"
-            local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
-            download_file "$url" "${output_dir}/${filename}" true || true
-        done
+        # Singularity 仅提供 x86_64 预编译包
+        if [ "$TARGET_ARCH" = "arm64" ]; then
+            echo "  ⏭️  跳过 RPM (aarch64): Singularity 官方不提供 ARM64 预编译包"
+            continue
+        fi
+        local filename="singularity-ce-${file_version}-1.${el_ver}.x86_64.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
     done
+    
+    # 下载源码包 (适用于所有架构，包括 ARM64)
+    echo ""
+    echo "  📦 下载源码包 (适用于所有架构)..."
+    local source_filename="singularity-ce-${file_version}.tar.gz"
+    local source_url="https://github.com/${github_repo}/releases/download/${tag_version}/${source_filename}"
+    download_file "$source_url" "${output_dir}/${source_filename}" true || true
 }
 
 # =============================================================================
