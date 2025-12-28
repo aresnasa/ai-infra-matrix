@@ -23,6 +23,11 @@ FORCE_REBUILD=false
 PARALLEL_JOBS=${PARALLEL_JOBS:-4}  # Default 4 parallel jobs
 ENABLE_PARALLEL=false              # Disabled by default
 
+# SSL Configuration
+ENABLE_SSL=${ENABLE_SSL:-true}     # Enabled by default
+SSL_DOMAIN=${SSL_DOMAIN:-}         # SSL domain, auto-detect from EXTERNAL_HOST if empty
+SSL_CERT_DIR="$SCRIPT_DIR/ssl-certs"
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -36,6 +41,7 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_cache() { echo -e "${CYAN}[CACHE]${NC} $1"; }
 log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
+log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 # ==============================================================================
 # 通用工具函数
@@ -1096,6 +1102,326 @@ mkdir -p "$SCRIPT_DIR/third_party"
 # 2. Helper Functions
 # ==============================================================================
 
+# ==============================================================================
+# SSL Certificate Generation Functions (内置，无需外部脚本)
+# ==============================================================================
+
+# SSL 配置常量
+SSL_VALID_DAYS=${SSL_VALID_DAYS:-3650}  # 10年有效期
+SSL_KEY_SIZE=${SSL_KEY_SIZE:-2048}
+SSL_COUNTRY=${SSL_COUNTRY:-CN}
+SSL_STATE=${SSL_STATE:-Beijing}
+SSL_CITY=${SSL_CITY:-Beijing}
+SSL_ORG=${SSL_ORG:-AI-Infra-Matrix}
+SSL_CA_NAME=${SSL_CA_NAME:-AI-Infra-Matrix-CA}
+# SSL 证书输出目录 (放在 src/nginx/ssl 以便打包到镜像)
+SSL_OUTPUT_DIR="$SCRIPT_DIR/src/nginx/ssl"
+
+# 生成 CA 根证书
+generate_ca_certificate() {
+    local output_dir="$SSL_OUTPUT_DIR"
+    local ca_dir="$output_dir/ca"
+    
+    log_step "生成 CA 根证书..."
+    
+    mkdir -p "$ca_dir"
+    
+    # 生成 CA 私钥
+    log_info "生成 CA 私钥..."
+    openssl genrsa -out "$ca_dir/ca.key" $SSL_KEY_SIZE 2>/dev/null
+    chmod 600 "$ca_dir/ca.key"
+    
+    # 生成 CA 证书
+    log_info "生成 CA 证书..."
+    openssl req -new -x509 -days $SSL_VALID_DAYS -key "$ca_dir/ca.key" \
+        -out "$ca_dir/ca.crt" \
+        -subj "/C=$SSL_COUNTRY/ST=$SSL_STATE/L=$SSL_CITY/O=$SSL_ORG/CN=$SSL_CA_NAME" \
+        2>/dev/null
+    
+    if [[ $? -eq 0 ]]; then
+        log_info "✓ CA 根证书生成成功"
+        log_info "  私钥: $ca_dir/ca.key"
+        log_info "  证书: $ca_dir/ca.crt"
+        return 0
+    else
+        log_error "CA 证书生成失败"
+        return 1
+    fi
+}
+
+# 生成服务器证书
+generate_server_certificate() {
+    local domain="$1"
+    local output_dir="$SSL_OUTPUT_DIR"
+    local ca_dir="$output_dir/ca"
+    
+    if [[ -z "$domain" ]]; then
+        log_error "域名不能为空"
+        return 1
+    fi
+    
+    # 检查 CA 是否存在
+    if [[ ! -f "$ca_dir/ca.key" ]] || [[ ! -f "$ca_dir/ca.crt" ]]; then
+        log_error "CA 证书不存在，请先生成 CA"
+        return 1
+    fi
+    
+    log_step "为域名生成服务器证书: $domain"
+    
+    # 安全文件名 (将 * 替换为 _wildcard_)
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+    
+    # 生成服务器私钥
+    log_info "生成服务器私钥..."
+    openssl genrsa -out "$output_dir/$safe_name.key" $SSL_KEY_SIZE 2>/dev/null
+    chmod 600 "$output_dir/$safe_name.key"
+    
+    # 创建 SAN 扩展配置
+    local san_config=$(mktemp)
+    cat > "$san_config" << EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = $SSL_COUNTRY
+ST = $SSL_STATE
+L = $SSL_CITY
+O = $SSL_ORG
+CN = $domain
+
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+EOF
+
+    # 添加 SAN (支持 IP 和域名)
+    local san_index=1
+    if [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "IP.$san_index = $domain" >> "$san_config"
+        san_index=$((san_index + 1))
+        # 添加 localhost
+        echo "IP.$san_index = 127.0.0.1" >> "$san_config"
+        echo "DNS.1 = localhost" >> "$san_config"
+    else
+        echo "DNS.$san_index = $domain" >> "$san_config"
+        san_index=$((san_index + 1))
+        echo "DNS.$san_index = localhost" >> "$san_config"
+        echo "IP.1 = 127.0.0.1" >> "$san_config"
+    fi
+    
+    # 生成证书签名请求 (CSR)
+    log_info "生成证书签名请求..."
+    openssl req -new -key "$output_dir/$safe_name.key" \
+        -out "$output_dir/$safe_name.csr" \
+        -config "$san_config" \
+        2>/dev/null
+    
+    # 创建签名扩展配置
+    local ext_config=$(mktemp)
+    cat > "$ext_config" << EOF
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+EOF
+    
+    # 复制 SAN 配置
+    grep -E "^(DNS|IP)\." "$san_config" >> "$ext_config"
+    
+    # 使用 CA 签发证书
+    log_info "使用 CA 签发证书..."
+    openssl x509 -req -days $SSL_VALID_DAYS \
+        -in "$output_dir/$safe_name.csr" \
+        -CA "$ca_dir/ca.crt" \
+        -CAkey "$ca_dir/ca.key" \
+        -CAcreateserial \
+        -out "$output_dir/$safe_name.crt" \
+        -extfile "$ext_config" \
+        2>/dev/null
+    
+    # 创建证书链
+    cat "$output_dir/$safe_name.crt" "$ca_dir/ca.crt" > "$output_dir/$safe_name.chain.crt"
+    
+    # 创建通用名称的符号链接 (server.crt/server.key)
+    ln -sf "$safe_name.crt" "$output_dir/server.crt"
+    ln -sf "$safe_name.key" "$output_dir/server.key"
+    ln -sf "$safe_name.chain.crt" "$output_dir/server.chain.crt"
+    cp "$ca_dir/ca.crt" "$output_dir/ca.crt"
+    
+    # 清理临时文件
+    rm -f "$san_config" "$ext_config" "$output_dir/$safe_name.csr"
+    
+    if [[ -f "$output_dir/$safe_name.crt" ]]; then
+        local cert_subject=$(openssl x509 -in "$output_dir/$safe_name.crt" -noout -subject 2>/dev/null | sed 's/subject=//')
+        local cert_expire=$(openssl x509 -in "$output_dir/$safe_name.crt" -noout -enddate 2>/dev/null | sed 's/notAfter=//')
+        
+        log_info "✓ 服务器证书生成成功"
+        log_info "  私钥: $output_dir/$safe_name.key"
+        log_info "  证书: $output_dir/$safe_name.crt"
+        log_info "  证书链: $output_dir/$safe_name.chain.crt"
+        log_info "  通用链接: $output_dir/server.crt -> $safe_name.crt"
+        log_info ""
+        log_info "  证书主题: $cert_subject"
+        log_info "  有效期至: $cert_expire"
+        return 0
+    else
+        log_error "服务器证书生成失败"
+        return 1
+    fi
+}
+
+# 设置 SSL 证书 (生成 CA + 服务器证书)
+setup_ssl_certificates() {
+    local domain="${1:-}"
+    local force="${2:-false}"
+    
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${SSL_DOMAIN:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain=$(detect_external_host)
+    fi
+    
+    if [[ -z "$domain" ]]; then
+        log_error "Unable to determine domain for SSL certificate"
+        log_info "Please specify domain: ./build.sh ssl-setup your-domain.com"
+        return 1
+    fi
+    
+    log_info "🔒 Setting up SSL certificates for: $domain"
+    log_info "   Output directory: $SSL_OUTPUT_DIR"
+    
+    # 检查 OpenSSL 是否可用
+    if ! command -v openssl &> /dev/null; then
+        log_error "OpenSSL not found. Please install OpenSSL first."
+        return 1
+    fi
+    
+    local openssl_version=$(openssl version 2>/dev/null)
+    log_info "   OpenSSL: $openssl_version"
+    
+    # 安全文件名
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+    
+    # 检查证书是否已存在
+    if [[ -f "$SSL_OUTPUT_DIR/$safe_name.crt" ]] && [[ "$force" != "true" ]]; then
+        log_info "SSL certificates already exist for $domain"
+        log_info "Use --force to regenerate: ./build.sh ssl-setup --force"
+        return 0
+    fi
+    
+    # 创建输出目录
+    mkdir -p "$SSL_OUTPUT_DIR"
+    
+    # 生成 CA (如果不存在或强制重新生成)
+    if [[ ! -f "$SSL_OUTPUT_DIR/ca/ca.crt" ]] || [[ "$force" == "true" ]]; then
+        if ! generate_ca_certificate; then
+            return 1
+        fi
+    else
+        log_info "使用已存在的 CA 证书"
+    fi
+    
+    # 生成服务器证书
+    if ! generate_server_certificate "$domain"; then
+        return 1
+    fi
+    
+    # 更新 .env 文件中的 SSL 相关变量
+    log_step "Updating .env configuration..."
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+    
+    echo ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "✅ SSL certificates generated successfully!"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info ""
+    log_info "📁 Certificate files (will be bundled into nginx image):"
+    log_info "   CA Certificate:     $SSL_OUTPUT_DIR/ca/ca.crt"
+    log_info "   Server Certificate: $SSL_OUTPUT_DIR/server.crt"
+    log_info "   Server Key:         $SSL_OUTPUT_DIR/server.key"
+    log_info ""
+    log_info "📋 Next steps:"
+    log_info "   1. Rebuild nginx:  ./build.sh nginx"
+    log_info "   2. Restart:        docker compose restart nginx"
+    log_info ""
+    log_info "💡 To trust the CA on client machines, import:"
+    log_info "   $SSL_OUTPUT_DIR/ca/ca.crt"
+    
+    return 0
+}
+
+# 显示 SSL 证书信息
+show_ssl_info() {
+    local domain="${1:-}"
+    
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-$(detect_external_host)}"
+    fi
+    
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+    local cert_file="$SSL_OUTPUT_DIR/server.crt"
+    local ca_file="$SSL_OUTPUT_DIR/ca/ca.crt"
+    
+    echo ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "SSL 证书信息"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    
+    if [[ -f "$ca_file" ]]; then
+        echo ""
+        log_info "CA 证书:"
+        openssl x509 -in "$ca_file" -noout -subject -issuer -dates 2>/dev/null | sed 's/^/   /'
+    else
+        log_warn "CA 证书不存在: $ca_file"
+    fi
+    
+    if [[ -f "$cert_file" ]]; then
+        echo ""
+        log_info "服务器证书:"
+        openssl x509 -in "$cert_file" -noout -subject -issuer -dates 2>/dev/null | sed 's/^/   /'
+        echo ""
+        log_info "SAN (Subject Alternative Names):"
+        openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | sed 's/^/   /'
+    else
+        log_warn "服务器证书不存在: $cert_file"
+        log_info "请运行: ./build.sh ssl-setup"
+    fi
+    
+    echo ""
+}
+
+# 清理 SSL 证书
+clean_ssl_certificates() {
+    log_info "🗑️  Cleaning SSL certificates..."
+    
+    if [[ -d "$SSL_OUTPUT_DIR" ]]; then
+        rm -rf "$SSL_OUTPUT_DIR"
+        log_info "Removed: $SSL_OUTPUT_DIR"
+    else
+        log_info "SSL directory does not exist: $SSL_OUTPUT_DIR"
+    fi
+    
+    # 恢复 .env 中的 SSL 相关设置
+    update_env_variable "ENABLE_TLS" "false"
+    update_env_variable "EXTERNAL_SCHEME" "http"
+    
+    log_info "✅ SSL certificates cleaned"
+}
+
 detect_compose_command() {
     if command -v docker-compose >/dev/null 2>&1; then
         echo "docker-compose"
@@ -1333,6 +1659,8 @@ TEMPLATE_VARIABLES=(
     "NIGHTINGALE_HOST"    # Nightingale service host (default: nightingale)
     "NIGHTINGALE_PORT"    # Nightingale service port (default: 17000)
     "EXTERNAL_PORT"       # Main Nginx port (default: 8080)
+    "HTTPS_PORT"          # HTTPS port (default: 8443)
+    "EXTERNAL_HOST"       # External host for CSP headers
     
     # ===========================================
     # Third-party image versions (for docker-compose.yml.tpl)
@@ -1575,13 +1903,26 @@ render_all_templates() {
     if [[ -d "$nginx_template_dir" ]]; then
         log_info "Rendering Nginx configuration templates..."
         
-        # Render main server config
+        # Render main server config (HTTP)
         local main_conf_tpl="$nginx_template_dir/conf.d/server-main.conf.tpl"
         if [[ -f "$main_conf_tpl" ]]; then
             local main_conf_out="$nginx_output_dir/conf.d/server-main.conf"
             mkdir -p "$(dirname "$main_conf_out")"
             if render_template "$main_conf_tpl" "$main_conf_out"; then
                 success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+        
+        # Render TLS server config (HTTPS)
+        local tls_conf_tpl="$nginx_template_dir/conf.d/server-main-tls.conf.tpl"
+        if [[ -f "$tls_conf_tpl" ]]; then
+            local tls_conf_out="$nginx_output_dir/conf.d/server-main-tls.conf"
+            mkdir -p "$(dirname "$tls_conf_out")"
+            if render_template "$tls_conf_tpl" "$tls_conf_out"; then
+                success_count=$((success_count + 1))
+                log_info "  ✓ Rendered server-main-tls.conf (for HTTPS mode)"
             else
                 fail_count=$((fail_count + 1))
             fi
@@ -3987,6 +4328,8 @@ print_help() {
     echo "  --force, -f, --no-cache    Force rebuild without Docker cache"
     echo "  --parallel, -p             Enable parallel builds (default: $PARALLEL_JOBS jobs)"
     echo "  --parallel=N, -pN          Enable parallel builds with N concurrent jobs"
+    echo "  --no-ssl                   Disable SSL/HTTPS mode (SSL enabled by default)"
+    echo "  --ssl=DOMAIN               Enable SSL with specific domain"
     echo "  --skip-cache               Skip build cache check (always rebuild)"
     echo ""
     echo "Environment Commands:"
@@ -3995,15 +4338,23 @@ print_help() {
     echo "  gen-prod-env [file] Generate production .env with random strong passwords"
     echo "                      default output: .env.prod"
     echo ""
+    echo "SSL/HTTPS Commands (SSL enabled by default):"
+    echo "  ssl-setup [domain]  Generate self-signed SSL certificates to src/nginx/ssl/"
+    echo "                      Certificates are bundled into nginx image during build"
+    echo "  ssl-setup --force   Regenerate existing certificates"
+    echo "  ssl-info [domain]   Display SSL certificate information"
+    echo "  ssl-clean           Remove all generated SSL certificates and disable SSL"
+    echo ""
     echo "Optional Components:"
     echo "  init-safeline       Initialize SafeLine WAF (optional sidecar component)"
     echo "                      SafeLine is NOT included in 'build.sh all'"
     echo "                      After init, start with: docker-compose --profile safeline up -d"
     echo ""
     echo "Build Commands:"
-    echo "  build-all, all           Build all components in the correct order"
+    echo "  build-all, all           Build all components (SSL enabled by default)"
     echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
     echo "  build-all --parallel     Parallel build with smart caching"
+    echo "  build-all --no-ssl       Build without SSL/HTTPS"
     echo "  [component]              Build a specific component (e.g., backend, frontend)"
     echo "  [component] --force      Force rebuild a component without cache"
     echo ""
@@ -4077,15 +4428,23 @@ print_help() {
     echo "  $0 init-env 192.168.0.100          # Set specific EXTERNAL_HOST"
     echo "  $0 init-env --force                # Force re-initialize"
     echo ""
+    echo "  # SSL/HTTPS setup (certificates bundled into nginx image)"
+    echo "  $0 ssl-setup                       # Generate certs for auto-detected domain"
+    echo "  $0 ssl-setup example.com           # Generate certs for specific domain"
+    echo "  $0 ssl-setup --force               # Regenerate existing certificates"
+    echo "  $0 ssl-info                        # Show certificate details"
+    echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
+    echo ""
     echo "  # Template rendering"
     echo "  $0 render                          # Render templates from .env"
     echo "  $0 render --force                  # Force re-render all templates"
     echo ""
-    echo "  # Building (with smart caching)"
-    echo "  $0 build-all                       # Build only changed services"
+    echo "  # Building (with smart caching, SSL enabled by default)"
+    echo "  $0 build-all                       # Build all services with SSL"
     echo "  $0 build-all --parallel            # Parallel build (default 4 jobs)"
     echo "  $0 build-all --parallel=8          # Parallel build with 8 jobs"
     echo "  $0 build-all --force               # Force rebuild all (ignore cache)"
+    echo "  $0 build-all --no-ssl              # Build without HTTPS"
     echo "  $0 backend                         # Build single service"
     echo "  $0 backend --force                 # Force rebuild single service"
     echo ""
@@ -4123,12 +4482,13 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Parse global options first (--force, --no-cache, -f, --parallel, etc.)
+# Parse global options first (--force, --no-cache, -f, --parallel, --ssl, etc.)
 # These can appear anywhere in the command line
 FORCE_BUILD=false
 FORCE_RENDER=false
 FORCE_REBUILD=false
 ENABLE_PARALLEL=false
+ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
 REMAINING_ARGS=()
 
@@ -4150,6 +4510,16 @@ for arg in "$@"; do
             ENABLE_PARALLEL=true
             PARALLEL_JOBS="${arg#-p}"
             ;;
+        --ssl)
+            ENABLE_SSL=true
+            ;;
+        --ssl=*)
+            ENABLE_SSL=true
+            SSL_DOMAIN="${arg#*=}"
+            ;;
+        --no-ssl)
+            ENABLE_SSL=false
+            ;;
         --skip-cache)
             SKIP_CACHE_CHECK=true
             ;;
@@ -4165,6 +4535,9 @@ if [[ "$FORCE_BUILD" == "true" ]]; then
 fi
 if [[ "$ENABLE_PARALLEL" == "true" ]]; then
     log_parallel "🚀 Parallel mode enabled (max $PARALLEL_JOBS concurrent jobs)"
+fi
+if [[ "$ENABLE_SSL" == "true" ]]; then
+    log_info "🔒 SSL/HTTPS mode enabled"
 fi
 if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
     log_cache "⏭️  Cache check skipped (--skip-cache)"
@@ -4253,11 +4626,30 @@ case "$COMMAND" in
         log_info ""
         log_info "🌐 Access SafeLine management console at: https://<host>:${SAFELINE_MGT_PORT:-9443}"
         ;;
+    ssl-setup|ssl-init|ssl|setup-ssl)
+        # 设置 SSL 证书
+        ssl_domain="${ARG2:-}"
+        setup_ssl_certificates "$ssl_domain" "$FORCE_BUILD"
+        ;;
+    ssl-info)
+        # 显示 SSL 证书信息
+        show_ssl_info "${ARG2:-}"
+        ;;
+    ssl-clean)
+        # 清理 SSL 证书
+        clean_ssl_certificates
+        ;;
     gen-prod-env)
         # 生成生产环境配置文件（使用强随机密码）
         generate_production_env "${ARG2:-.env.prod}" "$FORCE_BUILD"
         ;;
     build-all|all)
+        # 如果启用了 SSL，先设置 SSL 证书
+        if [[ "$ENABLE_SSL" == "true" ]]; then
+            log_info "🔒 SSL mode enabled, setting up certificates first..."
+            setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
+        fi
+        
         if [[ "$FORCE_BUILD" == "true" ]]; then
             build_all "true"
         else

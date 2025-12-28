@@ -78,6 +78,14 @@ env:
   ENV_FILE: ".env"
   TZ: "Asia/Shanghai"
   DOMAIN: "localhost"
+  
+  # SSL/TLS Configuration
+  ENABLE_TLS: "true"
+  EXTERNAL_SCHEME: "https"
+  EXTERNAL_HOST: "localhost"
+  EXTERNAL_PORT: "8080"
+  HTTPS_PORT: "8443"
+  
   NGINX_PORT: "8080"
   POSTGRES_HOST: "postgres"
   POSTGRES_PORT: "5432"
@@ -621,6 +629,20 @@ saltstack:
 # Ingress configuration
 ingress:
   enabled: false  # 暂时禁用ingress以简化部署
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: "ai-infra.local"
+      paths:
+        - path: /
+          pathType: Prefix
+          service: nginx
+          port: 80
+  # TLS configuration (enable for HTTPS)
+  tls: []
+  # - secretName: ai-infra-tls-secret
+  #   hosts:
+  #     - ai-infra.local
 
 # Monitoring configuration
 monitoring:

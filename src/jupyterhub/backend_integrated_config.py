@@ -48,6 +48,12 @@ print("🚀 JupyterHub后端集成配置加载中...")
 BACKEND_URL = os.environ.get('BACKEND_URL', 'http://backend:8082')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
 
+# 外部访问配置 (用于 CSP 和 iframe 嵌入)
+EXTERNAL_SCHEME = os.environ.get('EXTERNAL_SCHEME', 'http')
+EXTERNAL_HOST = os.environ.get('EXTERNAL_HOST', 'localhost')
+EXTERNAL_PORT = os.environ.get('EXTERNAL_PORT', '8080')
+HTTPS_PORT = os.environ.get('HTTPS_PORT', '8443')
+
 # 数据库配置
 DB_CONFIG = {
     'host': os.environ.get('POSTGRES_HOST', 'postgres'),
@@ -254,6 +260,11 @@ c.JupyterHub.hub_bind_url = 'http://0.0.0.0:8081'
 
 # 通过环境变量决定是否通过代理访问
 use_proxy = os.environ.get('JUPYTERHUB_USE_PROXY', 'true').lower() == 'true'
+# 检测是否启用 TLS
+enable_tls = os.environ.get('ENABLE_TLS', 'false').lower() == 'true'
+# 根据 EXTERNAL_SCHEME 或 ENABLE_TLS 确定协议
+default_scheme = 'https' if enable_tls or EXTERNAL_SCHEME == 'https' else 'http'
+
 if use_proxy:
     # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
     c.JupyterHub.base_url = '/jupyter'
@@ -274,7 +285,7 @@ def get_public_url(request=None):
         # 优先使用代理传递的原始Host头
         host = request.headers.get('X-Forwarded-Host') or request.headers.get('Host')
         if host:
-            proto = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else 'http'
+            proto = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else default_scheme
             if use_proxy:
                 return f'{proto}://{host}/jupyter/'
             else:
@@ -283,24 +294,27 @@ def get_public_url(request=None):
     # 降级到配置的静态地址
     if use_proxy:
         if not public_host.startswith('http'):
-            static_host = f'http://{public_host}'
+            static_host = f'{default_scheme}://{public_host}'
         else:
             static_host = public_host
         return f'{static_host}/jupyter/'
     else:
         if not public_host.startswith('http'):
-            return f'http://{public_host}/'
+            return f'{default_scheme}://{public_host}/'
         else:
             return f'{public_host}/'
 
 if use_proxy:
     if not public_host.startswith('http'):
-        public_host = f'http://{public_host}'
-    os.environ['JUPYTERHUB_PUBLIC_URL'] = f'{public_host}/jupyter/'
+        public_host_with_scheme = f'{default_scheme}://{public_host}'
+    else:
+        public_host_with_scheme = public_host
+    os.environ['JUPYTERHUB_PUBLIC_URL'] = f'{public_host_with_scheme}/jupyter/'
     # 通知spawner使用代理URL
-    c.JupyterHub.public_url = f'{public_host}/jupyter/'
+    c.JupyterHub.public_url = f'{public_host_with_scheme}/jupyter/'
+    print(f"📍 JupyterHub public_url: {c.JupyterHub.public_url}")
 else:
-    c.JupyterHub.public_url = f'http://{public_host}/'
+    c.JupyterHub.public_url = f'{default_scheme}://{public_host}/'
 
 # Hub 对外(容器内)连接信息：让单用户容器能访问 Hub API（通过服务名 jupyterhub:8081）
 hub_connect_host = os.environ.get('JUPYTERHUB_HUB_CONNECT_HOST', 'jupyterhub')
@@ -387,12 +401,14 @@ class AutoLoginHandler(BaseHandler):
             logger.info(f"AutoLogin: 登录成功: {login_data.get('name', username)}")
             
             # 7. 设置额外的认证cookie，确保状态持久化
+            # 根据 ENABLE_TLS 环境变量决定是否启用 secure cookie
+            use_secure_cookie = os.environ.get('ENABLE_TLS', 'false').lower() == 'true' or EXTERNAL_SCHEME == 'https'
             self.set_cookie(
                 'jupyterhub_auth_token', 
                 token, 
                 expires_days=7,  # 7天有效期
                 httponly=True,
-                secure=False,  # 在HTTP环境下设为False
+                secure=use_secure_cookie,
                 path=self.base_url
             )
             
@@ -408,10 +424,37 @@ c.JupyterHub.extra_handlers = [
     (r'/auto-login', AutoLoginHandler),
 ]
 
+# 构建动态 CSP frame-ancestors 列表
+def build_csp_frame_ancestors():
+    """根据环境变量构建 CSP frame-ancestors 策略"""
+    ancestors = ["'self'"]
+    
+    # 添加 HTTP 源
+    http_origins = [
+        f"http://localhost:{EXTERNAL_PORT}",
+        f"http://0.0.0.0:{EXTERNAL_PORT}",
+        f"http://{EXTERNAL_HOST}:{EXTERNAL_PORT}" if ':' not in EXTERNAL_HOST else f"http://{EXTERNAL_HOST}",
+    ]
+    ancestors.extend(http_origins)
+    
+    # 添加 HTTPS 源 (如果启用了 TLS)
+    if EXTERNAL_SCHEME == 'https' or os.environ.get('ENABLE_TLS', 'false').lower() == 'true':
+        https_origins = [
+            f"https://localhost:{HTTPS_PORT}",
+            f"https://0.0.0.0:{HTTPS_PORT}",
+            f"https://{EXTERNAL_HOST}:{HTTPS_PORT}" if ':' not in EXTERNAL_HOST else f"https://{EXTERNAL_HOST.split(':')[0]}:{HTTPS_PORT}",
+        ]
+        ancestors.extend(https_origins)
+    
+    return " ".join(ancestors) + ";"
+
+CSP_FRAME_ANCESTORS = build_csp_frame_ancestors()
+print(f"🔒 CSP frame-ancestors: {CSP_FRAME_ANCESTORS}")
+
 # 配置 Tornado 设置以支持 iframe 嵌入
 c.JupyterHub.tornado_settings = {
     'headers': {
-        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://172.20.10.11:8080;",
+        'Content-Security-Policy': f"frame-ancestors {CSP_FRAME_ANCESTORS}",
     },
 }
 

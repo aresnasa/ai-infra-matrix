@@ -151,6 +151,17 @@ spec:
           value: {{ .Values.jupyterhub.config.publicHost | quote }}
         - name: JUPYTERHUB_CORS_ORIGIN
           value: "http://{{ .Values.jupyterhub.config.publicHost }}"
+        # SSL/TLS Configuration
+        - name: ENABLE_TLS
+          value: {{ .Values.env.ENABLE_TLS | default "false" | quote }}
+        - name: EXTERNAL_SCHEME
+          value: {{ .Values.env.EXTERNAL_SCHEME | default "http" | quote }}
+        - name: EXTERNAL_HOST
+          value: {{ .Values.env.EXTERNAL_HOST | default "localhost" | quote }}
+        - name: EXTERNAL_PORT
+          value: {{ .Values.env.EXTERNAL_PORT | default "8080" | quote }}
+        - name: HTTPS_PORT
+          value: {{ .Values.env.HTTPS_PORT | default "8443" | quote }}
         - name: TZ
           value: "Asia/Shanghai"
         - name: KUBERNETES_NAMESPACE

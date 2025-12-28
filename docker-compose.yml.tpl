@@ -467,7 +467,12 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-your-encryption-key-change-in-production-32-bytes}
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
-
+      # SSL/TLS 和外部访问配置
+      - ENABLE_TLS=${ENABLE_TLS:-false}
+      - EXTERNAL_SCHEME=${EXTERNAL_SCHEME:-http}
+      - EXTERNAL_HOST=${EXTERNAL_HOST:-localhost}
+      - EXTERNAL_PORT=${EXTERNAL_PORT:-8080}
+      - HTTPS_PORT=${HTTPS_PORT:-8443}
       - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
       - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
       - SESSION_TIMEOUT=86400
@@ -772,6 +777,8 @@ services:
       - "${EXTERNAL_HOST}:${DEBUG_PORT}:8001"
     volumes:
       - nginx_logs:/var/log/nginx
+      # 挂载配置文件以支持热更新 (模板渲染后的文件)
+      - ./src/nginx/conf.d/includes:/etc/nginx/conf.d/includes:rw
     env_file:
       - .env
     environment:
@@ -783,6 +790,11 @@ services:
       - FRONTEND_PORT=${FRONTEND_PORT:-80}
       - JUPYTERHUB_HOST=${JUPYTERHUB_HOST:-jupyterhub}
       - JUPYTERHUB_PORT=${JUPYTERHUB_PORT:-8000}
+      - EXTERNAL_HOST=${EXTERNAL_HOST:-localhost}
+      - EXTERNAL_PORT=${EXTERNAL_PORT:-8080}
+      - HTTPS_PORT=${HTTPS_PORT:-8443}
+      - EXTERNAL_SCHEME=${EXTERNAL_SCHEME:-http}
+      - ENABLE_TLS=${ENABLE_TLS:-false}
       - TZ=Asia/Shanghai
     depends_on:
       postgres:
@@ -877,7 +889,7 @@ services:
       # SeaweedFS S3 兼容存储配置 (用于 Gitea 附件等)
       MINIO_ENDPOINT: "${SEAWEEDFS_FILER_HOST:-seaweedfs-filer}:${SEAWEEDFS_S3_PORT:-8333}"
       MINIO_BUCKET: "${SEAWEEDFS_BUCKET_GITEA:-gitea}"
-      MINIO_USE_SSL: "${SEAWEEDFS_USE_SSL:-false}"
+      MINIO_USE_SSL: "${SEAWEEDFS_USE_SSL:-true}"
       MINIO_LOCATION: "${SEAWEEDFS_REGION:-us-east-1}"
       MINIO_ACCESS_KEY: "${SEAWEEDFS_ACCESS_KEY:-admin}"
       MINIO_SECRET_KEY: "${SEAWEEDFS_SECRET_KEY:-admin123456}"

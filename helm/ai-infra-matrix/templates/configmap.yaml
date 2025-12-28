@@ -97,6 +97,13 @@ data:
   # Nginx Configuration
   NGINX_PORT: {{ .Values.nginx.service.port | quote }}
   NGINX_RESOLVER: "kube-dns.kube-system.svc.cluster.local"
+  
+  # SSL/TLS Configuration
+  ENABLE_TLS: {{ .Values.env.ENABLE_TLS | default "false" | quote }}
+  EXTERNAL_SCHEME: {{ .Values.env.EXTERNAL_SCHEME | default "http" | quote }}
+  EXTERNAL_HOST: {{ .Values.env.EXTERNAL_HOST | default "localhost" | quote }}
+  EXTERNAL_PORT: {{ .Values.env.EXTERNAL_PORT | default "8080" | quote }}
+  HTTPS_PORT: {{ .Values.env.HTTPS_PORT | default "8443" | quote }}
 
 ---
 apiVersion: v1

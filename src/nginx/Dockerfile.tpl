@@ -135,6 +135,12 @@ RUN if [ "$DEBUG_MODE" = "true" ]; then \
 COPY src/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY src/nginx/conf.d/ /etc/nginx/conf.d/
 
+# 复制 SSL 证书 (如果存在)
+# 证书由 ./build.sh ssl-setup 生成到 src/nginx/ssl/
+# 如果不存在则创建空目录
+RUN mkdir -p /etc/nginx/ssl
+COPY src/nginx/ssl/ /etc/nginx/ssl/
+
 # 创建JupyterHub wrapper页面的符号链接，支持多种访问方式
 RUN ln -sf /usr/share/nginx/html/jupyterhub/jupyterhub_wrapper_upstream.html /usr/share/nginx/html/jupyterhub_wrapper.html
 
