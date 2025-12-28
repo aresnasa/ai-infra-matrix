@@ -1091,11 +1091,15 @@ services:
       - ai-infra-network
     restart: unless-stopped
 
-  # SafeLine WAF Services
+  # SafeLine WAF Services (Optional - use --profile safeline to start)
+  # 启动方式: docker-compose --profile safeline up -d
+  # 或先运行: ./build.sh init-safeline
   safeline-postgres:
     container_name: safeline-pg
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-postgres{{SAFELINE_ARCH_SUFFIX}}:15.2
+    profiles:
+      - safeline
     volumes:
       - ${SAFELINE_DIR:-./data/safeline}/resources/postgres/data:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
@@ -1111,6 +1115,8 @@ services:
     container_name: safeline-mgt
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-mgt{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - ${SAFELINE_DIR:-./data/safeline}/resources/mgt:/app/data
@@ -1139,6 +1145,8 @@ services:
     container_name: safeline-detector
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-detector{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
     volumes:
       - ${SAFELINE_DIR:-./data/safeline}/resources/detector:/resources/detector
       - ${SAFELINE_DIR:-./data/safeline}/logs/detector:/logs/detector
@@ -1153,6 +1161,8 @@ services:
     container_name: safeline-tengine
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-tengine{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/resolv.conf:/etc/resolv.conf:ro
@@ -1183,6 +1193,8 @@ services:
     container_name: safeline-luigi
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-luigi{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
     environment:
       - MGT_IP=${SAFELINE_SUBNET_PREFIX}.4
       - LUIGI_PG=postgres://safeline-ce:${SAFELINE_POSTGRES_PASSWORD}@safeline-pg/safeline-ce?sslmode=disable
@@ -1205,6 +1217,8 @@ services:
     container_name: safeline-fvm
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-fvm{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
     volumes:
       - /etc/localtime:/etc/localtime:ro
     logging:
@@ -1220,6 +1234,8 @@ services:
     container_name: safeline-chaos
     restart: always
     image: {{SAFELINE_IMAGE_PREFIX}}/safeline-chaos{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
     logging:
       driver: "json-file"
       options:
