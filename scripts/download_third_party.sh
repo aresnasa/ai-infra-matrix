@@ -196,19 +196,19 @@ download_file() {
     echo "  📥 下载中: $(basename "$output_file")"
     echo "     URL: $final_url"
     
-    # 首先尝试镜像
-    if wget -q --show-progress -T 30 -t 3 "$final_url" -O "$output_file" 2>/dev/null; then
+    # 首先尝试镜像 (10秒超时)
+    if wget -q --show-progress -T 10 -t 2 "$final_url" -O "$output_file" 2>/dev/null; then
         if [ -s "$output_file" ]; then
             echo "  ✓ 下载成功: $(basename "$output_file")"
             return 0
         fi
     fi
     
-    # 镜像失败则尝试直接下载
+    # 镜像失败则尝试直接下载 (30秒超时)
     if [ "$final_url" != "$url" ]; then
         echo "  ⚠ 镜像下载失败，尝试直接下载..."
         rm -f "$output_file"
-        if wget -q --show-progress -T 60 -t 3 "$url" -O "$output_file" 2>/dev/null; then
+        if wget -q --show-progress -T 30 -t 2 "$url" -O "$output_file" 2>/dev/null; then
             if [ -s "$output_file" ]; then
                 echo "  ✓ 直接下载成功: $(basename "$output_file")"
                 return 0

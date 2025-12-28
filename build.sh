@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 # ==============================================================================
@@ -36,6 +36,55 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_cache() { echo -e "${CYAN}[CACHE]${NC} $1"; }
 log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
+
+# ==============================================================================
+# 通用工具函数
+# ==============================================================================
+
+# 验证 registry 路径是否完整 (Harbor 需要 project 名称)
+# 返回: 0 = 验证通过或用户确认继续, 1 = 用户取消
+# 用法: validate_registry_path "harbor.example.com/ai-infra" "v0.3.8"
+validate_registry_path() {
+    local registry="$1"
+    local tag="${2:-}"
+    
+    # 如果 registry 为空，直接返回成功（不需要验证）
+    [[ -z "$registry" ]] && return 0
+    
+    # 检查是否包含项目路径（应至少有一个 /）
+    if [[ ! "$registry" =~ / ]]; then
+        log_warn "=========================================="
+        log_warn "⚠️  Registry path may be incomplete!"
+        log_warn "=========================================="
+        log_warn "Provided: $registry"
+        log_warn ""
+        log_warn "Harbor registries require a project name in the path:"
+        log_warn "  ✓ $registry/ai-infra    (recommended)"
+        log_warn "  ✓ $registry/<project>   (your project name)"
+        log_warn ""
+        if [[ -n "$tag" ]]; then
+            log_warn "Example usage:"
+            log_warn "  $0 [command] $registry/ai-infra $tag"
+        fi
+        log_warn ""
+        
+        # 非交互模式下返回失败
+        if [[ ! -t 0 ]]; then
+            log_warn "Non-interactive mode, aborting."
+            return 1
+        fi
+        
+        read -p "Continue anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cancelled. Please use correct registry path."
+            return 1
+        fi
+        log_warn "Continuing with incomplete registry path..."
+    fi
+    
+    return 0
+}
 
 # ==============================================================================
 # 1. Configuration & Environment
@@ -120,19 +169,41 @@ detect_external_host() {
 detect_cgroup_version() {
     local cgroup_version="v1"  # 默认 v1
     
-    # 方法1：检查 /sys/fs/cgroup/cgroup.controllers (cgroupv2 特有)
+    # 方法0：macOS/Docker Desktop - 通过 docker info 检测
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v docker &> /dev/null; then
+        local docker_cgroup_ver
+        docker_cgroup_ver=$(docker info 2>/dev/null | grep -i "Cgroup Version" | awk '{print $NF}')
+        if [[ "$docker_cgroup_ver" == "2" ]]; then
+            cgroup_version="v2"
+            echo "$cgroup_version"
+            return
+        elif [[ "$docker_cgroup_ver" == "1" ]]; then
+            cgroup_version="v1"
+            echo "$cgroup_version"
+            return
+        fi
+    fi
+    
+    # 方法1：检查 /sys/fs/cgroup/cgroup.controllers (cgroupv2 特有) - Linux
     if [[ -f "/sys/fs/cgroup/cgroup.controllers" ]]; then
         cgroup_version="v2"
-    # 方法2：检查 /sys/fs/cgroup 的挂载类型
-    elif command -v stat &> /dev/null; then
+    # 方法2：检查 /sys/fs/cgroup 的挂载类型 - Linux
+    elif [[ -d "/sys/fs/cgroup" ]] && command -v stat &> /dev/null; then
         local cgroup_fstype
         cgroup_fstype=$(stat -f -c %T /sys/fs/cgroup 2>/dev/null || stat -f %T /sys/fs/cgroup 2>/dev/null)
         if [[ "$cgroup_fstype" == "cgroup2fs" ]] || [[ "$cgroup_fstype" == "cgroup2" ]]; then
             cgroup_version="v2"
         fi
-    # 方法3：通过 mount 命令检查
-    elif command -v mount &> /dev/null; then
+    # 方法3：通过 mount 命令检查 - Linux
+    elif [[ -d "/sys/fs/cgroup" ]] && command -v mount &> /dev/null; then
         if mount | grep -q "cgroup2 on /sys/fs/cgroup"; then
+            cgroup_version="v2"
+        fi
+    # 方法4：通过 docker info 检测（非 macOS 但有 docker）
+    elif command -v docker &> /dev/null; then
+        local docker_cgroup_ver
+        docker_cgroup_ver=$(docker info 2>/dev/null | grep -i "Cgroup Version" | awk '{print $NF}')
+        if [[ "$docker_cgroup_ver" == "2" ]]; then
             cgroup_version="v2"
         fi
     fi
@@ -187,7 +258,7 @@ update_env_variable() {
 # 同步 .env 与 .env.example
 # 功能：
 #   1. 添加 .env.example 中新增的变量
-#   2. 用 .env.example 的值覆盖 .env 中不同的值
+#   2. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
@@ -225,14 +296,16 @@ sync_env_with_example() {
                 echo "${var_name}=${example_value}" >> "$env_file"
                 missing_vars+=("$var_name")
             else
-                # 变量存在，检查值是否不同
-                local current_value
-                current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
-                
-                # 如果值不同，用 example 的值更新
-                if [[ "$current_value" != "$example_value" ]]; then
-                    update_env_variable "$var_name" "$example_value"
-                    updated_vars+=("$var_name: $current_value → $example_value")
+                # 变量存在，只同步版本类变量 (VERSION, TAG, VER, RELEASE)
+                if [[ "$var_name" =~ (VERSION|_TAG$|_VER$|_RELEASE$) ]]; then
+                    local current_value
+                    current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
+                    
+                    # 如果值不同，用 example 的值更新
+                    if [[ "$current_value" != "$example_value" ]]; then
+                        update_env_variable "$var_name" "$example_value"
+                        updated_vars+=("$var_name: $current_value → $example_value")
+                    fi
                 fi
             fi
         fi
@@ -247,7 +320,7 @@ sync_env_with_example() {
     fi
     
     if [[ ${#updated_vars[@]} -gt 0 ]]; then
-        log_info "Updated ${#updated_vars[@]} variables from .env.example:"
+        log_info "Updated ${#updated_vars[@]} version variables from .env.example:"
         for var in "${updated_vars[@]}"; do
             log_info "  ↻ $var"
         done
@@ -256,7 +329,7 @@ sync_env_with_example() {
     if [[ ${#missing_vars[@]} -eq 0 ]] && [[ ${#updated_vars[@]} -eq 0 ]]; then
         log_info "✓ .env is in sync with .env.example"
     else
-        log_info "✓ Synced ${#missing_vars[@]} new + ${#updated_vars[@]} updated variables"
+        log_info "✓ Synced ${#missing_vars[@]} new + ${#updated_vars[@]} version variables"
     fi
     
     return 0
@@ -1817,7 +1890,7 @@ sync_templates() {
 }
 
 # ==============================================================================
-# Pull Functions - 镜像拉取功能
+# Pull/Push Functions - 镜像操作功能 (优化后的统一重试机制)
 # ==============================================================================
 
 # Default retry settings
@@ -1837,19 +1910,33 @@ log_failure() {
     log_error "[$timestamp] $operation FAILED: $target - $error_msg"
 }
 
-# Pull single image with retry mechanism
-# Args: $1 = image name, $2 = max retries (default 3), $3 = retry delay (default 5)
-pull_image_with_retry() {
-    local image="$1"
-    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
-    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+# 通用的 Docker 命令重试执行器
+# 用法: docker_with_retry <operation> <image> [max_retries] [retry_delay] [skip_exists_check]
+# operation: pull, push, tag
+# skip_exists_check: 对于 push 操作设为 true
+docker_with_retry() {
+    local operation="$1"
+    local image="$2"
+    local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${4:-$DEFAULT_RETRY_DELAY}"
+    local skip_exists_check="${5:-false}"
     local retry_count=0
     local last_error=""
     
-    # Check if image already exists locally
-    if docker image inspect "$image" >/dev/null 2>&1; then
-        log_info "  ✓ Image exists: $image"
-        return 0
+    # 操作符号和显示文本映射 (macOS bash 3.x 兼容)
+    local op_icon="" op_verb="" op_past=""
+    case "$operation" in
+        pull) op_icon="⬇"; op_verb="Pulling"; op_past="Pulled" ;;
+        push) op_icon="⬆"; op_verb="Pushing"; op_past="Pushed" ;;
+        *)    op_icon="⚙"; op_verb="Processing"; op_past="Processed" ;;
+    esac
+    
+    # 对于 pull 操作，检查镜像是否已存在
+    if [[ "$operation" == "pull" ]] && [[ "$skip_exists_check" != "true" ]]; then
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "  ✓ Image exists: $image"
+            return 0
+        fi
     fi
     
     while [[ $retry_count -lt $max_retries ]]; do
@@ -1859,13 +1946,13 @@ pull_image_with_retry() {
             log_warn "  🔄 Retry $retry_count/$max_retries: $image (waiting ${retry_delay}s...)"
             sleep $retry_delay
         else
-            log_info "  ⬇ Pulling: $image"
+            log_info "  $op_icon $op_verb: $image"
         fi
         
-        # Capture both stdout and stderr
+        # 执行 Docker 命令
         local output
-        if output=$(docker pull "$image" 2>&1); then
-            log_info "  ✓ Pulled: $image"
+        if output=$(docker "$operation" "$image" 2>&1); then
+            log_info "  ✓ $op_past: $image"
             return 0
         else
             last_error="$output"
@@ -1873,9 +1960,31 @@ pull_image_with_retry() {
         fi
     done
     
-    # All retries exhausted - log failure
-    log_failure "PULL" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
+    # 所有重试失败
+    log_failure "${operation^^}" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
     return 1
+}
+
+# Pull single image with retry mechanism (使用通用重试器)
+# Args: $1 = image name, $2 = max retries (default 3), $3 = retry delay (default 5)
+pull_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+    
+    # 使用通用重试器
+    docker_with_retry "pull" "$image" "$max_retries" "$retry_delay" "false"
+}
+
+# Push single image with retry mechanism (使用通用重试器)
+# Args: $1 = image, $2 = max retries (default 3), $3 = retry delay (default 5)
+push_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+    
+    # push 操作不检查本地镜像是否存在
+    docker_with_retry "push" "$image" "$max_retries" "$retry_delay" "true"
 }
 
 # Extract base images from Dockerfile
@@ -1990,30 +2099,9 @@ pull_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Validate registry path for private registries (Harbor requires project in path)
-    if [[ -n "$registry" ]]; then
-        # Check if registry contains project path (should have at least one /)
-        if [[ ! "$registry" =~ / ]]; then
-            log_warn "=========================================="
-            log_warn "⚠️  Registry path may be incomplete!"
-            log_warn "=========================================="
-            log_warn "Provided: $registry"
-            log_warn ""
-            log_warn "Harbor registries require a project name in the path:"
-            log_warn "  ✓ $registry/ai-infra    (recommended)"
-            log_warn "  ✓ $registry/<project>   (your project name)"
-            log_warn ""
-            log_warn "Example usage:"
-            log_warn "  $0 pull-all $registry/ai-infra $tag"
-            log_warn ""
-            read -p "Continue anyway? [y/N] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                log_info "Cancelled. Please use correct registry path."
-                return 1
-            fi
-            log_warn "Continuing with incomplete registry path..."
-        fi
+    # 使用通用函数验证 registry 路径
+    if ! validate_registry_path "$registry" "$tag"; then
+        return 1
     fi
     
     if [[ -z "$registry" ]]; then
@@ -2312,41 +2400,8 @@ pull_common_images() {
 }
 
 # ==============================================================================
-# Push Functions - 镜像推送功能
+# Push Functions - 镜像推送功能 (使用通用重试器 docker_with_retry)
 # ==============================================================================
-
-# Push single image with retry mechanism
-# Args: $1 = image, $2 = max retries (default 3), $3 = retry delay (default 5)
-push_image_with_retry() {
-    local image="$1"
-    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
-    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
-    local retry_count=0
-    local last_error=""
-    
-    while [[ $retry_count -lt $max_retries ]]; do
-        retry_count=$((retry_count + 1))
-        
-        if [[ $retry_count -gt 1 ]]; then
-            log_warn "  🔄 Retry $retry_count/$max_retries: $image (waiting ${retry_delay}s...)"
-            sleep $retry_delay
-        fi
-        
-        # Capture both stdout and stderr
-        local output
-        if output=$(docker push "$image" 2>&1); then
-            log_info "  ✓ Pushed: $image"
-            return 0
-        else
-            last_error="$output"
-            log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
-        fi
-    done
-    
-    # All retries exhausted - log failure
-    log_failure "PUSH" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
-    return 1
-}
 
 # Push single service image
 # Args: $1 = service, $2 = tag, $3 = registry
@@ -2418,27 +2473,9 @@ push_all_services() {
         return 1
     fi
     
-    # Validate registry path (Harbor requires project in path)
-    if [[ ! "$registry" =~ / ]]; then
-        log_warn "=========================================="
-        log_warn "⚠️  Registry path may be incomplete!"
-        log_warn "=========================================="
-        log_warn "Provided: $registry"
-        log_warn ""
-        log_warn "Harbor registries require a project name in the path:"
-        log_warn "  ✓ $registry/ai-infra    (recommended)"
-        log_warn "  ✓ $registry/<project>   (your project name)"
-        log_warn ""
-        log_warn "Example usage:"
-        log_warn "  $0 push-all $registry/ai-infra $tag"
-        log_warn ""
-        read -p "Continue anyway? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Cancelled. Please use correct registry path."
-            return 1
-        fi
-        log_warn "Continuing with incomplete registry path..."
+    # 使用通用函数验证 registry 路径
+    if ! validate_registry_path "$registry" "$tag"; then
+        return 1
     fi
     
     # Ensure registry ends without trailing slash
