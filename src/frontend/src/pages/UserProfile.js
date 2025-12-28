@@ -178,13 +178,15 @@ const UserProfile = () => {
                 style={{ marginBottom: 16 }}
               />
               <div style={{ 
-                background: '#f5f5f5', 
+                background: '#ffffff', 
+                border: '1px solid #d9d9d9',
                 padding: 16, 
                 borderRadius: 8,
-                fontFamily: 'monospace' 
+                fontFamily: 'monospace',
+                color: '#000000'
               }}>
                 {recoveryCodes.map((code, index) => (
-                  <div key={index} style={{ marginBottom: 4 }}>{code}</div>
+                  <div key={index} style={{ marginBottom: 4, color: '#000000' }}>{code}</div>
                 ))}
               </div>
             </div>
@@ -635,7 +637,8 @@ const UserProfile = () => {
               display: 'flex', 
               justifyContent: 'center', 
               padding: 24, 
-              background: '#fafafa', 
+              background: '#ffffff', 
+              border: '1px solid #d9d9d9',
               borderRadius: 8,
               marginBottom: 16 
             }}>
@@ -681,13 +684,15 @@ const UserProfile = () => {
                   style={{ marginBottom: 8 }}
                 />
                 <div style={{ 
-                  background: '#f5f5f5', 
+                  background: '#ffffff', 
+                  border: '1px solid #d9d9d9',
                   padding: 12, 
                   borderRadius: 8,
-                  fontFamily: 'monospace'
+                  fontFamily: 'monospace',
+                  color: '#000000'
                 }}>
                   {twoFASetupData.recovery_codes.map((code, index) => (
-                    <div key={index} style={{ marginBottom: 4 }}>{code}</div>
+                    <div key={index} style={{ marginBottom: 4, color: '#000000' }}>{code}</div>
                   ))}
                 </div>
                 <Button

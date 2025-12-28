@@ -5102,6 +5102,20 @@ func (h *SaltStackHandler) UpdateSaltJobConfig(c *gin.Context) {
 				return
 			}
 		}
+
+		// 检查RequireAuthForDangerousCmd是否有变化（启用/禁用危险命令认证开关）
+		requireAuthChanged := request.RequireAuthForDangerousCmd != existingConfig.RequireAuthForDangerousCmd
+		if requireAuthChanged {
+			authConfig := utils.SecondaryAuthConfig{
+				Enabled:      true,
+				AuthType:     "require_auth_toggle",
+				AuthMethod:   utils.AuthMethodTOTP,
+				ErrorMessage: "启用或禁用危险命令认证开关需要2FA验证",
+			}
+			if !utils.RequireSecondaryAuthWith2FA(c, authConfig, "", request.AuthCode) {
+				return
+			}
+		}
 	}
 
 	// 检查是否需要密码认证（当修改危险命令列表时）
