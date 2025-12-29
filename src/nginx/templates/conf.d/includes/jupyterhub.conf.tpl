@@ -29,9 +29,9 @@
         proxy_send_timeout 86400s;
         proxy_hide_header Content-Security-Policy;
         proxy_hide_header X-Frame-Options;
-        # CSP frame-ancestors 支持 HTTP 和 HTTPS
-        # 注意: EXTERNAL_HOST 是纯主机名/IP，端口通过 EXTERNAL_PORT/HTTPS_PORT 指定
-        add_header Content-Security-Policy "frame-ancestors 'self' http://localhost:{{EXTERNAL_PORT}} http://0.0.0.0:{{EXTERNAL_PORT}} http://{{EXTERNAL_HOST}}:{{EXTERNAL_PORT}} https://localhost:{{HTTPS_PORT}} https://0.0.0.0:{{HTTPS_PORT}} https://{{EXTERNAL_HOST}}:{{HTTPS_PORT}};" always;
+        # CSP frame-ancestors 使用动态变量，支持任意访问来源
+        # $external_scheme 和 $external_host 在 server 块中定义
+        add_header Content-Security-Policy "frame-ancestors 'self' $external_scheme://$external_host http://$http_host https://$http_host;" always;
         add_header X-Frame-Options SAMEORIGIN always;
     }
 
