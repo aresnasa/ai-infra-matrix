@@ -8,6 +8,9 @@
         try_files /jupyterhub_auth_bridge.html =404;
         add_header Content-Type "text/html; charset=utf-8";
         add_header Cache-Control "no-cache, no-store, must-revalidate";
+        # 允许在 iframe 中嵌入（支持 HTTPS 访问）
+        add_header Content-Security-Policy "frame-ancestors 'self' $external_scheme://$external_host http://$http_host https://$http_host;" always;
+        add_header X-Frame-Options SAMEORIGIN always;
     }
 
     # JupyterHub 前端入口交给 React 路由处理
