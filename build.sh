@@ -338,6 +338,120 @@ sync_env_with_example() {
         log_info "✓ Synced ${#missing_vars[@]} new + ${#updated_vars[@]} version variables"
     fi
     
+    # 检测配置差异并警告用户
+    check_env_config_drift
+    
+    return 0
+}
+
+# 检测 .env 与 .env.example 之间的配置差异
+# 功能：
+#   1. 检测非版本类变量的值差异
+#   2. 特别关注关键配置项（如 EXTERNAL_SCHEME 与 ENABLE_TLS 的一致性）
+#   3. 警告用户可能的配置问题
+# 用法: check_env_config_drift
+check_env_config_drift() {
+    local env_file="$ENV_FILE"
+    local example_file="$ENV_EXAMPLE"
+    
+    if [[ ! -f "$example_file" ]] || [[ ! -f "$env_file" ]]; then
+        return 0
+    fi
+    
+    local drift_vars=()
+    local critical_drifts=()
+    
+    # 定义需要检测差异的关键配置变量（非版本类，非用户自定义类）
+    # 这些变量的默认值通常应该与 .env.example 保持一致
+    local -a check_vars=(
+        "EXTERNAL_SCHEME"
+        "ENABLE_TLS"
+        "ENABLE_OAUTH"
+        "ENABLE_LDAP"
+        "SSO_ENABLED"
+        "JWT_SECRET_KEY"
+        "HTTP_PORT"
+        "HTTPS_PORT"
+    )
+    
+    # 读取 .env.example 中的变量
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # 跳过注释和空行
+        if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+            continue
+        fi
+        
+        # 提取变量名和值
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local example_value="${BASH_REMATCH[2]}"
+            
+            # 跳过版本类变量（已在 sync_env_with_example 中处理）
+            if [[ "$var_name" =~ (VERSION|_TAG$|_VER$|_RELEASE$) ]]; then
+                continue
+            fi
+            
+            # 跳过用户自定义类变量（如密码、域名等）
+            if [[ "$var_name" =~ (PASSWORD|SECRET|_HOST$|_DOMAIN$|_USER$|_NAME$|_PATH$|_DIR$|_EMAIL$) ]]; then
+                continue
+            fi
+            
+            # 检查关键配置变量
+            local is_critical=false
+            for check_var in "${check_vars[@]}"; do
+                if [[ "$var_name" == "$check_var" ]]; then
+                    is_critical=true
+                    break
+                fi
+            done
+            
+            if [[ "$is_critical" == "true" ]]; then
+                # 获取 .env 中的当前值
+                local current_value
+                current_value=$(grep "^${var_name}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+                
+                if [[ -n "$current_value" ]] && [[ "$current_value" != "$example_value" ]]; then
+                    drift_vars+=("$var_name: '$current_value' (当前) vs '$example_value' (推荐)")
+                fi
+            fi
+        fi
+    done < "$example_file"
+    
+    # 特殊检查：ENABLE_TLS=true 但 EXTERNAL_SCHEME=http 的不一致
+    local enable_tls
+    local external_scheme
+    enable_tls=$(grep "^ENABLE_TLS=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    external_scheme=$(grep "^EXTERNAL_SCHEME=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    
+    if [[ "$enable_tls" == "true" ]] && [[ "$external_scheme" == "http" ]]; then
+        critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=true 但 EXTERNAL_SCHEME=http")
+        critical_drifts+=("   建议: 运行 './build.sh enable-ssl' 或手动设置 EXTERNAL_SCHEME=https")
+    fi
+    
+    if [[ "$enable_tls" == "false" ]] && [[ "$external_scheme" == "https" ]]; then
+        critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=false 但 EXTERNAL_SCHEME=https")
+        critical_drifts+=("   建议: 设置 ENABLE_TLS=true 或 EXTERNAL_SCHEME=http")
+    fi
+    
+    # 显示差异警告
+    if [[ ${#drift_vars[@]} -gt 0 ]]; then
+        log_warn "检测到 ${#drift_vars[@]} 个配置与 .env.example 默认值不同:"
+        for drift in "${drift_vars[@]}"; do
+            log_warn "  ≠ $drift"
+        done
+        log_info "提示: 如果这是有意修改，可以忽略此警告"
+    fi
+    
+    # 显示严重配置问题
+    if [[ ${#critical_drifts[@]} -gt 0 ]]; then
+        echo ""
+        log_error "发现关键配置问题:"
+        for critical in "${critical_drifts[@]}"; do
+            echo -e "  ${critical}"
+        done
+        echo ""
+    fi
+    
     return 0
 }
 
@@ -4682,6 +4796,14 @@ case "$COMMAND" in
         else
             render_all_templates
         fi
+        ;;
+    sync-env)
+        # 同步 .env 与 .env.example，并检测配置差异
+        sync_env_with_example
+        ;;
+    check-env)
+        # 仅检测 .env 配置差异，不同步
+        check_env_config_drift
         ;;
     start-all)
         start_all
