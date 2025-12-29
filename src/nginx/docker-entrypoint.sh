@@ -151,9 +151,9 @@ else
 fi
 
 # 替换配置文件中的环境变量
-find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/\${GITEA_ALIAS_ADMIN_TO}/${GITEA_ALIAS_ADMIN_TO}/g" {} \;
-find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/\${GITEA_ADMIN_EMAIL}/${GITEA_ADMIN_EMAIL}/g" {} \;
-# 同时处理模板渲染后可能遗留的双大括号格式
+# 注意：只处理 {{VAR}} 格式，因为 ${VAR} 会被 nginx 解析为 nginx 变量导致错误
+# 模板文件应使用 {{VAR}} 格式，build.sh 在构建时会替换它们
+# 这里作为后备，确保在开发环境或直接启动时也能正常工作
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{GITEA_ALIAS_ADMIN_TO}}/${GITEA_ALIAS_ADMIN_TO}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{GITEA_ADMIN_EMAIL}}/${GITEA_ADMIN_EMAIL}/g" {} \;
 find /etc/nginx/conf.d/ -name "*.conf" -type f -exec sed -i "s/{{FRONTEND_HOST}}/${FRONTEND_HOST}/g" {} \;

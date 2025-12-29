@@ -283,7 +283,18 @@ else:
     c.JupyterHub.base_url = '/'
 
 # 公共URL配置 - 支持动态检测客户端访问地址
-public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
+# 当启用 TLS 时，使用 HTTPS 端口替换默认的 HTTP 端口
+_raw_public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    # TLS 模式：确保 public_host 使用 HTTPS 端口
+    if ':' in _raw_public_host:
+        _host_part = _raw_public_host.rsplit(':', 1)[0]
+        public_host = f'{_host_part}:{HTTPS_PORT}'
+    else:
+        public_host = f'{_raw_public_host}:{HTTPS_PORT}'
+    print(f"🔒 TLS模式: public_host 调整为 {public_host}")
+else:
+    public_host = _raw_public_host
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
 
 # 设置动态公共URL检测

@@ -1689,6 +1689,13 @@ TEMPLATE_VARIABLES=(
     "REDISINSIGHT_VERSION" # RedisInsight version (e.g., latest)
     
     # ===========================================
+    # Gitea SSO configuration (Runtime)
+    # Used in src/nginx/templates/conf.d/includes/gitea.conf.tpl
+    # ===========================================
+    "GITEA_ALIAS_ADMIN_TO"  # SSO admin user mapping for Gitea (default: admin)
+    "GITEA_ADMIN_EMAIL"     # SSO admin email for Gitea (default: admin@example.com)
+    
+    # ===========================================
     # SaltStack configuration (Runtime)
     # Used for external node minion installation
     # ===========================================
