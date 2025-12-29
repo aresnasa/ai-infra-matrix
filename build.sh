@@ -1058,6 +1058,7 @@ COMMON_IMAGES=(
     "chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}"
     "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
     "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
+    "${GITEA_IMAGE:-gitea/gitea:${GITEA_VERSION:-1.25.1}}"
 )
 
 # Initialize SAFELINE_IMAGES array for SafeLine WAF
