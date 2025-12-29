@@ -274,7 +274,8 @@ if enable_tls or EXTERNAL_SCHEME == 'https':
 
 if use_proxy:
     # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
-    c.JupyterHub.base_url = '/jupyter'
+    # 注意：base_url 必须带尾部斜杠
+    c.JupyterHub.base_url = '/jupyter/'
     # 代理模式下，接收来自代理的Token
     c.JupyterHub.trust_user_provided_tokens = True
 else:
@@ -475,10 +476,9 @@ _tornado_settings = {
 if enable_tls or EXTERNAL_SCHEME == 'https':
     _tornado_settings['xsrf_cookie_kwargs'] = {
         'secure': True,
-        'samesite': 'None',  # 允许跨站点 iframe 嵌入
+        'samesite': 'Lax',  # 使用 Lax 而不是 None，避免跨站请求问题
     }
-    # 允许从反向代理传递的头部
-    _tornado_settings['cookie_secret'] = os.urandom(32).hex() if not os.path.exists('/srv/data/jupyterhub/jupyterhub_cookie_secret') else None
+    print("🔒 Tornado SSL cookie 设置已启用")
 
 c.JupyterHub.tornado_settings = _tornado_settings
 
@@ -588,13 +588,10 @@ c.JupyterHub.cookie_max_age_days = max(7, _session_timeout // 86400)  # 至少7�
 c.Authenticator.enable_auth_state = True
 
 # 5. 设置正确的cookie域名和路径（支持反向代理）
+# base_url 已在前面配置，这里只设置 hub_prefix
 if use_proxy:
     # 反向代理模式下的cookie配置
-    c.JupyterHub.base_url = '/jupyter/'
     c.JupyterHub.hub_prefix = '/jupyter/hub/'
-else:
-    # 直接访问模式下的cookie配置
-    c.JupyterHub.base_url = '/'
 
 # 加密密钥配置（用于auth_state）
 crypt_key = os.environ.get('JUPYTERHUB_CRYPT_KEY', '790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1')
