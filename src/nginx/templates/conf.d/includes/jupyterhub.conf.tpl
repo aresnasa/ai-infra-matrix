@@ -18,7 +18,10 @@
         proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        # 使用 $external_scheme 确保正确传递协议 (http/https)
+        proxy_set_header X-Forwarded-Proto $external_scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Port $server_port;
         proxy_set_header Cookie $http_cookie;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -27,6 +30,8 @@
         proxy_request_buffering off;
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
+        # 避免中断 WebSocket/SSE 连接
+        proxy_connect_timeout 60s;
         proxy_hide_header Content-Security-Policy;
         proxy_hide_header X-Frame-Options;
         # CSP frame-ancestors 使用动态变量，支持任意访问来源
@@ -41,5 +46,5 @@
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $external_scheme;
     }

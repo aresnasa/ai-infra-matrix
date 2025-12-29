@@ -265,6 +265,13 @@ enable_tls = os.environ.get('ENABLE_TLS', 'false').lower() == 'true'
 # 根据 EXTERNAL_SCHEME 或 ENABLE_TLS 确定协议
 default_scheme = 'https' if enable_tls or EXTERNAL_SCHEME == 'https' else 'http'
 
+# SSL 代理配置 - 信任反向代理传递的头部
+# 这对于正确处理 HTTPS 请求至关重要
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    # 信任来自代理的 X-Forwarded-* 头部
+    c.JupyterHub.trusted_alt_names = ['DNS:localhost', 'DNS:jupyterhub', 'IP:127.0.0.1']
+    print(f"🔒 SSL代理模式已启用: scheme={default_scheme}")
+
 if use_proxy:
     # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
     c.JupyterHub.base_url = '/jupyter'
@@ -313,6 +320,12 @@ if use_proxy:
     # 通知spawner使用代理URL
     c.JupyterHub.public_url = f'{public_host_with_scheme}/jupyter/'
     print(f"📍 JupyterHub public_url: {c.JupyterHub.public_url}")
+    
+    # 在代理模式下，必须配置信任代理传递的协议
+    # 这确保 JupyterHub 能正确识别 HTTPS 请求
+    if enable_tls or EXTERNAL_SCHEME == 'https':
+        # 通过 tornado_settings 配置 XSRF cookie 和安全设置
+        print(f"🔒 代理 SSL 模式: 信任 X-Forwarded-Proto 头部")
 else:
     c.JupyterHub.public_url = f'{default_scheme}://{public_host}/'
 
@@ -451,12 +464,23 @@ def build_csp_frame_ancestors():
 CSP_FRAME_ANCESTORS = build_csp_frame_ancestors()
 print(f"🔒 CSP frame-ancestors: {CSP_FRAME_ANCESTORS}")
 
-# 配置 Tornado 设置以支持 iframe 嵌入
-c.JupyterHub.tornado_settings = {
+# 配置 Tornado 设置以支持 iframe 嵌入和 SSL 代理
+_tornado_settings = {
     'headers': {
         'Content-Security-Policy': f"frame-ancestors {CSP_FRAME_ANCESTORS}",
     },
 }
+
+# SSL 代理模式下的额外 Tornado 设置
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    _tornado_settings['xsrf_cookie_kwargs'] = {
+        'secure': True,
+        'samesite': 'None',  # 允许跨站点 iframe 嵌入
+    }
+    # 允许从反向代理传递的头部
+    _tornado_settings['cookie_secret'] = os.urandom(32).hex() if not os.path.exists('/srv/data/jupyterhub/jupyterhub_cookie_secret') else None
+
+c.JupyterHub.tornado_settings = _tornado_settings
 
 # =========================
 # 动态Spawner配置
@@ -528,6 +552,15 @@ if SPAWNER_TYPE == 'docker':
 # 安全配置（将cookie密钥保存在数据卷中，避免每次重启失效）
 c.JupyterHub.cookie_secret_file = '/srv/data/jupyterhub/jupyterhub_cookie_secret'
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'default-token-change-me')
+
+# SSL 代理模式下的 ConfigurableHTTPProxy 配置
+# 当 JupyterHub 在 SSL 终止代理（如 nginx）后面运行时，需要信任代理传递的协议
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    # 允许代理将 HTTPS 请求转发为 HTTP
+    c.ConfigurableHTTPProxy.should_check_origin = False
+    # 配置代理的 API 令牌
+    c.ConfigurableHTTPProxy.api_url = 'http://127.0.0.1:8001'
+    print("🔒 ConfigurableHTTPProxy: SSL 代理模式已配置")
 
 # 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 7 天
 _session_timeout = int(os.environ.get('SESSION_TIMEOUT', '604800'))  # 7天
