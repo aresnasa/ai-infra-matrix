@@ -293,9 +293,9 @@ sync_master_pubkey() {
     
     log_info "尝试获取 Master 公钥: $MASTER_PUB_URL"
     
-    # 下载 Master 公钥
+    # 下载 Master 公钥 (使用 -k 选项支持自签名证书)
     if command -v curl >/dev/null 2>&1; then
-        if curl -fsSL --connect-timeout 10 -o "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
+        if curl -fsSLk --connect-timeout 10 -o "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
             if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
                 downloaded=true
                 log_info "✓ Master 公钥下载成功 (curl)"
@@ -305,7 +305,7 @@ sync_master_pubkey() {
             fi
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if wget -q --timeout=10 -O "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
+        if wget -q --timeout=10 --no-check-certificate -O "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
             if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
                 downloaded=true
                 log_info "✓ Master 公钥下载成功 (wget)"
