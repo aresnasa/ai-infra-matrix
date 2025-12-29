@@ -4761,6 +4761,33 @@ case "$COMMAND" in
         # 清理 SSL 证书
         clean_ssl_certificates
         ;;
+    enable-ssl)
+        # 启用 SSL 模式（更新 .env 配置）
+        log_info "🔒 Enabling SSL mode..."
+        update_env_variable "ENABLE_TLS" "true"
+        update_env_variable "EXTERNAL_SCHEME" "https"
+        log_info "✓ SSL mode enabled"
+        log_info "  ENABLE_TLS=true"
+        log_info "  EXTERNAL_SCHEME=https"
+        log_info ""
+        log_info "📋 Next steps:"
+        log_info "   1. Generate certificates: ./build.sh ssl-setup"
+        log_info "   2. Rebuild nginx:         ./build.sh nginx"
+        log_info "   3. Restart services:      docker compose restart nginx"
+        ;;
+    disable-ssl)
+        # 禁用 SSL 模式（更新 .env 配置）
+        log_info "🔓 Disabling SSL mode..."
+        update_env_variable "ENABLE_TLS" "false"
+        update_env_variable "EXTERNAL_SCHEME" "http"
+        log_info "✓ SSL mode disabled"
+        log_info "  ENABLE_TLS=false"
+        log_info "  EXTERNAL_SCHEME=http"
+        log_info ""
+        log_info "📋 Next steps:"
+        log_info "   1. Rebuild nginx: ./build.sh nginx"
+        log_info "   2. Restart:       docker compose restart nginx"
+        ;;
     gen-prod-env)
         # 生成生产环境配置文件（使用强随机密码）
         generate_production_env "${ARG2:-.env.prod}" "$FORCE_BUILD"
