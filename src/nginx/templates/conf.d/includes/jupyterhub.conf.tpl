@@ -24,8 +24,9 @@
         proxy_set_header X-Forwarded-Port $server_port;
         proxy_set_header Cookie $http_cookie;
         proxy_http_version 1.1;
+        # WebSocket 支持 - 使用全局定义的 $connection_upgrade 变量
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_buffering off;
         proxy_request_buffering off;
         proxy_read_timeout 86400s;
