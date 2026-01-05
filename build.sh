@@ -1059,7 +1059,6 @@ init_env_file() {
     # 检测外部地址
     local detected_host=$(detect_external_host)
     local detected_port="${EXTERNAL_PORT:-8080}"
-    local detected_scheme="${EXTERNAL_SCHEME:-http}"
     
     if [[ ! -f "$ENV_FILE" ]]; then
         log_info "Creating .env from .env.example..."
@@ -1074,6 +1073,10 @@ init_env_file() {
     
     # 同步 .env.example 中的新变量到 .env
     sync_env_with_example
+    
+    # 从 .env 读取当前的 scheme 设置（保留用户/example 的配置）
+    local current_scheme=$(grep "^EXTERNAL_SCHEME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+    local detected_scheme="${current_scheme:-https}"
     
     # 检查是否需要更新关键变量
     local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
@@ -3334,27 +3337,45 @@ build_component() {
             return 1
         fi
         
-        local target_image="ai-infra-$component:${tag}"
-        if [ -n "$PRIVATE_REGISTRY" ]; then
-            target_image="$PRIVATE_REGISTRY/$target_image"
-        fi
-        
-        log_info "Processing dependency $component: $upstream_image -> $target_image"
-        
-        if pull_image_with_retry "$upstream_image" 3 5; then
-            if docker tag "$upstream_image" "$target_image"; then
-                log_info "✓ Dependency ready: $target_image"
-                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED"
-                return 0
-            else
-                log_error "✗ Failed to tag $upstream_image"
-                log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR"
+        # Check if this component also has a Dockerfile (custom build based on dependency)
+        if [ -f "$component_dir/Dockerfile" ]; then
+            # This is a custom build that uses a base image from dependency.conf
+            # The Dockerfile should reference the upstream image, we just need to ensure it's available
+            log_info "Processing $component: dependency + custom Dockerfile"
+            log_info "  Base image: $upstream_image"
+            
+            # Pull the base image first to ensure it's available for the build
+            if ! pull_image_with_retry "$upstream_image" 3 5; then
+                log_error "✗ Failed to pull base image $upstream_image for $component"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "BASE_PULL_ERROR"
                 return 1
             fi
+            log_info "✓ Base image ready: $upstream_image"
+            # Continue to Dockerfile build below (don't return)
         else
-            log_error "✗ Failed to pull $upstream_image after retries"
-            log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR"
-            return 1
+            # Pure dependency - just pull and tag
+            local target_image="ai-infra-$component:${tag}"
+            if [ -n "$PRIVATE_REGISTRY" ]; then
+                target_image="$PRIVATE_REGISTRY/$target_image"
+            fi
+            
+            log_info "Processing dependency $component: $upstream_image -> $target_image"
+            
+            if pull_image_with_retry "$upstream_image" 3 5; then
+                if docker tag "$upstream_image" "$target_image"; then
+                    log_info "✓ Dependency ready: $target_image"
+                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED"
+                    return 0
+                else
+                    log_error "✗ Failed to tag $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR"
+                    return 1
+                fi
+            else
+                log_error "✗ Failed to pull $upstream_image after retries"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR"
+                return 1
+            fi
         fi
     fi
     
@@ -3448,13 +3469,8 @@ discover_services() {
             continue
         fi
         
-        # 1. Check for dependency.conf (External Image)
-        if [ -f "$dir/dependency.conf" ]; then
-            DEPENDENCY_SERVICES+=("$component")
-            continue
-        fi
-        
-        # 2. Check for Dockerfile (Buildable Component)
+        # Check for Dockerfile first (takes priority for build phase classification)
+        # Even if dependency.conf exists, if there's a Dockerfile, it's a buildable component
         if [ -f "$dir/Dockerfile" ]; then
             local phase="dependent" # Default phase
             
@@ -3471,6 +3487,13 @@ discover_services() {
             else
                 DEPENDENT_SERVICES+=("$component")
             fi
+            continue
+        fi
+        
+        # Check for dependency.conf only (Pure External Image, no custom Dockerfile)
+        if [ -f "$dir/dependency.conf" ]; then
+            DEPENDENCY_SERVICES+=("$component")
+            continue
         fi
     done < <(find "$SRC_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
     
