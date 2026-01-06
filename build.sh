@@ -1232,8 +1232,17 @@ SSL_STATE=${SSL_STATE:-Beijing}
 SSL_CITY=${SSL_CITY:-Beijing}
 SSL_ORG=${SSL_ORG:-AI-Infra-Matrix}
 SSL_CA_NAME=${SSL_CA_NAME:-AI-Infra-Matrix-CA}
+LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-${ACME_EMAIL:-}}
+LETSENCRYPT_STAGING=${LETSENCRYPT_STAGING:-false}
+LETSENCRYPT_EXTRA_DOMAINS=${LETSENCRYPT_EXTRA_DOMAINS:-}
 # SSL 证书输出目录 (放在 src/nginx/ssl 以便打包到镜像)
 SSL_OUTPUT_DIR="$SCRIPT_DIR/src/nginx/ssl"
+
+is_existing_cert_valid() {
+    local cert_file="$1"
+    local seconds=${2:-2592000}
+    openssl x509 -checkend "$seconds" -noout -in "$cert_file" >/dev/null 2>&1
+}
 
 # 生成 CA 根证书
 generate_ca_certificate() {
@@ -1478,6 +1487,112 @@ setup_ssl_certificates() {
     log_info "💡 To trust the CA on client machines, import:"
     log_info "   $SSL_OUTPUT_DIR/ca/ca.crt"
     
+    return 0
+}
+
+# 使用 Let's Encrypt (certbot) 申请正式证书并放入 SSL_OUTPUT_DIR
+setup_letsencrypt_certificates() {
+    local domain="${1:-}"
+    local email="${2:-${LETSENCRYPT_EMAIL:-}}"
+    local staging="${3:-${LETSENCRYPT_STAGING:-false}}"
+    local force="${4:-false}"
+
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${SSL_DOMAIN:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain=$(detect_external_host)
+    fi
+
+    if [[ -z "$domain" ]]; then
+        log_error "Unable to determine domain for Let's Encrypt"
+        log_info "Please specify domain: ./build.sh ssl-setup-le your-domain.com"
+        return 1
+    fi
+
+    if [[ -z "$email" ]]; then
+        log_error "Let's Encrypt email is required. Set LETSENCRYPT_EMAIL or provide as second argument."
+        return 1
+    fi
+
+    if ! command -v certbot >/dev/null 2>&1; then
+        log_error "certbot not found. Install certbot (https://letsencrypt.org/getting-started/)."
+        return 1
+    fi
+
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+
+    if [[ -f "$SSL_OUTPUT_DIR/server.crt" ]] && [[ "$force" != "true" ]]; then
+        if is_existing_cert_valid "$SSL_OUTPUT_DIR/server.crt"; then
+            log_info "Existing certificate is still valid. Use --force to renew."
+            return 0
+        fi
+    fi
+
+    local le_root="$SSL_OUTPUT_DIR/letsencrypt"
+    local le_config="$le_root/config"
+    local le_work="$le_root/work"
+    local le_logs="$le_root/logs"
+    mkdir -p "$le_config" "$le_work" "$le_logs" "$SSL_OUTPUT_DIR"
+
+    local staging_flag=""
+    [[ "$staging" == "true" ]] && staging_flag="--staging"
+
+    local -a domain_args
+    domain_args+=("-d" "$domain")
+    if [[ -n "$LETSENCRYPT_EXTRA_DOMAINS" ]]; then
+        IFS=',' read -ra extra_domains <<< "$LETSENCRYPT_EXTRA_DOMAINS"
+        for extra_domain in "${extra_domains[@]}"; do
+            [[ -z "$extra_domain" ]] && continue
+            domain_args+=("-d" "$extra_domain")
+        done
+    fi
+
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -iTCP:80 -sTCP:LISTEN >/dev/null 2>&1; then
+            log_warn "Port 80 is in use. certbot --standalone needs it. Stop nginx or map a free port before issuing."
+        fi
+    fi
+
+    log_step "Requesting Let's Encrypt certificate for: $domain"
+    if ! certbot certonly --standalone --preferred-challenges http \
+        --agree-tos --non-interactive \
+        -m "$email" "${domain_args[@]}" \
+        --config-dir "$le_config" \
+        --work-dir "$le_work" \
+        --logs-dir "$le_logs" \
+        $staging_flag; then
+        log_error "Let's Encrypt issuance failed"
+        return 1
+    fi
+
+    local live_dir="$le_config/live/$domain"
+    if [[ ! -f "$live_dir/fullchain.pem" ]] || [[ ! -f "$live_dir/privkey.pem" ]]; then
+        log_error "Issued certificate files not found in $live_dir"
+        return 1
+    fi
+
+    cp "$live_dir/fullchain.pem" "$SSL_OUTPUT_DIR/$safe_name.crt"
+    cp "$live_dir/privkey.pem" "$SSL_OUTPUT_DIR/$safe_name.key"
+    cp "$live_dir/chain.pem" "$SSL_OUTPUT_DIR/$safe_name.chain.crt" 2>/dev/null || true
+    ln -sf "$safe_name.crt" "$SSL_OUTPUT_DIR/server.crt"
+    ln -sf "$safe_name.key" "$SSL_OUTPUT_DIR/server.key"
+    ln -sf "$safe_name.chain.crt" "$SSL_OUTPUT_DIR/server.chain.crt"
+    chmod 600 "$SSL_OUTPUT_DIR/$safe_name.key" "$SSL_OUTPUT_DIR/server.key" 2>/dev/null || true
+
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+
+    log_info "✅ Let's Encrypt certificate ready for $domain"
+    log_info "   Email: $email"
+    [[ "$staging" == "true" ]] && log_warn "Using staging endpoint; set LETSENCRYPT_STAGING=false for production."
+    log_info "   Stored at: $SSL_OUTPUT_DIR"
+
     return 0
 }
 
@@ -4487,6 +4602,8 @@ print_help() {
     echo "  ssl-setup [domain]  Generate self-signed SSL certificates to src/nginx/ssl/"
     echo "                      Certificates are bundled into nginx image during build"
     echo "  ssl-setup --force   Regenerate existing certificates"
+    echo "  ssl-setup-le [domain] [email]  Issue Let's Encrypt cert via certbot --standalone"
+    echo "                          Uses LETSENCRYPT_EMAIL/LETSENCRYPT_STAGING if omitted"
     echo "  ssl-info [domain]   Display SSL certificate information"
     echo "  ssl-clean           Remove all generated SSL certificates and disable SSL"
     echo ""
@@ -4577,6 +4694,7 @@ print_help() {
     echo "  $0 ssl-setup                       # Generate certs for auto-detected domain"
     echo "  $0 ssl-setup example.com           # Generate certs for specific domain"
     echo "  $0 ssl-setup --force               # Regenerate existing certificates"
+    echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
     echo "  $0 ssl-info                        # Show certificate details"
     echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
     echo ""
@@ -4775,6 +4893,13 @@ case "$COMMAND" in
         # 设置 SSL 证书
         ssl_domain="${ARG2:-}"
         setup_ssl_certificates "$ssl_domain" "$FORCE_BUILD"
+        ;;
+    ssl-setup-le|ssl-letsencrypt|ssl-le)
+        # 使用 Let's Encrypt 申请正式证书
+        ssl_domain="${ARG2:-}"
+        ssl_email="${ARG3:-${LETSENCRYPT_EMAIL:-}}"
+        ssl_staging="${ARG4:-${LETSENCRYPT_STAGING:-false}}"
+        setup_letsencrypt_certificates "$ssl_domain" "$ssl_email" "$ssl_staging" "$FORCE_BUILD"
         ;;
     ssl-info)
         # 显示 SSL 证书信息
