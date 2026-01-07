@@ -47,16 +47,16 @@ common_images:
     description: "phpLDAPadmin web interface"
   
   redisinsight:
-    image: redislabs/redisinsight
+    image: redis/redisinsight
     version_env: REDISINSIGHT_VERSION
-    default_version: "latest"
-    description: "Redis management GUI"
+    default_version: "2.68"
+    description: "Redis management GUI (multi-arch: amd64/arm64)"
   
   seaweedfs:
     image: chrislusf/seaweedfs
     version_env: SEAWEEDFS_VERSION
-    default_version: "latest"
-    description: "SeaweedFS distributed storage"
+    default_version: "3.80"
+    description: "SeaweedFS distributed storage (multi-arch: amd64/arm64)"
   
   oceanbase:
     image: oceanbase/oceanbase-ce
