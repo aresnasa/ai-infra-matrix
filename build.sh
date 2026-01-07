@@ -1161,6 +1161,30 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# Detect host platform for multi-arch image pulls
+# Returns: linux/amd64 or linux/arm64
+_detect_docker_platform() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)
+            echo "linux/amd64"
+            ;;
+        aarch64|arm64)
+            echo "linux/arm64"
+            ;;
+        armv7l|armhf)
+            echo "linux/arm/v7"
+            ;;
+        *)
+            # Fallback: let docker decide
+            echo ""
+            ;;
+    esac
+}
+
+# Host platform for pulling correct architecture images
+DOCKER_HOST_PLATFORM="${DOCKER_HOST_PLATFORM:-$(_detect_docker_platform)}"
+
 # Initialize COMMON_IMAGES array after loading .env
 # This ensures version variables are available
 COMMON_IMAGES=(
