@@ -1794,6 +1794,592 @@ EOF
 }
 
 # ==============================================================================
+# Third Party Download Functions - 第三方依赖下载功能
+# ==============================================================================
+
+# Third party download configuration
+THIRD_PARTY_DIR="$SCRIPT_DIR/third_party"
+COMPONENTS_JSON="$THIRD_PARTY_DIR/components.json"
+APPHUB_DOCKERFILE="$SCRIPT_DIR/src/apphub/Dockerfile"
+
+# Download target architecture (all, amd64, arm64)
+DOWNLOAD_TARGET_ARCH="all"
+# Specified version for download
+DOWNLOAD_SPECIFIED_VERSION=""
+# GitHub mirror for download acceleration
+DOWNLOAD_GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
+
+# Component alias mapping (user-friendly names to actual component names)
+declare -A COMPONENT_ALIASES=(
+    ["vscode"]="code_server"
+    ["code-server"]="code_server"
+    ["codeserver"]="code_server"
+    ["node-exporter"]="node_exporter"
+    ["nodeexporter"]="node_exporter"
+    ["salt"]="saltstack"
+)
+
+# Resolve component alias to actual component name
+resolve_component_alias() {
+    local input="$1"
+    local lower_input=$(echo "$input" | tr '[:upper:]' '[:lower:]')
+    
+    # Check if it's an alias
+    if [[ -n "${COMPONENT_ALIASES[$lower_input]:-}" ]]; then
+        echo "${COMPONENT_ALIASES[$lower_input]}"
+    else
+        echo "$input"
+    fi
+}
+
+# Get component property from components.json
+get_download_component_prop() {
+    local component=$1
+    local prop=$2
+    local default=${3:-}
+    
+    if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
+        local val=$(jq -r ".components.${component}.${prop} // empty" "$COMPONENTS_JSON" 2>/dev/null)
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# Get array property from components.json
+get_download_component_array() {
+    local component=$1
+    local prop=$2
+    
+    if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
+        jq -r ".components.${component}.${prop}[]? // empty" "$COMPONENTS_JSON" 2>/dev/null
+    fi
+}
+
+# Get version from environment or .env file
+# Priority: already loaded env > .env file > default
+get_download_env_version() {
+    local var_name=$1
+    local default=$2
+    
+    # First check already loaded environment variable
+    local env_val="${!var_name:-}"
+    if [[ -n "$env_val" ]]; then
+        echo "$env_val"
+        return
+    fi
+    
+    # Then check .env file
+    if [[ -f "$ENV_FILE" ]]; then
+        local val=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# Get ARG value from Dockerfile
+get_download_dockerfile_arg() {
+    local name=$1
+    local default=$2
+    
+    if [[ -f "$APPHUB_DOCKERFILE" ]]; then
+        local val=$(grep "ARG $name=" "$APPHUB_DOCKERFILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# Ensure version has correct prefix
+download_ensure_prefix() {
+    local ver=$1
+    local prefix=$2
+    
+    if [[ -z "$prefix" ]] || [[ "$prefix" = "v" ]]; then
+        if [[ ! "$ver" =~ ^v ]]; then
+            echo "v${ver}"
+        else
+            echo "$ver"
+        fi
+    elif [[ "$prefix" = "munge-" ]]; then
+        if [[ ! "$ver" =~ ^munge- ]]; then
+            echo "munge-${ver}"
+        else
+            echo "$ver"
+        fi
+    elif [[ "$prefix" = "slurm-" ]]; then
+        if [[ ! "$ver" =~ ^slurm- ]]; then
+            echo "slurm-${ver}"
+        else
+            echo "$ver"
+        fi
+    else
+        echo "${ver}"
+    fi
+}
+
+# Strip version prefix
+download_strip_prefix() {
+    local ver=$1
+    ver="${ver#v}"
+    ver="${ver#munge-}"
+    ver="${ver#slurm-}"
+    echo "$ver"
+}
+
+# Generic download function with mirror support
+download_single_file() {
+    local url=$1
+    local output_file=$2
+    local use_mirror=${3:-true}
+    local final_url="$url"
+    
+    # Apply GitHub mirror
+    if [[ "$use_mirror" = true ]] && [[ "$url" == *"github.com"* ]] && [[ -n "$DOWNLOAD_GITHUB_MIRROR" ]]; then
+        local url_without_scheme="${url#https://}"
+        final_url="${DOWNLOAD_GITHUB_MIRROR}${url_without_scheme}"
+    fi
+    
+    # Check if file already exists and is non-empty
+    if [[ -f "$output_file" ]] && [[ -s "$output_file" ]]; then
+        log_info "  ✓ Already exists: $(basename "$output_file")"
+        return 0
+    fi
+    
+    # Remove possibly empty file
+    [[ -f "$output_file" ]] && rm -f "$output_file"
+    
+    log_info "  📥 Downloading: $(basename "$output_file")"
+    log_info "     URL: $final_url"
+    
+    # First try mirror (10s timeout)
+    if wget -q --show-progress -T 10 -t 2 "$final_url" -O "$output_file" 2>/dev/null; then
+        if [[ -s "$output_file" ]]; then
+            log_info "  ✓ Download successful: $(basename "$output_file")"
+            return 0
+        fi
+    fi
+    
+    # If mirror fails, try direct download (30s timeout)
+    if [[ "$final_url" != "$url" ]]; then
+        log_warn "  ⚠ Mirror download failed, trying direct download..."
+        rm -f "$output_file"
+        if wget -q --show-progress -T 30 -t 2 "$url" -O "$output_file" 2>/dev/null; then
+            if [[ -s "$output_file" ]]; then
+                log_info "  ✓ Direct download successful: $(basename "$output_file")"
+                return 0
+            fi
+        fi
+    fi
+    
+    log_error "  ✗ Download failed: $(basename "$output_file")"
+    rm -f "$output_file"
+    return 1
+}
+
+# Generate version.json for downloaded component
+generate_download_version_json() {
+    local output_dir=$1
+    local component=$2
+    local version=$3
+    
+    cat > "${output_dir}/version.json" << EOF
+{
+    "component": "${component}",
+    "version": "${version}",
+    "downloaded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+}
+
+# Download SaltStack packages (DEB + RPM)
+download_saltstack_packages() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    
+    local packages=()
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && packages+=("$pkg")
+    done < <(get_download_component_array "saltstack" "packages")
+    
+    # DEB packages
+    log_info ""
+    log_info "  📦 Downloading DEB packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        for pkg in "${packages[@]}"; do
+            local filename="${pkg}_${file_version}_${arch}.deb"
+            local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
+            download_single_file "$url" "${output_dir}/${filename}" true || true
+        done
+    done
+    
+    # RPM packages
+    log_info ""
+    log_info "  📦 Downloading RPM packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        local rpm_arch="x86_64"
+        [[ "$arch" = "arm64" ]] && rpm_arch="aarch64"
+        
+        for pkg in "${packages[@]}"; do
+            # RPM package name without -common suffix
+            local rpm_pkg="${pkg/-common/}"
+            local filename="${rpm_pkg}-${file_version}-0.${rpm_arch}.rpm"
+            local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
+            download_single_file "$url" "${output_dir}/${filename}" true || true
+        done
+    done
+}
+
+# Download code-server packages (DEB + RPM)
+download_code_server_packages() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="coder/code-server"
+    
+    # DEB packages
+    log_info ""
+    log_info "  📦 Downloading DEB packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        local filename="code-server_${file_version}_${arch}.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages
+    log_info ""
+    log_info "  📦 Downloading RPM packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        local filename="code-server-${file_version}-${arch}.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+}
+
+# Download Singularity packages (DEB + RPM + source)
+download_singularity_packages() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="sylabs/singularity"
+    
+    # DEB packages (Ubuntu) - amd64 only
+    log_info ""
+    log_info "  📦 Downloading DEB packages (Ubuntu)..."
+    log_warn "  ⚠️  Note: Singularity only provides amd64 prebuilt packages, ARM64 needs source compilation"
+    local ubuntu_codenames=("noble" "jammy")
+    for codename in "${ubuntu_codenames[@]}"; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" = "arm64" ]]; then
+            log_info "  ⏭️  Skipping DEB (arm64): Singularity doesn't provide ARM64 prebuilt packages"
+            continue
+        fi
+        local filename="singularity-ce_${file_version}-${codename}_amd64.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages (RHEL/CentOS/Rocky) - x86_64 only
+    log_info ""
+    log_info "  📦 Downloading RPM packages (RHEL/CentOS)..."
+    local el_versions=("el8" "el9" "el10")
+    for el_ver in "${el_versions[@]}"; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" = "arm64" ]]; then
+            log_info "  ⏭️  Skipping RPM (aarch64): Singularity doesn't provide ARM64 prebuilt packages"
+            continue
+        fi
+        local filename="singularity-ce-${file_version}-1.${el_ver}.x86_64.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # Source package (for all architectures including ARM64)
+    log_info ""
+    log_info "  📦 Downloading source package (for all architectures)..."
+    local source_filename="singularity-ce-${file_version}.tar.gz"
+    local source_url="https://github.com/${github_repo}/releases/download/${tag_version}/${source_filename}"
+    download_single_file "$source_url" "${output_dir}/${source_filename}" true || true
+}
+
+# Download a single component
+download_third_party_component() {
+    local component=$1
+    
+    # Resolve alias
+    component=$(resolve_component_alias "$component")
+    
+    echo ""
+    log_info "================================================================"
+    
+    local name=$(get_download_component_prop "$component" "name" "$component")
+    local desc=$(get_download_component_prop "$component" "description" "")
+    local github_repo=$(get_download_component_prop "$component" "github_repo")
+    local version_env=$(get_download_component_prop "$component" "version_env")
+    local default_version=$(get_download_component_prop "$component" "default_version")
+    local version_prefix=$(get_download_component_prop "$component" "version_prefix" "v")
+    local filename_version_prefix=$(get_download_component_prop "$component" "filename_version_prefix" "")
+    local filename_pattern=$(get_download_component_prop "$component" "filename_pattern")
+    
+    # Check if component exists
+    if [[ -z "$name" ]] || [[ "$name" = "null" ]]; then
+        log_error "Unknown component: $component"
+        log_info "Use 'download --list' to see available components"
+        return 1
+    fi
+    
+    # Get version: command line > env var > .env file > Dockerfile > default
+    local version=""
+    if [[ -n "$DOWNLOAD_SPECIFIED_VERSION" ]]; then
+        version="$DOWNLOAD_SPECIFIED_VERSION"
+    elif [[ -n "$version_env" ]]; then
+        version=$(get_download_env_version "$version_env" "")
+        [[ -z "$version" ]] && version=$(get_download_dockerfile_arg "$version_env" "")
+    fi
+    [[ -z "$version" ]] && version="$default_version"
+    
+    # Process version prefix
+    local tag_version=$(download_ensure_prefix "$version" "$version_prefix")
+    local file_version="$version"
+    if [[ -n "$filename_version_prefix" ]]; then
+        file_version="${filename_version_prefix}$(download_strip_prefix "$version")"
+    else
+        file_version="$(download_strip_prefix "$version")"
+    fi
+    
+    log_info "📦 $name ($component)"
+    [[ -n "$desc" ]] && log_info "   $desc"
+    log_info "   Version: $tag_version"
+    log_info "   Repository: $github_repo"
+    log_info "================================================================"
+    
+    local output_dir="$THIRD_PARTY_DIR/$component"
+    mkdir -p "$output_dir"
+    
+    # Get architecture list
+    local archs=()
+    while IFS= read -r arch; do
+        [[ -n "$arch" ]] && archs+=("$arch")
+    done < <(get_download_component_array "$component" "architectures")
+    
+    # Default to amd64 and arm64 if no architecture configured
+    [[ ${#archs[@]} -eq 0 ]] && archs=("amd64" "arm64")
+    
+    # Filter architecture
+    if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]]; then
+        local filtered_archs=()
+        for arch in "${archs[@]}"; do
+            if [[ "$arch" = "$DOWNLOAD_TARGET_ARCH" ]] || [[ -z "$arch" ]]; then
+                filtered_archs+=("$arch")
+            fi
+        done
+        archs=("${filtered_archs[@]}")
+    fi
+    
+    # Special handling for different components
+    case "$component" in
+        saltstack)
+            download_saltstack_packages "$tag_version" "$file_version" "$output_dir"
+            ;;
+        code_server)
+            download_code_server_packages "$tag_version" "$file_version" "$output_dir"
+            ;;
+        singularity)
+            download_singularity_packages "$tag_version" "$file_version" "$output_dir"
+            ;;
+        *)
+            # Generic download logic
+            for arch in "${archs[@]}"; do
+                local filename=$(echo "$filename_pattern" | sed "s/{VERSION}/$file_version/g" | sed "s/{ARCH}/$arch/g")
+                local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+                
+                download_single_file "$url" "${output_dir}/${filename}" true || true
+            done
+            ;;
+    esac
+    
+    generate_download_version_json "$output_dir" "$component" "$tag_version"
+    echo ""
+    return 0
+}
+
+# List available components
+list_download_components() {
+    if [[ ! -f "$COMPONENTS_JSON" ]]; then
+        log_error "Configuration file not found: $COMPONENTS_JSON"
+        return 1
+    fi
+    
+    echo ""
+    echo "Available Components:"
+    echo "====================="
+    echo ""
+    printf "%-17s %s\n" "Component" "Description"
+    printf "%-17s %s\n" "-----------------" "--------------------------------------------------"
+    
+    if command -v jq &> /dev/null; then
+        jq -r '.components | to_entries[] | "\(.key)\t\(.value.description)"' "$COMPONENTS_JSON" | \
+            while IFS=$'\t' read -r name desc; do
+                printf "%-17s %s\n" "$name" "$desc"
+            done
+    else
+        grep -E '"[a-z_]+":' "$COMPONENTS_JSON" | head -20 | sed 's/.*"\([^"]*\)".*/\1/' | grep -v "components"
+    fi
+    
+    echo ""
+    echo "Aliases:"
+    echo "--------"
+    for alias in "${!COMPONENT_ALIASES[@]}"; do
+        printf "  %-15s -> %s\n" "$alias" "${COMPONENT_ALIASES[$alias]}"
+    done
+    echo ""
+}
+
+# Get all component names from components.json
+get_all_download_components() {
+    if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
+        jq -r '.components | keys[]' "$COMPONENTS_JSON" 2>/dev/null
+    else
+        grep -E '^\s+"[a-z_]+":' "$COMPONENTS_JSON" | sed 's/.*"\([^"]*\)".*/\1/' | grep -v "components"
+    fi
+}
+
+# Main download function
+# Usage: download_third_party [options] [component...]
+# Options:
+#   --list, -l           List available components
+#   --version VER, -v    Specify version
+#   --arch ARCH, -a      Specify architecture (amd64, arm64, all)
+#   --mirror URL, -m     Set GitHub mirror URL
+#   --no-mirror          Disable GitHub mirror
+download_third_party() {
+    local components_to_download=()
+    
+    # Check jq availability
+    if ! command -v jq &> /dev/null; then
+        log_warn "jq not installed, some features may be limited"
+        log_info "Install with: brew install jq (macOS) or apt install jq (Linux)"
+        echo ""
+    fi
+    
+    # Check configuration file
+    if [[ ! -f "$COMPONENTS_JSON" ]]; then
+        log_error "Configuration file not found: $COMPONENTS_JSON"
+        return 1
+    fi
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                echo "Usage: $0 download [options] [component...]"
+                echo ""
+                echo "Options:"
+                echo "  -h, --help          Show this help"
+                echo "  -l, --list          List available components"
+                echo "  -v, --version VER   Specify component version"
+                echo "  -a, --arch ARCH     Specify architecture (amd64, arm64, all)"
+                echo "  -m, --mirror URL    Set GitHub mirror URL"
+                echo "  --no-mirror         Disable GitHub mirror"
+                echo ""
+                echo "Examples:"
+                echo "  $0 download                         # Download all components"
+                echo "  $0 download prometheus              # Download Prometheus only"
+                echo "  $0 download vscode                  # Download VS Code Server (alias)"
+                echo "  $0 download -v 4.107.0 vscode       # Download specific version"
+                echo "  $0 download --arch amd64 prometheus # Download amd64 only"
+                echo "  $0 download --no-mirror prometheus  # Download without mirror"
+                return 0
+                ;;
+            -l|--list)
+                list_download_components
+                return 0
+                ;;
+            -v|--version)
+                DOWNLOAD_SPECIFIED_VERSION="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                DOWNLOAD_TARGET_ARCH="$2"
+                shift 2
+                ;;
+            -m|--mirror)
+                DOWNLOAD_GITHUB_MIRROR="$2"
+                shift 2
+                ;;
+            --no-mirror)
+                DOWNLOAD_GITHUB_MIRROR=""
+                shift
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                components_to_download+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # If no components specified, download all
+    if [[ ${#components_to_download[@]} -eq 0 ]]; then
+        while IFS= read -r comp; do
+            [[ -n "$comp" ]] && components_to_download+=("$comp")
+        done < <(get_all_download_components)
+    fi
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║          Third-Party Dependencies Downloader                   ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "GitHub Mirror: ${DOWNLOAD_GITHUB_MIRROR:-<disabled>}"
+    log_info "Target Arch:   ${DOWNLOAD_TARGET_ARCH}"
+    log_info "Output Dir:    ${THIRD_PARTY_DIR}"
+    log_info "Components:    ${#components_to_download[@]}"
+    echo ""
+    
+    mkdir -p "$THIRD_PARTY_DIR"
+    
+    local success=0
+    local failed=0
+    
+    for component in "${components_to_download[@]}"; do
+        if download_third_party_component "$component"; then
+            ((success++))
+        else
+            ((failed++))
+        fi
+    done
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                      Download Complete                         ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Success: $success / Total: $((success + failed))"
+    echo ""
+    log_info "Files location: $THIRD_PARTY_DIR"
+    echo ""
+    ls -la "$THIRD_PARTY_DIR"
+    
+    return 0
+}
+
+# ==============================================================================
 # Template Rendering Functions - 模板渲染功能
 # ==============================================================================
 
@@ -4656,8 +5242,15 @@ print_help() {
     echo "  clean-all [--force] Remove all images, volumes and stop containers"
     echo ""
     echo "Download Commands:"
-    echo "  download-deps       Download third-party dependencies to third_party/"
-    echo "                      (Prometheus, Node Exporter, Alertmanager, Categraf, etc.)"
+    echo "  download [options] [component...]   Download third-party dependencies"
+    echo "  download-deps                       Alias for 'download'"
+    echo "    Options:"
+    echo "      -l, --list          List available components"
+    echo "      -v, --version VER   Specify version"
+    echo "      -a, --arch ARCH     Target architecture (amd64, arm64, all)"
+    echo "      --no-mirror         Disable GitHub mirror acceleration"
+    echo "    Components: prometheus, node_exporter, alertmanager, categraf,"
+    echo "                code_server (alias: vscode), saltstack, slurm, etc."
     echo ""
     echo "Offline Export Commands:"
     echo "  export-offline [dir] [tag] [include_common]  Export images to tar files"
@@ -4733,7 +5326,11 @@ print_help() {
     echo "  $0 clean-all --force"
     echo ""
     echo "  # Download third-party dependencies (for faster AppHub builds)"
-    echo "  $0 download-deps                       # Download to third_party/"
+    echo "  $0 download                            # Download all to third_party/"
+    echo "  $0 download --list                     # List available components"
+    echo "  $0 download vscode                     # Download VS Code Server only"
+    echo "  $0 download -v 4.107.0 vscode          # Download specific version"
+    echo "  $0 download --arch amd64 prometheus    # Download amd64 architecture only"
 }
 
 # ==============================================================================
@@ -5049,11 +5646,11 @@ case "$COMMAND" in
         # Export all images to tar files for offline deployment
         export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}"
         ;;
-    download-deps)
+    download|download-deps)
         # Download third-party dependencies to third_party/
         log_info "📦 Downloading third-party dependencies..."
         
-        # 加载 .env 文件中的环境变量，供下载脚本使用
+        # 加载 .env 文件中的环境变量，供下载函数使用
         if [[ -f "$ENV_FILE" ]]; then
             log_info "Loading environment from $ENV_FILE..."
             set -a  # 自动导出所有变量
@@ -5061,18 +5658,14 @@ case "$COMMAND" in
             set +a
         fi
         
-        # 构建传递给下载脚本的参数（排除命令本身）
-        # 使用 shift 方式获取命令后的参数
+        # 构建传递给下载函数的参数（排除命令本身）
         _download_args=("${REMAINING_ARGS[@]:1}")
         
-        if [[ -x "$SCRIPT_DIR/scripts/download_third_party.sh" ]]; then
-            "$SCRIPT_DIR/scripts/download_third_party.sh" "${_download_args[@]}"
-            log_info "✅ Third-party dependencies downloaded to third_party/"
-            log_info "💡 These files will be used during AppHub build for faster builds"
-        else
-            log_error "download_third_party.sh not found or not executable"
-            exit 1
-        fi
+        # 使用内置的下载函数
+        download_third_party "${_download_args[@]}"
+        
+        log_info "✅ Third-party dependencies downloaded to third_party/"
+        log_info "💡 These files will be used during AppHub build for faster builds"
         ;;
     help|--help|-h)
         print_help
