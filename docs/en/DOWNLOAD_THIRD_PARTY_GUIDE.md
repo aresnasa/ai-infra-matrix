@@ -28,8 +28,10 @@ git commit -m "feat: add third-party dependencies"
 | Alertmanager | prometheus/alertmanager | amd64, arm64 | Alert management |
 | Categraf | flashcatcloud/categraf | amd64, arm64 | Nightingale monitoring agent |
 | Munge | dun/munge | Source | Slurm authentication |
-| Singularity | sylabs/singularity | amd64, arm64 (DEB) | Container runtime |
+| Singularity | sylabs/singularity | **amd64 only** (DEB/RPM), Source | Container runtime |
 | SaltStack | saltstack/salt | amd64, arm64 (DEB/RPM) | Configuration management |
+
+> ⚠️ **Note**: Singularity CE 4.3.x only provides x86_64/amd64 pre-built packages. ARM64 users need to compile from source.
 
 ## Quick Start
 
@@ -70,8 +72,12 @@ third_party/
 │   ├── munge-0.5.16.tar.xz
 │   └── version.json
 ├── singularity/
-│   ├── singularity-ce_4.2.2-1~ubuntu22.04_amd64.deb
-│   ├── singularity-ce_4.2.2-1~ubuntu22.04_arm64.deb
+│   ├── singularity-ce_4.3.6-jammy_amd64.deb
+│   ├── singularity-ce_4.3.6-noble_amd64.deb
+│   ├── singularity-ce-4.3.6-1.el8.x86_64.rpm
+│   ├── singularity-ce-4.3.6-1.el9.x86_64.rpm
+│   ├── singularity-ce-4.3.6-1.el10.x86_64.rpm
+│   ├── singularity-ce-4.3.6.tar.gz  # Source (ARM64 compile from this)
 │   └── version.json
 └── saltstack/
     ├── salt-common_3007.1_amd64.deb

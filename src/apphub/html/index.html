@@ -15,6 +15,23 @@
             --border-color: #e2e8f0;
             --success-color: #22c55e;
             --warning-color: #f59e0b;
+            --code-bg: #1e293b;
+            --header-gradient-start: #2563eb;
+            --header-gradient-end: #1d4ed8;
+        }
+
+        /* 暗黑模式 */
+        [data-theme="dark"] {
+            --primary-color: #3b82f6;
+            --primary-dark: #2563eb;
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border-color: #334155;
+            --code-bg: #0f172a;
+            --header-gradient-start: #1e3a8a;
+            --header-gradient-end: #1e40af;
         }
 
         * {
@@ -28,6 +45,7 @@
             background-color: var(--bg-color);
             color: var(--text-color);
             line-height: 1.6;
+            transition: background-color 0.3s, color 0.3s;
         }
 
         .container {
@@ -39,9 +57,10 @@
         header {
             text-align: center;
             padding: 3rem 0;
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            background: linear-gradient(135deg, var(--header-gradient-start) 0%, var(--header-gradient-end) 100%);
             color: white;
             margin-bottom: 2rem;
+            position: relative;
         }
 
         header h1 {
@@ -61,6 +80,33 @@
             border-radius: 1rem;
             font-size: 0.875rem;
             margin-top: 0.5rem;
+        }
+
+        /* 控制按钮组 */
+        .controls {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .control-btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            transition: background 0.2s;
+        }
+
+        .control-btn:hover {
+            background: rgba(255,255,255,0.3);
         }
 
         .section-title {
@@ -84,7 +130,7 @@
             padding: 1.5rem;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             border: 1px solid var(--border-color);
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.2s, box-shadow 0.2s, background-color 0.3s;
         }
 
         .card:hover {
@@ -137,7 +183,8 @@
             border-radius: 6px;
             font-size: 0.875rem;
             font-weight: 500;
-            transition: background 0.2s;
+            transition: background 0.2s, color 0.2s;
+            border: 1px solid var(--border-color);
         }
 
         .card-link:hover {
@@ -157,6 +204,7 @@
             padding: 1.5rem;
             margin-bottom: 2rem;
             border: 1px solid var(--border-color);
+            transition: background-color 0.3s;
         }
 
         .quick-install h3 {
@@ -165,7 +213,7 @@
         }
 
         .code-block {
-            background: #1e293b;
+            background: var(--code-bg);
             color: #e2e8f0;
             padding: 1rem;
             border-radius: 8px;
@@ -212,6 +260,7 @@
             border: 1px solid var(--border-color);
             display: flex;
             align-items: center;
+            transition: background-color 0.3s;
         }
 
         .status-dot {
@@ -248,14 +297,29 @@
             .cards {
                 grid-template-columns: 1fr;
             }
+
+            .controls {
+                position: static;
+                justify-content: center;
+                margin-top: 1rem;
+            }
         }
     </style>
 </head>
 <body>
     <header>
+        <div class="controls">
+            <button class="control-btn" id="lang-btn" onclick="toggleLanguage()">
+                <span>🌐</span>
+                <span id="lang-text">EN</span>
+            </button>
+            <button class="control-btn" id="theme-btn" onclick="toggleTheme()">
+                <span id="theme-icon">🌙</span>
+            </button>
+        </div>
         <div class="container">
             <h1>📦 AppHub</h1>
-            <p>AI Infra Matrix 软件包分发中心</p>
+            <p id="header-desc">AI Infra Matrix 软件包分发中心</p>
             <span class="version-badge" id="version">Loading...</span>
         </div>
     </header>
@@ -263,32 +327,32 @@
     <div class="container">
         <!-- 快速安装 -->
         <div class="quick-install">
-            <h3>🚀 快速安装</h3>
+            <h3 id="quick-install-title">🚀 快速安装</h3>
             <div class="code-block">
-                <button class="copy-btn" onclick="copyCode(this)">复制</button>
+                <button class="copy-btn" onclick="copyCode(this)" id="copy-btn">复制</button>
                 <code id="install-cmd">curl -fsSL http://<span id="host"></span>/scripts/install-salt-minion.sh | bash</code>
             </div>
         </div>
 
         <!-- 服务状态 -->
-        <h2 class="section-title">📊 服务状态</h2>
+        <h2 class="section-title" id="status-title">📊 服务状态</h2>
         <div class="status-grid">
             <div class="status-item">
                 <span class="status-dot online" id="status-health"></span>
-                <span>AppHub 服务</span>
+                <span data-i18n="status.apphub">AppHub 服务</span>
             </div>
             <div class="status-item">
                 <span class="status-dot" id="status-pkgs"></span>
-                <span>软件包仓库</span>
+                <span data-i18n="status.pkgs">软件包仓库</span>
             </div>
             <div class="status-item">
                 <span class="status-dot" id="status-scripts"></span>
-                <span>安装脚本</span>
+                <span data-i18n="status.scripts">安装脚本</span>
             </div>
         </div>
 
         <!-- 组件列表 -->
-        <h2 class="section-title">🧩 可用组件</h2>
+        <h2 class="section-title" id="components-title">🧩 可用组件</h2>
         <div class="cards">
             <!-- SaltStack -->
             <div class="card">
@@ -296,15 +360,19 @@
                     <div class="card-icon">🧂</div>
                     <span class="card-title">SaltStack Minion</span>
                 </div>
-                <p class="card-desc">分布式配置管理和远程执行系统，用于统一管理集群节点</p>
+                <p class="card-desc" data-i18n="saltstack.desc">分布式配置管理和远程执行系统，用于统一管理集群节点</p>
                 <div class="card-links">
                     <a href="/scripts/install-salt-minion.sh" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        安装脚本
+                        <span data-i18n="btn.install">安装脚本</span>
                     </a>
-                    <a href="/pkgs/saltstack/" class="card-link">
+                    <a href="/pkgs/saltstack-deb/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        软件包
+                        <span>DEB</span>
+                    </a>
+                    <a href="/pkgs/saltstack-rpm/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        <span>RPM</span>
                     </a>
                 </div>
             </div>
@@ -315,15 +383,15 @@
                     <div class="card-icon">📈</div>
                     <span class="card-title">Categraf</span>
                 </div>
-                <p class="card-desc">轻量级监控采集 Agent，支持多种数据源采集和远程写入</p>
+                <p class="card-desc" data-i18n="categraf.desc">轻量级监控采集 Agent，支持多种数据源采集和远程写入</p>
                 <div class="card-links">
                     <a href="/scripts/install-categraf.sh" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        安装脚本
+                        <span data-i18n="btn.install">安装脚本</span>
                     </a>
                     <a href="/pkgs/categraf/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        软件包
+                        <span data-i18n="btn.packages">软件包</span>
                     </a>
                 </div>
             </div>
@@ -334,15 +402,15 @@
                     <div class="card-icon">🔍</div>
                     <span class="card-title">Node Exporter</span>
                 </div>
-                <p class="card-desc">Prometheus 官方节点指标采集器，用于采集主机硬件和操作系统指标</p>
+                <p class="card-desc" data-i18n="node_exporter.desc">Prometheus 官方节点指标采集器，用于采集主机硬件和操作系统指标</p>
                 <div class="card-links">
                     <a href="/scripts/install-node-exporter.sh" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        安装脚本
+                        <span data-i18n="btn.install">安装脚本</span>
                     </a>
-                    <a href="/pkgs/node-exporter/" class="card-link">
+                    <a href="/pkgs/node_exporter/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        软件包
+                        <span data-i18n="btn.packages">软件包</span>
                     </a>
                 </div>
             </div>
@@ -353,15 +421,15 @@
                     <div class="card-icon">🔥</div>
                     <span class="card-title">Prometheus</span>
                 </div>
-                <p class="card-desc">开源监控和告警工具包，时序数据库和查询语言</p>
+                <p class="card-desc" data-i18n="prometheus.desc">开源监控和告警工具包，时序数据库和查询语言</p>
                 <div class="card-links">
                     <a href="/scripts/install-prometheus.sh" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        安装脚本
+                        <span data-i18n="btn.install">安装脚本</span>
                     </a>
                     <a href="/pkgs/prometheus/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        软件包
+                        <span data-i18n="btn.packages">软件包</span>
                     </a>
                 </div>
             </div>
@@ -372,15 +440,34 @@
                     <div class="card-icon">🖥️</div>
                     <span class="card-title">SLURM</span>
                 </div>
-                <p class="card-desc">高性能计算作业调度系统，用于 HPC 集群资源管理</p>
+                <p class="card-desc" data-i18n="slurm.desc">高性能计算作业调度系统，用于 HPC 集群资源管理</p>
                 <div class="card-links">
                     <a href="/pkgs/slurm-deb/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        DEB 包
+                        <span>DEB</span>
                     </a>
                     <a href="/pkgs/slurm-rpm/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        RPM 包
+                        <span>RPM</span>
+                    </a>
+                    <a href="/pkgs/slurm-binaries/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+                        <span data-i18n="btn.binaries">二进制</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Singularity -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">🐳</div>
+                    <span class="card-title">Singularity</span>
+                </div>
+                <p class="card-desc" data-i18n="singularity.desc">HPC 容器运行时，用于在集群上运行容器化应用</p>
+                <div class="card-links">
+                    <a href="/pkgs/singularity/" class="card-link">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        <span data-i18n="btn.packages">软件包</span>
                     </a>
                 </div>
             </div>
@@ -389,59 +476,59 @@
             <div class="card">
                 <div class="card-header">
                     <div class="card-icon">🐍</div>
-                    <span class="card-title">Python 依赖</span>
+                    <span class="card-title" data-i18n="python.title">Python 依赖</span>
                 </div>
-                <p class="card-desc">SaltStack 所需的 Python 依赖包，支持 Python 3.12+ 系统</p>
+                <p class="card-desc" data-i18n="python.desc">SaltStack 所需的 Python 依赖包，支持 Python 3.12+ 系统</p>
                 <div class="card-links">
                     <a href="/pkgs/python-deps/" class="card-link">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                        Wheel 包
+                        <span data-i18n="btn.wheel">Wheel 包</span>
                     </a>
                 </div>
             </div>
         </div>
 
         <!-- 目录浏览 -->
-        <h2 class="section-title">📁 目录浏览</h2>
+        <h2 class="section-title" id="browse-title">📁 目录浏览</h2>
         <div class="cards">
             <div class="card">
                 <div class="card-header">
                     <div class="card-icon">📜</div>
-                    <span class="card-title">安装脚本</span>
+                    <span class="card-title" data-i18n="browse.scripts.title">安装脚本</span>
                 </div>
-                <p class="card-desc">自动化安装脚本，支持一键部署各组件</p>
+                <p class="card-desc" data-i18n="browse.scripts.desc">自动化安装脚本，支持一键部署各组件</p>
                 <div class="card-links">
-                    <a href="/scripts/" class="card-link">浏览目录</a>
+                    <a href="/scripts/" class="card-link" data-i18n="btn.browse">浏览目录</a>
                 </div>
             </div>
             <div class="card">
                 <div class="card-header">
                     <div class="card-icon">📦</div>
-                    <span class="card-title">软件包仓库</span>
+                    <span class="card-title" data-i18n="browse.pkgs.title">软件包仓库</span>
                 </div>
-                <p class="card-desc">所有可用软件包的存储目录</p>
+                <p class="card-desc" data-i18n="browse.pkgs.desc">所有可用软件包的存储目录</p>
                 <div class="card-links">
-                    <a href="/pkgs/" class="card-link">浏览目录</a>
+                    <a href="/pkgs/" class="card-link" data-i18n="btn.browse">浏览目录</a>
                 </div>
             </div>
             <div class="card">
                 <div class="card-header">
                     <div class="card-icon">🐧</div>
-                    <span class="card-title">DEB 仓库</span>
+                    <span class="card-title" data-i18n="browse.deb.title">DEB 仓库</span>
                 </div>
-                <p class="card-desc">Debian/Ubuntu 系统软件包</p>
+                <p class="card-desc" data-i18n="browse.deb.desc">Debian/Ubuntu 系统软件包</p>
                 <div class="card-links">
-                    <a href="/deb/" class="card-link">浏览目录</a>
+                    <a href="/deb/" class="card-link" data-i18n="btn.browse">浏览目录</a>
                 </div>
             </div>
             <div class="card">
                 <div class="card-header">
                     <div class="card-icon">🎩</div>
-                    <span class="card-title">RPM 仓库</span>
+                    <span class="card-title" data-i18n="browse.rpm.title">RPM 仓库</span>
                 </div>
-                <p class="card-desc">RHEL/CentOS/Rocky 系统软件包</p>
+                <p class="card-desc" data-i18n="browse.rpm.desc">RHEL/CentOS/Rocky 系统软件包</p>
                 <div class="card-links">
-                    <a href="/rpm/" class="card-link">浏览目录</a>
+                    <a href="/rpm/" class="card-link" data-i18n="btn.browse">浏览目录</a>
                 </div>
             </div>
         </div>
@@ -452,20 +539,180 @@
     </footer>
 
     <script>
-        // 设置主机地址
-        document.getElementById('host').textContent = window.location.host;
+        // 多语言支持
+        const i18n = {
+            zh: {
+                'header.desc': 'AI Infra Matrix 软件包分发中心',
+                'quick.title': '🚀 快速安装',
+                'status.title': '📊 服务状态',
+                'components.title': '🧩 可用组件',
+                'browse.title': '📁 目录浏览',
+                'status.apphub': 'AppHub 服务',
+                'status.pkgs': '软件包仓库',
+                'status.scripts': '安装脚本',
+                'saltstack.desc': '分布式配置管理和远程执行系统，用于统一管理集群节点',
+                'categraf.desc': '轻量级监控采集 Agent，支持多种数据源采集和远程写入',
+                'node_exporter.desc': 'Prometheus 官方节点指标采集器，用于采集主机硬件和操作系统指标',
+                'prometheus.desc': '开源监控和告警工具包，时序数据库和查询语言',
+                'slurm.desc': '高性能计算作业调度系统，用于 HPC 集群资源管理',
+                'singularity.desc': 'HPC 容器运行时，用于在集群上运行容器化应用',
+                'python.title': 'Python 依赖',
+                'python.desc': 'SaltStack 所需的 Python 依赖包，支持 Python 3.12+ 系统',
+                'btn.install': '安装脚本',
+                'btn.packages': '软件包',
+                'btn.binaries': '二进制',
+                'btn.wheel': 'Wheel 包',
+                'btn.browse': '浏览目录',
+                'btn.copy': '复制',
+                'btn.copied': '已复制!',
+                'browse.scripts.title': '安装脚本',
+                'browse.scripts.desc': '自动化安装脚本，支持一键部署各组件',
+                'browse.pkgs.title': '软件包仓库',
+                'browse.pkgs.desc': '所有可用软件包的存储目录',
+                'browse.deb.title': 'DEB 仓库',
+                'browse.deb.desc': 'Debian/Ubuntu 系统软件包',
+                'browse.rpm.title': 'RPM 仓库',
+                'browse.rpm.desc': 'RHEL/CentOS/Rocky 系统软件包'
+            },
+            en: {
+                'header.desc': 'AI Infra Matrix Package Distribution Center',
+                'quick.title': '🚀 Quick Install',
+                'status.title': '📊 Service Status',
+                'components.title': '🧩 Available Components',
+                'browse.title': '📁 Browse Directories',
+                'status.apphub': 'AppHub Service',
+                'status.pkgs': 'Package Repository',
+                'status.scripts': 'Install Scripts',
+                'saltstack.desc': 'Distributed configuration management and remote execution system for unified cluster node management',
+                'categraf.desc': 'Lightweight monitoring agent supporting multiple data sources and remote write',
+                'node_exporter.desc': 'Official Prometheus node metrics exporter for hardware and OS metrics collection',
+                'prometheus.desc': 'Open-source monitoring and alerting toolkit with time series database',
+                'slurm.desc': 'HPC job scheduler for cluster resource management',
+                'singularity.desc': 'HPC container runtime for running containerized applications on clusters',
+                'python.title': 'Python Dependencies',
+                'python.desc': 'Python dependencies required by SaltStack, supporting Python 3.12+ systems',
+                'btn.install': 'Install Script',
+                'btn.packages': 'Packages',
+                'btn.binaries': 'Binaries',
+                'btn.wheel': 'Wheel Packages',
+                'btn.browse': 'Browse',
+                'btn.copy': 'Copy',
+                'btn.copied': 'Copied!',
+                'browse.scripts.title': 'Install Scripts',
+                'browse.scripts.desc': 'Automated install scripts for one-click component deployment',
+                'browse.pkgs.title': 'Package Repository',
+                'browse.pkgs.desc': 'Storage directory for all available packages',
+                'browse.deb.title': 'DEB Repository',
+                'browse.deb.desc': 'Packages for Debian/Ubuntu systems',
+                'browse.rpm.title': 'RPM Repository',
+                'browse.rpm.desc': 'Packages for RHEL/CentOS/Rocky systems'
+            }
+        };
 
-        // 获取版本信息
-        fetch('/health')
-            .then(r => r.text())
-            .then(() => {
-                document.getElementById('version').textContent = 'v0.3.8';
-                document.getElementById('status-health').classList.add('online');
-            })
-            .catch(() => {
-                document.getElementById('version').textContent = 'Unknown';
-                document.getElementById('status-health').classList.add('offline');
+        let currentLang = localStorage.getItem('apphub-lang') || 'zh';
+        let currentTheme = localStorage.getItem('apphub-theme') || 'auto';
+
+        // 初始化
+        function init() {
+            // 设置主机地址
+            document.getElementById('host').textContent = window.location.host;
+
+            // 应用保存的主题
+            applyTheme(currentTheme);
+
+            // 监听系统主题变化
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+                if (currentTheme === 'auto') {
+                    applyTheme('auto');
+                }
             });
+
+            // 应用保存的语言
+            applyLanguage(currentLang);
+
+            // 获取版本信息
+            fetch('/health')
+                .then(r => r.text())
+                .then(() => {
+                    document.getElementById('version').textContent = 'v0.3.8';
+                    document.getElementById('status-health').classList.add('online');
+                })
+                .catch(() => {
+                    document.getElementById('version').textContent = 'Unknown';
+                    document.getElementById('status-health').classList.add('offline');
+                });
+
+            // 检查服务状态
+            checkStatus('/pkgs/', 'status-pkgs');
+            checkStatus('/scripts/', 'status-scripts');
+        }
+
+        // 切换语言
+        function toggleLanguage() {
+            currentLang = currentLang === 'zh' ? 'en' : 'zh';
+            localStorage.setItem('apphub-lang', currentLang);
+            applyLanguage(currentLang);
+        }
+
+        // 应用语言
+        function applyLanguage(lang) {
+            const texts = i18n[lang];
+            document.getElementById('lang-text').textContent = lang === 'zh' ? 'EN' : '中文';
+            document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+            
+            // 更新固定元素
+            document.getElementById('header-desc').textContent = texts['header.desc'];
+            document.getElementById('quick-install-title').textContent = texts['quick.title'];
+            document.getElementById('status-title').textContent = texts['status.title'];
+            document.getElementById('components-title').textContent = texts['components.title'];
+            document.getElementById('browse-title').textContent = texts['browse.title'];
+            document.getElementById('copy-btn').textContent = texts['btn.copy'];
+
+            // 更新所有带 data-i18n 属性的元素
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (texts[key]) {
+                    el.textContent = texts[key];
+                }
+            });
+        }
+
+        // 切换主题 (light -> dark -> auto -> light)
+        function toggleTheme() {
+            if (currentTheme === 'light') {
+                currentTheme = 'dark';
+            } else if (currentTheme === 'dark') {
+                currentTheme = 'auto';
+            } else {
+                currentTheme = 'light';
+            }
+            localStorage.setItem('apphub-theme', currentTheme);
+            applyTheme(currentTheme);
+        }
+
+        // 应用主题
+        function applyTheme(theme) {
+            let isDark = false;
+            let icon = '🌙';
+            
+            if (theme === 'dark') {
+                isDark = true;
+                icon = '☀️';
+            } else if (theme === 'auto') {
+                isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                icon = '🔄';
+            } else {
+                isDark = false;
+                icon = '🌙';
+            }
+            
+            if (isDark) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+            }
+            document.getElementById('theme-icon').textContent = icon;
+        }
 
         // 检查服务状态
         function checkStatus(url, elementId) {
@@ -478,17 +725,18 @@
                 });
         }
 
-        checkStatus('/pkgs/', 'status-pkgs');
-        checkStatus('/scripts/', 'status-scripts');
-
         // 复制代码
         function copyCode(btn) {
             const code = btn.parentElement.querySelector('code').textContent;
             navigator.clipboard.writeText(code).then(() => {
-                btn.textContent = '已复制!';
-                setTimeout(() => btn.textContent = '复制', 2000);
+                const originalText = btn.textContent;
+                btn.textContent = i18n[currentLang]['btn.copied'];
+                setTimeout(() => btn.textContent = i18n[currentLang]['btn.copy'], 2000);
             });
         }
+
+        // 页面加载时初始化
+        init();
     </script>
 </body>
 </html>

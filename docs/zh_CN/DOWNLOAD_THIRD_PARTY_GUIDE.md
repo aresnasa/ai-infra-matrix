@@ -26,8 +26,10 @@ git commit -m "feat: add third-party dependencies"
 | Alertmanager | prometheus/alertmanager | amd64, arm64 | 告警管理 |
 | Categraf | flashcatcloud/categraf | amd64, arm64 | 夜莺监控采集器 |
 | Munge | dun/munge | 源码 | Slurm 认证 |
-| Singularity | sylabs/singularity | amd64, arm64 (DEB) | 容器运行时 |
+| Singularity | sylabs/singularity | **仅 amd64** (DEB/RPM), 源码 | 容器运行时 |
 | SaltStack | saltstack/salt | amd64, arm64 (DEB/RPM) | 配置管理 |
+
+> ⚠️ **注意**: Singularity CE 4.3.x 官方仅提供 x86_64/amd64 预编译包。ARM64 用户需要从源码编译。
 
 ## 快速使用
 
@@ -68,8 +70,12 @@ third_party/
 │   ├── munge-0.5.16.tar.xz
 │   └── version.json
 ├── singularity/
-│   ├── singularity-ce_4.2.2-1~ubuntu22.04_amd64.deb
-│   ├── singularity-ce_4.2.2-1~ubuntu22.04_arm64.deb
+│   ├── singularity-ce_4.3.6-jammy_amd64.deb
+│   ├── singularity-ce_4.3.6-noble_amd64.deb
+│   ├── singularity-ce-4.3.6-1.el8.x86_64.rpm
+│   ├── singularity-ce-4.3.6-1.el9.x86_64.rpm
+│   ├── singularity-ce-4.3.6-1.el10.x86_64.rpm
+│   ├── singularity-ce-4.3.6.tar.gz  # 源码 (ARM64 需从此编译)
 │   └── version.json
 └── saltstack/
     ├── salt-common_3007.1_amd64.deb

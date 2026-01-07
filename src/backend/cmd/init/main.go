@@ -1529,6 +1529,13 @@ func initializeNightingaleRoles(db *gorm.DB) error {
 func initializeNightingaleAdmin(db *gorm.DB) error {
 	log.Println("Syncing admin account from main system to Nightingale...")
 
+	currentTime := time.Now().Unix()
+
+	// First, ensure Nightingale's built-in 'root' user exists (required by Nightingale)
+	if err := ensureNightingaleRootUser(db, currentTime); err != nil {
+		log.Printf("Warning: Failed to ensure root user: %v", err)
+	}
+
 	// Get admin user from main system
 	var mainAdmin models.User
 	if err := database.DB.Where("username = ?", "admin").First(&mainAdmin).Error; err != nil {
@@ -1540,8 +1547,6 @@ func initializeNightingaleAdmin(db *gorm.DB) error {
 	// Check if admin already exists in Nightingale
 	var nightingaleAdmin models.NightingaleUser
 	result := db.Where("username = ?", mainAdmin.Username).First(&nightingaleAdmin)
-
-	currentTime := time.Now().Unix()
 
 	if result.Error == gorm.ErrRecordNotFound {
 		// Create new admin user
@@ -1588,6 +1593,95 @@ func initializeNightingaleAdmin(db *gorm.DB) error {
 
 		log.Printf("✓ Admin user '%s' updated in Nightingale", mainAdmin.Username)
 		log.Println("  Password synced with main system")
+	}
+
+	return nil
+}
+
+// ensureNightingaleRootUser ensures the built-in 'root' user exists in Nightingale
+// This is required by Nightingale's internal logic (router/router_user.go:260)
+func ensureNightingaleRootUser(db *gorm.DB, currentTime int64) error {
+	var rootUser models.NightingaleUser
+	result := db.Where("username = ?", "root").First(&rootUser)
+
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create the built-in root user with default password 'root.2020'
+		newRoot := &models.NightingaleUser{
+			Username:   "root",
+			Nickname:   "超管",
+			Password:   "root.2020", // Nightingale default password (plain text, will be handled by N9E)
+			Roles:      "Admin",
+			Contacts:   "{}",
+			Maintainer: 1,
+			CreateAt:   currentTime,
+			CreateBy:   "system",
+			UpdateAt:   currentTime,
+			UpdateBy:   "system",
+		}
+
+		if err := db.Create(newRoot).Error; err != nil {
+			return fmt.Errorf("failed to create root user: %w", err)
+		}
+
+		log.Println("✓ Nightingale built-in 'root' user created (default password: root.2020)")
+
+		// Create default user group for root
+		if err := createNightingaleRootGroup(db, newRoot.ID, currentTime); err != nil {
+			log.Printf("Warning: Failed to create root group: %v", err)
+		}
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query root user: %w", result.Error)
+	} else {
+		log.Println("✓ Nightingale built-in 'root' user already exists")
+	}
+
+	return nil
+}
+
+// createNightingaleRootGroup creates the default user group for root user
+func createNightingaleRootGroup(db *gorm.DB, rootUserID uint, currentTime int64) error {
+	// Check if demo-root-group already exists
+	var existingGroup models.NightingaleUserGroup
+	result := db.Where("name = ?", "demo-root-group").First(&existingGroup)
+
+	var groupID uint
+	if result.Error == gorm.ErrRecordNotFound {
+		// Create root group
+		rootGroup := &models.NightingaleUserGroup{
+			Name:     "demo-root-group",
+			Note:     "Default root user group",
+			CreateAt: currentTime,
+			CreateBy: "root",
+			UpdateAt: currentTime,
+			UpdateBy: "root",
+		}
+
+		if err := db.Create(rootGroup).Error; err != nil {
+			return fmt.Errorf("failed to create root group: %w", err)
+		}
+		groupID = rootGroup.ID
+		log.Println("✓ Root user group 'demo-root-group' created")
+	} else if result.Error != nil {
+		return fmt.Errorf("failed to query root group: %w", result.Error)
+	} else {
+		groupID = existingGroup.ID
+	}
+
+	// Check if root is already a member
+	var memberCount int64
+	db.Model(&models.NightingaleUserGroupMember{}).Where("group_id = ? AND user_id = ?", groupID, rootUserID).Count(&memberCount)
+
+	if memberCount == 0 {
+		// Add root to group
+		member := &models.NightingaleUserGroupMember{
+			GroupID: int64(groupID),
+			UserID:  int64(rootUserID),
+		}
+
+		if err := db.Create(member).Error; err != nil {
+			return fmt.Errorf("failed to add root to group: %w", err)
+		}
+		log.Println("✓ Root user added to demo-root-group")
 	}
 
 	return nil

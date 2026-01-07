@@ -467,7 +467,12 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-your-encryption-key-change-in-production-32-bytes}
       - JUPYTERHUB_ADMIN_USERS=admin,jupyter-admin
-
+      # SSL/TLS 和外部访问配置
+      - ENABLE_TLS=${ENABLE_TLS:-false}
+      - EXTERNAL_SCHEME=${EXTERNAL_SCHEME:-http}
+      - EXTERNAL_HOST=${EXTERNAL_HOST:-localhost}
+      - EXTERNAL_PORT=${EXTERNAL_PORT:-8080}
+      - HTTPS_PORT=${HTTPS_PORT:-8443}
       - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
       - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
       - SESSION_TIMEOUT=86400
@@ -772,6 +777,8 @@ services:
       - "${EXTERNAL_HOST}:${DEBUG_PORT}:8001"
     volumes:
       - nginx_logs:/var/log/nginx
+      # 挂载配置文件以支持热更新 (模板渲染后的文件)
+      - ./src/nginx/conf.d/includes:/etc/nginx/conf.d/includes:rw
     env_file:
       - .env
     environment:
@@ -783,6 +790,11 @@ services:
       - FRONTEND_PORT=${FRONTEND_PORT:-80}
       - JUPYTERHUB_HOST=${JUPYTERHUB_HOST:-jupyterhub}
       - JUPYTERHUB_PORT=${JUPYTERHUB_PORT:-8000}
+      - EXTERNAL_HOST=${EXTERNAL_HOST:-localhost}
+      - EXTERNAL_PORT=${EXTERNAL_PORT:-8080}
+      - HTTPS_PORT=${HTTPS_PORT:-8443}
+      - EXTERNAL_SCHEME=${EXTERNAL_SCHEME:-http}
+      - ENABLE_TLS=${ENABLE_TLS:-false}
       - TZ=Asia/Shanghai
     depends_on:
       postgres:
@@ -877,7 +889,7 @@ services:
       # SeaweedFS S3 兼容存储配置 (用于 Gitea 附件等)
       MINIO_ENDPOINT: "${SEAWEEDFS_FILER_HOST:-seaweedfs-filer}:${SEAWEEDFS_S3_PORT:-8333}"
       MINIO_BUCKET: "${SEAWEEDFS_BUCKET_GITEA:-gitea}"
-      MINIO_USE_SSL: "${SEAWEEDFS_USE_SSL:-false}"
+      MINIO_USE_SSL: "${SEAWEEDFS_USE_SSL:-true}"
       MINIO_LOCATION: "${SEAWEEDFS_REGION:-us-east-1}"
       MINIO_ACCESS_KEY: "${SEAWEEDFS_ACCESS_KEY:-admin}"
       MINIO_SECRET_KEY: "${SEAWEEDFS_SECRET_KEY:-admin123456}"
@@ -1082,7 +1094,7 @@ services:
       backend-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/api/v1/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:17000/nightingale/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1090,6 +1102,165 @@ services:
     networks:
       - ai-infra-network
     restart: unless-stopped
+
+  # SafeLine WAF Services (Optional - use --profile safeline to start)
+  # 启动方式: docker-compose --profile safeline up -d
+  # 或先运行: ./build.sh init-safeline
+  safeline-postgres:
+    container_name: safeline-pg
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-postgres{{SAFELINE_ARCH_SUFFIX}}:15.2
+    profiles:
+      - safeline
+    volumes:
+      - ${SAFELINE_DIR:-./data/safeline}/resources/postgres/data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - POSTGRES_USER=safeline-ce
+      - POSTGRES_PASSWORD=${SAFELINE_POSTGRES_PASSWORD}
+    networks:
+      safeline-ce:
+        ipv4_address: ${SAFELINE_SUBNET_PREFIX}.2
+    command: ["postgres", "-c", "max_connections=500"]
+
+  safeline-mgt:
+    container_name: safeline-mgt
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-mgt{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ${SAFELINE_DIR:-./data/safeline}/resources/mgt:/app/data
+      - ${SAFELINE_DIR:-./data/safeline}/logs/nginx:/app/log/nginx:z
+      - ${SAFELINE_DIR:-./data/safeline}/resources/sock:/app/sock
+      - ${SAFELINE_DIR:-./data/safeline}/run:/app/run
+    ports:
+      - "${SAFELINE_MGT_PORT}:1443"
+    healthcheck:
+      test: curl -k -f https://localhost:1443/api/open/health
+    environment:
+      - MGT_PG=postgres://safeline-ce:${SAFELINE_POSTGRES_PASSWORD}@safeline-pg/safeline-ce?sslmode=disable
+    depends_on:
+      - safeline-postgres
+      - safeline-fvm
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    networks:
+      safeline-ce:
+        ipv4_address: ${SAFELINE_SUBNET_PREFIX}.4
+
+  safeline-detector:
+    container_name: safeline-detector
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-detector{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
+    volumes:
+      - ${SAFELINE_DIR:-./data/safeline}/resources/detector:/resources/detector
+      - ${SAFELINE_DIR:-./data/safeline}/logs/detector:/logs/detector
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - LOG_DIR=/logs/detector
+    networks:
+      safeline-ce:
+        ipv4_address: ${SAFELINE_SUBNET_PREFIX}.5
+
+  safeline-tengine:
+    container_name: safeline-tengine
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-tengine{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/resolv.conf:/etc/resolv.conf:ro
+      - ${SAFELINE_DIR:-./data/safeline}/resources/nginx:/etc/nginx
+      - ${SAFELINE_DIR:-./data/safeline}/resources/detector:/resources/detector
+      - ${SAFELINE_DIR:-./data/safeline}/resources/chaos:/resources/chaos
+      - ${SAFELINE_DIR:-./data/safeline}/logs/nginx:/var/log/nginx:z
+      - ${SAFELINE_DIR:-./data/safeline}/resources/cache:/usr/local/nginx/cache
+      - ${SAFELINE_DIR:-./data/safeline}/resources/sock:/app/sock
+    environment:
+      - TCD_MGT_API=https://${SAFELINE_SUBNET_PREFIX}.4:1443/api/open/publish/server
+      - TCD_SNSERVER=${SAFELINE_SUBNET_PREFIX}.5:8000
+      - CHAOS_ADDR=${SAFELINE_SUBNET_PREFIX}.10
+    ulimits:
+      nofile: 131072
+    depends_on:
+      - safeline-mgt
+      - safeline-detector
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    # 使用 host 网络模式，直接监听宿主机 80/443 端口
+    network_mode: host
+
+  safeline-luigi:
+    container_name: safeline-luigi
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-luigi{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
+    environment:
+      - MGT_IP=${SAFELINE_SUBNET_PREFIX}.4
+      - LUIGI_PG=postgres://safeline-ce:${SAFELINE_POSTGRES_PASSWORD}@safeline-pg/safeline-ce?sslmode=disable
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ${SAFELINE_DIR:-./data/safeline}/resources/luigi:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    depends_on:
+      - safeline-detector
+      - safeline-mgt
+    networks:
+      safeline-ce:
+        ipv4_address: ${SAFELINE_SUBNET_PREFIX}.7
+
+  safeline-fvm:
+    container_name: safeline-fvm
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-fvm{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    networks:
+      safeline-ce:
+        ipv4_address: ${SAFELINE_SUBNET_PREFIX}.8
+
+  safeline-chaos:
+    container_name: safeline-chaos
+    restart: always
+    image: {{SAFELINE_IMAGE_PREFIX}}/safeline-chaos{{SAFELINE_REGION}}{{SAFELINE_ARCH_SUFFIX}}:{{SAFELINE_IMAGE_TAG}}
+    profiles:
+      - safeline
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    environment:
+      - DB_ADDR=postgres://safeline-ce:${SAFELINE_POSTGRES_PASSWORD}@safeline-pg/safeline-ce?sslmode=disable
+    volumes:
+      - ${SAFELINE_DIR:-./data/safeline}/resources/sock:/app/sock
+      - ${SAFELINE_DIR:-./data/safeline}/resources/chaos:/app/chaos
+    networks:
+      safeline-ce:
+        ipv4_address: ${SAFELINE_SUBNET_PREFIX}.10
 
 volumes:
   postgres_data:
@@ -1160,3 +1331,13 @@ networks:
       config:
         - subnet: 172.16.238.0/24
           gateway: 172.16.238.1
+  safeline-ce:
+    name: safeline-ce
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - gateway: ${SAFELINE_SUBNET_PREFIX}.1
+          subnet: ${SAFELINE_SUBNET_PREFIX}.0/24
+    driver_opts:
+      com.docker.network.bridge.name: safeline-ce

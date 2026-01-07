@@ -73,6 +73,21 @@ export default {
     seconds: '秒',
     enabled: '启用',
     disabled: '禁用',
+    // 二次认证 / 2FA
+    secondaryAuth: '二次认证',
+    secondaryPassword: '二次密码',
+    pleaseInputSecondaryPassword: '请输入二次密码',
+    inputSecondaryPassword: '请输入您的二次密码以验证身份',
+    password: '密码',
+    pleaseInputPassword: '请输入密码',
+    inputPassword: '请输入您的账户密码',
+    // 2FA验证码
+    twoFactorAuth: '2FA验证',
+    twoFACode: '2FA验证码',
+    pleaseInputTwoFACode: '请输入2FA验证码',
+    inputTwoFACode: '请输入6位验证码',
+    twoFACodeLength: '验证码应为6位数字',
+    twoFACodeFormat: '验证码应为6位数字',
   },
 
   // 主题
@@ -695,6 +710,8 @@ export default {
     dangerousCommandBlacklist: '危险命令黑名单',
     dangerousCommandDesc: '配置危险命令黑名单，匹配的命令将被拦截执行。支持精确匹配和正则表达式。',
     dangerousCommandHint: '配置的命令模式将在执行 cmd.run 等命令时进行检查，匹配的命令将被拦截。',
+    requireAuthTip: '启用后，编辑或删除危险命令规则需要输入2FA验证码确认',
+    twoFARequired: '此操作需要2FA验证，请输入您的动态验证码。如未启用2FA，请先在"安全设置"中启用。',
     addCommand: '添加规则',
     editCommand: '编辑规则',
     commandPattern: '命令模式',
@@ -2523,6 +2540,7 @@ export default {
     disable2FA: '禁用 2FA',
     disable2FASuccess: '2FA 已禁用',
     confirmDisable2FA: '确定禁用二次认证？',
+    pleaseEnable2FA: '此操作需要启用2FA（两步验证），请先在"安全设置"中启用2FA',
     enterCode: '请输入验证码',
     invalidCode: '验证码无效',
     scanQRCode: '请使用认证器扫描二维码',

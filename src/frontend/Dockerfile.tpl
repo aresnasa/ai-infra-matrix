@@ -10,11 +10,27 @@ ARG NPM_REGISTRY={{NPM_REGISTRY}}
 ARG APT_MIRROR={{APT_MIRROR}}
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 配置 APT 镜像源（Debian bookworm）
+# 配置 APT 镜像源（Debian bookworm）- 支持自定义镜像源
 RUN set -eux; \
-    apt-get update || \
-    (sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-     apt-get update)
+    echo "配置 Debian 镜像源..."; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org/debian-security|${APT_MIRROR}/debian-security|g" /etc/apt/sources.list.d/debian.sources; \
+        elif [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}/debian-security|g" /etc/apt/sources.list; \
+        fi; \
+    else \
+        if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+            sed -i 's|security.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources; \
+        elif [ -f /etc/apt/sources.list ]; then \
+            sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+            sed -i 's|security.debian.org|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list; \
+        fi; \
+    fi; \
+    apt-get update
 
 # 安装时区工具
 RUN apt-get install -y --no-install-recommends tzdata && \

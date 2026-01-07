@@ -156,18 +156,19 @@ func (s *SaltJobService) GetConfigWithDangerousCommands() map[string]interface{}
 	}
 
 	return map[string]interface{}{
-		"id":                     s.config.ID,
-		"max_retention_days":     s.config.MaxRetentionDays,
-		"max_records":            s.config.MaxRecords,
-		"cleanup_enabled":        s.config.CleanupEnabled,
-		"cleanup_interval_hour":  s.config.CleanupIntervalHour,
-		"cleanup_interval_value": s.config.CleanupIntervalValue,
-		"cleanup_interval_unit":  s.config.CleanupIntervalUnit,
-		"last_cleanup_time":      s.config.LastCleanupTime,
-		"blacklist_enabled":      s.config.BlacklistEnabled,
-		"dangerous_commands":     s.config.GetDangerousCommands(),
-		"created_at":             s.config.CreatedAt,
-		"updated_at":             s.config.UpdatedAt,
+		"id":                             s.config.ID,
+		"max_retention_days":             s.config.MaxRetentionDays,
+		"max_records":                    s.config.MaxRecords,
+		"cleanup_enabled":                s.config.CleanupEnabled,
+		"cleanup_interval_hour":          s.config.CleanupIntervalHour,
+		"cleanup_interval_value":         s.config.CleanupIntervalValue,
+		"cleanup_interval_unit":          s.config.CleanupIntervalUnit,
+		"last_cleanup_time":              s.config.LastCleanupTime,
+		"blacklist_enabled":              s.config.BlacklistEnabled,
+		"require_auth_for_dangerous_cmd": s.config.RequireAuthForDangerousCmd,
+		"dangerous_commands":             s.config.GetDangerousCommands(),
+		"created_at":                     s.config.CreatedAt,
+		"updated_at":                     s.config.UpdatedAt,
 	}
 }
 

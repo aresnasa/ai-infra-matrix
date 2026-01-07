@@ -10,6 +10,21 @@ global:
   # - name: "my-registry-secret"
 
 # =============================================================================
+# SSL/TLS CONFIGURATION FOR PRODUCTION
+# =============================================================================
+
+# SSL/TLS settings for secure communication
+ssl:
+  enabled: true
+  # Environment variables for SSL/TLS configuration
+  env:
+    ENABLE_TLS: "true"
+    EXTERNAL_SCHEME: "https"
+    EXTERNAL_HOST: "ai-infra.example.com"  # CHANGE THIS to your domain!
+    EXTERNAL_PORT: "443"
+    HTTPS_PORT: "443"
+
+# =============================================================================
 # HIGH AVAILABILITY COMPONENTS
 # =============================================================================
 
@@ -251,7 +266,9 @@ nginx:
   service:
     type: "LoadBalancer"  # Use LoadBalancer in production
     port: 80
+    httpsPort: 443
     targetPort: 80
+    httpsTargetPort: 443
   autoscaling:
     enabled: true
     minReplicas: 2
@@ -278,6 +295,11 @@ nginx:
     limits:
       memory: "256Mi"
       cpu: "300m"
+  # SSL/TLS settings for nginx
+  env:
+    ENABLE_TLS: "true"
+    EXTERNAL_SCHEME: "https"
+    EXTERNAL_HOST: "ai-infra.example.com"  # CHANGE THIS to your domain!
 
 # =============================================================================
 # OTHER SERVICES
@@ -310,6 +332,12 @@ jupyterhub:
     SHARED_STORAGE_ENABLED: "true"
     KUBERNETES_NAMESPACE: ""  # Will use release namespace
     KUBERNETES_SERVICE_ACCOUNT: ""
+    # SSL/TLS settings (can override global ssl.env settings)
+    ENABLE_TLS: "true"
+    EXTERNAL_SCHEME: "https"
+    EXTERNAL_HOST: "ai-infra.example.com"  # CHANGE THIS to your domain!
+    EXTERNAL_PORT: "443"
+    HTTPS_PORT: "443"
 
 # Gitea with increased resources
 gitea:
@@ -402,17 +430,40 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/websocket-services: "jupyterhub"
+    # SSL redirect
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
     # Enable TLS if using cert-manager
-    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"  # Uncomment and configure your issuer
   hosts:
     - host: "ai-infra.example.com"  # CHANGE THIS!
       paths:
         - path: /
           pathType: Prefix
-  tls: []
-  # - secretName: ai-infra-tls
-  #   hosts:
-  #     - ai-infra.example.com
+        - path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: backend
+              port:
+                number: 8082
+        - path: /jupyter
+          pathType: Prefix
+          backend:
+            service:
+              name: jupyterhub
+              port:
+                number: 8000
+        - path: /gitea
+          pathType: Prefix
+          backend:
+            service:
+              name: gitea
+              port:
+                number: 3000
+  tls:
+    - secretName: ai-infra-tls
+      hosts:
+        - ai-infra.example.com  # CHANGE THIS!
 
 # =============================================================================
 # MONITORING

@@ -178,13 +178,15 @@ const UserProfile = () => {
                 style={{ marginBottom: 16 }}
               />
               <div style={{ 
-                background: '#f5f5f5', 
+                background: '#ffffff', 
+                border: '1px solid #d9d9d9',
                 padding: 16, 
                 borderRadius: 8,
-                fontFamily: 'monospace' 
+                fontFamily: 'monospace',
+                color: '#000000'
               }}>
                 {recoveryCodes.map((code, index) => (
-                  <div key={index} style={{ marginBottom: 4 }}>{code}</div>
+                  <div key={index} style={{ marginBottom: 4, color: '#000000' }}>{code}</div>
                 ))}
               </div>
             </div>
@@ -482,6 +484,7 @@ const UserProfile = () => {
                   <div>
                     <p>二次认证是一种额外的安全层，在登录时除了密码外还需要输入动态验证码。</p>
                     <p>启用2FA后，您需要使用认证器APP（如 Google Authenticator、Microsoft Authenticator 或 Authy）扫描二维码并获取验证码。</p>
+                    <p><Text type="warning"><strong>重要：</strong>关闭或修改危险命令黑名单等高危操作需要先启用2FA。</Text></p>
                   </div>
                 }
                 type="info"
@@ -634,7 +637,8 @@ const UserProfile = () => {
               display: 'flex', 
               justifyContent: 'center', 
               padding: 24, 
-              background: '#fafafa', 
+              background: '#ffffff', 
+              border: '1px solid #d9d9d9',
               borderRadius: 8,
               marginBottom: 16 
             }}>
@@ -653,12 +657,13 @@ const UserProfile = () => {
                 display: 'flex', 
                 alignItems: 'center', 
                 marginTop: 8,
-                background: '#f5f5f5',
+                background: '#ffffff',
+                border: '1px solid #d9d9d9',
                 padding: '8px 12px',
                 borderRadius: 4,
                 gap: 8
               }}>
-                <Text code style={{ flex: 1, letterSpacing: 2 }}>
+                <Text code style={{ flex: 1, letterSpacing: 2, color: '#000000', background: 'transparent' }}>
                   {twoFASetupData.secret}
                 </Text>
                 <Button
@@ -679,13 +684,15 @@ const UserProfile = () => {
                   style={{ marginBottom: 8 }}
                 />
                 <div style={{ 
-                  background: '#f5f5f5', 
+                  background: '#ffffff', 
+                  border: '1px solid #d9d9d9',
                   padding: 12, 
                   borderRadius: 8,
-                  fontFamily: 'monospace'
+                  fontFamily: 'monospace',
+                  color: '#000000'
                 }}>
                   {twoFASetupData.recovery_codes.map((code, index) => (
-                    <div key={index} style={{ marginBottom: 4 }}>{code}</div>
+                    <div key={index} style={{ marginBottom: 4, color: '#000000' }}>{code}</div>
                   ))}
                 </div>
                 <Button

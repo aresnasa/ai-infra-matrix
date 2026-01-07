@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 # ==============================================================================
@@ -23,6 +23,11 @@ FORCE_REBUILD=false
 PARALLEL_JOBS=${PARALLEL_JOBS:-4}  # Default 4 parallel jobs
 ENABLE_PARALLEL=false              # Disabled by default
 
+# SSL Configuration
+ENABLE_SSL=${ENABLE_SSL:-true}     # Enabled by default
+SSL_DOMAIN=${SSL_DOMAIN:-}         # SSL domain, auto-detect from EXTERNAL_HOST if empty
+SSL_CERT_DIR="$SCRIPT_DIR/ssl-certs"
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -36,6 +41,56 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_cache() { echo -e "${CYAN}[CACHE]${NC} $1"; }
 log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
+log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
+
+# ==============================================================================
+# 通用工具函数
+# ==============================================================================
+
+# 验证 registry 路径是否完整 (Harbor 需要 project 名称)
+# 返回: 0 = 验证通过或用户确认继续, 1 = 用户取消
+# 用法: validate_registry_path "harbor.example.com/ai-infra" "v0.3.8"
+validate_registry_path() {
+    local registry="$1"
+    local tag="${2:-}"
+    
+    # 如果 registry 为空，直接返回成功（不需要验证）
+    [[ -z "$registry" ]] && return 0
+    
+    # 检查是否包含项目路径（应至少有一个 /）
+    if [[ ! "$registry" =~ / ]]; then
+        log_warn "=========================================="
+        log_warn "⚠️  Registry path may be incomplete!"
+        log_warn "=========================================="
+        log_warn "Provided: $registry"
+        log_warn ""
+        log_warn "Harbor registries require a project name in the path:"
+        log_warn "  ✓ $registry/ai-infra    (recommended)"
+        log_warn "  ✓ $registry/<project>   (your project name)"
+        log_warn ""
+        if [[ -n "$tag" ]]; then
+            log_warn "Example usage:"
+            log_warn "  $0 [command] $registry/ai-infra $tag"
+        fi
+        log_warn ""
+        
+        # 非交互模式下返回失败
+        if [[ ! -t 0 ]]; then
+            log_warn "Non-interactive mode, aborting."
+            return 1
+        fi
+        
+        read -p "Continue anyway? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Cancelled. Please use correct registry path."
+            return 1
+        fi
+        log_warn "Continuing with incomplete registry path..."
+    fi
+    
+    return 0
+}
 
 # ==============================================================================
 # 1. Configuration & Environment
@@ -120,19 +175,41 @@ detect_external_host() {
 detect_cgroup_version() {
     local cgroup_version="v1"  # 默认 v1
     
-    # 方法1：检查 /sys/fs/cgroup/cgroup.controllers (cgroupv2 特有)
+    # 方法0：macOS/Docker Desktop - 通过 docker info 检测
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v docker &> /dev/null; then
+        local docker_cgroup_ver
+        docker_cgroup_ver=$(docker info 2>/dev/null | grep -i "Cgroup Version" | awk '{print $NF}')
+        if [[ "$docker_cgroup_ver" == "2" ]]; then
+            cgroup_version="v2"
+            echo "$cgroup_version"
+            return
+        elif [[ "$docker_cgroup_ver" == "1" ]]; then
+            cgroup_version="v1"
+            echo "$cgroup_version"
+            return
+        fi
+    fi
+    
+    # 方法1：检查 /sys/fs/cgroup/cgroup.controllers (cgroupv2 特有) - Linux
     if [[ -f "/sys/fs/cgroup/cgroup.controllers" ]]; then
         cgroup_version="v2"
-    # 方法2：检查 /sys/fs/cgroup 的挂载类型
-    elif command -v stat &> /dev/null; then
+    # 方法2：检查 /sys/fs/cgroup 的挂载类型 - Linux
+    elif [[ -d "/sys/fs/cgroup" ]] && command -v stat &> /dev/null; then
         local cgroup_fstype
         cgroup_fstype=$(stat -f -c %T /sys/fs/cgroup 2>/dev/null || stat -f %T /sys/fs/cgroup 2>/dev/null)
         if [[ "$cgroup_fstype" == "cgroup2fs" ]] || [[ "$cgroup_fstype" == "cgroup2" ]]; then
             cgroup_version="v2"
         fi
-    # 方法3：通过 mount 命令检查
-    elif command -v mount &> /dev/null; then
+    # 方法3：通过 mount 命令检查 - Linux
+    elif [[ -d "/sys/fs/cgroup" ]] && command -v mount &> /dev/null; then
         if mount | grep -q "cgroup2 on /sys/fs/cgroup"; then
+            cgroup_version="v2"
+        fi
+    # 方法4：通过 docker info 检测（非 macOS 但有 docker）
+    elif command -v docker &> /dev/null; then
+        local docker_cgroup_ver
+        docker_cgroup_ver=$(docker info 2>/dev/null | grep -i "Cgroup Version" | awk '{print $NF}')
+        if [[ "$docker_cgroup_ver" == "2" ]]; then
             cgroup_version="v2"
         fi
     fi
@@ -184,7 +261,10 @@ update_env_variable() {
     fi
 }
 
-# 同步 .env 与 .env.example 中的缺失变量
+# 同步 .env 与 .env.example
+# 功能：
+#   1. 添加 .env.example 中新增的变量
+#   2. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
@@ -204,7 +284,7 @@ sync_env_with_example() {
     local missing_vars=()
     local updated_vars=()
     
-    # 读取 .env.example 中的所有变量，同步缺失的变量到 .env
+    # 读取 .env.example 中的所有变量，同步到 .env
     while IFS= read -r line || [[ -n "$line" ]]; do
         # 跳过注释和空行
         if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
@@ -222,14 +302,16 @@ sync_env_with_example() {
                 echo "${var_name}=${example_value}" >> "$env_file"
                 missing_vars+=("$var_name")
             else
-                # 变量存在，检查是否为空值
-                local current_value
-                current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
-                
-                # 如果当前值为空且 example 有默认值，则更新
-                if [[ -z "$current_value" ]] && [[ -n "$example_value" ]]; then
-                    update_env_variable "$var_name" "$example_value"
-                    updated_vars+=("$var_name")
+                # 变量存在，只同步版本类变量 (VERSION, TAG, VER, RELEASE)
+                if [[ "$var_name" =~ (VERSION|_TAG$|_VER$|_RELEASE$) ]]; then
+                    local current_value
+                    current_value=$(grep "^${var_name}=" "$env_file" | head -1 | cut -d'=' -f2-)
+                    
+                    # 如果值不同，用 example 的值更新
+                    if [[ "$current_value" != "$example_value" ]]; then
+                        update_env_variable "$var_name" "$example_value"
+                        updated_vars+=("$var_name: $current_value → $example_value")
+                    fi
                 fi
             fi
         fi
@@ -244,7 +326,7 @@ sync_env_with_example() {
     fi
     
     if [[ ${#updated_vars[@]} -gt 0 ]]; then
-        log_info "Updated ${#updated_vars[@]} empty variables with defaults:"
+        log_info "Updated ${#updated_vars[@]} version variables from .env.example:"
         for var in "${updated_vars[@]}"; do
             log_info "  ↻ $var"
         done
@@ -253,7 +335,121 @@ sync_env_with_example() {
     if [[ ${#missing_vars[@]} -eq 0 ]] && [[ ${#updated_vars[@]} -eq 0 ]]; then
         log_info "✓ .env is in sync with .env.example"
     else
-        log_info "✓ Synced ${#missing_vars[@]} new + ${#updated_vars[@]} updated variables"
+        log_info "✓ Synced ${#missing_vars[@]} new + ${#updated_vars[@]} version variables"
+    fi
+    
+    # 检测配置差异并警告用户
+    check_env_config_drift
+    
+    return 0
+}
+
+# 检测 .env 与 .env.example 之间的配置差异
+# 功能：
+#   1. 检测非版本类变量的值差异
+#   2. 特别关注关键配置项（如 EXTERNAL_SCHEME 与 ENABLE_TLS 的一致性）
+#   3. 警告用户可能的配置问题
+# 用法: check_env_config_drift
+check_env_config_drift() {
+    local env_file="$ENV_FILE"
+    local example_file="$ENV_EXAMPLE"
+    
+    if [[ ! -f "$example_file" ]] || [[ ! -f "$env_file" ]]; then
+        return 0
+    fi
+    
+    local drift_vars=()
+    local critical_drifts=()
+    
+    # 定义需要检测差异的关键配置变量（非版本类，非用户自定义类）
+    # 这些变量的默认值通常应该与 .env.example 保持一致
+    local -a check_vars=(
+        "EXTERNAL_SCHEME"
+        "ENABLE_TLS"
+        "ENABLE_OAUTH"
+        "ENABLE_LDAP"
+        "SSO_ENABLED"
+        "JWT_SECRET_KEY"
+        "HTTP_PORT"
+        "HTTPS_PORT"
+    )
+    
+    # 读取 .env.example 中的变量
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # 跳过注释和空行
+        if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+            continue
+        fi
+        
+        # 提取变量名和值
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local example_value="${BASH_REMATCH[2]}"
+            
+            # 跳过版本类变量（已在 sync_env_with_example 中处理）
+            if [[ "$var_name" =~ (VERSION|_TAG$|_VER$|_RELEASE$) ]]; then
+                continue
+            fi
+            
+            # 跳过用户自定义类变量（如密码、域名等）
+            if [[ "$var_name" =~ (PASSWORD|SECRET|_HOST$|_DOMAIN$|_USER$|_NAME$|_PATH$|_DIR$|_EMAIL$) ]]; then
+                continue
+            fi
+            
+            # 检查关键配置变量
+            local is_critical=false
+            for check_var in "${check_vars[@]}"; do
+                if [[ "$var_name" == "$check_var" ]]; then
+                    is_critical=true
+                    break
+                fi
+            done
+            
+            if [[ "$is_critical" == "true" ]]; then
+                # 获取 .env 中的当前值
+                local current_value
+                current_value=$(grep "^${var_name}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+                
+                if [[ -n "$current_value" ]] && [[ "$current_value" != "$example_value" ]]; then
+                    drift_vars+=("$var_name: '$current_value' (当前) vs '$example_value' (推荐)")
+                fi
+            fi
+        fi
+    done < "$example_file"
+    
+    # 特殊检查：ENABLE_TLS=true 但 EXTERNAL_SCHEME=http 的不一致
+    local enable_tls
+    local external_scheme
+    enable_tls=$(grep "^ENABLE_TLS=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    external_scheme=$(grep "^EXTERNAL_SCHEME=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    
+    if [[ "$enable_tls" == "true" ]] && [[ "$external_scheme" == "http" ]]; then
+        critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=true 但 EXTERNAL_SCHEME=http")
+        critical_drifts+=("   建议: 运行 './build.sh enable-ssl' 或手动设置 EXTERNAL_SCHEME=https")
+    fi
+    
+    if [[ "$enable_tls" == "false" ]] && [[ "$external_scheme" == "https" ]]; then
+        critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=false 但 EXTERNAL_SCHEME=https")
+        critical_drifts+=("   建议: 设置 ENABLE_TLS=true 或 EXTERNAL_SCHEME=http")
+    fi
+    
+    # 显示差异警告
+    if [[ ${#drift_vars[@]} -gt 0 ]]; then
+        log_warn "检测到 ${#drift_vars[@]} 个配置与 .env.example 默认值不同:"
+        for drift in "${drift_vars[@]}"; do
+            log_warn "  ≠ $drift"
+        done
+        log_info "提示: 如果这是有意修改，可以忽略此警告"
+    fi
+    
+    # 显示严重配置问题
+    if [[ ${#critical_drifts[@]} -gt 0 ]]; then
+        echo ""
+        log_error "发现关键配置问题:"
+        for critical in "${critical_drifts[@]}"; do
+            echo -e "  ${critical}"
+        done
+        echo ""
     fi
     
     return 0
@@ -616,6 +812,16 @@ generate_production_env() {
     log_warn "⚠️  Please change admin password via Web UI after deployment"
     log_info "======================================================================"
     
+    # Detect external IP address
+    log_info "Detecting external IP address..."
+    local detected_external_host=$(detect_external_host)
+    if [[ "$detected_external_host" == "localhost" ]]; then
+        log_warn "⚠️  Could not detect external IP, using 'localhost'"
+        log_warn "⚠️  Please manually set EXTERNAL_HOST in $env_file if needed"
+    else
+        log_info "✅ Detected external IP: $detected_external_host"
+    fi
+    
     # Check if target file exists
     if [[ -f "$env_file" ]] && [[ "$force" != "true" ]]; then
         log_warn "Target file already exists: $env_file"
@@ -724,7 +930,9 @@ generate_production_env() {
         -v salt_token="$saltstack_api_token" \
         -v test_ssh="$test_ssh_password" \
         -v test_root="$test_root_password" \
+        -v ext_host="$detected_external_host" \
         '
+        /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
         /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
@@ -818,12 +1026,27 @@ generate_production_env() {
     log_warn "⚠️  Please save these passwords securely!"
     log_info "Production environment file created: $env_file"
     
+    # Display detected external host
+    log_info ""
+    log_info "🌐 Network Configuration:"
+    echo "    EXTERNAL_HOST=$detected_external_host"
+    
+    # Auto copy .env.prod to .env
+    log_info ""
+    log_info "Automatically copying $env_file to .env..."
+    cp "$env_file" .env
+    if [[ $? -eq 0 ]]; then
+        log_info "✅ Copied $env_file to .env successfully"
+    else
+        log_error "❌ Failed to copy $env_file to .env"
+        log_info "  Please manually run: cp $env_file .env"
+    fi
+    
     log_info ""
     log_info "Next steps:"
-    log_info "  1. Review and edit $env_file (set EXTERNAL_HOST, DOMAIN, etc.)"
-    log_info "  2. Copy to .env: cp $env_file .env"
-    log_info "  3. Render templates: ./build.sh render"
-    log_info "  4. Build and deploy: ./build.sh build-all && docker compose up -d"
+    log_info "  1. Review and edit .env if needed (adjust DOMAIN, ports, etc.)"
+    log_info "  2. Render templates: ./build.sh render"
+    log_info "  3. Build and deploy: ./build.sh build-all && docker compose up -d"
     
     return 0
 }
@@ -836,7 +1059,6 @@ init_env_file() {
     # 检测外部地址
     local detected_host=$(detect_external_host)
     local detected_port="${EXTERNAL_PORT:-8080}"
-    local detected_scheme="${EXTERNAL_SCHEME:-http}"
     
     if [[ ! -f "$ENV_FILE" ]]; then
         log_info "Creating .env from .env.example..."
@@ -851,6 +1073,10 @@ init_env_file() {
     
     # 同步 .env.example 中的新变量到 .env
     sync_env_with_example
+    
+    # 从 .env 读取当前的 scheme 设置（保留用户/example 的配置）
+    local current_scheme=$(grep "^EXTERNAL_SCHEME=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+    local detected_scheme="${current_scheme:-https}"
     
     # 检查是否需要更新关键变量
     local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
@@ -949,6 +1175,34 @@ COMMON_IMAGES=(
     "chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}"
     "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
     "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
+    "${GITEA_IMAGE:-gitea/gitea:${GITEA_VERSION:-1.25.1}}"
+)
+
+# Initialize SAFELINE_IMAGES array for SafeLine WAF
+# Architecture suffix is auto-detected: -arm for ARM/aarch64, empty for x86_64
+# Configuration is defined in config/images.yaml
+_detect_safeline_arch_suffix() {
+    local arch=$(uname -m)
+    if [[ "$arch" =~ "aarch" || "$arch" =~ "arm" ]]; then
+        echo "-arm"
+    else
+        echo ""
+    fi
+}
+
+SAFELINE_ARCH_SUFFIX="${SAFELINE_ARCH_SUFFIX:-$(_detect_safeline_arch_suffix)}"
+SAFELINE_IMAGE_PREFIX="${SAFELINE_IMAGE_PREFIX:-chaitin}"
+SAFELINE_IMAGE_TAG="${SAFELINE_IMAGE_TAG:-9.3.0}"
+SAFELINE_REGION="${SAFELINE_REGION:-}"
+
+SAFELINE_IMAGES=(
+    "${SAFELINE_IMAGE_PREFIX}/safeline-postgres${SAFELINE_ARCH_SUFFIX}:15.2"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-mgt${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-detector${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-tengine${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-luigi${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-fvm${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
+    "${SAFELINE_IMAGE_PREFIX}/safeline-chaos${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
 )
 
 # Ensure SSH Keys
@@ -965,6 +1219,441 @@ mkdir -p "$SCRIPT_DIR/third_party"
 # ==============================================================================
 # 2. Helper Functions
 # ==============================================================================
+
+# ==============================================================================
+# SSL Certificate Generation Functions (内置，无需外部脚本)
+# ==============================================================================
+
+# SSL 配置常量
+SSL_VALID_DAYS=${SSL_VALID_DAYS:-3650}  # 10年有效期
+SSL_KEY_SIZE=${SSL_KEY_SIZE:-2048}
+SSL_COUNTRY=${SSL_COUNTRY:-CN}
+SSL_STATE=${SSL_STATE:-Beijing}
+SSL_CITY=${SSL_CITY:-Beijing}
+SSL_ORG=${SSL_ORG:-AI-Infra-Matrix}
+SSL_CA_NAME=${SSL_CA_NAME:-AI-Infra-Matrix-CA}
+LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-${ACME_EMAIL:-}}
+LETSENCRYPT_STAGING=${LETSENCRYPT_STAGING:-false}
+LETSENCRYPT_EXTRA_DOMAINS=${LETSENCRYPT_EXTRA_DOMAINS:-}
+# SSL 证书输出目录 (放在 src/nginx/ssl 以便打包到镜像)
+SSL_OUTPUT_DIR="$SCRIPT_DIR/src/nginx/ssl"
+
+is_existing_cert_valid() {
+    local cert_file="$1"
+    local seconds=${2:-2592000}
+    openssl x509 -checkend "$seconds" -noout -in "$cert_file" >/dev/null 2>&1
+}
+
+# 生成 CA 根证书
+generate_ca_certificate() {
+    local output_dir="$SSL_OUTPUT_DIR"
+    local ca_dir="$output_dir/ca"
+    
+    log_step "生成 CA 根证书..."
+    
+    mkdir -p "$ca_dir"
+    
+    # 生成 CA 私钥
+    log_info "生成 CA 私钥..."
+    openssl genrsa -out "$ca_dir/ca.key" $SSL_KEY_SIZE 2>/dev/null
+    chmod 600 "$ca_dir/ca.key"
+    
+    # 生成 CA 证书
+    log_info "生成 CA 证书..."
+    openssl req -new -x509 -days $SSL_VALID_DAYS -key "$ca_dir/ca.key" \
+        -out "$ca_dir/ca.crt" \
+        -subj "/C=$SSL_COUNTRY/ST=$SSL_STATE/L=$SSL_CITY/O=$SSL_ORG/CN=$SSL_CA_NAME" \
+        2>/dev/null
+    
+    if [[ $? -eq 0 ]]; then
+        log_info "✓ CA 根证书生成成功"
+        log_info "  私钥: $ca_dir/ca.key"
+        log_info "  证书: $ca_dir/ca.crt"
+        return 0
+    else
+        log_error "CA 证书生成失败"
+        return 1
+    fi
+}
+
+# 生成服务器证书
+generate_server_certificate() {
+    local domain="$1"
+    local output_dir="$SSL_OUTPUT_DIR"
+    local ca_dir="$output_dir/ca"
+    
+    if [[ -z "$domain" ]]; then
+        log_error "域名不能为空"
+        return 1
+    fi
+    
+    # 检查 CA 是否存在
+    if [[ ! -f "$ca_dir/ca.key" ]] || [[ ! -f "$ca_dir/ca.crt" ]]; then
+        log_error "CA 证书不存在，请先生成 CA"
+        return 1
+    fi
+    
+    log_step "为域名生成服务器证书: $domain"
+    
+    # 安全文件名 (将 * 替换为 _wildcard_)
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+    
+    # 生成服务器私钥
+    log_info "生成服务器私钥..."
+    openssl genrsa -out "$output_dir/$safe_name.key" $SSL_KEY_SIZE 2>/dev/null
+    chmod 600 "$output_dir/$safe_name.key"
+    
+    # 创建 SAN 扩展配置
+    local san_config=$(mktemp)
+    cat > "$san_config" << EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+C = $SSL_COUNTRY
+ST = $SSL_STATE
+L = $SSL_CITY
+O = $SSL_ORG
+CN = $domain
+
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+EOF
+
+    # 添加 SAN (支持 IP 和域名)
+    local san_index=1
+    if [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "IP.$san_index = $domain" >> "$san_config"
+        san_index=$((san_index + 1))
+        # 添加 localhost
+        echo "IP.$san_index = 127.0.0.1" >> "$san_config"
+        echo "DNS.1 = localhost" >> "$san_config"
+    else
+        echo "DNS.$san_index = $domain" >> "$san_config"
+        san_index=$((san_index + 1))
+        echo "DNS.$san_index = localhost" >> "$san_config"
+        echo "IP.1 = 127.0.0.1" >> "$san_config"
+    fi
+    
+    # 生成证书签名请求 (CSR)
+    log_info "生成证书签名请求..."
+    openssl req -new -key "$output_dir/$safe_name.key" \
+        -out "$output_dir/$safe_name.csr" \
+        -config "$san_config" \
+        2>/dev/null
+    
+    # 创建签名扩展配置
+    local ext_config=$(mktemp)
+    cat > "$ext_config" << EOF
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[alt_names]
+EOF
+    
+    # 复制 SAN 配置
+    grep -E "^(DNS|IP)\." "$san_config" >> "$ext_config"
+    
+    # 使用 CA 签发证书
+    log_info "使用 CA 签发证书..."
+    openssl x509 -req -days $SSL_VALID_DAYS \
+        -in "$output_dir/$safe_name.csr" \
+        -CA "$ca_dir/ca.crt" \
+        -CAkey "$ca_dir/ca.key" \
+        -CAcreateserial \
+        -out "$output_dir/$safe_name.crt" \
+        -extfile "$ext_config" \
+        2>/dev/null
+    
+    # 创建证书链
+    cat "$output_dir/$safe_name.crt" "$ca_dir/ca.crt" > "$output_dir/$safe_name.chain.crt"
+    
+    # 创建通用名称的符号链接 (server.crt/server.key)
+    ln -sf "$safe_name.crt" "$output_dir/server.crt"
+    ln -sf "$safe_name.key" "$output_dir/server.key"
+    ln -sf "$safe_name.chain.crt" "$output_dir/server.chain.crt"
+    cp "$ca_dir/ca.crt" "$output_dir/ca.crt"
+    
+    # 清理临时文件
+    rm -f "$san_config" "$ext_config" "$output_dir/$safe_name.csr"
+    
+    if [[ -f "$output_dir/$safe_name.crt" ]]; then
+        local cert_subject=$(openssl x509 -in "$output_dir/$safe_name.crt" -noout -subject 2>/dev/null | sed 's/subject=//')
+        local cert_expire=$(openssl x509 -in "$output_dir/$safe_name.crt" -noout -enddate 2>/dev/null | sed 's/notAfter=//')
+        
+        log_info "✓ 服务器证书生成成功"
+        log_info "  私钥: $output_dir/$safe_name.key"
+        log_info "  证书: $output_dir/$safe_name.crt"
+        log_info "  证书链: $output_dir/$safe_name.chain.crt"
+        log_info "  通用链接: $output_dir/server.crt -> $safe_name.crt"
+        log_info ""
+        log_info "  证书主题: $cert_subject"
+        log_info "  有效期至: $cert_expire"
+        return 0
+    else
+        log_error "服务器证书生成失败"
+        return 1
+    fi
+}
+
+# 设置 SSL 证书 (生成 CA + 服务器证书)
+setup_ssl_certificates() {
+    local domain="${1:-}"
+    local force="${2:-false}"
+    
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${SSL_DOMAIN:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain=$(detect_external_host)
+    fi
+    
+    if [[ -z "$domain" ]]; then
+        log_error "Unable to determine domain for SSL certificate"
+        log_info "Please specify domain: ./build.sh ssl-setup your-domain.com"
+        return 1
+    fi
+    
+    log_info "🔒 Setting up SSL certificates for: $domain"
+    log_info "   Output directory: $SSL_OUTPUT_DIR"
+    
+    # 检查 OpenSSL 是否可用
+    if ! command -v openssl &> /dev/null; then
+        log_error "OpenSSL not found. Please install OpenSSL first."
+        return 1
+    fi
+    
+    local openssl_version=$(openssl version 2>/dev/null)
+    log_info "   OpenSSL: $openssl_version"
+    
+    # 安全文件名
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+    
+    # 检查证书是否已存在
+    if [[ -f "$SSL_OUTPUT_DIR/$safe_name.crt" ]] && [[ "$force" != "true" ]]; then
+        log_info "SSL certificates already exist for $domain"
+        log_info "Use --force to regenerate: ./build.sh ssl-setup --force"
+        return 0
+    fi
+    
+    # 创建输出目录
+    mkdir -p "$SSL_OUTPUT_DIR"
+    
+    # 生成 CA (如果不存在或强制重新生成)
+    if [[ ! -f "$SSL_OUTPUT_DIR/ca/ca.crt" ]] || [[ "$force" == "true" ]]; then
+        if ! generate_ca_certificate; then
+            return 1
+        fi
+    else
+        log_info "使用已存在的 CA 证书"
+    fi
+    
+    # 生成服务器证书
+    if ! generate_server_certificate "$domain"; then
+        return 1
+    fi
+    
+    # 更新 .env 文件中的 SSL 相关变量
+    log_step "Updating .env configuration..."
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+    
+    echo ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "✅ SSL certificates generated successfully!"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info ""
+    log_info "📁 Certificate files (will be bundled into nginx image):"
+    log_info "   CA Certificate:     $SSL_OUTPUT_DIR/ca/ca.crt"
+    log_info "   Server Certificate: $SSL_OUTPUT_DIR/server.crt"
+    log_info "   Server Key:         $SSL_OUTPUT_DIR/server.key"
+    log_info ""
+    log_info "📋 Next steps:"
+    log_info "   1. Rebuild nginx:  ./build.sh nginx"
+    log_info "   2. Restart:        docker compose restart nginx"
+    log_info ""
+    log_info "💡 To trust the CA on client machines, import:"
+    log_info "   $SSL_OUTPUT_DIR/ca/ca.crt"
+    
+    return 0
+}
+
+# 使用 Let's Encrypt (certbot) 申请正式证书并放入 SSL_OUTPUT_DIR
+setup_letsencrypt_certificates() {
+    local domain="${1:-}"
+    local email="${2:-${LETSENCRYPT_EMAIL:-}}"
+    local staging="${3:-${LETSENCRYPT_STAGING:-false}}"
+    local force="${4:-false}"
+
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${SSL_DOMAIN:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain=$(detect_external_host)
+    fi
+
+    if [[ -z "$domain" ]]; then
+        log_error "Unable to determine domain for Let's Encrypt"
+        log_info "Please specify domain: ./build.sh ssl-setup-le your-domain.com"
+        return 1
+    fi
+
+    if [[ -z "$email" ]]; then
+        log_error "Let's Encrypt email is required. Set LETSENCRYPT_EMAIL or provide as second argument."
+        return 1
+    fi
+
+    if ! command -v certbot >/dev/null 2>&1; then
+        log_error "certbot not found. Install certbot (https://letsencrypt.org/getting-started/)."
+        return 1
+    fi
+
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+
+    if [[ -f "$SSL_OUTPUT_DIR/server.crt" ]] && [[ "$force" != "true" ]]; then
+        if is_existing_cert_valid "$SSL_OUTPUT_DIR/server.crt"; then
+            log_info "Existing certificate is still valid. Use --force to renew."
+            return 0
+        fi
+    fi
+
+    local le_root="$SSL_OUTPUT_DIR/letsencrypt"
+    local le_config="$le_root/config"
+    local le_work="$le_root/work"
+    local le_logs="$le_root/logs"
+    mkdir -p "$le_config" "$le_work" "$le_logs" "$SSL_OUTPUT_DIR"
+
+    local staging_flag=""
+    [[ "$staging" == "true" ]] && staging_flag="--staging"
+
+    local -a domain_args
+    domain_args+=("-d" "$domain")
+    if [[ -n "$LETSENCRYPT_EXTRA_DOMAINS" ]]; then
+        IFS=',' read -ra extra_domains <<< "$LETSENCRYPT_EXTRA_DOMAINS"
+        for extra_domain in "${extra_domains[@]}"; do
+            [[ -z "$extra_domain" ]] && continue
+            domain_args+=("-d" "$extra_domain")
+        done
+    fi
+
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -iTCP:80 -sTCP:LISTEN >/dev/null 2>&1; then
+            log_warn "Port 80 is in use. certbot --standalone needs it. Stop nginx or map a free port before issuing."
+        fi
+    fi
+
+    log_step "Requesting Let's Encrypt certificate for: $domain"
+    if ! certbot certonly --standalone --preferred-challenges http \
+        --agree-tos --non-interactive \
+        -m "$email" "${domain_args[@]}" \
+        --config-dir "$le_config" \
+        --work-dir "$le_work" \
+        --logs-dir "$le_logs" \
+        $staging_flag; then
+        log_error "Let's Encrypt issuance failed"
+        return 1
+    fi
+
+    local live_dir="$le_config/live/$domain"
+    if [[ ! -f "$live_dir/fullchain.pem" ]] || [[ ! -f "$live_dir/privkey.pem" ]]; then
+        log_error "Issued certificate files not found in $live_dir"
+        return 1
+    fi
+
+    cp "$live_dir/fullchain.pem" "$SSL_OUTPUT_DIR/$safe_name.crt"
+    cp "$live_dir/privkey.pem" "$SSL_OUTPUT_DIR/$safe_name.key"
+    cp "$live_dir/chain.pem" "$SSL_OUTPUT_DIR/$safe_name.chain.crt" 2>/dev/null || true
+    ln -sf "$safe_name.crt" "$SSL_OUTPUT_DIR/server.crt"
+    ln -sf "$safe_name.key" "$SSL_OUTPUT_DIR/server.key"
+    ln -sf "$safe_name.chain.crt" "$SSL_OUTPUT_DIR/server.chain.crt"
+    chmod 600 "$SSL_OUTPUT_DIR/$safe_name.key" "$SSL_OUTPUT_DIR/server.key" 2>/dev/null || true
+
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+
+    log_info "✅ Let's Encrypt certificate ready for $domain"
+    log_info "   Email: $email"
+    [[ "$staging" == "true" ]] && log_warn "Using staging endpoint; set LETSENCRYPT_STAGING=false for production."
+    log_info "   Stored at: $SSL_OUTPUT_DIR"
+
+    return 0
+}
+
+# 显示 SSL 证书信息
+show_ssl_info() {
+    local domain="${1:-}"
+    
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-$(detect_external_host)}"
+    fi
+    
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+    local cert_file="$SSL_OUTPUT_DIR/server.crt"
+    local ca_file="$SSL_OUTPUT_DIR/ca/ca.crt"
+    
+    echo ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "SSL 证书信息"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    
+    if [[ -f "$ca_file" ]]; then
+        echo ""
+        log_info "CA 证书:"
+        openssl x509 -in "$ca_file" -noout -subject -issuer -dates 2>/dev/null | sed 's/^/   /'
+    else
+        log_warn "CA 证书不存在: $ca_file"
+    fi
+    
+    if [[ -f "$cert_file" ]]; then
+        echo ""
+        log_info "服务器证书:"
+        openssl x509 -in "$cert_file" -noout -subject -issuer -dates 2>/dev/null | sed 's/^/   /'
+        echo ""
+        log_info "SAN (Subject Alternative Names):"
+        openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | sed 's/^/   /'
+    else
+        log_warn "服务器证书不存在: $cert_file"
+        log_info "请运行: ./build.sh ssl-setup"
+    fi
+    
+    echo ""
+}
+
+# 清理 SSL 证书
+clean_ssl_certificates() {
+    log_info "🗑️  Cleaning SSL certificates..."
+    
+    if [[ -d "$SSL_OUTPUT_DIR" ]]; then
+        rm -rf "$SSL_OUTPUT_DIR"
+        log_info "Removed: $SSL_OUTPUT_DIR"
+    else
+        log_info "SSL directory does not exist: $SSL_OUTPUT_DIR"
+    fi
+    
+    # 恢复 .env 中的 SSL 相关设置
+    update_env_variable "ENABLE_TLS" "false"
+    update_env_variable "EXTERNAL_SCHEME" "http"
+    
+    log_info "✅ SSL certificates cleaned"
+}
 
 detect_compose_command() {
     if command -v docker-compose >/dev/null 2>&1; then
@@ -1010,6 +1699,684 @@ wait_for_apphub_ready() {
     
     log_error "❌ AppHub failed to become ready."
     return 1
+}
+
+# ==============================================================================
+# Third Party Version Sync - 同步第三方组件版本
+# ==============================================================================
+
+# Sync third_party version files with .env variables
+# Updates version.json files and components.json based on current .env settings
+sync_third_party_versions() {
+    local third_party_dir="$SCRIPT_DIR/third_party"
+    local components_json="$third_party_dir/components.json"
+    local updated_count=0
+    
+    log_info "Syncing third_party versions with .env..."
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        log_warn "jq not found, skipping third_party version sync"
+        return 0
+    fi
+    
+    # Check if components.json exists
+    if [[ ! -f "$components_json" ]]; then
+        log_warn "components.json not found at $components_json"
+        return 0
+    fi
+    
+    # Get list of components from components.json
+    local components=$(jq -r '.components | keys[]' "$components_json" 2>/dev/null)
+    
+    for component in $components; do
+        # Get version_env variable name from components.json
+        local version_env=$(jq -r ".components.${component}.version_env // empty" "$components_json")
+        local version_prefix=$(jq -r ".components.${component}.version_prefix // \"v\"" "$components_json")
+        local default_version=$(jq -r ".components.${component}.default_version // empty" "$components_json")
+        
+        if [[ -z "$version_env" ]]; then
+            continue
+        fi
+        
+        # Get current version from environment (loaded from .env)
+        local env_version="${!version_env:-}"
+        
+        if [[ -z "$env_version" ]]; then
+            continue
+        fi
+        
+        # Strip prefix for comparison if present in env_version
+        local clean_env_version="${env_version#v}"
+        clean_env_version="${clean_env_version#V}"
+        
+        # Check if version differs from default in components.json
+        if [[ "$clean_env_version" != "$default_version" ]]; then
+            log_info "  Updating $component: $default_version -> $clean_env_version"
+            
+            # Update components.json default_version
+            local tmp_file=$(mktemp)
+            jq ".components.${component}.default_version = \"$clean_env_version\"" "$components_json" > "$tmp_file" && \
+                mv "$tmp_file" "$components_json"
+            updated_count=$((updated_count + 1))
+        fi
+        
+        # Update version.json if component directory exists
+        local component_dir="$third_party_dir/$component"
+        local version_json="$component_dir/version.json"
+        
+        if [[ -d "$component_dir" ]] && [[ -f "$version_json" ]]; then
+            local current_version=$(jq -r '.version // empty' "$version_json" 2>/dev/null)
+            local current_clean="${current_version#v}"
+            current_clean="${current_clean#V}"
+            
+            if [[ "$current_clean" != "$clean_env_version" ]]; then
+                log_info "  Updating $component/version.json: $current_version -> ${version_prefix}${clean_env_version}"
+                
+                # Update version.json
+                cat > "$version_json" << EOF
+{
+    "component": "${component}",
+    "version": "${version_prefix}${clean_env_version}",
+    "downloaded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+                updated_count=$((updated_count + 1))
+            fi
+        fi
+    done
+    
+    if [[ $updated_count -gt 0 ]]; then
+        log_info "  ✓ Updated $updated_count third_party version entries"
+    else
+        log_info "  ✓ All third_party versions are in sync"
+    fi
+}
+
+# ==============================================================================
+# Third Party Download Functions - 第三方依赖下载功能
+# ==============================================================================
+
+# Third party download configuration
+THIRD_PARTY_DIR="$SCRIPT_DIR/third_party"
+COMPONENTS_JSON="$THIRD_PARTY_DIR/components.json"
+APPHUB_DOCKERFILE="$SCRIPT_DIR/src/apphub/Dockerfile"
+
+# Download target architecture (all, amd64, arm64)
+DOWNLOAD_TARGET_ARCH="all"
+# Specified version for download
+DOWNLOAD_SPECIFIED_VERSION=""
+# GitHub mirror for download acceleration
+DOWNLOAD_GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
+
+# Component alias mapping (user-friendly names to actual component names)
+declare -A COMPONENT_ALIASES=(
+    ["vscode"]="code_server"
+    ["code-server"]="code_server"
+    ["codeserver"]="code_server"
+    ["node-exporter"]="node_exporter"
+    ["nodeexporter"]="node_exporter"
+    ["salt"]="saltstack"
+)
+
+# Resolve component alias to actual component name
+resolve_component_alias() {
+    local input="$1"
+    local lower_input=$(echo "$input" | tr '[:upper:]' '[:lower:]')
+    
+    # Check if it's an alias
+    if [[ -n "${COMPONENT_ALIASES[$lower_input]:-}" ]]; then
+        echo "${COMPONENT_ALIASES[$lower_input]}"
+    else
+        echo "$input"
+    fi
+}
+
+# Get component property from components.json
+get_download_component_prop() {
+    local component=$1
+    local prop=$2
+    local default=${3:-}
+    
+    if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
+        local val=$(jq -r ".components.${component}.${prop} // empty" "$COMPONENTS_JSON" 2>/dev/null)
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# Get array property from components.json
+get_download_component_array() {
+    local component=$1
+    local prop=$2
+    
+    if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
+        jq -r ".components.${component}.${prop}[]? // empty" "$COMPONENTS_JSON" 2>/dev/null
+    fi
+}
+
+# Get version from environment or .env file
+# Priority: already loaded env > .env file > default
+get_download_env_version() {
+    local var_name=$1
+    local default=$2
+    
+    # First check already loaded environment variable
+    local env_val="${!var_name:-}"
+    if [[ -n "$env_val" ]]; then
+        echo "$env_val"
+        return
+    fi
+    
+    # Then check .env file
+    if [[ -f "$ENV_FILE" ]]; then
+        local val=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# Get ARG value from Dockerfile
+get_download_dockerfile_arg() {
+    local name=$1
+    local default=$2
+    
+    if [[ -f "$APPHUB_DOCKERFILE" ]]; then
+        local val=$(grep "ARG $name=" "$APPHUB_DOCKERFILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
+        echo "${val:-$default}"
+    else
+        echo "$default"
+    fi
+}
+
+# Ensure version has correct prefix
+download_ensure_prefix() {
+    local ver=$1
+    local prefix=$2
+    
+    if [[ -z "$prefix" ]] || [[ "$prefix" = "v" ]]; then
+        if [[ ! "$ver" =~ ^v ]]; then
+            echo "v${ver}"
+        else
+            echo "$ver"
+        fi
+    elif [[ "$prefix" = "munge-" ]]; then
+        if [[ ! "$ver" =~ ^munge- ]]; then
+            echo "munge-${ver}"
+        else
+            echo "$ver"
+        fi
+    elif [[ "$prefix" = "slurm-" ]]; then
+        if [[ ! "$ver" =~ ^slurm- ]]; then
+            echo "slurm-${ver}"
+        else
+            echo "$ver"
+        fi
+    else
+        echo "${ver}"
+    fi
+}
+
+# Strip version prefix
+download_strip_prefix() {
+    local ver=$1
+    ver="${ver#v}"
+    ver="${ver#munge-}"
+    ver="${ver#slurm-}"
+    echo "$ver"
+}
+
+# Generic download function with mirror support
+download_single_file() {
+    local url=$1
+    local output_file=$2
+    local use_mirror=${3:-true}
+    local final_url="$url"
+    
+    # Apply GitHub mirror
+    if [[ "$use_mirror" = true ]] && [[ "$url" == *"github.com"* ]] && [[ -n "$DOWNLOAD_GITHUB_MIRROR" ]]; then
+        local url_without_scheme="${url#https://}"
+        final_url="${DOWNLOAD_GITHUB_MIRROR}${url_without_scheme}"
+    fi
+    
+    # Check if file already exists and is non-empty
+    if [[ -f "$output_file" ]] && [[ -s "$output_file" ]]; then
+        log_info "  ✓ Already exists: $(basename "$output_file")"
+        return 0
+    fi
+    
+    # Remove possibly empty file
+    [[ -f "$output_file" ]] && rm -f "$output_file"
+    
+    log_info "  📥 Downloading: $(basename "$output_file")"
+    log_info "     URL: $final_url"
+    
+    # First try mirror (10s timeout)
+    if wget -q --show-progress -T 10 -t 2 "$final_url" -O "$output_file" 2>/dev/null; then
+        if [[ -s "$output_file" ]]; then
+            log_info "  ✓ Download successful: $(basename "$output_file")"
+            return 0
+        fi
+    fi
+    
+    # If mirror fails, try direct download (30s timeout)
+    if [[ "$final_url" != "$url" ]]; then
+        log_warn "  ⚠ Mirror download failed, trying direct download..."
+        rm -f "$output_file"
+        if wget -q --show-progress -T 30 -t 2 "$url" -O "$output_file" 2>/dev/null; then
+            if [[ -s "$output_file" ]]; then
+                log_info "  ✓ Direct download successful: $(basename "$output_file")"
+                return 0
+            fi
+        fi
+    fi
+    
+    log_error "  ✗ Download failed: $(basename "$output_file")"
+    rm -f "$output_file"
+    return 1
+}
+
+# Generate version.json for downloaded component
+generate_download_version_json() {
+    local output_dir=$1
+    local component=$2
+    local version=$3
+    
+    cat > "${output_dir}/version.json" << EOF
+{
+    "component": "${component}",
+    "version": "${version}",
+    "downloaded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+}
+
+# Download SaltStack packages (DEB + RPM)
+download_saltstack_packages() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    
+    local packages=()
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && packages+=("$pkg")
+    done < <(get_download_component_array "saltstack" "packages")
+    
+    # DEB packages
+    log_info ""
+    log_info "  📦 Downloading DEB packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        for pkg in "${packages[@]}"; do
+            local filename="${pkg}_${file_version}_${arch}.deb"
+            local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
+            download_single_file "$url" "${output_dir}/${filename}" true || true
+        done
+    done
+    
+    # RPM packages
+    log_info ""
+    log_info "  📦 Downloading RPM packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        local rpm_arch="x86_64"
+        [[ "$arch" = "arm64" ]] && rpm_arch="aarch64"
+        
+        for pkg in "${packages[@]}"; do
+            # RPM package name without -common suffix
+            local rpm_pkg="${pkg/-common/}"
+            local filename="${rpm_pkg}-${file_version}-0.${rpm_arch}.rpm"
+            local url="https://github.com/saltstack/salt/releases/download/${tag_version}/${filename}"
+            download_single_file "$url" "${output_dir}/${filename}" true || true
+        done
+    done
+}
+
+# Download code-server packages (DEB + RPM)
+download_code_server_packages() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="coder/code-server"
+    
+    # DEB packages
+    log_info ""
+    log_info "  📦 Downloading DEB packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        local filename="code-server_${file_version}_${arch}.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages
+    log_info ""
+    log_info "  📦 Downloading RPM packages..."
+    for arch in amd64 arm64; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]] && [[ "$arch" != "$DOWNLOAD_TARGET_ARCH" ]]; then
+            continue
+        fi
+        local filename="code-server-${file_version}-${arch}.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+}
+
+# Download Singularity packages (DEB + RPM + source)
+download_singularity_packages() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="sylabs/singularity"
+    
+    # DEB packages (Ubuntu) - amd64 only
+    log_info ""
+    log_info "  📦 Downloading DEB packages (Ubuntu)..."
+    log_warn "  ⚠️  Note: Singularity only provides amd64 prebuilt packages, ARM64 needs source compilation"
+    local ubuntu_codenames=("noble" "jammy")
+    for codename in "${ubuntu_codenames[@]}"; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" = "arm64" ]]; then
+            log_info "  ⏭️  Skipping DEB (arm64): Singularity doesn't provide ARM64 prebuilt packages"
+            continue
+        fi
+        local filename="singularity-ce_${file_version}-${codename}_amd64.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages (RHEL/CentOS/Rocky) - x86_64 only
+    log_info ""
+    log_info "  📦 Downloading RPM packages (RHEL/CentOS)..."
+    local el_versions=("el8" "el9" "el10")
+    for el_ver in "${el_versions[@]}"; do
+        if [[ "$DOWNLOAD_TARGET_ARCH" = "arm64" ]]; then
+            log_info "  ⏭️  Skipping RPM (aarch64): Singularity doesn't provide ARM64 prebuilt packages"
+            continue
+        fi
+        local filename="singularity-ce-${file_version}-1.${el_ver}.x86_64.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_single_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # Source package (for all architectures including ARM64)
+    log_info ""
+    log_info "  📦 Downloading source package (for all architectures)..."
+    local source_filename="singularity-ce-${file_version}.tar.gz"
+    local source_url="https://github.com/${github_repo}/releases/download/${tag_version}/${source_filename}"
+    download_single_file "$source_url" "${output_dir}/${source_filename}" true || true
+}
+
+# Download a single component
+download_third_party_component() {
+    local component=$1
+    
+    # Resolve alias
+    component=$(resolve_component_alias "$component")
+    
+    echo ""
+    log_info "================================================================"
+    
+    local name=$(get_download_component_prop "$component" "name" "$component")
+    local desc=$(get_download_component_prop "$component" "description" "")
+    local github_repo=$(get_download_component_prop "$component" "github_repo")
+    local version_env=$(get_download_component_prop "$component" "version_env")
+    local default_version=$(get_download_component_prop "$component" "default_version")
+    local version_prefix=$(get_download_component_prop "$component" "version_prefix" "v")
+    local filename_version_prefix=$(get_download_component_prop "$component" "filename_version_prefix" "")
+    local filename_pattern=$(get_download_component_prop "$component" "filename_pattern")
+    
+    # Check if component exists
+    if [[ -z "$name" ]] || [[ "$name" = "null" ]]; then
+        log_error "Unknown component: $component"
+        log_info "Use 'download --list' to see available components"
+        return 1
+    fi
+    
+    # Get version: command line > env var > .env file > Dockerfile > default
+    local version=""
+    if [[ -n "$DOWNLOAD_SPECIFIED_VERSION" ]]; then
+        version="$DOWNLOAD_SPECIFIED_VERSION"
+    elif [[ -n "$version_env" ]]; then
+        version=$(get_download_env_version "$version_env" "")
+        [[ -z "$version" ]] && version=$(get_download_dockerfile_arg "$version_env" "")
+    fi
+    [[ -z "$version" ]] && version="$default_version"
+    
+    # Process version prefix
+    local tag_version=$(download_ensure_prefix "$version" "$version_prefix")
+    local file_version="$version"
+    if [[ -n "$filename_version_prefix" ]]; then
+        file_version="${filename_version_prefix}$(download_strip_prefix "$version")"
+    else
+        file_version="$(download_strip_prefix "$version")"
+    fi
+    
+    log_info "📦 $name ($component)"
+    [[ -n "$desc" ]] && log_info "   $desc"
+    log_info "   Version: $tag_version"
+    log_info "   Repository: $github_repo"
+    log_info "================================================================"
+    
+    local output_dir="$THIRD_PARTY_DIR/$component"
+    mkdir -p "$output_dir"
+    
+    # Get architecture list
+    local archs=()
+    while IFS= read -r arch; do
+        [[ -n "$arch" ]] && archs+=("$arch")
+    done < <(get_download_component_array "$component" "architectures")
+    
+    # Default to amd64 and arm64 if no architecture configured
+    [[ ${#archs[@]} -eq 0 ]] && archs=("amd64" "arm64")
+    
+    # Filter architecture
+    if [[ "$DOWNLOAD_TARGET_ARCH" != "all" ]]; then
+        local filtered_archs=()
+        for arch in "${archs[@]}"; do
+            if [[ "$arch" = "$DOWNLOAD_TARGET_ARCH" ]] || [[ -z "$arch" ]]; then
+                filtered_archs+=("$arch")
+            fi
+        done
+        archs=("${filtered_archs[@]}")
+    fi
+    
+    # Special handling for different components
+    case "$component" in
+        saltstack)
+            download_saltstack_packages "$tag_version" "$file_version" "$output_dir"
+            ;;
+        code_server)
+            download_code_server_packages "$tag_version" "$file_version" "$output_dir"
+            ;;
+        singularity)
+            download_singularity_packages "$tag_version" "$file_version" "$output_dir"
+            ;;
+        *)
+            # Generic download logic
+            for arch in "${archs[@]}"; do
+                local filename=$(echo "$filename_pattern" | sed "s/{VERSION}/$file_version/g" | sed "s/{ARCH}/$arch/g")
+                local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+                
+                download_single_file "$url" "${output_dir}/${filename}" true || true
+            done
+            ;;
+    esac
+    
+    generate_download_version_json "$output_dir" "$component" "$tag_version"
+    echo ""
+    return 0
+}
+
+# List available components
+list_download_components() {
+    if [[ ! -f "$COMPONENTS_JSON" ]]; then
+        log_error "Configuration file not found: $COMPONENTS_JSON"
+        return 1
+    fi
+    
+    echo ""
+    echo "Available Components:"
+    echo "====================="
+    echo ""
+    printf "%-17s %s\n" "Component" "Description"
+    printf "%-17s %s\n" "-----------------" "--------------------------------------------------"
+    
+    if command -v jq &> /dev/null; then
+        jq -r '.components | to_entries[] | "\(.key)\t\(.value.description)"' "$COMPONENTS_JSON" | \
+            while IFS=$'\t' read -r name desc; do
+                printf "%-17s %s\n" "$name" "$desc"
+            done
+    else
+        grep -E '"[a-z_]+":' "$COMPONENTS_JSON" | head -20 | sed 's/.*"\([^"]*\)".*/\1/' | grep -v "components"
+    fi
+    
+    echo ""
+    echo "Aliases:"
+    echo "--------"
+    for alias in "${!COMPONENT_ALIASES[@]}"; do
+        printf "  %-15s -> %s\n" "$alias" "${COMPONENT_ALIASES[$alias]}"
+    done
+    echo ""
+}
+
+# Get all component names from components.json
+get_all_download_components() {
+    if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
+        jq -r '.components | keys[]' "$COMPONENTS_JSON" 2>/dev/null
+    else
+        grep -E '^\s+"[a-z_]+":' "$COMPONENTS_JSON" | sed 's/.*"\([^"]*\)".*/\1/' | grep -v "components"
+    fi
+}
+
+# Main download function
+# Usage: download_third_party [options] [component...]
+# Options:
+#   --list, -l           List available components
+#   --version VER, -v    Specify version
+#   --arch ARCH, -a      Specify architecture (amd64, arm64, all)
+#   --mirror URL, -m     Set GitHub mirror URL
+#   --no-mirror          Disable GitHub mirror
+download_third_party() {
+    local components_to_download=()
+    
+    # Check jq availability
+    if ! command -v jq &> /dev/null; then
+        log_warn "jq not installed, some features may be limited"
+        log_info "Install with: brew install jq (macOS) or apt install jq (Linux)"
+        echo ""
+    fi
+    
+    # Check configuration file
+    if [[ ! -f "$COMPONENTS_JSON" ]]; then
+        log_error "Configuration file not found: $COMPONENTS_JSON"
+        return 1
+    fi
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                echo "Usage: $0 download [options] [component...]"
+                echo ""
+                echo "Options:"
+                echo "  -h, --help          Show this help"
+                echo "  -l, --list          List available components"
+                echo "  -v, --version VER   Specify component version"
+                echo "  -a, --arch ARCH     Specify architecture (amd64, arm64, all)"
+                echo "  -m, --mirror URL    Set GitHub mirror URL"
+                echo "  --no-mirror         Disable GitHub mirror"
+                echo ""
+                echo "Examples:"
+                echo "  $0 download                         # Download all components"
+                echo "  $0 download prometheus              # Download Prometheus only"
+                echo "  $0 download vscode                  # Download VS Code Server (alias)"
+                echo "  $0 download -v 4.107.0 vscode       # Download specific version"
+                echo "  $0 download --arch amd64 prometheus # Download amd64 only"
+                echo "  $0 download --no-mirror prometheus  # Download without mirror"
+                return 0
+                ;;
+            -l|--list)
+                list_download_components
+                return 0
+                ;;
+            -v|--version)
+                DOWNLOAD_SPECIFIED_VERSION="$2"
+                shift 2
+                ;;
+            -a|--arch)
+                DOWNLOAD_TARGET_ARCH="$2"
+                shift 2
+                ;;
+            -m|--mirror)
+                DOWNLOAD_GITHUB_MIRROR="$2"
+                shift 2
+                ;;
+            --no-mirror)
+                DOWNLOAD_GITHUB_MIRROR=""
+                shift
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                components_to_download+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    # If no components specified, download all
+    if [[ ${#components_to_download[@]} -eq 0 ]]; then
+        while IFS= read -r comp; do
+            [[ -n "$comp" ]] && components_to_download+=("$comp")
+        done < <(get_all_download_components)
+    fi
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║          Third-Party Dependencies Downloader                   ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "GitHub Mirror: ${DOWNLOAD_GITHUB_MIRROR:-<disabled>}"
+    log_info "Target Arch:   ${DOWNLOAD_TARGET_ARCH}"
+    log_info "Output Dir:    ${THIRD_PARTY_DIR}"
+    log_info "Components:    ${#components_to_download[@]}"
+    echo ""
+    
+    mkdir -p "$THIRD_PARTY_DIR"
+    
+    local success=0
+    local failed=0
+    
+    for component in "${components_to_download[@]}"; do
+        if download_third_party_component "$component"; then
+            ((success++))
+        else
+            ((failed++))
+        fi
+    done
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                      Download Complete                         ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Success: $success / Total: $((success + failed))"
+    echo ""
+    log_info "Files location: $THIRD_PARTY_DIR"
+    echo ""
+    ls -la "$THIRD_PARTY_DIR"
+    
+    return 0
 }
 
 # ==============================================================================
@@ -1087,6 +2454,8 @@ TEMPLATE_VARIABLES=(
     "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)
     "PIP_VERSION"         # pip version (e.g., 24.2)
     "N9E_FE_VERSION"      # Nightingale frontend version (e.g., v7.7.2, empty for auto-detect)
+    "CODE_SERVER_VERSION" # Code Server version (e.g., 4.96.4)
+    "GITHUB_PROXY"        # GitHub proxy for downloading packages (e.g., http://192.168.0.200:7890)
     
     # ===========================================
     # Project settings (Build-time & Runtime)
@@ -1109,6 +2478,8 @@ TEMPLATE_VARIABLES=(
     "NIGHTINGALE_HOST"    # Nightingale service host (default: nightingale)
     "NIGHTINGALE_PORT"    # Nightingale service port (default: 17000)
     "EXTERNAL_PORT"       # Main Nginx port (default: 8080)
+    "HTTPS_PORT"          # HTTPS port (default: 8443)
+    "EXTERNAL_HOST"       # External host for CSP headers
     
     # ===========================================
     # Third-party image versions (for docker-compose.yml.tpl)
@@ -1136,6 +2507,13 @@ TEMPLATE_VARIABLES=(
     "REDISINSIGHT_VERSION" # RedisInsight version (e.g., latest)
     
     # ===========================================
+    # Gitea SSO configuration (Runtime)
+    # Used in src/nginx/templates/conf.d/includes/gitea.conf.tpl
+    # ===========================================
+    "GITEA_ALIAS_ADMIN_TO"  # SSO admin user mapping for Gitea (default: admin)
+    "GITEA_ADMIN_EMAIL"     # SSO admin email for Gitea (default: admin@example.com)
+    
+    # ===========================================
     # SaltStack configuration (Runtime)
     # Used for external node minion installation
     # ===========================================
@@ -1155,6 +2533,10 @@ TEMPLATE_VARIABLES=(
     # ===========================================
     "CGROUP_VERSION"      # Cgroup version: v1 or v2 (auto-detected)
     "CGROUP_MOUNT"        # Cgroup mount path for docker-compose volumes
+    "SAFELINE_IMAGE_PREFIX" # SafeLine image prefix (e.g., chaitin)
+    "SAFELINE_IMAGE_TAG"    # SafeLine image tag (e.g., latest)
+    "SAFELINE_ARCH_SUFFIX"  # SafeLine architecture suffix (-arm for ARM, empty for x86_64)
+    "SAFELINE_REGION"       # SafeLine region suffix (optional)
 )
 
 # Render a single template file
@@ -1232,6 +2614,18 @@ render_all_templates() {
     log_info "  CGROUP_VERSION=$CGROUP_VERSION"
     log_info "  CGROUP_MOUNT=$CGROUP_MOUNT"
     
+    # Step 1.6: Auto-detect CPU architecture for SafeLine
+    log_info ""
+    log_info "Step 1.6: Detecting CPU architecture for SafeLine..."
+    local arch=$(uname -m)
+    if [[ "$arch" =~ "aarch" || "$arch" =~ "arm" ]]; then
+        export SAFELINE_ARCH_SUFFIX="-arm"
+    else
+        export SAFELINE_ARCH_SUFFIX=""
+    fi
+    log_info "  CPU Architecture: $arch"
+    log_info "  SAFELINE_ARCH_SUFFIX=${SAFELINE_ARCH_SUFFIX:-<empty>}"
+    
     log_info ""
     log_info "Step 2: Rendering template files..."
     log_info "Source: .env / .env.example"
@@ -1303,6 +2697,30 @@ render_all_templates() {
     done < <(find "$SRC_DIR" -name "Dockerfile.tpl" -print0 2>/dev/null)
     
     # ===========================================
+    # Render dependency.conf.tpl files (external image versions)
+    # ===========================================
+    log_info "Rendering dependency configuration templates..."
+    while IFS= read -r -d '' template_file; do
+        local output_file="${template_file%.tpl}"
+        local component_name=$(basename "$(dirname "$template_file")")
+        
+        # Check if output file exists and is newer than template
+        if [[ "$force" != "true" ]] && [[ -f "$output_file" ]]; then
+            if [[ "$output_file" -nt "$template_file" ]] && [[ "$output_file" -nt "$ENV_FILE" ]]; then
+                log_info "Skipping $component_name/dependency.conf (up to date)"
+                skip_count=$((skip_count + 1))
+                continue
+            fi
+        fi
+        
+        if render_template "$template_file" "$output_file"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+        fi
+    done < <(find "$SRC_DIR" -name "dependency.conf.tpl" -print0 2>/dev/null)
+    
+    # ===========================================
     # Render Nginx configuration templates
     # ===========================================
     local nginx_template_dir="${SCRIPT_DIR}/src/nginx/templates"
@@ -1311,13 +2729,26 @@ render_all_templates() {
     if [[ -d "$nginx_template_dir" ]]; then
         log_info "Rendering Nginx configuration templates..."
         
-        # Render main server config
+        # Render main server config (HTTP)
         local main_conf_tpl="$nginx_template_dir/conf.d/server-main.conf.tpl"
         if [[ -f "$main_conf_tpl" ]]; then
             local main_conf_out="$nginx_output_dir/conf.d/server-main.conf"
             mkdir -p "$(dirname "$main_conf_out")"
             if render_template "$main_conf_tpl" "$main_conf_out"; then
                 success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        fi
+        
+        # Render TLS server config (HTTPS)
+        local tls_conf_tpl="$nginx_template_dir/conf.d/server-main-tls.conf.tpl"
+        if [[ -f "$tls_conf_tpl" ]]; then
+            local tls_conf_out="$nginx_output_dir/conf.d/server-main-tls.conf"
+            mkdir -p "$(dirname "$tls_conf_out")"
+            if render_template "$tls_conf_tpl" "$tls_conf_out"; then
+                success_count=$((success_count + 1))
+                log_info "  ✓ Rendered server-main-tls.conf (for HTTPS mode)"
             else
                 fail_count=$((fail_count + 1))
             fi
@@ -1493,12 +2924,125 @@ render_all_templates() {
         fi
     fi
     
+    # ===========================================
+    # Sync third_party version files with .env
+    # Update version.json and components.json based on .env variables
+    # ===========================================
+    sync_third_party_versions
+    
     echo
     log_info "=========================================="
     log_info "Template rendering complete:"
     log_info "  ✓ Success: $success_count"
     [[ $skip_count -gt 0 ]] && log_info "  ⏭️  Skipped: $skip_count"
     [[ $fail_count -gt 0 ]] && log_warn "  ✗ Failed: $fail_count"
+    log_info "=========================================="
+    
+    # ===========================================
+    # Print component versions summary (dynamically discovered)
+    # ===========================================
+    echo
+    log_info "=========================================="
+    log_info "📦 Component Versions Summary"
+    log_info "=========================================="
+    echo
+    printf "%-30s %-15s %s\n" "Component" "Type" "Version/Image"
+    printf "%-30s %-15s %s\n" "------------------------------" "---------------" "--------------------"
+    
+    # Project version
+    printf "%-30s %-15s %s\n" "AI-Infra-Matrix" "project" "${IMAGE_TAG:-N/A}"
+    echo
+    
+    # Discover components from src/ directory
+    local build_components=()
+    local dependency_components=()
+    
+    for component_dir in "$SRC_DIR"/*/; do
+        local component_name=$(basename "$component_dir")
+        
+        # Skip hidden directories and special dirs
+        [[ "$component_name" == "shared" ]] && continue
+        [[ "$component_name" =~ ^\. ]] && continue
+        
+        local has_dockerfile=false
+        local has_dependency=false
+        local version_info=""
+        local component_type=""
+        
+        # Check for Dockerfile (build component)
+        if [[ -f "${component_dir}Dockerfile" ]] || [[ -f "${component_dir}Dockerfile.tpl" ]]; then
+            has_dockerfile=true
+        fi
+        
+        # Check for dependency.conf (external image)
+        if [[ -f "${component_dir}dependency.conf" ]]; then
+            has_dependency=true
+            # Read first non-comment, non-empty line as version info
+            version_info=$(grep -v '^#' "${component_dir}dependency.conf" | grep -v '^[[:space:]]*$' | head -n 1)
+        fi
+        
+        # Determine component type and version
+        if [[ "$has_dockerfile" == "true" ]] && [[ "$has_dependency" == "true" ]]; then
+            component_type="build+dep"
+            build_components+=("$component_name|$component_type|${IMAGE_TAG:-latest} (dep: $version_info)")
+        elif [[ "$has_dockerfile" == "true" ]]; then
+            component_type="build"
+            build_components+=("$component_name|$component_type|${IMAGE_TAG:-latest}")
+        elif [[ "$has_dependency" == "true" ]]; then
+            component_type="dependency"
+            dependency_components+=("$component_name|$component_type|$version_info")
+        fi
+    done
+    
+    # Print build components
+    if [[ ${#build_components[@]} -gt 0 ]]; then
+        echo "--- Build Components (Dockerfile) ---"
+        for item in "${build_components[@]}"; do
+            IFS='|' read -r name type version <<< "$item"
+            printf "%-30s %-15s %s\n" "$name" "$type" "$version"
+        done
+        echo
+    fi
+    
+    # Print dependency components
+    if [[ ${#dependency_components[@]} -gt 0 ]]; then
+        echo "--- External Dependencies (dependency.conf) ---"
+        for item in "${dependency_components[@]}"; do
+            IFS='|' read -r name type version <<< "$item"
+            printf "%-30s %-15s %s\n" "$name" "$type" "$version"
+        done
+        echo
+    fi
+    
+    # Print key environment versions from .env
+    echo "--- Key Environment Versions (.env) ---"
+    local env_versions=(
+        "GOLANG_IMAGE_VERSION:Golang"
+        "UBUNTU_VERSION:Ubuntu"
+        "NODE_VERSION:Node.js"
+        "PYTHON_VERSION:Python"
+        "ALPINE_VERSION:Alpine"
+        "SALTSTACK_VERSION:SaltStack"
+        "SLURM_VERSION:SLURM"
+        "CATEGRAF_VERSION:Categraf"
+        "SINGULARITY_VERSION:Singularity"
+        "CODE_SERVER_VERSION:Code Server"
+        "PROMETHEUS_VERSION:Prometheus"
+        "GRAFANA_VERSION:Grafana"
+        "VICTORIAMETRICS_VERSION:VictoriaMetrics"
+        "N9E_FE_VERSION:Nightingale FE"
+        "SAFELINE_IMAGE_TAG:SafeLine WAF"
+    )
+    
+    for item in "${env_versions[@]}"; do
+        IFS=':' read -r var_name display_name <<< "$item"
+        local var_value="${!var_name:-N/A}"
+        printf "%-30s %-15s %s\n" "$display_name" "env" "$var_value"
+    done
+    echo
+    
+    log_info "=========================================="
+    log_info "Total: ${#build_components[@]} build + ${#dependency_components[@]} dependency components"
     log_info "=========================================="
     
     if [[ $fail_count -gt 0 ]]; then
@@ -1513,7 +3057,7 @@ sync_templates() {
 }
 
 # ==============================================================================
-# Pull Functions - 镜像拉取功能
+# Pull/Push Functions - 镜像操作功能 (优化后的统一重试机制)
 # ==============================================================================
 
 # Default retry settings
@@ -1533,19 +3077,33 @@ log_failure() {
     log_error "[$timestamp] $operation FAILED: $target - $error_msg"
 }
 
-# Pull single image with retry mechanism
-# Args: $1 = image name, $2 = max retries (default 3), $3 = retry delay (default 5)
-pull_image_with_retry() {
-    local image="$1"
-    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
-    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+# 通用的 Docker 命令重试执行器
+# 用法: docker_with_retry <operation> <image> [max_retries] [retry_delay] [skip_exists_check]
+# operation: pull, push, tag
+# skip_exists_check: 对于 push 操作设为 true
+docker_with_retry() {
+    local operation="$1"
+    local image="$2"
+    local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${4:-$DEFAULT_RETRY_DELAY}"
+    local skip_exists_check="${5:-false}"
     local retry_count=0
     local last_error=""
     
-    # Check if image already exists locally
-    if docker image inspect "$image" >/dev/null 2>&1; then
-        log_info "  ✓ Image exists: $image"
-        return 0
+    # 操作符号和显示文本映射 (macOS bash 3.x 兼容)
+    local op_icon="" op_verb="" op_past=""
+    case "$operation" in
+        pull) op_icon="⬇"; op_verb="Pulling"; op_past="Pulled" ;;
+        push) op_icon="⬆"; op_verb="Pushing"; op_past="Pushed" ;;
+        *)    op_icon="⚙"; op_verb="Processing"; op_past="Processed" ;;
+    esac
+    
+    # 对于 pull 操作，检查镜像是否已存在
+    if [[ "$operation" == "pull" ]] && [[ "$skip_exists_check" != "true" ]]; then
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "  ✓ Image exists: $image"
+            return 0
+        fi
     fi
     
     while [[ $retry_count -lt $max_retries ]]; do
@@ -1555,13 +3113,13 @@ pull_image_with_retry() {
             log_warn "  🔄 Retry $retry_count/$max_retries: $image (waiting ${retry_delay}s...)"
             sleep $retry_delay
         else
-            log_info "  ⬇ Pulling: $image"
+            log_info "  $op_icon $op_verb: $image"
         fi
         
-        # Capture both stdout and stderr
+        # 执行 Docker 命令
         local output
-        if output=$(docker pull "$image" 2>&1); then
-            log_info "  ✓ Pulled: $image"
+        if output=$(docker "$operation" "$image" 2>&1); then
+            log_info "  ✓ $op_past: $image"
             return 0
         else
             last_error="$output"
@@ -1569,9 +3127,31 @@ pull_image_with_retry() {
         fi
     done
     
-    # All retries exhausted - log failure
-    log_failure "PULL" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
+    # 所有重试失败
+    log_failure "${operation^^}" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
     return 1
+}
+
+# Pull single image with retry mechanism (使用通用重试器)
+# Args: $1 = image name, $2 = max retries (default 3), $3 = retry delay (default 5)
+pull_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+    
+    # 使用通用重试器
+    docker_with_retry "pull" "$image" "$max_retries" "$retry_delay" "false"
+}
+
+# Push single image with retry mechanism (使用通用重试器)
+# Args: $1 = image, $2 = max retries (default 3), $3 = retry delay (default 5)
+push_image_with_retry() {
+    local image="$1"
+    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
+    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
+    
+    # push 操作不检查本地镜像是否存在
+    docker_with_retry "push" "$image" "$max_retries" "$retry_delay" "true"
 }
 
 # Extract base images from Dockerfile
@@ -1686,30 +3266,9 @@ pull_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Validate registry path for private registries (Harbor requires project in path)
-    if [[ -n "$registry" ]]; then
-        # Check if registry contains project path (should have at least one /)
-        if [[ ! "$registry" =~ / ]]; then
-            log_warn "=========================================="
-            log_warn "⚠️  Registry path may be incomplete!"
-            log_warn "=========================================="
-            log_warn "Provided: $registry"
-            log_warn ""
-            log_warn "Harbor registries require a project name in the path:"
-            log_warn "  ✓ $registry/ai-infra    (recommended)"
-            log_warn "  ✓ $registry/<project>   (your project name)"
-            log_warn ""
-            log_warn "Example usage:"
-            log_warn "  $0 pull-all $registry/ai-infra $tag"
-            log_warn ""
-            read -p "Continue anyway? [y/N] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                log_info "Cancelled. Please use correct registry path."
-                return 1
-            fi
-            log_warn "Continuing with incomplete registry path..."
-        fi
+    # 使用通用函数验证 registry 路径
+    if ! validate_registry_path "$registry" "$tag"; then
+        return 1
     fi
     
     if [[ -z "$registry" ]]; then
@@ -1742,6 +3301,31 @@ pull_all_services() {
             else
                 log_warn "  ✗ Failed"
                 failed_services+=("common:$image")
+            fi
+        done
+        echo
+        
+        # Phase 1.5: Pull SafeLine WAF images from Docker Hub
+        log_info "=== Phase 1.5: SafeLine WAF images ==="
+        log_info "Architecture suffix: ${SAFELINE_ARCH_SUFFIX:-<none>}"
+        local safeline_count=0
+        for image in "${SAFELINE_IMAGES[@]}"; do
+            safeline_count=$((safeline_count + 1))
+            total_count=$((total_count + 1))
+            log_info "[$safeline_count/${#SAFELINE_IMAGES[@]}] $image"
+            
+            if docker image inspect "$image" &>/dev/null; then
+                log_info "  ✓ Already exists"
+                success_count=$((success_count + 1))
+                continue
+            fi
+            
+            if pull_image_with_retry "$image" "$max_retries"; then
+                log_info "  ✓ Pulled"
+                success_count=$((success_count + 1))
+            else
+                log_warn "  ✗ Failed"
+                failed_services+=("safeline:$image")
             fi
         done
         echo
@@ -1943,6 +3527,34 @@ pull_common_images() {
     
     echo
     log_info "=========================================="
+    log_info "Pulling SafeLine WAF images"
+    log_info "=========================================="
+    log_info "Images to pull: ${#SAFELINE_IMAGES[@]}"
+    log_info "Architecture suffix: ${SAFELINE_ARCH_SUFFIX:-<none>}"
+    echo
+    
+    for image in "${SAFELINE_IMAGES[@]}"; do
+        total_count=$((total_count + 1))
+        log_info "[SafeLine] Pulling: $image"
+        
+        # Check if image already exists locally
+        if docker image inspect "$image" &>/dev/null; then
+            log_info "  ✓ Already exists: $image"
+            success_count=$((success_count + 1))
+            continue
+        fi
+        
+        if pull_image_with_retry "$image" "$max_retries"; then
+            log_info "  ✓ Pulled: $image"
+            success_count=$((success_count + 1))
+        else
+            log_warn "  ✗ Failed: $image"
+            failed_images+=("$image")
+        fi
+    done
+    
+    echo
+    log_info "=========================================="
     log_info "Pull completed: $success_count/$total_count successful"
     
     if [[ ${#failed_images[@]} -gt 0 ]]; then
@@ -1955,41 +3567,8 @@ pull_common_images() {
 }
 
 # ==============================================================================
-# Push Functions - 镜像推送功能
+# Push Functions - 镜像推送功能 (使用通用重试器 docker_with_retry)
 # ==============================================================================
-
-# Push single image with retry mechanism
-# Args: $1 = image, $2 = max retries (default 3), $3 = retry delay (default 5)
-push_image_with_retry() {
-    local image="$1"
-    local max_retries="${2:-$DEFAULT_MAX_RETRIES}"
-    local retry_delay="${3:-$DEFAULT_RETRY_DELAY}"
-    local retry_count=0
-    local last_error=""
-    
-    while [[ $retry_count -lt $max_retries ]]; do
-        retry_count=$((retry_count + 1))
-        
-        if [[ $retry_count -gt 1 ]]; then
-            log_warn "  🔄 Retry $retry_count/$max_retries: $image (waiting ${retry_delay}s...)"
-            sleep $retry_delay
-        fi
-        
-        # Capture both stdout and stderr
-        local output
-        if output=$(docker push "$image" 2>&1); then
-            log_info "  ✓ Pushed: $image"
-            return 0
-        else
-            last_error="$output"
-            log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
-        fi
-    done
-    
-    # All retries exhausted - log failure
-    log_failure "PUSH" "$image" "Failed after $max_retries attempts. Last error: $(echo "$last_error" | head -1)"
-    return 1
-}
 
 # Push single service image
 # Args: $1 = service, $2 = tag, $3 = registry
@@ -2061,27 +3640,9 @@ push_all_services() {
         return 1
     fi
     
-    # Validate registry path (Harbor requires project in path)
-    if [[ ! "$registry" =~ / ]]; then
-        log_warn "=========================================="
-        log_warn "⚠️  Registry path may be incomplete!"
-        log_warn "=========================================="
-        log_warn "Provided: $registry"
-        log_warn ""
-        log_warn "Harbor registries require a project name in the path:"
-        log_warn "  ✓ $registry/ai-infra    (recommended)"
-        log_warn "  ✓ $registry/<project>   (your project name)"
-        log_warn ""
-        log_warn "Example usage:"
-        log_warn "  $0 push-all $registry/ai-infra $tag"
-        log_warn ""
-        read -p "Continue anyway? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Cancelled. Please use correct registry path."
-            return 1
-        fi
-        log_warn "Continuing with incomplete registry path..."
+    # 使用通用函数验证 registry 路径
+    if ! validate_registry_path "$registry" "$tag"; then
+        return 1
     fi
     
     # Ensure registry ends without trailing slash
@@ -2470,33 +4031,52 @@ build_component() {
     # Check for dependency configuration (External Image)
     local dep_conf="$component_dir/dependency.conf"
     if [ -f "$dep_conf" ]; then
-        local upstream_image=$(grep -v '^#' "$dep_conf" | head -n 1 | tr -d '[:space:]')
+        # Get first non-comment, non-empty line
+        local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
         if [ -z "$upstream_image" ]; then
             log_error "Empty dependency config for $component"
             return 1
         fi
         
-        local target_image="ai-infra-$component:${tag}"
-        if [ -n "$PRIVATE_REGISTRY" ]; then
-            target_image="$PRIVATE_REGISTRY/$target_image"
-        fi
-        
-        log_info "Processing dependency $component: $upstream_image -> $target_image"
-        
-        if pull_image_with_retry "$upstream_image" 3 5; then
-            if docker tag "$upstream_image" "$target_image"; then
-                log_info "✓ Dependency ready: $target_image"
-                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED"
-                return 0
-            else
-                log_error "✗ Failed to tag $upstream_image"
-                log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR"
+        # Check if this component also has a Dockerfile (custom build based on dependency)
+        if [ -f "$component_dir/Dockerfile" ]; then
+            # This is a custom build that uses a base image from dependency.conf
+            # The Dockerfile should reference the upstream image, we just need to ensure it's available
+            log_info "Processing $component: dependency + custom Dockerfile"
+            log_info "  Base image: $upstream_image"
+            
+            # Pull the base image first to ensure it's available for the build
+            if ! pull_image_with_retry "$upstream_image" 3 5; then
+                log_error "✗ Failed to pull base image $upstream_image for $component"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "BASE_PULL_ERROR"
                 return 1
             fi
+            log_info "✓ Base image ready: $upstream_image"
+            # Continue to Dockerfile build below (don't return)
         else
-            log_error "✗ Failed to pull $upstream_image after retries"
-            log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR"
-            return 1
+            # Pure dependency - just pull and tag
+            local target_image="ai-infra-$component:${tag}"
+            if [ -n "$PRIVATE_REGISTRY" ]; then
+                target_image="$PRIVATE_REGISTRY/$target_image"
+            fi
+            
+            log_info "Processing dependency $component: $upstream_image -> $target_image"
+            
+            if pull_image_with_retry "$upstream_image" 3 5; then
+                if docker tag "$upstream_image" "$target_image"; then
+                    log_info "✓ Dependency ready: $target_image"
+                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED"
+                    return 0
+                else
+                    log_error "✗ Failed to tag $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR"
+                    return 1
+                fi
+            else
+                log_error "✗ Failed to pull $upstream_image after retries"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR"
+                return 1
+            fi
         fi
     fi
     
@@ -2576,17 +4156,22 @@ discover_services() {
     FOUNDATION_SERVICES=()
     DEPENDENT_SERVICES=()
 
+    # Optional components that are disabled by default
+    # These require separate initialization (e.g., ./build.sh init-safeline)
+    local safeline_enabled="${SAFELINE_ENABLED:-false}"
+
     # Use find to avoid issues if directory is empty and sort for deterministic order
     while IFS= read -r dir; do
         local component=$(basename "$dir")
         
-        # 1. Check for dependency.conf (External Image)
-        if [ -f "$dir/dependency.conf" ]; then
-            DEPENDENCY_SERVICES+=("$component")
+        # Skip optional components when disabled
+        if [[ "$component" == "safeline" ]] && [[ "$safeline_enabled" != "true" ]]; then
+            log_info "Skipping optional component: $component (SAFELINE_ENABLED=false)"
             continue
         fi
         
-        # 2. Check for Dockerfile (Buildable Component)
+        # Check for Dockerfile first (takes priority for build phase classification)
+        # Even if dependency.conf exists, if there's a Dockerfile, it's a buildable component
         if [ -f "$dir/Dockerfile" ]; then
             local phase="dependent" # Default phase
             
@@ -2603,6 +4188,13 @@ discover_services() {
             else
                 DEPENDENT_SERVICES+=("$component")
             fi
+            continue
+        fi
+        
+        # Check for dependency.conf only (Pure External Image, no custom Dockerfile)
+        if [ -f "$dir/dependency.conf" ]; then
+            DEPENDENCY_SERVICES+=("$component")
+            continue
         fi
     done < <(find "$SRC_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
     
@@ -3582,6 +5174,8 @@ print_help() {
     echo "  --force, -f, --no-cache    Force rebuild without Docker cache"
     echo "  --parallel, -p             Enable parallel builds (default: $PARALLEL_JOBS jobs)"
     echo "  --parallel=N, -pN          Enable parallel builds with N concurrent jobs"
+    echo "  --no-ssl                   Disable SSL/HTTPS mode (SSL enabled by default)"
+    echo "  --ssl=DOMAIN               Enable SSL with specific domain"
     echo "  --skip-cache               Skip build cache check (always rebuild)"
     echo ""
     echo "Environment Commands:"
@@ -3590,10 +5184,25 @@ print_help() {
     echo "  gen-prod-env [file] Generate production .env with random strong passwords"
     echo "                      default output: .env.prod"
     echo ""
+    echo "SSL/HTTPS Commands (SSL enabled by default):"
+    echo "  ssl-setup [domain]  Generate self-signed SSL certificates to src/nginx/ssl/"
+    echo "                      Certificates are bundled into nginx image during build"
+    echo "  ssl-setup --force   Regenerate existing certificates"
+    echo "  ssl-setup-le [domain] [email]  Issue Let's Encrypt cert via certbot --standalone"
+    echo "                          Uses LETSENCRYPT_EMAIL/LETSENCRYPT_STAGING if omitted"
+    echo "  ssl-info [domain]   Display SSL certificate information"
+    echo "  ssl-clean           Remove all generated SSL certificates and disable SSL"
+    echo ""
+    echo "Optional Components:"
+    echo "  init-safeline       Initialize SafeLine WAF (optional sidecar component)"
+    echo "                      SafeLine is NOT included in 'build.sh all'"
+    echo "                      After init, start with: docker-compose --profile safeline up -d"
+    echo ""
     echo "Build Commands:"
-    echo "  build-all, all           Build all components in the correct order"
+    echo "  build-all, all           Build all components (SSL enabled by default)"
     echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
     echo "  build-all --parallel     Parallel build with smart caching"
+    echo "  build-all --no-ssl       Build without SSL/HTTPS"
     echo "  [component]              Build a specific component (e.g., backend, frontend)"
     echo "  [component] --force      Force rebuild a component without cache"
     echo ""
@@ -3633,8 +5242,15 @@ print_help() {
     echo "  clean-all [--force] Remove all images, volumes and stop containers"
     echo ""
     echo "Download Commands:"
-    echo "  download-deps       Download third-party dependencies to third_party/"
-    echo "                      (Prometheus, Node Exporter, Alertmanager, Categraf, etc.)"
+    echo "  download [options] [component...]   Download third-party dependencies"
+    echo "  download-deps                       Alias for 'download'"
+    echo "    Options:"
+    echo "      -l, --list          List available components"
+    echo "      -v, --version VER   Specify version"
+    echo "      -a, --arch ARCH     Target architecture (amd64, arm64, all)"
+    echo "      --no-mirror         Disable GitHub mirror acceleration"
+    echo "    Components: prometheus, node_exporter, alertmanager, categraf,"
+    echo "                code_server (alias: vscode), saltstack, slurm, etc."
     echo ""
     echo "Offline Export Commands:"
     echo "  export-offline [dir] [tag] [include_common]  Export images to tar files"
@@ -3667,15 +5283,24 @@ print_help() {
     echo "  $0 init-env 192.168.0.100          # Set specific EXTERNAL_HOST"
     echo "  $0 init-env --force                # Force re-initialize"
     echo ""
+    echo "  # SSL/HTTPS setup (certificates bundled into nginx image)"
+    echo "  $0 ssl-setup                       # Generate certs for auto-detected domain"
+    echo "  $0 ssl-setup example.com           # Generate certs for specific domain"
+    echo "  $0 ssl-setup --force               # Regenerate existing certificates"
+    echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
+    echo "  $0 ssl-info                        # Show certificate details"
+    echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
+    echo ""
     echo "  # Template rendering"
     echo "  $0 render                          # Render templates from .env"
     echo "  $0 render --force                  # Force re-render all templates"
     echo ""
-    echo "  # Building (with smart caching)"
-    echo "  $0 build-all                       # Build only changed services"
+    echo "  # Building (with smart caching, SSL enabled by default)"
+    echo "  $0 build-all                       # Build all services with SSL"
     echo "  $0 build-all --parallel            # Parallel build (default 4 jobs)"
     echo "  $0 build-all --parallel=8          # Parallel build with 8 jobs"
     echo "  $0 build-all --force               # Force rebuild all (ignore cache)"
+    echo "  $0 build-all --no-ssl              # Build without HTTPS"
     echo "  $0 backend                         # Build single service"
     echo "  $0 backend --force                 # Force rebuild single service"
     echo ""
@@ -3701,7 +5326,11 @@ print_help() {
     echo "  $0 clean-all --force"
     echo ""
     echo "  # Download third-party dependencies (for faster AppHub builds)"
-    echo "  $0 download-deps                       # Download to third_party/"
+    echo "  $0 download                            # Download all to third_party/"
+    echo "  $0 download --list                     # List available components"
+    echo "  $0 download vscode                     # Download VS Code Server only"
+    echo "  $0 download -v 4.107.0 vscode          # Download specific version"
+    echo "  $0 download --arch amd64 prometheus    # Download amd64 architecture only"
 }
 
 # ==============================================================================
@@ -3713,12 +5342,13 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Parse global options first (--force, --no-cache, -f, --parallel, etc.)
+# Parse global options first (--force, --no-cache, -f, --parallel, --ssl, etc.)
 # These can appear anywhere in the command line
 FORCE_BUILD=false
 FORCE_RENDER=false
 FORCE_REBUILD=false
 ENABLE_PARALLEL=false
+ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
 REMAINING_ARGS=()
 
@@ -3740,6 +5370,16 @@ for arg in "$@"; do
             ENABLE_PARALLEL=true
             PARALLEL_JOBS="${arg#-p}"
             ;;
+        --ssl)
+            ENABLE_SSL=true
+            ;;
+        --ssl=*)
+            ENABLE_SSL=true
+            SSL_DOMAIN="${arg#*=}"
+            ;;
+        --no-ssl)
+            ENABLE_SSL=false
+            ;;
         --skip-cache)
             SKIP_CACHE_CHECK=true
             ;;
@@ -3755,6 +5395,9 @@ if [[ "$FORCE_BUILD" == "true" ]]; then
 fi
 if [[ "$ENABLE_PARALLEL" == "true" ]]; then
     log_parallel "🚀 Parallel mode enabled (max $PARALLEL_JOBS concurrent jobs)"
+fi
+if [[ "$ENABLE_SSL" == "true" ]]; then
+    log_info "🔒 SSL/HTTPS mode enabled"
 fi
 if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
     log_cache "⏭️  Cache check skipped (--skip-cache)"
@@ -3785,11 +5428,122 @@ case "$COMMAND" in
         log_info "Current environment configuration:"
         grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
         ;;
+    init-safeline)
+        # 初始化 SafeLine WAF 数据目录
+        log_info "📦 Initializing SafeLine WAF data directories..."
+        
+        # 从 .env 获取 SAFELINE_DIR，默认 ./data/safeline
+        safeline_dir="${SAFELINE_DIR:-./data/safeline}"
+        
+        # 创建必要的目录
+        mkdir -p "$safeline_dir"/{resources,logs,run}
+        mkdir -p "$safeline_dir"/resources/{postgres/data,mgt,sock,nginx,detector,chaos,cache,luigi}
+        mkdir -p "$safeline_dir"/logs/{nginx,detector}
+        
+        # 设置安全的目录权限
+        # - 数据目录: 755 (所有者读写执行，其他人只读执行)
+        # - run/sock 目录需要被容器内进程访问: 750
+        # - postgres 数据目录: 700 (仅所有者访问，数据库安全要求)
+        # - logs 目录: 755 (允许读取日志)
+        
+        # 设置基础目录权限
+        chmod 755 "$safeline_dir"
+        chmod 755 "$safeline_dir"/resources
+        chmod 755 "$safeline_dir"/logs
+        chmod 750 "$safeline_dir"/run
+        
+        # 资源子目录权限
+        chmod 700 "$safeline_dir"/resources/postgres      # PostgreSQL 数据需要严格权限
+        chmod 700 "$safeline_dir"/resources/postgres/data
+        chmod 755 "$safeline_dir"/resources/mgt
+        chmod 750 "$safeline_dir"/resources/sock          # Socket 目录
+        chmod 755 "$safeline_dir"/resources/nginx
+        chmod 755 "$safeline_dir"/resources/detector
+        chmod 755 "$safeline_dir"/resources/chaos
+        chmod 755 "$safeline_dir"/resources/cache
+        chmod 755 "$safeline_dir"/resources/luigi
+        
+        # 日志目录权限
+        chmod 755 "$safeline_dir"/logs/nginx
+        chmod 755 "$safeline_dir"/logs/detector
+        
+        log_info "✅ SafeLine directories created at: $safeline_dir"
+        log_info ""
+        log_info "Directory structure (with permissions):"
+        find "$safeline_dir" -type d -exec ls -ld {} \; 2>/dev/null | head -20 | sed 's/^/  /'
+        log_info ""
+        log_info "⚠️  Note: SafeLine containers run as root inside, so directory ownership"
+        log_info "   is managed by the containers themselves. If you encounter permission"
+        log_info "   issues, run: sudo chown -R \$(id -u):\$(id -g) $safeline_dir"
+        log_info ""
+        log_info "💡 SafeLine is an optional sidecar component (not included in 'build.sh all')"
+        log_info ""
+        log_info "📋 To start SafeLine services (using docker-compose profiles):"
+        log_info "   docker-compose --profile safeline up -d"
+        log_info ""
+        log_info "🔐 To get/reset admin password:"
+        log_info "   docker exec safeline-mgt /app/mgt-cli reset-admin"
+        log_info ""
+        log_info "🌐 Access SafeLine management console at: https://<host>:${SAFELINE_MGT_PORT:-9443}"
+        ;;
+    ssl-setup|ssl-init|ssl|setup-ssl)
+        # 设置 SSL 证书
+        ssl_domain="${ARG2:-}"
+        setup_ssl_certificates "$ssl_domain" "$FORCE_BUILD"
+        ;;
+    ssl-setup-le|ssl-letsencrypt|ssl-le)
+        # 使用 Let's Encrypt 申请正式证书
+        ssl_domain="${ARG2:-}"
+        ssl_email="${ARG3:-${LETSENCRYPT_EMAIL:-}}"
+        ssl_staging="${ARG4:-${LETSENCRYPT_STAGING:-false}}"
+        setup_letsencrypt_certificates "$ssl_domain" "$ssl_email" "$ssl_staging" "$FORCE_BUILD"
+        ;;
+    ssl-info)
+        # 显示 SSL 证书信息
+        show_ssl_info "${ARG2:-}"
+        ;;
+    ssl-clean)
+        # 清理 SSL 证书
+        clean_ssl_certificates
+        ;;
+    enable-ssl)
+        # 启用 SSL 模式（更新 .env 配置）
+        log_info "🔒 Enabling SSL mode..."
+        update_env_variable "ENABLE_TLS" "true"
+        update_env_variable "EXTERNAL_SCHEME" "https"
+        log_info "✓ SSL mode enabled"
+        log_info "  ENABLE_TLS=true"
+        log_info "  EXTERNAL_SCHEME=https"
+        log_info ""
+        log_info "📋 Next steps:"
+        log_info "   1. Generate certificates: ./build.sh ssl-setup"
+        log_info "   2. Rebuild nginx:         ./build.sh nginx"
+        log_info "   3. Restart services:      docker compose restart nginx"
+        ;;
+    disable-ssl)
+        # 禁用 SSL 模式（更新 .env 配置）
+        log_info "🔓 Disabling SSL mode..."
+        update_env_variable "ENABLE_TLS" "false"
+        update_env_variable "EXTERNAL_SCHEME" "http"
+        log_info "✓ SSL mode disabled"
+        log_info "  ENABLE_TLS=false"
+        log_info "  EXTERNAL_SCHEME=http"
+        log_info ""
+        log_info "📋 Next steps:"
+        log_info "   1. Rebuild nginx: ./build.sh nginx"
+        log_info "   2. Restart:       docker compose restart nginx"
+        ;;
     gen-prod-env)
         # 生成生产环境配置文件（使用强随机密码）
         generate_production_env "${ARG2:-.env.prod}" "$FORCE_BUILD"
         ;;
     build-all|all)
+        # 如果启用了 SSL，先设置 SSL 证书
+        if [[ "$ENABLE_SSL" == "true" ]]; then
+            log_info "🔒 SSL mode enabled, setting up certificates first..."
+            setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
+        fi
+        
         if [[ "$FORCE_BUILD" == "true" ]]; then
             build_all "true"
         else
@@ -3814,6 +5568,14 @@ case "$COMMAND" in
         else
             render_all_templates
         fi
+        ;;
+    sync-env)
+        # 同步 .env 与 .env.example，并检测配置差异
+        sync_env_with_example
+        ;;
+    check-env)
+        # 仅检测 .env 配置差异，不同步
+        check_env_config_drift
         ;;
     start-all)
         start_all
@@ -3884,17 +5646,26 @@ case "$COMMAND" in
         # Export all images to tar files for offline deployment
         export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}"
         ;;
-    download-deps)
+    download|download-deps)
         # Download third-party dependencies to third_party/
         log_info "📦 Downloading third-party dependencies..."
-        if [[ -x "$SCRIPT_DIR/scripts/download_third_party.sh" ]]; then
-            "$SCRIPT_DIR/scripts/download_third_party.sh"
-            log_info "✅ Third-party dependencies downloaded to third_party/"
-            log_info "💡 These files will be used during AppHub build for faster builds"
-        else
-            log_error "download_third_party.sh not found or not executable"
-            exit 1
+        
+        # 加载 .env 文件中的环境变量，供下载函数使用
+        if [[ -f "$ENV_FILE" ]]; then
+            log_info "Loading environment from $ENV_FILE..."
+            set -a  # 自动导出所有变量
+            source "$ENV_FILE"
+            set +a
         fi
+        
+        # 构建传递给下载函数的参数（排除命令本身）
+        _download_args=("${REMAINING_ARGS[@]:1}")
+        
+        # 使用内置的下载函数
+        download_third_party "${_download_args[@]}"
+        
+        log_info "✅ Third-party dependencies downloaded to third_party/"
+        log_info "💡 These files will be used during AppHub build for faster builds"
         ;;
     help|--help|-h)
         print_help

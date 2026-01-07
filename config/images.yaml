@@ -1,0 +1,170 @@
+# AI Infrastructure Matrix - Docker Images Configuration
+# 此配置文件定义了项目所需的所有 Docker 镜像
+# 支持动态添加组件，build.sh 会自动读取此配置
+
+# 公共/第三方镜像 (从 Docker Hub 拉取)
+common_images:
+  postgres:
+    image: postgres
+    version_env: POSTGRES_VERSION
+    default_version: "15-alpine"
+    description: "PostgreSQL database"
+  
+  mysql:
+    image: mysql
+    version_env: MYSQL_VERSION
+    default_version: "8.0"
+    description: "MySQL database for SLURM"
+  
+  redis:
+    image: redis
+    version_env: REDIS_VERSION
+    default_version: "7-alpine"
+    description: "Redis cache service"
+  
+  kafka:
+    image: confluentinc/cp-kafka
+    version_env: KAFKA_VERSION
+    default_version: "7.5.0"
+    description: "Apache Kafka message broker"
+  
+  kafka_ui:
+    image: provectuslabs/kafka-ui
+    version_env: KAFKA_UI_VERSION
+    default_version: "latest"
+    description: "Kafka UI management interface"
+  
+  openldap:
+    image: osixia/openldap
+    version_env: OPENLDAP_VERSION
+    default_version: "stable"
+    description: "OpenLDAP directory service"
+  
+  phpldapadmin:
+    image: osixia/phpldapadmin
+    version_env: PHPLDAPADMIN_VERSION
+    default_version: "stable"
+    description: "phpLDAPadmin web interface"
+  
+  redisinsight:
+    image: redis/redisinsight
+    version_env: REDISINSIGHT_VERSION
+    default_version: "2.68"
+    description: "Redis management GUI (multi-arch: amd64/arm64)"
+  
+  seaweedfs:
+    image: chrislusf/seaweedfs
+    version_env: SEAWEEDFS_VERSION
+    default_version: "3.80"
+    description: "SeaweedFS distributed storage (multi-arch: amd64/arm64)"
+  
+  oceanbase:
+    image: oceanbase/oceanbase-ce
+    version_env: OCEANBASE_VERSION
+    default_version: "4.3.5-lts"
+    description: "OceanBase distributed database"
+  
+  victoriametrics:
+    image: victoriametrics/victoria-metrics
+    version_env: VICTORIAMETRICS_VERSION
+    default_version: "v1.115.0"
+    description: "VictoriaMetrics time series database"
+
+# SafeLine WAF 镜像
+# 架构后缀: ARM/aarch64 使用 -arm，x86_64 留空
+safeline_images:
+  safeline_postgres:
+    image: "{PREFIX}/safeline-postgres{ARCH_SUFFIX}"
+    version: "15.2"
+    description: "SafeLine PostgreSQL database"
+  
+  safeline_mgt:
+    image: "{PREFIX}/safeline-mgt{REGION}{ARCH_SUFFIX}"
+    version_env: SAFELINE_IMAGE_TAG
+    default_version: "9.3.0"
+    description: "SafeLine management console"
+  
+  safeline_detector:
+    image: "{PREFIX}/safeline-detector{REGION}{ARCH_SUFFIX}"
+    version_env: SAFELINE_IMAGE_TAG
+    default_version: "9.3.0"
+    description: "SafeLine detection engine"
+  
+  safeline_tengine:
+    image: "{PREFIX}/safeline-tengine{REGION}{ARCH_SUFFIX}"
+    version_env: SAFELINE_IMAGE_TAG
+    default_version: "9.3.0"
+    description: "SafeLine reverse proxy (Tengine)"
+  
+  safeline_luigi:
+    image: "{PREFIX}/safeline-luigi{REGION}{ARCH_SUFFIX}"
+    version_env: SAFELINE_IMAGE_TAG
+    default_version: "9.3.0"
+    description: "SafeLine task scheduler"
+  
+  safeline_fvm:
+    image: "{PREFIX}/safeline-fvm{REGION}{ARCH_SUFFIX}"
+    version_env: SAFELINE_IMAGE_TAG
+    default_version: "9.3.0"
+    description: "SafeLine feature verification module"
+  
+  safeline_chaos:
+    image: "{PREFIX}/safeline-chaos{REGION}{ARCH_SUFFIX}"
+    version_env: SAFELINE_IMAGE_TAG
+    default_version: "9.3.0"
+    description: "SafeLine chaos engineering module"
+
+# SafeLine 配置
+safeline_config:
+  image_prefix_env: SAFELINE_IMAGE_PREFIX
+  default_prefix: "chaitin"
+  arch_suffix_env: SAFELINE_ARCH_SUFFIX
+  region_env: SAFELINE_REGION
+  # 架构自动检测: ARM/aarch64 -> "-arm", 其他 -> ""
+  auto_detect_arch: true
+
+# 项目自构建镜像 (需要私有仓库才能拉取)
+project_images:
+  - name: backend
+    image: "ai-infra-backend"
+    description: "Backend API service"
+  
+  - name: backend-init
+    image: "ai-infra-backend-init"
+    description: "Backend database initialization"
+  
+  - name: frontend
+    image: "ai-infra-frontend"
+    description: "Frontend web application"
+  
+  - name: nginx
+    image: "ai-infra-nginx"
+    description: "Nginx reverse proxy"
+  
+  - name: jupyterhub
+    image: "ai-infra-jupyterhub"
+    description: "JupyterHub service"
+  
+  - name: singleuser
+    image: "ai-infra-singleuser"
+    description: "JupyterHub single user notebook"
+  
+  - name: saltstack
+    image: "ai-infra-saltstack"
+    description: "SaltStack master"
+  
+  - name: slurm-master
+    image: "ai-infra-slurm-master"
+    description: "SLURM workload manager"
+  
+  - name: gitea
+    image: "ai-infra-gitea"
+    description: "Gitea Git service"
+  
+  - name: apphub
+    image: "ai-infra-apphub"
+    description: "AppHub package server"
+  
+  - name: nightingale
+    image: "ai-infra-nightingale"
+    description: "Nightingale monitoring"

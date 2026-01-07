@@ -6,7 +6,7 @@
 # 生成时间: 由 build.sh sync 命令渲染
 # 
 # 变量说明:
-#   192.168.2.101 - Salt Master 外部访问地址
+#   192.168.249.202 - Salt Master 外部访问地址
 #   4505 - Salt Master 端口 (默认 4505)
 #   28080 - AppHub 端口 (默认 8090)
 # =============================================================================
@@ -16,11 +16,11 @@ set -eo pipefail
 # ===========================================
 # 环境配置 (已由模板渲染替换)
 # ===========================================
-SALT_MASTER="${SALT_MASTER:-192.168.2.101}"
+SALT_MASTER="${SALT_MASTER:-192.168.249.202}"
 SALT_MASTER_PORT="${SALT_MASTER_PORT:-4505}"
 SALT_VERSION="${SALT_VERSION:-3007.1}"
 MINION_ID="${MINION_ID:-}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.2.101:28080}"
+APPHUB_URL="${APPHUB_URL:-http://192.168.249.202:28080}"
 USE_OFFICIAL="${USE_OFFICIAL:-false}"
 # Master 公钥 URL (用于预同步 Master 公钥到 Minion)
 # 支持两种模式:
@@ -48,8 +48,8 @@ usage() {
 SaltStack Minion 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
-  Salt Master: 192.168.2.101:4505
-  AppHub URL:  http://192.168.2.101:28080
+  Salt Master: 192.168.249.202:4505
+  AppHub URL:  http://192.168.249.202:28080
 
 用法: $0 [OPTIONS]
 
@@ -73,7 +73,7 @@ SaltStack Minion 安装脚本 (预配置模板)
     $0 --minion-id worker01
 
     # 使用 curl 管道安装 (已知 Master 地址)
-    curl -fsSL http://192.168.2.101:28080/packages/install-salt-minion.sh | bash
+    curl -fsSL http://192.168.249.202:28080/packages/install-salt-minion.sh | bash
 EOF
     exit 0
 }
@@ -293,9 +293,9 @@ sync_master_pubkey() {
     
     log_info "尝试获取 Master 公钥: $MASTER_PUB_URL"
     
-    # 下载 Master 公钥
+    # 下载 Master 公钥 (使用 -k 选项支持自签名证书)
     if command -v curl >/dev/null 2>&1; then
-        if curl -fsSL --connect-timeout 10 -o "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
+        if curl -fsSLk --connect-timeout 10 -o "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
             if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
                 downloaded=true
                 log_info "✓ Master 公钥下载成功 (curl)"
@@ -305,7 +305,7 @@ sync_master_pubkey() {
             fi
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if wget -q --timeout=10 -O "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
+        if wget -q --timeout=10 --no-check-certificate -O "$master_pub_file" "$MASTER_PUB_URL" 2>/dev/null; then
             if [[ -s "$master_pub_file" ]] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY\|ssh-rsa" "$master_pub_file" 2>/dev/null; then
                 downloaded=true
                 log_info "✓ Master 公钥下载成功 (wget)"
@@ -704,7 +704,7 @@ main() {
     parse_args "$@"
     
     # 验证参数
-    if [[ -z "$SALT_MASTER" ]] || [[ "$SALT_MASTER" == "192.168.2.101" ]]; then
+    if [[ -z "$SALT_MASTER" ]] || [[ "$SALT_MASTER" == "192.168.249.202" ]]; then
         log_error "Salt Master 地址未配置"
         log_error "请确保模板已正确渲染，或使用 --master 参数指定"
         exit 1
@@ -742,7 +742,7 @@ main() {
     local installed=false
     
     # 优先从 AppHub 安装
-    if [[ "$USE_OFFICIAL" != "true" ]] && [[ -n "$APPHUB_URL" ]] && [[ "$APPHUB_URL" != *"192.168.2.101"* ]]; then
+    if [[ "$USE_OFFICIAL" != "true" ]] && [[ -n "$APPHUB_URL" ]] && [[ "$APPHUB_URL" != *"192.168.249.202"* ]]; then
         if check_apphub "$APPHUB_URL"; then
             log_info "AppHub 可用，从 AppHub 安装..."
             

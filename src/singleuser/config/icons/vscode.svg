@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="vscode-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#007ACC"/>
+      <stop offset="100%" style="stop-color:#005BA4"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#vscode-gradient)" d="M95 22.3v55.4c0 2.8-1.8 5.4-4.5 6.2l-22.9 7.6c-2.7.9-5.7.2-7.7-1.8L10 56.3c-1.6-1.6-1.6-4.1 0-5.7l6.9-6.9-6.9-6.9c-1.6-1.6-1.6-4.1 0-5.7l49.9-33.4c2-2 5-2.7 7.7-1.8l22.9 7.6c2.7.8 4.5 3.4 4.5 6.2l0 12.6z"/>
+  <path fill="#fff" d="M72 72V28l-30 22 30 22z" opacity="0.8"/>
+  <path fill="#fff" d="M72 50L42 72l-14-10 30-22 14 10z" opacity="0.6"/>
+</svg>

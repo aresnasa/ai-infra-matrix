@@ -84,6 +84,13 @@ spec:
             configMapKeyRef:
               name: {{ include "ai-infra-matrix.fullname" . }}-config
               key: NGINX_RESOLVER
+        # SSL/TLS Configuration
+        - name: ENABLE_TLS
+          value: {{ .Values.env.ENABLE_TLS | default "false" | quote }}
+        - name: EXTERNAL_SCHEME
+          value: {{ .Values.env.EXTERNAL_SCHEME | default "http" | quote }}
+        - name: EXTERNAL_HOST
+          value: {{ .Values.env.EXTERNAL_HOST | default "localhost" | quote }}
         resources:
           {{- toYaml .Values.nginx.resources | nindent 12 }}
         {{- if .Values.nginx.livenessProbe }}

@@ -342,6 +342,12 @@ func migrateTaskSchema() error {
 		&models.SlurmTask{},
 		&models.SlurmTaskEvent{},
 		&models.SlurmTaskStatistics{},
+		// 基础设施审计日志表
+		&models.InfraAuditLog{},
+		&models.AuditChangeDetail{},
+		&models.AuditArchive{},
+		&models.AuditConfig{},
+		&models.AuditExportRequest{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
 		return fmt.Errorf("task store migration failed: %w", err)

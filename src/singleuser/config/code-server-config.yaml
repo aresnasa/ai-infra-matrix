@@ -1,0 +1,40 @@
+# code-server configuration
+# Reference: https://coder.com/docs/code-server/latest/guide
+
+# Bind address - controlled by environment variable CODE_SERVER_BIND_ADDR
+bind-addr: 0.0.0.0:8443
+
+# Authentication type
+# Options: password, none
+# Note: When using through JupyterHub proxy, we disable auth since JupyterHub handles authentication
+auth: none
+
+# Password (only used if auth is 'password')
+# Can be set via CODE_SERVER_PASSWORD environment variable
+# password: your-password-here
+
+# Disable telemetry
+disable-telemetry: true
+
+# Disable update check
+disable-update-check: true
+
+# Certificate settings (TLS)
+# cert: false means no TLS - traffic will be proxied through JupyterHub which handles SSL
+cert: false
+
+# Proxy domain - used when behind reverse proxy
+# proxy-domain: example.com
+
+# User data directory
+user-data-dir: /home/jovyan/.local/share/code-server
+
+# Extensions directory
+extensions-dir: /home/jovyan/.local/share/code-server/extensions
+
+# Log level (trace, debug, info, warn, error)
+log: info
+
+# Workspace folder
+# This will be the default folder opened in VS Code
+# Can be overridden by command line arguments

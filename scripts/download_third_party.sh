@@ -99,11 +99,20 @@ get_component_array() {
     fi
 }
 
-# 从 .env 文件获取版本
+# 从环境变量或 .env 文件获取版本
+# 优先级: 已加载的环境变量 > .env 文件 > 默认值
 get_env_version() {
     local var_name=$1
     local default=$2
     
+    # 优先使用已加载的环境变量
+    local env_val="${!var_name:-}"
+    if [ -n "$env_val" ]; then
+        echo "$env_val"
+        return
+    fi
+    
+    # 其次从 .env 文件读取
     if [ -f "$ENV_FILE" ]; then
         local val=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '"' | tr -d ' ')
         echo "${val:-$default}"
@@ -187,19 +196,19 @@ download_file() {
     echo "  📥 下载中: $(basename "$output_file")"
     echo "     URL: $final_url"
     
-    # 首先尝试镜像
-    if wget -q --show-progress -T 30 -t 3 "$final_url" -O "$output_file" 2>/dev/null; then
+    # 首先尝试镜像 (10秒超时)
+    if wget -q --show-progress -T 10 -t 2 "$final_url" -O "$output_file" 2>/dev/null; then
         if [ -s "$output_file" ]; then
             echo "  ✓ 下载成功: $(basename "$output_file")"
             return 0
         fi
     fi
     
-    # 镜像失败则尝试直接下载
+    # 镜像失败则尝试直接下载 (30秒超时)
     if [ "$final_url" != "$url" ]; then
         echo "  ⚠ 镜像下载失败，尝试直接下载..."
         rm -f "$output_file"
-        if wget -q --show-progress -T 60 -t 3 "$url" -O "$output_file" 2>/dev/null; then
+        if wget -q --show-progress -T 30 -t 2 "$url" -O "$output_file" 2>/dev/null; then
             if [ -s "$output_file" ]; then
                 echo "  ✓ 直接下载成功: $(basename "$output_file")"
                 return 0
@@ -298,6 +307,12 @@ download_component() {
     # 特殊处理: SaltStack 有多个包和格式
     if [ "$component" = "saltstack" ]; then
         download_saltstack "$tag_version" "$file_version" "$output_dir"
+    # 特殊处理: code-server (DEB + RPM)
+    elif [ "$component" = "code_server" ]; then
+        download_code_server "$tag_version" "$file_version" "$output_dir"
+    # 特殊处理: singularity (DEB + RPM, 多发行版)
+    elif [ "$component" = "singularity" ]; then
+        download_singularity "$tag_version" "$file_version" "$output_dir"
     else
         # 通用下载逻辑
         for arch in "${archs[@]}"; do
@@ -355,6 +370,91 @@ download_saltstack() {
             download_file "$url" "${output_dir}/${filename}" true || true
         done
     done
+}
+
+# code-server 特殊下载 (DEB + RPM)
+download_code_server() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="coder/code-server"
+    
+    # DEB packages
+    echo ""
+    echo "  📦 下载 DEB 包..."
+    for arch in amd64 arm64; do
+        if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+            continue
+        fi
+        local filename="code-server_${file_version}_${arch}.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages
+    # 正确格式: code-server-4.107.0-arm64.rpm (不需要 -1. 和架构映射)
+    echo ""
+    echo "  📦 下载 RPM 包..."
+    for arch in amd64 arm64; do
+        if [ "$TARGET_ARCH" != "all" ] && [ "$arch" != "$TARGET_ARCH" ]; then
+            continue
+        fi
+        local filename="code-server-${file_version}-${arch}.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
+    done
+}
+
+# singularity 特殊下载 (DEB + RPM, 多发行版支持)
+download_singularity() {
+    local tag_version=$1
+    local file_version=$2
+    local output_dir=$3
+    local github_repo="sylabs/singularity"
+    
+    # 注意: Singularity CE 4.3.x 官方只提供 amd64/x86_64 预编译包
+    # ARM64 用户需要从源码编译: singularity-ce-${file_version}.tar.gz
+    # 参考: https://github.com/sylabs/singularity/releases
+    
+    # DEB packages (Ubuntu) - 仅 amd64
+    # 格式: singularity-ce_4.3.6-noble_amd64.deb
+    echo ""
+    echo "  📦 下载 DEB 包 (Ubuntu)..."
+    echo "  ⚠️  注意: Singularity 官方仅提供 amd64 预编译包，ARM64 需从源码编译"
+    local ubuntu_codenames=("noble" "jammy")
+    for codename in "${ubuntu_codenames[@]}"; do
+        # Singularity 仅提供 amd64 预编译包
+        if [ "$TARGET_ARCH" = "arm64" ]; then
+            echo "  ⏭️  跳过 DEB (arm64): Singularity 官方不提供 ARM64 预编译包"
+            continue
+        fi
+        local filename="singularity-ce_${file_version}-${codename}_amd64.deb"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # RPM packages (RHEL/CentOS/Rocky) - 仅 x86_64
+    # 格式: singularity-ce-4.3.6-1.el9.x86_64.rpm
+    echo ""
+    echo "  📦 下载 RPM 包 (RHEL/CentOS)..."
+    local el_versions=("el8" "el9" "el10")
+    for el_ver in "${el_versions[@]}"; do
+        # Singularity 仅提供 x86_64 预编译包
+        if [ "$TARGET_ARCH" = "arm64" ]; then
+            echo "  ⏭️  跳过 RPM (aarch64): Singularity 官方不提供 ARM64 预编译包"
+            continue
+        fi
+        local filename="singularity-ce-${file_version}-1.${el_ver}.x86_64.rpm"
+        local url="https://github.com/${github_repo}/releases/download/${tag_version}/${filename}"
+        download_file "$url" "${output_dir}/${filename}" true || true
+    done
+    
+    # 下载源码包 (适用于所有架构，包括 ARM64)
+    echo ""
+    echo "  📦 下载源码包 (适用于所有架构)..."
+    local source_filename="singularity-ce-${file_version}.tar.gz"
+    local source_url="https://github.com/${github_repo}/releases/download/${tag_version}/${source_filename}"
+    download_file "$source_url" "${output_dir}/${source_filename}" true || true
 }
 
 # =============================================================================

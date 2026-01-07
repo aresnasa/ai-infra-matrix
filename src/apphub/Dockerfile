@@ -49,7 +49,7 @@ ARG SALTSTACK_VERSION=v3007.8
 ARG CATEGRAF_VERSION=v0.4.25
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4.3.4
+ARG SINGULARITY_VERSION=v4.3.6
 
 # Accept optional tarball path relative to build context root
 # 默认在 src/apphub/ 目录查找 tarball（因为构建上下文是项目根目录）
@@ -353,6 +353,8 @@ ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
 ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
+ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 
 # Copy third_party directory for offline builds
 COPY third_party/ /third_party/
@@ -373,30 +375,61 @@ RUN set -eux; \
     rm -rf /etc/dnf/modules.d/* 2>/dev/null || true; \
     # 备份原始配置
     cp -r /etc/yum.repos.d /etc/yum.repos.d.backup 2>/dev/null || true; \
-    # 配置镜像源（microdnf 和 dnf 都会使用）
-    if [ -n "${YUM_MIRROR:-}" ]; then \
-        echo "Using custom YUM mirror: ${YUM_MIRROR}"; \
-        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e "s|repo.almalinux.org/\$contentdir|${YUM_MIRROR}/almalinux|g" \
-            -e "s|^# baseurl=|baseurl=|g" \
-            -e "s|^#baseurl=|baseurl=|g" \
-            -i.bak \
-            /etc/yum.repos.d/almalinux*.repo; \
-    else \
-        echo "尝试配置阿里云镜像源..."; \
-        sed -e 's|^mirrorlist=|#mirrorlist=|g' \
-            -e 's|repo.almalinux.org/\$contentdir|mirrors.aliyun.com/almalinux|g' \
-            -e "s|^# baseurl=|baseurl=|g" \
-            -e "s|^#baseurl=|baseurl=|g" \
-            -i.bak \
-            /etc/yum.repos.d/almalinux*.repo; \
-    fi; \
-    # minimal 镜像只有 microdnf，先安装 dnf（禁用 extras 避免 SSL 错误）
+    # 直接写入阿里云镜像源配置（更可靠，避免 sed 替换问题）
+    MIRROR_HOST="${YUM_MIRROR:-mirrors.aliyun.com}"; \
+    echo "Using mirror: ${MIRROR_HOST}"; \
+    printf '%s\n' \
+        '[baseos]' \
+        'name=AlmaLinux $releasever - BaseOS' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/BaseOS/\$basearch/os/" \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-baseos.repo; \
+    printf '%s\n' \
+        '[appstream]' \
+        'name=AlmaLinux $releasever - AppStream' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/AppStream/\$basearch/os/" \
+        'enabled=1' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-appstream.repo; \
+    printf '%s\n' \
+        '[crb]' \
+        'name=AlmaLinux $releasever - CRB' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/CRB/\$basearch/os/" \
+        'enabled=0' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-crb.repo; \
+    printf '%s\n' \
+        '[extras]' \
+        'name=AlmaLinux $releasever - Extras' \
+        "baseurl=https://${MIRROR_HOST}/almalinux/\$releasever/extras/\$basearch/os/" \
+        'enabled=0' \
+        'gpgcheck=1' \
+        'countme=0' \
+        'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9' \
+        > /etc/yum.repos.d/almalinux-extras.repo; \
+    # 删除原始 repo 文件中可能残留的 mirrorlist 配置
+    rm -f /etc/yum.repos.d/almalinux*.repo.bak 2>/dev/null || true; \
+    rm -f /etc/yum.repos.d/almalinux-*source*.repo 2>/dev/null || true; \
+    rm -f /etc/yum.repos.d/almalinux-*debug*.repo 2>/dev/null || true; \
+    # 显示配置的 repo 文件以便调试
+    echo "=== Configured repositories ==="; \
+    cat /etc/yum.repos.d/almalinux-baseos.repo; \
+    # minimal 镜像只有 microdnf，先安装 dnf
     echo "📦 Installing dnf on minimal image..."; \
-    microdnf --disablerepo=extras --disablerepo=crb install -y dnf || \
-    microdnf install -y dnf; \
+    microdnf clean all; \
+    microdnf install -y dnf || { echo "❌ Failed to install dnf"; exit 1; }; \
     dnf clean all; \
-    dnf makecache || true
+    dnf makecache || true; \
+    # 更新系统以确保基础包是最新的（镜像源已配置为阿里云）
+    echo "📦 Updating system packages..."; \
+    dnf update -y --setopt=timeout=300 || echo "⚠️ dnf update failed, continuing anyway"
 
 # Install build prerequisites and enable required repositories
 RUN set -eux; \
@@ -468,12 +501,50 @@ RUN set -eux; \
         2>/dev/null && echo "✓ munge packages installed from repository" || { \
         echo "⚠️  munge not available in repos, will build from source..."; \
         cd /tmp; \
-        if [ -f "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" ]; then \
-            echo "📦 Using local Munge tarball..."; \
-            cp "/third_party/munge/munge-${MUNGE_VERSION}.tar.xz" munge.tar.xz; \
-        else \
-            echo "Downloading Munge..."; \
-            wget "https://ghfast.top/github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/munge-${MUNGE_VERSION}.tar.xz" -O munge.tar.xz; \
+        MUNGE_TARBALL="munge-${MUNGE_VERSION}.tar.xz"; \
+        MUNGE_DIRECT_URL="https://github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/${MUNGE_TARBALL}"; \
+        DOWNLOAD_SUCCESS=false; \
+        # 方式0: 检查本地文件
+        if [ -f "/third_party/munge/${MUNGE_TARBALL}" ]; then \
+            echo "📦 [本地] Using local Munge tarball..."; \
+            cp "/third_party/munge/${MUNGE_TARBALL}" munge.tar.xz; \
+            DOWNLOAD_SUCCESS=true; \
+        fi; \
+        # 方式1: GITHUB_MIRROR
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_MIRROR:-}" ]; then \
+            MIRROR_URL="${GITHUB_MIRROR}github.com/dun/munge/releases/download/munge-${MUNGE_VERSION}/${MUNGE_TARBALL}"; \
+            echo "📥 [方式1] GITHUB_MIRROR: ${MIRROR_URL}"; \
+            if wget --timeout=60 --tries=3 -nv "${MIRROR_URL}" -O munge.tar.xz 2>/dev/null; then \
+                echo "✓ Downloaded Munge via GITHUB_MIRROR"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  GITHUB_MIRROR failed"; \
+            fi; \
+        fi; \
+        # 方式2: GITHUB_PROXY
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "📥 [方式2] GITHUB_PROXY: ${MUNGE_DIRECT_URL}"; \
+            export http_proxy="${GITHUB_PROXY}"; \
+            export https_proxy="${GITHUB_PROXY}"; \
+            if wget --timeout=60 --tries=3 -nv "${MUNGE_DIRECT_URL}" -O munge.tar.xz 2>/dev/null; then \
+                echo "✓ Downloaded Munge via GITHUB_PROXY"; \
+                DOWNLOAD_SUCCESS=true; \
+            fi; \
+            unset http_proxy https_proxy; \
+            if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+                echo "⚠️  GITHUB_PROXY failed"; \
+            fi; \
+        fi; \
+        # 方式3: 直接下载
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+            echo "📥 [方式3] Direct: ${MUNGE_DIRECT_URL}"; \
+            if wget --timeout=60 --tries=3 -nv "${MUNGE_DIRECT_URL}" -O munge.tar.xz; then \
+                echo "✓ Downloaded Munge directly"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "❌ All download methods failed for Munge"; \
+                exit 1; \
+            fi; \
         fi; \
         tar xf munge.tar.xz; \
         cd "munge-${MUNGE_VERSION}"; \
@@ -967,7 +1038,8 @@ RUN set -eux; \
         apt-get update; \
     fi; \
     # 安装下载工具（不再需要 golang，直接下载预编译二进制）
-    apt-get install -y --no-install-recommends curl tar gzip ca-certificates && \
+    # 注意: 需要 git 用于 fallback 源码构建时的代理配置
+    apt-get install -y --no-install-recommends curl tar gzip ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy third_party directory for offline builds
@@ -997,34 +1069,52 @@ RUN set -eux; \
             ARCH_SUFFIX="${ARCH}"; \
         fi; \
         TARBALL_NAME="categraf-${CATEGRAF_VERSION}-linux-${ARCH_SUFFIX}.tar.gz"; \
+        GITHUB_DIRECT_URL="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
+        DOWNLOAD_SUCCESS=false; \
         # 优先检查本地预下载的包
         if [ -f "/third_party/categraf/${TARBALL_NAME}" ]; then \
             echo "📦 使用本地 Categraf 二进制包: ${TARBALL_NAME}"; \
             cp "/third_party/categraf/${TARBALL_NAME}" /out/; \
-        else \
-            # 直接从 GitHub releases 下载预编译二进制（推荐，避免 Go 版本兼容问题）
-            echo "📥 Downloading pre-built Categraf ${CATEGRAF_VERSION} for ${ARCH_SUFFIX}..."; \
-            DOWNLOAD_URL="${GITHUB_MIRROR}github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
-            echo "Download URL: ${DOWNLOAD_URL}"; \
-            curl -fsSL -o "/out/${TARBALL_NAME}" "${DOWNLOAD_URL}" || { \
-                echo "❌ Failed to download Categraf binary"; \
-                echo "⚠️  Falling back to source build (requires Go 1.24+)..."; \
-                # Fallback: 从源码构建（可能因 Go 版本问题失败）
-                if [ -n "${GITHUB_PROXY:-}" ]; then \
-                    echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
-                    export ALL_PROXY="${GITHUB_PROXY}"; \
-                    export HTTP_PROXY="${GITHUB_PROXY}"; \
-                    export HTTPS_PROXY="${GITHUB_PROXY}"; \
-                    git config --global http.proxy "${GITHUB_PROXY}"; \
-                    git config --global https.proxy "${GITHUB_PROXY}"; \
-                fi; \
-                CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-                CATEGRAF_REPO=${CATEGRAF_REPO} \
-                BUILD_DIR=/build \
-                OUTPUT_DIR=/out \
-                /scripts/build-app.sh categraf; \
-            }; \
-            echo "✓ Categraf ${CATEGRAF_VERSION} downloaded successfully"; \
+            DOWNLOAD_SUCCESS=true; \
+        fi; \
+        # 方式1: 尝试使用 GITHUB_MIRROR 加速下载
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_MIRROR:-}" ]; then \
+            MIRROR_URL="${GITHUB_MIRROR}github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${TARBALL_NAME}"; \
+            echo "📥 [方式1] 尝试通过 GITHUB_MIRROR 下载: ${MIRROR_URL}"; \
+            if curl -fsSL --connect-timeout 30 --max-time 300 -o "/out/${TARBALL_NAME}" "${MIRROR_URL}"; then \
+                echo "✓ Categraf ${CATEGRAF_VERSION} downloaded via GITHUB_MIRROR"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  GITHUB_MIRROR 下载失败，尝试其他方式..."; \
+            fi; \
+        fi; \
+        # 方式2: 尝试使用 GITHUB_PROXY 代理直接从 GitHub 下载
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ] && [ -n "${GITHUB_PROXY:-}" ]; then \
+            echo "📥 [方式2] 尝试通过 GITHUB_PROXY 代理下载: ${GITHUB_DIRECT_URL}"; \
+            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
+            if curl --proxy "${GITHUB_PROXY}" -fsSL --connect-timeout 30 --max-time 300 -o "/out/${TARBALL_NAME}" "${GITHUB_DIRECT_URL}"; then \
+                echo "✓ Categraf ${CATEGRAF_VERSION} downloaded via GITHUB_PROXY"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  GITHUB_PROXY 代理下载失败..."; \
+            fi; \
+        fi; \
+        # 方式3: 直接从 GitHub 下载（无代理）
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+            echo "📥 [方式3] 尝试直接从 GitHub 下载: ${GITHUB_DIRECT_URL}"; \
+            if curl -fsSL --connect-timeout 30 --max-time 300 -o "/out/${TARBALL_NAME}" "${GITHUB_DIRECT_URL}"; then \
+                echo "✓ Categraf ${CATEGRAF_VERSION} downloaded directly from GitHub"; \
+                DOWNLOAD_SUCCESS=true; \
+            else \
+                echo "⚠️  直接下载也失败了..."; \
+            fi; \
+        fi; \
+        # 所有方式都失败，创建占位文件
+        if [ "${DOWNLOAD_SUCCESS}" = "false" ]; then \
+            echo "❌ 所有下载方式均失败"; \
+            echo "⚠️  Creating placeholder - Categraf will need to be installed manually or via apphub"; \
+            echo "DOWNLOAD_FAILED" > "/out/${TARBALL_NAME}.failed"; \
+            touch "/out/${TARBALL_NAME}"; \
         fi; \
     else \
         echo "⏭️  Skipping Categraf (BUILD_CATEGRAF=${BUILD_CATEGRAF})"; \
@@ -1039,8 +1129,9 @@ FROM ubuntu:${UBUNTU_VERSION} AS singularity-builder
 ARG BUILD_SINGULARITY=true
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4.3.4
+ARG SINGULARITY_VERSION=v4.3.6
 ARG GITHUB_PROXY
+ARG GITHUB_MIRROR=https://ghfast.top/
 ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
@@ -1068,45 +1159,70 @@ COPY third_party/ /third_party/
 # 创建输出目录
 RUN mkdir -p /out /build
 
+# 下载函数：支持 GITHUB_MIRROR、GITHUB_PROXY 和直接下载
 # 下载并重新打包预编译的 Singularity
 RUN set -eux; \
     if [ "${BUILD_SINGULARITY}" = "true" ]; then \
         echo "📦 Downloading pre-built Singularity ${SINGULARITY_VERSION}..."; \
+        echo "   GITHUB_MIRROR: ${GITHUB_MIRROR:-<disabled>}"; \
+        echo "   GITHUB_PROXY:  ${GITHUB_PROXY:-<disabled>}"; \
         mkdir -p /out; \
         VERSION_NUM=$(echo ${SINGULARITY_VERSION} | sed 's/^v//'); \
-        RELEASE_URL="https://ghfast.top/github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
-        CURL_OPTS=""; \
-        if [ -n "${GITHUB_PROXY:-}" ]; then \
-            echo "🌐 Using proxy: ${GITHUB_PROXY}"; \
-            CURL_OPTS="--proxy ${GITHUB_PROXY}"; \
-        fi; \
+        GITHUB_DIRECT_URL="https://github.com/sylabs/singularity/releases/download/v${VERSION_NUM}"; \
+        # 通用下载函数
+        download_file() { \
+            local filename=$1; \
+            local output_path="/out/${filename}"; \
+            local direct_url="${GITHUB_DIRECT_URL}/${filename}"; \
+            local download_success=false; \
+            # 方式0: 检查本地文件
+            if [ -f "/third_party/singularity/${filename}" ]; then \
+                echo "  📦 [本地] Using local file: ${filename}"; \
+                cp "/third_party/singularity/${filename}" "${output_path}"; \
+                return 0; \
+            fi; \
+            # 方式1: GITHUB_MIRROR
+            if [ -n "${GITHUB_MIRROR:-}" ]; then \
+                local mirror_url="${GITHUB_MIRROR}github.com/sylabs/singularity/releases/download/v${VERSION_NUM}/${filename}"; \
+                echo "  📥 [方式1] GITHUB_MIRROR: ${mirror_url}"; \
+                if curl -fsSL --connect-timeout 30 --max-time 300 -o "${output_path}" "${mirror_url}" 2>/dev/null; then \
+                    echo "  ✓ Downloaded ${filename} via GITHUB_MIRROR"; \
+                    return 0; \
+                fi; \
+                echo "  ⚠️  GITHUB_MIRROR failed"; \
+            fi; \
+            # 方式2: GITHUB_PROXY
+            if [ -n "${GITHUB_PROXY:-}" ]; then \
+                echo "  📥 [方式2] GITHUB_PROXY: ${direct_url}"; \
+                if curl --proxy "${GITHUB_PROXY}" -fsSL --connect-timeout 30 --max-time 300 -o "${output_path}" "${direct_url}" 2>/dev/null; then \
+                    echo "  ✓ Downloaded ${filename} via GITHUB_PROXY"; \
+                    return 0; \
+                fi; \
+                echo "  ⚠️  GITHUB_PROXY failed"; \
+            fi; \
+            # 方式3: 直接下载
+            echo "  📥 [方式3] Direct: ${direct_url}"; \
+            if curl -fsSL --connect-timeout 30 --max-time 300 -o "${output_path}" "${direct_url}"; then \
+                echo "  ✓ Downloaded ${filename} directly"; \
+                return 0; \
+            fi; \
+            echo "  ❌ All download methods failed for ${filename}"; \
+            rm -f "${output_path}"; \
+            return 1; \
+        }; \
         # Download Ubuntu 22.04 DEB packages (amd64 & arm64)
         for ARCH in amd64 arm64; do \
             DEB_FILE="singularity-ce_${VERSION_NUM}-1~ubuntu22.04_${ARCH}.deb"; \
             echo "Processing ${DEB_FILE}..."; \
-            if curl ${CURL_OPTS} -fsSL -o "/out/${DEB_FILE}" "${RELEASE_URL}/${DEB_FILE}"; then \
-                echo "✓ Downloaded ${DEB_FILE} from GitHub"; \
-            elif [ -f "/third_party/singularity/${DEB_FILE}" ]; then \
-                echo "⚠️ GitHub download failed, using local file: ${DEB_FILE}"; \
-                cp "/third_party/singularity/${DEB_FILE}" "/out/${DEB_FILE}"; \
-            else \
-                echo "❌ Failed to download ${DEB_FILE} and not found in third_party"; \
-            fi; \
+            download_file "${DEB_FILE}" || echo "⚠️  Skipping ${DEB_FILE}"; \
         done; \
         # Download EL9 RPM packages (x86_64 & aarch64)
         for ARCH in x86_64 aarch64; do \
             RPM_FILE="singularity-ce-${VERSION_NUM}-1.el9.${ARCH}.rpm"; \
             echo "Processing ${RPM_FILE}..."; \
-            if curl ${CURL_OPTS} -fsSL -o "/out/${RPM_FILE}" "${RELEASE_URL}/${RPM_FILE}"; then \
-                echo "✓ Downloaded ${RPM_FILE} from GitHub"; \
-            elif [ -f "/third_party/singularity/${RPM_FILE}" ]; then \
-                echo "⚠️ GitHub download failed, using local file: ${RPM_FILE}"; \
-                cp "/third_party/singularity/${RPM_FILE}" "/out/${RPM_FILE}"; \
-            else \
-                echo "❌ Failed to download ${RPM_FILE} and not found in third_party"; \
-            fi; \
+            download_file "${RPM_FILE}" || echo "⚠️  Skipping ${RPM_FILE}"; \
         done; \
-        echo "✅ Singularity packages downloaded"; \
+        echo "✅ Singularity packages processed"; \
         ls -lh /out/; \
     else \
         echo "⏭️  Skipping Singularity (BUILD_SINGULARITY=${BUILD_SINGULARITY})"; \
@@ -1271,6 +1387,7 @@ ARG PROMETHEUS_VERSION=v3.4.1
 ARG NODE_EXPORTER_VERSION=v1.8.2
 ARG ALERTMANAGER_VERSION=v0.28.1
 ARG CATEGRAF_VERSION=v0.4.25
+ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
@@ -1315,6 +1432,7 @@ RUN set -eux; \
         echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
+        GITHUB_PROXY=${GITHUB_PROXY:-} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
         /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
     fi; \
@@ -1335,6 +1453,7 @@ RUN set -eux; \
         echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
+        GITHUB_PROXY=${GITHUB_PROXY:-} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
         /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
     fi; \
@@ -1371,6 +1490,7 @@ RUN set -eux; \
         echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
         CATEGRAF_VERSION=${CATEGRAF_VERSION} \
         GITHUB_MIRROR=${GITHUB_MIRROR} \
+        GITHUB_PROXY=${GITHUB_PROXY:-} \
         OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
         /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
     fi; \

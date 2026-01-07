@@ -90,7 +90,8 @@ echo "=== Syncing Salt Master Public Key ==="
 MASTER_PUB_FILE="/etc/salt/pki/minion/minion_master.pub"
 echo "    Downloading from: {{.MasterPubURL}}"
 
-if curl -fsSL --connect-timeout 10 -o "$MASTER_PUB_FILE" "{{.MasterPubURL}}" 2>/dev/null; then
+# Use -k to allow self-signed certificates (HTTPS redirect from HTTP)
+if curl -fsSLk --connect-timeout 10 -o "$MASTER_PUB_FILE" "{{.MasterPubURL}}" 2>/dev/null; then
     if [ -s "$MASTER_PUB_FILE" ] && grep -q "BEGIN PUBLIC KEY\|BEGIN RSA PUBLIC KEY" "$MASTER_PUB_FILE" 2>/dev/null; then
         {{.SudoPrefix}}chmod 644 "$MASTER_PUB_FILE"
         echo "    Master public key synced successfully"

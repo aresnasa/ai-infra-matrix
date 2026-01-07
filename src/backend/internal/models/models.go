@@ -27,22 +27,23 @@ const (
 
 // User 用户表
 type User struct {
-	ID            uint            `json:"id" gorm:"primaryKey"`
-	Username      string          `json:"username" gorm:"uniqueIndex;not null;size:100"`
-	Email         string          `json:"email" gorm:"uniqueIndex;not null;size:255"`
-	Name          string          `json:"name" gorm:"size:255"` // 显示名称
-	Password      string          `json:"-" gorm:"not null;size:255"`
-	IsActive      bool            `json:"is_active" gorm:"default:true"`
-	AuthSource    string          `json:"auth_source" gorm:"default:'local';size:50"`           // 认证来源: local, ldap
-	LDAPDn        string          `json:"ldap_dn,omitempty" gorm:"size:500"`                    // LDAP用户的DN
-	DashboardRole string          `json:"dashboard_role" gorm:"size:50"`                        // 仪表板角色
-	RoleTemplate  string          `json:"role_template" gorm:"size:50"`                         // 角色模板
-	AllowedIPs    json.RawMessage `json:"allowed_ips,omitempty" gorm:"type:jsonb;default:'[]'"` // IP 白名单 (JSON 数组)
-	LastLogin     *time.Time      `json:"last_login,omitempty"`
-	LastLoginIP   string          `json:"last_login_ip,omitempty" gorm:"size:45"` // 上次登录的 IP 地址
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt  `json:"-" gorm:"index"`
+	ID                uint            `json:"id" gorm:"primaryKey"`
+	Username          string          `json:"username" gorm:"uniqueIndex;not null;size:100"`
+	Email             string          `json:"email" gorm:"uniqueIndex;not null;size:255"`
+	Name              string          `json:"name" gorm:"size:255"` // 显示名称
+	Password          string          `json:"-" gorm:"not null;size:255"`
+	SecondaryPassword string          `json:"-" gorm:"size:255"` // 二次认证密码（用于敏感操作验证）
+	IsActive          bool            `json:"is_active" gorm:"default:true"`
+	AuthSource        string          `json:"auth_source" gorm:"default:'local';size:50"`           // 认证来源: local, ldap
+	LDAPDn            string          `json:"ldap_dn,omitempty" gorm:"size:500"`                    // LDAP用户的DN
+	DashboardRole     string          `json:"dashboard_role" gorm:"size:50"`                        // 仪表板角色
+	RoleTemplate      string          `json:"role_template" gorm:"size:50"`                         // 角色模板
+	AllowedIPs        json.RawMessage `json:"allowed_ips,omitempty" gorm:"type:jsonb;default:'[]'"` // IP 白名单 (JSON 数组)
+	LastLogin         *time.Time      `json:"last_login,omitempty"`
+	LastLoginIP       string          `json:"last_login_ip,omitempty" gorm:"size:45"` // 上次登录的 IP 地址
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt  `json:"-" gorm:"index"`
 
 	// 关联关系 - 用户拥有的项目
 	Projects []Project `json:"projects,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`

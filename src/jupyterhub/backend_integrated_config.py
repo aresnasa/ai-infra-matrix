@@ -48,6 +48,12 @@ print("🚀 JupyterHub后端集成配置加载中...")
 BACKEND_URL = os.environ.get('BACKEND_URL', 'http://backend:8082')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
 
+# 外部访问配置 (用于 CSP 和 iframe 嵌入)
+EXTERNAL_SCHEME = os.environ.get('EXTERNAL_SCHEME', 'http')
+EXTERNAL_HOST = os.environ.get('EXTERNAL_HOST', 'localhost')
+EXTERNAL_PORT = os.environ.get('EXTERNAL_PORT', '8080')
+HTTPS_PORT = os.environ.get('HTTPS_PORT', '8443')
+
 # 数据库配置
 DB_CONFIG = {
     'host': os.environ.get('POSTGRES_HOST', 'postgres'),
@@ -254,9 +260,22 @@ c.JupyterHub.hub_bind_url = 'http://0.0.0.0:8081'
 
 # 通过环境变量决定是否通过代理访问
 use_proxy = os.environ.get('JUPYTERHUB_USE_PROXY', 'true').lower() == 'true'
+# 检测是否启用 TLS
+enable_tls = os.environ.get('ENABLE_TLS', 'false').lower() == 'true'
+# 根据 EXTERNAL_SCHEME 或 ENABLE_TLS 确定协议
+default_scheme = 'https' if enable_tls or EXTERNAL_SCHEME == 'https' else 'http'
+
+# SSL 代理配置 - 信任反向代理传递的头部
+# 这对于正确处理 HTTPS 请求至关重要
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    # 信任来自代理的 X-Forwarded-* 头部
+    c.JupyterHub.trusted_alt_names = ['DNS:localhost', 'DNS:jupyterhub', 'IP:127.0.0.1']
+    print(f"🔒 SSL代理模式已启用: scheme={default_scheme}")
+
 if use_proxy:
     # 代理模式：JupyterHub 通过 nginx /jupyter/ 前缀访问
-    c.JupyterHub.base_url = '/jupyter'
+    # 注意：base_url 必须带尾部斜杠
+    c.JupyterHub.base_url = '/jupyter/'
     # 代理模式下，接收来自代理的Token
     c.JupyterHub.trust_user_provided_tokens = True
 else:
@@ -264,7 +283,18 @@ else:
     c.JupyterHub.base_url = '/'
 
 # 公共URL配置 - 支持动态检测客户端访问地址
-public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
+# 当启用 TLS 时，使用 HTTPS 端口替换默认的 HTTP 端口
+_raw_public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    # TLS 模式：确保 public_host 使用 HTTPS 端口
+    if ':' in _raw_public_host:
+        _host_part = _raw_public_host.rsplit(':', 1)[0]
+        public_host = f'{_host_part}:{HTTPS_PORT}'
+    else:
+        public_host = f'{_raw_public_host}:{HTTPS_PORT}'
+    print(f"🔒 TLS模式: public_host 调整为 {public_host}")
+else:
+    public_host = _raw_public_host
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
 
 # 设置动态公共URL检测
@@ -274,7 +304,7 @@ def get_public_url(request=None):
         # 优先使用代理传递的原始Host头
         host = request.headers.get('X-Forwarded-Host') or request.headers.get('Host')
         if host:
-            proto = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else 'http'
+            proto = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else default_scheme
             if use_proxy:
                 return f'{proto}://{host}/jupyter/'
             else:
@@ -283,24 +313,33 @@ def get_public_url(request=None):
     # 降级到配置的静态地址
     if use_proxy:
         if not public_host.startswith('http'):
-            static_host = f'http://{public_host}'
+            static_host = f'{default_scheme}://{public_host}'
         else:
             static_host = public_host
         return f'{static_host}/jupyter/'
     else:
         if not public_host.startswith('http'):
-            return f'http://{public_host}/'
+            return f'{default_scheme}://{public_host}/'
         else:
             return f'{public_host}/'
 
 if use_proxy:
     if not public_host.startswith('http'):
-        public_host = f'http://{public_host}'
-    os.environ['JUPYTERHUB_PUBLIC_URL'] = f'{public_host}/jupyter/'
+        public_host_with_scheme = f'{default_scheme}://{public_host}'
+    else:
+        public_host_with_scheme = public_host
+    os.environ['JUPYTERHUB_PUBLIC_URL'] = f'{public_host_with_scheme}/jupyter/'
     # 通知spawner使用代理URL
-    c.JupyterHub.public_url = f'{public_host}/jupyter/'
+    c.JupyterHub.public_url = f'{public_host_with_scheme}/jupyter/'
+    print(f"📍 JupyterHub public_url: {c.JupyterHub.public_url}")
+    
+    # 在代理模式下，必须配置信任代理传递的协议
+    # 这确保 JupyterHub 能正确识别 HTTPS 请求
+    if enable_tls or EXTERNAL_SCHEME == 'https':
+        # 通过 tornado_settings 配置 XSRF cookie 和安全设置
+        print(f"🔒 代理 SSL 模式: 信任 X-Forwarded-Proto 头部")
 else:
-    c.JupyterHub.public_url = f'http://{public_host}/'
+    c.JupyterHub.public_url = f'{default_scheme}://{public_host}/'
 
 # Hub 对外(容器内)连接信息：让单用户容器能访问 Hub API（通过服务名 jupyterhub:8081）
 hub_connect_host = os.environ.get('JUPYTERHUB_HUB_CONNECT_HOST', 'jupyterhub')
@@ -387,12 +426,14 @@ class AutoLoginHandler(BaseHandler):
             logger.info(f"AutoLogin: 登录成功: {login_data.get('name', username)}")
             
             # 7. 设置额外的认证cookie，确保状态持久化
+            # 根据 ENABLE_TLS 环境变量决定是否启用 secure cookie
+            use_secure_cookie = os.environ.get('ENABLE_TLS', 'false').lower() == 'true' or EXTERNAL_SCHEME == 'https'
             self.set_cookie(
                 'jupyterhub_auth_token', 
                 token, 
                 expires_days=7,  # 7天有效期
                 httponly=True,
-                secure=False,  # 在HTTP环境下设为False
+                secure=use_secure_cookie,
                 path=self.base_url
             )
             
@@ -408,12 +449,49 @@ c.JupyterHub.extra_handlers = [
     (r'/auto-login', AutoLoginHandler),
 ]
 
-# 配置 Tornado 设置以支持 iframe 嵌入
-c.JupyterHub.tornado_settings = {
+# 构建动态 CSP frame-ancestors 列表
+def build_csp_frame_ancestors():
+    """根据环境变量构建 CSP frame-ancestors 策略"""
+    ancestors = ["'self'"]
+    
+    # 添加 HTTP 源
+    http_origins = [
+        f"http://localhost:{EXTERNAL_PORT}",
+        f"http://0.0.0.0:{EXTERNAL_PORT}",
+        f"http://{EXTERNAL_HOST}:{EXTERNAL_PORT}" if ':' not in EXTERNAL_HOST else f"http://{EXTERNAL_HOST}",
+    ]
+    ancestors.extend(http_origins)
+    
+    # 添加 HTTPS 源 (如果启用了 TLS)
+    if EXTERNAL_SCHEME == 'https' or os.environ.get('ENABLE_TLS', 'false').lower() == 'true':
+        https_origins = [
+            f"https://localhost:{HTTPS_PORT}",
+            f"https://0.0.0.0:{HTTPS_PORT}",
+            f"https://{EXTERNAL_HOST}:{HTTPS_PORT}" if ':' not in EXTERNAL_HOST else f"https://{EXTERNAL_HOST.split(':')[0]}:{HTTPS_PORT}",
+        ]
+        ancestors.extend(https_origins)
+    
+    return " ".join(ancestors) + ";"
+
+CSP_FRAME_ANCESTORS = build_csp_frame_ancestors()
+print(f"🔒 CSP frame-ancestors: {CSP_FRAME_ANCESTORS}")
+
+# 配置 Tornado 设置以支持 iframe 嵌入和 SSL 代理
+_tornado_settings = {
     'headers': {
-        'Content-Security-Policy': "frame-ancestors 'self' http://localhost:8080 http://0.0.0.0:8080 http://172.20.10.11:8080;",
+        'Content-Security-Policy': f"frame-ancestors {CSP_FRAME_ANCESTORS}",
     },
 }
+
+# SSL 代理模式下的额外 Tornado 设置
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    _tornado_settings['xsrf_cookie_kwargs'] = {
+        'secure': True,
+        'samesite': 'Lax',  # 使用 Lax 而不是 None，避免跨站请求问题
+    }
+    print("🔒 Tornado SSL cookie 设置已启用")
+
+c.JupyterHub.tornado_settings = _tornado_settings
 
 # =========================
 # 动态Spawner配置
@@ -486,6 +564,15 @@ if SPAWNER_TYPE == 'docker':
 c.JupyterHub.cookie_secret_file = '/srv/data/jupyterhub/jupyterhub_cookie_secret'
 c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'default-token-change-me')
 
+# SSL 代理模式下的 ConfigurableHTTPProxy 配置
+# 当 JupyterHub 在 SSL 终止代理（如 nginx）后面运行时，需要信任代理传递的协议
+if enable_tls or EXTERNAL_SCHEME == 'https':
+    # 允许代理将 HTTPS 请求转发为 HTTP
+    c.ConfigurableHTTPProxy.should_check_origin = False
+    # 配置代理的 API 令牌
+    c.ConfigurableHTTPProxy.api_url = 'http://127.0.0.1:8001'
+    print("🔒 ConfigurableHTTPProxy: SSL 代理模式已配置")
+
 # 会话与Cookie设置：默认会话时长由 SESSION_TIMEOUT 环境变量控制（秒），默认 7 天
 _session_timeout = int(os.environ.get('SESSION_TIMEOUT', '604800'))  # 7天
 c.JupyterHub.cookie_max_age_days = max(1, _session_timeout // 86400)
@@ -512,13 +599,10 @@ c.JupyterHub.cookie_max_age_days = max(7, _session_timeout // 86400)  # 至少7�
 c.Authenticator.enable_auth_state = True
 
 # 5. 设置正确的cookie域名和路径（支持反向代理）
+# base_url 已在前面配置，这里只设置 hub_prefix
 if use_proxy:
     # 反向代理模式下的cookie配置
-    c.JupyterHub.base_url = '/jupyter/'
     c.JupyterHub.hub_prefix = '/jupyter/hub/'
-else:
-    # 直接访问模式下的cookie配置
-    c.JupyterHub.base_url = '/'
 
 # 加密密钥配置（用于auth_state）
 crypt_key = os.environ.get('JUPYTERHUB_CRYPT_KEY', '790031b2deeb70d780d4ccd100514b37f3c168ce80141478bf80aebfb65580c1')

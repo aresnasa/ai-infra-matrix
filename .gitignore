@@ -5,6 +5,7 @@ third_party/m3fs
 third_party/slurm-operator
 third_party/openscow/
 third_party/proxy/
+third_party/code_server/
 scripts/ai_cd.sh
 ci_cd.sh
 ai_cd.sh
@@ -103,3 +104,14 @@ docker-compose.yml.backup
 build.sh.old
 src/nginx/conf.d
 build.sh.backup
+# Generated dependency config files (from .tpl templates)
+src/*/dependency.conf
+third_party/singularity
+third_party/*/version.json
+ssl-certs
+src/nginx/ssl
+# SSL 证书 (由 build.sh ssl-setup 生成)
+src/nginx/ssl/*.crt
+src/nginx/ssl/*.key
+src/nginx/ssl/ca/
+.serena

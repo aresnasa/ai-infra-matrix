@@ -25,6 +25,8 @@ CONFIG_FILE="$APPHUB_DIR/build-config.yaml"
 
 # GitHub 镜像加速 (可通过环境变量覆盖)
 GITHUB_MIRROR="${GITHUB_MIRROR:-https://gh-proxy.com/}"
+# GitHub 代理 (可选，用于 curl --proxy)
+GITHUB_PROXY="${GITHUB_PROXY:-}"
 
 # =============================================================================
 # 组件配置 (从 build-config.yaml 读取或使用默认值)
@@ -86,18 +88,10 @@ build_download_url() {
     echo "https://github.com/${repo}/releases/download/${tag}/${filename}"
 }
 
-# 通用下载函数
+# 通用下载函数 (支持 GITHUB_MIRROR 和 GITHUB_PROXY 多种方式)
 download_file() {
     local url=$1
     local output_file=$2
-    local final_url="$url"
-    
-    # 应用 GitHub 镜像
-    if [[ "$url" == *"github.com"* ]] && [ -n "$GITHUB_MIRROR" ]; then
-        # 移除 url 中的 https:// 前缀，避免重复
-        local url_without_scheme="${url#https://}"
-        final_url="${GITHUB_MIRROR}${url_without_scheme}"
-    fi
     
     if [ -f "$output_file" ]; then
         echo "  ✓ Already exists: $(basename "$output_file")"
@@ -106,31 +100,46 @@ download_file() {
     
     echo "  📥 Downloading: $(basename "$output_file")..."
     
-    # 首先尝试镜像
-    if [ -n "$GITHUB_MIRROR" ]; then
-        echo "     URL: ${final_url}"
-        if curl -fsSL -m 30 --retry 3 -o "$output_file" "$final_url" 2>/dev/null; then
-            echo "  ✓ Downloaded (via mirror): $(basename "$output_file")"
-            # 生成校验和
+    # 方式1: 尝试使用 GITHUB_MIRROR 加速下载
+    if [[ "$url" == *"github.com"* ]] && [ -n "$GITHUB_MIRROR" ]; then
+        local url_without_scheme="${url#https://}"
+        local mirror_url="${GITHUB_MIRROR}${url_without_scheme}"
+        echo "     [方式1] GITHUB_MIRROR: ${mirror_url}"
+        if curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "$output_file" "$mirror_url" 2>/dev/null; then
+            echo "  ✓ Downloaded via GITHUB_MIRROR: $(basename "$output_file")"
             if command -v sha256sum &> /dev/null; then
                 sha256sum "$output_file" > "${output_file}.sha256"
             fi
             return 0
         fi
-        echo "  ⚠️  Mirror failed, trying direct download..."
+        echo "  ⚠️  GITHUB_MIRROR failed, trying next method..."
     fi
     
-    # 直接下载
-    echo "     URL: ${url}"
-    if curl -fsSL -m 60 --retry 3 -o "$output_file" "$url"; then
-        echo "  ✓ Downloaded: $(basename "$output_file")"
+    # 方式2: 尝试使用 GITHUB_PROXY 代理
+    if [ -n "$GITHUB_PROXY" ]; then
+        echo "     [方式2] GITHUB_PROXY: ${url}"
+        echo "     Using proxy: ${GITHUB_PROXY}"
+        if curl --proxy "$GITHUB_PROXY" -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "$output_file" "$url" 2>/dev/null; then
+            echo "  ✓ Downloaded via GITHUB_PROXY: $(basename "$output_file")"
+            if command -v sha256sum &> /dev/null; then
+                sha256sum "$output_file" > "${output_file}.sha256"
+            fi
+            return 0
+        fi
+        echo "  ⚠️  GITHUB_PROXY failed, trying direct download..."
+    fi
+    
+    # 方式3: 直接下载
+    echo "     [方式3] Direct: ${url}"
+    if curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "$output_file" "$url"; then
+        echo "  ✓ Downloaded directly: $(basename "$output_file")"
         if command -v sha256sum &> /dev/null; then
             sha256sum "$output_file" > "${output_file}.sha256"
         fi
         return 0
     fi
     
-    echo "  ❌ Failed to download: $(basename "$output_file")"
+    echo "  ❌ All download methods failed: $(basename "$output_file")"
     rm -f "$output_file"
     return 1
 }
@@ -262,7 +271,8 @@ Components:
   all            - Download all components
 
 Environment Variables:
-  GITHUB_MIRROR  - GitHub proxy URL (default: https://gh-proxy.com/)
+  GITHUB_MIRROR  - GitHub mirror URL (default: https://gh-proxy.com/)
+  GITHUB_PROXY   - HTTP proxy for GitHub access (e.g., http://proxy:8080)
   OUTPUT_DIR     - Override output directory
 
 Examples:
@@ -287,6 +297,7 @@ echo "================================================================"
 echo "  GitHub Release Downloader for AppHub"
 echo "================================================================"
 echo "GitHub Mirror: ${GITHUB_MIRROR:-<disabled>}"
+echo "GitHub Proxy:  ${GITHUB_PROXY:-<disabled>}"
 echo ""
 
 case "$COMPONENT" in

@@ -73,6 +73,21 @@ export default {
     seconds: 'seconds',
     enabled: 'Enabled',
     disabled: 'Disabled',
+    // Secondary Authentication
+    secondaryAuth: 'Secondary Authentication',
+    secondaryPassword: 'Secondary Password',
+    pleaseInputSecondaryPassword: 'Please enter secondary password',
+    inputSecondaryPassword: 'Please enter your secondary password to verify identity',
+    password: 'Password',
+    pleaseInputPassword: 'Please enter password',
+    inputPassword: 'Please enter your account password',
+    // 2FA Verification Code
+    twoFactorAuth: '2FA Verification',
+    twoFACode: '2FA Code',
+    pleaseInputTwoFACode: 'Please enter 2FA code',
+    inputTwoFACode: 'Please enter 6-digit code',
+    twoFACodeLength: 'Code must be 6 digits',
+    twoFACodeFormat: 'Code must be 6 digits',
   },
 
   // Theme
@@ -751,6 +766,10 @@ export default {
     months: 'Months',
     years: 'Years',
     cleanupIntervalCalculated: '= {hours} hours',
+
+    // 2FA Authentication
+    requireAuthTip: 'When enabled, editing or deleting dangerous command rules requires 2FA verification',
+    twoFARequired: 'This operation requires 2FA verification. Please enter your authenticator code. If 2FA is not enabled, please enable it in "Security Settings" first.',
   },
 
   // Search Related
@@ -2523,6 +2542,7 @@ export default {
     disable2FA: 'Disable 2FA',
     disable2FASuccess: '2FA has been disabled',
     confirmDisable2FA: 'Confirm disable 2FA?',
+    pleaseEnable2FA: 'This operation requires 2FA (two-factor authentication). Please enable 2FA in "Security Settings" first.',
     enterCode: 'Please enter verification code',
     invalidCode: 'Invalid verification code',
     scanQRCode: 'Scan QR code with authenticator',
