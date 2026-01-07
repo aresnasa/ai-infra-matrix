@@ -3105,6 +3105,7 @@ log_failure() {
 # 用法: docker_with_retry <operation> <image> [max_retries] [retry_delay] [skip_exists_check]
 # operation: pull, push, tag
 # skip_exists_check: 对于 push 操作设为 true
+# 对于 pull 操作，会自动添加 --platform 参数确保拉取正确架构的镜像
 docker_with_retry() {
     local operation="$1"
     local image="$2"
@@ -3122,11 +3123,23 @@ docker_with_retry() {
         *)    op_icon="⚙"; op_verb="Processing"; op_past="Processed" ;;
     esac
     
-    # 对于 pull 操作，检查镜像是否已存在
+    # 对于 pull 操作，检查镜像是否已存在且架构匹配
     if [[ "$operation" == "pull" ]] && [[ "$skip_exists_check" != "true" ]]; then
         if docker image inspect "$image" >/dev/null 2>&1; then
-            log_info "  ✓ Image exists: $image"
-            return 0
+            # 检查已存在镜像的架构是否与主机匹配
+            local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
+            local expected_arch=""
+            case "$DOCKER_HOST_PLATFORM" in
+                linux/amd64) expected_arch="amd64" ;;
+                linux/arm64) expected_arch="arm64" ;;
+                linux/arm/v7) expected_arch="arm" ;;
+            esac
+            if [[ -n "$expected_arch" ]] && [[ "$existing_arch" != "$expected_arch" ]]; then
+                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch), re-pulling..."
+            else
+                log_info "  ✓ Image exists: $image (arch: $existing_arch)"
+                return 0
+            fi
         fi
     fi
     
@@ -3141,13 +3154,24 @@ docker_with_retry() {
         fi
         
         # 执行 Docker 命令
+        # 对于 pull 操作，添加 --platform 参数确保拉取正确架构
         local output
-        if output=$(docker "$operation" "$image" 2>&1); then
-            log_info "  ✓ $op_past: $image"
-            return 0
+        if [[ "$operation" == "pull" ]] && [[ -n "$DOCKER_HOST_PLATFORM" ]]; then
+            if output=$(docker pull --platform "$DOCKER_HOST_PLATFORM" "$image" 2>&1); then
+                log_info "  ✓ $op_past: $image (platform: $DOCKER_HOST_PLATFORM)"
+                return 0
+            else
+                last_error="$output"
+                log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+            fi
         else
-            last_error="$output"
-            log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+            if output=$(docker "$operation" "$image" 2>&1); then
+                log_info "  ✓ $op_past: $image"
+                return 0
+            else
+                last_error="$output"
+                log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+            fi
         fi
     done
     
