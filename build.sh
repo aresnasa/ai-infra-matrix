@@ -1167,13 +1167,18 @@ check_ip_change() {
     fi
 }
 
-# 初始化环境
-init_env_file
+# ==============================================================================
+# 环境初始化 (跳过 --help 模式)
+# ==============================================================================
+if [[ "$_SHOW_HELP_ONLY" != "true" ]]; then
+    # 初始化环境
+    init_env_file
 
-# Load .env variables
-set -a
-source "$ENV_FILE"
-set +a
+    # Load .env variables
+    set -a
+    source "$ENV_FILE"
+    set +a
+fi
 
 # Detect host platform for multi-arch image pulls
 # Returns: linux/amd64 or linux/arm64
@@ -1201,6 +1206,7 @@ DOCKER_HOST_PLATFORM="${DOCKER_HOST_PLATFORM:-$(_detect_docker_platform)}"
 
 # Initialize COMMON_IMAGES array after loading .env
 # This ensures version variables are available
+# Note: These use default values if .env not loaded (help mode)
 COMMON_IMAGES=(
     "postgres:${POSTGRES_VERSION:-15-alpine}"
     "mysql:${MYSQL_VERSION:-8.0}"
@@ -1243,16 +1249,18 @@ SAFELINE_IMAGES=(
     "${SAFELINE_IMAGE_PREFIX}/safeline-chaos${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
 )
 
-# Ensure SSH Keys
+# Ensure SSH Keys (skip in help mode)
 SSH_KEY_DIR="$SCRIPT_DIR/ssh-key"
-if [ ! -f "$SSH_KEY_DIR/id_rsa" ]; then
+if [[ "$_SHOW_HELP_ONLY" != "true" ]] && [ ! -f "$SSH_KEY_DIR/id_rsa" ]; then
     log_info "Generating SSH keys..."
     mkdir -p "$SSH_KEY_DIR"
     ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_DIR/id_rsa" -N "" -C "ai-infra-system@shared"
 fi
 
-# Ensure Third Party Directory
-mkdir -p "$SCRIPT_DIR/third_party"
+# Ensure Third Party Directory (skip in help mode)
+if [[ "$_SHOW_HELP_ONLY" != "true" ]]; then
+    mkdir -p "$SCRIPT_DIR/third_party"
+fi
 
 # ==============================================================================
 # 2. Helper Functions
