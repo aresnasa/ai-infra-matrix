@@ -11,6 +11,20 @@ ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 SRC_DIR="$SCRIPT_DIR/src"
 
 # ==============================================================================
+# Early Help Detection (避免初始化逻辑)
+# --help/-h/help 命令应仅打印帮助，不触发 .env 生成或其他初始化
+# ==============================================================================
+_SHOW_HELP_ONLY=false
+for _arg in "$@"; do
+    case "$_arg" in
+        --help|-h|help)
+            _SHOW_HELP_ONLY=true
+            break
+            ;;
+    esac
+done
+
+# ==============================================================================
 # Build Cache Configuration
 # ==============================================================================
 BUILD_CACHE_DIR="$SCRIPT_DIR/.build-cache"
