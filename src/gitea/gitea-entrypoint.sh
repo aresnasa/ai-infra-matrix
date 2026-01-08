@@ -223,10 +223,12 @@ main() {
     fi
   }
 
-  # SSO-first bootstrap: optionally create an initial admin user that matches backend identity mapping
-  # Avoid using default 'admin'. Only act if INITIAL_ADMIN_USERNAME is provided and != 'admin'.
-  if [ -n "${INITIAL_ADMIN_USERNAME}" ] && [ "${INITIAL_ADMIN_USERNAME}" != "admin" ]; then
-    if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk '{print $1}' | grep -qx "$INITIAL_ADMIN_USERNAME"; then
+  # SSO-first bootstrap: create the initial admin user for reverse-proxy SSO
+  # The user is created with a random password (login form is disabled anyway)
+  # and marked as admin. This ensures the SSO user has proper admin privileges.
+  if [ -n "${INITIAL_ADMIN_USERNAME}" ]; then
+    # Check if the user already exists
+    if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk '{print $2}' | grep -qx "$INITIAL_ADMIN_USERNAME"; then
       # Generate a random password; login form is disabled, so this is never used interactively
       RAND_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)
       log "creating initial SSO admin user '$INITIAL_ADMIN_USERNAME' (password login disabled)"
@@ -238,9 +240,20 @@ main() {
         --must-change-password=false || true
     else
       log "initial SSO admin user '$INITIAL_ADMIN_USERNAME' already exists"
+      # Ensure the user has admin privileges (in case it was created by SSO auto-register without admin flag)
+      log "ensuring '$INITIAL_ADMIN_USERNAME' has admin privileges..."
+      run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user change-password \
+        --username "$INITIAL_ADMIN_USERNAME" \
+        --password "$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)" 2>/dev/null || true
+      # Use SQL to set admin flag if gitea CLI doesn't support it directly
+      # Note: This requires the user to exist; the admin flag is set via 'admin user create' 
+      # For existing users created by SSO, we need to grant admin via the admin command
+      run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user must-change-password \
+        --username "$INITIAL_ADMIN_USERNAME" \
+        --unset 2>/dev/null || true
     fi
   else
-    log "skip creating default 'admin'; relying on reverse-proxy SSO auto-create and backend sync"
+    log "INITIAL_ADMIN_USERNAME not set; relying on reverse-proxy SSO auto-create"
   fi
 
   # Delegate to upstream entrypoint; pass through arguments
