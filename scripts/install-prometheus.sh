@@ -6,9 +6,9 @@
 # 生成时间: 由 build.sh sync 命令渲染
 #
 # 变量说明:
-#   192.168.249.202 - AppHub 外部访问地址
-#   28080 - AppHub 端口 (默认 28080)
-#   v3.4.1 - Prometheus 版本
+#    - AppHub 外部访问地址
+#    - AppHub 端口 (默认 28080)
+#    - Prometheus 版本
 # =============================================================================
 
 set -eo pipefail
@@ -16,8 +16,8 @@ set -eo pipefail
 # ===========================================
 # 环境配置 (已由模板渲染替换)
 # ===========================================
-PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-v3.4.1}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.249.202:28080}"
+PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-}"
+APPHUB_URL="${APPHUB_URL:-http://:}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/prometheus}"
 DATA_DIR="${DATA_DIR:-/var/lib/prometheus}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/prometheus}"
@@ -47,8 +47,8 @@ usage() {
 Prometheus 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
-  Prometheus 版本: v3.4.1
-  AppHub URL: http://192.168.249.202:28080
+  Prometheus 版本: 
+  AppHub URL: http://:
 
 用法: $0 [OPTIONS]
 
@@ -75,7 +75,7 @@ Prometheus 安装脚本 (预配置模板)
     $0 --port 9091 --retention 15d
 
     # 使用 curl 管道安装
-    curl -fsSL http://192.168.249.202:28080/scripts/install-prometheus.sh | bash
+    curl -fsSL http://:/scripts/install-prometheus.sh | bash
 EOF
     exit 0
 }
@@ -160,7 +160,7 @@ detect_init_system() {
 check_apphub() {
     local url="$1"
     
-    if [[ -z "$url" ]] || [[ "$url" == *"192.168.249.202"* ]]; then
+    if [[ -z "$url" ]] || [[ "$url" == *""* ]]; then
         return 1
     fi
     
@@ -494,7 +494,7 @@ main() {
     parse_args "$@"
     
     # 验证版本
-    if [[ -z "$PROMETHEUS_VERSION" ]] || [[ "$PROMETHEUS_VERSION" == "v3.4.1" ]]; then
+    if [[ -z "$PROMETHEUS_VERSION" ]] || [[ "$PROMETHEUS_VERSION" == "" ]]; then
         log_error "Prometheus 版本未配置"
         log_error "请确保模板已正确渲染，或使用 --version 参数指定"
         exit 1

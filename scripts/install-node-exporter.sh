@@ -6,11 +6,11 @@
 # 生成时间: 由 build.sh sync 命令渲染
 #
 # 变量说明:
-#   192.168.249.202 - AppHub 外部访问地址
-#   28080 - AppHub 端口 (默认 28080)
-#   v1.8.2 - Node Exporter 版本
-#   nightingale - Nightingale 服务地址
-#   17000 - Nightingale 端口
+#    - AppHub 外部访问地址
+#    - AppHub 端口 (默认 28080)
+#    - Node Exporter 版本
+#    - Nightingale 服务地址
+#    - Nightingale 端口
 # =============================================================================
 
 set -eo pipefail
@@ -18,10 +18,10 @@ set -eo pipefail
 # ===========================================
 # 环境配置 (已由模板渲染替换)
 # ===========================================
-NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-v1.8.2}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.249.202:28080}"
-NIGHTINGALE_HOST="${NIGHTINGALE_HOST:-192.168.249.202}"
-NIGHTINGALE_PORT="${NIGHTINGALE_PORT:-17000}"
+NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-}"
+APPHUB_URL="${APPHUB_URL:-http://:}"
+NIGHTINGALE_HOST="${NIGHTINGALE_HOST:-}"
+NIGHTINGALE_PORT="${NIGHTINGALE_PORT:-}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SERVICE_USER="${SERVICE_USER:-node_exporter}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
@@ -47,9 +47,9 @@ usage() {
 Node Exporter 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
-  Node Exporter 版本: v1.8.2
-  AppHub URL: http://192.168.249.202:28080
-  Nightingale: 192.168.249.202:17000
+  Node Exporter 版本: 
+  AppHub URL: http://:
+  Nightingale: :
 
 用法: $0 [OPTIONS]
 
@@ -73,7 +73,7 @@ Node Exporter 安装脚本 (预配置模板)
     $0 --port 9101
 
     # 使用 curl 管道安装
-    curl -fsSL http://192.168.249.202:28080/packages/install-node-exporter.sh | bash
+    curl -fsSL http://:/packages/install-node-exporter.sh | bash
 EOF
     exit 0
 }
@@ -149,7 +149,7 @@ detect_init_system() {
 check_apphub() {
     local url="$1"
     
-    if [[ -z "$url" ]] || [[ "$url" == *"192.168.249.202"* ]]; then
+    if [[ -z "$url" ]] || [[ "$url" == *""* ]]; then
         return 1
     fi
     
@@ -356,7 +356,7 @@ main() {
     parse_args "$@"
     
     # 验证版本
-    if [[ -z "$NODE_EXPORTER_VERSION" ]] || [[ "$NODE_EXPORTER_VERSION" == "v1.8.2" ]]; then
+    if [[ -z "$NODE_EXPORTER_VERSION" ]] || [[ "$NODE_EXPORTER_VERSION" == "" ]]; then
         log_error "Node Exporter 版本未配置"
         log_error "请确保模板已正确渲染，或使用 --version 参数指定"
         exit 1

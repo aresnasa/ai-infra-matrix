@@ -4,8 +4,8 @@
       "name": "admin",
       "credentials": [
         {
-          "accessKey": "seaweedfs_admin",
-          "secretKey": "seaweedfs_secret_key_change_me"
+          "accessKey": "",
+          "secretKey": ""
         }
       ],
       "actions": [
@@ -20,8 +20,8 @@
       "name": "app",
       "credentials": [
         {
-          "accessKey": "seaweedfs_app",
-          "secretKey": "seaweedfs_app_secret_change_me"
+          "accessKey": "",
+          "secretKey": ""
         }
       ],
       "actions": [
@@ -35,8 +35,8 @@
       "name": "readonly",
       "credentials": [
         {
-          "accessKey": "seaweedfs_readonly",
-          "secretKey": "seaweedfs_readonly_secret_change_me"
+          "accessKey": "",
+          "secretKey": ""
         }
       ],
       "actions": [
