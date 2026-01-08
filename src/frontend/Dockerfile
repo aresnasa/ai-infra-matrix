@@ -1,13 +1,13 @@
 # 全局 ARG 声明（用于多个构建阶段）
-ARG NODE_IMAGE_VERSION=22-bookworm
-ARG UBUNTU_VERSION=22.04
+ARG NODE_IMAGE_VERSION=
+ARG UBUNTU_VERSION=
 
 # Stage 1: 构建阶段 - 使用 Node.js Debian 镜像
 FROM node:${NODE_IMAGE_VERSION} AS build
 
 # Build arguments for versions
-ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG NPM_REGISTRY=
+ARG APT_MIRROR=
 ENV DEBIAN_FRONTEND=noninteractive
 
 # 配置 APT 镜像源（Debian bookworm）- 支持自定义镜像源
@@ -75,7 +75,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 
 # Version metadata
 ARG VERSION="dev"
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=
 ENV APP_VERSION=${VERSION}
 ENV TZ=Asia/Shanghai
 ENV DEBIAN_FRONTEND=noninteractive

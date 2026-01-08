@@ -3,10 +3,10 @@ ARG UBUNTU_VERSION=22.04
 FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
-ARG PIP_VERSION=24.2
-ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG PIP_VERSION=
+ARG PYPI_INDEX_URL=
+ARG NPM_REGISTRY=
+ARG APT_MIRROR=
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
@@ -95,10 +95,10 @@ RUN set -eux; \
 # 使用预下载的二进制包，避免网络依赖
 # Ubuntu 22.04 默认的 nodejs 12.x 太旧，会导致 ESM 加载器错误
 # NODE_JS_VERSION 通过模板渲染注入
-COPY third_party/nodejs/node-v22.11.0-linux-x64.tar.xz /tmp/
-COPY third_party/nodejs/node-v22.11.0-linux-arm64.tar.xz /tmp/
+COPY third_party/nodejs/node-v-linux-x64.tar.xz /tmp/
+COPY third_party/nodejs/node-v-linux-arm64.tar.xz /tmp/
 
-ARG NODE_JS_VERSION=22.11.0
+ARG NODE_JS_VERSION=
 RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     echo "Installing Node.js ${NODE_JS_VERSION} for ${ARCH}..."; \
