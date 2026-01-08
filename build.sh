@@ -183,6 +183,147 @@ detect_external_host() {
     echo "${detected_ip:-localhost}"
 }
 
+# 检测是否为私有 IP 地址
+# 返回: 0 如果是私有 IP，1 如果是公网 IP 或域名
+is_private_ip() {
+    local addr="$1"
+    
+    # 空值不是私有 IP
+    [[ -z "$addr" ]] && return 1
+    
+    # 检查是否为有效 IP 格式
+    if ! [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 1  # 不是 IP 格式（可能是域名）
+    fi
+    
+    # 检查私有 IP 范围
+    # 10.0.0.0/8
+    [[ "$addr" =~ ^10\. ]] && return 0
+    # 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
+    [[ "$addr" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] && return 0
+    # 192.168.0.0/16
+    [[ "$addr" =~ ^192\.168\. ]] && return 0
+    # 127.0.0.0/8 (localhost)
+    [[ "$addr" =~ ^127\. ]] && return 0
+    # 169.254.0.0/16 (link-local)
+    [[ "$addr" =~ ^169\.254\. ]] && return 0
+    
+    return 1
+}
+
+# 检测是否为有效域名
+# 返回: 0 如果是域名，1 如果是 IP 或其他
+is_valid_domain() {
+    local addr="$1"
+    
+    [[ -z "$addr" ]] && return 1
+    
+    # 如果是 IP 格式，不是域名
+    [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 1
+    
+    # 如果是 localhost，不是有效外部域名
+    [[ "$addr" == "localhost" ]] && return 1
+    
+    # 基本域名格式检查 (至少包含一个点)
+    [[ "$addr" =~ \. ]] && return 0
+    
+    return 1
+}
+
+# 检测 SSL 证书域名是否与 EXTERNAL_HOST 匹配
+# 返回: 0 如果匹配，1 如果不匹配或证书不存在
+check_ssl_cert_domain_match() {
+    local expected_domain="$1"
+    local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
+    
+    # 证书不存在
+    [[ ! -f "$cert_file" ]] && return 1
+    
+    # 获取证书的 CN 和 SAN
+    local cert_cn=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,]*\).*/\1/p')
+    local cert_san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://g' | tr '\n' ' ')
+    
+    # 检查 CN 是否匹配
+    [[ "$cert_cn" == "$expected_domain" ]] && return 0
+    [[ "$cert_cn" == "www.$expected_domain" ]] && return 0
+    [[ "$cert_cn" == "${expected_domain#www.}" ]] && return 0
+    
+    # 检查 SAN 是否包含该域名
+    [[ "$cert_san" == *"$expected_domain"* ]] && return 0
+    [[ "$cert_san" == *"www.$expected_domain"* ]] && return 0
+    
+    return 1
+}
+
+# 显示 SSL/域名配置建议
+show_ssl_domain_recommendations() {
+    local external_host="${1:-$EXTERNAL_HOST}"
+    local ssl_domain="${2:-$SSL_DOMAIN}"
+    
+    echo ""
+    log_info "════════════════════════════════════════════════════════════════"
+    log_info "🔒 SSL/域名配置检测"
+    log_info "════════════════════════════════════════════════════════════════"
+    
+    # 检查 EXTERNAL_HOST 类型
+    if is_valid_domain "$external_host"; then
+        log_info "✅ EXTERNAL_HOST='$external_host' 是有效域名"
+        
+        # 检查证书匹配
+        if check_ssl_cert_domain_match "$external_host"; then
+            log_info "✅ SSL 证书域名与 EXTERNAL_HOST 匹配"
+        else
+            log_warn "⚠️  SSL 证书域名可能与 EXTERNAL_HOST 不匹配"
+            log_info ""
+            log_info "建议操作："
+            log_info "  1. 重新生成 Let's Encrypt 证书（包含所有域名）:"
+            log_info "     certbot certonly --dns-cloudflare \\"
+            log_info "       --dns-cloudflare-credentials ~/.secrets/cloudflare.ini \\"
+            log_info "       -d $external_host \\"
+            log_info "       -d www.$external_host \\"
+            log_info "       --cert-name $external_host --force-renewal"
+            log_info ""
+            log_info "  2. 或使用 build.sh 生成自签名证书:"
+            log_info "     ./build.sh ssl-setup $external_host --force"
+        fi
+    elif is_private_ip "$external_host"; then
+        log_warn "⚠️  EXTERNAL_HOST='$external_host' 是私有 IP 地址"
+        log_info ""
+        log_info "在公有云环境中，建议使用域名而非私有 IP:"
+        log_info "  1. 配置域名指向服务器公网 IP"
+        log_info "  2. 修改 .env 中的 EXTERNAL_HOST 为域名"
+        log_info "  3. 使用 Let's Encrypt 申请正式证书"
+        log_info ""
+        log_info "示例配置:"
+        log_info "  EXTERNAL_HOST=your-domain.com"
+        log_info "  SSL_DOMAIN=your-domain.com"
+        log_info "  LETSENCRYPT_EMAIL=admin@your-domain.com"
+    else
+        log_info "ℹ️  EXTERNAL_HOST='$external_host'"
+        if [[ "$external_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            log_info "   这是公网 IP，可使用自签名证书或 IP-based 证书"
+        fi
+    fi
+    
+    # 显示当前证书信息
+    local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
+    if [[ -f "$cert_file" ]]; then
+        echo ""
+        log_info "📜 当前 SSL 证书信息:"
+        local cert_cn=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,]*\).*/\1/p')
+        local cert_expire=$(openssl x509 -in "$cert_file" -noout -enddate 2>/dev/null | cut -d= -f2)
+        local cert_san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://g' | tr '\n' ', ' | sed 's/,$//')
+        log_info "   证书主体 (CN): $cert_cn"
+        [[ -n "$cert_san" ]] && log_info "   备用名称 (SAN): $cert_san"
+        log_info "   过期时间: $cert_expire"
+    else
+        log_warn "⚠️  未找到 SSL 证书文件"
+        log_info "   运行 ./build.sh ssl-setup 生成证书"
+    fi
+    
+    echo ""
+}
+
 # 检测 cgroup 版本 (v1 或 v2)
 # cgroupv2 使用统一的层次结构，通常挂载在 /sys/fs/cgroup
 # cgroupv1 使用多层次结构，有多个子系统目录
