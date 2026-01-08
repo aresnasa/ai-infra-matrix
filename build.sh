@@ -2687,6 +2687,29 @@ render_all_templates() {
     log_info "  CPU Architecture: $arch"
     log_info "  SAFELINE_ARCH_SUFFIX=${SAFELINE_ARCH_SUFFIX:-<empty>}"
     
+    # Step 1.7: Validate and auto-fix EXTERNAL_HOST for port binding
+    log_info ""
+    log_info "Step 1.7: Validating network configuration..."
+    
+    # Check if EXTERNAL_HOST is a Docker internal IP (172.x.x.x, 10.x.x.x in Docker range)
+    if [[ "$EXTERNAL_HOST" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] || \
+       [[ "$EXTERNAL_HOST" =~ ^10\.0\. ]]; then
+        log_warn "  ⚠️  EXTERNAL_HOST='$EXTERNAL_HOST' appears to be a Docker internal IP!"
+        log_warn "  ⚠️  This will cause services to be inaccessible from outside Docker network."
+        log_warn "  ⚠️  Consider setting EXTERNAL_HOST to your server's public/private IP or '0.0.0.0'"
+        
+        # Auto-set BIND_HOST to 0.0.0.0 for port binding if not explicitly set
+        if [[ -z "$BIND_HOST" ]]; then
+            export BIND_HOST="0.0.0.0"
+            log_info "  ℹ️  Auto-setting BIND_HOST=0.0.0.0 for port binding"
+        fi
+    fi
+    
+    # Set BIND_HOST default to 0.0.0.0 if not set (for universal access)
+    export BIND_HOST="${BIND_HOST:-0.0.0.0}"
+    log_info "  EXTERNAL_HOST=${EXTERNAL_HOST:-<empty>}"
+    log_info "  BIND_HOST=${BIND_HOST}"
+    
     log_info ""
     log_info "Step 2: Rendering template files..."
     log_info "Source: .env / .env.example"
