@@ -17,6 +17,41 @@ echo "Starting Nightingale entrypoint..."
 echo "Source config directory: ${N9E_CONFIGS_SRC}"
 echo "Runtime config directory: ${N9E_CONFIGS}"
 
+# 修复数据库中的 JSON 字段（防止 "unexpected end of JSON input" 错误）
+fix_json_fields() {
+    local pg_host="${POSTGRES_HOST:-postgres}"
+    local pg_port="${POSTGRES_PORT:-5432}"
+    local pg_user="${POSTGRES_USER:-postgres}"
+    local pg_pass="${POSTGRES_PASSWORD:-}"
+    local pg_db="${N9E_DB_NAME:-nightingale}"
+    
+    echo "Checking and fixing JSON fields in database..."
+    
+    # 等待 PostgreSQL 可用
+    local max_retries=30
+    local retry=0
+    while [ $retry -lt $max_retries ]; do
+        if PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" -c '\q' 2>/dev/null; then
+            break
+        fi
+        retry=$((retry + 1))
+        echo "Waiting for PostgreSQL... ($retry/$max_retries)"
+        sleep 2
+    done
+    
+    if [ $retry -eq $max_retries ]; then
+        echo "WARNING: PostgreSQL not available, skipping JSON field fix"
+        return 0
+    fi
+    
+    # 修复 users 表的 contacts 字段（将 NULL 或空字符串转换为空 JSON 对象）
+    PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" <<-EOSQL 2>/dev/null || true
+        UPDATE users SET contacts = '{}' WHERE contacts IS NULL OR contacts = '';
+EOSQL
+    
+    echo "JSON fields check complete"
+}
+
 # 复制配置文件到可写目录并替换环境变量
 prepare_config() {
     # 创建运行时配置目录
