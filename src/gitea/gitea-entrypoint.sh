@@ -243,18 +243,25 @@ main() {
       # Check if the user is already an admin (IsAdmin is $5)
       if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk -v user="$INITIAL_ADMIN_USERNAME" '$2==user && $5=="true" {found=1} END{exit !found}'; then
         log "WARNING: user '$INITIAL_ADMIN_USERNAME' exists but is not an admin!"
-        log "To grant admin privileges, run inside the gitea container:"
-        log "  gitea admin user change-password --username $INITIAL_ADMIN_USERNAME --password <newpass>"
-        log "  Then manually set is_admin=true in the database or use Gitea admin UI"
-        log "Attempting to promote user via database..."
-        # Try to promote via SQL (works for PostgreSQL)
-        if command -v psql >/dev/null 2>&1 || [ -n "$GITEA_DB_HOST" ]; then
-          # Use gitea's database directly
-          PGPASSWORD="${GITEA_DB_PASSWD}" psql -h "${GITEA_DB_HOST%%:*}" -p "${GITEA_DB_HOST##*:}" \
-            -U "${GITEA_DB_USER}" -d "${GITEA_DB_NAME}" \
-            -c "UPDATE public.user SET is_admin=true WHERE lower_name=lower('${INITIAL_ADMIN_USERNAME}');" 2>/dev/null && \
-            log "Successfully promoted '$INITIAL_ADMIN_USERNAME' to admin via database" || \
-            log "WARNING: Could not promote user via database, please do it manually"
+        log "Attempting to delete and recreate user with admin privileges..."
+        # Delete the existing non-admin user and recreate with --admin flag
+        if run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user delete --username "$INITIAL_ADMIN_USERNAME" 2>/dev/null; then
+          log "Deleted non-admin user '$INITIAL_ADMIN_USERNAME'"
+          RAND_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)
+          if run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user create \
+            --admin \
+            --username "$INITIAL_ADMIN_USERNAME" \
+            --password "${RAND_PASS:-ChangeMe123}" \
+            --email "${INITIAL_ADMIN_EMAIL}" \
+            --must-change-password=false 2>/dev/null; then
+            log "Successfully recreated '$INITIAL_ADMIN_USERNAME' with admin privileges"
+          else
+            log "WARNING: Failed to recreate admin user. Please create manually."
+          fi
+        else
+          log "WARNING: Could not delete user (may have repos/data). Please grant admin manually:"
+          log "  1. Access Gitea directly at http://<host>:${GITEA_EXTERNAL_PORT:-3000}/"
+          log "  2. Or run SQL: UPDATE public.user SET is_admin=true WHERE lower_name='${INITIAL_ADMIN_USERNAME}';"
         fi
       else
         log "user '$INITIAL_ADMIN_USERNAME' is already an admin"
