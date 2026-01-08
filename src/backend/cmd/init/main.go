@@ -410,7 +410,7 @@ func createDefaultAdmin() {
 	if err := db.Where("username = ? OR email = ?", "admin", "admin@example.com").First(&existingAdmin).Error; err == nil {
 		log.Println("✅ Admin user already exists, skipping creation")
 		log.Printf("   Existing admin: username=%s, email=%s, id=%d", existingAdmin.Username, existingAdmin.Email, existingAdmin.ID)
-		
+
 		// 确保管理员有超级管理员角色
 		var superAdminRole models.Role
 		if err := db.Where("name = ?", "super-admin").First(&superAdminRole).Error; err == nil {
