@@ -1,11 +1,11 @@
 # Build stage
-ARG GOLANG_IMAGE=
+ARG GOLANG_IMAGE=golang\:1\.25\-bookworm
 FROM ${GOLANG_IMAGE} AS builder
 
 # Build arguments for versions
-ARG GOLANG_VERSION=
+ARG GOLANG_VERSION=1\.25
 ARG GO_PROXY=https://goproxy.cn,direct
-ARG APT_MIRROR=
+ARG APT_MIRROR=mirrors\.aliyun\.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 
@@ -88,12 +88,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/mai
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
 
 # Final stage - Backend Service (Default)
-ARG GOLANG_IMAGE=
+ARG GOLANG_IMAGE=golang\:1\.25\-bookworm
 FROM ${GOLANG_IMAGE} AS backend
 
 # Build arguments for versions
 ARG GO_PROXY=https://goproxy.cn,direct
-ARG APT_MIRROR=
+ARG APT_MIRROR=mirrors\.aliyun\.com
 ENV GO111MODULE=on
 ENV GOPROXY=${GO_PROXY}
 ENV GOSUMDB=off
@@ -205,13 +205,13 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.description="AI Infra Matrix - Backend service"
 
 # Backend Init Stage - for database initialization
-ARG GOLANG_IMAGE=
+ARG GOLANG_IMAGE=golang\:1\.25\-bookworm
 FROM ${GOLANG_IMAGE} AS backend-init
 
 # Version metadata (overridable at build time)
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
-ARG APT_MIRROR=
+ARG APT_MIRROR=mirrors\.aliyun\.com
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Configure APT mirror (支持 x86 和 ARM64 双架构，Debian bookworm)
