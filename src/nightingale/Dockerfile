@@ -3,9 +3,9 @@
 # Supports custom VITE_PREFIX for sub-path deployment (e.g., /nightingale)
 
 # 全局 ARG 声明 - 必须在所有 FROM 之前声明才能在 FROM 中使用
-ARG GOLANG_IMAGE=golang\:1\.25\-bookworm
-ARG UBUNTU_IMAGE=ubuntu\:22\.04
-ARG NODE_IMAGE=node\:22\-bookworm
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+ARG UBUNTU_IMAGE=ubuntu:22.04
+ARG NODE_IMAGE=node:22-bookworm
 
 # ============================================================
 # Stage 0: Build Frontend with custom VITE_PREFIX
@@ -13,7 +13,7 @@ ARG NODE_IMAGE=node\:22\-bookworm
 FROM ${NODE_IMAGE} AS fe-builder
 
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG N9E_FE_VERSION=v8\.4\.1
+ARG N9E_FE_VERSION=v8.4.1
 ARG GITHUB_MIRROR=https://ghfast.top/
 ARG GITHUB_PROXY=
 # Set VITE_PREFIX to match Nightingale's BasePath configuration
@@ -88,11 +88,11 @@ RUN set -eux; \
 # ============================================================
 FROM ${GOLANG_IMAGE} AS builder
 
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG GO_PROXY=https://goproxy.cn,direct
 ARG GITHUB_MIRROR=https://ghfast.top/
 ARG INTERNAL_FILE_SERVER=http://files.example.com
-ARG N9E_FE_VERSION=v8\.4\.1
+ARG N9E_FE_VERSION=v8.4.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -142,7 +142,7 @@ RUN go build -ldflags "-w -s" -o n9e ./cmd/center/main.go
 # UBUNTU_IMAGE 已在文件顶部全局声明
 FROM ${UBUNTU_IMAGE}
 
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Configure APT mirror (支持 x86 和 ARM64 双架构)
