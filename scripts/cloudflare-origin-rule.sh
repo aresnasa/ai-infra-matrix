@@ -68,20 +68,13 @@ check_config() {
     
     if [ -z "$CF_API_TOKEN" ]; then
         print_error "CF_API_TOKEN 未设置"
-        echo "  请在 .env 文件中添加: CF_API_TOKEN=your_api_token"
+        echo "  检查文件: $CF_SECRETS_FILE"
         echo "  或设置环境变量: export CF_API_TOKEN=your_api_token"
-        echo ""
-        echo "  获取 API Token: https://dash.cloudflare.com/profile/api-tokens"
-        echo "  需要的权限: Zone.Zone Settings (Edit), Zone.DNS (Edit)"
         missing=1
     fi
     
     if [ -z "$CF_ZONE_ID" ]; then
         print_error "CF_ZONE_ID 未设置"
-        echo "  请在 .env 文件中添加: CF_ZONE_ID=your_zone_id"
-        echo "  或设置环境变量: export CF_ZONE_ID=your_zone_id"
-        echo ""
-        echo "  获取 Zone ID: Cloudflare Dashboard → 域名 → Overview → 右侧 API 区域"
         missing=1
     fi
     
@@ -89,7 +82,7 @@ check_config() {
         exit 1
     fi
     
-    print_success "配置检查通过"
+    print_success "配置加载完成 (从 $CF_SECRETS_FILE)"
     print_info "Domain: $CF_DOMAIN"
     print_info "Zone ID: ${CF_ZONE_ID:0:8}..."
 }
