@@ -2842,7 +2842,7 @@ render_all_templates() {
        [[ "$EXTERNAL_HOST" =~ ^10\.0\. ]]; then
         log_warn "  ⚠️  EXTERNAL_HOST='$EXTERNAL_HOST' appears to be a Docker internal IP!"
         log_warn "  ⚠️  This will cause services to be inaccessible from outside Docker network."
-        log_warn "  ⚠️  Consider setting EXTERNAL_HOST to your server's public/private IP or '0.0.0.0'"
+        log_warn "  ⚠️  Consider setting EXTERNAL_HOST to your server's public/private IP, domain name, or '0.0.0.0'"
         
         # Auto-set BIND_HOST to 0.0.0.0 for port binding if not explicitly set
         if [[ -z "$BIND_HOST" ]]; then
@@ -2855,6 +2855,52 @@ render_all_templates() {
     export BIND_HOST="${BIND_HOST:-0.0.0.0}"
     log_info "  EXTERNAL_HOST=${EXTERNAL_HOST:-<empty>}"
     log_info "  BIND_HOST=${BIND_HOST}"
+    
+    # Step 1.8: Check SSL/domain configuration for cloud deployments
+    log_info ""
+    log_info "Step 1.8: Checking SSL/domain configuration..."
+    
+    local external_host_type="unknown"
+    if is_valid_domain "$EXTERNAL_HOST"; then
+        external_host_type="domain"
+        log_info "  ✅ EXTERNAL_HOST='$EXTERNAL_HOST' is a valid domain name"
+        
+        # Check if SSL cert matches the domain
+        if [[ "${ENABLE_TLS:-false}" == "true" ]]; then
+            if check_ssl_cert_domain_match "$EXTERNAL_HOST"; then
+                log_info "  ✅ SSL certificate matches EXTERNAL_HOST domain"
+            else
+                log_warn "  ⚠️  SSL certificate may not match EXTERNAL_HOST domain!"
+                log_warn "  ⚠️  This can cause SSL handshake failures (Error 525) with Cloudflare/proxies"
+                log_info ""
+                log_info "  💡 Recommended actions:"
+                log_info "     1. Generate certificate with correct domain:"
+                log_info "        certbot certonly --dns-cloudflare \\"
+                log_info "          --dns-cloudflare-credentials ~/.secrets/cloudflare.ini \\"
+                log_info "          -d $EXTERNAL_HOST -d www.$EXTERNAL_HOST \\"
+                log_info "          --cert-name $EXTERNAL_HOST --force-renewal"
+                log_info "     2. Copy certs to nginx ssl dir and restart"
+            fi
+        fi
+    elif is_private_ip "$EXTERNAL_HOST"; then
+        external_host_type="private_ip"
+        log_warn "  ⚠️  EXTERNAL_HOST='$EXTERNAL_HOST' is a private IP address"
+        log_info ""
+        log_info "  💡 For public cloud deployments with domain access:"
+        log_info "     1. Configure DNS to point your domain to the server's public IP"
+        log_info "     2. Update .env:"
+        log_info "        EXTERNAL_HOST=your-domain.com"
+        log_info "        SSL_DOMAIN=your-domain.com"
+        log_info "        LETSENCRYPT_EMAIL=admin@your-domain.com"
+        log_info "     3. Generate Let's Encrypt certificate:"
+        log_info "        ./build.sh ssl-setup-le your-domain.com admin@your-domain.com"
+    elif [[ "$EXTERNAL_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        external_host_type="public_ip"
+        log_info "  ℹ️  EXTERNAL_HOST='$EXTERNAL_HOST' is a public IP address"
+        log_info "     Self-signed certificates can be used for IP-based access"
+    else
+        log_info "  ℹ️  EXTERNAL_HOST='$EXTERNAL_HOST'"
+    fi
     
     log_info ""
     log_info "Step 2: Rendering template files..."
