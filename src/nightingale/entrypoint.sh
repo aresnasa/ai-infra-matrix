@@ -118,6 +118,9 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT
 
+# 修复数据库 JSON 字段（防止启动时 JSON 解析错误）
+fix_json_fields
+
 # 准备配置文件 (复制到可写目录并替换变量)
 prepare_config
 
