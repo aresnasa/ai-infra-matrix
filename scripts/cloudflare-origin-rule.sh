@@ -13,18 +13,27 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# 从 .env 文件或环境变量获取配置
+# 配置文件路径
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+CF_SECRETS_FILE="${CF_SECRETS_FILE:-/root/.secrets/cloudflare.ini}"
 
-# 加载 .env 文件
-if [ -f "$PROJECT_ROOT/.env" ]; then
-    source "$PROJECT_ROOT/.env"
-fi
+# 从 cloudflare.ini 读取 API Token
+load_cf_token() {
+    if [ -f "$CF_SECRETS_FILE" ]; then
+        CF_API_TOKEN=$(grep -E '^dns_cloudflare_api_token\s*=' "$CF_SECRETS_FILE" | cut -d'=' -f2 | tr -d ' ')
+    fi
+}
 
-# Cloudflare 配置 (可以在 .env 中设置或作为环境变量传入)
+# 加载配置
+load_cf_token
+
+# 加载 .env 文件 (可选覆盖)
+[ -f "$PROJECT_ROOT/.env" ] && source "$PROJECT_ROOT/.env"
+
+# Cloudflare 配置
 CF_API_TOKEN="${CF_API_TOKEN:-}"
-CF_ZONE_ID="${CF_ZONE_ID:-}"
+CF_ZONE_ID="${CF_ZONE_ID:-28c1ce2ce46d158d8b948acccf9300ad}"
 CF_DOMAIN="${CF_DOMAIN:-ai-infra-matrix.com}"
 
 #===============================================================================
