@@ -1,12 +1,12 @@
 # ai-infra single-user notebook image pinned to JupyterHub 5.3.x
 # Base on jupyter/docker-stacks base-notebook for a full Lab experience
 # Includes VS Code Server support for VS Code client connections
-FROM jupyter/base-notebook:
+FROM jupyter/base-notebook:latest
 
 # Version metadata
 ARG VERSION="dev"
-ARG PYPI_INDEX_URL=
-ARG CODE_SERVER_VERSION=
+ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG CODE_SERVER_VERSION=v4\.107\.0
 ENV APP_VERSION=${VERSION}
 ENV CODE_SERVER_VERSION=${CODE_SERVER_VERSION}
 
@@ -15,7 +15,7 @@ USER root
 # ========================================
 # 配置阿里云 APT 镜像源（加速构建）
 # ========================================
-ARG APT_MIRROR=
+ARG APT_MIRROR=mirrors\.aliyun\.com
 RUN set -eux; \
     # 获取 Ubuntu 版本代号
     . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
@@ -167,3 +167,4 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.title="ai-infra-singleuser" \
     org.opencontainers.image.version="${APP_VERSION}" \
     org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook with VS Code Server Support"
+
