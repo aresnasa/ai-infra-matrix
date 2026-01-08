@@ -5806,6 +5806,10 @@ case "$COMMAND" in
         # 显示 SSL 证书信息
         show_ssl_info "${ARG2:-}"
         ;;
+    ssl-check|ssl-diagnose|ssl-domain)
+        # 检查 SSL/域名配置是否正确（云部署诊断）
+        show_ssl_domain_recommendations "${ARG2:-$EXTERNAL_HOST}" "${ARG3:-$SSL_DOMAIN}"
+        ;;
     ssl-clean)
         # 清理 SSL 证书
         clean_ssl_certificates
