@@ -7,7 +7,7 @@ FROM ubuntu:${UBUNTU_VERSION}
 
 # Version metadata (can be overridden at build time)
 ARG VERSION="dev"
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ENV APP_VERSION=${VERSION}
 ENV TZ=Asia/Shanghai
 ENV DEBIAN_FRONTEND=noninteractive

@@ -2601,16 +2601,17 @@ render_template() {
     # Copy template to output file first
     cp "$template_file" "$output_file"
     
-    # Replace each {{VARIABLE}} with its value from environment using perl for reliability
-    # Perl handles special characters better than sed across different platforms
+    # Replace each {{VARIABLE}} with its value from environment
+    # Use perl for reliability across different platforms
     for var in "${TEMPLATE_VARIABLES[@]}"; do
         local value="${!var}"
         if [[ -n "$value" ]]; then
-            # Use perl for reliable substitution (handles special chars in value)
-            perl -i -pe "s/\\{\\{${var}\\}\\}/\Q${value}\E/g" "$output_file" 2>/dev/null || {
+            # Use perl with proper escaping - escape only regex special chars in pattern, not in replacement
+            # The replacement value needs & and \ escaped for perl's s/// operator
+            local escaped_value
+            escaped_value=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e 's/\//\\\//g')
+            perl -i -pe "s/\\{\\{${var}\\}\\}/${escaped_value}/g" "$output_file" 2>/dev/null || {
                 # Fallback to sed if perl is not available
-                # Escape special characters for sed replacement
-                local escaped_value
                 escaped_value=$(printf '%s' "$value" | sed 's/[&/\]/\\&/g')
                 sed -i.bak "s|{{${var}}}|${escaped_value}|g" "$output_file" 2>/dev/null || \
                 sed -i '' "s|{{${var}}}|${escaped_value}|g" "$output_file"

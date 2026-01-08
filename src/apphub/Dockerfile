@@ -11,10 +11,10 @@
 # - 物理机环境：可通过 slurm.conf 启用 proctrack/cgroup 和 task/cgroup
 # - 参考：src/slurm-master/config/README.md
 # =============================================================================
-ARG UBUNTU_VERSION=22\.04
-ARG ALMALINUX_VERSION=9\.3\-minimal
-ARG APT_MIRROR=mirrors\.aliyun\.com
-ARG YUM_MIRROR=mirrors\.aliyun\.com
+ARG UBUNTU_VERSION=22.04
+ARG ALMALINUX_VERSION=9.3-minimal
+ARG APT_MIRROR=mirrors.aliyun.com
+ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION=0.5.16
 
 # =============================================================================
@@ -31,7 +31,7 @@ ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
 ARG BUILD_CATEGRAF=true
 ARG BUILD_SINGULARITY=false
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
 
 # Copy third_party directory for offline builds
@@ -39,17 +39,17 @@ COPY third_party/ /third_party/
 
 # SLURM version configuration - update these when upgrading
 # 更新 SLURM 版本时只需修改这两个变量
-ARG SLURM_VERSION=25\.05\.4
+ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 
 # SaltStack version configuration
-ARG SALTSTACK_VERSION=v3007\.8
+ARG SALTSTACK_VERSION=v3007.8
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0\.4\.25
+ARG CATEGRAF_VERSION=v0.4.25
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4\.3\.6
+ARG SINGULARITY_VERSION=v4.3.6
 
 # Accept optional tarball path relative to build context root
 # 默认在 src/apphub/ 目录查找 tarball（因为构建上下文是项目根目录）
@@ -191,7 +191,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION=v3007\.8
+ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -351,7 +351,7 @@ ENV TZ=Asia/Shanghai
 # Build control flags
 ARG BUILD_SLURM=true
 ARG BUILD_SALTSTACK=true
-ARG YUM_MIRROR=mirrors\.aliyun\.com
+ARG YUM_MIRROR=mirrors.aliyun.com
 ARG MUNGE_VERSION
 ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
@@ -360,12 +360,12 @@ ARG GITHUB_MIRROR=https://ghfast.top/
 COPY third_party/ /third_party/
 
 # SLURM version configuration (same as deb builder)
-ARG SLURM_VERSION=25\.05\.4
+ARG SLURM_VERSION=25.05.4
 ARG SLURM_TARBALL_NAME=slurm-${SLURM_VERSION}.tar.bz2
 ARG SLURM_TARBALL_PATH=src/apphub/${SLURM_TARBALL_NAME}
 
 # SaltStack version configuration (same as deb builder)
-ARG SALTSTACK_VERSION=v3007\.8
+ARG SALTSTACK_VERSION=v3007.8
 
 # 配置 AlmaLinux 镜像源并安装 dnf（minimal 镜像只有 microdnf）
 # 注意：也可以通过 docker build --build-arg HTTP_PROXY=... 使用代理
@@ -637,7 +637,7 @@ RUN set -eux; \
 # Download SaltStack packages from GitHub releases
 USER root
 ARG BUILD_SALTSTACK
-ARG SALTSTACK_VERSION=v3007\.8
+ARG SALTSTACK_VERSION=v3007.8
 ARG GITHUB_PROXY
 
 # Use BuildKit cache mount for package caching
@@ -872,9 +872,9 @@ ENV TZ=Asia/Shanghai
 
 # Build control flags
 ARG BUILD_SLURM=true
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 # SLURM version configuration
-ARG SLURM_VERSION=25\.05\.4
+ARG SLURM_VERSION=25.05.4
 
 # 配置APT镜像源并安装提取工具
 RUN set -eux; \
@@ -1006,7 +1006,7 @@ FROM ubuntu:${UBUNTU_VERSION} AS categraf-builder
 ARG BUILD_CATEGRAF=true
 
 # Categraf version configuration
-ARG CATEGRAF_VERSION=v0\.4\.25
+ARG CATEGRAF_VERSION=v0.4.25
 ARG CATEGRAF_REPO=https://ghfast.top/github.com/flashcatcloud/categraf.git
 
 # 配置 Go 代理（中国镜像加速）- 仅用于 fallback 源码构建
@@ -1014,7 +1014,7 @@ ARG GO_PROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GO_PROXY}
 ENV GO111MODULE=on
 ENV CGO_ENABLED=0
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
 RUN set -eux; \
@@ -1129,10 +1129,10 @@ FROM ubuntu:${UBUNTU_VERSION} AS singularity-builder
 ARG BUILD_SINGULARITY=true
 
 # Singularity version configuration
-ARG SINGULARITY_VERSION=v4\.3\.6
+ARG SINGULARITY_VERSION=v4.3.6
 ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 
 # 配置 APT 镜像源并安装依赖
 RUN set -eux; \
@@ -1235,11 +1235,11 @@ RUN set -eux; \
 FROM ubuntu:${UBUNTU_VERSION}
 
 # 版本元数据 ARG（需要在 FROM 后重新声明）
-ARG SLURM_VERSION=25\.05\.4
-ARG SALTSTACK_VERSION=v3007\.8
-ARG CATEGRAF_VERSION=v0\.4\.25
+ARG SLURM_VERSION=25.05.4
+ARG SALTSTACK_VERSION=v3007.8
+ARG CATEGRAF_VERSION=v0.4.25
 ARG APPHUB_BASE_URL=http://localhost:8081
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 # 将版本保存到环境变量（可在运行时访问）
 ENV SLURM_VERSION=${SLURM_VERSION}
 ENV SALTSTACK_VERSION=${SALTSTACK_VERSION}
@@ -1363,7 +1363,7 @@ RUN chmod +x /app/scripts/generate-install-script.sh
 # Generate SLURM installation script from template
 
 # ARG needs to be redeclared here if used in RUN after COPY
-ARG SLURM_VERSION=25\.05\.4
+ARG SLURM_VERSION=25.05.4
 ARG APPHUB_BASE_URL=http://localhost:8081
 ENV SLURM_VERSION=${SLURM_VERSION}
 ENV APPHUB_BASE_URL=${APPHUB_BASE_URL}
@@ -1383,10 +1383,10 @@ COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 # 使用 scripts/download_third_party.sh 预下载所有依赖
 # 构建前请运行: ./build.sh download-deps 或 ./scripts/download_third_party.sh
 # =============================================================================
-ARG PROMETHEUS_VERSION=v3\.4\.1
-ARG NODE_EXPORTER_VERSION=v1\.8\.2
-ARG ALERTMANAGER_VERSION=v0\.28\.1
-ARG CATEGRAF_VERSION=v0\.4\.25
+ARG PROMETHEUS_VERSION=v3.4.1
+ARG NODE_EXPORTER_VERSION=v1.8.2
+ARG ALERTMANAGER_VERSION=v0.28.1
+ARG CATEGRAF_VERSION=v0.4.25
 ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/

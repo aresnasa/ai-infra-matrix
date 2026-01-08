@@ -1,11 +1,11 @@
-ARG UBUNTU_VERSION=22\.04
+ARG UBUNTU_VERSION=22.04
 FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
-ARG SALTSTACK_VERSION=v3007\.8
-ARG PIP_VERSION=24\.2
+ARG SALTSTACK_VERSION=v3007.8
+ARG PIP_VERSION=24.2
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ARG APT_MIRROR=mirrors\.aliyun\.com
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG VERSION="dev"
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
