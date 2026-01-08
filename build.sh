@@ -2606,18 +2606,19 @@ render_template() {
     for var in "${TEMPLATE_VARIABLES[@]}"; do
         local value="${!var}"
         if [[ -n "$value" ]]; then
-            # Escape special characters for sed
+            # Escape special characters for sed (& / \ and newlines)
             local escaped_value
-            escaped_value=$(printf '%s\n' "$value" | sed -e 's/[&/\]/\\&/g')
-            content=$(echo "$content" | sed "s|{{${var}}}|${escaped_value}|g")
+            escaped_value=$(printf '%s' "$value" | sed -e 's/[&/\]/\\&/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')
+            # Use printf instead of echo to avoid escape sequence interpretation
+            content=$(printf '%s' "$content" | sed "s|{{${var}}}|${escaped_value}|g")
         else
             # If variable is empty, replace with empty string
-            content=$(echo "$content" | sed "s|{{${var}}}||g")
+            content=$(printf '%s' "$content" | sed "s|{{${var}}}||g")
         fi
     done
     
-    # Write to output file
-    echo "$content" > "$output_file"
+    # Write to output file using printf to preserve content exactly
+    printf '%s\n' "$content" > "$output_file"
     
     # Check for any remaining unreplaced placeholders
     local remaining
