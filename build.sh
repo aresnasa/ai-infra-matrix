@@ -2517,10 +2517,15 @@ TEMPLATE_VARIABLES=(
     "TZ"                  # Timezone (e.g., Asia/Shanghai)
     
     # ===========================================
+    # Network configuration (Runtime)
+    # ===========================================
+    "BIND_HOST"           # Host IP for port binding (default: 0.0.0.0, auto-detected)
+    
+    # ===========================================
     # Nginx configuration variables (Runtime)
     # Used in src/nginx/templates/*.conf.tpl
     # ===========================================
-    "EXTERNAL_HOST"       # External host IP/domain
+    "EXTERNAL_HOST"       # External host IP/domain (for URLs, not port binding)
     "EXTERNAL_SCHEME"     # http or https
     "FRONTEND_HOST"       # Frontend service host (default: frontend)
     "FRONTEND_PORT"       # Frontend service port (default: 3000)
