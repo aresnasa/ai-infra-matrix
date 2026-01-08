@@ -2598,27 +2598,33 @@ render_template() {
     
     log_info "Rendering: $template_file -> $output_file"
     
-    # Start with the template content
-    local content
-    content=$(cat "$template_file")
+    # Copy template to output file first
+    cp "$template_file" "$output_file"
     
-    # Replace each {{VARIABLE}} with its value from environment
+    # Replace each {{VARIABLE}} with its value from environment using perl for reliability
+    # Perl handles special characters better than sed across different platforms
     for var in "${TEMPLATE_VARIABLES[@]}"; do
         local value="${!var}"
         if [[ -n "$value" ]]; then
-            # Escape special characters for sed (& / \ and newlines)
-            local escaped_value
-            escaped_value=$(printf '%s' "$value" | sed -e 's/[&/\]/\\&/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g')
-            # Use printf instead of echo to avoid escape sequence interpretation
-            content=$(printf '%s' "$content" | sed "s|{{${var}}}|${escaped_value}|g")
+            # Use perl for reliable substitution (handles special chars in value)
+            perl -i -pe "s/\\{\\{${var}\\}\\}/\Q${value}\E/g" "$output_file" 2>/dev/null || {
+                # Fallback to sed if perl is not available
+                # Escape special characters for sed replacement
+                local escaped_value
+                escaped_value=$(printf '%s' "$value" | sed 's/[&/\]/\\&/g')
+                sed -i.bak "s|{{${var}}}|${escaped_value}|g" "$output_file" 2>/dev/null || \
+                sed -i '' "s|{{${var}}}|${escaped_value}|g" "$output_file"
+                rm -f "${output_file}.bak" 2>/dev/null
+            }
         else
             # If variable is empty, replace with empty string
-            content=$(printf '%s' "$content" | sed "s|{{${var}}}||g")
+            perl -i -pe "s/\\{\\{${var}\\}\\}//g" "$output_file" 2>/dev/null || {
+                sed -i.bak "s|{{${var}}}||g" "$output_file" 2>/dev/null || \
+                sed -i '' "s|{{${var}}}||g" "$output_file"
+                rm -f "${output_file}.bak" 2>/dev/null
+            }
         fi
     done
-    
-    # Write to output file using printf to preserve content exactly
-    printf '%s\n' "$content" > "$output_file"
     
     # Check for any remaining unreplaced placeholders
     local remaining
