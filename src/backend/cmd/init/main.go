@@ -405,6 +405,24 @@ func createDefaultAdmin() {
 
 	log.Println("Creating default admin user...")
 
+	// 【防御性处理】先检查管理员用户是否已存在
+	var existingAdmin models.User
+	if err := db.Where("username = ? OR email = ?", "admin", "admin@example.com").First(&existingAdmin).Error; err == nil {
+		log.Println("✅ Admin user already exists, skipping creation")
+		log.Printf("   Existing admin: username=%s, email=%s, id=%d", existingAdmin.Username, existingAdmin.Email, existingAdmin.ID)
+		
+		// 确保管理员有超级管理员角色
+		var superAdminRole models.Role
+		if err := db.Where("name = ?", "super-admin").First(&superAdminRole).Error; err == nil {
+			if err := rbacService.AssignRoleToUser(existingAdmin.ID, superAdminRole.ID); err != nil {
+				log.Printf("   Note: Role assignment skipped (may already exist): %v", err)
+			} else {
+				log.Println("   Super-admin role verified for existing admin user")
+			}
+		}
+		return
+	}
+
 	// 创建默认管理员用户
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
 	if err != nil {
@@ -419,13 +437,16 @@ func createDefaultAdmin() {
 	}
 
 	if err := db.Create(admin).Error; err != nil {
-		log.Fatal("Failed to create admin user:", err)
+		log.Printf("Warning: Failed to create admin user: %v", err)
+		log.Println("This may be expected if the user already exists")
+		return
 	}
 
 	// 为管理员分配超级管理员角色
 	var superAdminRole models.Role
 	if err := db.Where("name = ?", "super-admin").First(&superAdminRole).Error; err != nil {
-		log.Fatal("Failed to find super-admin role:", err)
+		log.Printf("Warning: Failed to find super-admin role: %v", err)
+		return
 	}
 
 	if err := rbacService.AssignRoleToUser(admin.ID, superAdminRole.ID); err != nil {
