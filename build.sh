@@ -5595,6 +5595,7 @@ print_help() {
     echo "  $0 ssl-setup --force               # Regenerate existing certificates"
     echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
     echo "  $0 ssl-info                        # Show certificate details"
+    echo "  $0 ssl-check                       # Diagnose SSL/domain config issues"
     echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
     echo ""
     echo "  # Template rendering"
