@@ -5495,6 +5495,8 @@ print_help() {
     echo "  ssl-setup-le [domain] [email]  Issue Let's Encrypt cert via certbot --standalone"
     echo "                          Uses LETSENCRYPT_EMAIL/LETSENCRYPT_STAGING if omitted"
     echo "  ssl-info [domain]   Display SSL certificate information"
+    echo "  ssl-check           Diagnose SSL/domain configuration for cloud deployments"
+    echo "                      Detects domain mismatch, private IP issues, etc."
     echo "  ssl-clean           Remove all generated SSL certificates and disable SSL"
     echo ""
     echo "Optional Components:"
