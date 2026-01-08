@@ -829,8 +829,9 @@ services:
 
   # Redis 监控界面 (可选)
   redis-insight:
-    image: redislabs/redisinsight:latest
+    image: redis/redisinsight:{{REDISINSIGHT_VERSION}}
     container_name: ai-infra-redis-insight
+    platform: linux/amd64
     environment:
       TZ: Asia/Shanghai
     expose:

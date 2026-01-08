@@ -3172,7 +3172,10 @@ docker_with_retry() {
                 linux/arm/v7) expected_arch="arm" ;;
             esac
             if [[ -n "$expected_arch" ]] && [[ "$existing_arch" != "$expected_arch" ]]; then
-                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch), re-pulling..."
+                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch)"
+                log_info "  🗑 Removing wrong-arch image before re-pulling..."
+                docker rmi "$image" >/dev/null 2>&1 || true
+                # 继续执行 pull 操作
             else
                 log_info "  ✓ Image exists: $image (arch: $existing_arch)"
                 return 0
