@@ -3,7 +3,7 @@
 # 用于 AI-Infra-Matrix 监控数据采集
 # =============================================================================
 
-ARG PROMETHEUS_VERSION=v3.4.1
+ARG PROMETHEUS_VERSION=
 
 # 使用官方 Prometheus 镜像
 FROM prom/prometheus:${PROMETHEUS_VERSION}
@@ -11,7 +11,7 @@ FROM prom/prometheus:${PROMETHEUS_VERSION}
 # 标签信息
 LABEL maintainer="AI-Infra-Matrix Team"
 LABEL description="Prometheus Server for AI-Infra-Matrix Monitoring"
-LABEL version="v3.4.1"
+LABEL version=""
 
 # 复制配置文件（从项目根目录的 build context）
 COPY src/prometheus/prometheus.yml /etc/prometheus/prometheus.yml

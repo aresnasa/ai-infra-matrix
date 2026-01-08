@@ -1,12 +1,12 @@
 # AI Infrastructure Matrix - SLURM Master Service
 # 基于Ubuntu构建SLURM控制节点
-ARG UBUNTU_VERSION=22.04
+ARG UBUNTU_VERSION=
 FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
-ARG SLURM_VERSION=25.05.4
+ARG SLURM_VERSION=
 ARG VERSION=v0.3.8
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=
 LABEL maintainer="AI Infrastructure Team"
 LABEL version="${VERSION}"
 LABEL description="AI Infrastructure Matrix SLURM Master Service"

@@ -1,9 +1,9 @@
 # Ubuntu 22.04 SSH测试容器 - 用于SaltStack和SLURM客户端安装测试
-FROM ubuntu:22.04
+FROM ubuntu:
 
 ARG VERSION="dev"
-ARG APT_MIRROR=mirrors.aliyun.com
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG APT_MIRROR=
+ARG PIP_INDEX_URL=
 ENV APP_VERSION=${VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV container=docker
