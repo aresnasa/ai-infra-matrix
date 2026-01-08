@@ -371,10 +371,6 @@ func handleDatabaseReset(cfg *config.Config) error {
 
 	log.Printf("Database '%s' created successfully", cfg.Database.DBName)
 
-	// 关闭系统数据库连接
-	sqlDB, _ := systemDB.DB()
-	sqlDB.Close()
-
 	return nil
 }
 

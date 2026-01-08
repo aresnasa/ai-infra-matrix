@@ -4639,6 +4639,14 @@ build_all() {
         FORCE_BUILD=true
         FORCE_REBUILD=true
         
+        # 【防御性检查】Force 模式下检查数据库状态
+        log_info "=== Phase -2: Database Safety Check ==="
+        if ! pre_deployment_safety_check "$force"; then
+            log_error "Safety check failed or aborted. Exiting."
+            exit 1
+        fi
+        echo
+        
         # In force mode, auto-detect and update EXTERNAL_HOST if needed
         log_info "=== Phase -1: Verifying Network Configuration ==="
         local current_host=$(grep "^EXTERNAL_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
@@ -4869,11 +4877,238 @@ update_runtime_env() {
     fi
 }
 
+# ==============================================================================
+# Database Safety Functions - 数据库安全函数
+# ==============================================================================
+
+# 检查 PostgreSQL 数据库是否包含生产数据
+# Returns: 0 if has data, 1 if empty/not exists
+check_postgres_has_data() {
+    local db_name="${1:-ai_infra}"
+    local db_host="${DB_HOST:-postgres}"
+    local db_port="${DB_PORT:-5432}"
+    local db_user="${DB_USER:-postgres}"
+    local db_password="${DB_PASSWORD:-postgres}"
+    
+    log_info "🔍 Checking PostgreSQL database for existing data..."
+    
+    # 检查 postgres 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
+        log_info "PostgreSQL container not running, no data check needed"
+        return 1
+    fi
+    
+    # 检查数据库是否存在
+    local db_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='$db_name'" 2>/dev/null || echo "0")
+    
+    if [[ "$db_exists" != "1" ]]; then
+        log_info "Database '$db_name' does not exist"
+        return 1
+    fi
+    
+    # 检查关键表中是否有数据
+    local total_records=0
+    local critical_tables=("users" "roles" "clusters" "tasks" "gpu_configs")
+    
+    for table in "${critical_tables[@]}"; do
+        local count=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+            "SELECT COUNT(*) FROM $table" 2>/dev/null || echo "0")
+        count=${count//[^0-9]/}  # 移除非数字字符
+        total_records=$((total_records + ${count:-0}))
+    done
+    
+    if [[ $total_records -gt 0 ]]; then
+        log_warn "⚠️  Found $total_records records in critical tables"
+        return 0
+    else
+        log_info "Database exists but has no critical data"
+        return 1
+    fi
+}
+
+# 备份 PostgreSQL 数据库
+backup_postgres_database() {
+    local db_name="${1:-ai_infra}"
+    local backup_dir="${2:-./backup/postgres}"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${backup_dir}/${db_name}_${timestamp}.sql"
+    
+    log_info "📦 Creating PostgreSQL backup..."
+    
+    # 确保备份目录存在
+    mkdir -p "$backup_dir"
+    
+    # 检查 postgres 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
+        log_error "PostgreSQL container not running, cannot backup"
+        return 1
+    fi
+    
+    # 执行备份
+    local db_user="${DB_USER:-postgres}"
+    if docker exec ai-infra-postgres pg_dump -U "$db_user" -d "$db_name" > "$backup_file" 2>/dev/null; then
+        # 压缩备份
+        gzip "$backup_file"
+        log_info "✅ Backup created: ${backup_file}.gz"
+        
+        # 清理旧备份（保留最近10个）
+        local backup_count=$(ls -1 "$backup_dir"/${db_name}_*.sql.gz 2>/dev/null | wc -l)
+        if [[ $backup_count -gt 10 ]]; then
+            ls -1t "$backup_dir"/${db_name}_*.sql.gz | tail -n +11 | xargs rm -f
+            log_info "🧹 Cleaned old backups, keeping 10 most recent"
+        fi
+        
+        return 0
+    else
+        log_error "Failed to create backup"
+        return 1
+    fi
+}
+
+# 恢复 PostgreSQL 数据库
+restore_postgres_database() {
+    local backup_file="$1"
+    local db_name="${2:-ai_infra}"
+    
+    if [[ ! -f "$backup_file" ]]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+    
+    log_info "🔄 Restoring PostgreSQL database from backup..."
+    
+    local db_user="${DB_USER:-postgres}"
+    
+    # 如果是压缩文件，先解压
+    if [[ "$backup_file" == *.gz ]]; then
+        gunzip -c "$backup_file" | docker exec -i ai-infra-postgres psql -U "$db_user" -d "$db_name"
+    else
+        docker exec -i ai-infra-postgres psql -U "$db_user" -d "$db_name" < "$backup_file"
+    fi
+    
+    if [[ $? -eq 0 ]]; then
+        log_info "✅ Database restored successfully"
+        return 0
+    else
+        log_error "Failed to restore database"
+        return 1
+    fi
+}
+
+# 获取数据库初始化模式
+get_db_init_mode() {
+    local mode="${DB_INIT_MODE:-safe_init}"
+    echo "$mode"
+}
+
+# 设置数据库初始化模式
+set_db_init_mode() {
+    local mode="$1"
+    export DB_INIT_MODE="$mode"
+    log_info "DB_INIT_MODE set to: $mode"
+}
+
+# 交互式确认数据库重置
+confirm_database_reset() {
+    local db_name="${1:-ai_infra}"
+    
+    echo ""
+    log_warn "═══════════════════════════════════════════════════════════════"
+    log_warn "⚠️  DATABASE RESET WARNING"
+    log_warn "═══════════════════════════════════════════════════════════════"
+    log_warn "Database '$db_name' contains production data!"
+    log_warn ""
+    log_warn "Options:"
+    log_warn "  1. BACKUP and RESET - Create backup, then reset database"
+    log_warn "  2. UPGRADE ONLY     - Keep data, only run migrations"
+    log_warn "  3. ABORT            - Cancel operation"
+    log_warn "═══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    read -p "Enter choice [1/2/3]: " choice
+    
+    case "$choice" in
+        1)
+            log_info "Selected: Backup and Reset"
+            backup_postgres_database "$db_name"
+            set_db_init_mode "force_reset"
+            return 0
+            ;;
+        2)
+            log_info "Selected: Upgrade Only"
+            set_db_init_mode "upgrade"
+            return 0
+            ;;
+        3|*)
+            log_info "Operation aborted by user"
+            return 1
+            ;;
+    esac
+}
+
+# 安全检查包装函数 - 用于 build-all 和 start-all
+pre_deployment_safety_check() {
+    local force="${1:-false}"
+    
+    # 如果设置了 SKIP_DB_CHECK，跳过检查
+    if [[ "${SKIP_DB_CHECK:-false}" == "true" ]]; then
+        log_info "Database safety check skipped (SKIP_DB_CHECK=true)"
+        return 0
+    fi
+    
+    # 检查是否有生产数据
+    if check_postgres_has_data; then
+        if [[ "$force" == "true" ]]; then
+            log_warn "⚠️  Force mode enabled with existing data!"
+            
+            # 非交互模式下，根据 DB_INIT_MODE 决定行为
+            local init_mode=$(get_db_init_mode)
+            if [[ "$init_mode" == "force_reset" ]]; then
+                log_warn "DB_INIT_MODE=force_reset, proceeding with backup and reset"
+                backup_postgres_database
+                return 0
+            elif [[ "$init_mode" == "upgrade" ]]; then
+                log_info "DB_INIT_MODE=upgrade, keeping existing data"
+                return 0
+            else
+                # 安全模式 - 交互确认
+                if [[ -t 0 ]]; then
+                    # 终端模式，交互确认
+                    if ! confirm_database_reset; then
+                        return 1
+                    fi
+                else
+                    # 非交互模式，默认安全（不重置）
+                    log_warn "Non-interactive mode with existing data, using safe mode"
+                    set_db_init_mode "safe_init"
+                    return 0
+                fi
+            fi
+        else
+            log_info "Existing data detected, using upgrade mode"
+            set_db_init_mode "upgrade"
+        fi
+    else
+        log_info "No existing production data, proceeding with initialization"
+        set_db_init_mode "safe_init"
+    fi
+    
+    return 0
+}
+
 start_all() {
     log_info "Starting all services (with HA profile for SaltStack multi-master)..."
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found!"
+        exit 1
+    fi
+    
+    # 【防御性检查】启动前检查数据库状态
+    log_info "=== Pre-deployment Safety Check ==="
+    if ! pre_deployment_safety_check "false"; then
+        log_error "Safety check failed or aborted. Exiting."
         exit 1
     fi
     
@@ -5526,6 +5761,17 @@ print_help() {
     echo "  stop-all            Stop all services"
     echo "  tag-images          Tag private registry images as local (for intranet)"
     echo ""
+    echo "Database Safety Commands:"
+    echo "  db-check            Check if PostgreSQL has production data"
+    echo "  db-backup [name]    Backup PostgreSQL database"
+    echo "  db-restore <file>   Restore PostgreSQL database from backup"
+    echo ""
+    echo "  Environment Variables for DB Init:"
+    echo "    DB_INIT_MODE=safe_init   (default) Skip reset if data exists"
+    echo "    DB_INIT_MODE=upgrade     Keep data, only run migrations"
+    echo "    DB_INIT_MODE=force_reset Backup and reset (for dev/test)"
+    echo "    SKIP_DB_CHECK=true       Skip database safety check"
+    echo ""
     echo "Pull Commands (Smart Mode):"
     echo "  prefetch            Prefetch all base images from Dockerfiles"
     echo "  pull-common         Pull common/third-party images (mysql, kafka, redis, etc.)"
@@ -5896,6 +6142,20 @@ case "$COMMAND" in
         ;;
     stop-all)
         stop_all
+        ;;
+    db-check)
+        check_postgres_has_data "${ARG2:-ai_infra}"
+        ;;
+    db-backup)
+        backup_postgres_database "${ARG2:-ai_infra}" "./backup/postgres"
+        ;;
+    db-restore)
+        if [[ -z "$ARG2" ]]; then
+            log_error "Backup file required"
+            log_info "Usage: $0 db-restore <backup_file.sql.gz> [database_name]"
+            exit 1
+        fi
+        restore_postgres_database "$ARG2" "${ARG3:-ai_infra}"
         ;;
     clean-images)
         clean_images "$ARG2" "${ARG3:-false}"
