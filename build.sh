@@ -277,19 +277,26 @@ update_env_variable() {
 
 # 同步 .env 与 .env.example
 # 功能：
-#   1. 添加 .env.example 中新增的变量
-#   2. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
+#   1. 如果 .env.prod 存在，优先复制为 .env（生产环境配置优先）
+#   2. 添加 .env.example 中新增的变量
+#   3. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
     local example_file="$ENV_EXAMPLE"
+    local prod_file="$SCRIPT_DIR/.env.prod"
     
     if [[ ! -f "$example_file" ]]; then
         log_error ".env.example not found: $example_file"
         return 1
     fi
     
-    if [[ ! -f "$env_file" ]]; then
+    # 优先使用 .env.prod（生产环境配置）
+    if [[ -f "$prod_file" ]] && [[ ! -f "$env_file" ]]; then
+        log_info "Found .env.prod, using it as .env..."
+        cp "$prod_file" "$env_file"
+        log_info "✓ Created .env from .env.prod"
+    elif [[ ! -f "$env_file" ]]; then
         log_info "Creating .env from .env.example..."
         cp "$example_file" "$env_file"
         return 0
