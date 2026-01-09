@@ -30,7 +30,10 @@ RUN set -eux; \
     fi
 
 # 安装SSH服务器和基本工具
-RUN apt-get update && apt-get install -y \
+# 清理可能损坏的 apt 缓存，解决 GPG 签名验证问题
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get clean && \
+    apt-get update && apt-get install -y \
     systemd \
     systemd-sysv \
     openssh-server \
