@@ -390,6 +390,8 @@ services:
         condition: service_healthy
       backend-init:
         condition: service_completed_successfully
+      seaweedfs-filer:
+        condition: service_healthy
     volumes:
       - ./src/backend/outputs:/app/outputs
       - ./src/backend/uploads:/app/uploads
