@@ -34,6 +34,7 @@ const { Panel } = Collapse;
 
 const AdminLDAP = () => {
   const { t } = useI18n();
+  const { token } = useToken();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
