@@ -3,12 +3,27 @@ package services
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
+)
+
+// ObjectStorageHealthChecker 对象存储健康检查器
+type ObjectStorageHealthChecker struct {
+	service  *ObjectStorageService
+	stopChan chan struct{}
+	stopped  bool
+	mu       sync.Mutex
+}
+
+var (
+	objectStorageHealthChecker *ObjectStorageHealthChecker
+	objectStorageHealthOnce    sync.Once
 )
 
 // ObjectStorageService 对象存储服务
