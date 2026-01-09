@@ -364,6 +364,10 @@ func main() {
 	services.StartNodeMetricsSync()
 	logrus.Info("NodeMetricsSync service started")
 
+	// 启动对象存储健康检查服务（定期检查 SeaweedFS 等存储服务连接状态）
+	services.StartObjectStorageHealthCheck(database.DB)
+	logrus.Info("ObjectStorageHealthCheck service started")
+
 	// 优雅关闭
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
