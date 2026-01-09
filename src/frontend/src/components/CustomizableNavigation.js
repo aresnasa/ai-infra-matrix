@@ -123,6 +123,7 @@ const DEFAULT_NAV_ITEMS = [
 
 const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) => {
   const { t } = useI18n();
+  const { token } = theme.useToken(); // 获取主题 token 用于暗黑模式适配
   const [navItems, setNavItems] = useState(DEFAULT_NAV_ITEMS);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [loading, setLoading] = useState(false);
