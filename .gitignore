@@ -116,3 +116,8 @@ src/nginx/ssl/*.key
 src/nginx/ssl/ca/
 .serena
 src/nginx/conf.d/*
+*.pem
+*.key
+**/cloudflare.ini
+**/.secrets/
+**/secrets/
