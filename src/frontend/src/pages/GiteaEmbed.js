@@ -26,6 +26,7 @@ const resolveGiteaUrl = () => {
 
 const GiteaEmbed = () => {
   const { t, locale } = useI18n();
+  const { token } = useToken();
   const iframeRef = useRef(null);
   const base = useMemo(() => resolveGiteaUrl(), []);
   
