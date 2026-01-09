@@ -1798,6 +1798,180 @@ setup_letsencrypt_certificates() {
     return 0
 }
 
+# 使用 Cloudflare DNS 验证申请 Let's Encrypt 证书 (支持通配符证书)
+# Usage: ./build.sh ssl-cloudflare <domain> [--staging] [--force]
+#        ./build.sh ssl-cloudflare ai-infra-matrix.top
+#        ./build.sh ssl-cloudflare ai-infra-matrix.top --wildcard
+setup_cloudflare_certificates() {
+    local domain="${1:-}"
+    local wildcard="${2:-false}"
+    local staging="${3:-${LETSENCRYPT_STAGING:-false}}"
+    local force="${4:-false}"
+    local credentials_file="${CLOUDFLARE_CREDENTIALS:-$HOME/.secrets/cloudflare.ini}"
+
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${SSL_DOMAIN:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        log_error "Unable to determine domain for Cloudflare DNS validation"
+        log_info "Please specify domain: ./build.sh ssl-cloudflare your-domain.com"
+        return 1
+    fi
+
+    # 检查 certbot 是否安装
+    if ! command -v certbot >/dev/null 2>&1; then
+        log_error "certbot not found. Please install certbot first."
+        log_info "  Ubuntu/Debian: apt install certbot python3-certbot-dns-cloudflare"
+        log_info "  macOS: brew install certbot"
+        return 1
+    fi
+
+    # 检查 cloudflare 插件是否安装
+    if ! certbot plugins 2>/dev/null | grep -q "dns-cloudflare"; then
+        log_error "certbot-dns-cloudflare plugin not found."
+        log_info "  Ubuntu/Debian: apt install python3-certbot-dns-cloudflare"
+        log_info "  pip: pip install certbot-dns-cloudflare"
+        return 1
+    fi
+
+    # 检查 Cloudflare 凭证文件
+    if [[ ! -f "$credentials_file" ]]; then
+        log_error "Cloudflare credentials file not found: $credentials_file"
+        log_info ""
+        log_info "Please create the credentials file:"
+        log_info "  mkdir -p ~/.secrets"
+        log_info "  cat > ~/.secrets/cloudflare.ini << 'EOF'"
+        log_info "dns_cloudflare_api_token = YOUR_CLOUDFLARE_API_TOKEN"
+        log_info "EOF"
+        log_info "  chmod 600 ~/.secrets/cloudflare.ini"
+        log_info ""
+        log_info "Or set CLOUDFLARE_CREDENTIALS environment variable to your credentials file path."
+        return 1
+    fi
+
+    # 检查凭证文件权限 (certbot 要求 600)
+    local file_perms=$(stat -f "%OLp" "$credentials_file" 2>/dev/null || stat -c "%a" "$credentials_file" 2>/dev/null)
+    if [[ "$file_perms" != "600" ]]; then
+        log_warn "Cloudflare credentials file permissions should be 600 (current: $file_perms)"
+        log_info "Fixing permissions..."
+        chmod 600 "$credentials_file"
+    fi
+
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+
+    # 检查现有证书是否有效
+    if [[ -f "$SSL_OUTPUT_DIR/server.crt" ]] && [[ "$force" != "true" ]]; then
+        if is_existing_cert_valid "$SSL_OUTPUT_DIR/server.crt"; then
+            log_info "Existing certificate is still valid. Use --force to renew."
+            return 0
+        fi
+    fi
+
+    # 创建 Let's Encrypt 目录
+    local le_root="$SSL_OUTPUT_DIR/letsencrypt"
+    local le_config="$le_root/config"
+    local le_work="$le_root/work"
+    local le_logs="$le_root/logs"
+    mkdir -p "$le_config" "$le_work" "$le_logs" "$SSL_OUTPUT_DIR"
+
+    local staging_flag=""
+    [[ "$staging" == "true" ]] && staging_flag="--staging"
+
+    # 构建域名参数
+    local -a domain_args
+    if [[ "$wildcard" == "true" ]]; then
+        # 通配符证书：包含根域名和通配符
+        domain_args+=("-d" "$domain")
+        domain_args+=("-d" "*.$domain")
+        log_info "📜 Requesting wildcard certificate for: $domain and *.$domain"
+    else
+        # 标准证书：包含根域名和 www 子域名
+        domain_args+=("-d" "$domain")
+        domain_args+=("-d" "www.$domain")
+        log_info "📜 Requesting certificate for: $domain and www.$domain"
+    fi
+
+    # 添加额外域名
+    if [[ -n "$LETSENCRYPT_EXTRA_DOMAINS" ]]; then
+        IFS=',' read -ra extra_domains <<< "$LETSENCRYPT_EXTRA_DOMAINS"
+        for extra_domain in "${extra_domains[@]}"; do
+            [[ -z "$extra_domain" ]] && continue
+            domain_args+=("-d" "$extra_domain")
+            log_info "  + Extra domain: $extra_domain"
+        done
+    fi
+
+    log_step "🔐 Requesting Let's Encrypt certificate via Cloudflare DNS..."
+    log_info "   Domain: $domain"
+    log_info "   Credentials: $credentials_file"
+    [[ "$staging" == "true" ]] && log_warn "   Using STAGING endpoint (test certificate)"
+
+    if ! certbot certonly \
+        --dns-cloudflare \
+        --dns-cloudflare-credentials "$credentials_file" \
+        --dns-cloudflare-propagation-seconds 30 \
+        --agree-tos --non-interactive \
+        -m "${LETSENCRYPT_EMAIL:-admin@$domain}" \
+        "${domain_args[@]}" \
+        --config-dir "$le_config" \
+        --work-dir "$le_work" \
+        --logs-dir "$le_logs" \
+        $staging_flag; then
+        log_error "Let's Encrypt certificate issuance failed"
+        log_info "Check logs at: $le_logs"
+        return 1
+    fi
+
+    # 查找证书目录 (可能是根域名或通配符名称)
+    local live_dir="$le_config/live/$domain"
+    if [[ ! -d "$live_dir" ]]; then
+        # 尝试查找其他可能的目录名
+        live_dir=$(find "$le_config/live" -maxdepth 1 -type d -name "${domain}*" | head -1)
+    fi
+
+    if [[ ! -f "$live_dir/fullchain.pem" ]] || [[ ! -f "$live_dir/privkey.pem" ]]; then
+        log_error "Certificate files not found in $live_dir"
+        return 1
+    fi
+
+    # 复制证书到 SSL 目录
+    cp "$live_dir/fullchain.pem" "$SSL_OUTPUT_DIR/$safe_name.crt"
+    cp "$live_dir/privkey.pem" "$SSL_OUTPUT_DIR/$safe_name.key"
+    cp "$live_dir/chain.pem" "$SSL_OUTPUT_DIR/$safe_name.chain.crt" 2>/dev/null || true
+
+    # 创建符号链接
+    ln -sf "$safe_name.crt" "$SSL_OUTPUT_DIR/server.crt"
+    ln -sf "$safe_name.key" "$SSL_OUTPUT_DIR/server.key"
+    ln -sf "$safe_name.chain.crt" "$SSL_OUTPUT_DIR/server.chain.crt" 2>/dev/null || true
+    chmod 600 "$SSL_OUTPUT_DIR/$safe_name.key" "$SSL_OUTPUT_DIR/server.key" 2>/dev/null || true
+
+    # 更新 .env 配置
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+
+    log_info ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "✅ Cloudflare DNS 验证证书申请成功!"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "   域名: $domain"
+    [[ "$wildcard" == "true" ]] && log_info "   通配符: *.$domain"
+    log_info "   证书路径: $SSL_OUTPUT_DIR"
+    log_info "   有效期: $(openssl x509 -in "$SSL_OUTPUT_DIR/server.crt" -noout -enddate 2>/dev/null | cut -d= -f2)"
+    [[ "$staging" == "true" ]] && log_warn "   ⚠️  这是测试证书，请设置 LETSENCRYPT_STAGING=false 申请正式证书"
+    log_info ""
+    log_info "📋 下一步:"
+    log_info "   1. 重新渲染配置: ./build.sh render"
+    log_info "   2. 重启 nginx: docker compose restart nginx"
+    log_info "═══════════════════════════════════════════════════════════════════"
+
+    return 0
+}
+
 # 显示 SSL 证书信息
 show_ssl_info() {
     local domain="${1:-}"
@@ -5737,6 +5911,10 @@ print_help() {
     echo "  ssl-setup --force   Regenerate existing certificates"
     echo "  ssl-setup-le [domain] [email]  Issue Let's Encrypt cert via certbot --standalone"
     echo "                          Uses LETSENCRYPT_EMAIL/LETSENCRYPT_STAGING if omitted"
+    echo "  ssl-cloudflare <domain> [--wildcard] [--staging] [--force]"
+    echo "                      Issue Let's Encrypt cert via Cloudflare DNS validation"
+    echo "                      Credentials: ~/.secrets/cloudflare.ini or CLOUDFLARE_CREDENTIALS"
+    echo "                      --wildcard: Include *.<domain> wildcard certificate"
     echo "  ssl-info [domain]   Display SSL certificate information"
     echo "  ssl-check           Diagnose SSL/domain configuration for cloud deployments"
     echo "                      Detects domain mismatch, private IP issues, etc."
@@ -5848,6 +6026,8 @@ print_help() {
     echo "  $0 ssl-setup example.com           # Generate certs for specific domain"
     echo "  $0 ssl-setup --force               # Regenerate existing certificates"
     echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
+    echo "  $0 ssl-cloudflare ai-infra-matrix.top          # Cloudflare DNS validation"
+    echo "  $0 ssl-cloudflare ai-infra-matrix.top --wildcard  # Wildcard cert (*.<domain>)"
     echo "  $0 ssl-info                        # Show certificate details"
     echo "  $0 ssl-check                       # Diagnose SSL/domain config issues"
     echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
@@ -6058,6 +6238,22 @@ case "$COMMAND" in
         ssl_email="${ARG3:-${LETSENCRYPT_EMAIL:-}}"
         ssl_staging="${ARG4:-${LETSENCRYPT_STAGING:-false}}"
         setup_letsencrypt_certificates "$ssl_domain" "$ssl_email" "$ssl_staging" "$FORCE_BUILD"
+        ;;
+    ssl-cloudflare|ssl-cf|ssl-dns)
+        # 使用 Cloudflare DNS 验证申请 Let's Encrypt 证书
+        ssl_domain="${ARG2:-}"
+        ssl_wildcard="false"
+        ssl_staging="${LETSENCRYPT_STAGING:-false}"
+        # 解析参数
+        shift 2 2>/dev/null || true
+        for arg in "$@"; do
+            case "$arg" in
+                --wildcard) ssl_wildcard="true" ;;
+                --staging) ssl_staging="true" ;;
+                --force) FORCE_BUILD="true" ;;
+            esac
+        done
+        setup_cloudflare_certificates "$ssl_domain" "$ssl_wildcard" "$ssl_staging" "$FORCE_BUILD"
         ;;
     ssl-info)
         # 显示 SSL 证书信息
