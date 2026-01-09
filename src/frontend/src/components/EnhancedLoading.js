@@ -1,5 +1,5 @@
 import React from 'react';
-import { Spin, Alert, Progress, Typography, Space, Tag } from 'antd';
+import { Spin, Alert, Progress, Typography, Space, Tag, theme } from 'antd';
 import { 
   LoadingOutlined, 
   CheckCircleOutlined, 
@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 
 const { Text } = Typography;
+const { useToken } = theme;
 
 /**
  * 增强的加载组件
