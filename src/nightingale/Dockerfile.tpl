@@ -136,18 +136,30 @@ COPY third_party/nightingale/ .
 # Copy frontend build output from fe-builder stage
 COPY --from=fe-builder /fe/pub/ ./pub/
 
-# Build
+# Build - 使用多个 Go 代理加速下载
+# goproxy.cn 是主要代理，goproxy.io 作为备用
 ENV GOPROXY=${GO_PROXY}
+ENV GOSUMDB=sum.golang.google.cn
 
 # Step 1: Embed front-end files into Go binary using statik
+# 使用多重代理策略，确保 Go 模块可以快速下载
 RUN set -eux; \
-    # Install statik tool
-    go install github.com/rakyll/statik@latest; \
+    echo "Installing statik with GOPROXY=${GOPROXY}..."; \
+    # 尝试使用配置的代理安装 statik
+    if ! go install github.com/rakyll/statik@latest; then \
+        echo "Primary GOPROXY failed, trying goproxy.io..."; \
+        GOPROXY=https://goproxy.io,direct go install github.com/rakyll/statik@latest; \
+    fi; \
     # Embed front-end files
     $(go env GOPATH)/bin/statik -src=./pub -dest=./front
 
-# Step 2: Download Go dependencies
-RUN go mod download
+# Step 2: Download Go dependencies with fallback
+RUN set -eux; \
+    echo "Downloading Go dependencies with GOPROXY=${GOPROXY}..."; \
+    if ! go mod download; then \
+        echo "Primary GOPROXY failed, trying goproxy.io..."; \
+        GOPROXY=https://goproxy.io,direct go mod download; \
+    fi
 
 # Step 3: Build the binary
 RUN go build -ldflags "-w -s" -o n9e ./cmd/center/main.go
