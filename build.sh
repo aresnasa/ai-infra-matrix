@@ -1099,6 +1099,8 @@ generate_production_env() {
         -v ext_host="$detected_external_host" \
         '
         /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
+        /^EXTERNAL_PORT=/ { print "EXTERNAL_PORT=443"; next }
+        /^EXTERNAL_SCHEME=/ { print "EXTERNAL_SCHEME=https"; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
         /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
