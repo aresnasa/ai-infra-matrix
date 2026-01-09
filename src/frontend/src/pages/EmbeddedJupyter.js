@@ -72,9 +72,9 @@ const EmbeddedJupyter = () => {
   const iframeStyle = {
     width: '100%',
     height: 'calc(100vh - 64px - 48px)',
-    border: '1px solid #f0f0f0',
+    border: `1px solid ${token.colorBorderSecondary}`,
     borderRadius: 6,
-    background: '#fff'
+    background: token.colorBgContainer
   };
 
   return (
