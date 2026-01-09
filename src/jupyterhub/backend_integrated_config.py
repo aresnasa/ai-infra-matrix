@@ -54,6 +54,13 @@ EXTERNAL_HOST = os.environ.get('EXTERNAL_HOST', 'localhost')
 EXTERNAL_PORT = os.environ.get('EXTERNAL_PORT', '8080')
 HTTPS_PORT = os.environ.get('HTTPS_PORT', '8443')
 
+# 公有云环境配置
+# PUBLIC_HOST - 用户浏览器访问的公网地址（域名或公网 IP）
+# 在公有云环境中：
+#   PUBLIC_HOST=ai-infra-matrix.top  （域名，用于浏览器重定向）
+#   EXTERNAL_HOST=172.19.53.9        （内网 IP，用于容器间通信等）
+PUBLIC_HOST = os.environ.get('PUBLIC_HOST', '')
+
 # 公有云环境检测：本地 IP 和公网 IP 不同
 # 在公有云环境中，容器内检测到的 IP 是内网 IP（如 172.x.x.x），但用户需要通过公网 IP 访问
 def is_private_ip(ip):
@@ -72,29 +79,47 @@ def get_public_host_for_redirect():
     
     公有云环境说明：
     - 阿里云/AWS/Azure 等公有云的 ECS/EC2 实例，本地 IP 是内网 IP
-    - EXTERNAL_HOST 应该配置为公网 IP 或域名
+    - PUBLIC_HOST 应该配置为域名或公网 IP（优先级最高）
+    - EXTERNAL_HOST 可以是内网 IP（用于容器间通信）
     - 此函数确保重定向始终使用公网地址
+    
+    优先级：
+    1. PUBLIC_HOST - 公有云环境推荐配置
+    2. JUPYTERHUB_PUBLIC_HOST - JupyterHub 专用配置
+    3. EXTERNAL_HOST - 仅当不是内网 IP 时使用
     """
-    # 优先使用显式配置的 JUPYTERHUB_PUBLIC_HOST
+    enable_tls = os.environ.get('ENABLE_TLS', 'false').lower() == 'true'
+    
+    # 1. 最高优先级：PUBLIC_HOST（公有云环境推荐）
+    if PUBLIC_HOST and not is_private_ip(PUBLIC_HOST.split(':')[0]):
+        logger.info(f"使用 PUBLIC_HOST 作为公网主机: {PUBLIC_HOST}")
+        # 如果 PUBLIC_HOST 已包含端口则直接使用，否则根据 TLS 设置添加端口
+        if ':' in PUBLIC_HOST:
+            return PUBLIC_HOST
+        if enable_tls or EXTERNAL_SCHEME == 'https':
+            return f"{PUBLIC_HOST}:{HTTPS_PORT}"
+        else:
+            return f"{PUBLIC_HOST}:{EXTERNAL_PORT}"
+    
+    # 2. 次优先级：显式配置的 JUPYTERHUB_PUBLIC_HOST
     explicit_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', '')
     if explicit_host and not is_private_ip(explicit_host.split(':')[0]):
         logger.info(f"使用显式配置的公网主机: {explicit_host}")
         return explicit_host
     
-    # 其次使用 EXTERNAL_HOST
+    # 3. 使用 EXTERNAL_HOST（仅当不是内网 IP）
     if EXTERNAL_HOST and not is_private_ip(EXTERNAL_HOST):
         logger.info(f"使用 EXTERNAL_HOST 作为公网主机: {EXTERNAL_HOST}")
-        # 根据是否启用 TLS 选择端口
-        enable_tls = os.environ.get('ENABLE_TLS', 'false').lower() == 'true'
         if enable_tls or EXTERNAL_SCHEME == 'https':
             return f"{EXTERNAL_HOST}:{HTTPS_PORT}"
         else:
             return f"{EXTERNAL_HOST}:{EXTERNAL_PORT}"
     
-    # 警告：检测到使用内网 IP
-    if is_private_ip(EXTERNAL_HOST):
+    # 警告：检测到使用内网 IP，没有配置公网地址
+    if is_private_ip(EXTERNAL_HOST) and not PUBLIC_HOST:
         logger.warning(f"⚠️  检测到使用内网 IP ({EXTERNAL_HOST})，这可能导致公网访问重定向失败")
-        logger.warning("💡 请在 .env 中设置 EXTERNAL_HOST 为公网 IP 或域名")
+        logger.warning("💡 公有云环境请在 .env 中设置 PUBLIC_HOST 为域名或公网 IP")
+        logger.warning("💡 示例: PUBLIC_HOST=ai-infra-matrix.top")
     
     # 降级到默认配置
     return explicit_host or f"{EXTERNAL_HOST}:{EXTERNAL_PORT}"
