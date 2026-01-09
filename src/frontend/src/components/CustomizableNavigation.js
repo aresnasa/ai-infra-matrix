@@ -296,17 +296,18 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
                       style={{
                         marginBottom: 8,
                         opacity: !hasRole(item.roles, userRoles, roleTemplate) ? 0.5 : 1,
-                        backgroundColor: snapshot.isDragging ? '#f0f0f0' : '#fff',
+                        backgroundColor: snapshot.isDragging ? token.colorBgTextHover : token.colorBgContainer,
                         transform: snapshot.isDragging ? 'rotate(5deg)' : 'none',
+                        border: `1px solid ${token.colorBorderSecondary}`,
                         ...provided.draggableProps.style
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div style={{ display: 'flex', alignItems: 'center' }}>
                           <div {...provided.dragHandleProps} style={{ marginRight: 12, cursor: 'grab' }}>
-                            <DragOutlined style={{ color: '#999' }} />
+                            <DragOutlined style={{ color: token.colorTextSecondary }} />
                           </div>
-                          <span>{getItemLabel(item)}</span>
+                          <span style={{ color: token.colorText }}>{getItemLabel(item)}</span>
                           {!hasRole(item.roles, userRoles, roleTemplate) && (
                             <Text type="secondary" style={{ marginLeft: 8 }}>
                               {t('nav.noPermission')}
