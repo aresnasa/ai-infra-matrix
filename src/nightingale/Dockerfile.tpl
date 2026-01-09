@@ -12,6 +12,7 @@ ARG NODE_IMAGE={{NODE_IMAGE}}
 # ============================================================
 FROM ${NODE_IMAGE} AS fe-builder
 
+ARG APT_MIRROR={{APT_MIRROR}}
 ARG NPM_REGISTRY={{NPM_REGISTRY}}
 ARG N9E_FE_VERSION={{N9E_FE_VERSION}}
 ARG GITHUB_MIRROR={{GITHUB_MIRROR}}
@@ -22,13 +23,26 @@ ARG GITHUB_PROXY={{GITHUB_PROXY}}
 # Nginx must NOT strip the /nightingale prefix (no trailing slash in proxy_pass)
 ARG VITE_PREFIX=/nightingale
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /fe
 
+# Configure APT mirror for Debian-based Node image (加速 apt-get)
 # Download frontend source code from GitHub
 # The n9e-fe-src directory may not be included in Docker build context
 # because it's a nested git repository (not a submodule)
 # Uses 3-way fallback: GITHUB_MIRROR → GITHUB_PROXY → Direct
 RUN set -eux; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Configuring APT mirror: ${APT_MIRROR}"; \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi; \
+    fi; \
     apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*; \
     echo "Downloading n9e-fe ${N9E_FE_VERSION}..."; \
     GITHUB_URL="https://github.com/n9e/fe.git"; \
