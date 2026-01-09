@@ -380,6 +380,10 @@ func main() {
 		services.StopNodeMetricsSync()
 		logrus.Info("NodeMetricsSync service stopped")
 
+		// 停止对象存储健康检查服务
+		services.StopObjectStorageHealthCheck()
+		logrus.Info("ObjectStorageHealthCheck service stopped")
+
 		// 关闭AI网关服务
 		if err := services.ShutdownAIGateway(); err != nil {
 			logrus.Error("Error shutting down AI Gateway:", err)
