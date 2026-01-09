@@ -389,3 +389,101 @@ func (s *ObjectStorageService) getS3CompatibleStatistics(config *models.ObjectSt
 
 	return stats, nil
 }
+
+// StartObjectStorageHealthCheck 启动对象存储健康检查服务
+func StartObjectStorageHealthCheck(db *gorm.DB) {
+	objectStorageHealthOnce.Do(func() {
+		service := NewObjectStorageService(db)
+		objectStorageHealthChecker = &ObjectStorageHealthChecker{
+			service:  service,
+			stopChan: make(chan struct{}),
+		}
+		go objectStorageHealthChecker.run()
+		logrus.Info("[ObjectStorageHealthCheck] Health check service started")
+	})
+}
+
+// StopObjectStorageHealthCheck 停止对象存储健康检查服务
+func StopObjectStorageHealthCheck() {
+	if objectStorageHealthChecker != nil {
+		objectStorageHealthChecker.mu.Lock()
+		defer objectStorageHealthChecker.mu.Unlock()
+
+		if !objectStorageHealthChecker.stopped {
+			close(objectStorageHealthChecker.stopChan)
+			objectStorageHealthChecker.stopped = true
+			logrus.Info("[ObjectStorageHealthCheck] Health check service stopped")
+		}
+	}
+}
+
+// run 运行健康检查循环
+func (h *ObjectStorageHealthChecker) run() {
+	// 启动后立即进行一次检查
+	h.checkAllConfigs()
+
+	// 每 60 秒检查一次
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.stopChan:
+			return
+		case <-ticker.C:
+			h.checkAllConfigs()
+		}
+	}
+}
+
+// checkAllConfigs 检查所有配置的连接状态
+func (h *ObjectStorageHealthChecker) checkAllConfigs() {
+	var configs []models.ObjectStorageConfig
+	if err := h.service.db.Find(&configs).Error; err != nil {
+		logrus.WithError(err).Error("[ObjectStorageHealthCheck] Failed to load configs")
+		return
+	}
+
+	for _, config := range configs {
+		h.checkAndUpdateConfig(&config)
+	}
+}
+
+// checkAndUpdateConfig 检查并更新单个配置的连接状态
+func (h *ObjectStorageHealthChecker) checkAndUpdateConfig(config *models.ObjectStorageConfig) {
+	err := h.service.TestConnection(config)
+
+	oldStatus := config.Status
+	newStatus := "connected"
+	if err != nil {
+		newStatus = "disconnected"
+	}
+
+	// 只有状态变化时才更新并记录日志
+	if oldStatus != newStatus {
+		now := time.Now()
+		if err := h.service.db.Model(config).Updates(map[string]interface{}{
+			"status":      newStatus,
+			"last_tested": now,
+		}).Error; err != nil {
+			logrus.WithError(err).WithField("config_id", config.ID).Error("[ObjectStorageHealthCheck] Failed to update status")
+			return
+		}
+
+		logFields := logrus.Fields{
+			"config_id":   config.ID,
+			"config_name": config.Name,
+			"old_status":  oldStatus,
+			"new_status":  newStatus,
+		}
+		if newStatus == "connected" {
+			logrus.WithFields(logFields).Info("[ObjectStorageHealthCheck] Connection restored")
+		} else {
+			logrus.WithFields(logFields).WithError(err).Warn("[ObjectStorageHealthCheck] Connection lost")
+		}
+	} else {
+		// 状态未变化，只更新测试时间
+		now := time.Now()
+		h.service.db.Model(config).Update("last_tested", now)
+	}
+}
