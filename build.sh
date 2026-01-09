@@ -582,15 +582,19 @@ check_env_config_drift() {
     # 特殊检查：ENABLE_TLS=true 但 EXTERNAL_SCHEME=http 的不一致
     local enable_tls
     local external_scheme
+    local external_port
     enable_tls=$(grep "^ENABLE_TLS=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
     external_scheme=$(grep "^EXTERNAL_SCHEME=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    external_port=$(grep "^EXTERNAL_PORT=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
     
-    if [[ "$enable_tls" == "true" ]] && [[ "$external_scheme" == "http" ]]; then
+    # 如果使用 443 端口，说明是生产环境部署（可能在 CDN/反向代理后面），跳过此警告
+    if [[ "$enable_tls" == "true" ]] && [[ "$external_scheme" == "http" ]] && [[ "$external_port" != "443" ]]; then
         critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=true 但 EXTERNAL_SCHEME=http")
         critical_drifts+=("   建议: 运行 './build.sh enable-ssl' 或手动设置 EXTERNAL_SCHEME=https")
     fi
     
-    if [[ "$enable_tls" == "false" ]] && [[ "$external_scheme" == "https" ]]; then
+    # 如果使用 443 端口，说明是生产环境部署（可能在 CDN/反向代理后面），跳过此警告
+    if [[ "$enable_tls" == "false" ]] && [[ "$external_scheme" == "https" ]] && [[ "$external_port" != "443" ]]; then
         critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=false 但 EXTERNAL_SCHEME=https")
         critical_drifts+=("   建议: 设置 ENABLE_TLS=true 或 EXTERNAL_SCHEME=http")
     fi
