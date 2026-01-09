@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Card, Alert, Button, Space, Spin, Typography } from 'antd';
+import { Card, Alert, Button, Space, Spin, Typography, theme } from 'antd';
 import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
 import { useI18n } from '../hooks/useI18n';
+
+const { useToken } = theme;
 
 // Embedded Jupyter subpage with SSO preflight and full-height iframe
 const EmbeddedJupyter = () => {
   const { t } = useI18n();
+  const { token } = useToken();
   const [ready, setReady] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState(null);
