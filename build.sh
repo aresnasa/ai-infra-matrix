@@ -1198,6 +1198,8 @@ generate_production_env() {
     log_info ""
     log_info "🌐 Network Configuration:"
     echo "    EXTERNAL_HOST=$detected_external_host"
+    echo "    EXTERNAL_PORT=443"
+    echo "    EXTERNAL_SCHEME=https"
     
     # Auto copy .env.prod to .env
     log_info ""
