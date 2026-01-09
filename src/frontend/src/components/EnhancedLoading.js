@@ -24,6 +24,8 @@ const EnhancedLoading = ({
   showAPIStatus = true,
   children 
 }) => {
+  const { token } = useToken();
+  
   // API状态指示器
   const renderAPIStatus = () => {
     if (!showAPIStatus || !apiHealth) return null;
@@ -179,11 +181,11 @@ const EnhancedLoading = ({
           bottom: 16,
           right: 16,
           zIndex: 1000,
-          background: '#fff',
+          background: token.colorBgContainer,
           padding: '8px 12px',
           borderRadius: '6px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-          border: '1px solid #d9d9d9'
+          boxShadow: token.boxShadow,
+          border: `1px solid ${token.colorBorder}`
         }}>
           {renderAPIStatus()}
         </div>

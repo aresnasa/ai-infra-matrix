@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Popconfirm, Input, Divider } from 'antd';
+import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Popconfirm, Input, Divider, theme } from 'antd';
 import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined, QrcodeOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import { QRCodeSVG } from 'qrcode.react';
 import { userAPI, securityAPI } from '../services/api';
@@ -7,9 +7,11 @@ import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+const { useToken } = theme;
 
 const AdminUsers = () => {
   const { t } = useI18n();
+  const { token } = useToken();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [permissionModalVisible, setPermissionModalVisible] = useState(false);
@@ -477,14 +479,15 @@ const AdminUsers = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
                 <div style={{ 
                   padding: '16px', 
-                  background: '#fff', 
+                  background: token.colorBgContainer,
                   borderRadius: '8px',
-                  border: '1px solid #d9d9d9'
+                  border: `1px solid ${token.colorBorder}`
                 }}>
                   <QRCodeSVG 
                     value={twoFASetupData.qrCode} 
                     size={180}
                     level="M"
+                    bgColor={token.colorBgContainer}
                   />
                 </div>
                 <div style={{ flex: 1 }}>
@@ -552,15 +555,15 @@ const AdminUsers = () => {
                   gridTemplateColumns: 'repeat(2, 1fr)', 
                   gap: '8px',
                   padding: '12px',
-                  background: '#fafafa',
+                  background: token.colorBgLayout,
                   borderRadius: '4px',
                   fontFamily: 'monospace'
                 }}>
                   {twoFASetupData.recoveryCodes.map((code, index) => (
                     <div key={index} style={{ 
                       padding: '4px 8px',
-                      background: '#fff',
-                      border: '1px solid #d9d9d9',
+                      background: token.colorBgContainer,
+                      border: `1px solid ${token.colorBorder}`,
                       borderRadius: '4px',
                       textAlign: 'center'
                     }}>

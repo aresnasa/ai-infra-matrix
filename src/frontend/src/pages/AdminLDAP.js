@@ -13,7 +13,8 @@ import {
   Typography,
   Spin,
   Tooltip,
-  Collapse
+  Collapse,
+  theme
 } from 'antd';
 import {
   SafetyOutlined,
@@ -28,6 +29,7 @@ import { useI18n } from '../hooks/useI18n';
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
+const { useToken } = theme;
 const { Panel } = Collapse;
 
 const AdminLDAP = () => {

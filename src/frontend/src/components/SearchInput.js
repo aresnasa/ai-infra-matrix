@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Dropdown, Typography, Space, Tag, Spin, Empty, Tooltip } from 'antd';
+import { Input, Dropdown, Typography, Space, Tag, Spin, Empty, Tooltip, theme } from 'antd';
 import {
   SearchOutlined,
   CloseCircleOutlined,
@@ -14,6 +14,7 @@ import {
 import { useI18n } from '../hooks/useI18n';
 
 const { Text } = Typography;
+const { useToken } = theme;
 
 /**
  * 搜索历史存储 Key 前缀
@@ -94,6 +95,7 @@ const SearchInput = ({
   ...restProps
 }) => {
   const { t } = useI18n();
+  const { token } = useToken();
   const [focused, setFocused] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [history, setHistory] = useState([]);
@@ -155,9 +157,9 @@ const SearchInput = ({
   const historyDropdown = showHistory && history.length > 0 && (
     <div
       style={{
-        background: '#fff',
+        background: token.colorBgContainer,
         borderRadius: 8,
-        boxShadow: '0 3px 6px -4px rgba(0,0,0,.12), 0 6px 16px 0 rgba(0,0,0,.08)',
+        boxShadow: token.boxShadowSecondary,
         padding: '8px 0',
         minWidth: 280,
         maxWidth: 400,
@@ -168,7 +170,7 @@ const SearchInput = ({
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center',
-        borderBottom: '1px solid #f0f0f0',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
         marginBottom: 4
       }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
