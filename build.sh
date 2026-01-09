@@ -1099,7 +1099,8 @@ generate_production_env() {
         -v ext_host="$detected_external_host" \
         '
         /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
-        /^EXTERNAL_PORT=/ { print "EXTERNAL_PORT=443"; next }
+        /^EXTERNAL_PORT=/ { print "EXTERNAL_PORT=80"; next }
+        /^HTTPS_PORT=/ { print "HTTPS_PORT=443"; next }
         /^EXTERNAL_SCHEME=/ { print "EXTERNAL_SCHEME=https"; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
@@ -1198,8 +1199,13 @@ generate_production_env() {
     log_info ""
     log_info "🌐 Network Configuration:"
     echo "    EXTERNAL_HOST=$detected_external_host"
-    echo "    EXTERNAL_PORT=443"
+    echo "    EXTERNAL_PORT=80      (HTTP redirect port)"
+    echo "    HTTPS_PORT=443        (HTTPS main service port)"
     echo "    EXTERNAL_SCHEME=https"
+    log_info ""
+    log_info "📋 Port Mapping (for Cloudflare Full mode):"
+    echo "    外部 80  → 容器 80  (HTTP → HTTPS 重定向)"
+    echo "    外部 443 → 容器 443 (HTTPS 主服务)"
     
     # Auto copy .env.prod to .env
     log_info ""
