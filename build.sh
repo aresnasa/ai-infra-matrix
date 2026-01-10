@@ -618,6 +618,68 @@ check_env_config_drift() {
         echo ""
     fi
     
+    # 检查端口冲突
+    check_port_conflicts
+    
+    return 0
+}
+
+# 检查端口配置冲突
+# 确保只有 nginx 使用 80/443 端口，其他服务不能占用这些端口
+check_port_conflicts() {
+    local env_file="$ENV_FILE"
+    
+    if [[ ! -f "$env_file" ]]; then
+        return 0
+    fi
+    
+    local conflicts=()
+    local reserved_ports=("80" "443")
+    
+    # 定义不应该使用 80/443 的服务端口变量
+    local -a service_ports=(
+        "JUPYTERHUB_EXTERNAL_PORT:JupyterHub"
+        "GITEA_EXTERNAL_PORT:Gitea"
+        "APPHUB_PORT:AppHub"
+        "BACKEND_DEBUG_PORT:Backend Debug"
+        "DEBUG_PORT:Debug"
+        "PROMETHEUS_EXTERNAL_PORT:Prometheus"
+        "GRAFANA_EXTERNAL_PORT:Grafana"
+        "ALERTMANAGER_EXTERNAL_PORT:Alertmanager"
+    )
+    
+    for service_port in "${service_ports[@]}"; do
+        local var_name="${service_port%%:*}"
+        local service_name="${service_port#*:}"
+        
+        local port_value
+        port_value=$(grep "^${var_name}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+        
+        if [[ -n "$port_value" ]]; then
+            for reserved in "${reserved_ports[@]}"; do
+                if [[ "$port_value" == "$reserved" ]]; then
+                    conflicts+=("$service_name ($var_name=$port_value)")
+                fi
+            done
+        fi
+    done
+    
+    if [[ ${#conflicts[@]} -gt 0 ]]; then
+        echo ""
+        log_error "🚨 端口冲突检测: 以下服务不应使用 80/443 端口（这些端口应保留给 Nginx）:"
+        for conflict in "${conflicts[@]}"; do
+            log_error "  ✗ $conflict"
+        done
+        echo ""
+        log_warn "请修改 .env 文件，为这些服务分配其他端口。参考 .env.example 中的默认值:"
+        log_info "  JUPYTERHUB_EXTERNAL_PORT=8088"
+        log_info "  GITEA_EXTERNAL_PORT=3010"
+        log_info "  APPHUB_PORT=28080"
+        echo ""
+        log_info "只有 EXTERNAL_PORT (Nginx HTTP) 和 HTTPS_PORT (Nginx HTTPS) 可以使用 80/443"
+        return 1
+    fi
+    
     return 0
 }
 
