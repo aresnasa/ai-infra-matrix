@@ -15,10 +15,16 @@ SRC_DIR="$SCRIPT_DIR/src"
 # --help/-h/help 命令应仅打印帮助，不触发 .env 生成或其他初始化
 # ==============================================================================
 _SHOW_HELP_ONLY=false
+_SKIP_PORT_CHECK=false
 for _arg in "$@"; do
     case "$_arg" in
         --help|-h|help)
             _SHOW_HELP_ONLY=true
+            break
+            ;;
+        # 清理和状态类命令不需要端口检查
+        clean-all|clean-images|clean-volumes|cache-status|build-history|clear-cache|status|logs|db-check)
+            _SKIP_PORT_CHECK=true
             break
             ;;
     esac
@@ -627,6 +633,11 @@ check_env_config_drift() {
 # 检查端口配置冲突
 # 确保只有 nginx 使用 80/443 端口，其他服务不能占用这些端口
 check_port_conflicts() {
+    # 跳过清理和状态类命令的端口检查
+    if [[ "$_SKIP_PORT_CHECK" == "true" ]]; then
+        return 0
+    fi
+    
     local env_file="$ENV_FILE"
     
     if [[ ! -f "$env_file" ]]; then
