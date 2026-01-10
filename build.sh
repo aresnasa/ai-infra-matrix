@@ -1760,13 +1760,23 @@ setup_letsencrypt_certificates() {
         done
     fi
 
+    # Check if port 80 is in use and try to stop nginx temporarily
+    local nginx_was_running=false
     if command -v lsof >/dev/null 2>&1; then
         if lsof -iTCP:80 -sTCP:LISTEN >/dev/null 2>&1; then
-            log_warn "Port 80 is in use. certbot --standalone needs it. Stop nginx or map a free port before issuing."
+            log_warn "Port 80 is in use. Attempting to stop nginx temporarily..."
+            if docker ps --format '{{.Names}}' | grep -q "ai-infra-nginx"; then
+                docker stop ai-infra-nginx >/dev/null 2>&1 && nginx_was_running=true
+                log_info "Nginx container stopped temporarily"
+                sleep 2
+            else
+                log_warn "Port 80 is in use by non-nginx process. certbot --standalone may fail."
+            fi
         fi
     fi
 
     log_step "Requesting Let's Encrypt certificate for: $domain"
+    local certbot_result=0
     if ! certbot certonly --standalone --preferred-challenges http \
         --agree-tos --non-interactive \
         -m "$email" "${domain_args[@]}" \
@@ -1774,6 +1784,16 @@ setup_letsencrypt_certificates() {
         --work-dir "$le_work" \
         --logs-dir "$le_logs" \
         $staging_flag; then
+        certbot_result=1
+    fi
+
+    # Restart nginx if it was running before
+    if [[ "$nginx_was_running" == "true" ]]; then
+        log_info "Restarting nginx container..."
+        docker start ai-infra-nginx >/dev/null 2>&1 || true
+    fi
+
+    if [[ "$certbot_result" -ne 0 ]]; then
         log_error "Let's Encrypt issuance failed"
         return 1
     fi
