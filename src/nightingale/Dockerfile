@@ -12,6 +12,7 @@ ARG NODE_IMAGE=node:22-bookworm
 # ============================================================
 FROM ${NODE_IMAGE} AS fe-builder
 
+ARG APT_MIRROR=mirrors.aliyun.com
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG N9E_FE_VERSION=v8.4.1
 ARG GITHUB_MIRROR=https://ghfast.top/
@@ -22,13 +23,26 @@ ARG GITHUB_PROXY=
 # Nginx must NOT strip the /nightingale prefix (no trailing slash in proxy_pass)
 ARG VITE_PREFIX=/nightingale
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /fe
 
+# Configure APT mirror for Debian-based Node image (加速 apt-get)
 # Download frontend source code from GitHub
 # The n9e-fe-src directory may not be included in Docker build context
 # because it's a nested git repository (not a submodule)
 # Uses 3-way fallback: GITHUB_MIRROR → GITHUB_PROXY → Direct
 RUN set -eux; \
+    if [ -n "${APT_MIRROR}" ]; then \
+        echo "Configuring APT mirror: ${APT_MIRROR}"; \
+        if [ -f /etc/apt/sources.list ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
+        elif [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+            sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+            sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+        fi; \
+    fi; \
     apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl && rm -rf /var/lib/apt/lists/*; \
     echo "Downloading n9e-fe ${N9E_FE_VERSION}..."; \
     GITHUB_URL="https://github.com/n9e/fe.git"; \
@@ -73,16 +87,13 @@ RUN set -eux; \
     ls -la
 
 # Install dependencies and build with custom prefix
-# Note: n9e-fe package.json uses cross-env with 6GB limit, we override with 8GB
 RUN set -eux; \
     if [ -n "${NPM_REGISTRY}" ]; then \
         npm config set registry ${NPM_REGISTRY}; \
     fi; \
     npm install --legacy-peer-deps; \
     echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}"; \
-    # Build directly with vite to bypass cross-env memory limit
-    VITE_PREFIX=${VITE_PREFIX} ./node_modules/.bin/tsc && \
-    NODE_OPTIONS="--max-old-space-size=8192" VITE_PREFIX=${VITE_PREFIX} ./node_modules/.bin/vite build; \
+    VITE_PREFIX=${VITE_PREFIX} npm run build; \
     # The build output is in /fe/pub directory
     ls -la pub/
 
@@ -125,18 +136,30 @@ COPY third_party/nightingale/ .
 # Copy frontend build output from fe-builder stage
 COPY --from=fe-builder /fe/pub/ ./pub/
 
-# Build
+# Build - 使用多个 Go 代理加速下载
+# goproxy.cn 是主要代理，goproxy.io 作为备用
 ENV GOPROXY=${GO_PROXY}
+ENV GOSUMDB=sum.golang.google.cn
 
 # Step 1: Embed front-end files into Go binary using statik
+# 使用多重代理策略，确保 Go 模块可以快速下载
 RUN set -eux; \
-    # Install statik tool
-    go install github.com/rakyll/statik@latest; \
+    echo "Installing statik with GOPROXY=${GOPROXY}..."; \
+    # 尝试使用配置的代理安装 statik
+    if ! go install github.com/rakyll/statik@latest; then \
+        echo "Primary GOPROXY failed, trying goproxy.io..."; \
+        GOPROXY=https://goproxy.io,direct go install github.com/rakyll/statik@latest; \
+    fi; \
     # Embed front-end files
     $(go env GOPATH)/bin/statik -src=./pub -dest=./front
 
-# Step 2: Download Go dependencies
-RUN go mod download
+# Step 2: Download Go dependencies with fallback
+RUN set -eux; \
+    echo "Downloading Go dependencies with GOPROXY=${GOPROXY}..."; \
+    if ! go mod download; then \
+        echo "Primary GOPROXY failed, trying goproxy.io..."; \
+        GOPROXY=https://goproxy.io,direct go mod download; \
+    fi
 
 # Step 3: Build the binary
 RUN go build -ldflags "-w -s" -o n9e ./cmd/center/main.go
