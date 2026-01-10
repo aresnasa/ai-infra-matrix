@@ -3016,6 +3016,12 @@ TEMPLATE_VARIABLES=(
     "SAFELINE_IMAGE_TAG"    # SafeLine image tag (e.g., latest)
     "SAFELINE_ARCH_SUFFIX"  # SafeLine architecture suffix (-arm for ARM, empty for x86_64)
     "SAFELINE_REGION"       # SafeLine region suffix (optional)
+    
+    # ===========================================
+    # Docker platform configuration (Runtime - auto-detected)
+    # For multi-arch image support (ARM/AMD64)
+    # ===========================================
+    "DOCKER_HOST_PLATFORM"  # Docker host platform (linux/amd64 or linux/arm64, auto-detected)
 )
 
 # Render a single template file
