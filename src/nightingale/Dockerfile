@@ -73,14 +73,16 @@ RUN set -eux; \
     ls -la
 
 # Install dependencies and build with custom prefix
+# Note: n9e-fe package.json uses cross-env with 6GB limit, we override with 8GB
 RUN set -eux; \
     if [ -n "${NPM_REGISTRY}" ]; then \
         npm config set registry ${NPM_REGISTRY}; \
     fi; \
     npm install --legacy-peer-deps; \
     echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}"; \
-    # Increase Node.js memory limit to 8GB for large frontend builds
-    NODE_OPTIONS="--max-old-space-size=8192" VITE_PREFIX=${VITE_PREFIX} npm run build; \
+    # Build directly with vite to bypass cross-env memory limit
+    VITE_PREFIX=${VITE_PREFIX} ./node_modules/.bin/tsc && \
+    NODE_OPTIONS="--max-old-space-size=8192" VITE_PREFIX=${VITE_PREFIX} ./node_modules/.bin/vite build; \
     # The build output is in /fe/pub directory
     ls -la pub/
 
