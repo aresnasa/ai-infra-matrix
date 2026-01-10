@@ -79,7 +79,8 @@ RUN set -eux; \
     fi; \
     npm install --legacy-peer-deps; \
     echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}"; \
-    VITE_PREFIX=${VITE_PREFIX} npm run build; \
+    # Increase Node.js memory limit to 8GB for large frontend builds
+    NODE_OPTIONS="--max-old-space-size=8192" VITE_PREFIX=${VITE_PREFIX} npm run build; \
     # The build output is in /fe/pub directory
     ls -la pub/
 
