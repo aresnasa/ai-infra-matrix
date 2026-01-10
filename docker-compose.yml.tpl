@@ -835,7 +835,7 @@ services:
   redis-insight:
     image: redis/redisinsight:{{REDISINSIGHT_VERSION}}
     container_name: ai-infra-redis-insight
-    platform: linux/amd64
+    platform: {{DOCKER_HOST_PLATFORM}}
     environment:
       TZ: Asia/Shanghai
     expose:
