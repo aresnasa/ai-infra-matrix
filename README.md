@@ -366,17 +366,56 @@ docker compose up -d
 ### Service Management
 
 ```bash
-# Start all services
+# Start all services (includes SaltStack HA multi-master setup)
 ./build.sh start-all
 
 # Stop all services
 ./build.sh stop-all
 
-# Tag images for private registry
+# Tag images from private registry as local images
 ./build.sh tag-images
 ```
 
-### Image Pull (Smart Mode)
+### Database Safety Commands
+
+```bash
+# Check if PostgreSQL has production data
+./build.sh db-check
+
+# Backup PostgreSQL database
+./build.sh db-backup
+./build.sh db-backup custom-backup-name
+
+# Restore PostgreSQL database from backup
+./build.sh db-restore backup.sql
+```
+
+**Database Initialization Modes:**
+
+```bash
+# Safe initialization (default - skip reset if data exists)
+DB_INIT_MODE=safe_init ./build.sh start-all
+
+# Keep data, only run migrations
+DB_INIT_MODE=upgrade ./build.sh start-all
+
+# Backup and reset (for dev/test only)
+DB_INIT_MODE=force_reset ./build.sh start-all
+
+# Skip database safety check
+SKIP_DB_CHECK=true ./build.sh start-all
+```
+
+### Optional Components
+
+```bash
+# Initialize SafeLine WAF (optional sidecar component)
+./build.sh init-safeline
+
+# SafeLine is NOT included in 'build.sh build-all'
+# After init, start with:
+docker compose --profile safeline up -d
+```
 
 ```bash
 # Pre-pull all base images
