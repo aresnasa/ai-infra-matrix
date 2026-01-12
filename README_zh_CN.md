@@ -281,6 +281,37 @@ docker compose up -d
 > - **首次登录后请立即通过 Web 界面修改管理员密码**
 > - 切勿将 `.env.prod` 提交到版本控制系统
 
+### SSL/HTTPS 配置（默认启用SSL）
+
+```bash
+# 生成自签名SSL证书（打包进nginx镜像）
+./build.sh ssl-setup
+
+# 为指定域名生成证书
+./build.sh ssl-setup example.com
+
+# 重新生成证书
+./build.sh ssl-setup --force
+
+# 通过standalone方式申请Let's Encrypt证书
+./build.sh ssl-setup-le example.com user@example.com
+
+# 通过Cloudflare DNS验证方式申请Let's Encrypt证书
+./build.sh ssl-cloudflare example.com
+
+# 申请通配符证书
+./build.sh ssl-cloudflare example.com --wildcard
+
+# 显示SSL证书信息
+./build.sh ssl-info
+
+# 诊断SSL/域名配置问题
+./build.sh ssl-check
+
+# 删除SSL证书并禁用HTTPS
+./build.sh ssl-clean
+```
+
 ### 模板渲染
 
 ```bash
@@ -294,11 +325,20 @@ docker compose up -d
 ### 构建命令
 
 ```bash
-# 构建所有服务（按正确顺序）
+# 构建所有服务（默认启用SSL）
 ./build.sh build-all
 
 # 强制重建所有服务（无缓存）
 ./build.sh build-all --force
+
+# 并行构建（默认4个并发任务）
+./build.sh build-all --parallel
+
+# 指定并发任务数进行并行构建
+./build.sh build-all --parallel=8
+
+# 不启用SSL/HTTPS构建
+./build.sh build-all --no-ssl
 
 # 构建单个组件
 ./build.sh backend
@@ -306,6 +346,23 @@ docker compose up -d
 
 # 强制重建单个组件
 ./build.sh backend --force
+```
+
+### 构建缓存管理
+
+```bash
+# 显示所有服务的构建缓存状态
+./build.sh cache-status
+
+# 显示最近N条构建历史记录（默认：20）
+./build.sh build-history
+./build.sh build-history 50
+
+# 清理所有构建缓存
+./build.sh clear-cache
+
+# 清理特定服务的构建缓存
+./build.sh clear-cache backend
 ```
 
 ### 服务管理
