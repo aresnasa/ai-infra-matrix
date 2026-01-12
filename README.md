@@ -516,27 +516,67 @@ cd ./offline-images && ./import-images.sh
 
 ```bash
 # Clean project images (optionally specify tag)
+./build.sh clean-images
 ./build.sh clean-images v0.3.8
 
 # Clean project data volumes
 ./build.sh clean-volumes
 
 # Full cleanup (stop containers, delete images and volumes)
+./build.sh clean-all
 ./build.sh clean-all --force
 ```
 
 ### Global Options
 
-All commands support the following global options:
-
-- `--force` / `-f` / `--no-cache`: Force rebuild without Docker cache
-
-### Dry-Run Mode
+All commands support the following global options (can be used with any command):
 
 ```bash
-# Test mode: Skip actual Docker operations
-SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+# Force rebuild without Docker cache
+./build.sh build-all --force
+./build.sh backend -f          # Short form
+./build.sh backend --no-cache  # Alternative form
+
+# Enable parallel builds (default: 4 concurrent jobs)
+./build.sh build-all --parallel
+
+# Enable parallel builds with specific job count
+./build.sh build-all --parallel=8
+./build.sh build-all -p8       # Short form
+
+# Disable SSL/HTTPS
+./build.sh build-all --no-ssl
+
+# Enable SSL with specific domain
+./build.sh build-all --ssl=example.com
+
+# Skip build cache check (always rebuild)
+./build.sh build-all --skip-cache
 ```
+
+### Dry-Run & Test Mode
+
+```bash
+# Test mode: Skip actual Docker operations (useful for testing commands)
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+
+# This mode helps verify command parsing and file generation without executing Docker commands
+```
+
+### Quick Reference
+
+| Task | Command |
+|------|---------|
+| Initialize environment | `./build.sh init-env` |
+| Generate production config | `./build.sh gen-prod-env` |
+| SSL setup | `./build.sh ssl-setup example.com` |
+| Build all services | `./build.sh build-all` |
+| Parallel build | `./build.sh build-all --parallel=8` |
+| Start services | `./build.sh start-all` |
+| Check database | `./build.sh db-check` |
+| Export images offline | `./build.sh export-offline ./images v0.3.8` |
+| Push to registry | `./build.sh push-all harbor.example.com/ai-infra v0.3.8` |
+| Clean all | `./build.sh clean-all --force` |
 
 ## ⚙️ SLURM Configuration & MPI
 
