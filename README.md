@@ -417,33 +417,37 @@ SKIP_DB_CHECK=true ./build.sh start-all
 docker compose --profile safeline up -d
 ```
 
+### Image Management - Pull & Push
+
+**Pull Commands (Smart Mode):**
+
 ```bash
-# Pre-pull all base images
+# Pre-fetch all base images from Dockerfiles
 ./build.sh prefetch
 
-# Pull public/third-party images (mysql, redis, kafka, etc.)
+# Pull common/third-party images (mysql, kafka, redis, etc.)
 ./build.sh pull-common
 
-# Internet mode: Pull from Docker Hub
+# Internet mode: Pull from Docker Hub (all images)
 ./build.sh pull-all
 
-# Intranet mode: Pull from private registry (requires project path)
+# Intranet mode: Pull from private registry
 ./build.sh pull-all harbor.example.com/ai-infra v0.3.8
 
-# Pull dependency images
+# Pull dependency images from registry
 ./build.sh deps-pull harbor.example.com/ai-infra v0.3.8
 ```
 
-### Image Push
+**Push Commands:**
 
 ```bash
 # Push single service to registry
 ./build.sh push backend harbor.example.com/ai-infra v0.3.8
 
-# Push all images (4 stages: common, deps, project, special)
+# Push all images in 4 phases (common, deps, project, special)
 ./build.sh push-all harbor.example.com/ai-infra v0.3.8
 
-# Push dependency images
+# Push dependency images only
 ./build.sh push-dep harbor.example.com/ai-infra v0.3.8
 ```
 
@@ -452,17 +456,60 @@ docker compose --profile safeline up -d
 > - ✓ `harbor.example.com/ai-infra` (correct)
 > - ✗ `harbor.example.com` (wrong - missing project name)
 
-### Offline Deployment
+### Download Third-Party Dependencies
+
+```bash
+# Download all third-party dependencies
+./build.sh download
+
+# Alias for download
+./build.sh download-deps
+
+# List available components
+./build.sh download --list
+
+# Download specific component
+./build.sh download vscode
+./build.sh download code_server    # Alternative name for VS Code Server
+
+# Download specific version
+./build.sh download -v 4.107.0 vscode
+
+# Download for specific architecture
+./build.sh download --arch amd64 prometheus
+./build.sh download --arch arm64 slurm
+
+# Download all architectures
+./build.sh download --arch all saltstack
+
+# Disable GitHub mirror acceleration
+./build.sh download --no-mirror prometheus
+
+# Available components:
+# - prometheus, node_exporter, alertmanager
+# - categraf
+# - code_server (alias: vscode)
+# - saltstack, slurm
+# - and others
+```
+
+### Offline Export & Import
 
 ```bash
 # Export all images to tar files
 ./build.sh export-offline ./offline-images v0.3.8
 
-# Export excluding common images
+# Export without common/third-party images
 ./build.sh export-offline ./offline-images v0.3.8 false
+
+# Specify custom output directory
+./build.sh export-offline /data/offline-images v0.3.8 true
 
 # Import in offline environment
 cd ./offline-images && ./import-images.sh
+
+# Import from custom directory
+./import-images.sh /data/offline-images
 ```
 
 ### Cleanup Commands
