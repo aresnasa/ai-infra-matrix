@@ -518,27 +518,67 @@ cd ./offline-images && ./import-images.sh
 
 ```bash
 # 清理项目镜像（可选指定标签）
+./build.sh clean-images
 ./build.sh clean-images v0.3.8
 
 # 清理项目数据卷
 ./build.sh clean-volumes
 
 # 完全清理（停止容器、删除镜像和数据卷）
+./build.sh clean-all
 ./build.sh clean-all --force
 ```
 
 ### 全局选项
 
-所有命令都支持以下全局选项：
-
-- `--force` / `-f` / `--no-cache`：强制重建，不使用 Docker 缓存
-
-### 模拟模式
+所有命令都支持以下全局选项（可用于任何命令）：
 
 ```bash
-# 测试模式：跳过实际的 Docker 操作
-SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+# 强制重建，不使用Docker缓存
+./build.sh build-all --force
+./build.sh backend -f          # 短格式
+./build.sh backend --no-cache  # 另一种形式
+
+# 启用并行构建（默认：4个并发任务）
+./build.sh build-all --parallel
+
+# 指定并发任务数进行并行构建
+./build.sh build-all --parallel=8
+./build.sh build-all -p8       # 短格式
+
+# 禁用 SSL/HTTPS
+./build.sh build-all --no-ssl
+
+# 启用特定域名的 SSL
+./build.sh build-all --ssl=example.com
+
+# 跳过构建缓存检查（总是重建）
+./build.sh build-all --skip-cache
 ```
+
+### 测试模式
+
+```bash
+# 测试模式：跳过实际的 Docker 操作（用于测试命令）
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+
+# 此模式有助于验证命令解析和文件生成，无需执行Docker命令
+```
+
+### 快速参考
+
+| 任务 | 命令 |
+|------|------|
+| 初始化环境 | `./build.sh init-env` |
+| 生成生产配置 | `./build.sh gen-prod-env` |
+| SSL设置 | `./build.sh ssl-setup example.com` |
+| 构建所有服务 | `./build.sh build-all` |
+| 并行构建 | `./build.sh build-all --parallel=8` |
+| 启动服务 | `./build.sh start-all` |
+| 检查数据库 | `./build.sh db-check` |
+| 离线导出 | `./build.sh export-offline ./images v0.3.8` |
+| 推送到仓库 | `./build.sh push-all harbor.example.com/ai-infra v0.3.8` |
+| 完全清理 | `./build.sh clean-all --force` |
 
 ## ⚙️ SLURM 配置与 MPI
 
