@@ -368,7 +368,7 @@ docker compose up -d
 ### 服务管理
 
 ```bash
-# 启动所有服务
+# 启动所有服务（包含SaltStack高可用多主设置）
 ./build.sh start-all
 
 # 停止所有服务
@@ -378,35 +378,78 @@ docker compose up -d
 ./build.sh tag-images
 ```
 
-### 镜像拉取（智能模式）
+### 数据库安全命令
 
 ```bash
-# 预拉取所有基础镜像
+# 检查PostgreSQL数据库是否包含生产数据
+./build.sh db-check
+
+# 备份PostgreSQL数据库
+./build.sh db-backup
+./build.sh db-backup custom-backup-name
+
+# 从备份恢复PostgreSQL数据库
+./build.sh db-restore backup.sql
+```
+
+**数据库初始化模式：**
+
+```bash
+# 安全初始化（默认 - 如果存在数据则跳过重置）
+DB_INIT_MODE=safe_init ./build.sh start-all
+
+# 保留数据，仅运行迁移脚本
+DB_INIT_MODE=upgrade ./build.sh start-all
+
+# 备份后重置（仅用于开发/测试）
+DB_INIT_MODE=force_reset ./build.sh start-all
+
+# 跳过数据库安全检查
+SKIP_DB_CHECK=true ./build.sh start-all
+```
+
+### 可选组件
+
+```bash
+# 初始化 SafeLine WAF（可选的边车组件）
+./build.sh init-safeline
+
+# SafeLine 不包含在 'build.sh build-all' 中
+# 初始化后，通过以下方式启动：
+docker compose --profile safeline up -d
+```
+
+### 镜像管理 - 拉取与推送
+
+**拉取命令（智能模式）：**
+
+```bash
+# 预拉取所有Dockerfile中的基础镜像
 ./build.sh prefetch
 
-# 拉取公共/第三方镜像（mysql, redis, kafka等）
+# 拉取公共/第三方镜像（mysql、kafka、redis等）
 ./build.sh pull-common
 
-# 互联网模式：从 Docker Hub 拉取
+# 互联网模式：从Docker Hub拉取所有镜像
 ./build.sh pull-all
 
-# 内网模式：从私有仓库拉取（需要 project 路径）
+# 内网模式：从私有仓库拉取
 ./build.sh pull-all harbor.example.com/ai-infra v0.3.8
 
 # 拉取依赖镜像
 ./build.sh deps-pull harbor.example.com/ai-infra v0.3.8
 ```
 
-### 镜像推送
+**推送命令：**
 
 ```bash
 # 推送单个服务到仓库
 ./build.sh push backend harbor.example.com/ai-infra v0.3.8
 
-# 推送所有镜像（4个阶段：通用、依赖、项目、特殊）
+# 一次性推送所有镜像（4个阶段：通用镜像、依赖镜像、项目镜像、特殊镜像）
 ./build.sh push-all harbor.example.com/ai-infra v0.3.8
 
-# 推送依赖镜像
+# 仅推送依赖镜像
 ./build.sh push-dep harbor.example.com/ai-infra v0.3.8
 ```
 
@@ -415,17 +458,60 @@ docker compose up -d
 > - ✓ `harbor.example.com/ai-infra`（正确）
 > - ✗ `harbor.example.com`（错误 - 缺少项目名）
 
-### 离线部署
+### 下载第三方依赖
 
 ```bash
-# 导出所有镜像到 tar 文件
+# 下载所有第三方依赖
+./build.sh download
+
+# download 的别名
+./build.sh download-deps
+
+# 列出可用的组件
+./build.sh download --list
+
+# 下载特定组件
+./build.sh download vscode
+./build.sh download code_server    # VS Code Server的另一个名称
+
+# 下载指定版本
+./build.sh download -v 4.107.0 vscode
+
+# 下载特定架构
+./build.sh download --arch amd64 prometheus
+./build.sh download --arch arm64 slurm
+
+# 下载所有架构
+./build.sh download --arch all saltstack
+
+# 禁用GitHub镜像加速
+./build.sh download --no-mirror prometheus
+
+# 可用组件包括：
+# - prometheus, node_exporter, alertmanager
+# - categraf
+# - code_server (别名: vscode)
+# - saltstack, slurm
+# - 及其他
+```
+
+### 离线导出与导入
+
+```bash
+# 导出所有镜像到tar文件
 ./build.sh export-offline ./offline-images v0.3.8
 
-# 导出时排除公共镜像
+# 导出时排除公共/第三方镜像
 ./build.sh export-offline ./offline-images v0.3.8 false
 
-# 在离线环境导入
+# 指定自定义输出目录
+./build.sh export-offline /data/offline-images v0.3.8 true
+
+# 在离线环境中导入
 cd ./offline-images && ./import-images.sh
+
+# 从自定义目录导入
+./import-images.sh /data/offline-images
 ```
 
 ### 清理命令
