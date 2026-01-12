@@ -279,6 +279,37 @@ docker compose up -d
 > - **Change admin password via Web UI immediately after first login**
 > - Never commit `.env.prod` to version control
 
+### SSL/HTTPS Configuration (SSL Enabled by Default)
+
+```bash
+# Generate self-signed SSL certificates (bundled into nginx image)
+./build.sh ssl-setup
+
+# Generate certificates for specific domain
+./build.sh ssl-setup example.com
+
+# Regenerate certificates
+./build.sh ssl-setup --force
+
+# Issue Let's Encrypt certificate via standalone
+./build.sh ssl-setup-le example.com user@example.com
+
+# Issue Let's Encrypt certificate via Cloudflare DNS validation
+./build.sh ssl-cloudflare example.com
+
+# Wildcard certificate
+./build.sh ssl-cloudflare example.com --wildcard
+
+# Display SSL certificate information
+./build.sh ssl-info
+
+# Diagnose SSL/domain configuration issues
+./build.sh ssl-check
+
+# Remove SSL certificates and disable HTTPS
+./build.sh ssl-clean
+```
+
 ### Template Rendering
 
 ```bash
@@ -292,11 +323,20 @@ docker compose up -d
 ### Build Commands
 
 ```bash
-# Build all services (in correct order)
+# Build all services with SSL enabled (default)
 ./build.sh build-all
 
 # Force rebuild all services (no cache)
 ./build.sh build-all --force
+
+# Build with parallel compilation (default 4 jobs)
+./build.sh build-all --parallel
+
+# Parallel build with specific job count
+./build.sh build-all --parallel=8
+
+# Build without SSL/HTTPS
+./build.sh build-all --no-ssl
 
 # Build single component
 ./build.sh backend
@@ -304,6 +344,23 @@ docker compose up -d
 
 # Force rebuild single component
 ./build.sh backend --force
+```
+
+### Build Cache Management
+
+```bash
+# Show build cache status for all services
+./build.sh cache-status
+
+# Show last N build history entries (default: 20)
+./build.sh build-history
+./build.sh build-history 50
+
+# Clear all build cache
+./build.sh clear-cache
+
+# Clear build cache for specific service
+./build.sh clear-cache backend
 ```
 
 ### Service Management
