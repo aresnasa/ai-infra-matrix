@@ -5775,6 +5775,13 @@ build_component_for_platform() {
     local arch_name="${platform##*/}"
     local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
     
+    # Ensure multiarch-builder exists for cross-platform builds (uses docker-container driver)
+    # This is needed because the default docker driver cannot pull/build cross-platform images reliably
+    if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
+        log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
+        docker buildx create --name multiarch-builder --driver docker-container --bootstrap >/dev/null 2>&1 || true
+    fi
+    
     if [ ! -d "$component_dir" ]; then
         log_error "[$arch_name] Component directory not found: $component_dir"
         return 1
@@ -5907,6 +5914,7 @@ build_component_for_platform() {
         log_info "  [$arch_name] Building: $component [$target] -> $full_image_name"
         
         local cmd=("docker" "buildx" "build")
+        cmd+=("--builder" "multiarch-builder")  # Use docker-container driver for cross-platform builds
         cmd+=("--platform" "$platform")
         cmd+=("--load")  # Load to local docker daemon
         
