@@ -986,4 +986,42 @@ export const securityAPI = {
   getAuditLogs: (params) => api.get('/security/audit-logs', { params }),
 };
 
+// 权限审批 API
+export const approvalAPI = {
+  // 获取可用模块列表
+  getAvailableModules: () => api.get('/approvals/modules'),
+  
+  // 获取可用操作权限列表
+  getAvailableVerbs: () => api.get('/approvals/verbs'),
+  
+  // 权限申请管理
+  createRequest: (data) => api.post('/approvals/requests', data),
+  listRequests: (params) => api.get('/approvals/requests', { params }),
+  getRequest: (id) => api.get(`/approvals/requests/${id}`),
+  approveRequest: (id, data) => api.post(`/approvals/requests/${id}/approve`, data),
+  cancelRequest: (id, data = {}) => api.post(`/approvals/requests/${id}/cancel`, data),
+  
+  // 权限授权管理
+  grantPermission: (data) => api.post('/approvals/grants', data),
+  revokePermission: (data) => api.post('/approvals/grants/revoke', data),
+  getUserGrants: (userId, onlyActive = true) => api.get('/approvals/grants', { 
+    params: { user_id: userId, only_active: onlyActive }
+  }),
+  getMyGrants: () => api.get('/approvals/my-grants'),
+  
+  // 审批规则管理
+  createRule: (data) => api.post('/approvals/rules', data),
+  getRules: (onlyActive = false) => api.get('/approvals/rules', { 
+    params: { only_active: onlyActive }
+  }),
+  updateRule: (id, data) => api.put(`/approvals/rules/${id}`, data),
+  deleteRule: (id) => api.delete(`/approvals/rules/${id}`),
+  
+  // 统计和检查
+  getStats: () => api.get('/approvals/stats'),
+  checkPermission: (module, verb) => api.get('/approvals/check', { 
+    params: { module, verb }
+  }),
+};
+
 export default api;
