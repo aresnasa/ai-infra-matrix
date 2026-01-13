@@ -36,7 +36,7 @@ func NewPermissionApprovalController(approvalService *services.PermissionApprova
 // @Router /api/approvals/modules [get]
 func (c *PermissionApprovalController) GetAvailableModules(ctx *gin.Context) {
 	modules := c.approvalService.GetAvailableModules()
-	
+
 	// 按类别分组
 	grouped := make(map[string][]models.PermissionModuleInfo)
 	for _, m := range modules {
@@ -204,7 +204,7 @@ func (c *PermissionApprovalController) ListPermissionRequests(ctx *gin.Context) 
 	userID := ctx.GetUint("userID")
 
 	query := &models.PermissionRequestQuery{}
-	
+
 	// 解析查询参数
 	query.Status = ctx.Query("status")
 	query.OnlyPending = ctx.Query("only_pending") == "true"
