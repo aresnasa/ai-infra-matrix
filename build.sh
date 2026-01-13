@@ -5742,36 +5742,63 @@ export_offline_images() {
     local output_dir="${1:-./offline-images}"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local include_common="${3:-true}"
+    local platforms="${4:-amd64,arm64}"
     
     # Show help
     if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
-        echo "Usage: $0 export-offline [output_dir] [tag] [include_common]"
+        echo "Usage: $0 export-offline [output_dir] [tag] [include_common] [platforms]"
         echo ""
         echo "Arguments:"
         echo "  output_dir      Output directory (default: ./offline-images)"
         echo "  tag             Image tag (default: $IMAGE_TAG)"
         echo "  include_common  Include common images like mysql, redis, kafka (default: true)"
+        echo "  platforms       Comma-separated architectures to export (default: amd64,arm64)"
+        echo "                  Supported: amd64, arm64, or both"
         echo ""
         echo "Description:"
         echo "  Export all AI-Infra service images and dependency images to tar files"
+        echo "  Supports multi-architecture export for offline deployment"
         echo "  Automatically generates image manifest and import script"
         echo ""
         echo "Examples:"
-        echo "  $0 export-offline ./my-images v0.3.8 true"
-        echo "  $0 export-offline ./images v0.3.8 false"
+        echo "  $0 export-offline ./my-images v0.3.8 true amd64,arm64  # Both architectures"
+        echo "  $0 export-offline ./images v0.3.8 true amd64           # AMD64 only"
+        echo "  $0 export-offline ./images v0.3.8 false arm64          # ARM64 only, no common"
         return 0
     fi
     
+    # Parse platforms into array
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms"
+    local valid_platforms=()
+    for p in "${PLATFORM_ARRAY[@]}"; do
+        p=$(echo "$p" | tr -d '[:space:]')
+        case "$p" in
+            amd64|x86_64) valid_platforms+=("linux/amd64") ;;
+            arm64|aarch64) valid_platforms+=("linux/arm64") ;;
+            *) log_warn "Unknown platform: $p, skipping" ;;
+        esac
+    done
+    
+    if [[ ${#valid_platforms[@]} -eq 0 ]]; then
+        log_error "No valid platforms specified"
+        return 1
+    fi
+    
     log_info "=========================================="
-    log_info "📦 Exporting Offline Images"
+    log_info "📦 Exporting Offline Images (Multi-Arch)"
     log_info "=========================================="
     log_info "Output directory: $output_dir"
     log_info "Image tag: $tag"
     log_info "Include common images: $include_common"
+    log_info "Target platforms: ${valid_platforms[*]}"
     echo
     
-    # Create output directory
+    # Create output directories for each platform
     mkdir -p "$output_dir"
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        mkdir -p "${output_dir}/${arch_name}"
+    done
     
     discover_services
     
@@ -5779,21 +5806,81 @@ export_offline_images() {
     local failed_count=0
     local failed_images=()
     
+    # Helper function to export single image for specific platform
+    _export_image_for_platform() {
+        local image_name="$1"
+        local platform="$2"
+        local arch_name="${platform##*/}"
+        local safe_name=$(echo "$image_name" | sed 's|/|-|g' | sed 's|:|_|g')
+        local output_file="${output_dir}/${arch_name}/${safe_name}.tar"
+        
+        # Check if image is a local build (ai-infra-*) or remote image
+        local is_local_image=false
+        if [[ "$image_name" == ai-infra-* ]]; then
+            is_local_image=true
+        fi
+        
+        # For local images, check if it exists locally
+        if $is_local_image; then
+            if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                echo "not_found"
+                return
+            fi
+            # Export local image (assumes it's built for current platform)
+            if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                du -h "$output_file" | cut -f1
+            else
+                echo "failed"
+            fi
+        else
+            # For remote images, pull specific platform and export
+            # First check if already pulled
+            local pull_needed=true
+            if docker image inspect "$image_name" >/dev/null 2>&1; then
+                # Check if the existing image matches the target platform
+                local existing_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$existing_arch" == "$arch_name" ]] || [[ "$existing_arch" == "${arch_name/amd64/amd64}" ]]; then
+                    pull_needed=false
+                fi
+            fi
+            
+            # Pull with specific platform if needed
+            if $pull_needed; then
+                if ! docker pull --platform "$platform" "$image_name" >/dev/null 2>&1; then
+                    echo "pull_failed"
+                    return
+                fi
+            fi
+            
+            # Export the pulled image
+            if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                du -h "$output_file" | cut -f1
+            else
+                echo "failed"
+            fi
+        fi
+    }
+    
     # Phase 1: Export AI-Infra project images
     log_info "=== Phase 1: Exporting AI-Infra service images ==="
+    log_info "Note: Local images export current architecture only"
     
     local all_services=("${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
     
     for service in "${all_services[@]}"; do
         local image_name="ai-infra-${service}:${tag}"
-        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
-        local output_file="${output_dir}/${safe_name}.tar"
-        
         log_info "→ Exporting: $image_name"
+        
+        # Local images: export as-is (single architecture based on build machine)
+        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
+        local current_arch=$(_detect_docker_platform)
+        current_arch="${current_arch##*/}"
+        local output_file="${output_dir}/${current_arch}/${safe_name}.tar"
+        
         if docker image inspect "$image_name" >/dev/null 2>&1; then
             if docker save "$image_name" -o "$output_file"; then
                 local file_size=$(du -h "$output_file" | cut -f1)
-                log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
+                log_info "  ✓ Exported [${current_arch}]: $(basename "$output_file") ($file_size)"
                 exported_count=$((exported_count + 1))
             else
                 log_warn "  ✗ Failed to export: $image_name"
@@ -5808,59 +5895,70 @@ export_offline_images() {
     done
     echo
     
-    # Phase 2: Export dependency images (from deps.yaml mapping)
-    log_info "=== Phase 2: Exporting dependency images ==="
+    # Phase 2: Export dependency images (from deps.yaml mapping) - multi-arch
+    log_info "=== Phase 2: Exporting dependency images (multi-arch) ==="
     local dependencies=($(get_dependency_mappings))
     
     for mapping in "${dependencies[@]}"; do
         local source_image="${mapping%%|*}"
         local short_name="${mapping##*|}"
-        local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
-        local output_file="${output_dir}/${safe_name}.tar"
         
         log_info "→ Exporting: $source_image"
-        if docker image inspect "$source_image" >/dev/null 2>&1; then
-            if docker save "$source_image" -o "$output_file"; then
-                local file_size=$(du -h "$output_file" | cut -f1)
-                log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
-                exported_count=$((exported_count + 1))
-            else
-                log_warn "  ✗ Failed to export: $source_image"
-                failed_images+=("$source_image")
-                failed_count=$((failed_count + 1))
-            fi
-        else
-            log_warn "  ! Image not found, skipping: $source_image"
-            failed_images+=("$source_image")
-            failed_count=$((failed_count + 1))
-        fi
+        
+        for platform in "${valid_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            local result=$(_export_image_for_platform "$source_image" "$platform")
+            
+            case "$result" in
+                not_found)
+                    log_warn "  ! [$arch_name] Image not found, skipping"
+                    ;;
+                pull_failed)
+                    log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                    ;;
+                failed)
+                    log_warn "  ✗ [$arch_name] Failed to export"
+                    failed_images+=("${source_image}@${arch_name}")
+                    failed_count=$((failed_count + 1))
+                    ;;
+                *)
+                    log_info "  ✓ [$arch_name] Exported ($result)"
+                    exported_count=$((exported_count + 1))
+                    ;;
+            esac
+        done
     done
     echo
     
-    # Phase 3: Export common/third-party images
+    # Phase 3: Export common/third-party images - multi-arch
     if [[ "$include_common" == "true" ]]; then
-        log_info "=== Phase 3: Exporting common/third-party images ==="
+        log_info "=== Phase 3: Exporting common/third-party images (multi-arch) ==="
         
         for image in "${COMMON_IMAGES[@]}"; do
-            local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
-            local output_file="${output_dir}/${safe_name}.tar"
-            
             log_info "→ Exporting: $image"
-            if docker image inspect "$image" >/dev/null 2>&1; then
-                if docker save "$image" -o "$output_file"; then
-                    local file_size=$(du -h "$output_file" | cut -f1)
-                    log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
-                    exported_count=$((exported_count + 1))
-                else
-                    log_warn "  ✗ Failed to export: $image"
-                    failed_images+=("$image")
-                    failed_count=$((failed_count + 1))
-                fi
-            else
-                log_warn "  ! Image not found, skipping: $image"
-                failed_images+=("$image")
-                failed_count=$((failed_count + 1))
-            fi
+            
+            for platform in "${valid_platforms[@]}"; do
+                local arch_name="${platform##*/}"
+                local result=$(_export_image_for_platform "$image" "$platform")
+                
+                case "$result" in
+                    not_found)
+                        log_warn "  ! [$arch_name] Image not found, skipping"
+                        ;;
+                    pull_failed)
+                        log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                        ;;
+                    failed)
+                        log_warn "  ✗ [$arch_name] Failed to export"
+                        failed_images+=("${image}@${arch_name}")
+                        failed_count=$((failed_count + 1))
+                        ;;
+                    *)
+                        log_info "  ✓ [$arch_name] Exported ($result)"
+                        exported_count=$((exported_count + 1))
+                        ;;
+                esac
+            done
         done
         echo
     fi

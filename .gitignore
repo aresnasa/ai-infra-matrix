@@ -121,3 +121,4 @@ src/nginx/conf.d/*
 **/cloudflare.ini
 **/.secrets/
 **/secrets/
+offline-images/
