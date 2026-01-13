@@ -7867,8 +7867,25 @@ case "$COMMAND" in
         log_info "Building components: ${components[*]}"
         [[ "$FORCE_BUILD" == "true" ]] && log_info "  with --no-cache (force rebuild)"
         
-        for component in "${components[@]}"; do
-            build_component "$component"
-        done
+        # Check if multi-platform build is requested
+        if [[ -n "$BUILD_PLATFORMS" ]]; then
+            log_info "🏗️  Multi-platform build mode: $BUILD_PLATFORMS"
+            # Parse comma-separated platforms
+            IFS=',' read -ra platform_list <<< "$BUILD_PLATFORMS"
+            for platform in "${platform_list[@]}"; do
+                platform=$(echo "$platform" | xargs) # Trim whitespace
+                log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                log_info "🏗️  Building for platform: $platform"
+                log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                for component in "${components[@]}"; do
+                    build_component_for_platform "$component" "$platform"
+                done
+            done
+        else
+            # Standard single-platform build
+            for component in "${components[@]}"; do
+                build_component "$component"
+            done
+        fi
         ;;
 esac
