@@ -5914,8 +5914,22 @@ build_component_for_platform() {
         
         log_info "  [$arch_name] Building: $component [$target] -> $full_image_name"
         
-        local cmd=("docker" "buildx" "build")
-        cmd+=("--builder" "multiarch-builder")  # Use docker-container driver for cross-platform builds
+        # Build environment variables (inherit proxy settings from shell)
+        local build_env=()
+        [[ -n "$HTTP_PROXY" ]] && build_env+=("HTTP_PROXY=$HTTP_PROXY")
+        [[ -n "$HTTPS_PROXY" ]] && build_env+=("HTTPS_PROXY=$HTTPS_PROXY")
+        [[ -n "$http_proxy" ]] && build_env+=("http_proxy=$http_proxy")
+        [[ -n "$https_proxy" ]] && build_env+=("https_proxy=$https_proxy")
+        [[ -n "$NO_PROXY" ]] && build_env+=("NO_PROXY=$NO_PROXY")
+        [[ -n "$no_proxy" ]] && build_env+=("no_proxy=$no_proxy")
+        
+        local cmd=()
+        if [[ ${#build_env[@]} -gt 0 ]]; then
+            cmd=("env" "${build_env[@]}" "docker" "buildx" "build")
+        else
+            cmd=("docker" "buildx" "build")
+        fi
+        cmd+=("--builder" "$builder_name")  # Use the detected builder for cross-platform builds
         cmd+=("--platform" "$platform")
         cmd+=("--load")  # Load to local docker daemon
         
