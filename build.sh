@@ -5287,6 +5287,294 @@ build_for_platform() {
     build_multiarch "$platform" "$force"
 }
 
+# Build all services for multiple platforms sequentially
+# This is an enhanced version of build_all that builds for each platform
+# Usage: build_all_multiplatform <platforms> [force]
+# Example: build_all_multiplatform "amd64,arm64" "true"
+build_all_multiplatform() {
+    local platforms="${1:-amd64,arm64}"
+    local force="${2:-false}"
+    
+    # Normalize platform format
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms"
+    local normalized_platforms=()
+    for p in "${PLATFORM_ARRAY[@]}"; do
+        p=$(echo "$p" | tr -d '[:space:]')
+        case "$p" in
+            amd64|x86_64) normalized_platforms+=("linux/amd64") ;;
+            arm64|aarch64) normalized_platforms+=("linux/arm64") ;;
+            linux/amd64|linux/arm64) normalized_platforms+=("$p") ;;
+            *) log_warn "Unknown platform: $p, skipping" ;;
+        esac
+    done
+    
+    if [[ ${#normalized_platforms[@]} -eq 0 ]]; then
+        log_error "No valid platforms specified"
+        return 1
+    fi
+    
+    log_info "=========================================="
+    log_info "🏗️  Multi-Platform Build (build-all)"
+    log_info "=========================================="
+    log_info "Target platforms: ${normalized_platforms[*]}"
+    log_info "Force rebuild: $force"
+    echo
+    
+    # Setup buildx builder
+    if ! setup_buildx_builder; then
+        log_error "Failed to setup buildx builder"
+        return 1
+    fi
+    echo
+    
+    # Set force flag globally
+    if [[ "$force" == "true" ]]; then
+        FORCE_BUILD=true
+        FORCE_REBUILD=true
+    fi
+    
+    # Initialize build cache
+    init_build_cache
+    CURRENT_BUILD_ID=$(generate_build_id)
+    save_build_id "$CURRENT_BUILD_ID"
+    
+    log_info "Build Session: $CURRENT_BUILD_ID"
+    echo
+    
+    # Phase 0: Render all templates
+    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    if ! render_all_templates "$force"; then
+        log_error "Template rendering failed. Aborting build."
+        return 1
+    fi
+    echo
+    
+    # Phase 0.5: Prefetch base images for all platforms
+    log_info "=== Phase 0.5: Prefetching Base Images (Multi-Platform) ==="
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "Prefetching base images for $arch_name..."
+        prefetch_base_images_for_platform "$platform"
+    done
+    echo
+    
+    # Discover services
+    discover_services
+    
+    # Phase 1: Pull & Tag Dependency Services for all platforms
+    log_info "=== Phase 1: Processing Dependency Services (Multi-Platform) ==="
+    for service in "${DEPENDENCY_SERVICES[@]}"; do
+        log_info "Processing dependency: $service"
+        for platform in "${normalized_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            pull_dependency_for_platform "$service" "$platform"
+        done
+    done
+    echo
+    
+    # Phase 2: Build Foundation Services for each platform
+    log_info "=== Phase 2: Building Foundation Services (Multi-Platform) ==="
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "━━━ Building Foundation Services for $arch_name ━━━"
+        for service in "${FOUNDATION_SERVICES[@]}"; do
+            build_component_for_platform "$service" "$platform"
+        done
+    done
+    echo
+    
+    # Phase 3: Start AppHub Service (native platform only for serving files)
+    log_info "=== Phase 3: Starting AppHub Service ==="
+    local compose_cmd=$(detect_compose_command)
+    if [ -z "$compose_cmd" ]; then
+        log_error "docker-compose not found! Cannot start AppHub."
+        return 1
+    fi
+    
+    # Ensure we have native platform AppHub running
+    local native_platform=$(_detect_docker_platform)
+    log_info "Starting AppHub container (native: $native_platform)..."
+    $compose_cmd up -d apphub
+    
+    if ! wait_for_apphub_ready 300; then
+        log_error "AppHub failed to start. Aborting build."
+        return 1
+    fi
+    echo
+    
+    # Phase 4: Build Dependent Services for each platform
+    log_info "=== Phase 4: Building Dependent Services (Multi-Platform) ==="
+    local apphub_port="${APPHUB_PORT:-28080}"
+    local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    log_info "Using AppHub URL for builds: $apphub_url"
+    
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "━━━ Building Dependent Services for $arch_name ━━━"
+        for service in "${DEPENDENT_SERVICES[@]}"; do
+            build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
+        done
+    done
+    echo
+    
+    # Build summary
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🎉 Multi-Platform Build Session $CURRENT_BUILD_ID Completed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Platforms built: ${normalized_platforms[*]}"
+    log_info ""
+    log_info "📋 Next steps:"
+    log_info "   Export for offline: ./build.sh export-offline ./offline ${IMAGE_TAG:-latest} true ${platforms}"
+    log_info ""
+    log_info "View build history: ./build.sh build-history"
+}
+
+# Helper: Prefetch base images for a specific platform
+prefetch_base_images_for_platform() {
+    local platform="$1"
+    local arch_name="${platform##*/}"
+    
+    # Get base images from Dockerfile templates
+    local base_images=(
+        "python:3.11-slim"
+        "node:20-alpine"
+        "golang:1.21-alpine"
+        "nginx:alpine"
+        "alpine:3.18"
+    )
+    
+    for image in "${base_images[@]}"; do
+        log_info "  Pulling $image for $arch_name..."
+        docker pull --platform "$platform" "$image" >/dev/null 2>&1 || true
+    done
+}
+
+# Helper: Pull dependency image for a specific platform
+pull_dependency_for_platform() {
+    local component="$1"
+    local platform="$2"
+    local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local arch_name="${platform##*/}"
+    
+    # Check for dependency configuration
+    local dep_conf="$component_dir/dependency.conf"
+    if [ ! -f "$dep_conf" ]; then
+        return 0
+    fi
+    
+    # Skip if there's a Dockerfile (custom build)
+    if [ -f "$component_dir/Dockerfile" ]; then
+        return 0
+    fi
+    
+    local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
+    if [ -z "$upstream_image" ]; then
+        return 0
+    fi
+    
+    local target_image="ai-infra-$component:${tag}"
+    
+    log_info "  [$arch_name] Pulling: $upstream_image -> $target_image"
+    
+    if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+        docker tag "$upstream_image" "$target_image" >/dev/null 2>&1
+        log_info "  [$arch_name] ✓ Ready: $target_image"
+    else
+        log_warn "  [$arch_name] ✗ Failed to pull: $upstream_image"
+    fi
+}
+
+# Helper: Build a component for a specific platform using buildx
+build_component_for_platform() {
+    local component="$1"
+    local platform="$2"
+    local extra_args=("${@:3}")
+    local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local arch_name="${platform##*/}"
+    
+    if [ ! -d "$component_dir" ]; then
+        log_error "Component directory not found: $component_dir"
+        return 1
+    fi
+    
+    # Skip pure dependency services (no Dockerfile)
+    if [ -f "$component_dir/dependency.conf" ] && [ ! -f "$component_dir/Dockerfile" ]; then
+        log_info "  [$arch_name] ⏭️  $component (dependency, already pulled)"
+        return 0
+    fi
+    
+    if [ ! -f "$component_dir/Dockerfile" ]; then
+        log_warn "  [$arch_name] No Dockerfile in $component, skipping..."
+        return 0
+    fi
+    
+    # Check for template and render if needed
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [ -f "$template_file" ]; then
+        render_template "$template_file" >/dev/null 2>&1
+    fi
+    
+    # Check for build-targets.conf
+    local targets_file="$component_dir/build-targets.conf"
+    local targets=()
+    local images=()
+    
+    if [ -f "$targets_file" ]; then
+        while read -r target image_suffix || [ -n "$target" ]; do
+            [[ "$target" =~ ^#.*$ ]] && continue
+            [[ -z "$target" ]] && continue
+            targets+=("$target")
+            images+=("$image_suffix")
+        done < "$targets_file"
+    else
+        targets+=("default")
+        images+=("ai-infra-$component")
+    fi
+    
+    for i in "${!targets[@]}"; do
+        local target="${targets[$i]}"
+        local image_name="${images[$i]}"
+        local full_image_name="${image_name}:${tag}"
+        
+        log_info "  [$arch_name] Building: $component -> $full_image_name"
+        
+        local cmd=("docker" "buildx" "build")
+        cmd+=("--platform" "$platform")
+        cmd+=("--load")  # Load to local docker daemon
+        
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            cmd+=("--no-cache")
+        fi
+        
+        cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
+        
+        if [ "$target" != "default" ]; then
+            cmd+=("--target" "$target")
+        fi
+        
+        cmd+=("$SCRIPT_DIR")
+        
+        if "${cmd[@]}" >/dev/null 2>&1; then
+            log_info "  [$arch_name] ✓ Built: $full_image_name"
+        else
+            # Retry with output on failure
+            log_warn "  [$arch_name] Retrying build with verbose output..."
+            if "${cmd[@]}"; then
+                log_info "  [$arch_name] ✓ Built: $full_image_name"
+            else
+                log_error "  [$arch_name] ✗ Failed: $full_image_name"
+                return 1
+            fi
+        fi
+    done
+    
+    return 0
+}
+
 build_all() {
     local force="${1:-false}"
     
@@ -6570,16 +6858,16 @@ print_help() {
     echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
     echo "  build-all --parallel     Parallel build with smart caching"
     echo "  build-all --no-ssl       Build without SSL/HTTPS"
+    echo "  build-all --platform=amd64,arm64   Build for multiple architectures"
     echo "  [component]              Build a specific component (e.g., backend, frontend)"
     echo "  [component] --force      Force rebuild a component without cache"
     echo ""
     echo "Multi-Architecture Build Commands:"
-    echo "  build-multiarch [platforms] [--force]  Build for multiple architectures"
-    echo "                          platforms: linux/amd64,linux/arm64 (default: both)"
-    echo "                          Uses docker buildx for cross-platform builds"
+    echo "  --platform=<arch>        Global option to specify target platform(s)"
+    echo "                          Can be used with 'build-all' or single component"
+    echo "                          Values: amd64, arm64, or amd64,arm64 (both)"
+    echo "  build-multiarch [platforms] [--force]  Dedicated multi-arch build command"
     echo "  build-platform <arch> [--force]        Build for single target platform"
-    echo "                          Useful for building amd64 images on ARM Mac"
-    echo "                          arch: amd64, arm64 (auto-prefixed with linux/)"
     echo ""
     echo "Build Cache Commands:"
     echo "  cache-status        Show build cache status for all services"
@@ -6697,12 +6985,12 @@ print_help() {
     echo "  $0 backend                         # Build single service"
     echo "  $0 backend --force                 # Force rebuild single service"
     echo ""
-    echo "  # Multi-architecture builds (for cross-platform deployment)"
-    echo "  $0 build-multiarch                     # Build for amd64 and arm64"
-    echo "  $0 build-multiarch linux/amd64         # Build amd64 only"
-    echo "  $0 build-multiarch amd64,arm64 --force # Force rebuild both archs"
-    echo "  $0 build-platform amd64                # Build amd64 on ARM Mac"
-    echo "  $0 build-platform arm64                # Build arm64 on x86 machine"
+    echo "  # Multi-architecture builds (recommended for offline deployment)"
+    echo "  $0 build-all --platform=amd64,arm64    # Build all services for both archs"
+    echo "  $0 build-all --platform=amd64          # Build all for amd64 only"
+    echo "  $0 build-all --platform=arm64 --force  # Force rebuild for arm64"
+    echo "  $0 build-multiarch                     # Alternative: dedicated command"
+    echo "  $0 build-platform amd64                # Build single platform"
     echo ""
     echo "  # Build cache management"
     echo "  $0 cache-status                    # Show which services need rebuild"
@@ -6744,7 +7032,7 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Parse global options first (--force, --no-cache, -f, --parallel, --ssl, etc.)
+# Parse global options first (--force, --no-cache, -f, --parallel, --ssl, --platform, etc.)
 # These can appear anywhere in the command line
 FORCE_BUILD=false
 FORCE_RENDER=false
@@ -6752,6 +7040,7 @@ FORCE_REBUILD=false
 ENABLE_PARALLEL=false
 ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
+BUILD_PLATFORMS=""  # Empty means use native platform, can be: amd64, arm64, amd64,arm64
 REMAINING_ARGS=()
 
 for arg in "$@"; do
@@ -6771,6 +7060,12 @@ for arg in "$@"; do
         -p[0-9]*)
             ENABLE_PARALLEL=true
             PARALLEL_JOBS="${arg#-p}"
+            ;;
+        --platform=*)
+            BUILD_PLATFORMS="${arg#*=}"
+            ;;
+        --platform)
+            # Next arg should be the platform value, handled by shift logic below
             ;;
         --ssl)
             ENABLE_SSL=true
@@ -6803,6 +7098,9 @@ if [[ "$ENABLE_SSL" == "true" ]]; then
 fi
 if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
     log_cache "⏭️  Cache check skipped (--skip-cache)"
+fi
+if [[ -n "$BUILD_PLATFORMS" ]]; then
+    log_info "🏗️  Multi-platform build enabled: $BUILD_PLATFORMS"
 fi
 
 COMMAND="${REMAINING_ARGS[0]:-}"
@@ -6966,10 +7264,22 @@ case "$COMMAND" in
             setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
         fi
         
-        if [[ "$FORCE_BUILD" == "true" ]]; then
-            build_all "true"
+        # Check if multi-platform build is requested
+        if [[ -n "$BUILD_PLATFORMS" ]]; then
+            # Multi-platform build mode
+            log_info "🏗️  Multi-platform build mode: $BUILD_PLATFORMS"
+            if [[ "$FORCE_BUILD" == "true" ]]; then
+                build_all_multiplatform "$BUILD_PLATFORMS" "true"
+            else
+                build_all_multiplatform "$BUILD_PLATFORMS"
+            fi
         else
-            build_all
+            # Standard single-platform build
+            if [[ "$FORCE_BUILD" == "true" ]]; then
+                build_all "true"
+            else
+                build_all
+            fi
         fi
         ;;
     build-multiarch|multiarch)
