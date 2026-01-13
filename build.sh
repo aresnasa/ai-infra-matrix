@@ -3784,21 +3784,51 @@ extract_base_images() {
         return 1
     fi
     
+    # Extract ARG default values for variable substitution
+    # Format: ARG VAR_NAME=default_value
+    declare -A arg_defaults
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*ARG[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.+) ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local var_value="${BASH_REMATCH[2]}"
+            # Remove quotes if present
+            var_value="${var_value%\"}"
+            var_value="${var_value#\"}"
+            arg_defaults["$var_name"]="$var_value"
+        fi
+    done < "$dockerfile"
+    
     # Extract FROM statements
     # Pattern: FROM image:tag [AS alias]
-    # Skip: ARG variables (${...}), local build stages, empty images
+    # Handles: ARG variables (${...}), platform flags, local build stages
     grep -E "^FROM\s+" "$dockerfile" 2>/dev/null | \
-        awk '{
-            img=$2
-            # Skip ARG variables (contains ${...})
-            if (img ~ /\$\{/) next
-            # Skip platform flags
-            if (img ~ /^--/) next
+        while read -r from_line; do
+            # Remove FROM keyword and any --platform flags
+            local img=$(echo "$from_line" | sed 's/^FROM\s*//; s/--platform=[^ ]*\s*//g' | awk '{print $1}')
+            
+            # Skip if no image specified
+            [[ -z "$img" ]] && continue
+            
+            # Check for ARG variable substitution (e.g., ubuntu:${UBUNTU_VERSION})
+            if [[ "$img" =~ \$\{([A-Za-z_][A-Za-z0-9_]*)\} ]]; then
+                local var_name="${BASH_REMATCH[1]}"
+                local var_value="${arg_defaults[$var_name]:-}"
+                if [[ -n "$var_value" ]]; then
+                    # Substitute the variable with its default value
+                    img=$(echo "$img" | sed "s/\${${var_name}}/${var_value}/g")
+                else
+                    # Skip images with unresolved variables
+                    continue
+                fi
+            fi
+            
             # Skip if no colon and no slash (likely a build stage alias like "builder")
-            if (img !~ /[:\/]/) next
-            print img
-        }' | \
-        sort -u
+            if [[ ! "$img" =~ [:\/] ]]; then
+                continue
+            fi
+            
+            echo "$img"
+        done | sort -u
 }
 
 # Prefetch base images from Dockerfiles
@@ -4954,6 +4984,9 @@ setup_buildx_builder() {
         return 1
     fi
     
+    # Ensure QEMU is installed for cross-platform builds
+    _ensure_qemu_installed
+    
     # For simple single-platform builds, prefer the default docker driver
     # It inherits registry-mirrors from daemon.json
     if [[ "$use_container_driver" != "true" ]]; then
@@ -4993,6 +5026,59 @@ setup_buildx_builder() {
     docker buildx use "$builder_name"
     log_info "✓ Buildx builder ready: $builder_name"
     return 0
+}
+
+# Ensure QEMU user-mode emulation is installed for cross-platform builds
+_ensure_qemu_installed() {
+    local host_arch=$(uname -m)
+    local need_qemu=false
+    
+    # Check if we need QEMU based on host architecture and target platforms
+    if [[ -n "$BUILD_PLATFORMS" ]]; then
+        case "$host_arch" in
+            arm64|aarch64)
+                # On ARM, need QEMU for amd64
+                if echo "$BUILD_PLATFORMS" | grep -qE "amd64|x86_64"; then
+                    need_qemu=true
+                fi
+                ;;
+            x86_64|amd64)
+                # On x86, need QEMU for arm64
+                if echo "$BUILD_PLATFORMS" | grep -qE "arm64|aarch64"; then
+                    need_qemu=true
+                fi
+                ;;
+        esac
+    fi
+    
+    if [[ "$need_qemu" != "true" ]]; then
+        return 0
+    fi
+    
+    # Test if QEMU is working
+    local test_platform
+    case "$host_arch" in
+        arm64|aarch64) test_platform="linux/amd64" ;;
+        x86_64|amd64) test_platform="linux/arm64" ;;
+    esac
+    
+    log_info "Checking QEMU emulation for cross-platform builds..."
+    
+    if docker run --rm --platform "$test_platform" alpine:3.18 uname -m >/dev/null 2>&1; then
+        log_info "✓ QEMU emulation is working"
+        return 0
+    fi
+    
+    log_info "Installing QEMU user-mode emulation for cross-platform builds..."
+    if docker run --rm --privileged tonistiigi/binfmt --install all >/dev/null 2>&1; then
+        log_info "✓ QEMU emulation installed successfully"
+        return 0
+    else
+        log_warn "⚠️  Failed to install QEMU emulation"
+        log_warn "   Cross-platform builds may fail"
+        log_warn "   Try manually: docker run --rm --privileged tonistiigi/binfmt --install all"
+        return 1
+    fi
 }
 
 # Generate buildkit config with registry mirrors from Docker daemon.json
@@ -5051,8 +5137,10 @@ EOF
 }
 
 # Build a single component for multiple architectures
+# Enhanced version with dependency.conf base image support
 # Usage: build_component_multiarch <component> <platforms> [extra_args...]
 # Example: build_component_multiarch backend "linux/amd64,linux/arm64"
+#          build_component_multiarch apphub "linux/amd64,linux/arm64"
 build_component_multiarch() {
     local component="$1"
     local platforms="$2"
@@ -5066,15 +5154,15 @@ build_component_multiarch() {
         return 1
     fi
     
-    # Skip pure dependency services (no Dockerfile)
-    if [ -f "$component_dir/dependency.conf" ] && [ ! -f "$component_dir/Dockerfile" ]; then
-        log_info "⏭️  Skipping $component (pure dependency, use docker pull for multi-arch)"
-        return 0
-    fi
-    
-    if [ ! -f "$component_dir/Dockerfile" ]; then
-        log_warn "No Dockerfile in $component, skipping..."
-        return 0
+    # ===== Build Cache Check =====
+    if [[ "$FORCE_BUILD" != "true" ]]; then
+        local rebuild_reason=$(need_rebuild "$component" "$tag")
+        if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+            log_cache "⏭️  Skipping $component (no changes detected)"
+            log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE (multiarch)"
+            return 0
+        fi
+        log_cache "🔄 Rebuilding $component: $rebuild_reason"
     fi
     
     # Check for template and render if needed
@@ -5083,8 +5171,74 @@ build_component_multiarch() {
         log_info "Rendering template for $component..."
         if ! render_template "$template_file"; then
             log_error "Failed to render template for $component"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "TEMPLATE_ERROR"
             return 1
         fi
+    fi
+    
+    # ===== Dependency Configuration (External Base Image) =====
+    local dep_conf="$component_dir/dependency.conf"
+    if [ -f "$dep_conf" ]; then
+        local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
+        if [ -z "$upstream_image" ]; then
+            log_error "Empty dependency config for $component"
+            return 1
+        fi
+        
+        # Check if this component also has a Dockerfile (custom build based on dependency)
+        if [ -f "$component_dir/Dockerfile" ]; then
+            log_info "Processing $component: dependency + custom Dockerfile"
+            log_info "  Base image: $upstream_image"
+            
+            # Pull the base image for all target platforms first
+            log_info "Pulling base image for all target platforms..."
+            IFS=',' read -ra platform_array <<< "$platforms"
+            for platform in "${platform_array[@]}"; do
+                local arch_name="${platform##*/}"
+                log_info "  Pulling $upstream_image for $arch_name..."
+                if ! docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                    log_warn "  Retrying pull for $arch_name..."
+                    if ! docker pull --platform "$platform" "$upstream_image"; then
+                        log_error "✗ Failed to pull base image $upstream_image for $arch_name"
+                        log_build_history "$build_id" "$component" "$tag" "FAILED" "BASE_PULL_ERROR ($arch_name)"
+                        return 1
+                    fi
+                fi
+                log_info "  ✓ $arch_name ready"
+            done
+            log_info "✓ Base image ready for all platforms: $upstream_image"
+            # Continue to Dockerfile build below (don't return)
+        else
+            # Pure dependency - just pull and tag for all target platforms
+            local target_image="ai-infra-$component:${tag}"
+            if [ -n "$PRIVATE_REGISTRY" ]; then
+                target_image="$PRIVATE_REGISTRY/$target_image"
+            fi
+            
+            log_info "Processing dependency $component: $upstream_image -> $target_image (multiarch)"
+            
+            IFS=',' read -ra platform_array <<< "$platforms"
+            for platform in "${platform_array[@]}"; do
+                local arch_name="${platform##*/}"
+                log_info "  [$arch_name] Pulling and tagging..."
+                if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                    docker tag "$upstream_image" "$target_image" >/dev/null 2>&1
+                    log_info "  [$arch_name] ✓ Ready: $target_image"
+                else
+                    log_error "  [$arch_name] ✗ Failed to pull $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR ($arch_name)"
+                    return 1
+                fi
+            done
+            
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED (multiarch)"
+            return 0
+        fi
+    fi
+    
+    if [ ! -f "$component_dir/Dockerfile" ]; then
+        log_warn "No Dockerfile or dependency.conf in $component, skipping..."
+        return 0
     fi
     
     # Calculate service hash for build label
@@ -5167,8 +5321,11 @@ build_component_multiarch() {
         
         if "${cmd[@]}"; then
             log_info "✓ Multi-arch build success: $full_image_name ($platforms)"
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT (multiarch: $platforms)"
+            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
         else
             log_error "✗ Multi-arch build failed: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR (multiarch)"
             return 1
         fi
     done
@@ -5512,23 +5669,43 @@ build_all_multiplatform() {
 }
 
 # Helper: Prefetch base images for a specific platform
+# Includes all base images used by AI-Infra services including apphub
 prefetch_base_images_for_platform() {
     local platform="$1"
     local arch_name="${platform##*/}"
     
-    # Get base images from Dockerfile templates
+    # Get base images from Dockerfile templates and component Dockerfiles
+    # This includes apphub's Ubuntu/AlmaLinux builders and service base images
     local base_images=(
+        # AppHub base images (multi-stage builder)
+        "ubuntu:22.04"
+        "almalinux:9.3-minimal"
+        # Common service base images
         "python:3.11-slim"
         "node:20-alpine"
         "golang:1.21-alpine"
         "nginx:alpine"
         "alpine:3.18"
+        "alpine:3.19"
+        # Additional base images for other services
+        "debian:bookworm-slim"
     )
     
+    log_info "  [$arch_name] Prefetching ${#base_images[@]} base images..."
+    local success_count=0
+    local fail_count=0
+    
     for image in "${base_images[@]}"; do
-        log_info "  Pulling $image for $arch_name..."
-        docker pull --platform "$platform" "$image" >/dev/null 2>&1 || true
+        if docker pull --platform "$platform" "$image" >/dev/null 2>&1; then
+            log_info "    ✓ $image"
+            ((success_count++))
+        else
+            log_warn "    ✗ $image (may not be needed)"
+            ((fail_count++))
+        fi
     done
+    
+    log_info "  [$arch_name] Prefetch complete: $success_count success, $fail_count failed/skipped"
 }
 
 # Helper: Pull dependency image for a specific platform
@@ -5568,6 +5745,12 @@ pull_dependency_for_platform() {
 }
 
 # Helper: Build a component for a specific platform using buildx
+# Build a single component for a specific platform
+# Enhanced version with full feature parity with build_component()
+# Features: build cache check, dependency.conf support, build labels, history logging, private registry
+# Usage: build_component_for_platform <component> <platform> [extra_args...]
+# Example: build_component_for_platform apphub linux/amd64
+#          build_component_for_platform backend linux/arm64 --build-arg APPHUB_URL=http://...
 build_component_for_platform() {
     local component="$1"
     local platform="$2"
@@ -5575,28 +5758,98 @@ build_component_for_platform() {
     local component_dir="$SRC_DIR/$component"
     local tag="${IMAGE_TAG:-latest}"
     local arch_name="${platform##*/}"
+    local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
     
     if [ ! -d "$component_dir" ]; then
-        log_error "Component directory not found: $component_dir"
+        log_error "[$arch_name] Component directory not found: $component_dir"
         return 1
     fi
     
-    # Skip pure dependency services (no Dockerfile)
-    if [ -f "$component_dir/dependency.conf" ] && [ ! -f "$component_dir/Dockerfile" ]; then
-        log_info "  [$arch_name] ⏭️  $component (dependency, already pulled)"
-        return 0
-    fi
-    
-    if [ ! -f "$component_dir/Dockerfile" ]; then
-        log_warn "  [$arch_name] No Dockerfile in $component, skipping..."
-        return 0
+    # ===== Build Cache Check =====
+    # Skip cache check if FORCE_BUILD is enabled
+    if [[ "$FORCE_BUILD" != "true" ]]; then
+        local rebuild_reason=$(need_rebuild "$component" "$tag")
+        if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+            log_cache "  [$arch_name] ⏭️  Skipping $component (no changes detected)"
+            log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE ($arch_name)"
+            return 0
+        fi
+        log_cache "  [$arch_name] 🔄 Rebuilding $component: $rebuild_reason"
     fi
     
     # Check for template and render if needed
     local template_file="$component_dir/Dockerfile.tpl"
     if [ -f "$template_file" ]; then
-        render_template "$template_file" >/dev/null 2>&1
+        log_info "  [$arch_name] Rendering template for $component..."
+        if ! render_template "$template_file" >/dev/null 2>&1; then
+            log_error "  [$arch_name] Failed to render template for $component"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "TEMPLATE_ERROR ($arch_name)"
+            return 1
+        fi
     fi
+    
+    # ===== Dependency Configuration (External Base Image) =====
+    local dep_conf="$component_dir/dependency.conf"
+    if [ -f "$dep_conf" ]; then
+        local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
+        if [ -z "$upstream_image" ]; then
+            log_error "  [$arch_name] Empty dependency config for $component"
+            return 1
+        fi
+        
+        # Check if this component also has a Dockerfile (custom build based on dependency)
+        if [ -f "$component_dir/Dockerfile" ]; then
+            # Custom build that uses a base image from dependency.conf
+            log_info "  [$arch_name] Processing $component: dependency + custom Dockerfile"
+            log_info "  [$arch_name]   Base image: $upstream_image"
+            
+            # Pull the base image for the target platform first
+            log_info "  [$arch_name] Pulling base image for $arch_name..."
+            if ! docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                # Retry with verbose output
+                log_warn "  [$arch_name] Retrying base image pull..."
+                if ! docker pull --platform "$platform" "$upstream_image"; then
+                    log_error "  [$arch_name] ✗ Failed to pull base image $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "BASE_PULL_ERROR ($arch_name)"
+                    return 1
+                fi
+            fi
+            log_info "  [$arch_name] ✓ Base image ready: $upstream_image"
+            # Continue to Dockerfile build below (don't return)
+        else
+            # Pure dependency - just pull and tag for target platform
+            local target_image="ai-infra-$component:${tag}"
+            if [ -n "$PRIVATE_REGISTRY" ]; then
+                target_image="$PRIVATE_REGISTRY/$target_image"
+            fi
+            
+            log_info "  [$arch_name] Processing dependency $component: $upstream_image -> $target_image"
+            
+            if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                if docker tag "$upstream_image" "$target_image" >/dev/null 2>&1; then
+                    log_info "  [$arch_name] ✓ Dependency ready: $target_image"
+                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED ($arch_name)"
+                    return 0
+                else
+                    log_error "  [$arch_name] ✗ Failed to tag $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR ($arch_name)"
+                    return 1
+                fi
+            else
+                log_error "  [$arch_name] ✗ Failed to pull $upstream_image"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR ($arch_name)"
+                return 1
+            fi
+        fi
+    fi
+    
+    if [ ! -f "$component_dir/Dockerfile" ]; then
+        log_warn "  [$arch_name] No Dockerfile or dependency.conf in $component, skipping..."
+        return 0
+    fi
+    
+    # Calculate service hash for build label
+    local service_hash=$(calculate_service_hash "$component")
     
     # Check for build-targets.conf
     local targets_file="$component_dir/build-targets.conf"
@@ -5620,15 +5873,27 @@ build_component_for_platform() {
         local image_name="${images[$i]}"
         local full_image_name="${image_name}:${tag}"
         
-        log_info "  [$arch_name] Building: $component -> $full_image_name"
+        if [ -n "$PRIVATE_REGISTRY" ]; then
+            full_image_name="$PRIVATE_REGISTRY/$full_image_name"
+        fi
+        
+        log_info "  [$arch_name] Building: $component [$target] -> $full_image_name"
         
         local cmd=("docker" "buildx" "build")
         cmd+=("--platform" "$platform")
         cmd+=("--load")  # Load to local docker daemon
         
+        # Add --no-cache if force build is enabled
         if [[ "$FORCE_BUILD" == "true" ]]; then
             cmd+=("--no-cache")
         fi
+        
+        # Add build cache labels for incremental builds
+        cmd+=("--label" "build.hash=$service_hash")
+        cmd+=("--label" "build.id=$build_id")
+        cmd+=("--label" "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+        cmd+=("--label" "build.component=$component")
+        cmd+=("--label" "build.platform=$platform")
         
         cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
         
@@ -5640,13 +5905,18 @@ build_component_for_platform() {
         
         if "${cmd[@]}" >/dev/null 2>&1; then
             log_info "  [$arch_name] ✓ Built: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
+            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
         else
             # Retry with output on failure
             log_warn "  [$arch_name] Retrying build with verbose output..."
             if "${cmd[@]}"; then
                 log_info "  [$arch_name] ✓ Built: $full_image_name"
+                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_RETRY ($arch_name)"
+                save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
             else
                 log_error "  [$arch_name] ✗ Failed: $full_image_name"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
                 return 1
             fi
         fi
