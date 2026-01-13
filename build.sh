@@ -5948,7 +5948,6 @@ build_component_for_platform() {
             log_error "  [$arch_name] ✗ Failed: $full_image_name"
             log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
             return 1
-            fi
         fi
     done
     
