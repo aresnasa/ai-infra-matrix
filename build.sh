@@ -5803,10 +5803,8 @@ build_component_for_platform() {
                 driver_opts+=("--driver-opt" "env.HTTPS_PROXY=$proxy_host")
                 driver_opts+=("--driver-opt" "env.https_proxy=$proxy_host")
             fi
-            if [[ -n "$NO_PROXY" ]]; then
-                driver_opts+=("--driver-opt" "env.NO_PROXY=$NO_PROXY")
-                driver_opts+=("--driver-opt" "env.no_proxy=$NO_PROXY")
-            fi
+            # Note: NO_PROXY is intentionally omitted as it contains complex values with commas
+            # that don't parse well with --driver-opt. Buildkit will use proxy for all requests.
             
             # Create builder with docker-container driver
             if ! docker buildx create --name "$builder_name" --driver docker-container \
