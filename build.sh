@@ -4945,6 +4945,7 @@ build_parallel() {
 # Check and setup buildx builder
 setup_buildx_builder() {
     local builder_name="ai-infra-multiarch"
+    local use_container_driver="${1:-false}"  # Default to docker driver for better mirror support
     
     # Check if buildx is available
     if ! docker buildx version >/dev/null 2>&1; then
@@ -4953,12 +4954,36 @@ setup_buildx_builder() {
         return 1
     fi
     
-    # Check if our builder exists
+    # For simple single-platform builds, prefer the default docker driver
+    # It inherits registry-mirrors from daemon.json
+    if [[ "$use_container_driver" != "true" ]]; then
+        # Use default docker driver (desktop-linux on Mac)
+        local default_builder=$(docker buildx ls 2>/dev/null | grep -E "^desktop-linux|^default" | head -1 | awk '{print $1}')
+        if [[ -n "$default_builder" ]]; then
+            docker buildx use "$default_builder" 2>/dev/null
+            log_info "✓ Using buildx builder: $default_builder (docker driver, inherits mirror config)"
+            return 0
+        fi
+    fi
+    
+    # For docker-container driver (needed for some cross-platform scenarios)
+    # Create with registry mirror configuration
     if docker buildx inspect "$builder_name" >/dev/null 2>&1; then
         log_info "Using existing buildx builder: $builder_name"
     else
         log_info "Creating new buildx builder: $builder_name"
-        if ! docker buildx create --name "$builder_name" --driver docker-container --bootstrap; then
+        
+        # Generate buildkit config with registry mirrors from daemon.json
+        local buildkit_config="/tmp/buildkitd-${builder_name}.toml"
+        _generate_buildkit_config "$buildkit_config"
+        
+        local create_args=("--name" "$builder_name" "--driver" "docker-container" "--bootstrap")
+        if [[ -f "$buildkit_config" ]]; then
+            create_args+=("--config" "$buildkit_config")
+            log_info "Using registry mirrors from Docker daemon config"
+        fi
+        
+        if ! docker buildx create "${create_args[@]}"; then
             log_error "Failed to create buildx builder"
             return 1
         fi
@@ -4967,6 +4992,61 @@ setup_buildx_builder() {
     # Use this builder
     docker buildx use "$builder_name"
     log_info "✓ Buildx builder ready: $builder_name"
+    return 0
+}
+
+# Generate buildkit config with registry mirrors from Docker daemon.json
+_generate_buildkit_config() {
+    local output_file="$1"
+    local daemon_json="${HOME}/.docker/daemon.json"
+    
+    # Check if daemon.json exists and has registry-mirrors
+    if [[ ! -f "$daemon_json" ]]; then
+        return 1
+    fi
+    
+    # Extract registry mirrors (simple parsing)
+    local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+' | head -3)
+    if [[ -z "$mirrors" ]]; then
+        return 1
+    fi
+    
+    # Generate buildkit TOML config
+    cat > "$output_file" << 'EOF'
+# Auto-generated buildkit config for registry mirrors
+debug = false
+
+[registry."docker.io"]
+EOF
+    
+    # Add mirrors
+    echo "  mirrors = [" >> "$output_file"
+    local first=true
+    for mirror in $mirrors; do
+        # Extract hostname from URL
+        local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+        if [[ "$first" == "true" ]]; then
+            echo "    \"$host\"" >> "$output_file"
+            first=false
+        else
+            echo "    ,\"$host\"" >> "$output_file"
+        fi
+    done
+    echo "  ]" >> "$output_file"
+    
+    # Add insecure registry configs
+    for mirror in $mirrors; do
+        local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+        local is_http=$(echo "$mirror" | grep -c "^http://")
+        cat >> "$output_file" << EOF
+
+[registry."$host"]
+  http = $([ "$is_http" -gt 0 ] && echo "true" || echo "false")
+  insecure = true
+EOF
+    done
+    
+    log_info "Generated buildkit config: $output_file"
     return 0
 }
 
