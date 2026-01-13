@@ -6001,18 +6001,21 @@ EOF
             fi
         done
     
-    if [[ "$include_common" == "true" ]]; then
-        echo "" >> "$manifest_file"
-        echo "# Common/Third-party Images" >> "$manifest_file"
+        if [[ "$include_common" == "true" ]]; then
+            echo "" >> "$manifest_file"
+            echo "# Common/Third-party Images" >> "$manifest_file"
+            
+            for image in "${COMMON_IMAGES[@]}"; do
+                local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
+                local tar_file="${safe_name}.tar"
+                if [[ -f "${output_dir}/${arch_name}/${tar_file}" ]]; then
+                    echo "$image|$tar_file" >> "$manifest_file"
+                fi
+            done
+        fi
         
-        for image in "${COMMON_IMAGES[@]}"; do
-            local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
-            local tar_file="${safe_name}.tar"
-            if [[ -f "${output_dir}/${tar_file}" ]]; then
-                echo "$image|$tar_file" >> "$manifest_file"
-            fi
-        done
-    fi
+        log_info "  ✓ Generated manifest for $arch_name"
+    done
     
     # Generate import script
     log_info "📜 Generating import script..."
