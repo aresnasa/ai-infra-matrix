@@ -5777,9 +5777,10 @@ build_component_for_platform() {
     
     # Ensure multiarch-builder exists for cross-platform builds (uses docker-container driver)
     # This is needed because the default docker driver cannot pull/build cross-platform images reliably
+    # Using network=host to avoid container network isolation issues with Docker Hub access
     if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
         log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
-        docker buildx create --name multiarch-builder --driver docker-container --bootstrap >/dev/null 2>&1 || true
+        docker buildx create --name multiarch-builder --driver docker-container --driver-opt network=host --bootstrap >/dev/null 2>&1 || true
     fi
     
     if [ ! -d "$component_dir" ]; then
