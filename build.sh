@@ -6017,20 +6017,20 @@ EOF
         log_info "  ✓ Generated manifest for $arch_name"
     done
     
-    # Generate import script
+    # Generate import script (architecture-aware)
     log_info "📜 Generating import script..."
     local import_script="${output_dir}/import-images.sh"
     cat > "$import_script" << 'IMPORT_SCRIPT_EOF'
 #!/bin/bash
 
-# AI Infrastructure Matrix - Offline Images Import Script
-# Usage: ./import-images.sh [images_directory]
+# AI Infrastructure Matrix - Offline Images Import Script (Multi-Arch)
+# Usage: ./import-images.sh [architecture]
+# Architecture: amd64, arm64, or auto (default: auto-detect)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGES_DIR="${1:-$SCRIPT_DIR}"
-MANIFEST_FILE="${IMAGES_DIR}/images-manifest.txt"
+REQUESTED_ARCH="${1:-auto}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -6041,6 +6041,39 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Detect host architecture
+detect_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        *) echo "amd64" ;;  # Default fallback
+    esac
+}
+
+# Determine which architecture to use
+if [[ "$REQUESTED_ARCH" == "auto" ]]; then
+    ARCH=$(detect_arch)
+    log_info "Auto-detected architecture: $ARCH"
+else
+    ARCH="$REQUESTED_ARCH"
+fi
+
+IMAGES_DIR="${SCRIPT_DIR}/${ARCH}"
+MANIFEST_FILE="${IMAGES_DIR}/images-manifest.txt"
+
+# Check if architecture directory exists
+if [[ ! -d "$IMAGES_DIR" ]]; then
+    log_error "Architecture directory not found: $IMAGES_DIR"
+    log_info "Available architectures:"
+    for dir in "$SCRIPT_DIR"/*/; do
+        if [[ -f "${dir}images-manifest.txt" ]]; then
+            log_info "  - $(basename "$dir")"
+        fi
+    done
+    exit 1
+fi
+
 if [[ ! -f "$MANIFEST_FILE" ]]; then
     log_error "Manifest file not found: $MANIFEST_FILE"
     exit 1
@@ -6049,6 +6082,7 @@ fi
 log_info "=========================================="
 log_info "Importing Offline Images"
 log_info "=========================================="
+log_info "Architecture: $ARCH"
 log_info "Images directory: $IMAGES_DIR"
 log_info "Manifest file: $MANIFEST_FILE"
 echo
