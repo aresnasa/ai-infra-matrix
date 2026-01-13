@@ -6129,7 +6129,8 @@ IMPORT_SCRIPT_EOF
     
     chmod +x "$import_script"
     
-    # Calculate total size
+    # Calculate total size for each architecture
+    log_info "📊 Calculating sizes..."
     local total_size=$(du -sh "$output_dir" | cut -f1)
     
     # Print summary
@@ -6141,6 +6142,15 @@ IMPORT_SCRIPT_EOF
     log_info "  • Exported: $exported_count images"
     log_info "  • Failed: $failed_count images"
     log_info "  • Total size: $total_size"
+    log_info "  • Architectures:"
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        if [[ -d "${output_dir}/${arch_name}" ]]; then
+            local arch_size=$(du -sh "${output_dir}/${arch_name}" | cut -f1)
+            local arch_count=$(find "${output_dir}/${arch_name}" -name "*.tar" 2>/dev/null | wc -l | tr -d ' ')
+            log_info "    - ${arch_name}: ${arch_count} images (${arch_size})"
+        fi
+    done
     echo
     
     if [[ ${#failed_images[@]} -gt 0 ]]; then
