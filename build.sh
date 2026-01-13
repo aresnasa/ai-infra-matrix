@@ -4647,6 +4647,12 @@ if [ -f "$ENV_EXAMPLE" ]; then
         [[ -z "$key" ]] && continue
         curr_val="${!key}"
         if [ -n "$curr_val" ]; then
+            # For proxy-related args, convert localhost/127.0.0.1 to host.docker.internal
+            # This ensures buildkit container can access host's proxy
+            if [[ "$key" =~ ^(HTTP_PROXY|HTTPS_PROXY|http_proxy|https_proxy)$ ]]; then
+                curr_val="${curr_val//127.0.0.1/host.docker.internal}"
+                curr_val="${curr_val//localhost/host.docker.internal}"
+            fi
             BASE_BUILD_ARGS+=("--build-arg" "$key=$curr_val")
         fi
     done < <(grep -v '^#' "$ENV_EXAMPLE")
