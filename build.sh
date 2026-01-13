@@ -404,6 +404,12 @@ update_env_variable() {
     local var_value="$2"
     local env_file="$ENV_FILE"
     
+    # 防御性检查：变量名不能为空
+    if [[ -z "$var_name" ]]; then
+        log_warn "update_env_variable: empty var_name, skipping"
+        return 1
+    fi
+    
     if [[ ! -f "$env_file" ]]; then
         return 1
     fi
