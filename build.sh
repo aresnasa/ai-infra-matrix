@@ -5775,12 +5775,12 @@ build_component_for_platform() {
     local arch_name="${platform##*/}"
     local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
     
-    # Ensure multiarch-builder exists for cross-platform builds (uses docker-container driver)
-    # This is needed because the default docker driver cannot pull/build cross-platform images reliably
-    # Using network=host to avoid container network isolation issues with Docker Hub access
-    if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
-        log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
-        docker buildx create --name multiarch-builder --driver docker-container --driver-opt network=host --bootstrap >/dev/null 2>&1 || true
+    # For cross-platform builds, use the desktop-linux builder (Docker Desktop's built-in builder)
+    # It has better network connectivity and QEMU support than docker-container driver
+    local builder_name="desktop-linux"
+    if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        # Fallback to default if desktop-linux doesn't exist
+        builder_name="default"
     fi
     
     if [ ! -d "$component_dir" ]; then
