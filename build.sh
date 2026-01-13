@@ -5778,6 +5778,13 @@ build_component_for_platform() {
     local extra_args=("${@:3}")
     local component_dir="$SRC_DIR/$component"
     local tag="${IMAGE_TAG:-latest}"
+    
+    # Normalize platform format: ensure it has "linux/" prefix
+    # Accept: amd64, arm64, linux/amd64, linux/arm64
+    if [[ "$platform" != *"/"* ]]; then
+        platform="linux/$platform"
+    fi
+    
     local arch_name="${platform##*/}"
     local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
     
