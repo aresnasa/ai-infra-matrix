@@ -5792,29 +5792,11 @@ build_component_for_platform() {
         if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
             log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
             
-            # Build driver options
-            local driver_opts=("--driver-opt" "network=host")
-            
-            # Add proxy settings if available (use host.docker.internal for Docker Desktop on macOS/Windows)
-            # This allows buildkit container to access proxy running on host machine
-            if [[ -n "$HTTP_PROXY" ]]; then
-                local proxy_host="${HTTP_PROXY//127.0.0.1/host.docker.internal}"
-                proxy_host="${proxy_host//localhost/host.docker.internal}"
-                driver_opts+=("--driver-opt" "env.HTTP_PROXY=$proxy_host")
-                driver_opts+=("--driver-opt" "env.http_proxy=$proxy_host")
-            fi
-            if [[ -n "$HTTPS_PROXY" ]]; then
-                local proxy_host="${HTTPS_PROXY//127.0.0.1/host.docker.internal}"
-                proxy_host="${proxy_host//localhost/host.docker.internal}"
-                driver_opts+=("--driver-opt" "env.HTTPS_PROXY=$proxy_host")
-                driver_opts+=("--driver-opt" "env.https_proxy=$proxy_host")
-            fi
-            # Note: NO_PROXY is intentionally omitted as it contains complex values with commas
-            # that don't parse well with --driver-opt. Buildkit will use proxy for all requests.
-            
-            # Create builder with docker-container driver
+            # Create builder with docker-container driver and host network
+            # Using network=host allows buildkit to access the network directly without proxy configuration
+            # This avoids DNS resolution issues with host.docker.internal in different environments
             if ! docker buildx create --name "$builder_name" --driver docker-container \
-                "${driver_opts[@]}" --bootstrap 2>&1; then
+                --driver-opt network=host --bootstrap 2>&1; then
                 log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
                 builder_name="default"
             fi
