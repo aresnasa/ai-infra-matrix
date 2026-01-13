@@ -54,6 +54,76 @@ EXTERNAL_HOST = os.environ.get('EXTERNAL_HOST', 'localhost')
 EXTERNAL_PORT = os.environ.get('EXTERNAL_PORT', '8080')
 HTTPS_PORT = os.environ.get('HTTPS_PORT', '8443')
 
+# 公有云环境配置
+# PUBLIC_HOST - 用户浏览器访问的公网地址（域名或公网 IP）
+# 在公有云环境中：
+#   PUBLIC_HOST=ai-infra-matrix.top  （域名，用于浏览器重定向）
+#   EXTERNAL_HOST=172.19.53.9        （内网 IP，用于容器间通信等）
+PUBLIC_HOST = os.environ.get('PUBLIC_HOST', '')
+
+# 公有云环境检测：本地 IP 和公网 IP 不同
+# 在公有云环境中，容器内检测到的 IP 是内网 IP（如 172.x.x.x），但用户需要通过公网 IP 访问
+def is_private_ip(ip):
+    """检测是否为内网 IP"""
+    if not ip:
+        return True
+    # 内网 IP 范围：10.x.x.x, 172.16-31.x.x, 192.168.x.x, 127.x.x.x
+    private_prefixes = ('10.', '172.16.', '172.17.', '172.18.', '172.19.', 
+                        '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
+                        '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
+                        '172.30.', '172.31.', '192.168.', '127.', 'localhost')
+    return any(ip.startswith(prefix) for prefix in private_prefixes)
+
+def get_public_host_for_redirect():
+    """获取用于重定向的公网主机地址
+    
+    公有云环境说明：
+    - 阿里云/AWS/Azure 等公有云的 ECS/EC2 实例，本地 IP 是内网 IP
+    - PUBLIC_HOST 应该配置为域名或公网 IP（优先级最高）
+    - EXTERNAL_HOST 可以是内网 IP（用于容器间通信）
+    - 此函数确保重定向始终使用公网地址
+    
+    优先级：
+    1. PUBLIC_HOST - 公有云环境推荐配置
+    2. JUPYTERHUB_PUBLIC_HOST - JupyterHub 专用配置
+    3. EXTERNAL_HOST - 仅当不是内网 IP 时使用
+    """
+    enable_tls = os.environ.get('ENABLE_TLS', 'false').lower() == 'true'
+    
+    # 1. 最高优先级：PUBLIC_HOST（公有云环境推荐）
+    if PUBLIC_HOST and not is_private_ip(PUBLIC_HOST.split(':')[0]):
+        logger.info(f"使用 PUBLIC_HOST 作为公网主机: {PUBLIC_HOST}")
+        # 如果 PUBLIC_HOST 已包含端口则直接使用，否则根据 TLS 设置添加端口
+        if ':' in PUBLIC_HOST:
+            return PUBLIC_HOST
+        if enable_tls or EXTERNAL_SCHEME == 'https':
+            return f"{PUBLIC_HOST}:{HTTPS_PORT}"
+        else:
+            return f"{PUBLIC_HOST}:{EXTERNAL_PORT}"
+    
+    # 2. 次优先级：显式配置的 JUPYTERHUB_PUBLIC_HOST
+    explicit_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', '')
+    if explicit_host and not is_private_ip(explicit_host.split(':')[0]):
+        logger.info(f"使用显式配置的公网主机: {explicit_host}")
+        return explicit_host
+    
+    # 3. 使用 EXTERNAL_HOST（仅当不是内网 IP）
+    if EXTERNAL_HOST and not is_private_ip(EXTERNAL_HOST):
+        logger.info(f"使用 EXTERNAL_HOST 作为公网主机: {EXTERNAL_HOST}")
+        if enable_tls or EXTERNAL_SCHEME == 'https':
+            return f"{EXTERNAL_HOST}:{HTTPS_PORT}"
+        else:
+            return f"{EXTERNAL_HOST}:{EXTERNAL_PORT}"
+    
+    # 警告：检测到使用内网 IP，没有配置公网地址
+    if is_private_ip(EXTERNAL_HOST) and not PUBLIC_HOST:
+        logger.warning(f"⚠️  检测到使用内网 IP ({EXTERNAL_HOST})，这可能导致公网访问重定向失败")
+        logger.warning("💡 公有云环境请在 .env 中设置 PUBLIC_HOST 为域名或公网 IP")
+        logger.warning("💡 示例: PUBLIC_HOST=ai-infra-matrix.top")
+    
+    # 降级到默认配置
+    return explicit_host or f"{EXTERNAL_HOST}:{EXTERNAL_PORT}"
+
 # 数据库配置
 DB_CONFIG = {
     'host': os.environ.get('POSTGRES_HOST', 'postgres'),
@@ -283,18 +353,21 @@ else:
     c.JupyterHub.base_url = '/'
 
 # 公共URL配置 - 支持动态检测客户端访问地址
-# 当启用 TLS 时，使用 HTTPS 端口替换默认的 HTTP 端口
-_raw_public_host = os.environ.get('JUPYTERHUB_PUBLIC_HOST', 'localhost:8080')
+# 【关键修复】公有云环境下，确保使用公网 IP 而不是内网 IP
+# 获取用于重定向的公网主机地址（已处理内网/公网 IP 区分）
+public_host = get_public_host_for_redirect()
+
+# 当启用 TLS 时，确保使用正确的端口
 if enable_tls or EXTERNAL_SCHEME == 'https':
     # TLS 模式：确保 public_host 使用 HTTPS 端口
-    if ':' in _raw_public_host:
-        _host_part = _raw_public_host.rsplit(':', 1)[0]
+    if ':' in public_host:
+        _host_part = public_host.rsplit(':', 1)[0]
         public_host = f'{_host_part}:{HTTPS_PORT}'
     else:
-        public_host = f'{_raw_public_host}:{HTTPS_PORT}'
+        public_host = f'{public_host}:{HTTPS_PORT}'
     print(f"🔒 TLS模式: public_host 调整为 {public_host}")
-else:
-    public_host = _raw_public_host
+
+print(f"📍 公网访问地址: {public_host}")
 c.JupyterHub.bind_url = 'http://0.0.0.0:8000'
 
 # 设置动态公共URL检测
@@ -529,8 +602,17 @@ if SPAWNER_TYPE == 'docker':
     c.ContainerSpawner.remove = True  # 删除停止的容器
     c.ContainerSpawner.debug = True
     
-    # DockerSpawner 在同一 docker 网络内访问，使用容器内网IP可避免端口映射问题
+    # 【关键配置】DockerSpawner 网络配置
+    # use_internal_ip=True：单用户容器通过 Docker 内网连接 Hub（避免端口映射问题）
+    # 但浏览器重定向必须使用 public_url（公网地址）
     c.DockerSpawner.use_internal_ip = True
+    
+    # 【公有云环境修复】确保单用户容器返回的 URL 使用公网地址
+    # 这是解决 "跳转到 172.x.x.x" 问题的关键
+    # hub_connect_url 用于容器内部通信（内网）
+    # public_url 用于浏览器重定向（公网）
+    print(f"📍 Hub 内部连接地址: {c.JupyterHub.hub_connect_url}")
+    print(f"📍 公网访问地址: {c.JupyterHub.public_url}")
     
     # 启动/就绪超时调大，避免首次拉取镜像或慢启动导致超时
     c.Spawner.start_timeout = int(os.environ.get('JUPYTERHUB_START_TIMEOUT', '180'))
@@ -544,9 +626,13 @@ if SPAWNER_TYPE == 'docker':
     c.ContainerSpawner.notebook_dir = '/home/jovyan/work'
     c.ContainerSpawner.cmd = ['start-singleuser.sh']  # 使用标准单用户启动脚本
     
-    # 环境变量设置
+    # 环境变量设置 - 传递公网访问信息到单用户容器
     c.ContainerSpawner.environment = {
         'JUPYTER_ENABLE_LAB': 'yes',  # 启用JupyterLab
+        # 传递公网主机信息，供单用户容器使用
+        'JUPYTERHUB_PUBLIC_HOST': public_host,
+        'EXTERNAL_HOST': EXTERNAL_HOST,
+        'EXTERNAL_SCHEME': EXTERNAL_SCHEME,
     }
     
     # 挂载配置（可选）

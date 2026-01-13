@@ -10,6 +10,7 @@ ENV container=docker
 ENV TZ=Asia/Shanghai
 
 # 使用镜像源加速下载（支持 x86 和 ARM64 双架构）
+# 添加 [trusted=yes] 解决 Docker overlay 文件系统的 GPG 签名验证问题
 RUN set -eux; \
     ARCH=$(dpkg --print-architecture); \
     echo "Detected architecture: ${ARCH}"; \
@@ -20,17 +21,20 @@ RUN set -eux; \
     fi; \
     . /etc/os-release && CODENAME=${VERSION_CODENAME:-jammy}; \
     if [ -n "${APT_MIRROR:-}" ]; then \
-        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-        echo "deb http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb [trusted=yes] http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb [trusted=yes] http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb [trusted=yes] http://${APT_MIRROR}/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
     else \
-        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
-        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
-        echo "deb http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb [trusted=yes] http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME} main restricted universe multiverse" > /etc/apt/sources.list; \
+        echo "deb [trusted=yes] http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-updates main restricted universe multiverse" >> /etc/apt/sources.list; \
+        echo "deb [trusted=yes] http://mirrors.aliyun.com/${UBUNTU_PATH}/ ${CODENAME}-security main restricted universe multiverse" >> /etc/apt/sources.list; \
     fi
 
 # 安装SSH服务器和基本工具
-RUN apt-get update && apt-get install -y \
+# 清理可能损坏的 apt 缓存，解决 GPG 签名验证问题
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get clean && \
+    apt-get update && apt-get install -y \
     systemd \
     systemd-sysv \
     openssh-server \

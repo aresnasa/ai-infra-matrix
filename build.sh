@@ -11,6 +11,26 @@ ENV_EXAMPLE="$SCRIPT_DIR/.env.example"
 SRC_DIR="$SCRIPT_DIR/src"
 
 # ==============================================================================
+# Early Help Detection (避免初始化逻辑)
+# --help/-h/help 命令应仅打印帮助，不触发 .env 生成或其他初始化
+# ==============================================================================
+_SHOW_HELP_ONLY=false
+_SKIP_PORT_CHECK=false
+for _arg in "$@"; do
+    case "$_arg" in
+        --help|-h|help)
+            _SHOW_HELP_ONLY=true
+            break
+            ;;
+        # 清理和状态类命令不需要端口检查
+        clean-all|clean-images|clean-volumes|cache-status|build-history|clear-cache|status|logs|db-check)
+            _SKIP_PORT_CHECK=true
+            break
+            ;;
+    esac
+done
+
+# ==============================================================================
 # Build Cache Configuration
 # ==============================================================================
 BUILD_CACHE_DIR="$SCRIPT_DIR/.build-cache"
@@ -169,6 +189,147 @@ detect_external_host() {
     echo "${detected_ip:-localhost}"
 }
 
+# 检测是否为私有 IP 地址
+# 返回: 0 如果是私有 IP，1 如果是公网 IP 或域名
+is_private_ip() {
+    local addr="$1"
+    
+    # 空值不是私有 IP
+    [[ -z "$addr" ]] && return 1
+    
+    # 检查是否为有效 IP 格式
+    if ! [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 1  # 不是 IP 格式（可能是域名）
+    fi
+    
+    # 检查私有 IP 范围
+    # 10.0.0.0/8
+    [[ "$addr" =~ ^10\. ]] && return 0
+    # 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
+    [[ "$addr" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] && return 0
+    # 192.168.0.0/16
+    [[ "$addr" =~ ^192\.168\. ]] && return 0
+    # 127.0.0.0/8 (localhost)
+    [[ "$addr" =~ ^127\. ]] && return 0
+    # 169.254.0.0/16 (link-local)
+    [[ "$addr" =~ ^169\.254\. ]] && return 0
+    
+    return 1
+}
+
+# 检测是否为有效域名
+# 返回: 0 如果是域名，1 如果是 IP 或其他
+is_valid_domain() {
+    local addr="$1"
+    
+    [[ -z "$addr" ]] && return 1
+    
+    # 如果是 IP 格式，不是域名
+    [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 1
+    
+    # 如果是 localhost，不是有效外部域名
+    [[ "$addr" == "localhost" ]] && return 1
+    
+    # 基本域名格式检查 (至少包含一个点)
+    [[ "$addr" =~ \. ]] && return 0
+    
+    return 1
+}
+
+# 检测 SSL 证书域名是否与 EXTERNAL_HOST 匹配
+# 返回: 0 如果匹配，1 如果不匹配或证书不存在
+check_ssl_cert_domain_match() {
+    local expected_domain="$1"
+    local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
+    
+    # 证书不存在
+    [[ ! -f "$cert_file" ]] && return 1
+    
+    # 获取证书的 CN 和 SAN
+    local cert_cn=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,]*\).*/\1/p')
+    local cert_san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://g' | tr '\n' ' ')
+    
+    # 检查 CN 是否匹配
+    [[ "$cert_cn" == "$expected_domain" ]] && return 0
+    [[ "$cert_cn" == "www.$expected_domain" ]] && return 0
+    [[ "$cert_cn" == "${expected_domain#www.}" ]] && return 0
+    
+    # 检查 SAN 是否包含该域名
+    [[ "$cert_san" == *"$expected_domain"* ]] && return 0
+    [[ "$cert_san" == *"www.$expected_domain"* ]] && return 0
+    
+    return 1
+}
+
+# 显示 SSL/域名配置建议
+show_ssl_domain_recommendations() {
+    local external_host="${1:-$EXTERNAL_HOST}"
+    local ssl_domain="${2:-$SSL_DOMAIN}"
+    
+    echo ""
+    log_info "════════════════════════════════════════════════════════════════"
+    log_info "🔒 SSL/域名配置检测"
+    log_info "════════════════════════════════════════════════════════════════"
+    
+    # 检查 EXTERNAL_HOST 类型
+    if is_valid_domain "$external_host"; then
+        log_info "✅ EXTERNAL_HOST='$external_host' 是有效域名"
+        
+        # 检查证书匹配
+        if check_ssl_cert_domain_match "$external_host"; then
+            log_info "✅ SSL 证书域名与 EXTERNAL_HOST 匹配"
+        else
+            log_warn "⚠️  SSL 证书域名可能与 EXTERNAL_HOST 不匹配"
+            log_info ""
+            log_info "建议操作："
+            log_info "  1. 重新生成 Let's Encrypt 证书（包含所有域名）:"
+            log_info "     certbot certonly --dns-cloudflare \\"
+            log_info "       --dns-cloudflare-credentials ~/.secrets/cloudflare.ini \\"
+            log_info "       -d $external_host \\"
+            log_info "       -d www.$external_host \\"
+            log_info "       --cert-name $external_host --force-renewal"
+            log_info ""
+            log_info "  2. 或使用 build.sh 生成自签名证书:"
+            log_info "     ./build.sh ssl-setup $external_host --force"
+        fi
+    elif is_private_ip "$external_host"; then
+        log_warn "⚠️  EXTERNAL_HOST='$external_host' 是私有 IP 地址"
+        log_info ""
+        log_info "在公有云环境中，建议使用域名而非私有 IP:"
+        log_info "  1. 配置域名指向服务器公网 IP"
+        log_info "  2. 修改 .env 中的 EXTERNAL_HOST 为域名"
+        log_info "  3. 使用 Let's Encrypt 申请正式证书"
+        log_info ""
+        log_info "示例配置:"
+        log_info "  EXTERNAL_HOST=your-domain.com"
+        log_info "  SSL_DOMAIN=your-domain.com"
+        log_info "  LETSENCRYPT_EMAIL=admin@your-domain.com"
+    else
+        log_info "ℹ️  EXTERNAL_HOST='$external_host'"
+        if [[ "$external_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            log_info "   这是公网 IP，可使用自签名证书或 IP-based 证书"
+        fi
+    fi
+    
+    # 显示当前证书信息
+    local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
+    if [[ -f "$cert_file" ]]; then
+        echo ""
+        log_info "📜 当前 SSL 证书信息:"
+        local cert_cn=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,]*\).*/\1/p')
+        local cert_expire=$(openssl x509 -in "$cert_file" -noout -enddate 2>/dev/null | cut -d= -f2)
+        local cert_san=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+' | sed 's/DNS://g' | tr '\n' ', ' | sed 's/,$//')
+        log_info "   证书主体 (CN): $cert_cn"
+        [[ -n "$cert_san" ]] && log_info "   备用名称 (SAN): $cert_san"
+        log_info "   过期时间: $cert_expire"
+    else
+        log_warn "⚠️  未找到 SSL 证书文件"
+        log_info "   运行 ./build.sh ssl-setup 生成证书"
+    fi
+    
+    echo ""
+}
+
 # 检测 cgroup 版本 (v1 或 v2)
 # cgroupv2 使用统一的层次结构，通常挂载在 /sys/fs/cgroup
 # cgroupv1 使用多层次结构，有多个子系统目录
@@ -243,6 +404,12 @@ update_env_variable() {
     local var_value="$2"
     local env_file="$ENV_FILE"
     
+    # 防御性检查：变量名不能为空
+    if [[ -z "$var_name" ]]; then
+        log_warn "update_env_variable: empty var_name, skipping"
+        return 1
+    fi
+    
     if [[ ! -f "$env_file" ]]; then
         return 1
     fi
@@ -263,19 +430,26 @@ update_env_variable() {
 
 # 同步 .env 与 .env.example
 # 功能：
-#   1. 添加 .env.example 中新增的变量
-#   2. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
+#   1. 如果 .env.prod 存在，优先复制为 .env（生产环境配置优先）
+#   2. 添加 .env.example 中新增的变量
+#   3. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
     local example_file="$ENV_EXAMPLE"
+    local prod_file="$SCRIPT_DIR/.env.prod"
     
     if [[ ! -f "$example_file" ]]; then
         log_error ".env.example not found: $example_file"
         return 1
     fi
     
-    if [[ ! -f "$env_file" ]]; then
+    # 优先使用 .env.prod（生产环境配置）
+    if [[ -f "$prod_file" ]] && [[ ! -f "$env_file" ]]; then
+        log_info "Found .env.prod, using it as .env..."
+        cp "$prod_file" "$env_file"
+        log_info "✓ Created .env from .env.prod"
+    elif [[ ! -f "$env_file" ]]; then
         log_info "Creating .env from .env.example..."
         cp "$example_file" "$env_file"
         return 0
@@ -420,15 +594,19 @@ check_env_config_drift() {
     # 特殊检查：ENABLE_TLS=true 但 EXTERNAL_SCHEME=http 的不一致
     local enable_tls
     local external_scheme
+    local external_port
     enable_tls=$(grep "^ENABLE_TLS=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
     external_scheme=$(grep "^EXTERNAL_SCHEME=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+    external_port=$(grep "^EXTERNAL_PORT=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
     
-    if [[ "$enable_tls" == "true" ]] && [[ "$external_scheme" == "http" ]]; then
+    # 如果使用 443 端口，说明是生产环境部署（可能在 CDN/反向代理后面），跳过此警告
+    if [[ "$enable_tls" == "true" ]] && [[ "$external_scheme" == "http" ]] && [[ "$external_port" != "443" ]]; then
         critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=true 但 EXTERNAL_SCHEME=http")
         critical_drifts+=("   建议: 运行 './build.sh enable-ssl' 或手动设置 EXTERNAL_SCHEME=https")
     fi
     
-    if [[ "$enable_tls" == "false" ]] && [[ "$external_scheme" == "https" ]]; then
+    # 如果使用 443 端口，说明是生产环境部署（可能在 CDN/反向代理后面），跳过此警告
+    if [[ "$enable_tls" == "false" ]] && [[ "$external_scheme" == "https" ]] && [[ "$external_port" != "443" ]]; then
         critical_drifts+=("⚠️  配置不一致: ENABLE_TLS=false 但 EXTERNAL_SCHEME=https")
         critical_drifts+=("   建议: 设置 ENABLE_TLS=true 或 EXTERNAL_SCHEME=http")
     fi
@@ -450,6 +628,73 @@ check_env_config_drift() {
             echo -e "  ${critical}"
         done
         echo ""
+    fi
+    
+    # 检查端口冲突
+    check_port_conflicts
+    
+    return 0
+}
+
+# 检查端口配置冲突
+# 确保只有 nginx 使用 80/443 端口，其他服务不能占用这些端口
+check_port_conflicts() {
+    # 跳过清理和状态类命令的端口检查
+    if [[ "$_SKIP_PORT_CHECK" == "true" ]]; then
+        return 0
+    fi
+    
+    local env_file="$ENV_FILE"
+    
+    if [[ ! -f "$env_file" ]]; then
+        return 0
+    fi
+    
+    local conflicts=()
+    local reserved_ports=("80" "443")
+    
+    # 定义不应该使用 80/443 的服务端口变量
+    local -a service_ports=(
+        "JUPYTERHUB_EXTERNAL_PORT:JupyterHub"
+        "GITEA_EXTERNAL_PORT:Gitea"
+        "APPHUB_PORT:AppHub"
+        "BACKEND_DEBUG_PORT:Backend Debug"
+        "DEBUG_PORT:Debug"
+        "PROMETHEUS_EXTERNAL_PORT:Prometheus"
+        "GRAFANA_EXTERNAL_PORT:Grafana"
+        "ALERTMANAGER_EXTERNAL_PORT:Alertmanager"
+    )
+    
+    for service_port in "${service_ports[@]}"; do
+        local var_name="${service_port%%:*}"
+        local service_name="${service_port#*:}"
+        
+        local port_value
+        port_value=$(grep "^${var_name}=" "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2-)
+        
+        if [[ -n "$port_value" ]]; then
+            for reserved in "${reserved_ports[@]}"; do
+                if [[ "$port_value" == "$reserved" ]]; then
+                    conflicts+=("$service_name ($var_name=$port_value)")
+                fi
+            done
+        fi
+    done
+    
+    if [[ ${#conflicts[@]} -gt 0 ]]; then
+        echo ""
+        log_error "🚨 端口冲突检测: 以下服务不应使用 80/443 端口（这些端口应保留给 Nginx）:"
+        for conflict in "${conflicts[@]}"; do
+            log_error "  ✗ $conflict"
+        done
+        echo ""
+        log_warn "请修改 .env 文件，为这些服务分配其他端口。参考 .env.example 中的默认值:"
+        log_info "  JUPYTERHUB_EXTERNAL_PORT=8088"
+        log_info "  GITEA_EXTERNAL_PORT=3010"
+        log_info "  APPHUB_PORT=28080"
+        echo ""
+        log_info "只有 EXTERNAL_PORT (Nginx HTTP) 和 HTTPS_PORT (Nginx HTTPS) 可以使用 80/443"
+        return 1
     fi
     
     return 0
@@ -804,6 +1049,25 @@ generate_production_env() {
     local env_file="${1:-.env.prod}"
     local force="${2:-false}"
     
+    # Ensure UTF-8 locale for proper handling of Chinese characters in .env.example
+    # This is critical to avoid garbled text in generated .env files
+    local _orig_lc_all="${LC_ALL:-}"
+    local _orig_lang="${LANG:-}"
+    
+    # Try different UTF-8 locale names (different systems use different names)
+    if locale -a 2>/dev/null | grep -qiE '^(C\.UTF-8|en_US\.UTF-8|en_US\.utf8)$'; then
+        if locale -a 2>/dev/null | grep -qi '^C\.UTF-8$'; then
+            export LC_ALL=C.UTF-8
+            export LANG=C.UTF-8
+        elif locale -a 2>/dev/null | grep -qi '^en_US\.UTF-8$'; then
+            export LC_ALL=en_US.UTF-8
+            export LANG=en_US.UTF-8
+        elif locale -a 2>/dev/null | grep -qi '^en_US\.utf8$'; then
+            export LC_ALL=en_US.utf8
+            export LANG=en_US.utf8
+        fi
+    fi
+    
     log_info "======================================================================"
     log_info "🔧 AI Infrastructure Matrix - Production Environment Generator"
     log_info "======================================================================"
@@ -898,9 +1162,10 @@ generate_production_env() {
     local test_root_password=$(generate_random_password 20 "alphanumeric")
     
     # Use awk for safe replacement (handles special characters)
+    # IMPORTANT: Explicitly set UTF-8 locale to preserve Chinese characters in comments
     local temp_file="${env_file}.updating"
     
-    awk -v pg_pass="$postgres_password" \
+    LC_ALL=C.UTF-8 LANG=C.UTF-8 awk -v pg_pass="$postgres_password" \
         -v hub_db_pass="$jupyterhub_db_password" \
         -v mysql_root="$mysql_root_password" \
         -v mysql_pass="$mysql_password" \
@@ -933,6 +1198,9 @@ generate_production_env() {
         -v ext_host="$detected_external_host" \
         '
         /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
+        /^EXTERNAL_PORT=/ { print "EXTERNAL_PORT=80"; next }
+        /^HTTPS_PORT=/ { print "HTTPS_PORT=443"; next }
+        /^EXTERNAL_SCHEME=/ { print "EXTERNAL_SCHEME=https"; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
         /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
@@ -1030,6 +1298,13 @@ generate_production_env() {
     log_info ""
     log_info "🌐 Network Configuration:"
     echo "    EXTERNAL_HOST=$detected_external_host"
+    echo "    EXTERNAL_PORT=80      (HTTP redirect port)"
+    echo "    HTTPS_PORT=443        (HTTPS main service port)"
+    echo "    EXTERNAL_SCHEME=https"
+    log_info ""
+    log_info "📋 Port Mapping (for Cloudflare Full mode):"
+    echo "    外部 80  → 容器 80  (HTTP → HTTPS 重定向)"
+    echo "    外部 443 → 容器 443 (HTTPS 主服务)"
     
     # Auto copy .env.prod to .env
     log_info ""
@@ -1047,6 +1322,18 @@ generate_production_env() {
     log_info "  1. Review and edit .env if needed (adjust DOMAIN, ports, etc.)"
     log_info "  2. Render templates: ./build.sh render"
     log_info "  3. Build and deploy: ./build.sh build-all && docker compose up -d"
+    
+    # Restore original locale settings
+    if [[ -n "$_orig_lc_all" ]]; then
+        export LC_ALL="$_orig_lc_all"
+    else
+        unset LC_ALL
+    fi
+    if [[ -n "$_orig_lang" ]]; then
+        export LANG="$_orig_lang"
+    else
+        unset LANG
+    fi
     
     return 0
 }
@@ -1153,16 +1440,46 @@ check_ip_change() {
     fi
 }
 
-# 初始化环境
-init_env_file
+# ==============================================================================
+# 环境初始化 (跳过 --help 模式)
+# ==============================================================================
+if [[ "$_SHOW_HELP_ONLY" != "true" ]]; then
+    # 初始化环境
+    init_env_file
 
-# Load .env variables
-set -a
-source "$ENV_FILE"
-set +a
+    # Load .env variables
+    set -a
+    source "$ENV_FILE"
+    set +a
+fi
+
+# Detect host platform for multi-arch image pulls
+# Returns: linux/amd64 or linux/arm64
+_detect_docker_platform() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)
+            echo "linux/amd64"
+            ;;
+        aarch64|arm64)
+            echo "linux/arm64"
+            ;;
+        armv7l|armhf)
+            echo "linux/arm/v7"
+            ;;
+        *)
+            # Fallback: let docker decide
+            echo ""
+            ;;
+    esac
+}
+
+# Host platform for pulling correct architecture images
+DOCKER_HOST_PLATFORM="${DOCKER_HOST_PLATFORM:-$(_detect_docker_platform)}"
 
 # Initialize COMMON_IMAGES array after loading .env
 # This ensures version variables are available
+# Note: These use default values if .env not loaded (help mode)
 COMMON_IMAGES=(
     "postgres:${POSTGRES_VERSION:-15-alpine}"
     "mysql:${MYSQL_VERSION:-8.0}"
@@ -1205,16 +1522,18 @@ SAFELINE_IMAGES=(
     "${SAFELINE_IMAGE_PREFIX}/safeline-chaos${SAFELINE_REGION}${SAFELINE_ARCH_SUFFIX}:${SAFELINE_IMAGE_TAG}"
 )
 
-# Ensure SSH Keys
+# Ensure SSH Keys (skip in help mode)
 SSH_KEY_DIR="$SCRIPT_DIR/ssh-key"
-if [ ! -f "$SSH_KEY_DIR/id_rsa" ]; then
+if [[ "$_SHOW_HELP_ONLY" != "true" ]] && [ ! -f "$SSH_KEY_DIR/id_rsa" ]; then
     log_info "Generating SSH keys..."
     mkdir -p "$SSH_KEY_DIR"
     ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_DIR/id_rsa" -N "" -C "ai-infra-system@shared"
 fi
 
-# Ensure Third Party Directory
-mkdir -p "$SCRIPT_DIR/third_party"
+# Ensure Third Party Directory (skip in help mode)
+if [[ "$_SHOW_HELP_ONLY" != "true" ]]; then
+    mkdir -p "$SCRIPT_DIR/third_party"
+fi
 
 # ==============================================================================
 # 2. Helper Functions
@@ -1552,13 +1871,23 @@ setup_letsencrypt_certificates() {
         done
     fi
 
+    # Check if port 80 is in use and try to stop nginx temporarily
+    local nginx_was_running=false
     if command -v lsof >/dev/null 2>&1; then
         if lsof -iTCP:80 -sTCP:LISTEN >/dev/null 2>&1; then
-            log_warn "Port 80 is in use. certbot --standalone needs it. Stop nginx or map a free port before issuing."
+            log_warn "Port 80 is in use. Attempting to stop nginx temporarily..."
+            if docker ps --format '{{.Names}}' | grep -q "ai-infra-nginx"; then
+                docker stop ai-infra-nginx >/dev/null 2>&1 && nginx_was_running=true
+                log_info "Nginx container stopped temporarily"
+                sleep 2
+            else
+                log_warn "Port 80 is in use by non-nginx process. certbot --standalone may fail."
+            fi
         fi
     fi
 
     log_step "Requesting Let's Encrypt certificate for: $domain"
+    local certbot_result=0
     if ! certbot certonly --standalone --preferred-challenges http \
         --agree-tos --non-interactive \
         -m "$email" "${domain_args[@]}" \
@@ -1566,6 +1895,16 @@ setup_letsencrypt_certificates() {
         --work-dir "$le_work" \
         --logs-dir "$le_logs" \
         $staging_flag; then
+        certbot_result=1
+    fi
+
+    # Restart nginx if it was running before
+    if [[ "$nginx_was_running" == "true" ]]; then
+        log_info "Restarting nginx container..."
+        docker start ai-infra-nginx >/dev/null 2>&1 || true
+    fi
+
+    if [[ "$certbot_result" -ne 0 ]]; then
         log_error "Let's Encrypt issuance failed"
         return 1
     fi
@@ -1592,6 +1931,180 @@ setup_letsencrypt_certificates() {
     log_info "   Email: $email"
     [[ "$staging" == "true" ]] && log_warn "Using staging endpoint; set LETSENCRYPT_STAGING=false for production."
     log_info "   Stored at: $SSL_OUTPUT_DIR"
+
+    return 0
+}
+
+# 使用 Cloudflare DNS 验证申请 Let's Encrypt 证书 (支持通配符证书)
+# Usage: ./build.sh ssl-cloudflare <domain> [--staging] [--force]
+#        ./build.sh ssl-cloudflare ai-infra-matrix.top
+#        ./build.sh ssl-cloudflare ai-infra-matrix.top --wildcard
+setup_cloudflare_certificates() {
+    local domain="${1:-}"
+    local wildcard="${2:-false}"
+    local staging="${3:-${LETSENCRYPT_STAGING:-false}}"
+    local force="${4:-false}"
+    local credentials_file="${CLOUDFLARE_CREDENTIALS:-$HOME/.secrets/cloudflare.ini}"
+
+    # 自动检测域名
+    if [[ -z "$domain" ]]; then
+        domain="${SSL_DOMAIN:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        domain="${EXTERNAL_HOST:-}"
+    fi
+    if [[ -z "$domain" ]]; then
+        log_error "Unable to determine domain for Cloudflare DNS validation"
+        log_info "Please specify domain: ./build.sh ssl-cloudflare your-domain.com"
+        return 1
+    fi
+
+    # 检查 certbot 是否安装
+    if ! command -v certbot >/dev/null 2>&1; then
+        log_error "certbot not found. Please install certbot first."
+        log_info "  Ubuntu/Debian: apt install certbot python3-certbot-dns-cloudflare"
+        log_info "  macOS: brew install certbot"
+        return 1
+    fi
+
+    # 检查 cloudflare 插件是否安装
+    if ! certbot plugins 2>/dev/null | grep -q "dns-cloudflare"; then
+        log_error "certbot-dns-cloudflare plugin not found."
+        log_info "  Ubuntu/Debian: apt install python3-certbot-dns-cloudflare"
+        log_info "  pip: pip install certbot-dns-cloudflare"
+        return 1
+    fi
+
+    # 检查 Cloudflare 凭证文件
+    if [[ ! -f "$credentials_file" ]]; then
+        log_error "Cloudflare credentials file not found: $credentials_file"
+        log_info ""
+        log_info "Please create the credentials file:"
+        log_info "  mkdir -p ~/.secrets"
+        log_info "  cat > ~/.secrets/cloudflare.ini << 'EOF'"
+        log_info "dns_cloudflare_api_token = YOUR_CLOUDFLARE_API_TOKEN"
+        log_info "EOF"
+        log_info "  chmod 600 ~/.secrets/cloudflare.ini"
+        log_info ""
+        log_info "Or set CLOUDFLARE_CREDENTIALS environment variable to your credentials file path."
+        return 1
+    fi
+
+    # 检查凭证文件权限 (certbot 要求 600)
+    local file_perms=$(stat -f "%OLp" "$credentials_file" 2>/dev/null || stat -c "%a" "$credentials_file" 2>/dev/null)
+    if [[ "$file_perms" != "600" ]]; then
+        log_warn "Cloudflare credentials file permissions should be 600 (current: $file_perms)"
+        log_info "Fixing permissions..."
+        chmod 600 "$credentials_file"
+    fi
+
+    local safe_name=$(echo "$domain" | sed 's/\*/_wildcard_/g')
+
+    # 检查现有证书是否有效
+    if [[ -f "$SSL_OUTPUT_DIR/server.crt" ]] && [[ "$force" != "true" ]]; then
+        if is_existing_cert_valid "$SSL_OUTPUT_DIR/server.crt"; then
+            log_info "Existing certificate is still valid. Use --force to renew."
+            return 0
+        fi
+    fi
+
+    # 创建 Let's Encrypt 目录
+    local le_root="$SSL_OUTPUT_DIR/letsencrypt"
+    local le_config="$le_root/config"
+    local le_work="$le_root/work"
+    local le_logs="$le_root/logs"
+    mkdir -p "$le_config" "$le_work" "$le_logs" "$SSL_OUTPUT_DIR"
+
+    local staging_flag=""
+    [[ "$staging" == "true" ]] && staging_flag="--staging"
+
+    # 构建域名参数
+    local -a domain_args
+    if [[ "$wildcard" == "true" ]]; then
+        # 通配符证书：包含根域名和通配符
+        domain_args+=("-d" "$domain")
+        domain_args+=("-d" "*.$domain")
+        log_info "📜 Requesting wildcard certificate for: $domain and *.$domain"
+    else
+        # 标准证书：包含根域名和 www 子域名
+        domain_args+=("-d" "$domain")
+        domain_args+=("-d" "www.$domain")
+        log_info "📜 Requesting certificate for: $domain and www.$domain"
+    fi
+
+    # 添加额外域名
+    if [[ -n "$LETSENCRYPT_EXTRA_DOMAINS" ]]; then
+        IFS=',' read -ra extra_domains <<< "$LETSENCRYPT_EXTRA_DOMAINS"
+        for extra_domain in "${extra_domains[@]}"; do
+            [[ -z "$extra_domain" ]] && continue
+            domain_args+=("-d" "$extra_domain")
+            log_info "  + Extra domain: $extra_domain"
+        done
+    fi
+
+    log_step "🔐 Requesting Let's Encrypt certificate via Cloudflare DNS..."
+    log_info "   Domain: $domain"
+    log_info "   Credentials: $credentials_file"
+    [[ "$staging" == "true" ]] && log_warn "   Using STAGING endpoint (test certificate)"
+
+    if ! certbot certonly \
+        --dns-cloudflare \
+        --dns-cloudflare-credentials "$credentials_file" \
+        --dns-cloudflare-propagation-seconds 30 \
+        --agree-tos --non-interactive \
+        -m "${LETSENCRYPT_EMAIL:-admin@$domain}" \
+        "${domain_args[@]}" \
+        --config-dir "$le_config" \
+        --work-dir "$le_work" \
+        --logs-dir "$le_logs" \
+        $staging_flag; then
+        log_error "Let's Encrypt certificate issuance failed"
+        log_info "Check logs at: $le_logs"
+        return 1
+    fi
+
+    # 查找证书目录 (可能是根域名或通配符名称)
+    local live_dir="$le_config/live/$domain"
+    if [[ ! -d "$live_dir" ]]; then
+        # 尝试查找其他可能的目录名
+        live_dir=$(find "$le_config/live" -maxdepth 1 -type d -name "${domain}*" | head -1)
+    fi
+
+    if [[ ! -f "$live_dir/fullchain.pem" ]] || [[ ! -f "$live_dir/privkey.pem" ]]; then
+        log_error "Certificate files not found in $live_dir"
+        return 1
+    fi
+
+    # 复制证书到 SSL 目录
+    cp "$live_dir/fullchain.pem" "$SSL_OUTPUT_DIR/$safe_name.crt"
+    cp "$live_dir/privkey.pem" "$SSL_OUTPUT_DIR/$safe_name.key"
+    cp "$live_dir/chain.pem" "$SSL_OUTPUT_DIR/$safe_name.chain.crt" 2>/dev/null || true
+
+    # 创建符号链接
+    ln -sf "$safe_name.crt" "$SSL_OUTPUT_DIR/server.crt"
+    ln -sf "$safe_name.key" "$SSL_OUTPUT_DIR/server.key"
+    ln -sf "$safe_name.chain.crt" "$SSL_OUTPUT_DIR/server.chain.crt" 2>/dev/null || true
+    chmod 600 "$SSL_OUTPUT_DIR/$safe_name.key" "$SSL_OUTPUT_DIR/server.key" 2>/dev/null || true
+
+    # 更新 .env 配置
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+
+    log_info ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "✅ Cloudflare DNS 验证证书申请成功!"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "   域名: $domain"
+    [[ "$wildcard" == "true" ]] && log_info "   通配符: *.$domain"
+    log_info "   证书路径: $SSL_OUTPUT_DIR"
+    log_info "   有效期: $(openssl x509 -in "$SSL_OUTPUT_DIR/server.crt" -noout -enddate 2>/dev/null | cut -d= -f2)"
+    [[ "$staging" == "true" ]] && log_warn "   ⚠️  这是测试证书，请设置 LETSENCRYPT_STAGING=false 申请正式证书"
+    log_info ""
+    log_info "📋 下一步:"
+    log_info "   1. 重新渲染配置: ./build.sh render"
+    log_info "   2. 重启 nginx: docker compose restart nginx"
+    log_info "═══════════════════════════════════════════════════════════════════"
 
     return 0
 }
@@ -1935,10 +2448,9 @@ download_single_file() {
     local use_mirror=${3:-true}
     local final_url="$url"
     
-    # Apply GitHub mirror
+    # Apply GitHub mirror (使用完整 URL 拼接方式: ghfast.top/gh-proxy.com 等镜像服务的标准格式)
     if [[ "$use_mirror" = true ]] && [[ "$url" == *"github.com"* ]] && [[ -n "$DOWNLOAD_GITHUB_MIRROR" ]]; then
-        local url_without_scheme="${url#https://}"
-        final_url="${DOWNLOAD_GITHUB_MIRROR}${url_without_scheme}"
+        final_url="${DOWNLOAD_GITHUB_MIRROR}${url}"
     fi
     
     # Check if file already exists and is non-empty
@@ -2464,10 +2976,15 @@ TEMPLATE_VARIABLES=(
     "TZ"                  # Timezone (e.g., Asia/Shanghai)
     
     # ===========================================
+    # Network configuration (Runtime)
+    # ===========================================
+    "BIND_HOST"           # Host IP for port binding (default: 0.0.0.0, auto-detected)
+    
+    # ===========================================
     # Nginx configuration variables (Runtime)
     # Used in src/nginx/templates/*.conf.tpl
     # ===========================================
-    "EXTERNAL_HOST"       # External host IP/domain
+    "EXTERNAL_HOST"       # External host IP/domain (for URLs, not port binding)
     "EXTERNAL_SCHEME"     # http or https
     "FRONTEND_HOST"       # Frontend service host (default: frontend)
     "FRONTEND_PORT"       # Frontend service port (default: 3000)
@@ -2537,6 +3054,12 @@ TEMPLATE_VARIABLES=(
     "SAFELINE_IMAGE_TAG"    # SafeLine image tag (e.g., latest)
     "SAFELINE_ARCH_SUFFIX"  # SafeLine architecture suffix (-arm for ARM, empty for x86_64)
     "SAFELINE_REGION"       # SafeLine region suffix (optional)
+    
+    # ===========================================
+    # Docker platform configuration (Runtime - auto-detected)
+    # For multi-arch image support (ARM/AMD64)
+    # ===========================================
+    "DOCKER_HOST_PLATFORM"  # Docker host platform (linux/amd64 or linux/arm64, auto-detected)
 )
 
 # Render a single template file
@@ -2552,26 +3075,34 @@ render_template() {
     
     log_info "Rendering: $template_file -> $output_file"
     
-    # Start with the template content
-    local content
-    content=$(cat "$template_file")
+    # Copy template to output file first
+    cp "$template_file" "$output_file"
     
     # Replace each {{VARIABLE}} with its value from environment
+    # Use perl for reliability across different platforms
     for var in "${TEMPLATE_VARIABLES[@]}"; do
         local value="${!var}"
         if [[ -n "$value" ]]; then
-            # Escape special characters for sed
+            # Use perl with proper escaping - escape only regex special chars in pattern, not in replacement
+            # The replacement value needs & and \ escaped for perl's s/// operator
             local escaped_value
-            escaped_value=$(printf '%s\n' "$value" | sed -e 's/[&/\]/\\&/g')
-            content=$(echo "$content" | sed "s|{{${var}}}|${escaped_value}|g")
+            escaped_value=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e 's/\//\\\//g')
+            perl -i -pe "s/\\{\\{${var}\\}\\}/${escaped_value}/g" "$output_file" 2>/dev/null || {
+                # Fallback to sed if perl is not available
+                escaped_value=$(printf '%s' "$value" | sed 's/[&/\]/\\&/g')
+                sed -i.bak "s|{{${var}}}|${escaped_value}|g" "$output_file" 2>/dev/null || \
+                sed -i '' "s|{{${var}}}|${escaped_value}|g" "$output_file"
+                rm -f "${output_file}.bak" 2>/dev/null
+            }
         else
             # If variable is empty, replace with empty string
-            content=$(echo "$content" | sed "s|{{${var}}}||g")
+            perl -i -pe "s/\\{\\{${var}\\}\\}//g" "$output_file" 2>/dev/null || {
+                sed -i.bak "s|{{${var}}}||g" "$output_file" 2>/dev/null || \
+                sed -i '' "s|{{${var}}}||g" "$output_file"
+                rm -f "${output_file}.bak" 2>/dev/null
+            }
         fi
     done
-    
-    # Write to output file
-    echo "$content" > "$output_file"
     
     # Check for any remaining unreplaced placeholders
     local remaining
@@ -2625,6 +3156,75 @@ render_all_templates() {
     fi
     log_info "  CPU Architecture: $arch"
     log_info "  SAFELINE_ARCH_SUFFIX=${SAFELINE_ARCH_SUFFIX:-<empty>}"
+    
+    # Step 1.7: Validate and auto-fix EXTERNAL_HOST for port binding
+    log_info ""
+    log_info "Step 1.7: Validating network configuration..."
+    
+    # Check if EXTERNAL_HOST is a Docker internal IP (172.x.x.x, 10.x.x.x in Docker range)
+    if [[ "$EXTERNAL_HOST" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] || \
+       [[ "$EXTERNAL_HOST" =~ ^10\.0\. ]]; then
+        log_warn "  ⚠️  EXTERNAL_HOST='$EXTERNAL_HOST' appears to be a Docker internal IP!"
+        log_warn "  ⚠️  This will cause services to be inaccessible from outside Docker network."
+        log_warn "  ⚠️  Consider setting EXTERNAL_HOST to your server's public/private IP, domain name, or '0.0.0.0'"
+        
+        # Auto-set BIND_HOST to 0.0.0.0 for port binding if not explicitly set
+        if [[ -z "$BIND_HOST" ]]; then
+            export BIND_HOST="0.0.0.0"
+            log_info "  ℹ️  Auto-setting BIND_HOST=0.0.0.0 for port binding"
+        fi
+    fi
+    
+    # Set BIND_HOST default to 0.0.0.0 if not set (for universal access)
+    export BIND_HOST="${BIND_HOST:-0.0.0.0}"
+    log_info "  EXTERNAL_HOST=${EXTERNAL_HOST:-<empty>}"
+    log_info "  BIND_HOST=${BIND_HOST}"
+    
+    # Step 1.8: Check SSL/domain configuration for cloud deployments
+    log_info ""
+    log_info "Step 1.8: Checking SSL/domain configuration..."
+    
+    local external_host_type="unknown"
+    if is_valid_domain "$EXTERNAL_HOST"; then
+        external_host_type="domain"
+        log_info "  ✅ EXTERNAL_HOST='$EXTERNAL_HOST' is a valid domain name"
+        
+        # Check if SSL cert matches the domain
+        if [[ "${ENABLE_TLS:-false}" == "true" ]]; then
+            if check_ssl_cert_domain_match "$EXTERNAL_HOST"; then
+                log_info "  ✅ SSL certificate matches EXTERNAL_HOST domain"
+            else
+                log_warn "  ⚠️  SSL certificate may not match EXTERNAL_HOST domain!"
+                log_warn "  ⚠️  This can cause SSL handshake failures (Error 525) with Cloudflare/proxies"
+                log_info ""
+                log_info "  💡 Recommended actions:"
+                log_info "     1. Generate certificate with correct domain:"
+                log_info "        certbot certonly --dns-cloudflare \\"
+                log_info "          --dns-cloudflare-credentials ~/.secrets/cloudflare.ini \\"
+                log_info "          -d $EXTERNAL_HOST -d www.$EXTERNAL_HOST \\"
+                log_info "          --cert-name $EXTERNAL_HOST --force-renewal"
+                log_info "     2. Copy certs to nginx ssl dir and restart"
+            fi
+        fi
+    elif is_private_ip "$EXTERNAL_HOST"; then
+        external_host_type="private_ip"
+        log_warn "  ⚠️  EXTERNAL_HOST='$EXTERNAL_HOST' is a private IP address"
+        log_info ""
+        log_info "  💡 For public cloud deployments with domain access:"
+        log_info "     1. Configure DNS to point your domain to the server's public IP"
+        log_info "     2. Update .env:"
+        log_info "        EXTERNAL_HOST=your-domain.com"
+        log_info "        SSL_DOMAIN=your-domain.com"
+        log_info "        LETSENCRYPT_EMAIL=admin@your-domain.com"
+        log_info "     3. Generate Let's Encrypt certificate:"
+        log_info "        ./build.sh ssl-setup-le your-domain.com admin@your-domain.com"
+    elif [[ "$EXTERNAL_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        external_host_type="public_ip"
+        log_info "  ℹ️  EXTERNAL_HOST='$EXTERNAL_HOST' is a public IP address"
+        log_info "     Self-signed certificates can be used for IP-based access"
+    else
+        log_info "  ℹ️  EXTERNAL_HOST='$EXTERNAL_HOST'"
+    fi
     
     log_info ""
     log_info "Step 2: Rendering template files..."
@@ -3081,6 +3681,7 @@ log_failure() {
 # 用法: docker_with_retry <operation> <image> [max_retries] [retry_delay] [skip_exists_check]
 # operation: pull, push, tag
 # skip_exists_check: 对于 push 操作设为 true
+# 对于 pull 操作，会自动添加 --platform 参数确保拉取正确架构的镜像
 docker_with_retry() {
     local operation="$1"
     local image="$2"
@@ -3098,11 +3699,26 @@ docker_with_retry() {
         *)    op_icon="⚙"; op_verb="Processing"; op_past="Processed" ;;
     esac
     
-    # 对于 pull 操作，检查镜像是否已存在
+    # 对于 pull 操作，检查镜像是否已存在且架构匹配
     if [[ "$operation" == "pull" ]] && [[ "$skip_exists_check" != "true" ]]; then
         if docker image inspect "$image" >/dev/null 2>&1; then
-            log_info "  ✓ Image exists: $image"
-            return 0
+            # 检查已存在镜像的架构是否与主机匹配
+            local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
+            local expected_arch=""
+            case "$DOCKER_HOST_PLATFORM" in
+                linux/amd64) expected_arch="amd64" ;;
+                linux/arm64) expected_arch="arm64" ;;
+                linux/arm/v7) expected_arch="arm" ;;
+            esac
+            if [[ -n "$expected_arch" ]] && [[ "$existing_arch" != "$expected_arch" ]]; then
+                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch)"
+                log_info "  🗑 Removing wrong-arch image before re-pulling..."
+                docker rmi "$image" >/dev/null 2>&1 || true
+                # 继续执行 pull 操作
+            else
+                log_info "  ✓ Image exists: $image (arch: $existing_arch)"
+                return 0
+            fi
         fi
     fi
     
@@ -3117,13 +3733,24 @@ docker_with_retry() {
         fi
         
         # 执行 Docker 命令
+        # 对于 pull 操作，添加 --platform 参数确保拉取正确架构
         local output
-        if output=$(docker "$operation" "$image" 2>&1); then
-            log_info "  ✓ $op_past: $image"
-            return 0
+        if [[ "$operation" == "pull" ]] && [[ -n "$DOCKER_HOST_PLATFORM" ]]; then
+            if output=$(docker pull --platform "$DOCKER_HOST_PLATFORM" "$image" 2>&1); then
+                log_info "  ✓ $op_past: $image (platform: $DOCKER_HOST_PLATFORM)"
+                return 0
+            else
+                last_error="$output"
+                log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+            fi
         else
-            last_error="$output"
-            log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+            if output=$(docker "$operation" "$image" 2>&1); then
+                log_info "  ✓ $op_past: $image"
+                return 0
+            else
+                last_error="$output"
+                log_warn "  ⚠ Attempt $retry_count failed: $(echo "$last_error" | head -1)"
+            fi
         fi
     done
     
@@ -3163,21 +3790,51 @@ extract_base_images() {
         return 1
     fi
     
+    # Extract ARG default values for variable substitution
+    # Format: ARG VAR_NAME=default_value
+    declare -A arg_defaults
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*ARG[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)=(.+) ]]; then
+            local var_name="${BASH_REMATCH[1]}"
+            local var_value="${BASH_REMATCH[2]}"
+            # Remove quotes if present
+            var_value="${var_value%\"}"
+            var_value="${var_value#\"}"
+            arg_defaults["$var_name"]="$var_value"
+        fi
+    done < "$dockerfile"
+    
     # Extract FROM statements
     # Pattern: FROM image:tag [AS alias]
-    # Skip: ARG variables (${...}), local build stages, empty images
+    # Handles: ARG variables (${...}), platform flags, local build stages
     grep -E "^FROM\s+" "$dockerfile" 2>/dev/null | \
-        awk '{
-            img=$2
-            # Skip ARG variables (contains ${...})
-            if (img ~ /\$\{/) next
-            # Skip platform flags
-            if (img ~ /^--/) next
+        while read -r from_line; do
+            # Remove FROM keyword and any --platform flags
+            local img=$(echo "$from_line" | sed 's/^FROM\s*//; s/--platform=[^ ]*\s*//g' | awk '{print $1}')
+            
+            # Skip if no image specified
+            [[ -z "$img" ]] && continue
+            
+            # Check for ARG variable substitution (e.g., ubuntu:${UBUNTU_VERSION})
+            if [[ "$img" =~ \$\{([A-Za-z_][A-Za-z0-9_]*)\} ]]; then
+                local var_name="${BASH_REMATCH[1]}"
+                local var_value="${arg_defaults[$var_name]:-}"
+                if [[ -n "$var_value" ]]; then
+                    # Substitute the variable with its default value
+                    img=$(echo "$img" | sed "s/\${${var_name}}/${var_value}/g")
+                else
+                    # Skip images with unresolved variables
+                    continue
+                fi
+            fi
+            
             # Skip if no colon and no slash (likely a build stage alias like "builder")
-            if (img !~ /[:\/]/) next
-            print img
-        }' | \
-        sort -u
+            if [[ ! "$img" =~ [:\/] ]]; then
+                continue
+            fi
+            
+            echo "$img"
+        done | sort -u
 }
 
 # Prefetch base images from Dockerfiles
@@ -4317,6 +4974,984 @@ build_parallel() {
     return 0
 }
 
+# Multi-Architecture Build Support
+# Uses docker buildx to build images for multiple platforms
+# Requires: docker buildx (included in Docker Desktop, or install separately)
+
+# Check and setup buildx builder
+setup_buildx_builder() {
+    local builder_name="ai-infra-multiarch"
+    local use_container_driver="${1:-false}"  # Default to docker driver for better mirror support
+    
+    # Check if buildx is available
+    if ! docker buildx version >/dev/null 2>&1; then
+        log_error "docker buildx is not available"
+        log_info "Please install Docker Desktop or docker-buildx plugin"
+        return 1
+    fi
+    
+    # Ensure QEMU is installed for cross-platform builds
+    _ensure_qemu_installed
+    
+    # For simple single-platform builds, prefer the default docker driver
+    # It inherits registry-mirrors from daemon.json
+    if [[ "$use_container_driver" != "true" ]]; then
+        # Use default docker driver (desktop-linux on Mac)
+        local default_builder=$(docker buildx ls 2>/dev/null | grep -E "^desktop-linux|^default" | head -1 | awk '{print $1}')
+        if [[ -n "$default_builder" ]]; then
+            docker buildx use "$default_builder" 2>/dev/null
+            log_info "✓ Using buildx builder: $default_builder (docker driver, inherits mirror config)"
+            return 0
+        fi
+    fi
+    
+    # For docker-container driver (needed for some cross-platform scenarios)
+    # Create with registry mirror configuration
+    if docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        log_info "Using existing buildx builder: $builder_name"
+    else
+        log_info "Creating new buildx builder: $builder_name"
+        
+        # Generate buildkit config with registry mirrors from daemon.json
+        local buildkit_config="/tmp/buildkitd-${builder_name}.toml"
+        _generate_buildkit_config "$buildkit_config"
+        
+        local create_args=("--name" "$builder_name" "--driver" "docker-container" "--bootstrap")
+        if [[ -f "$buildkit_config" ]]; then
+            create_args+=("--config" "$buildkit_config")
+            log_info "Using registry mirrors from Docker daemon config"
+        fi
+        
+        if ! docker buildx create "${create_args[@]}"; then
+            log_error "Failed to create buildx builder"
+            return 1
+        fi
+    fi
+    
+    # Use this builder
+    docker buildx use "$builder_name"
+    log_info "✓ Buildx builder ready: $builder_name"
+    return 0
+}
+
+# Ensure QEMU user-mode emulation is installed for cross-platform builds
+_ensure_qemu_installed() {
+    local host_arch=$(uname -m)
+    local need_qemu=false
+    
+    # Check if we need QEMU based on host architecture and target platforms
+    if [[ -n "$BUILD_PLATFORMS" ]]; then
+        case "$host_arch" in
+            arm64|aarch64)
+                # On ARM, need QEMU for amd64
+                if echo "$BUILD_PLATFORMS" | grep -qE "amd64|x86_64"; then
+                    need_qemu=true
+                fi
+                ;;
+            x86_64|amd64)
+                # On x86, need QEMU for arm64
+                if echo "$BUILD_PLATFORMS" | grep -qE "arm64|aarch64"; then
+                    need_qemu=true
+                fi
+                ;;
+        esac
+    fi
+    
+    if [[ "$need_qemu" != "true" ]]; then
+        return 0
+    fi
+    
+    # Test if QEMU is working
+    local test_platform
+    case "$host_arch" in
+        arm64|aarch64) test_platform="linux/amd64" ;;
+        x86_64|amd64) test_platform="linux/arm64" ;;
+    esac
+    
+    log_info "Checking QEMU emulation for cross-platform builds..."
+    
+    if docker run --rm --platform "$test_platform" alpine:3.18 uname -m >/dev/null 2>&1; then
+        log_info "✓ QEMU emulation is working"
+        return 0
+    fi
+    
+    log_info "Installing QEMU user-mode emulation for cross-platform builds..."
+    if docker run --rm --privileged tonistiigi/binfmt --install all >/dev/null 2>&1; then
+        log_info "✓ QEMU emulation installed successfully"
+        return 0
+    else
+        log_warn "⚠️  Failed to install QEMU emulation"
+        log_warn "   Cross-platform builds may fail"
+        log_warn "   Try manually: docker run --rm --privileged tonistiigi/binfmt --install all"
+        return 1
+    fi
+}
+
+# Generate buildkit config with registry mirrors from Docker daemon.json
+_generate_buildkit_config() {
+    local output_file="$1"
+    local daemon_json="${HOME}/.docker/daemon.json"
+    
+    # Check if daemon.json exists and has registry-mirrors
+    if [[ ! -f "$daemon_json" ]]; then
+        return 1
+    fi
+    
+    # Extract registry mirrors (simple parsing)
+    local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+' | head -3)
+    if [[ -z "$mirrors" ]]; then
+        return 1
+    fi
+    
+    # Generate buildkit TOML config
+    cat > "$output_file" << 'EOF'
+# Auto-generated buildkit config for registry mirrors
+debug = false
+
+[registry."docker.io"]
+EOF
+    
+    # Add mirrors
+    echo "  mirrors = [" >> "$output_file"
+    local first=true
+    for mirror in $mirrors; do
+        # Extract hostname from URL
+        local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+        if [[ "$first" == "true" ]]; then
+            echo "    \"$host\"" >> "$output_file"
+            first=false
+        else
+            echo "    ,\"$host\"" >> "$output_file"
+        fi
+    done
+    echo "  ]" >> "$output_file"
+    
+    # Add insecure registry configs
+    for mirror in $mirrors; do
+        local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+        local is_http=$(echo "$mirror" | grep -c "^http://")
+        cat >> "$output_file" << EOF
+
+[registry."$host"]
+  http = $([ "$is_http" -gt 0 ] && echo "true" || echo "false")
+  insecure = true
+EOF
+    done
+    
+    log_info "Generated buildkit config: $output_file"
+    return 0
+}
+
+# Build a single component for multiple architectures
+# Enhanced version with dependency.conf base image support
+# Usage: build_component_multiarch <component> <platforms> [extra_args...]
+# Example: build_component_multiarch backend "linux/amd64,linux/arm64"
+#          build_component_multiarch apphub "linux/amd64,linux/arm64"
+build_component_multiarch() {
+    local component="$1"
+    local platforms="$2"
+    local extra_args=("${@:3}")
+    local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
+    
+    if [ ! -d "$component_dir" ]; then
+        log_error "Component directory not found: $component_dir"
+        return 1
+    fi
+    
+    # ===== Build Cache Check =====
+    if [[ "$FORCE_BUILD" != "true" ]]; then
+        local rebuild_reason=$(need_rebuild "$component" "$tag")
+        if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+            log_cache "⏭️  Skipping $component (no changes detected)"
+            log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE (multiarch)"
+            return 0
+        fi
+        log_cache "🔄 Rebuilding $component: $rebuild_reason"
+    fi
+    
+    # Check for template and render if needed
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [ -f "$template_file" ]; then
+        log_info "Rendering template for $component..."
+        if ! render_template "$template_file"; then
+            log_error "Failed to render template for $component"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "TEMPLATE_ERROR"
+            return 1
+        fi
+    fi
+    
+    # ===== Dependency Configuration (External Base Image) =====
+    local dep_conf="$component_dir/dependency.conf"
+    if [ -f "$dep_conf" ]; then
+        local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
+        if [ -z "$upstream_image" ]; then
+            log_error "Empty dependency config for $component"
+            return 1
+        fi
+        
+        # Check if this component also has a Dockerfile (custom build based on dependency)
+        if [ -f "$component_dir/Dockerfile" ]; then
+            log_info "Processing $component: dependency + custom Dockerfile"
+            log_info "  Base image: $upstream_image"
+            
+            # Pull the base image for all target platforms first
+            log_info "Pulling base image for all target platforms..."
+            IFS=',' read -ra platform_array <<< "$platforms"
+            for platform in "${platform_array[@]}"; do
+                local arch_name="${platform##*/}"
+                log_info "  Pulling $upstream_image for $arch_name..."
+                if ! docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                    log_warn "  Retrying pull for $arch_name..."
+                    if ! docker pull --platform "$platform" "$upstream_image"; then
+                        log_error "✗ Failed to pull base image $upstream_image for $arch_name"
+                        log_build_history "$build_id" "$component" "$tag" "FAILED" "BASE_PULL_ERROR ($arch_name)"
+                        return 1
+                    fi
+                fi
+                log_info "  ✓ $arch_name ready"
+            done
+            log_info "✓ Base image ready for all platforms: $upstream_image"
+            # Continue to Dockerfile build below (don't return)
+        else
+            # Pure dependency - just pull and tag for all target platforms
+            local target_image="ai-infra-$component:${tag}"
+            if [ -n "$PRIVATE_REGISTRY" ]; then
+                target_image="$PRIVATE_REGISTRY/$target_image"
+            fi
+            
+            log_info "Processing dependency $component: $upstream_image -> $target_image (multiarch)"
+            
+            IFS=',' read -ra platform_array <<< "$platforms"
+            for platform in "${platform_array[@]}"; do
+                local arch_name="${platform##*/}"
+                log_info "  [$arch_name] Pulling and tagging..."
+                if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                    docker tag "$upstream_image" "$target_image" >/dev/null 2>&1
+                    log_info "  [$arch_name] ✓ Ready: $target_image"
+                else
+                    log_error "  [$arch_name] ✗ Failed to pull $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR ($arch_name)"
+                    return 1
+                fi
+            done
+            
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED (multiarch)"
+            return 0
+        fi
+    fi
+    
+    if [ ! -f "$component_dir/Dockerfile" ]; then
+        log_warn "No Dockerfile or dependency.conf in $component, skipping..."
+        return 0
+    fi
+    
+    # Calculate service hash for build label
+    local service_hash=$(calculate_service_hash "$component")
+    
+    # Check for build-targets.conf
+    local targets_file="$component_dir/build-targets.conf"
+    local targets=()
+    local images=()
+    
+    if [ -f "$targets_file" ]; then
+        while read -r target image_suffix || [ -n "$target" ]; do
+            [[ "$target" =~ ^#.*$ ]] && continue
+            [[ -z "$target" ]] && continue
+            targets+=("$target")
+            images+=("$image_suffix")
+        done < "$targets_file"
+    else
+        targets+=("default")
+        images+=("ai-infra-$component")
+    fi
+    
+    for i in "${!targets[@]}"; do
+        local target="${targets[$i]}"
+        local image_name="${images[$i]}"
+        local full_image_name="${image_name}:${tag}"
+        
+        if [ -n "$PRIVATE_REGISTRY" ]; then
+            full_image_name="$PRIVATE_REGISTRY/$full_image_name"
+        fi
+        
+        log_info "Building $component [$target] for platforms: $platforms -> $full_image_name"
+        
+        local cmd=("docker" "buildx" "build")
+        
+        # Multi-platform specification
+        cmd+=("--platform" "$platforms")
+        
+        # Output to local docker images (load only works for single platform)
+        # For multi-platform, we need to use --output type=oci or push to registry
+        # Here we use --output type=docker for single platform compatibility
+        # or --output type=image,push=false for multi-platform local storage
+        
+        # Count platforms
+        local platform_count=$(echo "$platforms" | tr ',' '\n' | wc -l | tr -d ' ')
+        
+        if [[ $platform_count -eq 1 ]]; then
+            # Single platform: can use --load
+            cmd+=("--load")
+        else
+            # Multi-platform: output to OCI tarball in output directory
+            local output_dir="${MULTIARCH_OUTPUT_DIR:-./multiarch-images}"
+            mkdir -p "$output_dir"
+            local safe_name=$(echo "$full_image_name" | sed 's|/|-|g' | sed 's|:|_|g')
+            cmd+=("--output" "type=oci,dest=${output_dir}/${safe_name}.tar")
+        fi
+        
+        # Add --no-cache if force build is enabled
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            cmd+=("--no-cache")
+        fi
+        
+        # Add build cache labels
+        cmd+=("--label" "build.hash=$service_hash")
+        cmd+=("--label" "build.id=$build_id")
+        cmd+=("--label" "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+        cmd+=("--label" "build.component=$component")
+        cmd+=("--label" "build.platforms=$platforms")
+        
+        cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
+        
+        if [ "$target" != "default" ]; then
+            cmd+=("--target" "$target")
+        fi
+        
+        # Add build context (project root)
+        cmd+=("$SCRIPT_DIR")
+        
+        log_info "Executing: ${cmd[*]}"
+        
+        if "${cmd[@]}"; then
+            log_info "✓ Multi-arch build success: $full_image_name ($platforms)"
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT (multiarch: $platforms)"
+            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+        else
+            log_error "✗ Multi-arch build failed: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR (multiarch)"
+            return 1
+        fi
+    done
+    
+    return 0
+}
+
+# Build all services for multiple architectures
+# Usage: build_multiarch [platforms] [--force]
+# Example: build_multiarch "linux/amd64,linux/arm64"
+#          build_multiarch amd64,arm64 --force
+build_multiarch() {
+    local platforms="${1:-linux/amd64,linux/arm64}"
+    local force="${2:-false}"
+    
+    # Normalize platform format
+    if [[ "$platforms" != *"linux/"* ]]; then
+        # Convert short form (amd64,arm64) to full form (linux/amd64,linux/arm64)
+        platforms=$(echo "$platforms" | sed 's/\([^,]*\)/linux\/\1/g')
+    fi
+    
+    # Show help
+    if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+        echo "Usage: $0 build-multiarch [platforms] [--force]"
+        echo ""
+        echo "Arguments:"
+        echo "  platforms   Comma-separated list of target platforms"
+        echo "              Default: linux/amd64,linux/arm64"
+        echo "              Short form: amd64,arm64 (auto-converted to linux/amd64,linux/arm64)"
+        echo "  --force     Force rebuild without cache"
+        echo ""
+        echo "Description:"
+        echo "  Build all AI-Infra service images for multiple architectures"
+        echo "  Uses docker buildx for cross-platform builds"
+        echo "  For single platform: images are loaded to local docker"
+        echo "  For multi-platform: images are saved as OCI tarballs"
+        echo ""
+        echo "Examples:"
+        echo "  $0 build-multiarch                              # Build for amd64 and arm64"
+        echo "  $0 build-multiarch linux/amd64                  # Build for amd64 only"
+        echo "  $0 build-multiarch linux/arm64 --force          # Force rebuild for arm64"
+        echo "  $0 build-multiarch amd64,arm64                  # Short form"
+        echo ""
+        echo "Output:"
+        echo "  Single platform: Images loaded to local docker daemon"
+        echo "  Multi-platform: OCI tarballs in ./multiarch-images/"
+        echo ""
+        echo "Note:"
+        echo "  - Requires docker buildx (included in Docker Desktop)"
+        echo "  - Cross-platform builds use QEMU emulation (slower)"
+        echo "  - For production, consider using CI/CD with native runners"
+        return 0
+    fi
+    
+    if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        force="true"
+    fi
+    
+    log_info "=========================================="
+    log_info "🏗️  Multi-Architecture Build"
+    log_info "=========================================="
+    log_info "Target platforms: $platforms"
+    log_info "Force rebuild: $force"
+    echo
+    
+    # Setup buildx
+    if ! setup_buildx_builder; then
+        log_error "Failed to setup buildx builder"
+        return 1
+    fi
+    echo
+    
+    # Set force flag
+    if [[ "$force" == "true" ]]; then
+        FORCE_BUILD=true
+    fi
+    
+    # Initialize build
+    init_build_cache
+    CURRENT_BUILD_ID=$(generate_build_id)
+    save_build_id "$CURRENT_BUILD_ID"
+    
+    log_info "Build Session: $CURRENT_BUILD_ID"
+    echo
+    
+    # Render templates
+    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    if ! render_all_templates "$force"; then
+        log_error "Template rendering failed. Aborting build."
+        return 1
+    fi
+    echo
+    
+    # Discover services
+    discover_services
+    
+    local success_count=0
+    local fail_count=0
+    local skip_count=0
+    
+    # Build Foundation Services
+    log_info "=== Phase 1: Building Foundation Services (Multi-Arch) ==="
+    for service in "${FOUNDATION_SERVICES[@]}"; do
+        log_info "━━━ Building: $service ━━━"
+        if build_component_multiarch "$service" "$platforms"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            log_error "Failed to build $service"
+        fi
+    done
+    echo
+    
+    # For dependent services, we need AppHub running
+    # But in multi-arch mode, we skip dependent services that require runtime AppHub
+    log_info "=== Phase 2: Building Dependent Services (Multi-Arch) ==="
+    log_warn "Note: Some dependent services may require AppHub to be running"
+    log_warn "For cross-platform builds, ensure dependencies are pre-downloaded"
+    
+    # Determine AppHub URL for build args (may not be accessible in cross-compile)
+    local apphub_port="${APPHUB_PORT:-28080}"
+    local external_host="${EXTERNAL_HOST:-localhost}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    for service in "${DEPENDENT_SERVICES[@]}"; do
+        log_info "━━━ Building: $service ━━━"
+        if build_component_multiarch "$service" "$platforms" "--build-arg" "APPHUB_URL=$apphub_url"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            log_error "Failed to build $service"
+        fi
+    done
+    echo
+    
+    # Summary
+    log_info "=========================================="
+    log_info "🎉 Multi-Architecture Build Complete"
+    log_info "=========================================="
+    log_info "Platforms: $platforms"
+    log_info "Success: $success_count"
+    log_info "Failed: $fail_count"
+    log_info "Build ID: $CURRENT_BUILD_ID"
+    
+    # Count platforms
+    local platform_count=$(echo "$platforms" | tr ',' '\n' | wc -l | tr -d ' ')
+    if [[ $platform_count -gt 1 ]]; then
+        log_info ""
+        log_info "📁 Output: ./multiarch-images/"
+        log_info "   Each image is saved as an OCI tarball"
+        log_info ""
+        log_info "To import on target machine:"
+        log_info "   docker load < ./multiarch-images/<image>.tar"
+    fi
+    
+    if [[ $fail_count -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Build single platform for export (useful for building other arch on dev machine)
+# This builds images for a specific platform and loads them locally
+# Usage: build_for_platform <platform> [--force]
+build_for_platform() {
+    local platform="${1:-linux/amd64}"
+    local force="${2:-false}"
+    
+    # Normalize platform
+    if [[ "$platform" != "linux/"* ]]; then
+        platform="linux/$platform"
+    fi
+    
+    if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+        echo "Usage: $0 build-platform <platform> [--force]"
+        echo ""
+        echo "Build all AI-Infra images for a specific platform"
+        echo "Images are loaded to local docker daemon"
+        echo ""
+        echo "Arguments:"
+        echo "  platform    Target platform (default: linux/amd64)"
+        echo "              Examples: linux/amd64, linux/arm64, amd64, arm64"
+        echo "  --force     Force rebuild without cache"
+        echo ""
+        echo "Examples:"
+        echo "  $0 build-platform amd64          # Build AMD64 images on ARM Mac"
+        echo "  $0 build-platform arm64 --force  # Force rebuild ARM64"
+        return 0
+    fi
+    
+    if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        force="true"
+    fi
+    
+    log_info "Building for single platform: $platform"
+    build_multiarch "$platform" "$force"
+}
+
+# Build all services for multiple platforms sequentially
+# This is an enhanced version of build_all that builds for each platform
+# Usage: build_all_multiplatform <platforms> [force]
+# Example: build_all_multiplatform "amd64,arm64" "true"
+build_all_multiplatform() {
+    local platforms="${1:-amd64,arm64}"
+    local force="${2:-false}"
+    
+    # Normalize platform format
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms"
+    local normalized_platforms=()
+    for p in "${PLATFORM_ARRAY[@]}"; do
+        p=$(echo "$p" | tr -d '[:space:]')
+        case "$p" in
+            amd64|x86_64) normalized_platforms+=("linux/amd64") ;;
+            arm64|aarch64) normalized_platforms+=("linux/arm64") ;;
+            linux/amd64|linux/arm64) normalized_platforms+=("$p") ;;
+            *) log_warn "Unknown platform: $p, skipping" ;;
+        esac
+    done
+    
+    if [[ ${#normalized_platforms[@]} -eq 0 ]]; then
+        log_error "No valid platforms specified"
+        return 1
+    fi
+    
+    log_info "=========================================="
+    log_info "🏗️  Multi-Platform Build (build-all)"
+    log_info "=========================================="
+    log_info "Target platforms: ${normalized_platforms[*]}"
+    log_info "Force rebuild: $force"
+    echo
+    
+    # Setup buildx builder
+    if ! setup_buildx_builder; then
+        log_error "Failed to setup buildx builder"
+        return 1
+    fi
+    echo
+    
+    # Set force flag globally
+    if [[ "$force" == "true" ]]; then
+        FORCE_BUILD=true
+        FORCE_REBUILD=true
+    fi
+    
+    # Initialize build cache
+    init_build_cache
+    CURRENT_BUILD_ID=$(generate_build_id)
+    save_build_id "$CURRENT_BUILD_ID"
+    
+    log_info "Build Session: $CURRENT_BUILD_ID"
+    echo
+    
+    # Phase 0: Render all templates
+    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    if ! render_all_templates "$force"; then
+        log_error "Template rendering failed. Aborting build."
+        return 1
+    fi
+    echo
+    
+    # Phase 0.5: Prefetch base images for all platforms
+    log_info "=== Phase 0.5: Prefetching Base Images (Multi-Platform) ==="
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "Prefetching base images for $arch_name..."
+        prefetch_base_images_for_platform "$platform"
+    done
+    echo
+    
+    # Discover services
+    discover_services
+    
+    # Phase 1: Pull & Tag Dependency Services for all platforms
+    log_info "=== Phase 1: Processing Dependency Services (Multi-Platform) ==="
+    for service in "${DEPENDENCY_SERVICES[@]}"; do
+        log_info "Processing dependency: $service"
+        for platform in "${normalized_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            pull_dependency_for_platform "$service" "$platform"
+        done
+    done
+    echo
+    
+    # Phase 2: Build Foundation Services for each platform
+    log_info "=== Phase 2: Building Foundation Services (Multi-Platform) ==="
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "━━━ Building Foundation Services for $arch_name ━━━"
+        for service in "${FOUNDATION_SERVICES[@]}"; do
+            build_component_for_platform "$service" "$platform"
+        done
+    done
+    echo
+    
+    # Phase 3: Start AppHub Service (native platform only for serving files)
+    log_info "=== Phase 3: Starting AppHub Service ==="
+    local compose_cmd=$(detect_compose_command)
+    if [ -z "$compose_cmd" ]; then
+        log_error "docker-compose not found! Cannot start AppHub."
+        return 1
+    fi
+    
+    # Ensure we have native platform AppHub running
+    local native_platform=$(_detect_docker_platform)
+    log_info "Starting AppHub container (native: $native_platform)..."
+    $compose_cmd up -d apphub
+    
+    if ! wait_for_apphub_ready 300; then
+        log_error "AppHub failed to start. Aborting build."
+        return 1
+    fi
+    echo
+    
+    # Phase 4: Build Dependent Services for each platform
+    log_info "=== Phase 4: Building Dependent Services (Multi-Platform) ==="
+    local apphub_port="${APPHUB_PORT:-28080}"
+    local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    log_info "Using AppHub URL for builds: $apphub_url"
+    
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "━━━ Building Dependent Services for $arch_name ━━━"
+        for service in "${DEPENDENT_SERVICES[@]}"; do
+            build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
+        done
+    done
+    echo
+    
+    # Build summary
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🎉 Multi-Platform Build Session $CURRENT_BUILD_ID Completed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Platforms built: ${normalized_platforms[*]}"
+    log_info ""
+    log_info "📋 Next steps:"
+    log_info "   Export for offline: ./build.sh export-offline ./offline ${IMAGE_TAG:-latest} true ${platforms}"
+    log_info ""
+    log_info "View build history: ./build.sh build-history"
+}
+
+# Helper: Prefetch base images for a specific platform
+# Includes all base images used by AI-Infra services including apphub
+prefetch_base_images_for_platform() {
+    local platform="$1"
+    local arch_name="${platform##*/}"
+    
+    # Get base images from Dockerfile templates and component Dockerfiles
+    # This includes apphub's Ubuntu/AlmaLinux builders and service base images
+    local base_images=(
+        # AppHub base images (multi-stage builder)
+        "ubuntu:22.04"
+        "almalinux:9.3-minimal"
+        # Common service base images
+        "python:3.11-slim"
+        "node:20-alpine"
+        "golang:1.21-alpine"
+        "nginx:alpine"
+        "alpine:3.18"
+        "alpine:3.19"
+        # Additional base images for other services
+        "debian:bookworm-slim"
+    )
+    
+    log_info "  [$arch_name] Prefetching ${#base_images[@]} base images..."
+    local success_count=0
+    local fail_count=0
+    
+    for image in "${base_images[@]}"; do
+        if docker pull --platform "$platform" "$image" >/dev/null 2>&1; then
+            log_info "    ✓ $image"
+            ((success_count++))
+        else
+            log_warn "    ✗ $image (may not be needed)"
+            ((fail_count++))
+        fi
+    done
+    
+    log_info "  [$arch_name] Prefetch complete: $success_count success, $fail_count failed/skipped"
+}
+
+# Helper: Pull dependency image for a specific platform
+pull_dependency_for_platform() {
+    local component="$1"
+    local platform="$2"
+    local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local arch_name="${platform##*/}"
+    
+    # Check for dependency configuration
+    local dep_conf="$component_dir/dependency.conf"
+    if [ ! -f "$dep_conf" ]; then
+        return 0
+    fi
+    
+    # Skip if there's a Dockerfile (custom build)
+    if [ -f "$component_dir/Dockerfile" ]; then
+        return 0
+    fi
+    
+    local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
+    if [ -z "$upstream_image" ]; then
+        return 0
+    fi
+    
+    # Use architecture-suffixed tag for cross-platform pulls
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    local arch_suffix=""
+    
+    if [[ "$arch_name" != "$native_arch" ]]; then
+        arch_suffix="-${arch_name}"
+    fi
+    
+    local target_image="ai-infra-$component:${tag}${arch_suffix}"
+    
+    log_info "  [$arch_name] Pulling: $upstream_image -> $target_image"
+    
+    if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+        docker tag "$upstream_image" "$target_image" >/dev/null 2>&1
+        log_info "  [$arch_name] ✓ Ready: $target_image"
+    else
+        log_warn "  [$arch_name] ✗ Failed to pull: $upstream_image"
+    fi
+}
+
+# Helper: Build a component for a specific platform using buildx
+# Build a single component for a specific platform
+# Enhanced version with full feature parity with build_component()
+# Features: build cache check, dependency.conf support, build labels, history logging, private registry
+# Usage: build_component_for_platform <component> <platform> [extra_args...]
+# Example: build_component_for_platform apphub linux/amd64
+#          build_component_for_platform backend linux/arm64 --build-arg APPHUB_URL=http://...
+build_component_for_platform() {
+    local component="$1"
+    local platform="$2"
+    local extra_args=("${@:3}")
+    local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local arch_name="${platform##*/}"
+    local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
+    
+    if [ ! -d "$component_dir" ]; then
+        log_error "[$arch_name] Component directory not found: $component_dir"
+        return 1
+    fi
+    
+    # ===== Build Cache Check =====
+    # Skip cache check if FORCE_BUILD is enabled
+    if [[ "$FORCE_BUILD" != "true" ]]; then
+        local rebuild_reason=$(need_rebuild "$component" "$tag")
+        if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+            log_cache "  [$arch_name] ⏭️  Skipping $component (no changes detected)"
+            log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE ($arch_name)"
+            return 0
+        fi
+        log_cache "  [$arch_name] 🔄 Rebuilding $component: $rebuild_reason"
+    fi
+    
+    # Check for template and render if needed
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [ -f "$template_file" ]; then
+        log_info "  [$arch_name] Rendering template for $component..."
+        if ! render_template "$template_file" >/dev/null 2>&1; then
+            log_error "  [$arch_name] Failed to render template for $component"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "TEMPLATE_ERROR ($arch_name)"
+            return 1
+        fi
+    fi
+    
+    # ===== Dependency Configuration (External Base Image) =====
+    local dep_conf="$component_dir/dependency.conf"
+    if [ -f "$dep_conf" ]; then
+        local upstream_image=$(grep -v '^#' "$dep_conf" | grep -v '^[[:space:]]*$' | head -n 1 | tr -d '[:space:]')
+        if [ -z "$upstream_image" ]; then
+            log_error "  [$arch_name] Empty dependency config for $component"
+            return 1
+        fi
+        
+        # Check if this component also has a Dockerfile (custom build based on dependency)
+        if [ -f "$component_dir/Dockerfile" ]; then
+            # Custom build that uses a base image from dependency.conf
+            log_info "  [$arch_name] Processing $component: dependency + custom Dockerfile"
+            log_info "  [$arch_name]   Base image: $upstream_image"
+            
+            # Pull the base image for the target platform first
+            log_info "  [$arch_name] Pulling base image for $arch_name..."
+            if ! docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                # Retry with verbose output
+                log_warn "  [$arch_name] Retrying base image pull..."
+                if ! docker pull --platform "$platform" "$upstream_image"; then
+                    log_error "  [$arch_name] ✗ Failed to pull base image $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "BASE_PULL_ERROR ($arch_name)"
+                    return 1
+                fi
+            fi
+            log_info "  [$arch_name] ✓ Base image ready: $upstream_image"
+            # Continue to Dockerfile build below (don't return)
+        else
+            # Pure dependency - just pull and tag for target platform
+            local target_image="ai-infra-$component:${tag}"
+            if [ -n "$PRIVATE_REGISTRY" ]; then
+                target_image="$PRIVATE_REGISTRY/$target_image"
+            fi
+            
+            log_info "  [$arch_name] Processing dependency $component: $upstream_image -> $target_image"
+            
+            if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+                if docker tag "$upstream_image" "$target_image" >/dev/null 2>&1; then
+                    log_info "  [$arch_name] ✓ Dependency ready: $target_image"
+                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "DEPENDENCY_PULLED ($arch_name)"
+                    return 0
+                else
+                    log_error "  [$arch_name] ✗ Failed to tag $upstream_image"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "TAG_ERROR ($arch_name)"
+                    return 1
+                fi
+            else
+                log_error "  [$arch_name] ✗ Failed to pull $upstream_image"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "PULL_ERROR ($arch_name)"
+                return 1
+            fi
+        fi
+    fi
+    
+    if [ ! -f "$component_dir/Dockerfile" ]; then
+        log_warn "  [$arch_name] No Dockerfile or dependency.conf in $component, skipping..."
+        return 0
+    fi
+    
+    # Calculate service hash for build label
+    local service_hash=$(calculate_service_hash "$component")
+    
+    # Check for build-targets.conf
+    local targets_file="$component_dir/build-targets.conf"
+    local targets=()
+    local images=()
+    
+    if [ -f "$targets_file" ]; then
+        while read -r target image_suffix || [ -n "$target" ]; do
+            [[ "$target" =~ ^#.*$ ]] && continue
+            [[ -z "$target" ]] && continue
+            targets+=("$target")
+            images+=("$image_suffix")
+        done < "$targets_file"
+    else
+        targets+=("default")
+        images+=("ai-infra-$component")
+    fi
+    
+    for i in "${!targets[@]}"; do
+        local target="${targets[$i]}"
+        local image_name="${images[$i]}"
+        
+        # Use architecture-suffixed tag for cross-platform builds to avoid overwriting
+        # This allows building and storing both amd64 and arm64 images on the same machine
+        local native_platform=$(_detect_docker_platform)
+        local native_arch="${native_platform##*/}"
+        local arch_suffix=""
+        
+        # Add architecture suffix when building for non-native platform
+        if [[ "$arch_name" != "$native_arch" ]]; then
+            arch_suffix="-${arch_name}"
+        fi
+        
+        local full_image_name="${image_name}:${tag}${arch_suffix}"
+        
+        if [ -n "$PRIVATE_REGISTRY" ]; then
+            full_image_name="$PRIVATE_REGISTRY/$full_image_name"
+        fi
+        
+        log_info "  [$arch_name] Building: $component [$target] -> $full_image_name"
+        
+        local cmd=("docker" "buildx" "build")
+        cmd+=("--platform" "$platform")
+        cmd+=("--load")  # Load to local docker daemon
+        
+        # Add --no-cache if force build is enabled
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            cmd+=("--no-cache")
+        fi
+        
+        # Add build cache labels for incremental builds
+        cmd+=("--label" "build.hash=$service_hash")
+        cmd+=("--label" "build.id=$build_id")
+        cmd+=("--label" "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+        cmd+=("--label" "build.component=$component")
+        cmd+=("--label" "build.platform=$platform")
+        
+        cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
+        
+        if [ "$target" != "default" ]; then
+            cmd+=("--target" "$target")
+        fi
+        
+        cmd+=("$SCRIPT_DIR")
+        
+        if "${cmd[@]}" >/dev/null 2>&1; then
+            log_info "  [$arch_name] ✓ Built: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
+            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+        else
+            # Retry with output on failure
+            log_warn "  [$arch_name] Retrying build with verbose output..."
+            if "${cmd[@]}"; then
+                log_info "  [$arch_name] ✓ Built: $full_image_name"
+                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_RETRY ($arch_name)"
+                save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+            else
+                log_error "  [$arch_name] ✗ Failed: $full_image_name"
+                log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
+                return 1
+            fi
+        fi
+    done
+    
+    return 0
+}
+
 build_all() {
     local force="${1:-false}"
     
@@ -4335,6 +5970,14 @@ build_all() {
         log_info "Starting coordinated build process (FORCE MODE - no cache)..."
         FORCE_BUILD=true
         FORCE_REBUILD=true
+        
+        # 【防御性检查】Force 模式下检查数据库状态
+        log_info "=== Phase -2: Database Safety Check ==="
+        if ! pre_deployment_safety_check "$force"; then
+            log_error "Safety check failed or aborted. Exiting."
+            exit 1
+        fi
+        echo
         
         # In force mode, auto-detect and update EXTERNAL_HOST if needed
         log_info "=== Phase -1: Verifying Network Configuration ==="
@@ -4566,11 +6209,238 @@ update_runtime_env() {
     fi
 }
 
+# ==============================================================================
+# Database Safety Functions - 数据库安全函数
+# ==============================================================================
+
+# 检查 PostgreSQL 数据库是否包含生产数据
+# Returns: 0 if has data, 1 if empty/not exists
+check_postgres_has_data() {
+    local db_name="${1:-ai_infra}"
+    local db_host="${DB_HOST:-postgres}"
+    local db_port="${DB_PORT:-5432}"
+    local db_user="${DB_USER:-postgres}"
+    local db_password="${DB_PASSWORD:-postgres}"
+    
+    log_info "🔍 Checking PostgreSQL database for existing data..."
+    
+    # 检查 postgres 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
+        log_info "PostgreSQL container not running, no data check needed"
+        return 1
+    fi
+    
+    # 检查数据库是否存在
+    local db_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='$db_name'" 2>/dev/null || echo "0")
+    
+    if [[ "$db_exists" != "1" ]]; then
+        log_info "Database '$db_name' does not exist"
+        return 1
+    fi
+    
+    # 检查关键表中是否有数据
+    local total_records=0
+    local critical_tables=("users" "roles" "clusters" "tasks" "gpu_configs")
+    
+    for table in "${critical_tables[@]}"; do
+        local count=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+            "SELECT COUNT(*) FROM $table" 2>/dev/null || echo "0")
+        count=${count//[^0-9]/}  # 移除非数字字符
+        total_records=$((total_records + ${count:-0}))
+    done
+    
+    if [[ $total_records -gt 0 ]]; then
+        log_warn "⚠️  Found $total_records records in critical tables"
+        return 0
+    else
+        log_info "Database exists but has no critical data"
+        return 1
+    fi
+}
+
+# 备份 PostgreSQL 数据库
+backup_postgres_database() {
+    local db_name="${1:-ai_infra}"
+    local backup_dir="${2:-./backup/postgres}"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_file="${backup_dir}/${db_name}_${timestamp}.sql"
+    
+    log_info "📦 Creating PostgreSQL backup..."
+    
+    # 确保备份目录存在
+    mkdir -p "$backup_dir"
+    
+    # 检查 postgres 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
+        log_error "PostgreSQL container not running, cannot backup"
+        return 1
+    fi
+    
+    # 执行备份
+    local db_user="${DB_USER:-postgres}"
+    if docker exec ai-infra-postgres pg_dump -U "$db_user" -d "$db_name" > "$backup_file" 2>/dev/null; then
+        # 压缩备份
+        gzip "$backup_file"
+        log_info "✅ Backup created: ${backup_file}.gz"
+        
+        # 清理旧备份（保留最近10个）
+        local backup_count=$(ls -1 "$backup_dir"/${db_name}_*.sql.gz 2>/dev/null | wc -l)
+        if [[ $backup_count -gt 10 ]]; then
+            ls -1t "$backup_dir"/${db_name}_*.sql.gz | tail -n +11 | xargs rm -f
+            log_info "🧹 Cleaned old backups, keeping 10 most recent"
+        fi
+        
+        return 0
+    else
+        log_error "Failed to create backup"
+        return 1
+    fi
+}
+
+# 恢复 PostgreSQL 数据库
+restore_postgres_database() {
+    local backup_file="$1"
+    local db_name="${2:-ai_infra}"
+    
+    if [[ ! -f "$backup_file" ]]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+    
+    log_info "🔄 Restoring PostgreSQL database from backup..."
+    
+    local db_user="${DB_USER:-postgres}"
+    
+    # 如果是压缩文件，先解压
+    if [[ "$backup_file" == *.gz ]]; then
+        gunzip -c "$backup_file" | docker exec -i ai-infra-postgres psql -U "$db_user" -d "$db_name"
+    else
+        docker exec -i ai-infra-postgres psql -U "$db_user" -d "$db_name" < "$backup_file"
+    fi
+    
+    if [[ $? -eq 0 ]]; then
+        log_info "✅ Database restored successfully"
+        return 0
+    else
+        log_error "Failed to restore database"
+        return 1
+    fi
+}
+
+# 获取数据库初始化模式
+get_db_init_mode() {
+    local mode="${DB_INIT_MODE:-safe_init}"
+    echo "$mode"
+}
+
+# 设置数据库初始化模式
+set_db_init_mode() {
+    local mode="$1"
+    export DB_INIT_MODE="$mode"
+    log_info "DB_INIT_MODE set to: $mode"
+}
+
+# 交互式确认数据库重置
+confirm_database_reset() {
+    local db_name="${1:-ai_infra}"
+    
+    echo ""
+    log_warn "═══════════════════════════════════════════════════════════════"
+    log_warn "⚠️  DATABASE RESET WARNING"
+    log_warn "═══════════════════════════════════════════════════════════════"
+    log_warn "Database '$db_name' contains production data!"
+    log_warn ""
+    log_warn "Options:"
+    log_warn "  1. BACKUP and RESET - Create backup, then reset database"
+    log_warn "  2. UPGRADE ONLY     - Keep data, only run migrations"
+    log_warn "  3. ABORT            - Cancel operation"
+    log_warn "═══════════════════════════════════════════════════════════════"
+    echo ""
+    
+    read -p "Enter choice [1/2/3]: " choice
+    
+    case "$choice" in
+        1)
+            log_info "Selected: Backup and Reset"
+            backup_postgres_database "$db_name"
+            set_db_init_mode "force_reset"
+            return 0
+            ;;
+        2)
+            log_info "Selected: Upgrade Only"
+            set_db_init_mode "upgrade"
+            return 0
+            ;;
+        3|*)
+            log_info "Operation aborted by user"
+            return 1
+            ;;
+    esac
+}
+
+# 安全检查包装函数 - 用于 build-all 和 start-all
+pre_deployment_safety_check() {
+    local force="${1:-false}"
+    
+    # 如果设置了 SKIP_DB_CHECK，跳过检查
+    if [[ "${SKIP_DB_CHECK:-false}" == "true" ]]; then
+        log_info "Database safety check skipped (SKIP_DB_CHECK=true)"
+        return 0
+    fi
+    
+    # 检查是否有生产数据
+    if check_postgres_has_data; then
+        if [[ "$force" == "true" ]]; then
+            log_warn "⚠️  Force mode enabled with existing data!"
+            
+            # 非交互模式下，根据 DB_INIT_MODE 决定行为
+            local init_mode=$(get_db_init_mode)
+            if [[ "$init_mode" == "force_reset" ]]; then
+                log_warn "DB_INIT_MODE=force_reset, proceeding with backup and reset"
+                backup_postgres_database
+                return 0
+            elif [[ "$init_mode" == "upgrade" ]]; then
+                log_info "DB_INIT_MODE=upgrade, keeping existing data"
+                return 0
+            else
+                # 安全模式 - 交互确认
+                if [[ -t 0 ]]; then
+                    # 终端模式，交互确认
+                    if ! confirm_database_reset; then
+                        return 1
+                    fi
+                else
+                    # 非交互模式，默认安全（不重置）
+                    log_warn "Non-interactive mode with existing data, using safe mode"
+                    set_db_init_mode "safe_init"
+                    return 0
+                fi
+            fi
+        else
+            log_info "Existing data detected, using upgrade mode"
+            set_db_init_mode "upgrade"
+        fi
+    else
+        log_info "No existing production data, proceeding with initialization"
+        set_db_init_mode "safe_init"
+    fi
+    
+    return 0
+}
+
 start_all() {
     log_info "Starting all services (with HA profile for SaltStack multi-master)..."
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found!"
+        exit 1
+    fi
+    
+    # 【防御性检查】启动前检查数据库状态
+    log_info "=== Pre-deployment Safety Check ==="
+    if ! pre_deployment_safety_check "false"; then
+        log_error "Safety check failed or aborted. Exiting."
         exit 1
     fi
     
@@ -4759,8 +6629,9 @@ stop_all() {
         return 1
     fi
     
-    # 先尝试使用 --profile ha 停止所有服务（包括 HA 模式的容器）
-    $compose_cmd --profile ha down 2>/dev/null || true
+    # 停止所有 profile 下的服务（ha, safeline 等）
+    # 需要同时指定所有可能的 profile 才能确保完全停止
+    $compose_cmd --profile ha --profile safeline down 2>/dev/null || true
     
     # 作为兜底，再执行不带 profile 的 down
     $compose_cmd down 2>/dev/null || true
@@ -4769,6 +6640,13 @@ stop_all() {
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^ai-infra-salt-master-2$'; then
         log_info "Cleaning up HA container: ai-infra-salt-master-2"
         docker rm -f ai-infra-salt-master-2 >/dev/null 2>&1 || true
+    fi
+    
+    # 清理可能残留的 SafeLine 容器
+    local safeline_containers=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep '^safeline-' || true)
+    if [[ -n "$safeline_containers" ]]; then
+        log_info "Cleaning up SafeLine containers..."
+        echo "$safeline_containers" | xargs -r docker rm -f >/dev/null 2>&1 || true
     fi
     
     log_info "All services stopped."
@@ -4886,36 +6764,63 @@ export_offline_images() {
     local output_dir="${1:-./offline-images}"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local include_common="${3:-true}"
+    local platforms="${4:-amd64,arm64}"
     
     # Show help
     if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
-        echo "Usage: $0 export-offline [output_dir] [tag] [include_common]"
+        echo "Usage: $0 export-offline [output_dir] [tag] [include_common] [platforms]"
         echo ""
         echo "Arguments:"
         echo "  output_dir      Output directory (default: ./offline-images)"
         echo "  tag             Image tag (default: $IMAGE_TAG)"
         echo "  include_common  Include common images like mysql, redis, kafka (default: true)"
+        echo "  platforms       Comma-separated architectures to export (default: amd64,arm64)"
+        echo "                  Supported: amd64, arm64, or both"
         echo ""
         echo "Description:"
         echo "  Export all AI-Infra service images and dependency images to tar files"
+        echo "  Supports multi-architecture export for offline deployment"
         echo "  Automatically generates image manifest and import script"
         echo ""
         echo "Examples:"
-        echo "  $0 export-offline ./my-images v0.3.8 true"
-        echo "  $0 export-offline ./images v0.3.8 false"
+        echo "  $0 export-offline ./my-images v0.3.8 true amd64,arm64  # Both architectures"
+        echo "  $0 export-offline ./images v0.3.8 true amd64           # AMD64 only"
+        echo "  $0 export-offline ./images v0.3.8 false arm64          # ARM64 only, no common"
         return 0
     fi
     
+    # Parse platforms into array
+    IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms"
+    local valid_platforms=()
+    for p in "${PLATFORM_ARRAY[@]}"; do
+        p=$(echo "$p" | tr -d '[:space:]')
+        case "$p" in
+            amd64|x86_64) valid_platforms+=("linux/amd64") ;;
+            arm64|aarch64) valid_platforms+=("linux/arm64") ;;
+            *) log_warn "Unknown platform: $p, skipping" ;;
+        esac
+    done
+    
+    if [[ ${#valid_platforms[@]} -eq 0 ]]; then
+        log_error "No valid platforms specified"
+        return 1
+    fi
+    
     log_info "=========================================="
-    log_info "📦 Exporting Offline Images"
+    log_info "📦 Exporting Offline Images (Multi-Arch)"
     log_info "=========================================="
     log_info "Output directory: $output_dir"
     log_info "Image tag: $tag"
     log_info "Include common images: $include_common"
+    log_info "Target platforms: ${valid_platforms[*]}"
     echo
     
-    # Create output directory
+    # Create output directories for each platform
     mkdir -p "$output_dir"
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        mkdir -p "${output_dir}/${arch_name}"
+    done
     
     discover_services
     
@@ -4923,152 +6828,268 @@ export_offline_images() {
     local failed_count=0
     local failed_images=()
     
-    # Phase 1: Export AI-Infra project images
-    log_info "=== Phase 1: Exporting AI-Infra service images ==="
-    
-    local all_services=("${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
-    
-    for service in "${all_services[@]}"; do
-        local image_name="ai-infra-${service}:${tag}"
-        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
-        local output_file="${output_dir}/${safe_name}.tar"
+    # Helper function to export single image for specific platform
+    _export_image_for_platform() {
+        local image_name="$1"
+        local platform="$2"
+        local arch_name="${platform##*/}"
+        local safe_name=$(echo "$image_name" | sed 's|/|-|g' | sed 's|:|_|g')
+        local output_file="${output_dir}/${arch_name}/${safe_name}.tar"
         
-        log_info "→ Exporting: $image_name"
-        if docker image inspect "$image_name" >/dev/null 2>&1; then
-            if docker save "$image_name" -o "$output_file"; then
-                local file_size=$(du -h "$output_file" | cut -f1)
-                log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
-                exported_count=$((exported_count + 1))
+        # Check if image is a local build (ai-infra-*) or remote image
+        local is_local_image=false
+        if [[ "$image_name" == ai-infra-* ]]; then
+            is_local_image=true
+        fi
+        
+        # For local images, check if it exists locally
+        if $is_local_image; then
+            if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                echo "not_found"
+                return
+            fi
+            # Export local image (assumes it's built for current platform)
+            if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                du -h "$output_file" | cut -f1
             else
-                log_warn "  ✗ Failed to export: $image_name"
-                failed_images+=("$image_name")
-                failed_count=$((failed_count + 1))
+                echo "failed"
             fi
         else
-            log_warn "  ! Image not found, skipping: $image_name"
-            failed_images+=("$image_name")
-            failed_count=$((failed_count + 1))
+            # For remote images, pull specific platform and export
+            # First check if already pulled
+            local pull_needed=true
+            if docker image inspect "$image_name" >/dev/null 2>&1; then
+                # Check if the existing image matches the target platform
+                local existing_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$existing_arch" == "$arch_name" ]] || [[ "$existing_arch" == "${arch_name/amd64/amd64}" ]]; then
+                    pull_needed=false
+                fi
+            fi
+            
+            # Pull with specific platform if needed
+            if $pull_needed; then
+                if ! docker pull --platform "$platform" "$image_name" >/dev/null 2>&1; then
+                    echo "pull_failed"
+                    return
+                fi
+            fi
+            
+            # Export the pulled image
+            if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                du -h "$output_file" | cut -f1
+            else
+                echo "failed"
+            fi
         fi
+    }
+    
+    # Phase 1: Export AI-Infra project images
+    log_info "=== Phase 1: Exporting AI-Infra service images ==="
+    log_info "Note: Checking both native and cross-platform built images"
+    
+    local all_services=("${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
+    for service in "${all_services[@]}"; do
+        log_info "→ Exporting: ai-infra-${service}"
+        
+        # Try to export for each requested platform
+        for platform in "${valid_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            local arch_suffix=""
+            local image_name=""
+            
+            # For non-native arch, check for architecture-suffixed tag first
+            if [[ "$arch_name" != "$native_arch" ]]; then
+                arch_suffix="-${arch_name}"
+                image_name="ai-infra-${service}:${tag}${arch_suffix}"
+            else
+                # Native arch uses base tag
+                image_name="ai-infra-${service}:${tag}"
+            fi
+            
+            local safe_name=$(echo "ai-infra-${service}_${tag}" | sed 's|:|_|g')
+            local output_file="${output_dir}/${arch_name}/${safe_name}.tar"
+            
+            if docker image inspect "$image_name" >/dev/null 2>&1; then
+                # Verify the image architecture matches what we expect
+                local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$actual_arch" == "$arch_name" ]] || [[ "$actual_arch" == "amd64" && "$arch_name" == "amd64" ]] || [[ "$actual_arch" == "arm64" && "$arch_name" == "arm64" ]]; then
+                    if docker save "$image_name" -o "$output_file"; then
+                        local file_size=$(du -h "$output_file" | cut -f1)
+                        log_info "  ✓ Exported [${arch_name}]: $(basename "$output_file") ($file_size)"
+                        exported_count=$((exported_count + 1))
+                    else
+                        log_warn "  ✗ [$arch_name] Failed to export: $image_name"
+                        failed_images+=("${image_name}@${arch_name}")
+                        failed_count=$((failed_count + 1))
+                    fi
+                else
+                    log_warn "  ! [$arch_name] Image $image_name has wrong architecture: $actual_arch (expected $arch_name)"
+                    failed_images+=("${image_name}@${arch_name}")
+                    failed_count=$((failed_count + 1))
+                fi
+            else
+                # Try fallback: for non-native, also check base tag (in case it was built without suffix)
+                if [[ -n "$arch_suffix" ]]; then
+                    local fallback_image="ai-infra-${service}:${tag}"
+                    if docker image inspect "$fallback_image" >/dev/null 2>&1; then
+                        local fallback_arch=$(docker image inspect "$fallback_image" --format '{{.Architecture}}' 2>/dev/null)
+                        if [[ "$fallback_arch" == "$arch_name" ]]; then
+                            if docker save "$fallback_image" -o "$output_file"; then
+                                local file_size=$(du -h "$output_file" | cut -f1)
+                                log_info "  ✓ Exported [${arch_name}] (from base tag): $(basename "$output_file") ($file_size)"
+                                exported_count=$((exported_count + 1))
+                                continue
+                            fi
+                        fi
+                    fi
+                fi
+                log_warn "  ! [$arch_name] Image not found: $image_name"
+                failed_images+=("${image_name}@${arch_name}")
+                failed_count=$((failed_count + 1))
+            fi
+        done
     done
     echo
     
-    # Phase 2: Export dependency images (from deps.yaml mapping)
-    log_info "=== Phase 2: Exporting dependency images ==="
+    # Phase 2: Export dependency images (from deps.yaml mapping) - multi-arch
+    log_info "=== Phase 2: Exporting dependency images (multi-arch) ==="
     local dependencies=($(get_dependency_mappings))
     
     for mapping in "${dependencies[@]}"; do
         local source_image="${mapping%%|*}"
         local short_name="${mapping##*|}"
-        local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
-        local output_file="${output_dir}/${safe_name}.tar"
         
         log_info "→ Exporting: $source_image"
-        if docker image inspect "$source_image" >/dev/null 2>&1; then
-            if docker save "$source_image" -o "$output_file"; then
-                local file_size=$(du -h "$output_file" | cut -f1)
-                log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
-                exported_count=$((exported_count + 1))
-            else
-                log_warn "  ✗ Failed to export: $source_image"
-                failed_images+=("$source_image")
-                failed_count=$((failed_count + 1))
-            fi
-        else
-            log_warn "  ! Image not found, skipping: $source_image"
-            failed_images+=("$source_image")
-            failed_count=$((failed_count + 1))
-        fi
+        
+        for platform in "${valid_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            local result=$(_export_image_for_platform "$source_image" "$platform")
+            
+            case "$result" in
+                not_found)
+                    log_warn "  ! [$arch_name] Image not found, skipping"
+                    ;;
+                pull_failed)
+                    log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                    ;;
+                failed)
+                    log_warn "  ✗ [$arch_name] Failed to export"
+                    failed_images+=("${source_image}@${arch_name}")
+                    failed_count=$((failed_count + 1))
+                    ;;
+                *)
+                    log_info "  ✓ [$arch_name] Exported ($result)"
+                    exported_count=$((exported_count + 1))
+                    ;;
+            esac
+        done
     done
     echo
     
-    # Phase 3: Export common/third-party images
+    # Phase 3: Export common/third-party images - multi-arch
     if [[ "$include_common" == "true" ]]; then
-        log_info "=== Phase 3: Exporting common/third-party images ==="
+        log_info "=== Phase 3: Exporting common/third-party images (multi-arch) ==="
         
         for image in "${COMMON_IMAGES[@]}"; do
-            local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
-            local output_file="${output_dir}/${safe_name}.tar"
-            
             log_info "→ Exporting: $image"
-            if docker image inspect "$image" >/dev/null 2>&1; then
-                if docker save "$image" -o "$output_file"; then
-                    local file_size=$(du -h "$output_file" | cut -f1)
-                    log_info "  ✓ Exported: $(basename "$output_file") ($file_size)"
-                    exported_count=$((exported_count + 1))
-                else
-                    log_warn "  ✗ Failed to export: $image"
-                    failed_images+=("$image")
-                    failed_count=$((failed_count + 1))
-                fi
-            else
-                log_warn "  ! Image not found, skipping: $image"
-                failed_images+=("$image")
-                failed_count=$((failed_count + 1))
-            fi
+            
+            for platform in "${valid_platforms[@]}"; do
+                local arch_name="${platform##*/}"
+                local result=$(_export_image_for_platform "$image" "$platform")
+                
+                case "$result" in
+                    not_found)
+                        log_warn "  ! [$arch_name] Image not found, skipping"
+                        ;;
+                    pull_failed)
+                        log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                        ;;
+                    failed)
+                        log_warn "  ✗ [$arch_name] Failed to export"
+                        failed_images+=("${image}@${arch_name}")
+                        failed_count=$((failed_count + 1))
+                        ;;
+                    *)
+                        log_info "  ✓ [$arch_name] Exported ($result)"
+                        exported_count=$((exported_count + 1))
+                        ;;
+                esac
+            done
         done
         echo
     fi
     
-    # Generate image manifest file
-    log_info "📋 Generating image manifest..."
-    local manifest_file="${output_dir}/images-manifest.txt"
-    cat > "$manifest_file" << EOF
+    # Generate image manifest file for each architecture
+    log_info "📋 Generating image manifests..."
+    
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        local manifest_file="${output_dir}/${arch_name}/images-manifest.txt"
+        
+        cat > "$manifest_file" << EOF
 # AI Infrastructure Matrix - Offline Images Manifest
 # Generated: $(date)
 # Image Tag: $tag
+# Architecture: $arch_name
 # Include Common Images: $include_common
 
 # AI-Infra Service Images
 EOF
-    
-    for service in "${all_services[@]}"; do
-        local image_name="ai-infra-${service}:${tag}"
-        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
-        local tar_file="${safe_name}.tar"
-        if [[ -f "${output_dir}/${tar_file}" ]]; then
-            echo "$image_name|$tar_file" >> "$manifest_file"
-        fi
-    done
-    
-    echo "" >> "$manifest_file"
-    echo "# Dependency Images" >> "$manifest_file"
-    
-    for mapping in "${dependencies[@]}"; do
-        local source_image="${mapping%%|*}"
-        local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
-        local tar_file="${safe_name}.tar"
-        if [[ -f "${output_dir}/${tar_file}" ]]; then
-            echo "$source_image|$tar_file" >> "$manifest_file"
-        fi
-    done
-    
-    if [[ "$include_common" == "true" ]]; then
-        echo "" >> "$manifest_file"
-        echo "# Common/Third-party Images" >> "$manifest_file"
         
-        for image in "${COMMON_IMAGES[@]}"; do
-            local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
+        for service in "${all_services[@]}"; do
+            local image_name="ai-infra-${service}:${tag}"
+            local safe_name=$(echo "$image_name" | sed 's|:|_|g')
             local tar_file="${safe_name}.tar"
-            if [[ -f "${output_dir}/${tar_file}" ]]; then
-                echo "$image|$tar_file" >> "$manifest_file"
+            if [[ -f "${output_dir}/${arch_name}/${tar_file}" ]]; then
+                echo "$image_name|$tar_file" >> "$manifest_file"
             fi
         done
-    fi
+        
+        echo "" >> "$manifest_file"
+        echo "# Dependency Images" >> "$manifest_file"
+        
+        for mapping in "${dependencies[@]}"; do
+            local source_image="${mapping%%|*}"
+            local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
+            local tar_file="${safe_name}.tar"
+            if [[ -f "${output_dir}/${arch_name}/${tar_file}" ]]; then
+                echo "$source_image|$tar_file" >> "$manifest_file"
+            fi
+        done
     
-    # Generate import script
+        if [[ "$include_common" == "true" ]]; then
+            echo "" >> "$manifest_file"
+            echo "# Common/Third-party Images" >> "$manifest_file"
+            
+            for image in "${COMMON_IMAGES[@]}"; do
+                local safe_name=$(echo "$image" | sed 's|/|-|g' | sed 's|:|_|g')
+                local tar_file="${safe_name}.tar"
+                if [[ -f "${output_dir}/${arch_name}/${tar_file}" ]]; then
+                    echo "$image|$tar_file" >> "$manifest_file"
+                fi
+            done
+        fi
+        
+        log_info "  ✓ Generated manifest for $arch_name"
+    done
+    
+    # Generate import script (architecture-aware)
     log_info "📜 Generating import script..."
     local import_script="${output_dir}/import-images.sh"
     cat > "$import_script" << 'IMPORT_SCRIPT_EOF'
 #!/bin/bash
 
-# AI Infrastructure Matrix - Offline Images Import Script
-# Usage: ./import-images.sh [images_directory]
+# AI Infrastructure Matrix - Offline Images Import Script (Multi-Arch)
+# Usage: ./import-images.sh [architecture]
+# Architecture: amd64, arm64, or auto (default: auto-detect)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGES_DIR="${1:-$SCRIPT_DIR}"
-MANIFEST_FILE="${IMAGES_DIR}/images-manifest.txt"
+REQUESTED_ARCH="${1:-auto}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -5079,6 +7100,39 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Detect host architecture
+detect_arch() {
+    local arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        *) echo "amd64" ;;  # Default fallback
+    esac
+}
+
+# Determine which architecture to use
+if [[ "$REQUESTED_ARCH" == "auto" ]]; then
+    ARCH=$(detect_arch)
+    log_info "Auto-detected architecture: $ARCH"
+else
+    ARCH="$REQUESTED_ARCH"
+fi
+
+IMAGES_DIR="${SCRIPT_DIR}/${ARCH}"
+MANIFEST_FILE="${IMAGES_DIR}/images-manifest.txt"
+
+# Check if architecture directory exists
+if [[ ! -d "$IMAGES_DIR" ]]; then
+    log_error "Architecture directory not found: $IMAGES_DIR"
+    log_info "Available architectures:"
+    for dir in "$SCRIPT_DIR"/*/; do
+        if [[ -f "${dir}images-manifest.txt" ]]; then
+            log_info "  - $(basename "$dir")"
+        fi
+    done
+    exit 1
+fi
+
 if [[ ! -f "$MANIFEST_FILE" ]]; then
     log_error "Manifest file not found: $MANIFEST_FILE"
     exit 1
@@ -5087,6 +7141,7 @@ fi
 log_info "=========================================="
 log_info "Importing Offline Images"
 log_info "=========================================="
+log_info "Architecture: $ARCH"
 log_info "Images directory: $IMAGES_DIR"
 log_info "Manifest file: $MANIFEST_FILE"
 echo
@@ -5133,7 +7188,8 @@ IMPORT_SCRIPT_EOF
     
     chmod +x "$import_script"
     
-    # Calculate total size
+    # Calculate total size for each architecture
+    log_info "📊 Calculating sizes..."
     local total_size=$(du -sh "$output_dir" | cut -f1)
     
     # Print summary
@@ -5145,6 +7201,15 @@ IMPORT_SCRIPT_EOF
     log_info "  • Exported: $exported_count images"
     log_info "  • Failed: $failed_count images"
     log_info "  • Total size: $total_size"
+    log_info "  • Architectures:"
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        if [[ -d "${output_dir}/${arch_name}" ]]; then
+            local arch_size=$(du -sh "${output_dir}/${arch_name}" | cut -f1)
+            local arch_count=$(find "${output_dir}/${arch_name}" -name "*.tar" 2>/dev/null | wc -l | tr -d ' ')
+            log_info "    - ${arch_name}: ${arch_count} images (${arch_size})"
+        fi
+    done
     echo
     
     if [[ ${#failed_images[@]} -gt 0 ]]; then
@@ -5157,12 +7222,17 @@ IMPORT_SCRIPT_EOF
     
     log_info "📁 Output files:"
     log_info "  • Images directory: $output_dir"
-    log_info "  • Manifest file: $manifest_file"
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "    - ${arch_name}/: Images and manifest for $arch_name"
+    done
     log_info "  • Import script: $import_script"
     echo
     log_info "📋 Usage instructions:"
     log_info "  1. Copy the entire '$output_dir' directory to the offline environment"
-    log_info "  2. Run: cd $output_dir && ./import-images.sh"
+    log_info "  2. Run import with auto-detection: cd $output_dir && ./import-images.sh"
+    log_info "     Or specify architecture: ./import-images.sh amd64"
+    log_info "                              ./import-images.sh arm64"
     log_info "  3. Start services: docker compose --profile ha up -d"
     
     return 0
@@ -5191,7 +7261,13 @@ print_help() {
     echo "  ssl-setup --force   Regenerate existing certificates"
     echo "  ssl-setup-le [domain] [email]  Issue Let's Encrypt cert via certbot --standalone"
     echo "                          Uses LETSENCRYPT_EMAIL/LETSENCRYPT_STAGING if omitted"
+    echo "  ssl-cloudflare <domain> [--wildcard] [--staging] [--force]"
+    echo "                      Issue Let's Encrypt cert via Cloudflare DNS validation"
+    echo "                      Credentials: ~/.secrets/cloudflare.ini or CLOUDFLARE_CREDENTIALS"
+    echo "                      --wildcard: Include *.<domain> wildcard certificate"
     echo "  ssl-info [domain]   Display SSL certificate information"
+    echo "  ssl-check           Diagnose SSL/domain configuration for cloud deployments"
+    echo "                      Detects domain mismatch, private IP issues, etc."
     echo "  ssl-clean           Remove all generated SSL certificates and disable SSL"
     echo ""
     echo "Optional Components:"
@@ -5204,8 +7280,16 @@ print_help() {
     echo "  build-all --force        Force rebuild all (no cache, re-render templates)"
     echo "  build-all --parallel     Parallel build with smart caching"
     echo "  build-all --no-ssl       Build without SSL/HTTPS"
+    echo "  build-all --platform=amd64,arm64   Build for multiple architectures"
     echo "  [component]              Build a specific component (e.g., backend, frontend)"
     echo "  [component] --force      Force rebuild a component without cache"
+    echo ""
+    echo "Multi-Architecture Build Commands:"
+    echo "  --platform=<arch>        Global option to specify target platform(s)"
+    echo "                          Can be used with 'build-all' or single component"
+    echo "                          Values: amd64, arm64, or amd64,arm64 (both)"
+    echo "  build-multiarch [platforms] [--force]  Dedicated multi-arch build command"
+    echo "  build-platform <arch> [--force]        Build for single target platform"
     echo ""
     echo "Build Cache Commands:"
     echo "  cache-status        Show build cache status for all services"
@@ -5220,6 +7304,17 @@ print_help() {
     echo "  start-all           Start all services (with SaltStack HA multi-master)"
     echo "  stop-all            Stop all services"
     echo "  tag-images          Tag private registry images as local (for intranet)"
+    echo ""
+    echo "Database Safety Commands:"
+    echo "  db-check            Check if PostgreSQL has production data"
+    echo "  db-backup [name]    Backup PostgreSQL database"
+    echo "  db-restore <file>   Restore PostgreSQL database from backup"
+    echo ""
+    echo "  Environment Variables for DB Init:"
+    echo "    DB_INIT_MODE=safe_init   (default) Skip reset if data exists"
+    echo "    DB_INIT_MODE=upgrade     Keep data, only run migrations"
+    echo "    DB_INIT_MODE=force_reset Backup and reset (for dev/test)"
+    echo "    SKIP_DB_CHECK=true       Skip database safety check"
     echo ""
     echo "Pull Commands (Smart Mode):"
     echo "  prefetch            Prefetch all base images from Dockerfiles"
@@ -5254,8 +7349,12 @@ print_help() {
     echo "                code_server (alias: vscode), saltstack, slurm, etc."
     echo ""
     echo "Offline Export Commands:"
-    echo "  export-offline [dir] [tag] [include_common]  Export images to tar files"
-    echo "                                               default: ./offline-images, latest, true"
+    echo "  export-offline [dir] [tag] [include_common] [platforms]"
+    echo "                          Export images to tar files (multi-arch support)"
+    echo "                          dir: output directory (default: ./offline-images)"
+    echo "                          tag: image tag (default: latest)"
+    echo "                          include_common: include third-party images (default: true)"
+    echo "                          platforms: amd64,arm64 or single arch (default: amd64,arm64)"
     echo ""
     echo "Template Variables (from .env):"
     echo "  === Mirror Configuration (Build-time) ==="
@@ -5289,7 +7388,10 @@ print_help() {
     echo "  $0 ssl-setup example.com           # Generate certs for specific domain"
     echo "  $0 ssl-setup --force               # Regenerate existing certificates"
     echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
+    echo "  $0 ssl-cloudflare ai-infra-matrix.top          # Cloudflare DNS validation"
+    echo "  $0 ssl-cloudflare ai-infra-matrix.top --wildcard  # Wildcard cert (*.<domain>)"
     echo "  $0 ssl-info                        # Show certificate details"
+    echo "  $0 ssl-check                       # Diagnose SSL/domain config issues"
     echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
     echo ""
     echo "  # Template rendering"
@@ -5305,6 +7407,13 @@ print_help() {
     echo "  $0 backend                         # Build single service"
     echo "  $0 backend --force                 # Force rebuild single service"
     echo ""
+    echo "  # Multi-architecture builds (recommended for offline deployment)"
+    echo "  $0 build-all --platform=amd64,arm64    # Build all services for both archs"
+    echo "  $0 build-all --platform=amd64          # Build all for amd64 only"
+    echo "  $0 build-all --platform=arm64 --force  # Force rebuild for arm64"
+    echo "  $0 build-multiarch                     # Alternative: dedicated command"
+    echo "  $0 build-platform amd64                # Build single platform"
+    echo ""
     echo "  # Build cache management"
     echo "  $0 cache-status                    # Show which services need rebuild"
     echo "  $0 build-history                   # Show recent build history"
@@ -5319,9 +7428,11 @@ print_help() {
     echo "  $0 push-all harbor.example.com/ai-infra v0.3.8    # Push to registry"
     echo "  $0 pull-all harbor.example.com/ai-infra v0.3.8    # Pull from registry"
     echo ""
-    echo "  # Offline export"
-    echo "  $0 export-offline ./offline-images v0.3.8         # Export all images to tar"
-    echo "  $0 export-offline ./images v0.3.8 false           # Export without common images"
+    echo "  # Offline export (multi-arch)"
+    echo "  $0 export-offline ./offline v0.3.8 true amd64,arm64  # Export both architectures"
+    echo "  $0 export-offline ./offline v0.3.8 true amd64        # Export AMD64 only"
+    echo "  $0 export-offline ./offline v0.3.8 true arm64        # Export ARM64 only"
+    echo "  $0 export-offline ./images v0.3.8 false              # Export without common images"
     echo ""
     echo "  # Cleanup"
     echo "  $0 clean-all --force"
@@ -5343,7 +7454,7 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Parse global options first (--force, --no-cache, -f, --parallel, --ssl, etc.)
+# Parse global options first (--force, --no-cache, -f, --parallel, --ssl, --platform, etc.)
 # These can appear anywhere in the command line
 FORCE_BUILD=false
 FORCE_RENDER=false
@@ -5351,6 +7462,7 @@ FORCE_REBUILD=false
 ENABLE_PARALLEL=false
 ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
+BUILD_PLATFORMS=""  # Empty means use native platform, can be: amd64, arm64, amd64,arm64
 REMAINING_ARGS=()
 
 for arg in "$@"; do
@@ -5370,6 +7482,12 @@ for arg in "$@"; do
         -p[0-9]*)
             ENABLE_PARALLEL=true
             PARALLEL_JOBS="${arg#-p}"
+            ;;
+        --platform=*)
+            BUILD_PLATFORMS="${arg#*=}"
+            ;;
+        --platform)
+            # Next arg should be the platform value, handled by shift logic below
             ;;
         --ssl)
             ENABLE_SSL=true
@@ -5402,6 +7520,9 @@ if [[ "$ENABLE_SSL" == "true" ]]; then
 fi
 if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
     log_cache "⏭️  Cache check skipped (--skip-cache)"
+fi
+if [[ -n "$BUILD_PLATFORMS" ]]; then
+    log_info "🏗️  Multi-platform build enabled: $BUILD_PLATFORMS"
 fi
 
 COMMAND="${REMAINING_ARGS[0]:-}"
@@ -5499,9 +7620,29 @@ case "$COMMAND" in
         ssl_staging="${ARG4:-${LETSENCRYPT_STAGING:-false}}"
         setup_letsencrypt_certificates "$ssl_domain" "$ssl_email" "$ssl_staging" "$FORCE_BUILD"
         ;;
+    ssl-cloudflare|ssl-cf|ssl-dns)
+        # 使用 Cloudflare DNS 验证申请 Let's Encrypt 证书
+        ssl_domain="${ARG2:-}"
+        ssl_wildcard="false"
+        ssl_staging="${LETSENCRYPT_STAGING:-false}"
+        # 解析参数
+        shift 2 2>/dev/null || true
+        for arg in "$@"; do
+            case "$arg" in
+                --wildcard) ssl_wildcard="true" ;;
+                --staging) ssl_staging="true" ;;
+                --force) FORCE_BUILD="true" ;;
+            esac
+        done
+        setup_cloudflare_certificates "$ssl_domain" "$ssl_wildcard" "$ssl_staging" "$FORCE_BUILD"
+        ;;
     ssl-info)
         # 显示 SSL 证书信息
         show_ssl_info "${ARG2:-}"
+        ;;
+    ssl-check|ssl-diagnose|ssl-domain)
+        # 检查 SSL/域名配置是否正确（云部署诊断）
+        show_ssl_domain_recommendations "${ARG2:-$EXTERNAL_HOST}" "${ARG3:-$SSL_DOMAIN}"
         ;;
     ssl-clean)
         # 清理 SSL 证书
@@ -5545,11 +7686,31 @@ case "$COMMAND" in
             setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
         fi
         
-        if [[ "$FORCE_BUILD" == "true" ]]; then
-            build_all "true"
+        # Check if multi-platform build is requested
+        if [[ -n "$BUILD_PLATFORMS" ]]; then
+            # Multi-platform build mode
+            log_info "🏗️  Multi-platform build mode: $BUILD_PLATFORMS"
+            if [[ "$FORCE_BUILD" == "true" ]]; then
+                build_all_multiplatform "$BUILD_PLATFORMS" "true"
+            else
+                build_all_multiplatform "$BUILD_PLATFORMS"
+            fi
         else
-            build_all
+            # Standard single-platform build
+            if [[ "$FORCE_BUILD" == "true" ]]; then
+                build_all "true"
+            else
+                build_all
+            fi
         fi
+        ;;
+    build-multiarch|multiarch)
+        # Build for multiple architectures using buildx
+        build_multiarch "$ARG2" "$ARG3"
+        ;;
+    build-platform)
+        # Build for a specific platform (e.g., amd64 on arm64 mac)
+        build_for_platform "$ARG2" "$ARG3"
         ;;
     cache-status)
         # Show build cache status
@@ -5586,6 +7747,20 @@ case "$COMMAND" in
         ;;
     stop-all)
         stop_all
+        ;;
+    db-check)
+        check_postgres_has_data "${ARG2:-ai_infra}"
+        ;;
+    db-backup)
+        backup_postgres_database "${ARG2:-ai_infra}" "./backup/postgres"
+        ;;
+    db-restore)
+        if [[ -z "$ARG2" ]]; then
+            log_error "Backup file required"
+            log_info "Usage: $0 db-restore <backup_file.sql.gz> [database_name]"
+            exit 1
+        fi
+        restore_postgres_database "$ARG2" "${ARG3:-ai_infra}"
         ;;
     clean-images)
         clean_images "$ARG2" "${ARG3:-false}"
@@ -5644,8 +7819,8 @@ case "$COMMAND" in
         push_all_dependencies "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
         ;;
     export-offline)
-        # Export all images to tar files for offline deployment
-        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}"
+        # Export all images to tar files for offline deployment (multi-arch)
+        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}" "${ARG5:-amd64,arm64}"
         ;;
     download|download-deps)
         # Download third-party dependencies to third_party/

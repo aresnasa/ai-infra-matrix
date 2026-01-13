@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Space, Alert, Card } from 'antd';
+import { Button, Space, Alert, Card, theme } from 'antd';
 import { ReloadOutlined, ExportOutlined } from '@ant-design/icons';
 import { useI18n } from '../hooks/useI18n';
+
+const { useToken } = theme;
 
 // Simple iframe wrapper to embed a Gitea instance inside the portal.
 // URL priority: window.__GITEA_URL__ (runtime) -> REACT_APP_GITEA_URL (build-time) ->
@@ -24,6 +26,7 @@ const resolveGiteaUrl = () => {
 
 const GiteaEmbed = () => {
   const { t, locale } = useI18n();
+  const { token } = useToken();
   const iframeRef = useRef(null);
   const base = useMemo(() => resolveGiteaUrl(), []);
   
@@ -92,9 +95,9 @@ const GiteaEmbed = () => {
   const iframeStyle = {
     width: '100%',
     height: 'calc(100vh - 64px - 48px)', // align with EmbeddedJupyter
-    border: '1px solid #f0f0f0',
+    border: `1px solid ${token.colorBorderSecondary}`,
     borderRadius: 6,
-    background: '#fff'
+    background: token.colorBgContainer
   };
 
   return (

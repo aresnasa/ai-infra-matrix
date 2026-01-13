@@ -348,6 +348,11 @@ func migrateTaskSchema() error {
 		&models.AuditArchive{},
 		&models.AuditConfig{},
 		&models.AuditExportRequest{},
+		// 权限审批工作流表
+		&models.PermissionRequest{},
+		&models.PermissionApprovalLog{},
+		&models.PermissionApprovalRule{},
+		&models.PermissionGrant{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
 		return fmt.Errorf("task store migration failed: %w", err)

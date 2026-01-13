@@ -167,3 +167,4 @@ LABEL maintainer="AI Infrastructure Team" \
     org.opencontainers.image.title="ai-infra-singleuser" \
     org.opencontainers.image.version="${APP_VERSION}" \
     org.opencontainers.image.description="AI Infra Matrix - Singleuser Notebook with VS Code Server Support"
+

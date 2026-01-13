@@ -178,10 +178,9 @@ download_file() {
     local use_mirror=${3:-true}
     local final_url="$url"
     
-    # 应用 GitHub 镜像
+    # 应用 GitHub 镜像 (使用完整 URL 拼接方式: ghfast.top/gh-proxy.com 等镜像服务的标准格式)
     if [ "$use_mirror" = true ] && [[ "$url" == *"github.com"* ]] && [ -n "$GITHUB_MIRROR" ]; then
-        local url_without_scheme="${url#https://}"
-        final_url="${GITHUB_MIRROR}${url_without_scheme}"
+        final_url="${GITHUB_MIRROR}${url}"
     fi
     
     # 检查文件是否已存在且非空

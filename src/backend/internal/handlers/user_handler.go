@@ -1820,3 +1820,98 @@ func generateRandomPassword(length int) string {
 	}
 	return string(password)
 }
+
+// GrantUserModulesRequest 授予用户模块权限的请求体
+type GrantUserModulesRequest struct {
+	Modules []string `json:"modules" binding:"required"` // 模块列表，如 ["saltstack", "ansible", "kubernetes"]
+	Verbs   []string `json:"verbs"`                      // 操作权限，如 ["read", "create", "update", "delete", "list"]
+}
+
+// GrantUserModules 为用户授予模块权限
+// @Summary 授予用户模块权限
+// @Description 为指定用户授予特定模块的操作权限
+// @Tags 管理员功能
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "用户ID"
+// @Param request body GrantUserModulesRequest true "模块权限信息"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /admin/users/{id}/modules [post]
+func (h *UserHandler) GrantUserModules(c *gin.Context) {
+	userIDStr := c.Param("id")
+	userID, err := strconv.ParseUint(userIDStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID"})
+		return
+	}
+
+	var req GrantUserModulesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效: " + err.Error()})
+		return
+	}
+
+	// 默认操作权限
+	if len(req.Verbs) == 0 {
+		req.Verbs = []string{"read", "create", "update", "delete", "list"}
+	}
+
+	// 有效的模块列表
+	validModules := map[string]bool{
+		"saltstack":   true,
+		"ansible":     true,
+		"kubernetes":  true,
+		"hosts":       true,
+		"nightingale": true,
+		"audit-logs":  true,
+		"projects":    true,
+		"variables":   true,
+		"tasks":       true,
+		"jupyterhub":  true,
+		"kafka":       true,
+		"kafka-ui":    true,
+		"redis":       true,
+	}
+
+	// 验证模块
+	for _, module := range req.Modules {
+		if !validModules[module] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的模块: " + module})
+			return
+		}
+	}
+
+	// 验证操作权限
+	validVerbs := map[string]bool{
+		"create": true,
+		"read":   true,
+		"update": true,
+		"delete": true,
+		"list":   true,
+	}
+	for _, verb := range req.Verbs {
+		if !validVerbs[verb] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的操作权限: " + verb})
+			return
+		}
+	}
+
+	// 使用 RBAC 服务为用户授予模块权限
+	err = h.rbacService.GrantUserModulePermissions(uint(userID), req.Modules, req.Verbs)
+	if err != nil {
+		logrus.Error("Grant user module permissions error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "授予模块权限失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "模块权限授予成功",
+		"user_id": userID,
+		"modules": req.Modules,
+		"verbs":   req.Verbs,
+	})
+}

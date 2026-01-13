@@ -514,8 +514,8 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 		Name:          "sre",
 		DisplayName:   "SRE工程师",
 		DisplayNameEN: "SRE Engineer",
-		Description:   "SRE工程师 - 关注SaltStack、Ansible和K8s",
-		DescriptionEN: "SRE Engineer - Focuses on SaltStack, Ansible and K8s",
+		Description:   "SRE工程师 - 关注SaltStack、Ansible、K8s、监控和日志",
+		DescriptionEN: "SRE Engineer - Focuses on SaltStack, Ansible, K8s, Monitoring and Logs",
 		Color:         "orange",
 		Icon:          "tool",
 		Priority:      60,
@@ -528,18 +528,29 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 			{Resource: "saltstack", Verb: "read", Scope: "*"},
 			{Resource: "saltstack", Verb: "update", Scope: "*"},
 			{Resource: "saltstack", Verb: "delete", Scope: "*"},
+			{Resource: "saltstack", Verb: "list", Scope: "*"},
 			{Resource: "ansible", Verb: "create", Scope: "*"},
 			{Resource: "ansible", Verb: "read", Scope: "*"},
 			{Resource: "ansible", Verb: "update", Scope: "*"},
 			{Resource: "ansible", Verb: "delete", Scope: "*"},
+			{Resource: "ansible", Verb: "list", Scope: "*"},
 			{Resource: "kubernetes", Verb: "create", Scope: "*"},
 			{Resource: "kubernetes", Verb: "read", Scope: "*"},
 			{Resource: "kubernetes", Verb: "update", Scope: "*"},
 			{Resource: "kubernetes", Verb: "delete", Scope: "*"},
+			{Resource: "kubernetes", Verb: "list", Scope: "*"},
 			{Resource: "hosts", Verb: "read", Scope: "*"},
 			{Resource: "hosts", Verb: "create", Scope: "*"},
 			{Resource: "hosts", Verb: "update", Scope: "*"},
 			{Resource: "hosts", Verb: "delete", Scope: "*"},
+			{Resource: "hosts", Verb: "list", Scope: "*"},
+			{Resource: "nightingale", Verb: "create", Scope: "*"},
+			{Resource: "nightingale", Verb: "read", Scope: "*"},
+			{Resource: "nightingale", Verb: "update", Scope: "*"},
+			{Resource: "nightingale", Verb: "delete", Scope: "*"},
+			{Resource: "nightingale", Verb: "list", Scope: "*"},
+			{Resource: "audit-logs", Verb: "read", Scope: "*"},
+			{Resource: "audit-logs", Verb: "list", Scope: "*"},
 		},
 		IsSystem: true,
 	},
@@ -1296,6 +1307,73 @@ func (s *RBACService) AssignRoleTemplateToUser(userID uint, templateName string)
 	}
 	if err := s.db.Create(&userRole).Error; err != nil {
 		return fmt.Errorf("创建用户角色关联失败: %v", err)
+	}
+
+	return nil
+}
+
+// GrantUserModulePermissions 为用户授予模块权限
+func (s *RBACService) GrantUserModulePermissions(userID uint, modules []string, verbs []string) error {
+	// 开始事务
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// 为每个模块和操作创建权限
+	for _, module := range modules {
+		for _, verb := range verbs {
+			// 检查权限是否存在，不存在则创建
+			var permission models.Permission
+			err := tx.Where("resource = ? AND verb = ? AND scope = ?", module, verb, "*").First(&permission).Error
+			if err == gorm.ErrRecordNotFound {
+				permission = models.Permission{
+					Resource:    module,
+					Verb:        verb,
+					Scope:       "*",
+					Description: fmt.Sprintf("%s %s 权限", module, verb),
+				}
+				if err := tx.Create(&permission).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("创建权限失败: %v", err)
+				}
+			} else if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("查询权限失败: %v", err)
+			}
+
+			// 检查用户是否已有此权限授予
+			var existingGrant models.PermissionGrant
+			err = tx.Where("user_id = ? AND module = ? AND verb = ? AND is_active = ?", userID, module, verb, true).First(&existingGrant).Error
+			if err == gorm.ErrRecordNotFound {
+				// 为用户创建权限授予
+				grant := models.PermissionGrant{
+					UserID:    userID,
+					Module:    module,
+					Resource:  module,
+					Verb:      verb,
+					Scope:     "*",
+					GrantType: "manual",
+					GrantedBy: userID, // 可以改为管理员ID
+					Reason:    "管理员审批授予",
+					IsActive:  true,
+				}
+				if err := tx.Create(&grant).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("创建权限授予失败: %v", err)
+				}
+			} else if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("查询权限授予失败: %v", err)
+			}
+			// 如果已存在则跳过
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("提交事务失败: %v", err)
 	}
 
 	return nil

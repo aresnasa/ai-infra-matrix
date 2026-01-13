@@ -158,9 +158,9 @@ download_categraf() {
         download_url="${APPHUB_URL}/pkgs/categraf/${package_name}"
         log_info "Downloading from AppHub: ${download_url}"
     else
-        # 从 GitHub 下载
+        # 从 GitHub 下载 (使用完整 URL 拼接方式)
         if [ -n "$GITHUB_MIRROR" ]; then
-            download_url="${GITHUB_MIRROR}/https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${package_name}"
+            download_url="${GITHUB_MIRROR}https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${package_name}"
         else
             download_url="https://github.com/flashcatcloud/categraf/releases/download/${CATEGRAF_VERSION}/${package_name}"
         fi

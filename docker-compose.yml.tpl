@@ -375,7 +375,7 @@ services:
       - "8082"
     ports:
       # Debug: expose internal 8082 on host for direct backend access (bypass Nginx)
-      - "${EXTERNAL_HOST}:${BACKEND_DEBUG_PORT:-8082}:8082"
+      - "${BIND_HOST:-0.0.0.0}:${BACKEND_DEBUG_PORT:-8082}:8082"
     extra_hosts:
       - "kubernetes.docker.internal:host-gateway"
       - "host.docker.internal:host-gateway"
@@ -390,6 +390,8 @@ services:
         condition: service_healthy
       backend-init:
         condition: service_completed_successfully
+      seaweedfs-filer:
+        condition: service_healthy
     volumes:
       - ./src/backend/outputs:/app/outputs
       - ./src/backend/uploads:/app/uploads
@@ -473,6 +475,8 @@ services:
       - EXTERNAL_HOST=${EXTERNAL_HOST:-localhost}
       - EXTERNAL_PORT=${EXTERNAL_PORT:-8080}
       - HTTPS_PORT=${HTTPS_PORT:-8443}
+      # 公有云环境：PUBLIC_HOST 用于浏览器重定向（域名或公网 IP）
+      - PUBLIC_HOST=${PUBLIC_HOST:-}
       - CONFIGPROXY_AUTH_TOKEN=${CONFIGPROXY_AUTH_TOKEN}
       - JUPYTERHUB_CRYPT_KEY=${JUPYTERHUB_CRYPT_KEY:-a3d7c9e5b1f2048c7d9e3b6a5c1f08e2a7b3c9d5e1f2048c7d9e3b6a5c1f08e2}
       - SESSION_TIMEOUT=86400
@@ -496,7 +500,7 @@ services:
       - JUPYTERHUB_CORS_ORIGIN=${JUPYTERHUB_CORS_ORIGIN}
       - TZ=Asia/Shanghai
     ports:
-      - "${EXTERNAL_HOST}:${JUPYTERHUB_EXTERNAL_PORT}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${JUPYTERHUB_EXTERNAL_PORT}:8000"
     expose:
       - "8000"
       - "8091"
@@ -772,9 +776,9 @@ services:
         VERSION: {{IMAGE_TAG}}
     container_name: ai-infra-nginx
     ports:
-      - "${EXTERNAL_HOST}:${EXTERNAL_PORT}:80"
-      - "${EXTERNAL_HOST}:${HTTPS_PORT:-8443}:443"
-      - "${EXTERNAL_HOST}:${DEBUG_PORT}:8001"
+      - "${BIND_HOST:-0.0.0.0}:${EXTERNAL_PORT}:80"
+      - "${BIND_HOST:-0.0.0.0}:${HTTPS_PORT:-8443}:443"
+      - "${BIND_HOST:-0.0.0.0}:${DEBUG_PORT}:8001"
     volumes:
       - nginx_logs:/var/log/nginx
       # 挂载配置文件以支持热更新 (模板渲染后的文件)
@@ -829,8 +833,9 @@ services:
 
   # Redis 监控界面 (可选)
   redis-insight:
-    image: redislabs/redisinsight:latest
+    image: redis/redisinsight:{{REDISINSIGHT_VERSION}}
     container_name: ai-infra-redis-insight
+    platform: {{DOCKER_HOST_PLATFORM}}
     environment:
       TZ: Asia/Shanghai
     expose:
@@ -899,7 +904,7 @@ services:
       - "22"
     ports:
       # Debug: expose internal 3000 on host for direct backend access (bypass Nginx)
-      - "${EXTERNAL_HOST}:${GITEA_EXTERNAL_PORT}:3000"
+      - "${BIND_HOST:-0.0.0.0}:${GITEA_EXTERNAL_PORT}:3000"
     volumes:
       - gitea_data:/data
     depends_on:
@@ -1014,7 +1019,7 @@ services:
     env_file:
       - .env
     ports:
-      - "${EXTERNAL_HOST}:${APPHUB_PORT}:80"
+      - "${BIND_HOST:-0.0.0.0}:${APPHUB_PORT}:80"
     volumes:
       - apphub_logs:/var/log/nginx
     healthcheck:
@@ -1035,7 +1040,7 @@ services:
     environment:
       TZ: {{TZ}}
     ports:
-      - "${EXTERNAL_HOST}:${VICTORIAMETRICS_PORT:-8428}:8428"
+      - "${BIND_HOST:-0.0.0.0}:${VICTORIAMETRICS_PORT:-8428}:8428"
     volumes:
       - victoriametrics_data:/victoria-metrics-data
     command:
@@ -1078,8 +1083,8 @@ services:
       REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
-      - "${EXTERNAL_HOST}:${NIGHTINGALE_PORT:-17000}:17000"  # HTTP API
-      - "${EXTERNAL_HOST}:${NIGHTINGALE_ALERT_PORT:-19000}:19000"  # Alert engine
+      - "${BIND_HOST:-0.0.0.0}:${NIGHTINGALE_PORT:-17000}:17000"  # HTTP API
+      - "${BIND_HOST:-0.0.0.0}:${NIGHTINGALE_ALERT_PORT:-19000}:19000"  # Alert engine
     volumes:
       - ./src/nightingale/etc:/app/etc:ro
       - nightingale_data:/app/data

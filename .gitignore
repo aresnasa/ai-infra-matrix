@@ -115,3 +115,14 @@ src/nginx/ssl/*.crt
 src/nginx/ssl/*.key
 src/nginx/ssl/ca/
 .serena
+src/nginx/conf.d/*
+*.pem
+*.key
+**/cloudflare.ini
+**/.secrets/
+**/secrets/
+
+# Offline images export directories
+offline-images/
+multiarch-images/
+offline/

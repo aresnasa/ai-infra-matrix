@@ -106,8 +106,171 @@ func main() {
 	log.Println("Initialization completed successfully!")
 }
 
+// DatabaseInitMode 定义数据库初始化模式
+type DatabaseInitMode string
+
+const (
+	// ModeForceReset 强制重置模式：备份后删除重建（用于开发/测试）
+	ModeForceReset DatabaseInitMode = "force_reset"
+	// ModeSafeInit 安全初始化模式：如果数据库存在且有数据，跳过初始化（用于生产）
+	ModeSafeInit DatabaseInitMode = "safe_init"
+	// ModeUpgrade 升级模式：保留现有数据，仅执行迁移（用于生产升级）
+	ModeUpgrade DatabaseInitMode = "upgrade"
+)
+
+// getInitMode 获取初始化模式
+func getInitMode() DatabaseInitMode {
+	mode := os.Getenv("DB_INIT_MODE")
+	switch strings.ToLower(mode) {
+	case "force_reset", "force", "reset":
+		return ModeForceReset
+	case "upgrade":
+		return ModeUpgrade
+	default:
+		// 默认使用安全模式
+		return ModeSafeInit
+	}
+}
+
+// checkDatabaseHasData 检查数据库是否包含业务数据
+func checkDatabaseHasData(systemDB *gorm.DB, dbName string) (bool, int64, error) {
+	// 先检查数据库是否存在
+	var exists bool
+	query := "SELECT EXISTS(SELECT datname FROM pg_catalog.pg_database WHERE datname = ?)"
+	if err := systemDB.Raw(query, dbName).Scan(&exists).Error; err != nil {
+		return false, 0, fmt.Errorf("failed to check database existence: %w", err)
+	}
+
+	if !exists {
+		return false, 0, nil
+	}
+
+	// 连接到目标数据库检查数据量
+	targetDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		dbName,
+		func() int {
+			port := os.Getenv("DB_PORT")
+			if port == "" {
+				return 5432
+			}
+			var p int
+			fmt.Sscanf(port, "%d", &p)
+			return p
+		}(),
+		func() string {
+			mode := os.Getenv("DB_SSL_MODE")
+			if mode == "" {
+				return "disable"
+			}
+			return mode
+		}(),
+	)
+
+	targetDB, err := gorm.Open(postgres.Open(targetDSN), &gorm.Config{})
+	if err != nil {
+		log.Printf("Warning: Cannot connect to target database to check data: %v", err)
+		return true, 0, nil // 保守起见，假设有数据
+	}
+	defer func() {
+		sqlDB, _ := targetDB.DB()
+		sqlDB.Close()
+	}()
+
+	// 检查关键业务表是否有数据
+	var totalRecords int64
+	criticalTables := []string{"users", "roles", "clusters", "tasks", "gpu_configs", "ai_configs"}
+
+	for _, table := range criticalTables {
+		var count int64
+		// 使用原生SQL避免GORM的表名转换问题
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(table))
+		if err := targetDB.Raw(countQuery).Scan(&count).Error; err == nil {
+			totalRecords += count
+		}
+	}
+
+	return totalRecords > 0, totalRecords, nil
+}
+
+// createDatabaseBackup 创建数据库备份
+func createDatabaseBackup(systemDB *gorm.DB, dbName string) (string, error) {
+	backupDBName := fmt.Sprintf("%s_backup_%s", dbName, time.Now().Format("20060102_150405"))
+
+	// 先终止目标数据库的所有连接（备份需要独占访问）
+	terminateQuery := `
+		SELECT pg_terminate_backend(pid)
+		FROM pg_stat_activity
+		WHERE datname = ? AND pid <> pg_backend_pid()
+	`
+	if err := systemDB.Exec(terminateQuery, dbName).Error; err != nil {
+		log.Printf("Warning: Failed to terminate connections for backup: %v", err)
+	}
+
+	// 等待连接关闭
+	time.Sleep(2 * time.Second)
+
+	// 使用 WITH TEMPLATE 创建备份（PostgreSQL 方式）
+	backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s",
+		quoteIdentifier(backupDBName), quoteIdentifier(dbName))
+
+	if err := systemDB.Exec(backupQuery).Error; err != nil {
+		return "", fmt.Errorf("failed to create backup database: %w", err)
+	}
+
+	log.Printf("✅ Backup database created successfully: %s", backupDBName)
+	return backupDBName, nil
+}
+
+// cleanOldBackups 清理旧备份（保留最近N个）
+func cleanOldBackups(systemDB *gorm.DB, dbName string, keepCount int) {
+	// 查找所有备份数据库
+	var backups []string
+	query := "SELECT datname FROM pg_catalog.pg_database WHERE datname LIKE ? ORDER BY datname DESC"
+	pattern := fmt.Sprintf("%s_backup_%%", dbName)
+
+	rows, err := systemDB.Raw(query, pattern).Rows()
+	if err != nil {
+		log.Printf("Warning: Failed to list backup databases: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			backups = append(backups, name)
+		}
+	}
+
+	// 删除超出保留数量的旧备份
+	if len(backups) > keepCount {
+		for _, backup := range backups[keepCount:] {
+			log.Printf("Removing old backup: %s", backup)
+			dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(backup))
+			if err := systemDB.Exec(dropQuery).Error; err != nil {
+				log.Printf("Warning: Failed to remove old backup %s: %v", backup, err)
+			}
+		}
+	}
+
+	log.Printf("Backup cleanup completed. Kept %d most recent backups.", min(len(backups), keepCount))
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func handleDatabaseReset(cfg *config.Config) error {
-	// 连接到 postgres 系统数据库来检查目标数据库是否存在
+	initMode := getInitMode()
+	log.Printf("🔧 Database initialization mode: %s", initMode)
+
+	// 连接到 postgres 系统数据库
 	systemDSN := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%d sslmode=%s TimeZone=Asia/Shanghai",
 		cfg.Database.Host,
 		cfg.Database.User,
@@ -120,6 +283,16 @@ func handleDatabaseReset(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to system database: %w", err)
 	}
+	defer func() {
+		sqlDB, _ := systemDB.DB()
+		sqlDB.Close()
+	}()
+
+	// 检查数据库是否存在及数据量
+	hasData, recordCount, err := checkDatabaseHasData(systemDB, cfg.Database.DBName)
+	if err != nil {
+		log.Printf("Warning: Failed to check database data: %v", err)
+	}
 
 	// 检查目标数据库是否存在
 	var exists bool
@@ -129,23 +302,44 @@ func handleDatabaseReset(cfg *config.Config) error {
 	}
 
 	if exists {
-		log.Printf("Database '%s' already exists", cfg.Database.DBName)
+		log.Printf("📊 Database '%s' exists with approximately %d records in critical tables", cfg.Database.DBName, recordCount)
 
-		// 创建备份数据库名称
-		backupDBName := fmt.Sprintf("%s_backup_%s", cfg.Database.DBName, time.Now().Format("20060102_150405"))
+		switch initMode {
+		case ModeSafeInit:
+			if hasData {
+				log.Printf("⚠️  SAFE MODE: Database contains production data. Skipping reset.")
+				log.Printf("💡 To force reset, set DB_INIT_MODE=force_reset")
+				log.Printf("💡 To upgrade existing database, set DB_INIT_MODE=upgrade")
+				return nil // 直接返回，保留现有数据库
+			}
+			log.Printf("✅ SAFE MODE: Database exists but has no critical data. Proceeding with reset.")
 
-		// 备份现有数据库 - Use quoted identifiers to prevent SQL injection
-		log.Printf("Creating backup database: %s", backupDBName)
-		backupQuery := fmt.Sprintf("CREATE DATABASE %s WITH TEMPLATE %s",
-			quoteIdentifier(backupDBName), quoteIdentifier(cfg.Database.DBName))
-		if err := systemDB.Exec(backupQuery).Error; err != nil {
-			log.Printf("Warning: Failed to create backup database: %v", err)
-		} else {
-			log.Printf("Backup database created successfully: %s", backupDBName)
+		case ModeUpgrade:
+			log.Printf("🔄 UPGRADE MODE: Keeping existing database, will only run migrations.")
+			return nil // 返回，让后续的迁移处理
+
+		case ModeForceReset:
+			log.Printf("⚠️  FORCE RESET MODE: Will backup and reset database regardless of data.")
+			// 继续执行下面的备份和重置逻辑
 		}
 
+		// 创建备份
+		backupName, err := createDatabaseBackup(systemDB, cfg.Database.DBName)
+		if err != nil {
+			if initMode == ModeForceReset {
+				log.Printf("⚠️  Warning: Backup failed but continuing in force mode: %v", err)
+			} else {
+				return fmt.Errorf("backup failed, aborting reset: %w", err)
+			}
+		} else {
+			log.Printf("📦 Database backed up to: %s", backupName)
+		}
+
+		// 清理旧备份（保留最近5个）
+		cleanOldBackups(systemDB, cfg.Database.DBName, 5)
+
 		// 终止所有连接到目标数据库的连接
-		log.Printf("Terminating connections to database: %s", cfg.Database.DBName)
+		log.Printf("🔌 Terminating connections to database: %s", cfg.Database.DBName)
 		terminateQuery := `
 			SELECT pg_terminate_backend(pid)
 			FROM pg_stat_activity
@@ -155,28 +349,27 @@ func handleDatabaseReset(cfg *config.Config) error {
 			log.Printf("Warning: Failed to terminate connections: %v", err)
 		}
 
-		// 删除现有数据库 - Use quoted identifier
-		log.Printf("Dropping existing database: %s", cfg.Database.DBName)
+		// 等待连接关闭
+		time.Sleep(2 * time.Second)
+
+		// 删除现有数据库
+		log.Printf("🗑️  Dropping existing database: %s", cfg.Database.DBName)
 		dropQuery := fmt.Sprintf("DROP DATABASE IF EXISTS %s", quoteIdentifier(cfg.Database.DBName))
 		if err := systemDB.Exec(dropQuery).Error; err != nil {
 			return fmt.Errorf("failed to drop existing database: %w", err)
 		}
 
-		log.Printf("Database '%s' dropped successfully", cfg.Database.DBName)
+		log.Printf("✅ Database '%s' dropped successfully", cfg.Database.DBName)
 	}
 
-	// 创建新数据库 - Use quoted identifier to prevent SQL injection
-	log.Printf("Creating new database: %s", cfg.Database.DBName)
+	// 创建新数据库
+	log.Printf("🆕 Creating new database: %s", cfg.Database.DBName)
 	createQuery := fmt.Sprintf("CREATE DATABASE %s", quoteIdentifier(cfg.Database.DBName))
 	if err := systemDB.Exec(createQuery).Error; err != nil {
 		return fmt.Errorf("failed to create database: %w", err)
 	}
 
 	log.Printf("Database '%s' created successfully", cfg.Database.DBName)
-
-	// 关闭系统数据库连接
-	sqlDB, _ := systemDB.DB()
-	sqlDB.Close()
 
 	return nil
 }
@@ -212,6 +405,24 @@ func createDefaultAdmin() {
 
 	log.Println("Creating default admin user...")
 
+	// 【防御性处理】先检查管理员用户是否已存在
+	var existingAdmin models.User
+	if err := db.Where("username = ? OR email = ?", "admin", "admin@example.com").First(&existingAdmin).Error; err == nil {
+		log.Println("✅ Admin user already exists, skipping creation")
+		log.Printf("   Existing admin: username=%s, email=%s, id=%d", existingAdmin.Username, existingAdmin.Email, existingAdmin.ID)
+
+		// 确保管理员有超级管理员角色
+		var superAdminRole models.Role
+		if err := db.Where("name = ?", "super-admin").First(&superAdminRole).Error; err == nil {
+			if err := rbacService.AssignRoleToUser(existingAdmin.ID, superAdminRole.ID); err != nil {
+				log.Printf("   Note: Role assignment skipped (may already exist): %v", err)
+			} else {
+				log.Println("   Super-admin role verified for existing admin user")
+			}
+		}
+		return
+	}
+
 	// 创建默认管理员用户
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
 	if err != nil {
@@ -226,13 +437,16 @@ func createDefaultAdmin() {
 	}
 
 	if err := db.Create(admin).Error; err != nil {
-		log.Fatal("Failed to create admin user:", err)
+		log.Printf("Warning: Failed to create admin user: %v", err)
+		log.Println("This may be expected if the user already exists")
+		return
 	}
 
 	// 为管理员分配超级管理员角色
 	var superAdminRole models.Role
 	if err := db.Where("name = ?", "super-admin").First(&superAdminRole).Error; err != nil {
-		log.Fatal("Failed to find super-admin role:", err)
+		log.Printf("Warning: Failed to find super-admin role: %v", err)
+		return
 	}
 
 	if err := rbacService.AssignRoleToUser(admin.ID, superAdminRole.ID); err != nil {

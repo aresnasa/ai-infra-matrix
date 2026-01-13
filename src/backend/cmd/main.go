@@ -364,6 +364,10 @@ func main() {
 	services.StartNodeMetricsSync()
 	logrus.Info("NodeMetricsSync service started")
 
+	// 启动对象存储健康检查服务（定期检查 SeaweedFS 等存储服务连接状态）
+	services.StartObjectStorageHealthCheck(database.DB)
+	logrus.Info("ObjectStorageHealthCheck service started")
+
 	// 优雅关闭
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -375,6 +379,10 @@ func main() {
 		// 停止节点指标同步服务
 		services.StopNodeMetricsSync()
 		logrus.Info("NodeMetricsSync service stopped")
+
+		// 停止对象存储健康检查服务
+		services.StopObjectStorageHealthCheck()
+		logrus.Info("ObjectStorageHealthCheck service stopped")
 
 		// 关闭AI网关服务
 		if err := services.ShutdownAIGateway(); err != nil {
@@ -665,6 +673,41 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		rbac.GET("/verbs", rbacController.GetAvailableVerbs)
 	}
 
+	// 权限审批路由（需要认证）
+	approvalRbacService := services.NewRBACService(database.DB)
+	approvalService := services.NewPermissionApprovalService(database.DB, approvalRbacService)
+	approvalController := controllers.NewPermissionApprovalController(approvalService)
+	approvals := api.Group("/approvals")
+	approvals.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 模块和权限信息
+		approvals.GET("/modules", approvalController.GetAvailableModules)
+		approvals.GET("/verbs", approvalController.GetAvailableVerbs)
+
+		// 权限申请管理
+		approvals.POST("/requests", approvalController.CreatePermissionRequest)
+		approvals.GET("/requests", approvalController.ListPermissionRequests)
+		approvals.GET("/requests/:id", approvalController.GetPermissionRequest)
+		approvals.POST("/requests/:id/approve", approvalController.ApprovePermissionRequest)
+		approvals.POST("/requests/:id/cancel", approvalController.CancelPermissionRequest)
+
+		// 权限授权管理
+		approvals.POST("/grants", approvalController.GrantPermission)
+		approvals.POST("/grants/revoke", approvalController.RevokePermission)
+		approvals.GET("/grants", approvalController.GetUserGrants)
+		approvals.GET("/my-grants", approvalController.GetMyGrants)
+
+		// 审批规则管理
+		approvals.POST("/rules", approvalController.CreateApprovalRule)
+		approvals.GET("/rules", approvalController.GetApprovalRules)
+		approvals.PUT("/rules/:id", approvalController.UpdateApprovalRule)
+		approvals.DELETE("/rules/:id", approvalController.DeleteApprovalRule)
+
+		// 统计和检查
+		approvals.GET("/stats", approvalController.GetStats)
+		approvals.GET("/check", approvalController.CheckModulePermission)
+	}
+
 	// 管理员路由（需要管理员权限）
 	adminController := controllers.NewAdminController(database.DB)
 	loggingController := controllers.NewLoggingController()
@@ -697,6 +740,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		admin.GET("/approvals/pending", userHandler.GetPendingApprovals)
 		admin.POST("/approvals/:id/approve", userHandler.ApproveRegistration)
 		admin.POST("/approvals/:id/reject", userHandler.RejectRegistration)
+
+		// 用户模块权限管理
+		admin.POST("/users/:id/modules", userHandler.GrantUserModules)
 
 		// 项目管理
 		admin.GET("/projects", adminController.GetAllProjects)

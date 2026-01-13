@@ -101,9 +101,12 @@ download_file() {
     echo "  📥 Downloading: $(basename "$output_file")..."
     
     # 方式1: 尝试使用 GITHUB_MIRROR 加速下载
+    # 注意：不同的镜像服务有不同的 URL 格式
+    # - ghfast.top: https://ghfast.top/https://github.com/...
+    # - gh-proxy.com: https://gh-proxy.com/https://github.com/...
+    # 统一使用完整 URL 拼接方式
     if [[ "$url" == *"github.com"* ]] && [ -n "$GITHUB_MIRROR" ]; then
-        local url_without_scheme="${url#https://}"
-        local mirror_url="${GITHUB_MIRROR}${url_without_scheme}"
+        local mirror_url="${GITHUB_MIRROR}${url}"
         echo "     [方式1] GITHUB_MIRROR: ${mirror_url}"
         if curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 -o "$output_file" "$mirror_url" 2>/dev/null; then
             echo "  ✓ Downloaded via GITHUB_MIRROR: $(basename "$output_file")"

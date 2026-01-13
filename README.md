@@ -279,6 +279,37 @@ docker compose up -d
 > - **Change admin password via Web UI immediately after first login**
 > - Never commit `.env.prod` to version control
 
+### SSL/HTTPS Configuration (SSL Enabled by Default)
+
+```bash
+# Generate self-signed SSL certificates (bundled into nginx image)
+./build.sh ssl-setup
+
+# Generate certificates for specific domain
+./build.sh ssl-setup example.com
+
+# Regenerate certificates
+./build.sh ssl-setup --force
+
+# Issue Let's Encrypt certificate via standalone
+./build.sh ssl-setup-le example.com user@example.com
+
+# Issue Let's Encrypt certificate via Cloudflare DNS validation
+./build.sh ssl-cloudflare example.com
+
+# Wildcard certificate
+./build.sh ssl-cloudflare example.com --wildcard
+
+# Display SSL certificate information
+./build.sh ssl-info
+
+# Diagnose SSL/domain configuration issues
+./build.sh ssl-check
+
+# Remove SSL certificates and disable HTTPS
+./build.sh ssl-clean
+```
+
 ### Template Rendering
 
 ```bash
@@ -292,11 +323,20 @@ docker compose up -d
 ### Build Commands
 
 ```bash
-# Build all services (in correct order)
+# Build all services with SSL enabled (default)
 ./build.sh build-all
 
 # Force rebuild all services (no cache)
 ./build.sh build-all --force
+
+# Build with parallel compilation (default 4 jobs)
+./build.sh build-all --parallel
+
+# Parallel build with specific job count
+./build.sh build-all --parallel=8
+
+# Build without SSL/HTTPS
+./build.sh build-all --no-ssl
 
 # Build single component
 ./build.sh backend
@@ -306,48 +346,108 @@ docker compose up -d
 ./build.sh backend --force
 ```
 
+### Build Cache Management
+
+```bash
+# Show build cache status for all services
+./build.sh cache-status
+
+# Show last N build history entries (default: 20)
+./build.sh build-history
+./build.sh build-history 50
+
+# Clear all build cache
+./build.sh clear-cache
+
+# Clear build cache for specific service
+./build.sh clear-cache backend
+```
+
 ### Service Management
 
 ```bash
-# Start all services
+# Start all services (includes SaltStack HA multi-master setup)
 ./build.sh start-all
 
 # Stop all services
 ./build.sh stop-all
 
-# Tag images for private registry
+# Tag images from private registry as local images
 ./build.sh tag-images
 ```
 
-### Image Pull (Smart Mode)
+### Database Safety Commands
 
 ```bash
-# Pre-pull all base images
+# Check if PostgreSQL has production data
+./build.sh db-check
+
+# Backup PostgreSQL database
+./build.sh db-backup
+./build.sh db-backup custom-backup-name
+
+# Restore PostgreSQL database from backup
+./build.sh db-restore backup.sql
+```
+
+**Database Initialization Modes:**
+
+```bash
+# Safe initialization (default - skip reset if data exists)
+DB_INIT_MODE=safe_init ./build.sh start-all
+
+# Keep data, only run migrations
+DB_INIT_MODE=upgrade ./build.sh start-all
+
+# Backup and reset (for dev/test only)
+DB_INIT_MODE=force_reset ./build.sh start-all
+
+# Skip database safety check
+SKIP_DB_CHECK=true ./build.sh start-all
+```
+
+### Optional Components
+
+```bash
+# Initialize SafeLine WAF (optional sidecar component)
+./build.sh init-safeline
+
+# SafeLine is NOT included in 'build.sh build-all'
+# After init, start with:
+docker compose --profile safeline up -d
+```
+
+### Image Management - Pull & Push
+
+**Pull Commands (Smart Mode):**
+
+```bash
+# Pre-fetch all base images from Dockerfiles
 ./build.sh prefetch
 
-# Pull public/third-party images (mysql, redis, kafka, etc.)
+# Pull common/third-party images (mysql, kafka, redis, etc.)
 ./build.sh pull-common
 
-# Internet mode: Pull from Docker Hub
+# Internet mode: Pull from Docker Hub (all images)
 ./build.sh pull-all
 
-# Intranet mode: Pull from private registry (requires project path)
+# Intranet mode: Pull from private registry
 ./build.sh pull-all harbor.example.com/ai-infra v0.3.8
 
-# Pull dependency images
+# Pull dependency images from registry
 ./build.sh deps-pull harbor.example.com/ai-infra v0.3.8
 ```
 
-### Image Push
+**Push Commands:**
 
 ```bash
 # Push single service to registry
 ./build.sh push backend harbor.example.com/ai-infra v0.3.8
 
-# Push all images (4 stages: common, deps, project, special)
+# Push all images in 4 phases (common, deps, project, special)
 ./build.sh push-all harbor.example.com/ai-infra v0.3.8
 
-# Push dependency images
+# Push dependency images only
 ./build.sh push-dep harbor.example.com/ai-infra v0.3.8
 ```
 
@@ -356,44 +456,127 @@ docker compose up -d
 > - ✓ `harbor.example.com/ai-infra` (correct)
 > - ✗ `harbor.example.com` (wrong - missing project name)
 
-### Offline Deployment
+### Download Third-Party Dependencies
+
+```bash
+# Download all third-party dependencies
+./build.sh download
+
+# Alias for download
+./build.sh download-deps
+
+# List available components
+./build.sh download --list
+
+# Download specific component
+./build.sh download vscode
+./build.sh download code_server    # Alternative name for VS Code Server
+
+# Download specific version
+./build.sh download -v 4.107.0 vscode
+
+# Download for specific architecture
+./build.sh download --arch amd64 prometheus
+./build.sh download --arch arm64 slurm
+
+# Download all architectures
+./build.sh download --arch all saltstack
+
+# Disable GitHub mirror acceleration
+./build.sh download --no-mirror prometheus
+
+# Available components:
+# - prometheus, node_exporter, alertmanager
+# - categraf
+# - code_server (alias: vscode)
+# - saltstack, slurm
+# - and others
+```
+
+### Offline Export & Import
 
 ```bash
 # Export all images to tar files
 ./build.sh export-offline ./offline-images v0.3.8
 
-# Export excluding common images
+# Export without common/third-party images
 ./build.sh export-offline ./offline-images v0.3.8 false
+
+# Specify custom output directory
+./build.sh export-offline /data/offline-images v0.3.8 true
 
 # Import in offline environment
 cd ./offline-images && ./import-images.sh
+
+# Import from custom directory
+./import-images.sh /data/offline-images
 ```
 
 ### Cleanup Commands
 
 ```bash
 # Clean project images (optionally specify tag)
+./build.sh clean-images
 ./build.sh clean-images v0.3.8
 
 # Clean project data volumes
 ./build.sh clean-volumes
 
 # Full cleanup (stop containers, delete images and volumes)
+./build.sh clean-all
 ./build.sh clean-all --force
 ```
 
 ### Global Options
 
-All commands support the following global options:
-
-- `--force` / `-f` / `--no-cache`: Force rebuild without Docker cache
-
-### Dry-Run Mode
+All commands support the following global options (can be used with any command):
 
 ```bash
-# Test mode: Skip actual Docker operations
-SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+# Force rebuild without Docker cache
+./build.sh build-all --force
+./build.sh backend -f          # Short form
+./build.sh backend --no-cache  # Alternative form
+
+# Enable parallel builds (default: 4 concurrent jobs)
+./build.sh build-all --parallel
+
+# Enable parallel builds with specific job count
+./build.sh build-all --parallel=8
+./build.sh build-all -p8       # Short form
+
+# Disable SSL/HTTPS
+./build.sh build-all --no-ssl
+
+# Enable SSL with specific domain
+./build.sh build-all --ssl=example.com
+
+# Skip build cache check (always rebuild)
+./build.sh build-all --skip-cache
 ```
+
+### Dry-Run & Test Mode
+
+```bash
+# Test mode: Skip actual Docker operations (useful for testing commands)
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+
+# This mode helps verify command parsing and file generation without executing Docker commands
+```
+
+### Quick Reference
+
+| Task | Command |
+|------|---------|
+| Initialize environment | `./build.sh init-env` |
+| Generate production config | `./build.sh gen-prod-env` |
+| SSL setup | `./build.sh ssl-setup example.com` |
+| Build all services | `./build.sh build-all` |
+| Parallel build | `./build.sh build-all --parallel=8` |
+| Start services | `./build.sh start-all` |
+| Check database | `./build.sh db-check` |
+| Export images offline | `./build.sh export-offline ./images v0.3.8` |
+| Push to registry | `./build.sh push-all harbor.example.com/ai-infra v0.3.8` |
+| Clean all | `./build.sh clean-all --force` |
 
 ## ⚙️ SLURM Configuration & MPI
 

@@ -281,6 +281,37 @@ docker compose up -d
 > - **首次登录后请立即通过 Web 界面修改管理员密码**
 > - 切勿将 `.env.prod` 提交到版本控制系统
 
+### SSL/HTTPS 配置（默认启用SSL）
+
+```bash
+# 生成自签名SSL证书（打包进nginx镜像）
+./build.sh ssl-setup
+
+# 为指定域名生成证书
+./build.sh ssl-setup example.com
+
+# 重新生成证书
+./build.sh ssl-setup --force
+
+# 通过standalone方式申请Let's Encrypt证书
+./build.sh ssl-setup-le example.com user@example.com
+
+# 通过Cloudflare DNS验证方式申请Let's Encrypt证书
+./build.sh ssl-cloudflare example.com
+
+# 申请通配符证书
+./build.sh ssl-cloudflare example.com --wildcard
+
+# 显示SSL证书信息
+./build.sh ssl-info
+
+# 诊断SSL/域名配置问题
+./build.sh ssl-check
+
+# 删除SSL证书并禁用HTTPS
+./build.sh ssl-clean
+```
+
 ### 模板渲染
 
 ```bash
@@ -294,11 +325,20 @@ docker compose up -d
 ### 构建命令
 
 ```bash
-# 构建所有服务（按正确顺序）
+# 构建所有服务（默认启用SSL）
 ./build.sh build-all
 
 # 强制重建所有服务（无缓存）
 ./build.sh build-all --force
+
+# 并行构建（默认4个并发任务）
+./build.sh build-all --parallel
+
+# 指定并发任务数进行并行构建
+./build.sh build-all --parallel=8
+
+# 不启用SSL/HTTPS构建
+./build.sh build-all --no-ssl
 
 # 构建单个组件
 ./build.sh backend
@@ -308,10 +348,27 @@ docker compose up -d
 ./build.sh backend --force
 ```
 
+### 构建缓存管理
+
+```bash
+# 显示所有服务的构建缓存状态
+./build.sh cache-status
+
+# 显示最近N条构建历史记录（默认：20）
+./build.sh build-history
+./build.sh build-history 50
+
+# 清理所有构建缓存
+./build.sh clear-cache
+
+# 清理特定服务的构建缓存
+./build.sh clear-cache backend
+```
+
 ### 服务管理
 
 ```bash
-# 启动所有服务
+# 启动所有服务（包含SaltStack高可用多主设置）
 ./build.sh start-all
 
 # 停止所有服务
@@ -321,35 +378,78 @@ docker compose up -d
 ./build.sh tag-images
 ```
 
-### 镜像拉取（智能模式）
+### 数据库安全命令
 
 ```bash
-# 预拉取所有基础镜像
+# 检查PostgreSQL数据库是否包含生产数据
+./build.sh db-check
+
+# 备份PostgreSQL数据库
+./build.sh db-backup
+./build.sh db-backup custom-backup-name
+
+# 从备份恢复PostgreSQL数据库
+./build.sh db-restore backup.sql
+```
+
+**数据库初始化模式：**
+
+```bash
+# 安全初始化（默认 - 如果存在数据则跳过重置）
+DB_INIT_MODE=safe_init ./build.sh start-all
+
+# 保留数据，仅运行迁移脚本
+DB_INIT_MODE=upgrade ./build.sh start-all
+
+# 备份后重置（仅用于开发/测试）
+DB_INIT_MODE=force_reset ./build.sh start-all
+
+# 跳过数据库安全检查
+SKIP_DB_CHECK=true ./build.sh start-all
+```
+
+### 可选组件
+
+```bash
+# 初始化 SafeLine WAF（可选的边车组件）
+./build.sh init-safeline
+
+# SafeLine 不包含在 'build.sh build-all' 中
+# 初始化后，通过以下方式启动：
+docker compose --profile safeline up -d
+```
+
+### 镜像管理 - 拉取与推送
+
+**拉取命令（智能模式）：**
+
+```bash
+# 预拉取所有Dockerfile中的基础镜像
 ./build.sh prefetch
 
-# 拉取公共/第三方镜像（mysql, redis, kafka等）
+# 拉取公共/第三方镜像（mysql、kafka、redis等）
 ./build.sh pull-common
 
-# 互联网模式：从 Docker Hub 拉取
+# 互联网模式：从Docker Hub拉取所有镜像
 ./build.sh pull-all
 
-# 内网模式：从私有仓库拉取（需要 project 路径）
+# 内网模式：从私有仓库拉取
 ./build.sh pull-all harbor.example.com/ai-infra v0.3.8
 
 # 拉取依赖镜像
 ./build.sh deps-pull harbor.example.com/ai-infra v0.3.8
 ```
 
-### 镜像推送
+**推送命令：**
 
 ```bash
 # 推送单个服务到仓库
 ./build.sh push backend harbor.example.com/ai-infra v0.3.8
 
-# 推送所有镜像（4个阶段：通用、依赖、项目、特殊）
+# 一次性推送所有镜像（4个阶段：通用镜像、依赖镜像、项目镜像、特殊镜像）
 ./build.sh push-all harbor.example.com/ai-infra v0.3.8
 
-# 推送依赖镜像
+# 仅推送依赖镜像
 ./build.sh push-dep harbor.example.com/ai-infra v0.3.8
 ```
 
@@ -358,44 +458,127 @@ docker compose up -d
 > - ✓ `harbor.example.com/ai-infra`（正确）
 > - ✗ `harbor.example.com`（错误 - 缺少项目名）
 
-### 离线部署
+### 下载第三方依赖
 
 ```bash
-# 导出所有镜像到 tar 文件
+# 下载所有第三方依赖
+./build.sh download
+
+# download 的别名
+./build.sh download-deps
+
+# 列出可用的组件
+./build.sh download --list
+
+# 下载特定组件
+./build.sh download vscode
+./build.sh download code_server    # VS Code Server的另一个名称
+
+# 下载指定版本
+./build.sh download -v 4.107.0 vscode
+
+# 下载特定架构
+./build.sh download --arch amd64 prometheus
+./build.sh download --arch arm64 slurm
+
+# 下载所有架构
+./build.sh download --arch all saltstack
+
+# 禁用GitHub镜像加速
+./build.sh download --no-mirror prometheus
+
+# 可用组件包括：
+# - prometheus, node_exporter, alertmanager
+# - categraf
+# - code_server (别名: vscode)
+# - saltstack, slurm
+# - 及其他
+```
+
+### 离线导出与导入
+
+```bash
+# 导出所有镜像到tar文件
 ./build.sh export-offline ./offline-images v0.3.8
 
-# 导出时排除公共镜像
+# 导出时排除公共/第三方镜像
 ./build.sh export-offline ./offline-images v0.3.8 false
 
-# 在离线环境导入
+# 指定自定义输出目录
+./build.sh export-offline /data/offline-images v0.3.8 true
+
+# 在离线环境中导入
 cd ./offline-images && ./import-images.sh
+
+# 从自定义目录导入
+./import-images.sh /data/offline-images
 ```
 
 ### 清理命令
 
 ```bash
 # 清理项目镜像（可选指定标签）
+./build.sh clean-images
 ./build.sh clean-images v0.3.8
 
 # 清理项目数据卷
 ./build.sh clean-volumes
 
 # 完全清理（停止容器、删除镜像和数据卷）
+./build.sh clean-all
 ./build.sh clean-all --force
 ```
 
 ### 全局选项
 
-所有命令都支持以下全局选项：
-
-- `--force` / `-f` / `--no-cache`：强制重建，不使用 Docker 缓存
-
-### 模拟模式
+所有命令都支持以下全局选项（可用于任何命令）：
 
 ```bash
-# 测试模式：跳过实际的 Docker 操作
-SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+# 强制重建，不使用Docker缓存
+./build.sh build-all --force
+./build.sh backend -f          # 短格式
+./build.sh backend --no-cache  # 另一种形式
+
+# 启用并行构建（默认：4个并发任务）
+./build.sh build-all --parallel
+
+# 指定并发任务数进行并行构建
+./build.sh build-all --parallel=8
+./build.sh build-all -p8       # 短格式
+
+# 禁用 SSL/HTTPS
+./build.sh build-all --no-ssl
+
+# 启用特定域名的 SSL
+./build.sh build-all --ssl=example.com
+
+# 跳过构建缓存检查（总是重建）
+./build.sh build-all --skip-cache
 ```
+
+### 测试模式
+
+```bash
+# 测试模式：跳过实际的 Docker 操作（用于测试命令）
+SKIP_DOCKER_OPERATIONS=true ./build.sh export-all registry.example.com v0.3.8
+
+# 此模式有助于验证命令解析和文件生成，无需执行Docker命令
+```
+
+### 快速参考
+
+| 任务 | 命令 |
+|------|------|
+| 初始化环境 | `./build.sh init-env` |
+| 生成生产配置 | `./build.sh gen-prod-env` |
+| SSL设置 | `./build.sh ssl-setup example.com` |
+| 构建所有服务 | `./build.sh build-all` |
+| 并行构建 | `./build.sh build-all --parallel=8` |
+| 启动服务 | `./build.sh start-all` |
+| 检查数据库 | `./build.sh db-check` |
+| 离线导出 | `./build.sh export-offline ./images v0.3.8` |
+| 推送到仓库 | `./build.sh push-all harbor.example.com/ai-infra v0.3.8` |
+| 完全清理 | `./build.sh clean-all --force` |
 
 ## ⚙️ SLURM 配置与 MPI
 

@@ -223,24 +223,52 @@ main() {
     fi
   }
 
-  # SSO-first bootstrap: optionally create an initial admin user that matches backend identity mapping
-  # Avoid using default 'admin'. Only act if INITIAL_ADMIN_USERNAME is provided and != 'admin'.
-  if [ -n "${INITIAL_ADMIN_USERNAME}" ] && [ "${INITIAL_ADMIN_USERNAME}" != "admin" ]; then
-    if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk '{print $1}' | grep -qx "$INITIAL_ADMIN_USERNAME"; then
+  # SSO-first bootstrap: create the initial admin user for reverse-proxy SSO
+  # The user is created with a random password (login form is disabled anyway)
+  # and marked as admin. This ensures the SSO user has proper admin privileges.
+  if [ -n "${INITIAL_ADMIN_USERNAME}" ]; then
+    # Check if the user already exists using the correct column (Username is $2)
+    if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk 'NR>1 {print $2}' | grep -qx "$INITIAL_ADMIN_USERNAME"; then
       # Generate a random password; login form is disabled, so this is never used interactively
       RAND_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)
-      log "creating initial SSO admin user '$INITIAL_ADMIN_USERNAME' (password login disabled)"
+      log "creating initial SSO admin user '$INITIAL_ADMIN_USERNAME' with admin privileges (password login disabled)"
       run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user create \
         --admin \
         --username "$INITIAL_ADMIN_USERNAME" \
         --password "${RAND_PASS:-ChangeMe123}" \
         --email "${INITIAL_ADMIN_EMAIL}" \
-        --must-change-password=false || true
+        --must-change-password=false || log "WARNING: failed to create admin user, may need manual setup"
     else
       log "initial SSO admin user '$INITIAL_ADMIN_USERNAME' already exists"
+      # Check if the user is already an admin (IsAdmin is $5)
+      if ! run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user list 2>/dev/null | awk -v user="$INITIAL_ADMIN_USERNAME" '$2==user && $5=="true" {found=1} END{exit !found}'; then
+        log "WARNING: user '$INITIAL_ADMIN_USERNAME' exists but is not an admin!"
+        log "Attempting to delete and recreate user with admin privileges..."
+        # Delete the existing non-admin user and recreate with --admin flag
+        if run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user delete --username "$INITIAL_ADMIN_USERNAME" 2>/dev/null; then
+          log "Deleted non-admin user '$INITIAL_ADMIN_USERNAME'"
+          RAND_PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)
+          if run_as_git /usr/local/bin/gitea --config "$APP_INI" admin user create \
+            --admin \
+            --username "$INITIAL_ADMIN_USERNAME" \
+            --password "${RAND_PASS:-ChangeMe123}" \
+            --email "${INITIAL_ADMIN_EMAIL}" \
+            --must-change-password=false 2>/dev/null; then
+            log "Successfully recreated '$INITIAL_ADMIN_USERNAME' with admin privileges"
+          else
+            log "WARNING: Failed to recreate admin user. Please create manually."
+          fi
+        else
+          log "WARNING: Could not delete user (may have repos/data). Please grant admin manually:"
+          log "  1. Access Gitea directly at http://<host>:${GITEA_EXTERNAL_PORT:-3000}/"
+          log "  2. Or run SQL: UPDATE public.user SET is_admin=true WHERE lower_name='${INITIAL_ADMIN_USERNAME}';"
+        fi
+      else
+        log "user '$INITIAL_ADMIN_USERNAME' is already an admin"
+      fi
     fi
   else
-    log "skip creating default 'admin'; relying on reverse-proxy SSO auto-create and backend sync"
+    log "INITIAL_ADMIN_USERNAME not set; relying on reverse-proxy SSO auto-create"
   fi
 
   # Delegate to upstream entrypoint; pass through arguments

@@ -28,9 +28,8 @@ download_node_exporter() {
     local arch="$1"
     local filename="node_exporter-${NODE_EXPORTER_VERSION}.linux-${arch}.tar.gz"
     local base_url="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/${filename}"
-    # 移除 https:// 前缀避免重复
-    local base_url_without_scheme="${base_url#https://}"
-    local mirror_url="${GITHUB_MIRROR}${base_url_without_scheme}"
+    # 使用完整 URL 拼接方式 (ghfast.top/gh-proxy.com 等镜像服务的标准格式)
+    local mirror_url="${GITHUB_MIRROR}${base_url}"
     
     if [[ -f "${OUTPUT_DIR}/${filename}" ]]; then
         echo "  ✓ ${filename} already exists, skipping"

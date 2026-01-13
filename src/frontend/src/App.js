@@ -148,6 +148,9 @@ const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/
 const RoleTemplateManagement = withLazyLoading(React.lazy(() => import('./pages/RoleTemplateManagement')), {
   loadingText: '正在加载角色模板管理...'
 });
+const PermissionApprovalPage = withLazyLoading(React.lazy(() => import('./pages/PermissionApprovalPage')), {
+  loadingText: '正在加载权限审批管理...'
+});
 const FileBrowser = withLazyLoading(React.lazy(() => import('./pages/FileBrowser')),
   { loadingText: '正在加载文件浏览器...' }
 );
@@ -710,15 +713,15 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                       }
                     />
 
-                    {/* Monitoring dashboard page (Nightingale) - 允许管理员访问 */}
+                    {/* Monitoring dashboard page (Nightingale) - 允许SRE团队访问 */}
                     <Route
                       path="/monitoring"
                       element={
-                        <AdminProtectedRoute user={user}>
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <MonitoringPage />
                           </Suspense>
-                        </AdminProtectedRoute>
+                        </TeamProtectedRoute>
                       }
                     />
 
@@ -769,6 +772,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <RoleTemplateManagement />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/permission-approvals"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <PermissionApprovalPage />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

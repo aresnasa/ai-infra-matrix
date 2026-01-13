@@ -1982,6 +1982,20 @@ export default {
     updatePermissionFailed: 'Failed to update user permission',
     showing: '{start}-{end} of {total} items',
     total: 'Total {count} items',
+    // User Account Management
+    deleteUser: 'Delete User',
+    deleteUserSuccess: 'User deleted successfully',
+    deleteUserFailed: 'Failed to delete user',
+    confirmDeleteUser: 'Confirm delete user?',
+    disableUser: 'Disable Account',
+    enableUser: 'Enable Account',
+    disable: 'Disable',
+    enable: 'Enable',
+    confirmDisableUser: 'Confirm disable account?',
+    confirmEnableUser: 'Confirm enable account?',
+    disableUserSuccess: 'User disabled successfully',
+    enableUserSuccess: 'User enabled successfully',
+    toggleStatusFailed: 'Operation failed',
 
     // Project Management
     projectName: 'Project Name',
@@ -2055,6 +2069,36 @@ export default {
     clearTrashSuccess: 'Trash cleared successfully',
     clearTrashFailed: 'Failed to clear trash',
     files: 'files',
+
+    // Pending Approvals Management
+    pendingApprovals: 'Pending Approvals',
+    pendingApprovalsNote: 'Approval Notes',
+    pendingApprovalsNoteDesc: 'Users need administrator approval after registration to use the system. You can approve or reject user registration requests here and assign permission modules to approved users.',
+    pendingApprovalsList: 'Pending Approvals List',
+    noPendingApprovals: 'No pending registration requests',
+    getPendingApprovalsFailed: 'Failed to get pending approvals',
+    approve: 'Approve',
+    reject: 'Reject',
+    approveRegistration: 'Approve Registration',
+    rejectRegistration: 'Reject Registration',
+    confirmApprove: 'Confirm Approval',
+    confirmReject: 'Confirm Rejection',
+    approvalConfirmMessage: 'Are you sure you want to approve this registration request?',
+    rejectConfirmMessage: 'Are you sure you want to reject this registration request?',
+    selectPermissionModules: 'Select Permission Modules',
+    permissionModulesNote: 'Select system modules this user can access. SRE role users are recommended to have all the following module permissions:',
+    selectAll: 'Select All',
+    clearSelection: 'Clear',
+    rejectReason: 'Rejection Reason',
+    rejectReasonPlaceholder: 'Please enter the reason for rejection...',
+    rejectReasonRequired: 'Please enter the reason for rejection',
+    approvalSuccess: 'Registration approved successfully',
+    approvalFailed: 'Approval failed',
+    rejectSuccess: 'Registration request rejected',
+    rejectFailed: 'Failed to reject request',
+    department: 'Department',
+    roleTemplate: 'Role Template',
+    applyTime: 'Apply Time',
 
     // Auth Settings
     authSettings: 'Authentication Settings',
@@ -2595,5 +2639,15 @@ export default {
     deleteSuccess: 'Deleted successfully',
     deleteFailed: 'Delete failed',
     operationFailed: 'Operation failed',
+  },
+
+  // Role Templates Translation
+  roleTemplates: {
+    admin: 'Administrator',
+    sre: 'SRE Engineer',
+    dataDeveloper: 'Data Developer',
+    modelDeveloper: 'Model Developer',
+    engineer: 'Software Engineer',
+    audit: 'Auditor',
   },
 };

@@ -1980,6 +1980,20 @@ export default {
     updatePermissionFailed: '更新用户权限失败',
     showing: '第 {start}-{end} 条，共 {total} 条',
     total: '共 {count} 项',
+    // 用户账号管理
+    deleteUser: '删除用户',
+    deleteUserSuccess: '用户已删除',
+    deleteUserFailed: '删除用户失败',
+    confirmDeleteUser: '确认删除用户？',
+    disableUser: '禁用账号',
+    enableUser: '启用账号',
+    disable: '禁用',
+    enable: '启用',
+    confirmDisableUser: '确认禁用账号？',
+    confirmEnableUser: '确认启用账号？',
+    disableUserSuccess: '用户已禁用',
+    enableUserSuccess: '用户已启用',
+    toggleStatusFailed: '操作失败',
 
     // 项目管理
     projectName: '项目名称',
@@ -2053,6 +2067,36 @@ export default {
     clearTrashSuccess: '回收站清空成功',
     clearTrashFailed: '清空回收站失败',
     files: '个文件',
+
+    // 待审批管理
+    pendingApprovals: '待审批',
+    pendingApprovalsNote: '审批说明',
+    pendingApprovalsNoteDesc: '用户注册后需要管理员审批才能使用系统。您可以在此处审批或拒绝用户注册申请，并为已批准的用户分配权限模块。',
+    pendingApprovalsList: '待审批列表',
+    noPendingApprovals: '暂无待审批的注册申请',
+    getPendingApprovalsFailed: '获取待审批列表失败',
+    approve: '通过',
+    reject: '拒绝',
+    approveRegistration: '审批通过',
+    rejectRegistration: '拒绝申请',
+    confirmApprove: '确认审批',
+    confirmReject: '确认拒绝',
+    approvalConfirmMessage: '确定通过该用户的注册申请吗？',
+    rejectConfirmMessage: '确定拒绝该用户的注册申请吗？',
+    selectPermissionModules: '选择权限模块',
+    permissionModulesNote: '为该用户选择可访问的系统模块。SRE角色用户建议授予以下所有模块权限：',
+    selectAll: '全选',
+    clearSelection: '清除',
+    rejectReason: '拒绝原因',
+    rejectReasonPlaceholder: '请输入拒绝该申请的原因...',
+    rejectReasonRequired: '请输入拒绝原因',
+    approvalSuccess: '审批通过成功',
+    approvalFailed: '审批失败',
+    rejectSuccess: '已拒绝该申请',
+    rejectFailed: '拒绝申请失败',
+    department: '部门',
+    roleTemplate: '角色模板',
+    applyTime: '申请时间',
 
     // 认证设置
     authSettings: '认证设置',
@@ -2593,5 +2637,15 @@ export default {
     deleteSuccess: '删除成功',
     deleteFailed: '删除失败',
     operationFailed: '操作失败',
+  },
+
+  // 角色模板翻译
+  roleTemplates: {
+    admin: '管理员',
+    sre: 'SRE工程师',
+    dataDeveloper: '数据开发',
+    modelDeveloper: '模型开发',
+    engineer: '工程研发',
+    audit: '审计员',
   },
 };

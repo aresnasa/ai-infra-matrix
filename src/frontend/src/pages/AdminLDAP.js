@@ -13,7 +13,8 @@ import {
   Typography,
   Spin,
   Tooltip,
-  Collapse
+  Collapse,
+  theme
 } from 'antd';
 import {
   SafetyOutlined,
@@ -28,10 +29,12 @@ import { useI18n } from '../hooks/useI18n';
 const { Title, Text } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
+const { useToken } = theme;
 const { Panel } = Collapse;
 
 const AdminLDAP = () => {
   const { t } = useI18n();
+  const { token } = useToken();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -188,10 +191,10 @@ const AdminLDAP = () => {
             key="1"
           >
             <div style={{ 
-              backgroundColor: '#fff', 
+              backgroundColor: token.colorBgContainer, 
               padding: '16px', 
               borderRadius: '4px',
-              border: '1px dashed #d9d9d9'
+              border: `1px dashed ${token.colorBorder}`
             }}>
               <Title level={4} style={{ marginBottom: '16px', color: '#52c41a' }}>
                 🔧 {t('admin.testEnvConfig')}
@@ -199,10 +202,10 @@ const AdminLDAP = () => {
               <div style={{ 
                 fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
                 fontSize: '13px',
-                backgroundColor: '#f8f9fa',
+                backgroundColor: token.colorBgLayout,
                 padding: '12px',
                 borderRadius: '4px',
-                border: '1px solid #e9ecef',
+                border: `1px solid ${token.colorBorderSecondary}`,
                 marginBottom: '16px'
               }}>
                 <div style={{ color: '#6a737d', marginBottom: '8px' }}>/* {t('admin.basicConnConfig')} */</div>
