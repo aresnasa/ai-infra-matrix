@@ -674,7 +674,8 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	}
 
 	// 权限审批路由（需要认证）
-	approvalService := services.NewPermissionApprovalService(database.DB, rbacService)
+	approvalRbacService := services.NewRBACService(database.DB)
+	approvalService := services.NewPermissionApprovalService(database.DB, approvalRbacService)
 	approvalController := controllers.NewPermissionApprovalController(approvalService)
 	approvals := api.Group("/approvals")
 	approvals.Use(middleware.AuthMiddlewareWithSession())
