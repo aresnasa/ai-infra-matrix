@@ -6163,12 +6163,17 @@ IMPORT_SCRIPT_EOF
     
     log_info "📁 Output files:"
     log_info "  • Images directory: $output_dir"
-    log_info "  • Manifest file: $manifest_file"
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        log_info "    - ${arch_name}/: Images and manifest for $arch_name"
+    done
     log_info "  • Import script: $import_script"
     echo
     log_info "📋 Usage instructions:"
     log_info "  1. Copy the entire '$output_dir' directory to the offline environment"
-    log_info "  2. Run: cd $output_dir && ./import-images.sh"
+    log_info "  2. Run import with auto-detection: cd $output_dir && ./import-images.sh"
+    log_info "     Or specify architecture: ./import-images.sh amd64"
+    log_info "                              ./import-images.sh arm64"
     log_info "  3. Start services: docker compose --profile ha up -d"
     
     return 0
