@@ -5938,21 +5938,16 @@ build_component_for_platform() {
         
         cmd+=("$SCRIPT_DIR")
         
-        if "${cmd[@]}" >/dev/null 2>&1; then
+        # For cross-platform builds, always show output to avoid buildkit caching issues
+        # The silent-then-retry pattern can cause metadata resolution failures
+        if "${cmd[@]}"; then
             log_info "  [$arch_name] ✓ Built: $full_image_name"
             log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
             save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
         else
-            # Retry with output on failure
-            log_warn "  [$arch_name] Retrying build with verbose output..."
-            if "${cmd[@]}"; then
-                log_info "  [$arch_name] ✓ Built: $full_image_name"
-                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_RETRY ($arch_name)"
-                save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
-            else
-                log_error "  [$arch_name] ✗ Failed: $full_image_name"
-                log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
-                return 1
+            log_error "  [$arch_name] ✗ Failed: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
+            return 1
             fi
         fi
     done
