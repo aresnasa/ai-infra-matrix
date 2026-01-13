@@ -4938,6 +4938,355 @@ build_parallel() {
     return 0
 }
 
+# Multi-Architecture Build Support
+# Uses docker buildx to build images for multiple platforms
+# Requires: docker buildx (included in Docker Desktop, or install separately)
+
+# Check and setup buildx builder
+setup_buildx_builder() {
+    local builder_name="ai-infra-multiarch"
+    
+    # Check if buildx is available
+    if ! docker buildx version >/dev/null 2>&1; then
+        log_error "docker buildx is not available"
+        log_info "Please install Docker Desktop or docker-buildx plugin"
+        return 1
+    fi
+    
+    # Check if our builder exists
+    if docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        log_info "Using existing buildx builder: $builder_name"
+    else
+        log_info "Creating new buildx builder: $builder_name"
+        if ! docker buildx create --name "$builder_name" --driver docker-container --bootstrap; then
+            log_error "Failed to create buildx builder"
+            return 1
+        fi
+    fi
+    
+    # Use this builder
+    docker buildx use "$builder_name"
+    log_info "✓ Buildx builder ready: $builder_name"
+    return 0
+}
+
+# Build a single component for multiple architectures
+# Usage: build_component_multiarch <component> <platforms> [extra_args...]
+# Example: build_component_multiarch backend "linux/amd64,linux/arm64"
+build_component_multiarch() {
+    local component="$1"
+    local platforms="$2"
+    local extra_args=("${@:3}")
+    local component_dir="$SRC_DIR/$component"
+    local tag="${IMAGE_TAG:-latest}"
+    local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
+    
+    if [ ! -d "$component_dir" ]; then
+        log_error "Component directory not found: $component_dir"
+        return 1
+    fi
+    
+    # Skip pure dependency services (no Dockerfile)
+    if [ -f "$component_dir/dependency.conf" ] && [ ! -f "$component_dir/Dockerfile" ]; then
+        log_info "⏭️  Skipping $component (pure dependency, use docker pull for multi-arch)"
+        return 0
+    fi
+    
+    if [ ! -f "$component_dir/Dockerfile" ]; then
+        log_warn "No Dockerfile in $component, skipping..."
+        return 0
+    fi
+    
+    # Check for template and render if needed
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [ -f "$template_file" ]; then
+        log_info "Rendering template for $component..."
+        if ! render_template "$template_file"; then
+            log_error "Failed to render template for $component"
+            return 1
+        fi
+    fi
+    
+    # Calculate service hash for build label
+    local service_hash=$(calculate_service_hash "$component")
+    
+    # Check for build-targets.conf
+    local targets_file="$component_dir/build-targets.conf"
+    local targets=()
+    local images=()
+    
+    if [ -f "$targets_file" ]; then
+        while read -r target image_suffix || [ -n "$target" ]; do
+            [[ "$target" =~ ^#.*$ ]] && continue
+            [[ -z "$target" ]] && continue
+            targets+=("$target")
+            images+=("$image_suffix")
+        done < "$targets_file"
+    else
+        targets+=("default")
+        images+=("ai-infra-$component")
+    fi
+    
+    for i in "${!targets[@]}"; do
+        local target="${targets[$i]}"
+        local image_name="${images[$i]}"
+        local full_image_name="${image_name}:${tag}"
+        
+        if [ -n "$PRIVATE_REGISTRY" ]; then
+            full_image_name="$PRIVATE_REGISTRY/$full_image_name"
+        fi
+        
+        log_info "Building $component [$target] for platforms: $platforms -> $full_image_name"
+        
+        local cmd=("docker" "buildx" "build")
+        
+        # Multi-platform specification
+        cmd+=("--platform" "$platforms")
+        
+        # Output to local docker images (load only works for single platform)
+        # For multi-platform, we need to use --output type=oci or push to registry
+        # Here we use --output type=docker for single platform compatibility
+        # or --output type=image,push=false for multi-platform local storage
+        
+        # Count platforms
+        local platform_count=$(echo "$platforms" | tr ',' '\n' | wc -l | tr -d ' ')
+        
+        if [[ $platform_count -eq 1 ]]; then
+            # Single platform: can use --load
+            cmd+=("--load")
+        else
+            # Multi-platform: output to OCI tarball in output directory
+            local output_dir="${MULTIARCH_OUTPUT_DIR:-./multiarch-images}"
+            mkdir -p "$output_dir"
+            local safe_name=$(echo "$full_image_name" | sed 's|/|-|g' | sed 's|:|_|g')
+            cmd+=("--output" "type=oci,dest=${output_dir}/${safe_name}.tar")
+        fi
+        
+        # Add --no-cache if force build is enabled
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            cmd+=("--no-cache")
+        fi
+        
+        # Add build cache labels
+        cmd+=("--label" "build.hash=$service_hash")
+        cmd+=("--label" "build.id=$build_id")
+        cmd+=("--label" "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+        cmd+=("--label" "build.component=$component")
+        cmd+=("--label" "build.platforms=$platforms")
+        
+        cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
+        
+        if [ "$target" != "default" ]; then
+            cmd+=("--target" "$target")
+        fi
+        
+        # Add build context (project root)
+        cmd+=("$SCRIPT_DIR")
+        
+        log_info "Executing: ${cmd[*]}"
+        
+        if "${cmd[@]}"; then
+            log_info "✓ Multi-arch build success: $full_image_name ($platforms)"
+        else
+            log_error "✗ Multi-arch build failed: $full_image_name"
+            return 1
+        fi
+    done
+    
+    return 0
+}
+
+# Build all services for multiple architectures
+# Usage: build_multiarch [platforms] [--force]
+# Example: build_multiarch "linux/amd64,linux/arm64"
+#          build_multiarch amd64,arm64 --force
+build_multiarch() {
+    local platforms="${1:-linux/amd64,linux/arm64}"
+    local force="${2:-false}"
+    
+    # Normalize platform format
+    if [[ "$platforms" != *"linux/"* ]]; then
+        # Convert short form (amd64,arm64) to full form (linux/amd64,linux/arm64)
+        platforms=$(echo "$platforms" | sed 's/\([^,]*\)/linux\/\1/g')
+    fi
+    
+    # Show help
+    if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+        echo "Usage: $0 build-multiarch [platforms] [--force]"
+        echo ""
+        echo "Arguments:"
+        echo "  platforms   Comma-separated list of target platforms"
+        echo "              Default: linux/amd64,linux/arm64"
+        echo "              Short form: amd64,arm64 (auto-converted to linux/amd64,linux/arm64)"
+        echo "  --force     Force rebuild without cache"
+        echo ""
+        echo "Description:"
+        echo "  Build all AI-Infra service images for multiple architectures"
+        echo "  Uses docker buildx for cross-platform builds"
+        echo "  For single platform: images are loaded to local docker"
+        echo "  For multi-platform: images are saved as OCI tarballs"
+        echo ""
+        echo "Examples:"
+        echo "  $0 build-multiarch                              # Build for amd64 and arm64"
+        echo "  $0 build-multiarch linux/amd64                  # Build for amd64 only"
+        echo "  $0 build-multiarch linux/arm64 --force          # Force rebuild for arm64"
+        echo "  $0 build-multiarch amd64,arm64                  # Short form"
+        echo ""
+        echo "Output:"
+        echo "  Single platform: Images loaded to local docker daemon"
+        echo "  Multi-platform: OCI tarballs in ./multiarch-images/"
+        echo ""
+        echo "Note:"
+        echo "  - Requires docker buildx (included in Docker Desktop)"
+        echo "  - Cross-platform builds use QEMU emulation (slower)"
+        echo "  - For production, consider using CI/CD with native runners"
+        return 0
+    fi
+    
+    if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        force="true"
+    fi
+    
+    log_info "=========================================="
+    log_info "🏗️  Multi-Architecture Build"
+    log_info "=========================================="
+    log_info "Target platforms: $platforms"
+    log_info "Force rebuild: $force"
+    echo
+    
+    # Setup buildx
+    if ! setup_buildx_builder; then
+        log_error "Failed to setup buildx builder"
+        return 1
+    fi
+    echo
+    
+    # Set force flag
+    if [[ "$force" == "true" ]]; then
+        FORCE_BUILD=true
+    fi
+    
+    # Initialize build
+    init_build_cache
+    CURRENT_BUILD_ID=$(generate_build_id)
+    save_build_id "$CURRENT_BUILD_ID"
+    
+    log_info "Build Session: $CURRENT_BUILD_ID"
+    echo
+    
+    # Render templates
+    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    if ! render_all_templates "$force"; then
+        log_error "Template rendering failed. Aborting build."
+        return 1
+    fi
+    echo
+    
+    # Discover services
+    discover_services
+    
+    local success_count=0
+    local fail_count=0
+    local skip_count=0
+    
+    # Build Foundation Services
+    log_info "=== Phase 1: Building Foundation Services (Multi-Arch) ==="
+    for service in "${FOUNDATION_SERVICES[@]}"; do
+        log_info "━━━ Building: $service ━━━"
+        if build_component_multiarch "$service" "$platforms"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            log_error "Failed to build $service"
+        fi
+    done
+    echo
+    
+    # For dependent services, we need AppHub running
+    # But in multi-arch mode, we skip dependent services that require runtime AppHub
+    log_info "=== Phase 2: Building Dependent Services (Multi-Arch) ==="
+    log_warn "Note: Some dependent services may require AppHub to be running"
+    log_warn "For cross-platform builds, ensure dependencies are pre-downloaded"
+    
+    # Determine AppHub URL for build args (may not be accessible in cross-compile)
+    local apphub_port="${APPHUB_PORT:-28080}"
+    local external_host="${EXTERNAL_HOST:-localhost}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    for service in "${DEPENDENT_SERVICES[@]}"; do
+        log_info "━━━ Building: $service ━━━"
+        if build_component_multiarch "$service" "$platforms" "--build-arg" "APPHUB_URL=$apphub_url"; then
+            success_count=$((success_count + 1))
+        else
+            fail_count=$((fail_count + 1))
+            log_error "Failed to build $service"
+        fi
+    done
+    echo
+    
+    # Summary
+    log_info "=========================================="
+    log_info "🎉 Multi-Architecture Build Complete"
+    log_info "=========================================="
+    log_info "Platforms: $platforms"
+    log_info "Success: $success_count"
+    log_info "Failed: $fail_count"
+    log_info "Build ID: $CURRENT_BUILD_ID"
+    
+    # Count platforms
+    local platform_count=$(echo "$platforms" | tr ',' '\n' | wc -l | tr -d ' ')
+    if [[ $platform_count -gt 1 ]]; then
+        log_info ""
+        log_info "📁 Output: ./multiarch-images/"
+        log_info "   Each image is saved as an OCI tarball"
+        log_info ""
+        log_info "To import on target machine:"
+        log_info "   docker load < ./multiarch-images/<image>.tar"
+    fi
+    
+    if [[ $fail_count -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Build single platform for export (useful for building other arch on dev machine)
+# This builds images for a specific platform and loads them locally
+# Usage: build_for_platform <platform> [--force]
+build_for_platform() {
+    local platform="${1:-linux/amd64}"
+    local force="${2:-false}"
+    
+    # Normalize platform
+    if [[ "$platform" != "linux/"* ]]; then
+        platform="linux/$platform"
+    fi
+    
+    if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+        echo "Usage: $0 build-platform <platform> [--force]"
+        echo ""
+        echo "Build all AI-Infra images for a specific platform"
+        echo "Images are loaded to local docker daemon"
+        echo ""
+        echo "Arguments:"
+        echo "  platform    Target platform (default: linux/amd64)"
+        echo "              Examples: linux/amd64, linux/arm64, amd64, arm64"
+        echo "  --force     Force rebuild without cache"
+        echo ""
+        echo "Examples:"
+        echo "  $0 build-platform amd64          # Build AMD64 images on ARM Mac"
+        echo "  $0 build-platform arm64 --force  # Force rebuild ARM64"
+        return 0
+    fi
+    
+    if [[ "$2" == "--force" ]] || [[ "$2" == "-f" ]]; then
+        force="true"
+    fi
+    
+    log_info "Building for single platform: $platform"
+    build_multiarch "$platform" "$force"
+}
+
 build_all() {
     local force="${1:-false}"
     
@@ -6224,6 +6573,14 @@ print_help() {
     echo "  [component]              Build a specific component (e.g., backend, frontend)"
     echo "  [component] --force      Force rebuild a component without cache"
     echo ""
+    echo "Multi-Architecture Build Commands:"
+    echo "  build-multiarch [platforms] [--force]  Build for multiple architectures"
+    echo "                          platforms: linux/amd64,linux/arm64 (default: both)"
+    echo "                          Uses docker buildx for cross-platform builds"
+    echo "  build-platform <arch> [--force]        Build for single target platform"
+    echo "                          Useful for building amd64 images on ARM Mac"
+    echo "                          arch: amd64, arm64 (auto-prefixed with linux/)"
+    echo ""
     echo "Build Cache Commands:"
     echo "  cache-status        Show build cache status for all services"
     echo "  build-history [N]   Show last N build history entries (default: 20)"
@@ -6339,6 +6696,13 @@ print_help() {
     echo "  $0 build-all --no-ssl              # Build without HTTPS"
     echo "  $0 backend                         # Build single service"
     echo "  $0 backend --force                 # Force rebuild single service"
+    echo ""
+    echo "  # Multi-architecture builds (for cross-platform deployment)"
+    echo "  $0 build-multiarch                     # Build for amd64 and arm64"
+    echo "  $0 build-multiarch linux/amd64         # Build amd64 only"
+    echo "  $0 build-multiarch amd64,arm64 --force # Force rebuild both archs"
+    echo "  $0 build-platform amd64                # Build amd64 on ARM Mac"
+    echo "  $0 build-platform arm64                # Build arm64 on x86 machine"
     echo ""
     echo "  # Build cache management"
     echo "  $0 cache-status                    # Show which services need rebuild"
@@ -6607,6 +6971,14 @@ case "$COMMAND" in
         else
             build_all
         fi
+        ;;
+    build-multiarch|multiarch)
+        # Build for multiple architectures using buildx
+        build_multiarch "$ARG2" "$ARG3"
+        ;;
+    build-platform)
+        # Build for a specific platform (e.g., amd64 on arm64 mac)
+        build_for_platform "$ARG2" "$ARG3"
         ;;
     cache-status)
         # Show build cache status

@@ -121,4 +121,8 @@ src/nginx/conf.d/*
 **/cloudflare.ini
 **/.secrets/
 **/secrets/
+
+# Offline images export directories
 offline-images/
+multiarch-images/
+offline/
