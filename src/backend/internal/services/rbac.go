@@ -1311,3 +1311,65 @@ func (s *RBACService) AssignRoleTemplateToUser(userID uint, templateName string)
 
 	return nil
 }
+
+// GrantUserModulePermissions 为用户授予模块权限
+func (s *RBACService) GrantUserModulePermissions(userID uint, modules []string, verbs []string) error {
+	// 开始事务
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// 为每个模块和操作创建权限
+	for _, module := range modules {
+		for _, verb := range verbs {
+			// 检查权限是否存在，不存在则创建
+			var permission models.Permission
+			err := tx.Where("resource = ? AND verb = ? AND scope = ?", module, verb, "*").First(&permission).Error
+			if err == gorm.ErrRecordNotFound {
+				permission = models.Permission{
+					Resource:    module,
+					Verb:        verb,
+					Scope:       "*",
+					Description: fmt.Sprintf("%s %s 权限", module, verb),
+				}
+				if err := tx.Create(&permission).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("创建权限失败: %v", err)
+				}
+			} else if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("查询权限失败: %v", err)
+			}
+
+			// 检查用户是否已有此权限
+			var existingGrant models.PermissionGrant
+			err = tx.Where("user_id = ? AND permission_id = ?", userID, permission.ID).First(&existingGrant).Error
+			if err == gorm.ErrRecordNotFound {
+				// 为用户创建权限授予
+				grant := models.PermissionGrant{
+					UserID:       userID,
+					PermissionID: permission.ID,
+					GrantedBy:    userID, // 可以改为管理员ID
+					GrantedAt:    time.Now(),
+				}
+				if err := tx.Create(&grant).Error; err != nil {
+					tx.Rollback()
+					return fmt.Errorf("创建权限授予失败: %v", err)
+				}
+			} else if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("查询权限授予失败: %v", err)
+			}
+			// 如果已存在则跳过
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("提交事务失败: %v", err)
+	}
+
+	return nil
+}
