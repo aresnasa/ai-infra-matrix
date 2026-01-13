@@ -5965,6 +5965,9 @@ build_component_for_platform() {
         
         cmd+=("$SCRIPT_DIR")
         
+        # Debug: print the actual command being executed
+        # log_info "DEBUG CMD: ${cmd[*]}"
+        
         # For cross-platform builds, always show output to avoid buildkit caching issues
         # The silent-then-retry pattern can cause metadata resolution failures
         if "${cmd[@]}"; then
