@@ -777,6 +777,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                       }
                     />
                     <Route
+                      path="/admin/permission-approvals"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <PermissionApprovalPage />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
                       path="/admin/projects"
                       element={
                         <AdminProtectedRoute user={user}>
