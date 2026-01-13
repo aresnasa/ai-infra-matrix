@@ -1043,6 +1043,25 @@ generate_production_env() {
     local env_file="${1:-.env.prod}"
     local force="${2:-false}"
     
+    # Ensure UTF-8 locale for proper handling of Chinese characters in .env.example
+    # This is critical to avoid garbled text in generated .env files
+    local _orig_lc_all="${LC_ALL:-}"
+    local _orig_lang="${LANG:-}"
+    
+    # Try different UTF-8 locale names (different systems use different names)
+    if locale -a 2>/dev/null | grep -qiE '^(C\.UTF-8|en_US\.UTF-8|en_US\.utf8)$'; then
+        if locale -a 2>/dev/null | grep -qi '^C\.UTF-8$'; then
+            export LC_ALL=C.UTF-8
+            export LANG=C.UTF-8
+        elif locale -a 2>/dev/null | grep -qi '^en_US\.UTF-8$'; then
+            export LC_ALL=en_US.UTF-8
+            export LANG=en_US.UTF-8
+        elif locale -a 2>/dev/null | grep -qi '^en_US\.utf8$'; then
+            export LC_ALL=en_US.utf8
+            export LANG=en_US.utf8
+        fi
+    fi
+    
     log_info "======================================================================"
     log_info "🔧 AI Infrastructure Matrix - Production Environment Generator"
     log_info "======================================================================"
@@ -1137,9 +1156,10 @@ generate_production_env() {
     local test_root_password=$(generate_random_password 20 "alphanumeric")
     
     # Use awk for safe replacement (handles special characters)
+    # IMPORTANT: Explicitly set UTF-8 locale to preserve Chinese characters in comments
     local temp_file="${env_file}.updating"
     
-    awk -v pg_pass="$postgres_password" \
+    LC_ALL=C.UTF-8 LANG=C.UTF-8 awk -v pg_pass="$postgres_password" \
         -v hub_db_pass="$jupyterhub_db_password" \
         -v mysql_root="$mysql_root_password" \
         -v mysql_pass="$mysql_password" \
@@ -1296,6 +1316,18 @@ generate_production_env() {
     log_info "  1. Review and edit .env if needed (adjust DOMAIN, ports, etc.)"
     log_info "  2. Render templates: ./build.sh render"
     log_info "  3. Build and deploy: ./build.sh build-all && docker compose up -d"
+    
+    # Restore original locale settings
+    if [[ -n "$_orig_lc_all" ]]; then
+        export LC_ALL="$_orig_lc_all"
+    else
+        unset LC_ALL
+    fi
+    if [[ -n "$_orig_lang" ]]; then
+        export LANG="$_orig_lang"
+    else
+        unset LANG
+    fi
     
     return 0
 }
