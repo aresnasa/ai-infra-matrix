@@ -1344,16 +1344,21 @@ func (s *RBACService) GrantUserModulePermissions(userID uint, modules []string, 
 				return fmt.Errorf("查询权限失败: %v", err)
 			}
 
-			// 检查用户是否已有此权限
+			// 检查用户是否已有此权限授予
 			var existingGrant models.PermissionGrant
-			err = tx.Where("user_id = ? AND permission_id = ?", userID, permission.ID).First(&existingGrant).Error
+			err = tx.Where("user_id = ? AND module = ? AND verb = ? AND is_active = ?", userID, module, verb, true).First(&existingGrant).Error
 			if err == gorm.ErrRecordNotFound {
 				// 为用户创建权限授予
 				grant := models.PermissionGrant{
-					UserID:       userID,
-					PermissionID: permission.ID,
-					GrantedBy:    userID, // 可以改为管理员ID
-					GrantedAt:    time.Now(),
+					UserID:    userID,
+					Module:    module,
+					Resource:  module,
+					Verb:      verb,
+					Scope:     "*",
+					GrantType: "manual",
+					GrantedBy: userID, // 可以改为管理员ID
+					Reason:    "管理员审批授予",
+					IsActive:  true,
 				}
 				if err := tx.Create(&grant).Error; err != nil {
 					tx.Rollback()

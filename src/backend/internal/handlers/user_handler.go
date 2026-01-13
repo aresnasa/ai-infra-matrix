@@ -1862,19 +1862,19 @@ func (h *UserHandler) GrantUserModules(c *gin.Context) {
 
 	// 有效的模块列表
 	validModules := map[string]bool{
-		"saltstack":    true,
-		"ansible":      true,
-		"kubernetes":   true,
-		"hosts":        true,
-		"nightingale":  true,
-		"audit-logs":   true,
-		"projects":     true,
-		"variables":    true,
-		"tasks":        true,
-		"jupyterhub":   true,
-		"kafka":        true,
-		"kafka-ui":     true,
-		"redis":        true,
+		"saltstack":   true,
+		"ansible":     true,
+		"kubernetes":  true,
+		"hosts":       true,
+		"nightingale": true,
+		"audit-logs":  true,
+		"projects":    true,
+		"variables":   true,
+		"tasks":       true,
+		"jupyterhub":  true,
+		"kafka":       true,
+		"kafka-ui":    true,
+		"redis":       true,
 	}
 
 	// 验证模块

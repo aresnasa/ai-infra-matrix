@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Popconfirm, Input, Divider, theme, Tabs, Badge, Checkbox, Tooltip, Empty } from 'antd';
-import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined, QrcodeOutlined, CopyOutlined, ReloadOutlined, ClockCircleOutlined, CheckOutlined, CloseOutlined, TeamOutlined, ToolOutlined } from '@ant-design/icons';
+import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined, QrcodeOutlined, CopyOutlined, ReloadOutlined, ClockCircleOutlined, CheckOutlined, CloseOutlined, TeamOutlined, ToolOutlined, DeleteOutlined, StopOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { QRCodeSVG } from 'qrcode.react';
-import { userAPI, securityAPI } from '../services/api';
+import { userAPI, securityAPI, adminAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
 
 const { Title, Text } = Typography;
@@ -31,6 +31,41 @@ const AdminUsers = () => {
   const [selectedModules, setSelectedModules] = useState([]);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [actionLoading, setActionLoading] = useState({});
+
+  // 删除用户
+  const handleDeleteUser = async (user) => {
+    setActionLoading(prev => ({ ...prev, [user.id]: 'delete' }));
+    try {
+      await adminAPI.deleteUser(user.id);
+      message.success(t('admin.deleteUserSuccess') || `用户 ${user.username} 已删除`);
+      fetchUsers();
+    } catch (error) {
+      console.error('删除用户失败:', error);
+      message.error(t('admin.deleteUserFailed') || `删除用户失败: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [user.id]: null }));
+    }
+  };
+
+  // 禁用/启用用户账号
+  const handleToggleUserStatus = async (user) => {
+    const newStatus = !user.is_active;
+    setActionLoading(prev => ({ ...prev, [user.id]: 'status' }));
+    try {
+      await adminAPI.toggleUserStatus(user.id, newStatus);
+      message.success(newStatus 
+        ? (t('admin.enableUserSuccess') || `用户 ${user.username} 已启用`) 
+        : (t('admin.disableUserSuccess') || `用户 ${user.username} 已禁用`)
+      );
+      fetchUsers();
+    } catch (error) {
+      console.error('切换用户状态失败:', error);
+      message.error(t('admin.toggleStatusFailed') || `操作失败: ${error.response?.data?.error || error.message}`);
+    } finally {
+      setActionLoading(prev => ({ ...prev, [user.id]: null }));
+    }
+  };
 
   // SRE 权限模块定义
   const SRE_MODULES = [
@@ -442,6 +477,48 @@ const AdminUsers = () => {
               </Button>
             </Popconfirm>
           )}
+          {/* 禁用/启用账号按钮 */}
+          <Popconfirm
+            title={record.is_active ? (t('admin.confirmDisableUser') || '确认禁用账号？') : (t('admin.confirmEnableUser') || '确认启用账号？')}
+            description={record.is_active 
+              ? `禁用后用户 ${record.username} 将无法登录`
+              : `启用后用户 ${record.username} 将恢复登录权限`
+            }
+            onConfirm={() => handleToggleUserStatus(record)}
+            okText={t('common.confirm') || '确认'}
+            cancelText={t('common.cancel') || '取消'}
+          >
+            <Tooltip title={record.is_active ? (t('admin.disableUser') || '禁用账号') : (t('admin.enableUser') || '启用账号')}>
+              <Button
+                size="small"
+                type={record.is_active ? 'default' : 'primary'}
+                icon={record.is_active ? <StopOutlined /> : <PlayCircleOutlined />}
+                loading={actionLoading[record.id] === 'status'}
+              >
+                {record.is_active ? (t('admin.disable') || '禁用') : (t('admin.enable') || '启用')}
+              </Button>
+            </Tooltip>
+          </Popconfirm>
+          {/* 删除用户按钮 */}
+          <Popconfirm
+            title={t('admin.confirmDeleteUser') || '确认删除用户？'}
+            description={`这将永久删除用户 ${record.username}，此操作不可恢复！`}
+            onConfirm={() => handleDeleteUser(record)}
+            okText={t('common.confirm') || '确认'}
+            cancelText={t('common.cancel') || '取消'}
+            okButtonProps={{ danger: true }}
+          >
+            <Tooltip title={t('admin.deleteUser') || '删除用户'}>
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                loading={actionLoading[record.id] === 'delete'}
+              >
+                {t('common.delete') || '删除'}
+              </Button>
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },

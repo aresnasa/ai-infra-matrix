@@ -713,15 +713,15 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                       }
                     />
 
-                    {/* Monitoring dashboard page (Nightingale) - 允许管理员访问 */}
+                    {/* Monitoring dashboard page (Nightingale) - 允许SRE团队访问 */}
                     <Route
                       path="/monitoring"
                       element={
-                        <AdminProtectedRoute user={user}>
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <MonitoringPage />
                           </Suspense>
-                        </AdminProtectedRoute>
+                        </TeamProtectedRoute>
                       }
                     />
 
