@@ -493,6 +493,9 @@ export const adminAPI = {
   approveRegistration: (id) => api.post(`admin/approvals/${id}/approve`),
   rejectRegistration: (id, reason) => api.post(`admin/approvals/${id}/reject`, { reason }),
   
+  // 用户模块权限授予
+  grantUserModules: (userId, data) => api.post(`admin/users/${userId}/modules`, data),
+  
   // 获取所有用户（分页）
   getAllUsers: (params) => api.get('admin/users', { params }),
   
