@@ -5775,11 +5775,25 @@ build_component_for_platform() {
     local arch_name="${platform##*/}"
     local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
     
-    # For cross-platform builds, use the desktop-linux builder (Docker Desktop's built-in builder)
-    # It has better network connectivity and QEMU support than docker-container driver
-    local builder_name="desktop-linux"
-    if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
-        # Fallback to default if desktop-linux doesn't exist
+    # For cross-platform builds, we need docker-container driver (docker driver doesn't support cross-platform pull)
+    # The docker-container driver runs buildkit in a container with QEMU support
+    local builder_name="multiarch-builder"
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
+    # Only need special builder for cross-platform builds
+    if [[ "$arch_name" != "$native_arch" ]]; then
+        if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+            log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
+            # Create builder with host network to inherit proxy settings
+            docker buildx create --name "$builder_name" --driver docker-container \
+                --driver-opt network=host --bootstrap >/dev/null 2>&1 || {
+                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
+                builder_name="default"
+            }
+        fi
+    else
+        # For native platform, use default builder (faster)
         builder_name="default"
     fi
     
