@@ -5738,7 +5738,16 @@ pull_dependency_for_platform() {
         return 0
     fi
     
-    local target_image="ai-infra-$component:${tag}"
+    # Use architecture-suffixed tag for cross-platform pulls
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    local arch_suffix=""
+    
+    if [[ "$arch_name" != "$native_arch" ]]; then
+        arch_suffix="-${arch_name}"
+    fi
+    
+    local target_image="ai-infra-$component:${tag}${arch_suffix}"
     
     log_info "  [$arch_name] Pulling: $upstream_image -> $target_image"
     
@@ -5877,7 +5886,19 @@ build_component_for_platform() {
     for i in "${!targets[@]}"; do
         local target="${targets[$i]}"
         local image_name="${images[$i]}"
-        local full_image_name="${image_name}:${tag}"
+        
+        # Use architecture-suffixed tag for cross-platform builds to avoid overwriting
+        # This allows building and storing both amd64 and arm64 images on the same machine
+        local native_platform=$(_detect_docker_platform)
+        local native_arch="${native_platform##*/}"
+        local arch_suffix=""
+        
+        # Add architecture suffix when building for non-native platform
+        if [[ "$arch_name" != "$native_arch" ]]; then
+            arch_suffix="-${arch_name}"
+        fi
+        
+        local full_image_name="${image_name}:${tag}${arch_suffix}"
         
         if [ -n "$PRIVATE_REGISTRY" ]; then
             full_image_name="$PRIVATE_REGISTRY/$full_image_name"
@@ -6608,8 +6629,9 @@ stop_all() {
         return 1
     fi
     
-    # 先尝试使用 --profile ha 停止所有服务（包括 HA 模式的容器）
-    $compose_cmd --profile ha down 2>/dev/null || true
+    # 停止所有 profile 下的服务（ha, safeline 等）
+    # 需要同时指定所有可能的 profile 才能确保完全停止
+    $compose_cmd --profile ha --profile safeline down 2>/dev/null || true
     
     # 作为兜底，再执行不带 profile 的 down
     $compose_cmd down 2>/dev/null || true
@@ -6618,6 +6640,13 @@ stop_all() {
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^ai-infra-salt-master-2$'; then
         log_info "Cleaning up HA container: ai-infra-salt-master-2"
         docker rm -f ai-infra-salt-master-2 >/dev/null 2>&1 || true
+    fi
+    
+    # 清理可能残留的 SafeLine 容器
+    local safeline_containers=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep '^safeline-' || true)
+    if [[ -n "$safeline_containers" ]]; then
+        log_info "Cleaning up SafeLine containers..."
+        echo "$safeline_containers" | xargs -r docker rm -f >/dev/null 2>&1 || true
     fi
     
     log_info "All services stopped."
@@ -6856,35 +6885,72 @@ export_offline_images() {
     
     # Phase 1: Export AI-Infra project images
     log_info "=== Phase 1: Exporting AI-Infra service images ==="
-    log_info "Note: Local images export current architecture only"
+    log_info "Note: Checking both native and cross-platform built images"
     
     local all_services=("${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
     
     for service in "${all_services[@]}"; do
-        local image_name="ai-infra-${service}:${tag}"
-        log_info "→ Exporting: $image_name"
+        log_info "→ Exporting: ai-infra-${service}"
         
-        # Local images: export as-is (single architecture based on build machine)
-        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
-        local current_arch=$(_detect_docker_platform)
-        current_arch="${current_arch##*/}"
-        local output_file="${output_dir}/${current_arch}/${safe_name}.tar"
-        
-        if docker image inspect "$image_name" >/dev/null 2>&1; then
-            if docker save "$image_name" -o "$output_file"; then
-                local file_size=$(du -h "$output_file" | cut -f1)
-                log_info "  ✓ Exported [${current_arch}]: $(basename "$output_file") ($file_size)"
-                exported_count=$((exported_count + 1))
+        # Try to export for each requested platform
+        for platform in "${valid_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            local arch_suffix=""
+            local image_name=""
+            
+            # For non-native arch, check for architecture-suffixed tag first
+            if [[ "$arch_name" != "$native_arch" ]]; then
+                arch_suffix="-${arch_name}"
+                image_name="ai-infra-${service}:${tag}${arch_suffix}"
             else
-                log_warn "  ✗ Failed to export: $image_name"
-                failed_images+=("$image_name")
+                # Native arch uses base tag
+                image_name="ai-infra-${service}:${tag}"
+            fi
+            
+            local safe_name=$(echo "ai-infra-${service}_${tag}" | sed 's|:|_|g')
+            local output_file="${output_dir}/${arch_name}/${safe_name}.tar"
+            
+            if docker image inspect "$image_name" >/dev/null 2>&1; then
+                # Verify the image architecture matches what we expect
+                local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$actual_arch" == "$arch_name" ]] || [[ "$actual_arch" == "amd64" && "$arch_name" == "amd64" ]] || [[ "$actual_arch" == "arm64" && "$arch_name" == "arm64" ]]; then
+                    if docker save "$image_name" -o "$output_file"; then
+                        local file_size=$(du -h "$output_file" | cut -f1)
+                        log_info "  ✓ Exported [${arch_name}]: $(basename "$output_file") ($file_size)"
+                        exported_count=$((exported_count + 1))
+                    else
+                        log_warn "  ✗ [$arch_name] Failed to export: $image_name"
+                        failed_images+=("${image_name}@${arch_name}")
+                        failed_count=$((failed_count + 1))
+                    fi
+                else
+                    log_warn "  ! [$arch_name] Image $image_name has wrong architecture: $actual_arch (expected $arch_name)"
+                    failed_images+=("${image_name}@${arch_name}")
+                    failed_count=$((failed_count + 1))
+                fi
+            else
+                # Try fallback: for non-native, also check base tag (in case it was built without suffix)
+                if [[ -n "$arch_suffix" ]]; then
+                    local fallback_image="ai-infra-${service}:${tag}"
+                    if docker image inspect "$fallback_image" >/dev/null 2>&1; then
+                        local fallback_arch=$(docker image inspect "$fallback_image" --format '{{.Architecture}}' 2>/dev/null)
+                        if [[ "$fallback_arch" == "$arch_name" ]]; then
+                            if docker save "$fallback_image" -o "$output_file"; then
+                                local file_size=$(du -h "$output_file" | cut -f1)
+                                log_info "  ✓ Exported [${arch_name}] (from base tag): $(basename "$output_file") ($file_size)"
+                                exported_count=$((exported_count + 1))
+                                continue
+                            fi
+                        fi
+                    fi
+                fi
+                log_warn "  ! [$arch_name] Image not found: $image_name"
+                failed_images+=("${image_name}@${arch_name}")
                 failed_count=$((failed_count + 1))
             fi
-        else
-            log_warn "  ! Image not found, skipping: $image_name"
-            failed_images+=("$image_name")
-            failed_count=$((failed_count + 1))
-        fi
+        done
     done
     echo
     
