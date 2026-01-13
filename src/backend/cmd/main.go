@@ -673,6 +673,40 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		rbac.GET("/verbs", rbacController.GetAvailableVerbs)
 	}
 
+	// 权限审批路由（需要认证）
+	approvalService := services.NewPermissionApprovalService(database.DB, rbacService)
+	approvalController := controllers.NewPermissionApprovalController(approvalService)
+	approvals := api.Group("/approvals")
+	approvals.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 模块和权限信息
+		approvals.GET("/modules", approvalController.GetAvailableModules)
+		approvals.GET("/verbs", approvalController.GetAvailableVerbs)
+
+		// 权限申请管理
+		approvals.POST("/requests", approvalController.CreatePermissionRequest)
+		approvals.GET("/requests", approvalController.ListPermissionRequests)
+		approvals.GET("/requests/:id", approvalController.GetPermissionRequest)
+		approvals.POST("/requests/:id/approve", approvalController.ApprovePermissionRequest)
+		approvals.POST("/requests/:id/cancel", approvalController.CancelPermissionRequest)
+
+		// 权限授权管理
+		approvals.POST("/grants", approvalController.GrantPermission)
+		approvals.POST("/grants/revoke", approvalController.RevokePermission)
+		approvals.GET("/grants", approvalController.GetUserGrants)
+		approvals.GET("/my-grants", approvalController.GetMyGrants)
+
+		// 审批规则管理
+		approvals.POST("/rules", approvalController.CreateApprovalRule)
+		approvals.GET("/rules", approvalController.GetApprovalRules)
+		approvals.PUT("/rules/:id", approvalController.UpdateApprovalRule)
+		approvals.DELETE("/rules/:id", approvalController.DeleteApprovalRule)
+
+		// 统计和检查
+		approvals.GET("/stats", approvalController.GetStats)
+		approvals.GET("/check", approvalController.CheckModulePermission)
+	}
+
 	// 管理员路由（需要管理员权限）
 	adminController := controllers.NewAdminController(database.DB)
 	loggingController := controllers.NewLoggingController()
