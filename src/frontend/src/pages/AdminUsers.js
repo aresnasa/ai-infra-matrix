@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Popconfirm, Input, Divider, theme } from 'antd';
-import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined, QrcodeOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Select, Tag, Space, message, Card, Typography, Alert, Spin, Popconfirm, Input, Divider, theme, Tabs, Badge, Checkbox, Tooltip, Empty } from 'antd';
+import { UserOutlined, CrownOutlined, UserSwitchOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, KeyOutlined, QrcodeOutlined, CopyOutlined, ReloadOutlined, ClockCircleOutlined, CheckOutlined, CloseOutlined, TeamOutlined, ToolOutlined } from '@ant-design/icons';
 import { QRCodeSVG } from 'qrcode.react';
 import { userAPI, securityAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
@@ -22,6 +22,25 @@ const AdminUsers = () => {
   const [twoFAStatus, setTwoFAStatus] = useState({});
   const [twoFASetupData, setTwoFASetupData] = useState(null);
   const [twoFALoading, setTwoFALoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('users');
+  const [pendingApprovals, setPendingApprovals] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [approvalModalVisible, setApprovalModalVisible] = useState(false);
+  const [selectedApproval, setSelectedApproval] = useState(null);
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [selectedModules, setSelectedModules] = useState([]);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+
+  // SRE 权限模块定义
+  const SRE_MODULES = [
+    { key: 'saltstack', label: 'SaltStack管理', labelEn: 'SaltStack Management', icon: <ToolOutlined /> },
+    { key: 'ansible', label: 'Ansible自动化', labelEn: 'Ansible Automation', icon: <ToolOutlined /> },
+    { key: 'kubernetes', label: 'Kubernetes集群管理', labelEn: 'Kubernetes Management', icon: <TeamOutlined /> },
+    { key: 'hosts', label: '主机管理', labelEn: 'Host Management', icon: <TeamOutlined /> },
+    { key: 'nightingale', label: '系统监控', labelEn: 'System Monitoring', icon: <ToolOutlined /> },
+    { key: 'audit-logs', label: '日志管理', labelEn: 'Log Management', icon: <SafetyOutlined /> },
+  ];
 
   // 获取用户列表
   const fetchUsers = async () => {
@@ -43,6 +62,114 @@ const AdminUsers = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 获取待审批列表
+  const fetchPendingApprovals = async () => {
+    setPendingLoading(true);
+    try {
+      const response = await userAPI.getPendingApprovals();
+      const data = response.data || [];
+      setPendingApprovals(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('获取待审批列表失败:', error);
+      message.error(t('admin.getPendingApprovalsFailed'));
+      setPendingApprovals([]);
+    } finally {
+      setPendingLoading(false);
+    }
+  };
+
+  // 打开审批模态框
+  const openApprovalModal = (approval) => {
+    setSelectedApproval(approval);
+    // 根据角色模板预选模块
+    if (approval.role_template === 'sre') {
+      setSelectedModules(SRE_MODULES.map(m => m.key));
+    } else {
+      setSelectedModules([]);
+    }
+    setApprovalModalVisible(true);
+  };
+
+  // 审批通过
+  const handleApprove = async () => {
+    if (!selectedApproval) return;
+    
+    setApprovalLoading(true);
+    try {
+      await userAPI.approveRegistration(selectedApproval.id);
+      
+      // 如果选择了模块，为用户授予对应权限
+      if (selectedModules.length > 0 && selectedApproval.user_id) {
+        try {
+          await userAPI.grantUserModules(selectedApproval.user_id, {
+            modules: selectedModules,
+            verbs: ['read', 'create', 'update', 'delete', 'list']
+          });
+        } catch (err) {
+          console.warn('授予模块权限失败，但用户已审批通过:', err);
+        }
+      }
+      
+      message.success(t('admin.approvalSuccess'));
+      setApprovalModalVisible(false);
+      setSelectedApproval(null);
+      setSelectedModules([]);
+      fetchPendingApprovals();
+      fetchUsers();
+    } catch (error) {
+      console.error('审批失败:', error);
+      message.error(t('admin.approvalFailed') + ': ' + (error.response?.data?.error || error.message));
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  // 打开拒绝模态框
+  const openRejectModal = (approval) => {
+    setSelectedApproval(approval);
+    setRejectReason('');
+    setRejectModalVisible(true);
+  };
+
+  // 拒绝申请
+  const handleReject = async () => {
+    if (!selectedApproval) return;
+    
+    if (!rejectReason.trim()) {
+      message.warning(t('admin.rejectReasonRequired'));
+      return;
+    }
+    
+    setApprovalLoading(true);
+    try {
+      await userAPI.rejectRegistration(selectedApproval.id, rejectReason);
+      message.success(t('admin.rejectSuccess'));
+      setRejectModalVisible(false);
+      setSelectedApproval(null);
+      setRejectReason('');
+      fetchPendingApprovals();
+    } catch (error) {
+      console.error('拒绝申请失败:', error);
+      message.error(t('admin.rejectFailed') + ': ' + (error.response?.data?.error || error.message));
+    } finally {
+      setApprovalLoading(false);
+    }
+  };
+
+  // 获取角色模板标签
+  const getRoleTemplateTag = (template) => {
+    const templates = {
+      'admin': { color: 'red', icon: <CrownOutlined />, label: t('roleTemplates.admin') },
+      'sre': { color: 'blue', icon: <ToolOutlined />, label: t('roleTemplates.sre') },
+      'data-developer': { color: 'green', icon: <TeamOutlined />, label: t('roleTemplates.dataDeveloper') },
+      'model-developer': { color: 'purple', icon: <TeamOutlined />, label: t('roleTemplates.modelDeveloper') },
+      'engineer': { color: 'orange', icon: <UserOutlined />, label: t('roleTemplates.engineer') },
+      'audit': { color: 'cyan', icon: <SafetyOutlined />, label: t('roleTemplates.audit') },
+    };
+    const config = templates[template] || { color: 'default', icon: <UserOutlined />, label: template || t('admin.regularUser') };
+    return <Tag color={config.color} icon={config.icon}>{config.label}</Tag>;
   };
 
   // 更新用户权限 - 使用正确的API端点
@@ -323,6 +450,7 @@ const AdminUsers = () => {
   // 组件挂载时获取用户列表
   useEffect(() => {
     fetchUsers();
+    fetchPendingApprovals();
   }, []);
 
   // 用户列表更新后获取2FA状态
@@ -332,20 +460,89 @@ const AdminUsers = () => {
     }
   }, [users]);
 
-  return (
-    <div style={{ padding: '24px' }}>
-      <Card>
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div>
-            <Title level={2} style={{ marginBottom: '8px' }}>
-              <UserOutlined style={{ marginRight: '12px' }} />
-              {t('admin.userPermissions')}
-            </Title>
-            <Text type="secondary">
-              {t('admin.userPermissionsDesc')}
-            </Text>
-          </div>
+  // 待审批列表表格列配置
+  const pendingColumns = [
+    {
+      title: t('admin.username'),
+      dataIndex: 'username',
+      key: 'username',
+      render: (username) => (
+        <Space>
+          <UserOutlined />
+          <Text strong>{username}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: t('admin.email'),
+      dataIndex: 'email',
+      key: 'email',
+      render: (email) => email || t('admin.notSet'),
+    },
+    {
+      title: t('admin.department'),
+      dataIndex: 'department',
+      key: 'department',
+      render: (department) => department || '-',
+    },
+    {
+      title: t('admin.roleTemplate'),
+      dataIndex: 'role_template',
+      key: 'role_template',
+      render: (roleTemplate) => getRoleTemplateTag(roleTemplate),
+    },
+    {
+      title: t('admin.applyTime'),
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (createdAt) => {
+        if (!createdAt) return t('admin.unknown');
+        try {
+          return new Date(createdAt).toLocaleString('zh-CN');
+        } catch {
+          return createdAt;
+        }
+      },
+    },
+    {
+      title: t('admin.action'),
+      key: 'action',
+      width: 200,
+      render: (_, record) => (
+        <Space size="small">
+          <Button
+            type="primary"
+            size="small"
+            icon={<CheckOutlined />}
+            onClick={() => openApprovalModal(record)}
+          >
+            {t('admin.approve')}
+          </Button>
+          <Button
+            danger
+            size="small"
+            icon={<CloseOutlined />}
+            onClick={() => openRejectModal(record)}
+          >
+            {t('admin.reject')}
+          </Button>
+        </Space>
+      ),
+    },
+  ];
 
+  // Tab 配置
+  const tabItems = [
+    {
+      key: 'users',
+      label: (
+        <span>
+          <UserOutlined />
+          {t('admin.userList')}
+        </span>
+      ),
+      children: (
+        <>
           <Alert
             message={t('admin.permissionNote')}
             description={t('admin.permissionNoteDesc')}
@@ -353,8 +550,15 @@ const AdminUsers = () => {
             showIcon
             style={{ marginBottom: '24px' }}
           />
-
-          <Card title={t('admin.userList')} size="small">
+          <Card 
+            title={t('admin.userList')} 
+            size="small"
+            extra={
+              <Button icon={<ReloadOutlined />} onClick={fetchUsers} loading={loading}>
+                {t('common.refresh')}
+              </Button>
+            }
+          >
             <Table
               columns={columns}
               dataSource={users}
@@ -372,6 +576,79 @@ const AdminUsers = () => {
               }}
             />
           </Card>
+        </>
+      ),
+    },
+    {
+      key: 'pending',
+      label: (
+        <Badge count={pendingApprovals.length} offset={[10, 0]}>
+          <span>
+            <ClockCircleOutlined />
+            {t('admin.pendingApprovals')}
+          </span>
+        </Badge>
+      ),
+      children: (
+        <>
+          <Alert
+            message={t('admin.pendingApprovalsNote')}
+            description={t('admin.pendingApprovalsNoteDesc')}
+            type="warning"
+            showIcon
+            style={{ marginBottom: '24px' }}
+          />
+          <Card 
+            title={t('admin.pendingApprovalsList')} 
+            size="small"
+            extra={
+              <Button icon={<ReloadOutlined />} onClick={fetchPendingApprovals} loading={pendingLoading}>
+                {t('common.refresh')}
+              </Button>
+            }
+          >
+            {pendingApprovals.length === 0 ? (
+              <Empty description={t('admin.noPendingApprovals')} />
+            ) : (
+              <Table
+                columns={pendingColumns}
+                dataSource={pendingApprovals}
+                loading={pendingLoading}
+                rowKey="id"
+                pagination={{
+                  total: pendingApprovals.length,
+                  pageSize: 10,
+                  showSizeChanger: true,
+                  showQuickJumper: true,
+                  showTotal: (total, range) => t('admin.showing').replace('{start}', range[0]).replace('{end}', range[1]).replace('{total}', total),
+                }}
+              />
+            )}
+          </Card>
+        </>
+      ),
+    },
+  ];
+
+  return (
+    <div style={{ padding: '24px' }}>
+      <Card>
+        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+          <div>
+            <Title level={2} style={{ marginBottom: '8px' }}>
+              <UserOutlined style={{ marginRight: '12px' }} />
+              {t('admin.userPermissions')}
+            </Title>
+            <Text type="secondary">
+              {t('admin.userPermissionsDesc')}
+            </Text>
+          </div>
+
+          <Tabs 
+            activeKey={activeTab} 
+            onChange={setActiveTab}
+            items={tabItems}
+          />
         </Space>
       </Card>
 
@@ -577,6 +854,183 @@ const AdminUsers = () => {
         ) : (
           <div style={{ textAlign: 'center', padding: '40px' }}>
             <Text type="secondary">无数据</Text>
+          </div>
+        )}
+      </Modal>
+
+      {/* 审批确认模态框 */}
+      <Modal
+        title={
+          <Space>
+            <CheckCircleOutlined style={{ color: '#52c41a' }} />
+            {t('admin.approveRegistration')}
+          </Space>
+        }
+        open={approvalModalVisible}
+        onCancel={() => {
+          setApprovalModalVisible(false);
+          setSelectedApproval(null);
+          setSelectedModules([]);
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setApprovalModalVisible(false);
+            setSelectedApproval(null);
+            setSelectedModules([]);
+          }}>
+            {t('common.cancel')}
+          </Button>,
+          <Button 
+            key="approve" 
+            type="primary" 
+            loading={approvalLoading}
+            onClick={handleApprove}
+            icon={<CheckOutlined />}
+          >
+            {t('admin.confirmApprove')}
+          </Button>
+        ]}
+        width={600}
+      >
+        {selectedApproval && (
+          <div>
+            <Alert
+              message={t('admin.approvalConfirmMessage')}
+              type="info"
+              showIcon
+              style={{ marginBottom: '16px' }}
+            />
+            
+            <Card size="small" style={{ marginBottom: '16px' }}>
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <div>
+                  <Text strong>{t('admin.username')}: </Text>
+                  <Text>{selectedApproval.username}</Text>
+                </div>
+                <div>
+                  <Text strong>{t('admin.email')}: </Text>
+                  <Text>{selectedApproval.email || t('admin.notSet')}</Text>
+                </div>
+                <div>
+                  <Text strong>{t('admin.department')}: </Text>
+                  <Text>{selectedApproval.department || '-'}</Text>
+                </div>
+                <div>
+                  <Text strong>{t('admin.roleTemplate')}: </Text>
+                  {getRoleTemplateTag(selectedApproval.role_template)}
+                </div>
+              </Space>
+            </Card>
+
+            {/* 权限模块选择 - 仅对 SRE 和其他需要细分权限的角色显示 */}
+            {(selectedApproval.role_template === 'sre' || selectedApproval.role_template === 'engineer') && (
+              <Card 
+                size="small" 
+                title={
+                  <Space>
+                    <ToolOutlined />
+                    {t('admin.selectPermissionModules')}
+                  </Space>
+                }
+              >
+                <Alert
+                  message={t('admin.permissionModulesNote')}
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: '12px' }}
+                />
+                <Checkbox.Group
+                  value={selectedModules}
+                  onChange={setSelectedModules}
+                  style={{ width: '100%' }}
+                >
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                    {SRE_MODULES.map(module => (
+                      <Checkbox key={module.key} value={module.key}>
+                        <Space>
+                          {module.icon}
+                          <span>{module.label}</span>
+                        </Space>
+                      </Checkbox>
+                    ))}
+                  </div>
+                </Checkbox.Group>
+                <div style={{ marginTop: '12px' }}>
+                  <Button 
+                    size="small" 
+                    onClick={() => setSelectedModules(SRE_MODULES.map(m => m.key))}
+                  >
+                    {t('admin.selectAll')}
+                  </Button>
+                  <Button 
+                    size="small" 
+                    style={{ marginLeft: '8px' }}
+                    onClick={() => setSelectedModules([])}
+                  >
+                    {t('admin.clearSelection')}
+                  </Button>
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* 拒绝申请模态框 */}
+      <Modal
+        title={
+          <Space>
+            <CloseOutlined style={{ color: '#ff4d4f' }} />
+            {t('admin.rejectRegistration')}
+          </Space>
+        }
+        open={rejectModalVisible}
+        onCancel={() => {
+          setRejectModalVisible(false);
+          setSelectedApproval(null);
+          setRejectReason('');
+        }}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setRejectModalVisible(false);
+            setSelectedApproval(null);
+            setRejectReason('');
+          }}>
+            {t('common.cancel')}
+          </Button>,
+          <Button 
+            key="reject" 
+            danger 
+            loading={approvalLoading}
+            onClick={handleReject}
+            icon={<CloseOutlined />}
+          >
+            {t('admin.confirmReject')}
+          </Button>
+        ]}
+        width={500}
+      >
+        {selectedApproval && (
+          <div>
+            <Alert
+              message={t('admin.rejectConfirmMessage')}
+              description={`${t('admin.username')}: ${selectedApproval.username}`}
+              type="warning"
+              showIcon
+              style={{ marginBottom: '16px' }}
+            />
+            
+            <div>
+              <Text strong>{t('admin.rejectReason')}: </Text>
+              <Text type="danger">*</Text>
+            </div>
+            <Input.TextArea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder={t('admin.rejectReasonPlaceholder')}
+              rows={4}
+              style={{ marginTop: '8px' }}
+            />
           </div>
         )}
       </Modal>
