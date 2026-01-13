@@ -5956,13 +5956,29 @@ build_component_for_platform() {
         log_info "  [$arch_name] Building: $component [$target] -> $full_image_name"
         
         # Build environment variables (inherit proxy settings from shell)
+        # Convert localhost/127.0.0.1 to host.docker.internal for Docker Desktop compatibility
         local build_env=()
-        [[ -n "$HTTP_PROXY" ]] && build_env+=("HTTP_PROXY=$HTTP_PROXY")
-        [[ -n "$HTTPS_PROXY" ]] && build_env+=("HTTPS_PROXY=$HTTPS_PROXY")
-        [[ -n "$http_proxy" ]] && build_env+=("http_proxy=$http_proxy")
-        [[ -n "$https_proxy" ]] && build_env+=("https_proxy=$https_proxy")
-        [[ -n "$NO_PROXY" ]] && build_env+=("NO_PROXY=$NO_PROXY")
-        [[ -n "$no_proxy" ]] && build_env+=("no_proxy=$no_proxy")
+        if [[ -n "$HTTP_PROXY" ]]; then
+            local proxy="${HTTP_PROXY//127.0.0.1/host.docker.internal}"
+            proxy="${proxy//localhost/host.docker.internal}"
+            build_env+=("HTTP_PROXY=$proxy")
+        fi
+        if [[ -n "$HTTPS_PROXY" ]]; then
+            local proxy="${HTTPS_PROXY//127.0.0.1/host.docker.internal}"
+            proxy="${proxy//localhost/host.docker.internal}"
+            build_env+=("HTTPS_PROXY=$proxy")
+        fi
+        if [[ -n "$http_proxy" ]]; then
+            local proxy="${http_proxy//127.0.0.1/host.docker.internal}"
+            proxy="${proxy//localhost/host.docker.internal}"
+            build_env+=("http_proxy=$proxy")
+        fi
+        if [[ -n "$https_proxy" ]]; then
+            local proxy="${https_proxy//127.0.0.1/host.docker.internal}"
+            proxy="${proxy//localhost/host.docker.internal}"
+            build_env+=("https_proxy=$proxy")
+        fi
+        # Note: NO_PROXY is intentionally not converted as it may contain complex values
         
         local cmd=()
         if [[ ${#build_env[@]} -gt 0 ]]; then
