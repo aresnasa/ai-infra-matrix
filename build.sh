@@ -6709,8 +6709,8 @@ case "$COMMAND" in
         push_all_dependencies "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
         ;;
     export-offline)
-        # Export all images to tar files for offline deployment
-        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}"
+        # Export all images to tar files for offline deployment (multi-arch)
+        export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}" "${ARG5:-amd64,arm64}"
         ;;
     download|download-deps)
         # Download third-party dependencies to third_party/
