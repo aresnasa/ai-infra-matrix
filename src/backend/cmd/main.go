@@ -741,6 +741,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		admin.POST("/approvals/:id/approve", userHandler.ApproveRegistration)
 		admin.POST("/approvals/:id/reject", userHandler.RejectRegistration)
 
+		// 用户模块权限管理
+		admin.POST("/users/:id/modules", userHandler.GrantUserModules)
+
 		// 项目管理
 		admin.GET("/projects", adminController.GetAllProjects)
 		admin.GET("/projects/:id", adminController.GetProjectDetail)
