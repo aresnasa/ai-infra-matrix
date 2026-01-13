@@ -148,6 +148,9 @@ const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/
 const RoleTemplateManagement = withLazyLoading(React.lazy(() => import('./pages/RoleTemplateManagement')), {
   loadingText: '正在加载角色模板管理...'
 });
+const PermissionApprovalPage = withLazyLoading(React.lazy(() => import('./pages/PermissionApprovalPage')), {
+  loadingText: '正在加载权限审批管理...'
+});
 const FileBrowser = withLazyLoading(React.lazy(() => import('./pages/FileBrowser')),
   { loadingText: '正在加载文件浏览器...' }
 );
