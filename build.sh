@@ -5963,38 +5963,43 @@ export_offline_images() {
         echo
     fi
     
-    # Generate image manifest file
-    log_info "📋 Generating image manifest..."
-    local manifest_file="${output_dir}/images-manifest.txt"
-    cat > "$manifest_file" << EOF
+    # Generate image manifest file for each architecture
+    log_info "📋 Generating image manifests..."
+    
+    for platform in "${valid_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        local manifest_file="${output_dir}/${arch_name}/images-manifest.txt"
+        
+        cat > "$manifest_file" << EOF
 # AI Infrastructure Matrix - Offline Images Manifest
 # Generated: $(date)
 # Image Tag: $tag
+# Architecture: $arch_name
 # Include Common Images: $include_common
 
 # AI-Infra Service Images
 EOF
-    
-    for service in "${all_services[@]}"; do
-        local image_name="ai-infra-${service}:${tag}"
-        local safe_name=$(echo "$image_name" | sed 's|:|_|g')
-        local tar_file="${safe_name}.tar"
-        if [[ -f "${output_dir}/${tar_file}" ]]; then
-            echo "$image_name|$tar_file" >> "$manifest_file"
-        fi
-    done
-    
-    echo "" >> "$manifest_file"
-    echo "# Dependency Images" >> "$manifest_file"
-    
-    for mapping in "${dependencies[@]}"; do
-        local source_image="${mapping%%|*}"
-        local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
-        local tar_file="${safe_name}.tar"
-        if [[ -f "${output_dir}/${tar_file}" ]]; then
-            echo "$source_image|$tar_file" >> "$manifest_file"
-        fi
-    done
+        
+        for service in "${all_services[@]}"; do
+            local image_name="ai-infra-${service}:${tag}"
+            local safe_name=$(echo "$image_name" | sed 's|:|_|g')
+            local tar_file="${safe_name}.tar"
+            if [[ -f "${output_dir}/${arch_name}/${tar_file}" ]]; then
+                echo "$image_name|$tar_file" >> "$manifest_file"
+            fi
+        done
+        
+        echo "" >> "$manifest_file"
+        echo "# Dependency Images" >> "$manifest_file"
+        
+        for mapping in "${dependencies[@]}"; do
+            local source_image="${mapping%%|*}"
+            local safe_name=$(echo "$source_image" | sed 's|/|-|g' | sed 's|:|_|g')
+            local tar_file="${safe_name}.tar"
+            if [[ -f "${output_dir}/${arch_name}/${tar_file}" ]]; then
+                echo "$source_image|$tar_file" >> "$manifest_file"
+            fi
+        done
     
     if [[ "$include_common" == "true" ]]; then
         echo "" >> "$manifest_file"
