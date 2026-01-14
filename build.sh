@@ -890,6 +890,86 @@ need_rebuild() {
     return 1
 }
 
+# Check if service needs to be rebuilt for a specific platform
+# This is used by build_component_for_platform to check platform-specific images
+# Returns: FORCE_REBUILD, SKIP_CACHE_CHECK, IMAGE_NOT_EXIST, NO_HASH_LABEL, HASH_CHANGED, NO_CHANGE
+need_rebuild_for_platform() {
+    local service="$1"
+    local platform="$2"
+    local tag="${3:-${IMAGE_TAG:-latest}}"
+    
+    # Normalize platform and get arch name
+    if [[ "$platform" != *"/"* ]]; then
+        platform="linux/$platform"
+    fi
+    local arch_name="${platform##*/}"
+    
+    # Determine native architecture
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
+    # For native platform, use base tag; for cross-platform, use arch suffix
+    local arch_suffix=""
+    if [[ "$arch_name" != "$native_arch" ]]; then
+        arch_suffix="-${arch_name}"
+    fi
+    
+    local image="ai-infra-${service}:${tag}${arch_suffix}"
+    
+    # Force rebuild mode
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        echo "FORCE_REBUILD"
+        return 0
+    fi
+    
+    # Skip cache check mode
+    if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
+        echo "SKIP_CACHE_CHECK"
+        return 0
+    fi
+    
+    # Check if it's a dependency service (external image)
+    local dep_conf="$SRC_DIR/$service/dependency.conf"
+    if [[ -f "$dep_conf" ]]; then
+        # For dependencies, just check if local image exists
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            echo "NO_CHANGE"
+            return 1
+        else
+            echo "IMAGE_NOT_EXIST"
+            return 0
+        fi
+    fi
+    
+    # Image doesn't exist, need to build
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        echo "IMAGE_NOT_EXIST"
+        return 0
+    fi
+    
+    # Calculate current file hash
+    local current_hash=$(calculate_service_hash "$service")
+    
+    # Get hash stored in image label
+    local image_hash=$(docker image inspect "$image" --format '{{index .Config.Labels "build.hash"}}' 2>/dev/null || echo "")
+    
+    # No hash label in image, need to rebuild
+    if [[ -z "$image_hash" ]]; then
+        echo "NO_HASH_LABEL"
+        return 0
+    fi
+    
+    # Compare hashes
+    if [[ "$current_hash" != "$image_hash" ]]; then
+        echo "HASH_CHANGED|old:${image_hash:0:8}|new:${current_hash:0:8}"
+        return 0
+    fi
+    
+    # No need to rebuild
+    echo "NO_CHANGE"
+    return 1
+}
+
 # Log build history
 log_build_history() {
     local build_id="$1"
@@ -5718,10 +5798,10 @@ prefetch_base_images_for_platform() {
     for image in "${base_images[@]}"; do
         if docker pull --platform "$platform" "$image" >/dev/null 2>&1; then
             log_info "    ✓ $image"
-            ((success_count++))
+            success_count=$((success_count + 1))
         else
             log_warn "    ✗ $image (may not be needed)"
-            ((fail_count++))
+            fail_count=$((fail_count + 1))
         fi
     done
     
@@ -5824,8 +5904,9 @@ build_component_for_platform() {
     
     # ===== Build Cache Check =====
     # Skip cache check if FORCE_BUILD is enabled
+    # Use platform-specific check to ensure each architecture is built independently
     if [[ "$FORCE_BUILD" != "true" ]]; then
-        local rebuild_reason=$(need_rebuild "$component" "$tag")
+        local rebuild_reason=$(need_rebuild_for_platform "$component" "$platform" "$tag")
         if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
             log_cache "  [$arch_name] ⏭️  Skipping $component (no changes detected)"
             log_build_history "$build_id" "$component" "$tag" "SKIPPED" "NO_CHANGE ($arch_name)"
