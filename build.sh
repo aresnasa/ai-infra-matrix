@@ -2951,9 +2951,9 @@ download_third_party() {
     
     for component in "${components_to_download[@]}"; do
         if download_third_party_component "$component"; then
-            ((success++))
+            success=$((success + 1))
         else
-            ((failed++))
+            failed=$((failed + 1))
         fi
     done
     
