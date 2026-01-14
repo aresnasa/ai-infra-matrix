@@ -5716,7 +5716,11 @@ build_all_multiplatform() {
     done
     echo
     
-    # Phase 3: Start AppHub Service (native platform only for serving files)
+    # Phase 3: Start AppHub Service
+    # AppHub serves static files needed by dependent services during build
+    # Strategy:
+    #   - If native platform is in target platforms: use native AppHub (fast)
+    #   - If only cross-platform: run cross-platform AppHub via QEMU (slower but works)
     log_info "=== Phase 3: Starting AppHub Service ==="
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
@@ -5724,10 +5728,66 @@ build_all_multiplatform() {
         return 1
     fi
     
-    # Ensure we have native platform AppHub running
     local native_platform=$(_detect_docker_platform)
-    log_info "Starting AppHub container (native: $native_platform)..."
-    $compose_cmd up -d apphub
+    local native_arch="${native_platform##*/}"
+    local tag="${IMAGE_TAG:-latest}"
+    local apphub_image="ai-infra-apphub:${tag}"
+    
+    # Check if native platform is in target platforms
+    local has_native_platform=false
+    for platform in "${normalized_platforms[@]}"; do
+        local arch="${platform##*/}"
+        if [[ "$arch" == "$native_arch" ]]; then
+            has_native_platform=true
+            break
+        fi
+    done
+    
+    if [[ "$has_native_platform" == "true" ]]; then
+        # Native platform is in targets, use native AppHub
+        log_info "Using native AppHub (platform: $native_arch)"
+        $compose_cmd up -d apphub
+    else
+        # Only cross-platform builds, need to run AppHub via QEMU
+        local target_arch="${normalized_platforms[0]##*/}"
+        local cross_apphub_image="ai-infra-apphub:${tag}-${target_arch}"
+        
+        log_info "⚠️  Native platform ($native_arch) not in target platforms"
+        log_info "Starting cross-platform AppHub via QEMU (platform: $target_arch)"
+        
+        # Stop any existing apphub container
+        $compose_cmd stop apphub 2>/dev/null || true
+        docker rm -f ai-infra-apphub 2>/dev/null || true
+        
+        # Ensure network exists
+        docker network create ai-infra-network 2>/dev/null || true
+        
+        # Check if cross-platform image exists
+        if ! docker image inspect "$cross_apphub_image" >/dev/null 2>&1; then
+            log_error "Cross-platform AppHub image not found: $cross_apphub_image"
+            log_error "This should have been built in Phase 2"
+            return 1
+        fi
+        
+        # Run cross-platform AppHub container directly with platform flag
+        # This bypasses docker-compose and runs with explicit --platform
+        log_info "Running: docker run --platform linux/$target_arch $cross_apphub_image"
+        local apphub_port="${APPHUB_PORT:-28080}"
+        docker run -d \
+            --name ai-infra-apphub \
+            --platform "linux/$target_arch" \
+            --network ai-infra-network \
+            -p "${apphub_port}:80" \
+            -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+            -v "${SCRIPT_DIR}/src:/app/src:ro" \
+            "$cross_apphub_image"
+        
+        if [[ $? -ne 0 ]]; then
+            log_error "Failed to start cross-platform AppHub"
+            return 1
+        fi
+        log_info "✓ Cross-platform AppHub started via QEMU"
+    fi
     
     if ! wait_for_apphub_ready 300; then
         log_error "AppHub failed to start. Aborting build."
