@@ -4647,6 +4647,12 @@ if [ -f "$ENV_EXAMPLE" ]; then
         [[ -z "$key" ]] && continue
         curr_val="${!key}"
         if [ -n "$curr_val" ]; then
+            # For proxy-related args, convert localhost/127.0.0.1 to host.docker.internal
+            # This ensures buildkit container can access host's proxy
+            if [[ "$key" =~ ^(HTTP_PROXY|HTTPS_PROXY|http_proxy|https_proxy)$ ]]; then
+                curr_val="${curr_val//127.0.0.1/host.docker.internal}"
+                curr_val="${curr_val//localhost/host.docker.internal}"
+            fi
             BASE_BUILD_ARGS+=("--build-arg" "$key=$curr_val")
         fi
     done < <(grep -v '^#' "$ENV_EXAMPLE")
@@ -5772,8 +5778,40 @@ build_component_for_platform() {
     local extra_args=("${@:3}")
     local component_dir="$SRC_DIR/$component"
     local tag="${IMAGE_TAG:-latest}"
+    
+    # Normalize platform format: ensure it has "linux/" prefix
+    # Accept: amd64, arm64, linux/amd64, linux/arm64
+    if [[ "$platform" != *"/"* ]]; then
+        platform="linux/$platform"
+    fi
+    
     local arch_name="${platform##*/}"
     local build_id="${CURRENT_BUILD_ID:-$(generate_build_id)}"
+    
+    # For cross-platform builds, we need docker-container driver (docker driver doesn't support cross-platform pull)
+    # The docker-container driver runs buildkit in a container with QEMU support
+    local builder_name="multiarch-builder"
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
+    # Only need special builder for cross-platform builds
+    if [[ "$arch_name" != "$native_arch" ]]; then
+        if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+            log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
+            
+            # Create builder with docker-container driver and host network
+            # Using network=host allows buildkit to access the network directly without proxy configuration
+            # This avoids DNS resolution issues with host.docker.internal in different environments
+            if ! docker buildx create --name "$builder_name" --driver docker-container \
+                --driver-opt network=host --bootstrap 2>&1; then
+                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
+                builder_name="default"
+            fi
+        fi
+    else
+        # For native platform, use default builder (faster)
+        builder_name="default"
+    fi
     
     if [ ! -d "$component_dir" ]; then
         log_error "[$arch_name] Component directory not found: $component_dir"
@@ -5906,7 +5944,11 @@ build_component_for_platform() {
         
         log_info "  [$arch_name] Building: $component [$target] -> $full_image_name"
         
+        # For cross-platform builds using docker-container driver with network=host,
+        # the buildkit container can access the network directly without proxy.
+        # We don't pass proxy env vars to avoid DNS resolution issues with host.docker.internal
         local cmd=("docker" "buildx" "build")
+        cmd+=("--builder" "$builder_name")  # Use the detected builder for cross-platform builds
         cmd+=("--platform" "$platform")
         cmd+=("--load")  # Load to local docker daemon
         
@@ -5930,22 +5972,19 @@ build_component_for_platform() {
         
         cmd+=("$SCRIPT_DIR")
         
-        if "${cmd[@]}" >/dev/null 2>&1; then
+        # Debug: print the actual command being executed
+        # log_info "DEBUG CMD: ${cmd[*]}"
+        
+        # For cross-platform builds, always show output to avoid buildkit caching issues
+        # The silent-then-retry pattern can cause metadata resolution failures
+        if "${cmd[@]}"; then
             log_info "  [$arch_name] ✓ Built: $full_image_name"
             log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
             save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
         else
-            # Retry with output on failure
-            log_warn "  [$arch_name] Retrying build with verbose output..."
-            if "${cmd[@]}"; then
-                log_info "  [$arch_name] ✓ Built: $full_image_name"
-                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_RETRY ($arch_name)"
-                save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
-            else
-                log_error "  [$arch_name] ✗ Failed: $full_image_name"
-                log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
-                return 1
-            fi
+            log_error "  [$arch_name] ✗ Failed: $full_image_name"
+            log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
+            return 1
         fi
     done
     
@@ -7867,8 +7906,25 @@ case "$COMMAND" in
         log_info "Building components: ${components[*]}"
         [[ "$FORCE_BUILD" == "true" ]] && log_info "  with --no-cache (force rebuild)"
         
-        for component in "${components[@]}"; do
-            build_component "$component"
-        done
+        # Check if multi-platform build is requested
+        if [[ -n "$BUILD_PLATFORMS" ]]; then
+            log_info "🏗️  Multi-platform build mode: $BUILD_PLATFORMS"
+            # Parse comma-separated platforms
+            IFS=',' read -ra platform_list <<< "$BUILD_PLATFORMS"
+            for platform in "${platform_list[@]}"; do
+                platform=$(echo "$platform" | xargs) # Trim whitespace
+                log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                log_info "🏗️  Building for platform: $platform"
+                log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                for component in "${components[@]}"; do
+                    build_component_for_platform "$component" "$platform"
+                done
+            done
+        else
+            # Standard single-platform build
+            for component in "${components[@]}"; do
+                build_component "$component"
+            done
+        fi
         ;;
 esac
