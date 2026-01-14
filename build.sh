@@ -5623,10 +5623,14 @@ build_all_multiplatform() {
     
     # Phase 2: Build Foundation Services for each platform
     log_info "=== Phase 2: Building Foundation Services (Multi-Platform) ==="
+    log_info "Will build for ${#normalized_platforms[@]} platform(s): ${normalized_platforms[*]}"
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
-        log_info "━━━ Building Foundation Services for $arch_name ━━━"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "🏗️  Building Foundation Services for [$arch_name]"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         for service in "${FOUNDATION_SERVICES[@]}"; do
+            log_info "  → Building $service for $arch_name..."
             build_component_for_platform "$service" "$platform"
         done
     done
@@ -5658,16 +5662,20 @@ build_all_multiplatform() {
     local apphub_url="http://${external_host}:${apphub_port}"
     
     log_info "Using AppHub URL for builds: $apphub_url"
-    
+    log_info "Will build for ${#normalized_platforms[@]} platform(s): ${normalized_platforms[*]}"
+
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
-        log_info "━━━ Building Dependent Services for $arch_name ━━━"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "🏗️  Building Dependent Services for [$arch_name]"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         for service in "${DEPENDENT_SERVICES[@]}"; do
+            log_info "  → Building $service for $arch_name..."
             build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
         done
     done
     echo
-    
+
     # Build summary
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "🎉 Multi-Platform Build Session $CURRENT_BUILD_ID Completed"
@@ -5794,23 +5802,19 @@ build_component_for_platform() {
     local native_platform=$(_detect_docker_platform)
     local native_arch="${native_platform##*/}"
     
-    # Only need special builder for cross-platform builds
-    if [[ "$arch_name" != "$native_arch" ]]; then
-        if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
-            log_info "  [$arch_name] Creating multiarch-builder for cross-platform builds..."
-            
-            # Create builder with docker-container driver and host network
-            # Using network=host allows buildkit to access the network directly without proxy configuration
-            # This avoids DNS resolution issues with host.docker.internal in different environments
-            if ! docker buildx create --name "$builder_name" --driver docker-container \
-                --driver-opt network=host --bootstrap 2>&1; then
-                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
-                builder_name="default"
-            fi
+    # Always use multiarch-builder to avoid context switching issues
+    # This ensures consistent behavior whether building for native or cross platform
+    if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        log_info "  [$arch_name] Creating multiarch-builder..."
+        
+        # Create builder with docker-container driver and host network
+        # Using network=host allows buildkit to access the network directly without proxy configuration
+        # This avoids DNS resolution issues with host.docker.internal in different environments
+        if ! docker buildx create --name "$builder_name" --driver docker-container \
+            --driver-opt network=host --bootstrap 2>&1; then
+            log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
+            builder_name="default"
         fi
-    else
-        # For native platform, use default builder (faster)
-        builder_name="default"
     fi
     
     if [ ! -d "$component_dir" ]; then
