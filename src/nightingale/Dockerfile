@@ -87,14 +87,55 @@ RUN set -eux; \
     ls -la
 
 # Install dependencies and build with custom prefix
+# Note: esbuild crashes under QEMU emulation (ARM64 host building AMD64)
+# due to Go runtime "lfstack.push" error in emulated environment.
+# Strategy:
+#   1. Try normal npm build first
+#   2. If build fails (QEMU), download pre-built frontend from official release
+#   3. Pre-built frontend works but lacks custom VITE_PREFIX (default /)
+ARG N9E_VERSION=v8.5.0
 RUN set -eux; \
     if [ -n "${NPM_REGISTRY}" ]; then \
         npm config set registry ${NPM_REGISTRY}; \
     fi; \
-    npm install --legacy-peer-deps; \
-    echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}"; \
-    VITE_PREFIX=${VITE_PREFIX} npm run build; \
-    # The build output is in /fe/pub directory
+    BUILD_ARCH=$(uname -m); \
+    echo "Build architecture: ${BUILD_ARCH}"; \
+    # Try to build frontend with custom VITE_PREFIX
+    BUILD_SUCCESS=false; \
+    npm install --legacy-peer-deps && \
+    echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}" && \
+    NODE_OPTIONS="--max-old-space-size=4096" VITE_PREFIX=${VITE_PREFIX} npm run build && \
+    BUILD_SUCCESS=true || true; \
+    # If build failed (likely QEMU), download pre-built frontend
+    if [ "$BUILD_SUCCESS" = "false" ]; then \
+        echo "⚠️  Frontend build failed (likely QEMU emulation)"; \
+        echo "📦 Downloading pre-built frontend from official release..."; \
+        RELEASE_ARCH="amd64"; \
+        if [ "${BUILD_ARCH}" = "aarch64" ]; then RELEASE_ARCH="arm64"; fi; \
+        RELEASE_URL="https://github.com/ccfos/nightingale/releases/download/${N9E_VERSION}/n9e-${N9E_VERSION}-linux-${RELEASE_ARCH}.tar.gz"; \
+        # Try with GITHUB_MIRROR first
+        if [ -n "${GITHUB_MIRROR}" ]; then \
+            RELEASE_URL="${GITHUB_MIRROR}${RELEASE_URL}"; \
+        fi; \
+        echo "Downloading from: ${RELEASE_URL}"; \
+        mkdir -p /tmp/n9e-release; \
+        curl -fsSL "${RELEASE_URL}" | tar -xz -C /tmp/n9e-release --strip-components=1 || \
+        curl -fsSL "https://github.com/ccfos/nightingale/releases/download/${N9E_VERSION}/n9e-${N9E_VERSION}-linux-${RELEASE_ARCH}.tar.gz" | tar -xz -C /tmp/n9e-release --strip-components=1; \
+        # Copy pre-built frontend (pub directory)
+        if [ -d /tmp/n9e-release/pub ]; then \
+            cp -r /tmp/n9e-release/pub ./; \
+            echo "✓ Using pre-built frontend from official release"; \
+            echo "⚠️  Note: Pre-built frontend uses default BasePath (/)"; \
+            echo "    Custom VITE_PREFIX=${VITE_PREFIX} was not applied"; \
+        else \
+            echo "ERROR: pub directory not found in release"; \
+            exit 1; \
+        fi; \
+        rm -rf /tmp/n9e-release; \
+    else \
+        echo "✓ Frontend built successfully with VITE_PREFIX=${VITE_PREFIX}"; \
+    fi; \
+    # Verify pub directory exists
     ls -la pub/
 
 # ============================================================
