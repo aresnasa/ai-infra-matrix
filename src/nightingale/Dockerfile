@@ -93,7 +93,7 @@ RUN set -eux; \
 #   1. Try normal npm build first
 #   2. If build fails (QEMU), download pre-built frontend from official release
 #   3. Pre-built frontend works but lacks custom VITE_PREFIX (default /)
-ARG N9E_VERSION=v8.5.0
+ARG N9E_VERSION=v8.4.1
 RUN set -eux; \
     if [ -n "${NPM_REGISTRY}" ]; then \
         npm config set registry ${NPM_REGISTRY}; \
