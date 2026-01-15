@@ -6272,6 +6272,10 @@ tag_private_images_as_local() {
     local private_registry="${PRIVATE_REGISTRY:-}"
     local image_tag="${IMAGE_TAG:-v0.3.8}"
     
+    # Detect native platform for architecture suffix handling
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
     # List of ai-infra images that may need tagging
     local images=(
         "ai-infra-frontend"
@@ -6285,6 +6289,7 @@ tag_private_images_as_local() {
         "ai-infra-singleuser"
         "ai-infra-gitea"
         "ai-infra-nightingale"
+        "ai-infra-prometheus"
         "ai-infra-test-containers"
     )
     
@@ -6292,6 +6297,7 @@ tag_private_images_as_local() {
     local skipped=0
     
     log_info "Checking for images that need local tagging..."
+    log_info "Native architecture: $native_arch"
     
     # Mode 1: If PRIVATE_REGISTRY is configured, use it directly
     if [[ -n "$private_registry" ]]; then
@@ -6318,8 +6324,8 @@ tag_private_images_as_local() {
             fi
         done
     else
-        # Mode 2: Auto-detect registry-prefixed images
-        log_info "Auto-detecting registry-prefixed images..."
+        # Mode 2: Auto-detect registry-prefixed images AND architecture-suffixed images
+        log_info "Auto-detecting registry-prefixed and architecture-suffixed images..."
         
         for img in "${images[@]}"; do
             local local_image="${img}:${image_tag}"
@@ -6330,10 +6336,24 @@ tag_private_images_as_local() {
                 continue
             fi
             
-            # Search for any registry-prefixed version of this image
-            # Pattern: */ai-infra-xxx:tag or */*/*/ai-infra-xxx:tag
             local found_image=""
-            found_image=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "/${img}:${image_tag}$" | head -1)
+            
+            # Priority 1: Check for architecture-suffixed image (from cross-platform builds)
+            # This handles images built with --platform=amd64 on ARM64 Mac or vice versa
+            local arch_suffixed_image="${img}:${image_tag}-${native_arch}"
+            if docker image inspect "$arch_suffixed_image" &>/dev/null; then
+                # Verify architecture matches
+                local img_arch=$(docker image inspect "$arch_suffixed_image" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$img_arch" == "$native_arch" ]]; then
+                    found_image="$arch_suffixed_image"
+                fi
+            fi
+            
+            # Priority 2: Search for any registry-prefixed version of this image
+            # Pattern: */ai-infra-xxx:tag or */*/*/ai-infra-xxx:tag
+            if [[ -z "$found_image" ]]; then
+                found_image=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "/${img}:${image_tag}$" | head -1)
+            fi
             
             if [[ -n "$found_image" ]]; then
                 if docker tag "$found_image" "$local_image"; then
@@ -6351,7 +6371,7 @@ tag_private_images_as_local() {
     elif [[ $skipped -gt 0 ]]; then
         log_info "All $skipped images already exist locally"
     else
-        log_info "No registry-prefixed images found to tag"
+        log_info "No registry-prefixed or architecture-suffixed images found to tag"
     fi
 }
 
