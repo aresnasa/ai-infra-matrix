@@ -6330,10 +6330,17 @@ tag_private_images_as_local() {
         for img in "${images[@]}"; do
             local local_image="${img}:${image_tag}"
             
-            # Skip if local image already exists
+            # Check if local image already exists WITH CORRECT ARCHITECTURE
             if docker image inspect "$local_image" &>/dev/null; then
-                skipped=$((skipped + 1))
-                continue
+                local existing_arch=$(docker image inspect "$local_image" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$existing_arch" == "$native_arch" ]]; then
+                    skipped=$((skipped + 1))
+                    continue
+                else
+                    # Image exists but wrong architecture - need to replace it
+                    log_warn "  ⚠ $local_image exists but has wrong architecture: $existing_arch (expected $native_arch)"
+                    docker rmi "$local_image" &>/dev/null || true
+                fi
             fi
             
             local found_image=""
