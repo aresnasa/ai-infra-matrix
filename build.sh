@@ -7081,28 +7081,39 @@ export_offline_images() {
         # Try to export for each requested platform
         for platform in "${valid_platforms[@]}"; do
             local arch_name="${platform##*/}"
-            local arch_suffix=""
+            local arch_suffix="-${arch_name}"
             local image_name=""
+            local image_found=false
             
-            # For non-native arch, check for architecture-suffixed tag first
-            if [[ "$arch_name" != "$native_arch" ]]; then
-                arch_suffix="-${arch_name}"
-                image_name="ai-infra-${service}:${tag}${arch_suffix}"
-            else
-                # Native arch uses base tag
-                image_name="ai-infra-${service}:${tag}"
+            # Priority order for finding images:
+            # 1. Check architecture-suffixed tag first (cross-platform builds always use suffix)
+            # 2. Then check base tag (native builds)
+            local suffixed_image="ai-infra-${service}:${tag}${arch_suffix}"
+            local base_image="ai-infra-${service}:${tag}"
+            
+            # Try suffixed image first (preferred for clarity)
+            if docker image inspect "$suffixed_image" >/dev/null 2>&1; then
+                image_name="$suffixed_image"
+                image_found=true
+            elif docker image inspect "$base_image" >/dev/null 2>&1; then
+                # Verify base image has correct architecture
+                local base_arch=$(docker image inspect "$base_image" --format '{{.Architecture}}' 2>/dev/null)
+                if [[ "$base_arch" == "$arch_name" ]]; then
+                    image_name="$base_image"
+                    image_found=true
+                fi
             fi
             
             local safe_name=$(echo "ai-infra-${service}_${tag}" | sed 's|:|_|g')
             local output_file="${output_dir}/${arch_name}/${safe_name}.tar"
             
-            if docker image inspect "$image_name" >/dev/null 2>&1; then
+            if $image_found; then
                 # Verify the image architecture matches what we expect
                 local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
                 if [[ "$actual_arch" == "$arch_name" ]] || [[ "$actual_arch" == "amd64" && "$arch_name" == "amd64" ]] || [[ "$actual_arch" == "arm64" && "$arch_name" == "arm64" ]]; then
                     if docker save "$image_name" -o "$output_file"; then
                         local file_size=$(du -h "$output_file" | cut -f1)
-                        log_info "  ✓ Exported [${arch_name}]: $(basename "$output_file") ($file_size)"
+                        log_info "  ✓ [$arch_name] Exported: $(basename "$output_file") ($file_size)"
                         exported_count=$((exported_count + 1))
                     else
                         log_warn "  ✗ [$arch_name] Failed to export: $image_name"
@@ -7115,23 +7126,8 @@ export_offline_images() {
                     failed_count=$((failed_count + 1))
                 fi
             else
-                # Try fallback: for non-native, also check base tag (in case it was built without suffix)
-                if [[ -n "$arch_suffix" ]]; then
-                    local fallback_image="ai-infra-${service}:${tag}"
-                    if docker image inspect "$fallback_image" >/dev/null 2>&1; then
-                        local fallback_arch=$(docker image inspect "$fallback_image" --format '{{.Architecture}}' 2>/dev/null)
-                        if [[ "$fallback_arch" == "$arch_name" ]]; then
-                            if docker save "$fallback_image" -o "$output_file"; then
-                                local file_size=$(du -h "$output_file" | cut -f1)
-                                log_info "  ✓ Exported [${arch_name}] (from base tag): $(basename "$output_file") ($file_size)"
-                                exported_count=$((exported_count + 1))
-                                continue
-                            fi
-                        fi
-                    fi
-                fi
-                log_warn "  ! [$arch_name] Image not found: $image_name"
-                failed_images+=("${image_name}@${arch_name}")
+                log_warn "  ✗ [$arch_name] Image not found (tried: $suffixed_image, $base_image)"
+                failed_images+=("ai-infra-${service}:${tag}@${arch_name}")
                 failed_count=$((failed_count + 1))
             fi
         done
