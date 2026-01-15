@@ -7707,6 +7707,18 @@ if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
 fi
 if [[ -n "$BUILD_PLATFORMS" ]]; then
     log_info "🏗️  Multi-platform build enabled: $BUILD_PLATFORMS"
+    # Update DOCKER_HOST_PLATFORM to use the first specified platform for pull operations
+    # This ensures docker pull fetches images for the target architecture, not native
+    first_platform="${BUILD_PLATFORMS%%,*}"  # Get first platform (before comma)
+    case "$first_platform" in
+        amd64|x86_64)
+            DOCKER_HOST_PLATFORM="linux/amd64"
+            ;;
+        arm64|aarch64)
+            DOCKER_HOST_PLATFORM="linux/arm64"
+            ;;
+    esac
+    log_info "🎯 Target platform for pull: $DOCKER_HOST_PLATFORM"
 fi
 
 COMMAND="${REMAINING_ARGS[0]:-}"
