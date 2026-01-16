@@ -5606,6 +5606,152 @@ build_for_platform() {
     build_multiarch "$platform" "$force"
 }
 
+# ==============================================================================
+# Unified Image Tag Management (方案一：统一镜像标签)
+# ==============================================================================
+# 
+# Strategy: 
+# - All builds produce architecture-suffixed images: ai-infra-xxx:v0.3.8-amd64, ai-infra-xxx:v0.3.8-arm64
+# - After build, create unified tags for native architecture: ai-infra-xxx:v0.3.8 -> ai-infra-xxx:v0.3.8-arm64
+# - docker-compose uses unified tags (without suffix)
+# - start-all checks if images match local CPU architecture
+#
+# Benefits:
+# - Can store both architectures on the same machine
+# - Easy to export specific architecture for deployment
+# - Clear architecture identification via image tag
+
+# Create unified tags for native architecture
+# Maps ai-infra-xxx:tag-arch to ai-infra-xxx:tag for docker-compose compatibility
+# Usage: create_unified_tags_for_native <arch> <tag>
+create_unified_tags_for_native() {
+    local arch="$1"
+    local tag="${2:-${IMAGE_TAG:-latest}}"
+    local created=0
+    local skipped=0
+    local failed=0
+    
+    # Find all ai-infra images with architecture suffix
+    local arch_pattern=":${tag}-${arch}"
+    local images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep "ai-infra" | grep "$arch_pattern" || true)
+    
+    if [[ -z "$images" ]]; then
+        log_warn "No ai-infra images found with tag pattern: ${arch_pattern}"
+        return 0
+    fi
+    
+    log_info "Found $(echo "$images" | wc -l | tr -d ' ') images to tag"
+    
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        
+        # Extract base image name (remove architecture suffix)
+        # ai-infra-nginx:v0.3.8-arm64 -> ai-infra-nginx:v0.3.8
+        local unified_tag="${image%-${arch}}"
+        
+        # Check if unified tag already exists and matches
+        local existing_id=$(docker images -q "$unified_tag" 2>/dev/null || true)
+        local source_id=$(docker images -q "$image" 2>/dev/null || true)
+        
+        if [[ -n "$existing_id" ]] && [[ "$existing_id" == "$source_id" ]]; then
+            log_info "  ⏭️  Skip (same): $unified_tag"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        
+        if docker tag "$image" "$unified_tag" 2>/dev/null; then
+            log_info "  ✓ Tagged: $image -> $unified_tag"
+            created=$((created + 1))
+        else
+            log_warn "  ✗ Failed: $image -> $unified_tag"
+            failed=$((failed + 1))
+        fi
+    done <<< "$images"
+    
+    log_info "Unified tags: $created created, $skipped skipped, $failed failed"
+}
+
+# Check if local images match the native CPU architecture
+# Returns 0 if all images match, 1 if mismatch detected
+check_images_architecture() {
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    local tag="${IMAGE_TAG:-latest}"
+    local compose_cmd=$(detect_compose_command)
+    
+    log_info "Checking image architectures for native platform: $native_arch"
+    
+    # Get list of ai-infra images from docker-compose
+    local images=$($compose_cmd config --images 2>/dev/null | grep "ai-infra" | sort -u || true)
+    
+    if [[ -z "$images" ]]; then
+        log_warn "No ai-infra images found in docker-compose config"
+        return 0
+    fi
+    
+    local total=0
+    local matched=0
+    local mismatched=0
+    local missing=0
+    local mismatch_list=()
+    local missing_list=()
+    
+    while IFS= read -r image; do
+        [[ -z "$image" ]] && continue
+        total=$((total + 1))
+        
+        # Check if image exists
+        if ! docker image inspect "$image" >/dev/null 2>&1; then
+            missing=$((missing + 1))
+            missing_list+=("$image")
+            continue
+        fi
+        
+        # Get image architecture
+        local image_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+        
+        if [[ "$image_arch" == "$native_arch" ]]; then
+            matched=$((matched + 1))
+        else
+            mismatched=$((mismatched + 1))
+            mismatch_list+=("$image ($image_arch)")
+        fi
+    done <<< "$images"
+    
+    log_info "Architecture check: $matched/$total matched ($native_arch)"
+    
+    # Report missing images
+    if [[ $missing -gt 0 ]]; then
+        log_warn "Missing $missing images:"
+        for img in "${missing_list[@]}"; do
+            log_warn "  - $img"
+        done
+    fi
+    
+    # Report mismatched images
+    if [[ $mismatched -gt 0 ]]; then
+        log_error "Found $mismatched images with wrong architecture:"
+        for img in "${mismatch_list[@]}"; do
+            log_error "  - $img"
+        done
+        log_error ""
+        log_error "Your machine is $native_arch, but some images are built for different architecture."
+        log_error "Options to fix:"
+        log_error "  1. Rebuild for native: ./build.sh build-all"
+        log_error "  2. Rebuild for specific arch: ./build.sh build-all --platform=$native_arch"
+        log_error "  3. Tag existing arch images: docker tag ai-infra-xxx:${tag}-${native_arch} ai-infra-xxx:${tag}"
+        return 1
+    fi
+    
+    if [[ $missing -gt 0 ]]; then
+        log_warn "Some images are missing. Run: ./build.sh build-all"
+        # Don't fail on missing - docker-compose will handle it
+    fi
+    
+    log_info "✓ All images match native architecture ($native_arch)"
+    return 0
+}
+
 # Build all services for multiple platforms sequentially
 # This is an enhanced version of build_all that builds for each platform
 # Usage: build_all_multiplatform <platforms> [force]
@@ -5806,6 +5952,32 @@ build_all_multiplatform() {
     done
     echo
 
+    # Phase 5: Create unified tags for native architecture
+    # This allows docker-compose to use images without architecture suffix
+    log_info "=== Phase 5: Creating Unified Tags for Native Architecture ==="
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
+    
+    # Check if native architecture was built
+    local has_native=false
+    for platform in "${normalized_platforms[@]}"; do
+        local arch="${platform##*/}"
+        if [[ "$arch" == "$native_arch" ]]; then
+            has_native=true
+            break
+        fi
+    done
+    
+    if [[ "$has_native" == "true" ]]; then
+        log_info "Creating unified tags for native architecture: $native_arch"
+        create_unified_tags_for_native "$native_arch" "$tag"
+    else
+        log_warn "Native architecture ($native_arch) was not built."
+        log_warn "To start services on this machine, you need to build for $native_arch first."
+        log_info "Or manually tag images: docker tag ai-infra-xxx:${tag}-<arch> ai-infra-xxx:${tag}"
+    fi
+    echo
+
     # Build summary
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "🎉 Multi-Platform Build Session $CURRENT_BUILD_ID Completed"
@@ -5813,6 +5985,7 @@ build_all_multiplatform() {
     log_info "Platforms built: ${normalized_platforms[*]}"
     log_info ""
     log_info "📋 Next steps:"
+    log_info "   Start services: ./build.sh start-all"
     log_info "   Export for offline: ./build.sh export-offline ./offline ${IMAGE_TAG:-latest} true ${platforms}"
     log_info ""
     log_info "View build history: ./build.sh build-history"
@@ -5882,14 +6055,8 @@ pull_dependency_for_platform() {
         return 0
     fi
     
-    # Use architecture-suffixed tag for cross-platform pulls
-    local native_platform=$(_detect_docker_platform)
-    local native_arch="${native_platform##*/}"
-    local arch_suffix=""
-    
-    if [[ "$arch_name" != "$native_arch" ]]; then
-        arch_suffix="-${arch_name}"
-    fi
+    # Use architecture-suffixed tag for ALL pulls (方案一：统一镜像管理)
+    local arch_suffix="-${arch_name}"
     
     local target_image="ai-infra-$component:${tag}${arch_suffix}"
     
@@ -6060,16 +6227,10 @@ build_component_for_platform() {
         local target="${targets[$i]}"
         local image_name="${images[$i]}"
         
-        # Use architecture-suffixed tag for cross-platform builds to avoid overwriting
+        # Use architecture-suffixed tag for ALL builds (方案一：统一镜像管理)
         # This allows building and storing both amd64 and arm64 images on the same machine
-        local native_platform=$(_detect_docker_platform)
-        local native_arch="${native_platform##*/}"
-        local arch_suffix=""
-        
-        # Add architecture suffix when building for non-native platform
-        if [[ "$arch_name" != "$native_arch" ]]; then
-            arch_suffix="-${arch_name}"
-        fi
+        # After build, we'll create unified tags for the native architecture
+        local arch_suffix="-${arch_name}"
         
         local full_image_name="${image_name}:${tag}${arch_suffix}"
         
@@ -6659,6 +6820,14 @@ start_all() {
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
         log_error "docker-compose not found!"
+        exit 1
+    fi
+    
+    # 【架构检查】确保镜像与本机 CPU 架构匹配
+    log_info "=== Architecture Compatibility Check ==="
+    if ! check_images_architecture; then
+        log_error "Architecture check failed. Please rebuild images for your platform."
+        log_info "Run: ./build.sh build-all"
         exit 1
     fi
     
