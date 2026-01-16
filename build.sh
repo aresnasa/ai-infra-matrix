@@ -7452,6 +7452,15 @@ IMPORT_SCRIPT_EOF
             log_warn "    - $img"
         done
         echo
+        
+        # Provide helpful hint
+        log_info "💡 To fix missing/wrong-arch images, run:"
+        for platform in "${valid_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            log_info "   ./build.sh pull-all --platform=$arch_name   # Pull all $arch_name images"
+        done
+        log_info "   Then re-run: ./build.sh export-offline --platform=<arch>"
+        echo
     fi
     
     log_info "📁 Output files:"
