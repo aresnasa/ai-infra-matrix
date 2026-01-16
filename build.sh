@@ -7176,6 +7176,7 @@ export_offline_images() {
     
     # Phase 2: Export dependency images (from deps.yaml mapping) - multi-arch
     log_info "=== Phase 2: Exporting dependency images (multi-arch) ==="
+    log_info "Note: Run './build.sh pull-all --platform=xxx' first to pull correct architecture"
     local dependencies=($(get_dependency_mappings))
     
     for mapping in "${dependencies[@]}"; do
@@ -7190,10 +7191,16 @@ export_offline_images() {
             
             case "$result" in
                 not_found)
-                    log_warn "  ! [$arch_name] Image not found, skipping"
+                    log_warn "  ! [$arch_name] Image not found (run: ./build.sh pull-all --platform=$arch_name)"
+                    failed_images+=("${source_image}@${arch_name}")
+                    failed_count=$((failed_count + 1))
                     ;;
-                pull_failed)
-                    log_warn "  ✗ [$arch_name] Failed to pull (may not support this arch)"
+                arch_mismatch:*)
+                    local actual_arch="${result#arch_mismatch:}"
+                    log_warn "  ! [$arch_name] Architecture mismatch: $actual_arch (expected $arch_name)"
+                    log_warn "    → Run: ./build.sh pull-all --platform=$arch_name"
+                    failed_images+=("${source_image}@${arch_name}")
+                    failed_count=$((failed_count + 1))
                     ;;
                 failed)
                     log_warn "  ✗ [$arch_name] Failed to export"
@@ -7212,6 +7219,7 @@ export_offline_images() {
     # Phase 3: Export common/third-party images - multi-arch
     if [[ "$include_common" == "true" ]]; then
         log_info "=== Phase 3: Exporting common/third-party images (multi-arch) ==="
+        log_info "Note: Run './build.sh pull-all --platform=xxx' first to pull correct architecture"
         
         for image in "${COMMON_IMAGES[@]}"; do
             log_info "→ Exporting: $image"
