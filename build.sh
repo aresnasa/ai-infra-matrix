@@ -8040,7 +8040,7 @@ case "$COMMAND" in
     export-offline)
         # Export all images to tar files for offline deployment (multi-arch)
         # Priority: --platform= flag > ARG5 position parameter > default (amd64,arm64)
-        local _export_platforms="${BUILD_PLATFORMS:-${ARG5:-amd64,arm64}}"
+        _export_platforms="${BUILD_PLATFORMS:-${ARG5:-amd64,arm64}}"
         export_offline_images "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "${ARG4:-true}" "$_export_platforms"
         ;;
     download|download-deps)
