@@ -6087,6 +6087,14 @@ build_component_for_platform() {
         cmd+=("--platform" "$platform")
         cmd+=("--load")  # Load to local docker daemon
         
+        # Add --add-host to map 'apphub' to the actual container IP
+        # This allows buildkit (running with host network) to access apphub container
+        local apphub_ip=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ai-infra-apphub 2>/dev/null || echo "")
+        if [[ -n "$apphub_ip" ]]; then
+            cmd+=("--add-host" "apphub:$apphub_ip")
+            log_info "  [$arch_name] Using apphub at $apphub_ip"
+        fi
+        
         # Add --no-cache if force build is enabled
         if [[ "$FORCE_BUILD" == "true" ]]; then
             cmd+=("--no-cache")
