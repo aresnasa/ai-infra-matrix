@@ -7071,25 +7071,21 @@ export_offline_images() {
             # Solution: Use "docker buildx build --output type=docker" to create a single-arch
             # image that can be properly saved. This essentially re-packages the image layers
             # into a format compatible with docker save.
+            # 
+            # We output with the original image name so docker load will create the correct tag.
             
-            # Create a temporary tag for the single-arch export
-            local temp_tag="export-temp-${arch_name}-$(echo "$image_name" | sed 's|[/:]|-|g')"
-            
-            # Use buildx to create a loadable single-arch image
+            # Use buildx to create a loadable single-arch image with original name
             # The "FROM image" dockerfile trick forces buildx to resolve to the specific platform
             if echo "FROM $image_name" | docker buildx build \
                 --platform="$platform" \
-                --output "type=docker,name=${temp_tag}" \
+                --output "type=docker,name=${image_name}" \
                 --quiet \
                 -f - . >/dev/null 2>&1; then
                 
-                # Now save the temp image
-                if docker save "$temp_tag" -o "$output_file" 2>/dev/null; then
-                    # Clean up temp tag
-                    docker rmi "$temp_tag" >/dev/null 2>&1 || true
+                # Now save the image (buildx should have replaced the multi-arch manifest with single-arch)
+                if docker save "$image_name" -o "$output_file" 2>/dev/null; then
                     du -h "$output_file" | cut -f1
                 else
-                    docker rmi "$temp_tag" >/dev/null 2>&1 || true
                     echo "failed"
                 fi
             else
