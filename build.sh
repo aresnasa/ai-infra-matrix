@@ -4380,20 +4380,32 @@ push_service() {
 #   Phase 1: Common images (original tags) - for general use
 #   Phase 2: Dependency images (project tag) - for version-controlled deployment
 #   Phase 3: Project services (project tag) - the main application images
-# Args: $1 = registry, $2 = tag
+# Args: $1 = registry, $2 = tag, $3 = max_retries, $4 = platforms (optional, comma-separated)
 #
 # For Harbor/private registries, registry path should include project name:
 #   ✓ harbor.example.com/ai-infra    (correct - includes project)
 #   ✗ harbor.example.com             (wrong - missing project)
+#
+# Multi-architecture support (方案一):
+#   When platforms are specified, it pushes architecture-specific images:
+#   - amd64: ai-infra-xxx:v0.3.8-amd64
+#   - arm64: ai-infra-xxx:v0.3.8-arm64
+#   
+#   Usage examples:
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8                    # Push unified tags
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64   # Push amd64 only
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64  # Push both
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    local platforms="${4:-}"  # Optional: amd64,arm64 or empty for unified tag
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push-all"
-        log_info "Usage: $0 push-all <registry/project> [tag]"
+        log_info "Usage: $0 push-all <registry/project> [tag] [--platform=amd64,arm64]"
         log_info "Example: $0 push-all harbor.example.com/ai-infra v0.3.8"
+        log_info "Example: $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64"
         return 1
     fi
     
@@ -4405,12 +4417,46 @@ push_all_services() {
     # Ensure registry ends without trailing slash
     registry="${registry%/}"
     
+    # Parse platforms parameter (--platform=amd64,arm64 -> amd64,arm64)
+    local platforms_value=""
+    if [[ -n "$platforms" ]]; then
+        if [[ "$platforms" == --platform=* ]]; then
+            platforms_value="${platforms#--platform=}"
+        else
+            platforms_value="$platforms"
+        fi
+    fi
+    
+    # Normalize and parse platforms into array
+    local -a PLATFORM_ARRAY=()
+    if [[ -n "$platforms_value" ]]; then
+        IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms_value"
+        # Normalize platform names
+        for i in "${!PLATFORM_ARRAY[@]}"; do
+            local p="${PLATFORM_ARRAY[$i]}"
+            case "$p" in
+                linux/amd64|amd64|x86_64) PLATFORM_ARRAY[$i]="amd64" ;;
+                linux/arm64|arm64|aarch64) PLATFORM_ARRAY[$i]="arm64" ;;
+                *)
+                    log_warn "Unknown platform: $p, skipping..."
+                    unset 'PLATFORM_ARRAY[$i]'
+                    ;;
+            esac
+        done
+    fi
+    
     log_info "=========================================="
     log_info "Pushing ALL images to registry"
     log_info "=========================================="
     log_info "Registry: $registry"
     log_info "Tag: $tag"
     log_info "Max retries: $max_retries"
+    if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+        log_info "Platforms: ${PLATFORM_ARRAY[*]}"
+        log_info "Mode: Multi-architecture (方案一 - push arch-specific tags)"
+    else
+        log_info "Mode: Unified tags (no platform specified)"
+    fi
     echo
     
     discover_services
@@ -4419,144 +4465,203 @@ push_all_services() {
     local total_count=0
     local failed_services=()
     
-    # Phase 1: Push common/third-party images with original tags
-    log_info "=== Phase 1: Common/third-party images (original tags) ==="
-    log_info "These images keep their original tags for general compatibility"
-    echo
-    for image in "${COMMON_IMAGES[@]}"; do
-        total_count=$((total_count + 1))
+    # If platforms specified, iterate through each platform
+    if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+        for platform in "${PLATFORM_ARRAY[@]}"; do
+            log_info "=========================================="
+            log_info "Processing platform: $platform"
+            log_info "=========================================="
+            echo
+            
+            # Phase 3 (only for multi-arch): Push project services with architecture suffix
+            log_info "=== Project services (tag: ${tag}-${platform}) ==="
+            log_info "Main application images built from src/*"
+            echo
+            for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                total_count=$((total_count + 1))
+                
+                if push_service "$service" "$tag" "$registry" "$max_retries" "$platform"; then
+                    log_info "  ✓ $service-${platform} pushed"
+                    success_count=$((success_count + 1))
+                else
+                    failed_services+=("$service-${platform}")
+                fi
+            done
+            echo
+            
+            # Phase 4 (multi-arch): Push special images
+            log_info "=== Special images (tag: ${tag}-${platform}) ==="
+            echo
+            local special_images=(
+                "backend-init"
+            )
+            for special in "${special_images[@]}"; do
+                total_count=$((total_count + 1))
+                local image_name="ai-infra-${special}:${tag}-${platform}"
+                local target_image="${registry}/ai-infra-${special}:${tag}-${platform}"
+                
+                log_info "[$total_count] $image_name -> $target_image"
+                
+                if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                    log_warn "  ✗ Source image not found: $image_name"
+                    log_info "    Hint: Build with '--platform=${platform}'"
+                    failed_services+=("special:${special}-${platform}")
+                    continue
+                fi
+                
+                if ! docker tag "$image_name" "$target_image"; then
+                    log_warn "  ✗ Failed to tag: $target_image"
+                    failed_services+=("special:${special}-${platform}")
+                    continue
+                fi
+                
+                if push_image_with_retry "$target_image" "$max_retries"; then
+                    log_info "  ✓ Pushed"
+                    success_count=$((success_count + 1))
+                else
+                    failed_services+=("special:${special}-${platform}")
+                fi
+            done
+            echo
+        done
         
-        # Extract image name without tag for target naming
-        local image_name="${image%%:*}"
-        local image_tag="${image##*:}"
-        # Remove registry prefix if any (e.g., confluentinc/cp-kafka -> cp-kafka)
-        local short_name="${image_name##*/}"
-        local target_image="${registry}/${short_name}:${image_tag}"
+        # For multi-arch mode, we skip Phase 1 and Phase 2 (common/dependency images)
+        # These are pulled from Docker Hub and don't need arch suffix in our tag scheme
+        log_info "Note: Common and dependency images are architecture-agnostic and"
+        log_info "      should be pushed separately without platform suffix using:"
+        log_info "      ./build.sh push-all $registry $tag"
+        echo
+    else
+        # Original unified tag mode (no platform specified)
         
-        log_info "[$total_count] $image -> $target_image"
-        
-        # Check if source image exists locally
-        if ! docker image inspect "$image" >/dev/null 2>&1; then
-            log_info "  Pulling source image..."
-            if ! pull_image_with_retry "$image" "$max_retries"; then
-                log_warn "  ✗ Failed to pull: $image"
+        # Phase 1: Push common/third-party images with original tags
+        log_info "=== Phase 1: Common/third-party images (original tags) ==="
+        log_info "These images keep their original tags for general compatibility"
+        echo
+        for image in "${COMMON_IMAGES[@]}"; do
+            total_count=$((total_count + 1))
+            
+            local image_name="${image%%:*}"
+            local image_tag="${image##*:}"
+            local short_name="${image_name##*/}"
+            local target_image="${registry}/${short_name}:${image_tag}"
+            
+            log_info "[$total_count] $image -> $target_image"
+            
+            if ! docker image inspect "$image" >/dev/null 2>&1; then
+                log_info "  Pulling source image..."
+                if ! pull_image_with_retry "$image" "$max_retries"; then
+                    log_warn "  ✗ Failed to pull: $image"
+                    failed_services+=("common:$image")
+                    continue
+                fi
+            fi
+            
+            if ! docker tag "$image" "$target_image"; then
+                log_warn "  ✗ Failed to tag: $target_image"
                 failed_services+=("common:$image")
                 continue
             fi
-        fi
+            
+            if push_image_with_retry "$target_image" "$max_retries"; then
+                log_info "  ✓ Pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("common:$image")
+            fi
+        done
+        echo
         
-        # Tag for registry
-        if ! docker tag "$image" "$target_image"; then
-            log_warn "  ✗ Failed to tag: $target_image"
-            failed_services+=("common:$image")
-            continue
-        fi
-        
-        # Push to registry
-        if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("common:$image")
-        fi
-    done
-    echo
-    
-    # Phase 2: Push dependency images with project tag
-    log_info "=== Phase 2: Dependency images (tag: $tag) ==="
-    log_info "These images are tagged with project version for version-controlled deployment"
-    echo
-    local dependencies=($(get_dependency_mappings))
-    for mapping in "${dependencies[@]}"; do
-        total_count=$((total_count + 1))
-        
-        local source_image="${mapping%%|*}"
-        local short_name="${mapping##*|}"
-        local target_image="${registry}/${short_name}:${tag}"
-        
-        log_info "[$total_count] $source_image -> $target_image"
-        
-        # Check if source image exists locally
-        if ! docker image inspect "$source_image" >/dev/null 2>&1; then
-            log_info "  Pulling source image..."
-            if ! pull_image_with_retry "$source_image" "$max_retries"; then
-                log_warn "  ✗ Failed to pull: $source_image"
+        # Phase 2: Push dependency images with project tag
+        log_info "=== Phase 2: Dependency images (tag: $tag) ==="
+        log_info "These images are tagged with project version for version-controlled deployment"
+        echo
+        local dependencies=($(get_dependency_mappings))
+        for mapping in "${dependencies[@]}"; do
+            total_count=$((total_count + 1))
+            
+            local source_image="${mapping%%|*}"
+            local short_name="${mapping##*|}"
+            local target_image="${registry}/${short_name}:${tag}"
+            
+            log_info "[$total_count] $source_image -> $target_image"
+            
+            if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+                log_info "  Pulling source image..."
+                if ! pull_image_with_retry "$source_image" "$max_retries"; then
+                    log_warn "  ✗ Failed to pull: $source_image"
+                    failed_services+=("dep:$short_name")
+                    continue
+                fi
+            fi
+            
+            if ! docker tag "$source_image" "$target_image"; then
+                log_warn "  ✗ Failed to tag: $target_image"
                 failed_services+=("dep:$short_name")
                 continue
             fi
-        fi
+            
+            if push_image_with_retry "$target_image" "$max_retries"; then
+                log_info "  ✓ Pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("dep:$short_name")
+            fi
+        done
+        echo
         
-        # Tag for registry with project tag
-        if ! docker tag "$source_image" "$target_image"; then
-            log_warn "  ✗ Failed to tag: $target_image"
-            failed_services+=("dep:$short_name")
-            continue
-        fi
+        # Phase 3: Push project services (unified tags)
+        log_info "=== Phase 3: Project services (tag: $tag) ==="
+        log_info "Main application images built from src/*"
+        echo
+        for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+            total_count=$((total_count + 1))
+            
+            if push_service "$service" "$tag" "$registry" "$max_retries"; then
+                log_info "  ✓ $service pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("$service")
+            fi
+        done
+        echo
         
-        # Push to registry
-        if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("dep:$short_name")
-        fi
-    done
-    echo
-    
-    # Phase 3: Push project services
-    log_info "=== Phase 3: Project services (tag: $tag) ==="
-    log_info "Main application images built from src/*"
-    echo
-    for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
-        total_count=$((total_count + 1))
-        
-        if push_service "$service" "$tag" "$registry" "$max_retries"; then
-            log_info "  ✓ $service pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("$service")
-        fi
-    done
-    echo
-    
-    # Phase 4: Push special images (multi-stage build targets, etc.)
-    log_info "=== Phase 4: Special images (tag: $tag) ==="
-    log_info "Images from multi-stage builds that don't have their own src/ directory"
-    echo
-    local special_images=(
-        "backend-init"    # Multi-stage build target from backend
-    )
-    for special in "${special_images[@]}"; do
-        total_count=$((total_count + 1))
-        local image_name="ai-infra-${special}:${tag}"
-        local target_image="${registry}/${image_name}"
-        
-        log_info "[$total_count] $image_name -> $target_image"
-        
-        # Check if source image exists locally
-        if ! docker image inspect "$image_name" >/dev/null 2>&1; then
-            log_warn "  ✗ Source image not found: $image_name"
-            log_info "    Hint: Build with 'docker compose build backend-init'"
-            failed_services+=("special:$special")
-            continue
-        fi
-        
-        # Tag for registry
-        if ! docker tag "$image_name" "$target_image"; then
-            log_warn "  ✗ Failed to tag: $target_image"
-            failed_services+=("special:$special")
-            continue
-        fi
-        
-        # Push to registry
-        if push_image_with_retry "$target_image" "$max_retries"; then
-            log_info "  ✓ Pushed"
-            success_count=$((success_count + 1))
-        else
-            failed_services+=("special:$special")
-        fi
-    done
-    echo
+        # Phase 4: Push special images (multi-stage build targets, etc.)
+        log_info "=== Phase 4: Special images (tag: $tag) ==="
+        log_info "Images from multi-stage builds that don't have their own src/ directory"
+        echo
+        local special_images=(
+            "backend-init"
+        )
+        for special in "${special_images[@]}"; do
+            total_count=$((total_count + 1))
+            local image_name="ai-infra-${special}:${tag}"
+            local target_image="${registry}/${image_name}"
+            
+            log_info "[$total_count] $image_name -> $target_image"
+            
+            if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                log_warn "  ✗ Source image not found: $image_name"
+                log_info "    Hint: Build with 'docker compose build backend-init'"
+                failed_services+=("special:$special")
+                continue
+            fi
+            
+            if ! docker tag "$image_name" "$target_image"; then
+                log_warn "  ✗ Failed to tag: $target_image"
+                failed_services+=("special:$special")
+                continue
+            fi
+            
+            if push_image_with_retry "$target_image" "$max_retries"; then
+                log_info "  ✓ Pushed"
+                success_count=$((success_count + 1))
+            else
+                failed_services+=("special:$special")
+            fi
+        done
+        echo
+    fi
     
     log_info "=========================================="
     log_info "Push completed: $success_count/$total_count successful"
