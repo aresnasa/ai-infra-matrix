@@ -470,6 +470,11 @@ sync_env_with_example() {
             local var_name="${BASH_REMATCH[1]}"
             local example_value="${BASH_REMATCH[2]}"
             
+            # 防御性检查：确保变量名不为空
+            if [[ -z "$var_name" ]]; then
+                continue
+            fi
+            
             # 检查 .env 中是否存在该变量
             if ! grep -q "^${var_name}=" "$env_file" 2>/dev/null; then
                 # 变量不存在，添加到文件末尾
