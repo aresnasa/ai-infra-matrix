@@ -4308,6 +4308,7 @@ pull_all_services() {
             done
             echo
         fi
+    fi
     
     log_info "=========================================="
     log_info "Pull completed: $success_count/$total_count successful"
