@@ -7937,22 +7937,28 @@ case "$COMMAND" in
             setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
         fi
         
-        # Check if multi-platform build is requested
+        # Determine build platforms
+        # - If --platform=xxx is specified, use that (can be single or multiple)
+        # - If not specified, auto-detect native platform for local build
+        _target_platforms=""
         if [[ -n "$BUILD_PLATFORMS" ]]; then
-            # Multi-platform build mode
-            log_info "🏗️  Multi-platform build mode: $BUILD_PLATFORMS"
-            if [[ "$FORCE_BUILD" == "true" ]]; then
-                build_all_multiplatform "$BUILD_PLATFORMS" "true"
-            else
-                build_all_multiplatform "$BUILD_PLATFORMS"
-            fi
+            # User explicitly specified platform(s)
+            _target_platforms="$BUILD_PLATFORMS"
+            log_info "🏗️  Build platforms (user specified): $_target_platforms"
         else
-            # Standard single-platform build
-            if [[ "$FORCE_BUILD" == "true" ]]; then
-                build_all "true"
-            else
-                build_all
-            fi
+            # Auto-detect native platform
+            _native_platform=$(_detect_docker_platform)
+            _native_arch="${_native_platform##*/}"
+            _target_platforms="$_native_arch"
+            log_info "🏗️  Build platform (auto-detected native): $_target_platforms"
+        fi
+        
+        # Always use multiplatform build function for consistent behavior
+        # This ensures buildx is used for all builds (better architecture handling)
+        if [[ "$FORCE_BUILD" == "true" ]]; then
+            build_all_multiplatform "$_target_platforms" "true"
+        else
+            build_all_multiplatform "$_target_platforms"
         fi
         ;;
     build-multiarch|multiarch)
