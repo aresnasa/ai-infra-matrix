@@ -8395,10 +8395,15 @@ case "$COMMAND" in
     push-all)
         if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
-            log_info "Usage: $0 push-all <registry> [tag]"
+            log_info "Usage: $0 push-all <registry> [tag] [--platform=amd64,arm64]"
+            log_info "Examples:"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64"
             exit 1
         fi
-        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
+        # Pass BUILD_PLATFORMS if specified via --platform flag
+        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}"
         ;;
     push-dep|push-dependencies)
         if [[ -z "$ARG2" ]]; then
