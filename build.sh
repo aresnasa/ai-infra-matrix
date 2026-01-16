@@ -4504,29 +4504,29 @@ push_service() {
 #   ✗ harbor.example.com             (wrong - missing project)
 #
 # Multi-architecture support (方案一):
-#   When platforms are specified, it pushes architecture-specific images.
-#   Use --no-arch-tag for Docker Hub (remote tag without arch suffix).
+#   Default: builds both amd64 and arm64, pushes without arch suffix (Docker Hub mode).
+#   Use --arch-tag for Harbor (remote tag with arch suffix like v0.3.8-amd64).
 #   
 #   Usage examples:
-#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8                              # Push unified tags
-#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64             # Harbor: v0.3.8-amd64
-#   ./build.sh push-all docker.io/user v0.3.8 --platform=amd64 --no-arch-tag            # Docker Hub: v0.3.8
-#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64       # Harbor: both with suffix
+#   ./build.sh push-all docker.io/user v0.3.8                                           # Docker Hub: v0.3.8 (default)
+#   ./build.sh push-all docker.io/user v0.3.8 --platform=amd64                          # Docker Hub: v0.3.8 (single arch)
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --arch-tag                   # Harbor: v0.3.8-amd64, v0.3.8-arm64
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64 --arch-tag  # Harbor: v0.3.8-amd64
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
     local platforms="${4:-}"    # Optional: amd64,arm64 or empty for unified tag
-    local arch_tag="${5:-true}" # Whether to include arch suffix in remote tag (--no-arch-tag sets to false)
+    local arch_tag="${5:-false}" # Whether to include arch suffix in remote tag (--arch-tag sets to true)
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push-all"
-        log_info "Usage: $0 push-all <registry/project> [tag] [--platform=amd64,arm64] [--no-arch-tag]"
+        log_info "Usage: $0 push-all <registry/project> [tag] [--platform=amd64,arm64] [--arch-tag]"
         log_info ""
         log_info "Examples:"
-        log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8                           # Unified tags"
-        log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64          # Harbor: v0.3.8-amd64"
-        log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64 --no-arch-tag         # Docker Hub: v0.3.8"
+        log_info "  $0 push-all docker.io/user v0.3.8                                        # Docker Hub: v0.3.8 (default)"
+        log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64                       # Docker Hub: single arch"
+        log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --arch-tag                # Harbor: v0.3.8-amd64, v0.3.8-arm64"
         return 1
     fi
     
@@ -8537,26 +8537,26 @@ case "$COMMAND" in
         fi
         # Pass BUILD_PLATFORMS if specified via --platform flag
         # Pass BUILD_PLATFORMS and arch_tag flag
-        # For single push, also respect --no-arch-tag
-        _arch_tag="true"
-        [[ "$NO_ARCH_TAG" == "true" ]] && _arch_tag="false"
+        # Default: no arch suffix. Use --arch-tag for Harbor mode
+        _arch_tag="false"
+        [[ "$NO_ARCH_TAG" == "false" ]] && _arch_tag="true"
         push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}" "$_arch_tag"
         ;;
     push-all)
         if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
-            log_info "Usage: $0 push-all <registry> [tag] [--platform=amd64,arm64] [--no-arch-tag]"
+            log_info "Usage: $0 push-all <registry> [tag] [--platform=amd64,arm64] [--arch-tag]"
             log_info ""
             log_info "Examples:"
-            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8                              # Unified tags"
-            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64             # Harbor: v0.3.8-amd64"
-            log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64 --no-arch-tag            # Docker Hub: v0.3.8"
-            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64       # Both archs with suffix"
+            log_info "  $0 push-all docker.io/user v0.3.8                                           # Docker Hub: v0.3.8 (default)"
+            log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64                          # Single arch, no suffix"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --arch-tag                   # Harbor: v0.3.8-amd64, v0.3.8-arm64"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64 --arch-tag  # Harbor: v0.3.8-amd64"
             exit 1
         fi
-        # Convert NO_ARCH_TAG flag to arch_tag parameter (inverted)
-        _arch_tag="true"
-        [[ "$NO_ARCH_TAG" == "true" ]] && _arch_tag="false"
+        # Default: no arch suffix (Docker Hub mode). Use --arch-tag for Harbor mode
+        _arch_tag="false"
+        [[ "$NO_ARCH_TAG" == "false" ]] && _arch_tag="true"
         # Pass BUILD_PLATFORMS and arch_tag flag
         push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}" "$_arch_tag"
         ;;
