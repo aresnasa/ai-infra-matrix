@@ -4013,6 +4013,7 @@ pull_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
+    local platforms="${4:-}"  # Optional: amd64,arm64 or empty for unified tag
     
     discover_services
     
@@ -4023,6 +4024,34 @@ pull_all_services() {
     # 使用通用函数验证 registry 路径
     if ! validate_registry_path "$registry" "$tag"; then
         return 1
+    fi
+    
+    # Parse platforms parameter (--platform=amd64,arm64 -> amd64,arm64)
+    local platforms_value=""
+    if [[ -n "$platforms" ]]; then
+        if [[ "$platforms" == --platform=* ]]; then
+            platforms_value="${platforms#--platform=}"
+        else
+            platforms_value="$platforms"
+        fi
+    fi
+    
+    # Normalize and parse platforms into array
+    local -a PLATFORM_ARRAY=()
+    if [[ -n "$platforms_value" ]]; then
+        IFS=',' read -ra PLATFORM_ARRAY <<< "$platforms_value"
+        # Normalize platform names
+        for i in "${!PLATFORM_ARRAY[@]}"; do
+            local p="${PLATFORM_ARRAY[$i]}"
+            case "$p" in
+                linux/amd64|amd64|x86_64) PLATFORM_ARRAY[$i]="amd64" ;;
+                linux/arm64|arm64|aarch64) PLATFORM_ARRAY[$i]="arm64" ;;
+                *)
+                    log_warn "Unknown platform: $p, skipping..."
+                    unset 'PLATFORM_ARRAY[$i]'
+                    ;;
+            esac
+        done
     fi
     
     if [[ -z "$registry" ]]; then
@@ -4092,121 +4121,193 @@ pull_all_services() {
         log_info "Registry: $registry"
         log_info "Tag: $tag"
         log_info "Max retries: $max_retries"
+        if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+            log_info "Platforms: ${PLATFORM_ARRAY[*]}"
+            log_info "Mode: Multi-architecture (方案一 - pull arch-specific tags)"
+        fi
         echo
         
-        # Phase 1: Pull common images from private registry
-        log_info "=== Phase 1: Common/third-party images ==="
-        for image in "${COMMON_IMAGES[@]}"; do
-            total_count=$((total_count + 1))
+        # If platforms specified, iterate through each platform for project services
+        if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
+            # Multi-architecture pull mode
+            # Phase 1 and 2 (common/dependency) are skipped in multi-arch mode
+            # as they are architecture-agnostic and should be pulled without platform suffix
             
-            # Extract short name (e.g., confluentinc/cp-kafka:7.5.0 -> cp-kafka)
-            local image_name="${image%%:*}"
-            local image_tag="${image##*:}"
-            local short_name="${image_name##*/}"
-            local remote_image="${registry}/${short_name}:${image_tag}"
+            for platform in "${PLATFORM_ARRAY[@]}"; do
+                log_info "=========================================="
+                log_info "Pulling platform: $platform"
+                log_info "=========================================="
+                echo
+                
+                # Phase 3: Pull project services with architecture suffix
+                log_info "=== Project services (tag: ${tag}-${platform}) ==="
+                for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                    total_count=$((total_count + 1))
+                    local image_name="ai-infra-${service}:${tag}-${platform}"
+                    local remote_image="${registry}/ai-infra-${service}:${tag}-${platform}"
+                    
+                    log_info "[$total_count] $remote_image"
+                    
+                    if pull_image_with_retry "$remote_image" "$max_retries"; then
+                        if docker tag "$remote_image" "$image_name"; then
+                            log_info "  ✓ Tagged as $image_name"
+                            success_count=$((success_count + 1))
+                        else
+                            log_warn "  ⚠ Pulled but failed to tag"
+                            success_count=$((success_count + 1))
+                        fi
+                    else
+                        log_warn "  ✗ Failed"
+                        failed_services+=("${service}-${platform}")
+                    fi
+                done
+                echo
+                
+                # Phase 4: Pull special images with architecture suffix
+                log_info "=== Special images (tag: ${tag}-${platform}) ==="
+                local special_images=("backend-init")
+                for special in "${special_images[@]}"; do
+                    total_count=$((total_count + 1))
+                    local image_name="ai-infra-${special}:${tag}-${platform}"
+                    local remote_image="${registry}/ai-infra-${special}:${tag}-${platform}"
+                    
+                    log_info "[$total_count] $remote_image"
+                    
+                    if pull_image_with_retry "$remote_image" "$max_retries"; then
+                        if docker tag "$remote_image" "$image_name"; then
+                            log_info "  ✓ Tagged as $image_name"
+                            success_count=$((success_count + 1))
+                        else
+                            log_warn "  ⚠ Pulled but failed to tag"
+                            success_count=$((success_count + 1))
+                        fi
+                    else
+                        log_warn "  ✗ Failed"
+                        failed_services+=("special:${special}-${platform}")
+                    fi
+                done
+                echo
+            done
             
-            log_info "[$total_count] $remote_image"
+            log_info "Note: Common and dependency images should be pulled separately without"
+            log_info "      platform suffix using: ./build.sh pull-all $registry $tag"
+            echo
+        else
+            # Original unified tag mode (no platform specified)
             
-            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
-            # 即使本地镜像存在，也需要检查架构是否匹配
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                # Tag as original image name for docker-compose compatibility
-                if docker tag "$remote_image" "$image"; then
-                    log_info "  ✓ Tagged as $image"
-                    success_count=$((success_count + 1))
+            # Phase 1: Pull common images from private registry
+            log_info "=== Phase 1: Common/third-party images ==="
+            for image in "${COMMON_IMAGES[@]}"; do
+                total_count=$((total_count + 1))
+                
+                # Extract short name (e.g., confluentinc/cp-kafka:7.5.0 -> cp-kafka)
+                local image_name="${image%%:*}"
+                local image_tag="${image##*:}"
+                local short_name="${image_name##*/}"
+                local remote_image="${registry}/${short_name}:${image_tag}"
+                
+                log_info "[$total_count] $remote_image"
+                
+                # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+                # 即使本地镜像存在，也需要检查架构是否匹配
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    # Tag as original image name for docker-compose compatibility
+                    if docker tag "$remote_image" "$image"; then
+                        log_info "  ✓ Tagged as $image"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed to pull from registry"
+                    failed_services+=("common:$short_name")
                 fi
-            else
-                log_warn "  ✗ Failed to pull from registry"
-                failed_services+=("common:$short_name")
-            fi
-        done
-        echo
-        
-        # Phase 2: Pull dependency images with project tag
-        log_info "=== Phase 2: Dependency images (tag: $tag) ==="
-        local dependencies=($(get_dependency_mappings))
-        for mapping in "${dependencies[@]}"; do
-            total_count=$((total_count + 1))
+            done
+            echo
             
-            local source_image="${mapping%%|*}"
-            local short_name="${mapping##*|}"
-            local remote_image="${registry}/${short_name}:${tag}"
-            
-            log_info "[$total_count] $remote_image -> $source_image"
-            
-            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                # Tag as original image name for docker-compose compatibility
-                if docker tag "$remote_image" "$source_image"; then
-                    log_info "  ✓ Tagged as $source_image"
-                    success_count=$((success_count + 1))
+            # Phase 2: Pull dependency images with project tag
+            log_info "=== Phase 2: Dependency images (tag: $tag) ==="
+            local dependencies=($(get_dependency_mappings))
+            for mapping in "${dependencies[@]}"; do
+                total_count=$((total_count + 1))
+                
+                local source_image="${mapping%%|*}"
+                local short_name="${mapping##*|}"
+                local remote_image="${registry}/${short_name}:${tag}"
+                
+                log_info "[$total_count] $remote_image -> $source_image"
+                
+                # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    # Tag as original image name for docker-compose compatibility
+                    if docker tag "$remote_image" "$source_image"; then
+                        log_info "  ✓ Tagged as $source_image"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed"
+                    failed_services+=("dep:$short_name")
                 fi
-            else
-                log_warn "  ✗ Failed"
-                failed_services+=("dep:$short_name")
-            fi
-        done
-        echo
-        
-        # Phase 3: Pull project services
-        log_info "=== Phase 3: Project services (tag: $tag) ==="
-        for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
-            total_count=$((total_count + 1))
-            local image_name="ai-infra-${service}:${tag}"
-            local remote_image="${registry}/${image_name}"
+            done
+            echo
             
-            log_info "[$total_count] $remote_image"
-            
-            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                if docker tag "$remote_image" "$image_name"; then
-                    log_info "  ✓ Tagged as $image_name"
-                    success_count=$((success_count + 1))
+            # Phase 3: Pull project services
+            log_info "=== Phase 3: Project services (tag: $tag) ==="
+            for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                total_count=$((total_count + 1))
+                local image_name="ai-infra-${service}:${tag}"
+                local remote_image="${registry}/${image_name}"
+                
+                log_info "[$total_count] $remote_image"
+                
+                # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    if docker tag "$remote_image" "$image_name"; then
+                        log_info "  ✓ Tagged as $image_name"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed"
+                    failed_services+=("$service")
                 fi
-            else
-                log_warn "  ✗ Failed"
-                failed_services+=("$service")
-            fi
-        done
-        echo
-        
-        # Phase 4: Pull special images (multi-stage build targets, etc.)
-        # These are images that don't have their own src/ directory
-        log_info "=== Phase 4: Special images (tag: $tag) ==="
-        local special_images=(
-            "backend-init"    # Multi-stage build target from backend
-        )
-        for special in "${special_images[@]}"; do
-            total_count=$((total_count + 1))
-            local image_name="ai-infra-${special}:${tag}"
-            local remote_image="${registry}/${image_name}"
+            done
+            echo
             
-            log_info "[$total_count] $remote_image"
-            
-            if pull_image_with_retry "$remote_image" "$max_retries"; then
-                if docker tag "$remote_image" "$image_name"; then
-                    log_info "  ✓ Pulled and tagged as $image_name"
-                    success_count=$((success_count + 1))
+            # Phase 4: Pull special images (multi-stage build targets, etc.)
+            # These are images that don't have their own src/ directory
+            log_info "=== Phase 4: Special images (tag: $tag) ==="
+            local special_images=(
+                "backend-init"    # Multi-stage build target from backend
+            )
+            for special in "${special_images[@]}"; do
+                total_count=$((total_count + 1))
+                local image_name="ai-infra-${special}:${tag}"
+                local remote_image="${registry}/${image_name}"
+                
+                log_info "[$total_count] $remote_image"
+                
+                if pull_image_with_retry "$remote_image" "$max_retries"; then
+                    if docker tag "$remote_image" "$image_name"; then
+                        log_info "  ✓ Pulled and tagged as $image_name"
+                        success_count=$((success_count + 1))
+                    else
+                        log_warn "  ⚠ Pulled but failed to tag"
+                        success_count=$((success_count + 1))
+                    fi
                 else
-                    log_warn "  ⚠ Pulled but failed to tag"
-                    success_count=$((success_count + 1))
+                    log_warn "  ✗ Failed"
+                    failed_services+=("special:$special")
                 fi
-            else
-                log_warn "  ✗ Failed"
-                failed_services+=("special:$special")
-            fi
-        done
-        echo
-    fi
+            done
+            echo
+        fi
     
     log_info "=========================================="
     log_info "Pull completed: $success_count/$total_count successful"
@@ -4303,15 +4404,25 @@ pull_common_images() {
 # ==============================================================================
 
 # Push single service image for specific platform
-# Args: $1 = service, $2 = tag, $3 = registry, $4 = max_retries, $5 = platform (optional)
-# If platform is specified, pushes the architecture-specific image (e.g., v0.3.8-amd64)
-# If no platform, pushes the unified tag (e.g., v0.3.8)
+# Args: $1 = service, $2 = tag, $3 = registry, $4 = max_retries, $5 = platform (optional), $6 = arch_tag (optional)
+#
+# Platform and arch_tag behavior:
+#   - platform: Determines which local image to push (e.g., ai-infra-xxx:v0.3.8-amd64)
+#   - arch_tag: Controls whether remote tag includes architecture suffix
+#     - "true" (default when platform set): Remote tag includes arch suffix (Harbor mode)
+#     - "false": Remote tag without arch suffix (Docker Hub mode, uses multi-manifest)
+#
+# Examples:
+#   push_service backend v0.3.8 docker.io/user 3 amd64 true   # -> docker.io/user/ai-infra-backend:v0.3.8-amd64
+#   push_service backend v0.3.8 docker.io/user 3 amd64 false  # -> docker.io/user/ai-infra-backend:v0.3.8
+#   push_service backend v0.3.8 docker.io/user 3              # -> docker.io/user/ai-infra-backend:v0.3.8
 push_service() {
     local service="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local registry="$3"
     local max_retries="${4:-$DEFAULT_MAX_RETRIES}"
-    local platform="${5:-}"  # Optional: amd64, arm64, or empty
+    local platform="${5:-}"      # Optional: amd64, arm64, or empty
+    local arch_tag="${6:-true}"  # Whether to include arch suffix in remote tag
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push"
@@ -4322,17 +4433,19 @@ push_service() {
     local arch_suffix=""
     local remote_arch_suffix=""
     if [[ -n "$platform" ]]; then
-        # Normalize platform name
+        # Normalize platform name for local image
         case "$platform" in
             linux/amd64|amd64|x86_64) 
                 arch_suffix="-amd64"
-                remote_arch_suffix="-amd64"
                 ;;
             linux/arm64|arm64|aarch64) 
                 arch_suffix="-arm64"
-                remote_arch_suffix="-arm64"
                 ;;
         esac
+        # Only add arch suffix to remote tag if arch_tag is true
+        if [[ "$arch_tag" == "true" ]]; then
+            remote_arch_suffix="$arch_suffix"
+        fi
     fi
     
     local base_image="ai-infra-${service}:${tag}${arch_suffix}"
@@ -4341,6 +4454,9 @@ push_service() {
     log_info "Pushing service: $service${arch_suffix:+ ($arch_suffix)}"
     log_info "  Source: $base_image"
     log_info "  Target: $target_image"
+    if [[ -n "$platform" ]] && [[ "$arch_tag" == "false" ]]; then
+        log_info "  Mode: Docker Hub (no arch suffix in remote tag)"
+    fi
     
     # Check if source image exists
     if ! docker image inspect "$base_image" >/dev/null 2>&1; then
@@ -4380,32 +4496,36 @@ push_service() {
 #   Phase 1: Common images (original tags) - for general use
 #   Phase 2: Dependency images (project tag) - for version-controlled deployment
 #   Phase 3: Project services (project tag) - the main application images
-# Args: $1 = registry, $2 = tag, $3 = max_retries, $4 = platforms (optional, comma-separated)
+# Args: $1 = registry, $2 = tag, $3 = max_retries, $4 = platforms (optional), $5 = arch_tag (optional)
 #
 # For Harbor/private registries, registry path should include project name:
 #   ✓ harbor.example.com/ai-infra    (correct - includes project)
 #   ✗ harbor.example.com             (wrong - missing project)
 #
 # Multi-architecture support (方案一):
-#   When platforms are specified, it pushes architecture-specific images:
-#   - amd64: ai-infra-xxx:v0.3.8-amd64
-#   - arm64: ai-infra-xxx:v0.3.8-arm64
+#   When platforms are specified, it pushes architecture-specific images.
+#   Use --no-arch-tag for Docker Hub (remote tag without arch suffix).
 #   
 #   Usage examples:
-#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8                    # Push unified tags
-#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64   # Push amd64 only
-#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64  # Push both
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8                              # Push unified tags
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64             # Harbor: v0.3.8-amd64
+#   ./build.sh push-all docker.io/user v0.3.8 --platform=amd64 --no-arch-tag            # Docker Hub: v0.3.8
+#   ./build.sh push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64       # Harbor: both with suffix
 push_all_services() {
     local registry="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local max_retries="${3:-$DEFAULT_MAX_RETRIES}"
-    local platforms="${4:-}"  # Optional: amd64,arm64 or empty for unified tag
+    local platforms="${4:-}"    # Optional: amd64,arm64 or empty for unified tag
+    local arch_tag="${5:-true}" # Whether to include arch suffix in remote tag (--no-arch-tag sets to false)
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push-all"
-        log_info "Usage: $0 push-all <registry/project> [tag] [--platform=amd64,arm64]"
-        log_info "Example: $0 push-all harbor.example.com/ai-infra v0.3.8"
-        log_info "Example: $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64"
+        log_info "Usage: $0 push-all <registry/project> [tag] [--platform=amd64,arm64] [--no-arch-tag]"
+        log_info ""
+        log_info "Examples:"
+        log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8                           # Unified tags"
+        log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64          # Harbor: v0.3.8-amd64"
+        log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64 --no-arch-tag         # Docker Hub: v0.3.8"
         return 1
     fi
     
@@ -4453,7 +4573,11 @@ push_all_services() {
     log_info "Max retries: $max_retries"
     if [[ ${#PLATFORM_ARRAY[@]} -gt 0 ]]; then
         log_info "Platforms: ${PLATFORM_ARRAY[*]}"
-        log_info "Mode: Multi-architecture (方案一 - push arch-specific tags)"
+        if [[ "$arch_tag" == "true" ]]; then
+            log_info "Mode: Multi-arch with arch suffix (Harbor mode: v0.3.8-amd64)"
+        else
+            log_info "Mode: Multi-arch without arch suffix (Docker Hub mode: v0.3.8)"
+        fi
     else
         log_info "Mode: Unified tags (no platform specified)"
     fi
@@ -4473,15 +4597,21 @@ push_all_services() {
             log_info "=========================================="
             echo
             
-            # Phase 3 (only for multi-arch): Push project services with architecture suffix
-            log_info "=== Project services (tag: ${tag}-${platform}) ==="
+            # Determine remote tag based on arch_tag setting
+            local remote_tag_display="${tag}"
+            if [[ "$arch_tag" == "true" ]]; then
+                remote_tag_display="${tag}-${platform}"
+            fi
+            
+            # Phase 3 (only for multi-arch): Push project services
+            log_info "=== Project services (remote tag: ${remote_tag_display}) ==="
             log_info "Main application images built from src/*"
             echo
             for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
                 total_count=$((total_count + 1))
                 
-                if push_service "$service" "$tag" "$registry" "$max_retries" "$platform"; then
-                    log_info "  ✓ $service-${platform} pushed"
+                if push_service "$service" "$tag" "$registry" "$max_retries" "$platform" "$arch_tag"; then
+                    log_info "  ✓ $service (${platform}) pushed"
                     success_count=$((success_count + 1))
                 else
                     failed_services+=("$service-${platform}")
@@ -4490,7 +4620,7 @@ push_all_services() {
             echo
             
             # Phase 4 (multi-arch): Push special images
-            log_info "=== Special images (tag: ${tag}-${platform}) ==="
+            log_info "=== Special images (remote tag: ${remote_tag_display}) ==="
             echo
             local special_images=(
                 "backend-init"
@@ -4498,7 +4628,13 @@ push_all_services() {
             for special in "${special_images[@]}"; do
                 total_count=$((total_count + 1))
                 local image_name="ai-infra-${special}:${tag}-${platform}"
-                local target_image="${registry}/ai-infra-${special}:${tag}-${platform}"
+                # Determine target image based on arch_tag
+                local target_image
+                if [[ "$arch_tag" == "true" ]]; then
+                    target_image="${registry}/ai-infra-${special}:${tag}-${platform}"
+                else
+                    target_image="${registry}/ai-infra-${special}:${tag}"
+                fi
                 
                 log_info "[$total_count] $image_name -> $target_image"
                 
@@ -4547,7 +4683,6 @@ push_all_services() {
             local target_image="${registry}/${short_name}:${image_tag}"
             
             log_info "[$total_count] $image -> $target_image"
-            
             if ! docker image inspect "$image" >/dev/null 2>&1; then
                 log_info "  Pulling source image..."
                 if ! pull_image_with_retry "$image" "$max_retries"; then
@@ -8035,6 +8170,7 @@ ENABLE_PARALLEL=false
 ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
 BUILD_PLATFORMS=""  # Empty means use native platform, can be: amd64, arm64, amd64,arm64
+NO_ARCH_TAG=false   # If true, remote tag won't include arch suffix (for Docker Hub)
 REMAINING_ARGS=()
 
 for arg in "$@"; do
@@ -8060,6 +8196,10 @@ for arg in "$@"; do
             ;;
         --platform)
             # Next arg should be the platform value, handled by shift logic below
+            ;;
+        --no-arch-tag)
+            # For Docker Hub: don't add architecture suffix to remote tag
+            NO_ARCH_TAG=true
             ;;
         --ssl)
             ENABLE_SSL=true
@@ -8107,6 +8247,9 @@ if [[ -n "$BUILD_PLATFORMS" ]]; then
             ;;
     esac
     log_info "🎯 Target platform for pull: $DOCKER_HOST_PLATFORM"
+fi
+if [[ "$NO_ARCH_TAG" == "true" ]]; then
+    log_info "☁️  Docker Hub mode: remote tags without arch suffix"
 fi
 
 COMMAND="${REMAINING_ARGS[0]:-}"
@@ -8369,7 +8512,8 @@ case "$COMMAND" in
         ;;
     pull-all)
         # Smart mode: without registry -> Docker Hub, with registry -> private registry
-        pull_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}"
+        # Supports multi-architecture: ./build.sh pull-all <registry> <tag> --platform=amd64,arm64
+        pull_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}"
         ;;
     deps-pull)
         if [[ -z "$ARG2" ]]; then
@@ -8391,20 +8535,29 @@ case "$COMMAND" in
             exit 1
         fi
         # Pass BUILD_PLATFORMS if specified via --platform flag
-        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}"
+        # Pass BUILD_PLATFORMS and arch_tag flag
+        # For single push, also respect --no-arch-tag
+        _arch_tag="true"
+        [[ "$NO_ARCH_TAG" == "true" ]] && _arch_tag="false"
+        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}" "$_arch_tag"
         ;;
     push-all)
         if [[ -z "$ARG2" ]]; then
             log_error "Registry is required"
-            log_info "Usage: $0 push-all <registry> [tag] [--platform=amd64,arm64]"
+            log_info "Usage: $0 push-all <registry> [tag] [--platform=amd64,arm64] [--no-arch-tag]"
+            log_info ""
             log_info "Examples:"
-            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8"
-            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64"
-            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8                              # Unified tags"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64             # Harbor: v0.3.8-amd64"
+            log_info "  $0 push-all docker.io/user v0.3.8 --platform=amd64 --no-arch-tag            # Docker Hub: v0.3.8"
+            log_info "  $0 push-all harbor.example.com/ai-infra v0.3.8 --platform=amd64,arm64       # Both archs with suffix"
             exit 1
         fi
-        # Pass BUILD_PLATFORMS if specified via --platform flag
-        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}"
+        # Convert NO_ARCH_TAG flag to arch_tag parameter (inverted)
+        _arch_tag="true"
+        [[ "$NO_ARCH_TAG" == "true" ]] && _arch_tag="false"
+        # Pass BUILD_PLATFORMS and arch_tag flag
+        push_all_services "$ARG2" "${ARG3:-${IMAGE_TAG:-latest}}" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}" "$_arch_tag"
         ;;
     push-dep|push-dependencies)
         if [[ -z "$ARG2" ]]; then
