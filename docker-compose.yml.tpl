@@ -864,7 +864,9 @@ services:
       STATIC_URL_PREFIX: "${STATIC_URL_PREFIX:-/gitea}"
       GITEA__server__ROOT_URL: "${ROOT_URL}"
       GITEA__server__SUBURL: "${SUBURL:-/gitea}"
-      DOMAIN: "${DOMAIN}"
+      # 使用 GITEA__ 前缀直接设置 server 配置，避免嵌套变量替换问题
+      GITEA__server__DOMAIN: "${EXTERNAL_HOST}"
+      GITEA__server__SSH_DOMAIN: "${EXTERNAL_HOST}"
       PROTOCOL: "${GITEA_PROTOCOL:-http}"
       HTTP_PORT: "${GITEA_HTTP_PORT:-3000}"
       GITEA_DB_TYPE: "${GITEA_DB_TYPE:-postgres}"
