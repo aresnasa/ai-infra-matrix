@@ -6250,6 +6250,7 @@ build_component_for_platform() {
         cmd+=("--builder" "$builder_name")  # Use the detected builder for cross-platform builds
         cmd+=("--platform" "$platform")
         cmd+=("--network" "host")  # Allow build steps to access host network (for pip/apt mirrors)
+        cmd+=("--allow" "network.host")  # Grant network.host entitlement
         cmd+=("--load")  # Load to local docker daemon
         
         # Add --add-host to map 'apphub' to the actual container IP
