@@ -3782,7 +3782,7 @@ docker_with_retry() {
     # 对于 pull 操作，检查镜像是否已存在且架构匹配
     if [[ "$operation" == "pull" ]] && [[ "$skip_exists_check" != "true" ]]; then
         if docker image inspect "$image" >/dev/null 2>&1; then
-            # 检查已存在镜像的架构是否与主机匹配
+            # 检查已存在镜像的架构是否与目标平台匹配
             local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
             local expected_arch=""
             case "$DOCKER_HOST_PLATFORM" in
@@ -3790,13 +3790,25 @@ docker_with_retry() {
                 linux/arm64) expected_arch="arm64" ;;
                 linux/arm/v7) expected_arch="arm" ;;
             esac
-            if [[ -n "$expected_arch" ]] && [[ "$existing_arch" != "$expected_arch" ]]; then
-                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch)"
-                log_info "  🗑 Removing wrong-arch image before re-pulling..."
-                docker rmi "$image" >/dev/null 2>&1 || true
-                # 继续执行 pull 操作
+            
+            # 如果指定了目标架构，且已有镜像架构不匹配或为空，需要重新拉取
+            if [[ -n "$expected_arch" ]]; then
+                if [[ -z "$existing_arch" ]] || [[ "$existing_arch" != "$expected_arch" ]]; then
+                    if [[ -z "$existing_arch" ]]; then
+                        log_warn "  ⚠ Image exists but arch unknown, re-pulling for: $expected_arch"
+                    else
+                        log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch)"
+                    fi
+                    log_info "  🗑 Removing wrong-arch image before re-pulling..."
+                    docker rmi "$image" >/dev/null 2>&1 || true
+                    # 继续执行 pull 操作
+                else
+                    log_info "  ✓ Image exists: $image (arch: $existing_arch)"
+                    return 0
+                fi
             else
-                log_info "  ✓ Image exists: $image (arch: $existing_arch)"
+                # 未指定目标架构，镜像存在就跳过
+                log_info "  ✓ Image exists: $image (arch: ${existing_arch:-unknown})"
                 return 0
             fi
         fi
