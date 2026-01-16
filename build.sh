@@ -7065,15 +7065,24 @@ export_offline_images() {
                 echo "failed"
             fi
         else
-            # For remote images, check if exists (trust pull-all --platform=xxx)
-            # Note: Skip architecture validation because Docker Desktop's docker inspect
-            # returns unreliable architecture info for cross-platform images
-            if ! docker image inspect "$image_name" >/dev/null 2>&1; then
-                echo "not_found"
-                return
+            # For remote images: Docker Desktop may store multi-arch manifests in a way that
+            # causes "docker save" to fail with "content digest not found" errors.
+            # Solution: Re-pull with explicit --platform to get single-arch image, then export.
+            
+            # Create a platform-specific tag to avoid conflicts
+            local temp_tag="${image_name}-${arch_name}-export"
+            temp_tag=$(echo "$temp_tag" | sed 's|/|-|g')
+            
+            # Pull with explicit platform (quiet, suppress output)
+            if ! docker pull --platform="$platform" "$image_name" -q >/dev/null 2>&1; then
+                # If pull fails, try to use existing image
+                if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                    echo "not_found"
+                    return
+                fi
             fi
             
-            # Export the image directly (trust that pull-all --platform=xxx pulled correct arch)
+            # Now save the image (should work after platform-specific pull)
             if docker save "$image_name" -o "$output_file" 2>/dev/null; then
                 du -h "$output_file" | cut -f1
             else
