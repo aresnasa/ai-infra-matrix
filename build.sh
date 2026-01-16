@@ -4102,18 +4102,12 @@ pull_all_services() {
             
             log_info "[$total_count] $remote_image"
             
-            # Check if original image already exists
-            if docker image inspect "$image" &>/dev/null; then
-                log_info "  ✓ Already exists locally"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
-            # Try to pull from private registry
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+            # 即使本地镜像存在，也需要检查架构是否匹配
             if pull_image_with_retry "$remote_image" "$max_retries"; then
                 # Tag as original image name for docker-compose compatibility
                 if docker tag "$remote_image" "$image"; then
-                    log_info "  ✓ Pulled and tagged as $image"
+                    log_info "  ✓ Tagged as $image"
                     success_count=$((success_count + 1))
                 else
                     log_warn "  ⚠ Pulled but failed to tag"
@@ -4138,17 +4132,11 @@ pull_all_services() {
             
             log_info "[$total_count] $remote_image -> $source_image"
             
-            # Check if source image already exists
-            if docker image inspect "$source_image" &>/dev/null; then
-                log_info "  ✓ Already exists locally"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
             if pull_image_with_retry "$remote_image" "$max_retries"; then
                 # Tag as original image name for docker-compose compatibility
                 if docker tag "$remote_image" "$source_image"; then
-                    log_info "  ✓ Pulled and tagged"
+                    log_info "  ✓ Tagged as $source_image"
                     success_count=$((success_count + 1))
                 else
                     log_warn "  ⚠ Pulled but failed to tag"
@@ -4170,9 +4158,10 @@ pull_all_services() {
             
             log_info "[$total_count] $remote_image"
             
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
             if pull_image_with_retry "$remote_image" "$max_retries"; then
                 if docker tag "$remote_image" "$image_name"; then
-                    log_info "  ✓ Pulled and tagged as $image_name"
+                    log_info "  ✓ Tagged as $image_name"
                     success_count=$((success_count + 1))
                 else
                     log_warn "  ⚠ Pulled but failed to tag"
