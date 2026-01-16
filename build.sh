@@ -7052,6 +7052,7 @@ export_offline_images() {
     local failed_images=()
     
     # Helper function to export single image for specific platform
+    # This function expects images to be pre-pulled (use pull-all --platform=xxx first)
     _export_image_for_platform() {
         local image_name="$1"
         local platform="$2"
@@ -7071,33 +7072,33 @@ export_offline_images() {
                 echo "not_found"
                 return
             fi
-            # Export local image (assumes it's built for current platform)
+            # Verify architecture matches
+            local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+            if [[ -n "$actual_arch" ]] && [[ "$actual_arch" != "$arch_name" ]]; then
+                echo "arch_mismatch:$actual_arch"
+                return
+            fi
+            # Export local image
             if docker save "$image_name" -o "$output_file" 2>/dev/null; then
                 du -h "$output_file" | cut -f1
             else
                 echo "failed"
             fi
         else
-            # For remote images, pull specific platform and export
-            # First check if already pulled
-            local pull_needed=true
-            if docker image inspect "$image_name" >/dev/null 2>&1; then
-                # Check if the existing image matches the target platform
-                local existing_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
-                if [[ "$existing_arch" == "$arch_name" ]] || [[ "$existing_arch" == "${arch_name/amd64/amd64}" ]]; then
-                    pull_needed=false
-                fi
+            # For remote images, check if already pulled with correct architecture
+            if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+                echo "not_found"
+                return
             fi
             
-            # Pull with specific platform if needed
-            if $pull_needed; then
-                if ! docker pull --platform "$platform" "$image_name" >/dev/null 2>&1; then
-                    echo "pull_failed"
-                    return
-                fi
+            # Verify the existing image matches the target platform
+            local existing_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
+            if [[ -n "$existing_arch" ]] && [[ "$existing_arch" != "$arch_name" ]]; then
+                echo "arch_mismatch:$existing_arch"
+                return
             fi
             
-            # Export the pulled image
+            # Export the image
             if docker save "$image_name" -o "$output_file" 2>/dev/null; then
                 du -h "$output_file" | cut -f1
             else
