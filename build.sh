@@ -8170,8 +8170,8 @@ FORCE_REBUILD=false
 ENABLE_PARALLEL=false
 ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
-BUILD_PLATFORMS=""  # Empty means use native platform, can be: amd64, arm64, amd64,arm64
-NO_ARCH_TAG=false   # If true, remote tag won't include arch suffix (for Docker Hub)
+BUILD_PLATFORMS="amd64,arm64"  # Default: build both architectures. Can be: amd64, arm64, amd64,arm64
+NO_ARCH_TAG=true    # Default: remote tag won't include arch suffix (Docker Hub mode). Use --arch-tag for Harbor mode
 REMAINING_ARGS=()
 
 for arg in "$@"; do
@@ -8198,9 +8198,9 @@ for arg in "$@"; do
         --platform)
             # Next arg should be the platform value, handled by shift logic below
             ;;
-        --no-arch-tag)
-            # For Docker Hub: don't add architecture suffix to remote tag
-            NO_ARCH_TAG=true
+        --arch-tag)
+            # For Harbor: add architecture suffix to remote tag (e.g., v0.3.8-amd64)
+            NO_ARCH_TAG=false
             ;;
         --ssl)
             ENABLE_SSL=true
