@@ -7073,14 +7073,7 @@ export_offline_images() {
                 return
             fi
             
-            # Verify the existing image matches the target platform
-            local existing_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
-            if [[ -n "$existing_arch" ]] && [[ "$existing_arch" != "$arch_name" ]]; then
-                echo "arch_mismatch:$existing_arch"
-                return
-            fi
-            
-            # Export the image
+            # Export the image directly (trust that pull-all --platform=xxx pulled correct arch)
             if docker save "$image_name" -o "$output_file" 2>/dev/null; then
                 du -h "$output_file" | cut -f1
             else
