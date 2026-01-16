@@ -6113,7 +6113,23 @@ build_component_for_platform() {
         # For cross-platform builds, always show output to avoid buildkit caching issues
         # The silent-then-retry pattern can cause metadata resolution failures
         if "${cmd[@]}"; then
-            log_info "  [$arch_name] ✓ Built: $full_image_name"
+            # Verify the image was actually loaded to Docker daemon
+            # docker-container driver with --load may silently fail to import when using cache
+            if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                log_warn "  [$arch_name] ⚠ Image not found in Docker daemon after build, retrying with --no-cache..."
+                # Retry with --no-cache to force re-export
+                local retry_cmd=("${cmd[@]}")
+                retry_cmd+=("--no-cache")
+                if "${retry_cmd[@]}" && docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                    log_info "  [$arch_name] ✓ Built (retry): $full_image_name"
+                else
+                    log_error "  [$arch_name] ✗ Failed to load image after retry: $full_image_name"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "LOAD_ERROR ($arch_name)"
+                    return 1
+                fi
+            else
+                log_info "  [$arch_name] ✓ Built: $full_image_name"
+            fi
             log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
             save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
         else
