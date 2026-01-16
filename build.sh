@@ -4038,14 +4038,9 @@ pull_all_services() {
             total_count=$((total_count + 1))
             log_info "[$total_count/${#COMMON_IMAGES[@]}] $image"
             
-            if docker image inspect "$image" &>/dev/null; then
-                log_info "  ✓ Already exists"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
+            # 不再单独检查镜像是否存在，因为可能存在架构不匹配的情况
             if pull_image_with_retry "$image" "$max_retries"; then
-                log_info "  ✓ Pulled"
                 success_count=$((success_count + 1))
             else
                 log_warn "  ✗ Failed"
@@ -4063,14 +4058,8 @@ pull_all_services() {
             total_count=$((total_count + 1))
             log_info "[$safeline_count/${#SAFELINE_IMAGES[@]}] $image"
             
-            if docker image inspect "$image" &>/dev/null; then
-                log_info "  ✓ Already exists"
-                success_count=$((success_count + 1))
-                continue
-            fi
-            
+            # 使用 pull_image_with_retry 进行拉取（内部会处理架构验证）
             if pull_image_with_retry "$image" "$max_retries"; then
-                log_info "  ✓ Pulled"
                 success_count=$((success_count + 1))
             else
                 log_warn "  ✗ Failed"
