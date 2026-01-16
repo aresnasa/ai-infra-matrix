@@ -7031,6 +7031,8 @@ export_offline_images() {
     
     # Helper function to export single image for specific platform
     # This function expects images to be pre-pulled (use pull-all --platform=xxx first)
+    # Note: On Docker Desktop (Mac/Windows), docker inspect may return incorrect architecture
+    # for cross-platform pulled images. We trust that pull-all --platform=xxx did the right thing.
     _export_image_for_platform() {
         local image_name="$1"
         local platform="$2"
@@ -7050,7 +7052,7 @@ export_offline_images() {
                 echo "not_found"
                 return
             fi
-            # Verify architecture matches
+            # Verify architecture matches (only for local builds where we control the tag)
             local actual_arch=$(docker image inspect "$image_name" --format '{{.Architecture}}' 2>/dev/null)
             if [[ -n "$actual_arch" ]] && [[ "$actual_arch" != "$arch_name" ]]; then
                 echo "arch_mismatch:$actual_arch"
@@ -7063,7 +7065,9 @@ export_offline_images() {
                 echo "failed"
             fi
         else
-            # For remote images, check if already pulled with correct architecture
+            # For remote images, check if exists (trust pull-all --platform=xxx)
+            # Note: Skip architecture validation because Docker Desktop's docker inspect
+            # returns unreliable architecture info for cross-platform images
             if ! docker image inspect "$image_name" >/dev/null 2>&1; then
                 echo "not_found"
                 return
