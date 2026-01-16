@@ -8382,15 +8382,16 @@ case "$COMMAND" in
     push)
         if [[ -z "$ARG2" ]]; then
             log_error "Service name is required"
-            log_info "Usage: $0 push <service> <registry> [tag]"
+            log_info "Usage: $0 push <service> <registry> [tag] [--platform=amd64|arm64]"
             exit 1
         fi
         if [[ -z "$ARG3" ]]; then
             log_error "Registry is required"
-            log_info "Usage: $0 push <service> <registry> [tag]"
+            log_info "Usage: $0 push <service> <registry> [tag] [--platform=amd64|arm64]"
             exit 1
         fi
-        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3"
+        # Pass BUILD_PLATFORMS if specified via --platform flag
+        push_service "$ARG2" "${ARG4:-${IMAGE_TAG:-latest}}" "$ARG3" "$DEFAULT_MAX_RETRIES" "${BUILD_PLATFORMS:-}"
         ;;
     push-all)
         if [[ -z "$ARG2" ]]; then
