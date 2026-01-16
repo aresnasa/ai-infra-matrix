@@ -6107,8 +6107,11 @@ build_component_for_platform() {
         # Create builder with docker-container driver and host network
         # Using network=host allows buildkit to access the internet for apt/yum operations
         # For accessing docker containers (like apphub), we'll use --add-host in the build command
+        # --buildkitd-flags enables network.host entitlement for --network=host in build commands
         if ! docker buildx create --name "$builder_name" --driver docker-container \
-            --driver-opt network=host --bootstrap 2>&1; then
+            --driver-opt network=host \
+            --buildkitd-flags '--allow-insecure-entitlement network.host' \
+            --bootstrap 2>&1; then
             log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
             builder_name="default"
         fi
