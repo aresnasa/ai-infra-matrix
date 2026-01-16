@@ -4299,37 +4299,62 @@ pull_common_images() {
 }
 
 # ==============================================================================
-# Push Functions - 镜像推送功能 (使用通用重试器 docker_with_retry)
+# Push Functions - 镜像推送功能 (支持多架构)
 # ==============================================================================
 
-# Push single service image
-# Args: $1 = service, $2 = tag, $3 = registry
+# Push single service image for specific platform
+# Args: $1 = service, $2 = tag, $3 = registry, $4 = max_retries, $5 = platform (optional)
+# If platform is specified, pushes the architecture-specific image (e.g., v0.3.8-amd64)
+# If no platform, pushes the unified tag (e.g., v0.3.8)
 push_service() {
     local service="$1"
     local tag="${2:-${IMAGE_TAG:-latest}}"
     local registry="$3"
     local max_retries="${4:-$DEFAULT_MAX_RETRIES}"
+    local platform="${5:-}"  # Optional: amd64, arm64, or empty
     
     if [[ -z "$registry" ]]; then
         log_error "Registry is required for push"
         return 1
     fi
     
-    local base_image="ai-infra-${service}:${tag}"
-    local target_image="$registry/ai-infra-${service}:${tag}"
+    # Determine image names based on platform
+    local arch_suffix=""
+    local remote_arch_suffix=""
+    if [[ -n "$platform" ]]; then
+        # Normalize platform name
+        case "$platform" in
+            linux/amd64|amd64|x86_64) 
+                arch_suffix="-amd64"
+                remote_arch_suffix="-amd64"
+                ;;
+            linux/arm64|arm64|aarch64) 
+                arch_suffix="-arm64"
+                remote_arch_suffix="-arm64"
+                ;;
+        esac
+    fi
     
-    log_info "Pushing service: $service"
+    local base_image="ai-infra-${service}:${tag}${arch_suffix}"
+    local target_image="$registry/ai-infra-${service}:${tag}${remote_arch_suffix}"
+    
+    log_info "Pushing service: $service${arch_suffix:+ ($arch_suffix)}"
     log_info "  Source: $base_image"
     log_info "  Target: $target_image"
     
     # Check if source image exists
     if ! docker image inspect "$base_image" >/dev/null 2>&1; then
         log_warn "Local image not found: $base_image"
-        log_info "Building image first..."
-        if ! build_component "$service"; then
-            log_failure "BUILD" "$base_image" "Build failed before push"
-            return 1
+        if [[ -n "$platform" ]]; then
+            log_info "Hint: Build with './build.sh $service --platform=${platform##*/}'"
+        else
+            log_info "Building image first..."
+            if ! build_component "$service"; then
+                log_failure "BUILD" "$base_image" "Build failed before push"
+                return 1
+            fi
         fi
+        return 1
     fi
     
     # Tag for registry with retry
