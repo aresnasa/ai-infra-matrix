@@ -3,9 +3,9 @@
 # Supports custom VITE_PREFIX for sub-path deployment (e.g., /nightingale)
 
 # 全局 ARG 声明 - 必须在所有 FROM 之前声明才能在 FROM 中使用
-ARG GOLANG_IMAGE={{GOLANG_IMAGE}}
-ARG UBUNTU_IMAGE={{UBUNTU_IMAGE}}
-ARG NODE_IMAGE={{NODE_IMAGE}}
+ARG GOLANG_IMAGE=golang:1.25-bookworm
+ARG UBUNTU_IMAGE=ubuntu:22.04
+ARG NODE_IMAGE=node:22-bookworm
 
 # ============================================================
 # Stage 0: Build Frontend with custom VITE_PREFIX
@@ -13,10 +13,10 @@ ARG NODE_IMAGE={{NODE_IMAGE}}
 FROM ${NODE_IMAGE} AS fe-builder
 
 ARG APT_MIRROR=mirrors.aliyun.com
-ARG NPM_REGISTRY={{NPM_REGISTRY}}
-ARG N9E_FE_VERSION={{N9E_FE_VERSION}}
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG N9E_FE_VERSION=v8.4.1
 ARG GITHUB_MIRROR=https://ghfast.top/
-ARG GITHUB_PROXY={{GITHUB_PROXY}}
+ARG GITHUB_PROXY=
 # Set VITE_PREFIX to match Nightingale's BasePath configuration
 # This ensures React Router and all asset paths use the correct prefix
 # Backend config.toml must have: BasePath = "/nightingale"
@@ -142,8 +142,8 @@ FROM ${GOLANG_IMAGE} AS builder
 ARG APT_MIRROR=mirrors.aliyun.com
 ARG GO_PROXY=https://goproxy.cn,direct
 ARG GITHUB_MIRROR=https://ghfast.top/
-ARG INTERNAL_FILE_SERVER={{INTERNAL_FILE_SERVER}}
-ARG N9E_FE_VERSION={{N9E_FE_VERSION}}
+ARG INTERNAL_FILE_SERVER=http://files.example.com
+ARG N9E_FE_VERSION=v8.4.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
