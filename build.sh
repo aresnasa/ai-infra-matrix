@@ -7065,28 +7065,44 @@ export_offline_images() {
                 echo "failed"
             fi
         else
-            # For remote images: Docker Desktop may store multi-arch manifests in a way that
-            # causes "docker save" to fail with "content digest not found" errors.
-            # Solution: Re-pull with explicit --platform to get single-arch image, then export.
+            # For remote images: Docker Desktop with containerd image store has a known issue
+            # where "docker save" fails with "content digest not found" for multi-arch images.
+            # 
+            # Solution: Use "docker buildx build --output type=docker" to create a single-arch
+            # image that can be properly saved. This essentially re-packages the image layers
+            # into a format compatible with docker save.
             
-            # Create a platform-specific tag to avoid conflicts
-            local temp_tag="${image_name}-${arch_name}-export"
-            temp_tag=$(echo "$temp_tag" | sed 's|/|-|g')
+            # Create a temporary tag for the single-arch export
+            local temp_tag="export-temp-${arch_name}-$(echo "$image_name" | sed 's|[/:]|-|g')"
             
-            # Pull with explicit platform (quiet, suppress output)
-            if ! docker pull --platform="$platform" "$image_name" -q >/dev/null 2>&1; then
-                # If pull fails, try to use existing image
-                if ! docker image inspect "$image_name" >/dev/null 2>&1; then
-                    echo "not_found"
-                    return
+            # Use buildx to create a loadable single-arch image
+            # The "FROM image" dockerfile trick forces buildx to resolve to the specific platform
+            if echo "FROM $image_name" | docker buildx build \
+                --platform="$platform" \
+                --output "type=docker,name=${temp_tag}" \
+                --quiet \
+                -f - . >/dev/null 2>&1; then
+                
+                # Now save the temp image
+                if docker save "$temp_tag" -o "$output_file" 2>/dev/null; then
+                    # Clean up temp tag
+                    docker rmi "$temp_tag" >/dev/null 2>&1 || true
+                    du -h "$output_file" | cut -f1
+                else
+                    docker rmi "$temp_tag" >/dev/null 2>&1 || true
+                    echo "failed"
                 fi
-            fi
-            
-            # Now save the image (should work after platform-specific pull)
-            if docker save "$image_name" -o "$output_file" 2>/dev/null; then
-                du -h "$output_file" | cut -f1
             else
-                echo "failed"
+                # Buildx failed, try direct pull+save as fallback (may work on native Docker)
+                if docker pull --platform="$platform" "$image_name" -q >/dev/null 2>&1; then
+                    if docker save "$image_name" -o "$output_file" 2>/dev/null; then
+                        du -h "$output_file" | cut -f1
+                    else
+                        echo "failed"
+                    fi
+                else
+                    echo "not_found"
+                fi
             fi
         fi
     }
