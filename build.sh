@@ -5937,26 +5937,13 @@ build_component_for_platform() {
     if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
         log_info "  [$arch_name] Creating multiarch-builder..."
         
-        # Create builder with docker-container driver connected to ai-infra-network
-        # This allows buildkit to access services like apphub during build
-        # On macOS, network=host doesn't work the same as Linux, so we use the project network
-        local build_network="ai-infra-network"
-        if docker network inspect "$build_network" >/dev/null 2>&1; then
-            log_info "  [$arch_name] Using network: $build_network"
-            if ! docker buildx create --name "$builder_name" --driver docker-container \
-                --driver-opt "network=$build_network" --bootstrap 2>&1; then
-                log_warn "  [$arch_name] Failed to create builder with $build_network, trying host network..."
-                docker buildx rm "$builder_name" 2>/dev/null || true
-                docker buildx create --name "$builder_name" --driver docker-container \
-                    --driver-opt network=host --bootstrap 2>&1 || builder_name="default"
-            fi
-        else
-            log_info "  [$arch_name] Network $build_network not found, using host network"
-            if ! docker buildx create --name "$builder_name" --driver docker-container \
-                --driver-opt network=host --bootstrap 2>&1; then
-                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
-                builder_name="default"
-            fi
+        # Create builder with docker-container driver and host network
+        # Using network=host allows buildkit to access the internet for apt/yum operations
+        # For accessing docker containers (like apphub), we'll use --add-host in the build command
+        if ! docker buildx create --name "$builder_name" --driver docker-container \
+            --driver-opt network=host --bootstrap 2>&1; then
+            log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
+            builder_name="default"
         fi
     fi
     
