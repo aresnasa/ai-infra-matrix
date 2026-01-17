@@ -218,6 +218,9 @@ RUN set -eux; \
                 echo "⚠️  Build succeeded but no .deb files found"; \
                 echo ">>> Searching for any .deb files:"; \
                 find /home/builder/build -name "*.deb" -type f || echo "No .deb files found"; \
+                echo "⚠️  Creating skip marker for downstream steps"; \
+                mkdir -p /out; \
+                touch /out/.skip_slurm_deb; \
             fi; \
         fi; \
     fi
