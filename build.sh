@@ -6263,43 +6263,119 @@ build_all_multiplatform() {
 }
 
 # Helper: Prefetch base images for a specific platform
-# Includes all base images used by AI-Infra services including apphub
+# Dynamically discovers and prefetches all base images from Dockerfiles
+# Features:
+#   - Renders all Dockerfile templates first
+#   - Extracts base images dynamically from src/*/Dockerfile
+#   - No hardcoded image list - all from actual Dockerfiles
+#   - Retry mechanism with exponential backoff
+# Args: $1 = platform (e.g., linux/amd64, linux/arm64)
+#       $2 = max_retries (default 5)
+#       $3 = retry_delay (default 10)
 prefetch_base_images_for_platform() {
     local platform="$1"
+    local max_retries="${2:-5}"
+    local retry_delay="${3:-10}"
     local arch_name="${platform##*/}"
     
-    # Get base images from Dockerfile templates and component Dockerfiles
-    # This includes apphub's Ubuntu/AlmaLinux builders and service base images
-    local base_images=(
-        # AppHub base images (multi-stage builder)
-        "ubuntu:22.04"
-        "almalinux:9.3-minimal"
-        # Common service base images
-        "python:3.11-slim"
-        "node:20-alpine"
-        "golang:1.21-alpine"
-        "nginx:alpine"
-        "alpine:3.18"
-        "alpine:3.19"
-        # Additional base images for other services
-        "debian:bookworm-slim"
-    )
+    log_info "  [$arch_name] Phase 1: Rendering Dockerfile templates..."
     
-    log_info "  [$arch_name] Prefetching ${#base_images[@]} base images..."
+    # Render all templates to ensure Dockerfiles are up-to-date
+    if ! render_all_templates false 2>/dev/null; then
+        log_warn "  [$arch_name] Template rendering had issues, continuing with existing Dockerfiles..."
+    fi
+    
+    log_info "  [$arch_name] Phase 2: Discovering base images from Dockerfiles..."
+    
+    # Dynamically extract all base images from Dockerfiles
+    local all_base_images=()
+    local dockerfiles=()
+    
+    # Find all Dockerfiles (including rendered ones from templates)
+    while IFS= read -r dockerfile; do
+        dockerfiles+=("$dockerfile")
+    done < <(find "$SRC_DIR" -name "Dockerfile" -type f \
+        -not -path "*/node_modules/*" \
+        -not -path "*/.git/*" \
+        -not -path "*/vendor/*" \
+        -not -path "*/__pycache__/*" \
+        2>/dev/null)
+    
+    if [[ ${#dockerfiles[@]} -eq 0 ]]; then
+        log_warn "  [$arch_name] No Dockerfiles found in $SRC_DIR"
+        return 0
+    fi
+    
+    log_info "  [$arch_name] Found ${#dockerfiles[@]} Dockerfiles to scan"
+    
+    # Extract base images from all Dockerfiles
+    for dockerfile in "${dockerfiles[@]}"; do
+        local images
+        if images=$(extract_base_images "$dockerfile" 2>/dev/null); then
+            while IFS= read -r image; do
+                [[ -z "$image" ]] && continue
+                # Skip internal build stages (single word without / or :)
+                [[ "$image" =~ ^[a-z_-]+$ ]] && continue
+                all_base_images+=("$image")
+            done <<< "$images"
+        fi
+    done
+    
+    # Remove duplicates and sort
+    local unique_base_images=($(printf '%s\n' "${all_base_images[@]}" | sort -u))
+    
+    if [[ ${#unique_base_images[@]} -eq 0 ]]; then
+        log_warn "  [$arch_name] No base images found in Dockerfiles"
+        return 0
+    fi
+    
+    log_info "  [$arch_name] Phase 3: Prefetching ${#unique_base_images[@]} unique base images with retry..."
+    
     local success_count=0
     local fail_count=0
+    local skip_count=0
     
-    for image in "${base_images[@]}"; do
-        if docker pull --platform "$platform" "$image" >/dev/null 2>&1; then
-            log_info "    ✓ $image"
-            success_count=$((success_count + 1))
-        else
-            log_warn "    ✗ $image (may not be needed)"
+    for image in "${unique_base_images[@]}"; do
+        # Check if image already exists locally
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "    ✓ $image (cached)"
+            skip_count=$((skip_count + 1))
+            continue
+        fi
+        
+        # Pull image with retry mechanism
+        local retry_count=0
+        local pulled=false
+        
+        while [[ $retry_count -lt $max_retries ]]; do
+            retry_count=$((retry_count + 1))
+            
+            if [[ $retry_count -gt 1 ]]; then
+                local wait_time=$((retry_delay * retry_count))
+                log_warn "    🔄 Retry $retry_count/$max_retries: $image (waiting ${wait_time}s...)"
+                sleep "$wait_time"
+            else
+                log_info "    ⬇ $image"
+            fi
+            
+            # Attempt to pull with platform specification
+            if docker pull --platform "$platform" "$image" 2>&1 | grep -qE "(^Digest:|^Status:|Downloaded)" ; then
+                log_info "    ✓ $image"
+                success_count=$((success_count + 1))
+                pulled=true
+                break
+            fi
+        done
+        
+        if [[ "$pulled" == false ]]; then
+            log_warn "    ✗ $image (failed after $max_retries attempts, may not be available)"
             fail_count=$((fail_count + 1))
         fi
     done
     
-    log_info "  [$arch_name] Prefetch complete: $success_count success, $fail_count failed/skipped"
+    log_info "  [$arch_name] Phase 3 complete: $success_count pulled, $skip_count cached, $fail_count failed"
+    
+    return 0
 }
 
 # Helper: Pull dependency image for a specific platform
