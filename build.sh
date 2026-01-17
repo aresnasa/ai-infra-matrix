@@ -6547,18 +6547,23 @@ build_component_for_platform() {
     # Always use multiarch-builder to avoid context switching issues
     # This ensures consistent behavior whether building for native or cross platform
     if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
-        log_info "  [$arch_name] Creating multiarch-builder..."
+        log_info "  [$arch_name] Creating multiarch-builder with host network support..."
         
         # Create builder with docker-container driver and host network
         # Using network=host allows buildkit to access the internet for apt/yum operations
         # For accessing docker containers (like apphub), we'll use --add-host in the build command
         # --buildkitd-flags enables network.host entitlement for --network=host in build commands
+        # This is critical for arm64 (cross-platform) builds to avoid timeout issues
         if ! docker buildx create --name "$builder_name" --driver docker-container \
             --driver-opt network=host \
             --buildkitd-flags '--allow-insecure-entitlement network.host' \
             --bootstrap 2>&1; then
-            log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
-            builder_name="default"
+            log_warn "  [$arch_name] Failed to create multiarch-builder with network=host"
+            log_warn "  [$arch_name] Attempting to create with default docker-container driver..."
+            if ! docker buildx create --name "$builder_name" --driver docker-container --bootstrap 2>&1; then
+                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
+                builder_name="default"
+            fi
         fi
     fi
     
