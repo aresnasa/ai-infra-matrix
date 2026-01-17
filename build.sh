@@ -5532,7 +5532,87 @@ _ensure_qemu_installed() {
     fi
 }
 
+# Generate advanced buildkit config with mirrors, proxy and insecure registries
+# This is critical for environments with custom proxies and registry mirrors
+_generate_buildkit_config_with_proxy() {
+    local output_file="$1"
+    local daemon_json="${HOME}/.docker/daemon.json"
+    
+    # Initialize config
+    cat > "$output_file" << 'EOF'
+# Auto-generated buildkit config for registry mirrors and proxy support
+debug = false
+
+# Network configuration for outgoing connections
+[net]
+  # GC policy for intermediate layers
+EOF
+    
+    # Extract and add proxy settings if present in daemon.json
+    if [[ -f "$daemon_json" ]]; then
+        local http_proxy=$(grep -o '"httpProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+        local https_proxy=$(grep -o '"httpsProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+        local no_proxy=$(grep -o '"noProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+        
+        if [[ -n "$http_proxy" || -n "$https_proxy" ]]; then
+            cat >> "$output_file" << EOF
+
+[buildkitd]
+  # Proxy settings for pulling images
+EOF
+            if [[ -n "$http_proxy" ]]; then
+                echo "  httpProxy = \"$http_proxy\"" >> "$output_file"
+            fi
+            if [[ -n "$https_proxy" ]]; then
+                echo "  httpsProxy = \"$https_proxy\"" >> "$output_file"
+            fi
+            if [[ -n "$no_proxy" ]]; then
+                echo "  noProxy = \"$no_proxy\"" >> "$output_file"
+            fi
+        fi
+        
+        # Add registry mirrors
+        local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+' | head -3)
+        if [[ -n "$mirrors" ]]; then
+            cat >> "$output_file" << 'EOF'
+
+# Registry configuration
+[registry."docker.io"]
+EOF
+            # Add mirrors
+            echo "  mirrors = [" >> "$output_file"
+            local first=true
+            for mirror in $mirrors; do
+                local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+                if [[ "$first" == "true" ]]; then
+                    echo "    \"$host\"" >> "$output_file"
+                    first=false
+                else
+                    echo "    ,\"$host\"" >> "$output_file"
+                fi
+            done
+            echo "  ]" >> "$output_file"
+            
+            # Add insecure registry configs for mirrors
+            for mirror in $mirrors; do
+                local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+                local is_http=$(echo "$mirror" | grep -c "^http://")
+                cat >> "$output_file" << EOF
+
+[registry."$host"]
+  http = $([ "$is_http" -gt 0 ] && echo "true" || echo "false")
+  insecure = true
+EOF
+            done
+        fi
+    fi
+    
+    log_info "Generated advanced buildkit config: $output_file"
+    return 0
+}
+
 # Generate buildkit config with registry mirrors from Docker daemon.json
+# (Legacy version, kept for compatibility)
 _generate_buildkit_config() {
     local output_file="$1"
     local daemon_json="${HOME}/.docker/daemon.json"

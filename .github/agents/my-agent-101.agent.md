@@ -129,3 +129,5 @@ function ai_cd {
     "https://d9qvoql50lvykf-k8s.xuanyuan.run"
   ]
 }
+
+10. 除了build.sh 外的 shell 脚本，都要放入scripts/中
