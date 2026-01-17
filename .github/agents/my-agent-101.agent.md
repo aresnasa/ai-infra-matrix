@@ -106,21 +106,4 @@ function ai_cd {
 
 5. 所有的 TASK 任务生成的 markdown 文件都要放在private-docs/docs-all 中
 
-6. 我想要一个高级方案，能够支持自动存档点检查和回滚，像打游戏一样的能够记录相关操作，方便开发人员使用。
-
-7. # 安装 certbot cloudflare 插件
-apt install python3-certbot-dns-cloudflare
-
-# 创建 Cloudflare API 凭证文件
-cat > ~/.secrets/cloudflare.ini << 'EOF'
-dns_cloudflare_api_token = YOUR_CLOUDFLARE_API_TOKEN
-EOF
-chmod 600 ~/.secrets/cloudflare.ini
-
-# 使用 DNS 验证申请证书
-certbot certonly \
-  --dns-cloudflare \
-  --dns-cloudflare-credentials ~/.secrets/cloudflare.ini \
-  -d www.ai-infra-matrix.top \
-  -d ai-infra-matrix.top
 8. 除了 README.md 和README_zh_CN.md 外的 markdown 文档，都要放入private-docs/docs-all/中
