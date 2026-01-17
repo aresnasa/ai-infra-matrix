@@ -172,6 +172,9 @@ RUN set -eux; \
         }; \
     fi
 
+# Pre-create output directories with proper permissions for builder user
+RUN mkdir -p /out /home/builder/debs && chown -R builder:builder /out /home/builder/debs && chmod -R 755 /out /home/builder/debs
+
 USER builder
 RUN set -eux; \
     if grep -q "SKIP_SLURM_BUILD=1" /home/builder/build/.srcdir; then \
