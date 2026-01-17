@@ -6563,12 +6563,76 @@ build_all_multiplatform() {
     
     log_info "Using AppHub URL for builds: $apphub_url"
     log_info "Will build for ${#normalized_platforms[@]} platform(s): ${normalized_platforms[*]}"
+    log_info "⚙️  AppHub Container Management: Restarting for each architecture (serial mode)"
+    echo
 
+    local compose_cmd=$(detect_compose_command)
+    local current_apphub_arch=""
+    
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
+        
+        # If AppHub architecture changes, restart AppHub with correct architecture
+        if [[ "$current_apphub_arch" != "$arch_name" ]]; then
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info "🔄 AppHub Architecture Change: $current_apphub_arch → $arch_name"
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            
+            # Stop current AppHub container
+            log_info "  Stopping current AppHub container..."
+            $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+            docker rm -f ai-infra-apphub 2>/dev/null || true
+            
+            # Start AppHub for this architecture
+            log_info "  Starting AppHub for [$arch_name]..."
+            if [[ "$has_native_platform" == "true" && "$arch_name" == "$native_arch" ]]; then
+                # Use native AppHub for native architecture
+                $compose_cmd up -d apphub
+            else
+                # Use cross-platform AppHub (with QEMU) for non-native architectures
+                local cross_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
+                local apphub_port="${APPHUB_PORT:-28080}"
+                
+                # Ensure network exists
+                docker network create ai-infra-network 2>/dev/null || true
+                
+                # Check if cross-platform image exists
+                if ! docker image inspect "$cross_apphub_image" >/dev/null 2>&1; then
+                    log_error "  Cross-platform AppHub image not found: $cross_apphub_image"
+                    return 1
+                fi
+                
+                # Run AppHub with correct platform
+                docker run -d \
+                    --name ai-infra-apphub \
+                    --platform "linux/$arch_name" \
+                    --network ai-infra-network \
+                    -p "${apphub_port}:80" \
+                    -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                    -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                    "$cross_apphub_image"
+                
+                if [[ $? -ne 0 ]]; then
+                    log_error "  Failed to start cross-platform AppHub for [$arch_name]"
+                    return 1
+                fi
+            fi
+            
+            # Wait for AppHub to be ready
+            log_info "  Waiting for AppHub to be ready on [$arch_name]..."
+            if ! wait_for_apphub_ready 300; then
+                log_error "AppHub failed to become ready for [$arch_name]. Aborting build."
+                return 1
+            fi
+            
+            current_apphub_arch="$arch_name"
+            log_info "  ✓ AppHub ready for [$arch_name]"
+        fi
+        
         log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         log_info "🏗️  Building Dependent Services for [$arch_name]"
         log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
         for service in "${DEPENDENT_SERVICES[@]}"; do
             log_info "  → Building $service for $arch_name..."
             build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
@@ -6579,8 +6643,6 @@ build_all_multiplatform() {
     # Phase 5: Create unified tags for native architecture
     # This allows docker-compose to use images without architecture suffix
     log_info "=== Phase 5: Creating Unified Tags for Native Architecture ==="
-    local native_platform=$(_detect_docker_platform)
-    local native_arch="${native_platform##*/}"
     
     # Check if native architecture was built
     local has_native=false
