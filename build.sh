@@ -6633,7 +6633,6 @@ EOF
     
     return 0
 }
-}
 
 # Helper: Pull dependency image for a specific platform
 pull_dependency_for_platform() {
