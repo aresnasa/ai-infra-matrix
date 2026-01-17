@@ -213,7 +213,7 @@ RUN set -eux; \
             if [ "$deb_count" -gt 0 ]; then \
                 echo "✓ Found $deb_count DEB package(s)"; \
                 mkdir -p /home/builder/debs; \
-                find /home/builder/build -maxdepth 2 -name "slurm*.deb" -type f -exec cp {} /home/builder/debs/ \;; \
+                find /home/builder/build -maxdepth 2 -name "slurm*.deb" -type f -exec cp {} /home/builder/debs/ \; \
                 ls -lh /home/builder/debs/; \
             else \
                 echo "⚠️  Build succeeded but no .deb files found"; \
@@ -739,7 +739,7 @@ RUN set -eux; \
                 echo "✓ SLURM RPM build completed successfully"; \
                 echo ">>> Verifying and collecting generated RPM packages:"; \
                 mkdir -p /out/slurm-rpm; \
-                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/slurm-rpm/ \;; \
+                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/slurm-rpm/ \; \
                 echo "✓ Copied $rpm_count RPM packages to /out/slurm-rpm"; \
                 ls -lh /out/slurm-rpm/*.rpm 2>/dev/null; \
             else \
@@ -1463,7 +1463,7 @@ RUN set -eux; \
     if [ -n "$DEB_FILE" ]; then \
         dpkg-deb -x "$DEB_FILE" /tmp/slurm-extract; \
         # Find and copy cgroup_v2.so
-        find /tmp/slurm-extract -name "cgroup_v2.so" -exec cp {} /usr/share/nginx/html/pkgs/slurm-plugins/ \;; \
+        find /tmp/slurm-extract -name "cgroup_v2.so" -exec cp {} /usr/share/nginx/html/pkgs/slurm-plugins/ \; \
         rm -rf /tmp/slurm-extract; \
         echo "✓ Extracted cgroup_v2.so plugin"; \
         ls -lh /usr/share/nginx/html/pkgs/slurm-plugins/; \
