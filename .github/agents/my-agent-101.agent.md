@@ -131,3 +131,37 @@ function ai_cd {
 }
 
 10. 除了build.sh 外的 shell 脚本，都要放入scripts/中
+
+11. **版本号和镜像同步工作流程** ⚠️
+    
+    为了避免脏数据和版本不一致问题，任何时候修改版本号后都需要以下流程：
+    
+    ```bash
+    # 步骤 1: 删除旧的 .env 文件（清除脏数据）
+    rm .env
+    
+    # 步骤 2: 重新渲染模板（从 .env.example 生成新的 .env，并应用所有版本更新）
+    ./build.sh render
+    
+    # 步骤 3: 构建目标组件（确保使用最新版本）
+    ./build.sh gitea --platform=arm64,amd64
+    # 或构建所有组件：
+    ./build.sh all --platform=arm64,amd64
+    ```
+    
+    **为什么这个流程很重要：**
+    - `.env` 文件可能包含旧的缓存数据（脏数据）
+    - 版本号更新时（如 GITEA_VERSION），对应的镜像也需要更新（GITEA_IMAGE）
+    - 删除 `.env` 后，`./build.sh render` 会从 `.env.example` 生成全新的 .env，确保所有配置都是最新的
+    - 这个流程确保 Dockerfile 模板被正确渲染，使用新的版本号
+    
+    **常见版本号配置：**
+    - GITEA_VERSION=1.25.3 → 自动使用 gitea/gitea:1.25.3
+    - GITEA_IMAGE 可不设置，系统会从 GITEA_VERSION 自动生成
+    - 其他组件版本号遵循同样的模式
+    
+    **验证配置是否正确：**
+    ```bash
+    grep "GITEA_VERSION\|GITEA_IMAGE" .env
+    # 输出应该显示一致的版本号
+    ```
