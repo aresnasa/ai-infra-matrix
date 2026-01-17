@@ -6441,9 +6441,10 @@ prefetch_base_images_for_platform() {
             continue
         fi
         
-        # Pull image with retry mechanism
+        # Pull image with aggressive retry mechanism for problematic images
         local retry_count=0
         local pulled=false
+        local pull_output=""
         
         while [[ $retry_count -lt $max_retries ]]; do
             retry_count=$((retry_count + 1))
@@ -6457,11 +6458,32 @@ prefetch_base_images_for_platform() {
             fi
             
             # Attempt to pull with platform specification
-            if docker pull --platform "$platform" "$image" 2>&1 | grep -qE "(^Digest:|^Status:|Downloaded)" ; then
-                log_info "    ✓ $image"
-                success_count=$((success_count + 1))
-                pulled=true
-                break
+            # Capture both stdout and stderr to detect various failure modes
+            if pull_output=$(docker pull --platform "$platform" "$image" 2>&1); then
+                # Success - check if we actually got an image
+                if echo "$pull_output" | grep -qE "(^Digest:|^Status:|Downloaded|already exists)"; then
+                    log_info "    ✓ $image"
+                    success_count=$((success_count + 1))
+                    pulled=true
+                    break
+                fi
+            else
+                # Pull failed - check what type of error
+                if echo "$pull_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused"; then
+                    # Network error - retry is worth it
+                    log_warn "    ⚠️  Network error, will retry: $image"
+                    continue
+                elif echo "$pull_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
+                    # Image doesn't exist - no point retrying
+                    log_warn "    ✗ $image (image not found in registry)"
+                    fail_count=$((fail_count + 1))
+                    pulled=false
+                    break
+                else
+                    # Unknown error - retry
+                    log_warn "    ⚠️  Pull failed with error (will retry): $(echo "$pull_output" | tail -1)"
+                    continue
+                fi
             fi
         done
         
@@ -6549,15 +6571,31 @@ build_component_for_platform() {
     if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
         log_info "  [$arch_name] Creating multiarch-builder with host network support..."
         
+        # Prepare BuildKit config with mirrors and proxy support
+        # This is needed because docker-container driver may not inherit daemon.json settings
+        local buildkit_config="/tmp/buildkitd-multiarch.toml"
+        _generate_buildkit_config_with_proxy "$buildkit_config"
+        
         # Create builder with docker-container driver and host network
         # Using network=host allows buildkit to access the internet for apt/yum operations
         # For accessing docker containers (like apphub), we'll use --add-host in the build command
         # --buildkitd-flags enables network.host entitlement for --network=host in build commands
         # This is critical for arm64 (cross-platform) builds to avoid timeout issues
-        if ! docker buildx create --name "$builder_name" --driver docker-container \
-            --driver-opt network=host \
-            --buildkitd-flags '--allow-insecure-entitlement network.host' \
-            --bootstrap 2>&1; then
+        local create_args=(
+            "--name" "$builder_name"
+            "--driver" "docker-container"
+            "--driver-opt" "network=host"
+            "--buildkitd-flags" "--allow-insecure-entitlement network.host"
+            "--bootstrap"
+        )
+        
+        # Add config file if it was generated successfully
+        if [[ -f "$buildkit_config" ]]; then
+            create_args+=("--config" "$buildkit_config")
+            log_info "  [$arch_name] Using custom buildkit config with mirrors"
+        fi
+        
+        if ! docker buildx create "${create_args[@]}" 2>&1; then
             log_warn "  [$arch_name] Failed to create multiarch-builder with network=host"
             log_warn "  [$arch_name] Attempting to create with default docker-container driver..."
             if ! docker buildx create --name "$builder_name" --driver docker-container --bootstrap 2>&1; then
