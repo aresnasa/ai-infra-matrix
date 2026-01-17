@@ -1464,7 +1464,7 @@ RUN set -eux; \
     if [ -n "$DEB_FILE" ]; then \
         dpkg-deb -x "$DEB_FILE" /tmp/slurm-extract; \
         # Find and copy cgroup_v2.so
-        find /tmp/slurm-extract -name "cgroup_v2.so" -exec cp {} /usr/share/nginx/html/pkgs/slurm-plugins/ \; \
+        find /tmp/slurm-extract -name "cgroup_v2.so" -print0 | xargs -0 -I {} cp {} /usr/share/nginx/html/pkgs/slurm-plugins/; \
         rm -rf /tmp/slurm-extract; \
         echo "✓ Extracted cgroup_v2.so plugin"; \
         ls -lh /usr/share/nginx/html/pkgs/slurm-plugins/; \
