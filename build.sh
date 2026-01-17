@@ -6876,7 +6876,6 @@ build_component_for_platform() {
         # Add docker.internal for compatibility (maps to host's localhost)
         if [[ "$builder_name" == "multiarch-builder" ]]; then
             cmd+=("--add-host" "host.docker.internal:127.0.0.1")
-            log_debug "  [$arch_name] Added host.docker.internal mapping for proxy access"
         fi
         
         # Add --no-cache if force build is enabled
