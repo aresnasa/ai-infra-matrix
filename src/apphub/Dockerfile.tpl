@@ -215,7 +215,7 @@ RUN set -eux; \
             if [ "$deb_count" -gt 0 ]; then \
                 echo "✓ Found $deb_count DEB package(s)"; \
                 mkdir -p /home/builder/debs; \
-                find /home/builder/build -maxdepth 2 -name "slurm*.deb" -type f -exec cp {} /home/builder/debs/ \; \
+                find /home/builder/build -maxdepth 2 -name "slurm*.deb" -type f -print0 | xargs -0 -I {} cp {} /home/builder/debs/; \
                 ls -lh /home/builder/debs/; \
             else \
                 echo "⚠️  Build succeeded but no .deb files found"; \
