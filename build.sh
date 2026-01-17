@@ -7045,8 +7045,231 @@ build_component_for_platform() {
     return 0
 }
 
+# ==============================================================================
+# 自诊断和自修复系统
+# ==============================================================================
+# 在构建前对系统进行全面的诊断，并自动修复可以修复的问题
+
+# 诊断 SSL 证书
+diagnose_ssl_certificates() {
+    log_info "  📋 Checking SSL certificates..."
+    
+    local ssl_dir="src/nginx/ssl"
+    local crt_file="$ssl_dir/server.crt"
+    local key_file="$ssl_dir/server.key"
+    
+    if [[ ! -f "$crt_file" ]] || [[ ! -f "$key_file" ]]; then
+        log_warn "  ⚠️  SSL certificates not found in $ssl_dir"
+        log_info "  🔧 Auto-generating SSL certificates..."
+        
+        if setup_ssl_certificates "" false; then
+            log_info "  ✅ SSL certificates generated successfully"
+            # Rebuild nginx to bundle new certificates
+            log_info "  🔨 Rebuilding nginx with new certificates..."
+            build_component "nginx"
+            return 0
+        else
+            log_warn "  ⚠️  Failed to generate SSL certificates (will continue without SSL)"
+            return 1
+        fi
+    else
+        log_info "  ✅ SSL certificates found"
+        
+        # Check certificate validity
+        if command -v openssl &> /dev/null; then
+            local expiry_date=$(openssl x509 -in "$crt_file" -noout -enddate 2>/dev/null | cut -d= -f2)
+            if [[ -n "$expiry_date" ]]; then
+                log_info "     Certificate expires: $expiry_date"
+            fi
+        fi
+        return 0
+    fi
+}
+
+# 诊断 .env 文件
+diagnose_env_file() {
+    log_info "  📋 Checking environment configuration..."
+    
+    if [[ ! -f ".env" ]]; then
+        log_warn "  ⚠️  .env file not found"
+        log_info "  🔧 Initializing .env from .env.example..."
+        
+        if ! ./build.sh init-env; then
+            log_error "  ✗ Failed to initialize .env"
+            return 1
+        fi
+        
+        log_info "  ✅ .env file initialized"
+        return 0
+    else
+        log_info "  ✅ .env file exists"
+        
+        # Check for required variables
+        local required_vars=("COMPOSE_PROJECT_NAME" "IMAGE_TAG" "EXTERNAL_HOST" "TZ")
+        local missing_vars=()
+        
+        for var in "${required_vars[@]}"; do
+            if ! grep -q "^$var=" .env; then
+                missing_vars+=("$var")
+            fi
+        done
+        
+        if [[ ${#missing_vars[@]} -gt 0 ]]; then
+            log_warn "  ⚠️  Missing environment variables: ${missing_vars[*]}"
+            log_info "  🔧 Re-syncing .env with .env.example..."
+            
+            if ./build.sh render; then
+                log_info "  ✅ Environment variables synced"
+                return 0
+            else
+                log_warn "  ⚠️  Failed to sync .env (some variables may be missing)"
+                return 1
+            fi
+        fi
+        
+        return 0
+    fi
+}
+
+# 诊断 Docker 和 Docker Compose
+diagnose_docker() {
+    log_info "  📋 Checking Docker installation..."
+    
+    if ! command -v docker &> /dev/null; then
+        log_error "  ✗ Docker not found"
+        return 1
+    fi
+    
+    local docker_version=$(docker --version 2>/dev/null)
+    log_info "  ✅ Docker: $docker_version"
+    
+    # Check Docker daemon is running
+    if ! docker ps &>/dev/null; then
+        log_error "  ✗ Docker daemon is not running"
+        return 1
+    fi
+    
+    # Check Docker Compose
+    local compose_cmd=$(detect_compose_command)
+    if [[ -z "$compose_cmd" ]]; then
+        log_error "  ✗ Docker Compose not found"
+        return 1
+    fi
+    
+    local compose_version=$($compose_cmd version 2>/dev/null | head -1)
+    log_info "  ✅ Docker Compose: $compose_version"
+    
+    return 0
+}
+
+# 诊断镜像加速和网络配置
+diagnose_network_and_mirrors() {
+    log_info "  📋 Checking network and mirror configuration..."
+    
+    # Check daemon.json configuration
+    local daemon_json="$HOME/.docker/daemon.json"
+    if [[ -f "$daemon_json" ]]; then
+        local mirror_count=$(grep -o '"registry-mirrors"' "$daemon_json" | wc -l)
+        if [[ $mirror_count -gt 0 ]]; then
+            local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+' | head -3)
+            log_info "  ✅ Registry mirrors configured:"
+            echo "$mirrors" | while read -r mirror; do
+                log_info "     - $mirror"
+            done
+        fi
+    fi
+    
+    # Check network connectivity
+    log_info "  📡 Testing network connectivity..."
+    if ping -c 1 8.8.8.8 &>/dev/null 2>&1; then
+        log_info "  ✅ Internet connectivity OK"
+    else
+        log_warn "  ⚠️  Internet connectivity check failed"
+    fi
+    
+    return 0
+}
+
+# 诊断磁盘空间
+diagnose_disk_space() {
+    log_info "  📋 Checking disk space..."
+    
+    local disk_usage=$(df -h . | tail -1 | awk '{print $5}')
+    local disk_available=$(df -h . | tail -1 | awk '{print $4}')
+    
+    log_info "  ✅ Disk usage: $disk_usage available: $disk_available"
+    
+    # Warn if less than 10GB available
+    local available_gb=$(df . | tail -1 | awk '{print int($4/1024/1024)}')
+    if [[ $available_gb -lt 10 ]]; then
+        log_warn "  ⚠️  Low disk space: Only ${available_gb}GB available (recommended: 50GB+)"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 诊断数据库配置
+diagnose_database() {
+    log_info "  📋 Checking database configuration..."
+    
+    local db_type=$(grep "^DB_TYPE=" .env 2>/dev/null | cut -d'=' -f2)
+    if [[ -n "$db_type" ]]; then
+        log_info "  ✅ Database type: $db_type"
+    fi
+    
+    # Check if database directory exists for local databases
+    if [[ "$db_type" == "postgres" ]]; then
+        if [[ -d "data/postgres" ]]; then
+            log_info "  ✅ PostgreSQL data directory exists"
+        else
+            log_info "  ℹ️  PostgreSQL data directory will be created on first run"
+        fi
+    fi
+    
+    return 0
+}
+
+# 主诊断函数：执行所有诊断
+pre_build_diagnosis() {
+    local auto_fix="${1:-true}"  # 是否自动修复
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🔍 Pre-Build System Diagnosis"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local diagnosis_passed=true
+    
+    # 执行各项诊断
+    diagnose_env_file || diagnosis_passed=false
+    diagnose_docker || diagnosis_passed=false
+    diagnose_ssl_certificates || true  # SSL is optional
+    diagnose_network_and_mirrors || true  # Network issues are not fatal
+    diagnose_disk_space || diagnosis_passed=false
+    diagnose_database || true  # Database issues are not fatal
+    
+    echo ""
+    
+    if [[ "$diagnosis_passed" == "true" ]]; then
+        log_info "✅ All critical diagnostics passed"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    else
+        log_error "❌ Some critical diagnostics failed"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 1
+    fi
+}
+
 build_all() {
     local force="${1:-false}"
+    
+    # 【新增】Phase -3: 系统诊断和自修复
+    if ! pre_build_diagnosis true; then
+        log_error "Pre-build diagnosis failed. Please fix the issues above and try again."
+        exit 1
+    fi
+    echo
     
     # Initialize build cache
     init_build_cache
