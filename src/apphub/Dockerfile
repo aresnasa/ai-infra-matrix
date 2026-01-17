@@ -736,10 +736,10 @@ RUN set -eux; \
             if [ "$rpm_count" -gt 0 ]; then \
                 echo "✓ SLURM RPM build completed successfully"; \
                 echo ">>> Verifying and collecting generated RPM packages:"; \
-                mkdir -p /out; \
-                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/ \;; \
-                echo "✓ Copied $rpm_count RPM packages to /out"; \
-                ls -lh /out/*.rpm 2>/dev/null; \
+                mkdir -p /out/slurm-rpm; \
+                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/slurm-rpm/ \;; \
+                echo "✓ Copied $rpm_count RPM packages to /out/slurm-rpm"; \
+                ls -lh /out/slurm-rpm/*.rpm 2>/dev/null; \
             else \
                 echo "❌ ERROR: No .rpm files were created!"; \
                 echo ">>> rpmbuild exit code was: $rpmbuild_exit_code"; \
@@ -882,7 +882,8 @@ RUN --mount=type=cache,target=/var/cache/saltstack-rpm,sharing=locked \
 
 # Collect RPM artifacts
 RUN set -eux; \
-    mkdir -p /out; \
+    # Create output directories first (CRITICAL for multi-stage COPY)
+    mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
     echo "📦 Collecting RPM packages..."; \
     if [ ! -f /home/builder/rpms/.skip_slurm ] && [ "${BUILD_SLURM}" = "true" ]; then \
         # Find and copy built SLURM RPMs from all possible locations
@@ -893,33 +894,33 @@ RUN set -eux; \
         # Check rpmbuild directory structure (standard rpmbuild location)
         if [ -d /home/builder/rpmbuild/RPMS ]; then \
             echo "  Checking: /home/builder/rpmbuild/RPMS"; \
-            find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+            find /home/builder/rpmbuild/RPMS -type f -name '*.rpm' -exec cp {} /out/slurm-rpm/ \; 2>/dev/null || true; \
         fi; \
         # Check source directory (make rpm sometimes puts RPMs here)
         if [ -d /home/builder/build ]; then \
             echo "  Checking: /home/builder/build"; \
-            find /home/builder/build -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+            find /home/builder/build -type f -name '*.rpm' -exec cp {} /out/slurm-rpm/ \; 2>/dev/null || true; \
         fi; \
         # Check home directory root (backup location)
         echo "  Checking: /home/builder"; \
-        find /home/builder -maxdepth 3 -type f -name '*.rpm' -exec cp {} /out/ \; 2>/dev/null || true; \
+        find /home/builder -maxdepth 3 -type f -name '*.rpm' -exec cp {} /out/slurm-rpm/ \; 2>/dev/null || true; \
         # Remove duplicates and debug symbols if needed
-        cd /out && rm -f *-debuginfo-*.rpm *-debugsource-*.rpm 2>/dev/null || true; \
+        cd /out/slurm-rpm && rm -f *-debuginfo-*.rpm *-debugsource-*.rpm 2>/dev/null || true; \
         # Count collected RPMs
-        rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
+        rpm_count=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
         if [ "$rpm_count" -gt 0 ]; then \
             echo "✓ Successfully collected ${rpm_count} SLURM RPM package(s)"; \
             echo ">>> SLURM RPM packages:"; \
-            ls -lh /out/*.rpm; \
+            ls -lh /out/slurm-rpm/*.rpm; \
         else \
             echo "⚠️  No SLURM RPM packages were found"; \
             echo ">>> Listing /home/builder structure for debugging:"; \
             ls -laR /home/builder/ | head -100 || true; \
-            touch /out/.skip_slurm; \
+            touch /out/slurm-rpm/.skip_slurm; \
         fi; \
     else \
         echo "⚠️  SLURM RPM build was skipped"; \
-        touch /out/.skip_slurm; \
+        touch /out/slurm-rpm/.skip_slurm; \
     fi; \
     # Copy SaltStack packages (CRITICAL: ensure they exist before copying)
     echo "📦 Checking SaltStack packages..."; \
@@ -928,63 +929,56 @@ RUN set -eux; \
         echo "Found ${salt_rpm_count} SaltStack rpm files in /saltstack-rpm"; \
         if [ "$salt_rpm_count" -gt 0 ]; then \
             ls -lh /saltstack-rpm/*.rpm; \
-            cp /saltstack-rpm/*.rpm /out/ || { \
+            cp /saltstack-rpm/*.rpm /out/saltstack-rpm/ || { \
                 echo "❌ Failed to copy SaltStack RPMs"; \
-                exit 1; \
+                touch /out/saltstack-rpm/.skip_saltstack; \
             }; \
-            echo "✓ Copied ${salt_rpm_count} SaltStack rpm packages to /out"; \
-            ls -lh /out/salt*.rpm 2>/dev/null || echo "⚠️  No salt*.rpm in /out"; \
+            echo "✓ Copied ${salt_rpm_count} SaltStack rpm packages to /out/saltstack-rpm"; \
+            ls -lh /out/saltstack-rpm/salt*.rpm 2>/dev/null || echo "⚠️  No salt*.rpm in /out/saltstack-rpm"; \
         else \
             echo "⚠️  No SaltStack RPM files found in /saltstack-rpm"; \
+            touch /out/saltstack-rpm/.skip_saltstack; \
         fi; \
     else \
-        echo "❌ /saltstack-rpm directory does not exist"; \
+        echo "⚠️  /saltstack-rpm directory does not exist"; \
+        touch /out/saltstack-rpm/.skip_saltstack; \
     fi; \
     # Final verification
-    echo "📊 Final /out contents:"; \
-    ls -lh /out/ || echo "⚠️  /out is empty"; \
-    total_rpm_count=$(ls /out/*.rpm 2>/dev/null | wc -l || echo 0); \
-    echo "✓ Total RPM packages in /out: ${total_rpm_count}"; \
+    echo "📊 Final /out/slurm-rpm contents:"; \
+    ls -lh /out/slurm-rpm/ || echo "⚠️  /out/slurm-rpm is empty"; \
+    echo "📊 Final /out/saltstack-rpm contents:"; \
+    ls -lh /out/saltstack-rpm/ || echo "⚠️  /out/saltstack-rpm is empty"; \
+    slurm_total=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    salt_total=$(ls /out/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
+    echo "✓ SLURM RPM packages: ${slurm_total}"; \
+    echo "✓ SaltStack RPM packages: ${salt_total}"; \
     # Generate RPM repository metadata using createrepo_c (Rocky Linux has it)
     echo "🔧 Installing createrepo_c for metadata generation..."; \
     dnf install -y createrepo_c 2>/dev/null || { \
         echo "⚠️  createrepo_c not available, trying createrepo..."; \
         dnf install -y createrepo 2>/dev/null || echo "⚠️  No createrepo tools available"; \
     }; \
-    # Separate SLURM and SaltStack RPMs into subdirectories
-    mkdir -p /out/slurm-rpm /out/saltstack-rpm; \
     # Remove invalid/empty RPMs
     find /out -name "*.rpm" -size 0 -delete || true; \
-    # Check if there are any RPM files to organize
-    if ls /out/*.rpm >/dev/null 2>&1; then \
-        echo "📦 Organizing RPM packages..."; \
-        mv /out/slurm-*.rpm /out/slurm-rpm/ 2>/dev/null || true; \
-        mv /out/salt-*.rpm /out/saltstack-rpm/ 2>/dev/null || true; \
-        # Count packages in each directory
-        slurm_count=$(ls /out/slurm-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-        salt_count=$(ls /out/saltstack-rpm/*.rpm 2>/dev/null | wc -l || echo 0); \
-        echo "  - SLURM RPMs: ${slurm_count}"; \
-        echo "  - SaltStack RPMs: ${salt_count}"; \
-        # Generate metadata for SLURM repository
-        if [ "$slurm_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
-            echo "🔧 Generating SLURM RPM repository metadata..."; \
-            cd /out/slurm-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
-            echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
-        elif [ "$slurm_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
-            echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
-            cd /out/slurm-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
-            echo "✓ Generated SLURM repodata"; \
-        fi; \
-        # Generate metadata for SaltStack repository
-        if [ "$salt_count" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
-            echo "🔧 Generating SaltStack RPM repository metadata..."; \
-            cd /out/saltstack-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
-            echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
-        elif [ "$salt_count" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
-            echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
-            cd /out/saltstack-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
-            echo "✓ Generated SaltStack repodata"; \
-        fi; \
+    # Generate metadata for SLURM repository
+    if [ "$slurm_total" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
+        echo "🔧 Generating SLURM RPM repository metadata..."; \
+        cd /out/slurm-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
+        echo "✓ Generated SLURM repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
+    elif [ "$slurm_total" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
+        echo "🔧 Generating SLURM RPM repository metadata (using createrepo)..."; \
+        cd /out/slurm-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
+        echo "✓ Generated SLURM repodata"; \
+    fi; \
+    # Generate metadata for SaltStack repository
+    if [ "$salt_total" -gt 0 ] && command -v createrepo_c >/dev/null 2>&1; then \
+        echo "🔧 Generating SaltStack RPM repository metadata..."; \
+        cd /out/saltstack-rpm && (createrepo_c . || echo "⚠️  createrepo_c failed, continuing anyway") && \
+        echo "✓ Generated SaltStack repodata: $(ls -d repodata 2>/dev/null || echo 'failed')"; \
+    elif [ "$salt_total" -gt 0 ] && command -v createrepo >/dev/null 2>&1; then \
+        echo "🔧 Generating SaltStack RPM repository metadata (using createrepo)..."; \
+        cd /out/saltstack-rpm && (createrepo . || echo "⚠️  createrepo failed, continuing anyway") && \
+        echo "✓ Generated SaltStack repodata"; \
     fi
 
 # =============================================================================
