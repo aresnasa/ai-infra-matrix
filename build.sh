@@ -6519,22 +6519,31 @@ prefetch_base_images_for_platform() {
     
     log_info "  [$arch_name] Phase 3: Prefetching ${#unique_base_images[@]} unique base images with retry..."
     
+    # Use docker-container driver (buildx) to pre-pull images into BuildKit cache
+    # This is better than docker pull because:
+    # 1. BuildKit will use the daemon.json registry mirrors and proxy settings
+    # 2. Images go directly into BuildKit cache for builds
+    # 3. docker pull only caches in Docker daemon, not in BuildKit
+    local builder_name="multiarch-builder"
+    
     local success_count=0
     local fail_count=0
     local skip_count=0
     
     for image in "${unique_base_images[@]}"; do
-        # Check if image already exists locally
-        if docker image inspect "$image" >/dev/null 2>&1; then
-            log_info "    ✓ $image (cached)"
-            skip_count=$((skip_count + 1))
-            continue
-        fi
+        # Create a simple Dockerfile that just references the base image
+        # This forces BuildKit to pull and cache the image
+        local temp_dockerfile=$(mktemp)
+        cat > "$temp_dockerfile" << EOF
+FROM $image
+RUN echo "Prefetch cache"
+EOF
         
-        # Pull image with aggressive retry mechanism for problematic images
+        log_info "    ⬇ $image"
+        
+        # Try to build (this will pull the image) with retries
         local retry_count=0
         local pulled=false
-        local pull_output=""
         
         while [[ $retry_count -lt $max_retries ]]; do
             retry_count=$((retry_count + 1))
@@ -6543,44 +6552,54 @@ prefetch_base_images_for_platform() {
                 local wait_time=$((retry_delay * retry_count))
                 log_warn "    🔄 Retry $retry_count/$max_retries: $image (waiting ${wait_time}s...)"
                 sleep "$wait_time"
-            else
-                log_info "    ⬇ $image"
             fi
             
-            # Attempt to pull with platform specification
-            # Capture both stdout and stderr to detect various failure modes
-            if pull_output=$(docker pull --platform "$platform" "$image" 2>&1); then
-                # Success - check if we actually got an image
-                if echo "$pull_output" | grep -qE "(^Digest:|^Status:|Downloaded|already exists)"; then
+            # Use buildx build to pull image into BuildKit cache
+            # --cache-to=type=inline: Store inline cache (no network overhead)
+            # We don't need output, just the image pull side-effect
+            local build_output
+            if build_output=$(docker buildx build \
+                --builder "$builder_name" \
+                --platform "$platform" \
+                --progress plain \
+                -f "$temp_dockerfile" \
+                --cache-policy=pull-always \
+                --cache-to=type=inline \
+                /tmp 2>&1); then
+                
+                # Check if build succeeded
+                if echo "$build_output" | grep -qE "(successfully|DONE)"; then
                     log_info "    ✓ $image"
                     success_count=$((success_count + 1))
                     pulled=true
                     break
                 fi
+            fi
+            
+            # Check for specific errors
+            if echo "$build_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused"; then
+                # Network error - retry
+                log_warn "    ⚠️  Network error, will retry: $image"
+                continue
+            elif echo "$build_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
+                # Image doesn't exist - no point retrying
+                log_warn "    ✗ $image (image not found in registry)"
+                fail_count=$((fail_count + 1))
+                pulled=false
+                break
             else
-                # Pull failed - check what type of error
-                if echo "$pull_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused"; then
-                    # Network error - retry is worth it
-                    log_warn "    ⚠️  Network error, will retry: $image"
-                    continue
-                elif echo "$pull_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
-                    # Image doesn't exist - no point retrying
-                    log_warn "    ✗ $image (image not found in registry)"
-                    fail_count=$((fail_count + 1))
-                    pulled=false
-                    break
-                else
-                    # Unknown error - retry
-                    log_warn "    ⚠️  Pull failed with error (will retry): $(echo "$pull_output" | tail -1)"
-                    continue
-                fi
+                # Unknown error
+                log_warn "    ⚠️  Pull failed (will retry): $(echo "$build_output" | tail -1 | head -c 100)"
+                continue
             fi
         done
         
         if [[ "$pulled" == false ]]; then
-            log_warn "    ✗ $image (failed after $max_retries attempts, may not be available)"
+            log_warn "    ✗ $image (failed after $max_retries attempts)"
             fail_count=$((fail_count + 1))
         fi
+        
+        rm -f "$temp_dockerfile"
     done
     
     log_info "  [$arch_name] Phase 3 complete: $success_count pulled, $skip_count cached, $fail_count failed"
