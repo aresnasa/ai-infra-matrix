@@ -206,7 +206,6 @@ RUN set -eux; \
             echo ">>> Checking debian/rules file:"; \
             head -50 debian/rules 2>/dev/null || echo "debian/rules not found"; \
             echo "⚠️  DEB package build failed - skipping for now"; \
-            mkdir -p /home/builder/debs /out; \
             touch /home/builder/debs/.skip_slurm_deb; \
             touch /out/.skip_slurm_deb; \
         else \
@@ -223,7 +222,6 @@ RUN set -eux; \
                 echo ">>> Searching for any .deb files:"; \
                 find /home/builder/build -name "*.deb" -type f || echo "No .deb files found"; \
                 echo "⚠️  Creating skip marker for downstream steps"; \
-                mkdir -p /out; \
                 touch /out/.skip_slurm_deb; \
             fi; \
         fi; \
