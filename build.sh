@@ -6526,6 +6526,9 @@ prefetch_base_images_for_platform() {
     # 3. docker pull only caches in Docker daemon, not in BuildKit
     local builder_name="multiarch-builder"
     
+    # Create a temporary directory for prefetch Dockerfiles
+    local prefetch_dir=$(mktemp -d)
+    
     local success_count=0
     local fail_count=0
     local skip_count=0
@@ -6533,7 +6536,7 @@ prefetch_base_images_for_platform() {
     for image in "${unique_base_images[@]}"; do
         # Create a simple Dockerfile that just references the base image
         # This forces BuildKit to pull and cache the image
-        local temp_dockerfile=$(mktemp)
+        local temp_dockerfile="$prefetch_dir/Dockerfile.prefetch"
         cat > "$temp_dockerfile" << EOF
 FROM $image
 RUN echo "Prefetch cache"
@@ -6555,42 +6558,38 @@ EOF
             fi
             
             # Use buildx build to pull image into BuildKit cache
-            # --cache-to=type=inline: Store inline cache (no network overhead)
             # We don't need output, just the image pull side-effect
             local build_output
             if build_output=$(docker buildx build \
                 --builder "$builder_name" \
                 --platform "$platform" \
-                --progress plain \
+                --progress=plain \
                 -f "$temp_dockerfile" \
                 --cache-policy=pull-always \
-                --cache-to=type=inline \
-                /tmp 2>&1); then
+                "$prefetch_dir" 2>&1); then
                 
-                # Check if build succeeded
-                if echo "$build_output" | grep -qE "(successfully|DONE)"; then
-                    log_info "    ✓ $image"
-                    success_count=$((success_count + 1))
-                    pulled=true
-                    break
-                fi
-            fi
-            
-            # Check for specific errors
-            if echo "$build_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused"; then
-                # Network error - retry
-                log_warn "    ⚠️  Network error, will retry: $image"
-                continue
-            elif echo "$build_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
-                # Image doesn't exist - no point retrying
-                log_warn "    ✗ $image (image not found in registry)"
-                fail_count=$((fail_count + 1))
-                pulled=false
+                # Build succeeded - image is now in cache
+                log_info "    ✓ $image"
+                success_count=$((success_count + 1))
+                pulled=true
                 break
             else
-                # Unknown error
-                log_warn "    ⚠️  Pull failed (will retry): $(echo "$build_output" | tail -1 | head -c 100)"
-                continue
+                # Build failed - check what type of error
+                if echo "$build_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused"; then
+                    # Network error - retry
+                    log_warn "    ⚠️  Network error, will retry: $image"
+                    continue
+                elif echo "$build_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
+                    # Image doesn't exist - no point retrying
+                    log_warn "    ✗ $image (image not found in registry)"
+                    fail_count=$((fail_count + 1))
+                    pulled=false
+                    break
+                else
+                    # Unknown error
+                    log_warn "    ⚠️  Pull failed (will retry): $(echo "$build_output" | tail -1 | head -c 100)"
+                    continue
+                fi
             fi
         done
         
@@ -6598,9 +6597,9 @@ EOF
             log_warn "    ✗ $image (failed after $max_retries attempts)"
             fail_count=$((fail_count + 1))
         fi
-        
-        rm -f "$temp_dockerfile"
     done
+    
+    rm -rf "$prefetch_dir"
     
     log_info "  [$arch_name] Phase 3 complete: $success_count pulled, $skip_count cached, $fail_count failed"
     
