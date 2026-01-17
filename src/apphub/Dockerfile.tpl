@@ -615,12 +615,17 @@ RUN set -eux; \
         cat ~/.rpmmacros; \
         echo "Note: cgroup support disabled at build time - use system defaults"; \
         # Build RPMs directly using rpmbuild -ta (recommended by official docs)
+        # Use --with munge to enable munge support (munge is already built and installed)
+        # Use --without cgroup to disable cgroup at compile-time, manage via slurm.conf
         echo ">>> Building SLURM RPM packages using 'rpmbuild -ta' (this may take 10-15 minutes)..."; \
-        echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
-        echo ">>> Note: Using --nodeps because we installed munge from source (not RPM package)"; \
-        if ! rpmbuild -ta --nodeps "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
-            echo "⚠️  RPM build failed! (Non-fatal, skipping RPMs)"; \
+        echo ">>> Command: rpmbuild -ta --with munge --without cgroup ${tarball}"; \
+        echo ">>> Options: --with munge (enable MUNGE auth) --without cgroup (disable compile-time cgroup)"; \
+        if ! rpmbuild -ta --with munge --without cgroup "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
+            echo "⚠️  RPM build failed! Showing diagnostic information:"; \
+            echo ">>> Last 100 lines of build log:"; \
             tail -100 /tmp/rpmbuild.log; \
+            echo ">>> Searching for error messages:"; \
+            grep -iE "error|cannot find|undefined reference|fatal" /tmp/rpmbuild.log || echo "No specific error patterns found"; \
             mkdir -p /home/builder/rpms; \
             touch /home/builder/rpms/.skip_slurm; \
         else \
