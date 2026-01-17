@@ -190,8 +190,9 @@ RUN set -eux; \
     # Embed front-end files
     $(go env GOPATH)/bin/statik -src=./pub -dest=./front
 
-# Step 2: Download Go dependencies with fallback
+# Step 2: Tidy and download Go dependencies with fallback
 RUN set -eux; \
+    go mod tidy && \
     echo "Downloading Go dependencies with GOPROXY=${GOPROXY}..."; \
     if ! go mod download; then \
         echo "Primary GOPROXY failed, trying goproxy.io..."; \
