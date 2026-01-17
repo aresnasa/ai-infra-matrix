@@ -203,8 +203,9 @@ RUN set -eux; \
             echo ">>> Checking debian/rules file:"; \
             head -50 debian/rules 2>/dev/null || echo "debian/rules not found"; \
             echo "⚠️  DEB package build failed - skipping for now"; \
-            mkdir -p /home/builder/debs; \
+            mkdir -p /home/builder/debs /out; \
             touch /home/builder/debs/.skip_slurm_deb; \
+            touch /out/.skip_slurm_deb; \
         else \
             echo "✓ SLURM DEB build completed"; \
             echo ">>> Checking for generated DEB packages..."; \
