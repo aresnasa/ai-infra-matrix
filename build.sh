@@ -5538,14 +5538,13 @@ _generate_buildkit_config_with_proxy() {
     local output_file="$1"
     local daemon_json="${HOME}/.docker/daemon.json"
     
-    # Initialize config
+    # Initialize config with basic settings
     cat > "$output_file" << 'EOF'
 # Auto-generated buildkit config for registry mirrors and proxy support
 debug = false
 
-# Network configuration for outgoing connections
-[net]
-  # GC policy for intermediate layers
+[worker.oci]
+  # Use overlayfs snapshotter for better performance
 EOF
     
     # Extract and add proxy settings if present in daemon.json
@@ -5558,7 +5557,7 @@ EOF
             cat >> "$output_file" << EOF
 
 [buildkitd]
-  # Proxy settings for pulling images
+  # Proxy settings for pulling images and running RUN commands
 EOF
             if [[ -n "$http_proxy" ]]; then
                 echo "  httpProxy = \"$http_proxy\"" >> "$output_file"
@@ -5571,39 +5570,50 @@ EOF
             fi
         fi
         
-        # Add registry mirrors
-        local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+' | head -3)
+        # Extract registry mirrors - these are the acceleration mirrors configured in daemon.json
+        local mirrors=$(grep -A10 '"registry-mirrors"' "$daemon_json" 2>/dev/null | grep -oE 'https?://[^"]+')
+        local is_insecure_registry=$(grep -o '"insecure-registries"' "$daemon_json" 2>/dev/null | wc -l)
+        
         if [[ -n "$mirrors" ]]; then
-            cat >> "$output_file" << 'EOF'
-
-# Registry configuration
-[registry."docker.io"]
-EOF
-            # Add mirrors
-            echo "  mirrors = [" >> "$output_file"
-            local first=true
-            for mirror in $mirrors; do
-                local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
-                if [[ "$first" == "true" ]]; then
-                    echo "    \"$host\"" >> "$output_file"
-                    first=false
-                else
-                    echo "    ,\"$host\"" >> "$output_file"
-                fi
-            done
-            echo "  ]" >> "$output_file"
+            # Get first mirror as the primary acceleration endpoint
+            local first_mirror=$(echo "$mirrors" | head -1)
+            local mirror_host=$(echo "$first_mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+            local is_http=$(echo "$first_mirror" | grep -c "^http://")
             
-            # Add insecure registry configs for mirrors
-            for mirror in $mirrors; do
-                local host=$(echo "$mirror" | sed -E 's|https?://||' | sed 's|/.*||')
-                local is_http=$(echo "$mirror" | grep -c "^http://")
-                cat >> "$output_file" << EOF
+            # Configure docker.io to use the primary mirror
+            # This tells BuildKit to use the mirror for docker.io requests
+            cat >> "$output_file" << EOF
 
-[registry."$host"]
-  http = $([ "$is_http" -gt 0 ] && echo "true" || echo "false")
-  insecure = true
+# Registry configuration for Docker Hub acceleration
+[registry."docker.io"]
+  # Use the configured mirror as the primary endpoint
+  # BuildKit will try this mirror first for docker.io requests
+  mirrors = ["$mirror_host"]
+
+# Configure the mirror itself as a registry endpoint
+[registry."$mirror_host"]
 EOF
-            done
+            if [[ "$is_http" -gt 0 ]]; then
+                echo "  http = true" >> "$output_file"
+            fi
+            
+            # Mark as insecure if configured in daemon.json
+            if grep -q "\"$mirror_host\"" "$daemon_json"; then
+                echo "  insecure = true" >> "$output_file"
+            fi
+        fi
+        
+        # Also configure registry-1.docker.io (used by some images) to use the same mirror
+        if [[ -n "$mirrors" ]]; then
+            local first_mirror=$(echo "$mirrors" | head -1)
+            local mirror_host=$(echo "$first_mirror" | sed -E 's|https?://||' | sed 's|/.*||')
+            
+            cat >> "$output_file" << EOF
+
+# Also redirect registry-1.docker.io to mirror
+[registry."registry-1.docker.io"]
+  mirrors = ["$mirror_host"]
+EOF
         fi
     fi
     
