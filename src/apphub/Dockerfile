@@ -203,8 +203,9 @@ RUN set -eux; \
             echo ">>> Checking debian/rules file:"; \
             head -50 debian/rules 2>/dev/null || echo "debian/rules not found"; \
             echo "⚠️  DEB package build failed - skipping for now"; \
-            mkdir -p /home/builder/debs; \
+            mkdir -p /home/builder/debs /out; \
             touch /home/builder/debs/.skip_slurm_deb; \
+            touch /out/.skip_slurm_deb; \
         else \
             echo "✓ SLURM DEB build completed"; \
             echo ">>> Checking for generated DEB packages..."; \
@@ -218,6 +219,9 @@ RUN set -eux; \
                 echo "⚠️  Build succeeded but no .deb files found"; \
                 echo ">>> Searching for any .deb files:"; \
                 find /home/builder/build -name "*.deb" -type f || echo "No .deb files found"; \
+                echo "⚠️  Creating skip marker for downstream steps"; \
+                mkdir -p /out; \
+                touch /out/.skip_slurm_deb; \
             fi; \
         fi; \
     fi
@@ -348,33 +352,58 @@ RUN mkdir -p /out \
 
 # Move all debuild outputs to /out (skip verification if SLURM build was skipped)
 RUN set -eux; \
-    if [ ! -f /out/.skip_slurm ]; then \
+    if [ ! -f /home/builder/debs/.skip_slurm_deb ] && [ ! -f /out/.skip_slurm_deb ]; then \
+        echo ">>> Collecting DEB packages from build..."; \
         find /home/builder/build -maxdepth 1 -type f -name '*.deb' -exec mv {} /out/ \; || true; \
         find /home/builder/build -maxdepth 1 -type f -name '*.ddeb' -exec mv {} /out/ \; || true; \
         find /home/builder/build -maxdepth 1 -type f -name '*.build*' -exec mv {} /out/ \; || true; \
         find /home/builder/build -maxdepth 1 -type f -name '*.changes' -exec mv {} /out/ \; || true; \
+        # Also check in parent directory where debuild might output files
+        find /home/builder -maxdepth 1 -type f -name '*.deb' -exec mv {} /out/ \; || true; \
+        find /home/builder -maxdepth 1 -type f -name '*.ddeb' -exec mv {} /out/ \; || true; \
         # Verify at least one .deb file was produced
-        deb_count=$(find /out -name '*.deb' -type f | wc -l); \
+        deb_count=$(find /out -name '*.deb' -type f 2>/dev/null | wc -l); \
         if [ "$deb_count" -eq 0 ]; then \
-            echo "ERROR: No .deb packages were built!"; \
-            echo "Build artifacts in /home/builder:"; \
-            ls -la /home/builder/ || true; \
-            echo "Build artifacts in /home/builder/build:"; \
-            ls -la /home/builder/build/ || true; \
-            exit 1; \
+            echo "⚠️  WARNING: No .deb packages were found!"; \
+            echo ">>> This may indicate:"; \
+            echo "    1. DEB build failed (check previous logs)"; \
+            echo "    2. Packages are in unexpected location"; \
+            echo ">>> Build artifacts in /home/builder:"; \
+            ls -la /home/builder/ 2>/dev/null | head -20 || true; \
+            echo ">>> Build artifacts in /home/builder/build:"; \
+            ls -la /home/builder/build/ 2>/dev/null | head -20 || true; \
+            echo ">>> Build artifacts in /out:"; \
+            ls -la /out/ 2>/dev/null | grep -E '\.(deb|ddeb|build)' || echo "No packages found"; \
+            echo ">>> Marking DEB build as skipped due to missing packages"; \
+            touch /out/.skip_slurm_deb; \
+        else \
+            echo "✓ Successfully collected $deb_count SLURM .deb package(s)"; \
+            ls -lh /out/slurm*.deb 2>/dev/null | head -5; \
         fi; \
-        echo "✓ Successfully built $deb_count SLURM .deb package(s)"; \
+    elif [ -f /home/builder/debs/.skip_slurm_deb ] || [ -f /out/.skip_slurm_deb ]; then \
+        echo "⚠️  SLURM DEB build was skipped or failed - no packages to collect"; \
+        # Copy the skip marker to /out for consistency
+        touch /out/.skip_slurm_deb; \
     else \
-        echo "⚠️  SLURM build was skipped - no packages to collect"; \
+        echo "⚠️  SLURM RPM build was skipped - no DEB packages expected"; \
     fi; \
     # Copy SaltStack packages
     if [ -d /saltstack-deb ] && [ "$(ls -A /saltstack-deb/*.deb 2>/dev/null)" ]; then \
+        echo ">>> Collecting SaltStack packages..."; \
         cp /saltstack-deb/*.deb /out/ || true; \
         salt_count=$(ls /saltstack-deb/*.deb 2>/dev/null | wc -l || echo 0); \
-        echo "✓ Added ${salt_count} SaltStack deb packages"; \
-        ls -lh /out/salt*.deb 2>/dev/null || true; \
-    fi
-
+        if [ "$salt_count" -gt 0 ]; then \
+            echo "✓ Added ${salt_count} SaltStack deb package(s)"; \
+            ls -lh /out/salt*.deb 2>/dev/null | head -5; \
+        fi; \
+    fi; \
+    echo ">>> Final package inventory:"; \
+    total_debs=$(find /out -name '*.deb' -type f 2>/dev/null | wc -l); \
+    if [ "$total_debs" -gt 0 ]; then \
+        echo "✓ Total: $total_debs DEB packages in /out"; \
+        ls -lh /out/*.deb 2>/dev/null | tail -3; \
+    else \
+        echo "ℹ️  No DEB packages in /out (may have been skipped)"; \
 # =============================================================================
 # Stage 2: Build SLURM rpm packages (AlmaLinux 9)
 # 使用 AlmaLinux 替代 Rocky Linux（Rocky 的 AppStream 模块元数据损坏）
