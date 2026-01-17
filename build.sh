@@ -6710,12 +6710,55 @@ build_component_for_platform() {
         
         cmd+=("--load")  # Load to local docker daemon
         
+        # Network proxy and mirror configuration for buildx docker-container driver
+        # The buildkit container may be isolated from daemon.json settings
+        # We need to explicitly pass proxy and registry mirror configs
+        
+        # Check if daemon.json has proxy settings
+        local daemon_json="${HOME}/.docker/daemon.json"
+        if [[ -f "$daemon_json" ]]; then
+            # Extract proxy settings if present (httpProxy, httpsProxy, noProxy)
+            local http_proxy=$(grep -o '"httpProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+            local https_proxy=$(grep -o '"httpsProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+            local no_proxy=$(grep -o '"noProxy": "[^"]*"' "$daemon_json" 2>/dev/null | cut -d'"' -f4)
+            
+            # Pass proxy settings to build environment
+            if [[ -n "$http_proxy" ]]; then
+                cmd+=("--build-arg" "HTTP_PROXY=$http_proxy")
+                cmd+=("--build-arg" "http_proxy=$http_proxy")
+                log_info "  [$arch_name] Using HTTP proxy: $http_proxy"
+            fi
+            if [[ -n "$https_proxy" ]]; then
+                cmd+=("--build-arg" "HTTPS_PROXY=$https_proxy")
+                cmd+=("--build-arg" "https_proxy=$https_proxy")
+                log_info "  [$arch_name] Using HTTPS proxy: $https_proxy"
+            fi
+            if [[ -n "$no_proxy" ]]; then
+                cmd+=("--build-arg" "NO_PROXY=$no_proxy")
+                cmd+=("--build-arg" "no_proxy=$no_proxy")
+            fi
+        fi
+        
+        # Add environment variables from Docker daemon for registry mirrors and other settings
+        # This ensures buildkit respects the same configurations as docker daemon
+        if [[ -n "$http_proxy" || -n "$https_proxy" ]]; then
+            log_info "  [$arch_name] ⚠️  Proxy detected, may slow down image pulls"
+            log_info "  [$arch_name]   Ensure proxy server is running: http_proxy=$http_proxy"
+        fi
+        
         # Add --add-host to map 'apphub' to the actual container IP
         # This allows buildkit (running with host network) to access apphub container
         local apphub_ip=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ai-infra-apphub 2>/dev/null || echo "")
         if [[ -n "$apphub_ip" ]]; then
             cmd+=("--add-host" "apphub:$apphub_ip")
             log_info "  [$arch_name] Using apphub at $apphub_ip"
+        fi
+        
+        # For docker-container driver with host network, we also need to handle localhost properly
+        # Add docker.internal for compatibility (maps to host's localhost)
+        if [[ "$builder_name" == "multiarch-builder" ]]; then
+            cmd+=("--add-host" "host.docker.internal:127.0.0.1")
+            log_debug "  [$arch_name] Added host.docker.internal mapping for proxy access"
         fi
         
         # Add --no-cache if force build is enabled

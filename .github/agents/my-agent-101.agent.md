@@ -107,3 +107,25 @@ function ai_cd {
 5. 所有的 TASK 任务生成的 markdown 文件都要放在private-docs/docs-all 中
 
 8. 除了 README.md 和README_zh_CN.md 外的 markdown 文档，都要放入private-docs/docs-all/中
+
+9. 我本地的 docker 使用了代理http://127.0.0.1：7890去访问 dockerhub，这里需要一个检查机制保证 docker 能够获取元数据，同时本地的 docker 已经使用了如下镜像加速配置配置：
+{
+  "builder": {
+    "gc": {
+      "defaultKeepStorage": "60GB",
+      "enabled": true
+    }
+  },
+  "experimental": false,
+  "insecure-registries": [
+    "d9qvoql50lvykf.xuanyuan.run",
+    "d9qvoql50lvykf-ghcr.xuanyuan.run",
+    "d9qvoql50lvykf-k8s.xuanyuan.run",
+    "nexus-docker.zs.shaipower.online"
+  ],
+  "registry-mirrors": [
+    "https://d9qvoql50lvykf.xuanyuan.run",
+    "https://d9qvoql50lvykf-ghcr.xuanyuan.run",
+    "https://d9qvoql50lvykf-k8s.xuanyuan.run"
+  ]
+}
