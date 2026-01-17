@@ -404,6 +404,8 @@ RUN set -eux; \
         ls -lh /out/*.deb 2>/dev/null | tail -3; \
     else \
         echo "ℹ️  No DEB packages in /out (may have been skipped)"; \
+    fi
+
 # =============================================================================
 # Stage 2: Build SLURM rpm packages (AlmaLinux 9)
 # 使用 AlmaLinux 替代 Rocky Linux（Rocky 的 AppStream 模块元数据损坏）
