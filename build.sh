@@ -64,6 +64,104 @@ log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 # ==============================================================================
+# Network Diagnostics Functions - 网络诊断函数
+# ==============================================================================
+
+# Check basic network connectivity
+# Returns: 0 if connected, 1 if disconnected
+_check_network_connectivity() {
+    local test_hosts=("8.8.8.8" "1.1.1.1" "114.114.114.114")
+    local timeout=3
+    
+    for host in "${test_hosts[@]}"; do
+        if ping -c 1 -W $timeout "$host" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Get network interface information
+_get_network_info() {
+    echo "Network Information:"
+    
+    if command -v ifconfig >/dev/null 2>&1; then
+        ifconfig | grep -E "^[a-z]|inet " || true
+    elif command -v ip >/dev/null 2>&1; then
+        ip addr show | grep -E "^[0-9]+:|inet " || true
+    else
+        echo "  (No network tools available)"
+    fi
+}
+
+# Diagnose network issues
+diagnose_network() {
+    log_error "Network connectivity issue detected!"
+    echo ""
+    log_step "Running network diagnostics..."
+    echo ""
+    
+    # Check DNS resolution
+    echo "🔍 DNS Resolution Test:"
+    if ping -c 1 -W 2 docker.io >/dev/null 2>&1; then
+        echo "  ✓ docker.io is reachable"
+    else
+        echo "  ✗ docker.io is NOT reachable"
+        echo "    - Check your internet connection"
+        echo "    - Check DNS configuration: cat /etc/resolv.conf"
+        echo "    - Try using different DNS: 8.8.8.8, 1.1.1.1, 114.114.114.114"
+    fi
+    echo ""
+    
+    # Check Docker daemon
+    echo "🐳 Docker Status:"
+    if docker info >/dev/null 2>&1; then
+        local docker_version=$(docker version --format='{{.Server.Version}}' 2>/dev/null || echo "unknown")
+        echo "  ✓ Docker daemon is running (version: $docker_version)"
+    else
+        echo "  ✗ Docker daemon is NOT running"
+        echo "    - Start Docker: docker daemon"
+        echo "    - Or start Docker Desktop on macOS/Windows"
+    fi
+    echo ""
+    
+    # Check buildx builder
+    echo "🏗️ BuildKit Builder:"
+    if docker buildx ls >/dev/null 2>&1; then
+        echo "  ✓ docker buildx is available"
+        docker buildx ls | sed 's/^/    /'
+    else
+        echo "  ✗ docker buildx is NOT available"
+    fi
+    echo ""
+    
+    # Show network interfaces
+    echo "🌐 Network Interfaces:"
+    _get_network_info | sed 's/^/    /'
+    echo ""
+    
+    # Check DNS
+    echo "🔎 DNS Servers:"
+    if [[ -f "/etc/resolv.conf" ]]; then
+        grep "^nameserver" /etc/resolv.conf | sed 's/^/    /' || echo "    (No nameservers configured)"
+    elif [[ -f "/etc/wsl.conf" ]]; then
+        echo "    (WSL2 system - DNS inherited from Windows)"
+    else
+        echo "    (Unable to check DNS configuration)"
+    fi
+    echo ""
+    
+    log_info "Recommended solutions:"
+    echo "  1. Check internet connection:  ping 8.8.8.8"
+    echo "  2. Check DNS:                  nslookup docker.io"
+    echo "  3. Check Docker network:       docker network ls"
+    echo "  4. Restart Docker:             docker restart"
+    echo "  5. Clear Docker build cache:   docker builder prune --all"
+    echo ""
+}
+
+# ==============================================================================
 # 通用工具函数
 # ==============================================================================
 
