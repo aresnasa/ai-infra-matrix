@@ -2942,6 +2942,171 @@ list_download_components() {
     echo ""
 }
 
+# ==============================================================================
+# Go Dependencies Update Functions - Go 依赖更新功能
+# ==============================================================================
+
+update_go_dependencies() {
+    local projects=("backend" "nightingale")
+    local update_all=true
+    local project_to_update=""
+    local update_mode="--patch"
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                echo "Usage: $0 update-go-deps [project] [options]"
+                echo ""
+                echo "Projects:"
+                echo "  backend          Update backend Go dependencies"
+                echo "  nightingale      Update Nightingale Go dependencies"
+                echo "  all              Update all projects (default)"
+                echo ""
+                echo "Options:"
+                echo "  -h, --help       Show this help message"
+                echo "  --patch          Only update patch versions (default)"
+                echo "  --minor          Update minor and patch versions"
+                echo "  --tidy           Only run go mod tidy (no upgrades)"
+                echo ""
+                echo "Examples:"
+                echo "  $0 update-go-deps              # Update all projects (patch only)"
+                echo "  $0 update-go-deps backend      # Update backend only"
+                echo "  $0 update-go-deps --tidy       # Only tidy all projects"
+                return 0
+                ;;
+            --patch|--minor|--tidy)
+                update_mode="$1"
+                shift
+                ;;
+            backend|nightingale|all)
+                project_to_update="$1"
+                update_all=false
+                shift
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    export GOPROXY="https://goproxy.cn,https://goproxy.io,direct"
+    
+    local success=0
+    local failed=0
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║          Go Dependencies Update Tool                           ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "GOPROXY: $GOPROXY"
+    log_info "Update Mode: $update_mode"
+    echo ""
+    
+    # Determine which projects to update
+    if [[ "$update_all" == true ]] || [[ "$project_to_update" == "all" ]]; then
+        # Update all projects
+        for project in "${projects[@]}"; do
+            _update_go_project "$project" "$update_mode" || failed=$((failed + 1))
+            success=$((success + 1))
+        done
+    else
+        # Update specific project
+        if [[ " ${projects[*]} " =~ " ${project_to_update} " ]]; then
+            _update_go_project "$project_to_update" "$update_mode" || failed=$((failed + 1))
+            success=$((success + 1))
+        else
+            log_error "Unknown project: $project_to_update"
+            log_info "Valid projects: ${projects[*]}"
+            return 1
+        fi
+    fi
+    
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║                   Update Complete                              ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Processed: $success project(s)"
+    [[ $failed -gt 0 ]] && log_error "Failed: $failed project(s)" || log_info "All projects updated successfully ✓"
+    echo ""
+    
+    return $([[ $failed -eq 0 ]] && echo 0 || echo 1)
+}
+
+_update_go_project() {
+    local project="$1"
+    local update_mode="$2"
+    local project_path=""
+    
+    case "$project" in
+        backend)
+            project_path="$SCRIPT_DIR/src/backend"
+            ;;
+        nightingale)
+            project_path="$SCRIPT_DIR/third_party/nightingale"
+            ;;
+        *)
+            log_error "Unknown project: $project"
+            return 1
+            ;;
+    esac
+    
+    if [[ ! -f "$project_path/go.mod" ]]; then
+        log_error "go.mod not found: $project_path/go.mod"
+        return 1
+    fi
+    
+    log_step "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_step "Updating: $project"
+    log_step "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    cd "$project_path" || return 1
+    
+    # Step 1: go mod tidy
+    log_info "[1/3] Running go mod tidy..."
+    if ! timeout 120 go mod tidy 2>&1 | head -20; then
+        log_error "Failed to run go mod tidy"
+        cd "$SCRIPT_DIR"
+        return 1
+    fi
+    
+    # Step 2: go mod verify
+    log_info "[2/3] Verifying go.mod..."
+    if ! go mod verify 2>&1 | head -10; then
+        log_error "go mod verify failed"
+        cd "$SCRIPT_DIR"
+        return 1
+    fi
+    
+    # Step 3: Update dependencies (based on mode)
+    case "$update_mode" in
+        --tidy)
+            log_info "[3/3] Skipping dependency updates (--tidy mode)"
+            ;;
+        --patch)
+            log_info "[3/3] Updating patch versions (go get -u=patch)..."
+            if ! timeout 300 go get -u=patch ./... 2>&1 | head -30; then
+                log_warn "Some patch updates may have failed, but continuing..."
+            fi
+            ;;
+        --minor)
+            log_info "[3/3] Updating minor and patch versions (go get -u)..."
+            if ! timeout 300 go get -u ./... 2>&1 | head -30; then
+                log_warn "Some updates may have failed, but continuing..."
+            fi
+            ;;
+    esac
+    
+    log_info "✓ $project updated successfully"
+    echo ""
+    
+    cd "$SCRIPT_DIR" || return 1
+    return 0
+}
+
 # Get all component names from components.json
 get_all_download_components() {
     if command -v jq &> /dev/null && [[ -f "$COMPONENTS_JSON" ]]; then
@@ -8737,6 +8902,23 @@ print_help() {
     echo "    Components: prometheus, node_exporter, alertmanager, categraf,"
     echo "                code_server (alias: vscode), saltstack, slurm, etc."
     echo ""
+    echo "Go Dependencies Update Commands:"
+    echo "  update-go-deps [project] [options]  Update Go module dependencies"
+    echo "    Projects:"
+    echo "      backend          Update backend Go dependencies"
+    echo "      nightingale      Update Nightingale Go dependencies"
+    echo "      all              Update all projects (default)"
+    echo "    Options:"
+    echo "      -h, --help       Show help"
+    echo "      --patch          Only update patch versions (default)"
+    echo "      --minor          Update minor and patch versions"
+    echo "      --tidy           Only run go mod tidy (no upgrades)"
+    echo "    Examples:"
+    echo "      $0 update-go-deps              # Update all with patch versions"
+    echo "      $0 update-go-deps backend      # Update backend only"
+    echo "      $0 update-go-deps --minor      # Update all with minor versions"
+    echo "      $0 update-go-deps --tidy       # Only tidy all projects"
+    echo ""
     echo "Offline Export Commands:"
     echo "  export-offline [dir] [tag] [include_common] [platforms]"
     echo "                          Export images to tar files (multi-arch support)"
@@ -9275,6 +9457,16 @@ case "$COMMAND" in
         
         log_info "✅ Third-party dependencies downloaded to third_party/"
         log_info "💡 These files will be used during AppHub build for faster builds"
+        ;;
+    update-go-deps)
+        # Update Go module dependencies
+        log_info "🔄 Updating Go dependencies..."
+        
+        # 构建传递给更新函数的参数（排除命令本身）
+        _update_args=("${REMAINING_ARGS[@]:1}")
+        
+        # 使用内置的更新函数
+        update_go_dependencies "${_update_args[@]}"
         ;;
     help|--help|-h)
         print_help
