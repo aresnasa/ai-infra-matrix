@@ -630,8 +630,20 @@ RUN set -eux; \
             touch /home/builder/rpms/.skip_slurm; \
         else \
             echo "✓ SLURM RPM build completed successfully"; \
-            echo ">>> Listing generated RPM packages:"; \
-            find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
+            echo ">>> Verifying and collecting generated RPM packages:"; \
+            rpm_count=$(find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null | wc -l); \
+            if [ "$rpm_count" -gt 0 ]; then \
+                echo "✓ Found $rpm_count RPM package(s)"; \
+                mkdir -p /out; \
+                find ~/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/ \;; \
+                echo "✓ Copied all RPM packages to /out"; \
+                ls -lh /out/*.rpm 2>/dev/null | head -10; \
+            else \
+                echo "❌ ERROR: Build succeeded but no .rpm files found!"; \
+                echo ">>> Checking rpmbuild directory structure:"; \
+                find ~/rpmbuild -type f -name "*.rpm" || echo "No RPM files found anywhere"; \
+                exit 1; \
+            fi; \
         fi; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
