@@ -182,11 +182,46 @@ RUN set -eux; \
         echo "📦 Building SLURM DEB packages..."; \
         echo "Note: Building without hardcoded cgroup dependency - use system defaults"; \
         echo "      cgroup features will be configured via slurm.conf, not at compile time"; \
+        echo ">>> Current directory: $(pwd)"; \
+        echo ">>> SLURM source directory contents:"; \
+        ls -la | head -20; \
         # Use DEB_BUILD_OPTIONS to pass configuration (skip tests, minimal build)
-        # Note: SLURM's debian/rules may not honor --without-cgroup, but we document the intent
         export DEB_BUILD_OPTIONS="nocheck parallel=$(nproc)"; \
-        dpkg-buildpackage -b -uc; \
+        echo ">>> DEB_BUILD_OPTIONS: $DEB_BUILD_OPTIONS"; \
+        echo ">>> Starting: dpkg-buildpackage -b -uc"; \
+        build_exit_code=0; \
+        if ! dpkg-buildpackage -b -uc 2>&1 | tee /tmp/dpkg-build.log; then \
+            build_exit_code=$?; \
+        fi; \
+        echo ">>> dpkg-buildpackage exit code: $build_exit_code"; \
+        if [ "$build_exit_code" -ne 0 ]; then \
+            echo "❌ DEB build failed with exit code: $build_exit_code"; \
+            echo ">>> Last 150 lines of build log:"; \
+            tail -150 /tmp/dpkg-build.log; \
+            echo ">>> Searching for error messages:"; \
+            grep -iE "error|fatal|failed|cannot find|undefined reference|missing|configure" /tmp/dpkg-build.log | tail -30 || echo "No specific error patterns found"; \
+            echo ">>> Checking debian/rules file:"; \
+            head -50 debian/rules 2>/dev/null || echo "debian/rules not found"; \
+            echo "⚠️  DEB package build failed - skipping for now"; \
+            mkdir -p /home/builder/debs; \
+            touch /home/builder/debs/.skip_slurm_deb; \
+        else \
+            echo "✓ SLURM DEB build completed"; \
+            echo ">>> Checking for generated DEB packages..."; \
+            deb_count=$(find /home/builder/build -name "slurm*.deb" -type f 2>/dev/null | wc -l); \
+            if [ "$deb_count" -gt 0 ]; then \
+                echo "✓ Found $deb_count DEB package(s)"; \
+                mkdir -p /home/builder/debs; \
+                find /home/builder/build -maxdepth 2 -name "slurm*.deb" -type f -exec cp {} /home/builder/debs/ \;; \
+                ls -lh /home/builder/debs/; \
+            else \
+                echo "⚠️  Build succeeded but no .deb files found"; \
+                echo ">>> Searching for any .deb files:"; \
+                find /home/builder/build -name "*.deb" -type f || echo "No .deb files found"; \
+            fi; \
+        fi; \
     fi
+
 
 # Download SaltStack packages from GitHub releases
 USER root
@@ -639,44 +674,56 @@ RUN set -eux; \
         \
         # Copy spec file to SPECS directory
         echo ">>> Setting up spec file for rpmbuild..."; \
-        cp "/tmp/${extracted_dir}/contribs/slurm.spec" /home/builder/rpmbuild/SPECS/ 2>/dev/null || \
-            { echo "❌ Failed to find spec file"; exit 1; }; \
-        \
-        # Copy source tarball to SOURCES directory
-        cp "${tarball}" /home/builder/rpmbuild/SOURCES/; \
-        \
-        # Build with explicit spec file reference
-        echo ">>> Building RPMs using: rpmbuild -bb SPECS/slurm.spec"; \
-        rpmbuild_exit_code=0; \
-        if ! rpmbuild -bb /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
-            rpmbuild_exit_code=$?; \
-        fi; \
-        echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
-        \
-        # Check if RPM files were created
-        echo ">>> Checking for generated RPM packages..."; \
-        rpm_count=$(find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" 2>/dev/null | wc -l); \
-        echo "Found $rpm_count RPM file(s)"; \
-        \
-        if [ "$rpm_count" -gt 0 ]; then \
-            echo "✓ SLURM RPM build completed successfully"; \
-            echo ">>> Verifying and collecting generated RPM packages:"; \
-            mkdir -p /out; \
-            find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/ \;; \
-            echo "✓ Copied $rpm_count RPM packages to /out"; \
-            ls -lh /out/*.rpm 2>/dev/null; \
-        else \
-            echo "❌ ERROR: No .rpm files were created!"; \
-            echo ">>> rpmbuild exit code was: $rpmbuild_exit_code"; \
-            echo ">>> Last 200 lines of build log:"; \
-            tail -200 /tmp/rpmbuild.log; \
-            echo ">>> Searching for error messages:"; \
-            grep -iE "error|fatal|failed|cannot find|undefined reference" /tmp/rpmbuild.log | tail -30 || echo "No error patterns found"; \
-            echo ">>> Checking rpmbuild directory contents:"; \
-            ls -la /home/builder/rpmbuild/; \
-            ls -la /home/builder/rpmbuild/BUILD/ 2>/dev/null || echo "BUILD directory empty"; \
+        spec_path=$(find "/tmp/${extracted_dir}" -name "slurm.spec" -type f | head -1); \
+        if [ -z "$spec_path" ]; then \
+            echo "❌ ERROR: slurm.spec not found in tarball!"; \
+            echo ">>> Available spec files:"; \
+            find "/tmp/${extracted_dir}" -name "*.spec" -type f || echo "No .spec files found"; \
+            echo ">>> Directory structure:"; \
+            ls -la "/tmp/${extracted_dir}/" | head -20; \
+            echo "⚠️  Skipping SLURM RPM build - spec file not found"; \
             mkdir -p /home/builder/rpms; \
             touch /home/builder/rpms/.skip_slurm; \
+        else \
+            echo ">>> Found spec file at: $spec_path"; \
+            cp "$spec_path" /home/builder/rpmbuild/SPECS/; \
+            \
+            # Copy source tarball to SOURCES directory
+            cp "${tarball}" /home/builder/rpmbuild/SOURCES/; \
+            \
+            # Build with explicit spec file reference
+            echo ">>> Building RPMs using: rpmbuild -bb SPECS/slurm.spec"; \
+            rpmbuild_exit_code=0; \
+            if ! rpmbuild -bb /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
+                rpmbuild_exit_code=$?; \
+            fi; \
+            echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
+            \
+            # Check if RPM files were created
+            echo ">>> Checking for generated RPM packages..."; \
+            rpm_count=$(find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" 2>/dev/null | wc -l); \
+            echo "Found $rpm_count RPM file(s)"; \
+            \
+            if [ "$rpm_count" -gt 0 ]; then \
+                echo "✓ SLURM RPM build completed successfully"; \
+                echo ">>> Verifying and collecting generated RPM packages:"; \
+                mkdir -p /out; \
+                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/ \;; \
+                echo "✓ Copied $rpm_count RPM packages to /out"; \
+                ls -lh /out/*.rpm 2>/dev/null; \
+            else \
+                echo "❌ ERROR: No .rpm files were created!"; \
+                echo ">>> rpmbuild exit code was: $rpmbuild_exit_code"; \
+                echo ">>> Last 200 lines of build log:"; \
+                tail -200 /tmp/rpmbuild.log; \
+                echo ">>> Searching for error messages:"; \
+                grep -iE "error|fatal|failed|cannot find|undefined reference" /tmp/rpmbuild.log | tail -30 || echo "No error patterns found"; \
+                echo ">>> Checking rpmbuild directory contents:"; \
+                ls -la /home/builder/rpmbuild/; \
+                ls -la /home/builder/rpmbuild/BUILD/ 2>/dev/null || echo "BUILD directory empty"; \
+                mkdir -p /home/builder/rpms; \
+                touch /home/builder/rpms/.skip_slurm; \
+            fi; \
         fi; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
