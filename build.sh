@@ -6777,19 +6777,34 @@ build_component_for_platform() {
                     if [[ $build_attempt -lt $max_build_attempts ]]; then
                         log_warn "  [$arch_name]   Retrying with --no-cache..."
                         # Retry with --no-cache to force re-export
-                        local retry_cmd=("${cmd[@]}")
-                        # Remove existing --no-cache if present
-                        retry_cmd=($(for item in "${retry_cmd[@]}"; do [[ "$item" != "--no-cache" ]] && echo "$item"; done))
+                        # Build command array carefully to avoid argument issues
+                        local retry_cmd=()
+                        local found_no_cache=false
+                        
+                        for item in "${cmd[@]}"; do
+                            if [[ "$item" == "--no-cache" ]]; then
+                                found_no_cache=true
+                            else
+                                retry_cmd+=("$item")
+                            fi
+                        done
+                        
+                        # Always add --no-cache for retry
                         retry_cmd+=("--no-cache")
                         
-                        if "${retry_cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
-                            if docker image inspect "$full_image_name" >/dev/null 2>&1; then
-                                log_info "  [$arch_name] ✓ Built (no-cache retry): $full_image_name"
-                                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_NOCACHE ($arch_name)"
-                                save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
-                                build_success=true
-                                break
+                        # Verify command array is not empty
+                        if [[ ${#retry_cmd[@]} -gt 0 ]]; then
+                            if "${retry_cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
+                                if docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                                    log_info "  [$arch_name] ✓ Built (no-cache retry): $full_image_name"
+                                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_NOCACHE ($arch_name)"
+                                    save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+                                    build_success=true
+                                    break
+                                fi
                             fi
+                        else
+                            log_error "  [$arch_name] ✗ Failed to build retry command (empty array)"
                         fi
                     fi
                 fi
