@@ -6548,33 +6548,28 @@ prefetch_base_images_for_platform() {
         fi
     fi
     
-    # Use docker-container driver (buildx) to pre-pull images into BuildKit cache
-    # This is better than docker pull because:
-    # 1. BuildKit will use the daemon.json registry mirrors and proxy settings
-    # 2. Images go directly into BuildKit cache for builds
-    # 3. docker pull only caches in Docker daemon, not in BuildKit
-    
-    # Create a temporary directory for prefetch Dockerfiles
-    local prefetch_dir=$(mktemp -d)
+    # Pre-pull images directly using docker pull
+    # This is simpler and more reliable than using docker buildx build for prefetch
+    # Docker daemon handles mirror acceleration automatically
     
     local success_count=0
     local fail_count=0
     local skip_count=0
     
     for image in "${unique_base_images[@]}"; do
-        # Create a simple Dockerfile that just references the base image
-        # This forces BuildKit to pull and cache the image
-        local temp_dockerfile="$prefetch_dir/Dockerfile.prefetch"
-        cat > "$temp_dockerfile" << EOF
-FROM $image
-RUN echo "Prefetch cache"
-EOF
+        # Check if image already exists locally in docker daemon
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            log_info "    ✓ $image (cached)"
+            skip_count=$((skip_count + 1))
+            continue
+        fi
         
         log_info "    ⬇ $image"
         
-        # Try to build (this will pull the image) with retries
+        # Try to pull image with retries
         local retry_count=0
         local pulled=false
+        local pull_output=""
         
         while [[ $retry_count -lt $max_retries ]]; do
             retry_count=$((retry_count + 1))
@@ -6585,39 +6580,34 @@ EOF
                 sleep "$wait_time"
             fi
             
-            # Use buildx build to pull image into BuildKit cache
-            # We don't need output, just the image pull side-effect
-            local build_output
-            if build_output=$(docker buildx build \
-                --builder "$builder_name" \
-                --platform "$platform" \
-                --progress=plain \
-                -f "$temp_dockerfile" \
-                --cache-policy=pull-always \
-                "$prefetch_dir" 2>&1); then
-                
-                # Build succeeded - image is now in cache
-                log_info "    ✓ $image"
-                success_count=$((success_count + 1))
-                pulled=true
+            # Pull image with platform specification
+            # This will use Docker daemon's configured mirrors automatically
+            if pull_output=$(docker pull --platform "$platform" "$image" 2>&1); then
+                # Check if pull succeeded
+                if echo "$pull_output" | grep -qiE "(Digest:|Status:|Downloaded|already exists)"; then
+                    log_info "    ✓ $image"
+                    success_count=$((success_count + 1))
+                    pulled=true
+                    break
+                fi
+            fi
+            
+            # Pull failed - check error type
+            if echo "$pull_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused|i/o timeout"; then
+                # Network error - worth retrying
+                log_warn "    ⚠️  Network error, will retry: $image"
+                continue
+            elif echo "$pull_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
+                # Image doesn't exist in registry - don't retry
+                log_warn "    ✗ $image (not found in registry)"
+                fail_count=$((fail_count + 1))
+                pulled=false
                 break
             else
-                # Build failed - check what type of error
-                if echo "$build_output" | grep -qiE "DeadlineExceeded|timeout|temporary failure|connection refused"; then
-                    # Network error - retry
-                    log_warn "    ⚠️  Network error, will retry: $image"
-                    continue
-                elif echo "$build_output" | grep -qiE "not found|unknown manifest|no matching manifest"; then
-                    # Image doesn't exist - no point retrying
-                    log_warn "    ✗ $image (image not found in registry)"
-                    fail_count=$((fail_count + 1))
-                    pulled=false
-                    break
-                else
-                    # Unknown error
-                    log_warn "    ⚠️  Pull failed (will retry): $(echo "$build_output" | tail -1 | head -c 100)"
-                    continue
-                fi
+                # Other error - log and retry
+                local error_msg=$(echo "$pull_output" | grep -iE "error|failed" | head -1 | cut -c1-100)
+                log_warn "    ⚠️  Pull error (will retry): ${error_msg:-unknown error}"
+                continue
             fi
         done
         
@@ -6626,8 +6616,6 @@ EOF
             fail_count=$((fail_count + 1))
         fi
     done
-    
-    rm -rf "$prefetch_dir"
     
     log_info "  [$arch_name] Phase 3 complete: $success_count pulled, $skip_count cached, $fail_count failed"
     
