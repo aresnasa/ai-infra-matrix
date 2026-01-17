@@ -6519,12 +6519,40 @@ prefetch_base_images_for_platform() {
     
     log_info "  [$arch_name] Phase 3: Prefetching ${#unique_base_images[@]} unique base images with retry..."
     
+    # Ensure multiarch-builder exists before prefetching
+    local builder_name="multiarch-builder"
+    if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+        log_info "  [$arch_name] Pre-creating multiarch-builder for prefetch..."
+        
+        # Prepare BuildKit config with mirrors and proxy support
+        local buildkit_config="/tmp/buildkitd-multiarch.toml"
+        _generate_buildkit_config_with_proxy "$buildkit_config"
+        
+        # Create builder with docker-container driver and host network
+        local create_args=(
+            "--name" "$builder_name"
+            "--driver" "docker-container"
+            "--driver-opt" "network=host"
+            "--buildkitd-flags" "--allow-insecure-entitlement network.host"
+            "--bootstrap"
+        )
+        
+        # Add config file if it was generated successfully
+        if [[ -f "$buildkit_config" ]]; then
+            create_args+=("--config" "$buildkit_config")
+            log_info "  [$arch_name] Using custom buildkit config with mirrors"
+        fi
+        
+        if ! docker buildx create "${create_args[@]}" 2>&1 | grep -v "^$"; then
+            log_warn "  [$arch_name] Failed to pre-create multiarch-builder, prefetch may fail"
+        fi
+    fi
+    
     # Use docker-container driver (buildx) to pre-pull images into BuildKit cache
     # This is better than docker pull because:
     # 1. BuildKit will use the daemon.json registry mirrors and proxy settings
     # 2. Images go directly into BuildKit cache for builds
     # 3. docker pull only caches in Docker daemon, not in BuildKit
-    local builder_name="multiarch-builder"
     
     # Create a temporary directory for prefetch Dockerfiles
     local prefetch_dir=$(mktemp -d)
@@ -6604,6 +6632,7 @@ EOF
     log_info "  [$arch_name] Phase 3 complete: $success_count pulled, $skip_count cached, $fail_count failed"
     
     return 0
+}
 }
 
 # Helper: Pull dependency image for a specific platform
