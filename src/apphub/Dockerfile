@@ -1506,9 +1506,9 @@ COPY --from=singularity-builder /out/ /usr/share/nginx/html/pkgs/singularity/
 # 使用 scripts/download_third_party.sh 预下载所有依赖
 # 构建前请运行: ./build.sh download-deps 或 ./scripts/download_third_party.sh
 # =============================================================================
-ARG PROMETHEUS_VERSION={{PROMETHEUS_VERSION}}
+ARG PROMETHEUS_VERSION=v3.4.1
 ARG NODE_EXPORTER_VERSION=v1.8.2
-ARG ALERTMANAGER_VERSION={{ALERTMANAGER_VERSION}}
+ARG ALERTMANAGER_VERSION=v0.28.1
 ARG CATEGRAF_VERSION=v0.4.25
 ARG GITHUB_PROXY
 ARG GITHUB_MIRROR=https://ghfast.top/
