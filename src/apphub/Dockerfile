@@ -605,28 +605,78 @@ RUN set -eux; \
         echo ">>> Setting up rpmbuild environment..."; \
         mkdir -p /home/builder/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
         # Create .rpmmacros file for custom configurations
-        # Note: Disable cgroup by default - let SLURM configuration (not compile-time) manage it
+        # Note: Define macros that SLURM spec file will recognize
         echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros; \
         echo '%_prefix /usr' >> ~/.rpmmacros; \
         echo '%_slurm_sysconfdir %{_prefix}/etc/slurm' >> ~/.rpmmacros; \
-        echo '%with_munge --with-munge' >> ~/.rpmmacros; \
-        echo '%without_cgroup --without-cgroup' >> ~/.rpmmacros; \
+        # For SLURM spec file - define conditional macros
+        echo '%define with_munge 1' >> ~/.rpmmacros; \
+        echo '%define without_cgroup 1' >> ~/.rpmmacros; \
         echo "✓ Created ~/.rpmmacros configuration"; \
         cat ~/.rpmmacros; \
         echo "Note: cgroup support disabled at build time - use system defaults"; \
         # Build RPMs directly using rpmbuild -ta (recommended by official docs)
-        echo ">>> Building SLURM RPM packages using 'rpmbuild -ta' (this may take 10-15 minutes)..."; \
-        echo ">>> Command: rpmbuild -ta --nodeps ${tarball}"; \
-        echo ">>> Note: Using --nodeps because we installed munge from source (not RPM package)"; \
-        if ! rpmbuild -ta --nodeps "${tarball}" 2>&1 | tee /tmp/rpmbuild.log; then \
-            echo "⚠️  RPM build failed! (Non-fatal, skipping RPMs)"; \
-            tail -100 /tmp/rpmbuild.log; \
+        # The --with-munge and --without-cgroup options are already defined in ~/.rpmmacros
+        echo ">>> Building SLURM RPM packages (this may take 10-15 minutes)..."; \
+        echo ">>> Using tarball-to-rpms workflow"; \
+        \
+        # Extract tarball to inspect spec file
+        echo ">>> Extracting tarball to find spec file..."; \
+        tar -xjf "${tarball}" -C /tmp; \
+        extracted_dir=$(tar -tjf "${tarball}" | head -1 | cut -d'/' -f1); \
+        echo "✓ Extracted to: /tmp/${extracted_dir}"; \
+        \
+        # Find and display spec file
+        spec_file="/tmp/${extracted_dir}/contribs/slurm.spec"; \
+        echo ">>> Looking for spec file: ${spec_file}"; \
+        if [ -f "${spec_file}" ]; then \
+            echo "✓ Found spec file"; \
+            head -30 "${spec_file}"; \
+        else \
+            echo "⚠️  Spec file not found at expected location"; \
+            find /tmp/${extracted_dir} -name "*.spec" -type f; \
+        fi; \
+        \
+        # Copy spec file to SPECS directory
+        echo ">>> Setting up spec file for rpmbuild..."; \
+        cp "/tmp/${extracted_dir}/contribs/slurm.spec" /home/builder/rpmbuild/SPECS/ 2>/dev/null || \
+            { echo "❌ Failed to find spec file"; exit 1; }; \
+        \
+        # Copy source tarball to SOURCES directory
+        cp "${tarball}" /home/builder/rpmbuild/SOURCES/; \
+        \
+        # Build with explicit spec file reference
+        echo ">>> Building RPMs using: rpmbuild -bb SPECS/slurm.spec"; \
+        rpmbuild_exit_code=0; \
+        if ! rpmbuild -bb /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
+            rpmbuild_exit_code=$?; \
+        fi; \
+        echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
+        \
+        # Check if RPM files were created
+        echo ">>> Checking for generated RPM packages..."; \
+        rpm_count=$(find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" 2>/dev/null | wc -l); \
+        echo "Found $rpm_count RPM file(s)"; \
+        \
+        if [ "$rpm_count" -gt 0 ]; then \
+            echo "✓ SLURM RPM build completed successfully"; \
+            echo ">>> Verifying and collecting generated RPM packages:"; \
+            mkdir -p /out; \
+            find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/ \;; \
+            echo "✓ Copied $rpm_count RPM packages to /out"; \
+            ls -lh /out/*.rpm 2>/dev/null; \
+        else \
+            echo "❌ ERROR: No .rpm files were created!"; \
+            echo ">>> rpmbuild exit code was: $rpmbuild_exit_code"; \
+            echo ">>> Last 200 lines of build log:"; \
+            tail -200 /tmp/rpmbuild.log; \
+            echo ">>> Searching for error messages:"; \
+            grep -iE "error|fatal|failed|cannot find|undefined reference" /tmp/rpmbuild.log | tail -30 || echo "No error patterns found"; \
+            echo ">>> Checking rpmbuild directory contents:"; \
+            ls -la /home/builder/rpmbuild/; \
+            ls -la /home/builder/rpmbuild/BUILD/ 2>/dev/null || echo "BUILD directory empty"; \
             mkdir -p /home/builder/rpms; \
             touch /home/builder/rpms/.skip_slurm; \
-        else \
-            echo "✓ SLURM RPM build completed successfully"; \
-            echo ">>> Listing generated RPM packages:"; \
-            find ~/rpmbuild/RPMS -name "*.rpm" -type f 2>/dev/null || echo "No RPMs found"; \
         fi; \
     else \
         echo "🚫 Skipping SLURM RPM build (BUILD_SLURM=false)"; \
