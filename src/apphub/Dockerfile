@@ -740,7 +740,7 @@ RUN set -eux; \
                 echo "✓ SLURM RPM build completed successfully"; \
                 echo ">>> Verifying and collecting generated RPM packages:"; \
                 mkdir -p /out/slurm-rpm; \
-                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} /out/slurm-rpm/ \; \
+                find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" -print0 | xargs -0 -I {} cp {} /out/slurm-rpm/; \
                 echo "✓ Copied $rpm_count RPM packages to /out/slurm-rpm"; \
                 ls -lh /out/slurm-rpm/*.rpm 2>/dev/null; \
             else \
