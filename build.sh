@@ -6631,30 +6631,83 @@ build_component_for_platform() {
         # Debug: print the actual command being executed
         # log_info "DEBUG CMD: ${cmd[*]}"
         
-        # For cross-platform builds, always show output to avoid buildkit caching issues
-        # The silent-then-retry pattern can cause metadata resolution failures
-        if "${cmd[@]}"; then
-            # Verify the image was actually loaded to Docker daemon
-            # docker-container driver with --load may silently fail to import when using cache
-            if ! docker image inspect "$full_image_name" >/dev/null 2>&1; then
-                log_warn "  [$arch_name] ⚠ Image not found in Docker daemon after build, retrying with --no-cache..."
-                # Retry with --no-cache to force re-export
-                local retry_cmd=("${cmd[@]}")
-                retry_cmd+=("--no-cache")
-                if "${retry_cmd[@]}" && docker image inspect "$full_image_name" >/dev/null 2>&1; then
-                    log_info "  [$arch_name] ✓ Built (retry): $full_image_name"
+        # For cross-platform builds, with network retry mechanism
+        # Handle temporary network issues and transient failures
+        local build_attempt=0
+        local max_build_attempts=3
+        local build_retry_delay=15
+        local build_success=false
+        
+        while [[ $build_attempt -lt $max_build_attempts ]]; do
+            build_attempt=$((build_attempt + 1))
+            
+            if [[ $build_attempt -gt 1 ]]; then
+                log_warn "  [$arch_name] 🔄 Build retry attempt $build_attempt/$max_build_attempts (waiting ${build_retry_delay}s)..."
+                sleep "$build_retry_delay"
+                
+                # Check network connectivity before retry
+                if ! _check_network_connectivity >/dev/null 2>&1; then
+                    log_warn "  [$arch_name] ⚠️  Network connectivity issues detected"
+                    log_warn "  [$arch_name]    Waiting additional ${build_retry_delay}s before retry..."
+                    sleep "$build_retry_delay"
+                fi
+            fi
+            
+            # Execute build command
+            if "${cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
+                # Build succeeded, now verify image was loaded
+                if docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                    log_info "  [$arch_name] ✓ Built: $full_image_name"
+                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
+                    save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+                    build_success=true
+                    break
                 else
-                    log_error "  [$arch_name] ✗ Failed to load image after retry: $full_image_name"
-                    log_build_history "$build_id" "$component" "$tag" "FAILED" "LOAD_ERROR ($arch_name)"
-                    return 1
+                    log_warn "  [$arch_name] ⚠ Image not found in Docker daemon after build"
+                    if [[ $build_attempt -lt $max_build_attempts ]]; then
+                        log_warn "  [$arch_name]   Retrying with --no-cache..."
+                        # Retry with --no-cache to force re-export
+                        local retry_cmd=("${cmd[@]}")
+                        # Remove existing --no-cache if present
+                        retry_cmd=($(for item in "${retry_cmd[@]}"; do [[ "$item" != "--no-cache" ]] && echo "$item"; done))
+                        retry_cmd+=("--no-cache")
+                        
+                        if "${retry_cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
+                            if docker image inspect "$full_image_name" >/dev/null 2>&1; then
+                                log_info "  [$arch_name] ✓ Built (no-cache retry): $full_image_name"
+                                log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_NOCACHE ($arch_name)"
+                                save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+                                build_success=true
+                                break
+                            fi
+                        fi
+                    fi
                 fi
             else
-                log_info "  [$arch_name] ✓ Built: $full_image_name"
+                # Build failed - check error message to determine if it's a network issue
+                local last_error=$(tail -20 "$FAILURE_LOG" 2>/dev/null | grep -i "network\|timeout\|connection\|read" || echo "unknown error")
+                
+                if [[ $build_attempt -lt $max_build_attempts ]]; then
+                    if echo "$last_error" | grep -qiE "network|timeout|connection|read.*down"; then
+                        log_warn "  [$arch_name] ⚠️  Network/timeout error detected: $last_error"
+                        log_warn "  [$arch_name]   This may be transient, will retry..."
+                        continue
+                    else
+                        log_error "  [$arch_name] ✗ Build failed (non-network error): $last_error"
+                        log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
+                        return 1
+                    fi
+                else
+                    log_error "  [$arch_name] ✗ Failed after $max_build_attempts attempts: $full_image_name"
+                    log_error "  [$arch_name]   Last error: $last_error"
+                    log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_FAILED_RETRIES ($arch_name)"
+                    return 1
+                fi
             fi
-            log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT ($arch_name)"
-            save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
-        else
-            log_error "  [$arch_name] ✗ Failed: $full_image_name"
+        done
+        
+        if [[ "$build_success" != "true" ]]; then
+            log_error "  [$arch_name] ✗ Failed: $full_image_name (after $max_build_attempts attempts)"
             log_build_history "$build_id" "$component" "$tag" "FAILED" "BUILD_ERROR ($arch_name)"
             return 1
         fi
