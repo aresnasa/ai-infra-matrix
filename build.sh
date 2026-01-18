@@ -6537,30 +6537,37 @@ build_all_multiplatform() {
     log_info "Build Session: $CURRENT_BUILD_ID"
     echo
     
-    # Phase 0: Render all templates
-    log_info "=== Phase 0: Rendering Dockerfile Templates ==="
+    # ==========================================================================
+    # Phase 1: 准备 - 渲染模板、预取镜像、处理依赖
+    # ==========================================================================
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📦 Phase 1: Preparation (Templates, Base Images, Dependencies)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    
+    # 1.1 Render all templates
+    log_info "  [1.1] Rendering Dockerfile Templates..."
     if ! render_all_templates "$force"; then
         log_error "Template rendering failed. Aborting build."
         return 1
     fi
     echo
     
-    # Phase 0.5: Prefetch base images for all platforms
-    log_info "=== Phase 0.5: Prefetching Base Images (Multi-Platform) ==="
+    # 1.2 Prefetch base images for all platforms
+    log_info "  [1.2] Prefetching Base Images (Multi-Platform)..."
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
-        log_info "Prefetching base images for $arch_name..."
+        log_info "    Prefetching base images for $arch_name..."
         prefetch_base_images_for_platform "$platform"
     done
     echo
     
-    # Discover services
+    # 1.3 Discover and process dependency services
     discover_services
     
-    # Phase 1: Pull & Tag Dependency Services for all platforms
-    log_info "=== Phase 1: Processing Dependency Services (Multi-Platform) ==="
+    log_info "  [1.3] Processing Dependency Services..."
     for service in "${DEPENDENCY_SERVICES[@]}"; do
-        log_info "Processing dependency: $service"
+        log_info "    Processing dependency: $service"
         for platform in "${normalized_platforms[@]}"; do
             local arch_name="${platform##*/}"
             pull_dependency_for_platform "$service" "$platform"
@@ -6568,43 +6575,10 @@ build_all_multiplatform() {
     done
     echo
     
-    # Phase 2: Build Foundation Services for each platform
-    log_info "=== Phase 2: Building Foundation Services (Multi-Platform) ==="
-    log_info "Will build for ${#normalized_platforms[@]} platform(s): ${normalized_platforms[*]}"
-    for platform in "${normalized_platforms[@]}"; do
-        local arch_name="${platform##*/}"
-        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_info "🏗️  Building Foundation Services for [$arch_name]"
-        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        # Check if parallel build is enabled for foundation services
-        if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
-            log_parallel "🚀 Parallel build enabled for foundation services [$arch_name]"
-            build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"
-        else
-            for service in "${FOUNDATION_SERVICES[@]}"; do
-                log_info "  → Building $service for $arch_name..."
-                build_component_for_platform "$service" "$platform"
-            done
-        fi
-    done
-    echo
-    
-    # Phase 3: Start AppHub Service
-    # AppHub serves static files needed by dependent services during build
-    # Strategy:
-    #   - If native platform is in target platforms: use native AppHub (fast)
-    #   - If only cross-platform: run cross-platform AppHub via QEMU (slower but works)
-    log_info "=== Phase 3: Starting AppHub Service ==="
-    local compose_cmd=$(detect_compose_command)
-    if [ -z "$compose_cmd" ]; then
-        log_error "docker-compose not found! Cannot start AppHub."
-        return 1
-    fi
-    
+    # Detect native platform for later use
     local native_platform=$(_detect_docker_platform)
     local native_arch="${native_platform##*/}"
     local tag="${IMAGE_TAG:-latest}"
-    local apphub_image="ai-infra-apphub:${tag}"
     
     # Check if native platform is in target platforms
     local has_native_platform=false
@@ -6616,116 +6590,77 @@ build_all_multiplatform() {
         fi
     done
     
-    if [[ "$has_native_platform" == "true" ]]; then
-        # Native platform is in targets, use native AppHub
-        log_info "Using native AppHub (platform: $native_arch)"
-        $compose_cmd up -d apphub
-    else
-        # Only cross-platform builds, need to run AppHub via QEMU
-        local target_arch="${normalized_platforms[0]##*/}"
-        local cross_apphub_image="ai-infra-apphub:${tag}-${target_arch}"
-        
-        log_info "⚠️  Native platform ($native_arch) not in target platforms"
-        log_info "Starting cross-platform AppHub via QEMU (platform: $target_arch)"
-        
-        # Stop any existing apphub container
-        $compose_cmd stop apphub 2>/dev/null || true
-        docker rm -f ai-infra-apphub 2>/dev/null || true
-        
-        # Ensure network exists
-        docker network create ai-infra-network 2>/dev/null || true
-        
-        # Check if cross-platform image exists
-        if ! docker image inspect "$cross_apphub_image" >/dev/null 2>&1; then
-            log_error "Cross-platform AppHub image not found: $cross_apphub_image"
-            log_error "This should have been built in Phase 2"
-            return 1
-        fi
-        
-        # Run cross-platform AppHub container directly with platform flag
-        # This bypasses docker-compose and runs with explicit --platform
-        log_info "Running: docker run --platform linux/$target_arch $cross_apphub_image"
-        local apphub_port="${APPHUB_PORT:-28080}"
-        docker run -d \
-            --name ai-infra-apphub \
-            --platform "linux/$target_arch" \
-            --network ai-infra-network \
-            -p "${apphub_port}:80" \
-            -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
-            -v "${SCRIPT_DIR}/src:/app/src:ro" \
-            "$cross_apphub_image"
-        
-        if [[ $? -ne 0 ]]; then
-            log_error "Failed to start cross-platform AppHub"
-            return 1
-        fi
-        log_info "✓ Cross-platform AppHub started via QEMU"
-    fi
-    
-    if ! wait_for_apphub_ready 300; then
-        log_error "AppHub failed to start. Aborting build."
-        return 1
+    # ==========================================================================
+    # Phase 2: 构建 - 构建所有服务镜像（按平台串行，服务可并行）
+    # ==========================================================================
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🔨 Phase 2: Build All Services (Multi-Platform)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Platforms: ${normalized_platforms[*]}"
+    if [[ ${#normalized_platforms[@]} -gt 1 ]]; then
+        log_info "⚙️  AppHub will be restarted when switching architectures"
     fi
     echo
     
-    # Phase 4: Build Dependent Services for each platform
-    log_info "=== Phase 4: Building Dependent Services (Multi-Platform) ==="
+    local compose_cmd=$(detect_compose_command)
+    if [ -z "$compose_cmd" ]; then
+        log_error "docker-compose not found! Cannot manage AppHub."
+        return 1
+    fi
+    
     local apphub_port="${APPHUB_PORT:-28080}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
-    
-    log_info "Using AppHub URL for builds: $apphub_url"
-    log_info "Will build for ${#normalized_platforms[@]} platform(s): ${normalized_platforms[*]}"
-    if [[ ${#normalized_platforms[@]} -gt 1 ]]; then
-        log_info "⚙️  AppHub Container Management: Will restart when switching architectures"
-    fi
-    echo
-
-    local compose_cmd=$(detect_compose_command)
-    # Initialize current_apphub_arch based on Phase 3 startup
-    # Phase 3 starts AppHub with native arch if available, otherwise first platform's arch
     local current_apphub_arch=""
-    if [[ "$has_native_platform" == "true" ]]; then
-        current_apphub_arch="$native_arch"
-    else
-        current_apphub_arch="${normalized_platforms[0]##*/}"
-    fi
-    log_info "Current AppHub architecture: $current_apphub_arch"
+    local apphub_started=false
     
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
         
-        # If AppHub architecture changes, restart AppHub with correct architecture
+        log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+        log_info "┃ 🏗️  Building for [$arch_name]"
+        log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+        
+        # 2.1 Build Foundation Services (includes AppHub)
+        log_info "  [2.1] Building Foundation Services for [$arch_name]..."
+        if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
+            log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
+            build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"
+        else
+            for service in "${FOUNDATION_SERVICES[@]}"; do
+                log_info "    → Building $service for $arch_name..."
+                build_component_for_platform "$service" "$platform"
+            done
+        fi
+        echo
+        
+        # 2.2 Start/Restart AppHub for this architecture (if needed)
         if [[ "$current_apphub_arch" != "$arch_name" ]]; then
-            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            log_info "🔄 AppHub Architecture Change: $current_apphub_arch → $arch_name"
-            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info "  [2.2] Managing AppHub for [$arch_name]..."
             
-            # Stop current AppHub container
-            log_info "  Stopping current AppHub container..."
-            $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
-            docker rm -f ai-infra-apphub 2>/dev/null || true
+            # Stop existing AppHub if running
+            if [[ "$apphub_started" == "true" ]]; then
+                log_info "    🔄 Stopping AppHub ($current_apphub_arch) for architecture switch..."
+                $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+                docker rm -f ai-infra-apphub 2>/dev/null || true
+            fi
             
-            # Start AppHub for this architecture
-            log_info "  Starting AppHub for [$arch_name]..."
+            # Start AppHub for current architecture
+            log_info "    🚀 Starting AppHub for [$arch_name]..."
             if [[ "$has_native_platform" == "true" && "$arch_name" == "$native_arch" ]]; then
-                # Use native AppHub for native architecture
+                # Use native AppHub
                 $compose_cmd up -d apphub
             else
-                # Use cross-platform AppHub (with QEMU) for non-native architectures
+                # Use cross-platform AppHub via QEMU
                 local cross_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
-                local apphub_port="${APPHUB_PORT:-28080}"
                 
-                # Ensure network exists
                 docker network create ai-infra-network 2>/dev/null || true
                 
-                # Check if cross-platform image exists
                 if ! docker image inspect "$cross_apphub_image" >/dev/null 2>&1; then
-                    log_error "  Cross-platform AppHub image not found: $cross_apphub_image"
+                    log_error "    Cross-platform AppHub image not found: $cross_apphub_image"
                     return 1
                 fi
                 
-                # Run AppHub with correct platform
                 docker run -d \
                     --name ai-infra-apphub \
                     --platform "linux/$arch_name" \
@@ -6736,54 +6671,49 @@ build_all_multiplatform() {
                     "$cross_apphub_image"
                 
                 if [[ $? -ne 0 ]]; then
-                    log_error "  Failed to start cross-platform AppHub for [$arch_name]"
+                    log_error "    Failed to start cross-platform AppHub for [$arch_name]"
                     return 1
                 fi
             fi
             
             # Wait for AppHub to be ready
-            log_info "  Waiting for AppHub to be ready on [$arch_name]..."
+            log_info "    ⏳ Waiting for AppHub to be ready..."
             if ! wait_for_apphub_ready 300; then
                 log_error "AppHub failed to become ready for [$arch_name]. Aborting build."
                 return 1
             fi
             
             current_apphub_arch="$arch_name"
-            log_info "  ✓ AppHub ready for [$arch_name]"
+            apphub_started=true
+            log_info "    ✓ AppHub ready for [$arch_name]"
         fi
+        echo
         
-        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_info "🏗️  Building Dependent Services for [$arch_name]"
-        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        # 2.3 Build Dependent Services
+        log_info "  [2.3] Building Dependent Services for [$arch_name]..."
+        log_info "    Using AppHub URL: $apphub_url"
         
-        # Check if parallel build is enabled for dependent services
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
-            log_parallel "🚀 Parallel build enabled for dependent services [$arch_name] (max $PARALLEL_JOBS jobs)"
+            log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
             build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- "--build-arg" "APPHUB_URL=$apphub_url"
         else
             for service in "${DEPENDENT_SERVICES[@]}"; do
-                log_info "  → Building $service for $arch_name..."
+                log_info "    → Building $service for $arch_name..."
                 build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
             done
         fi
+        echo
     done
+    
+    # ==========================================================================
+    # Phase 3: 完成 - 创建统一标签
+    # ==========================================================================
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🏷️  Phase 3: Finalize (Create Unified Tags)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
-
-    # Phase 5: Create unified tags for native architecture
-    # This allows docker-compose to use images without architecture suffix
-    log_info "=== Phase 5: Creating Unified Tags for Native Architecture ==="
     
-    # Check if native architecture was built
-    local has_native=false
-    for platform in "${normalized_platforms[@]}"; do
-        local arch="${platform##*/}"
-        if [[ "$arch" == "$native_arch" ]]; then
-            has_native=true
-            break
-        fi
-    done
-    
-    if [[ "$has_native" == "true" ]]; then
+    if [[ "$has_native_platform" == "true" ]]; then
         log_info "Creating unified tags for native architecture: $native_arch"
         create_unified_tags_for_native "$native_arch" "$tag"
     else
