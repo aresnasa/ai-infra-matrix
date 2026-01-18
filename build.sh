@@ -6676,11 +6676,21 @@ build_all_multiplatform() {
     
     log_info "Using AppHub URL for builds: $apphub_url"
     log_info "Will build for ${#normalized_platforms[@]} platform(s): ${normalized_platforms[*]}"
-    log_info "⚙️  AppHub Container Management: Restarting for each architecture (serial mode)"
+    if [[ ${#normalized_platforms[@]} -gt 1 ]]; then
+        log_info "⚙️  AppHub Container Management: Will restart when switching architectures"
+    fi
     echo
 
     local compose_cmd=$(detect_compose_command)
+    # Initialize current_apphub_arch based on Phase 3 startup
+    # Phase 3 starts AppHub with native arch if available, otherwise first platform's arch
     local current_apphub_arch=""
+    if [[ "$has_native_platform" == "true" ]]; then
+        current_apphub_arch="$native_arch"
+    else
+        current_apphub_arch="${normalized_platforms[0]##*/}"
+    fi
+    log_info "Current AppHub architecture: $current_apphub_arch"
     
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
