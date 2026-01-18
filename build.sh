@@ -5723,6 +5723,13 @@ build_parallel_for_platform() {
     log_parallel "[$arch_name] 📊 Parallel Build Summary: $completed succeeded, $failed failed, $total total"
     log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    # Clean up log directory if all builds succeeded
+    if [[ $failed -eq 0 ]]; then
+        rm -rf "$parallel_log_dir" 2>/dev/null || true
+    else
+        log_warn "[$arch_name] Build logs saved to: $parallel_log_dir"
+    fi
+    
     if [[ $failed -gt 0 ]]; then
         return 1
     fi
