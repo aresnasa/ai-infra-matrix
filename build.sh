@@ -6576,10 +6576,16 @@ build_all_multiplatform() {
         log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         log_info "🏗️  Building Foundation Services for [$arch_name]"
         log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        for service in "${FOUNDATION_SERVICES[@]}"; do
-            log_info "  → Building $service for $arch_name..."
-            build_component_for_platform "$service" "$platform"
-        done
+        # Check if parallel build is enabled for foundation services
+        if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
+            log_parallel "🚀 Parallel build enabled for foundation services [$arch_name]"
+            build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"
+        else
+            for service in "${FOUNDATION_SERVICES[@]}"; do
+                log_info "  → Building $service for $arch_name..."
+                build_component_for_platform "$service" "$platform"
+            done
+        fi
     done
     echo
     
