@@ -6692,6 +6692,28 @@ build_all_multiplatform() {
     log_info "📦 Phase 2.1: Build Foundation Services (All Platforms)"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    # Validate FOUNDATION_SERVICES array
+    log_info "  Foundation services to build: ${FOUNDATION_SERVICES[*]}"
+    if [[ ${#FOUNDATION_SERVICES[@]} -eq 0 ]]; then
+        log_error "  ❌ FOUNDATION_SERVICES is empty! Check discover_services function."
+        return 1
+    fi
+    
+    # Ensure apphub is in FOUNDATION_SERVICES (required for dependent builds)
+    local apphub_in_foundation=false
+    for svc in "${FOUNDATION_SERVICES[@]}"; do
+        if [[ "$svc" == "apphub" ]]; then
+            apphub_in_foundation=true
+            break
+        fi
+    done
+    if [[ "$apphub_in_foundation" != "true" ]]; then
+        log_error "  ❌ 'apphub' is not in FOUNDATION_SERVICES!"
+        log_error "     This is likely a configuration error."
+        log_error "     Check: src/apphub/build.conf should contain BUILD_PHASE=foundation"
+        return 1
+    fi
+    
     local foundation_build_failed=false
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
