@@ -2382,10 +2382,17 @@ wait_for_apphub_ready() {
             continue
         fi
         
-        # Check if packages are accessible
-        if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/pkgs/slurm-deb/Packages" >/dev/null 2>&1; then
-            log_info "✅ AppHub is ready!"
-            return 0
+        # Check health endpoint (primary check)
+        if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/health" >/dev/null 2>&1; then
+            # Health check passed, verify nginx is serving content
+            if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/" >/dev/null 2>&1; then
+                log_info "✅ AppHub is ready!"
+                # Optional: warn if SLURM packages are missing (non-blocking)
+                if ! curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/pkgs/slurm-deb/Packages" >/dev/null 2>&1; then
+                    log_warn "⚠️  Note: SLURM deb packages not available (may have been skipped during build)"
+                fi
+                return 0
+            fi
         fi
         
         log_warn "[${elapsed}s] AppHub not ready yet..."
