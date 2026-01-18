@@ -6612,14 +6612,25 @@ build_all_multiplatform() {
     done
     
     # ==========================================================================
-    # Phase 2: 构建 - 构建所有服务镜像（按平台串行，服务可并行）
+    # Phase 2: 构建 - 构建所有服务镜像（新架构：先构建所有基础服务，再统一启动AppHub）
+    # ==========================================================================
+    # 新流程说明：
+    # 1. 先构建所有架构的 Foundation Services（包括 AppHub）
+    # 2. AppHub 镜像包含所有架构的包（SaltStack/SLURM deb/rpm）
+    # 3. 只启动一个原生架构的 AppHub 实例
+    # 4. 使用该 AppHub 为所有架构的依赖服务提供包
+    # 
+    # 优点：
+    # - 无需在构建过程中切换 AppHub
+    # - 避免 QEMU 模拟运行 AppHub 的性能问题
+    # - 简化构建流程
     # ==========================================================================
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "🔨 Phase 2: Build All Services (Multi-Platform)"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Platforms: ${normalized_platforms[*]}"
     if [[ ${#normalized_platforms[@]} -gt 1 ]]; then
-        log_info "⚙️  AppHub will be restarted when switching architectures"
+        log_info "⚙️  Multi-arch build: AppHub will be built for all platforms, then started once"
     fi
     echo
     
@@ -6630,9 +6641,8 @@ build_all_multiplatform() {
     fi
     
     # Stop any existing AppHub before multi-platform build to ensure clean state
-    # This is important when building for multiple architectures (arm64,amd64)
     if docker ps -q -f name=ai-infra-apphub 2>/dev/null | grep -q .; then
-        log_info "🛑 Stopping existing AppHub container before multi-platform build..."
+        log_info "🛑 Stopping existing AppHub container before build..."
         $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
         docker rm -f ai-infra-apphub 2>/dev/null || true
         log_info "   ✓ Existing AppHub stopped"
@@ -6641,18 +6651,21 @@ build_all_multiplatform() {
     local apphub_port="${APPHUB_PORT:-28080}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
-    local current_apphub_arch=""
-    local apphub_started=false
+    
+    # --------------------------------------------------------------------------
+    # Phase 2.1: Build ALL Foundation Services for ALL platforms first
+    # --------------------------------------------------------------------------
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📦 Phase 2.1: Build Foundation Services (All Platforms)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
         
         log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-        log_info "┃ 🏗️  Building for [$arch_name]"
+        log_info "┃ 🏗️  Building Foundation Services for [$arch_name]"
         log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
         
-        # 2.1 Build Foundation Services (includes AppHub)
-        log_info "  [2.1] Building Foundation Services for [$arch_name]..."
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
             log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
             build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"
@@ -6663,70 +6676,188 @@ build_all_multiplatform() {
             done
         fi
         echo
+    done
+    
+    # --------------------------------------------------------------------------
+    # Phase 2.2: Start ONE AppHub instance (native architecture preferred)
+    # --------------------------------------------------------------------------
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🚀 Phase 2.2: Start AppHub (Single Instance for All Architectures)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Clean up any existing AppHub container
+    if docker ps -a --filter "name=^ai-infra-apphub$" --format "{{.ID}}" | grep -q .; then
+        log_info "  🧹 Removing existing AppHub container..."
+        docker stop ai-infra-apphub 2>/dev/null || true
+        docker rm -f ai-infra-apphub 2>/dev/null || true
+    fi
+    
+    # Decide which AppHub image to use
+    local apphub_image_to_use=""
+    local apphub_platform=""
+    
+    if [[ "$has_native_platform" == "true" ]]; then
+        # Prefer native architecture for best performance
+        apphub_image_to_use="ai-infra-apphub:${tag}-${native_arch}"
+        apphub_platform="linux/${native_arch}"
+        log_info "  📌 Using native architecture AppHub: $apphub_image_to_use"
+    else
+        # Fall back to first available platform (will run via QEMU)
+        local first_arch="${normalized_platforms[0]##*/}"
+        apphub_image_to_use="ai-infra-apphub:${tag}-${first_arch}"
+        apphub_platform="linux/${first_arch}"
+        log_warn "  ⚠️  Native platform not in build targets, using QEMU: $apphub_image_to_use"
+    fi
+    
+    # Verify AppHub image exists
+    if ! docker image inspect "$apphub_image_to_use" >/dev/null 2>&1; then
+        log_error "  ❌ AppHub image not found: $apphub_image_to_use"
+        log_error "     Please ensure Foundation Services were built successfully."
+        return 1
+    fi
+    
+    # Start AppHub
+    log_info "  🚀 Starting AppHub..."
+    docker network create ai-infra-network 2>/dev/null || true
+    
+    if [[ "$has_native_platform" == "true" ]]; then
+        # Use docker-compose for native platform (better integration)
+        $compose_cmd up -d apphub
+    else
+        # Use docker run for cross-platform
+        docker run -d \
+            --name ai-infra-apphub \
+            --platform "$apphub_platform" \
+            --network ai-infra-network \
+            -p "${apphub_port}:80" \
+            -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+            -v "${SCRIPT_DIR}/src:/app/src:ro" \
+            "$apphub_image_to_use"
         
-        # 2.2 Start/Restart AppHub for this architecture (if needed)
-        if [[ "$current_apphub_arch" != "$arch_name" ]]; then
-            log_info "  [2.2] Managing AppHub for [$arch_name]..."
-            
-            # Always clean up existing AppHub container first (stopped or running)
-            # This prevents "container name already in use" conflicts
-            if docker ps -a --filter "name=^ai-infra-apphub$" --format "{{.ID}}" | grep -q .; then
-                log_info "    🧹 Removing existing AppHub container..."
-                docker stop ai-infra-apphub 2>/dev/null || true
-                docker rm -f ai-infra-apphub 2>/dev/null || true
-            fi
-            
-            # Start AppHub for current architecture
-            log_info "    🚀 Starting AppHub for [$arch_name]..."
-            if [[ "$has_native_platform" == "true" && "$arch_name" == "$native_arch" ]]; then
-                # Use native AppHub
-                $compose_cmd up -d apphub
-            else
-                # Use cross-platform AppHub via QEMU
-                local cross_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
-                
-                docker network create ai-infra-network 2>/dev/null || true
-                
-                if ! docker image inspect "$cross_apphub_image" >/dev/null 2>&1; then
-                    log_error "    Cross-platform AppHub image not found: $cross_apphub_image"
-                    return 1
-                fi
-                
-                docker run -d \
-                    --name ai-infra-apphub \
-                    --platform "linux/$arch_name" \
-                    --network ai-infra-network \
-                    -p "${apphub_port}:80" \
-                    -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
-                    -v "${SCRIPT_DIR}/src:/app/src:ro" \
-                    "$cross_apphub_image"
-                
-                if [[ $? -ne 0 ]]; then
-                    log_error "    Failed to start cross-platform AppHub for [$arch_name]"
-                    return 1
-                fi
-            fi
-            
-            # Wait for AppHub to be ready
-            log_info "    ⏳ Waiting for AppHub to be ready..."
-            if ! wait_for_apphub_ready 300; then
-                log_error "AppHub failed to become ready for [$arch_name]. Aborting build."
-                return 1
-            fi
-            
-            current_apphub_arch="$arch_name"
-            apphub_started=true
-            log_info "    ✓ AppHub ready for [$arch_name]"
+        if [[ $? -ne 0 ]]; then
+            log_error "  ❌ Failed to start AppHub"
+            return 1
         fi
-        echo
+    fi
+    
+    # Wait for AppHub to be ready
+    log_info "  ⏳ Waiting for AppHub to be ready..."
+    if ! wait_for_apphub_ready 300; then
+        log_error "  ❌ AppHub failed to become ready. Aborting build."
+        return 1
+    fi
+    
+    # Record which architecture's AppHub is currently running
+    local current_apphub_arch=""
+    if [[ "$has_native_platform" == "true" ]]; then
+        current_apphub_arch="$native_arch"
+    else
+        current_apphub_arch="${normalized_platforms[0]##*/}"
+    fi
+    log_info "  ✓ AppHub is ready at $apphub_url (arch: $current_apphub_arch)"
+    echo
+    
+    # --------------------------------------------------------------------------
+    # Phase 2.3: Build Dependent Services for ALL platforms
+    # --------------------------------------------------------------------------
+    # 架构匹配说明：
+    # - AppHub 中的 SLURM 包是架构相关的（arm64 包只能用于 arm64 构建）
+    # - 当构建目标架构与当前 AppHub 架构不匹配时：
+    #   方案 A: 切换到对应架构的 AppHub（通过 QEMU/Rosetta）
+    #   方案 B: 启用系统回退 ALLOW_SYSTEM_SLURM=true
+    # 
+    # Mac ARM64 特殊性：
+    # - Mac 有 Rosetta 转译层，可以高效运行 amd64 容器
+    # - 在 Mac 上切换 AppHub 架构是可行的
+    # 
+    # Linux ARM64：
+    # - 需要 QEMU 模拟运行 amd64 容器（较慢）
+    # - 建议使用系统回退或在原生机器上构建
+    # --------------------------------------------------------------------------
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "📦 Phase 2.3: Build Dependent Services (All Platforms)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "  Using AppHub URL: $apphub_url"
+    log_info "  Current AppHub arch: $current_apphub_arch"
+    
+    # Detect if running on macOS (has Rosetta for efficient cross-arch)
+    local is_macos=false
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        is_macos=true
+        log_info "  🍎 Running on macOS (Rosetta available for cross-arch)"
+    fi
+    echo
+    
+    for platform in "${normalized_platforms[@]}"; do
+        local arch_name="${platform##*/}"
+        local need_apphub_switch=false
+        local use_system_fallback=false
         
-        # 2.3 Build Dependent Services
-        log_info "  [2.3] Building Dependent Services for [$arch_name]..."
-        log_info "    Using AppHub URL: $apphub_url"
+        log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+        log_info "┃ 🏗️  Building Dependent Services for [$arch_name]"
+        log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
         
-        # Check if SLURM packages are available in AppHub
+        # Check if target arch matches current AppHub arch
+        if [[ "$arch_name" != "$current_apphub_arch" ]]; then
+            log_warn "    ⚠️  Target arch ($arch_name) differs from AppHub arch ($current_apphub_arch)"
+            
+            # Check if we have the target arch's AppHub image
+            local target_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
+            if docker image inspect "$target_apphub_image" >/dev/null 2>&1; then
+                if [[ "$is_macos" == "true" ]]; then
+                    # On macOS, we can switch AppHub efficiently via Rosetta
+                    log_info "    🔄 Switching AppHub to $arch_name (via Rosetta/QEMU)..."
+                    need_apphub_switch=true
+                else
+                    # On Linux, QEMU is slower, prefer system fallback
+                    log_warn "    📦 Using system SLURM fallback (QEMU would be slow)"
+                    use_system_fallback=true
+                fi
+            else
+                # No target arch AppHub image, must use system fallback
+                log_warn "    📦 AppHub image for $arch_name not found, using system fallback"
+                use_system_fallback=true
+            fi
+        fi
+        
+        # Switch AppHub if needed
+        if [[ "$need_apphub_switch" == "true" ]]; then
+            log_info "    🧹 Stopping current AppHub..."
+            docker stop ai-infra-apphub 2>/dev/null || true
+            docker rm -f ai-infra-apphub 2>/dev/null || true
+            
+            local target_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
+            log_info "    🚀 Starting AppHub for $arch_name..."
+            
+            docker run -d \
+                --name ai-infra-apphub \
+                --platform "linux/$arch_name" \
+                --network ai-infra-network \
+                -p "${apphub_port}:80" \
+                -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                "$target_apphub_image"
+            
+            if [[ $? -ne 0 ]]; then
+                log_warn "    ⚠️  Failed to start $arch_name AppHub, using system fallback"
+                use_system_fallback=true
+            else
+                log_info "    ⏳ Waiting for AppHub to be ready..."
+                if wait_for_apphub_ready 180; then
+                    current_apphub_arch="$arch_name"
+                    log_info "    ✓ AppHub switched to $arch_name"
+                else
+                    log_warn "    ⚠️  AppHub not ready, using system fallback"
+                    use_system_fallback=true
+                fi
+            fi
+        fi
+        
+        # Determine SLURM build args
         local slurm_build_args="--build-arg APPHUB_URL=$apphub_url"
-        if ! check_apphub_slurm_available; then
+        if [[ "$use_system_fallback" == "true" ]]; then
+            slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
+        elif ! check_apphub_slurm_available; then
             log_warn "    ⚠️  SLURM packages not available in AppHub, enabling system fallback"
             slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
         fi
