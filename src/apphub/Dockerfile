@@ -1645,13 +1645,9 @@ RUN set -eux; \
     \
     # === Python dependencies for SaltStack (looseversion for Python 3.12+) ===
     echo "📦 Processing Python dependencies..."; \
-    PYPI_MIRROR=${PYPI_INDEX_URL:-https://pypi.org/simple} \
-    PYPI_MIRROR_CN=https://mirrors.aliyun.com/pypi/simple \
-    OUTPUT_DIR=/usr/share/nginx/html/pkgs/python-deps \
-    /tmp/download-python-deps.sh || echo "⚠️ Python deps download failed, continuing..."; \
+    echo "  ⚠️  Python dependencies should be pre-downloaded to third_party/saltstack/"; \
     \
     # Cleanup
-    rm -f /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     rm -rf /third_party; \
     \
     # Summary
