@@ -1830,14 +1830,10 @@ RUN set -eux; \
         echo "⚠️  Packages can be downloaded directly via HTTP"; \
     fi
 
-# Copy installation scripts (rendered from templates by build.sh render)
-# These scripts are pre-configured with EXTERNAL_HOST and other settings
-COPY scripts/install-salt-minion.sh /usr/share/nginx/html/scripts/install-salt-minion.sh
-COPY scripts/install-categraf.sh /usr/share/nginx/html/scripts/install-categraf.sh
-COPY scripts/install-node-exporter.sh /usr/share/nginx/html/scripts/install-node-exporter.sh
-COPY scripts/install-prometheus.sh /usr/share/nginx/html/scripts/install-prometheus.sh
-RUN chmod +x /usr/share/nginx/html/scripts/*.sh && \
-    echo "✓ Installation scripts copied to /scripts/"
+# Installation scripts are served dynamically by HTTP from AppHub
+# They are rendered by build.sh render and updated at runtime
+# No need to copy them into the image; clients fetch them via HTTP
+# Example: curl http://apphub:80/scripts/install-prometheus.sh
 
 # Expose port
 EXPOSE 80
