@@ -1014,8 +1014,8 @@ services:
   # AppHub - 二进制包仓库服务 (DEB/RPM packages)
   apphub:
     build:
-      context: ./src/apphub
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/apphub/Dockerfile
     image: ${PRIVATE_REGISTRY}ai-infra-apphub:{{IMAGE_TAG}}
     container_name: ai-infra-apphub
     env_file:
