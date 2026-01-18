@@ -1518,15 +1518,7 @@ ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 # 复制所有预下载的包
 COPY third_party/ /third_party/
 
-# Copy download scripts as fallback for any missing packages
-COPY src/apphub/scripts/prometheus/download-prometheus.sh /tmp/download-prometheus.sh
-COPY src/apphub/scripts/node_exporter/download-node-exporter.sh /tmp/download-node-exporter.sh
-COPY src/apphub/scripts/categraf/download-categraf.sh /tmp/download-categraf.sh
-COPY src/apphub/scripts/categraf/install-categraf.sh /scripts/categraf/install-categraf.sh
-COPY src/apphub/scripts/saltstack/download-python-deps.sh /tmp/download-python-deps.sh
-
 RUN set -eux; \
-    chmod +x /tmp/download-prometheus.sh /tmp/download-node-exporter.sh /tmp/download-categraf.sh /tmp/download-python-deps.sh; \
     mkdir -p /scripts/categraf; \
     mkdir -p /usr/share/nginx/html/pkgs/prometheus; \
     mkdir -p /usr/share/nginx/html/pkgs/node_exporter; \
@@ -1552,12 +1544,7 @@ RUN set -eux; \
         fi; \
     done; \
     if [ "$prometheus_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
-        PROMETHEUS_VERSION=${PROMETHEUS_VERSION} \
-        GITHUB_MIRROR=${GITHUB_MIRROR} \
-        GITHUB_PROXY=${GITHUB_PROXY:-} \
-        OUTPUT_DIR=/usr/share/nginx/html/pkgs/prometheus \
-        /tmp/download-prometheus.sh || echo "⚠️ Prometheus download failed, continuing..."; \
+        echo "  ⚠️  Pre-downloaded Prometheus files not found (expected in third_party/prometheus/)"; \
     fi; \
     \
     # === Node Exporter ===
