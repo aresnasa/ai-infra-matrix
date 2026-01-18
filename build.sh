@@ -6608,6 +6608,15 @@ build_all_multiplatform() {
         return 1
     fi
     
+    # Stop any existing AppHub before multi-platform build to ensure clean state
+    # This is important when building for multiple architectures (arm64,amd64)
+    if docker ps -q -f name=ai-infra-apphub 2>/dev/null | grep -q .; then
+        log_info "🛑 Stopping existing AppHub container before multi-platform build..."
+        $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+        docker rm -f ai-infra-apphub 2>/dev/null || true
+        log_info "   ✓ Existing AppHub stopped"
+    fi
+    
     local apphub_port="${APPHUB_PORT:-28080}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
