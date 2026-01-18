@@ -1560,12 +1560,7 @@ RUN set -eux; \
         fi; \
     done; \
     if [ "$node_exporter_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
-        NODE_EXPORTER_VERSION=${NODE_EXPORTER_VERSION} \
-        GITHUB_MIRROR=${GITHUB_MIRROR} \
-        GITHUB_PROXY=${GITHUB_PROXY:-} \
-        OUTPUT_DIR=/usr/share/nginx/html/pkgs/node_exporter \
-        /tmp/download-node-exporter.sh || echo "⚠️ Node Exporter download failed, continuing..."; \
+        echo "  ⚠️  Pre-downloaded Node Exporter files not found (expected in third_party/node_exporter/)"; \
     fi; \
     \
     # === Alertmanager ===
@@ -1597,12 +1592,7 @@ RUN set -eux; \
         fi; \
     done; \
     if [ "$categraf_copied" -lt 2 ]; then \
-        echo "  ⚠ Pre-downloaded files not found or incomplete, downloading..."; \
-        CATEGRAF_VERSION=${CATEGRAF_VERSION} \
-        GITHUB_MIRROR=${GITHUB_MIRROR} \
-        GITHUB_PROXY=${GITHUB_PROXY:-} \
-        OUTPUT_DIR=/usr/share/nginx/html/pkgs/categraf \
-        /tmp/download-categraf.sh || echo "⚠️ Categraf download failed, continuing..."; \
+        echo "  ⚠️  Pre-downloaded Categraf files not found (expected in third_party/categraf/)"; \
     fi; \
     \
     # === SaltStack packages (DEB) ===
