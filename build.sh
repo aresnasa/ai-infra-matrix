@@ -6746,10 +6746,16 @@ build_all_multiplatform() {
         log_info "🏗️  Building Dependent Services for [$arch_name]"
         log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
-        for service in "${DEPENDENT_SERVICES[@]}"; do
-            log_info "  → Building $service for $arch_name..."
-            build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
-        done
+        # Check if parallel build is enabled for dependent services
+        if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
+            log_parallel "🚀 Parallel build enabled for dependent services [$arch_name] (max $PARALLEL_JOBS jobs)"
+            build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- "--build-arg" "APPHUB_URL=$apphub_url"
+        else
+            for service in "${DEPENDENT_SERVICES[@]}"; do
+                log_info "  → Building $service for $arch_name..."
+                build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
+            done
+        fi
     done
     echo
 
