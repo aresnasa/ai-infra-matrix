@@ -7205,10 +7205,27 @@ build_component_for_platform() {
         
         # Add --add-host to map 'apphub' to the actual container IP
         # This allows buildkit (running with host network) to access apphub container
-        local apphub_ip=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ai-infra-apphub 2>/dev/null || echo "")
-        if [[ -n "$apphub_ip" ]]; then
-            cmd+=("--add-host" "apphub:$apphub_ip")
-            log_info "  [$arch_name] Using apphub at $apphub_ip"
+        local apphub_ip=""
+        local apphub_container_status=$(docker ps --filter "name=^ai-infra-apphub$" --filter "status=running" --format "{{.ID}}" 2>/dev/null || echo "")
+        
+        if [[ -z "$apphub_container_status" ]]; then
+            log_warn "  [$arch_name] ⚠️  AppHub container not running, using default hostname"
+            # Fall back to using hostname instead of IP
+            cmd+=("--add-host" "apphub:127.0.0.1")
+            log_info "  [$arch_name] Using apphub at 127.0.0.1 (fallback)"
+        else
+            # Get the first IP from the ai-infra-network
+            apphub_ip=$(docker inspect -f '{{index .NetworkSettings.Networks "ai-infra-network" .IPAddress}}' ai-infra-apphub 2>/dev/null || echo "")
+            
+            # Validate IP address format (basic check for IPv4)
+            if [[ $apphub_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                cmd+=("--add-host" "apphub:$apphub_ip")
+                log_info "  [$arch_name] Using apphub at $apphub_ip"
+            else
+                log_warn "  [$arch_name] ⚠️  Invalid AppHub IP: '$apphub_ip', using localhost fallback"
+                cmd+=("--add-host" "apphub:127.0.0.1")
+                log_info "  [$arch_name] Using apphub at 127.0.0.1 (fallback)"
+            fi
         fi
         
         # For docker-container driver with host network, we also need to handle localhost properly
