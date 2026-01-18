@@ -2361,6 +2361,20 @@ detect_compose_command() {
     fi
 }
 
+# Check if SLURM deb packages are available in AppHub
+# Returns 0 if available, 1 if not
+check_apphub_slurm_available() {
+    local apphub_port="${APPHUB_PORT:-28080}"
+    local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
+    local apphub_url="http://${external_host}:${apphub_port}"
+    
+    if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/pkgs/slurm-deb/Packages" >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 wait_for_apphub_ready() {
     local timeout="${1:-300}"
     local container_name="ai-infra-apphub"
@@ -6710,13 +6724,25 @@ build_all_multiplatform() {
         log_info "  [2.3] Building Dependent Services for [$arch_name]..."
         log_info "    Using AppHub URL: $apphub_url"
         
+        # Check if SLURM packages are available in AppHub
+        local slurm_build_args="--build-arg APPHUB_URL=$apphub_url"
+        if ! check_apphub_slurm_available; then
+            log_warn "    ⚠️  SLURM packages not available in AppHub, enabling system fallback"
+            slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
+        fi
+        
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
             log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
             build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- "--build-arg" "APPHUB_URL=$apphub_url"
         else
             for service in "${DEPENDENT_SERVICES[@]}"; do
                 log_info "    → Building $service for $arch_name..."
-                build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
+                # Use slurm_build_args for slurm-master, regular args for others
+                if [[ "$service" == "slurm-master" ]]; then
+                    build_component_for_platform "$service" "$platform" $slurm_build_args
+                else
+                    build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
+                fi
             done
         fi
         echo
