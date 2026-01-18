@@ -6770,6 +6770,15 @@ build_all_multiplatform() {
         echo
     done
     
+    # Check if any foundation service build failed
+    if [[ "$foundation_build_failed" == "true" ]]; then
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_error "❌ Some foundation services failed to build."
+        log_error "   Please check the build logs above for details."
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        # Don't return immediately - continue to check AppHub specifically
+    fi
+    
     # Check if AppHub was built successfully (required for Phase 2.3)
     local apphub_built=false
     for platform in "${normalized_platforms[@]}"; do
@@ -6789,7 +6798,7 @@ build_all_multiplatform() {
         log_error ""
         log_error "   Debug steps:"
         log_error "   1. Check build logs above for AppHub errors"
-        log_error "   2. Try building AppHub alone: ./build.sh apphub"
+        log_error "   2. Try building AppHub alone: ./build.sh apphub --platform=arm64"
         log_error "   3. Check AppHub Dockerfile: src/apphub/Dockerfile"
         log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         return 1
