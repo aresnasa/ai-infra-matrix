@@ -1007,16 +1007,10 @@ need_rebuild_for_platform() {
     fi
     local arch_name="${platform##*/}"
     
-    # Determine native architecture
-    local native_platform=$(_detect_docker_platform)
-    local native_arch="${native_platform##*/}"
-    
-    # For native platform, use base tag; for cross-platform, use arch suffix
-    local arch_suffix=""
-    if [[ "$arch_name" != "$native_arch" ]]; then
-        arch_suffix="-${arch_name}"
-    fi
-    
+    # Always use architecture-suffixed tag for multi-platform builds
+    # This matches the image naming convention in build_component_for_platform()
+    # Examples: ai-infra-apphub:v0.3.8-arm64, ai-infra-apphub:v0.3.8-amd64
+    local arch_suffix="-${arch_name}"
     local image="ai-infra-${service}:${tag}${arch_suffix}"
     
     # Force rebuild mode
@@ -6632,7 +6626,46 @@ build_all_multiplatform() {
     if [[ ${#normalized_platforms[@]} -gt 1 ]]; then
         log_info "⚙️  Multi-arch build: AppHub will be built for all platforms, then started once"
     fi
-    echo
+    
+    # --------------------------------------------------------------------------
+    # Pre-build Summary: Show which components will be built or skipped
+    # --------------------------------------------------------------------------
+    if [[ "$FORCE_REBUILD" != "true" ]]; then
+        log_info ""
+        log_info "📋 Pre-build Analysis (checking existing images)..."
+        local to_build=()
+        local to_skip=()
+        
+        for platform in "${normalized_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                local rebuild_reason=$(need_rebuild_for_platform "$service" "$platform" "$tag")
+                if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+                    to_skip+=("$service:$arch_name")
+                else
+                    to_build+=("$service:$arch_name ($rebuild_reason)")
+                fi
+            done
+        done
+        
+        if [[ ${#to_skip[@]} -gt 0 ]]; then
+            log_cache "  ⏭️  Will skip ${#to_skip[@]} component(s): ${to_skip[*]}"
+        fi
+        if [[ ${#to_build[@]} -gt 0 ]]; then
+            log_info "  🔧 Will build ${#to_build[@]} component(s)"
+            for item in "${to_build[@]}"; do
+                log_info "      → $item"
+            done
+        fi
+        
+        if [[ ${#to_build[@]} -eq 0 ]]; then
+            log_info ""
+            log_info "✅ All components are up-to-date! No rebuild needed."
+            log_info "   Use --force to rebuild anyway: ./build.sh --force all --platform=${platforms}"
+            return 0
+        fi
+        echo
+    fi
     
     local compose_cmd=$(detect_compose_command)
     if [ -z "$compose_cmd" ]; then
