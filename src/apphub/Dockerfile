@@ -1912,6 +1912,6 @@ echo "✓ SSH server started on port 22"
 # Start nginx
 nginx -g 'daemon off;'
 EOF
-chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
