@@ -5639,6 +5639,10 @@ build_parallel_for_platform() {
     log_parallel "🚀 [$arch_name] Starting parallel build: $total services, max $max_jobs concurrent jobs"
     log_parallel "[$arch_name] Services: ${services[*]}"
     
+    # Create log directory for parallel build output
+    local parallel_log_dir="/tmp/ai-infra-parallel-build-$$"
+    mkdir -p "$parallel_log_dir"
+    
     # Build services in batches
     for service in "${services[@]}"; do
         # Wait if we've reached max concurrent jobs
@@ -5660,6 +5664,14 @@ build_parallel_for_platform() {
                     else
                         failed=$((failed + 1))
                         log_error "[$arch_name] ✗ Failed: $svc (exit code: $exit_code)"
+                        # Show tail of log file for failed build
+                        local logfile="$parallel_log_dir/${svc}-${arch_name}.log"
+                        if [[ -f "$logfile" ]]; then
+                            log_error "[$arch_name]    Last 20 lines of build log:"
+                            tail -20 "$logfile" | while read line; do
+                                log_error "[$arch_name]    $line"
+                            done
+                        fi
                     fi
                 fi
             done
@@ -5668,13 +5680,16 @@ build_parallel_for_platform() {
             sleep 0.5
         done
         
-        # Start new build job in background
+        # Start new build job in background with output logged to file
         log_parallel "[$arch_name] 🔨 Starting: $service"
+        local logfile="$parallel_log_dir/${service}-${arch_name}.log"
         (
             if [[ ${#extra_args[@]} -gt 0 ]]; then
-                build_component_for_platform "$service" "$platform" "${extra_args[@]}"
+                build_component_for_platform "$service" "$platform" "${extra_args[@]}" 2>&1 | tee "$logfile"
+                exit ${PIPESTATUS[0]}
             else
-                build_component_for_platform "$service" "$platform"
+                build_component_for_platform "$service" "$platform" 2>&1 | tee "$logfile"
+                exit ${PIPESTATUS[0]}
             fi
         ) &
         pids+=($!)
@@ -5693,6 +5708,14 @@ build_parallel_for_platform() {
         else
             failed=$((failed + 1))
             log_error "[$arch_name] ✗ Failed: $svc (exit code: $exit_code)"
+            # Show tail of log file for failed build
+            local logfile="$parallel_log_dir/${svc}-${arch_name}.log"
+            if [[ -f "$logfile" ]]; then
+                log_error "[$arch_name]    Last 20 lines of build log:"
+                tail -20 "$logfile" | while read line; do
+                    log_error "[$arch_name]    $line"
+                done
+            fi
         fi
     done
     
