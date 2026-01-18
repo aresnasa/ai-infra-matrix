@@ -6692,27 +6692,61 @@ build_all_multiplatform() {
         docker rm -f ai-infra-apphub 2>/dev/null || true
     fi
     
-    # Decide which AppHub image to use
+    # Decide which AppHub image to use (with fallback logic)
     local apphub_image_to_use=""
     local apphub_platform=""
+    local apphub_arch_selected=""
+    
+    # Try to find an available AppHub image in order of preference:
+    # 1. Native architecture (best performance)
+    # 2. First platform in the build list
+    # 3. Any available AppHub image
     
     if [[ "$has_native_platform" == "true" ]]; then
-        # Prefer native architecture for best performance
-        apphub_image_to_use="ai-infra-apphub:${tag}-${native_arch}"
-        apphub_platform="linux/${native_arch}"
-        log_info "  📌 Using native architecture AppHub: $apphub_image_to_use"
-    else
-        # Fall back to first available platform (will run via QEMU)
-        local first_arch="${normalized_platforms[0]##*/}"
-        apphub_image_to_use="ai-infra-apphub:${tag}-${first_arch}"
-        apphub_platform="linux/${first_arch}"
-        log_warn "  ⚠️  Native platform not in build targets, using QEMU: $apphub_image_to_use"
+        local native_image="ai-infra-apphub:${tag}-${native_arch}"
+        if docker image inspect "$native_image" >/dev/null 2>&1; then
+            apphub_image_to_use="$native_image"
+            apphub_platform="linux/${native_arch}"
+            apphub_arch_selected="$native_arch"
+            log_info "  📌 Using native architecture AppHub: $apphub_image_to_use"
+        fi
     fi
     
-    # Verify AppHub image exists
-    if ! docker image inspect "$apphub_image_to_use" >/dev/null 2>&1; then
-        log_error "  ❌ AppHub image not found: $apphub_image_to_use"
-        log_error "     Please ensure Foundation Services were built successfully."
+    # Fallback: try each platform in the build list
+    if [[ -z "$apphub_image_to_use" ]]; then
+        for platform in "${normalized_platforms[@]}"; do
+            local arch="${platform##*/}"
+            local test_image="ai-infra-apphub:${tag}-${arch}"
+            if docker image inspect "$test_image" >/dev/null 2>&1; then
+                apphub_image_to_use="$test_image"
+                apphub_platform="linux/${arch}"
+                apphub_arch_selected="$arch"
+                log_warn "  ⚠️  Native AppHub not available, using: $apphub_image_to_use"
+                break
+            fi
+        done
+    fi
+    
+    # Last resort: find any AppHub image with matching tag
+    if [[ -z "$apphub_image_to_use" ]]; then
+        local any_apphub=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "ai-infra-apphub:${tag}" | head -1)
+        if [[ -n "$any_apphub" ]]; then
+            apphub_image_to_use="$any_apphub"
+            # Extract arch from tag (e.g., v0.3.8-amd64 -> amd64)
+            apphub_arch_selected="${any_apphub##*-}"
+            apphub_platform="linux/${apphub_arch_selected}"
+            log_warn "  ⚠️  Using available AppHub image: $apphub_image_to_use"
+        fi
+    fi
+    
+    # Verify we found an AppHub image
+    if [[ -z "$apphub_image_to_use" ]]; then
+        log_error "  ❌ No AppHub image found for tag: ${tag}"
+        log_error "     Available images:"
+        docker images --format "  {{.Repository}}:{{.Tag}}" | grep apphub || echo "     (none)"
+        log_error ""
+        log_error "     Please build AppHub first:"
+        log_error "       ./build.sh build-platform linux/${native_arch} apphub"
         return 1
     fi
     
@@ -6720,11 +6754,13 @@ build_all_multiplatform() {
     log_info "  🚀 Starting AppHub..."
     docker network create ai-infra-network 2>/dev/null || true
     
-    if [[ "$has_native_platform" == "true" ]]; then
+    # Determine if we should use docker-compose or docker run
+    # Use docker-compose only if the selected AppHub is native architecture
+    if [[ "$apphub_arch_selected" == "$native_arch" ]]; then
         # Use docker-compose for native platform (better integration)
         $compose_cmd up -d apphub
     else
-        # Use docker run for cross-platform
+        # Use docker run for cross-platform (via QEMU/Rosetta)
         docker run -d \
             --name ai-infra-apphub \
             --platform "$apphub_platform" \
@@ -6748,12 +6784,7 @@ build_all_multiplatform() {
     fi
     
     # Record which architecture's AppHub is currently running
-    local current_apphub_arch=""
-    if [[ "$has_native_platform" == "true" ]]; then
-        current_apphub_arch="$native_arch"
-    else
-        current_apphub_arch="${normalized_platforms[0]##*/}"
-    fi
+    local current_apphub_arch="$apphub_arch_selected"
     log_info "  ✓ AppHub is ready at $apphub_url (arch: $current_apphub_arch)"
     echo
     
