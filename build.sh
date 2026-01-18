@@ -5584,6 +5584,113 @@ build_parallel() {
     return 0
 }
 
+# Parallel build for a specific platform
+# Usage: build_parallel_for_platform <platform> <services...> [-- extra_args...]
+# Example: build_parallel_for_platform linux/amd64 nginx backend frontend -- --build-arg FOO=bar
+build_parallel_for_platform() {
+    local platform="$1"
+    shift
+    
+    local services=()
+    local extra_args=()
+    local found_separator=false
+    
+    # Parse arguments: services before --, extra args after --
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            found_separator=true
+            continue
+        fi
+        if [[ "$found_separator" == "true" ]]; then
+            extra_args+=("$arg")
+        else
+            services+=("$arg")
+        fi
+    done
+    
+    if [[ ${#services[@]} -eq 0 ]]; then
+        log_warn "No services to build in parallel"
+        return 0
+    fi
+    
+    local arch_name="${platform##*/}"
+    local max_jobs="${PARALLEL_JOBS:-4}"
+    local total=${#services[@]}
+    local completed=0
+    local failed=0
+    local pids=()
+    local service_map=()
+    
+    log_parallel "🚀 [$arch_name] Starting parallel build: $total services, max $max_jobs concurrent jobs"
+    log_parallel "[$arch_name] Services: ${services[*]}"
+    
+    # Build services in batches
+    for service in "${services[@]}"; do
+        # Wait if we've reached max concurrent jobs
+        while [[ ${#pids[@]} -ge $max_jobs ]]; do
+            # Wait for any job to complete
+            local new_pids=()
+            local new_map=()
+            for i in "${!pids[@]}"; do
+                if kill -0 "${pids[$i]}" 2>/dev/null; then
+                    new_pids+=("${pids[$i]}")
+                    new_map+=("${service_map[$i]}")
+                else
+                    wait "${pids[$i]}" 2>/dev/null
+                    local exit_code=$?
+                    local svc="${service_map[$i]}"
+                    if [[ $exit_code -eq 0 ]]; then
+                        completed=$((completed + 1))
+                        log_parallel "[$arch_name] ✓ Completed: $svc ($completed/$total)"
+                    else
+                        failed=$((failed + 1))
+                        log_error "[$arch_name] ✗ Failed: $svc (exit code: $exit_code)"
+                    fi
+                fi
+            done
+            pids=("${new_pids[@]}")
+            service_map=("${new_map[@]}")
+            sleep 0.5
+        done
+        
+        # Start new build job in background
+        log_parallel "[$arch_name] 🔨 Starting: $service"
+        (
+            if [[ ${#extra_args[@]} -gt 0 ]]; then
+                build_component_for_platform "$service" "$platform" "${extra_args[@]}"
+            else
+                build_component_for_platform "$service" "$platform"
+            fi
+        ) &
+        pids+=($!)
+        service_map+=("$service")
+    done
+    
+    # Wait for remaining jobs
+    log_parallel "[$arch_name] ⏳ Waiting for remaining builds to complete..."
+    for i in "${!pids[@]}"; do
+        wait "${pids[$i]}" 2>/dev/null
+        local exit_code=$?
+        local svc="${service_map[$i]}"
+        if [[ $exit_code -eq 0 ]]; then
+            completed=$((completed + 1))
+            log_parallel "[$arch_name] ✓ Completed: $svc ($completed/$total)"
+        else
+            failed=$((failed + 1))
+            log_error "[$arch_name] ✗ Failed: $svc (exit code: $exit_code)"
+        fi
+    done
+    
+    log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_parallel "[$arch_name] 📊 Parallel Build Summary: $completed succeeded, $failed failed, $total total"
+    log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ $failed -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
 # Multi-Architecture Build Support
 # Uses docker buildx to build images for multiple platforms
 # Requires: docker buildx (included in Docker Desktop, or install separately)
