@@ -1,16 +1,16 @@
 # AI Infrastructure Matrix - SLURM Master Service
 # 基于Ubuntu构建SLURM控制节点
-ARG UBUNTU_VERSION={{UBUNTU_VERSION}}
-FROM ubuntu:
+ARG UBUNTU_VERSION=22.04
+FROM ubuntu:${UBUNTU_VERSION}
 
 # Build arguments for versions
-ARG SLURM_VERSION={{SLURM_VERSION}}
+ARG SLURM_VERSION=25.05.4
 ARG VERSION=v0.3.8
-ARG APT_MIRROR={{APT_MIRROR}}
+ARG APT_MIRROR=mirrors.aliyun.com
 LABEL maintainer="AI Infrastructure Team"
-LABEL version=""
+LABEL version="${VERSION}"
 LABEL description="AI Infrastructure Matrix SLURM Master Service"
-LABEL slurm.version=""
+LABEL slurm.version="${SLURM_VERSION}"
 
 # 避免交互式安装提示
 ENV DEBIAN_FRONTEND=noninteractive
@@ -23,27 +23,27 @@ RUN set -eux; \
     cp /etc/apt/sources.list /etc/apt/sources.list.backup; \
     # 检测架构
     ARCH=$(dpkg --print-architecture); \
-    echo "🔍 检测到系统架构: "; \
+    echo "🔍 检测到系统架构: ${ARCH}"; \
     # 根据架构配置镜像源（多镜像源智能回退）
     if [ -n "${APT_MIRROR:-}" ]; then \
-        echo "⚙️  使用自定义镜像源: "; \
-        if [ "" = "arm64" ] || [ "" = "aarch64" ]; then \
+        echo "⚙️  使用自定义镜像源: ${APT_MIRROR}"; \
+        if [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
             { \
-                echo "deb http:///ubuntu-ports/ jammy main restricted universe multiverse"; \
-                echo "deb http:///ubuntu-ports/ jammy-security main restricted universe multiverse"; \
-                echo "deb http:///ubuntu-ports/ jammy-updates main restricted universe multiverse"; \
-                echo "deb http:///ubuntu-ports/ jammy-backports main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy-security main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy-updates main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu-ports/ jammy-backports main restricted universe multiverse"; \
             } > /etc/apt/sources.list; \
         else \
             { \
-                echo "deb http:///ubuntu/ jammy main restricted universe multiverse"; \
-                echo "deb http:///ubuntu/ jammy-security main restricted universe multiverse"; \
-                echo "deb http:///ubuntu/ jammy-updates main restricted universe multiverse"; \
-                echo "deb http:///ubuntu/ jammy-backports main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy-security main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy-updates main restricted universe multiverse"; \
+                echo "deb http://${APT_MIRROR}/ubuntu/ jammy-backports main restricted universe multiverse"; \
             } > /etc/apt/sources.list; \
         fi; \
         apt-get update; \
-    elif [ "" = "arm64" ] || [ "" = "aarch64" ]; then \
+    elif [ "${ARCH}" = "arm64" ] || [ "${ARCH}" = "aarch64" ]; then \
         echo "⚙️  配置 ARM64 镜像源（带智能回退）..."; \
         # 尝试阿里云源（静默失败检测）
         { \
@@ -158,7 +158,7 @@ RUN set -eux; \
 RUN set -eux; \
     # Refresh index right before install to avoid stale caches across layers
     for i in 1 2 3; do \
-        apt-get -o Acquire::Retries=3 update && break || (echo "apt-get update failed (attempt ), retrying..." && sleep 5); \
+        apt-get -o Acquire::Retries=3 update && break || (echo "apt-get update failed (attempt $i), retrying..." && sleep 5); \
     done; \
     # Install with --fix-missing and retries to improve robustness on flaky mirrors
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends --fix-missing \
@@ -216,7 +216,7 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # 配置时区
-RUN ln -snf /usr/share/zoneinfo/ /etc/localtime && echo  > /etc/timezone
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 在安装任何包之前先创建用户，使用固定的 UID/GID 以确保跨节点一致性
 # 这样可以避免不同节点上自动分配的 UID/GID 不一致的问题
@@ -259,47 +259,47 @@ ARG ALLOW_SYSTEM_SLURM=false
 RUN set -eux; \
     SLURM_INSTALLED=false; \
     SLURM_SOURCE="none"; \
-    echo "🔍 尝试从AppHub安装SLURM  包..."; \
+    echo "🔍 尝试从AppHub安装SLURM ${SLURM_VERSION} 包..."; \
     # 添加AppHub源
-    echo "deb [trusted=yes] /pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
+    echo "deb [trusted=yes] ${APPHUB_URL}/pkgs/slurm-deb ./" > /etc/apt/sources.list.d/ai-infra-slurm.list; \
     echo "📋 AppHub源配置:"; \
     cat /etc/apt/sources.list.d/ai-infra-slurm.list; \
     \
     # 测试AppHub连接
     echo "🌐 测试AppHub连接..."; \
-    if curl -sf --max-time 10 /pkgs/slurm-deb/Packages > /dev/null; then \
+    if curl -sf --max-time 10 ${APPHUB_URL}/pkgs/slurm-deb/Packages > /dev/null; then \
         echo "✅ AppHub连接正常"; \
         \
         # 动态发现AppHub中所有可用的SLURM包
         echo "📦 发现AppHub中的SLURM包..."; \
-        AVAILABLE_PACKAGES=$(curl -sL /pkgs/slurm-deb/Packages 2>/dev/null | \
+        AVAILABLE_PACKAGES=$(curl -sL ${APPHUB_URL}/pkgs/slurm-deb/Packages 2>/dev/null | \
             grep "^Package:" | \
             awk '{print $2}' | \
             grep -E "^slurm" | \
             sort -u | \
             tr '\n' ' '); \
         \
-        if [ -n "" ]; then \
+        if [ -n "$AVAILABLE_PACKAGES" ]; then \
             echo "✓ 发现的SLURM包:"; \
-            echo "" | tr ' ' '\n' | sed 's/^/  - /'; \
-            PACKAGE_COUNT=$(echo "" | wc -w); \
-            echo "✓ 总计:  个包"; \
+            echo "$AVAILABLE_PACKAGES" | tr ' ' '\n' | sed 's/^/  - /'; \
+            PACKAGE_COUNT=$(echo "$AVAILABLE_PACKAGES" | wc -w); \
+            echo "✓ 总计: $PACKAGE_COUNT 个包"; \
             \
             # 定义核心包和可选包
             CORE_PACKAGES="slurm-smd slurm-smd-client slurm-smd-slurmctld slurm-smd-slurmdbd slurm-smd-slurmrestd"; \
             OPTIONAL_PACKAGES=""; \
             \
             # 从可用包中筛选出非核心的可选包
-            for pkg in ; do \
+            for pkg in $AVAILABLE_PACKAGES; do \
                 is_core=0; \
-                for core in ; do \
-                    if [ "" = "" ]; then \
+                for core in $CORE_PACKAGES; do \
+                    if [ "$pkg" = "$core" ]; then \
                         is_core=1; \
                         break; \
                     fi; \
                 done; \
-                if [  -eq 0 ]; then \
-                    OPTIONAL_PACKAGES=" "; \
+                if [ $is_core -eq 0 ]; then \
+                    OPTIONAL_PACKAGES="$OPTIONAL_PACKAGES $pkg"; \
                 fi; \
             done; \
             \
@@ -307,15 +307,15 @@ RUN set -eux; \
             if timeout 120 apt-get update; then \
                 # 安装核心包
                 echo "📦 安装核心SLURM包..."; \
-                if apt-get install -y --no-install-recommends ; then \
+                if apt-get install -y --no-install-recommends $CORE_PACKAGES; then \
                     echo "✅ 核心SLURM包安装成功"; \
                     SLURM_INSTALLED=true; \
                     SLURM_SOURCE="AppHub-Core"; \
                     \
                     # 尝试安装可选包（失败不影响）
-                    if [ -n "" ]; then \
+                    if [ -n "$OPTIONAL_PACKAGES" ]; then \
                         echo "📦 尝试安装可选SLURM包..."; \
-                        apt-get install -y --no-install-recommends  2>/dev/null && \
+                        apt-get install -y --no-install-recommends $OPTIONAL_PACKAGES 2>/dev/null && \
                             echo "✅ 可选包安装成功" || \
                             echo "⚠️  部分可选包安装失败（不影响核心功能）"; \
                     fi; \
@@ -336,8 +336,8 @@ RUN set -eux; \
         fi; \
         \
         # 如果AppHub安装失败，检查是否允许回退到系统仓库
-        if [ "" != "true" ]; then \
-            if [ "" = "true" ]; then \
+        if [ "$SLURM_INSTALLED" != "true" ]; then \
+            if [ "${ALLOW_SYSTEM_SLURM}" = "true" ]; then \
                 echo "⚠️  AppHub安装失败，尝试从Ubuntu官方仓库安装..."; \
             else \
                 echo "❌ AppHub安装失败，构建终止"; \
@@ -349,12 +349,12 @@ RUN set -eux; \
         fi; \
     else \
         echo "⚠️  AppHub SLURM包不可用（返回404或连接失败）"; \
-        if [ "" = "true" ]; then \
+        if [ "${ALLOW_SYSTEM_SLURM}" = "true" ]; then \
             echo "📦 允许系统回退，将尝试从Ubuntu官方仓库安装..."; \
         else \
             echo "❌ AppHub连接失败，构建终止"; \
             echo "💡 提示: SLURM master必须从AppHub安装以确保版本一致性"; \
-            echo "💡 AppHub URL: "; \
+            echo "💡 AppHub URL: ${APPHUB_URL}"; \
             echo ""; \
             echo "📋 故障排查:"; \
             echo "   1. 确保AppHub服务正在运行:"; \
@@ -364,7 +364,7 @@ RUN set -eux; \
             echo "      docker port ai-infra-apphub"; \
             echo ""; \
             echo "   3. 测试AppHub连接:"; \
-            echo "      curl http://\:\/pkgs/slurm-deb/Packages"; \
+            echo "      curl http://\${EXTERNAL_HOST}:\${APPHUB_PORT}/pkgs/slurm-deb/Packages"; \
             echo ""; \
             echo "   4. 允许系统回退（跨架构构建时）:"; \
             echo "      --build-arg ALLOW_SYSTEM_SLURM=true"; \
@@ -376,7 +376,7 @@ RUN set -eux; \
     # ==========================================================================
     # 系统仓库回退：如果AppHub不可用且允许回退
     # ==========================================================================
-    if [ "" != "true" ] && [ "" = "true" ]; then \
+    if [ "$SLURM_INSTALLED" != "true" ] && [ "${ALLOW_SYSTEM_SLURM}" = "true" ]; then \
         echo ""; \
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
         echo "📦 从Ubuntu官方仓库安装SLURM（系统回退模式）"; \
@@ -412,7 +412,7 @@ RUN set -eux; \
     fi; \
     \
     # 最终检查
-    if [ "" != "true" ]; then \
+    if [ "$SLURM_INSTALLED" != "true" ]; then \
         echo "❌ SLURM安装失败（所有方法都失败了）"; \
         exit 1; \
     fi; \
@@ -437,30 +437,30 @@ RUN set -eux; \
     \
     # 创建标记文件和路径检查
     touch /opt/slurm-installed; \
-    echo "" > /opt/slurm-source; \
+    echo "$SLURM_SOURCE" > /opt/slurm-source; \
     # 动态检查实际的二进制文件位置
     echo "🔍 检查SLURM二进制文件位置..."; \
     SLURMCTLD_PATH=$(which slurmctld 2>/dev/null || find /usr -name "slurmctld" -type f -executable 2>/dev/null | head -1 || echo ""); \
     SLURMDBD_PATH=$(which slurmdbd 2>/dev/null || find /usr -name "slurmdbd" -type f -executable 2>/dev/null | head -1 || echo ""); \
     \
-    if [ -n "" ] && [ -x "" ]; then \
-        echo "" > /opt/slurmctld-path; \
-        echo "✅ slurmctld: "; \
+    if [ -n "$SLURMCTLD_PATH" ] && [ -x "$SLURMCTLD_PATH" ]; then \
+        echo "$SLURMCTLD_PATH" > /opt/slurmctld-path; \
+        echo "✅ slurmctld: $SLURMCTLD_PATH"; \
     else \
         echo "❌ slurmctld二进制文件未找到"; \
         exit 1; \
     fi; \
     \
-    if [ -n "" ] && [ -x "" ]; then \
-        echo "" > /opt/slurmdbd-path; \
-        echo "✅ slurmdbd: "; \
+    if [ -n "$SLURMDBD_PATH" ] && [ -x "$SLURMDBD_PATH" ]; then \
+        echo "$SLURMDBD_PATH" > /opt/slurmdbd-path; \
+        echo "✅ slurmdbd: $SLURMDBD_PATH"; \
     else \
         echo "❌ slurmdbd二进制文件未找到"; \
         exit 1; \
     fi; \
     \
     echo "📦 SLURM安装摘要:"; \
-    echo "  来源: "; \
+    echo "  来源: $SLURM_SOURCE"; \
     echo "  版本: $(slurmctld -V)"; \
     echo "  slurmctld: $(cat /opt/slurmctld-path)"; \
     echo "  slurmdbd: $(cat /opt/slurmdbd-path)"
