@@ -6692,6 +6692,7 @@ build_all_multiplatform() {
     log_info "📦 Phase 2.1: Build Foundation Services (All Platforms)"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    local foundation_build_failed=false
     for platform in "${normalized_platforms[@]}"; do
         local arch_name="${platform##*/}"
         
@@ -6701,15 +6702,46 @@ build_all_multiplatform() {
         
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
             log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
-            build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"
+            if ! build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"; then
+                log_error "    ❌ Some foundation services failed to build for $arch_name"
+                foundation_build_failed=true
+            fi
         else
             for service in "${FOUNDATION_SERVICES[@]}"; do
                 log_info "    → Building $service for $arch_name..."
-                build_component_for_platform "$service" "$platform"
+                if ! build_component_for_platform "$service" "$platform"; then
+                    log_error "    ❌ Failed to build $service for $arch_name"
+                    foundation_build_failed=true
+                fi
             done
         fi
         echo
     done
+    
+    # Check if AppHub was built successfully (required for Phase 2.3)
+    local apphub_built=false
+    for platform in "${normalized_platforms[@]}"; do
+        local arch="${platform##*/}"
+        local apphub_image="ai-infra-apphub:${tag}-${arch}"
+        if docker image inspect "$apphub_image" >/dev/null 2>&1; then
+            apphub_built=true
+            log_info "  ✓ AppHub image found: $apphub_image"
+            break
+        fi
+    done
+    
+    if [[ "$apphub_built" != "true" ]]; then
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_error "❌ CRITICAL: AppHub was not built successfully!"
+        log_error "   AppHub is required to serve packages for dependent services."
+        log_error ""
+        log_error "   Debug steps:"
+        log_error "   1. Check build logs above for AppHub errors"
+        log_error "   2. Try building AppHub alone: ./build.sh apphub"
+        log_error "   3. Check AppHub Dockerfile: src/apphub/Dockerfile"
+        log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 1
+    fi
     
     # --------------------------------------------------------------------------
     # Phase 2.2: Start ONE AppHub instance (native architecture preferred)
