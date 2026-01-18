@@ -6647,10 +6647,11 @@ build_all_multiplatform() {
         if [[ "$current_apphub_arch" != "$arch_name" ]]; then
             log_info "  [2.2] Managing AppHub for [$arch_name]..."
             
-            # Stop existing AppHub if running
-            if [[ "$apphub_started" == "true" ]]; then
-                log_info "    🔄 Stopping AppHub ($current_apphub_arch) for architecture switch..."
-                $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+            # Always clean up existing AppHub container first (stopped or running)
+            # This prevents "container name already in use" conflicts
+            if docker ps -a --filter "name=^ai-infra-apphub$" --format "{{.ID}}" | grep -q .; then
+                log_info "    🧹 Removing existing AppHub container..."
+                docker stop ai-infra-apphub 2>/dev/null || true
                 docker rm -f ai-infra-apphub 2>/dev/null || true
             fi
             
