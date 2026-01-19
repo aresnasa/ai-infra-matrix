@@ -15,7 +15,7 @@ set -e
 declare -a GIT_USER_CONFIGS=(
     # 示例配置 - 请根据实际情况修改
     "github.com/aresnasa|aresnasa|aresnasa@example.com"
-    "gitlab.company.com|Your Name|your.name@company.com"
+    "gitlab.company.com|xuchao|your.name@company.com"
     "gitee.com|gitee_user|gitee@example.com"
     # 添加更多配置...
 )
