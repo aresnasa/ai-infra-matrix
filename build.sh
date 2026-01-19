@@ -7050,7 +7050,15 @@ build_all_multiplatform() {
         
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
             log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
-            build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- "--build-arg" "APPHUB_URL=$apphub_url"
+            # For parallel builds, we need to pass ALLOW_SYSTEM_SLURM for ALL services
+            # because slurm-master will be built in parallel with others
+            # The extra arg will be ignored by non-slurm services
+            local parallel_extra_args="--build-arg APPHUB_URL=$apphub_url"
+            if ! check_apphub_slurm_available "$arch_name"; then
+                parallel_extra_args="$parallel_extra_args --build-arg ALLOW_SYSTEM_SLURM=true"
+                log_info "    📦 ALLOW_SYSTEM_SLURM=true will be used for slurm-master"
+            fi
+            build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- $parallel_extra_args
         else
             for service in "${DEPENDENT_SERVICES[@]}"; do
                 log_info "    → Building $service for $arch_name..."
