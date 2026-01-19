@@ -7297,6 +7297,7 @@ pull_dependency_for_platform() {
     local component_dir="$SRC_DIR/$component"
     local tag="${IMAGE_TAG:-latest}"
     local arch_name="${platform##*/}"
+    local pull_timeout="${DEPENDENCY_PULL_TIMEOUT:-120}"  # Default 2 minutes timeout per image
     
     # Check for dependency configuration
     local dep_conf="$component_dir/dependency.conf"
@@ -7319,13 +7320,27 @@ pull_dependency_for_platform() {
     
     local target_image="ai-infra-$component:${tag}${arch_suffix}"
     
-    log_info "  [$arch_name] Pulling: $upstream_image -> $target_image"
+    # Skip if target image already exists
+    if docker image inspect "$target_image" >/dev/null 2>&1; then
+        log_info "  [$arch_name] ✓ $component (cached: $target_image)"
+        return 0
+    fi
     
-    if docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
+    log_info "  [$arch_name] Pulling: $upstream_image -> $target_image (timeout: ${pull_timeout}s)"
+    
+    # Use timeout to prevent hanging on slow/unavailable images
+    if timeout "$pull_timeout" docker pull --platform "$platform" "$upstream_image" >/dev/null 2>&1; then
         docker tag "$upstream_image" "$target_image" >/dev/null 2>&1
         log_info "  [$arch_name] ✓ Ready: $target_image"
     else
-        log_warn "  [$arch_name] ✗ Failed to pull: $upstream_image"
+        local exit_code=$?
+        if [[ $exit_code -eq 124 ]]; then
+            log_warn "  [$arch_name] ⏱️ Timeout: $upstream_image (>${pull_timeout}s) - skipping"
+        else
+            log_warn "  [$arch_name] ✗ Failed to pull: $upstream_image"
+        fi
+        # Don't fail the build for dependency pulls - these are optional external images
+        return 0
     fi
 }
 
