@@ -7034,9 +7034,12 @@ build_all_multiplatform() {
         local slurm_build_args="--build-arg APPHUB_URL=$apphub_url"
         if [[ "$use_system_fallback" == "true" ]]; then
             slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
-        elif ! check_apphub_slurm_available; then
-            log_warn "    ⚠️  SLURM packages not available in AppHub, enabling system fallback"
+            log_info "    📦 System SLURM fallback enabled for $arch_name"
+        elif ! check_apphub_slurm_available "$arch_name"; then
+            log_warn "    ⚠️  SLURM packages for $arch_name not available in AppHub, enabling system fallback"
             slurm_build_args="$slurm_build_args --build-arg ALLOW_SYSTEM_SLURM=true"
+        else
+            log_info "    ✓ AppHub SLURM packages available for $arch_name"
         fi
         
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
