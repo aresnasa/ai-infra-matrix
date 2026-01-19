@@ -14,9 +14,9 @@ set -e
 # origin_pattern: 匹配 remote origin URL 的正则表达式
 declare -a GIT_USER_CONFIGS=(
     # 示例配置 - 请根据实际情况修改
-    "github.com/aresnasa|aresnasa|aresnasa@example.com"
-    "gitlab.company.com|xuchao|your.name@company.com"
-    "gitee.com|gitee_user|gitee@example.com"
+    "github.com/aresnasa|aresnasa|aresnasa@126.com"
+    "gitlab.zs.shaipower.online|xuchao|your.name@company.com"
+    "gitee.com|Wolverinexu|aresnasa@126.com"
     # 添加更多配置...
 )
 
