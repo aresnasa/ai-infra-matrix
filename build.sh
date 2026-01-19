@@ -7238,6 +7238,7 @@ prefetch_base_images_for_platform() {
         local retry_count=0
         local pulled=false
         local pull_output=""
+        local pull_timeout="${BASE_IMAGE_PULL_TIMEOUT:-180}"  # Default 3 minutes per base image
         
         while [[ $retry_count -lt $max_retries ]]; do
             retry_count=$((retry_count + 1))
@@ -7248,9 +7249,9 @@ prefetch_base_images_for_platform() {
                 sleep "$wait_time"
             fi
             
-            # Pull image with platform specification
+            # Pull image with platform specification and timeout
             # This will use Docker daemon's configured mirrors automatically
-            if pull_output=$(docker pull --platform "$platform" "$image" 2>&1); then
+            if pull_output=$(timeout "$pull_timeout" docker pull --platform "$platform" "$image" 2>&1); then
                 # Check if pull succeeded
                 if echo "$pull_output" | grep -qiE "(Digest:|Status:|Downloaded|already exists)"; then
                     log_info "    ✓ $image"
@@ -7258,6 +7259,14 @@ prefetch_base_images_for_platform() {
                     pulled=true
                     break
                 fi
+            fi
+            
+            local exit_code=$?
+            
+            # Check for timeout first
+            if [[ $exit_code -eq 124 ]]; then
+                log_warn "    ⏱️ Timeout (>${pull_timeout}s): $image - will retry"
+                continue
             fi
             
             # Pull failed - check error type
