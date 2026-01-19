@@ -7048,6 +7048,7 @@ build_all_multiplatform() {
             log_info "    ✓ AppHub SLURM packages available for $arch_name"
         fi
         
+        local dependent_build_failed=false
         if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#DEPENDENT_SERVICES[@]} -gt 1 ]]; then
             log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
             # For parallel builds, we need to pass ALLOW_SYSTEM_SLURM for ALL services
@@ -7058,17 +7059,30 @@ build_all_multiplatform() {
                 parallel_extra_args="$parallel_extra_args --build-arg ALLOW_SYSTEM_SLURM=true"
                 log_info "    📦 ALLOW_SYSTEM_SLURM=true will be used for slurm-master"
             fi
-            build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- $parallel_extra_args
+            if ! build_parallel_for_platform "$platform" "${DEPENDENT_SERVICES[@]}" -- $parallel_extra_args; then
+                log_error "    ❌ Some dependent services failed to build for $arch_name"
+                dependent_build_failed=true
+            fi
         else
             for service in "${DEPENDENT_SERVICES[@]}"; do
                 log_info "    → Building $service for $arch_name..."
                 # Use slurm_build_args for slurm-master, regular args for others
                 if [[ "$service" == "slurm-master" ]]; then
-                    build_component_for_platform "$service" "$platform" $slurm_build_args
+                    if ! build_component_for_platform "$service" "$platform" $slurm_build_args; then
+                        log_error "    ❌ Failed to build $service for $arch_name"
+                        dependent_build_failed=true
+                    fi
                 else
-                    build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"
+                    if ! build_component_for_platform "$service" "$platform" "--build-arg" "APPHUB_URL=$apphub_url"; then
+                        log_error "    ❌ Failed to build $service for $arch_name"
+                        dependent_build_failed=true
+                    fi
                 fi
             done
+        fi
+        
+        if [[ "$dependent_build_failed" == "true" ]]; then
+            log_warn "    ⚠️  Some dependent services failed to build for $arch_name"
         fi
         echo
     done
