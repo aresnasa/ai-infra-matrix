@@ -15,14 +15,14 @@ set -e
 declare -a GIT_USER_CONFIGS=(
     # 示例配置 - 请根据实际情况修改
     "github.com/aresnasa|aresnasa|aresnasa@126.com"
-    "gitlab.zs.shaipower.online|xuchao|your.name@company.com"
+    "gitlab.zs.shaipower.online|xuchao|xuchao@inesa.com"
     "gitee.com|Wolverinexu|aresnasa@126.com"
     # 添加更多配置...
 )
 
 # 默认用户（当没有匹配到任何配置时使用）
-DEFAULT_USER_NAME="Default User"
-DEFAULT_USER_EMAIL="default@example.com"
+DEFAULT_USER_NAME="aresnasa"
+DEFAULT_USER_EMAIL="aresnasa@126.com"
 
 # =============================================================================
 # 函数定义
