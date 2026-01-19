@@ -2355,16 +2355,36 @@ detect_compose_command() {
     fi
 }
 
-# Check if SLURM deb packages are available in AppHub
+# Check if SLURM deb packages are available in AppHub for specific architecture
+# Args: $1 - target architecture (amd64, arm64), defaults to current arch
 # Returns 0 if available, 1 if not
 check_apphub_slurm_available() {
+    local target_arch="${1:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"
     local apphub_port="${APPHUB_PORT:-28080}"
     local external_host="${EXTERNAL_HOST:-$(detect_external_host)}"
     local apphub_url="http://${external_host}:${apphub_port}"
     
-    if curl -sf --connect-timeout 2 --max-time 5 "${apphub_url}/pkgs/slurm-deb/Packages" >/dev/null 2>&1; then
+    # Normalize architecture name
+    case "$target_arch" in
+        x86_64|x64) target_arch="amd64" ;;
+        aarch64) target_arch="arm64" ;;
+    esac
+    
+    # Check if Packages file exists
+    local packages_content
+    packages_content=$(curl -sf --connect-timeout 2 --max-time 10 "${apphub_url}/pkgs/slurm-deb/Packages" 2>/dev/null)
+    if [[ -z "$packages_content" ]]; then
+        log_debug "SLURM Packages file not found in AppHub"
+        return 1
+    fi
+    
+    # Check if packages for target architecture exist
+    # Look for "Architecture: <target_arch>" in the Packages file
+    if echo "$packages_content" | grep -q "^Architecture: ${target_arch}$"; then
+        log_debug "Found SLURM packages for $target_arch in AppHub"
         return 0
     else
+        log_debug "No SLURM packages for $target_arch in AppHub (found: $(echo "$packages_content" | grep "^Architecture:" | sort -u | tr '\n' ' '))"
         return 1
     fi
 }
