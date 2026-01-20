@@ -6805,26 +6805,53 @@ build_all_multiplatform() {
         # Don't return immediately - continue to check AppHub specifically
     fi
     
-    # Check if AppHub was built successfully (required for Phase 2.3)
+    # Check if ANY AppHub image exists (required for Phase 2.3)
+    # AppHub contains packages for ALL architectures, so we can use any available AppHub
+    # Priority: 1) Target platform AppHub, 2) Native platform AppHub, 3) Any AppHub
     local apphub_built=false
+    local apphub_available_arch=""
+    
+    # First, check target platforms
     for platform in "${normalized_platforms[@]}"; do
         local arch="${platform##*/}"
         local apphub_image="ai-infra-apphub:${tag}-${arch}"
         if docker image inspect "$apphub_image" >/dev/null 2>&1; then
             apphub_built=true
+            apphub_available_arch="$arch"
             log_info "  ✓ AppHub image found: $apphub_image"
             break
         fi
     done
     
+    # If not found, check native platform (e.g., arm64 on Mac)
+    if [[ "$apphub_built" != "true" ]]; then
+        local native_apphub="ai-infra-apphub:${tag}-${native_arch}"
+        if docker image inspect "$native_apphub" >/dev/null 2>&1; then
+            apphub_built=true
+            apphub_available_arch="$native_arch"
+            log_info "  ✓ AppHub image found (native arch): $native_apphub"
+            log_info "    📦 AppHub contains packages for ALL architectures, can be used for cross-platform builds"
+        fi
+    fi
+    
+    # Last resort: check for any AppHub with matching tag
+    if [[ "$apphub_built" != "true" ]]; then
+        local any_apphub=$(docker images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | grep "ai-infra-apphub:${tag}" | head -1)
+        if [[ -n "$any_apphub" ]]; then
+            apphub_built=true
+            apphub_available_arch="${any_apphub##*-}"
+            log_info "  ✓ AppHub image found (fallback): $any_apphub"
+        fi
+    fi
+    
     if [[ "$apphub_built" != "true" ]]; then
         log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_error "❌ CRITICAL: AppHub was not built successfully!"
+        log_error "❌ CRITICAL: No AppHub image found!"
         log_error "   AppHub is required to serve packages for dependent services."
         log_error ""
         log_error "   Debug steps:"
         log_error "   1. Check build logs above for AppHub errors"
-        log_error "   2. Try building AppHub alone: ./build.sh apphub --platform=arm64"
+        log_error "   2. Build AppHub for native arch first: ./build.sh apphub --platform=${native_arch}"
         log_error "   3. Check AppHub Dockerfile: src/apphub/Dockerfile"
         log_error "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         return 1
