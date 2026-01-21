@@ -68,18 +68,35 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class N9EConfig:
-    """Nightingale 配置"""
+    """Nightingale 配置
+    
+    支持两种认证模式：
+    1. JWT 模式（默认）：通过 /api/n9e/auth/login 登录获取 token
+       - 适用于 Web 访问
+       - 配置：api_mode = "web"
+    2. Service API 模式：使用 Basic Auth 直接访问 /v1/n9e/*
+       - 适用于脚本自动化
+       - 配置：api_mode = "service"
+       - 需要在 Nightingale config.toml 中启用 [HTTP.APIForService]
+    """
     host: str = "localhost"
-    port: int = 17000
-    username: str = "root"
-    password: str = "root.2020"
+    port: int = 80  # 通过 nginx 访问
+    username: str = "n9e-api"  # Service API 默认用户名
+    password: str = "123456"   # Service API 默认密码
     timeout: int = 30
     ssl: bool = False
+    api_mode: str = "service"  # "web" 或 "service"
     
     @property
     def base_url(self) -> str:
+        """获取 API 基础 URL"""
         protocol = "https" if self.ssl else "http"
-        return f"{protocol}://{self.host}:{self.port}/api/n9e"
+        if self.api_mode == "service":
+            # Service API 端点（Basic Auth）
+            return f"{protocol}://{self.host}:{self.port}/v1/n9e"
+        else:
+            # Web API 端点（JWT Auth）
+            return f"{protocol}://{self.host}:{self.port}/api/n9e"
     
     @classmethod
     def from_env(cls) -> 'N9EConfig':
@@ -90,12 +107,13 @@ class N9EConfig:
             load_dotenv(env_path)
         
         return cls(
-            host=os.getenv('NIGHTINGALE_HOST', 'localhost'),
-            port=int(os.getenv('NIGHTINGALE_PORT', '17000')),
-            username=os.getenv('N9E_USERNAME', 'root'),
-            password=os.getenv('N9E_PASSWORD', 'root.2020'),
+            host=os.getenv('NIGHTINGALE_HOST', os.getenv('N9E_HOST', 'localhost')),
+            port=int(os.getenv('NIGHTINGALE_PORT', os.getenv('N9E_PORT', '80'))),
+            username=os.getenv('N9E_API_USER', os.getenv('N9E_USERNAME', 'n9e-api')),
+            password=os.getenv('N9E_API_PASSWORD', os.getenv('N9E_PASSWORD', '123456')),
             timeout=int(os.getenv('N9E_TIMEOUT', '30')),
-            ssl=os.getenv('N9E_SSL', 'false').lower() == 'true'
+            ssl=os.getenv('N9E_SSL', 'false').lower() == 'true',
+            api_mode=os.getenv('N9E_API_MODE', 'service')  # 默认使用 service API
         )
 
 
