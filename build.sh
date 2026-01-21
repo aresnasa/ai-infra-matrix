@@ -213,27 +213,28 @@ _select_best_builder() {
     
     # Test network connectivity with the preferred builder
     # This is critical because docker-container driver may have proxy/network issues
-    log_info "  [$arch_name] Testing buildx network connectivity..."
+    # Note: Use >&2 to send logs to stderr so they don't pollute the return value
+    echo "  [$arch_name] Testing buildx network connectivity..." >&2
     
     if _test_buildx_network "$preferred_builder" "$platform"; then
-        log_info "  [$arch_name] ✓ Using $preferred_builder (network test passed)"
+        echo "  [$arch_name] ✓ Using $preferred_builder (network test passed)" >&2
         echo "$preferred_builder"
         return 0
     else
-        log_warn "  [$arch_name] ⚠️  $preferred_builder network test failed"
+        echo "  [$arch_name] ⚠️  $preferred_builder network test failed" >&2
         
         # Test fallback builder
         if docker buildx inspect "$fallback_builder" >/dev/null 2>&1; then
             if _test_buildx_network "$fallback_builder" "$platform"; then
-                log_info "  [$arch_name] ✓ Falling back to $fallback_builder (network works)"
+                echo "  [$arch_name] ✓ Falling back to $fallback_builder (network works)" >&2
                 echo "$fallback_builder"
                 return 0
             fi
         fi
         
         # Both failed, run full network diagnostics
-        log_error "  [$arch_name] ✗ All builders failed network test"
-        diagnose_network
+        echo "  [$arch_name] ✗ All builders failed network test" >&2
+        diagnose_network >&2
         
         # Return preferred builder anyway, let the actual build fail with proper error
         echo "$preferred_builder"
