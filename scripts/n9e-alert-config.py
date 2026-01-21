@@ -802,6 +802,8 @@ def print_status(client: N9EClient):
     """打印当前状态"""
     print("\n" + "=" * 60)
     print("Nightingale 监控系统状态")
+    print(f"API 模式: {client.config.api_mode}")
+    print(f"API 地址: {client.config.base_url}")
     print("=" * 60)
     
     # 业务组
@@ -854,14 +856,23 @@ def main():
   列出业务组:        python %(prog)s list-groups
   列出告警规则:      python %(prog)s list-rules --group-id 1
   查看系统状态:      python %(prog)s status
+
+认证模式:
+  Service API (默认): 使用 Basic Auth，适合脚本自动化
+    --api-mode service --username n9e-api --password 123456
+  
+  Web API: 使用 JWT 登录，适合交互式访问
+    --api-mode web --username root --password root.2020
         """
     )
     
     # 通用参数
-    parser.add_argument('--host', default=None, help='N9E 主机地址')
-    parser.add_argument('--port', type=int, default=None, help='N9E 端口')
-    parser.add_argument('--username', default=None, help='用户名')
+    parser.add_argument('--host', default=None, help='N9E 主机地址 (默认从环境变量 N9E_HOST)')
+    parser.add_argument('--port', type=int, default=None, help='N9E 端口 (默认: 80 通过 nginx)')
+    parser.add_argument('--username', default=None, help='用户名 (Service API: n9e-api, Web API: root)')
     parser.add_argument('--password', default=None, help='密码')
+    parser.add_argument('--api-mode', choices=['service', 'web'], default=None,
+                       help='API 模式: service(Basic Auth) 或 web(JWT)')
     parser.add_argument('-v', '--verbose', action='store_true', help='显示详细信息')
     
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
