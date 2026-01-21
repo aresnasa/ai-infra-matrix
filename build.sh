@@ -7484,13 +7484,18 @@ build_component_for_platform() {
     
     # For cross-platform builds, we need docker-container driver (docker driver doesn't support cross-platform pull)
     # The docker-container driver runs buildkit in a container with QEMU support
-    local builder_name="multiarch-builder"
+    # However, docker-container driver may have network isolation issues with proxies
+    # Use intelligent builder selection to handle this
     local native_platform=$(_detect_docker_platform)
     local native_arch="${native_platform##*/}"
     
-    # Always use multiarch-builder to avoid context switching issues
-    # This ensures consistent behavior whether building for native or cross platform
-    if ! docker buildx inspect "$builder_name" >/dev/null 2>&1; then
+    # Intelligent builder selection: test network connectivity before choosing
+    # This handles the common case where docker-container driver can't access Docker Hub
+    # due to proxy misconfiguration or network isolation
+    local builder_name
+    
+    # First, ensure multiarch-builder exists
+    if ! docker buildx inspect "multiarch-builder" >/dev/null 2>&1; then
         log_info "  [$arch_name] Creating multiarch-builder with host network support..."
         
         # Prepare BuildKit config with mirrors and proxy support
@@ -7504,7 +7509,7 @@ build_component_for_platform() {
         # --buildkitd-flags enables network.host entitlement for --network=host in build commands
         # This is critical for arm64 (cross-platform) builds to avoid timeout issues
         local create_args=(
-            "--name" "$builder_name"
+            "--name" "multiarch-builder"
             "--driver" "docker-container"
             "--driver-opt" "network=host"
             "--buildkitd-flags" "--allow-insecure-entitlement network.host"
@@ -7520,11 +7525,18 @@ build_component_for_platform() {
         if ! docker buildx create "${create_args[@]}" 2>&1; then
             log_warn "  [$arch_name] Failed to create multiarch-builder with network=host"
             log_warn "  [$arch_name] Attempting to create with default docker-container driver..."
-            if ! docker buildx create --name "$builder_name" --driver docker-container --bootstrap 2>&1; then
-                log_warn "  [$arch_name] Failed to create multiarch-builder, falling back to default"
-                builder_name="default"
-            fi
+            docker buildx create --name "multiarch-builder" --driver docker-container --bootstrap 2>&1 || true
         fi
+    fi
+    
+    # Select the best builder based on network connectivity test
+    # This is critical for environments where docker-container driver has proxy issues
+    builder_name=$(_select_best_builder "$platform")
+    local select_result=$?
+    
+    if [[ $select_result -ne 0 ]]; then
+        log_warn "  [$arch_name] ⚠️  Network connectivity issues detected, build may fail"
+        log_warn "  [$arch_name]    Please check your network/proxy configuration"
     fi
     
     if [ ! -d "$component_dir" ]; then
