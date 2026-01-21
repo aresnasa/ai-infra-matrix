@@ -96,10 +96,17 @@ wait_for_n9e() {
     local retry=0
     
     log_info "等待 Nightingale 服务就绪..."
+    log_debug "检查地址: http://${N9E_HOST}:${N9E_PORT}/api/n9e/versions"
     
     while [ $retry -lt $max_retries ]; do
+        # 尝试访问版本接口（不需要认证）
         if curl -s "http://${N9E_HOST}:${N9E_PORT}/api/n9e/versions" > /dev/null 2>&1; then
             log_info "Nightingale 服务已就绪"
+            return 0
+        fi
+        # 也尝试检查 v1 API 端点
+        if curl -s -u "${N9E_API_USER}:${N9E_API_PASSWORD}" "http://${N9E_HOST}:${N9E_PORT}/v1/n9e/busi-groups" > /dev/null 2>&1; then
+            log_info "Nightingale Service API 已就绪"
             return 0
         fi
         retry=$((retry + 1))
