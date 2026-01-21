@@ -168,12 +168,14 @@ diagnose_network() {
 _test_buildx_network() {
     local builder_name="$1"
     local platform="${2:-linux/amd64}"
-    local timeout_seconds=30
+    local timeout_seconds=20
     
-    # Create a minimal test Dockerfile
-    local test_dockerfile=$(mktemp)
-    echo "FROM alpine:latest" > "$test_dockerfile"
-    echo "RUN echo 'Network test passed'" >> "$test_dockerfile"
+    # Create a temporary build context directory with minimal Dockerfile
+    local test_dir=$(mktemp -d)
+    cat > "$test_dir/Dockerfile" << 'TESTEOF'
+FROM alpine:latest
+RUN echo "Network test passed"
+TESTEOF
     
     # Try to build with the specified builder
     # Use --no-cache to ensure we actually test network connectivity
@@ -182,15 +184,14 @@ _test_buildx_network() {
         --builder "$builder_name" \
         --platform "$platform" \
         --no-cache \
-        --progress=plain \
-        -f "$test_dockerfile" \
-        - < /dev/null >/dev/null 2>&1; then
+        --progress=quiet \
+        "$test_dir" >/dev/null 2>&1; then
         result=0
     else
         result=1
     fi
     
-    rm -f "$test_dockerfile"
+    rm -rf "$test_dir"
     return $result
 }
 
