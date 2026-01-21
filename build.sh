@@ -161,6 +161,85 @@ diagnose_network() {
     echo ""
 }
 
+# Test if a buildx builder can access Docker Hub registry
+# This is critical for docker-container drivers which may have network isolation issues
+# Returns: 0 if network works, 1 if network fails
+# Usage: _test_buildx_network "multiarch-builder" "linux/arm64"
+_test_buildx_network() {
+    local builder_name="$1"
+    local platform="${2:-linux/amd64}"
+    local timeout_seconds=30
+    
+    # Create a minimal test Dockerfile
+    local test_dockerfile=$(mktemp)
+    echo "FROM alpine:latest" > "$test_dockerfile"
+    echo "RUN echo 'Network test passed'" >> "$test_dockerfile"
+    
+    # Try to build with the specified builder
+    # Use --no-cache to ensure we actually test network connectivity
+    local result=0
+    if timeout "$timeout_seconds" docker buildx build \
+        --builder "$builder_name" \
+        --platform "$platform" \
+        --no-cache \
+        --progress=plain \
+        -f "$test_dockerfile" \
+        - < /dev/null >/dev/null 2>&1; then
+        result=0
+    else
+        result=1
+    fi
+    
+    rm -f "$test_dockerfile"
+    return $result
+}
+
+# Select the best available buildx builder for the given platform
+# Prefers multiarch-builder but falls back to desktop-linux if network fails
+# Returns: builder name via echo
+# Usage: builder=$(_select_best_builder "linux/arm64")
+_select_best_builder() {
+    local platform="${1:-linux/amd64}"
+    local arch_name="${platform##*/}"
+    local preferred_builder="multiarch-builder"
+    local fallback_builder="desktop-linux"
+    
+    # Check if preferred builder exists
+    if ! docker buildx inspect "$preferred_builder" >/dev/null 2>&1; then
+        echo "$fallback_builder"
+        return 0
+    fi
+    
+    # Test network connectivity with the preferred builder
+    # This is critical because docker-container driver may have proxy/network issues
+    log_info "  [$arch_name] Testing buildx network connectivity..."
+    
+    if _test_buildx_network "$preferred_builder" "$platform"; then
+        log_info "  [$arch_name] ✓ Using $preferred_builder (network test passed)"
+        echo "$preferred_builder"
+        return 0
+    else
+        log_warn "  [$arch_name] ⚠️  $preferred_builder network test failed"
+        
+        # Test fallback builder
+        if docker buildx inspect "$fallback_builder" >/dev/null 2>&1; then
+            if _test_buildx_network "$fallback_builder" "$platform"; then
+                log_info "  [$arch_name] ✓ Falling back to $fallback_builder (network works)"
+                echo "$fallback_builder"
+                return 0
+            fi
+        fi
+        
+        # Both failed, run full network diagnostics
+        log_error "  [$arch_name] ✗ All builders failed network test"
+        diagnose_network
+        
+        # Return preferred builder anyway, let the actual build fail with proper error
+        echo "$preferred_builder"
+        return 1
+    fi
+}
+
 # ==============================================================================
 # 通用工具函数
 # ==============================================================================
