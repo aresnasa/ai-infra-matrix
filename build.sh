@@ -62,6 +62,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_cache() { echo -e "${CYAN}[CACHE]${NC} $1"; }
 log_parallel() { echo -e "${BLUE}[PARALLEL]${NC} $1"; }
 log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
+log_debug() { [[ "${DEBUG:-false}" == "true" ]] && echo -e "${BLUE}[DEBUG]${NC} $1"; return 0; }
 
 # ==============================================================================
 # Network Diagnostics Functions - 网络诊断函数
