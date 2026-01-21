@@ -35,11 +35,13 @@ if [ -f "$PROJECT_DIR/.env" ]; then
     set +a
 fi
 
-# 默认配置
-N9E_HOST="${NIGHTINGALE_HOST:-localhost}"
-N9E_PORT="${NIGHTINGALE_PORT:-17000}"
-N9E_USERNAME="${N9E_USERNAME:-root}"
-N9E_PASSWORD="${N9E_PASSWORD:-root.2020}"
+# 默认配置 - 使用 Service API (Basic Auth)
+# 通过 nginx 代理访问 /v1/n9e/* 端点
+N9E_HOST="${N9E_HOST:-${NIGHTINGALE_HOST:-localhost}}"
+N9E_PORT="${N9E_PORT:-80}"  # 通过 nginx 访问
+N9E_API_USER="${N9E_API_USER:-n9e-api}"  # Service API 用户名
+N9E_API_PASSWORD="${N9E_API_PASSWORD:-123456}"  # Service API 密码
+N9E_API_MODE="${N9E_API_MODE:-service}"  # 使用 service API 模式
 
 # Python 脚本路径
 PYTHON_SCRIPT="$SCRIPT_DIR/n9e-alert-config.py"
