@@ -224,7 +224,12 @@ class AlertMute:
 # ============================================
 
 class N9EClient:
-    """Nightingale API 客户端"""
+    """Nightingale API 客户端
+    
+    支持两种认证模式：
+    1. JWT 模式（api_mode="web"）：通过登录获取 token
+    2. Service API 模式（api_mode="service"）：使用 Basic Auth
+    """
     
     def __init__(self, config: N9EConfig):
         self.config = config
@@ -240,9 +245,35 @@ class N9EClient:
             'X-Language': 'zh_CN'
         })
         self.session.timeout = self.config.timeout
+        
+        # Service API 模式使用 Basic Auth
+        if self.config.api_mode == "service":
+            from requests.auth import HTTPBasicAuth
+            self.session.auth = HTTPBasicAuth(
+                self.config.username, 
+                self.config.password
+            )
+            logger.debug(f"使用 Service API 模式 (Basic Auth), 用户: {self.config.username}")
     
     def login(self) -> bool:
-        """登录获取token"""
+        """登录获取token（仅 Web API 模式需要）"""
+        # Service API 模式不需要登录，直接返回成功
+        if self.config.api_mode == "service":
+            logger.info(f"Service API 模式，使用 Basic Auth，用户: {self.config.username}")
+            # 测试连接
+            try:
+                result = self.get('/busi-groups')
+                if result.get('err', '') == '':
+                    logger.info("Service API 连接成功")
+                    return True
+                else:
+                    logger.error(f"Service API 连接失败: {result.get('err')}")
+                    return False
+            except Exception as e:
+                logger.error(f"Service API 连接异常: {e}")
+                return False
+        
+        # Web API 模式使用 JWT 登录
         try:
             url = f"{self.config.base_url}/auth/login"
             data = {
@@ -256,7 +287,7 @@ class N9EClient:
                 self.token = result['dat'].get('access_token')
                 if self.token:
                     self.session.headers['Authorization'] = f'Bearer {self.token}'
-                    logger.info(f"登录成功，用户: {self.config.username}")
+                    logger.info(f"JWT 登录成功，用户: {self.config.username}")
                     return True
             
             logger.error(f"登录失败: {result.get('err', 'Unknown error')}")
@@ -270,6 +301,12 @@ class N9EClient:
         url = f"{self.config.base_url}{endpoint}"
         try:
             response = self.session.request(method, url, **kwargs)
+            
+            # 检查 HTTP 状态码
+            if response.status_code == 401:
+                logger.error(f"认证失败 [{endpoint}]: 请检查用户名密码")
+                return {'err': 'Authentication failed', 'dat': None}
+            
             result = response.json()
             
             if result.get('err', '') != '':
