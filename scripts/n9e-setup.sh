@@ -120,11 +120,18 @@ wait_for_n9e() {
 
 # 运行 Python 脚本
 run_python() {
+    # 设置环境变量给 Python 脚本
+    export N9E_HOST="$N9E_HOST"
+    export N9E_PORT="$N9E_PORT"
+    export N9E_API_USER="$N9E_API_USER"
+    export N9E_API_PASSWORD="$N9E_API_PASSWORD"
+    export N9E_API_MODE="$N9E_API_MODE"
+    
     python3 "$PYTHON_SCRIPT" \
         --host "$N9E_HOST" \
         --port "$N9E_PORT" \
-        --username "$N9E_USERNAME" \
-        --password "$N9E_PASSWORD" \
+        --username "$N9E_API_USER" \
+        --password "$N9E_API_PASSWORD" \
         "$@"
 }
 
