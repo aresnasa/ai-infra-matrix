@@ -1,0 +1,313 @@
+# Nightingale 告警规则配置示例
+# 用于 n9e-alert-config.py import-rules 命令
+
+# 基础设施监控规则
+rules:
+  # ==========================================
+  # 主机资源告警
+  # ==========================================
+  - name: "CPU使用率超过80%"
+    note: "主机CPU使用率超过80%，请检查是否有异常进程占用"
+    prom_ql: "cpu_usage_active > 80"
+    severity: 2  # 1:紧急 2:警告 3:通知
+    interval: 15
+    labels:
+      - "type=cpu"
+      - "level=warning"
+    annotations:
+      summary: "CPU使用率告警"
+      description: "主机 {{ $labels.ident }} CPU使用率超过80%，当前值: {{ $value }}%"
+
+  - name: "CPU使用率超过95%"
+    note: "主机CPU使用率超过95%，系统可能无响应"
+    prom_ql: "cpu_usage_active > 95"
+    severity: 1
+    interval: 15
+    labels:
+      - "type=cpu"
+      - "level=critical"
+    annotations:
+      summary: "CPU使用率紧急告警"
+      description: "主机 {{ $labels.ident }} CPU使用率超过95%，当前值: {{ $value }}%"
+
+  - name: "内存使用率超过80%"
+    note: "主机内存使用率超过80%，请检查内存占用"
+    prom_ql: "mem_used_percent > 80"
+    severity: 2
+    interval: 15
+    labels:
+      - "type=memory"
+      - "level=warning"
+    annotations:
+      summary: "内存使用率告警"
+      description: "主机 {{ $labels.ident }} 内存使用率超过80%，当前值: {{ $value }}%"
+
+  - name: "内存使用率超过95%"
+    note: "主机内存使用率超过95%，可能触发OOM"
+    prom_ql: "mem_used_percent > 95"
+    severity: 1
+    interval: 15
+    labels:
+      - "type=memory"
+      - "level=critical"
+    annotations:
+      summary: "内存使用率紧急告警"
+      description: "主机 {{ $labels.ident }} 内存使用率超过95%，当前值: {{ $value }}%"
+
+  - name: "根分区磁盘使用率超过85%"
+    note: "根分区磁盘使用率超过85%，请及时清理"
+    prom_ql: 'disk_used_percent{path="/"} > 85'
+    severity: 2
+    interval: 60
+    labels:
+      - "type=disk"
+      - "level=warning"
+    annotations:
+      summary: "磁盘使用率告警"
+      description: "主机 {{ $labels.ident }} 根分区使用率超过85%，当前值: {{ $value }}%"
+
+  - name: "根分区磁盘使用率超过95%"
+    note: "根分区磁盘使用率超过95%，系统可能无法写入"
+    prom_ql: 'disk_used_percent{path="/"} > 95'
+    severity: 1
+    interval: 60
+    labels:
+      - "type=disk"
+      - "level=critical"
+    annotations:
+      summary: "磁盘使用率紧急告警"
+      description: "主机 {{ $labels.ident }} 根分区使用率超过95%，当前值: {{ $value }}%"
+
+  - name: "主机宕机告警"
+    note: "主机心跳丢失超过3分钟"
+    prom_ql: "up == 0"
+    severity: 1
+    interval: 30
+    labels:
+      - "type=host"
+      - "level=critical"
+    annotations:
+      summary: "主机宕机"
+      description: "主机 {{ $labels.ident }} 已离线超过3分钟"
+
+  - name: "系统负载过高"
+    note: "系统1分钟负载超过CPU核数的2倍"
+    prom_ql: "system_load1 / system_n_cpus > 2"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=load"
+      - "level=warning"
+    annotations:
+      summary: "系统负载告警"
+      description: "主机 {{ $labels.ident }} 负载过高，当前1分钟负载: {{ $value }}"
+
+  # ==========================================
+  # 网络监控告警
+  # ==========================================
+  - name: "网络接口错误告警"
+    note: "网络接口出现错误包"
+    prom_ql: "rate(net_errs_in[5m]) > 0 or rate(net_errs_out[5m]) > 0"
+    severity: 2
+    interval: 60
+    labels:
+      - "type=network"
+      - "level=warning"
+    annotations:
+      summary: "网络错误"
+      description: "主机 {{ $labels.ident }} 网络接口出现错误"
+
+  - name: "网络带宽使用率超过80%"
+    note: "网络带宽使用率超过80%"
+    prom_ql: "(rate(net_bytes_sent[5m]) + rate(net_bytes_recv[5m])) / 1024 / 1024 > 80"
+    severity: 2
+    interval: 60
+    labels:
+      - "type=network"
+      - "level=warning"
+    annotations:
+      summary: "网络带宽告警"
+      description: "主机 {{ $labels.ident }} 网络带宽使用率过高"
+
+  # ==========================================
+  # Docker 容器监控
+  # ==========================================
+  - name: "Docker容器停止运行"
+    note: "Docker容器已停止运行"
+    prom_ql: "docker_container_state_running == 0"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=docker"
+      - "level=warning"
+    annotations:
+      summary: "容器停止"
+      description: "容器 {{ $labels.container_name }} 在主机 {{ $labels.ident }} 上已停止"
+
+  - name: "Docker容器CPU使用率超过80%"
+    note: "Docker容器CPU使用率过高"
+    prom_ql: "docker_container_cpu_percent > 80"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=docker"
+      - "level=warning"
+    annotations:
+      summary: "容器CPU告警"
+      description: "容器 {{ $labels.container_name }} CPU使用率超过80%"
+
+  - name: "Docker容器内存使用率超过80%"
+    note: "Docker容器内存使用率过高"
+    prom_ql: "docker_container_memory_percent > 80"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=docker"
+      - "level=warning"
+    annotations:
+      summary: "容器内存告警"
+      description: "容器 {{ $labels.container_name }} 内存使用率超过80%"
+
+  # ==========================================
+  # 数据库监控 - MySQL
+  # ==========================================
+  - name: "MySQL连接数使用率超过80%"
+    note: "MySQL连接数接近上限"
+    prom_ql: "(mysql_global_status_threads_connected / mysql_global_variables_max_connections) * 100 > 80"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=mysql"
+      - "level=warning"
+    annotations:
+      summary: "MySQL连接数告警"
+      description: "MySQL实例连接数使用率超过80%"
+
+  - name: "MySQL慢查询增加"
+    note: "MySQL慢查询数量在5分钟内增加超过10个"
+    prom_ql: "increase(mysql_global_status_slow_queries[5m]) > 10"
+    severity: 2
+    interval: 60
+    labels:
+      - "type=mysql"
+      - "level=warning"
+    annotations:
+      summary: "MySQL慢查询告警"
+      description: "MySQL实例慢查询数量增加"
+
+  - name: "MySQL服务不可用"
+    note: "MySQL服务无法连接"
+    prom_ql: "mysql_up == 0"
+    severity: 1
+    interval: 15
+    labels:
+      - "type=mysql"
+      - "level=critical"
+    annotations:
+      summary: "MySQL服务宕机"
+      description: "MySQL服务无法连接"
+
+  # ==========================================
+  # 数据库监控 - Redis
+  # ==========================================
+  - name: "Redis内存使用率超过80%"
+    note: "Redis内存接近上限"
+    prom_ql: "(redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 80"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=redis"
+      - "level=warning"
+    annotations:
+      summary: "Redis内存告警"
+      description: "Redis内存使用率超过80%"
+
+  - name: "Redis连接数过多"
+    note: "Redis客户端连接数超过100"
+    prom_ql: "redis_connected_clients > 100"
+    severity: 2
+    interval: 30
+    labels:
+      - "type=redis"
+      - "level=warning"
+    annotations:
+      summary: "Redis连接数告警"
+      description: "Redis客户端连接数超过100"
+
+  - name: "Redis服务不可用"
+    note: "Redis服务无法连接"
+    prom_ql: "redis_up == 0"
+    severity: 1
+    interval: 15
+    labels:
+      - "type=redis"
+      - "level=critical"
+    annotations:
+      summary: "Redis服务宕机"
+      description: "Redis服务无法连接"
+
+  # ==========================================
+  # Kubernetes 监控
+  # ==========================================
+  - name: "Kubernetes Pod不健康"
+    note: "Pod未处于Ready状态超过5分钟"
+    prom_ql: 'kube_pod_status_ready{condition="true"} == 0'
+    severity: 2
+    interval: 60
+    labels:
+      - "type=kubernetes"
+      - "level=warning"
+    annotations:
+      summary: "Pod未就绪"
+      description: "Pod {{ $labels.pod }} 在命名空间 {{ $labels.namespace }} 中未就绪"
+
+  - name: "Kubernetes Pod重启频繁"
+    note: "Pod在1小时内重启超过3次"
+    prom_ql: "increase(kube_pod_container_status_restarts_total[1h]) > 3"
+    severity: 2
+    interval: 300
+    labels:
+      - "type=kubernetes"
+      - "level=warning"
+    annotations:
+      summary: "Pod重启告警"
+      description: "Pod {{ $labels.pod }} 重启频繁"
+
+  - name: "Kubernetes节点不可用"
+    note: "Kubernetes节点状态异常"
+    prom_ql: 'kube_node_status_condition{condition="Ready",status="true"} == 0'
+    severity: 1
+    interval: 30
+    labels:
+      - "type=kubernetes"
+      - "level=critical"
+    annotations:
+      summary: "K8s节点异常"
+      description: "节点 {{ $labels.node }} 状态异常"
+
+  # ==========================================
+  # 应用服务监控
+  # ==========================================
+  - name: "HTTP请求延迟过高"
+    note: "HTTP请求P99延迟超过1秒"
+    prom_ql: "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 1"
+    severity: 2
+    interval: 60
+    labels:
+      - "type=application"
+      - "level=warning"
+    annotations:
+      summary: "HTTP延迟告警"
+      description: "HTTP请求P99延迟超过1秒"
+
+  - name: "HTTP错误率过高"
+    note: "HTTP 5xx错误率超过5%"
+    prom_ql: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) * 100 > 5'
+    severity: 2
+    interval: 60
+    labels:
+      - "type=application"
+      - "level=warning"
+    annotations:
+      summary: "HTTP错误率告警"
+      description: "HTTP 5xx错误率超过5%"
