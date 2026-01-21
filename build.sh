@@ -197,18 +197,49 @@ TESTEOF
 }
 
 # Select the best available buildx builder for the given platform
-# Prefers multiarch-builder but falls back to desktop-linux if network fails
+# Intelligent builder selection for buildx
+# - For native architecture: prefer docker driver (desktop-linux) for reliable --load
+# - For cross-platform: use docker-container driver (multiarch-builder)
 # Returns: builder name via echo
 # Usage: builder=$(_select_best_builder "linux/arm64")
 _select_best_builder() {
     local platform="${1:-linux/amd64}"
     local arch_name="${platform##*/}"
-    local preferred_builder="multiarch-builder"
-    local fallback_builder="desktop-linux"
+    local native_platform=$(_detect_docker_platform)
+    local native_arch="${native_platform##*/}"
     
-    # Check if preferred builder exists
-    if ! docker buildx inspect "$preferred_builder" >/dev/null 2>&1; then
-        echo "$fallback_builder"
+    # Builder names
+    local docker_driver_builder="desktop-linux"
+    local container_driver_builder="multiarch-builder"
+    
+    # =========================================================================
+    # KEY FIX: For native architecture, prefer docker driver (desktop-linux)
+    # 
+    # The docker driver's --load is more reliable, especially in parallel builds.
+    # The docker-container driver (multiarch-builder) may have issues with
+    # concurrent --load operations, causing images to not be properly loaded
+    # into the local Docker daemon.
+    # =========================================================================
+    if [[ "$arch_name" == "$native_arch" ]]; then
+        # Native architecture: use docker driver for reliable --load
+        if docker buildx inspect "$docker_driver_builder" >/dev/null 2>&1; then
+            echo "  [$arch_name] Using $docker_driver_builder (native arch, docker driver)" >&2
+            echo "$docker_driver_builder"
+            return 0
+        fi
+        # Fallback to default if desktop-linux doesn't exist
+        if docker buildx inspect "default" >/dev/null 2>&1; then
+            echo "  [$arch_name] Using default builder (native arch)" >&2
+            echo "default"
+            return 0
+        fi
+    fi
+    
+    # Cross-platform: need docker-container driver for QEMU/Rosetta emulation
+    # Check if multiarch-builder exists
+    if ! docker buildx inspect "$container_driver_builder" >/dev/null 2>&1; then
+        echo "  [$arch_name] ⚠️  $container_driver_builder not found, using $docker_driver_builder" >&2
+        echo "$docker_driver_builder"
         return 0
     fi
     
@@ -217,18 +248,18 @@ _select_best_builder() {
     # Note: Use >&2 to send logs to stderr so they don't pollute the return value
     echo "  [$arch_name] Testing buildx network connectivity..." >&2
     
-    if _test_buildx_network "$preferred_builder" "$platform"; then
-        echo "  [$arch_name] ✓ Using $preferred_builder (network test passed)" >&2
-        echo "$preferred_builder"
+    if _test_buildx_network "$container_driver_builder" "$platform"; then
+        echo "  [$arch_name] ✓ Using $container_driver_builder (cross-platform, network test passed)" >&2
+        echo "$container_driver_builder"
         return 0
     else
-        echo "  [$arch_name] ⚠️  $preferred_builder network test failed" >&2
+        echo "  [$arch_name] ⚠️  $container_driver_builder network test failed" >&2
         
         # Test fallback builder
-        if docker buildx inspect "$fallback_builder" >/dev/null 2>&1; then
-            if _test_buildx_network "$fallback_builder" "$platform"; then
-                echo "  [$arch_name] ✓ Falling back to $fallback_builder (network works)" >&2
-                echo "$fallback_builder"
+        if docker buildx inspect "$docker_driver_builder" >/dev/null 2>&1; then
+            if _test_buildx_network "$docker_driver_builder" "$platform"; then
+                echo "  [$arch_name] ✓ Falling back to $docker_driver_builder (network works)" >&2
+                echo "$docker_driver_builder"
                 return 0
             fi
         fi
@@ -237,8 +268,8 @@ _select_best_builder() {
         echo "  [$arch_name] ✗ All builders failed network test" >&2
         diagnose_network >&2
         
-        # Return preferred builder anyway, let the actual build fail with proper error
-        echo "$preferred_builder"
+        # Return container driver builder anyway, let the actual build fail with proper error
+        echo "$container_driver_builder"
         return 1
     fi
 }
