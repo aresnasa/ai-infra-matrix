@@ -6714,6 +6714,16 @@ build_all_multiplatform() {
     done
     echo
     
+    # 1.2.5 Pull common/third-party images used in docker-compose.yml
+    # These images (mysql, redis, victoriametrics, etc.) are NOT in Dockerfiles
+    # but are directly referenced in docker-compose.yml
+    log_info "  [1.2.5] Pulling Common/Third-party Images (docker-compose dependencies)..."
+    if ! pull_common_images "$DEFAULT_MAX_RETRIES"; then
+        log_warn "  ⚠️  Some common images failed to pull, services may fail to start"
+        log_warn "  💡 You can retry later with: ./build.sh pull-common"
+    fi
+    echo
+    
     # 1.3 Discover and process dependency services
     discover_services
     
