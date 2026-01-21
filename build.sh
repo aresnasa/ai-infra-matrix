@@ -5862,6 +5862,72 @@ build_parallel_for_platform() {
     log_parallel "[$arch_name] 📊 Parallel Build Summary: $completed succeeded, $failed failed, $total total"
     log_parallel "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    # =========================================================================
+    # POST-BUILD VERIFICATION: Check if images were actually loaded to daemon
+    # 
+    # Due to potential race conditions with docker-container driver's --load,
+    # some images may not be properly loaded. We verify and retry if needed.
+    # =========================================================================
+    local tag="${IMAGE_TAG:-latest}"
+    local missing_services=()
+    
+    log_parallel "[$arch_name] 🔍 Verifying images were loaded to Docker daemon..."
+    for service in "${services[@]}"; do
+        local expected_image="ai-infra-${service}:${tag}-${arch_name}"
+        if ! docker image inspect "$expected_image" >/dev/null 2>&1; then
+            missing_services+=("$service")
+            log_warn "[$arch_name]    ⚠️  Image not found: $expected_image"
+        fi
+    done
+    
+    # If some images are missing, retry them serially
+    if [[ ${#missing_services[@]} -gt 0 ]]; then
+        log_warn "[$arch_name] ⚠️  ${#missing_services[@]} images not found in Docker daemon after parallel build"
+        log_parallel "[$arch_name] 🔄 Retrying missing services serially..."
+        
+        local retry_failed=0
+        for service in "${missing_services[@]}"; do
+            log_parallel "[$arch_name]    → Retrying: $service"
+            if [[ ${#extra_args[@]} -gt 0 ]]; then
+                if build_component_for_platform "$service" "$platform" "${extra_args[@]}"; then
+                    # Verify image exists after retry
+                    local expected_image="ai-infra-${service}:${tag}-${arch_name}"
+                    if docker image inspect "$expected_image" >/dev/null 2>&1; then
+                        log_parallel "[$arch_name]    ✓ Retry succeeded: $service"
+                    else
+                        log_error "[$arch_name]    ✗ Retry completed but image still not found: $service"
+                        retry_failed=$((retry_failed + 1))
+                    fi
+                else
+                    log_error "[$arch_name]    ✗ Retry failed: $service"
+                    retry_failed=$((retry_failed + 1))
+                fi
+            else
+                if build_component_for_platform "$service" "$platform"; then
+                    # Verify image exists after retry
+                    local expected_image="ai-infra-${service}:${tag}-${arch_name}"
+                    if docker image inspect "$expected_image" >/dev/null 2>&1; then
+                        log_parallel "[$arch_name]    ✓ Retry succeeded: $service"
+                    else
+                        log_error "[$arch_name]    ✗ Retry completed but image still not found: $service"
+                        retry_failed=$((retry_failed + 1))
+                    fi
+                else
+                    log_error "[$arch_name]    ✗ Retry failed: $service"
+                    retry_failed=$((retry_failed + 1))
+                fi
+            fi
+        done
+        
+        if [[ $retry_failed -gt 0 ]]; then
+            failed=$((failed + retry_failed))
+            log_error "[$arch_name] ❌ $retry_failed service(s) failed even after serial retry"
+        else
+            log_parallel "[$arch_name] ✓ All missing services recovered via serial retry"
+            failed=0  # Reset failed count since we recovered
+        fi
+    fi
+    
     # Clean up log directory if all builds succeeded
     if [[ $failed -eq 0 ]]; then
         rm -rf "$parallel_log_dir" 2>/dev/null || true
