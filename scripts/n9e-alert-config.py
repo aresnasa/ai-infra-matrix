@@ -937,13 +937,18 @@ def main():
         config.username = args.username
     if args.password:
         config.password = args.password
+    if hasattr(args, 'api_mode') and args.api_mode:
+        config.api_mode = args.api_mode
     
     # 创建客户端
     client = N9EClient(config)
     
-    # 登录
+    # 登录/连接测试
     if not client.login():
-        logger.error("登录失败，请检查配置")
+        logger.error("连接失败，请检查配置")
+        logger.error(f"  API 地址: {config.base_url}")
+        logger.error(f"  API 模式: {config.api_mode}")
+        logger.error(f"  用户名: {config.username}")
         return 1
     
     # 执行命令
