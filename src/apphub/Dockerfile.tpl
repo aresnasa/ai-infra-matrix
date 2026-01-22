@@ -1797,10 +1797,15 @@ RUN set -eux; \
         ln -sf ../pkgs/slurm-rpm/* /usr/share/nginx/html/rpm/ 2>/dev/null || true; \
         echo "  ✓ Linked SLURM rpm packages to /rpm/"; \
     fi; \
-    # Note about RPM metadata
+    # Check and report RPM metadata status
     if [ "$slurm_rpm_count" -gt 0 ] || [ "$salt_rpm_count" -gt 0 ]; then \
-        echo "⚠️  Note: YUM/DNF metadata generation skipped (can be enabled if createrepo is installed)"; \
-        echo "⚠️  Packages can be downloaded directly via HTTP"; \
+        if [ -d /usr/share/nginx/html/pkgs/slurm-rpm/repodata ] || [ -d /usr/share/nginx/html/pkgs/saltstack-rpm/repodata ]; then \
+            echo "✓ YUM/DNF repository metadata available (repodata generated in build stage)"; \
+            ls -la /usr/share/nginx/html/pkgs/slurm-rpm/repodata/ 2>/dev/null || true; \
+        else \
+            echo "⚠️  Note: YUM/DNF metadata not found (createrepo may have failed during build)"; \
+            echo "⚠️  Packages can still be downloaded directly via HTTP"; \
+        fi; \
     fi
 
 # Installation scripts are served dynamically by HTTP from AppHub
