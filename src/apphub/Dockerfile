@@ -663,10 +663,7 @@ COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 # Reference: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
 RUN set -eux; \
     if [ "${BUILD_SLURM}" = "true" ]; then \
-        # Detect current architecture
-        CURRENT_ARCH=$(uname -m); \
         echo "📦 Building SLURM ${SLURM_VERSION} RPM packages using rpmbuild..."; \
-        echo ">>> Current architecture: ${CURRENT_ARCH}"; \
         cd /home/builder/build; \
         # Find the SLURM tarball
         tarball=$(ls slurm-*.tar.bz2 | head -1); \
@@ -726,23 +723,16 @@ RUN set -eux; \
             # Copy source tarball to SOURCES directory
             cp "${tarball}" /home/builder/rpmbuild/SOURCES/; \
             \
-            # Determine build target architecture
-            BUILD_ARCH=$(uname -m); \
-            echo ">>> Build target architecture: ${BUILD_ARCH}"; \
-            \
-            # Build with explicit spec file reference and architecture
-            echo ">>> Building RPMs using: rpmbuild -bb --target=${BUILD_ARCH} SPECS/slurm.spec"; \
+            # Build with explicit spec file reference
+            echo ">>> Building RPMs using: rpmbuild -bb SPECS/slurm.spec"; \
             rpmbuild_exit_code=0; \
-            if ! rpmbuild -bb --target="${BUILD_ARCH}" /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
+            if ! rpmbuild -bb /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
                 rpmbuild_exit_code=$?; \
-                echo "⚠️  rpmbuild returned exit code: $rpmbuild_exit_code"; \
             fi; \
             echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
             \
-            # Check if RPM files were created (look in architecture-specific subdirs)
+            # Check if RPM files were created
             echo ">>> Checking for generated RPM packages..."; \
-            echo ">>> rpmbuild RPMS directory structure:"; \
-            ls -laR /home/builder/rpmbuild/RPMS/ 2>/dev/null || echo "RPMS directory is empty or doesn't exist"; \
             rpm_count=$(find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" 2>/dev/null | wc -l); \
             echo "Found $rpm_count RPM file(s)"; \
             \
