@@ -663,7 +663,10 @@ COPY --chown=builder:builder ${SLURM_TARBALL_PATH} /home/builder/build/
 # Reference: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
 RUN set -eux; \
     if [ "${BUILD_SLURM}" = "true" ]; then \
+        # Detect current architecture
+        CURRENT_ARCH=$(uname -m); \
         echo "📦 Building SLURM ${SLURM_VERSION} RPM packages using rpmbuild..."; \
+        echo ">>> Current architecture: ${CURRENT_ARCH}"; \
         cd /home/builder/build; \
         # Find the SLURM tarball
         tarball=$(ls slurm-*.tar.bz2 | head -1); \
