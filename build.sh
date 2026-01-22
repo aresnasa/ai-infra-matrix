@@ -8077,6 +8077,19 @@ build_component_for_platform() {
         cmd+=("--label" "build.component=$component")
         cmd+=("--label" "build.platform=$platform")
         
+        # AppHub 特殊标签：记录组件和版本信息用于智能缓存检查
+        if [[ "$component" == "apphub" ]]; then
+            local services_count=$(find "$SRC_DIR" -maxdepth 1 -type d ! -name "src" ! -name "apphub" ! -name "shared" | wc -l | tr -d ' ')
+            local slurm_tarball=$(ls -1 "$component_dir"/slurm-*.tar.bz2 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+            local munge_tarball=$(ls -1 "$SCRIPT_DIR/third_party/munge"/munge-*.tar.* 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+            local saltstack_version=$(grep -E "^ARG\s+SALTSTACK_VERSION=" "$component_dir/Dockerfile" 2>/dev/null | cut -d= -f2 || echo "")
+            
+            cmd+=("--label" "build.services_count=$services_count")
+            [[ -n "$slurm_tarball" ]] && cmd+=("--label" "build.slurm_tarball=$slurm_tarball")
+            [[ -n "$munge_tarball" ]] && cmd+=("--label" "build.munge_tarball=$munge_tarball")
+            [[ -n "$saltstack_version" ]] && cmd+=("--label" "build.saltstack_version=$saltstack_version")
+        fi
+        
         cmd+=("${BASE_BUILD_ARGS[@]}" "${extra_args[@]}" "-t" "$full_image_name" "-f" "$component_dir/Dockerfile")
         
         if [ "$target" != "default" ]; then
