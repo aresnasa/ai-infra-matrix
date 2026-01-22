@@ -7818,6 +7818,17 @@ build_component_for_platform() {
             cmd+=("--allow" "network.host")  # Grant network.host entitlement
         fi
         
+        # =====================================================================
+        # IMPORTANT: --load behavior differs between docker and docker-container drivers
+        # 
+        # - docker driver (desktop-linux): --load works reliably
+        # - docker-container driver (multiarch-builder): --load may have issues
+        #   especially in parallel builds or cross-platform scenarios
+        #
+        # We use --load for simplicity, but verify the result and retry if needed.
+        # For docker-container driver, --output=type=docker is equivalent to --load
+        # but some versions may handle it differently.
+        # =====================================================================
         cmd+=("--load")  # Load to local docker daemon
         
         # Network proxy and mirror configuration for buildx docker-container driver
