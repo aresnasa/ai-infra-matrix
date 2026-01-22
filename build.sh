@@ -275,6 +275,121 @@ _select_best_builder() {
 }
 
 # ==============================================================================
+# Docker 环境清理函数 - 清理可能冲突的中间配置
+# ==============================================================================
+
+# 检查并清理可能冲突的 Docker 网络
+# 如果网络存在但不是由 docker-compose 创建的，删除后让 compose 重新创建
+# 这样可以避免 "network was found but has incorrect label" 错误
+# 注意：只清理网络配置，不会影响 volume 数据
+ensure_clean_docker_network() {
+    local network_name="${1:-ai-infra-network}"
+    
+    # 检查网络是否存在
+    if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+        log_debug "Network $network_name does not exist, no cleanup needed"
+        return 0
+    fi
+    
+    # 检查网络是否有正确的 compose 标签
+    local compose_label=$(docker network inspect "$network_name" --format '{{index .Labels "com.docker.compose.network"}}' 2>/dev/null || echo "")
+    
+    if [[ -n "$compose_label" ]] && [[ "$compose_label" == "$network_name" ]]; then
+        log_debug "Network $network_name has correct compose label, no cleanup needed"
+        return 0
+    fi
+    
+    # 网络存在但标签不正确 - 需要清理
+    log_info "🧹 Cleaning up inconsistent Docker network: $network_name"
+    log_info "   (Network exists but was not created by docker-compose)"
+    
+    # 检查是否有容器连接到该网络
+    local connected_containers=$(docker network inspect "$network_name" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs || echo "")
+    
+    if [[ -n "$connected_containers" ]]; then
+        log_warn "   Containers connected to network: $connected_containers"
+        log_info "   Disconnecting containers from network..."
+        
+        # 断开所有容器与网络的连接
+        for container in $connected_containers; do
+            docker network disconnect -f "$network_name" "$container" 2>/dev/null || true
+        done
+    fi
+    
+    # 删除网络
+    if docker network rm "$network_name" >/dev/null 2>&1; then
+        log_info "   ✓ Network $network_name removed (will be recreated by docker-compose)"
+        return 0
+    else
+        log_warn "   ⚠️  Failed to remove network $network_name"
+        log_warn "   Try manually: docker network rm $network_name"
+        return 1
+    fi
+}
+
+# 清理所有可能冲突的 Docker 中间配置
+# 只清理网络和孤立容器，不会影响 volume 数据
+# 返回: 0 = 成功, 1 = 部分失败（但继续执行）
+ensure_clean_docker_state() {
+    local force="${1:-false}"
+    local had_issues=false
+    
+    log_info "🔍 Checking Docker environment for inconsistent state..."
+    
+    # 1. 清理 ai-infra 相关网络
+    for network in "ai-infra-network" "safeline-ce"; do
+        if ! ensure_clean_docker_network "$network"; then
+            had_issues=true
+        fi
+    done
+    
+    # 2. 清理孤立的 ai-infra 容器（没有对应 compose 服务的容器）
+    local orphan_containers=$(docker ps -a --filter "name=ai-infra-" --format "{{.Names}}" 2>/dev/null | sort || echo "")
+    if [[ -n "$orphan_containers" ]]; then
+        # 检查每个容器是否在 docker-compose 配置中
+        local compose_cmd=$(detect_compose_command 2>/dev/null || echo "docker compose")
+        local compose_services=$($compose_cmd config --services 2>/dev/null | sort || echo "")
+        
+        for container in $orphan_containers; do
+            # 从容器名提取服务名 (ai-infra-backend -> backend)
+            local service_name="${container#ai-infra-}"
+            
+            # 检查是否是 HA 模式的额外容器 (ai-infra-salt-master-2 等)
+            if [[ "$container" =~ -[0-9]+$ ]]; then
+                # HA 模式容器可能不在基础 compose 配置中
+                if [[ "$force" == "true" ]]; then
+                    log_info "   Removing HA orphan container: $container"
+                    docker rm -f "$container" 2>/dev/null || true
+                else
+                    log_debug "   Skipping HA container: $container (use --force to remove)"
+                fi
+            fi
+        done
+    fi
+    
+    # 3. 检查并清理悬空的 buildx builder（可能导致构建问题）
+    local buildx_builders=$(docker buildx ls --format "{{.Name}}" 2>/dev/null | grep -v "^default$\|^desktop-linux$" || echo "")
+    if [[ -n "$buildx_builders" ]] && [[ "$force" == "true" ]]; then
+        log_info "   Checking buildx builders..."
+        for builder in $buildx_builders; do
+            # 检查 builder 是否正常工作
+            if ! docker buildx inspect "$builder" >/dev/null 2>&1; then
+                log_info "   Removing broken buildx builder: $builder"
+                docker buildx rm "$builder" 2>/dev/null || true
+            fi
+        done
+    fi
+    
+    if [[ "$had_issues" == "true" ]]; then
+        log_warn "   Some cleanup operations had issues, but continuing..."
+        return 1
+    fi
+    
+    log_info "   ✓ Docker environment is clean"
+    return 0
+}
+
+# ==============================================================================
 # 通用工具函数
 # ==============================================================================
 
