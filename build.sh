@@ -5877,6 +5877,13 @@ build_parallel_for_platform() {
         if ! docker image inspect "$expected_image" >/dev/null 2>&1; then
             missing_services+=("$service")
             log_warn "[$arch_name]    ⚠️  Image not found: $expected_image"
+        else
+            # Also verify the architecture is correct
+            local loaded_arch=$(docker image inspect "$expected_image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+            if [[ "$loaded_arch" != "$arch_name" ]]; then
+                missing_services+=("$service")
+                log_warn "[$arch_name]    ⚠️  Image has wrong architecture: $expected_image (expected: $arch_name, got: $loaded_arch)"
+            fi
         fi
     done
     
