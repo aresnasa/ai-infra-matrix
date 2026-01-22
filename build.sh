@@ -1053,6 +1053,68 @@ calculate_apphub_critical_hash() {
     echo -e "$hash_data" | shasum -a 256 | awk '{print $1}'
 }
 
+# ==============================================================================
+# AppHub 重建必要性检查
+# ==============================================================================
+# 检查 AppHub 是否真的需要重建
+# 返回: NO_CHANGE（不需要重建）或具体的重建原因
+# ==============================================================================
+check_apphub_rebuild_necessity() {
+    local apphub_path="$SRC_DIR/apphub"
+    local reasons=()
+    
+    # 1. 检查是否有新增的服务组件
+    # 通过比较当前服务数量和镜像中记录的服务数量
+    local current_services=$(find "$SRC_DIR" -maxdepth 1 -type d ! -name "src" ! -name "apphub" ! -name "shared" | wc -l | tr -d ' ')
+    local image_services=$(docker image inspect ai-infra-apphub:${IMAGE_TAG:-latest}-arm64 --format '{{index .Config.Labels "build.services_count"}}' 2>/dev/null || echo "0")
+    if [[ "$current_services" != "$image_services" && "$image_services" != "0" ]]; then
+        reasons+=("NEW_COMPONENT:${current_services}vs${image_services}")
+    fi
+    
+    # 2. 检查 SLURM tarball 是否变化
+    local current_slurm=$(ls -1 "$apphub_path"/slurm-*.tar.bz2 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+    local image_slurm=$(docker image inspect ai-infra-apphub:${IMAGE_TAG:-latest}-arm64 --format '{{index .Config.Labels "build.slurm_tarball"}}' 2>/dev/null || echo "")
+    if [[ -n "$current_slurm" && "$current_slurm" != "$image_slurm" && -n "$image_slurm" ]]; then
+        reasons+=("SLURM_VERSION:${current_slurm}")
+    fi
+    
+    # 3. 检查 Munge 版本是否变化
+    local current_munge=$(ls -1 "$SCRIPT_DIR/third_party/munge"/munge-*.tar.* 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "")
+    local image_munge=$(docker image inspect ai-infra-apphub:${IMAGE_TAG:-latest}-arm64 --format '{{index .Config.Labels "build.munge_tarball"}}' 2>/dev/null || echo "")
+    if [[ -n "$current_munge" && "$current_munge" != "$image_munge" && -n "$image_munge" ]]; then
+        reasons+=("MUNGE_VERSION:${current_munge}")
+    fi
+    
+    # 4. 检查 SaltStack 版本是否变化（从 Dockerfile ARG 中提取）
+    local current_saltstack=$(grep -E "^ARG\s+SALTSTACK_VERSION=" "$apphub_path/Dockerfile" 2>/dev/null | cut -d= -f2 || echo "")
+    local image_saltstack=$(docker image inspect ai-infra-apphub:${IMAGE_TAG:-latest}-arm64 --format '{{index .Config.Labels "build.saltstack_version"}}' 2>/dev/null || echo "")
+    if [[ -n "$current_saltstack" && "$current_saltstack" != "$image_saltstack" && -n "$image_saltstack" ]]; then
+        reasons+=("SALTSTACK_VERSION:${current_saltstack}")
+    fi
+    
+    # 5. 如果镜像没有任何标签信息（旧版本镜像），需要重建以添加标签
+    if [[ -z "$image_slurm" && -z "$image_munge" && -z "$image_saltstack" ]]; then
+        # 检查是否是非常旧的镜像（没有 build.* 标签）
+        local has_any_label=$(docker image inspect ai-infra-apphub:${IMAGE_TAG:-latest}-arm64 --format '{{range $k, $v := .Config.Labels}}{{if hasPrefix $k "build."}}1{{end}}{{end}}' 2>/dev/null || echo "")
+        if [[ -z "$has_any_label" ]]; then
+            # 旧镜像没有标签，但不强制重建（用户可以用 --force）
+            # 返回 NO_CHANGE 以保持稳定性
+            echo "NO_CHANGE"
+            return 0
+        fi
+    fi
+    
+    # 如果有任何重建原因，返回它们
+    if [[ ${#reasons[@]} -gt 0 ]]; then
+        echo "${reasons[*]}"
+        return 0
+    fi
+    
+    # 没有实质性变化
+    echo "NO_CHANGE"
+    return 0
+}
+
 # Calculate combined hash for a service (source code + config + Dockerfile)
 calculate_service_hash() {
     local service="$1"
