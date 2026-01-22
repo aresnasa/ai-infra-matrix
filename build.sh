@@ -9022,6 +9022,10 @@ start_all() {
         exit 1
     fi
     
+    # 【环境清理】确保 Docker 环境状态一致（修复网络标签等问题）
+    log_info "=== Docker Environment Check ==="
+    ensure_clean_docker_state
+    
     # 【架构检查】确保镜像与本机 CPU 架构匹配
     log_info "=== Architecture Compatibility Check ==="
     if ! check_images_architecture; then
