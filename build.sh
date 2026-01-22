@@ -7411,6 +7411,9 @@ build_all_multiplatform() {
     log_info "🚀 Phase 2.2: Start AppHub (Single Instance for All Architectures)"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    # First, ensure Docker environment is clean (fix network label issues, etc.)
+    ensure_clean_docker_state
+    
     # Clean up any existing AppHub container
     if docker ps -a --filter "name=^ai-infra-apphub$" --format "{{.ID}}" | grep -q .; then
         log_info "  🧹 Removing existing AppHub container..."
