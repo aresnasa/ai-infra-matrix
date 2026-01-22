@@ -7303,17 +7303,28 @@ build_all_multiplatform() {
     local apphub_arch_selected=""
     
     # Try to find an available AppHub image in order of preference:
-    # 1. Native architecture (best performance)
-    # 2. First platform in the build list
-    # 3. Any available AppHub image
+    # 1. Native architecture with suffix (ai-infra-apphub:v0.3.8-arm64)
+    # 2. Native architecture without suffix (ai-infra-apphub:v0.3.8)
+    # 3. First platform in the build list
+    # 4. Any available AppHub image
     
     if [[ "$has_native_platform" == "true" ]]; then
+        # First try with arch suffix
         local native_image="ai-infra-apphub:${tag}-${native_arch}"
         if docker image inspect "$native_image" >/dev/null 2>&1; then
             apphub_image_to_use="$native_image"
             apphub_platform="linux/${native_arch}"
             apphub_arch_selected="$native_arch"
             log_info "  📌 Using native architecture AppHub: $apphub_image_to_use"
+        else
+            # Try without arch suffix (legacy format)
+            local legacy_image="ai-infra-apphub:${tag}"
+            if docker image inspect "$legacy_image" >/dev/null 2>&1; then
+                apphub_image_to_use="$legacy_image"
+                apphub_platform="linux/${native_arch}"
+                apphub_arch_selected="$native_arch"
+                log_info "  📌 Using native architecture AppHub (legacy tag): $apphub_image_to_use"
+            fi
         fi
     fi
     
