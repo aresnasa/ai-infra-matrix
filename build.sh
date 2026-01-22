@@ -1264,22 +1264,40 @@ show_cache_status() {
     
     local all_services=("${DEPENDENCY_SERVICES[@]}" "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}")
     
-    printf "%-25s %-15s %-50s\n" "SERVICE" "STATUS" "REASON"
-    printf "%-25s %-15s %-50s\n" "-------" "------" "------"
+    # Determine platforms to check (from BUILD_PLATFORMS or detect native)
+    local platforms_to_check=()
+    if [[ -n "${BUILD_PLATFORMS:-}" ]]; then
+        IFS=',' read -ra platforms_to_check <<< "$BUILD_PLATFORMS"
+    else
+        local native_platform=$(_detect_docker_platform 2>/dev/null || echo "linux/arm64")
+        local native_arch="${native_platform##*/}"
+        platforms_to_check=("$native_arch")
+    fi
+    
+    printf "%-25s %-10s %-15s %-40s\n" "SERVICE" "ARCH" "STATUS" "REASON"
+    printf "%-25s %-10s %-15s %-40s\n" "-------" "----" "------" "------"
     
     for service in "${all_services[@]}"; do
-        local result=$(need_rebuild "$service" "$tag")
-        local status
-        
-        if [[ "$result" == "NO_CHANGE" ]]; then
-            status="${GREEN}✓ CACHED${NC}"
-            skip_build=$((skip_build + 1))
-        else
-            status="${YELLOW}○ REBUILD${NC}"
-            need_build=$((need_build + 1))
-        fi
-        
-        printf "%-25s %-15b %-50s\n" "$service" "$status" "$result"
+        for arch in "${platforms_to_check[@]}"; do
+            # Normalize architecture name
+            case "$arch" in
+                amd64|x86_64) arch="amd64" ;;
+                arm64|aarch64) arch="arm64" ;;
+            esac
+            
+            local result=$(need_rebuild_for_platform "$service" "$arch" "$tag")
+            local status
+            
+            if [[ "$result" == "NO_CHANGE" ]]; then
+                status="${GREEN}✓ CACHED${NC}"
+                skip_build=$((skip_build + 1))
+            else
+                status="${YELLOW}○ REBUILD${NC}"
+                need_build=$((need_build + 1))
+            fi
+            
+            printf "%-25s %-10s %-15b %-40s\n" "$service" "$arch" "$status" "$result"
+        done
     done
     
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
