@@ -7259,8 +7259,14 @@ build_all_multiplatform() {
         local any_apphub=$(docker images --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | grep "ai-infra-apphub:${tag}" | head -1)
         if [[ -n "$any_apphub" ]]; then
             apphub_built=true
-            apphub_available_arch="${any_apphub##*-}"
-            log_info "  ✓ AppHub image found (fallback): $any_apphub"
+            # Extract arch from tag - handle both cases: with and without arch suffix
+            if [[ "$any_apphub" == *"-arm64" ]] || [[ "$any_apphub" == *"-amd64" ]]; then
+                apphub_available_arch="${any_apphub##*-}"
+            else
+                # No arch suffix, assume native arch
+                apphub_available_arch="$native_arch"
+            fi
+            log_info "  ✓ AppHub image found (fallback): $any_apphub (arch: $apphub_available_arch)"
         fi
     fi
     
