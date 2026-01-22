@@ -653,7 +653,10 @@ RUN set -eux; \
     echo "✓ SLURM build dependencies installed (with available packages)"
 
 # Add non-root builder user
-RUN useradd -m -u 1000 builder
+RUN useradd -m -u 1000 builder && \
+    mkdir -p /out/slurm-rpm && \
+    chown -R builder:builder /out
+
 USER builder
 WORKDIR /home/builder/build
 
