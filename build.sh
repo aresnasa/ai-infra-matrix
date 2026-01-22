@@ -7966,11 +7966,17 @@ build_component_for_platform() {
                         if [[ ${#retry_cmd[@]} -gt 0 ]]; then
                             if "${retry_cmd[@]}" 2>&1 | tee -a "$FAILURE_LOG"; then
                                 if docker image inspect "$full_image_name" >/dev/null 2>&1; then
-                                    log_info "  [$arch_name] ✓ Built (no-cache retry): $full_image_name"
-                                    log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_NOCACHE ($arch_name)"
-                                    save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
-                                    build_success=true
-                                    break
+                                    # Also verify architecture after no-cache retry
+                                    local loaded_arch=$(docker image inspect "$full_image_name" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+                                    if [[ "$loaded_arch" == "$arch_name" ]]; then
+                                        log_info "  [$arch_name] ✓ Built (no-cache retry): $full_image_name (verified arch: $loaded_arch)"
+                                        log_build_history "$build_id" "$component" "$tag" "SUCCESS" "BUILT_NOCACHE ($arch_name)"
+                                        save_service_build_info "$component" "$tag" "$build_id" "$service_hash"
+                                        build_success=true
+                                        break
+                                    else
+                                        log_warn "  [$arch_name] ⚠ Image loaded but wrong architecture: expected $arch_name, got $loaded_arch"
+                                    fi
                                 fi
                             fi
                         else
