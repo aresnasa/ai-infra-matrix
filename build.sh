@@ -10198,20 +10198,53 @@ case "$COMMAND" in
             setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
         fi
         
-        # Determine build platforms
-        # - If --platform=xxx is specified, use that (can be single or multiple)
-        # - If not specified, auto-detect native platform for local build
-        _target_platforms=""
-        if [[ -n "$BUILD_PLATFORMS" ]]; then
-            # User explicitly specified platform(s)
-            _target_platforms="$BUILD_PLATFORMS"
-            log_info "🏗️  Build platforms (user specified): $_target_platforms"
-        else
-            # Auto-detect native platform
-            _native_platform=$(_detect_docker_platform)
-            _native_arch="${_native_platform##*/}"
-            _target_platforms="$_native_arch"
-            log_info "🏗️  Build platform (auto-detected native): $_target_platforms"
+        # 使用已解析的 BUILD_PLATFORMS（在参数解析阶段已设置）
+        _target_platforms="$BUILD_PLATFORMS"
+        
+        # ==================================================================
+        # 跨平台构建处理
+        # ==================================================================
+        if [[ "$CROSS_PLATFORM_BUILD" == "true" ]]; then
+            log_info ""
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info "🔄 Cross-Platform Build Preparation"
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info "Native architecture: $_NATIVE_ARCH"
+            log_info "Target platform(s): $_target_platforms"
+            log_info ""
+            
+            # 1. 停止当前运行的 AppHub 容器（可能是其他架构的）
+            if docker ps -q -f name=ai-infra-apphub 2>/dev/null | grep -q .; then
+                log_info "🛑 Stopping existing AppHub container..."
+                local compose_cmd=$(detect_compose_command)
+                $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+                log_info "   ✓ AppHub stopped"
+            fi
+            
+            # 2. 确保 QEMU 和 buildx 已正确配置
+            log_info "🔧 Setting up QEMU and buildx for cross-platform builds..."
+            
+            # 检查并安装 QEMU（如果需要）
+            if ! docker run --rm --privileged multiarch/qemu-user-static --reset -p yes >/dev/null 2>&1; then
+                log_warn "   ⚠️  QEMU setup may have issues, trying alternative method..."
+                docker run --privileged --rm tonistiigi/binfmt --install all 2>/dev/null || true
+            else
+                log_info "   ✓ QEMU configured for multi-arch support"
+            fi
+            
+            # 3. 重新创建 buildx builder 以确保干净状态
+            log_info "🔧 Recreating buildx builder for cross-platform builds..."
+            docker buildx rm multiarch-builder 2>/dev/null || true
+            docker buildx create --name multiarch-builder \
+                --driver docker-container \
+                --driver-opt network=host \
+                --bootstrap 2>/dev/null || true
+            docker buildx use multiarch-builder 2>/dev/null || true
+            log_info "   ✓ Buildx builder ready"
+            
+            log_info ""
+            log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            log_info ""
         fi
         
         # Always use multiplatform build function for consistent behavior
