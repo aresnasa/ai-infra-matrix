@@ -7143,30 +7143,66 @@ build_all_multiplatform() {
     fi
     
     local foundation_build_failed=false
-    for platform in "${normalized_platforms[@]}"; do
-        local arch_name="${platform##*/}"
-        
-        log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-        log_info "┃ 🏗️  Building Foundation Services for [$arch_name]"
-        log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-        
-        if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#FOUNDATION_SERVICES[@]} -gt 1 ]]; then
-            log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
-            if ! build_parallel_for_platform "$platform" "${FOUNDATION_SERVICES[@]}"; then
-                log_error "    ❌ Some foundation services failed to build for $arch_name"
-                foundation_build_failed=true
-            fi
-        else
-            for service in "${FOUNDATION_SERVICES[@]}"; do
-                log_info "    → Building $service for $arch_name..."
-                if ! build_component_for_platform "$service" "$platform"; then
-                    log_error "    ❌ Failed to build $service for $arch_name"
+    
+    # ===========================================================================
+    # AppHub 特殊处理：只构建一次（原生架构）
+    # ===========================================================================
+    # AppHub 的 Dockerfile 使用多阶段构建：
+    # - deb-builder (Ubuntu) 构建 deb 包 - 架构无关的包构建
+    # - rpm-builder (AlmaLinux) 构建 rpm 包 - 架构无关的包构建
+    # - 最终 nginx 镜像只需要运行在原生架构
+    #
+    # 因此，AppHub 只需要在原生架构构建一次，内部的 deb/rpm 包可以服务所有架构
+    # ===========================================================================
+    log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+    log_info "┃ 🏗️  Building AppHub (Native Architecture Only: $native_arch)"
+    log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+    log_info "    📦 AppHub 内部构建 deb/rpm 包（适用于所有架构）"
+    log_info "    📦 只需在原生架构构建一次，避免重复构建"
+    
+    if ! build_component_for_platform "apphub" "linux/${native_arch}"; then
+        log_error "    ❌ Failed to build apphub for $native_arch"
+        foundation_build_failed=true
+    fi
+    echo
+    
+    # ===========================================================================
+    # 构建其他 Foundation Services（所有平台）
+    # ===========================================================================
+    # 过滤掉 apphub，构建其他 foundation 服务
+    local other_foundation_services=()
+    for svc in "${FOUNDATION_SERVICES[@]}"; do
+        if [[ "$svc" != "apphub" ]]; then
+            other_foundation_services+=("$svc")
+        fi
+    done
+    
+    if [[ ${#other_foundation_services[@]} -gt 0 ]]; then
+        for platform in "${normalized_platforms[@]}"; do
+            local arch_name="${platform##*/}"
+            
+            log_info "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+            log_info "┃ 🏗️  Building Other Foundation Services for [$arch_name]"
+            log_info "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+            
+            if [[ "$ENABLE_PARALLEL" == "true" ]] && [[ ${#other_foundation_services[@]} -gt 1 ]]; then
+                log_parallel "    🚀 Parallel build enabled (max $PARALLEL_JOBS jobs)"
+                if ! build_parallel_for_platform "$platform" "${other_foundation_services[@]}"; then
+                    log_error "    ❌ Some foundation services failed to build for $arch_name"
                     foundation_build_failed=true
                 fi
-            done
-        fi
-        echo
-    done
+            else
+                for service in "${other_foundation_services[@]}"; do
+                    log_info "    → Building $service for $arch_name..."
+                    if ! build_component_for_platform "$service" "$platform"; then
+                        log_error "    ❌ Failed to build $service for $arch_name"
+                        foundation_build_failed=true
+                    fi
+                done
+            fi
+            echo
+        done
+    fi
     
     # Check if any foundation service build failed
     if [[ "$foundation_build_failed" == "true" ]]; then
