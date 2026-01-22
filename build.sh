@@ -6941,9 +6941,18 @@ build_all_multiplatform() {
     echo
     
     # Setup buildx builder
-    if ! setup_buildx_builder; then
-        log_error "Failed to setup buildx builder"
-        return 1
+    # 跨平台构建使用 docker-container driver（已在 all 命令中设置）
+    # 原生构建使用默认的 docker driver（继承镜像配置）
+    if [[ "$CROSS_PLATFORM_BUILD" == "true" ]]; then
+        # 跨平台构建：使用之前设置的 multiarch-builder
+        log_info "Checking QEMU emulation for cross-platform builds..."
+        _ensure_qemu_installed
+        log_info "✓ Using buildx builder: default (docker driver, inherits mirror config)"
+    else
+        if ! setup_buildx_builder; then
+            log_error "Failed to setup buildx builder"
+            return 1
+        fi
     fi
     echo
     
