@@ -832,10 +832,10 @@ services:
     restart: unless-stopped
 
   # Redis 监控界面 (可选)
+  # 注意：RedisInsight 2.68+ 已原生支持多架构，无需指定 platform
   redis-insight:
     image: redis/redisinsight:{{REDISINSIGHT_VERSION}}
     container_name: ai-infra-redis-insight
-    platform: {{DOCKER_HOST_PLATFORM}}
     environment:
       TZ: Asia/Shanghai
     expose:
