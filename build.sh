@@ -9906,7 +9906,10 @@ FORCE_REBUILD=false
 ENABLE_PARALLEL=false
 ENABLE_SSL=false
 SKIP_CACHE_CHECK=false
-BUILD_PLATFORMS="amd64,arm64"  # Default: build both architectures. Can be: amd64, arm64, amd64,arm64
+# 默认只构建本地架构，简化构建流程
+# 如果需要构建其他架构，使用 --platform=amd64 或 --platform=amd64,arm64
+BUILD_PLATFORMS=""  # 空表示使用本地架构，稍后会自动检测
+CROSS_PLATFORM_BUILD=false  # 标记是否是跨平台构建
 NO_ARCH_TAG=true    # Default: remote tag won't include arch suffix (Docker Hub mode). Use --arch-tag for Harbor mode
 REMAINING_ARGS=()
 
@@ -9970,21 +9973,66 @@ fi
 if [[ "$SKIP_CACHE_CHECK" == "true" ]]; then
     log_cache "⏭️  Cache check skipped (--skip-cache)"
 fi
-if [[ -n "$BUILD_PLATFORMS" ]]; then
-    log_info "🏗️  Multi-platform build enabled: $BUILD_PLATFORMS"
-    # Update DOCKER_HOST_PLATFORM to use the first specified platform for pull operations
-    # This ensures docker pull fetches images for the target architecture, not native
-    first_platform="${BUILD_PLATFORMS%%,*}"  # Get first platform (before comma)
-    case "$first_platform" in
-        amd64|x86_64)
-            DOCKER_HOST_PLATFORM="linux/amd64"
-            ;;
-        arm64|aarch64)
-            DOCKER_HOST_PLATFORM="linux/arm64"
-            ;;
-    esac
-    log_info "🎯 Target platform for pull: $DOCKER_HOST_PLATFORM"
+
+# ==============================================================================
+# 平台检测和跨平台构建处理
+# ==============================================================================
+# 检测本地系统架构
+_NATIVE_ARCH=$(_detect_docker_platform 2>/dev/null || echo "linux/arm64")
+_NATIVE_ARCH="${_NATIVE_ARCH##*/}"  # 提取架构名称 (arm64 或 amd64)
+
+# 如果未指定 BUILD_PLATFORMS，默认使用本地架构
+if [[ -z "$BUILD_PLATFORMS" ]]; then
+    BUILD_PLATFORMS="$_NATIVE_ARCH"
+    log_info "🏗️  Build platform (auto-detected): $BUILD_PLATFORMS"
+else
+    log_info "🏗️  Build platform (user specified): $BUILD_PLATFORMS"
 fi
+
+# 检测是否是跨平台构建（在 ARM 上构建 AMD64 或反之）
+_is_cross_platform_build() {
+    local target_platforms="$1"
+    local native_arch="$_NATIVE_ARCH"
+    
+    # 如果包含多个平台，肯定是跨平台
+    if [[ "$target_platforms" == *","* ]]; then
+        return 0  # true
+    fi
+    
+    # 标准化目标平台名称
+    local target_arch="$target_platforms"
+    case "$target_arch" in
+        x86_64) target_arch="amd64" ;;
+        aarch64) target_arch="arm64" ;;
+    esac
+    
+    # 如果目标架构与本地不同，是跨平台
+    if [[ "$target_arch" != "$native_arch" ]]; then
+        return 0  # true
+    fi
+    
+    return 1  # false
+}
+
+# 设置跨平台构建标志
+if _is_cross_platform_build "$BUILD_PLATFORMS"; then
+    CROSS_PLATFORM_BUILD=true
+    log_warn "🔄 Cross-platform build detected (native: $_NATIVE_ARCH, target: $BUILD_PLATFORMS)"
+    log_warn "   This requires QEMU emulation and may be slower"
+fi
+
+# Update DOCKER_HOST_PLATFORM for pull operations
+first_platform="${BUILD_PLATFORMS%%,*}"  # Get first platform (before comma)
+case "$first_platform" in
+    amd64|x86_64)
+        DOCKER_HOST_PLATFORM="linux/amd64"
+        ;;
+    arm64|aarch64)
+        DOCKER_HOST_PLATFORM="linux/arm64"
+        ;;
+esac
+log_info "🎯 Target platform for pull: $DOCKER_HOST_PLATFORM"
+
 if [[ "$NO_ARCH_TAG" == "true" ]]; then
     log_info "☁️  Docker Hub mode: remote tags without arch suffix"
 fi
