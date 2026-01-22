@@ -726,16 +726,23 @@ RUN set -eux; \
             # Copy source tarball to SOURCES directory
             cp "${tarball}" /home/builder/rpmbuild/SOURCES/; \
             \
-            # Build with explicit spec file reference
-            echo ">>> Building RPMs using: rpmbuild -bb SPECS/slurm.spec"; \
+            # Determine build target architecture
+            BUILD_ARCH=$(uname -m); \
+            echo ">>> Build target architecture: ${BUILD_ARCH}"; \
+            \
+            # Build with explicit spec file reference and architecture
+            echo ">>> Building RPMs using: rpmbuild -bb --target=${BUILD_ARCH} SPECS/slurm.spec"; \
             rpmbuild_exit_code=0; \
-            if ! rpmbuild -bb /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
+            if ! rpmbuild -bb --target="${BUILD_ARCH}" /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
                 rpmbuild_exit_code=$?; \
+                echo "⚠️  rpmbuild returned exit code: $rpmbuild_exit_code"; \
             fi; \
             echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
             \
-            # Check if RPM files were created
+            # Check if RPM files were created (look in architecture-specific subdirs)
             echo ">>> Checking for generated RPM packages..."; \
+            echo ">>> rpmbuild RPMS directory structure:"; \
+            ls -laR /home/builder/rpmbuild/RPMS/ 2>/dev/null || echo "RPMS directory is empty or doesn't exist"; \
             rpm_count=$(find /home/builder/rpmbuild/RPMS -type f -name "*.rpm" 2>/dev/null | wc -l); \
             echo "Found $rpm_count RPM file(s)"; \
             \
