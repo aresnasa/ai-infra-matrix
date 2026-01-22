@@ -7332,9 +7332,15 @@ build_all_multiplatform() {
         if [[ -n "$any_apphub" ]]; then
             apphub_image_to_use="$any_apphub"
             # Extract arch from tag (e.g., v0.3.8-amd64 -> amd64)
-            apphub_arch_selected="${any_apphub##*-}"
+            # Handle both cases: with arch suffix and without
+            if [[ "$any_apphub" == *"-arm64" ]] || [[ "$any_apphub" == *"-amd64" ]]; then
+                apphub_arch_selected="${any_apphub##*-}"
+            else
+                # No arch suffix, assume native arch
+                apphub_arch_selected="$native_arch"
+            fi
             apphub_platform="linux/${apphub_arch_selected}"
-            log_warn "  ⚠️  Using available AppHub image: $apphub_image_to_use"
+            log_warn "  ⚠️  Using available AppHub image: $apphub_image_to_use (arch: $apphub_arch_selected)"
         fi
     fi
     
