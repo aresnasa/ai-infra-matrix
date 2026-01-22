@@ -1261,6 +1261,7 @@ need_rebuild_for_platform() {
     # Examples: ai-infra-apphub:v0.3.8-arm64, ai-infra-apphub:v0.3.8-amd64
     local arch_suffix="-${arch_name}"
     local image="ai-infra-${service}:${tag}${arch_suffix}"
+    local legacy_image="ai-infra-${service}:${tag}"  # Without arch suffix (legacy format)
     
     # Force rebuild mode
     if [[ "$FORCE_REBUILD" == "true" ]]; then
@@ -1277,8 +1278,8 @@ need_rebuild_for_platform() {
     # Check if it's a dependency service (external image)
     local dep_conf="$SRC_DIR/$service/dependency.conf"
     if [[ -f "$dep_conf" ]]; then
-        # For dependencies, just check if local image exists
-        if docker image inspect "$image" >/dev/null 2>&1; then
+        # For dependencies, just check if local image exists (with or without arch suffix)
+        if docker image inspect "$image" >/dev/null 2>&1 || docker image inspect "$legacy_image" >/dev/null 2>&1; then
             echo "NO_CHANGE"
             return 1
         else
@@ -1287,8 +1288,13 @@ need_rebuild_for_platform() {
         fi
     fi
     
-    # Image doesn't exist, need to build
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
+    # Image doesn't exist - check both with and without arch suffix
+    local actual_image=""
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        actual_image="$image"
+    elif docker image inspect "$legacy_image" >/dev/null 2>&1; then
+        actual_image="$legacy_image"
+    else
         echo "IMAGE_NOT_EXIST"
         return 0
     fi
@@ -1297,7 +1303,7 @@ need_rebuild_for_platform() {
     local current_hash=$(calculate_service_hash "$service")
     
     # Get hash stored in image label
-    local image_hash=$(docker image inspect "$image" --format '{{index .Config.Labels "build.hash"}}' 2>/dev/null || echo "")
+    local image_hash=$(docker image inspect "$actual_image" --format '{{index .Config.Labels "build.hash"}}' 2>/dev/null || echo "")
     
     # No hash label in image, need to rebuild
     if [[ -z "$image_hash" ]]; then
