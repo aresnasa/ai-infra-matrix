@@ -555,7 +555,25 @@ RUN set -eux; \
         autoconf \
         automake \
         systemd \
+        systemd-devel \
+        libtool \
         || { echo "❌ Failed to install basic dependencies"; exit 1; }; \
+    # Install additional SLURM build dependencies
+    # These are commonly needed by rpmbuild -ta
+    dnf install -y \
+        dbus-devel \
+        numactl-devel \
+        gtk2-devel \
+        lua-devel \
+        http-parser-devel \
+        libcurl-devel \
+        lz4-devel \
+        freeipmi-devel \
+        rrdtool-devel \
+        hdf5-devel \
+        ncurses-devel \
+        man-db \
+        2>/dev/null || echo "⚠️ Some optional SLURM dependencies not available"; \
     # Install mariadb-devel (required by SLURM)
     dnf module reset mysql -y 2>/dev/null || true; \
     dnf install -y mysql-devel 2>/dev/null || \
