@@ -1245,6 +1245,19 @@ need_rebuild_for_platform() {
     
     # Compare hashes
     if [[ "$current_hash" != "$image_hash" ]]; then
+        # AppHub 特殊处理：进行更细粒度的变化检测
+        # 由于 AppHub 构建耗时长，只有在真正需要时才重建
+        if [[ "$service" == "apphub" ]]; then
+            local rebuild_reason=$(check_apphub_rebuild_necessity)
+            if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
+                # 哈希变化但没有实质性变化（可能是哈希算法更新），跳过重建
+                echo "NO_CHANGE"
+                return 1
+            else
+                echo "REBUILD_NEEDED|${rebuild_reason}"
+                return 0
+            fi
+        fi
         echo "HASH_CHANGED|old:${image_hash:0:8}|new:${current_hash:0:8}"
         return 0
     fi
