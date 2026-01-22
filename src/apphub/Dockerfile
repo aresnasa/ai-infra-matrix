@@ -742,11 +742,14 @@ RUN set -eux; \
             echo ">>> This is the official recommended method for SLURM"; \
             rpmbuild_exit_code=0; \
             # 使用 --define 传递必要的宏定义
-            # --with=munge 启用 munge 认证支持
-            # 注意：较新版本的 SLURM 可能不再需要 without_cgroup
+            # --nodeps 跳过 RPM 依赖检查（依赖已从源码安装，不在 RPM 数据库中）
+            # --with munge 启用 munge 认证支持
+            # --without cgroup_v1 禁用旧版 cgroup v1 支持（使用系统默认的 v2）
             if ! rpmbuild -ta "${tarball}" \
+                --nodeps \
                 --define "_topdir /home/builder/rpmbuild" \
                 --define "with_munge 1" \
+                --define "_without_cgroup_v1 1" \
                 2>&1 | tee /tmp/rpmbuild.log; then \
                 rpmbuild_exit_code=$?; \
             fi; \
