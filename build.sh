@@ -7064,9 +7064,21 @@ build_all_multiplatform() {
         local to_build=()
         local to_skip=()
         
+        # AppHub 只检查原生架构
+        local apphub_rebuild_reason=$(need_rebuild_for_platform "apphub" "linux/${native_arch}" "$tag")
+        if [[ "$apphub_rebuild_reason" == "NO_CHANGE" ]]; then
+            to_skip+=("apphub:$native_arch (native only)")
+        else
+            to_build+=("apphub:$native_arch ($apphub_rebuild_reason) [builds deb+rpm for all archs]")
+        fi
+        
+        # 其他服务检查所有平台
         for platform in "${normalized_platforms[@]}"; do
             local arch_name="${platform##*/}"
             for service in "${FOUNDATION_SERVICES[@]}" "${DEPENDENT_SERVICES[@]}"; do
+                # 跳过 apphub，已经单独处理
+                [[ "$service" == "apphub" ]] && continue
+                
                 local rebuild_reason=$(need_rebuild_for_platform "$service" "$platform" "$tag")
                 if [[ "$rebuild_reason" == "NO_CHANGE" ]]; then
                     to_skip+=("$service:$arch_name")
