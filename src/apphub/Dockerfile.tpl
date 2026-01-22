@@ -555,7 +555,25 @@ RUN set -eux; \
         autoconf \
         automake \
         systemd \
+        systemd-devel \
+        libtool \
         || { echo "❌ Failed to install basic dependencies"; exit 1; }; \
+    # Install additional SLURM build dependencies
+    # These are commonly needed by rpmbuild -ta
+    dnf install -y \
+        dbus-devel \
+        numactl-devel \
+        gtk2-devel \
+        lua-devel \
+        http-parser-devel \
+        libcurl-devel \
+        lz4-devel \
+        freeipmi-devel \
+        rrdtool-devel \
+        hdf5-devel \
+        ncurses-devel \
+        man-db \
+        2>/dev/null || echo "⚠️ Some optional SLURM dependencies not available"; \
     # Install mariadb-devel (required by SLURM)
     dnf module reset mysql -y 2>/dev/null || true; \
     dnf install -y mysql-devel 2>/dev/null || \
@@ -718,15 +736,19 @@ RUN set -eux; \
             touch /home/builder/rpms/.skip_slurm; \
         else \
             echo ">>> Found spec file at: $spec_path"; \
-            cp "$spec_path" /home/builder/rpmbuild/SPECS/; \
             \
-            # Copy source tarball to SOURCES directory
-            cp "${tarball}" /home/builder/rpmbuild/SOURCES/; \
-            \
-            # Build with explicit spec file reference
-            echo ">>> Building RPMs using: rpmbuild -bb SPECS/slurm.spec"; \
+            # SLURM 官方推荐使用 rpmbuild -ta 直接从 tarball 构建
+            # 参考: https://slurm.schedmd.com/quickstart_admin.html#rpmbuild
+            echo ">>> Building RPMs using: rpmbuild -ta ${tarball}"; \
+            echo ">>> This is the official recommended method for SLURM"; \
             rpmbuild_exit_code=0; \
-            if ! rpmbuild -bb /home/builder/rpmbuild/SPECS/slurm.spec 2>&1 | tee /tmp/rpmbuild.log; then \
+            # 使用 --define 传递必要的宏定义
+            # --with=munge 启用 munge 认证支持
+            # 注意：较新版本的 SLURM 可能不再需要 without_cgroup
+            if ! rpmbuild -ta "${tarball}" \
+                --define "_topdir /home/builder/rpmbuild" \
+                --define "with_munge 1" \
+                2>&1 | tee /tmp/rpmbuild.log; then \
                 rpmbuild_exit_code=$?; \
             fi; \
             echo ">>> rpmbuild exit code: $rpmbuild_exit_code"; \
