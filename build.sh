@@ -989,6 +989,70 @@ calculate_hash() {
     fi
 }
 
+# ==============================================================================
+# AppHub 智能缓存检查
+# ==============================================================================
+# AppHub 是包分发中心，只有以下情况需要重建：
+# 1. 新增了组件（检测 src/ 目录下的服务数量变化）
+# 2. SLURM/SaltStack/Munge 版本变化（检测 tarball 文件）
+# 3. 核心构建脚本变化（nginx 配置等）
+# 4. 依赖的第三方包变化
+#
+# 不需要触发重建的情况：
+# - Dockerfile 中的注释或空格变化（不影响构建结果）
+# - 其他服务的代码变化（apphub 不依赖它们）
+# ==============================================================================
+calculate_apphub_critical_hash() {
+    local apphub_path="$1"
+    local hash_data=""
+    
+    # 1. 检测服务数量变化（新增组件时需要重建）
+    # 生成当前所有服务的列表哈希
+    local services_list=$(find "$SRC_DIR" -maxdepth 1 -type d -not -name "src" -not -name "apphub" | sort | xargs -I {} basename {} 2>/dev/null | sort | tr '\n' ',')
+    hash_data+="services:${services_list}\n"
+    
+    # 2. 检测关键 tarball 文件（SLURM、Munge 版本变化）
+    # 只检查文件名（包含版本号），不检查内容（太大）
+    local tarballs=$(find "$apphub_path" -maxdepth 1 -type f \( -name "*.tar.bz2" -o -name "*.tar.gz" -o -name "*.tar.xz" \) | sort | xargs -I {} basename {} 2>/dev/null | tr '\n' ',')
+    hash_data+="tarballs:${tarballs}\n"
+    
+    # 3. 检测 third_party 目录中的关键包
+    if [[ -d "$SCRIPT_DIR/third_party" ]]; then
+        # 检测 munge 版本
+        local munge_files=$(find "$SCRIPT_DIR/third_party/munge" -type f -name "*.tar.*" 2>/dev/null | sort | xargs -I {} basename {} 2>/dev/null | tr '\n' ',')
+        hash_data+="munge:${munge_files}\n"
+        
+        # 检测 categraf 版本
+        local categraf_files=$(find "$SCRIPT_DIR/third_party/categraf" -type f -name "*.tar.gz" 2>/dev/null | sort | xargs -I {} basename {} 2>/dev/null | tr '\n' ',')
+        hash_data+="categraf:${categraf_files}\n"
+    fi
+    
+    # 4. 检测 nginx 配置（apphub 使用 nginx 提供服务）
+    if [[ -f "$apphub_path/nginx.conf" ]]; then
+        hash_data+="$(shasum -a 256 "$apphub_path/nginx.conf" 2>/dev/null | awk '{print $1}')\n"
+    fi
+    
+    # 5. 检测关键构建参数（从 Dockerfile 中提取版本号等）
+    if [[ -f "$apphub_path/Dockerfile" ]]; then
+        # 提取关键 ARG 声明（版本号等）
+        local key_args=$(grep -E "^ARG\s+(SLURM_VERSION|SALTSTACK_VERSION|MUNGE_VERSION|UBUNTU_VERSION|ALMALINUX_VERSION|BUILD_SLURM|BUILD_SALTSTACK)=" "$apphub_path/Dockerfile" 2>/dev/null | sort | tr '\n' ',')
+        hash_data+="dockerfile_args:${key_args}\n"
+    fi
+    
+    # 6. 检测 deps.yaml 变化（定义了组件依赖关系）
+    if [[ -f "$SCRIPT_DIR/deps.yaml" ]]; then
+        hash_data+="$(shasum -a 256 "$SCRIPT_DIR/deps.yaml" 2>/dev/null | awk '{print $1}')\n"
+    fi
+    
+    # 7. 检测 images.yaml 变化（定义了镜像配置）
+    if [[ -f "$SCRIPT_DIR/config/images.yaml" ]]; then
+        hash_data+="$(shasum -a 256 "$SCRIPT_DIR/config/images.yaml" 2>/dev/null | awk '{print $1}')\n"
+    fi
+    
+    # 计算最终哈希
+    echo -e "$hash_data" | shasum -a 256 | awk '{print $1}'
+}
+
 # Calculate combined hash for a service (source code + config + Dockerfile)
 calculate_service_hash() {
     local service="$1"
@@ -1011,9 +1075,19 @@ calculate_service_hash() {
         hash_data+="$(calculate_hash "$dockerfile_tpl")\n"
     fi
     
-    # 2. Source code directory hash
+    # 2. Source code directory hash (with special handling for apphub)
     if [[ -d "$service_path" ]]; then
-        hash_data+="$(calculate_hash "$service_path")\n"
+        if [[ "$service" == "apphub" ]]; then
+            # AppHub 特殊处理：只关注关键文件变化，忽略无关紧要的变化
+            # 这是因为 AppHub 作为包分发中心，只有以下情况需要重建：
+            # - 新增组件/包
+            # - SLURM/SaltStack 版本变化
+            # - 核心 Dockerfile 构建逻辑变化（已在上面处理）
+            # - tarball 文件变化
+            hash_data+="$(calculate_apphub_critical_hash "$service_path")\n"
+        else
+            hash_data+="$(calculate_hash "$service_path")\n"
+        fi
     fi
     
     # 3. Configuration file hashes (service-specific)
