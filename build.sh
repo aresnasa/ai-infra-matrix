@@ -7441,11 +7441,32 @@ prefetch_base_images_for_platform() {
     local skip_count=0
     
     for image in "${unique_base_images[@]}"; do
-        # Check if image already exists locally in docker daemon
+        # =====================================================================
+        # CRITICAL FIX: Check if image exists WITH CORRECT ARCHITECTURE
+        # 
+        # docker image inspect doesn't check architecture!
+        # We need to verify the image's architecture matches our target platform.
+        # If architecture doesn't match, we must re-pull with --platform flag.
+        # =====================================================================
+        local image_exists=false
+        local arch_matches=false
+        
         if docker image inspect "$image" >/dev/null 2>&1; then
-            log_info "    ✓ $image (cached)"
+            image_exists=true
+            # Check if the image architecture matches our target
+            local image_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+            if [[ "$image_arch" == "$arch_name" ]]; then
+                arch_matches=true
+            fi
+        fi
+        
+        if [[ "$image_exists" == "true" ]] && [[ "$arch_matches" == "true" ]]; then
+            log_info "    ✓ $image (cached, arch: $arch_name)"
             skip_count=$((skip_count + 1))
             continue
+        elif [[ "$image_exists" == "true" ]] && [[ "$arch_matches" == "false" ]]; then
+            local current_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null || echo "unknown")
+            log_info "    🔄 $image (exists as $current_arch, need $arch_name)"
         fi
         
         log_info "    ⬇ $image"
