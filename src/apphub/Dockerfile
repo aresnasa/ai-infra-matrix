@@ -690,13 +690,12 @@ RUN set -eux; \
         echo ">>> Setting up rpmbuild environment..."; \
         mkdir -p /home/builder/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
         # Create .rpmmacros file for custom configurations
-        # Note: Define macros that SLURM spec file will recognize
+        # Note: Use %_xxx format, NOT %define (which is for spec files only)
         echo '%_topdir %(echo $HOME)/rpmbuild' > ~/.rpmmacros; \
         echo '%_prefix /usr' >> ~/.rpmmacros; \
         echo '%_slurm_sysconfdir %{_prefix}/etc/slurm' >> ~/.rpmmacros; \
-        # For SLURM spec file - define conditional macros
-        echo '%define with_munge 1' >> ~/.rpmmacros; \
-        echo '%define without_cgroup 1' >> ~/.rpmmacros; \
+        # Enable munge and disable cgroup using conditional build options
+        # These are passed via --define on rpmbuild command line instead
         echo "✓ Created ~/.rpmmacros configuration"; \
         cat ~/.rpmmacros; \
         echo "Note: cgroup support disabled at build time - use system defaults"; \
