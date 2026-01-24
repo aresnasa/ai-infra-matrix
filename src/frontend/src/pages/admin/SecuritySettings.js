@@ -542,6 +542,207 @@ const SecuritySettings = () => {
     }
   };
 
+  // ==================== 疑似攻击IP ====================
+  const fetchSuspiciousIPs = async (page = 1, pageSize = 10) => {
+    setSuspiciousIPsLoading(true);
+    try {
+      const res = await securityAPI.getIPStats({ page, page_size: pageSize, min_risk_score: 30, order_by_risk: true });
+      setSuspiciousIPs(res.data?.data || []);
+      setSuspiciousIPsPagination({
+        current: page,
+        pageSize: pageSize,
+        total: res.data?.total || 0,
+      });
+    } catch (error) {
+      message.error(t('security.fetchSuspiciousIPsFailed') || '获取疑似攻击IP列表失败');
+    } finally {
+      setSuspiciousIPsLoading(false);
+    }
+  };
+
+  const fetchLoginStats = async () => {
+    try {
+      const res = await securityAPI.getLoginStatsSummary({ hours: 24 });
+      setLoginStats(res.data?.data || res.data);
+    } catch (error) {
+      // 静默处理
+    }
+  };
+
+  const fetchLockedAccounts = async () => {
+    setLockedAccountsLoading(true);
+    try {
+      const res = await securityAPI.getLockedAccounts({ page: 1, page_size: 100 });
+      setLockedAccounts(res.data?.data || []);
+    } catch (error) {
+      // 静默处理
+    } finally {
+      setLockedAccountsLoading(false);
+    }
+  };
+
+  const handleUnlockAccount = async (username) => {
+    try {
+      await securityAPI.unlockAccount(username);
+      message.success(t('security.unlockSuccess') || '解锁成功');
+      fetchLockedAccounts();
+    } catch (error) {
+      message.error(t('security.unlockFailed') || '解锁失败');
+    }
+  };
+
+  const handleBlockIP = async (ip) => {
+    try {
+      await securityAPI.blockIP({ ip, reason: '手动封禁', duration_minutes: 1440 });
+      message.success(t('security.blockSuccess') || '封禁成功');
+      fetchSuspiciousIPs();
+    } catch (error) {
+      message.error(t('security.blockFailed') || '封禁失败');
+    }
+  };
+
+  const handleUnblockIP = async (ip) => {
+    try {
+      await securityAPI.unblockIP(ip);
+      message.success(t('security.unblockSuccess') || '解封成功');
+      fetchSuspiciousIPs();
+    } catch (error) {
+      message.error(t('security.unblockFailed') || '解封失败');
+    }
+  };
+
+  const suspiciousIPsColumns = [
+    {
+      title: 'IP',
+      dataIndex: 'ip',
+      key: 'ip',
+      render: (ip, record) => (
+        <Space>
+          <Tag icon={<GlobalOutlined />} color={record.risk_score >= 70 ? 'red' : record.risk_score >= 50 ? 'orange' : 'gold'}>
+            {ip}
+          </Tag>
+          {record.blocked_until && new Date(record.blocked_until) > new Date() && (
+            <Tag color="red">{t('security.blocked') || '已封禁'}</Tag>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: t('security.riskScore') || '风险评分',
+      dataIndex: 'risk_score',
+      key: 'risk_score',
+      render: (score) => {
+        let color = 'green';
+        if (score >= 70) color = 'red';
+        else if (score >= 50) color = 'orange';
+        else if (score >= 30) color = 'gold';
+        return (
+          <Tag color={color}>
+            {score}/100
+          </Tag>
+        );
+      },
+      sorter: (a, b) => a.risk_score - b.risk_score,
+    },
+    {
+      title: t('security.totalAttempts') || '总尝试',
+      dataIndex: 'total_attempts',
+      key: 'total_attempts',
+    },
+    {
+      title: t('security.failureCount') || '失败次数',
+      dataIndex: 'failure_count',
+      key: 'failure_count',
+      render: (count, record) => (
+        <Text type={count > 5 ? 'danger' : 'secondary'}>
+          {count} ({record.consecutive_fails} {t('security.consecutive') || '连续'})
+        </Text>
+      ),
+    },
+    {
+      title: t('security.successCount') || '成功次数',
+      dataIndex: 'success_count',
+      key: 'success_count',
+    },
+    {
+      title: t('security.lastAttempt') || '最后尝试',
+      dataIndex: 'last_attempt_at',
+      key: 'last_attempt_at',
+      render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '-',
+    },
+    {
+      title: t('security.blockCount') || '封禁次数',
+      dataIndex: 'block_count',
+      key: 'block_count',
+    },
+    {
+      title: t('common.actions') || '操作',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          {record.blocked_until && new Date(record.blocked_until) > new Date() ? (
+            <Popconfirm
+              title={t('security.confirmUnblock') || '确定解封此IP？'}
+              onConfirm={() => handleUnblockIP(record.ip)}
+            >
+              <Button size="small" icon={<UnlockOutlined />}>
+                {t('security.unblock') || '解封'}
+              </Button>
+            </Popconfirm>
+          ) : (
+            <Popconfirm
+              title={t('security.confirmBlock') || '确定封禁此IP 24小时？'}
+              onConfirm={() => handleBlockIP(record.ip)}
+            >
+              <Button size="small" danger icon={<StopOutlined />}>
+                {t('security.block') || '封禁'}
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  const lockedAccountsColumns = [
+    {
+      title: t('security.username') || '用户名',
+      dataIndex: 'username',
+      key: 'username',
+    },
+    {
+      title: t('security.failedCount') || '失败次数',
+      dataIndex: 'failed_login_count',
+      key: 'failed_login_count',
+      render: (count) => <Tag color="red">{count}</Tag>,
+    },
+    {
+      title: t('security.lastFailedIP') || '最后失败IP',
+      dataIndex: 'last_failed_login_ip',
+      key: 'last_failed_login_ip',
+    },
+    {
+      title: t('security.lockedUntil') || '锁定到期',
+      dataIndex: 'locked_until',
+      key: 'locked_until',
+      render: (time) => time ? dayjs(time).format('YYYY-MM-DD HH:mm:ss') : '-',
+    },
+    {
+      title: t('common.actions') || '操作',
+      key: 'actions',
+      render: (_, record) => (
+        <Popconfirm
+          title={t('security.confirmUnlockAccount') || '确定解锁此账号？'}
+          onConfirm={() => handleUnlockAccount(record.username)}
+        >
+          <Button size="small" icon={<UnlockOutlined />}>
+            {t('security.unlock') || '解锁'}
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
   const auditColumns = [
     {
       title: t('security.action') || '操作',
