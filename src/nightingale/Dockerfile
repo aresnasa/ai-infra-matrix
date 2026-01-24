@@ -94,7 +94,7 @@ RUN set -eux; \
 #   2. If build fails (QEMU), download pre-built frontend from n9e/fe releases
 #   3. Pre-built frontend works but lacks custom VITE_PREFIX (default /)
 # Memory optimization: package.json sets NODE_OPTIONS=--max-old-space-size=6096
-# which requires 6GB+ RAM. We override this for low-memory environments.
+# which requires 6GB+ RAM. We modify package.json for low-memory environments.
 RUN set -eux; \
     if [ -n "${NPM_REGISTRY}" ]; then \
         npm config set registry ${NPM_REGISTRY}; \
@@ -102,21 +102,23 @@ RUN set -eux; \
     BUILD_ARCH=$(uname -m); \
     echo "Build architecture: ${BUILD_ARCH}"; \
     # Detect available memory (in MB) and adjust NODE_OPTIONS accordingly
-    # Default to 3072MB for low-memory systems, 4096MB otherwise
     TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}'); \
     TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024)); \
     if [ "$TOTAL_MEM_MB" -lt 6000 ]; then \
         NODE_MEM=3072; \
-        echo "Low memory detected (${TOTAL_MEM_MB}MB), using NODE_OPTIONS=--max-old-space-size=${NODE_MEM}"; \
+        echo "⚠️  Low memory detected (${TOTAL_MEM_MB}MB total)"; \
+        echo "   Reducing Node.js heap size to ${NODE_MEM}MB"; \
+        # Modify package.json to use lower memory setting
+        sed -i "s/max-old-space-size=6096/max-old-space-size=${NODE_MEM}/g" package.json; \
     else \
         NODE_MEM=4096; \
-        echo "Sufficient memory (${TOTAL_MEM_MB}MB), using NODE_OPTIONS=--max-old-space-size=${NODE_MEM}"; \
+        echo "✓ Sufficient memory (${TOTAL_MEM_MB}MB), using default settings"; \
     fi; \
     # Try to build frontend with custom VITE_PREFIX
     BUILD_SUCCESS=false; \
     npm install --legacy-peer-deps && \
     echo "Building frontend with VITE_PREFIX=${VITE_PREFIX}" && \
-    NODE_OPTIONS="--max-old-space-size=${NODE_MEM}" VITE_PREFIX=${VITE_PREFIX} npm run build:vite && \
+    NODE_OPTIONS="--max-old-space-size=${NODE_MEM}" VITE_PREFIX=${VITE_PREFIX} npm run build && \
     BUILD_SUCCESS=true || true; \
     # If build failed (likely QEMU), download pre-built frontend from n9e/fe releases
     if [ "$BUILD_SUCCESS" = "false" ]; then \
