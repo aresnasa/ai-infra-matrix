@@ -10469,30 +10469,65 @@ BUILD_PLATFORMS=""  # 空表示使用本地架构，稍后会自动检测
 CROSS_PLATFORM_BUILD=false  # 标记是否是跨平台构建
 NO_ARCH_TAG=true    # Default: remote tag won't include arch suffix (Docker Hub mode). Use --arch-tag for Harbor mode
 REMAINING_ARGS=()
+PARALLEL_JOBS=4     # 默认并行任务数
 
-for arg in "$@"; do
+# 使用 while 循环和 shift 来正确处理参数，避免 -p 平台和并行参数冲突
+args=("$@")
+i=0
+while [ $i -lt $# ]; do
+    arg="${args[$i]}"
     case "$arg" in
         --force|-f|--no-cache)
             FORCE_BUILD=true
             FORCE_RENDER=true
             FORCE_REBUILD=true
             ;;
-        --parallel|-p)
+        --parallel)
             ENABLE_PARALLEL=true
             ;;
-        --parallel=*|-p=*)
+        --parallel=*)
             ENABLE_PARALLEL=true
             PARALLEL_JOBS="${arg#*=}"
-            ;;
-        -p[0-9]*)
-            ENABLE_PARALLEL=true
-            PARALLEL_JOBS="${arg#-p}"
+            # 验证并行任务数
+            if ! [[ "$PARALLEL_JOBS" =~ ^[0-9]+$ ]] || [ "$PARALLEL_JOBS" -lt 1 ]; then
+                log_error "Invalid parallel jobs: ${PARALLEL_JOBS}. Must be a positive integer."
+                exit 1
+            fi
             ;;
         --platform=*)
             BUILD_PLATFORMS="${arg#*=}"
             ;;
         --platform)
-            # Next arg should be the platform value, handled by shift logic below
+            # 处理 --platform amd64 这种格式
+            i=$((i+1))
+            if [ $i -ge $# ] || [[ "${args[$i]}" == -* ]]; then
+                log_error "Platform specification required: --platform=amd64,arm64 or --platform amd64,arm64"
+                exit 1
+            fi
+            BUILD_PLATFORMS="${args[$i]}"
+            ;;
+        -p|--platform*) 
+            # 处理 -p 和 --platform 的各种格式
+            if [[ "$arg" == --platform* ]]; then
+                BUILD_PLATFORMS="${arg#*=}"
+            elif [[ "$arg" == -p=* ]]; then
+                BUILD_PLATFORMS="${arg#*=}"
+            elif [[ "$arg" == -p* ]]; then
+                # 处理 -p 后跟平台名的情况
+                platform_arg="${arg#-p}"
+                if [ -z "$platform_arg" ]; then
+                    # -p 单独出现，下一个是平台值
+                    i=$((i+1))
+                    if [ $i -ge $# ] || [[ "${args[$i]}" == -* ]]; then
+                        log_error "Platform specification required: -p=amd64,arm64 or -p amd64,arm64"
+                        exit 1
+                    fi
+                    BUILD_PLATFORMS="${args[$i]}"
+                else
+                    # -p 直接跟平台名，如 -pamd64
+                    BUILD_PLATFORMS="$platform_arg"
+                fi
+            fi
             ;;
         --arch-tag)
             # For Harbor: add architecture suffix to remote tag (e.g., v0.3.8-amd64)
@@ -10515,6 +10550,7 @@ for arg in "$@"; do
             REMAINING_ARGS+=("$arg")
             ;;
     esac
+    i=$((i+1))
 done
 
 # Show mode messages after parsing
