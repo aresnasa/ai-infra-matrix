@@ -18,12 +18,22 @@ echo "Source config directory: ${N9E_CONFIGS_SRC}"
 echo "Runtime config directory: ${N9E_CONFIGS}"
 
 # 修复数据库中的 JSON 字段（防止 "unexpected end of JSON input" 错误）
+# 注意：此函数需要 psql 客户端。如果容器内没有 psql，将跳过修复
+# 对于生产环境，建议通过 init 容器或外部脚本修复数据库
 fix_json_fields() {
     local pg_host="${POSTGRES_HOST:-postgres}"
     local pg_port="${POSTGRES_PORT:-5432}"
     local pg_user="${POSTGRES_USER:-postgres}"
     local pg_pass="${POSTGRES_PASSWORD:-}"
     local pg_db="${N9E_DB_NAME:-nightingale}"
+    
+    # 检查 psql 是否可用
+    if ! command -v psql &> /dev/null; then
+        echo "INFO: psql not available in container, skipping JSON field fix"
+        echo "If you see JSON parse errors, run this on the host:"
+        echo "  docker exec ai-infra-postgres psql -U postgres -d nightingale -c \"UPDATE users SET contacts = '{}' WHERE contacts = '' OR contacts IS NULL;\""
+        return 0
+    fi
     
     echo "Checking and fixing JSON fields in database..."
     
