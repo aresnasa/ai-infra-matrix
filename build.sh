@@ -2746,6 +2746,295 @@ clean_ssl_certificates() {
     log_info "✅ SSL certificates cleaned"
 }
 
+# 导入用户自定义 SSL 证书
+# Usage: ./build.sh ssl-import <cert_path> [--key=key_path] [--ca=ca_path] [--chain=chain_path] [--force]
+# Examples:
+#   ./build.sh ssl-import /path/to/certs/                    # 自动检测目录下的证书文件
+#   ./build.sh ssl-import /path/to/server.crt --key=/path/to/server.key
+#   ./build.sh ssl-import /path/to/fullchain.pem --key=/path/to/privkey.pem
+import_custom_ssl_certificates() {
+    local cert_path="${1:-}"
+    local key_path=""
+    local ca_path=""
+    local chain_path=""
+    local force="false"
+    
+    # 解析参数
+    shift 1 2>/dev/null || true
+    for arg in "$@"; do
+        case "$arg" in
+            --key=*) key_path="${arg#--key=}" ;;
+            --ca=*) ca_path="${arg#--ca=}" ;;
+            --chain=*) chain_path="${arg#--chain=}" ;;
+            --force) force="true" ;;
+        esac
+    done
+    
+    # 检查证书路径是否提供
+    if [[ -z "$cert_path" ]]; then
+        log_error "请提供证书路径"
+        log_info ""
+        log_info "用法: ./build.sh ssl-import <证书路径或目录> [选项]"
+        log_info ""
+        log_info "选项:"
+        log_info "  --key=<path>    私钥文件路径 (如果未在目录中自动检测到)"
+        log_info "  --ca=<path>     CA 证书文件路径 (可选)"
+        log_info "  --chain=<path>  证书链文件路径 (可选)"
+        log_info "  --force         覆盖现有证书"
+        log_info ""
+        log_info "示例:"
+        log_info "  # 从目录导入 (自动检测 .crt/.key/.pem 文件)"
+        log_info "  ./build.sh ssl-import /path/to/certs/"
+        log_info ""
+        log_info "  # 指定证书和私钥文件"
+        log_info "  ./build.sh ssl-import /path/to/server.crt --key=/path/to/server.key"
+        log_info ""
+        log_info "  # Let's Encrypt 证书 (fullchain + privkey)"
+        log_info "  ./build.sh ssl-import /etc/letsencrypt/live/domain.com/fullchain.pem \\"
+        log_info "      --key=/etc/letsencrypt/live/domain.com/privkey.pem"
+        log_info ""
+        log_info "支持的证书格式:"
+        log_info "  - PEM 格式 (.pem, .crt, .cer)"
+        log_info "  - 私钥 (.key, .pem)"
+        log_info "  - 证书链 (.chain.crt, fullchain.pem)"
+        return 1
+    fi
+    
+    # 检查路径是否存在
+    if [[ ! -e "$cert_path" ]]; then
+        log_error "路径不存在: $cert_path"
+        return 1
+    fi
+    
+    log_info "🔐 导入用户自定义 SSL 证书..."
+    log_info "   源路径: $cert_path"
+    
+    # 如果是目录，自动检测证书文件
+    if [[ -d "$cert_path" ]]; then
+        log_info "   检测到目录，自动搜索证书文件..."
+        
+        local detected_cert=""
+        local detected_key=""
+        local detected_ca=""
+        local detected_chain=""
+        
+        # 检测证书文件 (优先级: fullchain.pem > server.crt > *.crt)
+        for pattern in "fullchain.pem" "server.crt" "certificate.crt" "cert.crt" "*.crt" "*.pem"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_cert" ]]; then
+                # 验证是否为证书文件 (包含 BEGIN CERTIFICATE)
+                if grep -q "BEGIN CERTIFICATE" "$found" 2>/dev/null; then
+                    detected_cert="$found"
+                    log_info "   检测到证书: $found"
+                fi
+            fi
+        done
+        
+        # 检测私钥文件 (优先级: privkey.pem > server.key > *.key)
+        for pattern in "privkey.pem" "server.key" "private.key" "key.pem" "*.key"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_key" ]]; then
+                # 验证是否为私钥文件 (包含 BEGIN.*PRIVATE KEY)
+                if grep -qE "BEGIN.*PRIVATE KEY" "$found" 2>/dev/null; then
+                    detected_key="$found"
+                    log_info "   检测到私钥: $found"
+                fi
+            fi
+        done
+        
+        # 检测 CA 证书
+        for pattern in "ca.crt" "ca.pem" "ca-bundle.crt" "root.crt"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_ca" ]]; then
+                if grep -q "BEGIN CERTIFICATE" "$found" 2>/dev/null; then
+                    detected_ca="$found"
+                    log_info "   检测到 CA 证书: $found"
+                fi
+            fi
+        done
+        
+        # 检测证书链
+        for pattern in "chain.pem" "*.chain.crt" "intermediate.crt"; do
+            local found=$(find "$cert_path" -maxdepth 1 -name "$pattern" -type f 2>/dev/null | head -1)
+            if [[ -n "$found" ]] && [[ -z "$detected_chain" ]]; then
+                if grep -q "BEGIN CERTIFICATE" "$found" 2>/dev/null; then
+                    detected_chain="$found"
+                    log_info "   检测到证书链: $found"
+                fi
+            fi
+        done
+        
+        # 使用检测到的文件
+        cert_path="${detected_cert:-}"
+        [[ -z "$key_path" ]] && key_path="${detected_key:-}"
+        [[ -z "$ca_path" ]] && ca_path="${detected_ca:-}"
+        [[ -z "$chain_path" ]] && chain_path="${detected_chain:-}"
+    fi
+    
+    # 验证证书文件
+    if [[ -z "$cert_path" ]] || [[ ! -f "$cert_path" ]]; then
+        log_error "未找到有效的证书文件"
+        return 1
+    fi
+    
+    # 验证私钥文件
+    if [[ -z "$key_path" ]] || [[ ! -f "$key_path" ]]; then
+        log_error "未找到有效的私钥文件"
+        log_info "请使用 --key=<path> 指定私钥文件路径"
+        return 1
+    fi
+    
+    # 验证证书格式
+    if ! openssl x509 -in "$cert_path" -noout 2>/dev/null; then
+        log_error "无效的证书文件格式: $cert_path"
+        return 1
+    fi
+    
+    # 验证私钥格式
+    if ! openssl rsa -in "$key_path" -check -noout 2>/dev/null && \
+       ! openssl ec -in "$key_path" -check -noout 2>/dev/null; then
+        log_error "无效的私钥文件格式: $key_path"
+        return 1
+    fi
+    
+    # 验证证书和私钥是否匹配
+    local cert_modulus=$(openssl x509 -in "$cert_path" -noout -modulus 2>/dev/null | md5sum | awk '{print $1}')
+    local key_modulus=$(openssl rsa -in "$key_path" -noout -modulus 2>/dev/null | md5sum | awk '{print $1}')
+    
+    # 如果 RSA 验证失败，尝试 EC 密钥
+    if [[ -z "$key_modulus" ]] || [[ "$key_modulus" == "d41d8cd98f00b204e9800998ecf8427e" ]]; then
+        cert_modulus=$(openssl x509 -in "$cert_path" -noout -pubkey 2>/dev/null | md5sum | awk '{print $1}')
+        key_modulus=$(openssl ec -in "$key_path" -pubout 2>/dev/null | md5sum | awk '{print $1}')
+    fi
+    
+    if [[ "$cert_modulus" != "$key_modulus" ]]; then
+        log_error "证书和私钥不匹配!"
+        log_error "  证书: $cert_path"
+        log_error "  私钥: $key_path"
+        return 1
+    fi
+    
+    log_info "✓ 证书和私钥验证通过"
+    
+    # 获取证书信息
+    local cert_cn=$(openssl x509 -in "$cert_path" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p')
+    local cert_expire=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | cut -d= -f2)
+    local cert_san=$(openssl x509 -in "$cert_path" -noout -ext subjectAltName 2>/dev/null | grep -oE 'DNS:[^,]+|IP Address:[^,]+' | sed 's/DNS://g; s/IP Address://g' | tr '\n' ', ' | sed 's/,$//')
+    
+    log_info "   证书主体 (CN): $cert_cn"
+    [[ -n "$cert_san" ]] && log_info "   备用名称 (SAN): $cert_san"
+    log_info "   过期时间: $cert_expire"
+    
+    # 检查现有证书
+    if [[ -f "$SSL_OUTPUT_DIR/server.crt" ]] && [[ "$force" != "true" ]]; then
+        log_warn "SSL 证书已存在于 $SSL_OUTPUT_DIR"
+        log_info "使用 --force 参数覆盖现有证书"
+        return 0
+    fi
+    
+    # 创建输出目录
+    mkdir -p "$SSL_OUTPUT_DIR"
+    mkdir -p "$SSL_OUTPUT_DIR/ca"
+    
+    # 安全文件名
+    local safe_name=$(echo "${cert_cn:-custom}" | sed 's/\*/_wildcard_/g; s/[^a-zA-Z0-9._-]/_/g')
+    
+    # 获取源文件和目标文件的绝对路径，用于比较
+    local abs_cert_path=$(cd "$(dirname "$cert_path")" && pwd)/$(basename "$cert_path")
+    local abs_key_path=$(cd "$(dirname "$key_path")" && pwd)/$(basename "$key_path")
+    local abs_output_dir=$(cd "$SSL_OUTPUT_DIR" && pwd)
+    
+    # 复制证书文件
+    log_step "复制证书文件到 nginx SSL 目录..."
+    
+    local target_cert="$SSL_OUTPUT_DIR/$safe_name.crt"
+    local target_key="$SSL_OUTPUT_DIR/$safe_name.key"
+    
+    # 检查源和目标是否相同，避免 "identical" 错误
+    if [[ "$abs_cert_path" != "$abs_output_dir/$safe_name.crt" ]]; then
+        cp "$cert_path" "$target_cert"
+        log_info "   复制证书: $target_cert"
+    else
+        log_info "   证书已在目标位置: $target_cert"
+    fi
+    
+    if [[ "$abs_key_path" != "$abs_output_dir/$safe_name.key" ]]; then
+        cp "$key_path" "$target_key"
+        log_info "   复制私钥: $target_key"
+    else
+        log_info "   私钥已在目标位置: $target_key"
+    fi
+    chmod 600 "$target_key"
+    
+    # 复制 CA 证书 (如果提供)
+    if [[ -n "$ca_path" ]] && [[ -f "$ca_path" ]]; then
+        local abs_ca_path=$(cd "$(dirname "$ca_path")" && pwd)/$(basename "$ca_path")
+        if [[ "$abs_ca_path" != "$abs_output_dir/ca/ca.crt" ]]; then
+            cp "$ca_path" "$SSL_OUTPUT_DIR/ca/ca.crt"
+            log_info "   复制 CA 证书: $SSL_OUTPUT_DIR/ca/ca.crt"
+        else
+            log_info "   CA 证书已在目标位置: $SSL_OUTPUT_DIR/ca/ca.crt"
+        fi
+    fi
+    
+    # 复制或生成证书链
+    if [[ -n "$chain_path" ]] && [[ -f "$chain_path" ]]; then
+        local abs_chain_path=$(cd "$(dirname "$chain_path")" && pwd)/$(basename "$chain_path")
+        if [[ "$abs_chain_path" != "$abs_output_dir/$safe_name.chain.crt" ]]; then
+            cp "$chain_path" "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+            log_info "   复制证书链: $SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        else
+            log_info "   证书链已在目标位置: $SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        fi
+    else
+        # 尝试从证书文件中提取证书链 (fullchain.pem 包含多个证书)
+        local cert_count=$(grep -c "BEGIN CERTIFICATE" "$cert_path" 2>/dev/null || echo "1")
+        if [[ "$cert_count" -gt 1 ]]; then
+            log_info "   检测到证书链 ($cert_count 个证书)，保留完整链"
+            [[ "$abs_cert_path" != "$abs_output_dir/$safe_name.chain.crt" ]] && cp "$cert_path" "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        elif [[ -n "$ca_path" ]] && [[ -f "$ca_path" ]]; then
+            cat "$cert_path" "$ca_path" > "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+            log_info "   生成证书链: $SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        else
+            [[ "$abs_cert_path" != "$abs_output_dir/$safe_name.chain.crt" ]] && cp "$cert_path" "$SSL_OUTPUT_DIR/$safe_name.chain.crt"
+        fi
+    fi
+    
+    # 创建通用符号链接
+    ln -sf "$safe_name.crt" "$SSL_OUTPUT_DIR/server.crt"
+    ln -sf "$safe_name.key" "$SSL_OUTPUT_DIR/server.key"
+    ln -sf "$safe_name.chain.crt" "$SSL_OUTPUT_DIR/server.chain.crt"
+    [[ -f "$SSL_OUTPUT_DIR/ca/ca.crt" ]] && cp "$SSL_OUTPUT_DIR/ca/ca.crt" "$SSL_OUTPUT_DIR/ca.crt"
+    
+    log_info "   创建符号链接: server.crt -> $safe_name.crt"
+    log_info "   创建符号链接: server.key -> $safe_name.key"
+    
+    # 更新 .env 配置
+    log_step "更新 .env 配置..."
+    update_env_variable "ENABLE_TLS" "true"
+    update_env_variable "EXTERNAL_SCHEME" "https"
+    update_env_variable "SSL_CERT_DIR" "./src/nginx/ssl"
+    
+    echo ""
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info "✅ 用户自定义 SSL 证书导入成功!"
+    log_info "═══════════════════════════════════════════════════════════════════"
+    log_info ""
+    log_info "📁 证书文件位置 (将打包到 nginx 镜像):"
+    log_info "   服务器证书: $SSL_OUTPUT_DIR/server.crt"
+    log_info "   服务器私钥: $SSL_OUTPUT_DIR/server.key"
+    [[ -f "$SSL_OUTPUT_DIR/ca/ca.crt" ]] && log_info "   CA 证书:     $SSL_OUTPUT_DIR/ca/ca.crt"
+    log_info ""
+    log_info "📋 下一步:"
+    log_info "   1. 重新构建 nginx:  ./build.sh nginx"
+    log_info "   2. 重启服务:        docker compose restart nginx"
+    log_info ""
+    log_info "💡 验证证书:"
+    log_info "   ./build.sh ssl-info"
+    
+    return 0
+}
+
 detect_compose_command() {
     if command -v docker-compose >/dev/null 2>&1; then
         echo "docker-compose"
@@ -9900,6 +10189,9 @@ print_help() {
     echo "                      Issue Let's Encrypt cert via Cloudflare DNS validation"
     echo "                      Credentials: ~/.secrets/cloudflare.ini or CLOUDFLARE_CREDENTIALS"
     echo "                      --wildcard: Include *.<domain> wildcard certificate"
+    echo "  ssl-import <path>   Import custom SSL certificates from specified path"
+    echo "                      Auto-detect certs in directory or specify files directly"
+    echo "                      Options: --key=<path> --ca=<path> --chain=<path> --force"
     echo "  ssl-info [domain]   Display SSL certificate information"
     echo "  ssl-check           Diagnose SSL/domain configuration for cloud deployments"
     echo "                      Detects domain mismatch, private IP issues, etc."
@@ -10042,6 +10334,8 @@ print_help() {
     echo "  $0 ssl-setup-le example.com user@example.com   # Request Let's Encrypt cert"
     echo "  $0 ssl-cloudflare ai-infra-matrix.top          # Cloudflare DNS validation"
     echo "  $0 ssl-cloudflare ai-infra-matrix.top --wildcard  # Wildcard cert (*.<domain>)"
+    echo "  $0 ssl-import /path/to/certs/      # Import custom certs from directory"
+    echo "  $0 ssl-import /path/to/cert.crt --key=/path/to/cert.key  # Import specific files"
     echo "  $0 ssl-info                        # Show certificate details"
     echo "  $0 ssl-check                       # Diagnose SSL/domain config issues"
     echo "  $0 nginx                           # Rebuild nginx with SSL certs bundled"
@@ -10356,6 +10650,13 @@ case "$COMMAND" in
         done
         setup_cloudflare_certificates "$ssl_domain" "$ssl_wildcard" "$ssl_staging" "$FORCE_BUILD"
         ;;
+    ssl-import|ssl-custom|import-ssl)
+        # 导入用户自定义 SSL 证书
+        cert_path="${ARG2:-}"
+        # 收集所有额外参数
+        shift 2 2>/dev/null || true
+        import_custom_ssl_certificates "$cert_path" "$@"
+        ;;
     ssl-info)
         # 显示 SSL 证书信息
         show_ssl_info "${ARG2:-}"
@@ -10405,6 +10706,10 @@ case "$COMMAND" in
             log_info "🔒 SSL mode enabled, setting up certificates first..."
             setup_ssl_certificates "$SSL_DOMAIN" "$FORCE_BUILD"
         fi
+        
+        # 确保 Docker 环境干净（修复网络标签问题等）
+        log_info "🔍 Ensuring clean Docker environment..."
+        ensure_clean_docker_state
         
         # 使用已解析的 BUILD_PLATFORMS（在参数解析阶段已设置）
         _target_platforms="$BUILD_PLATFORMS"
