@@ -562,6 +562,66 @@ is_valid_domain() {
     return 1
 }
 
+# 检测公网域名 (通过 SSL 证书或配置文件推断)
+# 用于设置 PUBLIC_HOST - 用户浏览器访问的公网地址
+# 返回: 检测到的域名，或空字符串
+detect_public_domain() {
+    local domain=""
+    
+    # 方法1: 从 SSL 证书读取域名 (最可靠)
+    local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
+    if [[ -f "$cert_file" ]]; then
+        # 尝试从 SAN (Subject Alternative Names) 获取
+        domain=$(openssl x509 -in "$cert_file" -noout -ext subjectAltName 2>/dev/null | \
+            grep -oE 'DNS:[^,]+' | sed 's/DNS://g' | \
+            grep -v -E '^(localhost|\*\.)' | head -n1)
+        
+        # 如果 SAN 没有，尝试从 CN 获取
+        if [[ -z "$domain" ]]; then
+            domain=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | \
+                sed -n 's/.*CN *= *\([^,]*\).*/\1/p' | \
+                grep -v -E '^(localhost|\*\.)')
+        fi
+        
+        if [[ -n "$domain" ]]; then
+            log_debug "从 SSL 证书检测到域名: $domain"
+        fi
+    fi
+    
+    # 方法2: 从现有 .env 文件读取 PUBLIC_HOST
+    if [[ -z "$domain" ]] && [[ -f "$ENV_FILE" ]]; then
+        local env_domain=$(grep "^PUBLIC_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+        if [[ -n "$env_domain" ]] && [[ ! "$env_domain" =~ \$\{ ]] && is_valid_domain "$env_domain"; then
+            domain="$env_domain"
+            log_debug "从 .env 文件检测到域名: $domain"
+        fi
+    fi
+    
+    # 方法3: 从 nginx 配置中的 server_name 读取
+    if [[ -z "$domain" ]]; then
+        local nginx_conf="./src/nginx/conf.d/server-main.conf"
+        if [[ -f "$nginx_conf" ]]; then
+            domain=$(grep -E "^\s*server_name\s+" "$nginx_conf" 2>/dev/null | \
+                head -n1 | awk '{print $2}' | tr -d ';' | \
+                grep -v -E '^(localhost|_|\$)')
+            if [[ -n "$domain" ]]; then
+                log_debug "从 nginx 配置检测到域名: $domain"
+            fi
+        fi
+    fi
+    
+    # 方法4: 检测 hostname 是否像域名
+    if [[ -z "$domain" ]]; then
+        local hostname_val=$(hostname -f 2>/dev/null || hostname 2>/dev/null)
+        if is_valid_domain "$hostname_val" && [[ "$hostname_val" =~ \.[a-z]{2,}$ ]]; then
+            domain="$hostname_val"
+            log_debug "从主机名检测到域名: $domain"
+        fi
+    fi
+    
+    echo "$domain"
+}
+
 # 检测 SSL 证书域名是否与 EXTERNAL_HOST 匹配
 # 返回: 0 如果匹配，1 如果不匹配或证书不存在
 check_ssl_cert_domain_match() {
