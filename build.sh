@@ -7965,12 +7965,13 @@ build_all_multiplatform() {
         # Switch AppHub if needed
         if [[ "$need_apphub_switch" == "true" ]]; then
             log_info "    🧹 Stopping current AppHub..."
-            docker stop ai-infra-apphub 2>/dev/null || true
-            docker rm -f ai-infra-apphub 2>/dev/null || true
+            $compose_cmd stop apphub 2>/dev/null || docker stop ai-infra-apphub 2>/dev/null || true
+            $compose_cmd rm -f apphub 2>/dev/null || docker rm -f ai-infra-apphub 2>/dev/null || true
             
             local target_apphub_image="ai-infra-apphub:${tag}-${arch_name}"
             log_info "    🚀 Starting AppHub for $arch_name..."
             
+            # Use direct docker run for cross-platform AppHub
             docker run -d \
                 --name ai-infra-apphub \
                 --platform "linux/$arch_name" \
@@ -7978,6 +7979,7 @@ build_all_multiplatform() {
                 -p "${apphub_port}:80" \
                 -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
                 -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                --restart unless-stopped \
                 "$target_apphub_image"
             
             if [[ $? -ne 0 ]]; then
@@ -7987,10 +7989,33 @@ build_all_multiplatform() {
                 log_info "    ⏳ Waiting for AppHub to be ready..."
                 if wait_for_apphub_ready 180; then
                     current_apphub_arch="$arch_name"
-                    log_info "    ✓ AppHub switched to $arch_name"
+                    log_info "    ✓ AppHub switched to $arch_name and ready"
                 else
-                    log_warn "    ⚠️  AppHub not ready, using system fallback"
+                    log_warn "    ⚠️  AppHub not ready after 180 seconds, using system fallback"
                     use_system_fallback=true
+                    
+                    # As a last resort, try to start the native arch AppHub again
+                    log_info "    🔄 Attempting to revert to native AppHub ($current_apphub_arch)..."
+                    docker stop ai-infra-apphub 2>/dev/null || true
+                    docker rm -f ai-infra-apphub 2>/dev/null || true
+                    
+                    # Try to start the original arch AppHub
+                    local original_apphub_image="ai-infra-apphub:${tag}-${current_apphub_arch}"
+                    docker run -d \
+                        --name ai-infra-apphub \
+                        --platform "linux/$current_apphub_arch" \
+                        --network ai-infra-network \
+                        -p "${apphub_port}:80" \
+                        -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                        -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                        --restart unless-stopped \
+                        "$original_apphub_image"
+                    
+                    if wait_for_apphub_ready 180; then
+                        log_info "    ✓ Reverted to native AppHub and ready"
+                    else
+                        log_error "    ❌ Reverted AppHub also not ready, this will cause build failures"
+                    fi
                 fi
             fi
         fi
