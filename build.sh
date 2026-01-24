@@ -7799,7 +7799,10 @@ build_all_multiplatform() {
     # Use docker-compose only if the selected AppHub is native architecture
     if [[ "$apphub_arch_selected" == "$native_arch" ]]; then
         # Use docker-compose for native platform (better integration)
-        $compose_cmd up -d apphub
+        if ! $compose_cmd up -d apphub >/dev/null 2>&1; then
+            log_error "  ❌ Failed to start AppHub via docker-compose"
+            return 1
+        fi
     else
         # Use docker run for cross-platform (via QEMU/Rosetta)
         docker run -d \
