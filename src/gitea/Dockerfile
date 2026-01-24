@@ -1,6 +1,6 @@
 # Minimal wrapper to run Gitea with sensible defaults for the portal
 # Multi-arch supported via upstream image
-ARG GITEA_VERSION=1.25.6
+ARG GITEA_VERSION=1.25.3
 FROM gitea/gitea:${GITEA_VERSION}
 
 # Copy custom entrypoint as root, then run as standard user
