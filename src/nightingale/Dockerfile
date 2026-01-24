@@ -226,9 +226,9 @@ RUN set -eux; \
 
 WORKDIR /app
 
-# Install runtime dependencies (including python3 for script server)
+# Install runtime dependencies (including python3 for script server, postgresql-client for DB init)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates tzdata curl wget python3 \
+    ca-certificates tzdata curl wget python3 postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Set timezone
