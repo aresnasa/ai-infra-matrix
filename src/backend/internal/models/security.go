@@ -45,20 +45,71 @@ func (IPWhitelist) TableName() string {
 	return "ip_whitelists"
 }
 
-// LoginAttempt 登录尝试记录（用于检测暴力破解）
+// LoginAttempt 登录尝试记录（用于检测暴力破解和统计）
 type LoginAttempt struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	IP        string    `gorm:"size:64;index;not null" json:"ip"`
-	Username  string    `gorm:"size:64;index" json:"username"`
-	Success   bool      `gorm:"default:false" json:"success"`
-	UserAgent string    `gorm:"size:256" json:"user_agent,omitempty"`
-	Reason    string    `gorm:"size:128" json:"reason,omitempty"` // 失败原因
-	CreatedAt time.Time `gorm:"index" json:"created_at"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	IP          string    `gorm:"size:64;index;not null" json:"ip"`
+	Username    string    `gorm:"size:64;index" json:"username"`
+	UserID      uint      `gorm:"index" json:"user_id,omitempty"` // 关联用户ID（如果用户存在）
+	Success     bool      `gorm:"default:false;index" json:"success"`
+	UserAgent   string    `gorm:"size:512" json:"user_agent,omitempty"`
+	Reason      string    `gorm:"size:256" json:"reason,omitempty"`            // 失败原因
+	FailureType string    `gorm:"size:32;index" json:"failure_type,omitempty"` // 失败类型: invalid_password, account_locked, ip_blocked, user_not_found
+	Country     string    `gorm:"size:64" json:"country,omitempty"`            // IP 所属国家（可选，需要 GeoIP）
+	City        string    `gorm:"size:64" json:"city,omitempty"`               // IP 所属城市（可选）
+	RequestID   string    `gorm:"size:64" json:"request_id,omitempty"`         // 请求追踪ID
+	CreatedAt   time.Time `gorm:"index" json:"created_at"`
 }
 
 // TableName 指定表名
 func (LoginAttempt) TableName() string {
 	return "login_attempts"
+}
+
+// LoginFailureType 登录失败类型常量
+const (
+	LoginFailureInvalidPassword = "invalid_password" // 密码错误
+	LoginFailureAccountLocked   = "account_locked"   // 账号已锁定
+	LoginFailureIPBlocked       = "ip_blocked"       // IP 已封禁
+	LoginFailureUserNotFound    = "user_not_found"   // 用户不存在
+	LoginFailureAccountDisabled = "account_disabled" // 账号已禁用
+	LoginFailure2FAFailed       = "2fa_failed"       // 二次认证失败
+	LoginFailureLDAPError       = "ldap_error"       // LDAP 认证错误
+)
+
+// IPLoginStats IP 登录统计（用于快速查询）
+type IPLoginStats struct {
+	ID               uint       `gorm:"primaryKey" json:"id"`
+	IP               string     `gorm:"size:64;uniqueIndex;not null" json:"ip"`
+	TotalAttempts    int        `gorm:"default:0" json:"total_attempts"`    // 总尝试次数
+	SuccessCount     int        `gorm:"default:0" json:"success_count"`     // 成功次数
+	FailureCount     int        `gorm:"default:0" json:"failure_count"`     // 失败次数
+	ConsecutiveFails int        `gorm:"default:0" json:"consecutive_fails"` // 连续失败次数
+	LastAttemptAt    *time.Time `json:"last_attempt_at,omitempty"`          // 最后尝试时间
+	LastSuccessAt    *time.Time `json:"last_success_at,omitempty"`          // 最后成功时间
+	LastFailureAt    *time.Time `json:"last_failure_at,omitempty"`          // 最后失败时间
+	BlockedUntil     *time.Time `json:"blocked_until,omitempty"`            // 封禁到期时间
+	BlockCount       int        `gorm:"default:0" json:"block_count"`       // 被封禁次数
+	FirstSeenAt      time.Time  `json:"first_seen_at"`                      // 首次出现时间
+	UniqueUsernames  int        `gorm:"default:0" json:"unique_usernames"`  // 尝试的不同用户名数量
+	Country          string     `gorm:"size:64" json:"country,omitempty"`
+	City             string     `gorm:"size:64" json:"city,omitempty"`
+	RiskScore        int        `gorm:"default:0" json:"risk_score"` // 风险评分 (0-100)
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// TableName 指定表名
+func (IPLoginStats) TableName() string {
+	return "ip_login_stats"
+}
+
+// IsBlocked 检查 IP 是否被封禁
+func (s *IPLoginStats) IsBlocked() bool {
+	if s.BlockedUntil == nil {
+		return false
+	}
+	return time.Now().Before(*s.BlockedUntil)
 }
 
 // TwoFactorConfig 二次认证配置

@@ -41,9 +41,18 @@ type User struct {
 	AllowedIPs        json.RawMessage `json:"allowed_ips,omitempty" gorm:"type:jsonb;default:'[]'"` // IP 白名单 (JSON 数组)
 	LastLogin         *time.Time      `json:"last_login,omitempty"`
 	LastLoginIP       string          `json:"last_login_ip,omitempty" gorm:"size:45"` // 上次登录的 IP 地址
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
-	DeletedAt         gorm.DeletedAt  `json:"-" gorm:"index"`
+
+	// 账号安全相关字段
+	FailedLoginCount   int        `json:"failed_login_count" gorm:"default:0"`           // 连续登录失败次数
+	LockedUntil        *time.Time `json:"locked_until,omitempty"`                        // 账号锁定到期时间
+	LastFailedLoginAt  *time.Time `json:"last_failed_login_at,omitempty"`                // 最后一次登录失败时间
+	LastFailedLoginIP  string     `json:"last_failed_login_ip,omitempty" gorm:"size:45"` // 最后一次登录失败的 IP
+	PasswordChangedAt  *time.Time `json:"password_changed_at,omitempty"`                 // 密码最后修改时间
+	MustChangePassword bool       `json:"must_change_password" gorm:"default:false"`     // 是否必须修改密码
+
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// 关联关系 - 用户拥有的项目
 	Projects []Project `json:"projects,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
@@ -51,6 +60,26 @@ type User struct {
 	// RBAC 关联关系
 	Roles      []Role      `json:"roles,omitempty" gorm:"many2many:user_roles"`
 	UserGroups []UserGroup `json:"user_groups,omitempty" gorm:"many2many:user_group_memberships"`
+}
+
+// IsLocked 检查账号是否被锁定
+func (u *User) IsLocked() bool {
+	if u.LockedUntil == nil {
+		return false
+	}
+	return time.Now().Before(*u.LockedUntil)
+}
+
+// GetLockRemainingSeconds 获取锁定剩余秒数
+func (u *User) GetLockRemainingSeconds() int {
+	if u.LockedUntil == nil {
+		return 0
+	}
+	remaining := time.Until(*u.LockedUntil)
+	if remaining <= 0 {
+		return 0
+	}
+	return int(remaining.Seconds())
 }
 
 // LoginRequest 登录请求结构

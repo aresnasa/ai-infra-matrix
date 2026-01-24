@@ -27,20 +27,22 @@ import (
 )
 
 type UserHandler struct {
-	db             *gorm.DB
-	userService    *services.UserService
-	rbacService    *services.RBACService
-	sessionService *services.SessionService
-	ldapService    *services.LDAPService
+	db                     *gorm.DB
+	userService            *services.UserService
+	rbacService            *services.RBACService
+	sessionService         *services.SessionService
+	ldapService            *services.LDAPService
+	loginProtectionService *services.LoginProtectionService
 }
 
 func NewUserHandler(db *gorm.DB) *UserHandler {
 	return &UserHandler{
-		db:             db,
-		userService:    services.NewUserService(),
-		rbacService:    services.NewRBACService(db),
-		sessionService: services.NewSessionService(),
-		ldapService:    services.NewLDAPService(db),
+		db:                     db,
+		userService:            services.NewUserService(),
+		rbacService:            services.NewRBACService(db),
+		sessionService:         services.NewSessionService(),
+		ldapService:            services.NewLDAPService(db),
+		loginProtectionService: services.NewLoginProtectionService(),
 	}
 }
 
@@ -219,18 +221,49 @@ func (h *UserHandler) Register(c *gin.Context) {
 // @Success 200 {object} models.LoginResponse
 // @Failure 400 {object} map[string]interface{}
 // @Failure 401 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Failure 429 {object} map[string]interface{}
 // @Router /auth/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
 	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
 		logrus.Debug("E2E bypass enabled: hybrid authentication will allow local accounts first")
 	}
+
+	// 获取客户端IP和请求信息
+	clientIP := c.ClientIP()
+	userAgent := c.GetHeader("User-Agent")
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+
 	// 添加调试日志
 	logrus.WithFields(logrus.Fields{
-		"user_agent": c.GetHeader("User-Agent"),
+		"user_agent": userAgent,
 		"origin":     c.GetHeader("Origin"),
 		"method":     c.Request.Method,
 		"path":       c.Request.URL.Path,
+		"client_ip":  clientIP,
+		"request_id": requestID,
 	}).Info("Login request received")
+
+	// 检查IP是否被封禁
+	if isBlocked, reason, remainingSeconds, err := h.loginProtectionService.CheckIPBlocked(clientIP); err != nil {
+		logrus.WithError(err).Error("Failed to check IP block status")
+	} else if isBlocked {
+		logrus.WithFields(logrus.Fields{
+			"ip":                clientIP,
+			"reason":            reason,
+			"remaining_seconds": remainingSeconds,
+		}).Warn("Login blocked due to IP ban")
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":             "IP地址已被封禁",
+			"reason":            reason,
+			"remaining_seconds": remainingSeconds,
+			"retry_after":       remainingSeconds,
+		})
+		return
+	}
 
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -241,6 +274,26 @@ func (h *UserHandler) Login(c *gin.Context) {
 
 	logrus.WithField("username", req.Username).Info("Login attempt for user")
 
+	// 检查账号是否被锁定
+	if isLocked, remainingSeconds, err := h.loginProtectionService.CheckAccountLocked(req.Username); err != nil {
+		logrus.WithError(err).Error("Failed to check account lock status")
+	} else if isLocked {
+		logrus.WithFields(logrus.Fields{
+			"username":          req.Username,
+			"remaining_seconds": remainingSeconds,
+		}).Warn("Login blocked due to account lock")
+
+		// 记录登录尝试（账号已锁定）
+		h.loginProtectionService.RecordLoginAttempt(clientIP, req.Username, userAgent, false, models.LoginFailureAccountLocked, requestID)
+
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":             "账号已被锁定",
+			"remaining_seconds": remainingSeconds,
+			"retry_after":       remainingSeconds,
+		})
+		return
+	}
+
 	var user *models.User
 	var err error
 
@@ -248,6 +301,18 @@ func (h *UserHandler) Login(c *gin.Context) {
 	user, err = h.performHybridAuthentication(&req)
 	if err != nil {
 		logrus.Error("Authentication error:", err)
+
+		// 记录登录失败
+		failureType := models.LoginFailureInvalidPassword
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "不存在") {
+			failureType = models.LoginFailureUserNotFound
+		} else if strings.Contains(err.Error(), "LDAP") || strings.Contains(err.Error(), "ldap") {
+			failureType = models.LoginFailureLDAPError
+		} else if strings.Contains(err.Error(), "disabled") || strings.Contains(err.Error(), "禁用") {
+			failureType = models.LoginFailureAccountDisabled
+		}
+		h.loginProtectionService.RecordLoginAttempt(clientIP, req.Username, userAgent, false, failureType, requestID)
+
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -272,6 +337,9 @@ func (h *UserHandler) Login(c *gin.Context) {
 		})
 		return
 	}
+
+	// 记录登录成功
+	h.loginProtectionService.RecordLoginAttempt(clientIP, req.Username, userAgent, true, "", requestID)
 
 	// 没有启用2FA，直接完成登录
 	h.completeLogin(c, user)

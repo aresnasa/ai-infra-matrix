@@ -1378,6 +1378,18 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// 安全审计日志
 		security.GET("/audit-logs", securityHandler.ListAuditLogs)
+
+		// 登录保护管理
+		security.GET("/locked-accounts", securityHandler.GetLockedAccounts)
+		security.POST("/accounts/:username/unlock", securityHandler.UnlockAccount)
+		security.GET("/blocked-ips", securityHandler.GetBlockedIPsFromProtection)
+		security.POST("/block-ip", securityHandler.BlockIPManually)
+		security.POST("/ips/:ip/unblock", securityHandler.UnblockIP)
+		security.GET("/login-attempts", securityHandler.GetLoginAttempts)
+		security.GET("/ip-stats", securityHandler.GetIPLoginStats)
+		security.GET("/ip-stats/:ip", securityHandler.GetIPStatsDetail)
+		security.GET("/login-stats/summary", securityHandler.GetLoginStatsSummary)
+		security.POST("/login-records/cleanup", securityHandler.CleanupLoginRecords)
 	}
 
 	// 基础设施审计日志路由（需要认证）
