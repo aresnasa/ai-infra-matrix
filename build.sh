@@ -1955,6 +1955,16 @@ generate_production_env() {
     echo "    EXTERNAL_PORT=80      (HTTP redirect port)"
     echo "    HTTPS_PORT=443        (HTTPS main service port)"
     echo "    EXTERNAL_SCHEME=https"
+    if [[ -n "$detected_public_host" ]]; then
+        echo "    PUBLIC_HOST=$detected_public_host  (for iframe embedding & browser redirects)"
+    else
+        if is_private_ip "$detected_external_host"; then
+            log_warn ""
+            log_warn "⚠️  PUBLIC_HOST not set (EXTERNAL_HOST is private IP)"
+            log_warn "⚠️  For public cloud environments, set PUBLIC_HOST in .env:"
+            log_warn "    PUBLIC_HOST=your-domain.com"
+        fi
+    fi
     log_info ""
     log_info "📋 Port Mapping (for Cloudflare Full mode):"
     echo "    外部 80  → 容器 80  (HTTP → HTTPS 重定向)"
