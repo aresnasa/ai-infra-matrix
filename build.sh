@@ -5337,16 +5337,29 @@ pull_common_images() {
         total_count=$((total_count + 1))
         log_info "[$total_count/${#COMMON_IMAGES[@]}] Pulling: $image"
         
-        # Check if image already exists locally
+        # Check if image already exists locally with correct architecture
         if docker image inspect "$image" &>/dev/null; then
-            log_info "  ✓ Already exists: $image"
-            success_count=$((success_count + 1))
-            continue
+            local existing_arch=$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null)
+            local expected_arch="${DOCKER_HOST_PLATFORM##*/}"
+            if [[ "$existing_arch" == "$expected_arch" ]]; then
+                log_info "  ✓ Already exists: $image (arch: $existing_arch)"
+                success_count=$((success_count + 1))
+                continue
+            else
+                log_warn "  ⚠ Image exists but arch mismatch: $existing_arch (expected: $expected_arch), re-pulling..."
+                docker rmi "$image" >/dev/null 2>&1 || true
+            fi
         fi
         
         if pull_image_with_retry "$image" "$max_retries"; then
-            log_info "  ✓ Pulled: $image"
-            success_count=$((success_count + 1))
+            # Verify the image was actually pulled
+            if docker image inspect "$image" &>/dev/null; then
+                log_info "  ✓ Pulled and verified: $image"
+                success_count=$((success_count + 1))
+            else
+                log_error "  ✗ Pull reported success but image not found: $image"
+                failed_images+=("$image")
+            fi
         else
             log_warn "  ✗ Failed: $image"
             failed_images+=("$image")
