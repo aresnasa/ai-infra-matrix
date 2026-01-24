@@ -158,6 +158,11 @@ func main() {
 		logrus.Fatal("Failed to migrate database:", err)
 	}
 
+	// 自动迁移敏感数据（加密未加密的凭据）
+	if err := database.MigrateSensitiveData(); err != nil {
+		logrus.WithError(err).Warn("Failed to migrate sensitive data, continuing...")
+	}
+
 	// 初始化默认数据
 	if err := database.SeedDefaultData(); err != nil {
 		logrus.WithError(err).Warn("Failed to seed default data, continuing...")
