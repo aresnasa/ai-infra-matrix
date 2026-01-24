@@ -27,20 +27,38 @@ fix_json_fields() {
     
     echo "Checking and fixing JSON fields in database..."
     
-    # 等待 PostgreSQL 可用
+    # 等待 PostgreSQL 服务可用（先连接到 postgres 数据库）
     local max_retries=30
     local retry=0
+    echo "Waiting for PostgreSQL service to be ready..."
     while [ $retry -lt $max_retries ]; do
-        if PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" -c '\q' 2>/dev/null; then
+        if PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "postgres" -c '\q' 2>/dev/null; then
+            echo "PostgreSQL service is ready"
             break
         fi
         retry=$((retry + 1))
-        echo "Waiting for PostgreSQL... ($retry/$max_retries)"
+        echo "Waiting for PostgreSQL service... ($retry/$max_retries)"
         sleep 2
     done
     
     if [ $retry -eq $max_retries ]; then
-        echo "WARNING: PostgreSQL not available, skipping JSON field fix"
+        echo "WARNING: PostgreSQL service not available, skipping JSON field fix"
+        return 0
+    fi
+    
+    # 检查 nightingale 数据库是否存在
+    local db_exists=$(PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "postgres" -tAc "SELECT 1 FROM pg_database WHERE datname='${pg_db}'" 2>/dev/null)
+    
+    if [ "$db_exists" != "1" ]; then
+        echo "Database '${pg_db}' does not exist yet, skipping JSON field fix (will be created by n9e)"
+        return 0
+    fi
+    
+    # 检查 users 表是否存在
+    local table_exists=$(PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" -tAc "SELECT 1 FROM information_schema.tables WHERE table_name='users'" 2>/dev/null)
+    
+    if [ "$table_exists" != "1" ]; then
+        echo "Table 'users' does not exist yet, skipping JSON field fix (will be created by n9e)"
         return 0
     fi
     
