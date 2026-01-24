@@ -528,7 +528,12 @@ c.JupyterHub.extra_handlers = [
 
 # 构建动态 CSP frame-ancestors 列表
 def build_csp_frame_ancestors():
-    """根据环境变量构建 CSP frame-ancestors 策略"""
+    """根据环境变量构建 CSP frame-ancestors 策略
+    
+    支持公有云环境：
+    - PUBLIC_HOST: 公网域名或 IP（如 ai-infra-matrix.top）
+    - EXTERNAL_HOST: 内网 IP（如 172.19.53.9）
+    """
     ancestors = ["'self'"]
     
     # 添加 HTTP 源
@@ -547,6 +552,19 @@ def build_csp_frame_ancestors():
             f"https://{EXTERNAL_HOST}:{HTTPS_PORT}" if ':' not in EXTERNAL_HOST else f"https://{EXTERNAL_HOST.split(':')[0]}:{HTTPS_PORT}",
         ]
         ancestors.extend(https_origins)
+    
+    # 关键：添加 PUBLIC_HOST（公网域名）以支持 iframe 嵌入
+    if PUBLIC_HOST:
+        public_host_clean = PUBLIC_HOST.split(':')[0]  # 移除端口号（如果有）
+        # 添加 HTTP 和 HTTPS 版本（使用标准端口，不带端口号）
+        ancestors.append(f"http://{public_host_clean}")
+        ancestors.append(f"https://{public_host_clean}")
+        # 也添加带非标准端口的版本
+        if EXTERNAL_PORT and EXTERNAL_PORT != '80':
+            ancestors.append(f"http://{public_host_clean}:{EXTERNAL_PORT}")
+        if HTTPS_PORT and HTTPS_PORT != '443':
+            ancestors.append(f"https://{public_host_clean}:{HTTPS_PORT}")
+        print(f"✅ PUBLIC_HOST '{PUBLIC_HOST}' 已添加到 CSP frame-ancestors")
     
     return " ".join(ancestors) + ";"
 
