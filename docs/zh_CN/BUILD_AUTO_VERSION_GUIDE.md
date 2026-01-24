@@ -46,7 +46,7 @@ node: "22-alpine"
 python: "3.14-alpine"
 
 # 应用程序
-gitea: "1.25.3"
+gitea: "1.25.6"
 nginx: "stable-alpine-perl"
 seaweedfs: "latest"
 ```
@@ -356,7 +356,7 @@ postgres: "15.5-alpine"    # 推荐
 # postgres: "latest"       # 不推荐
 
 # 应用 - 指定完整版本
-gitea: "1.25.3"            # 推荐
+gitea: "1.25.6"            # 推荐
 # gitea: "1.25"            # 可接受
 # gitea: "latest"          # 不推荐
 ```

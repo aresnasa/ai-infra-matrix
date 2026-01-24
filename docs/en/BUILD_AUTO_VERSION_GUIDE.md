@@ -48,7 +48,7 @@ node: "22-alpine"
 python: "3.14-alpine"
 
 # Applications
-gitea: "1.25.3"
+gitea: "1.25.6"
 nginx: "stable-alpine-perl"
 seaweedfs: "latest"
 ```
@@ -224,7 +224,7 @@ postgres: "15.5-alpine"    # Recommended
 # postgres: "latest"       # Not recommended
 
 # Applications - specify full version
-gitea: "1.25.3"            # Recommended
+gitea: "1.25.6"            # Recommended
 # gitea: "1.25"            # Acceptable
 # gitea: "latest"          # Not recommended
 ```
