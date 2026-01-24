@@ -7787,7 +7787,13 @@ build_all_multiplatform() {
     
     # Start AppHub
     log_info "  🚀 Starting AppHub..."
-    docker network create ai-infra-network 2>/dev/null || true
+    # 创建网络时添加 compose 标签，避免后续 docker compose 报错
+    if ! docker network inspect ai-infra-network >/dev/null 2>&1; then
+        docker network create \
+            --label "com.docker.compose.network=ai-infra-network" \
+            --label "com.docker.compose.project=ai-infra-matrix" \
+            ai-infra-network 2>/dev/null || true
+    fi
     
     # Determine if we should use docker-compose or docker run
     # Use docker-compose only if the selected AppHub is native architecture
