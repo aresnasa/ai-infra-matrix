@@ -1223,6 +1223,10 @@ const SecuritySettings = () => {
           onChange={(key) => {
             if (key === 'audit') {
               fetchAuditLogs(1, 10);
+            } else if (key === 'suspicious') {
+              fetchSuspiciousIPs();
+              fetchLoginStats();
+              fetchLockedAccounts();
             }
           }}
         />
