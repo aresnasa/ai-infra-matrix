@@ -110,6 +110,14 @@ const SecuritySettings = () => {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditPagination, setAuditPagination] = useState({ current: 1, pageSize: 10, total: 0 });
 
+  // 疑似攻击IP状态
+  const [suspiciousIPs, setSuspiciousIPs] = useState([]);
+  const [suspiciousIPsLoading, setSuspiciousIPsLoading] = useState(false);
+  const [suspiciousIPsPagination, setSuspiciousIPsPagination] = useState({ current: 1, pageSize: 10, total: 0 });
+  const [loginStats, setLoginStats] = useState(null);
+  const [lockedAccounts, setLockedAccounts] = useState([]);
+  const [lockedAccountsLoading, setLockedAccountsLoading] = useState(false);
+
   // 加载数据
   useEffect(() => {
     fetchBlacklist();
