@@ -136,6 +136,7 @@ export default {
     aiAssistant: 'AI Assistant',
     jupyterhubManagement: 'JupyterHub Management',
     objectStorageManagement: 'Object Storage',
+    securityManagement: 'Security Management',
     // User menu
     profile: 'Profile',
     logout: 'Logout',

@@ -136,6 +136,7 @@ export default {
     aiAssistant: 'AI助手管理',
     jupyterhubManagement: 'JupyterHub管理',
     objectStorageManagement: '对象存储管理',
+    securityManagement: '安全管理',
     // 用户菜单
     profile: '个人信息',
     logout: '退出登录',

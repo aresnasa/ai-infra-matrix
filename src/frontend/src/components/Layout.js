@@ -195,6 +195,12 @@ const Layout = ({ children, user, onLogout }) => {
       label: t('nav.objectStorageManagement'),
       onClick: () => navigate('/admin/object-storage'),
     },
+    {
+      key: '/admin/security',
+      icon: <SafetyOutlined />,
+      label: t('nav.securityManagement'),
+      onClick: () => navigate('/admin/security'),
+    },
   ];
 
   const handleMenuClick = ({ key }) => {
