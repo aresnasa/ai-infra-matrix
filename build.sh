@@ -7813,6 +7813,18 @@ build_all_multiplatform() {
     
     # Start AppHub
     log_info "  🚀 Starting AppHub..."
+    
+    # Tag the arch-specific image to the name expected by docker-compose
+    # docker-compose.yml uses: ai-infra-apphub:v0.3.8 (without arch suffix)
+    # But we built: ai-infra-apphub:v0.3.8-arm64 (with arch suffix)
+    local compose_expected_image="${PRIVATE_REGISTRY:-}ai-infra-apphub:${tag}"
+    if [[ "$apphub_image_to_use" != "$compose_expected_image" ]]; then
+        log_info "  🏷️  Tagging $apphub_image_to_use -> $compose_expected_image"
+        if ! docker tag "$apphub_image_to_use" "$compose_expected_image" 2>/dev/null; then
+            log_warn "  ⚠️  Failed to tag image, docker-compose may try to build"
+        fi
+    fi
+    
     # 创建网络时添加 compose 标签，避免后续 docker compose 报错
     if ! docker network inspect ai-infra-network >/dev/null 2>&1; then
         docker network create \
