@@ -1078,6 +1078,123 @@ const SecuritySettings = () => {
         </Card>
       ),
     },
+    {
+      key: 'suspicious',
+      label: (
+        <span>
+          <WarningOutlined /> {t('security.suspiciousIPs') || '疑似攻击IP'}
+        </span>
+      ),
+      children: (
+        <Card bordered={false}>
+          <Alert
+            message={t('security.suspiciousIPsDesc') || '展示风险评分较高的IP，可能存在暴力破解或恶意登录行为'}
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          
+          {/* 登录统计概览 */}
+          {loginStats && (
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.totalAttempts24h') || '24h登录尝试'} 
+                    value={loginStats.total_attempts || 0}
+                    prefix={<HistoryOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.failedLogins') || '失败次数'} 
+                    value={loginStats.failed_logins || 0}
+                    valueStyle={{ color: '#ff4d4f' }}
+                    prefix={<WarningOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.lockedAccounts') || '锁定账号'} 
+                    value={loginStats.locked_accounts || 0}
+                    valueStyle={{ color: '#faad14' }}
+                    prefix={<LockOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.blockedIPs') || '封禁IP'} 
+                    value={(loginStats.blocked_ips || 0) + (loginStats.auto_blocked_ips || 0)}
+                    valueStyle={{ color: '#ff4d4f' }}
+                    prefix={<StopOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.highRiskIPs') || '高风险IP'} 
+                    value={loginStats.high_risk_ips || 0}
+                    valueStyle={{ color: '#ff4d4f' }}
+                    prefix={<WarningOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} sm={8} md={6}>
+                <Card size="small">
+                  <Statistic 
+                    title={t('security.uniqueIPs') || '独立IP数'} 
+                    value={loginStats.unique_ips || 0}
+                    prefix={<GlobalOutlined />}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          )}
+
+          <Space style={{ marginBottom: 16 }}>
+            <Button 
+              icon={<ReloadOutlined />} 
+              onClick={() => {
+                fetchSuspiciousIPs();
+                fetchLoginStats();
+                fetchLockedAccounts();
+              }}
+            >
+              {t('common.refresh') || '刷新'}
+            </Button>
+          </Space>
+
+          <Divider orientation="left">{t('security.suspiciousIPList') || '疑似攻击IP列表'}</Divider>
+          <Table
+            loading={suspiciousIPsLoading}
+            dataSource={suspiciousIPs}
+            columns={suspiciousIPsColumns}
+            rowKey="id"
+            pagination={{
+              ...suspiciousIPsPagination,
+              onChange: (page, pageSize) => fetchSuspiciousIPs(page, pageSize),
+            }}
+          />
+
+          <Divider orientation="left">{t('security.lockedAccountsList') || '已锁定账号'}</Divider>
+          <Table
+            loading={lockedAccountsLoading}
+            dataSource={lockedAccounts}
+            columns={lockedAccountsColumns}
+            rowKey="id"
+            pagination={{ pageSize: 5 }}
+            locale={{ emptyText: <Empty description={t('security.noLockedAccounts') || '暂无锁定账号'} /> }}
+          />
+        </Card>
+      ),
+    },
   ];
 
   return (
