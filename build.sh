@@ -7834,7 +7834,8 @@ build_all_multiplatform() {
     fi
     
     # Determine if we should use docker-compose or docker run
-    # Use docker-compose only if the selected AppHub is native architecture
+    # Use docker-compose for native platform (better integration)
+    # But only if the architecture matches - otherwise use docker run with --platform
     if [[ "$apphub_arch_selected" == "$native_arch" ]]; then
         # Use docker-compose for native platform (better integration)
         # --no-build: Use pre-built image, don't try to build
@@ -7843,7 +7844,22 @@ build_all_multiplatform() {
         if ! compose_output=$($compose_cmd up -d --no-build apphub 2>&1); then
             log_error "  ❌ Failed to start AppHub via docker-compose"
             log_error "  Error: $compose_output"
-            return 1
+            # Fallback to direct docker run
+            log_info "  🔄 Fallback: Trying direct docker run..."
+            docker run -d \
+                --name ai-infra-apphub \
+                --platform "$apphub_platform" \
+                --network ai-infra-network \
+                -p "${apphub_port}:80" \
+                -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
+                -v "${SCRIPT_DIR}/src:/app/src:ro" \
+                --restart unless-stopped \
+                "$apphub_image_to_use"
+            
+            if [[ $? -ne 0 ]]; then
+                log_error "  ❌ Failed to start AppHub with fallback method"
+                return 1
+            fi
         fi
         # Only show output if it contains errors or warnings
         if echo "$compose_output" | grep -qiE "error|fail|warn"; then
@@ -7851,6 +7867,10 @@ build_all_multiplatform() {
         fi
     else
         # Use docker run for cross-platform (via QEMU/Rosetta)
+        # Ensure the container is removed if it already exists
+        docker stop ai-infra-apphub 2>/dev/null || true
+        docker rm ai-infra-apphub 2>/dev/null || true
+        
         docker run -d \
             --name ai-infra-apphub \
             --platform "$apphub_platform" \
@@ -7858,6 +7878,7 @@ build_all_multiplatform() {
             -p "${apphub_port}:80" \
             -v "${SCRIPT_DIR}/third_party:/app/third_party:ro" \
             -v "${SCRIPT_DIR}/src:/app/src:ro" \
+            --restart unless-stopped \
             "$apphub_image_to_use"
         
         if [[ $? -ne 0 ]]; then
