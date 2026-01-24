@@ -42,7 +42,7 @@ python: "3.14"
 python-alpine: "3.14-alpine"
 
 # 应用镜像
-gitea: "1.25.6"
+gitea: "1.25.3"
 jupyter-base-notebook: "latest"
 
 # 操作系统镜像

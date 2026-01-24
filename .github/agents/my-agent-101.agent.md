@@ -156,7 +156,7 @@ function ai_cd {
     - 这个流程确保 Dockerfile 模板被正确渲染，使用新的版本号
     
     **常见版本号配置：**
-    - GITEA_VERSION=1.25.6 → 自动使用 gitea/gitea:1.25.6
+    - GITEA_VERSION=1.25.3 → 自动使用 gitea/gitea:1.25.3
     - GITEA_IMAGE 可不设置，系统会从 GITEA_VERSION 自动生成
     - 其他组件版本号遵循同样的模式
     

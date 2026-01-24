@@ -2070,7 +2070,7 @@ COMMON_IMAGES=(
     "chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-3.80}"
     "oceanbase/oceanbase-ce:${OCEANBASE_VERSION:-4.3.5-lts}"
     "victoriametrics/victoria-metrics:${VICTORIAMETRICS_VERSION:-v1.115.0}"
-    "${GITEA_IMAGE:-gitea/gitea:${GITEA_VERSION:-1.25.6}}"
+    "${GITEA_IMAGE:-gitea/gitea:${GITEA_VERSION:-1.25.3}}"
 )
 
 # Initialize SAFELINE_IMAGES array for SafeLine WAF
@@ -4030,7 +4030,7 @@ TEMPLATE_VARIABLES=(
     "NODE_ALPINE_IMAGE"           # Full node alpine image name (e.g., node:22-alpine)
     "NODE_BOOKWORM_IMAGE"         # Full node bookworm image name (e.g., node:22-bookworm)
     "JUPYTER_BASE_IMAGE"          # Full jupyter base image name (e.g., jupyter/base-notebook:latest)
-    "GITEA_IMAGE"                 # Full gitea image name (e.g., gitea/gitea:1.25.6)
+    "GITEA_IMAGE"                 # Full gitea image name (e.g., gitea/gitea:1.25.3)
     
     # ===========================================
     # Component/Application versions (Build-time)
@@ -4041,7 +4041,7 @@ TEMPLATE_VARIABLES=(
     "CATEGRAF_VERSION"    # Categraf version (e.g., 0.4.6)
     "NODE_EXPORTER_VERSION" # Node Exporter version (e.g., v1.8.2)
     "SINGULARITY_VERSION" # Singularity version
-    "GITEA_VERSION"       # Gitea version (e.g., 1.25.6)
+    "GITEA_VERSION"       # Gitea version (e.g., 1.25.3)
     "JUPYTERHUB_VERSION"  # JupyterHub version (e.g., 5.3.*)
     "PIP_VERSION"         # pip version (e.g., 24.2)
     "N9E_FE_VERSION"      # Nightingale frontend version (e.g., v7.7.2, empty for auto-detect)
