@@ -42,6 +42,10 @@ except Exception:  # 运行在非Hub环境时兜底
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# 减少 urllib3 和 docker 相关的 DEBUG 日志噪音
+logging.getLogger('urllib3').setLevel(logging.INFO)
+logging.getLogger('docker').setLevel(logging.INFO)
+
 print("🚀 JupyterHub后端集成配置加载中...")
 
 # 环境配置
