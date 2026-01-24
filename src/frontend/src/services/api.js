@@ -987,6 +987,18 @@ export const securityAPI = {
 
   // 安全审计日志
   getAuditLogs: (params) => api.get('/security/audit-logs', { params }),
+
+  // 登录保护管理
+  getLockedAccounts: (params) => api.get('/security/locked-accounts', { params }),
+  unlockAccount: (username) => api.post(`/security/accounts/${username}/unlock`),
+  getBlockedIPs: (params) => api.get('/security/blocked-ips', { params }),
+  blockIP: (data) => api.post('/security/block-ip', data),
+  unblockIP: (ip) => api.post(`/security/ips/${ip}/unblock`),
+  getLoginAttempts: (params) => api.get('/security/login-attempts', { params }),
+  getIPStats: (params) => api.get('/security/ip-stats', { params }),
+  getIPStatsDetail: (ip) => api.get(`/security/ip-stats/${ip}`),
+  getLoginStatsSummary: (params) => api.get('/security/login-stats/summary', { params }),
+  cleanupLoginRecords: (data) => api.post('/security/login-records/cleanup', data),
 };
 
 // 权限审批 API
