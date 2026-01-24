@@ -1724,6 +1724,20 @@ generate_production_env() {
         log_info "✅ Detected external IP: $detected_external_host"
     fi
     
+    # Detect public domain (for iframe embedding and browser redirects)
+    log_info "Detecting public domain..."
+    local detected_public_host=$(detect_public_domain)
+    if [[ -n "$detected_public_host" ]]; then
+        log_info "✅ Detected public domain: $detected_public_host"
+    else
+        # 如果 EXTERNAL_HOST 是私有 IP，提示设置 PUBLIC_HOST
+        if is_private_ip "$detected_external_host"; then
+            log_warn "⚠️  EXTERNAL_HOST is a private IP ($detected_external_host)"
+            log_warn "⚠️  For public cloud, set PUBLIC_HOST to your domain or public IP"
+            log_info "💡 Example: PUBLIC_HOST=ai-infra-matrix.top"
+        fi
+    fi
+    
     # Check if target file exists
     if [[ -f "$env_file" ]] && [[ "$force" != "true" ]]; then
         log_warn "Target file already exists: $env_file"
