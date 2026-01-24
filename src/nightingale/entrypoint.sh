@@ -44,12 +44,45 @@ fix_json_fields() {
         return 0
     fi
     
-    # 修复 users 表的 contacts 字段（将 NULL 或空字符串转换为空 JSON 对象）
+    # 修复 users 表的 contacts 字段
+    # 1. 将 NULL 或空字符串转换为空 JSON 对象
+    # 2. 修复无效的 JSON（不是以 { 或 [ 开头的，或者不是有效 JSON 的）
+    echo "Fixing users.contacts field..."
     PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" <<-EOSQL 2>/dev/null || true
-        UPDATE users SET contacts = '{}' WHERE contacts IS NULL OR contacts = '';
+        -- 修复 NULL 或空字符串
+        UPDATE users SET contacts = '{}' WHERE contacts IS NULL OR contacts = '' OR TRIM(contacts) = '';
+        
+        -- 修复不是有效 JSON 对象/数组的值（不以 { 或 [ 开头）
+        UPDATE users SET contacts = '{}' WHERE contacts IS NOT NULL AND contacts != '' 
+            AND LEFT(TRIM(contacts), 1) NOT IN ('{', '[');
+        
+        -- 尝试验证 JSON 格式，如果无效则重置为 {}
+        UPDATE users SET contacts = '{}' 
+        WHERE contacts IS NOT NULL AND contacts != '' 
+            AND NOT (contacts::jsonb IS NOT NULL) IS NOT FALSE;
+EOSQL
+
+    # 修复其他可能有 JSON 字段的表
+    echo "Fixing other JSON fields..."
+    PGPASSWORD="${pg_pass}" psql -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" <<-EOSQL 2>/dev/null || true
+        -- 修复 alert_mutes 表的 tags 字段
+        UPDATE alert_mutes SET tags = '[]' WHERE tags IS NULL OR tags = '' OR TRIM(tags) = '';
+        
+        -- 修复 alert_subscribes 表的相关字段
+        UPDATE alert_subscribes SET tags = '[]' WHERE tags IS NULL OR tags = '' OR TRIM(tags) = '';
+        UPDATE alert_subscribes SET user_ids = '[]' WHERE user_ids IS NULL OR user_ids = '' OR TRIM(user_ids) = '';
+        UPDATE alert_subscribes SET webhooks = '[]' WHERE webhooks IS NULL OR webhooks = '' OR TRIM(webhooks) = '';
+        
+        -- 修复 alert_rules 表的相关字段
+        UPDATE alert_rules SET notify_channels = '[]' WHERE notify_channels IS NULL OR notify_channels = '' OR TRIM(notify_channels) = '';
+        UPDATE alert_rules SET notify_groups = '[]' WHERE notify_groups IS NULL OR notify_groups = '' OR TRIM(notify_groups) = '';
+        UPDATE alert_rules SET callbacks = '[]' WHERE callbacks IS NULL OR callbacks = '' OR TRIM(callbacks) = '';
+        UPDATE alert_rules SET append_tags = '[]' WHERE append_tags IS NULL OR append_tags = '' OR TRIM(append_tags) = '';
+        UPDATE alert_rules SET annotations = '{}' WHERE annotations IS NULL OR annotations = '' OR TRIM(annotations) = '';
+        UPDATE alert_rules SET extra_config = '{}' WHERE extra_config IS NULL OR extra_config = '' OR TRIM(extra_config) = '';
 EOSQL
     
-    echo "JSON fields check complete"
+    echo "JSON fields fix complete"
 }
 
 # 复制配置文件到可写目录并替换环境变量
