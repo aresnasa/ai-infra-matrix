@@ -1848,11 +1848,13 @@ generate_production_env() {
         -v test_ssh="$test_ssh_password" \
         -v test_root="$test_root_password" \
         -v ext_host="$detected_external_host" \
+        -v pub_host="$detected_public_host" \
         '
         /^EXTERNAL_HOST=/ { print "EXTERNAL_HOST=" ext_host; next }
         /^EXTERNAL_PORT=/ { print "EXTERNAL_PORT=80"; next }
         /^HTTPS_PORT=/ { print "HTTPS_PORT=443"; next }
         /^EXTERNAL_SCHEME=/ { print "EXTERNAL_SCHEME=https"; next }
+        /^PUBLIC_HOST=/ { if (pub_host != "") print "PUBLIC_HOST=" pub_host; else print; next }
         /^POSTGRES_PASSWORD=/ { print "POSTGRES_PASSWORD=" pg_pass; next }
         /^JUPYTERHUB_DB_PASSWORD=/ { print "JUPYTERHUB_DB_PASSWORD=" hub_db_pass; next }
         /^MYSQL_ROOT_PASSWORD=/ { print "MYSQL_ROOT_PASSWORD=" mysql_root; next }
