@@ -8,6 +8,16 @@
 
 > Enterprise-grade AI Infrastructure Platform - Integrating HPC Scheduling, Machine Learning Environments, Code Collaboration and Unified Monitoring
 
+---
+
+## 🚀 Live Demo
+
+🌐 **Demo URL**: [https://www.ai-infra-matrix.top](https://www.ai-infra-matrix.top)
+
+Welcome developers to try out the platform features! The demo environment is periodically reset, please do not store important data.
+
+---
+
 ## 🌟 Overview
 
 AI Infrastructure Matrix is an enterprise-grade HPC and AI infrastructure platform, providing Slurm cluster management, JupyterHub machine learning environments, Gitea code repositories, object storage, and Nightingale monitoring systems. Through containerized architecture and a unified web management interface, it delivers an out-of-the-box AI/HPC development and deployment solution.

@@ -8,6 +8,16 @@
 
 > 企业级AI基础设施平台 - 集成HPC调度、机器学习环境、代码协作与统一监控
 
+---
+
+## 🚀 在线试用
+
+🌐 **试用地址**: [https://www.ai-infra-matrix.top](https://www.ai-infra-matrix.top)
+
+欢迎开发者体验平台功能！试用环境定期重置，请勿存储重要数据。
+
+---
+
 ## 🌟 项目简介
 
 AI Infrastructure Matrix 是一个企业级HPC与AI基础设施平台，提供Slurm集群管理、JupyterHub机器学习环境、Gitea代码仓库、对象存储以及Nightingale监控系统。通过容器化架构和统一的Web管理界面，实现开箱即用的AI/HPC开发和部署解决方案。
