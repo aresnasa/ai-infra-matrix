@@ -10552,27 +10552,21 @@ while [ $i -lt $# ]; do
             fi
             BUILD_PLATFORMS="${args[$i]}"
             ;;
-        -p|--platform*) 
-            # 处理 -p 和 --platform 的各种格式
-            if [[ "$arg" == --platform* ]]; then
+        -p*)
+            # 处理 -p 参数的各种格式 (-p=xxx, -pxxx, -p xxx)
+            if [[ "$arg" == -p=* ]]; then
                 BUILD_PLATFORMS="${arg#*=}"
-            elif [[ "$arg" == -p=* ]]; then
-                BUILD_PLATFORMS="${arg#*=}"
-            elif [[ "$arg" == -p* ]]; then
-                # 处理 -p 后跟平台名的情况
-                platform_arg="${arg#-p}"
-                if [ -z "$platform_arg" ]; then
-                    # -p 单独出现，下一个是平台值
-                    i=$((i+1))
-                    if [ $i -ge $# ] || [[ "${args[$i]}" == -* ]]; then
-                        log_error "Platform specification required: -p=amd64,arm64 or -p amd64,arm64"
-                        exit 1
-                    fi
-                    BUILD_PLATFORMS="${args[$i]}"
-                else
-                    # -p 直接跟平台名，如 -pamd64
-                    BUILD_PLATFORMS="$platform_arg"
+            elif [[ "$arg" == -p?* ]]; then
+                # -p后面直接跟值，如 -pamd64
+                BUILD_PLATFORMS="${arg#-p}"
+            else
+                # -p 单独出现，下一个是平台值
+                i=$((i+1))
+                if [ $i -ge $# ] || [[ "${args[$i]}" == -* ]]; then
+                    log_error "Platform specification required: -p=amd64,arm64, -p amd64,arm64 or -pamd64,arm64"
+                    exit 1
                 fi
+                BUILD_PLATFORMS="${args[$i]}"
             fi
             ;;
         --arch-tag)
