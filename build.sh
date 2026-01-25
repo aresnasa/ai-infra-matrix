@@ -9571,6 +9571,9 @@ update_component() {
     if [[ "$force_build" == "true" ]]; then
         build_args+=("--force")
         FORCE_BUILD=true
+        FORCE_REBUILD=true      # Skip cache check in need_rebuild()
+        SKIP_CACHE_CHECK=true   # Additional flag to skip cache check
+        log_info "  → Force rebuild enabled (--no-cache, skip cache check)"
     fi
     
     if ! build_component "$component" "${build_args[@]}"; then
