@@ -9503,11 +9503,12 @@ pre_deployment_safety_check() {
 update_component() {
     local component="$1"
     shift
-    local force_build=false
+    # Inherit global FORCE_BUILD if already set (from global --force flag)
+    local force_build="${FORCE_BUILD:-false}"
     local no_restart=false
     local tag="${IMAGE_TAG:-latest}"
     
-    # Parse options
+    # Parse options (can override global settings)
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --force|-f)
