@@ -18,9 +18,10 @@ ENV KC_METRICS_ENABLED=true
 # 数据库配置（使用 PostgreSQL）
 ENV KC_DB=postgres
 
-# 构建优化版本
+# 构建优化版本 - 包含构建时选项
 RUN /opt/keycloak/bin/kc.sh build \
     --db=postgres \
+    --http-relative-path=/auth \
     --features=docker,admin-fine-grained-authz,token-exchange,organization
 
 # ==================== 生产镜像 ====================
@@ -52,7 +53,7 @@ ENV KC_HOSTNAME_STRICT_HTTPS=false
 ENV KC_HTTP_ENABLED=true
 ENV KC_HTTP_PORT=8080
 ENV KC_HTTPS_PORT=8443
-ENV KC_HTTP_RELATIVE_PATH=/auth
+# KC_HTTP_RELATIVE_PATH 是构建时选项，已在 build 阶段设置为 /auth
 
 # 代理配置（反向代理模式）
 ENV KC_PROXY_HEADERS=xforwarded
