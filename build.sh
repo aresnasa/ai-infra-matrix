@@ -4408,6 +4408,27 @@ TEMPLATE_VARIABLES=(
     "REDISINSIGHT_VERSION" # RedisInsight version (e.g., latest)
     
     # ===========================================
+    # Keycloak SSO configuration (Runtime)
+    # Used for Keycloak IAM service
+    # ===========================================
+    "KEYCLOAK_VERSION"    # Keycloak version (e.g., 26.0)
+    "KEYCLOAK_HTTP_PORT"  # Keycloak HTTP port (e.g., 8180)
+    "KEYCLOAK_HTTPS_PORT" # Keycloak HTTPS port (e.g., 8543)
+    "KEYCLOAK_ADMIN"      # Keycloak admin username
+    "KEYCLOAK_ADMIN_PASSWORD" # Keycloak admin password
+    "KEYCLOAK_DB_NAME"    # Keycloak database name
+    "KEYCLOAK_DB_USER"    # Keycloak database user
+    "KEYCLOAK_DB_PASSWORD" # Keycloak database password
+    
+    # ===========================================
+    # ArgoCD GitOps configuration (Runtime)
+    # Used for ArgoCD deployment service
+    # ===========================================
+    "ARGOCD_VERSION"      # ArgoCD version (e.g., v2.13.3)
+    "ARGOCD_HTTP_PORT"    # ArgoCD HTTP port (e.g., 8280)
+    "ARGOCD_ADMIN_PASSWORD" # ArgoCD admin password
+    
+    # ===========================================
     # Gitea SSO configuration (Runtime)
     # Used in src/nginx/templates/conf.d/includes/gitea.conf.tpl
     # ===========================================
