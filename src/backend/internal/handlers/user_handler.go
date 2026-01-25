@@ -133,7 +133,12 @@ func (h *UserHandler) Register(c *gin.Context) {
 		}
 		if err := h.userService.CreateUserDirectly(user); err != nil {
 			logrus.WithError(err).Error("E2E bypass user creation failed")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user (e2e)"})
+			// 检查是否是用户名/邮箱已存在的错误
+			if err.Error() == "username or email already exists" || strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique constraint") {
+				c.JSON(http.StatusConflict, gin.H{"error": "用户名或邮箱已存在"})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user (e2e)"})
+			}
 			return
 		}
 		// Assign role template if provided
