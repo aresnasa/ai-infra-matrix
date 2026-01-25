@@ -18,9 +18,10 @@ ENV KC_METRICS_ENABLED=true
 # 数据库配置（使用 PostgreSQL）
 ENV KC_DB=postgres
 
-# 构建优化版本
+# 构建优化版本 - 包含构建时选项
 RUN /opt/keycloak/bin/kc.sh build \
     --db=postgres \
+    --http-relative-path=/auth \
     --features=docker,admin-fine-grained-authz,token-exchange,organization
 
 # ==================== 生产镜像 ====================
@@ -30,9 +31,9 @@ FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 
 # 复制自定义主题和配置
-# 注意：构建上下文为项目根目录，所以使用 src/keycloak/ 前缀
-COPY src/keycloak/themes/ /opt/keycloak/themes/
-COPY src/keycloak/realm-export/ /opt/keycloak/data/import/
+# 构建上下文为 ./src/keycloak，所以直接使用相对路径
+COPY themes/ /opt/keycloak/themes/
+COPY realm-export/ /opt/keycloak/data/import/
 
 # 设置工作目录
 WORKDIR /opt/keycloak
@@ -52,7 +53,7 @@ ENV KC_HOSTNAME_STRICT_HTTPS=false
 ENV KC_HTTP_ENABLED=true
 ENV KC_HTTP_PORT=8080
 ENV KC_HTTPS_PORT=8443
-ENV KC_HTTP_RELATIVE_PATH=/auth
+# KC_HTTP_RELATIVE_PATH 是构建时选项，已在 build 阶段设置为 /auth
 
 # 代理配置（反向代理模式）
 ENV KC_PROXY_HEADERS=xforwarded
