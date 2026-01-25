@@ -1308,7 +1308,8 @@ services:
     volumes:
       - argocd_controller_data:/tmp
     depends_on:
-      - argocd-repo-server
+      argocd-repo-server:
+        condition: service_started
       redis:
         condition: service_healthy
     healthcheck:
