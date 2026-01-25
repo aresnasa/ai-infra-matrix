@@ -40,7 +40,8 @@ RUN apt-get install -y --no-install-recommends tzdata && \
 WORKDIR /app
 
 # 复制package.json和package-lock.json
-COPY package*.json ./
+# 支持两种构建上下文: 项目根目录(build.sh) 或 src/frontend (docker-compose)
+COPY src/frontend/package*.json package*.json ./
 
 # 配置npm镜像源（支持多种格式）
 RUN set -eux; \
@@ -55,7 +56,10 @@ RUN set -eux; \
 RUN npm install --verbose
 
 # 复制源代码
-COPY . .
+# 支持两种构建上下文: 项目根目录(build.sh) 或 src/frontend (docker-compose)
+COPY src/frontend/src src/frontend/public src/frontend/package*.json ./
+COPY src src/ 
+public public/
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
