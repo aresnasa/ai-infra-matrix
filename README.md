@@ -386,6 +386,34 @@ docker compose up -d
 ./build.sh tag-images
 ```
 
+### Component Update Commands
+
+Quickly update components with a single command (build → tag → restart):
+
+```bash
+# Update a single component (build + tag + restart)
+./build.sh update backend
+./build.sh update frontend
+
+# Force rebuild without Docker cache
+./build.sh update backend --force
+
+# Update multiple components at once
+./build.sh update backend frontend nginx
+
+# Build only, without restarting the service
+./build.sh update backend --no-restart
+
+# Specify image tag version
+./build.sh update backend --tag=v0.3.9
+```
+
+**Update Workflow:**
+1. Render template (if `Dockerfile.tpl` exists)
+2. Build component image
+3. Verify image tag
+4. Restart service (stop → remove container → start)
+
 ### Database Safety Commands
 
 ```bash

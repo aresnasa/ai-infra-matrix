@@ -388,6 +388,34 @@ docker compose up -d
 ./build.sh tag-images
 ```
 
+### 组件更新命令
+
+一键更新组件（构建 → 打标签 → 重启）：
+
+```bash
+# 更新单个组件（构建 + 打标签 + 重启）
+./build.sh update backend
+./build.sh update frontend
+
+# 强制重建（不使用Docker缓存）
+./build.sh update backend --force
+
+# 同时更新多个组件
+./build.sh update backend frontend nginx
+
+# 仅构建，不重启服务
+./build.sh update backend --no-restart
+
+# 指定镜像标签版本
+./build.sh update backend --tag=v0.3.9
+```
+
+**更新流程：**
+1. 渲染模板（如果存在 `Dockerfile.tpl`）
+2. 构建组件镜像
+3. 验证镜像标签
+4. 重启服务（停止 → 删除容器 → 启动）
+
 ### 数据库安全命令
 
 ```bash
