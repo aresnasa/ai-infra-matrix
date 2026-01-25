@@ -1,15 +1,11 @@
 # ArgoCD GitOps 持续部署服务
-# 版本: v2.13
+# 版本: {{ARGOCD_VERSION}}
 # 用途: 为 AI Infrastructure Matrix 提供 GitOps 持续部署能力
 # 支持架构: linux/amd64, linux/arm64
 
-{{if .BASE_IMAGE_REGISTRY}}
-ARG BASE_IMAGE_REGISTRY={{.BASE_IMAGE_REGISTRY}}
-{{else}}
-ARG BASE_IMAGE_REGISTRY=
-{{end}}
+ARG ARGOCD_VERSION={{ARGOCD_VERSION}}
 
-FROM ${BASE_IMAGE_REGISTRY}quay.io/argoproj/argocd:{{.ARGOCD_VERSION | default "v2.13.3"}}
+FROM quay.io/argoproj/argocd:${ARGOCD_VERSION}
 
 # 设置时区
 ENV TZ=Asia/Shanghai
