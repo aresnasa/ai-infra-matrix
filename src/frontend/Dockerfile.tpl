@@ -40,7 +40,8 @@ RUN apt-get install -y --no-install-recommends tzdata && \
 WORKDIR /app
 
 # 复制package.json和package-lock.json
-COPY package*.json ./
+# 支持项目根目录作为构建上下文 (build.sh)
+COPY src/frontend/package*.json ./
 
 # 配置npm镜像源（支持多种格式）
 RUN set -eux; \
@@ -55,7 +56,9 @@ RUN set -eux; \
 RUN npm install --verbose
 
 # 复制源代码
-COPY . .
+# 支持项目根目录作为构建上下文 (build.sh)
+COPY src/frontend/src ./src
+COPY src/frontend/public ./public
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
@@ -128,7 +131,8 @@ RUN set -eux; \
 COPY --from=build /app/build /usr/share/nginx/html
 
 # 复制nginx配置文件
-COPY nginx.conf /etc/nginx/sites-available/default
+# 支持项目根目录作为构建上下文 (build.sh)
+COPY src/frontend/nginx.conf /etc/nginx/sites-available/default
 
 # 设置工作目录
 WORKDIR /usr/share/nginx/html
