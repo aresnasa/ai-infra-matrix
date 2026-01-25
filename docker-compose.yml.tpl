@@ -192,6 +192,8 @@ services:
     environment:
       DYNAMIC_CONFIG_ENABLED: 'true'
       TZ: Asia/Shanghai
+      # 设置基础路径以支持反向代理
+      SERVER_SERVLET_CONTEXT_PATH: /kafka-ui-backend
     expose:
       - "8080"
     ports:
