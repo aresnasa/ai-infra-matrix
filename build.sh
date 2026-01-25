@@ -4412,6 +4412,8 @@ TEMPLATE_VARIABLES=(
     # Used for Keycloak IAM service
     # ===========================================
     "KEYCLOAK_VERSION"    # Keycloak version (e.g., 26.0)
+    "KEYCLOAK_HOST"       # Keycloak service host (default: keycloak)
+    "KEYCLOAK_PORT"       # Keycloak internal port (default: 8080)
     "KEYCLOAK_HTTP_PORT"  # Keycloak HTTP port (e.g., 8180)
     "KEYCLOAK_HTTPS_PORT" # Keycloak HTTPS port (e.g., 8543)
     "KEYCLOAK_ADMIN"      # Keycloak admin username
@@ -4425,6 +4427,8 @@ TEMPLATE_VARIABLES=(
     # Used for ArgoCD deployment service
     # ===========================================
     "ARGOCD_VERSION"      # ArgoCD version (e.g., v2.13.3)
+    "ARGOCD_HOST"         # ArgoCD service host (default: argocd-server)
+    "ARGOCD_PORT"         # ArgoCD internal port (default: 8080)
     "ARGOCD_HTTP_PORT"    # ArgoCD HTTP port (e.g., 8280)
     "ARGOCD_ADMIN_PASSWORD" # ArgoCD admin password
     
