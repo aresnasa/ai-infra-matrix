@@ -1,6 +1,7 @@
 # ArgoCD GitOps 反向代理配置
 # 用于 GitOps 持续部署
 # Template variables: ARGOCD_HOST (default: argocd-server), ARGOCD_PORT (default: 8080)
+# 注意：使用变量方式进行 DNS 解析，避免 ArgoCD 服务未启动时 nginx 无法启动
 
 # ArgoCD 服务 (/argocd)
 location /argocd {
@@ -8,7 +9,9 @@ location /argocd {
     auth_request /__auth/verify;
     auth_request_set $auth_username $upstream_http_x_user;
     
-    proxy_pass http://{{ARGOCD_HOST}}:{{ARGOCD_PORT}}/argocd;
+    # 使用变量延迟 DNS 解析 - 允许服务不存在时 nginx 仍能启动
+    set $argocd_upstream "{{ARGOCD_HOST}}:{{ARGOCD_PORT}}";
+    proxy_pass http://$argocd_upstream/argocd;
     
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -46,7 +49,9 @@ location /argocd/api/ {
     auth_request /__auth/verify;
     auth_request_set $auth_username $upstream_http_x_user;
     
-    proxy_pass http://{{ARGOCD_HOST}}:{{ARGOCD_PORT}}/argocd/api/;
+    # 使用变量延迟 DNS 解析
+    set $argocd_upstream "{{ARGOCD_HOST}}:{{ARGOCD_PORT}}";
+    proxy_pass http://$argocd_upstream/argocd/api/;
     
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -86,7 +91,9 @@ location /argocd/api/ {
 
 # ArgoCD Dex 回调 (用于 SSO)
 location /argocd/api/dex/callback {
-    proxy_pass http://{{ARGOCD_HOST}}:{{ARGOCD_PORT}}/argocd/api/dex/callback;
+    # 使用变量延迟 DNS 解析
+    set $argocd_upstream "{{ARGOCD_HOST}}:{{ARGOCD_PORT}}";
+    proxy_pass http://$argocd_upstream/argocd/api/dex/callback;
     
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -96,14 +103,18 @@ location /argocd/api/dex/callback {
 
 # ArgoCD 健康检查
 location /argocd/healthz {
-    proxy_pass http://{{ARGOCD_HOST}}:{{ARGOCD_PORT}}/argocd/healthz;
+    # 使用变量延迟 DNS 解析
+    set $argocd_upstream "{{ARGOCD_HOST}}:{{ARGOCD_PORT}}";
+    proxy_pass http://$argocd_upstream/argocd/healthz;
     proxy_set_header Host $http_host;
     access_log off;
 }
 
 # ArgoCD 静态资源
 location ~ ^/argocd/(assets|dist)/ {
-    proxy_pass http://{{ARGOCD_HOST}}:{{ARGOCD_PORT}};
+    # 使用变量延迟 DNS 解析
+    set $argocd_upstream "{{ARGOCD_HOST}}:{{ARGOCD_PORT}}";
+    proxy_pass http://$argocd_upstream;
     
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;

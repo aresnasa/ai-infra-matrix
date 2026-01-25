@@ -1,10 +1,13 @@
 # Keycloak IAM 反向代理配置
 # 用于 SSO 单点登录和身份认证
 # Template variables: KEYCLOAK_HOST (default: keycloak), KEYCLOAK_PORT (default: 8080)
+# 注意：使用变量方式进行 DNS 解析，避免 Keycloak 服务未启动时 nginx 无法启动
 
 # Keycloak 认证服务 (/auth)
 location /auth {
-    proxy_pass http://{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}/auth;
+    # 使用变量延迟 DNS 解析 - 允许服务不存在时 nginx 仍能启动
+    set $keycloak_upstream "{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}";
+    proxy_pass http://$keycloak_upstream/auth;
     
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -57,14 +60,18 @@ location /auth {
 
 # Keycloak 健康检查端点
 location /auth/health {
-    proxy_pass http://{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}/auth/health;
+    # 使用变量延迟 DNS 解析
+    set $keycloak_upstream "{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}";
+    proxy_pass http://$keycloak_upstream/auth/health;
     proxy_set_header Host $http_host;
     access_log off;
 }
 
 # Keycloak OIDC 配置端点 (Well-Known)
 location /auth/realms/ {
-    proxy_pass http://{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}/auth/realms/;
+    # 使用变量延迟 DNS 解析
+    set $keycloak_upstream "{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}";
+    proxy_pass http://$keycloak_upstream/auth/realms/;
     
     proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
