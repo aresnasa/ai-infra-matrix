@@ -524,33 +524,63 @@ var defaultRoleTemplates = []DefaultRoleTemplate{
 			Verb     string
 			Scope    string
 		}{
+			// SaltStack管理
 			{Resource: "saltstack", Verb: "create", Scope: "*"},
 			{Resource: "saltstack", Verb: "read", Scope: "*"},
 			{Resource: "saltstack", Verb: "update", Scope: "*"},
 			{Resource: "saltstack", Verb: "delete", Scope: "*"},
 			{Resource: "saltstack", Verb: "list", Scope: "*"},
+			// Ansible自动化
 			{Resource: "ansible", Verb: "create", Scope: "*"},
 			{Resource: "ansible", Verb: "read", Scope: "*"},
 			{Resource: "ansible", Verb: "update", Scope: "*"},
 			{Resource: "ansible", Verb: "delete", Scope: "*"},
 			{Resource: "ansible", Verb: "list", Scope: "*"},
+			// Kubernetes集群管理
 			{Resource: "kubernetes", Verb: "create", Scope: "*"},
 			{Resource: "kubernetes", Verb: "read", Scope: "*"},
 			{Resource: "kubernetes", Verb: "update", Scope: "*"},
 			{Resource: "kubernetes", Verb: "delete", Scope: "*"},
 			{Resource: "kubernetes", Verb: "list", Scope: "*"},
+			// 主机管理
 			{Resource: "hosts", Verb: "read", Scope: "*"},
 			{Resource: "hosts", Verb: "create", Scope: "*"},
 			{Resource: "hosts", Verb: "update", Scope: "*"},
 			{Resource: "hosts", Verb: "delete", Scope: "*"},
 			{Resource: "hosts", Verb: "list", Scope: "*"},
+			// 系统监控 (Nightingale)
 			{Resource: "nightingale", Verb: "create", Scope: "*"},
 			{Resource: "nightingale", Verb: "read", Scope: "*"},
 			{Resource: "nightingale", Verb: "update", Scope: "*"},
 			{Resource: "nightingale", Verb: "delete", Scope: "*"},
 			{Resource: "nightingale", Verb: "list", Scope: "*"},
+			// 日志管理
 			{Resource: "audit-logs", Verb: "read", Scope: "*"},
 			{Resource: "audit-logs", Verb: "list", Scope: "*"},
+			// 项目管理 (SRE需要访问项目页面进行Ansible项目管理)
+			{Resource: "projects", Verb: "create", Scope: "*"},
+			{Resource: "projects", Verb: "read", Scope: "*"},
+			{Resource: "projects", Verb: "update", Scope: "*"},
+			{Resource: "projects", Verb: "delete", Scope: "own"},
+			{Resource: "projects", Verb: "list", Scope: "*"},
+			// 变量管理 (Ansible变量)
+			{Resource: "variables", Verb: "create", Scope: "*"},
+			{Resource: "variables", Verb: "read", Scope: "*"},
+			{Resource: "variables", Verb: "update", Scope: "*"},
+			{Resource: "variables", Verb: "delete", Scope: "own"},
+			{Resource: "variables", Verb: "list", Scope: "*"},
+			// 任务管理 (Ansible任务)
+			{Resource: "tasks", Verb: "create", Scope: "*"},
+			{Resource: "tasks", Verb: "read", Scope: "*"},
+			{Resource: "tasks", Verb: "update", Scope: "*"},
+			{Resource: "tasks", Verb: "delete", Scope: "own"},
+			{Resource: "tasks", Verb: "list", Scope: "*"},
+			// Playbook管理
+			{Resource: "playbooks", Verb: "create", Scope: "*"},
+			{Resource: "playbooks", Verb: "read", Scope: "*"},
+			{Resource: "playbooks", Verb: "update", Scope: "*"},
+			{Resource: "playbooks", Verb: "delete", Scope: "own"},
+			{Resource: "playbooks", Verb: "list", Scope: "*"},
 		},
 		IsSystem: true,
 	},
