@@ -358,6 +358,13 @@ func (s *UserService) GetUserByUsername(username string) (*models.User, error) {
 // CreateUserDirectly 直接创建用户（用于LDAP用户）
 func (s *UserService) CreateUserDirectly(user *models.User) error {
 	db := database.DB
+
+	// 先检查用户名或邮箱是否已存在
+	var existingUser models.User
+	if err := db.Where("username = ? OR email = ?", user.Username, user.Email).First(&existingUser).Error; err == nil {
+		return errors.New("username or email already exists")
+	}
+
 	return db.Create(user).Error
 }
 
