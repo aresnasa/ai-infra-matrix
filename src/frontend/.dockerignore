@@ -1,0 +1,45 @@
+# Frontend Docker Ignore
+# Exclude development files but keep necessary config
+
+# Node modules (will be installed during build)
+node_modules
+
+# Build output (generated during build)
+build
+
+# Test files
+*.test.js
+*.spec.js
+__tests__
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Debug files
+debug/
+
+# Test files
+test_*.js
+test_*.json
+
+# Explicitly INCLUDE nginx.conf (negate any exclusions)
+!nginx.conf
+!package.json
+!package-lock.json
+!public
+!src
