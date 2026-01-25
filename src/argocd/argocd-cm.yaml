@@ -1,0 +1,85 @@
+# ArgoCD ConfigMap - 核心配置
+# 参考: https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # 应用控制器配置
+  application.instanceLabelKey: argocd.argoproj.io/instance
+  
+  # 资源追踪方式
+  resource.trackingMethod: annotation
+  
+  # 服务器配置
+  url: ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/argocd
+  
+  # Kustomize 配置
+  kustomize.buildOptions: --enable-alpha-plugins --enable-exec
+  
+  # 仓库服务器配置
+  timeout.reconciliation: 180s
+  timeout.hard.reconciliation: 0s
+  
+  # Dex (OIDC) 配置 - 使用 Keycloak
+  dex.config: |
+    connectors:
+      - type: oidc
+        id: keycloak
+        name: Keycloak
+        config:
+          issuer: ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/auth/realms/ai-infra
+          clientID: argocd
+          clientSecret: ${KEYCLOAK_ARGOCD_CLIENT_SECRET}
+          redirectURI: ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/argocd/api/dex/callback
+          insecureEnableGroups: true
+          scopes:
+            - openid
+            - profile
+            - email
+            - groups
+          userIDKey: preferred_username
+          userNameKey: preferred_username
+          claimMapping:
+            groups: groups
+  
+  # 管理员邮箱
+  admin.enabled: "true"
+  
+  # 资源健康检查配置
+  resource.customizations.health.argoproj.io_Application: |
+    hs = {}
+    hs.status = "Progressing"
+    hs.message = ""
+    if obj.status ~= nil then
+      if obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+    end
+    return hs
+  
+  # 资源排除配置
+  resource.exclusions: |
+    - apiGroups:
+        - tekton.dev
+      clusters:
+        - "*"
+      kinds:
+        - TaskRun
+        - PipelineRun
+  
+  # 仓库凭证模板
+  repositories: |
+    - url: http://gitea:3000
+      name: gitea-internal
+      type: git
+      insecure: true
+    - url: ${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/gitea
+      name: gitea-external
+      type: git

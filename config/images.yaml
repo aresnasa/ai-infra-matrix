@@ -69,6 +69,18 @@ common_images:
     version_env: VICTORIAMETRICS_VERSION
     default_version: "v1.115.0"
     description: "VictoriaMetrics time series database"
+  
+  keycloak:
+    image: quay.io/keycloak/keycloak
+    version_env: KEYCLOAK_VERSION
+    default_version: "26.0"
+    description: "Keycloak Identity and Access Management"
+  
+  argocd:
+    image: quay.io/argoproj/argocd
+    version_env: ARGOCD_VERSION
+    default_version: "v2.13.3"
+    description: "ArgoCD GitOps Continuous Delivery"
 
 # SafeLine WAF 镜像
 # 架构后缀: ARM/aarch64 使用 -arm，x86_64 留空
@@ -168,3 +180,11 @@ project_images:
   - name: nightingale
     image: "ai-infra-nightingale"
     description: "Nightingale monitoring"
+  
+  - name: keycloak
+    image: "ai-infra-keycloak"
+    description: "Keycloak IAM service"
+  
+  - name: argocd
+    image: "ai-infra-argocd"
+    description: "ArgoCD GitOps service"

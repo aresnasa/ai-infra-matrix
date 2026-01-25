@@ -154,9 +154,16 @@ graph TB
 
 | 组件 | 说明 |
 |------|------|
+| Keycloak | 统一身份认证 (SSO/OIDC) |
 | OpenLDAP | 用户认证目录服务 |
 | PHPLDAPAdmin | LDAP Web管理界面 |
 | KeyVault | 安全密钥分发服务 |
+
+### GitOps 与持续部署
+
+| 组件 | 说明 |
+|------|------|
+| ArgoCD | GitOps 持续部署 |
 
 ## 🚀 快速开始
 
@@ -191,7 +198,9 @@ docker compose up -d
 - 📊 **JupyterHub**: <http://localhost:8080/jupyter>
 - 🗃️ **Gitea**: <http://localhost:8080/gitea/>
 - 📈 **Nightingale**: <http://localhost:8080/n9e>
-- 📦 **SeaweedFS控制台**: <http://localhost:8080/seaweedfs/>
+- � **Keycloak**: <http://localhost:8080/auth> (可选)
+- 🚀 **ArgoCD**: <http://localhost:8080/argocd> (可选)
+- �📦 **SeaweedFS控制台**: <http://localhost:8080/seaweedfs/>
 
 默认管理员账号：`admin` / `admin123`
 

@@ -1414,6 +1414,38 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		security.POST("/login-records/cleanup", securityHandler.CleanupLoginRecords)
 	}
 
+	// ArgoCD GitOps 管理路由（需要认证）
+	argoCDHandler := handlers.NewArgoCDHandler()
+	argocd := api.Group("/argocd")
+	argocd.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// ArgoCD 版本和配置
+		argocd.GET("/version", argoCDHandler.GetVersion)
+		argocd.GET("/settings", argoCDHandler.GetSettings)
+
+		// 应用管理
+		argocd.GET("/applications", argoCDHandler.ListApplications)
+		argocd.GET("/applications/:name", argoCDHandler.GetApplication)
+		argocd.POST("/applications", argoCDHandler.CreateApplication)
+		argocd.DELETE("/applications/:name", argoCDHandler.DeleteApplication)
+		argocd.POST("/applications/:name/sync", argoCDHandler.SyncApplication)
+		argocd.POST("/applications/:name/refresh", argoCDHandler.RefreshApplication)
+		argocd.GET("/applications/:name/resource-tree", argoCDHandler.GetApplicationResourceTree)
+
+		// 仓库管理
+		argocd.GET("/repositories", argoCDHandler.ListRepositories)
+		argocd.POST("/repositories", argoCDHandler.CreateRepository)
+		argocd.DELETE("/repositories/*repo", argoCDHandler.DeleteRepository)
+
+		// 集群管理
+		argocd.GET("/clusters", argoCDHandler.ListClusters)
+
+		// 项目管理
+		argocd.GET("/projects", argoCDHandler.ListProjects)
+		argocd.GET("/projects/:name", argoCDHandler.GetProject)
+		argocd.POST("/projects", argoCDHandler.CreateProject)
+	}
+
 	// 基础设施审计日志路由（需要认证）
 	auditHandler := handlers.NewAuditHandler()
 	// 初始化审计配置

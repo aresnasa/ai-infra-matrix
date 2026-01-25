@@ -1,0 +1,495 @@
+{
+  "realm": "ai-infra",
+  "displayName": "AI Infrastructure Matrix",
+  "displayNameHtml": "<div class=\"kc-logo-text\"><span>AI Infrastructure Matrix</span></div>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": true,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "accessTokenLifespan": 1800,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "defaultSignatureAlgorithm": "RS256",
+  "passwordPolicy": "length(8) and maxLength(128) and notUsername and notEmail",
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "系统管理员 - 完全权限",
+        "composite": true,
+        "composites": {
+          "realm": ["sre", "engineer", "model-developer", "data-developer"]
+        }
+      },
+      {
+        "name": "sre",
+        "description": "SRE工程师 - SaltStack/Ansible/K8s/监控",
+        "composite": false
+      },
+      {
+        "name": "engineer",
+        "description": "工程研发 - Kubernetes/项目管理",
+        "composite": false
+      },
+      {
+        "name": "model-developer",
+        "description": "模型开发 - JupyterHub/项目读取",
+        "composite": false
+      },
+      {
+        "name": "data-developer",
+        "description": "数据开发 - 项目/主机/变量管理",
+        "composite": false
+      },
+      {
+        "name": "viewer",
+        "description": "只读访问 - 查看仪表板和监控",
+        "composite": false
+      }
+    ],
+    "client": {
+      "ai-infra-backend": [
+        {
+          "name": "manage-users",
+          "description": "用户管理权限"
+        },
+        {
+          "name": "manage-projects",
+          "description": "项目管理权限"
+        },
+        {
+          "name": "manage-clusters",
+          "description": "集群管理权限"
+        },
+        {
+          "name": "view-monitoring",
+          "description": "监控查看权限"
+        }
+      ],
+      "gitea": [
+        {
+          "name": "gitea-admin",
+          "description": "Gitea 管理员"
+        },
+        {
+          "name": "gitea-user",
+          "description": "Gitea 普通用户"
+        }
+      ],
+      "nightingale": [
+        {
+          "name": "n9e-admin",
+          "description": "Nightingale 管理员"
+        },
+        {
+          "name": "n9e-user",
+          "description": "Nightingale 普通用户"
+        }
+      ],
+      "argocd": [
+        {
+          "name": "argocd-admin",
+          "description": "ArgoCD 管理员"
+        },
+        {
+          "name": "argocd-readonly",
+          "description": "ArgoCD 只读用户"
+        }
+      ]
+    }
+  },
+  "groups": [
+    {
+      "name": "administrators",
+      "path": "/administrators",
+      "realmRoles": ["admin"]
+    },
+    {
+      "name": "sre-team",
+      "path": "/sre-team",
+      "realmRoles": ["sre"]
+    },
+    {
+      "name": "developers",
+      "path": "/developers",
+      "subGroups": [
+        {
+          "name": "model-developers",
+          "path": "/developers/model-developers",
+          "realmRoles": ["model-developer"]
+        },
+        {
+          "name": "data-developers",
+          "path": "/developers/data-developers",
+          "realmRoles": ["data-developer"]
+        },
+        {
+          "name": "engineers",
+          "path": "/developers/engineers",
+          "realmRoles": ["engineer"]
+        }
+      ]
+    },
+    {
+      "name": "viewers",
+      "path": "/viewers",
+      "realmRoles": ["viewer"]
+    }
+  ],
+  "defaultGroups": ["/viewers"],
+  "clients": [
+    {
+      "clientId": "ai-infra-backend",
+      "name": "AI Infra Backend",
+      "description": "AI Infrastructure Matrix 后端服务",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_BACKEND_CLIENT_SECRET}",
+      "redirectUris": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/*",
+        "http://localhost:*/*"
+      ],
+      "webOrigins": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}",
+        "http://localhost:3000",
+        "http://localhost:8080"
+      ],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "preferred_username",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ai-infra-frontend",
+      "name": "AI Infra Frontend",
+      "description": "AI Infrastructure Matrix 前端应用",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "publicClient": true,
+      "redirectUris": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/*",
+        "http://localhost:*/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email",
+        "acr"
+      ]
+    },
+    {
+      "clientId": "gitea",
+      "name": "Gitea",
+      "description": "Gitea Git 代码托管服务",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_GITEA_CLIENT_SECRET}",
+      "redirectUris": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/gitea/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/gitea/*"
+      ],
+      "webOrigins": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}"
+      ],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "gitea-groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "nightingale",
+      "name": "Nightingale",
+      "description": "夜莺监控系统",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_N9E_CLIENT_SECRET}",
+      "redirectUris": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/monitoring/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/monitoring/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true
+    },
+    {
+      "clientId": "argocd",
+      "name": "ArgoCD",
+      "description": "GitOps 持续部署工具",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_ARGOCD_CLIENT_SECRET}",
+      "redirectUris": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/argocd/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/argocd/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/argocd/api/dex/callback",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/argocd/api/dex/callback"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "argocd-groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "jupyterhub",
+      "name": "JupyterHub",
+      "description": "JupyterHub 交互式计算环境",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_JUPYTERHUB_CLIENT_SECRET}",
+      "redirectUris": [
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${EXTERNAL_PORT}/jupyter/*",
+        "${EXTERNAL_SCHEME}://${EXTERNAL_HOST}:${HTTPS_PORT}/jupyter/*"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": true
+    }
+  ],
+  "identityProviders": [],
+  "userFederationProviders": [
+    {
+      "displayName": "LDAP",
+      "providerName": "ldap",
+      "config": {
+        "editMode": "WRITABLE",
+        "syncRegistrations": "true",
+        "vendor": "other",
+        "usernameLDAPAttribute": "uid",
+        "rdnLDAPAttribute": "uid",
+        "uuidLDAPAttribute": "entryUUID",
+        "userObjectClasses": "inetOrgPerson, organizationalPerson",
+        "connectionUrl": "ldap://${LDAP_SERVER}:${LDAP_PORT}",
+        "usersDn": "${LDAP_USER_BASE}",
+        "authType": "simple",
+        "bindDn": "${LDAP_BIND_DN}",
+        "bindCredential": "${LDAP_ADMIN_PASSWORD}",
+        "searchScope": "2",
+        "pagination": "true",
+        "batchSizeForSync": "1000",
+        "fullSyncPeriod": "604800",
+        "changedSyncPeriod": "86400",
+        "importEnabled": "true",
+        "enabled": "true"
+      }
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "ai-infra-scope",
+      "description": "AI Infrastructure Matrix 自定义 scope",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "true",
+        "consent.screen.text": "AI Infrastructure Matrix 权限"
+      },
+      "protocolMappers": [
+        {
+          "name": "ai-infra-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "ai-infra-backend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "System",
+      "lastName": "Administrator",
+      "email": "admin@ai-infra.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${KEYCLOAK_ADMIN_PASSWORD}",
+          "temporary": true
+        }
+      ],
+      "realmRoles": ["admin"],
+      "groups": ["/administrators"],
+      "clientRoles": {
+        "ai-infra-backend": ["manage-users", "manage-projects", "manage-clusters", "view-monitoring"],
+        "gitea": ["gitea-admin"],
+        "nightingale": ["n9e-admin"],
+        "argocd": ["argocd-admin"]
+      }
+    }
+  ],
+  "smtpServer": {},
+  "eventsEnabled": true,
+  "eventsListeners": ["jboss-logging"],
+  "enabledEventTypes": [
+    "LOGIN",
+    "LOGIN_ERROR",
+    "LOGOUT",
+    "LOGOUT_ERROR",
+    "REGISTER",
+    "REGISTER_ERROR",
+    "UPDATE_PROFILE",
+    "UPDATE_PASSWORD",
+    "UPDATE_EMAIL",
+    "VERIFY_EMAIL",
+    "GRANT_CONSENT",
+    "REVOKE_GRANT",
+    "CLIENT_LOGIN",
+    "CLIENT_LOGIN_ERROR",
+    "INTROSPECT_TOKEN",
+    "INTROSPECT_TOKEN_ERROR"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "zh-CN"],
+  "defaultLocale": "zh-CN",
+  "browserFlow": "browser",
+  "registrationFlow": "registration",
+  "directGrantFlow": "direct grant",
+  "resetCredentialsFlow": "reset credentials",
+  "clientAuthenticationFlow": "clients"
+}

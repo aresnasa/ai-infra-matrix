@@ -45,6 +45,10 @@ python-alpine: "3.14-alpine"
 gitea: "1.25.3"
 jupyter-base-notebook: "latest"
 
+# 身份认证和 GitOps
+keycloak: "26.0"
+argocd: "v2.13.3"
+
 # 操作系统镜像
 ubuntu: "22.04"
 almalinux: "9.3-minimal"

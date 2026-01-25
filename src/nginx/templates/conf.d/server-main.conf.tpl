@@ -107,6 +107,8 @@ server {
     include /etc/nginx/conf.d/includes/nightingale.conf;
     include /etc/nginx/conf.d/includes/seaweedfs.conf;
     include /etc/nginx/conf.d/includes/kafka-ui.conf;
+    include /etc/nginx/conf.d/includes/keycloak.conf;
+    include /etc/nginx/conf.d/includes/argocd.conf;
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {

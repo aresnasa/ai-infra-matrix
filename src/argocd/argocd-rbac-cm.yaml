@@ -1,0 +1,63 @@
+# ArgoCD RBAC ConfigMap - 权限配置
+# 参考: https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  labels:
+    app.kubernetes.io/name: argocd-rbac-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # 默认策略
+  policy.default: role:readonly
+  
+  # RBAC 策略定义
+  # 格式: p, <role/user>, <resource>, <action>, <appproject>/<object>, <allow/deny>
+  # 资源: clusters, projects, applications, applicationsets, repositories, certificates, accounts, gpgkeys, logs, exec, extensions
+  # 动作: get, create, update, delete, sync, override, action/<group>/<kind>/<action name>
+  policy.csv: |
+    # 管理员组 - 完全权限
+    g, administrators, role:admin
+    
+    # SRE 团队 - 集群、应用、仓库管理
+    p, role:sre, applications, *, */*, allow
+    p, role:sre, applicationsets, *, */*, allow
+    p, role:sre, clusters, get, *, allow
+    p, role:sre, clusters, create, *, allow
+    p, role:sre, clusters, update, *, allow
+    p, role:sre, repositories, *, *, allow
+    p, role:sre, projects, get, *, allow
+    p, role:sre, logs, get, */*, allow
+    p, role:sre, exec, create, */*, allow
+    g, sre-team, role:sre
+    
+    # 开发团队 - 应用部署（仅限指定项目）
+    p, role:developer, applications, get, */*, allow
+    p, role:developer, applications, sync, */*, allow
+    p, role:developer, applications, action/*, */*, allow
+    p, role:developer, applicationsets, get, */*, allow
+    p, role:developer, repositories, get, *, allow
+    p, role:developer, projects, get, *, allow
+    p, role:developer, logs, get, */*, allow
+    g, developers, role:developer
+    
+    # 工程师 - 应用管理（创建、更新、删除）
+    p, role:engineer, applications, *, */*, allow
+    p, role:engineer, applicationsets, *, */*, allow
+    p, role:engineer, repositories, get, *, allow
+    p, role:engineer, projects, get, *, allow
+    p, role:engineer, logs, get, */*, allow
+    p, role:engineer, exec, create, */*, allow
+    g, developers/engineers, role:engineer
+    
+    # 只读用户
+    p, role:readonly, applications, get, */*, allow
+    p, role:readonly, applicationsets, get, */*, allow
+    p, role:readonly, clusters, get, *, allow
+    p, role:readonly, repositories, get, *, allow
+    p, role:readonly, projects, get, *, allow
+    p, role:readonly, logs, get, */*, allow
+    g, viewers, role:readonly
+  
+  # 从 OIDC Token 中获取组的方式
+  scopes: '[groups, email]'

@@ -141,6 +141,11 @@ const SecuritySettings = withLazyLoading(React.lazy(() => import('./pages/admin/
   loadingText: '正在加载安全管理...'
 });
 
+// ArgoCD GitOps 管理页面
+const ArgoCDManagement = withLazyLoading(React.lazy(() => import('./pages/ArgoCDManagement')), {
+  loadingText: '正在加载ArgoCD管理...'
+});
+
 // 新增功能页面懒加载
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
@@ -874,6 +879,17 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                             <SecuritySettings />
                           </Suspense>
                         </AdminProtectedRoute>
+                      }
+                    />
+                    {/* ArgoCD GitOps 管理 - SRE团队访问 */}
+                    <Route
+                      path="/argocd"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <ArgoCDManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
                       }
                     />
                     {/* 移除自动重定向 - 让 AuthPage 处理登录后的导航 */}
