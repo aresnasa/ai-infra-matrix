@@ -53,7 +53,7 @@ RUN set -eux; \
     npm config get registry
 
 # 安装依赖
-RUN npm install --verbose
+RUN npm install --verbose --legacy-peer-deps
 
 # 复制源代码
 # 支持项目根目录作为构建上下文 (build.sh)

@@ -1446,6 +1446,43 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		argocd.POST("/projects", argoCDHandler.CreateProject)
 	}
 
+	// Keycloak 身份认证管理路由（需要认证）
+	keycloakHandler := handlers.NewKeycloakHandler()
+	keycloak := api.Group("/keycloak")
+	keycloak.Use(middleware.AuthMiddlewareWithSession())
+	{
+		// 服务器信息
+		keycloak.GET("/server-info", keycloakHandler.GetServerInfo)
+
+		// Realm 管理
+		keycloak.GET("/realms", keycloakHandler.ListRealms)
+		keycloak.GET("/realms/:realm", keycloakHandler.GetRealm)
+
+		// 用户管理
+		keycloak.GET("/realms/:realm/users", keycloakHandler.ListUsers)
+		keycloak.GET("/realms/:realm/users/:userId", keycloakHandler.GetUser)
+		keycloak.POST("/realms/:realm/users", keycloakHandler.CreateUser)
+		keycloak.PUT("/realms/:realm/users/:userId", keycloakHandler.UpdateUser)
+		keycloak.DELETE("/realms/:realm/users/:userId", keycloakHandler.DeleteUser)
+		keycloak.PUT("/realms/:realm/users/:userId/reset-password", keycloakHandler.ResetPassword)
+		keycloak.GET("/realms/:realm/users/:userId/role-mappings", keycloakHandler.GetUserRoles)
+		keycloak.GET("/realms/:realm/users/:userId/sessions", keycloakHandler.GetUserSessions)
+
+		// 客户端管理
+		keycloak.GET("/realms/:realm/clients", keycloakHandler.ListClients)
+		keycloak.GET("/realms/:realm/clients/:clientId", keycloakHandler.GetClient)
+
+		// 用户组管理
+		keycloak.GET("/realms/:realm/groups", keycloakHandler.ListGroups)
+		keycloak.GET("/realms/:realm/groups/:groupId", keycloakHandler.GetGroup)
+
+		// 角色管理
+		keycloak.GET("/realms/:realm/roles", keycloakHandler.ListRoles)
+
+		// 会话管理
+		keycloak.GET("/realms/:realm/sessions", keycloakHandler.ListSessions)
+	}
+
 	// 基础设施审计日志路由（需要认证）
 	auditHandler := handlers.NewAuditHandler()
 	// 初始化审计配置

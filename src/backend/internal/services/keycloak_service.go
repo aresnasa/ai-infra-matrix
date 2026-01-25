@@ -224,12 +224,12 @@ func (s *keycloakServiceImpl) CreateUser(user models.User, password string, role
 	kcUser := KeycloakUser{
 		Username:      user.Username,
 		Email:         user.Email,
-		FirstName:     user.Nickname,
+		FirstName:     user.Name,
 		Enabled:       user.IsActive,
 		EmailVerified: true,
 		Attributes: map[string][]string{
 			"ai_infra_user_id": {fmt.Sprintf("%d", user.ID)},
-			"department":       {user.Department},
+			"role_template":    {user.RoleTemplate},
 		},
 	}
 
@@ -306,12 +306,12 @@ func (s *keycloakServiceImpl) UpdateUser(user models.User, roles []string) error
 	// 更新用户信息
 	updateUser := KeycloakUser{
 		Email:         user.Email,
-		FirstName:     user.Nickname,
+		FirstName:     user.Name,
 		Enabled:       user.IsActive,
 		EmailVerified: true,
 		Attributes: map[string][]string{
 			"ai_infra_user_id": {fmt.Sprintf("%d", user.ID)},
-			"department":       {user.Department},
+			"role_template":    {user.RoleTemplate},
 		},
 	}
 
@@ -798,8 +798,8 @@ func (s *keycloakServiceImpl) SyncAllUsers() (created, updated, skipped int, err
 	for _, user := range users {
 		// 获取用户角色
 		roles := []string{}
-		if user.Role != "" {
-			roles = append(roles, user.Role)
+		if user.RoleTemplate != "" {
+			roles = append(roles, user.RoleTemplate)
 		}
 
 		// 检查用户是否存在

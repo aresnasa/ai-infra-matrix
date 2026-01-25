@@ -146,6 +146,11 @@ const ArgoCDManagement = withLazyLoading(React.lazy(() => import('./pages/ArgoCD
   loadingText: '正在加载ArgoCD管理...'
 });
 
+// Keycloak 身份认证管理页面
+const KeycloakManagement = withLazyLoading(React.lazy(() => import('./pages/KeycloakManagement')), {
+  loadingText: '正在加载Keycloak管理...'
+});
+
 // 新增功能页面懒加载
 const EnhancedUserManagement = withLazyLoading(React.lazy(() => import('./pages/EnhancedUserManagement')), {
   loadingText: '正在加载增强用户管理...'
@@ -888,6 +893,17 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         <TeamProtectedRoute user={user} allowedTeams={['sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <ArgoCDManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+                    {/* Keycloak 身份认证管理 - SRE团队访问 */}
+                    <Route
+                      path="/keycloak"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <KeycloakManagement />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

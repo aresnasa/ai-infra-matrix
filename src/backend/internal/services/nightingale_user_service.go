@@ -166,7 +166,7 @@ func (s *nightingaleUserServiceImpl) EnsureUser(u models.User, roles []string) e
 	if exists && existingUser != nil {
 		// 更新用户
 		updateReq := N9eUserUpdateReq{
-			Nickname: u.Nickname,
+			Nickname: u.Name,
 			Email:    u.Email,
 			Roles:    n9eRoles,
 		}
@@ -182,7 +182,7 @@ func (s *nightingaleUserServiceImpl) EnsureUser(u models.User, roles []string) e
 		createReq := N9eUserCreateReq{
 			Username: u.Username,
 			Password: defaultPassword,
-			Nickname: u.Nickname,
+			Nickname: u.Name,
 			Email:    u.Email,
 			Roles:    n9eRoles,
 		}
@@ -372,8 +372,8 @@ func (s *nightingaleUserServiceImpl) SyncAllUsers() (created, updated, skipped i
 	for _, user := range users {
 		// 获取用户角色
 		var roles []string
-		if user.Role != "" {
-			roles = []string{user.Role}
+		if user.RoleTemplate != "" {
+			roles = []string{user.RoleTemplate}
 		} else {
 			roles = []string{"viewer"}
 		}
@@ -402,7 +402,7 @@ func (s *nightingaleUserServiceImpl) SyncAllUsers() (created, updated, skipped i
 func (s *nightingaleUserServiceImpl) syncToLocalDB(u models.User, roles []string) {
 	n9eUser := models.NightingaleUser{
 		Username: u.Username,
-		Nickname: u.Nickname,
+		Nickname: u.Name,
 		Email:    u.Email,
 		Roles:    strings.Join(roles, ","),
 	}

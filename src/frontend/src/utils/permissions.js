@@ -47,6 +47,7 @@ export const ROLE_PERMISSIONS = {
       '/ansible',
       '/kubernetes',
       '/argocd',
+      '/keycloak',
       '/dashboard',
       '/enhanced-dashboard',
       '/admin',
@@ -71,6 +72,7 @@ export const ROLE_PERMISSIONS = {
       'files',
       'saltstack',
       'argocd',
+      'keycloak',
       'kafka-ui',
       'ai-chat',
       'admin'

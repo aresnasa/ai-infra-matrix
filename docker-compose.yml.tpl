@@ -252,8 +252,8 @@ services:
   backend-init:
     image: ai-infra-backend-init:{{IMAGE_TAG}}
     build:
-      context: ./src/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/backend/Dockerfile
       target: backend-init
       args:
         VERSION: {{IMAGE_TAG}}
@@ -300,8 +300,8 @@ services:
   backend:
     image: ai-infra-backend:{{IMAGE_TAG}}
     build:
-      context: ./src/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/backend/Dockerfile
       target: backend
       args:
         VERSION: {{IMAGE_TAG}}
@@ -419,8 +419,8 @@ services:
   frontend:
     image: ai-infra-frontend:{{IMAGE_TAG}}
     build:
-      context: ./src/frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: src/frontend/Dockerfile
       args:
         REACT_APP_API_URL: /api
         REACT_APP_JUPYTERHUB_URL: /jupyter
