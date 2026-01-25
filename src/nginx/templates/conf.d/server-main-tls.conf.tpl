@@ -206,6 +206,12 @@ server {
         proxy_set_header X-External-Host $external_host;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Cookie $http_cookie;
+        
+        # 增大代理缓冲区以处理大的响应头（如JWT token）
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+        
         set $cors_origin "*";
         if ($http_origin ~ ^https?://(.*\.)?(localhost|[\d\.]+)(:\d+)?$) { set $cors_origin $http_origin; }
         add_header Access-Control-Allow-Origin $cors_origin always;
