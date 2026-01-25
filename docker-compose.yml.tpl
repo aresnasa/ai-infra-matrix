@@ -1146,7 +1146,7 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HTTP_ENABLED: "true"
-      KC_HTTP_RELATIVE_PATH: /auth
+      # KC_HTTP_RELATIVE_PATH 是构建时选项，已在 Dockerfile 中设置为 /auth
       # 代理配置
       KC_PROXY_HEADERS: xforwarded
       # 健康检查
