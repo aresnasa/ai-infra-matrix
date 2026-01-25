@@ -40,7 +40,7 @@ RUN apt-get install -y --no-install-recommends tzdata && \
 WORKDIR /app
 
 # 复制package.json和package-lock.json
-# 支持两种构建上下文: 项目根目录(build.sh) 或 src/frontend (docker-compose)
+# 支持项目根目录作为构建上下文 (build.sh)
 COPY src/frontend/package*.json ./
 
 # 配置npm镜像源（支持多种格式）
