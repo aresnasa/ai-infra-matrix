@@ -10848,6 +10848,29 @@ print_help() {
     echo "Service Commands:"
     echo "  start-all           Start all services (with SaltStack HA multi-master)"
     echo "  stop-all            Stop all services"
+    echo "  up [options] [services]   Start services with docker compose up"
+    echo "    Options:"
+    echo "      --profile <name>      Use docker compose profile (keycloak, argocd, full)"
+    echo "      -d, --detach          Run in background (default)"
+    echo "      --build               Build images before starting"
+    echo "      --force-recreate      Recreate containers"
+    echo "      --remove-orphans      Remove orphaned containers"
+    echo "    Examples:"
+    echo "      $0 up                          # Start all default services"
+    echo "      $0 up --profile full           # Start with full profile (Keycloak + ArgoCD)"
+    echo "      $0 up --profile keycloak       # Start with Keycloak SSO only"
+    echo "      $0 up nginx backend            # Start specific services"
+    echo "      $0 up --build --force-recreate # Build and force recreate"
+    echo "  down [options] [services] Stop services with docker compose down"
+    echo "    Options:"
+    echo "      --profile <name>      Use docker compose profile"
+    echo "      -v, --volumes         Remove volumes"
+    echo "      --rmi local|all       Remove images"
+    echo "      --remove-orphans      Remove orphaned containers"
+    echo "    Examples:"
+    echo "      $0 down                        # Stop all services"
+    echo "      $0 down --profile full         # Stop services with profile"
+    echo "      $0 down -v                     # Stop and remove volumes"
     echo "  tag-images          Tag private registry images as local (for intranet)"
     echo ""
     echo "Update Commands (Build + Tag + Restart):"
@@ -11527,6 +11550,149 @@ case "$COMMAND" in
         ;;
     start-all)
         start_all
+        ;;
+    up)
+        # Docker Compose up with optional profile support
+        # Usage: ./build.sh up [--profile <profile>] [service1] [service2] ...
+        # Examples:
+        #   ./build.sh up                    # Start all default services
+        #   ./build.sh up --profile full     # Start with 'full' profile
+        #   ./build.sh up --profile keycloak # Start with Keycloak SSO
+        #   ./build.sh up nginx backend      # Start specific services
+        
+        compose_args=()
+        profile_name=""
+        services_to_start=()
+        
+        # Parse arguments after 'up' command
+        _up_args=("${REMAINING_ARGS[@]:1}")
+        _i=0
+        while [[ $_i -lt ${#_up_args[@]} ]]; do
+            _arg="${_up_args[$_i]}"
+            case "$_arg" in
+                --profile)
+                    _i=$((_i + 1))
+                    profile_name="${_up_args[$_i]:-}"
+                    if [[ -n "$profile_name" ]]; then
+                        compose_args+=("--profile" "$profile_name")
+                    fi
+                    ;;
+                --profile=*)
+                    profile_name="${_arg#--profile=}"
+                    if [[ -n "$profile_name" ]]; then
+                        compose_args+=("--profile" "$profile_name")
+                    fi
+                    ;;
+                -d|--detach)
+                    compose_args+=("-d")
+                    ;;
+                --build)
+                    compose_args+=("--build")
+                    ;;
+                --force-recreate)
+                    compose_args+=("--force-recreate")
+                    ;;
+                --remove-orphans)
+                    compose_args+=("--remove-orphans")
+                    ;;
+                -*)
+                    # Pass through other docker-compose options
+                    compose_args+=("$_arg")
+                    ;;
+                *)
+                    # Service names
+                    services_to_start+=("$_arg")
+                    ;;
+            esac
+            _i=$((_i + 1))
+        done
+        
+        # Default to detached mode if not specified
+        if [[ ! " ${compose_args[*]} " =~ " -d " ]] && [[ ! " ${compose_args[*]} " =~ " --detach " ]]; then
+            compose_args+=("-d")
+        fi
+        
+        # Build docker-compose command
+        compose_cmd="docker compose"
+        if [[ ${#compose_args[@]} -gt 0 ]]; then
+            # Profile args come before 'up'
+            profile_args=()
+            other_args=()
+            for _a in "${compose_args[@]}"; do
+                if [[ "$_a" == "--profile" ]] || [[ -n "$_pending_profile" ]]; then
+                    if [[ "$_a" == "--profile" ]]; then
+                        _pending_profile="true"
+                        profile_args+=("$_a")
+                    else
+                        profile_args+=("$_a")
+                        _pending_profile=""
+                    fi
+                else
+                    other_args+=("$_a")
+                fi
+            done
+            
+            if [[ ${#profile_args[@]} -gt 0 ]]; then
+                compose_cmd="$compose_cmd ${profile_args[*]}"
+            fi
+            compose_cmd="$compose_cmd up"
+            if [[ ${#other_args[@]} -gt 0 ]]; then
+                compose_cmd="$compose_cmd ${other_args[*]}"
+            fi
+        else
+            compose_cmd="$compose_cmd up -d"
+        fi
+        
+        # Add services if specified
+        if [[ ${#services_to_start[@]} -gt 0 ]]; then
+            compose_cmd="$compose_cmd ${services_to_start[*]}"
+        fi
+        
+        log_info "🚀 Starting services..."
+        if [[ -n "$profile_name" ]]; then
+            log_info "  Profile: $profile_name"
+        fi
+        if [[ ${#services_to_start[@]} -gt 0 ]]; then
+            log_info "  Services: ${services_to_start[*]}"
+        fi
+        log_info "  Command: $compose_cmd"
+        
+        eval "$compose_cmd"
+        ;;
+    down)
+        # Docker Compose down with optional profile support
+        compose_args=()
+        profile_name=""
+        
+        # Parse arguments
+        _down_args=("${REMAINING_ARGS[@]:1}")
+        for _arg in "${_down_args[@]}"; do
+            case "$_arg" in
+                --profile=*)
+                    profile_name="${_arg#--profile=}"
+                    compose_args+=("--profile" "$profile_name")
+                    ;;
+                -v|--volumes)
+                    compose_args+=("-v")
+                    ;;
+                --rmi)
+                    compose_args+=("--rmi" "all")
+                    ;;
+                *)
+                    compose_args+=("$_arg")
+                    ;;
+            esac
+        done
+        
+        compose_cmd="docker compose"
+        if [[ -n "$profile_name" ]]; then
+            compose_cmd="$compose_cmd --profile $profile_name"
+        fi
+        compose_cmd="$compose_cmd down ${compose_args[*]}"
+        
+        log_info "🛑 Stopping services..."
+        log_info "  Command: $compose_cmd"
+        eval "$compose_cmd"
         ;;
     tag-images)
         tag_private_images_as_local
