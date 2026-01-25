@@ -1,15 +1,11 @@
 # Keycloak IAM 服务 - 统一身份认证管理
-# 版本: v26.0
+# 版本: 26.0
 # 用途: 为 AI Infrastructure Matrix 提供 SSO 单点登录、OIDC/SAML 认证服务
 # 支持架构: linux/amd64, linux/arm64
 
-{{if .BASE_IMAGE_REGISTRY}}
-ARG BASE_IMAGE_REGISTRY={{.BASE_IMAGE_REGISTRY}}
-{{else}}
-ARG BASE_IMAGE_REGISTRY=
-{{end}}
+ARG KEYCLOAK_VERSION=26.0
 
-FROM ${BASE_IMAGE_REGISTRY}quay.io/keycloak/keycloak:{{.KEYCLOAK_VERSION | default "26.0"}} AS builder
+FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION} AS builder
 
 # 设置工作目录
 WORKDIR /opt/keycloak
@@ -28,7 +24,7 @@ RUN /opt/keycloak/bin/kc.sh build \
     --features=docker,admin-fine-grained-authz,token-exchange,declarative-user-profile
 
 # ==================== 生产镜像 ====================
-FROM ${BASE_IMAGE_REGISTRY}quay.io/keycloak/keycloak:{{.KEYCLOAK_VERSION | default "26.0"}}
+FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
 
 # 从构建阶段复制优化后的文件
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
