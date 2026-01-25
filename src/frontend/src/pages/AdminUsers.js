@@ -133,12 +133,12 @@ const AdminUsers = () => {
     
     setApprovalLoading(true);
     try {
-      await userAPI.approveRegistration(selectedApproval.id);
+      await adminAPI.approveRegistration(selectedApproval.id);
       
       // 如果选择了模块，为用户授予对应权限
       if (selectedModules.length > 0 && selectedApproval.user_id) {
         try {
-          await userAPI.grantUserModules(selectedApproval.user_id, {
+          await adminAPI.grantUserModules(selectedApproval.user_id, {
             modules: selectedModules,
             verbs: ['read', 'create', 'update', 'delete', 'list']
           });
@@ -179,7 +179,7 @@ const AdminUsers = () => {
     
     setApprovalLoading(true);
     try {
-      await userAPI.rejectRegistration(selectedApproval.id, rejectReason);
+      await adminAPI.rejectRegistration(selectedApproval.id, rejectReason);
       message.success(t('admin.rejectSuccess'));
       setRejectModalVisible(false);
       setSelectedApproval(null);
