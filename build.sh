@@ -10791,6 +10791,9 @@ print_help() {
     echo "  init-env --force    Force re-initialize all environment variables"
     echo "  gen-prod-env [file] Generate production .env with random strong passwords"
     echo "                      default output: .env.prod"
+    echo "  detect-domain       Detect public domain by DNS verification"
+    echo "                      Checks if candidate domains resolve to server's public IP"
+    echo "                      Auto-configures PUBLIC_HOST if verified"
     echo ""
     echo "SSL/HTTPS Commands (SSL enabled by default):"
     echo "  ssl-setup [domain]  Generate self-signed SSL certificates to src/nginx/ssl/"
@@ -11224,6 +11227,62 @@ case "$COMMAND" in
         echo
         log_info "Current environment configuration:"
         grep -E "^(EXTERNAL_HOST|DOMAIN|EXTERNAL_PORT|EXTERNAL_SCHEME)=" "$ENV_FILE"
+        ;;
+    detect-domain|detect-public-domain|auto-domain)
+        # 检测公网域名并自动配置 PUBLIC_HOST
+        log_info "🔍 Detecting public domain via DNS verification..."
+        echo
+        
+        # 获取服务器公网 IP
+        log_info "Step 1: Getting server's public IP..."
+        public_ip=$(get_public_ip)
+        if [[ -z "$public_ip" ]]; then
+            log_error "❌ Failed to detect public IP. Check internet connection."
+            exit 1
+        fi
+        log_info "✅ Server public IP: $public_ip"
+        echo
+        
+        # 检测域名
+        log_info "Step 2: Checking candidate domains..."
+        detected_domain=$(detect_public_domain)
+        
+        if [[ -n "$detected_domain" ]]; then
+            echo
+            log_info "🎉 Verified domain: $detected_domain"
+            log_info "   Resolves to: $public_ip"
+            echo
+            
+            # 询问是否更新 .env
+            if [[ -f "$ENV_FILE" ]]; then
+                current_public_host=$(grep "^PUBLIC_HOST=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+                if [[ "$current_public_host" != "$detected_domain" ]]; then
+                    log_info "Step 3: Updating PUBLIC_HOST in .env..."
+                    update_env_variable "PUBLIC_HOST" "$detected_domain"
+                    log_info "✅ PUBLIC_HOST updated: $detected_domain"
+                    echo
+                    log_info "📋 Next steps:"
+                    log_info "   1. Restart JupyterHub: docker compose up -d jupyterhub --force-recreate"
+                    log_info "   2. Verify redirects work correctly"
+                else
+                    log_info "✅ PUBLIC_HOST already set to: $detected_domain"
+                fi
+            else
+                log_warn "⚠️  .env file not found. Run 'init-env' first."
+                log_info "💡 Then manually set: PUBLIC_HOST=$detected_domain"
+            fi
+        else
+            log_warn "⚠️  No verified domain found."
+            log_info ""
+            log_info "To add your domain, edit build.sh and add it to candidate_domains array in detect_public_domain():"
+            log_info "   candidate_domains=("
+            log_info "       \"your-domain.com\""
+            log_info "       \"www.your-domain.com\""
+            log_info "   )"
+            log_info ""
+            log_info "Or manually set PUBLIC_HOST in .env:"
+            log_info "   PUBLIC_HOST=your-domain.com"
+        fi
         ;;
     init-safeline)
         # 初始化 SafeLine WAF 数据目录

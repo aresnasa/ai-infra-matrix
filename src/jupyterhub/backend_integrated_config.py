@@ -675,8 +675,6 @@ c.ConfigurableHTTPProxy.auth_token = os.environ.get('CONFIGPROXY_AUTH_TOKEN', 'd
 # SSL 代理模式下的 ConfigurableHTTPProxy 配置
 # 当 JupyterHub 在 SSL 终止代理（如 nginx）后面运行时，需要信任代理传递的协议
 if enable_tls or EXTERNAL_SCHEME == 'https':
-    # 允许代理将 HTTPS 请求转发为 HTTP
-    c.ConfigurableHTTPProxy.should_check_origin = False
     # 配置代理的 API 令牌
     c.ConfigurableHTTPProxy.api_url = 'http://127.0.0.1:8001'
     print("🔒 ConfigurableHTTPProxy: SSL 代理模式已配置")
