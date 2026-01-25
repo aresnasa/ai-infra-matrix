@@ -9544,6 +9544,8 @@ update_component() {
     
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "🔄 Updating component: $component"
+    [[ "$force_build" == "true" ]] && log_info "   Mode: Force rebuild (--no-cache)"
+    [[ "$no_restart" == "true" ]] && log_info "   Mode: Build only (--no-restart)"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     local compose_cmd=$(detect_compose_command)
