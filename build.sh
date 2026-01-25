@@ -9572,16 +9572,16 @@ update_component() {
     
     # Step 2: Build component
     log_step "Step 2/4: Building $component..."
-    local build_args=()
     if [[ "$force_build" == "true" ]]; then
-        build_args+=("--force")
+        # Set environment variables that build_component uses to add --no-cache
+        # Do NOT pass --force to build_component as it's not a valid docker build flag
         FORCE_BUILD=true
         FORCE_REBUILD=true      # Skip cache check in need_rebuild()
         SKIP_CACHE_CHECK=true   # Additional flag to skip cache check
         log_info "  → Force rebuild enabled (--no-cache, skip cache check)"
     fi
     
-    if ! build_component "$component" "${build_args[@]}"; then
+    if ! build_component "$component"; then
         log_error "Failed to build $component"
         return 1
     fi
