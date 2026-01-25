@@ -111,6 +111,15 @@ const DEFAULT_NAV_ITEMS = [
     roles: ['sre', 'admin', 'super-admin']
   },
   {
+    id: 'kafka-ui',
+    key: '/kafka-ui',
+    labelKey: 'nav.kafkaUI',
+    icon: 'ApiOutlined',
+    visible: true,
+    order: 8,
+    roles: ['sre', 'admin', 'super-admin']
+  },
+  {
     id: 'role-templates',
     key: '/admin/role-templates',
     labelKey: 'nav.roleTemplates',

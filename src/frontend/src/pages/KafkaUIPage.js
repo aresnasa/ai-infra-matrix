@@ -7,8 +7,11 @@ const KafkaUIPage = () => {
   const [error, setError] = useState(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
 
-  // Kafka UI的URL
-  const kafkaUIUrl = 'http://localhost:9095';
+  // Kafka UI的URL - 使用相对路径通过nginx代理访问
+  // nginx 会将 /kafka-ui-backend/ 路由代理到 kafka-ui 容器
+  const kafkaUIUrl = '/kafka-ui-backend/';
+  // 直接访问 URL（用于新标签页打开，需要根据环境配置）
+  const directKafkaUIUrl = window.location.origin + '/kafka-ui-backend/';
 
   useEffect(() => {
     // 检查Kafka UI服务是否可访问
@@ -54,7 +57,7 @@ const KafkaUIPage = () => {
   };
 
   const handleOpenInNewTab = () => {
-    window.open(kafkaUIUrl, '_blank');
+    window.open(directKafkaUIUrl, '_blank');
   };
 
   if (loading) {
@@ -97,7 +100,7 @@ const KafkaUIPage = () => {
               <ul>
                 <li>检查Kafka服务是否正常运行</li>
                 <li>确认Kafka UI服务是否已启动</li>
-                <li>在新标签页中直接访问: <a href={kafkaUIUrl} target="_blank" rel="noopener noreferrer">{kafkaUIUrl}</a></li>
+                <li>在新标签页中直接访问: <a href={directKafkaUIUrl} target="_blank" rel="noopener noreferrer">{directKafkaUIUrl}</a></li>
               </ul>
             </div>
           }

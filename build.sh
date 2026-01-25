@@ -4159,6 +4159,8 @@ TEMPLATE_VARIABLES=(
     "JUPYTERHUB_PORT"     # JupyterHub service port (default: 8000)
     "NIGHTINGALE_HOST"    # Nightingale service host (default: nightingale)
     "NIGHTINGALE_PORT"    # Nightingale service port (default: 17000)
+    "KAFKA_UI_HOST"       # Kafka UI service host (default: kafka-ui)
+    "KAFKA_UI_PORT"       # Kafka UI service port (default: 8080)
     "EXTERNAL_PORT"       # Main Nginx port (default: 8080)
     "HTTPS_PORT"          # HTTPS port (default: 8443)
     "EXTERNAL_HOST"       # External host for CSP headers

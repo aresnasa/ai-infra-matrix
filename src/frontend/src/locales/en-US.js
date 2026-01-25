@@ -113,6 +113,8 @@ export default {
     jupyterhub: 'JupyterHub',
     slurm: 'SLURM',
     saltstack: 'SaltStack',
+    kafkaUI: 'Kafka UI',
+    'kafka-ui': 'Kafka UI',
     objectStorage: 'Object Storage',
     roleTemplates: 'Role Templates',
     adminCenter: 'Admin Center',

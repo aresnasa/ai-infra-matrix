@@ -17,11 +17,11 @@ upstream jupyterhub {
     server {{JUPYTERHUB_HOST}}:{{JUPYTERHUB_PORT}};
 }
 
-# SaltStack API Upstream - 负载均衡双 Master
+# SaltStack API Upstream - 单 Master 模式
 upstream salt_api {
     least_conn;
     server salt-master-1:8002 max_fails=2 fail_timeout=10s;
-    server salt-master-2:8002 max_fails=2 fail_timeout=10s backup;
+    # server salt-master-2:8002 max_fails=2 fail_timeout=10s backup;  # 可选的备份 master
 }
 
 # SeaweedFS Upstream Definitions
@@ -149,6 +149,7 @@ server {
     include /etc/nginx/conf.d/includes/jupyterhub.conf;
     include /etc/nginx/conf.d/includes/nightingale.conf;
     include /etc/nginx/conf.d/includes/seaweedfs.conf;
+    include /etc/nginx/conf.d/includes/kafka-ui.conf;
 
     # Nightingale API 代理 - 使用 ^~ 确保优先于 /api/ 匹配
     location ^~ /api/n9e/ {
