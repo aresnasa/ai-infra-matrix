@@ -41,7 +41,7 @@ WORKDIR /app
 
 # 复制package.json和package-lock.json
 # 支持两种构建上下文: 项目根目录(build.sh) 或 src/frontend (docker-compose)
-COPY src/frontend/package*.json package*.json ./
+COPY src/frontend/package*.json ./
 
 # 配置npm镜像源（支持多种格式）
 RUN set -eux; \
@@ -56,10 +56,9 @@ RUN set -eux; \
 RUN npm install --verbose
 
 # 复制源代码
-# 支持两种构建上下文: 项目根目录(build.sh) 或 src/frontend (docker-compose)
-COPY src/frontend/src src/frontend/public src/frontend/package*.json ./
-COPY src src/ 
-public public/
+# 支持项目根目录作为构建上下文 (build.sh)
+COPY src/frontend/src ./src
+COPY src/frontend/public ./public
 
 # 设置构建时环境变量
 ARG REACT_APP_API_URL=/api
