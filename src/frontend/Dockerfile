@@ -131,7 +131,8 @@ RUN set -eux; \
 COPY --from=build /app/build /usr/share/nginx/html
 
 # 复制nginx配置文件
-COPY nginx.conf /etc/nginx/sites-available/default
+# 支持项目根目录作为构建上下文 (build.sh)
+COPY src/frontend/nginx.conf /etc/nginx/sites-available/default
 
 # 设置工作目录
 WORKDIR /usr/share/nginx/html
