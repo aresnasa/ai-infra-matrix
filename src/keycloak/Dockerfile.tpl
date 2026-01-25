@@ -21,7 +21,7 @@ ENV KC_DB=postgres
 # 构建优化版本
 RUN /opt/keycloak/bin/kc.sh build \
     --db=postgres \
-    --features=docker,admin-fine-grained-authz,token-exchange,declarative-user-profile
+    --features=docker,admin-fine-grained-authz,token-exchange,organization
 
 # ==================== 生产镜像 ====================
 FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
