@@ -36,7 +36,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'ProjectOutlined',
     visible: true,
     order: 0,
-    roles: ['user', 'admin', 'super-admin']
+    roles: ['data-developer', 'sre', 'audit', 'user', 'admin', 'super-admin']
   },
   {
     id: 'monitoring',
@@ -45,7 +45,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'DashboardOutlined',
     visible: true,
     order: 1,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'gitea',
@@ -54,7 +54,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'CodeOutlined',
     visible: true,
     order: 1,
-    roles: ['user', 'admin', 'super-admin']
+    roles: ['sre', 'user', 'admin', 'super-admin']
   },
   {
     id: 'kubernetes',
@@ -63,7 +63,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'CloudServerOutlined',
     visible: true,
     order: 2,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'ansible',
@@ -72,7 +72,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'FileTextOutlined',
     visible: true,
     order: 3,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'jupyterhub',
@@ -81,7 +81,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'ExperimentTwoTone',
     visible: true,
     order: 4,
-    roles: ['user', 'admin', 'super-admin']
+    roles: ['data-developer', 'sre', 'user', 'admin', 'super-admin']
   },
   {
     id: 'slurm',
@@ -108,7 +108,7 @@ const DEFAULT_NAV_ITEMS = [
     icon: 'ControlOutlined',
     visible: true,
     order: 7,
-    roles: ['admin', 'super-admin']
+    roles: ['sre', 'admin', 'super-admin']
   },
   {
     id: 'role-templates',
