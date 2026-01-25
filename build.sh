@@ -701,7 +701,8 @@ detect_public_domain() {
         for candidate in "${candidate_domains[@]}"; do
             if verify_domain_dns "$candidate" "$public_ip"; then
                 domain="$candidate"
-                log_info "✅ 通过 DNS 验证检测到域名: $domain (解析到 $public_ip)"
+                # 注意: 使用 >&2 输出到 stderr，避免混入函数返回值
+                echo -e "${GREEN}[INFO]${NC} ✅ 通过 DNS 验证检测到域名: $domain (解析到 $public_ip)" >&2
                 echo "$domain"
                 return 0
             fi
@@ -727,7 +728,8 @@ detect_public_domain() {
             log_debug "从 SSL 证书检测到域名: $domain"
             # 验证 SSL 证书中的域名是否也指向当前服务器
             if [[ -n "$public_ip" ]] && verify_domain_dns "$domain" "$public_ip"; then
-                log_info "✅ SSL 证书域名 $domain 已验证指向当前服务器"
+                # 使用 >&2 输出到 stderr，避免混入函数返回值
+                echo -e "${GREEN}[INFO]${NC} ✅ SSL 证书域名 $domain 已验证指向当前服务器" >&2
             fi
         fi
     fi
