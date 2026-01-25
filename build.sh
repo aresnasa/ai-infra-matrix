@@ -9588,9 +9588,23 @@ update_component() {
     log_info "  ✓ Build completed: $image_name"
     
     # Step 3: Tag image (if needed)
-    log_step "Step 3/4: Verifying image tag..."
+    log_step "Step 3/4: Verifying and syncing image tags..."
     if docker image inspect "$image_name" >/dev/null 2>&1; then
         log_info "  ✓ Image tagged: $image_name"
+        
+        # Sync architecture-specific tags to the same image
+        # This ensures ai-infra-xxx:v0.3.8 and ai-infra-xxx:v0.3.8-amd64 point to the same image
+        local native_arch=$(_detect_docker_platform)
+        native_arch="${native_arch##*/}"  # Extract arch from linux/amd64 -> amd64
+        local arch_tag="ai-infra-$component:${tag}-${native_arch}"
+        if [[ -n "$PRIVATE_REGISTRY" ]]; then
+            arch_tag="$PRIVATE_REGISTRY/$arch_tag"
+        fi
+        
+        # Tag the image with architecture suffix (for consistency with multi-arch builds)
+        if docker tag "$image_name" "$arch_tag" 2>/dev/null; then
+            log_info "  ✓ Synced architecture tag: $arch_tag"
+        fi
     else
         log_error "Image not found after build: $image_name"
         return 1
