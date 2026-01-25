@@ -9585,30 +9585,73 @@ update_component() {
         log_error "Failed to build $component"
         return 1
     fi
-    log_info "  ✓ Build completed: $image_name"
     
-    # Step 3: Tag image (if needed)
-    log_step "Step 3/4: Verifying and syncing image tags..."
+    # Step 3: Verify and tag image properly
+    log_step "Step 3/4: Verifying and tagging image..."
+    
+    # Find the latest built image for this component
+    # Priority: 1) Image with correct tag, 2) Most recent image matching component name
+    local built_image_id=""
+    local base_image_name="ai-infra-$component"
+    
+    # First check if the expected image exists
     if docker image inspect "$image_name" >/dev/null 2>&1; then
-        log_info "  ✓ Image tagged: $image_name"
-        
-        # Sync architecture-specific tags to the same image
-        # This ensures ai-infra-xxx:v0.3.8 and ai-infra-xxx:v0.3.8-amd64 point to the same image
-        local native_arch=$(_detect_docker_platform)
-        native_arch="${native_arch##*/}"  # Extract arch from linux/amd64 -> amd64
-        local arch_tag="ai-infra-$component:${tag}-${native_arch}"
-        if [[ -n "$PRIVATE_REGISTRY" ]]; then
-            arch_tag="$PRIVATE_REGISTRY/$arch_tag"
-        fi
-        
-        # Tag the image with architecture suffix (for consistency with multi-arch builds)
-        if docker tag "$image_name" "$arch_tag" 2>/dev/null; then
-            log_info "  ✓ Synced architecture tag: $arch_tag"
-        fi
+        built_image_id=$(docker image inspect "$image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
+        log_info "  ✓ Found image with expected tag: $image_name (ID: $built_image_id)"
     else
-        log_error "Image not found after build: $image_name"
-        return 1
+        # Look for the most recently created image matching the component name
+        # This handles cases where build produced an image but with wrong/no tag
+        built_image_id=$(docker images --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.CreatedAt}}' | \
+            grep "$base_image_name" | \
+            sort -k3 -r | \
+            head -1 | \
+            awk '{print $1}')
+        
+        if [[ -n "$built_image_id" ]]; then
+            log_info "  → Found recent image: $built_image_id, tagging as $image_name"
+            if docker tag "$built_image_id" "$image_name"; then
+                log_info "  ✓ Tagged image: $built_image_id -> $image_name"
+            else
+                log_error "  ✗ Failed to tag image $built_image_id as $image_name"
+                return 1
+            fi
+        else
+            # Last resort: check for dangling images created in last 5 minutes
+            built_image_id=$(docker images --filter "dangling=true" --format '{{.ID}} {{.CreatedAt}}' | \
+                head -1 | awk '{print $1}')
+            
+            if [[ -n "$built_image_id" ]]; then
+                log_info "  → Found dangling image: $built_image_id, tagging as $image_name"
+                if docker tag "$built_image_id" "$image_name"; then
+                    log_info "  ✓ Tagged dangling image: $built_image_id -> $image_name"
+                else
+                    log_error "  ✗ Failed to tag dangling image"
+                    return 1
+                fi
+            else
+                log_error "  ✗ No built image found for $component"
+                return 1
+            fi
+        fi
     fi
+    
+    # Sync architecture-specific tags to the same image
+    # This ensures ai-infra-xxx:v0.3.8 and ai-infra-xxx:v0.3.8-amd64 point to the same image
+    local native_arch=$(_detect_docker_platform)
+    native_arch="${native_arch##*/}"  # Extract arch from linux/amd64 -> amd64
+    local arch_tag="ai-infra-$component:${tag}-${native_arch}"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        arch_tag="$PRIVATE_REGISTRY/$arch_tag"
+    fi
+    
+    # Tag the image with architecture suffix (for consistency with multi-arch builds)
+    if docker tag "$image_name" "$arch_tag" 2>/dev/null; then
+        log_info "  ✓ Synced architecture tag: $arch_tag"
+    fi
+    
+    # Verify final image
+    local final_id=$(docker image inspect "$image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
+    log_info "  ✓ Image ready: $image_name (ID: $final_id)"
     
     # Step 4: Restart component
     if [[ "$no_restart" == "true" ]]; then
