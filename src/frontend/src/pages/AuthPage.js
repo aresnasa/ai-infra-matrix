@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Form, Input, Button, Card, message, Tabs, Row, Col, Select, Checkbox, Alert, Descriptions, Divider, Modal, Space } from 'antd';
 import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -48,6 +48,13 @@ const AuthPage = ({ onLogin }) => {
   const [activeTab, setActiveTab] = useState('login');
   const [selectedRoleTemplate, setSelectedRoleTemplate] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(true);
+  
+  // 注册配置状态
+  const [registrationConfig, setRegistrationConfig] = useState({
+    requireInvitationCode: true, // 默认需要邀请码
+    disableRegistration: false,
+    allowApprovalMode: false,
+  });
   const [ldapValidationStatus, setLdapValidationStatus] = useState(null); // null, 'validating', 'success', 'error'
   
   // 邀请码相关状态
@@ -62,6 +69,31 @@ const AuthPage = ({ onLogin }) => {
   const [pendingLoginData, setPendingLoginData] = useState(null);
   const [verifying2FA, setVerifying2FA] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+
+  // 获取注册配置
+  useEffect(() => {
+    const fetchRegistrationConfig = async () => {
+      try {
+        const response = await authAPI.getRegistrationConfig();
+        if (response.data) {
+          setRegistrationConfig({
+            requireInvitationCode: response.data.require_invitation_code ?? true,
+            disableRegistration: response.data.disable_registration ?? false,
+            allowApprovalMode: response.data.allow_approval_mode ?? false,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch registration config:', error);
+        // 默认使用最严格的配置
+        setRegistrationConfig({
+          requireInvitationCode: true,
+          disableRegistration: false,
+          allowApprovalMode: false,
+        });
+      }
+    };
+    fetchRegistrationConfig();
+  }, []);
 
   // 获取角色模板名称
   const getRoleTemplateName = (key) => {
@@ -504,9 +536,12 @@ const AuthPage = ({ onLogin }) => {
                     />
                   </Form.Item>
 
-                  {/* 邀请码输入框（可选） */}
+                  {/* 邀请码输入框 */}
                   <Form.Item
                     name="invitation_code"
+                    rules={registrationConfig.requireInvitationCode ? [
+                      { required: true, message: t('auth.invitationCodeRequired') }
+                    ] : []}
                     extra={invitationCodeValid === true ? (
                       <span style={{ color: '#52c41a' }}>
                         ✓ {t('auth.invitationCodeValid')}
@@ -514,13 +549,15 @@ const AuthPage = ({ onLogin }) => {
                       </span>
                     ) : invitationCodeValid === false ? (
                       <span style={{ color: '#ff4d4f' }}>✗ {t('auth.invitationCodeInvalid')}</span>
+                    ) : registrationConfig.requireInvitationCode ? (
+                      <span style={{ color: '#ff4d4f' }}>{t('auth.invitationCodeRequiredHint')}</span>
                     ) : (
                       <span style={{ color: '#666' }}>{t('auth.invitationCodeHint')}</span>
                     )}
                   >
                     <Input
                       prefix={<SafetyOutlined />}
-                      placeholder={t('auth.invitationCode')}
+                      placeholder={registrationConfig.requireInvitationCode ? t('auth.invitationCodeRequiredPlaceholder') : t('auth.invitationCode')}
                       value={invitationCode}
                       onChange={handleInvitationCodeChange}
                       suffix={invitationCodeChecking ? <LoadingOutlined /> : null}
@@ -548,12 +585,20 @@ const AuthPage = ({ onLogin }) => {
 
                   {renderRoleTemplateInfo()}
 
-                  {/* 根据是否有有效邀请码显示不同的提示 */}
+                  {/* 根据注册配置和邀请码状态显示不同的提示 */}
                   {invitationCodeValid === true ? (
                     <Alert
                       message={t('auth.invitationCodeMode')}
                       description={t('auth.invitationCodeModeDesc')}
                       type="success"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+                  ) : registrationConfig.requireInvitationCode ? (
+                    <Alert
+                      message={t('auth.invitationCodeRequiredMode')}
+                      description={t('auth.invitationCodeRequiredModeDesc')}
+                      type="warning"
                       showIcon
                       style={{ marginBottom: 16 }}
                     />
@@ -565,7 +610,7 @@ const AuthPage = ({ onLogin }) => {
                       showIcon
                       style={{ marginBottom: 16 }}
                     />
-                  )}
+                  )}}
 
                   {ldapValidationStatus === 'validating' && (
                     <Alert

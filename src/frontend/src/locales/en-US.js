@@ -931,6 +931,11 @@ export default {
     pendingApprovalExists: 'A pending registration request already exists for this username or email',
     // Invitation Code
     invitationCode: 'Invitation Code (Optional)',
+    invitationCodeRequired: 'Please enter invitation code',
+    invitationCodeRequiredPlaceholder: 'Enter invitation code (Required)',
+    invitationCodeRequiredHint: 'This system requires invitation code to register. Please get one from administrator.',
+    invitationCodeRequiredMode: 'Invitation Code Required',
+    invitationCodeRequiredModeDesc: 'This system only allows registration with valid invitation code. Please contact administrator to get one.',
     invitationCodeHint: 'Enter invitation code to register instantly without waiting for approval',
     invitationCodeValid: 'Invitation code is valid',
     invitationCodeInvalid: 'Invitation code is invalid or expired',

@@ -131,6 +131,7 @@ export const authAPI = {
   register: (userData) => api.post('/auth/register', userData),
   validateLDAP: (credentials) => api.post('/auth/validate-ldap', credentials),
   validateInvitationCode: (code) => api.get(`/auth/validate-invitation-code?code=${encodeURIComponent(code)}`),
+  getRegistrationConfig: () => api.get('/auth/registration-config'), // 获取注册配置
   logout: () => api.post('/auth/logout'),
   getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
   getProfile: createCachedRequest(() => api.get('/auth/me'), true), 

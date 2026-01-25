@@ -929,6 +929,11 @@ export default {
     pendingApprovalExists: '该用户名或邮箱已有待审批的注册申请',
     // 邀请码相关
     invitationCode: '邀请码（可选）',
+    invitationCodeRequired: '请输入邀请码',
+    invitationCodeRequiredPlaceholder: '请输入邀请码（必填）',
+    invitationCodeRequiredHint: '当前系统要求邀请码注册，请向管理员获取邀请码',
+    invitationCodeRequiredMode: '邀请码注册模式',
+    invitationCodeRequiredModeDesc: '当前系统仅允许通过邀请码注册。请向管理员获取有效的邀请码后再进行注册。',
     invitationCodeHint: '如果您有邀请码，输入后可直接注册无需等待审批',
     invitationCodeValid: '邀请码有效',
     invitationCodeInvalid: '邀请码无效或已过期',

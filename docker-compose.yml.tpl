@@ -369,6 +369,8 @@ services:
       SEAWEEDFS_USE_SSL: "${SEAWEEDFS_USE_SSL:-false}"
       # E2E 测试配置（开发/测试环境）
       E2E_ALLOW_FAKE_LDAP: "${E2E_ALLOW_FAKE_LDAP:-true}"
+      # 注册安全策略
+      REGISTRATION_REQUIRE_INVITATION_CODE: "${REGISTRATION_REQUIRE_INVITATION_CODE:-true}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       TZ: "Asia/Shanghai"
       # 外部脚本目录 - 优先加载外部脚本模板

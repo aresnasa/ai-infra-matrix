@@ -94,6 +94,35 @@ func (h *UserHandler) ValidateLDAP(c *gin.Context) {
 	})
 }
 
+// GetRegistrationConfig 获取注册配置
+// @Summary 获取注册配置
+// @Description 获取当前系统的注册策略配置
+// @Tags 用户管理
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /auth/registration-config [get]
+func (h *UserHandler) GetRegistrationConfig(c *gin.Context) {
+	// 检查 REGISTRATION_REQUIRE_INVITATION_CODE 环境变量
+	requireInvitationCode := true // 默认值
+	val := strings.TrimSpace(strings.ToLower(os.Getenv("REGISTRATION_REQUIRE_INVITATION_CODE")))
+	if val == "false" || val == "0" || val == "no" {
+		requireInvitationCode = false
+	}
+
+	// 检查是否禁用注册
+	disableRegistration := false
+	disableVal := strings.TrimSpace(strings.ToLower(os.Getenv("DISABLE_REGISTRATION")))
+	if disableVal == "true" || disableVal == "1" || disableVal == "yes" {
+		disableRegistration = true
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"require_invitation_code": requireInvitationCode,
+		"disable_registration":    disableRegistration,
+		"allow_approval_mode":     !requireInvitationCode, // 允许审批模式（无邀请码注册需审批）
+	})
+}
+
 // Register 用户注册
 // @Summary 用户注册
 // @Description 创建新用户账户

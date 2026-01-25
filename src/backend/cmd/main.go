@@ -470,6 +470,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 	auth := api.Group("/auth")
 	{
+		auth.GET("/registration-config", userHandler.GetRegistrationConfig) // 公开API：获取注册配置
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/validate-ldap", userHandler.ValidateLDAP)
 		auth.GET("/validate-invitation-code", invitationCodePublicHandler.ValidateInvitationCode) // 公开API：验证邀请码

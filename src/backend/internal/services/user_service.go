@@ -32,13 +32,32 @@ func NewUserService() *UserService {
 // 支持两种注册方式：
 // 1. 邀请码注册：提供有效邀请码可直接注册成功
 // 2. 普通注册：需要管理员审批后才能登录
+// 注册策略由 REGISTRATION_REQUIRE_INVITATION_CODE 环境变量控制：
+// - true（默认）: 邀请码必填，没有邀请码不能注册
+// - false: 邀请码可选，没有邀请码需要管理员审批
 func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error) {
 	return s.RegisterWithIP(req, "")
+}
+
+// isInvitationCodeRequired 检查是否强制要求邀请码
+func isInvitationCodeRequired() bool {
+	val := strings.TrimSpace(strings.ToLower(os.Getenv("REGISTRATION_REQUIRE_INVITATION_CODE")))
+	// 默认为 true（强制要求邀请码）
+	if val == "" {
+		return true
+	}
+	return val != "false" && val != "0" && val != "no"
 }
 
 // RegisterWithIP 用户注册（带IP地址）
 func (s *UserService) RegisterWithIP(req *models.RegisterRequest, ipAddress string) (*models.User, error) {
 	db := database.DB
+
+	// 检查是否强制要求邀请码
+	invitationCode := strings.TrimSpace(req.InvitationCode)
+	if isInvitationCodeRequired() && invitationCode == "" {
+		return nil, errors.New("邀请码必填，请输入有效的邀请码后重试")
+	}
 
 	// 检查用户名是否已存在（包括正式用户和待审批记录）
 	var existingUser models.User
@@ -75,8 +94,7 @@ func (s *UserService) RegisterWithIP(req *models.RegisterRequest, ipAddress stri
 		return nil, errors.New("密码加密失败")
 	}
 
-	// 检查是否提供了邀请码
-	invitationCode := strings.TrimSpace(req.InvitationCode)
+	// 检查是否提供了邀请码（invitationCode 已在函数开头定义）
 	if invitationCode != "" {
 		// 邀请码注册流程：验证邀请码并直接创建用户
 		return s.registerWithInvitationCode(req, invitationCode, string(hashedPassword), authSource, ipAddress)
