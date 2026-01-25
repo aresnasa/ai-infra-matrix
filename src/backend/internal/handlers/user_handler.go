@@ -112,8 +112,9 @@ func (h *UserHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// E2E test bypass: when enabled, skip LDAP and approval and create an active local user directly
-	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" {
+	// E2E test bypass: when enabled AND no invitation code provided, skip LDAP and approval
+	// If invitation code is provided, always use the normal flow to properly validate and use the code
+	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" && strings.TrimSpace(req.InvitationCode) == "" {
 		// Ensure username/email uniqueness via service call path
 		user := &models.User{
 			Username:      req.Username,
@@ -151,69 +152,95 @@ func (h *UserHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.Register(&req)
+	// 获取客户端IP地址
+	clientIP := c.ClientIP()
+
+	user, err := h.userService.RegisterWithIP(&req, clientIP)
 	if err != nil {
 		logrus.Error("Register error:", err)
-		if err.Error() == "username or email already exists" {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		errMsg := err.Error()
+		if errMsg == "username or email already exists" {
+			c.JSON(http.StatusConflict, gin.H{"error": errMsg})
+		} else if strings.Contains(errMsg, "邀请码") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+		} else if strings.Contains(errMsg, "待审批") {
+			c.JSON(http.StatusConflict, gin.H{"error": errMsg})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to register user"})
 		}
 		return
 	}
-	// After local user created, try to create corresponding LDAP entry and K8s SA/RBAC (best-effort)
-	go func() {
-		// 1) LDAP user provisioning
-		if h.ldapService != nil {
-			// displayName defaults to username
-			if err := h.ldapService.CreateUser(req.Username, req.Password, req.Email, req.Username, req.Department); err != nil {
-				logrus.WithError(err).Warn("LDAP user provisioning failed")
-			} else {
-				logrus.WithField("username", req.Username).Info("LDAP user provisioned")
-			}
-		}
 
-		// 2) K8s SA/RBAC provisioning
-		// Find default cluster from DB if exists (first enabled cluster)
-		defer func() { recover() }()
-		var cluster models.KubernetesCluster
-		if err := database.DB.Where("enabled = ?", true).First(&cluster).Error; err == nil {
-			ks := services.NewKubernetesService()
-			clientset, cerr := ks.ConnectToCluster(cluster.KubeConfig)
-			if cerr != nil {
-				logrus.WithError(cerr).Warn("K8s connect for provisioning failed")
-				return
-			}
-			// Namespace strategy: use department if provided, else "users"
-			ns := strings.ToLower(strings.TrimSpace(req.Department))
-			if ns == "" {
-				ns = "users"
-			}
-			if err := ks.EnsureNamespace(clientset, ns); err != nil {
-				logrus.WithError(err).Warn("Ensure namespace failed")
-			}
-			saName := fmt.Sprintf("user-%s", req.Username)
-			if _, err := ks.EnsureServiceAccount(clientset, ns, saName); err != nil {
-				logrus.WithError(err).Warn("Ensure ServiceAccount failed")
-			}
-			// Map role to ClusterRole
-			role := strings.ToLower(strings.TrimSpace(req.Role))
-			clusterRole := "view"
-			if role == "user" {
-				clusterRole = "edit"
-			}
-			if role == "admin" {
-				clusterRole = "admin"
-			}
-			rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
-			if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
-				logrus.WithError(err).Warn("Ensure RoleBinding failed")
-			}
-			logrus.WithFields(logrus.Fields{"username": req.Username, "namespace": ns, "cluster_role": clusterRole}).Info("K8s SA/RBAC provisioned")
-		}
-	}()
+	// 根据用户激活状态返回不同的消息
+	if user.IsActive {
+		// 邀请码注册成功，用户已激活
+		c.JSON(http.StatusCreated, gin.H{
+			"message":   "注册成功！您可以直接登录系统。",
+			"user":      user,
+			"activated": true,
+		})
+	} else {
+		// 普通注册，等待审批 - 返回 202 Accepted
+		c.JSON(http.StatusAccepted, gin.H{
+			"message":           "注册申请已提交！请等待管理员审批。",
+			"requires_approval": true,
+			"activated":         false,
+		})
+	}
 
-	c.JSON(http.StatusCreated, user)
+	// After user created (if active), try to create corresponding LDAP entry and K8s SA/RBAC (best-effort)
+	if user.IsActive {
+		go func() {
+			// 1) LDAP user provisioning
+			if h.ldapService != nil {
+				// displayName defaults to username
+				if err := h.ldapService.CreateUser(req.Username, req.Password, req.Email, req.Username, req.Department); err != nil {
+					logrus.WithError(err).Warn("LDAP user provisioning failed")
+				} else {
+					logrus.WithField("username", req.Username).Info("LDAP user provisioned")
+				}
+			}
+
+			// 2) K8s SA/RBAC provisioning
+			// Find default cluster from DB if exists (first enabled cluster)
+			defer func() { recover() }()
+			var cluster models.KubernetesCluster
+			if err := database.DB.Where("enabled = ?", true).First(&cluster).Error; err == nil {
+				ks := services.NewKubernetesService()
+				clientset, cerr := ks.ConnectToCluster(cluster.KubeConfig)
+				if cerr != nil {
+					logrus.WithError(cerr).Warn("K8s connect for provisioning failed")
+					return
+				}
+				// Namespace strategy: use department if provided, else "users"
+				ns := strings.ToLower(strings.TrimSpace(req.Department))
+				if ns == "" {
+					ns = "users"
+				}
+				if err := ks.EnsureNamespace(clientset, ns); err != nil {
+					logrus.WithError(err).Warn("Ensure namespace failed")
+				}
+				saName := fmt.Sprintf("user-%s", req.Username)
+				if _, err := ks.EnsureServiceAccount(clientset, ns, saName); err != nil {
+					logrus.WithError(err).Warn("Ensure ServiceAccount failed")
+				}
+				// Map role to ClusterRole
+				role := strings.ToLower(strings.TrimSpace(req.Role))
+				clusterRole := "view"
+				if role == "user" {
+					clusterRole = "edit"
+				}
+				if role == "admin" {
+					clusterRole = "admin"
+				}
+				rbName := fmt.Sprintf("%s-%s-rb", saName, clusterRole)
+				if _, err := ks.EnsureRoleBinding(clientset, ns, rbName, saName, clusterRole); err != nil {
+					logrus.WithError(err).Warn("Ensure RoleBinding failed")
+				}
+				logrus.WithFields(logrus.Fields{"username": req.Username, "namespace": ns, "cluster_role": clusterRole}).Info("K8s SA/RBAC provisioned")
+			}
+		}()
+	}
 }
 
 // Login 用户登录

@@ -465,11 +465,14 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	userHandler := handlers.NewUserHandler(database.DB)
 	// JupyterHub认证处理器（在多个地方使用）
 	jupyterHubAuthHandler := handlers.NewJupyterHubAuthHandler(database.DB, cfg, cache.RDB)
+	// 邀请码验证处理器（公开API）
+	invitationCodePublicHandler := handlers.NewInvitationCodeHandler()
 
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", userHandler.Register)
 		auth.POST("/validate-ldap", userHandler.ValidateLDAP)
+		auth.GET("/validate-invitation-code", invitationCodePublicHandler.ValidateInvitationCode) // 公开API：验证邀请码
 		auth.POST("/login", userHandler.Login)
 		auth.POST("/verify-2fa", userHandler.Verify2FALogin) // 2FA验证登录
 		auth.POST("/logout", middleware.AuthMiddlewareWithSession(), userHandler.Logout)
@@ -775,6 +778,19 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 
 		// RBAC初始化
 		admin.POST("/rbac/initialize", adminController.InitializeRBAC)
+
+		// 邀请码管理
+		invitationCodeHandler := handlers.NewInvitationCodeHandler()
+		invitationCodes := admin.Group("/invitation-codes")
+		{
+			invitationCodes.POST("", invitationCodeHandler.CreateInvitationCode)
+			invitationCodes.GET("", invitationCodeHandler.ListInvitationCodes)
+			invitationCodes.GET("/statistics", invitationCodeHandler.GetInvitationCodeStatistics)
+			invitationCodes.GET("/:id", invitationCodeHandler.GetInvitationCode)
+			invitationCodes.POST("/:id/disable", invitationCodeHandler.DisableInvitationCode)
+			invitationCodes.POST("/:id/enable", invitationCodeHandler.EnableInvitationCode)
+			invitationCodes.DELETE("/:id", invitationCodeHandler.DeleteInvitationCode)
+		}
 
 		// 日志级别管理
 		logging := admin.Group("/logging")

@@ -355,6 +355,9 @@ func migrateTaskSchema() error {
 		&models.PermissionGrant{},
 		// 用户注册审批表
 		&models.RegistrationApproval{},
+		// 邀请码表
+		&models.InvitationCode{},
+		&models.InvitationCodeUsage{},
 	); err != nil {
 		logrus.WithError(err).Error("Task store migration failed")
 		return fmt.Errorf("task store migration failed: %w", err)

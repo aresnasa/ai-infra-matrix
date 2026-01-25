@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Form, Input, Button, Card, message, Tabs, Row, Col, Select, Checkbox, Alert, Descriptions, Divider, Modal, Space } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, MailOutlined, TeamOutlined, CheckCircleOutlined, ExclamationCircleOutlined, SafetyOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authAPI, securityAPI } from '../services/api';
 import { useI18n } from '../hooks/useI18n';
@@ -49,6 +49,12 @@ const AuthPage = ({ onLogin }) => {
   const [selectedRoleTemplate, setSelectedRoleTemplate] = useState('');
   const [requiresApproval, setRequiresApproval] = useState(true);
   const [ldapValidationStatus, setLdapValidationStatus] = useState(null); // null, 'validating', 'success', 'error'
+  
+  // 邀请码相关状态
+  const [invitationCode, setInvitationCode] = useState('');
+  const [invitationCodeValid, setInvitationCodeValid] = useState(null); // null, true, false
+  const [invitationCodeChecking, setInvitationCodeChecking] = useState(false);
+  const [invitationCodeInfo, setInvitationCodeInfo] = useState(null);
   
   // 2FA 相关状态
   const [show2FAModal, setShow2FAModal] = useState(false);
@@ -205,6 +211,49 @@ const AuthPage = ({ onLogin }) => {
     setTwoFACode('');
   };
 
+  // 验证邀请码
+  const validateInvitationCode = async (code) => {
+    if (!code || code.trim() === '') {
+      setInvitationCodeValid(null);
+      setInvitationCodeInfo(null);
+      return;
+    }
+
+    setInvitationCodeChecking(true);
+    try {
+      const response = await authAPI.validateInvitationCode(code.trim());
+      if (response.data.valid) {
+        setInvitationCodeValid(true);
+        setInvitationCodeInfo(response.data);
+        // 如果邀请码预设了角色模板，自动选中
+        if (response.data.role_template) {
+          setSelectedRoleTemplate(response.data.role_template);
+        }
+      } else {
+        setInvitationCodeValid(false);
+        setInvitationCodeInfo(null);
+      }
+    } catch (error) {
+      setInvitationCodeValid(false);
+      setInvitationCodeInfo(null);
+    } finally {
+      setInvitationCodeChecking(false);
+    }
+  };
+
+  // 处理邀请码输入变化（防抖）
+  const handleInvitationCodeChange = (e) => {
+    const code = e.target.value;
+    setInvitationCode(code);
+    // 使用防抖延迟验证
+    if (code.trim().length >= 16) {
+      validateInvitationCode(code);
+    } else {
+      setInvitationCodeValid(null);
+      setInvitationCodeInfo(null);
+    }
+  };
+
   const handleRegister = async (values) => {
     setLoading(true);
     setLdapValidationStatus('validating');
@@ -229,18 +278,26 @@ const AuthPage = ({ onLogin }) => {
       const registerData = {
         ...values,
         role_template: selectedRoleTemplate,
-        requires_approval: requiresApproval
+        invitation_code: invitationCode.trim() || undefined, // 添加邀请码
       };
 
       const response = await authAPI.register(registerData);
 
-      if (requiresApproval) {
-        message.success(t('auth.registerSuccess'));
+      // 根据返回结果判断是邀请码注册还是普通注册
+      if (response.data.activated) {
+        // 邀请码注册成功，可以直接登录
+        message.success(t('auth.invitationRegisterSuccess'));
         setActiveTab('login');
       } else {
-        message.success(t('auth.registerSuccessNoApproval'));
+        // 普通注册，需要等待审批
+        message.success(t('auth.registerSuccess'));
         setActiveTab('login');
       }
+
+      // 清空邀请码
+      setInvitationCode('');
+      setInvitationCodeValid(null);
+      setInvitationCodeInfo(null);
 
     } catch (error) {
       console.error('Register failed:', error);
@@ -253,11 +310,14 @@ const AuthPage = ({ onLogin }) => {
         setLdapValidationStatus('error');
         message.error(t('auth.ldapValidateFailed'));
       } else if (statusCode === 409 || errorMessage.includes('已存在') || errorMessage.includes('already exists')) {
-        // 用户已存在错误 - 不要设置 LDAP 错误状态
-        // LDAP 验证已经成功，只是注册失败了
         message.error(errorMessage || t('auth.userAlreadyExists'));
+      } else if (errorMessage.includes('邀请码')) {
+        // 邀请码相关错误
+        message.error(errorMessage);
+        setInvitationCodeValid(false);
+      } else if (errorMessage.includes('待审批')) {
+        message.error(errorMessage);
       } else {
-        // 其他注册错误
         message.error(errorMessage || t('auth.loginFailed'));
       }
     } finally {
@@ -444,6 +504,29 @@ const AuthPage = ({ onLogin }) => {
                     />
                   </Form.Item>
 
+                  {/* 邀请码输入框（可选） */}
+                  <Form.Item
+                    name="invitation_code"
+                    extra={invitationCodeValid === true ? (
+                      <span style={{ color: '#52c41a' }}>
+                        ✓ {t('auth.invitationCodeValid')}
+                        {invitationCodeInfo?.role_template && ` (${t('auth.presetRole')}: ${getRoleTemplateName(invitationCodeInfo.role_template)})`}
+                      </span>
+                    ) : invitationCodeValid === false ? (
+                      <span style={{ color: '#ff4d4f' }}>✗ {t('auth.invitationCodeInvalid')}</span>
+                    ) : (
+                      <span style={{ color: '#666' }}>{t('auth.invitationCodeHint')}</span>
+                    )}
+                  >
+                    <Input
+                      prefix={<SafetyOutlined />}
+                      placeholder={t('auth.invitationCode')}
+                      value={invitationCode}
+                      onChange={handleInvitationCodeChange}
+                      suffix={invitationCodeChecking ? <LoadingOutlined /> : null}
+                    />
+                  </Form.Item>
+
                   <Form.Item
                     name="role_template"
                     rules={[{ required: true, message: t('auth.roleTemplateRequired') }]}
@@ -452,6 +535,8 @@ const AuthPage = ({ onLogin }) => {
                       placeholder={t('auth.selectRoleTemplate')}
                       onChange={handleRoleTemplateChange}
                       size="large"
+                      value={selectedRoleTemplate}
+                      disabled={invitationCodeValid === true && invitationCodeInfo?.role_template}
                     >
                       {Object.entries(ROLE_TEMPLATES || {}).map(([key, template]) => (
                         <Option key={key} value={key}>
@@ -463,14 +548,24 @@ const AuthPage = ({ onLogin }) => {
 
                   {renderRoleTemplateInfo()}
 
-                  <Form.Item>
-                    <Checkbox
-                      checked={requiresApproval}
-                      onChange={(e) => setRequiresApproval(e.target.checked)}
-                    >
-                      {t('auth.requiresApproval')}
-                    </Checkbox>
-                  </Form.Item>
+                  {/* 根据是否有有效邀请码显示不同的提示 */}
+                  {invitationCodeValid === true ? (
+                    <Alert
+                      message={t('auth.invitationCodeMode')}
+                      description={t('auth.invitationCodeModeDesc')}
+                      type="success"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+                  ) : (
+                    <Alert
+                      message={t('auth.approvalRequired')}
+                      description={t('auth.approvalRequiredDesc')}
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+                  )}
 
                   {ldapValidationStatus === 'validating' && (
                     <Alert
@@ -512,7 +607,7 @@ const AuthPage = ({ onLogin }) => {
                       block
                       disabled={ldapValidationStatus === 'error'}
                     >
-                      {requiresApproval ? t('auth.submitRegister') : t('auth.register')}
+                      {t('auth.submitRegister')}
                     </Button>
                   </Form.Item>
                 </Form>

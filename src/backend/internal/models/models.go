@@ -99,7 +99,9 @@ type RegisterRequest struct {
 	Role string `json:"role" binding:"omitempty,oneof=viewer user admin"`
 	// Role template for predefined role assignments
 	RoleTemplate string `json:"role_template" binding:"omitempty,oneof=admin data-developer model-developer sre engineer"`
-	// Registration requires admin approval
+	// Invitation code for direct registration (optional)
+	InvitationCode string `json:"invitation_code" binding:"omitempty"`
+	// Registration requires admin approval (ignored if invitation code is provided)
 	RequiresApproval bool `json:"requires_approval" binding:"omitempty"`
 }
 
@@ -826,20 +828,23 @@ func (UserNavigationConfig) TableName() string {
 
 // RegistrationApproval 注册审批表
 type RegistrationApproval struct {
-	ID           uint       `json:"id" gorm:"primaryKey"`
-	UserID       uint       `json:"user_id" gorm:"not null;index"`
-	Username     string     `json:"username" gorm:"not null;size:50"`
-	Email        string     `json:"email" gorm:"not null;size:100"`
-	Department   string     `json:"department" gorm:"size:100"`
-	RoleTemplate string     `json:"role_template" gorm:"size:50"`
-	Status       string     `json:"status" gorm:"not null;default:'pending';size:20"` // pending, approved, rejected
-	ApprovedBy   *uint      `json:"approved_by,omitempty" gorm:"index"`
-	ApprovedAt   *time.Time `json:"approved_at,omitempty"`
-	RejectedBy   *uint      `json:"rejected_by,omitempty" gorm:"index"`
-	RejectedAt   *time.Time `json:"rejected_at,omitempty"`
-	RejectReason string     `json:"reject_reason" gorm:"size:500"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID            uint       `json:"id" gorm:"primaryKey"`
+	UserID        uint       `json:"user_id" gorm:"index"` // 审批通过后创建的用户ID（可为空）
+	Username      string     `json:"username" gorm:"not null;size:50"`
+	Email         string     `json:"email" gorm:"not null;size:100"`
+	Department    string     `json:"department" gorm:"size:100"`
+	RoleTemplate  string     `json:"role_template" gorm:"size:50"`
+	PasswordHash  string     `json:"-" gorm:"size:255"`                                // 存储加密后的密码（不返回给前端）
+	AuthSource    string     `json:"auth_source" gorm:"size:50;default:'local'"`       // 认证来源: local, ldap
+	DashboardRole string     `json:"dashboard_role" gorm:"size:50;default:'user'"`     // 申请的仪表板角色
+	Status        string     `json:"status" gorm:"not null;default:'pending';size:20"` // pending, approved, rejected
+	ApprovedBy    *uint      `json:"approved_by,omitempty" gorm:"index"`
+	ApprovedAt    *time.Time `json:"approved_at,omitempty"`
+	RejectedBy    *uint      `json:"rejected_by,omitempty" gorm:"index"`
+	RejectedAt    *time.Time `json:"rejected_at,omitempty"`
+	RejectReason  string     `json:"reject_reason" gorm:"size:500"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 
 	// 关联关系
 	User     User `json:"user,omitempty" gorm:"foreignKey:UserID"`
@@ -849,6 +854,73 @@ type RegistrationApproval struct {
 
 func (RegistrationApproval) TableName() string {
 	return "registration_approvals"
+}
+
+// ==================== 邀请码相关模型 ====================
+
+// InvitationCode 邀请码表
+type InvitationCode struct {
+	ID           uint       `json:"id" gorm:"primaryKey"`
+	Code         string     `json:"code" gorm:"uniqueIndex;not null;size:32"` // 邀请码（唯一）
+	Description  string     `json:"description" gorm:"size:255"`              // 邀请码描述/备注
+	RoleTemplate string     `json:"role_template" gorm:"size:50"`             // 预设角色模板
+	MaxUses      int        `json:"max_uses" gorm:"default:1"`                // 最大使用次数，0表示无限制
+	UsedCount    int        `json:"used_count" gorm:"default:0"`              // 已使用次数
+	IsActive     bool       `json:"is_active" gorm:"default:true"`            // 是否启用
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`                     // 过期时间，null表示永不过期
+	CreatedBy    uint       `json:"created_by" gorm:"not null;index"`         // 创建者ID
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+
+	// 关联关系
+	Creator User `json:"creator,omitempty" gorm:"foreignKey:CreatedBy"`
+}
+
+func (InvitationCode) TableName() string {
+	return "invitation_codes"
+}
+
+// IsValid 检查邀请码是否有效
+func (i *InvitationCode) IsValid() bool {
+	// 检查是否启用
+	if !i.IsActive {
+		return false
+	}
+	// 检查是否过期
+	if i.ExpiresAt != nil && time.Now().After(*i.ExpiresAt) {
+		return false
+	}
+	// 检查使用次数
+	if i.MaxUses > 0 && i.UsedCount >= i.MaxUses {
+		return false
+	}
+	return true
+}
+
+// InvitationCodeUsage 邀请码使用记录表
+type InvitationCodeUsage struct {
+	ID               uint      `json:"id" gorm:"primaryKey"`
+	InvitationCodeID uint      `json:"invitation_code_id" gorm:"not null;index"` // 邀请码ID
+	UserID           uint      `json:"user_id" gorm:"not null;index"`            // 使用者ID
+	UsedAt           time.Time `json:"used_at"`                                  // 使用时间
+	IPAddress        string    `json:"ip_address" gorm:"size:45"`                // 使用时的IP地址
+
+	// 关联关系
+	InvitationCode InvitationCode `json:"invitation_code,omitempty" gorm:"foreignKey:InvitationCodeID"`
+	User           User           `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+func (InvitationCodeUsage) TableName() string {
+	return "invitation_code_usages"
+}
+
+// CreateInvitationCodeRequest 创建邀请码请求
+type CreateInvitationCodeRequest struct {
+	Description  string     `json:"description" binding:"omitempty,max=255"`
+	RoleTemplate string     `json:"role_template" binding:"omitempty,oneof=admin data-developer model-developer sre engineer"`
+	MaxUses      int        `json:"max_uses" binding:"omitempty,min=0"`      // 0表示无限制
+	ExpiresAt    *time.Time `json:"expires_at" binding:"omitempty"`          // null表示永不过期
+	Count        int        `json:"count" binding:"omitempty,min=1,max=100"` // 批量生成数量，默认1
 }
 
 // ==================== 作业管理相关模型 ====================

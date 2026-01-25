@@ -130,6 +130,7 @@ export const authAPI = {
   login: (credentials) => api.post('/auth/login', credentials),
   register: (userData) => api.post('/auth/register', userData),
   validateLDAP: (credentials) => api.post('/auth/validate-ldap', credentials),
+  validateInvitationCode: (code) => api.get(`/auth/validate-invitation-code?code=${encodeURIComponent(code)}`),
   logout: () => api.post('/auth/logout'),
   getCurrentUser: createCachedRequest(() => api.get('/auth/me'), true),
   getProfile: createCachedRequest(() => api.get('/auth/me'), true), 
@@ -138,6 +139,24 @@ export const authAPI = {
   updateProfile: (data) => api.put('/users/profile', data), // 更新个人信息
   // 2FA 登录验证
   verify2FALogin: (data) => api.post('/auth/verify-2fa', data),
+};
+
+// 邀请码管理API（管理员）
+export const invitationCodeAPI = {
+  // 创建邀请码
+  create: (data) => api.post('/admin/invitation-codes', data),
+  // 获取邀请码列表
+  list: (params) => api.get('/admin/invitation-codes', { params }),
+  // 获取邀请码详情
+  get: (id) => api.get(`/admin/invitation-codes/${id}`),
+  // 获取邀请码统计
+  getStatistics: () => api.get('/admin/invitation-codes/statistics'),
+  // 禁用邀请码
+  disable: (id) => api.post(`/admin/invitation-codes/${id}/disable`),
+  // 启用邀请码
+  enable: (id) => api.post(`/admin/invitation-codes/${id}/enable`),
+  // 删除邀请码
+  delete: (id) => api.delete(`/admin/invitation-codes/${id}`),
 };
 // Kubernetes集群管理API
 export const kubernetesAPI = {

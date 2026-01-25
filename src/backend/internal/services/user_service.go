@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
@@ -14,86 +15,85 @@ import (
 )
 
 type UserService struct {
-	ldapService *LDAPService
-	rbacService *RBACService
+	ldapService       *LDAPService
+	rbacService       *RBACService
+	invitationService *InvitationCodeService
 }
 
 func NewUserService() *UserService {
 	return &UserService{
-		ldapService: NewLDAPService(database.DB),
-		rbacService: NewRBACService(database.DB),
+		ldapService:       NewLDAPService(database.DB),
+		rbacService:       NewRBACService(database.DB),
+		invitationService: NewInvitationCodeService(),
 	}
 }
 
 // Register 用户注册
+// 支持两种注册方式：
+// 1. 邀请码注册：提供有效邀请码可直接注册成功
+// 2. 普通注册：需要管理员审批后才能登录
 func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error) {
+	return s.RegisterWithIP(req, "")
+}
+
+// RegisterWithIP 用户注册（带IP地址）
+func (s *UserService) RegisterWithIP(req *models.RegisterRequest, ipAddress string) (*models.User, error) {
 	db := database.DB
 
-	// 检查用户名是否已存在
+	// 检查用户名是否已存在（包括正式用户和待审批记录）
 	var existingUser models.User
 	if err := db.Where("username = ? OR email = ?", req.Username, req.Email).First(&existingUser).Error; err == nil {
 		return nil, errors.New("username or email already exists")
 	}
 
+	// 检查是否有待审批的记录
+	var existingApproval models.RegistrationApproval
+	if err := db.Where("(username = ? OR email = ?) AND status = ?", req.Username, req.Email, "pending").First(&existingApproval).Error; err == nil {
+		return nil, errors.New("该用户名或邮箱已有待审批的注册申请")
+	}
+
 	// Detect LDAP runtime enablement
 	ldapCfg, _ := s.ldapService.GetConfig()
 	ldapEnabled := ldapCfg != nil && ldapCfg.IsEnabled
+	authSource := "local"
 
-	// If LDAP is enabled, try to validate in LDAP; otherwise allow local registration.
-	// In strict mode (REGISTRATION_STRICT_LDAP=true), fail registration when LDAP validation fails.
+	// If LDAP is enabled, try to validate in LDAP
 	if ldapEnabled {
 		strict := os.Getenv("REGISTRATION_STRICT_LDAP") == "true"
 		if _, err := s.ldapService.AuthenticateUser(req.Username, req.Password); err != nil {
 			if strict {
 				return nil, errors.New("LDAP验证失败: 用户不存在或密码错误")
 			}
-			// Not strict: gracefully fall back to local registration for this request
-			ldapEnabled = false
+		} else {
+			authSource = "ldap"
 		}
 	}
 
-	// 如果需要审批，创建审批记录
-	if req.RequiresApproval {
-		approval := &models.RegistrationApproval{
-			Username:     req.Username,
-			Email:        req.Email,
-			Department:   req.Department,
-			RoleTemplate: req.RoleTemplate,
-			Status:       "pending",
-		}
-
-		if err := db.Create(approval).Error; err != nil {
-			return nil, errors.New("创建注册审批记录失败")
-		}
-
-		// 返回用户对象但标记为未激活
-		user := &models.User{
-			Username:      req.Username,
-			Email:         req.Email,
-			Password:      "", // 密码暂时不设置
-			IsActive:      false,
-			AuthSource:    ifThen(ldapEnabled, "ldap", "local"),
-			DashboardRole: req.Role,
-		}
-		return user, nil
-	}
-
-	// 直接注册流程
 	// 加密密码
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("密码加密失败")
 	}
 
-	user := &models.User{
-		Username: req.Username,
-		Email:    req.Email,
-		Password: string(hashedPassword),
-		IsActive: true,
-		// If LDAP validated, mark as ldap; otherwise mark as local to allow local login
-		AuthSource:    ifThen(ldapEnabled, "ldap", "local"),
-		DashboardRole: req.Role,
-		RoleTemplate:  req.RoleTemplate, // 设置角色模板
+	// 检查是否提供了邀请码
+	invitationCode := strings.TrimSpace(req.InvitationCode)
+	if invitationCode != "" {
+		// 邀请码注册流程：验证邀请码并直接创建用户
+		return s.registerWithInvitationCode(req, invitationCode, string(hashedPassword), authSource, ipAddress)
+	}
+
+	// 普通注册流程：创建审批记录，等待管理员审批
+	return s.registerWithApproval(req, string(hashedPassword), authSource)
+}
+
+// registerWithInvitationCode 使用邀请码注册（直接创建用户）
+func (s *UserService) registerWithInvitationCode(req *models.RegisterRequest, invitationCode, hashedPassword, authSource, ipAddress string) (*models.User, error) {
+	db := database.DB
+
+	// 验证邀请码
+	invitation, err := s.invitationService.ValidateCode(invitationCode)
+	if err != nil {
+		return nil, errors.New("邀请码无效: " + err.Error())
 	}
 
 	// 开始事务
@@ -104,14 +104,41 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 		}
 	}()
 
+	// 确定角色模板：优先使用邀请码预设的角色模板
+	roleTemplate := req.RoleTemplate
+	if invitation.RoleTemplate != "" {
+		roleTemplate = invitation.RoleTemplate
+	}
+
+	// 创建用户
+	user := &models.User{
+		Username:      req.Username,
+		Email:         req.Email,
+		Password:      hashedPassword,
+		IsActive:      true, // 邀请码注册直接激活
+		AuthSource:    authSource,
+		DashboardRole: req.Role,
+		RoleTemplate:  roleTemplate,
+	}
+
+	if user.DashboardRole == "" {
+		user.DashboardRole = "user"
+	}
+
 	if err := tx.Create(user).Error; err != nil {
 		tx.Rollback()
-		return nil, err
+		return nil, errors.New("创建用户失败: " + err.Error())
+	}
+
+	// 使用邀请码（增加使用次数并记录）
+	if err := s.invitationService.UseCode(invitationCode, user.ID, ipAddress); err != nil {
+		tx.Rollback()
+		return nil, errors.New("使用邀请码失败: " + err.Error())
 	}
 
 	// 如果指定了角色模板，为用户分配角色
-	if req.RoleTemplate != "" {
-		if err := s.rbacService.AssignRoleTemplateToUser(user.ID, req.RoleTemplate); err != nil {
+	if roleTemplate != "" {
+		if err := s.rbacService.AssignRoleTemplateToUser(user.ID, roleTemplate); err != nil {
 			tx.Rollback()
 			return nil, errors.New("分配角色模板失败: " + err.Error())
 		}
@@ -121,6 +148,42 @@ func (s *UserService) Register(req *models.RegisterRequest) (*models.User, error
 		return nil, errors.New("提交事务失败")
 	}
 
+	return user, nil
+}
+
+// registerWithApproval 普通注册（需要审批）
+func (s *UserService) registerWithApproval(req *models.RegisterRequest, hashedPassword, authSource string) (*models.User, error) {
+	db := database.DB
+
+	// 创建审批记录
+	approval := &models.RegistrationApproval{
+		Username:      req.Username,
+		Email:         req.Email,
+		Department:    req.Department,
+		RoleTemplate:  req.RoleTemplate,
+		PasswordHash:  hashedPassword,
+		AuthSource:    authSource,
+		DashboardRole: req.Role,
+		Status:        "pending",
+	}
+
+	if approval.DashboardRole == "" {
+		approval.DashboardRole = "user"
+	}
+
+	if err := db.Create(approval).Error; err != nil {
+		return nil, errors.New("创建注册审批记录失败")
+	}
+
+	// 返回用户对象但标记为未激活（用于前端展示）
+	user := &models.User{
+		Username:      req.Username,
+		Email:         req.Email,
+		Password:      "", // 密码不返回
+		IsActive:      false,
+		AuthSource:    authSource,
+		DashboardRole: req.Role,
+	}
 	return user, nil
 }
 
@@ -389,6 +452,12 @@ func (s *UserService) ApproveRegistration(approvalID uint, adminID uint) error {
 		return errors.New("该申请已被处理")
 	}
 
+	// 再次检查用户名/邮箱是否已存在（防止并发问题）
+	var existingUser models.User
+	if err := db.Where("username = ? OR email = ?", approval.Username, approval.Email).First(&existingUser).Error; err == nil {
+		return errors.New("用户名或邮箱已被其他用户使用")
+	}
+
 	// 开始事务
 	tx := db.Begin()
 	defer func() {
@@ -407,25 +476,46 @@ func (s *UserService) ApproveRegistration(approvalID uint, adminID uint) error {
 		return errors.New("更新审批状态失败")
 	}
 
-	// 创建用户
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("temp_password"), bcrypt.DefaultCost)
-	if err != nil {
-		tx.Rollback()
-		return err
+	// 使用审批记录中保存的密码哈希创建用户
+	password := approval.PasswordHash
+	if password == "" {
+		// 兼容旧数据：如果没有保存密码哈希，生成一个临时密码
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte("temp_password_"+approval.Username), bcrypt.DefaultCost)
+		if err != nil {
+			tx.Rollback()
+			return errors.New("生成密码失败")
+		}
+		password = string(hashedPassword)
 	}
 
 	user := &models.User{
 		Username:      approval.Username,
 		Email:         approval.Email,
-		Password:      string(hashedPassword),
+		Password:      password,
 		IsActive:      true,
-		AuthSource:    "ldap",
-		DashboardRole: "user", // 默认角色
+		AuthSource:    approval.AuthSource,
+		DashboardRole: approval.DashboardRole,
+		RoleTemplate:  approval.RoleTemplate,
+	}
+
+	// 设置默认值
+	if user.AuthSource == "" {
+		user.AuthSource = "local"
+	}
+	if user.DashboardRole == "" {
+		user.DashboardRole = "user"
 	}
 
 	if err := tx.Create(user).Error; err != nil {
 		tx.Rollback()
-		return errors.New("创建用户失败")
+		return errors.New("创建用户失败: " + err.Error())
+	}
+
+	// 更新审批记录中的用户ID
+	approval.UserID = user.ID
+	if err := tx.Save(&approval).Error; err != nil {
+		tx.Rollback()
+		return errors.New("更新审批记录失败")
 	}
 
 	// 如果指定了角色模板，为用户分配角色
