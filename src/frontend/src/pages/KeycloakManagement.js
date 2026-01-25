@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Card, 
   Row, 
@@ -40,7 +41,8 @@ import {
   ApiOutlined,
   EditOutlined,
   DeleteOutlined,
-  ExportOutlined
+  ExportOutlined,
+  DesktopOutlined
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import api from '../services/api';
@@ -51,6 +53,7 @@ const { Option } = Select;
 
 const KeycloakManagement = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [serverInfo, setServerInfo] = useState(null);
   const [realms, setRealms] = useState([]);
@@ -369,6 +372,13 @@ const KeycloakManagement = () => {
         </Col>
         <Col>
           <Space>
+            <Button 
+              type="primary"
+              icon={<DesktopOutlined />}
+              onClick={() => navigate('/keycloak-ui')}
+            >
+              {t('keycloak.openEmbedUI', '嵌入式控制台')}
+            </Button>
             <Button 
               icon={<ExportOutlined />}
               onClick={openKeycloakConsole}

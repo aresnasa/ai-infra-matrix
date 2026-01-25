@@ -146,9 +146,19 @@ const ArgoCDManagement = withLazyLoading(React.lazy(() => import('./pages/ArgoCD
   loadingText: '正在加载ArgoCD管理...'
 });
 
+// ArgoCD 嵌入页面
+const ArgoCDEmbed = withLazyLoading(React.lazy(() => import('./pages/ArgoCDEmbed')), {
+  loadingText: '正在加载ArgoCD...'
+});
+
 // Keycloak 身份认证管理页面
 const KeycloakManagement = withLazyLoading(React.lazy(() => import('./pages/KeycloakManagement')), {
   loadingText: '正在加载Keycloak管理...'
+});
+
+// Keycloak 嵌入页面
+const KeycloakEmbed = withLazyLoading(React.lazy(() => import('./pages/KeycloakEmbed')), {
+  loadingText: '正在加载Keycloak...'
 });
 
 // 新增功能页面懒加载
@@ -897,6 +907,17 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         </TeamProtectedRoute>
                       }
                     />
+                    {/* ArgoCD 嵌入页面 - SRE团队访问 */}
+                    <Route
+                      path="/argocd-ui"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <ArgoCDEmbed />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
                     {/* Keycloak 身份认证管理 - SRE团队访问 */}
                     <Route
                       path="/keycloak"
@@ -904,6 +925,17 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         <TeamProtectedRoute user={user} allowedTeams={['sre']}>
                           <Suspense fallback={<LazyLoadingSpinner />}>
                             <KeycloakManagement />
+                          </Suspense>
+                        </TeamProtectedRoute>
+                      }
+                    />
+                    {/* Keycloak 嵌入页面 - SRE团队访问 */}
+                    <Route
+                      path="/keycloak-ui"
+                      element={
+                        <TeamProtectedRoute user={user} allowedTeams={['sre']}>
+                          <Suspense fallback={<LazyLoadingSpinner />}>
+                            <KeycloakEmbed />
                           </Suspense>
                         </TeamProtectedRoute>
                       }

@@ -115,6 +115,8 @@ export default {
     saltstack: 'SaltStack',
     kafkaUI: 'Kafka UI',
     'kafka-ui': 'Kafka UI',
+    argocd: 'ArgoCD',
+    keycloak: 'Keycloak',
     objectStorage: '对象存储',
     roleTemplates: '角色模板',
     adminCenter: '管理中心',

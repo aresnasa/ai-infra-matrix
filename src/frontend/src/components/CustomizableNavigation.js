@@ -19,7 +19,9 @@ import {
   ControlOutlined,
   ApiOutlined,
   MenuOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  DeploymentUnitOutlined,
+  SafetyCertificateOutlined
 } from '@ant-design/icons';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { navigationAPI } from '../services/api';
@@ -120,12 +122,30 @@ const DEFAULT_NAV_ITEMS = [
     roles: ['sre', 'admin', 'super-admin']
   },
   {
+    id: 'argocd',
+    key: '/argocd',
+    labelKey: 'nav.argocd',
+    icon: 'DeploymentUnitOutlined',
+    visible: true,
+    order: 9,
+    roles: ['sre', 'admin', 'super-admin']
+  },
+  {
+    id: 'keycloak',
+    key: '/keycloak',
+    labelKey: 'nav.keycloak',
+    icon: 'SafetyCertificateOutlined',
+    visible: true,
+    order: 10,
+    roles: ['sre', 'admin', 'super-admin']
+  },
+  {
     id: 'role-templates',
     key: '/admin/role-templates',
     labelKey: 'nav.roleTemplates',
     icon: 'TeamOutlined',
     visible: true,
-    order: 8,
+    order: 11,
     roles: ['admin', 'super-admin']
   }
 ];
@@ -362,7 +382,9 @@ const CustomizableNavigation = ({ user, selectedKeys, onMenuClick, children }) =
     'TeamOutlined': <TeamOutlined />,
     'ControlOutlined': <ControlOutlined />,
     'ApiOutlined': <ApiOutlined />,
-    'MenuOutlined': <MenuOutlined />
+    'MenuOutlined': <MenuOutlined />,
+    'DeploymentUnitOutlined': <DeploymentUnitOutlined />,
+    'SafetyCertificateOutlined': <SafetyCertificateOutlined />
   };
 
   useEffect(() => {

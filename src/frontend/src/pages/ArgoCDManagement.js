@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Card, 
   Row, 
@@ -31,7 +32,8 @@ import {
   BranchesOutlined,
   AppstoreOutlined,
   DeploymentUnitOutlined,
-  GithubOutlined
+  GithubOutlined,
+  DesktopOutlined
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import api from '../services/api';
@@ -58,6 +60,7 @@ const syncStatusColors = {
 
 const ArgoCDManagement = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [applications, setApplications] = useState([]);
   const [repositories, setRepositories] = useState([]);
@@ -421,14 +424,34 @@ const ArgoCDManagement = () => {
   return (
     <div style={{ padding: '24px' }}>
       {/* 页面标题 */}
-      <div style={{ marginBottom: 24 }}>
-        <Title level={2}>
-          <DeploymentUnitOutlined /> {t('argocd.title', 'ArgoCD GitOps Management')}
-        </Title>
-        <Text type="secondary">
-          {t('argocd.description', 'Manage GitOps deployments with ArgoCD')}
-        </Text>
-      </div>
+      <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
+        <Col>
+          <Title level={2}>
+            <DeploymentUnitOutlined /> {t('argocd.title', 'ArgoCD GitOps Management')}
+          </Title>
+          <Text type="secondary">
+            {t('argocd.description', 'Manage GitOps deployments with ArgoCD')}
+          </Text>
+        </Col>
+        <Col>
+          <Space>
+            <Button 
+              type="primary"
+              icon={<DesktopOutlined />}
+              onClick={() => navigate('/argocd-ui')}
+            >
+              {t('argocd.openEmbedUI', '嵌入式控制台')}
+            </Button>
+            <Button 
+              icon={<ReloadOutlined />} 
+              onClick={fetchData}
+              loading={loading}
+            >
+              {t('common.refresh', '刷新')}
+            </Button>
+          </Space>
+        </Col>
+      </Row>
 
       {/* 统计卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
