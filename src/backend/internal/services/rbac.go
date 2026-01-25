@@ -822,6 +822,29 @@ func (s *RBACService) initializeDefaultRoleTemplates() error {
 					return fmt.Errorf("更新角色模板英文字段失败: %v", err)
 				}
 			}
+
+			// 同步模板权限：添加新权限（不删除已有权限）
+			for _, perm := range template.Permissions {
+				var existingPerm models.RoleTemplatePermission
+				scope := perm.Scope
+				if scope == "" {
+					scope = "*"
+				}
+				err := s.db.Where("role_template_id = ? AND resource = ? AND verb = ? AND scope = ?",
+					existing.ID, perm.Resource, perm.Verb, scope).First(&existingPerm).Error
+				if err == gorm.ErrRecordNotFound {
+					// 权限不存在，添加新权限
+					templatePerm := models.RoleTemplatePermission{
+						RoleTemplateID: existing.ID,
+						Resource:       perm.Resource,
+						Verb:           perm.Verb,
+						Scope:          scope,
+					}
+					if err := s.db.Create(&templatePerm).Error; err != nil {
+						logrus.WithError(err).Warnf("添加角色模板权限失败: %s %s %s", perm.Resource, perm.Verb, scope)
+					}
+				}
+			}
 		}
 	}
 	return nil
