@@ -38,13 +38,13 @@ COPY src/keycloak/realm-export/ /opt/keycloak/data/import/
 WORKDIR /opt/keycloak
 
 # 环境变量配置
-# 数据库连接（运行时通过环境变量覆盖）
+# 数据库连接配置（非敏感配置，密码在运行时通过环境变量传入）
 ENV KC_DB=postgres
 ENV KC_DB_URL_HOST=postgres
 ENV KC_DB_URL_PORT=5432
 ENV KC_DB_URL_DATABASE=keycloak
 ENV KC_DB_USERNAME=keycloak
-ENV KC_DB_PASSWORD=keycloak
+# KC_DB_PASSWORD 通过运行时环境变量传入
 
 # 主机名配置
 ENV KC_HOSTNAME_STRICT=false
@@ -61,9 +61,9 @@ ENV KC_PROXY_HEADERS=xforwarded
 ENV KC_HEALTH_ENABLED=true
 ENV KC_METRICS_ENABLED=true
 
-# 管理员初始配置
+# 管理员用户名（密码通过运行时环境变量 KEYCLOAK_ADMIN_PASSWORD 传入）
 ENV KEYCLOAK_ADMIN=admin
-ENV KEYCLOAK_ADMIN_PASSWORD=admin
+# KEYCLOAK_ADMIN_PASSWORD 通过运行时环境变量传入
 
 # 时区设置
 ENV TZ=Asia/Shanghai
