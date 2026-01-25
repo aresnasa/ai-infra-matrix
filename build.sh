@@ -962,9 +962,10 @@ update_env_variable() {
 
 # 同步 .env 与 .env.example
 # 功能：
-#   1. 如果 .env.prod 存在，优先复制为 .env（生产环境配置优先）
-#   2. 添加 .env.example 中新增的变量
-#   3. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
+#   1. 如果 .env.prod 存在，先将 .env.example 中新增的变量同步到 .env.prod
+#   2. 然后将 .env.prod 复制到 .env（生产环境配置优先）
+#   3. 如果没有 .env.prod，则直接同步 .env.example 到 .env
+#   4. 只同步版本类变量 (VERSION, TAG, VER, RELEASE)，保留用户自定义配置
 # 用法: sync_env_with_example
 sync_env_with_example() {
     local env_file="$ENV_FILE"
@@ -976,19 +977,89 @@ sync_env_with_example() {
         return 1
     fi
     
-    # 优先使用 .env.prod（生产环境配置）
-    if [[ -f "$prod_file" ]] && [[ ! -f "$env_file" ]]; then
-        log_info "Found .env.prod, using it as .env..."
+    local missing_vars=()
+    local updated_vars=()
+    local prod_missing_vars=()
+    
+    # 检查是否存在 .env.prod（生产环境配置）
+    if [[ -f "$prod_file" ]]; then
+        log_info "Found .env.prod, syncing new variables from .env.example to .env.prod first..."
+        
+        # Step 1: 将 .env.example 中新增的变量同步到 .env.prod
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # 跳过注释和空行
+            if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*$ ]]; then
+                continue
+            fi
+            
+            # 提取变量名和值
+            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                local var_name="${BASH_REMATCH[1]}"
+                local example_value="${BASH_REMATCH[2]}"
+                
+                # 防御性检查：确保变量名不为空
+                if [[ -z "$var_name" ]]; then
+                    continue
+                fi
+                
+                # 检查 .env.prod 中是否存在该变量
+                if ! grep -q "^${var_name}=" "$prod_file" 2>/dev/null; then
+                    # 变量不存在于 .env.prod，添加到文件末尾
+                    echo "${var_name}=${example_value}" >> "$prod_file"
+                    prod_missing_vars+=("$var_name")
+                else
+                    # 变量存在，只同步版本类变量 (VERSION, TAG, VER, RELEASE)
+                    if [[ "$var_name" =~ (VERSION|_TAG$|_VER$|_RELEASE$) ]]; then
+                        local current_value
+                        current_value=$(grep "^${var_name}=" "$prod_file" | head -1 | cut -d'=' -f2-)
+                        
+                        # 如果值不同，用 example 的值更新（生产环境可能需要保持最新版本）
+                        if [[ "$current_value" != "$example_value" ]]; then
+                            # 在 .env.prod 中更新版本变量
+                            if [[ "$(uname)" == "Darwin" ]]; then
+                                sed -i '' "s|^${var_name}=.*|${var_name}=${example_value}|" "$prod_file"
+                            else
+                                sed -i "s|^${var_name}=.*|${var_name}=${example_value}|" "$prod_file"
+                            fi
+                            updated_vars+=("$var_name: $current_value → $example_value (in .env.prod)")
+                        fi
+                    fi
+                fi
+            fi
+        done < "$example_file"
+        
+        # 显示 .env.prod 同步结果
+        if [[ ${#prod_missing_vars[@]} -gt 0 ]]; then
+            log_info "Added ${#prod_missing_vars[@]} new variables to .env.prod:"
+            for var in "${prod_missing_vars[@]}"; do
+                log_info "  + $var"
+            done
+        fi
+        
+        if [[ ${#updated_vars[@]} -gt 0 ]]; then
+            log_info "Updated ${#updated_vars[@]} version variables in .env.prod:"
+            for var in "${updated_vars[@]}"; do
+                log_info "  ↻ $var"
+            done
+        fi
+        
+        # Step 2: 将 .env.prod 复制到 .env
+        log_info "Copying .env.prod to .env..."
         cp "$prod_file" "$env_file"
-        log_info "✓ Created .env from .env.prod"
-    elif [[ ! -f "$env_file" ]]; then
+        log_info "✓ .env created from .env.prod (production config preserved)"
+        
+        # 检测配置差异并警告用户
+        check_env_config_drift
+        
+        return 0
+    fi
+    
+    # 没有 .env.prod 的情况，使用原有逻辑
+    if [[ ! -f "$env_file" ]]; then
         log_info "Creating .env from .env.example..."
         cp "$example_file" "$env_file"
         return 0
     fi
-    
-    local missing_vars=()
-    local updated_vars=()
     
     # 读取 .env.example 中的所有变量，同步到 .env
     while IFS= read -r line || [[ -n "$line" ]]; do
