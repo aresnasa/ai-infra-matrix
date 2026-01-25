@@ -562,11 +562,151 @@ is_valid_domain() {
     return 1
 }
 
+# 获取服务器的公网 IP 地址
+# 通过多个公共服务检测，返回公网 IP 或空字符串
+get_public_ip() {
+    local public_ip=""
+    local timeout_opt=""
+    
+    # 设置 curl/wget 超时选项
+    if command -v curl &> /dev/null; then
+        timeout_opt="--connect-timeout 3 -s"
+    fi
+    
+    # 尝试多个公共 IP 检测服务
+    local services=(
+        "ifconfig.me"
+        "ipinfo.io/ip"
+        "icanhazip.com"
+        "api.ipify.org"
+        "checkip.amazonaws.com"
+    )
+    
+    for service in "${services[@]}"; do
+        if command -v curl &> /dev/null; then
+            public_ip=$(curl $timeout_opt "https://$service" 2>/dev/null | tr -d '[:space:]')
+        elif command -v wget &> /dev/null; then
+            public_ip=$(wget -qO- --timeout=3 "https://$service" 2>/dev/null | tr -d '[:space:]')
+        fi
+        
+        # 验证返回的是有效 IP 格式
+        if [[ -n "$public_ip" ]] && [[ "$public_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            log_debug "从 $service 获取到公网 IP: $public_ip"
+            echo "$public_ip"
+            return 0
+        fi
+    done
+    
+    log_debug "无法获取公网 IP"
+    return 1
+}
+
+# 解析域名获取 IP 地址
+# 参数: $1 - 域名
+# 返回: 解析到的 IP 地址，或空字符串
+resolve_domain_ip() {
+    local domain="$1"
+    local resolved_ip=""
+    
+    [[ -z "$domain" ]] && return 1
+    
+    # 方法1: 使用 dig (最可靠)
+    if command -v dig &> /dev/null; then
+        resolved_ip=$(dig +short "$domain" A 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+    fi
+    
+    # 方法2: 使用 nslookup
+    if [[ -z "$resolved_ip" ]] && command -v nslookup &> /dev/null; then
+        resolved_ip=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / { print $2 }' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+        # 备用解析方式
+        if [[ -z "$resolved_ip" ]]; then
+            resolved_ip=$(nslookup "$domain" 2>/dev/null | awk '/Name:/{found=1} found && /Address:/{print $2; exit}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+        fi
+    fi
+    
+    # 方法3: 使用 host
+    if [[ -z "$resolved_ip" ]] && command -v host &> /dev/null; then
+        resolved_ip=$(host "$domain" 2>/dev/null | awk '/has address/ { print $4 }' | head -n1)
+    fi
+    
+    # 方法4: 使用 getent (Linux)
+    if [[ -z "$resolved_ip" ]] && command -v getent &> /dev/null; then
+        resolved_ip=$(getent hosts "$domain" 2>/dev/null | awk '{ print $1 }' | head -n1)
+    fi
+    
+    if [[ -n "$resolved_ip" ]]; then
+        log_debug "域名 $domain 解析到 IP: $resolved_ip"
+        echo "$resolved_ip"
+        return 0
+    fi
+    
+    log_debug "无法解析域名: $domain"
+    return 1
+}
+
+# 验证域名是否解析到指定的公网 IP
+# 参数: $1 - 域名, $2 - 期望的公网 IP (可选，默认自动检测)
+# 返回: 0 如果匹配，1 如果不匹配
+verify_domain_dns() {
+    local domain="$1"
+    local expected_ip="${2:-}"
+    
+    [[ -z "$domain" ]] && return 1
+    
+    # 如果没有提供期望的 IP，自动获取公网 IP
+    if [[ -z "$expected_ip" ]]; then
+        expected_ip=$(get_public_ip)
+        if [[ -z "$expected_ip" ]]; then
+            log_debug "无法获取公网 IP 进行验证"
+            return 1
+        fi
+    fi
+    
+    # 解析域名
+    local resolved_ip=$(resolve_domain_ip "$domain")
+    if [[ -z "$resolved_ip" ]]; then
+        log_debug "域名 $domain 无法解析"
+        return 1
+    fi
+    
+    # 比较 IP
+    if [[ "$resolved_ip" == "$expected_ip" ]]; then
+        log_debug "✅ 域名 $domain 正确解析到公网 IP $expected_ip"
+        return 0
+    else
+        log_debug "❌ 域名 $domain 解析到 $resolved_ip，不匹配期望的 $expected_ip"
+        return 1
+    fi
+}
+
 # 检测公网域名 (通过 SSL 证书或配置文件推断)
 # 用于设置 PUBLIC_HOST - 用户浏览器访问的公网地址
 # 返回: 检测到的域名，或空字符串
 detect_public_domain() {
     local domain=""
+    
+    # 预配置的候选域名列表 (可以通过 DNS 验证自动配置)
+    # 用户可以在这里添加自己的域名，脚本会自动验证是否指向当前服务器
+    local candidate_domains=(
+        "ai-infra-matrix.top"
+        "www.ai-infra-matrix.top"
+    )
+    
+    # 方法0: 通过 DNS 解析验证候选域名 (最智能的方法)
+    # 获取当前服务器的公网 IP，然后检查候选域名是否解析到该 IP
+    log_debug "尝试通过 DNS 验证检测公网域名..."
+    local public_ip=$(get_public_ip)
+    if [[ -n "$public_ip" ]]; then
+        log_debug "检测到服务器公网 IP: $public_ip"
+        for candidate in "${candidate_domains[@]}"; do
+            if verify_domain_dns "$candidate" "$public_ip"; then
+                domain="$candidate"
+                log_info "✅ 通过 DNS 验证检测到域名: $domain (解析到 $public_ip)"
+                echo "$domain"
+                return 0
+            fi
+        done
+    fi
     
     # 方法1: 从 SSL 证书读取域名 (最可靠)
     local cert_file="${SSL_OUTPUT_DIR:-./src/nginx/ssl}/server.crt"
@@ -585,6 +725,10 @@ detect_public_domain() {
         
         if [[ -n "$domain" ]]; then
             log_debug "从 SSL 证书检测到域名: $domain"
+            # 验证 SSL 证书中的域名是否也指向当前服务器
+            if [[ -n "$public_ip" ]] && verify_domain_dns "$domain" "$public_ip"; then
+                log_info "✅ SSL 证书域名 $domain 已验证指向当前服务器"
+            fi
         fi
     fi
     
