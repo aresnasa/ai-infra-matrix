@@ -11,8 +11,9 @@ FROM quay.io/argoproj/argocd:${ARGOCD_VERSION}
 ENV TZ=Asia/Shanghai
 
 # 复制自定义配置
-COPY argocd-cm.yaml /home/argocd/
-COPY argocd-rbac-cm.yaml /home/argocd/
+# 注意：构建上下文为项目根目录，所以使用 src/argocd/ 前缀
+COPY src/argocd/argocd-cm.yaml /home/argocd/
+COPY src/argocd/argocd-rbac-cm.yaml /home/argocd/
 
 # 切换到 argocd 用户
 USER argocd
