@@ -244,12 +244,21 @@ const AuthPage = ({ onLogin }) => {
 
     } catch (error) {
       console.error('Register failed:', error);
-      setLdapValidationStatus('error');
-
-      if (error.response?.data?.error?.includes('LDAP')) {
+      
+      const errorMessage = error.response?.data?.error || '';
+      const statusCode = error.response?.status;
+      
+      // 只有在 LDAP 验证阶段（而非注册阶段）出错时才设置 LDAP 错误状态
+      if (errorMessage.includes('LDAP') || ldapValidationStatus === 'validating') {
+        setLdapValidationStatus('error');
         message.error(t('auth.ldapValidateFailed'));
+      } else if (statusCode === 409 || errorMessage.includes('已存在') || errorMessage.includes('already exists')) {
+        // 用户已存在错误 - 不要设置 LDAP 错误状态
+        // LDAP 验证已经成功，只是注册失败了
+        message.error(errorMessage || t('auth.userAlreadyExists'));
       } else {
-        message.error(error.response?.data?.error || t('auth.loginFailed'));
+        // 其他注册错误
+        message.error(errorMessage || t('auth.loginFailed'));
       }
     } finally {
       setLoading(false);

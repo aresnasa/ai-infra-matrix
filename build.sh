@@ -9490,6 +9490,223 @@ pre_deployment_safety_check() {
     return 0
 }
 
+# ==============================================================================
+# Component Update Functions - 组件更新函数
+# ==============================================================================
+
+# Update a single component: build -> tag -> restart
+# Usage: update_component <component> [--force] [--no-restart]
+# Examples:
+#   update_component backend
+#   update_component frontend --force
+#   update_component nginx --no-restart
+update_component() {
+    local component="$1"
+    shift
+    local force_build=false
+    local no_restart=false
+    local tag="${IMAGE_TAG:-latest}"
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f)
+                force_build=true
+                shift
+                ;;
+            --no-restart)
+                no_restart=true
+                shift
+                ;;
+            --tag=*)
+                tag="${1#--tag=}"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    if [[ -z "$component" ]]; then
+        log_error "Component name is required"
+        log_info "Usage: $0 update <component> [--force] [--no-restart] [--tag=VERSION]"
+        return 1
+    fi
+    
+    local component_dir="$SRC_DIR/$component"
+    if [[ ! -d "$component_dir" ]]; then
+        log_error "Component not found: $component"
+        log_info "Available components in $SRC_DIR:"
+        ls -1 "$SRC_DIR" | sed 's/^/  - /'
+        return 1
+    fi
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🔄 Updating component: $component"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local compose_cmd=$(detect_compose_command)
+    local image_name="ai-infra-$component:$tag"
+    if [[ -n "$PRIVATE_REGISTRY" ]]; then
+        image_name="$PRIVATE_REGISTRY/$image_name"
+    fi
+    
+    # Step 1: Render template if exists
+    local template_file="$component_dir/Dockerfile.tpl"
+    if [[ -f "$template_file" ]]; then
+        log_step "Step 1/4: Rendering template..."
+        if ! render_template "$template_file"; then
+            log_error "Failed to render template for $component"
+            return 1
+        fi
+        log_info "  ✓ Template rendered"
+    else
+        log_step "Step 1/4: No template to render (using Dockerfile directly)"
+    fi
+    
+    # Step 2: Build component
+    log_step "Step 2/4: Building $component..."
+    local build_args=()
+    if [[ "$force_build" == "true" ]]; then
+        build_args+=("--force")
+        FORCE_BUILD=true
+    fi
+    
+    if ! build_component "$component" "${build_args[@]}"; then
+        log_error "Failed to build $component"
+        return 1
+    fi
+    log_info "  ✓ Build completed: $image_name"
+    
+    # Step 3: Tag image (if needed)
+    log_step "Step 3/4: Verifying image tag..."
+    if docker image inspect "$image_name" >/dev/null 2>&1; then
+        log_info "  ✓ Image tagged: $image_name"
+    else
+        log_error "Image not found after build: $image_name"
+        return 1
+    fi
+    
+    # Step 4: Restart component
+    if [[ "$no_restart" == "true" ]]; then
+        log_step "Step 4/4: Skipping restart (--no-restart specified)"
+    else
+        log_step "Step 4/4: Restarting $component..."
+        
+        # Get the service name in docker-compose (usually same as component name)
+        local service_name="$component"
+        
+        # Check if service is running
+        if $compose_cmd ps --services 2>/dev/null | grep -q "^${service_name}$"; then
+            # Stop the service
+            log_info "  → Stopping $service_name..."
+            $compose_cmd stop "$service_name" 2>/dev/null || true
+            
+            # Remove the container to ensure fresh start with new image
+            local container_name="ai-infra-$component"
+            docker rm -f "$container_name" 2>/dev/null || true
+            
+            # Start the service
+            log_info "  → Starting $service_name..."
+            if $compose_cmd up -d --no-build --pull never "$service_name" 2>/dev/null; then
+                log_info "  ✓ Service restarted: $service_name"
+            else
+                log_warn "  ⚠ Failed to start $service_name, trying alternative method..."
+                # Fallback: try starting without the specific service flag
+                $compose_cmd up -d --no-build --pull never 2>/dev/null || true
+            fi
+        else
+            log_info "  → Service $service_name not running, starting..."
+            if $compose_cmd up -d --no-build --pull never "$service_name" 2>/dev/null; then
+                log_info "  ✓ Service started: $service_name"
+            else
+                log_warn "  ⚠ Service might need manual start: docker compose up -d $service_name"
+            fi
+        fi
+    fi
+    
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "✅ Update completed: $component"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    return 0
+}
+
+# Update multiple components at once
+# Usage: update_components <component1> <component2> ... [--force] [--no-restart]
+# Examples:
+#   update_components backend frontend
+#   update_components backend frontend nginx --force
+update_components() {
+    local components=()
+    local extra_args=()
+    
+    # Parse arguments: separate components from options
+    for arg in "$@"; do
+        if [[ "$arg" == --* || "$arg" == -* ]]; then
+            extra_args+=("$arg")
+        else
+            components+=("$arg")
+        fi
+    done
+    
+    if [[ ${#components[@]} -eq 0 ]]; then
+        log_error "At least one component is required"
+        log_info "Usage: $0 update <component1> [component2] ... [--force] [--no-restart]"
+        log_info ""
+        log_info "Common components:"
+        log_info "  backend     - Go backend API service"
+        log_info "  frontend    - React frontend application"
+        log_info "  nginx       - Nginx reverse proxy"
+        log_info "  jupyterhub  - JupyterHub service"
+        log_info "  saltstack   - SaltStack master service"
+        log_info "  nightingale - Nightingale monitoring"
+        log_info ""
+        log_info "Tip: Use 'ls $SRC_DIR' to see all available components"
+        return 1
+    fi
+    
+    local total=${#components[@]}
+    local success=0
+    local failed=0
+    
+    log_info "╔══════════════════════════════════════════════════════════════╗"
+    log_info "║  🔄 Batch Update: $total component(s)                          "
+    log_info "║  Components: ${components[*]}"
+    log_info "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    for component in "${components[@]}"; do
+        if update_component "$component" "${extra_args[@]}"; then
+            success=$((success + 1))
+        else
+            failed=$((failed + 1))
+            log_error "Failed to update: $component"
+        fi
+        echo ""
+    done
+    
+    log_info "╔══════════════════════════════════════════════════════════════╗"
+    log_info "║  📊 Update Summary                                            "
+    log_info "║  Total: $total | ✅ Success: $success | ❌ Failed: $failed"
+    log_info "╚══════════════════════════════════════════════════════════════╝"
+    
+    [[ $failed -eq 0 ]]
+}
+
+# Quick update shortcuts for common components
+update_backend() {
+    update_component "backend" "$@"
+}
+
+update_frontend() {
+    update_component "frontend" "$@"
+}
+
+update_nginx() {
+    update_component "nginx" "$@"
+}
+
 start_all() {
     log_info "Starting all services (with HA profile for SaltStack multi-master)..."
     local compose_cmd=$(detect_compose_command)
@@ -10419,6 +10636,18 @@ print_help() {
     echo "  stop-all            Stop all services"
     echo "  tag-images          Tag private registry images as local (for intranet)"
     echo ""
+    echo "Update Commands (Build + Tag + Restart):"
+    echo "  update <component> [options]       Update a single component"
+    echo "  update <c1> <c2> ... [options]     Update multiple components"
+    echo "    Options:"
+    echo "      --force, -f      Force rebuild without Docker cache"
+    echo "      --no-restart     Only build, do not restart the service"
+    echo "      --tag=VERSION    Specify image tag (default: \$IMAGE_TAG)"
+    echo "    Examples:"
+    echo "      $0 update backend                # Build and restart backend"
+    echo "      $0 update frontend --force       # Force rebuild frontend"
+    echo "      $0 update backend frontend       # Update multiple components"
+    echo ""
     echo "Database Safety Commands:"
     echo "  db-check            Check if PostgreSQL has production data"
     echo "  db-backup [name]    Backup PostgreSQL database"
@@ -10552,6 +10781,12 @@ print_help() {
     echo "  $0 build-history                   # Show recent build history"
     echo "  $0 clear-cache                     # Clear all build cache"
     echo "  $0 clear-cache backend             # Clear cache for specific service"
+    echo ""
+    echo "  # Quick update (build + tag + restart)"
+    echo "  $0 update backend                      # Update backend service"
+    echo "  $0 update frontend --force             # Force rebuild and restart"
+    echo "  $0 update backend frontend nginx       # Update multiple components"
+    echo "  $0 update backend --no-restart         # Build only, no restart"
     echo ""
     echo "  # Internet mode (Docker Hub)"
     echo "  $0 prefetch                        # Prefetch base images"
@@ -11028,6 +11263,32 @@ case "$COMMAND" in
         ;;
     stop-all)
         stop_all
+        ;;
+    update)
+        # Update component(s): build -> tag -> restart
+        # Usage: ./build.sh update <component1> [component2] ... [--force] [--no-restart]
+        shift_args=("${REMAINING_ARGS[@]:1}")  # Remove 'update' command itself
+        if [[ ${#shift_args[@]} -eq 0 ]]; then
+            log_error "Component name(s) required"
+            log_info ""
+            log_info "Usage: $0 update <component1> [component2] ... [options]"
+            log_info ""
+            log_info "Options:"
+            log_info "  --force, -f      Force rebuild without Docker cache"
+            log_info "  --no-restart     Only build, do not restart the service"
+            log_info "  --tag=VERSION    Specify image tag (default: \$IMAGE_TAG or 'latest')"
+            log_info ""
+            log_info "Examples:"
+            log_info "  $0 update backend                    # Build and restart backend"
+            log_info "  $0 update frontend --force           # Force rebuild frontend"
+            log_info "  $0 update backend frontend nginx     # Update multiple components"
+            log_info "  $0 update backend --no-restart       # Build only, no restart"
+            log_info ""
+            log_info "Available components:"
+            ls -1 "$SRC_DIR" 2>/dev/null | sed 's/^/  - /' || log_warn "Could not list $SRC_DIR"
+            exit 1
+        fi
+        update_components "${shift_args[@]}"
         ;;
     db-check)
         check_postgres_has_data "${ARG2:-ai_infra}"

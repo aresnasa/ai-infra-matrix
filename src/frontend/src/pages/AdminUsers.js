@@ -103,7 +103,7 @@ const AdminUsers = () => {
   const fetchPendingApprovals = async () => {
     setPendingLoading(true);
     try {
-      const response = await userAPI.getPendingApprovals();
+      const response = await adminAPI.getPendingApprovals();
       const data = response.data || [];
       setPendingApprovals(Array.isArray(data) ? data : []);
     } catch (error) {

@@ -921,6 +921,7 @@ export default {
     submitRegister: '提交注册申请',
     registerSuccess: '注册申请已提交！请等待管理员审批。',
     registerSuccessNoApproval: '注册成功！请登录',
+    userAlreadyExists: '用户名或邮箱已存在',
     // LDAP 验证
     ldapValidating: '正在验证LDAP...',
     ldapValidatingDesc: '正在验证您的LDAP账户信息，请稍候...',

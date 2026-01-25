@@ -923,6 +923,7 @@ export default {
     submitRegister: 'Submit Registration',
     registerSuccess: 'Registration submitted! Please wait for admin approval.',
     registerSuccessNoApproval: 'Registration successful! Please login',
+    userAlreadyExists: 'Username or email already exists',
     // LDAP Validation
     ldapValidating: 'Validating LDAP...',
     ldapValidatingDesc: 'Validating your LDAP account, please wait...',
