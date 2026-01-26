@@ -614,7 +614,7 @@ const AuthPage = ({ onLogin }) => {
                       showIcon
                       style={{ marginBottom: 16 }}
                     />
-                  )}}
+                  )}
 
                   {ldapValidationStatus === 'validating' && (
                     <Alert
