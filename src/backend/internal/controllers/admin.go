@@ -307,12 +307,12 @@ func (c *AdminController) UpdateUserStatusEnhanced(ctx *gin.Context) {
 
 	// 记录操作日志
 	logrus.WithFields(logrus.Fields{
-		"operator_id":    userID,
-		"target_user":    user.Username,
-		"action":         "update_status",
-		"new_status":     req.IsActive,
-		"reason":         req.Reason,
-		"is_local_admin": isLocalAdmin,
+		"operator_id":  userID,
+		"target_user":  user.Username,
+		"action":       "update_status",
+		"new_status":   req.IsActive,
+		"reason":       req.Reason,
+		"is_protected": isProtected,
 	}).Info("User status update")
 
 	user.IsActive = req.IsActive
