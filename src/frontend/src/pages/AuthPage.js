@@ -44,6 +44,7 @@ const AuthPage = ({ onLogin }) => {
   const { t, locale } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
+  const [registerForm] = Form.useForm(); // 注册表单实例
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
   const [selectedRoleTemplate, setSelectedRoleTemplate] = useState('');
@@ -257,9 +258,11 @@ const AuthPage = ({ onLogin }) => {
       if (response.data.valid) {
         setInvitationCodeValid(true);
         setInvitationCodeInfo(response.data);
-        // 如果邀请码预设了角色模板，自动选中
+        // 如果邀请码预设了角色模板，自动选中并同步表单值
         if (response.data.role_template) {
           setSelectedRoleTemplate(response.data.role_template);
+          // 同步更新表单值，确保表单验证通过
+          registerForm.setFieldsValue({ role_template: response.data.role_template });
         }
       } else {
         setInvitationCodeValid(false);
@@ -459,6 +462,7 @@ const AuthPage = ({ onLogin }) => {
                 />
 
                 <Form
+                  form={registerForm}
                   name="register"
                   onFinish={handleRegister}
                   autoComplete="off"
