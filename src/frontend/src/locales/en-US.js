@@ -63,6 +63,7 @@ export default {
     selected: 'Selected',
     noData: 'No Data',
     notFound: 'Not Found',
+    copy: 'Copy',
     copySuccess: 'Copied successfully',
     copyFailed: 'Copy failed',
     createdAt: 'Created At',

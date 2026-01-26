@@ -63,6 +63,7 @@ export default {
     selected: '已选',
     noData: '暂无数据',
     notFound: '未找到',
+    copy: '复制',
     copySuccess: '复制成功',
     copyFailed: '复制失败',
     createdAt: '创建时间',
