@@ -4,8 +4,8 @@
       "name": "admin",
       "credentials": [
         {
-          "accessKey": "1sXdFuPIz1vuqsf8zass",
-          "secretKey": "XITShXVhFdtAvI6M2fu9HKRM40pEH2KVR0OV9a"
+          "accessKey": "omV57JJfIN3Q2xYUojfL",
+          "secretKey": "g86wC6uqe9g8GkEhT5W4MHk3gIxYovdRaLjyQ"
         }
       ],
       "actions": [
@@ -20,8 +20,8 @@
       "name": "app",
       "credentials": [
         {
-          "accessKey": "rKjFivKmb73Mf8tLtFZs",
-          "secretKey": "rGlvw6SqEX9dvaoPOvAqGOxeDdDrO2VKHZh16"
+          "accessKey": "JDsqfleTAd9Vh9v6mf1E",
+          "secretKey": "yIlooCAkaJaEsvXddRqSMvu78khBFu3M5xfhaD5x"
         }
       ],
       "actions": [
@@ -35,8 +35,8 @@
       "name": "readonly",
       "credentials": [
         {
-          "accessKey": "CO6gsv9TdQ53LZtIj0qZ",
-          "secretKey": "pvSL05N9i0R26sAm5YzBmYfu0eXRNbwErULexrD"
+          "accessKey": "5pobawfieuR5PoKhmA3s",
+          "secretKey": "9zyIOUA32q2zGJxMCJcpvFkMiOYFJ4hZoR9tLRt"
         }
       ],
       "actions": [
