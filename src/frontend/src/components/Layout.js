@@ -211,6 +211,12 @@ const Layout = ({ children, user, onLogout }) => {
       label: t('nav.securityManagement'),
       onClick: () => navigate('/admin/security'),
     },
+    {
+      key: '/admin/invitation-codes',
+      icon: <KeyOutlined />,
+      label: t('nav.invitationCodes'),
+      onClick: () => navigate('/admin/invitation-codes'),
+    },
   ];
 
   const handleMenuClick = ({ key }) => {

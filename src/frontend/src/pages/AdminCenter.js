@@ -10,7 +10,8 @@ import {
   SafetyOutlined,
   ExperimentOutlined,
   DashboardOutlined,
-  DatabaseOutlined
+  DatabaseOutlined,
+  KeyOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { usePagePreload } from '../hooks/usePagePreload';
@@ -104,6 +105,15 @@ const AdminCenter = () => {
       color: isDark ? '#2a1215' : '#fff1f0',
       badge: 'new',
       priority: 8
+    },
+    {
+      title: t('admin.invitationCode'),
+      description: t('admin.invitationCodeDesc'),
+      icon: <KeyOutlined style={{ fontSize: '24px', color: '#9254de' }} />,
+      path: '/admin/invitation-codes',
+      color: isDark ? '#1a1325' : '#f9f0ff',
+      badge: 'new',
+      priority: 9
     }
   ];
 

@@ -141,6 +141,7 @@ export default {
     jupyterhubManagement: 'JupyterHub Management',
     objectStorageManagement: 'Object Storage',
     securityManagement: 'Security Management',
+    invitationCodes: 'Invitation Codes',
     // User menu
     profile: 'Profile',
     logout: 'Logout',
@@ -1969,6 +1970,8 @@ export default {
     objectStorageDesc: 'Manage MinIO, S3 and other object storage service configurations',
     securitySettings: 'Security Settings',
     securitySettingsDesc: 'Configure IP blacklist, 2FA, third-party login and other security policies',
+    invitationCode: 'Invitation Codes',
+    invitationCodeDesc: 'Create and manage user registration invitation codes',
     // Badges
     hot: 'Hot',
     new: 'New',
@@ -2710,5 +2713,80 @@ export default {
     modelDeveloper: 'Model Developer',
     engineer: 'Software Engineer',
     audit: 'Auditor',
+  },
+
+  // Invitation Code Management
+  invitationCode: {
+    title: 'Invitation Code Management',
+    description: 'Create and manage user registration invitation codes with batch generation and usage statistics',
+    codeList: 'Invitation Code List',
+    create: 'Create Invitation Code',
+    createSuccess: 'Invitation code created successfully',
+    createFailed: 'Failed to create invitation code',
+    createTip: 'Created invitation codes can be used for direct user registration without admin approval',
+    codeGenerated: 'Generated invitation code',
+    
+    // Table fields
+    code: 'Invitation Code',
+    status: 'Status',
+    roleTemplate: 'Role Template',
+    usageCount: 'Usage Count',
+    expiresAt: 'Expires At',
+    createdAt: 'Created At',
+    
+    // Status
+    valid: 'Valid',
+    disabled: 'Disabled',
+    expired: 'Expired',
+    usedUp: 'Used Up',
+    
+    // Form
+    descriptionLabel: 'Description',
+    descriptionPlaceholder: 'Enter description for this invitation code (optional)',
+    descriptionTooLong: 'Description cannot exceed 255 characters',
+    selectRole: 'Select preset role (optional)',
+    maxUses: 'Maximum Uses',
+    maxUsesTooltip: '0 means unlimited',
+    batchCount: 'Batch Count',
+    batchCountTooltip: 'Maximum 100 codes per batch',
+    selectExpireTime: 'Select expiration time (optional)',
+    neverExpire: 'Never Expire',
+    noPreset: 'No Preset',
+    
+    // Role options
+    roleAdmin: 'Administrator',
+    roleDataDeveloper: 'Data Developer',
+    roleModelDeveloper: 'Model Developer',
+    roleSRE: 'SRE Engineer',
+    roleEngineer: 'Software Engineer',
+    
+    // Actions
+    disable: 'Disable',
+    enable: 'Enable',
+    detail: 'Invitation Code Details',
+    confirmDisable: 'Are you sure to disable this invitation code?',
+    confirmDelete: 'Are you sure to delete this invitation code? This action cannot be undone.',
+    disableSuccess: 'Invitation code disabled',
+    disableFailed: 'Failed to disable',
+    enableSuccess: 'Invitation code enabled',
+    enableFailed: 'Failed to enable',
+    deleteSuccess: 'Invitation code deleted',
+    deleteFailed: 'Failed to delete',
+    
+    // Statistics
+    totalCodes: 'Total Codes',
+    activeCodes: 'Active Codes',
+    usedCount: 'Total Uses',
+    expiredCodes: 'Expired',
+    showExpired: 'Show Expired',
+    
+    // Usage records
+    usageRecords: 'Usage Records',
+    usedBy: 'Used By',
+    usedAt: 'Used At',
+    noUsageRecords: 'No usage records',
+    
+    // Fetch failed
+    fetchFailed: 'Failed to fetch invitation codes',
   },
 };

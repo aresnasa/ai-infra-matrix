@@ -141,6 +141,11 @@ const SecuritySettings = withLazyLoading(React.lazy(() => import('./pages/admin/
   loadingText: '正在加载安全管理...'
 });
 
+// 邀请码管理页面
+const InvitationCodeManagement = withLazyLoading(React.lazy(() => import('./pages/InvitationCodeManagement')), {
+  loadingText: '正在加载邀请码管理...'
+});
+
 // ArgoCD GitOps 管理页面
 const ArgoCDManagement = withLazyLoading(React.lazy(() => import('./pages/ArgoCDManagement')), {
   loadingText: '正在加载ArgoCD管理...'
@@ -892,6 +897,16 @@ function AppContent({ user, handleLogin, handleLogout, apiHealth, LazyLoadingSpi
                         <AdminProtectedRoute user={user}>
                           <Suspense fallback={<AdminLoadingFallback />}>
                             <SecuritySettings />
+                          </Suspense>
+                        </AdminProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/admin/invitation-codes"
+                      element={
+                        <AdminProtectedRoute user={user}>
+                          <Suspense fallback={<AdminLoadingFallback />}>
+                            <InvitationCodeManagement />
                           </Suspense>
                         </AdminProtectedRoute>
                       }

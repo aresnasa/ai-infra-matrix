@@ -141,6 +141,7 @@ export default {
     jupyterhubManagement: 'JupyterHub管理',
     objectStorageManagement: '对象存储管理',
     securityManagement: '安全管理',
+    invitationCodes: '邀请码管理',
     // 用户菜单
     profile: '个人信息',
     logout: '退出登录',
@@ -1967,6 +1968,8 @@ export default {
     objectStorageDesc: '管理SeaweedFS、MinIO、S3等对象存储服务配置',
     securitySettings: '安全管理',
     securitySettingsDesc: '配置IP黑名单、二次认证、第三方登录等安全策略',
+    invitationCode: '邀请码管理',
+    invitationCodeDesc: '创建和管理用户注册邀请码，支持批量生成',
     // 徽章
     hot: '热门',
     new: '新功能',
@@ -2708,5 +2711,80 @@ export default {
     modelDeveloper: '模型开发',
     engineer: '工程研发',
     audit: '审计员',
+  },
+
+  // 邀请码管理
+  invitationCode: {
+    title: '邀请码管理',
+    description: '创建和管理用户注册邀请码，支持批量生成和使用统计',
+    codeList: '邀请码列表',
+    create: '创建邀请码',
+    createSuccess: '邀请码创建成功',
+    createFailed: '创建邀请码失败',
+    createTip: '创建的邀请码可用于用户注册时直接激活账户，无需管理员审批',
+    codeGenerated: '生成的邀请码',
+    
+    // 表格字段
+    code: '邀请码',
+    status: '状态',
+    roleTemplate: '角色模板',
+    usageCount: '使用次数',
+    expiresAt: '过期时间',
+    createdAt: '创建时间',
+    
+    // 状态
+    valid: '有效',
+    disabled: '已禁用',
+    expired: '已过期',
+    usedUp: '已用完',
+    
+    // 表单
+    descriptionLabel: '描述/备注',
+    descriptionPlaceholder: '输入邀请码用途说明（可选）',
+    descriptionTooLong: '描述不能超过255个字符',
+    selectRole: '选择预设角色（可选）',
+    maxUses: '最大使用次数',
+    maxUsesTooltip: '0 表示无限制',
+    batchCount: '批量生成数量',
+    batchCountTooltip: '一次最多生成100个',
+    selectExpireTime: '选择过期时间（可选）',
+    neverExpire: '永不过期',
+    noPreset: '无预设',
+    
+    // 角色选项
+    roleAdmin: '管理员',
+    roleDataDeveloper: '数据开发工程师',
+    roleModelDeveloper: '模型开发工程师',
+    roleSRE: 'SRE运维工程师',
+    roleEngineer: '研发工程师',
+    
+    // 操作
+    disable: '禁用',
+    enable: '启用',
+    detail: '邀请码详情',
+    confirmDisable: '确定禁用此邀请码？',
+    confirmDelete: '确定删除此邀请码？删除后无法恢复。',
+    disableSuccess: '邀请码已禁用',
+    disableFailed: '禁用失败',
+    enableSuccess: '邀请码已启用',
+    enableFailed: '启用失败',
+    deleteSuccess: '邀请码已删除',
+    deleteFailed: '删除失败',
+    
+    // 统计
+    totalCodes: '总邀请码',
+    activeCodes: '有效邀请码',
+    usedCount: '总使用次数',
+    expiredCodes: '已过期',
+    showExpired: '显示过期的',
+    
+    // 使用记录
+    usageRecords: '使用记录',
+    usedBy: '使用者',
+    usedAt: '使用时间',
+    noUsageRecords: '暂无使用记录',
+    
+    // 获取失败
+    fetchFailed: '获取邀请码列表失败',
   },
 };
