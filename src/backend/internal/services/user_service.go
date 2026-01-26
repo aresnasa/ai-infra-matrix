@@ -49,6 +49,29 @@ func isInvitationCodeRequired() bool {
 	return val != "false" && val != "0" && val != "no"
 }
 
+// ProtectedUsernames 受保护的用户名列表（不能删除、禁用）
+var ProtectedUsernames = []string{"admin"}
+
+// IsProtectedUser 检查是否为受保护的用户
+func IsProtectedUser(username string) bool {
+	for _, protected := range ProtectedUsernames {
+		if strings.EqualFold(username, protected) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsProtectedUserByID 通过用户ID检查是否为受保护的用户
+func IsProtectedUserByID(userID uint) bool {
+	db := database.DB
+	var user models.User
+	if err := db.First(&user, userID).Error; err != nil {
+		return false
+	}
+	return IsProtectedUser(user.Username)
+}
+
 // RegisterWithIP 用户注册（带IP地址）
 func (s *UserService) RegisterWithIP(req *models.RegisterRequest, ipAddress string) (*models.User, error) {
 	db := database.DB
@@ -295,6 +318,11 @@ func (s *UserService) UpdateUser(userID uint, updates map[string]interface{}) er
 
 // DeleteUser 删除用户
 func (s *UserService) DeleteUser(userID uint) error {
+	// 检查是否为受保护用户
+	if IsProtectedUserByID(userID) {
+		return errors.New("不能删除受保护的系统用户")
+	}
+
 	db := database.DB
 	return db.Delete(&models.User{}, userID).Error
 }

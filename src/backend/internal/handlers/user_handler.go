@@ -767,6 +767,12 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
+	// 检查是否为受保护用户
+	if services.IsProtectedUserByID(uint(userID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot delete protected system user"})
+		return
+	}
+
 	if err := h.userService.DeleteUser(uint(userID)); err != nil {
 		logrus.Error("Delete user error:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
@@ -810,6 +816,12 @@ func (h *UserHandler) ToggleUserStatus(c *gin.Context) {
 	currentUserID, _ := middleware.GetCurrentUserID(c)
 	if uint(userID) == currentUserID && !req.IsActive {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot disable yourself"})
+		return
+	}
+
+	// 检查是否为受保护用户（如 admin），禁止禁用
+	if !req.IsActive && services.IsProtectedUserByID(uint(userID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot disable protected system user"})
 		return
 	}
 
