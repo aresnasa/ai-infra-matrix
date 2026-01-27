@@ -52,6 +52,10 @@ import {
   WindowsOutlined,
   GitlabOutlined,
   ArrowLeftOutlined,
+  EnvironmentOutlined,
+  CompassOutlined,
+  InfoCircleOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { securityAPI } from '../../services/api';
