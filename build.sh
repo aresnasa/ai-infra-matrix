@@ -9628,28 +9628,64 @@ sync_seaweedfs_credentials() {
         "SELECT id FROM object_storage_configs WHERE type = 'seaweedfs' AND deleted_at IS NULL LIMIT 1" 2>/dev/null)
     
     if [[ -n "$config_id" ]] && [[ "$config_id" =~ ^[0-9]+$ ]]; then
-        # 配置已存在：更新所有字段（包括凭据）
-        # 凭据以明文写入，后端启动时会自动检测并加密
+        # 配置已存在：检查凭据是否需要更新
         log_info "  → SeaweedFS configuration exists (ID: $config_id)"
-        log_info "  → Updating configuration with new credentials from .env..."
-        docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
-            UPDATE object_storage_configs 
-            SET endpoint = '$escaped_s3_endpoint',
-                filer_url = '$escaped_filer_url',
-                master_url = '$escaped_master_url',
-                region = '$escaped_region',
-                access_key = '$escaped_access_key',
-                secret_key = '$escaped_secret_key',
-                status = 'unknown',
-                updated_at = NOW()
-            WHERE id = $config_id
-        " 2>/dev/null
         
-        if [[ $? -eq 0 ]]; then
-            log_info "  ✓ SeaweedFS configuration updated with new credentials"
-            log_info "  → Credentials will be encrypted when backend starts"
+        # 获取数据库中的当前凭据（用于比较）
+        local db_access_key=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+            "SELECT access_key FROM object_storage_configs WHERE id = $config_id" 2>/dev/null | tr -d '[:space:]')
+        
+        # 检查数据库中的凭据是否与 .env 一致
+        # 注意：数据库中的凭据可能是明文或已加密
+        # 如果是已加密的（以特定前缀开头），则需要更新为新的明文凭据
+        local needs_update=false
+        
+        # 检查 access_key 是否一致（明文比较）
+        if [[ "$db_access_key" != "$access_key" ]]; then
+            # access_key 不一致，检查是否是因为已加密
+            if [[ "$db_access_key" == ENC:* ]] || [[ ${#db_access_key} -gt 100 ]]; then
+                log_info "  → Database credentials appear to be encrypted, will update with new plaintext"
+                needs_update=true
+            else
+                log_info "  → Access key mismatch, will update"
+                needs_update=true
+            fi
         else
-            log_warn "  ⚠ Failed to update SeaweedFS configuration"
+            log_info "  → Access key matches, checking other fields..."
+        fi
+        
+        # 检查连接信息是否需要更新
+        local db_endpoint=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+            "SELECT endpoint FROM object_storage_configs WHERE id = $config_id" 2>/dev/null | tr -d '[:space:]')
+        
+        if [[ "$db_endpoint" != "$s3_endpoint" ]]; then
+            log_info "  → Endpoint changed: $db_endpoint -> $s3_endpoint"
+            needs_update=true
+        fi
+        
+        if [[ "$needs_update" == "true" ]]; then
+            log_info "  → Updating configuration with credentials from .env..."
+            docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
+                UPDATE object_storage_configs 
+                SET endpoint = '$escaped_s3_endpoint',
+                    filer_url = '$escaped_filer_url',
+                    master_url = '$escaped_master_url',
+                    region = '$escaped_region',
+                    access_key = '$escaped_access_key',
+                    secret_key = '$escaped_secret_key',
+                    status = 'unknown',
+                    updated_at = NOW()
+                WHERE id = $config_id
+            " 2>/dev/null
+            
+            if [[ $? -eq 0 ]]; then
+                log_info "  ✓ SeaweedFS configuration updated"
+                log_info "  → Credentials will be re-encrypted when backend starts"
+            else
+                log_warn "  ⚠ Failed to update SeaweedFS configuration"
+            fi
+        else
+            log_info "  ✓ SeaweedFS configuration is up-to-date, no changes needed"
         fi
     else
         # 配置不存在：创建新配置
