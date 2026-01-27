@@ -2804,5 +2804,10 @@ export default {
     
     // Fetch failed
     fetchFailed: 'Failed to fetch invitation codes',
+    
+    // Copy all
+    copyAll: 'Copy All Codes',
+    copyAllSuccess: 'Copied {count} valid invitation codes',
+    noValidCodes: 'No valid invitation codes to copy',
   },
 };

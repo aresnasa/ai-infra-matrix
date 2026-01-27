@@ -219,6 +219,26 @@ const InvitationCodeManagement = () => {
     message.success(t('common.copySuccess'));
   };
 
+  // 复制全部邀请码
+  const handleCopyAll = () => {
+    // 只复制有效的邀请码（未过期、未禁用、未用完）
+    const validCodes = codes.filter(item => {
+      if (!item.is_active) return false;
+      if (item.expires_at && dayjs(item.expires_at).isBefore(dayjs())) return false;
+      if (item.max_uses > 0 && item.used_count >= item.max_uses) return false;
+      return true;
+    });
+    
+    if (validCodes.length === 0) {
+      message.warning(t('invitationCode.noValidCodes'));
+      return;
+    }
+    
+    const codesText = validCodes.map(item => item.code).join('\n');
+    navigator.clipboard.writeText(codesText);
+    message.success(t('invitationCode.copyAllSuccess', { count: validCodes.length }));
+  };
+
   // 获取状态标签
   const getStatusTag = (record) => {
     if (!record.is_active) {
@@ -451,6 +471,13 @@ const InvitationCodeManagement = () => {
             <Divider type="vertical" />
             <Button icon={<ReloadOutlined />} onClick={fetchCodes}>
               {t('common.refresh')}
+            </Button>
+            <Button
+              icon={<CopyOutlined />}
+              onClick={handleCopyAll}
+              disabled={codes.length === 0}
+            >
+              {t('invitationCode.copyAll')}
             </Button>
             <Button
               type="primary"

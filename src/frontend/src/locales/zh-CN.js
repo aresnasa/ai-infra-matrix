@@ -2802,5 +2802,10 @@ export default {
     
     // 获取失败
     fetchFailed: '获取邀请码列表失败',
+    
+    // 复制全部
+    copyAll: '复制全部邀请码',
+    copyAllSuccess: '已复制 {count} 个有效邀请码',
+    noValidCodes: '没有可复制的有效邀请码',
   },
 };
