@@ -4,8 +4,8 @@
       "name": "admin",
       "credentials": [
         {
-          "accessKey": "omV57JJfIN3Q2xYUojfL",
-          "secretKey": "g86wC6uqe9g8GkEhT5W4MHk3gIxYovdRaLjyQ"
+          "accessKey": "seaweedfs_admin",
+          "secretKey": "seaweedfs_secret_key_change_me"
         }
       ],
       "actions": [
@@ -20,8 +20,8 @@
       "name": "app",
       "credentials": [
         {
-          "accessKey": "JDsqfleTAd9Vh9v6mf1E",
-          "secretKey": "yIlooCAkaJaEsvXddRqSMvu78khBFu3M5xfhaD5x"
+          "accessKey": "seaweedfs_app",
+          "secretKey": "seaweedfs_app_secret_change_me"
         }
       ],
       "actions": [
@@ -35,8 +35,8 @@
       "name": "readonly",
       "credentials": [
         {
-          "accessKey": "5pobawfieuR5PoKhmA3s",
-          "secretKey": "9zyIOUA32q2zGJxMCJcpvFkMiOYFJ4hZoR9tLRt"
+          "accessKey": "seaweedfs_readonly",
+          "secretKey": "seaweedfs_readonly_secret_change_me"
         }
       ],
       "actions": [
