@@ -9524,21 +9524,38 @@ update_runtime_env() {
 sync_seaweedfs_credentials() {
     log_info "🔄 Syncing SeaweedFS credentials to database..."
     
+    # 确保加载环境变量文件
+    local env_file="$PROJECT_ROOT/.env"
+    if [[ ! -f "$env_file" ]]; then
+        # 尝试 .env.prod
+        if [[ -f "$PROJECT_ROOT/.env.prod" ]]; then
+            env_file="$PROJECT_ROOT/.env.prod"
+        else
+            log_warn "  ⚠ No .env or .env.prod file found, skipping SeaweedFS sync"
+            return 0
+        fi
+    fi
+    
+    # 加载环境变量
+    log_info "  → Loading environment from: $env_file"
+    set -a
+    source "$env_file"
+    set +a
+    
     # 读取 .env 中的 SeaweedFS 配置
     local access_key="${SEAWEEDFS_ACCESS_KEY:-}"
     local secret_key="${SEAWEEDFS_SECRET_KEY:-}"
-    local s3_endpoint="${SEAWEEDFS_S3_ENDPOINT:-http://seaweedfs-filer:8333}"
-    local filer_url="${SEAWEEDFS_FILER_URL:-http://seaweedfs-filer:8888}"
-    local master_url="${SEAWEEDFS_MASTER_URL:-http://seaweedfs-master:9333}"
+    local filer_host="${SEAWEEDFS_FILER_HOST:-seaweedfs-filer}"
+    local filer_port="${SEAWEEDFS_FILER_PORT:-8888}"
+    local s3_port="${SEAWEEDFS_S3_PORT:-8333}"
+    local master_host="${SEAWEEDFS_MASTER_HOST:-seaweedfs-master}"
+    local master_port="${SEAWEEDFS_MASTER_PORT:-9333}"
     local region="${SEAWEEDFS_REGION:-us-east-1}"
     
-    # 从 hosts 配置构建 S3 端点（如果环境变量未设置）
-    if [[ -z "$access_key" ]]; then
-        access_key=$(grep "^SEAWEEDFS_ACCESS_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
-    fi
-    if [[ -z "$secret_key" ]]; then
-        secret_key=$(grep "^SEAWEEDFS_SECRET_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
-    fi
+    # 构建 URLs
+    local s3_endpoint="http://${filer_host}:${s3_port}"
+    local filer_url="http://${filer_host}:${filer_port}"
+    local master_url="http://${master_host}:${master_port}"
     
     # 检查必要的配置
     if [[ -z "$access_key" ]] || [[ -z "$secret_key" ]]; then
@@ -9552,9 +9569,12 @@ sync_seaweedfs_credentials() {
         return 0
     fi
     
+    # 从环境变量获取数据库配置
     local db_name="${DB_NAME:-ai_infra}"
     local db_user="${DB_USER:-postgres}"
     local db_password="${DB_PASSWORD:-postgres}"
+    
+    log_info "  → Database: $db_name, User: $db_user"
     
     # 检查数据库是否存在
     local db_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -tAc \
