@@ -1625,3 +1625,254 @@ func (h *SecurityHandler) CleanupLoginRecords(c *gin.Context) {
 		"message": fmt.Sprintf("已清理 %d 天前的登录记录", retentionDays),
 	})
 }
+
+// GetClientInfo 获取客户端信息（包括真实IP和GeoIP信息）
+// @Summary 获取客户端信息
+// @Description 获取当前请求的客户端IP、地理位置、User-Agent等信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/client-info [get]
+func (h *SecurityHandler) GetClientInfo(c *gin.Context) {
+	// 获取真实客户端IP
+	clientIP := h.getRealClientIP(c)
+	
+	// 获取所有相关的IP头信息（用于调试）
+	xForwardedFor := c.GetHeader("X-Forwarded-For")
+	xRealIP := c.GetHeader("X-Real-IP")
+	cfConnectingIP := c.GetHeader("CF-Connecting-IP") // Cloudflare
+	trueClientIP := c.GetHeader("True-Client-IP")     // Akamai/Cloudflare
+	
+	// 获取 User-Agent
+	userAgent := c.GetHeader("User-Agent")
+	
+	// 获取 Referer
+	referer := c.GetHeader("Referer")
+	
+	// 获取 Accept-Language
+	acceptLanguage := c.GetHeader("Accept-Language")
+	
+	// 获取请求协议
+	scheme := "http"
+	if c.GetHeader("X-Forwarded-Proto") == "https" || c.Request.TLS != nil {
+		scheme = "https"
+	}
+	
+	// 获取 GeoIP 信息
+	var geoInfo *services.GeoIPInfo
+	var geoErr error
+	if clientIP != "" && clientIP != "unknown" {
+		geoInfo, geoErr = h.geoIPService.Lookup(clientIP)
+	}
+	
+	// 构建响应
+	response := gin.H{
+		"success": true,
+		"data": gin.H{
+			"ip": gin.H{
+				"address":           clientIP,
+				"x_forwarded_for":   xForwardedFor,
+				"x_real_ip":         xRealIP,
+				"cf_connecting_ip":  cfConnectingIP,
+				"true_client_ip":    trueClientIP,
+				"remote_addr":       c.Request.RemoteAddr,
+			},
+			"user_agent":      userAgent,
+			"referer":         referer,
+			"accept_language": acceptLanguage,
+			"scheme":          scheme,
+			"host":            c.Request.Host,
+			"request_time":    time.Now().Format(time.RFC3339),
+		},
+	}
+	
+	// 添加 GeoIP 信息
+	if geoInfo != nil {
+		response["data"].(gin.H)["geo"] = gin.H{
+			"country":       geoInfo.Country,
+			"country_code":  geoInfo.CountryCode,
+			"region":        geoInfo.Region,
+			"city":          geoInfo.City,
+			"isp":           geoInfo.ISP,
+			"org":           geoInfo.Org,
+			"asn":           geoInfo.ASN,
+			"timezone":      geoInfo.Timezone,
+			"latitude":      geoInfo.Latitude,
+			"longitude":     geoInfo.Longitude,
+			"is_proxy":      geoInfo.IsProxy,
+			"is_vpn":        geoInfo.IsVPN,
+			"is_tor":        geoInfo.IsTor,
+			"is_datacenter": geoInfo.IsDatacenter,
+			"risk_level":    geoInfo.RiskLevel,
+			"source":        geoInfo.Source,
+		}
+	} else if geoErr != nil {
+		response["data"].(gin.H)["geo"] = gin.H{
+			"error": geoErr.Error(),
+		}
+	}
+	
+	c.JSON(http.StatusOK, response)
+}
+
+// LookupIPGeoInfo 查询指定IP的GeoIP信息
+// @Summary 查询IP地理位置
+// @Description 查询指定IP地址的地理位置信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param ip path string true "IP地址"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/geoip/{ip} [get]
+func (h *SecurityHandler) LookupIPGeoInfo(c *gin.Context) {
+	ip := c.Param("ip")
+	if ip == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "IP地址不能为空"})
+		return
+	}
+	
+	// 验证IP格式
+	if net.ParseIP(ip) == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的IP地址格式"})
+		return
+	}
+	
+	geoInfo, err := h.geoIPService.Lookup(ip)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    geoInfo,
+	})
+}
+
+// BatchLookupIPGeoInfo 批量查询IP地理位置
+// @Summary 批量查询IP地理位置
+// @Description 批量查询多个IP地址的地理位置信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Param request body object true "IP地址列表" 
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/geoip/batch [post]
+func (h *SecurityHandler) BatchLookupIPGeoInfo(c *gin.Context) {
+	var req struct {
+		IPs []string `json:"ips" binding:"required"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的请求参数"})
+		return
+	}
+	
+	if len(req.IPs) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "一次最多查询100个IP"})
+		return
+	}
+	
+	results := h.geoIPService.BatchLookup(req.IPs)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    results,
+		"count":   len(results),
+	})
+}
+
+// GetGeoIPCacheStats 获取GeoIP缓存统计
+// @Summary 获取GeoIP缓存统计
+// @Description 获取GeoIP服务的缓存统计信息
+// @Tags 安全管理
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/security/geoip/stats [get]
+func (h *SecurityHandler) GetGeoIPCacheStats(c *gin.Context) {
+	stats := h.geoIPService.GetCacheStats()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// getRealClientIP 获取真实客户端IP
+func (h *SecurityHandler) getRealClientIP(c *gin.Context) string {
+	// 优先级: CF-Connecting-IP > True-Client-IP > X-Real-IP > X-Forwarded-For > RemoteAddr
+	
+	// Cloudflare
+	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+	
+	// Akamai/Cloudflare Enterprise
+	if ip := c.GetHeader("True-Client-IP"); ip != "" {
+		return ip
+	}
+	
+	// Nginx real_ip 模块设置
+	if ip := c.GetHeader("X-Real-IP"); ip != "" {
+		return ip
+	}
+	
+	// X-Forwarded-For 取第一个非内网IP
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		ips := strings.Split(xff, ",")
+		for _, ip := range ips {
+			ip = strings.TrimSpace(ip)
+			if ip != "" && !h.isPrivateIP(ip) {
+				return ip
+			}
+		}
+		// 如果都是内网IP，返回第一个
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	
+	// 使用 Gin 的 ClientIP (已经配置了 TrustedProxies)
+	clientIP := c.ClientIP()
+	if clientIP != "" {
+		return clientIP
+	}
+	
+	// 最后使用 RemoteAddr
+	remoteAddr := c.Request.RemoteAddr
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	
+	return remoteAddr
+}
+
+// isPrivateIP 检查是否为内网IP
+func (h *SecurityHandler) isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	
+	privateRanges := []string{
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"127.0.0.0/8",
+		"100.64.0.0/10",
+		"169.254.0.0/16",
+	}
+	
+	for _, r := range privateRanges {
+		_, network, err := net.ParseCIDR(r)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	
+	return false
+}
