@@ -24,6 +24,7 @@ import (
 type SecurityHandler struct {
 	db                     *gorm.DB
 	loginProtectionService *services.LoginProtectionService
+	geoIPService           *services.GeoIPService
 }
 
 // NewSecurityHandler 创建安全管理处理器
@@ -31,6 +32,7 @@ func NewSecurityHandler() *SecurityHandler {
 	return &SecurityHandler{
 		db:                     database.DB,
 		loginProtectionService: services.NewLoginProtectionService(),
+		geoIPService:           services.NewGeoIPService(),
 	}
 }
 
