@@ -1412,6 +1412,12 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		security.GET("/ip-stats/:ip", securityHandler.GetIPStatsDetail)
 		security.GET("/login-stats/summary", securityHandler.GetLoginStatsSummary)
 		security.POST("/login-records/cleanup", securityHandler.CleanupLoginRecords)
+		
+		// 客户端信息和GeoIP查询
+		security.GET("/client-info", securityHandler.GetClientInfo)
+		security.GET("/geoip/:ip", securityHandler.LookupIPGeoInfo)
+		security.POST("/geoip/batch", securityHandler.BatchLookupIPGeoInfo)
+		security.GET("/geoip/stats", securityHandler.GetGeoIPCacheStats)
 	}
 
 	// ArgoCD GitOps 管理路由（需要认证）
