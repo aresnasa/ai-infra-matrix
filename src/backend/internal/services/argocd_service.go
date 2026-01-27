@@ -29,8 +29,8 @@ type ArgoCDService struct {
 
 // ArgoCDCluster ArgoCD 集群配置
 type ArgoCDCluster struct {
-	Server string            `json:"server"`
-	Name   string            `json:"name"`
+	Server string              `json:"server"`
+	Name   string              `json:"name"`
 	Config ArgoCDClusterConfig `json:"config"`
 }
 
@@ -57,10 +57,10 @@ type ArgoCDClusterResponse struct {
 
 // ArgoCDClusterItem ArgoCD 集群项
 type ArgoCDClusterItem struct {
-	Server     string            `json:"server"`
-	Name       string            `json:"name"`
-	Config     ArgoCDClusterConfig `json:"config"`
-	ServerVersion string          `json:"serverVersion,omitempty"`
+	Server          string                 `json:"server"`
+	Name            string                 `json:"name"`
+	Config          ArgoCDClusterConfig    `json:"config"`
+	ServerVersion   string                 `json:"serverVersion,omitempty"`
 	ConnectionState *ArgoCDConnectionState `json:"connectionState,omitempty"`
 }
 
@@ -319,22 +319,27 @@ func (s *ArgoCDService) getClusterByServer(server string) (*ArgoCDClusterItem, e
 }
 
 // ListArgoCDClusters 列出 ArgoCD 中的所有集群
+// 如果 ArgoCD 未启用，返回空列表而不是错误
 func (s *ArgoCDService) ListArgoCDClusters() ([]ArgoCDClusterItem, error) {
 	if !s.IsEnabled() {
-		return nil, fmt.Errorf("ArgoCD is not enabled")
+		logrus.Debug("ArgoCD is not enabled, returning empty cluster list")
+		return []ArgoCDClusterItem{}, nil
 	}
 
 	body, statusCode, err := s.doRequest("GET", "/clusters", nil)
 	if err != nil {
-		return nil, err
+		logrus.WithError(err).Debug("Failed to list ArgoCD clusters")
+		return []ArgoCDClusterItem{}, nil
 	}
 	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", statusCode)
+		logrus.WithField("status", statusCode).Debug("Unexpected status code when listing ArgoCD clusters")
+		return []ArgoCDClusterItem{}, nil
 	}
 
 	var response ArgoCDClusterResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
+		logrus.WithError(err).Debug("Failed to parse ArgoCD clusters response")
+		return []ArgoCDClusterItem{}, nil
 	}
 	return response.Items, nil
 }
@@ -343,9 +348,9 @@ func (s *ArgoCDService) ListArgoCDClusters() ([]ArgoCDClusterItem, error) {
 func (s *ArgoCDService) parseKubeConfig(kubeConfig string) (map[string]interface{}, error) {
 	// 简单的 YAML 解析，提取必要的认证信息
 	// 这里使用简化的方式，实际生产环境可能需要更复杂的解析
-	
+
 	config := make(map[string]interface{})
-	
+
 	// 检查是否包含 token
 	if strings.Contains(kubeConfig, "token:") {
 		// 提取 token (简化处理)
@@ -360,7 +365,7 @@ func (s *ArgoCDService) parseKubeConfig(kubeConfig string) (map[string]interface
 			}
 		}
 	}
-	
+
 	// 检查是否包含客户端证书
 	if strings.Contains(kubeConfig, "client-certificate-data:") {
 		tlsConfig := make(map[string]interface{})
@@ -384,26 +389,34 @@ func (s *ArgoCDService) parseKubeConfig(kubeConfig string) (map[string]interface
 			config["tlsClientConfig"] = tlsConfig
 		}
 	}
-	
+
 	// 如果没有找到认证信息，使用 insecure 模式
 	if len(config) == 0 {
 		config["tlsClientConfig"] = map[string]interface{}{
 			"insecure": true,
 		}
 	}
-	
+
 	return config, nil
 }
 
 // SyncAllClustersToArgoCD 同步所有 K8s 集群到 ArgoCD
+// 如果 ArgoCD 未启用或没有可用的 K8s 集群，返回 nil（不报错）
 func (s *ArgoCDService) SyncAllClustersToArgoCD() error {
 	if !s.IsEnabled() {
-		return fmt.Errorf("ArgoCD is not enabled")
+		logrus.Debug("ArgoCD is not enabled, skipping sync all clusters")
+		return nil
 	}
 
 	var clusters []models.KubernetesCluster
 	if err := database.DB.Where("status = ? AND is_active = ?", "connected", true).Find(&clusters).Error; err != nil {
 		return fmt.Errorf("failed to fetch clusters: %v", err)
+	}
+
+	// 没有可用的 K8s 集群时，返回 nil
+	if len(clusters) == 0 {
+		logrus.Debug("No connected K8s clusters found, nothing to sync")
+		return nil
 	}
 
 	var errs []string
@@ -422,27 +435,54 @@ func (s *ArgoCDService) SyncAllClustersToArgoCD() error {
 }
 
 // GetArgoCDStatus 获取 ArgoCD 服务状态
+// 返回详细的状态信息供前端渲染
 func (s *ArgoCDService) GetArgoCDStatus() map[string]interface{} {
 	status := map[string]interface{}{
-		"enabled":  s.IsEnabled(),
-		"base_url": s.baseURL,
+		"enabled":       s.IsEnabled(),
+		"base_url":      s.baseURL,
+		"configured":    s.authToken != "",
+		"cluster_count": 0,
+		"ready":         false,
 	}
 
-	if s.IsEnabled() {
-		// 尝试获取版本信息
-		body, statusCode, err := s.doRequest("GET", "/version", nil)
-		if err == nil && statusCode == http.StatusOK {
-			var version map[string]interface{}
-			if json.Unmarshal(body, &version) == nil {
-				status["version"] = version
-			}
-		}
+	// 检查是否有可用的 K8s 集群配置
+	var k8sClusterCount int64
+	if database.DB != nil {
+		database.DB.Model(&models.KubernetesCluster{}).Where("status = ? AND is_active = ?", "connected", true).Count(&k8sClusterCount)
+	}
+	status["k8s_cluster_count"] = k8sClusterCount
+	status["k8s_configured"] = k8sClusterCount > 0
 
-		// 获取集群数量
-		clusters, err := s.ListArgoCDClusters()
-		if err == nil {
-			status["cluster_count"] = len(clusters)
+	if !s.IsEnabled() {
+		status["status_message"] = "ArgoCD 服务未启用或不可用"
+		status["action_hint"] = "请先启动 ArgoCD 服务：docker-compose --profile argocd up -d"
+		return status
+	}
+
+	if k8sClusterCount == 0 {
+		status["status_message"] = "暂无可用的 Kubernetes 集群"
+		status["action_hint"] = "请先在 '集群管理' 页面添加并连接 Kubernetes 集群"
+	}
+
+	// 尝试获取版本信息
+	body, statusCode, err := s.doRequest("GET", "/version", nil)
+	if err == nil && statusCode == http.StatusOK {
+		var version map[string]interface{}
+		if json.Unmarshal(body, &version) == nil {
+			status["version"] = version
 		}
+	}
+
+	// 获取 ArgoCD 管理的集群数量
+	clusters, _ := s.ListArgoCDClusters()
+	status["cluster_count"] = len(clusters)
+
+	// 判断是否就绪
+	status["ready"] = s.IsEnabled() && k8sClusterCount > 0
+
+	if status["ready"].(bool) {
+		status["status_message"] = "ArgoCD 服务运行正常"
+		status["action_hint"] = ""
 	}
 
 	return status

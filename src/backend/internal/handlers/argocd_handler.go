@@ -507,24 +507,56 @@ func (h *ArgoCDHandler) GetArgoCDStatus(c *gin.Context) {
 }
 
 // SyncAllClusters 同步所有 K8s 集群到 ArgoCD
+// 优雅处理 ArgoCD 未启用或没有 K8s 集群的情况
 func (h *ArgoCDHandler) SyncAllClusters(c *gin.Context) {
 	argoCDService := services.GetArgoCDService()
+	status := argoCDService.GetArgoCDStatus()
 
+	// ArgoCD 未启用时返回提示信息（不是错误）
 	if !argoCDService.IsEnabled() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":   "ArgoCD is not enabled or not available",
-			"message": "请先启动 ArgoCD 服务：docker-compose --profile argocd up -d",
+		c.JSON(http.StatusOK, gin.H{
+			"success":      false,
+			"synced_count": 0,
+			"message":      status["status_message"],
+			"action_hint":  status["action_hint"],
+			"enabled":      false,
+			"ready":        false,
+		})
+		return
+	}
+
+	// 没有可用的 K8s 集群时返回提示信息
+	k8sConfigured, _ := status["k8s_configured"].(bool)
+	if !k8sConfigured {
+		c.JSON(http.StatusOK, gin.H{
+			"success":      false,
+			"synced_count": 0,
+			"message":      status["status_message"],
+			"action_hint":  status["action_hint"],
+			"enabled":      true,
+			"ready":        false,
 		})
 		return
 	}
 
 	if err := argoCDService.SyncAllClustersToArgoCD(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusOK, gin.H{
+			"success":      false,
+			"synced_count": 0,
+			"message":      "同步失败: " + err.Error(),
+			"enabled":      true,
+			"ready":        true,
+		})
 		return
 	}
 
+	k8sCount, _ := status["k8s_cluster_count"].(int64)
 	c.JSON(http.StatusOK, gin.H{
-		"message": "所有已连接的 K8s 集群已同步到 ArgoCD",
+		"success":      true,
+		"synced_count": k8sCount,
+		"message":      "所有已连接的 K8s 集群已同步到 ArgoCD",
+		"enabled":      true,
+		"ready":        true,
 	})
 }
 
@@ -537,25 +569,19 @@ func (h *ArgoCDHandler) RefreshArgoCDAvailability(c *gin.Context) {
 }
 
 // ListArgoCDManagedClusters 列出 ArgoCD 管理的所有集群
+// 优雅处理 ArgoCD 未启用或没有集群的情况，返回空列表和状态信息
 func (h *ArgoCDHandler) ListArgoCDManagedClusters(c *gin.Context) {
 	argoCDService := services.GetArgoCDService()
+	status := argoCDService.GetArgoCDStatus()
 
-	if !argoCDService.IsEnabled() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error":   "ArgoCD is not enabled",
-			"message": "请先启动 ArgoCD 服务",
-		})
-		return
-	}
-
-	clusters, err := argoCDService.ListArgoCDClusters()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	clusters, _ := argoCDService.ListArgoCDClusters()
 
 	c.JSON(http.StatusOK, gin.H{
-		"items": clusters,
-		"count": len(clusters),
+		"items":          clusters,
+		"count":          len(clusters),
+		"enabled":        status["enabled"],
+		"ready":          status["ready"],
+		"status_message": status["status_message"],
+		"action_hint":    status["action_hint"],
 	})
 }
