@@ -9518,6 +9518,120 @@ update_runtime_env() {
 # Database Safety Functions - 数据库安全函数
 # ==============================================================================
 
+# Sync SeaweedFS credentials from .env to database
+# This ensures the backend can access SeaweedFS with the correct credentials
+# Usage: sync_seaweedfs_credentials
+sync_seaweedfs_credentials() {
+    log_info "🔄 Syncing SeaweedFS credentials to database..."
+    
+    # 读取 .env 中的 SeaweedFS 配置
+    local access_key="${SEAWEEDFS_ACCESS_KEY:-}"
+    local secret_key="${SEAWEEDFS_SECRET_KEY:-}"
+    local s3_endpoint="${SEAWEEDFS_S3_ENDPOINT:-http://seaweedfs-filer:8333}"
+    local filer_url="${SEAWEEDFS_FILER_URL:-http://seaweedfs-filer:8888}"
+    local master_url="${SEAWEEDFS_MASTER_URL:-http://seaweedfs-master:9333}"
+    local region="${SEAWEEDFS_REGION:-us-east-1}"
+    
+    # 从 hosts 配置构建 S3 端点（如果环境变量未设置）
+    if [[ -z "$access_key" ]]; then
+        access_key=$(grep "^SEAWEEDFS_ACCESS_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+    fi
+    if [[ -z "$secret_key" ]]; then
+        secret_key=$(grep "^SEAWEEDFS_SECRET_KEY=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2)
+    fi
+    
+    # 检查必要的配置
+    if [[ -z "$access_key" ]] || [[ -z "$secret_key" ]]; then
+        log_warn "  ⚠ SeaweedFS credentials not found in .env, skipping sync"
+        return 0
+    fi
+    
+    # 检查 postgres 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
+        log_warn "  ⚠ PostgreSQL container not running, skipping SeaweedFS sync"
+        return 0
+    fi
+    
+    local db_name="${DB_NAME:-ai_infra}"
+    local db_user="${DB_USER:-postgres}"
+    local db_password="${DB_PASSWORD:-postgres}"
+    
+    # 检查数据库是否存在
+    local db_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='$db_name'" 2>/dev/null || echo "0")
+    
+    if [[ "$db_exists" != "1" ]]; then
+        log_info "  → Database '$db_name' does not exist yet, skipping SeaweedFS sync"
+        return 0
+    fi
+    
+    # 检查 object_storage_configs 表是否存在
+    local table_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'object_storage_configs')" 2>/dev/null || echo "f")
+    
+    if [[ "$table_exists" != "t" ]]; then
+        log_info "  → Table 'object_storage_configs' does not exist yet, skipping SeaweedFS sync"
+        return 0
+    fi
+    
+    # 转义特殊字符用于 SQL
+    local escaped_access_key=$(printf '%s' "$access_key" | sed "s/'/''/g")
+    local escaped_secret_key=$(printf '%s' "$secret_key" | sed "s/'/''/g")
+    local escaped_s3_endpoint=$(printf '%s' "$s3_endpoint" | sed "s/'/''/g")
+    local escaped_filer_url=$(printf '%s' "$filer_url" | sed "s/'/''/g")
+    local escaped_master_url=$(printf '%s' "$master_url" | sed "s/'/''/g")
+    local escaped_region=$(printf '%s' "$region" | sed "s/'/''/g")
+    
+    # 检查是否存在 SeaweedFS 配置
+    local config_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+        "SELECT id FROM object_storage_configs WHERE type = 'seaweedfs' AND deleted_at IS NULL LIMIT 1" 2>/dev/null)
+    
+    if [[ -n "$config_exists" ]] && [[ "$config_exists" =~ ^[0-9]+$ ]]; then
+        # 更新现有配置
+        log_info "  → Updating existing SeaweedFS configuration (ID: $config_exists)..."
+        docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
+            UPDATE object_storage_configs 
+            SET access_key = '$escaped_access_key',
+                secret_key = '$escaped_secret_key',
+                endpoint = '$escaped_s3_endpoint',
+                filer_url = '$escaped_filer_url',
+                master_url = '$escaped_master_url',
+                region = '$escaped_region',
+                status = 'connected',
+                updated_at = NOW()
+            WHERE id = $config_exists
+        " 2>/dev/null
+        
+        if [[ $? -eq 0 ]]; then
+            log_info "  ✓ SeaweedFS credentials updated in database"
+        else
+            log_warn "  ⚠ Failed to update SeaweedFS credentials"
+        fi
+    else
+        # 创建新配置
+        log_info "  → Creating new SeaweedFS configuration..."
+        docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
+            INSERT INTO object_storage_configs 
+                (name, type, endpoint, access_key, secret_key, region, filer_url, master_url, 
+                 is_active, status, description, created_by, created_at, updated_at)
+            VALUES 
+                ('SeaweedFS (Default)', 'seaweedfs', '$escaped_s3_endpoint', 
+                 '$escaped_access_key', '$escaped_secret_key', '$escaped_region',
+                 '$escaped_filer_url', '$escaped_master_url',
+                 true, 'connected', 'Auto-configured SeaweedFS storage', 1, NOW(), NOW())
+            ON CONFLICT DO NOTHING
+        " 2>/dev/null
+        
+        if [[ $? -eq 0 ]]; then
+            log_info "  ✓ SeaweedFS configuration created in database"
+        else
+            log_warn "  ⚠ Failed to create SeaweedFS configuration"
+        fi
+    fi
+    
+    return 0
+}
+
 # 检查 PostgreSQL 数据库是否包含生产数据
 # Returns: 0 if has data, 1 if empty/not exists
 check_postgres_has_data() {
@@ -9944,6 +10058,12 @@ update_component() {
                 log_warn "  ⚠ Service might need manual start: docker compose up -d $service_name"
             fi
         fi
+    fi
+    
+    # Step 5 (Backend only): Sync SeaweedFS credentials to database
+    if [[ "$component" == "backend" ]]; then
+        log_step "Step 5/5: Syncing SeaweedFS credentials..."
+        sync_seaweedfs_credentials
     fi
     
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
