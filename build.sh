@@ -9569,10 +9569,10 @@ sync_seaweedfs_credentials() {
         return 0
     fi
     
-    # 从环境变量获取数据库配置
-    local db_name="${DB_NAME:-ai_infra}"
-    local db_user="${DB_USER:-postgres}"
-    local db_password="${DB_PASSWORD:-postgres}"
+    # 从环境变量获取数据库配置 (使用 POSTGRES_* 变量名)
+    local db_name="${POSTGRES_DB:-ai_infra_matrix}"
+    local db_user="${POSTGRES_USER:-postgres}"
+    local db_password="${POSTGRES_PASSWORD:-postgres}"
     
     log_info "  → Database: $db_name, User: $db_user"
     
