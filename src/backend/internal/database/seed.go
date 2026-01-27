@@ -23,6 +23,7 @@ func SeedDefaultData() error {
 }
 
 // getSeaweedFSConfigFromEnv 从环境变量读取 SeaweedFS 配置
+// 返回的 accessKey 和 secretKey 已加密（如果加密服务可用）
 func getSeaweedFSConfigFromEnv() (endpoint, filerURL, masterURL, accessKey, secretKey string, sslEnabled bool) {
 	seaweedFilerHost := os.Getenv("SEAWEEDFS_FILER_HOST")
 	if seaweedFilerHost == "" {
@@ -49,14 +50,34 @@ func getSeaweedFSConfigFromEnv() (endpoint, filerURL, masterURL, accessKey, secr
 		seaweedS3Port = "8333"
 	}
 
-	accessKey = os.Getenv("SEAWEEDFS_ACCESS_KEY")
-	if accessKey == "" {
-		accessKey = "seaweedfs_admin"
+	// 读取原始凭据
+	rawAccessKey := os.Getenv("SEAWEEDFS_ACCESS_KEY")
+	if rawAccessKey == "" {
+		rawAccessKey = "seaweedfs_admin"
 	}
 
-	secretKey = os.Getenv("SEAWEEDFS_SECRET_KEY")
-	if secretKey == "" {
-		secretKey = "seaweedfs_secret_key_change_me"
+	rawSecretKey := os.Getenv("SEAWEEDFS_SECRET_KEY")
+	if rawSecretKey == "" {
+		rawSecretKey = "seaweedfs_secret_key_change_me"
+	}
+
+	// 加密凭据（SECURITY: 凭据不应明文存储在数据库中）
+	if CryptoService != nil {
+		var err error
+		accessKey, err = CryptoService.EncryptIfNeeded(rawAccessKey)
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to encrypt access key, using raw value")
+			accessKey = rawAccessKey
+		}
+		secretKey, err = CryptoService.EncryptIfNeeded(rawSecretKey)
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to encrypt secret key, using raw value")
+			secretKey = rawSecretKey
+		}
+	} else {
+		logrus.Warn("CryptoService not available, credentials will be stored unencrypted")
+		accessKey = rawAccessKey
+		secretKey = rawSecretKey
 	}
 
 	sslEnabled = false

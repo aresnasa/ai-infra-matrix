@@ -9534,11 +9534,11 @@ update_runtime_env() {
 # ==============================================================================
 
 # Sync SeaweedFS credentials from .env to database
-# This ensures the backend can access SeaweedFS with the correct credentials
-# The credentials are written in plaintext and will be encrypted by the backend on startup
+# This uses the backend CLI tool to encrypt credentials before writing to the database
+# SECURITY: Credentials are NEVER stored in plaintext in the database
 # Usage: sync_seaweedfs_credentials
 sync_seaweedfs_credentials() {
-    log_info "🔄 Syncing SeaweedFS credentials to database..."
+    log_info "🔐 Syncing SeaweedFS credentials (encrypted) to database..."
     
     # 确保加载环境变量文件 (使用 SCRIPT_DIR 而不是 PROJECT_ROOT)
     local env_file="$SCRIPT_DIR/.env"
@@ -9564,17 +9564,6 @@ sync_seaweedfs_credentials() {
     # 读取 .env 中的 SeaweedFS 配置
     local access_key="${SEAWEEDFS_ACCESS_KEY:-}"
     local secret_key="${SEAWEEDFS_SECRET_KEY:-}"
-    local filer_host="${SEAWEEDFS_FILER_HOST:-seaweedfs-filer}"
-    local filer_port="${SEAWEEDFS_FILER_PORT:-8888}"
-    local s3_port="${SEAWEEDFS_S3_PORT:-8333}"
-    local master_host="${SEAWEEDFS_MASTER_HOST:-seaweedfs-master}"
-    local master_port="${SEAWEEDFS_MASTER_PORT:-9333}"
-    local region="${SEAWEEDFS_REGION:-us-east-1}"
-    
-    # 构建 URLs
-    local s3_endpoint="http://${filer_host}:${s3_port}"
-    local filer_url="http://${filer_host}:${filer_port}"
-    local master_url="http://${master_host}:${master_port}"
     
     # 检查必要的配置
     if [[ -z "$access_key" ]] || [[ -z "$secret_key" ]]; then
@@ -9590,128 +9579,37 @@ sync_seaweedfs_credentials() {
         return 0
     fi
     
-    # 从环境变量获取数据库配置 (使用 POSTGRES_* 变量名)
-    local db_name="${POSTGRES_DB:-ai_infra_matrix}"
-    local db_user="${POSTGRES_USER:-postgres}"
-    local db_password="${POSTGRES_PASSWORD:-postgres}"
-    
-    log_info "  → Database: $db_name, User: $db_user"
-    
-    # 检查数据库是否存在
-    local db_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -tAc \
-        "SELECT 1 FROM pg_database WHERE datname='$db_name'" 2>/dev/null || echo "0")
-    
-    if [[ "$db_exists" != "1" ]]; then
-        log_info "  → Database '$db_name' does not exist yet, skipping SeaweedFS sync"
+    # 检查 backend 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-backend"; then
+        log_warn "  ⚠ Backend container not running, cannot use encrypted sync"
+        log_info "  → Credentials will be synced when backend starts (via seed.go)"
         return 0
     fi
     
-    # 检查 object_storage_configs 表是否存在
-    local table_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
-        "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'object_storage_configs')" 2>/dev/null || echo "f")
-    
-    if [[ "$table_exists" != "t" ]]; then
-        log_info "  → Table 'object_storage_configs' does not exist yet, skipping SeaweedFS sync"
+    # 检查 backend 容器中是否有 sync-seaweedfs 工具
+    if ! docker exec ai-infra-backend test -f /root/sync-seaweedfs 2>/dev/null; then
+        log_warn "  ⚠ sync-seaweedfs tool not found in backend container"
+        log_info "  → Rebuild backend to include the tool: ./build.sh rebuild backend"
+        log_info "  → Credentials will be synced via backend startup (seed.go)"
         return 0
     fi
     
-    # 转义特殊字符用于 SQL
-    local escaped_access_key=$(printf '%s' "$access_key" | sed "s/'/''/g")
-    local escaped_secret_key=$(printf '%s' "$secret_key" | sed "s/'/''/g")
-    local escaped_s3_endpoint=$(printf '%s' "$s3_endpoint" | sed "s/'/''/g")
-    local escaped_filer_url=$(printf '%s' "$filer_url" | sed "s/'/''/g")
-    local escaped_master_url=$(printf '%s' "$master_url" | sed "s/'/''/g")
-    local escaped_region=$(printf '%s' "$region" | sed "s/'/''/g")
+    # 使用后端 CLI 工具加密并同步凭据
+    log_info "  → Executing sync-seaweedfs in backend container..."
     
-    # 检查是否存在 SeaweedFS 配置
-    local config_id=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
-        "SELECT id FROM object_storage_configs WHERE type = 'seaweedfs' AND deleted_at IS NULL LIMIT 1" 2>/dev/null)
-    
-    if [[ -n "$config_id" ]] && [[ "$config_id" =~ ^[0-9]+$ ]]; then
-        # 配置已存在：检查凭据是否需要更新
-        log_info "  → SeaweedFS configuration exists (ID: $config_id)"
-        
-        # 获取数据库中的当前凭据（用于比较）
-        local db_access_key=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
-            "SELECT access_key FROM object_storage_configs WHERE id = $config_id" 2>/dev/null | tr -d '[:space:]')
-        
-        # 检查数据库中的凭据是否与 .env 一致
-        # 注意：数据库中的凭据可能是明文或已加密
-        # 如果是已加密的（以特定前缀开头），则需要更新为新的明文凭据
-        local needs_update=false
-        
-        # 检查 access_key 是否一致（明文比较）
-        if [[ "$db_access_key" != "$access_key" ]]; then
-            # access_key 不一致，检查是否是因为已加密
-            if [[ "$db_access_key" == ENC:* ]] || [[ ${#db_access_key} -gt 100 ]]; then
-                log_info "  → Database credentials appear to be encrypted, will update with new plaintext"
-                needs_update=true
-            else
-                log_info "  → Access key mismatch, will update"
-                needs_update=true
-            fi
-        else
-            log_info "  → Access key matches, checking other fields..."
-        fi
-        
-        # 检查连接信息是否需要更新
-        local db_endpoint=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
-            "SELECT endpoint FROM object_storage_configs WHERE id = $config_id" 2>/dev/null | tr -d '[:space:]')
-        
-        if [[ "$db_endpoint" != "$s3_endpoint" ]]; then
-            log_info "  → Endpoint changed: $db_endpoint -> $s3_endpoint"
-            needs_update=true
-        fi
-        
-        if [[ "$needs_update" == "true" ]]; then
-            log_info "  → Updating configuration with credentials from .env..."
-            docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
-                UPDATE object_storage_configs 
-                SET endpoint = '$escaped_s3_endpoint',
-                    filer_url = '$escaped_filer_url',
-                    master_url = '$escaped_master_url',
-                    region = '$escaped_region',
-                    access_key = '$escaped_access_key',
-                    secret_key = '$escaped_secret_key',
-                    status = 'unknown',
-                    updated_at = NOW()
-                WHERE id = $config_id
-            " 2>/dev/null
-            
-            if [[ $? -eq 0 ]]; then
-                log_info "  ✓ SeaweedFS configuration updated"
-                log_info "  → Credentials will be re-encrypted when backend starts"
-            else
-                log_warn "  ⚠ Failed to update SeaweedFS configuration"
-            fi
-        else
-            log_info "  ✓ SeaweedFS configuration is up-to-date, no changes needed"
-        fi
+    # 执行后端的 sync-seaweedfs 工具（它会自动读取容器的环境变量）
+    if docker exec ai-infra-backend /root/sync-seaweedfs 2>&1 | while read line; do
+        log_info "  [backend] $line"
+    done; then
+        log_info "  ✓ SeaweedFS credentials synced with encryption"
     else
-        # 配置不存在：创建新配置
-        log_info "  → Creating new SeaweedFS configuration..."
-        docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
-            INSERT INTO object_storage_configs 
-                (name, type, endpoint, access_key, secret_key, region, filer_url, master_url, 
-                 is_active, status, description, created_by, created_at, updated_at)
-            VALUES 
-                ('SeaweedFS (Default)', 'seaweedfs', '$escaped_s3_endpoint', 
-                 '$escaped_access_key', '$escaped_secret_key', '$escaped_region',
-                 '$escaped_filer_url', '$escaped_master_url',
-                 true, 'unknown', 'Auto-configured SeaweedFS storage', 1, NOW(), NOW())
-            ON CONFLICT DO NOTHING
-        " 2>/dev/null
-        
-        if [[ $? -eq 0 ]]; then
-            log_info "  ✓ SeaweedFS configuration created in database"
-            log_info "  → Credentials will be encrypted when backend starts"
-        else
-            log_warn "  ⚠ Failed to create SeaweedFS configuration"
-        fi
+        log_warn "  ⚠ Failed to sync SeaweedFS credentials via backend CLI"
+        log_info "  → Credentials will be synced when backend restarts (via seed.go)"
     fi
     
     return 0
 }
+
 
 # 检查 PostgreSQL 数据库是否包含生产数据
 # Returns: 0 if has data, 1 if empty/not exists
