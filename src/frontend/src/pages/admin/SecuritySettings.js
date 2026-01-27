@@ -152,6 +152,49 @@ const SecuritySettings = () => {
     }
   };
 
+  // ==================== 客户端信息 ====================
+  const fetchClientInfo = async () => {
+    setClientInfoLoading(true);
+    try {
+      const res = await securityAPI.getClientInfo();
+      if (res.data?.success) {
+        setClientInfo(res.data.data);
+      }
+    } catch (error) {
+      console.error('获取客户端信息失败:', error);
+    } finally {
+      setClientInfoLoading(false);
+    }
+  };
+
+  const handleGeoIPLookup = async () => {
+    if (!geoIPLookupIP) {
+      message.warning(t('security.enterIPToLookup') || '请输入要查询的 IP 地址');
+      return;
+    }
+    setGeoIPLookupLoading(true);
+    try {
+      const res = await securityAPI.lookupGeoIP(geoIPLookupIP);
+      if (res.data?.success) {
+        setGeoIPLookupResult(res.data.data);
+      }
+    } catch (error) {
+      message.error(t('security.geoipLookupFailed') || 'GeoIP 查询失败');
+    } finally {
+      setGeoIPLookupLoading(false);
+    }
+  };
+
+  // 获取风险等级标签颜色
+  const getRiskLevelColor = (level) => {
+    switch (level) {
+      case 'high': return 'red';
+      case 'medium': return 'orange';
+      case 'low': return 'green';
+      default: return 'default';
+    }
+  };
+
   const handleAddBlacklist = () => {
     setEditingBlacklist(null);
     blacklistForm.resetFields();
