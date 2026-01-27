@@ -15,23 +15,23 @@ import (
 
 // GeoIPInfo 地理位置信息
 type GeoIPInfo struct {
-	IP          string  `json:"ip"`
-	Country     string  `json:"country"`
-	CountryCode string  `json:"country_code"`
-	Region      string  `json:"region"`
-	City        string  `json:"city"`
-	ISP         string  `json:"isp"`
-	Org         string  `json:"org"`
-	ASN         string  `json:"asn"`
-	Latitude    float64 `json:"latitude,omitempty"`
-	Longitude   float64 `json:"longitude,omitempty"`
-	Timezone    string  `json:"timezone,omitempty"`
-	IsProxy     bool    `json:"is_proxy"`
-	IsVPN       bool    `json:"is_vpn"`
-	IsTor       bool    `json:"is_tor"`
-	IsDatacenter bool   `json:"is_datacenter"`
-	RiskLevel   string  `json:"risk_level"` // low, medium, high
-	Source      string  `json:"source"`     // 数据来源
+	IP           string  `json:"ip"`
+	Country      string  `json:"country"`
+	CountryCode  string  `json:"country_code"`
+	Region       string  `json:"region"`
+	City         string  `json:"city"`
+	ISP          string  `json:"isp"`
+	Org          string  `json:"org"`
+	ASN          string  `json:"asn"`
+	Latitude     float64 `json:"latitude,omitempty"`
+	Longitude    float64 `json:"longitude,omitempty"`
+	Timezone     string  `json:"timezone,omitempty"`
+	IsProxy      bool    `json:"is_proxy"`
+	IsVPN        bool    `json:"is_vpn"`
+	IsTor        bool    `json:"is_tor"`
+	IsDatacenter bool    `json:"is_datacenter"`
+	RiskLevel    string  `json:"risk_level"` // low, medium, high
+	Source       string  `json:"source"`     // 数据来源
 }
 
 // GeoIPService GeoIP 查询服务
@@ -148,7 +148,7 @@ func (s *GeoIPService) queryIPAPI(ip string) (*GeoIPInfo, error) {
 	}
 
 	url := fmt.Sprintf("http://ip-api.com/json/%s?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query", ip)
-	
+
 	resp, err := s.httpClient.Get(url)
 	if err != nil {
 		return nil, err
@@ -220,7 +220,7 @@ func (s *GeoIPService) queryIPInfo(ip string) (*GeoIPInfo, error) {
 	}
 
 	url := fmt.Sprintf("https://ipinfo.io/%s/json", ip)
-	
+
 	resp, err := s.httpClient.Get(url)
 	if err != nil {
 		return nil, err
@@ -280,7 +280,7 @@ func (s *GeoIPService) queryIPSB(ip string) (*GeoIPInfo, error) {
 	}
 
 	url := fmt.Sprintf("https://api.ip.sb/geoip/%s", ip)
-	
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -377,15 +377,15 @@ func (s *GeoIPService) isPrivateIP(ip net.IP) bool {
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"127.0.0.0/8",
-		"100.64.0.0/10", // CGNAT
+		"100.64.0.0/10",  // CGNAT
 		"169.254.0.0/16", // Link-local
 	}
 
 	// IPv6 私有地址范围
 	privateRangesV6 := []string{
-		"::1/128",       // Loopback
-		"fc00::/7",      // Unique local
-		"fe80::/10",     // Link-local
+		"::1/128",   // Loopback
+		"fc00::/7",  // Unique local
+		"fe80::/10", // Link-local
 	}
 
 	ranges := privateRanges
