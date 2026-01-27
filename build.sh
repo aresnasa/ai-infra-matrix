@@ -9524,14 +9524,14 @@ update_runtime_env() {
 sync_seaweedfs_credentials() {
     log_info "🔄 Syncing SeaweedFS credentials to database..."
     
-    # 确保加载环境变量文件
-    local env_file="$PROJECT_ROOT/.env"
+    # 确保加载环境变量文件 (使用 SCRIPT_DIR 而不是 PROJECT_ROOT)
+    local env_file="$SCRIPT_DIR/.env"
     if [[ ! -f "$env_file" ]]; then
         # 尝试 .env.prod
-        if [[ -f "$PROJECT_ROOT/.env.prod" ]]; then
-            env_file="$PROJECT_ROOT/.env.prod"
+        if [[ -f "$SCRIPT_DIR/.env.prod" ]]; then
+            env_file="$SCRIPT_DIR/.env.prod"
         else
-            log_warn "  ⚠ No .env or .env.prod file found, skipping SeaweedFS sync"
+            log_warn "  ⚠ No .env or .env.prod file found in $SCRIPT_DIR, skipping SeaweedFS sync"
             return 0
         fi
     fi
