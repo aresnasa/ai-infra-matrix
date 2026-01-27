@@ -1041,6 +1041,21 @@ export default {
     switchToSameOrigin: '切换为同源',
   },
 
+  // Keycloak 页面
+  keycloak: {
+    title: 'Keycloak 身份认证',
+    embeddedUrl: '嵌入地址',
+    proxyAccess: '当前通过代理访问',
+    directAccess: '当前使用直接端口访问',
+    switchToDirect: '切换到直接访问',
+    switchToProxy: '切换到代理',
+    embedHint: '提示：如果页面无法加载，请尝试在新窗口中打开。默认管理员账号: admin',
+    adminConsole: '管理控制台',
+    accountManagement: '账户管理',
+    login: '登录页面',
+    loading: '正在加载 Keycloak...',
+  },
+
   // Kubernetes 页面
   kubernetes: {
     title: 'Kubernetes 集群管理',

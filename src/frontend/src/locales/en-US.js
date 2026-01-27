@@ -1042,6 +1042,21 @@ export default {
     switchToSameOrigin: 'Switch to Same Origin',
   },
 
+  // Keycloak Page
+  keycloak: {
+    title: 'Keycloak Identity Authentication',
+    embeddedUrl: 'Embedded URL',
+    proxyAccess: 'Currently using proxy access',
+    directAccess: 'Currently using direct port access',
+    switchToDirect: 'Switch to Direct Access',
+    switchToProxy: 'Switch to Proxy',
+    embedHint: 'Tip: If the page cannot load, try opening it in a new window. Default admin account: admin',
+    adminConsole: 'Admin Console',
+    accountManagement: 'Account Management',
+    login: 'Login Page',
+    loading: 'Loading Keycloak...',
+  },
+
   // Kubernetes Page
   kubernetes: {
     title: 'Kubernetes Cluster Management',
