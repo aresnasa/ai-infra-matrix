@@ -122,12 +122,20 @@ const SecuritySettings = () => {
   const [lockedAccounts, setLockedAccounts] = useState([]);
   const [lockedAccountsLoading, setLockedAccountsLoading] = useState(false);
 
+  // 客户端信息状态
+  const [clientInfo, setClientInfo] = useState(null);
+  const [clientInfoLoading, setClientInfoLoading] = useState(false);
+  const [geoIPLookupIP, setGeoIPLookupIP] = useState('');
+  const [geoIPLookupResult, setGeoIPLookupResult] = useState(null);
+  const [geoIPLookupLoading, setGeoIPLookupLoading] = useState(false);
+
   // 加载数据
   useEffect(() => {
     fetchBlacklist();
     fetchWhitelist();
     fetch2FAStatus();
     fetchOAuthProviders();
+    fetchClientInfo();
     fetchSecurityConfig();
   }, []);
 
