@@ -31,9 +31,9 @@ FROM quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 
 # 复制自定义主题和配置
-# 构建上下文为 ./src/keycloak，所以直接使用相对路径
-COPY themes/ /opt/keycloak/themes/
-COPY realm-export/ /opt/keycloak/data/import/
+# 构建上下文为项目根目录，所以使用 src/keycloak/ 前缀
+COPY src/keycloak/themes/ /opt/keycloak/themes/
+COPY src/keycloak/realm-export/ /opt/keycloak/data/import/
 
 # 设置工作目录
 WORKDIR /opt/keycloak
