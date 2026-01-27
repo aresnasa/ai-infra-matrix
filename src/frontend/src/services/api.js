@@ -1019,6 +1019,12 @@ export const securityAPI = {
   getIPStatsDetail: (ip) => api.get(`/security/ip-stats/${ip}`),
   getLoginStatsSummary: (params) => api.get('/security/login-stats/summary', { params }),
   cleanupLoginRecords: (data) => api.post('/security/login-records/cleanup', data),
+  
+  // 客户端信息和GeoIP查询
+  getClientInfo: () => api.get('/security/client-info'),
+  lookupGeoIP: (ip) => api.get(`/security/geoip/${ip}`),
+  batchLookupGeoIP: (ips) => api.post('/security/geoip/batch', { ips }),
+  getGeoIPCacheStats: () => api.get('/security/geoip/stats'),
 };
 
 // 权限审批 API

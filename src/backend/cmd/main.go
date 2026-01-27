@@ -1412,7 +1412,7 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		security.GET("/ip-stats/:ip", securityHandler.GetIPStatsDetail)
 		security.GET("/login-stats/summary", securityHandler.GetLoginStatsSummary)
 		security.POST("/login-records/cleanup", securityHandler.CleanupLoginRecords)
-		
+
 		// 客户端信息和GeoIP查询
 		security.GET("/client-info", securityHandler.GetClientInfo)
 		security.GET("/geoip/:ip", securityHandler.LookupIPGeoInfo)
