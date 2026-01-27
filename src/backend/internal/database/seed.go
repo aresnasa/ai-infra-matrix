@@ -150,11 +150,11 @@ func syncDefaultSeaweedFSConfig(config *models.ObjectStorageConfig, endpoint, fi
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"config_id":         config.ID,
-		"config_name":       config.Name,
-		"endpoint":          endpoint,
-		"filer_url":         filerURL,
-		"master_url":        masterURL,
+		"config_id":             config.ID,
+		"config_name":           config.Name,
+		"endpoint":              endpoint,
+		"filer_url":             filerURL,
+		"master_url":            masterURL,
 		"credentials_encrypted": CryptoService != nil,
 	}).Info("Synced SeaweedFS config credentials from environment variables")
 
@@ -162,6 +162,7 @@ func syncDefaultSeaweedFSConfig(config *models.ObjectStorageConfig, endpoint, fi
 }
 
 // createDefaultSeaweedFSConfig 创建默认的 SeaweedFS 配置
+// 注意：传入的 accessKey 和 secretKey 已加密
 func createDefaultSeaweedFSConfig(endpoint, filerURL, masterURL, accessKey, secretKey string, sslEnabled bool) error {
 	defaultConfig := &models.ObjectStorageConfig{
 		Name:        "SeaweedFS (Default)",
@@ -174,7 +175,7 @@ func createDefaultSeaweedFSConfig(endpoint, filerURL, masterURL, accessKey, secr
 		SSLEnabled:  sslEnabled,
 		IsActive:    true,
 		Status:      "unknown",
-		Description: "Auto-configured SeaweedFS storage",
+		Description: "Auto-configured SeaweedFS storage (encrypted)",
 		CreatedBy:   1,
 	}
 
