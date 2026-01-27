@@ -86,6 +86,7 @@ RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main cmd/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o init cmd/init/main.go
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o test-k8s cmd/test-k8s/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sync-seaweedfs cmd/sync-seaweedfs/main.go
 
 # Final stage - Backend Service (Default)
 ARG GOLANG_IMAGE=golang:1.25-bookworm
@@ -136,6 +137,7 @@ WORKDIR /root/
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/main .
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/init .
 COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/test-k8s .
+COPY --from=builder /go/src/github.com/aresnasa/ai-infra-matrix/src/backend/sync-seaweedfs .
 
 # Copy installation scripts for remote execution
 COPY src/backend/scripts/ /app/scripts/
