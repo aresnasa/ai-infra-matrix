@@ -9,18 +9,21 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/services"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // KubernetesController 提供集群管理API
 
 type KubernetesController struct {
-	service *services.KubernetesService
+	service       *services.KubernetesService
+	argoCDService *services.ArgoCDService
 }
 
 func NewKubernetesController() *KubernetesController {
 	return &KubernetesController{
-		service: services.NewKubernetesService(),
+		service:       services.NewKubernetesService(),
+		argoCDService: services.GetArgoCDService(),
 	}
 }
 
@@ -81,7 +84,20 @@ func (ctl *KubernetesController) CreateCluster(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, cluster)
+
+	// 如果集群连接成功，同步到 ArgoCD
+	if cluster.Status == "connected" {
+		go func() {
+			if err := ctl.argoCDService.SyncClusterToArgoCD(&cluster); err != nil {
+				logrus.WithError(err).WithField("cluster_id", cluster.ID).Warn("Failed to sync cluster to ArgoCD")
+			}
+		}()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"cluster":       cluster,
+		"argocd_synced": cluster.Status == "connected" && ctl.argoCDService.IsEnabled(),
+	})
 }
 
 // UpdateCluster 更新集群
@@ -130,6 +146,22 @@ func (ctl *KubernetesController) UpdateCluster(c *gin.Context) {
 func (ctl *KubernetesController) DeleteCluster(c *gin.Context) {
 	id := c.Param("id")
 	db := database.DB
+
+	// 先获取集群信息，用于从 ArgoCD 移除
+	var cluster models.KubernetesCluster
+	if err := db.First(&cluster, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "cluster not found"})
+		return
+	}
+
+	// 从 ArgoCD 移除集群
+	go func() {
+		if err := ctl.argoCDService.RemoveClusterFromArgoCD(&cluster); err != nil {
+			logrus.WithError(err).WithField("cluster_id", cluster.ID).Warn("Failed to remove cluster from ArgoCD")
+		}
+	}()
+
+	// 删除数据库记录
 	if err := db.Delete(&models.KubernetesCluster{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

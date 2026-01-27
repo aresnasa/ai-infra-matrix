@@ -1419,7 +1419,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 	argocd := api.Group("/argocd")
 	argocd.Use(middleware.AuthMiddlewareWithSession())
 	{
-		// ArgoCD 版本和配置
+		// ArgoCD 服务状态和配置
+		argocd.GET("/status", argoCDHandler.GetArgoCDStatus)
+		argocd.POST("/status/refresh", argoCDHandler.RefreshArgoCDAvailability)
 		argocd.GET("/version", argoCDHandler.GetVersion)
 		argocd.GET("/settings", argoCDHandler.GetSettings)
 
@@ -1437,8 +1439,10 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		argocd.POST("/repositories", argoCDHandler.CreateRepository)
 		argocd.DELETE("/repositories/*repo", argoCDHandler.DeleteRepository)
 
-		// 集群管理
+		// 集群管理 (ArgoCD 内部集群)
 		argocd.GET("/clusters", argoCDHandler.ListClusters)
+		argocd.GET("/clusters/managed", argoCDHandler.ListArgoCDManagedClusters)
+		argocd.POST("/clusters/sync-all", argoCDHandler.SyncAllClusters)
 
 		// 项目管理
 		argocd.GET("/projects", argoCDHandler.ListProjects)
