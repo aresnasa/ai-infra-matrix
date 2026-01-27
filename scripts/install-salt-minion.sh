@@ -7,8 +7,8 @@
 # 
 # 变量说明:
 #   192.168.216.57 - Salt Master 外部访问地址
-#   4505 - Salt Master 端口 (默认 4505)
-#   28080 - AppHub 端口 (默认 8090)
+#   {{SALT_MASTER_PORT}} - Salt Master 端口 (默认 4505)
+#   {{APPHUB_PORT}} - AppHub 端口 (默认 8090)
 # =============================================================================
 
 set -eo pipefail
@@ -17,10 +17,10 @@ set -eo pipefail
 # 环境配置 (已由模板渲染替换)
 # ===========================================
 SALT_MASTER="${SALT_MASTER:-192.168.216.57}"
-SALT_MASTER_PORT="${SALT_MASTER_PORT:-4505}"
+SALT_MASTER_PORT="${SALT_MASTER_PORT:-{{SALT_MASTER_PORT}}}"
 SALT_VERSION="${SALT_VERSION:-3007.1}"
 MINION_ID="${MINION_ID:-}"
-APPHUB_URL="${APPHUB_URL:-http://192.168.216.57:28080}"
+APPHUB_URL="${APPHUB_URL:-http://192.168.216.57:{{APPHUB_PORT}}}"
 USE_OFFICIAL="${USE_OFFICIAL:-false}"
 # Master 公钥 URL (用于预同步 Master 公钥到 Minion)
 # 支持两种模式:
@@ -48,8 +48,8 @@ usage() {
 SaltStack Minion 安装脚本 (预配置模板)
 
 此脚本已预配置以下默认值:
-  Salt Master: 192.168.216.57:4505
-  AppHub URL:  http://192.168.216.57:28080
+  Salt Master: 192.168.216.57:{{SALT_MASTER_PORT}}
+  AppHub URL:  http://192.168.216.57:{{APPHUB_PORT}}
 
 用法: $0 [OPTIONS]
 
@@ -73,7 +73,7 @@ SaltStack Minion 安装脚本 (预配置模板)
     $0 --minion-id worker01
 
     # 使用 curl 管道安装 (已知 Master 地址)
-    curl -fsSL http://192.168.216.57:28080/packages/install-salt-minion.sh | bash
+    curl -fsSL http://192.168.216.57:{{APPHUB_PORT}}/packages/install-salt-minion.sh | bash
 EOF
     exit 0
 }
