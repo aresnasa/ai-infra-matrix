@@ -9609,7 +9609,7 @@ sync_seaweedfs_credentials() {
         return 0
     fi
     
-    # 转义特殊字符用于 SQL
+    # 转义特殊字符用于 SQL（仅用于非敏感字段和新建场景）
     local escaped_access_key=$(printf '%s' "$access_key" | sed "s/'/''/g")
     local escaped_secret_key=$(printf '%s' "$secret_key" | sed "s/'/''/g")
     local escaped_s3_endpoint=$(printf '%s' "$s3_endpoint" | sed "s/'/''/g")
@@ -9622,28 +9622,27 @@ sync_seaweedfs_credentials() {
         "SELECT id FROM object_storage_configs WHERE type = 'seaweedfs' AND deleted_at IS NULL LIMIT 1" 2>/dev/null)
     
     if [[ -n "$config_exists" ]] && [[ "$config_exists" =~ ^[0-9]+$ ]]; then
-        # 更新现有配置
-        log_info "  → Updating existing SeaweedFS configuration (ID: $config_exists)..."
+        # 配置已存在：只更新非敏感的连接信息（endpoint/URL），保留已加密的凭据
+        # 这样可以避免用明文覆盖已加密的 access_key/secret_key
+        log_info "  → SeaweedFS configuration exists (ID: $config_exists)"
+        log_info "  → Updating connection info only (preserving encrypted credentials)..."
         docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
             UPDATE object_storage_configs 
-            SET access_key = '$escaped_access_key',
-                secret_key = '$escaped_secret_key',
-                endpoint = '$escaped_s3_endpoint',
+            SET endpoint = '$escaped_s3_endpoint',
                 filer_url = '$escaped_filer_url',
                 master_url = '$escaped_master_url',
                 region = '$escaped_region',
-                status = 'connected',
                 updated_at = NOW()
             WHERE id = $config_exists
         " 2>/dev/null
         
         if [[ $? -eq 0 ]]; then
-            log_info "  ✓ SeaweedFS credentials updated in database"
+            log_info "  ✓ SeaweedFS connection info updated (credentials preserved)"
         else
-            log_warn "  ⚠ Failed to update SeaweedFS credentials"
+            log_warn "  ⚠ Failed to update SeaweedFS connection info"
         fi
     else
-        # 创建新配置
+        # 配置不存在：创建新配置（包含明文凭据，后端启动时会自动加密）
         log_info "  → Creating new SeaweedFS configuration..."
         docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
             INSERT INTO object_storage_configs 
@@ -9659,6 +9658,7 @@ sync_seaweedfs_credentials() {
         
         if [[ $? -eq 0 ]]; then
             log_info "  ✓ SeaweedFS configuration created in database"
+            log_info "  → Credentials will be encrypted when backend starts"
         else
             log_warn "  ⚠ Failed to create SeaweedFS configuration"
         fi
