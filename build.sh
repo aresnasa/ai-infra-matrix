@@ -9535,6 +9535,7 @@ update_runtime_env() {
 
 # Sync SeaweedFS credentials from .env to database
 # This ensures the backend can access SeaweedFS with the correct credentials
+# The credentials are written in plaintext and will be encrypted by the backend on startup
 # Usage: sync_seaweedfs_credentials
 sync_seaweedfs_credentials() {
     log_info "🔄 Syncing SeaweedFS credentials to database..."
@@ -9551,8 +9552,11 @@ sync_seaweedfs_credentials() {
         fi
     fi
     
+    # 计算 .env 文件的 MD5 用于日志
+    local env_md5=$(md5sum "$env_file" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+    log_info "  → Loading environment from: $env_file (MD5: ${env_md5:0:8}...)"
+    
     # 加载环境变量
-    log_info "  → Loading environment from: $env_file"
     set -a
     source "$env_file"
     set +a
@@ -9577,6 +9581,8 @@ sync_seaweedfs_credentials() {
         log_warn "  ⚠ SeaweedFS credentials not found in .env, skipping sync"
         return 0
     fi
+    
+    log_info "  → SeaweedFS Access Key: ${access_key:0:8}..."
     
     # 检查 postgres 容器是否运行
     if ! docker ps --format '{{.Names}}' | grep -q "ai-infra-postgres"; then
@@ -9609,7 +9615,7 @@ sync_seaweedfs_credentials() {
         return 0
     fi
     
-    # 转义特殊字符用于 SQL（仅用于非敏感字段和新建场景）
+    # 转义特殊字符用于 SQL
     local escaped_access_key=$(printf '%s' "$access_key" | sed "s/'/''/g")
     local escaped_secret_key=$(printf '%s' "$secret_key" | sed "s/'/''/g")
     local escaped_s3_endpoint=$(printf '%s' "$s3_endpoint" | sed "s/'/''/g")
@@ -9618,31 +9624,35 @@ sync_seaweedfs_credentials() {
     local escaped_region=$(printf '%s' "$region" | sed "s/'/''/g")
     
     # 检查是否存在 SeaweedFS 配置
-    local config_exists=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
+    local config_id=$(docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -tAc \
         "SELECT id FROM object_storage_configs WHERE type = 'seaweedfs' AND deleted_at IS NULL LIMIT 1" 2>/dev/null)
     
-    if [[ -n "$config_exists" ]] && [[ "$config_exists" =~ ^[0-9]+$ ]]; then
-        # 配置已存在：只更新非敏感的连接信息（endpoint/URL），保留已加密的凭据
-        # 这样可以避免用明文覆盖已加密的 access_key/secret_key
-        log_info "  → SeaweedFS configuration exists (ID: $config_exists)"
-        log_info "  → Updating connection info only (preserving encrypted credentials)..."
+    if [[ -n "$config_id" ]] && [[ "$config_id" =~ ^[0-9]+$ ]]; then
+        # 配置已存在：更新所有字段（包括凭据）
+        # 凭据以明文写入，后端启动时会自动检测并加密
+        log_info "  → SeaweedFS configuration exists (ID: $config_id)"
+        log_info "  → Updating configuration with new credentials from .env..."
         docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
             UPDATE object_storage_configs 
             SET endpoint = '$escaped_s3_endpoint',
                 filer_url = '$escaped_filer_url',
                 master_url = '$escaped_master_url',
                 region = '$escaped_region',
+                access_key = '$escaped_access_key',
+                secret_key = '$escaped_secret_key',
+                status = 'unknown',
                 updated_at = NOW()
-            WHERE id = $config_exists
+            WHERE id = $config_id
         " 2>/dev/null
         
         if [[ $? -eq 0 ]]; then
-            log_info "  ✓ SeaweedFS connection info updated (credentials preserved)"
+            log_info "  ✓ SeaweedFS configuration updated with new credentials"
+            log_info "  → Credentials will be encrypted when backend starts"
         else
-            log_warn "  ⚠ Failed to update SeaweedFS connection info"
+            log_warn "  ⚠ Failed to update SeaweedFS configuration"
         fi
     else
-        # 配置不存在：创建新配置（包含明文凭据，后端启动时会自动加密）
+        # 配置不存在：创建新配置
         log_info "  → Creating new SeaweedFS configuration..."
         docker exec ai-infra-postgres psql -U "$db_user" -d "$db_name" -c "
             INSERT INTO object_storage_configs 
@@ -9652,7 +9662,7 @@ sync_seaweedfs_credentials() {
                 ('SeaweedFS (Default)', 'seaweedfs', '$escaped_s3_endpoint', 
                  '$escaped_access_key', '$escaped_secret_key', '$escaped_region',
                  '$escaped_filer_url', '$escaped_master_url',
-                 true, 'connected', 'Auto-configured SeaweedFS storage', 1, NOW(), NOW())
+                 true, 'unknown', 'Auto-configured SeaweedFS storage', 1, NOW(), NOW())
             ON CONFLICT DO NOTHING
         " 2>/dev/null
         
