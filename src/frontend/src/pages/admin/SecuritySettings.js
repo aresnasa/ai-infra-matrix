@@ -841,6 +841,242 @@ const SecuritySettings = () => {
 
   const tabItems = [
     {
+      key: 'clientInfo',
+      label: (
+        <span>
+          <DesktopOutlined /> {t('security.clientInfo') || '客户端信息'}
+        </span>
+      ),
+      children: (
+        <Spin spinning={clientInfoLoading}>
+          <Row gutter={[16, 16]}>
+            {/* 当前客户端信息卡片 */}
+            <Col span={24}>
+              <Card
+                title={
+                  <Space>
+                    <InfoCircleOutlined />
+                    {t('security.yourClientInfo') || '您的客户端信息'}
+                  </Space>
+                }
+                extra={
+                  <Button icon={<ReloadOutlined />} onClick={fetchClientInfo}>
+                    {t('common.refresh') || '刷新'}
+                  </Button>
+                }
+              >
+                {clientInfo ? (
+                  <Row gutter={[24, 16]}>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><GlobalOutlined /> {t('security.ipInfo') || 'IP 信息'}</>}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <div>
+                            <Text strong>{t('security.currentIP') || '当前 IP'}:</Text>{' '}
+                            <Tag color="blue" icon={<GlobalOutlined />}>{clientInfo.ip?.address || 'Unknown'}</Tag>
+                          </div>
+                          {clientInfo.ip?.x_forwarded_for && (
+                            <div>
+                              <Text type="secondary">X-Forwarded-For:</Text>{' '}
+                              <Text code>{clientInfo.ip.x_forwarded_for}</Text>
+                            </div>
+                          )}
+                          {clientInfo.ip?.x_real_ip && (
+                            <div>
+                              <Text type="secondary">X-Real-IP:</Text>{' '}
+                              <Text code>{clientInfo.ip.x_real_ip}</Text>
+                            </div>
+                          )}
+                          {clientInfo.ip?.cf_connecting_ip && (
+                            <div>
+                              <Text type="secondary">CF-Connecting-IP:</Text>{' '}
+                              <Text code>{clientInfo.ip.cf_connecting_ip}</Text>
+                            </div>
+                          )}
+                        </Space>
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><EnvironmentOutlined /> {t('security.geoLocation') || '地理位置'}</>}>
+                        {clientInfo.geo ? (
+                          <Space direction="vertical" style={{ width: '100%' }}>
+                            <div>
+                              <Text strong>{t('security.country') || '国家'}:</Text>{' '}
+                              <Tag>{clientInfo.geo.country || 'Unknown'} ({clientInfo.geo.country_code})</Tag>
+                            </div>
+                            {clientInfo.geo.region && (
+                              <div>
+                                <Text strong>{t('security.region') || '地区'}:</Text>{' '}
+                                {clientInfo.geo.region}
+                              </div>
+                            )}
+                            {clientInfo.geo.city && (
+                              <div>
+                                <Text strong>{t('security.city') || '城市'}:</Text>{' '}
+                                {clientInfo.geo.city}
+                              </div>
+                            )}
+                            {clientInfo.geo.isp && (
+                              <div>
+                                <Text strong>ISP:</Text>{' '}
+                                {clientInfo.geo.isp}
+                              </div>
+                            )}
+                            {clientInfo.geo.timezone && (
+                              <div>
+                                <Text strong>{t('security.timezone') || '时区'}:</Text>{' '}
+                                {clientInfo.geo.timezone}
+                              </div>
+                            )}
+                            <div>
+                              <Text strong>{t('security.riskLevel') || '风险等级'}:</Text>{' '}
+                              <Tag color={getRiskLevelColor(clientInfo.geo.risk_level)}>
+                                {clientInfo.geo.risk_level || 'unknown'}
+                              </Tag>
+                            </div>
+                            {(clientInfo.geo.is_proxy || clientInfo.geo.is_vpn || clientInfo.geo.is_tor || clientInfo.geo.is_datacenter) && (
+                              <div>
+                                <Space wrap>
+                                  {clientInfo.geo.is_proxy && <Tag color="orange">{t('security.isProxy') || '代理'}</Tag>}
+                                  {clientInfo.geo.is_vpn && <Tag color="orange">VPN</Tag>}
+                                  {clientInfo.geo.is_tor && <Tag color="red">Tor</Tag>}
+                                  {clientInfo.geo.is_datacenter && <Tag color="purple">{t('security.isDatacenter') || '数据中心'}</Tag>}
+                                </Space>
+                              </div>
+                            )}
+                          </Space>
+                        ) : (
+                          <Text type="secondary">{t('security.geoInfoUnavailable') || '地理位置信息不可用'}</Text>
+                        )}
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><CompassOutlined /> {t('security.browserInfo') || '浏览器信息'}</>}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          {clientInfo.user_agent && (
+                            <div>
+                              <Text strong>User-Agent:</Text>
+                              <Paragraph ellipsis={{ rows: 2, expandable: true }} style={{ marginBottom: 0, marginTop: 4 }}>
+                                <Text code style={{ fontSize: 12 }}>{clientInfo.user_agent}</Text>
+                              </Paragraph>
+                            </div>
+                          )}
+                          {clientInfo.accept_language && (
+                            <div>
+                              <Text strong>{t('security.language') || '语言'}:</Text>{' '}
+                              <Text>{clientInfo.accept_language}</Text>
+                            </div>
+                          )}
+                        </Space>
+                      </Card>
+                    </Col>
+                    <Col xs={24} md={12}>
+                      <Card type="inner" title={<><CloudOutlined /> {t('security.connectionInfo') || '连接信息'}</>}>
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          <div>
+                            <Text strong>{t('security.protocol') || '协议'}:</Text>{' '}
+                            <Tag color={clientInfo.scheme === 'https' ? 'green' : 'orange'}>
+                              {clientInfo.scheme?.toUpperCase() || 'HTTP'}
+                            </Tag>
+                          </div>
+                          <div>
+                            <Text strong>{t('security.host') || '主机'}:</Text>{' '}
+                            {clientInfo.host}
+                          </div>
+                          <div>
+                            <Text strong>{t('security.requestTime') || '请求时间'}:</Text>{' '}
+                            {clientInfo.request_time ? dayjs(clientInfo.request_time).format('YYYY-MM-DD HH:mm:ss') : '-'}
+                          </div>
+                        </Space>
+                      </Card>
+                    </Col>
+                  </Row>
+                ) : (
+                  <Empty description={t('security.noClientInfo') || '无法获取客户端信息'} />
+                )}
+              </Card>
+            </Col>
+
+            {/* GeoIP 查询工具卡片 */}
+            <Col span={24}>
+              <Card
+                title={
+                  <Space>
+                    <EnvironmentOutlined />
+                    {t('security.geoipLookupTool') || 'IP 地理位置查询工具'}
+                  </Space>
+                }
+              >
+                <Space style={{ marginBottom: 16 }}>
+                  <Input
+                    placeholder={t('security.enterIPAddress') || '输入 IP 地址'}
+                    value={geoIPLookupIP}
+                    onChange={(e) => setGeoIPLookupIP(e.target.value)}
+                    onPressEnter={handleGeoIPLookup}
+                    style={{ width: 200 }}
+                  />
+                  <Button 
+                    type="primary" 
+                    icon={<GlobalOutlined />} 
+                    onClick={handleGeoIPLookup}
+                    loading={geoIPLookupLoading}
+                  >
+                    {t('security.lookup') || '查询'}
+                  </Button>
+                </Space>
+                {geoIPLookupResult && (
+                  <Card type="inner" style={{ marginTop: 16 }}>
+                    <Row gutter={[16, 8]}>
+                      <Col span={12}>
+                        <Text strong>IP:</Text> <Tag color="blue">{geoIPLookupResult.ip}</Tag>
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.country') || '国家'}:</Text> {geoIPLookupResult.country} ({geoIPLookupResult.country_code})
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.region') || '地区'}:</Text> {geoIPLookupResult.region || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.city') || '城市'}:</Text> {geoIPLookupResult.city || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>ISP:</Text> {geoIPLookupResult.isp || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>ASN:</Text> {geoIPLookupResult.asn || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.timezone') || '时区'}:</Text> {geoIPLookupResult.timezone || '-'}
+                      </Col>
+                      <Col span={12}>
+                        <Text strong>{t('security.riskLevel') || '风险等级'}:</Text>{' '}
+                        <Tag color={getRiskLevelColor(geoIPLookupResult.risk_level)}>
+                          {geoIPLookupResult.risk_level || 'unknown'}
+                        </Tag>
+                      </Col>
+                      {(geoIPLookupResult.is_proxy || geoIPLookupResult.is_vpn || geoIPLookupResult.is_tor || geoIPLookupResult.is_datacenter) && (
+                        <Col span={24}>
+                          <Text strong>{t('security.flags') || '标记'}:</Text>{' '}
+                          <Space wrap>
+                            {geoIPLookupResult.is_proxy && <Tag color="orange">{t('security.isProxy') || '代理'}</Tag>}
+                            {geoIPLookupResult.is_vpn && <Tag color="orange">VPN</Tag>}
+                            {geoIPLookupResult.is_tor && <Tag color="red">Tor</Tag>}
+                            {geoIPLookupResult.is_datacenter && <Tag color="purple">{t('security.isDatacenter') || '数据中心'}</Tag>}
+                          </Space>
+                        </Col>
+                      )}
+                      <Col span={24}>
+                        <Text type="secondary">{t('security.dataSource') || '数据来源'}: {geoIPLookupResult.source}</Text>
+                      </Col>
+                    </Row>
+                  </Card>
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </Spin>
+      ),
+    },
+    {
       key: 'blacklist',
       label: (
         <span>
