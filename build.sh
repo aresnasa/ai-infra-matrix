@@ -10042,11 +10042,21 @@ update_component() {
     local final_id=$(docker image inspect "$image_name" --format '{{.Id}}' 2>/dev/null | cut -d: -f2 | head -c 12)
     log_info "  ✓ Image ready: $image_name (ID: $final_id)"
     
-    # Step 4: Restart component
+    # Step 4 (Backend only): Sync SeaweedFS credentials BEFORE restart
+    # This ensures backend starts with correct credentials
+    if [[ "$component" == "backend" ]]; then
+        log_step "Step 4/5: Syncing SeaweedFS credentials (before restart)..."
+        sync_seaweedfs_credentials
+    fi
+    
+    # Step 5 (or 4 for non-backend): Restart component
+    local restart_step="4/4"
+    [[ "$component" == "backend" ]] && restart_step="5/5"
+    
     if [[ "$no_restart" == "true" ]]; then
-        log_step "Step 4/4: Skipping restart (--no-restart specified)"
+        log_step "Step $restart_step: Skipping restart (--no-restart specified)"
     else
-        log_step "Step 4/4: Restarting $component..."
+        log_step "Step $restart_step: Restarting $component..."
         
         # Get the service name in docker-compose (usually same as component name)
         local service_name="$component"
@@ -10078,12 +10088,6 @@ update_component() {
                 log_warn "  ⚠ Service might need manual start: docker compose up -d $service_name"
             fi
         fi
-    fi
-    
-    # Step 5 (Backend only): Sync SeaweedFS credentials to database
-    if [[ "$component" == "backend" ]]; then
-        log_step "Step 5/5: Syncing SeaweedFS credentials..."
-        sync_seaweedfs_credentials
     fi
     
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
