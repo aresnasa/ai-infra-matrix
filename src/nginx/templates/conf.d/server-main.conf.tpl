@@ -155,7 +155,7 @@ server {
         proxy_read_timeout 300s;
     }
 
-    # 后端 API 代理 + CORS
+    # 后端 API 代理 + CORS（安全配置 - 只允许特定来源）
     location /api/ {
         proxy_pass http://backend/api/;
         proxy_set_header Host $http_host;
@@ -166,15 +166,26 @@ server {
         proxy_set_header X-External-Host $external_host;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Cookie $http_cookie;
-        set $cors_origin "*";
-        if ($http_origin ~ ^https?://(.*\\.)?(localhost|[\\d\\.]+)(:\\d+)?$) { set $cors_origin $http_origin; }
+        
+        # 安全的 CORS 配置 - 只允许特定来源
+        set $cors_origin "";
+        # 允许主域名
+        if ($http_origin = "https://ai-infra-matrix.top") { set $cors_origin $http_origin; }
+        if ($http_origin = "https://www.ai-infra-matrix.top") { set $cors_origin $http_origin; }
+        # 允许本地开发环境
+        if ($http_origin ~ "^https?://localhost(:\\d+)?$") { set $cors_origin $http_origin; }
+        if ($http_origin ~ "^https?://127\\.0\\.0\\.1(:\\d+)?$") { set $cors_origin $http_origin; }
+        # 允许内网开发环境（可选，根据需要启用）
+        # if ($http_origin ~ "^https?://192\\.168\\.") { set $cors_origin $http_origin; }
+        
+        # 只有匹配的来源才设置 CORS 头
         add_header Access-Control-Allow-Origin $cors_origin always;
-        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH" always;
         add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-External-Host" always;
         add_header Access-Control-Allow-Credentials "true" always;
         if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin $cors_origin always;
-            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH" always;
             add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-External-Host" always;
             add_header Access-Control-Allow-Credentials "true" always;
             return 204;
