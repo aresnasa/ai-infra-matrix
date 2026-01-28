@@ -127,4 +127,3 @@ offline-images/
 multiarch-images/
 offline/
 build.sh.old1
-scripts/git-switch-user.sh
