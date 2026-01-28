@@ -330,10 +330,34 @@ func main() {
 			"user_agent": c.GetHeader("User-Agent"),
 		}).Info("Manual CORS: Request received")
 
-		// 设置CORS头
-		c.Header("Access-Control-Allow-Origin", "*")
+		// 安全的CORS配置 - 只允许特定的来源
+		allowedOrigins := []string{
+			"https://ai-infra-matrix.top",
+			"https://www.ai-infra-matrix.top",
+			"http://localhost:3000",
+			"http://localhost:8080",
+			"http://127.0.0.1:3000",
+			"http://127.0.0.1:8080",
+		}
+		
+		isAllowedOrigin := false
+		for _, allowed := range allowedOrigins {
+			if origin == allowed {
+				isAllowedOrigin = true
+				break
+			}
+		}
+		
+		// 设置CORS头 - 只对允许的来源设置
+		if isAllowedOrigin {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+		} else if origin == "" {
+			// 同源请求或无Origin头的请求
+			c.Header("Access-Control-Allow-Origin", "https://ai-infra-matrix.top")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, X-Requested-With, Accept, Access-Control-Request-Method, Access-Control-Request-Headers, X-External-Host")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		// 处理预检请求
@@ -1394,9 +1418,9 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 		security.GET("/oauth/providers/:id", securityHandler.GetOAuthProvider)
 		security.PUT("/oauth/providers/:id", securityHandler.UpdateOAuthProvider)
 
-		// 全局安全配置
-		security.GET("/config", securityHandler.GetSecurityConfig)
-		security.PUT("/config", securityHandler.UpdateSecurityConfig)
+		// 全局安全配置 - 只允许管理员访问
+		security.GET("/config", middleware.AdminMiddleware(), securityHandler.GetSecurityConfig)
+		security.PUT("/config", middleware.AdminMiddleware(), securityHandler.UpdateSecurityConfig)
 
 		// 安全审计日志
 		security.GET("/audit-logs", securityHandler.ListAuditLogs)

@@ -143,7 +143,10 @@ func (h *UserHandler) Register(c *gin.Context) {
 
 	// E2E test bypass: when enabled AND no invitation code provided, skip LDAP and approval
 	// If invitation code is provided, always use the normal flow to properly validate and use the code
-	if os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" && strings.TrimSpace(req.InvitationCode) == "" {
+	// 安全加固：只在非production环境且E2E_ALLOW_FAKE_LDAP=true时才允许绕过
+	goEnv := os.Getenv("GO_ENV")
+	isProduction := goEnv == "production" || goEnv == "prod"
+	if !isProduction && os.Getenv("E2E_ALLOW_FAKE_LDAP") == "true" && strings.TrimSpace(req.InvitationCode) == "" {
 		// Ensure username/email uniqueness via service call path
 		user := &models.User{
 			Username:      req.Username,
