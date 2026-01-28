@@ -339,7 +339,7 @@ func main() {
 			"http://127.0.0.1:3000",
 			"http://127.0.0.1:8080",
 		}
-		
+
 		isAllowedOrigin := false
 		for _, allowed := range allowedOrigins {
 			if origin == allowed {
@@ -347,7 +347,7 @@ func main() {
 				break
 			}
 		}
-		
+
 		// 设置CORS头 - 只对允许的来源设置
 		if isAllowedOrigin {
 			c.Header("Access-Control-Allow-Origin", origin)
