@@ -63,6 +63,27 @@ server {
     access_log /var/log/nginx/access.log main;
     error_log /var/log/nginx/error.log warn;
 
+    # ========== 安全规则：阻止敏感文件/路径访问 ==========
+    # 阻止 .env、.git 等敏感配置文件
+    location ~ /\.(env|git|svn|hg|bzr|DS_Store|htaccess|htpasswd)(/|$) {
+        deny all;
+        return 404;
+    }
+    
+    # 阻止敏感配置/备份文件
+    location ~* \.(sql|bak|backup|old|orig|save|swp|config|conf|cfg|ini|log|yaml|yml|toml|json)$ {
+        # 排除合法的 API 路径
+        if ($uri !~ "^/api/") {
+            return 404;
+        }
+    }
+    
+    # 阻止常见敏感路径
+    location ~ ^/(dump|backup|config|private|secret|admin\.php|wp-admin|\.well-known/acme-challenge) {
+        # .well-known/acme-challenge 用于 SSL 证书验证，可按需放行
+        return 404;
+    }
+
     # 定义基础变量
     set $external_scheme "{{EXTERNAL_SCHEME}}";
     set $external_host "{{EXTERNAL_HOST}}";
