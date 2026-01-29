@@ -36,7 +36,7 @@ type SlurmUserService interface {
 	// ListUsers 列出所有用户
 	ListUsers() ([]SlurmUserInfo, error)
 	// GetUserJobs 获取用户的作业
-	GetUserJobs(username string) ([]SlurmJob, error)
+	GetUserJobs(username string) ([]SlurmUserJob, error)
 }
 
 // slurmUserServiceImpl SLURM 用户服务实现
@@ -82,8 +82,8 @@ type SlurmUserLimits struct {
 	MaxTRES       string `json:"max_tres,omitempty"`        // e.g., "cpu=16,mem=64G"
 }
 
-// SlurmJob SLURM 作业信息
-type SlurmJob struct {
+// SlurmUserJob SLURM 用户作业信息（区别于 slurm_service.go 中的 SlurmJob）
+type SlurmUserJob struct {
 	JobID     string `json:"job_id"`
 	Name      string `json:"name"`
 	User      string `json:"user"`
