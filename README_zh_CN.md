@@ -12,7 +12,7 @@
 
 ## 🚀 在线试用
 
-🌐 **试用地址**: [https://www.ai-infra-matrix.top](https://www.ai-infra-matrix.top)
+🌐 **试用地址**: [https://ai-infra-matrix.top](https://ai-infra-matrix.top)
 
 欢迎开发者体验平台功能！试用环境定期重置，请勿存储重要数据。
 
