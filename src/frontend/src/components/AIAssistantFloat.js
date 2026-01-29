@@ -1930,7 +1930,7 @@ const AIAssistantFloat = () => {
         title={
           <Space>
             <ApiOutlined />
-            <span>模型配置</span>
+            <span style={{ color: isDark ? '#d9d9d9' : undefined }}>模型配置</span>
           </Space>
         }
         open={showModelConfig}
@@ -1946,24 +1946,31 @@ const AIAssistantFloat = () => {
           }
         }}
         width={720}
-        className="ai-model-config-modal"
+        className={`ai-model-config-modal ${isDark ? 'ai-model-config-modal-dark' : ''}`}
+        styles={{
+          header: isDark ? { background: '#1f1f1f', borderBottom: '1px solid #303030' } : {},
+          body: isDark ? { background: '#1f1f1f', color: '#d9d9d9' } : {},
+          footer: isDark ? { background: '#1f1f1f', borderTop: '1px solid #303030' } : {},
+          content: isDark ? { background: '#1f1f1f' } : {},
+          mask: isDark ? { background: 'rgba(0, 0, 0, 0.65)' } : {},
+        }}
       >
         <div style={{ padding: '16px 0' }}>
           {/* 当前选择的模型信息 */}
           {selectedConfig && (
-            <Card size="small" style={{ marginBottom: 16 }}>
+            <Card size="small" style={{ marginBottom: 16, backgroundColor: isDark ? '#1f1f1f' : undefined, borderColor: isDark ? '#434343' : undefined }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Space size={12}>
                   {getModelIcon(configs.find(c => c.id === selectedConfig))}
                   <div>
-                    <div style={{ fontWeight: 500, marginBottom: 4 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 4, color: isDark ? '#d9d9d9' : undefined }}>
                       当前模型: {configs.find(c => c.id === selectedConfig)?.name}
                     </div>
-                    <div style={{ fontSize: 12, color: '#666' }}>
+                    <div style={{ fontSize: 12, color: isDark ? '#8c8c8c' : '#666' }}>
                       类型: {configs.find(c => c.id === selectedConfig)?.model_type || 'AI模型'}
                     </div>
                     {configs.find(c => c.id === selectedConfig)?.api_endpoint && (
-                      <div style={{ fontSize: 12, color: '#666' }}>
+                      <div style={{ fontSize: 12, color: isDark ? '#8c8c8c' : '#666' }}>
                         地址: {configs.find(c => c.id === selectedConfig)?.api_endpoint}
                       </div>
                     )}
@@ -1977,7 +1984,7 @@ const AIAssistantFloat = () => {
           )}
 
           <Divider orientation="left" orientationMargin="0">
-            <span style={{ fontSize: 14, fontWeight: 500 }}>可用模型列表</span>
+            <span style={{ fontSize: 14, fontWeight: 500, color: isDark ? '#d9d9d9' : undefined }}>可用模型列表</span>
           </Divider>
 
           {/* 模型搜索框 */}
@@ -1988,7 +1995,7 @@ const AIAssistantFloat = () => {
             onChange={(e) => setModelSearchText(e.target.value)}
             allowClear
             size="small"
-            style={{ marginBottom: 16 }}
+            style={{ marginBottom: 16, backgroundColor: isDark ? '#141414' : undefined, borderColor: isDark ? '#434343' : undefined, color: isDark ? '#d9d9d9' : undefined }}
           />
 
           {/* 模型列表 */}
@@ -2000,7 +2007,7 @@ const AIAssistantFloat = () => {
                 return (
                   <div style={{ textAlign: 'center', padding: 20 }}>
                     <RobotOutlined style={{ fontSize: 32, color: '#d9d9d9', marginBottom: 8 }} />
-                    <div style={{ color: '#999' }}>暂无可用的AI模型配置</div>
+                    <div style={{ color: isDark ? '#8c8c8c' : '#999' }}>暂无可用的AI模型配置</div>
                     <Button 
                       type="link" 
                       onClick={() => {
@@ -2017,8 +2024,8 @@ const AIAssistantFloat = () => {
               if (filteredConfigs.length === 0 && modelSearchText.trim()) {
                 return (
                   <div style={{ textAlign: 'center', padding: 20 }}>
-                    <MessageOutlined style={{ fontSize: 32, color: '#d9d9d9', marginBottom: 8 }} />
-                    <div style={{ color: '#999' }}>没有找到匹配 "{modelSearchText}" 的模型配置</div>
+                    <MessageOutlined style={{ fontSize: 32, color: isDark ? '#6b7280' : '#d9d9d9', marginBottom: 8 }} />
+                    <div style={{ color: isDark ? '#8c8c8c' : '#999' }}>没有找到匹配 "{modelSearchText}" 的模型配置</div>
                     <Button 
                       type="link" 
                       onClick={() => setModelSearchText('')}
@@ -2054,7 +2061,7 @@ const AIAssistantFloat = () => {
                         avatar={<Avatar icon={getModelIcon(config)} />}
                         title={
                           <Space>
-                            <span style={{ fontWeight: 500 }}>{config.name}</span>
+                            <span style={{ fontWeight: 500, color: isDark ? '#d9d9d9' : undefined }}>{config.name}</span>
                             {getModelStatusTag(config)}
                             {config.id === selectedConfig && (
                               <Tag color="green" size="small">当前使用</Tag>
@@ -2062,17 +2069,17 @@ const AIAssistantFloat = () => {
                           </Space>
                         }
                         description={
-                          <div>
+                          <div style={{ color: isDark ? '#8c8c8c' : undefined }}>
                             <div style={{ marginBottom: 4 }}>
                               类型: {config.model_type || 'AI模型'} • 提供商: {config.provider || '未知'}
                             </div>
                             {config.api_endpoint && (
-                              <div style={{ fontSize: 12, color: '#666' }}>
+                              <div style={{ fontSize: 12, color: isDark ? '#6b7280' : '#666' }}>
                                 API地址: {config.api_endpoint}
                               </div>
                             )}
                             {config.description && (
-                              <div style={{ fontSize: 12, color: '#999' }}>
+                              <div style={{ fontSize: 12, color: isDark ? '#6b7280' : '#999' }}>
                                 {config.description}
                               </div>
                             )}
@@ -2088,8 +2095,8 @@ const AIAssistantFloat = () => {
 
           <Divider orientation="left" orientationMargin="0">
             <Space>
-              <ApiOutlined />
-              <span style={{ fontSize: 14, fontWeight: 500 }}>自定义RESTful接口配置</span>
+              <ApiOutlined style={{ color: isDark ? '#d9d9d9' : undefined }} />
+              <span style={{ fontSize: 14, fontWeight: 500, color: isDark ? '#d9d9d9' : undefined }}>自定义RESTful接口配置</span>
             </Space>
           </Divider>
 
@@ -2102,8 +2109,8 @@ const AIAssistantFloat = () => {
                 key: '1',
                 label: (
                   <Space>
-                    <LinkOutlined />
-                    <span>RESTful API配置</span>
+                    <LinkOutlined style={{ color: isDark ? '#d9d9d9' : undefined }} />
+                    <span style={{ color: isDark ? '#d9d9d9' : undefined }}>RESTful API配置</span>
                   </Space>
                 ),
                 children: (
