@@ -127,4 +127,4 @@ offline-images/
 multiarch-images/
 offline/
 build.sh.old1
-pentest-results
+pentest-results/

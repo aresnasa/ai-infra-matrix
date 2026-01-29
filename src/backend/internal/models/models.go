@@ -1303,3 +1303,129 @@ type OSInfo struct {
 	Version string `json:"version"`
 	Arch    string `json:"arch"`
 }
+
+// ==================== 组件权限相关模型 ====================
+
+// ComponentType 组件类型常量
+const (
+	ComponentNightingale = "nightingale" // 监控系统
+	ComponentGitea       = "gitea"       // 代码仓库
+	ComponentSeaweedFS   = "seaweedfs"   // 对象存储
+	ComponentJupyterHub  = "jupyterhub"  // JupyterHub
+	ComponentSlurm       = "slurm"       // 计算集群
+	ComponentKeycloak    = "keycloak"    // IAM
+)
+
+// ComponentPermissionLevel 组件权限级别
+const (
+	PermissionLevelNone     = "none"     // 无权限
+	PermissionLevelReadonly = "readonly" // 只读
+	PermissionLevelUser     = "user"     // 普通用户
+	PermissionLevelAdmin    = "admin"    // 管理员
+)
+
+// UserComponentPermission 用户组件权限表
+type UserComponentPermission struct {
+	ID               uint            `json:"id" gorm:"primaryKey"`
+	UserID           uint            `json:"user_id" gorm:"not null;index;uniqueIndex:idx_user_component,priority:1"`
+	Component        string          `json:"component" gorm:"not null;size:50;uniqueIndex:idx_user_component,priority:2"` // 组件名称
+	PermissionLevel  string          `json:"permission_level" gorm:"not null;size:20;default:'none'"`                     // 权限级别
+	Enabled          bool            `json:"enabled" gorm:"default:false"`                                                // 是否启用该组件
+	ExternalUserID   string          `json:"external_user_id,omitempty" gorm:"size:255"`                                  // 外部系统的用户ID
+	ExternalUsername string          `json:"external_username,omitempty" gorm:"size:100"`                                 // 外部系统的用户名
+	Metadata         json.RawMessage `json:"metadata,omitempty" gorm:"type:jsonb"`                                        // 额外配置（如bucket名、quota等）
+	SyncStatus       string          `json:"sync_status" gorm:"size:20;default:'pending'"`                                // 同步状态: pending, synced, failed
+	SyncError        string          `json:"sync_error,omitempty" gorm:"type:text"`                                       // 同步错误信息
+	LastSyncAt       *time.Time      `json:"last_sync_at,omitempty"`                                                      // 最后同步时间
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt  `json:"-" gorm:"index"`
+
+	// 关联关系
+	User User `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+}
+
+func (UserComponentPermission) TableName() string {
+	return "user_component_permissions"
+}
+
+// ComponentSyncTask 组件用户同步任务表
+type ComponentSyncTask struct {
+	ID           uint            `json:"id" gorm:"primaryKey"`
+	UserID       uint            `json:"user_id" gorm:"not null;index"`
+	Component    string          `json:"component" gorm:"not null;size:50;index"`
+	Action       string          `json:"action" gorm:"not null;size:20"` // create, update, delete, sync
+	Status       string          `json:"status" gorm:"not null;size:20;default:'pending'"`
+	ErrorMessage string          `json:"error_message,omitempty" gorm:"type:text"`
+	Metadata     json.RawMessage `json:"metadata,omitempty" gorm:"type:jsonb"`
+	StartedAt    *time.Time      `json:"started_at,omitempty"`
+	CompletedAt  *time.Time      `json:"completed_at,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+
+	// 关联关系
+	User User `json:"user,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+}
+
+func (ComponentSyncTask) TableName() string {
+	return "component_sync_tasks"
+}
+
+// RoleTemplateComponentPermission 角色模板组件权限表
+type RoleTemplateComponentPermission struct {
+	ID              uint            `json:"id" gorm:"primaryKey"`
+	RoleTemplateID  uint            `json:"role_template_id" gorm:"not null;index;uniqueIndex:idx_template_component,priority:1"`
+	Component       string          `json:"component" gorm:"not null;size:50;uniqueIndex:idx_template_component,priority:2"`
+	PermissionLevel string          `json:"permission_level" gorm:"not null;size:20;default:'none'"`
+	Enabled         bool            `json:"enabled" gorm:"default:false"`
+	DefaultMetadata json.RawMessage `json:"default_metadata,omitempty" gorm:"type:jsonb"` // 默认配置
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+
+	// 关联关系
+	RoleTemplate RoleTemplate `json:"role_template,omitempty" gorm:"foreignKey:RoleTemplateID;constraint:OnDelete:CASCADE"`
+}
+
+func (RoleTemplateComponentPermission) TableName() string {
+	return "role_template_component_permissions"
+}
+
+// ComponentRegistrationRequest 组件注册请求
+type ComponentRegistrationRequest struct {
+	UserID     uint                        `json:"user_id" binding:"required"`
+	Components []ComponentPermissionConfig `json:"components" binding:"required"`
+}
+
+// ComponentPermissionConfig 组件权限配置
+type ComponentPermissionConfig struct {
+	Component       string          `json:"component" binding:"required"`
+	PermissionLevel string          `json:"permission_level" binding:"required,oneof=none readonly user admin"`
+	Enabled         bool            `json:"enabled"`
+	Metadata        json.RawMessage `json:"metadata,omitempty"`
+}
+
+// UpdateComponentPermissionRequest 更新组件权限请求
+type UpdateComponentPermissionRequest struct {
+	PermissionLevel string          `json:"permission_level" binding:"omitempty,oneof=none readonly user admin"`
+	Enabled         *bool           `json:"enabled,omitempty"`
+	Metadata        json.RawMessage `json:"metadata,omitempty"`
+}
+
+// ComponentSyncStatus 组件同步状态
+type ComponentSyncStatus struct {
+	Component    string     `json:"component"`
+	Status       string     `json:"status"` // pending, synced, failed
+	LastSyncAt   *time.Time `json:"last_sync_at,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	ExternalID   string     `json:"external_id,omitempty"`
+	ExternalUser string     `json:"external_user,omitempty"`
+}
+
+// UserComponentSyncResult 用户组件同步结果
+type UserComponentSyncResult struct {
+	UserID     uint                  `json:"user_id"`
+	Username   string                `json:"username"`
+	Components []ComponentSyncStatus `json:"components"`
+	Success    bool                  `json:"success"`
+	Message    string                `json:"message,omitempty"`
+}

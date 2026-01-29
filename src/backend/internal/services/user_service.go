@@ -9,15 +9,17 @@ import (
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/database"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/models"
 	"github.com/aresnasa/ai-infra-matrix/src/backend/internal/utils"
+	"github.com/sirupsen/logrus"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 type UserService struct {
-	ldapService       *LDAPService
-	rbacService       *RBACService
-	invitationService *InvitationCodeService
+	ldapService                  *LDAPService
+	rbacService                  *RBACService
+	invitationService            *InvitationCodeService
+	componentRegistrationService ComponentRegistrationService
 }
 
 func NewUserService() *UserService {
@@ -25,7 +27,24 @@ func NewUserService() *UserService {
 		ldapService:       NewLDAPService(database.DB),
 		rbacService:       NewRBACService(database.DB),
 		invitationService: NewInvitationCodeService(),
+		// componentRegistrationService 需要在初始化时注入
+		// 或者使用延迟初始化
 	}
+}
+
+// NewUserServiceWithComponents 创建带组件注册服务的用户服务
+func NewUserServiceWithComponents(componentService ComponentRegistrationService) *UserService {
+	return &UserService{
+		ldapService:                  NewLDAPService(database.DB),
+		rbacService:                  NewRBACService(database.DB),
+		invitationService:            NewInvitationCodeService(),
+		componentRegistrationService: componentService,
+	}
+}
+
+// SetComponentRegistrationService 设置组件注册服务（用于延迟初始化）
+func (s *UserService) SetComponentRegistrationService(service ComponentRegistrationService) {
+	s.componentRegistrationService = service
 }
 
 // Register 用户注册
@@ -189,7 +208,31 @@ func (s *UserService) registerWithInvitationCode(req *models.RegisterRequest, in
 		return nil, errors.New("提交事务失败")
 	}
 
+	// 异步注册用户到各组件（事务提交后执行）
+	go s.registerUserToComponents(user, req.Password, roleTemplate)
+
 	return user, nil
+}
+
+// registerUserToComponents 注册用户到各启用的组件
+func (s *UserService) registerUserToComponents(user *models.User, password string, roleTemplate string) {
+	if s.componentRegistrationService == nil {
+		return
+	}
+
+	logger := logrus.WithFields(logrus.Fields{
+		"user_id":       user.ID,
+		"username":      user.Username,
+		"role_template": roleTemplate,
+	})
+
+	logger.Info("Starting component registration for new user")
+
+	if err := s.componentRegistrationService.RegisterUserToAllEnabledComponents(*user, password, roleTemplate); err != nil {
+		logger.WithError(err).Warn("Component registration had some failures")
+	} else {
+		logger.Info("Component registration completed successfully")
+	}
 }
 
 // registerWithApproval 普通注册（需要审批）
@@ -575,6 +618,10 @@ func (s *UserService) ApproveRegistration(approvalID uint, adminID uint) error {
 	if err := tx.Commit().Error; err != nil {
 		return errors.New("提交事务失败")
 	}
+
+	// 异步注册用户到各组件（事务提交后执行）
+	// 注意：审批通过时没有原始密码，使用空字符串，组件服务会生成默认密码
+	go s.registerUserToComponents(user, "", approval.RoleTemplate)
 
 	return nil
 }
