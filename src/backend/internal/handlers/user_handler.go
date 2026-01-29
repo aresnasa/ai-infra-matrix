@@ -36,9 +36,18 @@ type UserHandler struct {
 }
 
 func NewUserHandler(db *gorm.DB) *UserHandler {
+	return NewUserHandlerWithComponentService(db, nil)
+}
+
+// NewUserHandlerWithComponentService 创建带组件注册服务的用户处理器
+func NewUserHandlerWithComponentService(db *gorm.DB, componentService services.ComponentRegistrationService) *UserHandler {
+	userService := services.NewUserService()
+	if componentService != nil {
+		userService.SetComponentRegistrationService(componentService)
+	}
 	return &UserHandler{
 		db:                     db,
-		userService:            services.NewUserService(),
+		userService:            userService,
 		rbacService:            services.NewRBACService(db),
 		sessionService:         services.NewSessionService(),
 		ldapService:            services.NewLDAPService(db),
