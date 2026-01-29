@@ -817,6 +817,15 @@ func setupAPIRoutes(r *gin.Engine, cfg *config.Config, jobService *services.JobS
 			invitationCodes.DELETE("/:id", invitationCodeHandler.DeleteInvitationCode)
 		}
 
+		// 组件权限管理
+		componentPermissionHandler := initComponentPermissionHandler(cfg)
+		if componentPermissionHandler != nil {
+			componentPermissionHandler.RegisterHandlers(admin)
+			logrus.Info("Component permission handlers registered in admin routes")
+		} else {
+			logrus.Warn("Component permission handler not initialized, skipping route registration")
+		}
+
 		// 日志级别管理
 		logging := admin.Group("/logging")
 		{
