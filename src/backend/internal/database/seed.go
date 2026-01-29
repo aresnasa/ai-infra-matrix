@@ -23,7 +23,7 @@ func SeedDefaultData() error {
 }
 
 // getSeaweedFSConfigFromEnv 从环境变量读取 SeaweedFS 配置
-// 返回的 accessKey 和 secretKey 已加密（如果加密服务可用）
+// 返回的 accessKey 和 secretKey 是明文，加密由 GORM 钩子统一处理
 func getSeaweedFSConfigFromEnv() (endpoint, filerURL, masterURL, accessKey, secretKey string, sslEnabled bool) {
 	seaweedFilerHost := os.Getenv("SEAWEEDFS_FILER_HOST")
 	if seaweedFilerHost == "" {
@@ -50,34 +50,16 @@ func getSeaweedFSConfigFromEnv() (endpoint, filerURL, masterURL, accessKey, secr
 		seaweedS3Port = "8333"
 	}
 
-	// 读取原始凭据
-	rawAccessKey := os.Getenv("SEAWEEDFS_ACCESS_KEY")
-	if rawAccessKey == "" {
-		rawAccessKey = "seaweedfs_admin"
+	// 读取原始凭据（明文）
+	// 注意：加密由 GORM 钩子在 Create/Update 时统一处理
+	accessKey = os.Getenv("SEAWEEDFS_ACCESS_KEY")
+	if accessKey == "" {
+		accessKey = "seaweedfs_admin"
 	}
 
-	rawSecretKey := os.Getenv("SEAWEEDFS_SECRET_KEY")
-	if rawSecretKey == "" {
-		rawSecretKey = "seaweedfs_secret_key_change_me"
-	}
-
-	// 加密凭据（SECURITY: 凭据不应明文存储在数据库中）
-	if CryptoService != nil {
-		var err error
-		accessKey, err = CryptoService.EncryptIfNeeded(rawAccessKey)
-		if err != nil {
-			logrus.WithError(err).Warn("Failed to encrypt access key, using raw value")
-			accessKey = rawAccessKey
-		}
-		secretKey, err = CryptoService.EncryptIfNeeded(rawSecretKey)
-		if err != nil {
-			logrus.WithError(err).Warn("Failed to encrypt secret key, using raw value")
-			secretKey = rawSecretKey
-		}
-	} else {
-		logrus.Warn("CryptoService not available, credentials will be stored unencrypted")
-		accessKey = rawAccessKey
-		secretKey = rawSecretKey
+	secretKey = os.Getenv("SEAWEEDFS_SECRET_KEY")
+	if secretKey == "" {
+		secretKey = "seaweedfs_secret_key_change_me"
 	}
 
 	sslEnabled = false
@@ -131,21 +113,19 @@ func seedDefaultObjectStorageConfig() error {
 
 // syncDefaultSeaweedFSConfig 同步更新已存在的 SeaweedFS 配置
 // 只更新凭据和连接信息，保护其他用户自定义的字段
-// 注意：传入的 accessKey 和 secretKey 已加密
+// 注意：传入的 accessKey 和 secretKey 是明文，加密由 GORM 钩子处理
 func syncDefaultSeaweedFSConfig(config *models.ObjectStorageConfig, endpoint, filerURL, masterURL, accessKey, secretKey string, sslEnabled bool) error {
-	// 准备需要更新的字段（凭据已加密）
-	updates := map[string]interface{}{
-		"endpoint":    endpoint,
-		"filer_url":   filerURL,
-		"master_url":  masterURL,
-		"access_key":  accessKey,
-		"secret_key":  secretKey,
-		"ssl_enabled": sslEnabled,
-		"status":      "unknown", // 重置状态，等待健康检查更新
-	}
+	// 更新配置字段（明文凭据）
+	config.Endpoint = endpoint
+	config.FilerURL = filerURL
+	config.MasterURL = masterURL
+	config.AccessKey = accessKey
+	config.SecretKey = secretKey
+	config.SSLEnabled = sslEnabled
+	config.Status = "unknown" // 重置状态，等待健康检查更新
 
-	// 使用事务更新
-	if err := DB.Model(config).Updates(updates).Error; err != nil {
+	// 使用 Save 触发 GORM 钩子进行加密
+	if err := DB.Save(config).Error; err != nil {
 		return fmt.Errorf("failed to sync SeaweedFS config credentials: %w", err)
 	}
 
@@ -162,7 +142,7 @@ func syncDefaultSeaweedFSConfig(config *models.ObjectStorageConfig, endpoint, fi
 }
 
 // createDefaultSeaweedFSConfig 创建默认的 SeaweedFS 配置
-// 注意：传入的 accessKey 和 secretKey 已加密
+// 注意：传入的 accessKey 和 secretKey 是明文，加密由 GORM 钩子处理
 func createDefaultSeaweedFSConfig(endpoint, filerURL, masterURL, accessKey, secretKey string, sslEnabled bool) error {
 	defaultConfig := &models.ObjectStorageConfig{
 		Name:        "SeaweedFS (Default)",
@@ -175,7 +155,7 @@ func createDefaultSeaweedFSConfig(endpoint, filerURL, masterURL, accessKey, secr
 		SSLEnabled:  sslEnabled,
 		IsActive:    true,
 		Status:      "unknown",
-		Description: "Auto-configured SeaweedFS storage (encrypted)",
+		Description: "Auto-configured SeaweedFS storage",
 		CreatedBy:   1,
 	}
 
