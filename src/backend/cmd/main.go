@@ -1621,7 +1621,7 @@ func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermi
 	}
 
 	// 初始化 SLURM 服务
-	slurmUserService := services.NewSlurmUserService(database.GetSlurmDB())
+	slurmUserService := services.NewSlurmUserService()
 	if slurmUserService != nil {
 		logger.Info("SLURM user service initialized")
 	}
