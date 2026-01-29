@@ -2839,4 +2839,133 @@ export default {
     copyAllSuccess: 'Copied {count} valid invitation codes',
     noValidCodes: 'No valid invitation codes to copy',
   },
+
+  // Cluster Permission Management
+  clusterPermission: {
+    title: 'Cluster Permission Management',
+    subtitle: 'Manage user access permissions for SLURM and SaltStack clusters',
+    
+    // Types
+    slurm: 'SLURM Cluster',
+    saltstack: 'SaltStack Cluster',
+    
+    // Permission Verbs
+    verbs: {
+      view: 'View',
+      submit: 'Submit Job',
+      manage: 'Manage',
+      admin: 'Admin',
+      execute: 'Execute',
+      monitor: 'Monitor',
+      scale: 'Scale',
+      connect: 'Connect',
+    },
+    
+    // SLURM Permissions
+    slurmPermission: {
+      title: 'SLURM Cluster Permissions',
+      cluster: 'Cluster',
+      partitions: 'Partitions',
+      allPartitions: 'All Partitions',
+      selectedPartitions: 'Selected Partitions',
+      maxJobs: 'Max Concurrent Jobs',
+      maxCPUs: 'Max CPU Cores',
+      maxGPUs: 'Max GPUs',
+      maxMemoryGB: 'Max Memory (GB)',
+      maxWalltime: 'Max Wall Time',
+      priority: 'Priority',
+      qos: 'QoS Level',
+      account: 'SLURM Account',
+      resourceLimits: 'Resource Limits',
+      noLimit: 'No Limit',
+    },
+    
+    // SaltStack Permissions
+    saltstackPermission: {
+      title: 'SaltStack Cluster Permissions',
+      master: 'Salt Master',
+      masterAddress: 'Master Address',
+      minions: 'Minion Nodes',
+      allMinions: 'All Minions',
+      minionGroups: 'Minion Groups',
+      minionPatterns: 'Minion Patterns',
+      allowedFunctions: 'Allowed Functions',
+      deniedFunctions: 'Denied Functions',
+      allowDangerous: 'Allow Dangerous Commands',
+      maxConcurrent: 'Max Concurrent',
+      rateLimit: 'Rate Limit (req/min)',
+    },
+    
+    // Actions
+    grant: 'Grant',
+    revoke: 'Revoke',
+    update: 'Update',
+    grantPermission: 'Grant Permission',
+    revokePermission: 'Revoke Permission',
+    updatePermission: 'Update Permission',
+    
+    // Status
+    active: 'Active',
+    expired: 'Expired',
+    revoked: 'Revoked',
+    expiresAt: 'Expires At',
+    validDays: 'Valid Days',
+    permanent: 'Permanent',
+    
+    // Grant Info
+    grantedBy: 'Granted By',
+    grantReason: 'Grant Reason',
+    grantedAt: 'Granted At',
+    revokedBy: 'Revoked By',
+    revokeReason: 'Revoke Reason',
+    revokedAt: 'Revoked At',
+    
+    // Form
+    selectUser: 'Select User',
+    selectCluster: 'Select Cluster',
+    selectMaster: 'Select Salt Master',
+    selectVerbs: 'Select Permissions',
+    selectPartitions: 'Select Partitions',
+    inputReason: 'Enter Reason',
+    reasonRequired: 'Please enter a reason',
+    reasonTooShort: 'Reason must be at least 5 characters',
+    
+    // Query
+    myPermissions: 'My Permissions',
+    userPermissions: 'User Permissions',
+    clusterPermissions: 'Cluster Permissions',
+    accessList: 'Access List',
+    permissionLogs: 'Permission Logs',
+    
+    // Messages
+    grantSuccess: 'Permission granted successfully',
+    grantFailed: 'Failed to grant permission',
+    revokeSuccess: 'Permission revoked successfully',
+    revokeFailed: 'Failed to revoke permission',
+    updateSuccess: 'Permission updated successfully',
+    updateFailed: 'Failed to update permission',
+    loadFailed: 'Failed to load permissions',
+    
+    // Access Denied
+    slurmAccessDenied: 'SLURM cluster access denied',
+    saltstackAccessDenied: 'SaltStack cluster access denied',
+    accessDenied: 'Access Denied',
+    noPermission: 'You do not have permission to access this resource',
+    contactAdmin: 'Please contact administrator for access',
+    
+    // Permission Logs
+    logAction: {
+      grant: 'Grant',
+      revoke: 'Revoke',
+      modify: 'Modify',
+      expire: 'Expire',
+    },
+    
+    // Other
+    noPermissions: 'No permission records',
+    includeExpired: 'Include Expired',
+    filterByUser: 'Filter by User',
+    filterByCluster: 'Filter by Cluster',
+    filterByStatus: 'Filter by Status',
+  },
 };
