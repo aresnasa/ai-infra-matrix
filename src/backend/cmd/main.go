@@ -1583,7 +1583,7 @@ func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermi
 	// 初始化 Nightingale 服务
 	var n9eUserService services.NightingaleUserService
 	if cfg.Nightingale.Enabled {
-		n9eUserService = services.NewNightingaleUserService(cfg)
+		n9eUserService = services.NewNightingaleUserService(cfg, database.DB)
 		logger.Info("Nightingale user service initialized")
 	} else {
 		logger.Info("Nightingale integration disabled")
@@ -1592,7 +1592,7 @@ func initComponentPermissionHandler(cfg *config.Config) *handlers.ComponentPermi
 	// 初始化 Keycloak 服务
 	var keycloakService services.KeycloakService
 	if cfg.Keycloak.Enabled {
-		keycloakService = services.NewKeycloakService(cfg)
+		keycloakService = services.NewKeycloakService(cfg, database.DB)
 		logger.Info("Keycloak service initialized")
 	} else {
 		logger.Info("Keycloak integration disabled")

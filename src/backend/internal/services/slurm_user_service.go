@@ -247,7 +247,7 @@ func (s *slurmUserServiceImpl) ListUsers() ([]SlurmUserInfo, error) {
 }
 
 // GetUserJobs 获取用户的作业
-func (s *slurmUserServiceImpl) GetUserJobs(username string) ([]SlurmJob, error) {
+func (s *slurmUserServiceImpl) GetUserJobs(username string) ([]SlurmUserJob, error) {
 	if s.restAPIURL != "" {
 		return s.getUserJobsViaREST(username)
 	}
@@ -477,7 +477,7 @@ func (s *slurmUserServiceImpl) listUsersViaREST() ([]SlurmUserInfo, error) {
 	return s.parseUsersFromResponse(result)
 }
 
-func (s *slurmUserServiceImpl) getUserJobsViaREST(username string) ([]SlurmJob, error) {
+func (s *slurmUserServiceImpl) getUserJobsViaREST(username string) ([]SlurmUserJob, error) {
 	url := fmt.Sprintf("%s/slurm/v0.0.39/jobs?users=%s", s.restAPIURL, username)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -724,16 +724,16 @@ func (s *slurmUserServiceImpl) parseUsersFromResponse(result map[string]interfac
 	return userInfos, nil
 }
 
-func (s *slurmUserServiceImpl) parseJobsFromResponse(result map[string]interface{}) ([]SlurmJob, error) {
+func (s *slurmUserServiceImpl) parseJobsFromResponse(result map[string]interface{}) ([]SlurmUserJob, error) {
 	jobs, ok := result["jobs"].([]interface{})
 	if !ok {
 		return nil, nil
 	}
 
-	var slurmJobs []SlurmJob
+	var slurmJobs []SlurmUserJob
 	for _, j := range jobs {
 		jobData := j.(map[string]interface{})
-		job := SlurmJob{}
+		job := SlurmUserJob{}
 		if id, ok := jobData["job_id"]; ok {
 			job.JobID = fmt.Sprintf("%v", id)
 		}
