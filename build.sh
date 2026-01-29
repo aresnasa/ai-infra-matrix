@@ -12286,22 +12286,24 @@ case "$COMMAND" in
         fix_mode=""
         [[ "$ARG2" == "--fix" ]] && fix_mode="--fix"
         
-        # List of components to check
-        components=(
-            "frontend"
-            "backend"
-            "backend-init"
-            "nginx"
-            "jupyterhub"
-            "singleuser"
-            "saltstack"
-            "slurm-master"
-            "gitea"
-            "apphub"
-            "nightingale"
-            "keycloak"
-            "argocd"
-        )
+        # Dynamically discover components from src directory
+        # Only include directories that have a Dockerfile (buildable components)
+        log_info "Discovering buildable components from $SRC_DIR..."
+        components=()
+        while IFS= read -r dir; do
+            local comp=$(basename "$dir")
+            # Skip shared, test-containers, and directories without Dockerfile
+            [[ "$comp" == "shared" ]] && continue
+            [[ "$comp" == "test-containers" ]] && continue
+            if [[ -f "$dir/Dockerfile" ]]; then
+                components+=("$comp")
+            fi
+        done < <(find "$SRC_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+        
+        # Also add backend-init (special case, built from backend)
+        components+=("backend-init")
+        
+        log_info "Found ${#components[@]} components to check: ${components[*]}"
         
         consistent=0
         inconsistent=0
